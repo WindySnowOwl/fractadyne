@@ -3672,6 +3672,16 @@ struct ExportState {
     /// When the in-flight export began (deep exports: at the reference build). Drives the live
     /// "elapsed" readout and the final total-time report.
     started: Option<std::time::Instant>,
+    /// Open the finished image in the system viewer once the export succeeds (persisted).
+    open_after: bool,
+    /// Where the in-flight export is being written. ⭐Captured at START, not parsed back out
+    /// of the status message — the message is prose for a human and its shape is free to
+    /// change; the path is the fact.
+    dest: Option<std::path::PathBuf>,
+    /// A finished file waiting to be handed to the system viewer. ⚠The completion hook runs
+    /// where there is no `egui::Context`, and `open_url` needs one, so the request parks here
+    /// and the export window spends it on the next frame.
+    pending_open: Option<std::path::PathBuf>,
 }
 
 /// Relief-lighting + distance-estimate-glow effect settings (mostly persisted; `de_phase` is
@@ -4922,6 +4932,9 @@ impl FractadyneApp {
                 cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 last_dir: s.export_dir.clone().map(std::path::PathBuf::from),
                 started: None,
+                open_after: s.export_open_after,
+                dest: None,
+                pending_open: None,
             },
             gallery: GalleryState { dir: Self::pictures_dir(), ..Default::default() },
             bookmarks: Self::load_bookmarks(),
@@ -5535,6 +5548,7 @@ impl FractadyneApp {
                 DualExport::ActiveOnly => "active".to_string(),
             },
             export_aspect: self.export.aspect.clone(),
+            export_open_after: self.export.open_after,
             show_location: self.show_location,
             palette_anim: self.anim.palette_anim.key().to_string(),
             palette_anim_speed: self.anim.palette_anim_speed,
@@ -11574,6 +11588,14 @@ impl eframe::App for FractadyneApp {
         // Orbit racing-dot animation.
         self.advance_orbit_anim(ctx);
 
+        // ⚠⚠**Here, not in the export dialog.** The request is created by a completion that can
+        // land long after the dialog was closed, and a consumer that only runs while the window is
+        // open would sit on it until the user next opened the window — firing a viewer for an
+        // export they finished minutes ago.
+        if let Some(p) = self.export.pending_open.take() {
+            let url = format!("file:///{}", p.display().to_string().replace('\\', "/"));
+            ctx.open_url(egui::OpenUrl::new_tab(url));
+        }
         // Poll a background export for completion.
         if let Some(rx) = &self.export.task {
             match rx.try_recv() {

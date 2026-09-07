@@ -1823,6 +1823,10 @@ impl FractadyneApp {
                         .weak()
                         .small(),
                 );
+                ui.checkbox(&mut self.export.open_after, "Open when done")
+                    .on_hover_text(
+                        "Hand the finished image to the system viewer as soon as it is written.",
+                    );
                 ui.add_space(6.0);
                 let busy = self.export.task.is_some() || self.export.prep.is_some();
                 let elapsed = self

@@ -156,6 +156,11 @@ pub struct SessionState {
     /// Export aspect ratio: "window" (match the live view) or a fixed ratio key ("16:9", "1:1", …).
     #[serde(default = "default_export_aspect")]
     pub export_aspect: String,
+    /// Open the finished image in the system viewer when an export succeeds.
+    /// ⚠Defaults OFF: an export can be a batch of one among many, and a viewer window
+    /// stealing focus mid-session is not something to opt people into silently.
+    #[serde(default)]
+    pub export_open_after: bool,
     /// Burn the zoom/coordinate HUD into exports (also settable via the `--show-location` CLI flag).
     #[serde(default)]
     pub show_location: bool,
@@ -477,6 +482,7 @@ impl Default for SessionState {
             welcome_seen: false,
             export_dual_mode: default_export_dual_mode(),
             export_aspect: default_export_aspect(),
+            export_open_after: false,
             show_location: false,
             palette_anim: default_palette_anim(),
             palette_anim_speed: default_palette_anim_speed(),

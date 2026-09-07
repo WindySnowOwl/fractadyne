@@ -449,3 +449,34 @@ fn a_session_from_before_the_performance_field_still_loads() {
     let back: SessionState = toml::from_str(&older).expect("an older session must still parse");
     assert!(!back.perf_panel);
 }
+
+/// ⚠**"Open when done" must default OFF and stick when turned on.** Off by default because an
+/// export can be one of a batch and a viewer stealing focus mid-session is not something to opt
+/// people into silently; sticky because a checkbox that forgets is worse than no checkbox.
+#[test]
+fn open_after_export_is_off_by_default_and_survives_a_restart() {
+    assert!(
+        !SessionState::default().export_open_after,
+        "a fresh install must not launch a viewer behind the user's back"
+    );
+
+    let on = SessionState { export_open_after: true, ..Default::default() };
+    assert!(roundtrip(&on).export_open_after, "turning it on must survive a restart");
+
+    let off = SessionState { export_open_after: false, ..Default::default() };
+    assert!(!roundtrip(&off).export_open_after, "and turning it back off must too");
+}
+
+/// ⚠A session written before this field existed must still load — and load as OFF.
+#[test]
+fn a_session_from_before_the_open_after_field_still_loads() {
+    let text = toml::to_string_pretty(&SessionState::default()).expect("serialize");
+    let older: String = text
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("export_open_after"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!older.contains("export_open_after"), "the guard: the field must really be absent");
+    let back: SessionState = toml::from_str(&older).expect("an older session must still parse");
+    assert!(!back.export_open_after);
+}

@@ -3930,6 +3930,159 @@ zoom = \"1e94\"
                 threshold: "clamped & finite; report lists clamped + unknown",
                 pass: clamped,
             });
+
+            // The custom gradient travels WITH the view. Before this field, a `.fdn` saved on a
+            // hand-built gradient carried only `palette=<index>`, so reopening it landed on
+            // whichever preset sat at that index: the geometry survived and the colour did not.
+            // Round-tripped through the real writer and reader, not just the codec.
+            let palette_was = (
+                self.coloring.custom_segments.clone(),
+                self.coloring.custom_palette.clone(),
+                self.coloring.use_custom_palette,
+                self.coloring.custom_palette_flat,
+            );
+            let rich = vec![
+                fractadyne_state::PaletteSegment {
+                    left: 0.0, mid: 0.113_712_3, right: 0.25,
+                    left_color: [0.0, 0.0, 0.0, 1.0],
+                    right_color: [0.937_254_9, 0.203_921_6, 0.101_960_8, 1.0],
+                    blend: 1, space: 1, blend_params: [0.0; 4],
+                },
+                fractadyne_state::PaletteSegment {
+                    left: 0.25, mid: 0.9, right: 1.0,
+                    left_color: [0.937_254_9, 0.203_921_6, 0.101_960_8, 1.0],
+                    right_color: [0.043_137_3, 0.180_392_2, 0.941_176_4, 1.0],
+                    blend: 5, space: 0, blend_params: [0.17, 0.67, 0.83, 0.33],
+                },
+            ];
+            self.coloring.custom_segments = rich.clone();
+            self.coloring.use_custom_palette = true;
+            self.coloring.custom_palette_flat = false;
+            let cblob = self.view_metadata();
+            // Scramble: back to a preset, gradient forgotten — exactly the state a fresh launch
+            // would be in when the file is opened.
+            self.coloring.custom_segments.clear();
+            self.coloring.use_custom_palette = false;
+            let cr = self.load_view_metadata(&cblob);
+            let back = self.coloring.custom_segments.clone();
+            // ⭐Name the first field that differs. A bare "did not round-trip" sends the next
+            // person back to a debugger for something the check already knows.
+            let mut diff: Option<String> = None;
+            for (i, (a, b)) in back.iter().zip(rich.iter()).enumerate() {
+                for (f, ok) in [
+                    ("left", a.left == b.left),
+                    ("mid", a.mid == b.mid),
+                    ("right", a.right == b.right),
+                    ("left_color", a.left_color == b.left_color),
+                    ("right_color", a.right_color == b.right_color),
+                    ("blend", a.blend == b.blend),
+                    ("space", a.space == b.space),
+                    ("blend_params", b.blend != 5 || a.blend_params == b.blend_params),
+                ] {
+                    if !ok && diff.is_none() {
+                        diff = Some(format!("seg {i} {f}: {a:?} vs {b:?}"));
+                    }
+                }
+            }
+            let same = back.len() == rich.len()
+                && back.iter().zip(rich.iter()).all(|(a, b)| {
+                    a.left == b.left && a.mid == b.mid && a.right == b.right
+                        && a.left_color == b.left_color && a.right_color == b.right_color
+                        && a.blend == b.blend && a.space == b.space
+                        // ⚠`blend_params` is meaningful ONLY for kind 5. Every other kind
+                        // normalizes it to `BEZIER_IDENTITY` on the way through `Blend`, so
+                        // demanding it round-trip on a Curved segment would be asserting that a
+                        // field nothing reads keeps a value nothing wrote.
+                        && (b.blend != 5 || a.blend_params == b.blend_params)
+                });
+            let embed_ok = cr.note().is_none() && same && self.coloring.use_custom_palette
+                && !self.coloring.custom_palette.is_empty();
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "View format",
+                name: "custom gradient round-trips in the view".into(),
+                params: "2 segments: off-centre mid, Bézier blend, HSV space, alpha".into(),
+                result: match diff.clone().or_else(|| cr.note().map(|n| format!("note: {n}"))) {
+                    Some(d) => format!("MISMATCH {d}"),
+                    None => format!(
+                        "{} segments back, custom {}, {} derived stops",
+                        back.len(),
+                        self.coloring.use_custom_palette,
+                        self.coloring.custom_palette.len()
+                    ),
+                },
+                threshold: "every field bit-identical; custom palette re-selected",
+                pass: embed_ok,
+            });
+
+            // ⛔⭐⭐**Every key the WRITER emits must be one the READER knows.** `palette_custom`
+            // was added to the writer and its own load branch, and both worked — but the key was
+            // missing from `KNOWN_VIEW_KEYS`, so every load reported "ignored unknown field(s):
+            // palette_custom" about a field it had just honoured. Nothing else could see that: the
+            // gradient arrived correctly and the warning was cosmetic-looking noise. This check
+            // exists so the NEXT field added to the writer cannot repeat it.
+            let unknown_emitted: Vec<String> = cblob
+                .lines()
+                .filter_map(|l| l.split_once('='))
+                .map(|(k, _)| k.to_string())
+                .filter(|k| !crate::export::KNOWN_VIEW_KEYS.contains(&k.as_str()))
+                .collect();
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "View format",
+                name: "every emitted key is a known key".into(),
+                params: format!("{} keys written", cblob.lines().count()),
+                result: if unknown_emitted.is_empty() {
+                    "all known".into()
+                } else {
+                    format!("writer emits unknown: {}", unknown_emitted.join(", "))
+                },
+                threshold: "writer ⊆ KNOWN_VIEW_KEYS",
+                pass: unknown_emitted.is_empty(),
+            });
+
+            // ⚠⚠And the field must be ABSENT on a preset view. A `palette_custom=` written for
+            // every export would bloat every PNG's metadata and, worse, would pin a stale gradient
+            // onto files whose author was using a preset.
+            self.coloring.use_custom_palette = false;
+            let preset_blob = self.view_metadata();
+            let absent = !preset_blob.contains("palette_custom");
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "View format",
+                name: "preset views carry no embedded gradient".into(),
+                params: "use_custom_palette = false".into(),
+                result: if absent { "absent".into() } else { "PRESENT".to_string() },
+                threshold: "no palette_custom key",
+                pass: absent,
+            });
+
+            // A corrupt gradient must leave the live palette ALONE and say so — not render a
+            // colour nobody chose. The shape here parses as numbers but does not cover 0..1.
+            self.coloring.custom_segments = rich.clone();
+            self.coloring.use_custom_palette = true;
+            let bad = "app=Fractadyne\nformat_version=1\ncenter_re=-0.5\ncenter_im=0\n\
+                       palette_custom=0.3,0.5,0.9,0,0,0,1,1,1,1,1,0,0,0,0,0,0\n";
+            let br = self.load_view_metadata(bad);
+            let kept = self.coloring.custom_segments == rich
+                && br.clamped.iter().any(|c| *c == "custom palette");
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "View format",
+                name: "a corrupt gradient is refused, not applied".into(),
+                params: "palette_custom spanning 0.3..0.9".into(),
+                result: format!(
+                    "{} segments kept; clamped [{}]",
+                    self.coloring.custom_segments.len(), br.clamped.join(", ")
+                ),
+                threshold: "live gradient untouched + reported clamped",
+                pass: kept,
+            });
+
+            // ⚠⚠Put the palette back. These checks install a gradient to prove it travels, and a
+            // later check ("gradient-edit-changes-the-image") renders a preset and then edits ONE
+            // stop — with our gradient still live it saw no change and failed, which is a leak in
+            // this block, not a defect in that one.
+            self.coloring.custom_segments = palette_was.0;
+            self.coloring.custom_palette = palette_was.1;
+            self.coloring.use_custom_palette = palette_was.2;
+            self.coloring.custom_palette_flat = palette_was.3;
         }
 
         // ---- status-bar formatters (pure, depth-aware display) ----

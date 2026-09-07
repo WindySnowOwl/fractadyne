@@ -286,13 +286,19 @@ fn undo_redo_round_trip() {
 ///
 /// WARNING: a literal here could drift away from what the app actually writes, so it is
 /// checked against `KNOWN_VIEW_KEYS` below - add or rename a field and the test says so.
+///
+/// It carries a custom gradient (`palette_custom`) deliberately, even though that field is
+/// optional in real files: the sample is the fullest shape the reader must accept, and a sample
+/// that omitted the one variable-length field would leave the parser's hardest input untested.
 const SAMPLE_LOCATION: &str = "app=Fractadyne\nversion=0.2.40\nformat_version=1\n\
 saved_unix=1787401025\nsaved=2026-08-22 10:57:05 UTC\nnotes=hero\nfractal=Mandelbrot\n\
 julia=0\njulia_c_re=0.00000000000000000e0\njulia_c_im=0.00000000000000000e0\n\
 center_re=-1.7688142728350613080035161139012583033818929344327473679816125832\n\
 center_im=0.0000505988919638538088127175518550855307415194377517168044839680\n\
 upp=1.00000000000000000e-45\nupp_log2=-1.49500000000000000e2\nzoom=6.60e43\n\
-max_iter=60000\nauto_iter=1\npalette=0\ncycle=0.27\noffset=0.1\naa=1\n";
+max_iter=60000\nauto_iter=1\npalette=0\ncycle=0.27\noffset=0.1\naa=1\n\
+palette_custom=0,0.25,0.5,0,0,0,1,1,0.2,0.1,1,0,0,0,0,0,0;\
+0.5,0.75,1,1,0.2,0.1,1,1,1,1,1,5,1,0.17,0.67,0.83,0.33\n";
 
 /// The sample above must stay in step with the reader's own key list: every key the reader
 /// knows appears in it, and it carries no key the reader would report as unknown.

@@ -12,6 +12,36 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A `.fdn` now carries the gradient, and an export can open itself** (beta.69). Saving a view
+  wrote `palette=<index>` — a pointer into the built-in presets. That is fine while you are on a
+  preset, and quietly wrong the moment you are not: a file saved on a hand-built gradient
+  reopened in whichever preset happened to sit at that index. The coordinates came back and the
+  picture did not, which for something people share is most of what a saved view is for.
+
+  Views saved on a custom gradient now embed it. Every segment travels — positions, both
+  endpoint colours with alpha, the off-centre midpoint, the blend curve and its colour space,
+  and the Bézier control points — in one line of the same `key=value` metadata the view fields
+  already ride in, so it works in `.fdn` files, in shared location text, and in the metadata
+  embedded in an exported PNG. A view saved on a preset writes nothing new at all.
+
+  The reader refuses a gradient it cannot trust rather than rendering a colour nobody chose: the
+  segments must cover 0 to 1 in order, with no gaps, no zero-width spans, no midpoint outside
+  its own segment, and no non-finite value. A file that fails any of those keeps the palette you
+  already had and says so in the load report.
+
+- **"Open when done"** (beta.69), in the export dialog and off by default. A finished export can
+  hand itself to the system viewer instead of leaving you to go and find it. Off by default
+  because an export is often one of a batch, and off or on, the answer is remembered.
+
+- **Four new self-test checks (178 now), and one of them caught a defect while being written.**
+  `palette_custom` was added to the writer and to its own load branch, and both worked — but the
+  key was missing from the reader's known-key list, so every load reported "ignored unknown
+  field(s): palette_custom" about a field it had just correctly honoured. Nothing else could have
+  seen it: the gradient arrived intact and the warning looked like noise. There is now a check
+  that every key the writer emits is one the reader knows, so the next field added cannot repeat
+  it.
+
+
 - **A gate under reference reuse, and a measurement that settled a question** (beta.68). A deep
   export rebuilds its reference orbit from scratch even though the view on screen already has one.
   The machinery to extend the existing orbit instead has always been there — the live view uses it —

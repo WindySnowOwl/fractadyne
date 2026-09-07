@@ -237,8 +237,93 @@ impl ViewLoad {
 pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "app", "version", "format_version", "saved_unix", "saved", "notes", "fractal", "julia",
     "julia_c_re", "julia_c_im", "center_re", "center_im", "upp", "upp_log2", "zoom", "max_iter",
-    "auto_iter", "palette", "cycle", "offset", "aa",
+    "auto_iter", "palette", "cycle", "offset", "aa", "palette_custom",
 ];
+
+/// The largest embedded gradient, shared by the writer and the reader. ⭐**One constant, both
+/// ends** — a writer that emits more than the reader accepts produces files that only fail on
+/// somebody else's machine.
+pub(crate) const MAX_EMBEDDED_SEGMENTS: usize = 512;
+
+/// Encode the custom gradient as ONE Latin-1, single-line field for view metadata.
+///
+/// ⭐⭐**A `.fdn` that restores the view but not the colours does not restore the IMAGE**, which is
+/// the thing people share. The view fields have always travelled; the gradient did not, so a
+/// carefully built palette arrived as whatever preset the recipient happened to be on.
+///
+/// ⚠**One line, ASCII, and no `=`** — this rides in PNG `tEXt` beside the view fields, which is a
+/// Latin-1 key=value format. Segments are separated by `;` and fields by `,`.
+///
+/// ⛔**The blend/space numbers are the SAME FILE FORMAT as `.ggr` and the session** — GIMP's
+/// numbering, append-only. They go through `as_u8`, never a cast, for the reason recorded on
+/// `PaletteSegment`: renumbering silently re-interprets every saved gradient.
+///
+/// ⭐**Plain `{}` on the floats, not a fixed precision.** Rust's `Display` for `f32` emits the
+/// shortest decimal that parses back to the identical bits, so this is both exact and shorter than
+/// any `{:.N}` that would also be exact. A fixed `{:.9}` was the first attempt and it is subtly
+/// worse: it is exact only while every value stays inside `0..1`.
+fn encode_palette_segments(segs: &[fractadyne_state::PaletteSegment]) -> String {
+    let mut out = String::new();
+    for (i, s) in segs.iter().enumerate() {
+        if i > 0 {
+            out.push(';');
+        }
+        out.push_str(&format!(
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            s.left, s.mid, s.right,
+            s.left_color[0], s.left_color[1], s.left_color[2], s.left_color[3],
+            s.right_color[0], s.right_color[1], s.right_color[2], s.right_color[3],
+            s.blend, s.space,
+            s.blend_params[0], s.blend_params[1], s.blend_params[2], s.blend_params[3],
+        ));
+    }
+    out
+}
+
+/// Decode [`encode_palette_segments`]. Untrusted input: a malformed segment is DROPPED rather than
+/// defaulted, and the whole field is refused unless what survives still covers `0..1` in order — a
+/// half-parsed gradient would render as a colour nobody chose.
+fn decode_palette_segments(v: &str) -> Option<Vec<fractadyne_state::PaletteSegment>> {
+    let mut out: Vec<fractadyne_state::PaletteSegment> = Vec::new();
+    for part in v.split(';').filter(|p| !p.trim().is_empty()) {
+        let f: Vec<&str> = part.split(',').map(|t| t.trim()).collect();
+        if f.len() != 17 {
+            return None;
+        }
+        let n: Vec<f32> = f.iter().map(|t| t.parse::<f32>().unwrap_or(f32::NAN)).collect();
+        if n.iter().any(|x| !x.is_finite()) {
+            return None;
+        }
+        out.push(fractadyne_state::PaletteSegment {
+            left: n[0], mid: n[1], right: n[2],
+            left_color: [n[3], n[4], n[5], n[6]],
+            right_color: [n[7], n[8], n[9], n[10]],
+            blend: f[11].parse::<u8>().ok()?,
+            space: f[12].parse::<u8>().ok()?,
+            blend_params: [n[13], n[14], n[15], n[16]],
+        });
+    }
+    // ⚠Shape, not just syntax: covering 0..1 in order is what `Gradient::eval` assumes, and a
+    // gradient that does not is a black band nobody asked for.
+    if out.is_empty() || out.len() > MAX_EMBEDDED_SEGMENTS {
+        return None;
+    }
+    if (out[0].left - 0.0).abs() > 1.0e-4 || (out[out.len() - 1].right - 1.0).abs() > 1.0e-4 {
+        return None;
+    }
+    if out.windows(2).any(|w| (w[1].left - w[0].right).abs() > 1.0e-4) {
+        return None;
+    }
+    if out.iter().any(|s| s.right <= s.left) {
+        return None;
+    }
+    // ⚠The midpoint too: `Gradient::eval` divides by the distance to it, and a `mid` outside
+    // its own segment is the one malformed shape the checks above still let through.
+    if out.iter().any(|s| s.mid < s.left || s.mid > s.right) {
+        return None;
+    }
+    Some(out)
+}
 
 impl FractadyneApp {
     /// Reloadable view-state metadata embedded in exports. The center is stored as
@@ -262,7 +347,7 @@ impl FractadyneApp {
             "app=Fractadyne\nversion={}\nformat_version={}\nsaved_unix={}\nsaved={}\n\
              notes={}\nfractal={}\njulia={}\njulia_c_re={:.17e}\njulia_c_im={:.17e}\n\
              center_re={}\ncenter_im={}\nupp={:.17e}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n\
-             palette={}\ncycle={}\noffset={}\naa={}\n",
+             palette={}\ncycle={}\noffset={}\naa={}\n{}",
             version_string(),
             VIEW_FORMAT_VERSION,
             secs,
@@ -288,6 +373,25 @@ impl FractadyneApp {
             self.coloring.cycle,
             self.coloring.offset,
             self.render_cfg.aa,
+            // The custom gradient, when there is one. Empty otherwise, so a preset view's
+            // metadata is byte-identical to what it was before this field existed.
+            if self.coloring.use_custom_palette
+                && !self.coloring.custom_segments.is_empty()
+                // ⚠⚠**The same cap the READER enforces.** Without it a gradient past the limit
+                // would be written into every export and refused by our own loader — a field that
+                // is always there and never works is worse than one that is absent, because the
+                // absence is at least honest. Real gradients are well under this; an importer
+                // producing hundreds of segments is the case that would trip it.
+                && self.coloring.custom_segments.len() <= MAX_EMBEDDED_SEGMENTS
+            {
+                format!(
+                    "palette_custom={}
+",
+                    encode_palette_segments(&self.coloring.custom_segments)
+                )
+            } else {
+                String::new()
+            },
         )
     }
 
@@ -362,6 +466,27 @@ impl FractadyneApp {
         }
         if let Some(ai) = get("auto_iter") {
             self.render_cfg.auto_iter = ai == "1";
+        }
+                // ⭐⭐**The custom gradient, if the file carries one.** Restored BEFORE the preset index
+        // below so a file with both lands on the gradient it was saved with, and only falls back
+        // to the preset when the gradient is absent or does not parse.
+        //
+        // ⚠Untrusted: `decode_palette_segments` refuses anything that does not cover 0..1 in
+        // order, so a truncated or hostile field leaves the current palette alone rather than
+        // rendering a colour nobody chose.
+        if let Some(segs) = get("palette_custom").and_then(|v| decode_palette_segments(&v)) {
+            self.coloring.custom_segments = segs;
+            self.coloring.custom_palette_flat = false;
+            self.coloring.use_custom_palette = true;
+            // ⚠Keep the derived stop list in step, exactly as every other path that installs
+            // segments does — a loaded gradient must be indistinguishable from an edited one.
+            let g = crate::segments_to_gradient(
+                "Loaded gradient",
+                &self.coloring.custom_segments.clone(),
+            );
+            self.store_segments(&g);
+        } else if get("palette_custom").is_some() {
+            report.clamped.push("custom palette");
         }
         if let Some(p) = get("palette").and_then(|s| s.parse::<usize>().ok()) {
             if p < fractadyne_color::PRESETS.len() {
@@ -871,6 +996,10 @@ impl FractadyneApp {
         // Start the export clock now — for a deep export this includes the (long) off-thread
         // reference build, which is part of the wait the user is timing.
         self.export.started = Some(std::time::Instant::now());
+
+        // ⭐Remember where it is going, so the "open when done" option has a path that does not
+        // depend on the wording of a status message.
+        self.export.dest = Some(path.clone());
         if let Some(parent) = path.parent() {
             self.export.last_dir = Some(parent.to_path_buf());
         }
@@ -933,10 +1062,24 @@ impl FractadyneApp {
     /// Finalize an export status line: on success append the total elapsed time; either way clear
     /// the timer. Cancel/failure messages pass through unchanged (no time — the run didn't finish).
     pub(crate) fn finish_export_status(&mut self, msg: String) -> String {
-        match self.export.started.take() {
-            Some(t) if msg.starts_with("Saved") => {
-                format!("{msg}  (in {})", Self::fmt_export_duration(t.elapsed()))
+        // ⭐⭐Every finished export funnels through here — both the synchronous glitch-corrected
+        // path and the background worker — which is why the "open when done" hook lives here and
+        // not at the two call sites.
+        let dest = self.export.dest.take();
+        let ok = msg.starts_with("Saved");
+        // ⚠Never during the scripted UI walk, which exports for real — the same exemption the
+        // finish tone carries, and for the same reason: a gate must not spray the machine with
+        // viewer windows.
+        if ok && self.export.open_after && self.harness.uitest.is_none() {
+            // ⚠Only a file that is actually there. A worker can report success for a stitched
+            // pair whose reported path is the map half; either way, handing a missing path to the
+            // shell opens a browser error, so check first and stay silent if it is not readable.
+            if let Some(p) = dest.filter(|p| p.is_file()) {
+                self.export.pending_open = Some(p);
             }
+        }
+        match self.export.started.take() {
+            Some(t) if ok => format!("{msg}  (in {})", Self::fmt_export_duration(t.elapsed())),
             _ => msg,
         }
     }
@@ -1019,3 +1162,6 @@ impl FractadyneApp {
         });
     }
 }
+
+#[cfg(test)]
+mod palette_embed;
