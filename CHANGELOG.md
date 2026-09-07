@@ -12,6 +12,20 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The console output is opt-in** (beta.55). The `[fd-…]` diagnostic lines are useful, and they
+  were printed at everyone whether they wanted them or not. They are now **on whenever Fractadyne is
+  given any argument** — so every headless render, harness and validation script keeps exactly the
+  output it had — and **off for a bare launch of the GUI**, which nobody asked to have narrated.
+
+  Three ways to turn them on: the **`--console`** flag (`--no-console` forces the other way), the
+  **`FRACTADYNE_CONSOLE`** environment variable (`0` off, anything else on), and a checkbox in
+  **Tools ▸ Diagnostics** that takes effect immediately. Setting `FRACTADYNE_TRACE` switches the
+  console on by itself — a trace nobody can see is not a trace.
+
+  **Nothing is recorded any differently.** The log file still gets every line, so Help ▸ Show recent
+  log, the crash report's tail and anything you attach to an issue are unchanged; the gate decides
+  who is *told*, never what is *kept*. A panic always reaches the console.
+
 - **Menu sections look like sections** (beta.54). File ▸ Settings set its four headings —
   Frame-rate cap, UI scale, Theme, Updates — in the same font, weight and colour as their own
   options, flush at the same margin. A heading that matches the rows below it is not a heading, it

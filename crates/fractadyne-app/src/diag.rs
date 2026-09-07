@@ -7,6 +7,12 @@
 //!
 //! - **Log file** — every diagnostic line is teed to `<config>/logs/fractadyne.log`
 //!   (rotated once past ~5 MB). Disable with `FRACTADYNE_LOG=0`.
+//! - **Console gate** — the same lines reach stderr only when [`console_on`]. ON whenever there is
+//!   any command-line argument (so every headless mode, harness and validation script keeps its
+//!   output), OFF for a bare GUI launch, and overridable by `--console` / `--no-console`,
+//!   `FRACTADYNE_CONSOLE`, or the checkbox in the Diagnostics window. ⚠**The file is written
+//!   either way** — the gate decides who is *told*, never what is *recorded* — and a panic always
+//!   prints.
 //! - **Breadcrumb** — a global "current activity" cell, written at phase transitions
 //!   (reference build, export tile, glitch pass, tour frame). Costs one mutex store per
 //!   transition; read by the panic hook and the watchdog so a dead or hung process names
@@ -131,6 +137,13 @@ fn stamp() -> String {
 pub(crate) fn init(args: &[String]) {
     let _ = START.set(Instant::now());
     alive();
+    // ⚠**First**, before anything can call `log_line` — the start banner below is the very output
+    // this decides the fate of.
+    set_console(console_default(
+        args,
+        std::env::var("FRACTADYNE_CONSOLE").ok().as_deref(),
+        std::env::var("FRACTADYNE_TRACE").ok().as_deref(),
+    ));
 
     // FRACTADYNE_LOG=0 disables the file (stderr behavior is unchanged either way).
     let file_log_on = std::env::var("FRACTADYNE_LOG").map_or(true, |v| v != "0");
@@ -225,8 +238,68 @@ fn file_line(text: &str) {
 /// double-panic abort and lose the crash report entirely (the exact automation scenario D1
 /// targets).
 pub(crate) fn log_line(cat: &str, msg: &str) {
-    let _ = writeln!(std::io::stderr(), "[fd-{cat}] {} {msg}", stamp());
+    // ⭐**The FILE always gets the line; only the console is gated.** That is what makes quiet-by-
+    // default safe: Help ▸ recent log, the crash report's tail and a bug reporter's attachment are
+    // all unchanged, so nothing is lost — it is just not shouted at someone who did not ask.
+    if console_on() || cat == "panic" {
+        let _ = writeln!(std::io::stderr(), "[fd-{cat}] {} {msg}", stamp());
+    }
     file_line(&format!("[fd-{cat}] {msg}"));
+}
+
+/// Whether `[fd-*]` diagnostics reach stderr. See [`console_default`] for how it is chosen.
+///
+/// ⚠An `AtomicBool` rather than a `OnceLock` because the Diagnostics window can turn it on and off
+/// while the app runs — the third of the three ways the user asked for.
+static CONSOLE: AtomicBool = AtomicBool::new(true);
+
+pub(crate) fn console_on() -> bool {
+    CONSOLE.load(Ordering::Relaxed)
+}
+
+pub(crate) fn set_console(on: bool) {
+    CONSOLE.store(on, Ordering::Relaxed);
+}
+
+/// Should `[fd-*]` diagnostics go to the console this run?
+///
+/// ⭐⭐**Quiet for a bare launch, verbose the moment there is an argument.** Someone who
+/// double-clicks the app or starts it from a shortcut did not ask for a running commentary; someone
+/// who typed `fractadyne --render …` is at a terminal and the output is the point.
+///
+/// ⚠⚠**"Any argument" rather than a list of CLI modes, deliberately.** Three gates parse this
+/// banner off stderr — `validation/crosscheck_backends.py` reads *"backends compiled in"* to prove
+/// it is running the build under test, `validation/corpus/generate_corpus.py` reads *"session:"* to
+/// prove the staged session actually loaded, and `scripts/gpu-validate.ps1` folds stderr into every
+/// step log — and all three invoke fractadyne WITH arguments. A hand-maintained list of headless
+/// modes would silently drop one the day a mode was added, and the failure would look like a gate
+/// that stopped checking rather than one that broke. There is no list to fall out of date.
+///
+/// Precedence, most explicit first:
+/// 1. `--console` / `--no-console` on the command line.
+/// 2. `FRACTADYNE_CONSOLE` (`0` off, anything else on).
+/// 3. `FRACTADYNE_TRACE` set to anything live implies **on** — a trace whose output goes nowhere is
+///    the [probe-whose-reading-is-discarded] failure, and it would look like the tracing is broken.
+/// 4. Otherwise: on if there is any argument past the program name.
+pub(crate) fn console_default(
+    args: &[String],
+    env_console: Option<&str>,
+    env_trace: Option<&str>,
+) -> bool {
+    if args.iter().any(|a| a == "--no-console") {
+        return false;
+    }
+    if args.iter().any(|a| a == "--console") {
+        return true;
+    }
+    if let Some(v) = env_console {
+        return v != "0";
+    }
+    // Matches `trace_cats`: unset, or "0", is off.
+    if env_trace.is_some_and(|v| v != "0") {
+        return true;
+    }
+    args.len() > 1
 }
 
 /// Trace category set parsed from FRACTADYNE_TRACE: `None` = tracing off,
@@ -291,6 +364,10 @@ pub(crate) fn log_dir_override(
 
 #[cfg(test)]
 mod log_dir;
+
+#[cfg(test)]
+#[path = "diag/console.rs"]
+mod console_tests;
 
 /// The resolved logs directory (`<config>/logs`), or `None` if file logging is off/unavailable.
 /// Used by the issue reporter to pull the log + crash reports.

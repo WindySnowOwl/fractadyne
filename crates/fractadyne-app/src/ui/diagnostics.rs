@@ -442,6 +442,33 @@ impl FractadyneApp {
                     ui.separator();
                     ui.colored_label(egui::Color32::from_rgb(0xe5, 0x73, 0x73), e);
                 }
+
+                // ⭐The third of the three ways to reach the console output (flag, env var, here).
+                // It lives in Diagnostics rather than File ▸ Settings because it is not a
+                // preference about how the app looks — it is an instrument, and this is the window
+                // someone chasing a problem already has open.
+                ui.separator();
+                let mut console = crate::diag::console_on();
+                if ui
+                    .checkbox(&mut console, "Print diagnostics to the console")
+                    .on_hover_text(
+                        "Show the [fd-…] lines on stderr from now on. Off by default when \
+                         Fractadyne is launched without arguments. This changes nothing about what \
+                         is RECORDED — the log file always gets every line — so leave it off unless \
+                         you are watching a terminal. Persists for this session only; use the \
+                         --console flag or FRACTADYNE_CONSOLE=1 to catch startup too.",
+                    )
+                    .changed()
+                {
+                    crate::diag::set_console(console);
+                    // Announce the change through the very channel it controls, so turning it on
+                    // produces immediate evidence that it worked rather than silence until the next
+                    // event happens to fire.
+                    crate::diag::log_line(
+                        "console",
+                        if console { "console output ON (from Diagnostics)" } else { "console output OFF (from Diagnostics)" },
+                    );
+                }
             });
 
         self.diagnostics.open = open;
