@@ -12,6 +12,24 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The deepest location we track: 9.98e60205×** (beta.76). `validation/spiral-9.98e60205.fdn` —
+  a 60,231-digit centre, 121 KB. The previous deepest was ~e21000. It is checked by the
+  shipped-file sweep like every other location, so it stays loadable for free.
+
+  A new **opt-in** `deep-location` group renders it and asserts two things a portable check can:
+  that two renders are bit-identical, and that the result is not blank. Deliberately not a blessed
+  hash — deep floatexp output is hardware-dependent (an RTX 3080 renders all-black where a 3070
+  renders detail, an open bug), so pinning pixels would fail honestly-different GPUs and teach
+  everyone to ignore it. Blankness is the failure that has actually happened, and a flatness test
+  catches it.
+
+  ⛔**It runs only when named**, and that needed a new mechanism: the existing group predicate
+  runs everything when no filter is given, so adding this as an ordinary group would have made a
+  bare `--selftest` take 30-60+ minutes instead of 37 seconds. A gate that slow is one people learn
+  to skip, and a skipped gate is no gate. `--selftest-list` now shows opt-in groups separately,
+  with their cost stated.
+
+
 - **Save .fdn froze the app at deep zoom — fixed, and the location now lands first** (beta.75).
   A regression I introduced with the thumbnail in beta.72: generating it called the export path
   that builds a FRESH reference orbit, synchronously, on the UI thread. At shallow depth that is

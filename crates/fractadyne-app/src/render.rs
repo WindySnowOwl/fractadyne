@@ -135,7 +135,7 @@ pub(crate) struct CorrectedIter {
 #[derive(Clone)]
 pub(crate) struct RecomputeResult {
     orbit: std::sync::Arc<Vec<[f32; 4]>>,
-    orbit_len: u32,
+    pub(crate) orbit_len: u32,
     rp: [fractadyne_core::BigFloat; 2],
     sa: fractadyne_core::SeriesSkip,
     bla: std::sync::Arc<Vec<[f32; 4]>>,
@@ -2238,6 +2238,36 @@ impl FractadyneApp {
             return None;
         }
         Some(fractadyne_text::base64::encode(&png))
+    }
+
+    /// Render the CURRENT viewport at `n`×`n` for a determinism probe, reference and all.
+    ///
+    /// ⭐**Borrows the installed reference** (`RefSource::Live`). The caller builds the orbit once
+    /// and installs it; at ~200,000 bits and two million iterations a per-render build would double
+    /// the slowest check in the suite in order to test something it is not asking about.
+    pub(crate) fn selfcheck_deep_render(
+        &self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        n: u32,
+    ) -> Option<Vec<f32>> {
+        use std::sync::atomic::{AtomicBool, AtomicU32};
+        let mut req = self.build_export_request(&self.viewport, self.julia_mode, RefSource::Live);
+        req.width = n;
+        req.height = n;
+        req.ss = 1;
+        let (sx, sy) = crate::contain_span(
+            req.span_mantissa.x,
+            req.span_mantissa.y,
+            n as f64,
+            n as f64,
+        );
+        req.span_mantissa = fractadyne_core::SpanMantissa::new(sx, sy);
+        let progress = AtomicU32::new(0);
+        let cancel = AtomicBool::new(false);
+        fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)
+            .ok()
+            .map(|r| r.pixels)
     }
 
     /// Does the same view render the same picture on a WIDER canvas?

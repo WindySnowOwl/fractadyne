@@ -325,10 +325,20 @@ impl FractadyneApp {
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
             "checklist",
         ];
+        /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` above so a bare
+        /// `--selftest` never pays for them — each costs minutes, not milliseconds.
+        const OPT_IN_GROUPS: &[(&str, &str)] = &[(
+            "deep-location",
+            "the deepest tracked location (9.98e60205×) — 30-60+ MINUTES: a ~200,000-bit orbit",
+        )];
         if self.selftest.list {
             println!("selftest groups (use with --selftest-filter <substr>):");
             for g in GROUPS {
                 println!("  {g}");
+            }
+            println!("opt-in groups (run ONLY when named, and NOT part of a bare --selftest):");
+            for (g, why) in OPT_IN_GROUPS {
+                println!("  {g}  — {why}");
             }
             crate::exit(0);
         }
@@ -337,6 +347,13 @@ impl FractadyneApp {
         // it can't drift from the group/golden name lists the way a pre-flight check would.)
         let want = |tag: &str| -> bool {
             filter.as_ref().is_none_or(|f| tag.to_ascii_lowercase().contains(f.as_str()))
+        };
+        // ⛔⭐⭐**OPT-IN groups run ONLY when the filter NAMES them** — the opposite of `want`,
+        // which runs everything when there is no filter. For a check whose cost is minutes rather
+        // than milliseconds, "on unless excluded" is the wrong default: it would turn the gate
+        // people run constantly into one they learn to skip, and a skipped gate is no gate.
+        let opt_in = |tag: &str| -> bool {
+            filter.as_ref().is_some_and(|f| tag.to_ascii_lowercase().contains(f.as_str()))
         };
         if let Some(f) = &filter {
             eprintln!("[selftest] FILTERED RUN (--selftest-filter {f}): group state is shared — use full runs for verdicts");
@@ -927,6 +944,132 @@ impl FractadyneApp {
                 pass: why.is_none(),
             });
         }
+        // ⭐⭐**THE DEEPEST LOCATION WE TRACK — 9.98e60205×, and OPT-IN.**
+        //
+        // ⛔Not in the default sweep, deliberately. `--selftest` is the gate run constantly;
+        // a 60,231-digit centre needs a ~200,000-bit reference orbit, and paying for that on
+        // every run would make the gate something people skip. Run it with
+        // `--selftest-filter deep-location` when the deep pipeline is what changed.
+        //
+        // ⚠⚠**It asserts DETERMINISM and LIVENESS, not a blessed hash.** Deep floatexp output
+        // is hardware-dependent (an RTX 3080 renders all-black where a 3070 renders detail —
+        // an open bug), so pinning pixels would fail honestly-different GPUs and teach everyone
+        // to ignore it. What IS portable: the same GPU must render the same thing twice, and
+        // it must render SOMETHING. The all-black failure is exactly the shape a flatness test
+        // catches, and it is the one that has actually happened.
+        if opt_in("deep-location") {
+            const DEEP_FDN: &str = "validation/spiral-9.98e60205.fdn";
+            let path = anchored(DEEP_FDN);
+            let saved_vp = self.viewport.clone();
+            let saved_iter = self.render_cfg.max_iter;
+            let saved_auto = self.render_cfg.auto_iter;
+            let saved_cache = self.ref_cache.clone();
+            let mut why: Option<String> = None;
+            let mut note = String::new();
+
+            match std::fs::read_to_string(&path) {
+                // ⚠LOUD, not skipped: a missing data file must not quietly shrink the suite.
+                Err(e) => why = Some(format!("{} unreadable: {e}", path.display())),
+                Ok(text) => {
+                    let report = self.load_view_metadata(&text);
+                    let l2 = self.viewport.log2_magnification();
+                    if let Some(n) = report.note() {
+                        why = Some(format!("the location did not load cleanly: {n}"));
+                    } else if !(199_990.0..200_010.0).contains(&l2) {
+                        // The depth is the whole point of this fixture; if it did not survive
+                        // the load, everything below would be testing a shallower view.
+                        why = Some(format!("loaded at log2mag {l2:.1}, expected ~200000"));
+                    } else {
+                        self.render_cfg.max_iter = 2_000_000;
+                        self.render_cfg.auto_iter = false;
+                        let n = 96u32;
+                        // ⭐⭐**Build the orbit ONCE, render from it twice.** A ~200,000-bit
+                        // reference at two million iterations is minutes of arbitrary-precision
+                        // arithmetic; building it per render doubled the slowest check in the
+                        // suite and bought nothing, because what is under test here is whether
+                        // the SHADER is deterministic at extreme depth.
+                        //
+                        // ⚠So this does NOT cover reference-build determinism — real coverage it
+                        // does not provide, and not free to add: it would mean paying that build
+                        // twice. The F3 corpus and the ref-reuse check cover the orbit at depths
+                        // where the cost is bearable.
+                        let vp_now = self.viewport.clone();
+                        // ⭐⭐**Announce it.** This one step runs for 30-60+ minutes on the
+                        // author's machine, and a check that prints nothing for that long is
+                        // indistinguishable from a hung one — which is how people learn to kill a
+                        // gate instead of waiting for it.
+                        eprintln!(
+                            "[selftest] deep-location: building a ~200,000-bit reference orbit at \
+                             9.98e60205x ({} iterations). EXPECT 30-60+ MINUTES.",
+                            self.render_cfg.max_iter
+                        );
+                        let t0 = std::time::Instant::now();
+                        let built = self
+                            .export_reference_inputs_for(
+                                &vp_now,
+                                false,
+                                crate::render::IterBudget::current(self),
+                            )
+                            .map(crate::render::recompute_worker);
+                        let build_ms = t0.elapsed().as_secs_f64() * 1000.0;
+                        let (mut a, mut b) = (None, None);
+                        let mut orbit_len = 0u32;
+                        match built {
+                            None => why = Some("no reference inputs for this view".into()),
+                            Some(res) => {
+                                orbit_len = res.orbit_len;
+                                self.install_recompute_for_selftest(0, res);
+                                // Both renders BORROW that orbit, so the time below is the
+                                // shader alone.
+                                a = self.selfcheck_deep_render(device, queue, n);
+                                b = self.selfcheck_deep_render(device, queue, n);
+                            }
+                        }
+                        match (a, b) {
+                            (Some(a), Some(b)) => {
+                                let diffs = a
+                                    .iter()
+                                    .zip(b.iter())
+                                    .filter(|(x, y)| x.to_bits() != y.to_bits())
+                                    .count();
+                                // ⚠⚠A uniformly flat frame is what the all-black failure looks
+                                // like, and two flat frames agree perfectly. Determinism alone
+                                // would pass on it.
+                                let flat = a.chunks(4).all(|px| px[..3] == a[..3]);
+                                let lo = a.iter().step_by(4).cloned().fold(f32::MAX, f32::min);
+                                let hi = a.iter().step_by(4).cloned().fold(f32::MIN, f32::max);
+                                if diffs != 0 {
+                                    why = Some(format!("{diffs} of {} texels differ between two identical renders", a.len()));
+                                } else if flat {
+                                    why = Some(format!("every texel is the same colour (red {lo:.3}..{hi:.3}) — a blank render"));
+                                } else {
+                                    note = format!(
+                                        "{n}×{n} twice, bit-identical; red spans {lo:.3}..{hi:.3}; \
+                                         orbit {orbit_len} built in {:.1}s",
+                                        build_ms / 1000.0
+                                    );
+                                }
+                            }
+                            _ => why = Some("the deep render failed".into()),
+                        }
+                    }
+                }
+            }
+
+            self.viewport = saved_vp;
+            self.render_cfg.max_iter = saved_iter;
+            self.render_cfg.auto_iter = saved_auto;
+            self.ref_cache = saved_cache;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Deep location",
+                name: "the deepest tracked location renders, twice the same".into(),
+                params: format!("{DEEP_FDN}, 9.98e60205×, 2,000,000 iter, 96×96"),
+                result: why.clone().unwrap_or(note),
+                threshold: "loads clean at ~2^200000; two renders bit-identical; not blank",
+                pass: why.is_none(),
+            });
+        }
+
         if want("export-contain") {
             let saved_w = self.export.width;
             let saved_aspect = self.export.aspect.clone();
