@@ -3585,6 +3585,16 @@ eleaseractadyne.exe),
     pixels within `ThresholdC`) third, which lands exactly on our Misiurewicz-spar pain case.
     ⚠Read `HarmonicLLA`/`HarmonicMLA` before committing the stage design — possibly the successor
     construction, but the reviewer's own read is low-confidence and the theory is undocumented.
+  - [ ] **T2b′. Multi-entry reference-orbit CACHE — design written, codecs landed beta.77.**
+    ⭐⭐Returning to an extreme location costs **30-60+ min**, all of it the reference orbit — but
+    the GPU consumes 16 bytes/iteration, so the artifact is **4.1 MB** at `LIVE_REF_CAP`. And one
+    orbit serves a NEIGHBOURHOOD (perturbation renders every pixel as a delta from it), so coming
+    back and zooming *nearby* is free too. ⛔**`refcache_persist` ALREADY EXISTS** (one slot, keyed
+    on the exact view, no tail ⇒ not extendable): this GROWS it, it does not sit beside it.
+    ▶Full design, the comparison table, and the plan: **`design/orbit-cache.md`**.
+    ✅Landed: `fractadyne_core::bfbytes` (exact BigFloat words) + `render::orbit_blob` (+ tests).
+    ▶Next: the bit-identity GATE, then measure SA/BLA rebuild at depth, then the cache + its
+    browser-style controls (path, usage, limit, clear — author's requirement 2026-09-08).
   - [ ] **T2d. Self-referential orbit compression for `refcache_persist`.** Imagina's scheme (perturb the
     orbit against its own PREFIX, waypoint + rebase-bit + rebase-index list, emit only where the
     self-perturbation drifts past a relative-error bound) is materially better than FractalShark's

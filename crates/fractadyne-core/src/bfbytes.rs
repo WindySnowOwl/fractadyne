@@ -1,20 +1,22 @@
 //! Exact, compact serialization of a [`BigFloat`] — sign, exponent and mantissa words, verbatim.
 //!
-//! ⭐⭐**Why not decimal.** A `.fdn` stores coordinates as decimal because a human reads and pastes
-//! them, and "correct to the view's precision" is all that a location needs. A cached reference
-//! ORBIT is a different contract: the stored `f32` orbit is the orbit *of a specific point*, and the
-//! per-pixel delta `c - c_ref` is computed at full precision against it. A point that comes back
-//! differing in its last bits produces an orbit that is subtly not the one the pixels were rendered
-//! against — a wrong picture, arrived at quickly, which is worse than a slow correct one.
+//! ⭐⭐**Why not decimal, honestly stated.** `refcache_persist` already stores a reference point as
+//! a decimal string and notes, correctly, that "astro-float's to_string()/parse round-trip is not
+//! bit-stable at this precision". The consequence there is benign: a last-bit difference at 200,000
+//! bits is ~2^-200000, astronomically below the pixel spacing, so the restored reference is as good
+//! as the original. ⛔It would be an overstatement to call that a wrong picture, and an earlier
+//! draft of this comment did.
 //!
-//! ⚠**And decimal round-tripping is not obviously exact here**: `astro-float`'s `FromStr` is lenient
-//! (see `parse_bf`'s shape-validation), so "format then parse" would be trusting a property nothing
-//! pins. Words in, words out has no such question — `mantissa_digits()` and `from_words` are inverse
-//! by construction.
+//! The reason exactness matters HERE is different and concrete:
 //!
-//! ⚠A 200,000-bit number is ~25 KB here against ~60,000 decimal digits, which also happens to be
-//! the smaller of the two.
-
+//! 1. ⭐**Key stability.** A neighbourhood cache is keyed ON the reference point. If the point does
+//!    not round-trip identically, the key changes between sessions and every lookup misses — a
+//!    cache that is silently useless rather than wrong, which is its own kind of bad.
+//! 2. ⭐**Size.** A ~200,000-bit value is ~25 KB in words against ~60,000 decimal digits.
+//! 3. ⚠**No hidden leniency.** `astro-float`'s `FromStr` is lenient (see `parse_bf`'s
+//!    shape-validation), so "format then parse" trusts a property nothing pins. `mantissa_digits()`
+//!    and `from_words` are inverse by construction.
+//!
 use astro_float::{BigFloat, Sign};
 
 /// Serialization format tag. ⛔Bump on any layout change: a cache entry written by an older build
