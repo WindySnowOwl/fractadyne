@@ -12,8 +12,10 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
-- **Returning to an extreme location now costs seconds, not an hour: the reference-orbit cache**
-  (beta.78). Every deep reference orbit that took more than a second to build is kept on disk
+- **Returning to an extreme location now costs seconds, not hours: the reference-orbit cache**
+  (beta.78). Measured at 9.98e60205× with a 2,000,000-iteration ask: **8 h 52 min cold, 3 s
+  cached** — the entry was found, loaded and verified in 53 ms, and the two renders after it were
+  bit-identical to the cold run's. Every deep reference orbit that took more than a second to build is kept on disk
   (`<config>/orbits/`, ~4 MB each at the live cap), and the next build that could use it — the
   same location, or any nearby view the orbit's point lies inside of, at any precision up to the
   one it was built at — loads it instead of rebuilding. A restored session gets its deep view back

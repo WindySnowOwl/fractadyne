@@ -156,10 +156,13 @@ expires when its denominator moves.*
 5. ▶**Then measure the thing that started this**: cold vs cached time to reach
    `validation/spiral-9.98e60205.fdn`, and put the number here.
 
-| 9.98e60205×, 200,193 bits | cold | cached |
+| 9.98e60205×, 200,193 bits, 2,000,000 ask | cold | cached |
 |---|---|---|
-| export-grade, 2,000,000 ask (`--selftest deep-location`): pick **5.77 h** (101 survivors, deep-perturb scoring) + orbit **3.02 h** (escaped at 1,645,896) + BLA **2.0 s**, SA skipped — **8.8 h** | measured 2026-09-08 | *(pending — the cache-on pair)* |
-| live, 256,000 cap, same ask (`--shot`, the author's return-visit scenario) | *(pending)* | *(pending)* |
+| export-grade (`--selftest deep-location --orbit-cache`, whole process) | **8 h 52 min** — pick 5.93 h (101 survivors, deep-perturb scoring) + orbit 2.93 h (escaped at 1,645,896) + BLA 1.5 s, SA skipped; the 25.2 MB entry written in 60 ms | **3 s** — HIT: found, loaded and verified in 53 ms, no extension (the orbit is complete), BLA 1.5 s, two bit-identical 96×96 renders |
+| live, 256,000 cap (`--shot`, the author's return-visit scenario) | *(pending)* | *(pending)* |
+
+Both measured 2026-09-08 on the author's machine (astro-float backend). The export-grade cold
+figure was taken twice (beta.77 without the cache: 8.8 h; beta.78 with it: 8 h 52 min) and agrees.
 
 ⭐**The pick is 1.9× the orbit at this depth**, so a lookup keyed on the picked point would have
 paid 5.8 of the 8.8 hours to find its key. ⚠The `deep-location` banner's "30-60+ minutes" was the
