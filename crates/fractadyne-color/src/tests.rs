@@ -151,3 +151,48 @@ fn presets_pack_within_bounds() {
         assert_eq!(out[0], [c[0], c[1], c[2], pos], "{}: first slot", p.name);
     }
 }
+
+// ---------------------------------------------------------------- line-ending hygiene
+
+/// ⭐⭐**A palette file must parse the same whatever wrote its line endings.** `str::lines()` does
+/// not treat a lone `\r` as a terminator, so before the hygiene layer a classic-Mac `.map` — and
+/// there are plenty in the archives these palettes come from — arrived as ONE line and parsed as
+/// zero colours, reported as "no colours found" for a file that was completely fine.
+#[test]
+fn every_importer_handles_cr_crlf_and_lf() {
+    let map_unix = "  0   0   0\n255 128  64\n 12  34  56\n";
+    let ggr_unix = "GIMP Gradient\nName: t\n1\n0.0 0.5 1.0 0 0 0 1 1 1 1 1 0 0\n";
+
+    // ⚠Typed as fn pointers: an array of closures with different bodies is an array of different
+    // TYPES, which is a compile error rather than the obvious-looking table it reads as.
+    let cases: [(&str, fn(&str) -> String); 4] = [
+        ("unix", |s| s.to_string()),
+        ("dos", |s| s.replace('\n', "\r\n")),
+        ("classic mac", |s| s.replace('\n', "\r")),
+        ("mixed", |s| s.replacen('\n', "\r\n", 1)),
+    ];
+    for (name, transform) in cases {
+        let m = crate::import::parse_map(&transform(map_unix))
+            .unwrap_or_else(|e| panic!("{name} .map failed: {e}"));
+        assert_eq!(m.colors.len(), 3, "{name} .map lost lines");
+
+        let g = crate::import::parse_ggr(&transform(ggr_unix))
+            .unwrap_or_else(|e| panic!("{name} .ggr failed: {e}"));
+        assert_eq!(g.segments.len(), 1, "{name} .ggr lost segments");
+
+        let p = crate::parse_palette_text(&transform(map_unix))
+            .unwrap_or_else(|e| panic!("{name} palette text failed: {e}"));
+        assert_eq!(p.len(), 3, "{name} palette text lost lines");
+    }
+}
+
+/// ⚠And the paste repairs reach the importers too — a palette copied out of a web page arrives
+/// with the hyphens and quotes a browser or word processor substituted.
+#[test]
+fn a_pasted_palette_survives_smart_punctuation() {
+    // A no-break space between columns is what a copy out of an HTML table looks like.
+    let pasted = "\u{FEFF}  0\u{00A0}  0   0\n255 128  64\n";
+    let m = crate::import::parse_map(pasted).expect("a pasted .map must still parse");
+    assert_eq!(m.colors.len(), 2);
+    assert_eq!(m.colors[1], [1.0, 128.0 / 255.0, 64.0 / 255.0]);
+}

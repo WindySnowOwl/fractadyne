@@ -2719,6 +2719,18 @@ const MINIMAP_TH: u32 = 180;
 /// actually 21:9 (2.333) — 2560×1080 is 64:27 (2.370) and 3440×1440 is 43:18 (2.389) — so a single
 /// "21:9" entry would render both at the wrong height. They get one key each, and the friendly
 /// names live in [`STANDARD_SIZES`] where users actually pick a size.
+/// The embedded view thumbnail. 4:3 at 128×96 — big enough to recognize a place, small enough
+/// that a `.fdn` stays a file you can open in a text editor.
+///
+/// ⚠**Deep fractals are close to incompressible**: measured at 1e30×, a clean 128×96 PNG is
+/// ~35 KB and base64 adds a third on top. That is the real cost of this feature and it is why
+/// the size is not larger.
+pub(crate) const VIEW_THUMB_W: u32 = 128;
+pub(crate) const VIEW_THUMB_H: u32 = 96;
+/// Refuse to embed a thumbnail past this; a pathological view should not produce a file nobody
+/// can paste. Generous against the ~35 KB measurement, so it only ever catches the pathological.
+pub(crate) const VIEW_THUMB_MAX_BYTES: usize = 128 * 1024;
+
 const EXPORT_ASPECTS: [(&str, f64); 12] = [
     ("16:9", 16.0 / 9.0),
     ("16:10", 16.0 / 10.0),
@@ -2857,6 +2869,15 @@ pub(crate) fn export_file_name(fractal: &str, secs: u64, ext: &str) -> String {
 }
 
 /// One exported image discovered by the gallery browser.
+/// A view text whose checksum failed, waiting on the user's answer.
+pub(crate) struct PendingView {
+    pub(crate) text: String,
+    /// Where it came from, for the prompt — a path, or "pasted text".
+    pub(crate) source: String,
+    pub(crate) found: String,
+    pub(crate) computed: String,
+}
+
 struct GalleryEntry {
     path: std::path::PathBuf,
     meta: String,
@@ -2889,6 +2910,17 @@ pub(crate) fn scan_gallery_dir(dir: &std::path::Path) -> Vec<(std::path::PathBuf
         let meta = match ext.as_str() {
             "png" => fractadyne_export::read_png_metadata(&path).ok().flatten(),
             "exr" => fractadyne_export::read_exr_metadata(&path).ok().flatten(),
+            // ⭐⭐**A saved view IS its own metadata.** Until this, the gallery listed only
+            // exported images, so a folder of `.fdn` locations — the deep ones, the ones worth
+            // keeping — was invisible to the one screen built for browsing places.
+            //
+            // ⚠Bounded read: `.fdn` is a text file and `SHARE_MAX` is what every other reader
+            // of one already enforces. A folder scan must not be a way to make the app read a
+            // gigabyte off disk because something with the wrong extension is sitting in it.
+            "fdn" => std::fs::read(&path)
+                .ok()
+                .filter(|b| b.len() <= SHARE_MAX)
+                .and_then(|b| String::from_utf8(b).ok()),
             _ => None,
         };
         let Some(m) = meta else { continue };
@@ -3306,6 +3338,10 @@ struct ShareDialog {
     open: bool,
     text: String,
     msg: Option<String>,
+    /// Embed a thumbnail of the view. ⭐ON by default: the whole reason to want one is a folder
+    /// of deep locations you cannot tell apart, and that is the default situation, not an
+    /// advanced one. Off is for someone who wants a small file or a pasteable-in-a-chat one.
+    include_thumb: bool,
 }
 
 /// Benchmark-configuration dialog state (transient).
@@ -4033,6 +4069,10 @@ struct DialogState {
     /// Post-crash "send a report?" prompt. Opened at startup when the previous session ended
     /// unclean and the user has not opted out.
     crash_prompt_open: bool,
+    /// A view whose checksum did not match, held UNAPPLIED while the user is asked whether to
+    /// load it anyway. ⭐Parked rather than loaded-then-undone: a half-applied view would have
+    /// already moved them, and "undo" is not a thing a jump has.
+    pending_view: Option<PendingView>,
     /// "Accelerated build" dialog open (Help menu).
     accelerated_open: bool,
     /// Keyboard/help overlay window open.
@@ -4150,6 +4190,10 @@ struct FractadyneApp {
     export: ExportState,
     /// Gallery browser state.
     gallery: GalleryState,
+    /// The device + queue, refreshed every frame. ⭐Cloned `Arc`s (eframe holds them anyway),
+    /// kept so code that runs outside the frame closure — opening a dialog, saving a view —
+    /// can render without every one of those paths growing two parameters.
+    gpu: Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
     /// Bookmarks (saved views), persisted to the config dir; + window/input state.
     bookmarks: Vec<Bookmark>,
     /// The user's saved gradients, loaded from `gradients.toml` beside the bookmarks.
@@ -4885,6 +4929,7 @@ impl FractadyneApp {
                 welcome_open: welcome_should_open(s.welcome_seen, launched_for_a_task),
                 // Never in front of a harness: a modal would block --uitest/--livetest exactly the
                 // way the welcome dialog once did.
+                pending_view: None,
                 crash_prompt_open: crate::diag::previous_session_unclean()
                     && !s.crash_prompt_disabled
                     && !launched_for_a_task,
@@ -4937,6 +4982,7 @@ impl FractadyneApp {
                 pending_open: None,
             },
             gallery: GalleryState { dir: Self::pictures_dir(), ..Default::default() },
+            gpu: None,
             bookmarks: Self::load_bookmarks(),
             saved_gradients: Self::load_saved_gradients(),
             pending_thumb: None,
@@ -4948,7 +4994,7 @@ impl FractadyneApp {
             nav: NavHistory::default(),
             goto: GotoDialog::default(),
             misi: ui::misiurewicz_explorer::MisiExplorer::default(),
-            share: ShareDialog::default(),
+            share: ShareDialog { include_thumb: s.share_include_thumb, ..Default::default() },
             toast: None,
             // Booted by the device-loss handler's relaunch? Tell the user why the window blinked
             // (the session file restored their exact view; without this the restart is a mystery).
@@ -5549,6 +5595,7 @@ impl FractadyneApp {
             },
             export_aspect: self.export.aspect.clone(),
             export_open_after: self.export.open_after,
+            share_include_thumb: self.share.include_thumb,
             show_location: self.show_location,
             palette_anim: self.anim.palette_anim.key().to_string(),
             palette_anim_speed: self.anim.palette_anim_speed,
@@ -7172,9 +7219,45 @@ impl FractadyneApp {
         }
     }
 
+    /// Rebuild the Share dialog's text from the current view — with a thumbnail if the user
+    /// wants one.
+    ///
+    /// ⭐**Wrapped**: this is both the text a person copies out of the dialog and the exact
+    /// bytes written to a `.fdn`, so it gets the guidance, the markers and the checksum. The
+    /// copy embedded in an exported image stays bare — nobody hand-copies that, and a thumbnail
+    /// of an image, inside that image, would be absurd.
+    ///
+    /// ⚠**`thumb` is appended HERE, not in `view_metadata`**, for exactly that reason.
+    pub(crate) fn rebuild_share_text(&mut self) {
+        self.share.text = crate::export::wrap_view_text(&self.view_metadata());
+    }
+
+    /// The bytes written to a `.fdn`: the shared text, plus a thumbnail if the user wants one.
+    ///
+    /// ⭐⭐**The thumbnail goes in the FILE, never in the dialog's text box.** The dialog's job
+    /// is text a person pastes into a message, and nobody wants 55 KB of base64 in a forum post;
+    /// the file's job is to be findable again in a folder, which is what needs the picture.
+    ///
+    /// ⚠Each is wrapped separately and so carries its OWN checksum, over its own field set.
+    /// That is correct rather than a discrepancy: the digest describes the document it sits in.
+    pub(crate) fn share_file_bytes(&mut self) -> String {
+        let mut bare = self.view_metadata();
+        if self.share.include_thumb {
+            if let Some(b64) = self
+                .gpu
+                .clone()
+                .and_then(|(d, q)| self.render_view_thumbnail(&d, &q))
+            {
+                bare.push_str(&format!("thumb={b64}
+"));
+            }
+        }
+        crate::export::wrap_view_text(&bare)
+    }
+
     /// Open the Share-location dialog, pre-filled with the current view as `.fdn` text.
     fn open_share(&mut self) {
-        self.share.text = self.view_metadata();
+        self.rebuild_share_text();
         self.share.msg = None;
         self.share.open = true;
     }
@@ -7211,7 +7294,10 @@ impl FractadyneApp {
             .save_file()
         {
             self.remember_dir(&path);
-            match std::fs::write(&path, self.share.text.as_bytes()) {
+            // ⭐The FILE gets the thumbnail; the dialog's text box does not. See
+            // `share_file_bytes` for why that split exists.
+            let bytes = self.share_file_bytes();
+            match std::fs::write(&path, bytes.as_bytes()) {
                 Ok(()) => self.share.msg = Some("Saved.".into()),
                 Err(e) => self.share.msg = Some(format!("Save failed: {e}")),
             }
@@ -7302,7 +7388,7 @@ impl FractadyneApp {
         }
         if self.report.include_location {
             s.push_str("== Current location (.fdn) ==\n");
-            s.push_str(&self.view_metadata());
+            s.push_str(&crate::export::wrap_view_text(&self.view_metadata()));
             s.push('\n');
         }
         if self.report.include_crash {
@@ -10896,7 +10982,77 @@ impl FractadyneApp {
         // Below a quarter of a percent this is rounding in the aspect table, not a framing change.
         (grow.1 > 1.0025).then(|| (grow.0, (grow.1 - 1.0) * 100.0))
     }
+}
 
+/// The complex span a `w`×`h` frame needs in order to CONTAIN the span `(sx, sy)` — the
+/// smallest rectangle of the frame's aspect that loses nothing.
+///
+/// ⭐⭐**One rule, every caller.** The export dialog and the saved-view thumbnail both reframe a
+/// view into a different aspect, and two copies of this arithmetic would eventually disagree —
+/// with the symptom being a thumbnail that does not show what the export shows.
+///
+/// ⚠`max` picks the binding axis without a branch, and returns `(sx, sy)` unchanged when the
+/// aspects already match, so this is an exact identity in the common case.
+pub(crate) fn contain_span(sx: f64, sy: f64, w: f64, h: f64) -> (f64, f64) {
+    let aspect = w / h.max(1.0e-12);
+    let y = sy.max(sx / aspect);
+    (y * aspect, y)
+}
+
+impl FractadyneApp {
+    /// Render the current view small, as a base64 PNG for embedding in a saved view.
+    ///
+    /// ⭐**Why a `.fdn` wants a picture at all.** A folder of deep locations is a folder of
+    /// coordinate files that look identical; the gallery can list them but not tell you which is
+    /// which. With a thumbnail the same folder becomes a catalogue.
+    ///
+    /// ⚠⚠**Unlike the Misiurewicz explorer's tiles, this one KEEPS the live normalization.**
+    /// That code has a long comment on why a FOREIGN view must not wear the live view's
+    /// palette mapping — but this is not a foreign view, it is the view itself, and the
+    /// thumbnail's whole job is to look like what the user is looking at.
+    pub(crate) fn render_view_thumbnail(
+        &self,
+        dev: &eframe::wgpu::Device,
+        q: &eframe::wgpu::Queue,
+    ) -> Option<String> {
+        use std::sync::atomic::{AtomicBool, AtomicU32};
+        let mut req = self.current_export_request_for(&self.viewport, self.julia_mode);
+        req.width = VIEW_THUMB_W;
+        req.height = VIEW_THUMB_H;
+        // ⭐Supersampled: at 128×96 a deep view is mostly filigree, and one sample per texel
+        // turns it into noise that is both uglier and (being noise) markedly larger as a PNG.
+        req.ss = 2;
+        let (sx, sy) = contain_span(
+            req.span_mantissa.x,
+            req.span_mantissa.y,
+            VIEW_THUMB_W as f64,
+            VIEW_THUMB_H as f64,
+        );
+        req.span_mantissa = fractadyne_core::SpanMantissa::new(sx, sy);
+        let progress = AtomicU32::new(0);
+        let cancel = AtomicBool::new(false);
+        let res = fractadyne_gpu::render_export(dev, q, &req, &progress, &cancel).ok()?;
+        // ⚠`to_srgb8`, NOT `to_srgb8_dithered`. The dither exists to hide banding in a big
+        // export; here it is per-pixel noise that PNG cannot compress, and measured it made the
+        // encoded thumbnail LARGER THAN RAW RGB.
+        let bytes = fractadyne_export::to_srgb8(&res.pixels);
+        let png = fractadyne_export::encode_png_rgba8(res.width, res.height, &bytes).ok()?;
+        // ⚠A thumbnail that would dominate the file it rides in is not worth carrying.
+        if png.len() > VIEW_THUMB_MAX_BYTES {
+            crate::diag::log_line(
+                "view",
+                &format!(
+                    "thumbnail dropped: {} bytes exceeds the {VIEW_THUMB_MAX_BYTES}-byte cap",
+                    png.len()
+                ),
+            );
+            return None;
+        }
+        Some(fractadyne_text::base64::encode(&png))
+    }
+}
+
+impl FractadyneApp {
     fn build_export_job(&self) -> ExportJob {
         // Apply the chosen aspect: override the request height (the render centers the extra/fewer
         // rows on the same center; width stays `export_width`). For "window" this equals the height
@@ -10920,14 +11076,13 @@ impl FractadyneApp {
             // ⚠Both axes are scaled from the SAME target, so the per-texel step stays isotropic
             // (the GPU derives step = span/resolution per axis); a stretched fractal is the other
             // way to get this wrong.
-            let (w, hf) = (req.width.max(1) as f64, h.max(1) as f64);
-            let aspect = w / hf;
-            // Height binds when the export is wider than the window, width binds when it is taller.
-            // `max` picks the binding axis without a branch, and returns the window's own span when
-            // the aspects match — so this is exactly an identity for "Match window".
-            let span_y = req.span_mantissa.y.max(req.span_mantissa.x / aspect);
-            req.span_mantissa =
-                fractadyne_core::SpanMantissa::new(span_y * aspect, span_y);
+            let (sx, sy) = contain_span(
+                req.span_mantissa.x,
+                req.span_mantissa.y,
+                req.width.max(1) as f64,
+                h.max(1) as f64,
+            );
+            req.span_mantissa = fractadyne_core::SpanMantissa::new(sx, sy);
             req
         };
         if self.dual {
@@ -11370,6 +11525,7 @@ impl eframe::App for FractadyneApp {
         let gpu = frame
             .wgpu_render_state()
             .map(|rs| (rs.device.clone(), rs.queue.clone()));
+        self.gpu = gpu.clone();
         // Motion-jam bookkeeping: retire completed full-size dispatches (the callbacks fired
         // since last frame), then arm registrations owed from LAST frame's dispatches — eframe
         // has submitted that work by now, so `on_submitted_work_done` covers it and nothing
@@ -11829,6 +11985,7 @@ impl eframe::App for FractadyneApp {
         self.draw_notice_dialog(ctx);
 
         self.draw_gallery_dialog(ctx);
+        self.draw_checksum_dialog(ctx);
 
         self.draw_export_dialog(ctx, &gpu);
 

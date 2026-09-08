@@ -7,6 +7,7 @@ description = "Core numerics and viewport math for Fractadyne (no GPU/UI deps)."
 
 [dependencies]
 astro-float.workspace = true
+fractadyne-text.workspace = true
 rug = { workspace = true, optional = true }
 gmp-mpfr-sys = { workspace = true, optional = true }
 

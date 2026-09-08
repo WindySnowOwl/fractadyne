@@ -1020,7 +1020,11 @@ impl FractadyneApp {
                 self.open_misiurewicz_explorer();
                 self.misi.uitest_jump = true;
             }
-            Screen::Share => self.share.open = true,
+            // ⚠⚠**Through `open_share`, not by flipping the flag.** Setting `share.open`
+            // directly opened the window with an EMPTY text box, so every walk since this step
+            // existed has photographed the chrome around a control carrying no data — the one
+            // failure a screenshot gate is least able to notice, because the window IS there.
+            Screen::Share => self.open_share(),
             Screen::Report => self.report.open = true,
             // Opened only — the walk must NOT start a test. A self-test child inside the UI walk
             // would contend for the same GPU the walk is rendering with, and turn a UI check into

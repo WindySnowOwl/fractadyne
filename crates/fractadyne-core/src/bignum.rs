@@ -719,6 +719,13 @@ fn parse_kfr_zoom(s: &str) -> Option<f64> {
 /// non-finite), and zoom/iterations are clamped. Returns `None` unless a valid Re, Im, and
 /// Zoom are present.
 pub fn parse_kfr(text: &str) -> Option<KfrView> {
+    // ⭐⭐**Line endings and clipboard damage, before anything else.** These files arrive by
+    // download and by paste — a `.map` from a 2003 archive can carry lone-CR endings, which
+    // `str::lines()` does not split on, so the whole file reads as ONE line and parses as
+    // nothing. A palette pasted out of a forum post arrives with smart quotes and en dashes.
+    // `clean` normalizes CR / CRLF / LF and repairs both, so everything below can assume `\n`.
+    let cleaned = fractadyne_text::clean(text);
+    let text = cleaned.text.as_str();
     if text.len() > 4_000_000 {
         return None; // refuse absurdly large inputs
     }
@@ -774,6 +781,13 @@ pub fn parse_kfr(text: &str) -> Option<KfrView> {
 /// (no formulas-as-code, no paths), the centre validated through [`parse_bf`], and clamped
 /// zoom/iterations. Returns `None` unless a valid `Re`, `Im` and `Size` are present.
 pub fn parse_imagina_text(text: &str) -> Option<KfrView> {
+    // ⭐⭐**Line endings and clipboard damage, before anything else.** These files arrive by
+    // download and by paste — a `.map` from a 2003 archive can carry lone-CR endings, which
+    // `str::lines()` does not split on, so the whole file reads as ONE line and parses as
+    // nothing. A palette pasted out of a forum post arrives with smart quotes and en dashes.
+    // `clean` normalizes CR / CRLF / LF and repairs both, so everything below can assume `\n`.
+    let cleaned = fractadyne_text::clean(text);
+    let text = cleaned.text.as_str();
     if text.len() > 4_000_000 {
         return None;
     }

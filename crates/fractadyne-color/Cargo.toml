@@ -6,6 +6,7 @@ license.workspace = true
 description = "Palettes and coloring algorithms (planned — DESIGN.md §6)."
 
 [dependencies]
+fractadyne-text.workspace = true
 
 [lints]
 workspace = true

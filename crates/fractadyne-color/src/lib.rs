@@ -87,6 +87,10 @@ pub fn parse_palette_text(text: &str) -> Result<Vec<[f32; 3]>, String> {
         }
     }
 
+    // ⭐Same hygiene as every other importer: CR / CRLF / LF all split, and clipboard damage
+    // (a smart quote, an en dash, an invisible space inside a number) repaired before parsing.
+    let cleaned = fractadyne_text::clean(text);
+    let text = cleaned.text.as_str();
     let mut out: Vec<[f32; 3]> = Vec::new();
     for raw in text.lines() {
         // Strip comments. `#` is NOT a comment marker here — it introduces hex.

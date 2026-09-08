@@ -302,9 +302,22 @@ palette_custom=0,0.25,0.5,0,0,0,1,1,0.2,0.1,1,0,0,0,0,0,0;\
 
 /// The sample above must stay in step with the reader's own key list: every key the reader
 /// knows appears in it, and it carries no key the reader would report as unknown.
+/// Keys the sample deliberately does NOT carry, each for a stated reason. ⭐An explicit list rather
+/// than a loose rule: adding a key to the reader still forces a decision here, which is the whole
+/// job of the test below.
+///
+/// - `thumb` is a base64 PNG of tens of kilobytes — a source literal is the wrong place for it, and
+///   it is exercised by its own round-trip tests instead.
+/// - `checksum` is DERIVED from the other fields, so a hand-written one would be wrong the moment
+///   anything else in the sample changed. `view_text.rs` covers it against a computed value.
+const SAMPLE_OPTIONAL_KEYS: &[&str] = &["thumb", "checksum"];
+
 #[test]
 fn the_sample_location_covers_every_view_key() {
     for k in crate::export::KNOWN_VIEW_KEYS {
+        if SAMPLE_OPTIONAL_KEYS.contains(k) {
+            continue;
+        }
         // `julia=0` is the one legitimately-empty-looking value (a flag, not a string).
         assert!(
             !meta_get(SAMPLE_LOCATION, k).is_empty() || *k == "julia",

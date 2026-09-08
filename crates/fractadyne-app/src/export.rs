@@ -212,6 +212,20 @@ pub(crate) struct ViewLoad {
     pub(crate) clamped: Vec<&'static str>,
     /// Unrecognized keys present in the file (a typo, or a newer format's new fields).
     pub(crate) unknown: Vec<String>,
+    /// ⭐**Positional complaints**: a line that is not a comment and carries no `=`, a value
+    /// that is not the number its key requires, a duplicated key. Each names the LINE and
+    /// COLUMN, because "invalid file" is not something a person can act on and "line 7, col 11:
+    /// center_re is not a number" is.
+    pub(crate) problems: Vec<String>,
+    /// A summary of copy-and-paste damage that was repaired on the way in (smart quotes, a
+    /// Unicode minus sign, a zero-width space). ⭐Reported even though the load SUCCEEDED — the
+    /// user needs to know their clipboard is mangling data, because it will happen again.
+    pub(crate) repairs: Option<String>,
+    /// The text carried a BEGIN marker but no END: almost certainly a truncated paste.
+    pub(crate) truncated: bool,
+    /// Essential keys the text did not contain at all — what is MISSING, so a partial paste
+    /// says what to go back for.
+    pub(crate) missing: Vec<&'static str>,
 }
 
 impl ViewLoad {
@@ -229,6 +243,23 @@ impl ViewLoad {
         if !self.unknown.is_empty() {
             parts.push(format!("ignored unknown field(s): {}", self.unknown.join(", ")));
         }
+        // ⚠Ordered worst-first: a truncated paste explains every other complaint below it, so
+        // it must not be buried under a list of missing fields it already accounts for.
+        if self.truncated {
+            parts.insert(
+                0,
+                "the text ends before the END marker — the paste looks truncated".to_string(),
+            );
+        }
+        if !self.missing.is_empty() {
+            parts.push(format!("missing: {}", self.missing.join(", ")));
+        }
+        if !self.problems.is_empty() {
+            parts.push(self.problems.join("; "));
+        }
+        if let Some(r) = &self.repairs {
+            parts.push(r.clone());
+        }
         (!parts.is_empty()).then(|| parts.join("; "))
     }
 }
@@ -237,8 +268,222 @@ impl ViewLoad {
 pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "app", "version", "format_version", "saved_unix", "saved", "notes", "fractal", "julia",
     "julia_c_re", "julia_c_im", "center_re", "center_im", "upp", "upp_log2", "zoom", "max_iter",
-    "auto_iter", "palette", "cycle", "offset", "aa", "palette_custom",
+    "auto_iter", "palette", "cycle", "offset", "aa", "palette_custom", "thumb", "checksum",
 ];
+
+/// Without these a "view" is not a view. Their absence is reported by NAME, so a paste that
+/// lost its tail says what to go back for instead of silently landing somewhere else.
+pub(crate) const ESSENTIAL_VIEW_KEYS: &[&str] = &["center_re", "center_im"];
+
+/// What each key's value has to BE, so an unreadable one is reported with a position instead of
+/// being silently skipped.
+///
+/// ⛔⭐⭐**This is the `.and_then(|s| s.parse().ok())` trap, one layer out.** That idiom makes an
+/// unreadable value indistinguishable from an absent one — the defect closed in `01add37` across
+/// ~20 CLI options. Every numeric key here is still parsed that way at its own call site (so a
+/// bad value keeps the current setting rather than aborting the load), and this table is what
+/// makes the difference VISIBLE.
+const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
+    ("format_version", ValueKind::Uint),
+    ("saved_unix", ValueKind::Uint),
+    ("julia", ValueKind::Flag),
+    ("auto_iter", ValueKind::Flag),
+    ("julia_c_re", ValueKind::Float),
+    ("julia_c_im", ValueKind::Float),
+    ("center_re", ValueKind::BigFloat),
+    ("center_im", ValueKind::BigFloat),
+    ("upp", ValueKind::Float),
+    ("upp_log2", ValueKind::Float),
+    ("max_iter", ValueKind::Uint),
+    ("palette", ValueKind::Uint),
+    ("cycle", ValueKind::Float),
+    ("offset", ValueKind::Float),
+    ("aa", ValueKind::Uint),
+];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ValueKind {
+    Uint,
+    Float,
+    /// `0` or `1`.
+    Flag,
+    /// A full-precision decimal, read by `parse_bf`.
+    BigFloat,
+}
+
+impl ValueKind {
+    fn accepts(self, v: &str) -> bool {
+        match self {
+            // ⚠`f64` accepts "inf" and "NaN"; those are hostile values, not unreadable ones, and
+            // the clamping at each call site is what deals with them. Shape only, here.
+            ValueKind::Uint => v.parse::<u64>().is_ok(),
+            ValueKind::Float => v.parse::<f64>().is_ok(),
+            ValueKind::Flag => v == "0" || v == "1",
+            ValueKind::BigFloat => fractadyne_core::parse_bf(v).is_some(),
+        }
+    }
+
+    fn describe(self) -> &'static str {
+        match self {
+            ValueKind::Uint => "a whole number",
+            ValueKind::Float => "a number",
+            ValueKind::Flag => "0 or 1",
+            ValueKind::BigFloat => "a decimal number",
+        }
+    }
+}
+
+/// The line that opens a shareable view, and the one that closes it.
+///
+/// ⭐⭐**They exist for the clipboard, not the parser.** A location travels through forum posts
+/// and chat messages, where it gets selected by hand and arrives with the first or last line
+/// missing. The markers tell a person exactly what to select, and let the reader say "this is
+/// truncated" instead of loading a half-view and leaving them somewhere unexplained.
+///
+/// ⚠⚠**No `=` in either marker.** A reader older than this format finds no `=` on the line and
+/// skips it; put an `=` in and every one of those builds reports a bogus unknown key instead.
+pub(crate) const VIEW_BEGIN_MARKER: &str = "# ----- BEGIN FRACTADYNE VIEW -----";
+pub(crate) const VIEW_END_MARKER: &str = "# ----- END FRACTADYNE VIEW -----";
+
+/// Whether a view's `checksum` field agrees with the data beside it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) enum ChecksumState {
+    /// No `checksum` field — every file written before the field existed, and every view read
+    /// out of a PNG chunk. ⭐Not a failure: absence is the norm for older files and must stay
+    /// silent, or the warning becomes noise and gets ignored.
+    #[default]
+    Absent,
+    Match,
+    Mismatch {
+        found: String,
+        computed: String,
+    },
+}
+
+/// The digest a view carries, over a CANONICAL form of its fields.
+///
+/// ⭐⭐**Canonical, NOT the raw bytes, and that distinction is the whole design.** A location
+/// travels by clipboard: through chat clients that reflow whitespace, forum software that
+/// rewrites line endings, editors that add or remove a trailing newline. Hashing the raw text
+/// would flag every one of those as corruption — and a checksum that cries wolf is worse than
+/// none, because people learn to click through it. So the digest is taken over the FIELDS:
+/// sorted by key, value trimmed, joined with a newline. Whitespace, key order, comments, line
+/// endings and the markers themselves can all change without disturbing it, while a changed
+/// digit or a dropped line cannot.
+///
+/// ⚠**`thumb` is excluded**, and not to save time: a thumbnail is the one field a person might
+/// reasonably strip to shorten a paste, and a view that still describes the right place should
+/// not be called corrupt for having lost its picture. The thumbnail does not need covering
+/// anyway — it is a PNG, and every PNG chunk already carries its own CRC-32, so a damaged one
+/// fails to decode and is simply not shown.
+///
+/// ⚠**`checksum` excludes itself**, obviously, or it could never be computed.
+///
+/// ⛔**FNV-1a, and the threat model is ACCIDENT.** Truncated pastes, a dropped character, a
+/// mangled encoding. It is not a signature and must never be described as one: anyone editing a
+/// view by hand can recompute it. A cryptographic hash would need a dependency and would still
+/// not make the file trustworthy, because the file was never signed.
+pub(crate) fn view_digest<'a>(fields: impl Iterator<Item = (&'a str, &'a str)>) -> String {
+    let mut pairs: Vec<(&str, &str)> = fields
+        .filter(|(k, _)| *k != "checksum" && *k != "thumb")
+        .collect();
+    pairs.sort_unstable();
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let byte = |b: u8, h: &mut u64| {
+        *h ^= b as u64;
+        *h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    };
+    for (k, v) in pairs {
+        for b in k.as_bytes() {
+            byte(*b, &mut h);
+        }
+        byte(b'=', &mut h);
+        for b in v.as_bytes() {
+            byte(*b, &mut h);
+        }
+        byte(b'\n', &mut h);
+    }
+    format!("{h:016x}")
+}
+
+/// Split view text into `(key, value)` pairs the same way the reader does — comments and
+/// markers skipped, values trimmed.
+///
+/// ⭐**Shared by the writer and the verifier deliberately.** Two implementations of "what counts
+/// as a field" would drift, and the symptom would be every file reporting itself corrupt.
+pub(crate) fn view_field_pairs(meta: &str) -> Vec<(&str, &str)> {
+    fractadyne_text::numbered_lines(meta)
+        .into_iter()
+        .filter_map(|(_, raw)| {
+            let t = raw.trim();
+            if t.is_empty() || t.starts_with('#') {
+                return None;
+            }
+            raw.split_once('=').map(|(k, v)| (k.trim(), v.trim()))
+        })
+        .collect()
+}
+
+/// Check a view's checksum WITHOUT applying it — so a caller can ask before changing anything.
+///
+/// ⚠⚠**The clipboard repair runs first, exactly as it does on load.** If a chat client turned a
+/// hyphen into a Unicode minus sign, `clean` puts it back and the digest MATCHES — which is
+/// right: the data survived. Only damage that could not be repaired reaches the comparison.
+pub(crate) fn view_checksum_state(meta: &str) -> ChecksumState {
+    let cleaned = fractadyne_text::clean(meta);
+    let pairs = view_field_pairs(&cleaned.text);
+    let Some((_, found)) = pairs.iter().find(|(k, _)| *k == "checksum") else {
+        return ChecksumState::Absent;
+    };
+    let computed = view_digest(pairs.iter().copied());
+    if found.eq_ignore_ascii_case(&computed) {
+        ChecksumState::Match
+    } else {
+        ChecksumState::Mismatch { found: (*found).to_string(), computed }
+    }
+}
+
+/// Wrap bare view metadata as a shareable document: guidance, markers, and a checksum.
+///
+/// ⭐**Only for the surfaces a HUMAN copies from** — the `.fdn` file and the Share dialog. The
+/// copy embedded in a PNG or EXR stays bare: nobody selects it by hand, so the markers would be
+/// bytes in every exported image for no one's benefit.
+/// Decode a view's embedded thumbnail to `(width, height, rgba8)`, or `None` if it has none.
+///
+/// ⚠**Every failure is a `None`, never a panic or a placeholder.** This runs over files a user
+/// dropped in a folder: a truncated base64 value, a corrupt PNG, a thumbnail from a future
+/// version. The gallery simply shows that entry without a picture, which is exactly what it
+/// already does for an image it cannot decode.
+///
+/// ⭐The PNG carries a CRC-32 per chunk, so a damaged thumbnail fails HERE rather than being
+/// drawn as garbage — which is why the view checksum deliberately does not cover this field.
+pub(crate) fn decode_embedded_thumbnail(meta: &str) -> Option<(u32, u32, Vec<u8>)> {
+    let cleaned = fractadyne_text::clean(meta);
+    let (_, b64) = view_field_pairs(&cleaned.text)
+        .into_iter()
+        .find(|(k, _)| *k == "thumb")?;
+    let png = fractadyne_text::base64::decode(b64)?;
+    fractadyne_export::read_png_rgba8_bytes(&png).ok()
+}
+
+pub(crate) fn wrap_view_text(bare: &str) -> String {
+    let digest = view_digest(view_field_pairs(bare).into_iter());
+    let mut out = String::with_capacity(bare.len() + 320);
+    out.push_str("# Fractadyne view. Open it with File \u{25B8} Open view, or paste it into\n");
+    out.push_str("# File \u{25B8} Share location. Copy the BEGIN and END lines too.\n");
+    out.push_str("# Lines starting with # are comments and are ignored.\n");
+    out.push_str(VIEW_BEGIN_MARKER);
+    out.push('\n');
+    out.push_str(bare);
+    if !bare.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str("# Detects accidental damage in transit; it is not a signature.\n");
+    out.push_str(&format!("checksum={digest}\n"));
+    out.push_str(VIEW_END_MARKER);
+    out.push('\n');
+    out
+}
 
 /// The largest embedded gradient, shared by the writer and the reader. ⭐**One constant, both
 /// ends** — a writer that emits more than the reader accepts produces files that only fail on
@@ -401,18 +646,94 @@ impl FractadyneApp {
     /// Returns whether the file's `format_version` is within this build's range so callers
     /// can warn on a forward-incompatible (newer) file.
     pub(crate) fn load_view_metadata(&mut self, meta: &str) -> ViewLoad {
-        let get = |key: &str| -> Option<String> {
-            meta.lines().find_map(|l| {
-                l.split_once('=')
-                    .filter(|(k, _)| k.trim() == key)
-                    .map(|(_, v)| v.trim().to_string())
-            })
-        };
+        let mut report = ViewLoad::default();
+        // ⭐⭐**Repair the clipboard first, parse second.** A location that has been through a
+        // chat client or a word processor comes back with a Unicode minus sign where a hyphen
+        // was, or a zero-width space inside a number — invisible changes that make a perfectly
+        // good coordinate unparseable. `clean` also normalizes CR / CRLF / LF, so a file saved
+        // on any platform (or mangled by a transfer that rewrote endings) reads the same.
+        let cleaned = fractadyne_text::clean(meta);
+        report.repairs = cleaned.summary();
+        let meta = cleaned.text.as_str();
+
+        // One pass, keeping WHERE each field came from. The old reader re-scanned every line
+        // for every key and kept no positions, so it could not say anything about a bad line
+        // beyond ignoring it.
+        let mut fields: Vec<(String, String, usize, usize)> = Vec::new();
+        let (mut saw_begin, mut saw_end) = (false, false);
+        for (n, raw) in fractadyne_text::numbered_lines(meta) {
+            let t = raw.trim();
+            if t.is_empty() {
+                continue;
+            }
+            if t.starts_with('#') {
+                // ⚠Check BEGIN first: neither marker is a substring of the other, but relying
+                // on that silently is how a renamed marker becomes a mystery.
+                if t.contains("BEGIN FRACTADYNE VIEW") {
+                    saw_begin = true;
+                } else if t.contains("END FRACTADYNE VIEW") {
+                    saw_end = true;
+                }
+                continue;
+            }
+            let Some((k, v)) = raw.split_once('=') else {
+                // ⚠Named, not silently dropped — this is usually a wrapped long line from a
+                // paste, and the user can only fix what they are told about.
+                if report.problems.len() < 8 {
+                    let shown: String = t.chars().take(32).collect();
+                    report.problems.push(format!(
+                        "line {n}: no \u{27}=\u{27} and not a comment, ignored ({shown:?})"
+                    ));
+                }
+                continue;
+            };
+            let key = k.trim().to_string();
+            // 1-based CHARACTER column of the first character of the value — what an editor
+            // shows, which a byte offset is not.
+            let col = k.chars().count()
+                + 1
+                + v.chars().take_while(|c| c.is_whitespace()).count()
+                + 1;
+            if fields.iter().any(|(existing, _, _, _)| *existing == key)
+                && report.problems.len() < 8
+            {
+                report.problems.push(format!(
+                    "line {n}: {key:?} appears more than once; the first one is used"
+                ));
+            }
+            fields.push((key, v.trim().to_string(), n, col));
+        }
+        // ⚠⚠BEGIN with no END is the shape a truncated paste takes. No BEGIN at all is NOT a
+        // problem: bare metadata is what lives in a PNG chunk and in every file written before
+        // the markers existed.
+        report.truncated = saw_begin && !saw_end;
+        let field = |key: &str| fields.iter().find(|(k, _, _, _)| k == key);
+        let get = |key: &str| -> Option<String> { field(key).map(|(_, v, _, _)| v.clone()) };
+
+        // ⭐Every typed key that is PRESENT but unreadable, named with its position. The call
+        // sites below still use `.parse().ok()` and keep the current value on failure — this is
+        // what stops that being invisible.
+        for (key, kind) in TYPED_VIEW_KEYS {
+            if let Some((_, v, line, col)) = field(key) {
+                if !kind.accepts(v) && report.problems.len() < 8 {
+                    let shown: String = v.chars().take(24).collect();
+                    report.problems.push(format!(
+                        "line {line}, col {col}: {key} needs {} but found {shown:?}",
+                        kind.describe()
+                    ));
+                }
+            }
+        }
+        for key in ESSENTIAL_VIEW_KEYS {
+            if field(key).is_none() {
+                report.missing.push(key);
+            }
+        }
+
         // A file with no `format_version` predates the field but is format-1 compatible.
         let file_ver = get("format_version")
             .and_then(|s| s.parse::<u32>().ok())
             .unwrap_or(VIEW_FORMAT_VERSION);
-        let mut report = ViewLoad::default();
         if let Some(f) = get("fractal").and_then(|s| FractalKind::from_name(&s)) {
             self.fractal = f;
         }
@@ -534,18 +855,16 @@ impl FractadyneApp {
         self.invalidate_refs();
         self.pointer.zoom_vel = 0.0;
         self.record_nav();
-        // Report any keys we didn't recognize (cap the list so a junk file can't flood it).
-        for line in meta.lines() {
-            if let Some((k, _)) = line.split_once('=') {
-                let k = k.trim();
-                if !k.is_empty()
-                    && !KNOWN_VIEW_KEYS.contains(&k)
-                    && !report.unknown.iter().any(|u| u == k)
-                {
-                    report.unknown.push(k.to_string());
-                    if report.unknown.len() >= 8 {
-                        break;
-                    }
+        // Report any keys we did not recognize (cap the list so a junk file cannot flood it).
+        // ⭐Now from the PARSED fields, so a comment can never be mistaken for a key.
+        for (k, _, line, _) in &fields {
+            if !k.is_empty()
+                && !KNOWN_VIEW_KEYS.contains(&k.as_str())
+                && !report.unknown.iter().any(|u| u.starts_with(k.as_str()))
+            {
+                report.unknown.push(format!("{k} (line {line})"));
+                if report.unknown.len() >= 8 {
+                    break;
                 }
             }
         }
@@ -557,6 +876,31 @@ impl FractadyneApp {
     /// exported **PNG/EXR** (view restored from its embedded metadata), a **`.fdn`** share-location
     /// file, or a Kalles Fraktaler **`.kfr`** location — dispatched by extension. This is the single
     /// discoverable entry point; `.fdn` no longer needs the Share-location dialog.
+    /// Load view text — unless its checksum says it arrived damaged, in which case park it and
+    /// let the user decide.
+    ///
+    /// ⭐⭐**The check happens BEFORE anything is applied.** `load_view_metadata` jumps the view
+    /// and records history as it parses; asking afterwards would mean asking about a move that
+    /// had already happened.
+    ///
+    /// ⚠A file with no checksum loads normally and silently. Every view written before the
+    /// field existed, and every view read out of a PNG chunk, is in that case — warning about
+    /// them would make the warning worthless.
+    ///
+    /// Returns `None` when the load was deferred to the prompt.
+    pub(crate) fn load_view_checked(&mut self, text: &str, source: String) -> Option<ViewLoad> {
+        if let ChecksumState::Mismatch { found, computed } = view_checksum_state(text) {
+            self.dialogs.pending_view = Some(crate::PendingView {
+                text: text.to_string(),
+                source,
+                found,
+                computed,
+            });
+            return None;
+        }
+        Some(self.load_view_metadata(text))
+    }
+
     pub(crate) fn open_view(&mut self, ctx: &egui::Context) {
         let path = rfd::FileDialog::new()
             .add_filter("Fractadyne view or location", &["png", "exr", "fdn", "kfr"])
@@ -576,15 +920,20 @@ impl FractadyneApp {
             "fdn" => match std::fs::read(&path) {
                 Ok(bytes) if bytes.len() <= crate::SHARE_MAX => match String::from_utf8(bytes) {
                     Ok(t) if crate::location_text_verdict(&t).is_ok() => {
-                        let report = self.load_view_metadata(&t); // jump + record history
-                        let zoom = crate::fmt_zoom_log2(self.viewport.log2_magnification());
-                        self.set_toast(
-                            match report.note() {
-                                None => format!("Loaded location @ {zoom}×"),
-                                Some(n) => format!("Loaded @ {zoom}× — {n}"),
-                            },
-                            ctx,
-                        );
+                        // `None` means the checksum failed and the prompt has it now.
+                        if let Some(report) =
+                            self.load_view_checked(&t, path.display().to_string())
+                        {
+                            let zoom =
+                                crate::fmt_zoom_log2(self.viewport.log2_magnification());
+                            self.set_toast(
+                                match report.note() {
+                                    None => format!("Loaded location @ {zoom}×"),
+                                    Some(n) => format!("Loaded @ {zoom}× — {n}"),
+                                },
+                                ctx,
+                            );
+                        }
                     }
                     _ => self.set_toast(
                         format!("{} isn't a Fractadyne location.", path.display()),
@@ -608,14 +957,19 @@ impl FractadyneApp {
                 };
                 match meta {
                     Ok(Some(m)) => {
-                        let report = self.load_view_metadata(&m);
-                        self.set_toast(
-                            match report.note() {
-                                None => format!("Loaded view from {}", path.display()),
-                                Some(n) => format!("Loaded view from {} — {n}", path.display()),
-                            },
-                            ctx,
-                        );
+                        if let Some(report) =
+                            self.load_view_checked(&m, path.display().to_string())
+                        {
+                            self.set_toast(
+                                match report.note() {
+                                    None => format!("Loaded view from {}", path.display()),
+                                    Some(n) => {
+                                        format!("Loaded view from {} — {n}", path.display())
+                                    }
+                                },
+                                ctx,
+                            );
+                        }
                     }
                     Ok(None) => self.set_toast(
                         "That file has no embedded Fractadyne view metadata.".to_string(),
@@ -1165,3 +1519,5 @@ impl FractadyneApp {
 
 #[cfg(test)]
 mod palette_embed;
+#[cfg(test)]
+mod view_text;

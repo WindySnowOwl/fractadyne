@@ -402,6 +402,33 @@ pub fn write_png_rgba8(
     Ok(())
 }
 
+/// Encode already-sRGB 8-bit RGBA pixels to PNG **in memory**, with no metadata chunk.
+///
+/// ⭐For a thumbnail that has to travel inside a text field, where a file on disk is not the point
+/// and every byte is multiplied by 4/3 on its way through base64.
+///
+/// ⚠**No `tEXt` chunk, deliberately.** This encodes a picture that is already embedded in a view;
+/// giving it a second copy of that view would be circular and would roughly double its size.
+pub fn encode_png_rgba8(width: u32, height: u32, rgba8: &[u8]) -> Result<Vec<u8>, ExportError> {
+    let expected = width as usize * height as usize * 4;
+    if rgba8.len() < expected {
+        return Err(ExportError::SizeMismatch { expected, got: rgba8.len() });
+    }
+    let mut out: Vec<u8> = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(std::io::Cursor::new(&mut out), width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
+        // ⭐Maximum compression: this is encoded ONCE when a view is saved and carried forever
+        // after, so trading encode time for bytes is the right way round.
+        encoder.set_compression(png::Compression::Best);
+        let mut writer = encoder.write_header()?;
+        writer.write_image_data(&rgba8[..expected])?;
+    }
+    Ok(out)
+}
+
 /// Decode a PNG and box-downsample it to a thumbnail (≤ `max` px on the long edge).
 /// Returns `(width, height, rgba8)`. Currently PNG only (EXR thumbnails: future).
 pub fn read_thumbnail(path: &Path, max: u32) -> Result<(u32, u32, Vec<u8>), ExportError> {

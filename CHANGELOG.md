@@ -12,6 +12,63 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A saved view is now a document, not just a blob of fields** (beta.72). Locations travel by
+  clipboard — a forum post, a chat message, a file mailed to someone — and that journey is lossy
+  in ways the sender never sees. Several changes, all aimed at that.
+
+  **Comments and markers.** Lines starting with `#` are ignored, and a saved view is wrapped in
+  `BEGIN` / `END` marker lines with a note saying to copy them too. A reader that finds a BEGIN
+  and no END says the paste looks truncated instead of loading half a view and leaving you
+  somewhere unexplained, and it names any essential field that never arrived. Neither marker
+  contains an `=`, so older builds skip them as unrecognized lines rather than reporting a bogus
+  field.
+
+  **Parse problems now have a position.** A line that is neither a comment nor `key=value`, a
+  duplicated key, or a value that is not the number its key requires is reported with the line
+  and column — counted in characters, as an editor shows them. Values were previously parsed
+  with `.parse().ok()`, which made an unreadable one indistinguishable from an absent one; they
+  still keep your current setting rather than aborting the load, but the difference is now
+  visible.
+
+  **Copy-and-paste damage is repaired, and reported.** Text that has been through a word
+  processor, a chat client or a web page comes back subtly changed: `−` U+2212 MINUS SIGN where
+  a hyphen was (which stops a negative coordinate parsing, and looks identical), smart quotes,
+  en and em dashes, no-break spaces, zero-width spaces, a leading byte-order mark, full-width
+  digits. These are now fixed on the way in and each one is reported, because a clipboard that
+  mangles data will do it again. Text in other languages is left alone — only clipboard damage
+  is touched, never the user's own words.
+
+  **Every text format handles CR, CRLF and LF.** `str::lines()` does not split on a lone `\r`,
+  so a classic-Mac or badly-transferred file arrived as a single enormous line. Measured: a
+  `.map` palette with CR endings parsed as **one colour** and was reported as malformed. Now
+  fixed for `.fdn`, `.map`, `.ugr`, `.ggr`, palette text, `.kfr` and Imagina locations, in one
+  shared place with its own tests.
+
+  **A checksum, over the fields rather than the bytes.** A saved view carries a digest so a
+  damaged copy can be detected. It is taken over the parsed fields — sorted, trimmed — so line
+  endings, whitespace, key order, added comments and the markers themselves can all change
+  without tripping it, while a changed digit or a dropped line cannot. That distinction is the
+  whole design: a checksum that cries wolf teaches people to click through it. On a mismatch you
+  are told what does not match and offered the choice to load anyway, before anything is applied.
+  It detects accidents, not tampering, and does not pretend to be a signature.
+
+- **`.fdn` files can embed a thumbnail, and the gallery now lists them** (beta.72). A folder of
+  deep locations was a folder of coordinate files that look identical; the gallery could not see
+  them at all, because it only scanned exported images. A saved view can now carry a 128×96
+  picture of itself, and `.fdn` files appear in the gallery alongside exports. Optional, and off
+  is a real choice: a deep fractal is close to incompressible, and the thumbnail is about 55 KB —
+  most of the file. It goes only into the saved file, never into the text you copy out of the
+  dialog, and it is deliberately outside the checksum so that stripping it to shorten a paste
+  does not make the view read as corrupt (a PNG carries its own CRC per chunk anyway).
+
+- **A `--uitest` step had been photographing an empty control since it was written.** The walk
+  opened the Share dialog by setting its `open` flag directly, bypassing the code that fills the
+  text box — so every screenshot showed the window, the buttons and the chrome around a control
+  with no data in it. That is the failure a screenshot gate is least able to notice, because the
+  window really is there. Found while checking something else, and worth saying plainly: it was
+  not a regression, and the first diagnosis of it was wrong.
+
+
 - **An export at a different aspect no longer crops your composition** (beta.71). Choosing a
   fixed aspect ratio in the export dialog held the horizontal extent and let the vertical follow
   it, so exporting 16:9 from a taller window silently cut the top and bottom off the frame you

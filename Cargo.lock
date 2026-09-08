@@ -1381,7 +1381,7 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-app"
-version = "0.2.41-beta.71"
+version = "0.2.41-beta.72"
 dependencies = [
  "directories",
  "eframe",
@@ -1393,6 +1393,7 @@ dependencies = [
  "fractadyne-export",
  "fractadyne-gpu",
  "fractadyne-state",
+ "fractadyne-text",
  "libc",
  "log",
  "rfd",
@@ -1407,20 +1408,24 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-color"
-version = "0.2.41-beta.71"
+version = "0.2.41-beta.72"
+dependencies = [
+ "fractadyne-text",
+]
 
 [[package]]
 name = "fractadyne-core"
-version = "0.2.41-beta.71"
+version = "0.2.41-beta.72"
 dependencies = [
  "astro-float",
+ "fractadyne-text",
  "gmp-mpfr-sys",
  "rug",
 ]
 
 [[package]]
 name = "fractadyne-export"
-version = "0.2.41-beta.71"
+version = "0.2.41-beta.72"
 dependencies = [
  "exr",
  "png 0.17.16",
@@ -1429,7 +1434,7 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-gpu"
-version = "0.2.41-beta.71"
+version = "0.2.41-beta.72"
 dependencies = [
  "bytemuck",
  "egui",
@@ -1441,12 +1446,16 @@ dependencies = [
 
 [[package]]
 name = "fractadyne-state"
-version = "0.2.41-beta.71"
+version = "0.2.41-beta.72"
 dependencies = [
  "directories",
  "serde",
  "toml",
 ]
+
+[[package]]
+name = "fractadyne-text"
+version = "0.2.41-beta.72"
 
 [[package]]
 name = "futures-channel"

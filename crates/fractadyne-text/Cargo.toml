@@ -1,0 +1,11 @@
+[package]
+name = "fractadyne-text"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Line-ending and copy-paste hygiene for Fractadyne's text formats (no dependencies)."
+
+[dependencies]
+
+[lints]
+workspace = true

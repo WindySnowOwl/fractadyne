@@ -5,7 +5,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.2.41-beta.71"
+version = "0.2.41-beta.72"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/WindySnowOwl/fractadyne"
@@ -55,6 +55,7 @@ thiserror = "2"
 
 # Internal crates
 fractadyne-core = { path = "crates/fractadyne-core" }
+fractadyne-text = { path = "crates/fractadyne-text" }
 fractadyne-gpu = { path = "crates/fractadyne-gpu" }
 fractadyne-color = { path = "crates/fractadyne-color" }
 fractadyne-state = { path = "crates/fractadyne-state" }

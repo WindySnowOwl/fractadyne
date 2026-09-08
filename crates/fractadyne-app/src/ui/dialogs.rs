@@ -554,6 +554,19 @@ impl FractadyneApp {
                     .small(),
                 );
                 ui.add_space(4.0);
+                // ⭐⭐The thumbnail is what turns a folder of `.fdn` files into a catalogue: deep
+                // locations are otherwise indistinguishable coordinate files. Optional because it
+                // is most of the file size — a deep fractal is close to incompressible.
+                ui.checkbox(
+                    &mut self.share.include_thumb,
+                    "Include a thumbnail in the saved file",
+                )
+                .on_hover_text(
+                    "Save .fdn embeds a small picture of this view so the file can be \
+                     recognized in the gallery. Adds roughly 55 KB, and is not part of the \
+                     text above.",
+                );
+                ui.add_space(4.0);
                 egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
                     ui.add(
                         egui::TextEdit::multiline(&mut self.share.text)
@@ -820,6 +833,95 @@ impl FractadyneApp {
                 Some("Opened Gmail compose — paste the copied report into the body (Ctrl+V).".into());
         }
         self.report.open = open && self.report.open;
+    }
+
+    /// "This location looks damaged" — the checksum did not match, so ask before jumping.
+    ///
+    /// ⭐⭐**Informs, then offers to proceed.** A failed checksum on a pasted location almost
+    /// always means a truncated or mangled copy, and the honest thing is to say so and let the
+    /// user decide: the coordinates may still be perfectly good, and refusing outright would
+    /// strand someone whose only copy of a deep location came out of a chat window.
+    ///
+    /// ⚠**Loading anyway is the SECONDARY action.** It is not destructive — nothing is
+    /// overwritten, and the previous view stays in history — so it does not get the red
+    /// treatment the reset dialog uses; but it is the one that acts on data we have said is
+    /// suspect, so Cancel is the default-weight button and this one is plain.
+    pub(crate) fn draw_checksum_dialog(&mut self, ctx: &egui::Context) {
+        let Some(p) = &self.dialogs.pending_view else {
+            return;
+        };
+        let (source, found, computed) = (p.source.clone(), p.found.clone(), p.computed.clone());
+        let mut open = true;
+        let (mut load_anyway, mut cancel) = (false, false);
+        egui::Window::new("This location may be damaged")
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .default_width(480.0)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.colored_label(
+                    egui::Color32::from_rgb(0xE0, 0x9C, 0x40),
+                    "⚠  Its checksum does not match the data beside it.",
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    "That usually means the text was cut short or altered on the way here — \
+                     a partial copy out of a chat window or a forum post is the common cause.",
+                );
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new("Source").weak().small());
+                ui.label(egui::RichText::new(&source).monospace().small());
+                ui.add_space(4.0);
+                egui::Grid::new("checksum-compare").num_columns(2).show(ui, |ui| {
+                    ui.label(egui::RichText::new("in the file").weak().small());
+                    ui.label(egui::RichText::new(&found).monospace().small());
+                    ui.end_row();
+                    ui.label(egui::RichText::new("from the data").weak().small());
+                    ui.label(egui::RichText::new(&computed).monospace().small());
+                    ui.end_row();
+                });
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(
+                        "You can load it anyway — the coordinates may still be fine, and \
+                         nothing is overwritten. Anything unreadable is reported after loading.",
+                    )
+                    .weak()
+                    .small(),
+                );
+                ui.add_space(8.0);
+                ui.separator();
+                // Added right-to-left: Cancel first so it lands rightmost.
+                crate::theme::action_row(ui, |ui| {
+                    cancel = crate::theme::cancel_button(ui, "Cancel").clicked();
+                    if ui
+                        .button("Load anyway")
+                        .on_hover_text("Jump to it despite the mismatch")
+                        .clicked()
+                    {
+                        load_anyway = true;
+                    }
+                });
+            });
+        if load_anyway {
+            if let Some(p) = self.dialogs.pending_view.take() {
+                let report = self.load_view_metadata(&p.text);
+                let zoom = crate::fmt_zoom_log2(self.viewport.log2_magnification());
+                // ⭐The load report still gets surfaced. The checksum said something is wrong;
+                // the report says WHAT, and after a mismatch that is the more useful half.
+                self.set_toast(
+                    match report.note() {
+                        None => format!("Loaded @ {zoom}× despite the checksum mismatch"),
+                        Some(n) => format!("Loaded @ {zoom}× — {n}"),
+                    },
+                    ctx,
+                );
+            }
+        } else if cancel || !open {
+            self.dialogs.pending_view = None;
+            self.set_toast("Not loaded.", ctx);
+        }
     }
 
     /// "Reset application state" confirmation dialog — permanently deletes all saved data.
@@ -1617,8 +1719,21 @@ impl FractadyneApp {
         // Lazily decode one thumbnail per frame so scanning a folder never freezes.
         if let Some(entry) = self.gallery.entries.iter_mut().find(|e| !e.thumb_tried) {
             entry.thumb_tried = true;
-            if let Ok((tw, th, rgba)) = fractadyne_export::read_thumbnail(&entry.path, 160) {
-                let img = egui::ColorImage::from_rgba_unmultiplied([tw as usize, th as usize], &rgba);
+            // ⭐A `.fdn` has no pixels of its own — its picture is the base64 PNG it carries.
+            // An image file is decoded and downsampled as before.
+            let is_view_file = entry
+                .path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("fdn"));
+            let decoded = if is_view_file {
+                crate::export::decode_embedded_thumbnail(&entry.meta)
+            } else {
+                fractadyne_export::read_thumbnail(&entry.path, 160).ok()
+            };
+            if let Some((tw, th, rgba)) = decoded {
+                let img =
+                    egui::ColorImage::from_rgba_unmultiplied([tw as usize, th as usize], &rgba);
                 let name = format!("thumb:{}", entry.path.display());
                 entry.thumb = Some(ctx.load_texture(name, img, egui::TextureOptions::LINEAR));
             }

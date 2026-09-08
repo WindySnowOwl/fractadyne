@@ -58,6 +58,13 @@ impl MapPalette {
 /// palette on the web" paste box and guesses at the shape. A file the user named as a `.map` has
 /// declared its format, so a parse failure should be reported, not guessed around.
 pub fn parse_map(text: &str) -> Result<MapPalette, String> {
+    // ⭐⭐**Line endings and clipboard damage, before anything else.** These files arrive by
+    // download and by paste — a `.map` from a 2003 archive can carry lone-CR endings, which
+    // `str::lines()` does not split on, so the whole file reads as ONE line and parses as
+    // nothing. A palette pasted out of a forum post arrives with smart quotes and en dashes.
+    // `clean` normalizes CR / CRLF / LF and repairs both, so everything below can assume `\n`.
+    let cleaned = fractadyne_text::clean(text);
+    let text = cleaned.text.as_str();
     let mut colors: Vec<[f32; 3]> = Vec::new();
     for (n, raw) in text.lines().enumerate() {
         let line = raw.split(';').next().unwrap_or("").trim();
@@ -173,6 +180,13 @@ impl UgrGradient {
 /// ⚠gnofract4d divides those bytes by **256.0**; we divide by **255.0**, so our import is a hair
 /// brighter than theirs and, unlike theirs, reaches pure white.
 pub fn parse_ugr(text: &str) -> Result<Vec<UgrGradient>, String> {
+    // ⭐⭐**Line endings and clipboard damage, before anything else.** These files arrive by
+    // download and by paste — a `.map` from a 2003 archive can carry lone-CR endings, which
+    // `str::lines()` does not split on, so the whole file reads as ONE line and parses as
+    // nothing. A palette pasted out of a forum post arrives with smart quotes and en dashes.
+    // `clean` normalizes CR / CRLF / LF and repairs both, so everything below can assume `\n`.
+    let cleaned = fractadyne_text::clean(text);
+    let text = cleaned.text.as_str();
     let toks = ugr_tokens(text);
     let mut out: Vec<UgrGradient> = Vec::new();
     let mut i = 0usize;
@@ -331,6 +345,13 @@ fn ugr_u32(v: &str, what: &str) -> Result<u32, String> {
 /// and guessing at a compression scheme is how a palette gets silently mis-imported. A file using
 /// one is REJECTED by name rather than half-read.
 pub fn parse_ggr(text: &str) -> Result<Gradient, String> {
+    // ⭐⭐**Line endings and clipboard damage, before anything else.** These files arrive by
+    // download and by paste — a `.map` from a 2003 archive can carry lone-CR endings, which
+    // `str::lines()` does not split on, so the whole file reads as ONE line and parses as
+    // nothing. A palette pasted out of a forum post arrives with smart quotes and en dashes.
+    // `clean` normalizes CR / CRLF / LF and repairs both, so everything below can assume `\n`.
+    let cleaned = fractadyne_text::clean(text);
+    let text = cleaned.text.as_str();
     use crate::segment::{Blend, Segment, Space};
 
     let mut lines = text

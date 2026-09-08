@@ -779,6 +779,89 @@ impl FractadyneApp {
         // the job asks for, and a rendered comparison could not align pixels anyway once the
         // resolution changes with the aspect — so it would have to re-derive this same rule to
         // know where to look, and a check that re-derives the rule it is checking proves nothing.
+        // ⭐⭐**The embedded thumbnail, end to end**: render it, base64 it, wrap it into a view,
+        // verify the checksum still holds, and decode it back to pixels. Every link in that
+        // chain is somewhere a silent failure would leave a gallery full of blank tiles.
+        //
+        // ⚠It also REPORTS THE SIZE, because size is the whole reason this feature is optional:
+        // a deep fractal is close to incompressible, and if the encoder or the supersampling
+        // ever changes, the number that matters moves without anything else noticing.
+        if want("view-thumb") {
+            const VTX: &str = "-0.743643887037158704752191506114774";
+            const VTY: &str = "0.131825904205311970493132056385139";
+            let saved_vp = self.viewport.clone();
+            let saved_iter = self.render_cfg.max_iter;
+            let saved_auto = self.render_cfg.auto_iter;
+            self.viewport.width_px = 1200.0;
+            self.viewport.height_px = 900.0;
+            self.viewport.center_x = fractadyne_core::parse_bf(VTX).unwrap();
+            self.viewport.center_y = fractadyne_core::parse_bf(VTY).unwrap();
+            self.viewport.units_per_pixel =
+                fractadyne_core::FloatExp::from_f64(3.0 / (900.0 * 1.0e30));
+            self.viewport.precision = fractadyne_core::precision_for_magnification(1.0e30);
+            self.render_cfg.max_iter = 60_000;
+            self.render_cfg.auto_iter = false;
+
+            let b64 = self.render_view_thumbnail(device, queue);
+            let mut why: Option<String> = None;
+            let mut bytes = 0usize;
+            let mut dims = (0u32, 0u32);
+            match &b64 {
+                None => why = Some("render_view_thumbnail returned nothing".into()),
+                Some(b) => {
+                    bytes = b.len();
+                    let bare = format!("{}thumb={b}\n", self.view_metadata());
+                    let doc = crate::export::wrap_view_text(&bare);
+                    // 1. A thumbnail must not break the checksum of the view carrying it.
+                    if crate::export::view_checksum_state(&doc)
+                        != crate::export::ChecksumState::Match
+                    {
+                        why = Some("the checksum failed on a view carrying a thumbnail".into());
+                    }
+                    // 2. And it must survive the wrap and come back as pixels.
+                    match crate::export::decode_embedded_thumbnail(&doc) {
+                        None => {
+                            if why.is_none() {
+                                why = Some("the embedded thumbnail did not decode".into());
+                            }
+                        }
+                        Some((w, h, rgba)) => {
+                            dims = (w, h);
+                            if (w, h) != (crate::VIEW_THUMB_W, crate::VIEW_THUMB_H) {
+                                why = Some(format!("decoded {w}x{h}, expected 128x96"));
+                            } else if rgba.len() != (w * h * 4) as usize {
+                                why = Some(format!("decoded {} bytes of pixels", rgba.len()));
+                            } else if rgba.chunks(4).all(|p| p[..3] == rgba[..3]) {
+                                // ⚠⚠A uniformly flat thumbnail is what a broken render looks
+                                // like, and it decodes perfectly. Without this the check would
+                                // pass on a blank picture.
+                                why = Some("every pixel is the same colour — a blank render".into());
+                            }
+                        }
+                    }
+                }
+            }
+            self.viewport = saved_vp;
+            self.render_cfg.max_iter = saved_iter;
+            self.render_cfg.auto_iter = saved_auto;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "View format",
+                name: "an embedded thumbnail survives a round trip".into(),
+                params: "1e30x, 128x96, ss=2, base64 in a wrapped view".into(),
+                result: why.clone().unwrap_or_else(|| {
+                    format!(
+                        "{}x{} decoded; {:.1} KB of base64 ({:.1} KB as PNG)",
+                        dims.0,
+                        dims.1,
+                        bytes as f64 / 1024.0,
+                        bytes as f64 * 0.75 / 1024.0
+                    )
+                }),
+                threshold: "decodes at 128x96, not blank, checksum intact",
+                pass: why.is_none(),
+            });
+        }
+
         if want("export-contain") {
             let saved_w = self.export.width;
             let saved_aspect = self.export.aspect.clone();
@@ -4096,7 +4179,9 @@ zoom = \"1e94\"
                 && self.coloring.cycle.is_finite()
                 && self.coloring.offset.is_finite()
                 && hr.clamped.len() >= 4 // zoom depth, max_iter, aa, cycle, offset
-                && hr.unknown.iter().any(|u| u == "bogus_field");
+                // ⭐The report now names the LINE too ("bogus_field (line 10)"), so match the
+                // key rather than the whole rendered string.
+                && hr.unknown.iter().any(|u| u.starts_with("bogus_field"));
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "View format",
                 name: "hostile fields clamped + reported".into(),

@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 fractadyne-core.workspace = true
+fractadyne-text.workspace = true
 fractadyne-gpu.workspace = true
 fractadyne-color.workspace = true
 fractadyne-state.workspace = true

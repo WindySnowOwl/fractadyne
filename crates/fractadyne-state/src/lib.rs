@@ -156,6 +156,10 @@ pub struct SessionState {
     /// Export aspect ratio: "window" (match the live view) or a fixed ratio key ("16:9", "1:1", …).
     #[serde(default = "default_export_aspect")]
     pub export_aspect: String,
+    /// Embed a thumbnail when saving or sharing a view. See `ShareDialog::include_thumb`.
+    #[serde(default = "default_true")]
+    pub share_include_thumb: bool,
+
     /// Open the finished image in the system viewer when an export succeeds.
     /// ⚠Defaults OFF: an export can be a batch of one among many, and a viewer window
     /// stealing focus mid-session is not something to opt people into silently.
@@ -323,10 +327,6 @@ fn default_duotone_hi() -> [f32; 3] {
     [0.95, 0.80, 0.45] // warm cream
 }
 
-fn default_true() -> bool {
-    true
-}
-
 fn default_dual_split() -> f32 {
     0.5
 }
@@ -388,6 +388,10 @@ fn default_ui_scale() -> f32 {
 
 fn default_theme() -> String {
     "dark".to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_export_width() -> u32 {
@@ -482,6 +486,7 @@ impl Default for SessionState {
             welcome_seen: false,
             export_dual_mode: default_export_dual_mode(),
             export_aspect: default_export_aspect(),
+            share_include_thumb: true,
             export_open_after: false,
             show_location: false,
             palette_anim: default_palette_anim(),
