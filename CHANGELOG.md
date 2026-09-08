@@ -12,6 +12,32 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **"The exported image does not match my screen" — measured, and gated** (beta.70). A report
+  that a spiral's centre appeared to have moved in an exported EXR, and might be mirrored.
+  Neither turned out to be happening, and the measurements are worth writing down.
+
+  The EXR container is not flipped or transposed: the writer walks the buffer row-major exactly
+  as the PNG writer does, and an existing test on a non-square image with a per-pixel-unique
+  ramp would fail if either axis moved. Rendering the same view at two canvas widths and the
+  same height is **pixel-identical** on the direct path, so the centre and the vertical extent
+  are preserved exactly.
+
+  What does change is the horizontal extent, and that is by design: magnification is
+  height-anchored, so a frame with a different aspect than the live canvas shows more or less of
+  the plane to the left and right. Anything not exactly at the centre therefore sits at a
+  different fraction across the frame — which is what "the centre moved" looks like.
+
+  Two self-test checks now pin it (180 now): a wider canvas must contain the narrower one pixel
+  for pixel, at both a direct-path and a perturbation depth. Verified to go red — a **single
+  column** of misalignment differs in 13,332 of 20,480 texels, three orders of magnitude past
+  the tolerance the perturbation arm carries for its per-pixel glitch noise.
+
+  One real, small defect came out of it: in the perturbation regime a handful of isolated pixels
+  (27 of 307,200 at 1e30x, at export resolution) do change with canvas width, because glitch
+  detection is per-pixel and its neighbourhood shifts. Too small to see, and now measured rather
+  than suspected.
+
+
 - **A `.fdn` now carries the gradient, and an export can open itself** (beta.69). Saving a view
   wrote `palette=<index>` — a pointer into the built-in presets. That is fine while you are on a
   preset, and quietly wrong the moment you are not: a file saved on a hand-built gradient

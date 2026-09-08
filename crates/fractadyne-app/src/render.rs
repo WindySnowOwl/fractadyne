@@ -2140,6 +2140,99 @@ impl FractadyneApp {
         }
     }
 
+    /// Does the same view render the same picture on a WIDER canvas?
+    ///
+    /// ⭐⭐**Why this is the check an "the export doesn't match my screen" report needs.**
+    /// Magnification is HEIGHT-anchored (`upp = REFERENCE_HEIGHT / height_px × 2^-log2mag`), so two
+    /// renders sharing a height share `upp` exactly, every pixel column maps to a fixed complex
+    /// coordinate relative to the centre, and **the narrow image must appear pixel-for-pixel inside
+    /// the wide one**. A centring error, an off-by-one in the raster mapping, or a mirrored axis all
+    /// break that identity; a mere aspect change does not.
+    ///
+    /// ⚠⚠**The viewport is what varies, not just the request.** `delta_exp` comes from
+    /// `vp.gpu_scale()`, which reads `vp.width_px` — so overriding `req.width` alone would hold the
+    /// GPU scale fixed and test a narrower thing than `--render --size WxH` actually does.
+    ///
+    /// ⭐Returns `(differing_texels, compared_texels, note)` rather than a verdict: the caller
+    /// decides the threshold, because the honest threshold DIFFERS BY DEPTH — see the two call
+    /// sites in `selftest.rs`.
+    pub(crate) fn selfcheck_width_independence(
+        &self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        vp: &Viewport,
+        height: u32,
+        narrow: u32,
+        wide: u32,
+    ) -> (usize, usize, String) {
+        use std::sync::atomic::{AtomicBool, AtomicU32};
+        if narrow >= wide || (wide - narrow) % 2 != 0 {
+            return (usize::MAX, 0, "widths must differ by an even amount".into());
+        }
+        let build = |w: u32| {
+            let mut v = vp.clone();
+            v.width_px = w as f64;
+            v.height_px = height as f64;
+            let mut r = self.build_export_request(&v, false, RefSource::Fresh);
+            r.width = w;
+            r.height = height;
+            r.ss = 1;
+            r
+        };
+        let (req_n, req_w) = (build(narrow), build(wide));
+        let progress = AtomicU32::new(0);
+        let cancel = AtomicBool::new(false);
+        let rn = fractadyne_gpu::render_export(device, queue, &req_n, &progress, &cancel);
+        let rw = fractadyne_gpu::render_export(device, queue, &req_w, &progress, &cancel);
+        let (Ok(a), Ok(b)) = (rn, rw) else {
+            return (usize::MAX, 0, "render failed".into());
+        };
+        if a.width != narrow || b.width != wide || a.height != height || b.height != height {
+            return (
+                usize::MAX,
+                0,
+                format!(
+                    "size not honoured: got {}x{} and {}x{}",
+                    a.width, a.height, b.width, b.height
+                ),
+            );
+        }
+        // Column `i` of the narrow image is column `i + off` of the wide one: both map to
+        // `cx + (i - w/2 + 0.5) * upp` with their own `w`.
+        let off = ((wide - narrow) / 2) as usize;
+        let (nw, ww) = (narrow as usize, wide as usize);
+        let mut diffs = 0usize;
+        let mut worst = 0.0f32;
+        let mut worst_at = (0usize, 0usize);
+        for y in 0..height as usize {
+            for x in 0..nw {
+                let ia = (y * nw + x) * 4;
+                let ib = (y * ww + x + off) * 4;
+                let mut d = 0.0f32;
+                for c in 0..3 {
+                    d = d.max((a.pixels[ia + c] - b.pixels[ib + c]).abs());
+                }
+                if d > 0.0 {
+                    diffs += 1;
+                    if d > worst {
+                        worst = d;
+                        worst_at = (y, x);
+                    }
+                }
+            }
+        }
+        let compared = height as usize * nw;
+        let note = if diffs == 0 {
+            format!("{narrow}px inside {wide}px at h={height}: identical over {compared} texels")
+        } else {
+            format!(
+                "{diffs} of {compared} texels differ (worst {:.3} at row {} col {})",
+                worst, worst_at.0, worst_at.1
+            )
+        };
+        (diffs, compared, note)
+    }
+
     /// The reference-recompute inputs for an export view, or `None` for the direct path (`mode == 1`,
     /// no reference). Computes `mode` / `eff_iter` / `precision` / scale exactly as
     /// The auto-iter zoom cap for exports, scaled by the view's live adaptive `iter_boost`: a GUI

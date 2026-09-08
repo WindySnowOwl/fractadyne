@@ -755,6 +755,61 @@ impl FractadyneApp {
             });
         }
 
+        // ⭐⭐**"The export does not match what I see."** Magnification is HEIGHT-anchored, so a
+        // render on a wider canvas at the same height must contain the narrower one pixel for
+        // pixel — the extra width shows MORE of the plane on either side and moves nothing. That
+        // identity is what an export inherits when its aspect differs from the live canvas, and
+        // it is what a centring, mapping or mirroring defect would break.
+        //
+        // ⚠⚠**Two depths, two thresholds, and the difference is the point.** The direct (f64)
+        // path is EXACTLY width-independent and is gated at zero. The perturbation path is not:
+        // measured, a handful of isolated pixels out of ~300k change with canvas width, because
+        // glitch detection is per-pixel and its neighbourhood shifts. Gating that arm at zero
+        // would be gating a defect we have not fixed; gating it loosely would still catch the
+        // failure this check exists for, which is GROSS — a mis-centred or mirrored frame differs
+        // in tens of thousands of pixels, not tens. ⛔So the loose bound is deliberately far
+        // below any real misframing and far above the measured noise.
+        if want("width-independence") {
+            const WIX: &str = "-0.743643887037158704752191506114774";
+            const WIY: &str = "0.131825904205311970493132056385139";
+            let (h, narrow, wide) = (128u32, 160u32, 240u32);
+            let saved_iter = self.render_cfg.max_iter;
+            let saved_auto = self.render_cfg.auto_iter;
+            self.render_cfg.auto_iter = false;
+            for (label, mag, iter, tol, bound) in [
+                ("direct f64 (1e2x)", 1.0e2_f64, 2_000u32, 0usize, "0 texels differ"),
+                (
+                    "perturbation (1e30x)",
+                    1.0e30_f64,
+                    60_000u32,
+                    64usize,
+                    "<= 64 texels differ (measured glitch noise; a misframing differs in 10,000s)",
+                ),
+            ] {
+                let mut vp = Viewport::new(wide as f64, h as f64);
+                vp.center_x = fractadyne_core::parse_bf(WIX).unwrap();
+                vp.center_y = fractadyne_core::parse_bf(WIY).unwrap();
+                // ⚠upp from the HEIGHT — the anchor the whole check rests on.
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (h as f64 * mag));
+                vp.precision = fractadyne_core::precision_for_magnification(mag);
+                self.render_cfg.max_iter = iter;
+                let (diffs, compared, note) =
+                    self.selfcheck_width_independence(device, queue, &vp, h, narrow, wide);
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Framing",
+                    name: format!("a wider canvas contains the narrower one — {label}"),
+                    params: format!(
+                        "{narrow}px vs {wide}px at h={h}, {iter} iter, {compared} texels compared"
+                    ),
+                    result: note,
+                    threshold: bound,
+                    pass: diffs <= tol,
+                });
+            }
+            self.render_cfg.max_iter = saved_iter;
+            self.render_cfg.auto_iter = saved_auto;
+        }
+
         if want("iter-chunk") {
             let mag = 1.0e24;
             const C6X: &str = "-0.7436438870371587047521915061147707";
