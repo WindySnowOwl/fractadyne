@@ -329,7 +329,7 @@ impl FractadyneApp {
         /// `--selftest` never pays for them — each costs minutes, not milliseconds.
         const OPT_IN_GROUPS: &[(&str, &str)] = &[(
             "deep-location",
-            "the deepest tracked location (9.98e60205×) — 30-60+ MINUTES: a ~200,000-bit orbit",
+            "the deepest tracked location (9.98e60205×) — ~9 HOURS: a ~200,000-bit orbit to a 2,000,000 ask",
         )];
         if self.selftest.list {
             println!("selftest groups (use with --selftest-filter <substr>):");
@@ -986,9 +986,10 @@ impl FractadyneApp {
         // ⭐⭐**THE DEEPEST LOCATION WE TRACK — 9.98e60205×, and OPT-IN.**
         //
         // ⛔Not in the default sweep, deliberately. `--selftest` is the gate run constantly;
-        // a 60,231-digit centre needs a ~200,000-bit reference orbit, and paying for that on
-        // every run would make the gate something people skip. Run it with
-        // `--selftest-filter deep-location` when the deep pipeline is what changed.
+        // a 60,231-digit centre needs a ~200,000-bit reference orbit (measured: ~9 hours to a
+        // 2,000,000 ask), and paying for that on every run would make the gate something people
+        // skip. Run it with `--selftest-filter deep-location` when the deep pipeline is what
+        // changed.
         //
         // ⚠⚠**It asserts DETERMINISM and LIVENESS, not a blessed hash.** Deep floatexp output
         // is hardware-dependent (an RTX 3080 renders all-black where a 3070 renders detail —
@@ -1033,13 +1034,19 @@ impl FractadyneApp {
                         // twice. The F3 corpus and the ref-reuse check cover the orbit at depths
                         // where the cost is bearable.
                         let vp_now = self.viewport.clone();
-                        // ⭐⭐**Announce it.** This one step runs for 30-60+ minutes on the
-                        // author's machine, and a check that prints nothing for that long is
-                        // indistinguishable from a hung one — which is how people learn to kill a
-                        // gate instead of waiting for it.
+                        // ⭐⭐**Announce it.** This one step runs for HOURS, and a check that
+                        // prints nothing for that long is indistinguishable from a hung one —
+                        // which is how people learn to kill a gate instead of waiting for it.
+                        //
+                        // ⚠The first banner said "30-60+ minutes" — the author's LIVE experience,
+                        // where the orbit stops at `LIVE_REF_CAP`. This check builds EXPORT-grade
+                        // to the full ask, and that was measured 2026-09-08 (`FRACTADYNE_TRACE=ref`):
+                        // candidate scoring 5.77 h (101 survivors) + orbit 3.02 h (escaped at
+                        // 1,645,896) + BLA 2 s = **8.8 hours** on the author's machine.
                         eprintln!(
                             "[selftest] deep-location: building a ~200,000-bit reference orbit at \
-                             9.98e60205x ({} iterations). EXPECT 30-60+ MINUTES.",
+                             9.98e60205x ({} iterations). EXPECT ~9 HOURS (measured: pick 5.8 h + \
+                             orbit 3.0 h).",
                             self.render_cfg.max_iter
                         );
                         let t0 = std::time::Instant::now();
