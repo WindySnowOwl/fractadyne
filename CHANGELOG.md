@@ -12,6 +12,12 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Share location is on the toolbar** (beta.74), as the fourth of the file verbs — open, gallery,
+  export, snapshot, share. Its menu entry stays under Navigate, where a location is a places
+  concern; on a toolbar its neighbours are the things that read and write files, which is what it
+  does.
+
+
 - **Locations saved before v0.2.20 had been loading without their coordinates** (beta.73), and
   the sample location that ships in the release archive was one of them.
 

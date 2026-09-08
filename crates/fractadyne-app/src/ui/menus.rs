@@ -913,6 +913,20 @@ impl FractadyneApp {
                         self.quick_export(ctx, dev.clone(), q.clone());
                     }
                 }
+                // ⭐Share location sits with the FILE actions, not with navigation, even though
+                // its menu entry lives under Navigate (a location is a PLACES concern there). On
+                // the toolbar the neighbouring verbs are open / browse / save, and this is the
+                // fourth of those — it writes and reads a `.fdn`.
+                if ui
+                    .button(crate::icons::SHARE)
+                    .on_hover_text(
+                        "Share location — copy, paste, save or load a self-contained \
+                         .fdn (fractal, full-precision center, zoom, coloring)",
+                    )
+                    .clicked()
+                {
+                    self.open_share();
+                }
                 ui.separator();
                 // ── Navigation / location: zoom, reset/home, bookmark ─────────────────
                 if ui.button(crate::icons::ZOOM_IN).on_hover_text("Zoom in").clicked() {
