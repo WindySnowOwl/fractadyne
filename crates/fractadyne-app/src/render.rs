@@ -231,7 +231,7 @@ pub(crate) struct HoldPrefetch {
 }
 
 /// Owned, `Send` inputs for an off-thread reference recompute.
-struct RecomputeInputs {
+pub(crate) struct RecomputeInputs {
     /// Which path asked for this build (`live` / `lookahead` / `export`), for the breadcrumb only.
     /// Every build logs the same line, so a runaway shows up as thousands of indistinguishable
     /// entries — naming the caller is the difference between reading a 5 MB log and knowing which
@@ -398,7 +398,7 @@ fn precomputed_matches(r: &RecomputeResult, eff_iter: u32, precision: usize) -> 
 /// `inp.gpu_iter` — the slow arbitrary-precision work. Pure and `Send`, so it runs on a worker
 /// thread; mirrors the synchronous `compute_reference` + `series_skip_for` + `build_bla`. The
 /// progressive cold start (`recompute_worker_staged`) reuses the `pick`/`build` split below.
-fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
+pub(crate) fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
     // The bignum orbit build is the longest silent phase in the app — name it for the
     // watchdog/crash report before starting (D1.2).
     // Memory on the line: a deep reference build is the app's largest allocation by a wide margin
@@ -995,6 +995,15 @@ impl FractadyneApp {
     /// (watchdog: "no activity — last activity: reference built: len=500001"). Dropping it keeps
     /// the previous safe reference on screen; `ref_ext_futile` remembers the verdict so the
     /// quality gate doesn't re-request the same doomed build every settle (cleared with the view).
+    /// Install a reference the way the live render loop does — for `--selftest`, which has no
+    /// render loop and therefore nothing resident to borrow.
+    ///
+    /// ⭐Without this the thumbnail check could only ever see the REFUSED branch, and the path the
+    /// real app takes at depth would stay untested — which is how the freeze shipped.
+    pub(crate) fn install_recompute_for_selftest(&mut self, vi: usize, res: RecomputeResult) {
+        self.install_recompute(vi, res);
+    }
+
     fn install_recompute(&mut self, vi: usize, res: RecomputeResult) {
         // `orbit_len` counts SAMPLES (`iters + 1`): a build capped at exactly `LIVE_REF_CAP`
         // iterations stores `LIVE_REF_CAP + 1` samples and must install normally.
@@ -2140,6 +2149,97 @@ impl FractadyneApp {
         }
     }
 
+    /// Can the LIVE view lend its reference orbit for `vp`, right now, with no bignum work?
+    ///
+    /// ⭐Asks by CALLING `live_ref_fields`, the same function `build_export_request` will call,
+    /// rather than by re-deriving its preconditions — a cheaper copy of that test would
+    /// eventually disagree with it, and the failure mode is the one below.
+    pub(crate) fn live_ref_can_serve(&self, vp: &Viewport, julia: bool) -> bool {
+        let eff_iter = self.export_eff_iter(vp, julia);
+        let delta_exp = vp.gpu_scale().delta_exp;
+        self.live_ref_fields(vp, julia, eff_iter, delta_exp, vp.precision)
+            .is_some()
+    }
+
+    /// Render the current view small, as a base64 PNG for embedding in a saved view.
+    ///
+    /// ⭐**Why a `.fdn` wants a picture.** A folder of deep locations is a folder of coordinate
+    /// files that look identical; with a thumbnail the same folder becomes a catalogue.
+    ///
+    /// ⛔⭐⭐**IT MUST NEVER BUILD A REFERENCE ORBIT.** The first version called
+    /// `current_export_request_for`, which builds a FRESH one synchronously on the UI thread.
+    /// At shallow depth that is milliseconds and invisible. At 9.98e60205× with 2,000,000
+    /// iterations it is minutes of arbitrary-precision arithmetic, and the app goes
+    /// "(Not Responding)" the moment you press Save .fdn — reported from a real session, and
+    /// the deeper the view the more certain the hang, which is exactly backwards from where a
+    /// user most wants their location saved.
+    ///
+    /// ⭐So it BORROWS the live view's already-resident orbit (`RefSource::Live`) — no bignum at
+    /// all — and returns `None` rather than falling back to building one. ⚠⚠That fallback is
+    /// inside `build_export_request` and is silent, so the guard has to happen BEFORE the call:
+    /// `RefSource::Live` degrades to a fresh build when the cache cannot serve it.
+    ///
+    /// ⚠Unlike the Misiurewicz explorer's tiles, this KEEPS the live normalization. That code
+    /// documents why a FOREIGN view must not wear the live palette mapping — but this is not a
+    /// foreign view, it is the view itself, and the thumbnail's job is to look like the screen.
+    pub(crate) fn render_view_thumbnail(
+        &self,
+        dev: &eframe::wgpu::Device,
+        q: &eframe::wgpu::Queue,
+    ) -> Option<String> {
+        use std::sync::atomic::{AtomicBool, AtomicU32};
+        let vp = self.viewport.clone();
+        let julia = self.julia_mode;
+        // Direct mode needs no reference at all; perturbation modes need one we can borrow.
+        let mode = RenderMode::select(
+            self.fractal.supports_perturbation(),
+            julia,
+            vp.magnification(),
+        );
+        if !mode.is_direct() && !self.live_ref_can_serve(&vp, julia) {
+            crate::diag::log_line(
+                "view",
+                "thumbnail skipped: no resident reference to borrow, and building one here \
+                 would freeze the UI",
+            );
+            return None;
+        }
+        let mut req = self.build_export_request(&vp, julia, RefSource::Live);
+        req.width = crate::VIEW_THUMB_W;
+        req.height = crate::VIEW_THUMB_H;
+        // ⭐Supersampled: at 128×96 a deep view is mostly filigree, and one sample per texel
+        // turns it into noise that is both uglier and (being noise) markedly larger as a PNG.
+        req.ss = 2;
+        let (sx, sy) = crate::contain_span(
+            req.span_mantissa.x,
+            req.span_mantissa.y,
+            crate::VIEW_THUMB_W as f64,
+            crate::VIEW_THUMB_H as f64,
+        );
+        req.span_mantissa = fractadyne_core::SpanMantissa::new(sx, sy);
+        let progress = AtomicU32::new(0);
+        let cancel = AtomicBool::new(false);
+        let res = fractadyne_gpu::render_export(dev, q, &req, &progress, &cancel).ok()?;
+        // ⚠`to_srgb8`, NOT `to_srgb8_dithered`. The dither exists to hide banding in a big
+        // export; here it is per-pixel noise PNG cannot compress, and measured it made the
+        // encoded thumbnail LARGER THAN RAW RGB.
+        let bytes = fractadyne_export::to_srgb8(&res.pixels);
+        let png = fractadyne_export::encode_png_rgba8(res.width, res.height, &bytes).ok()?;
+        // ⚠A thumbnail that would dominate the file it rides in is not worth carrying.
+        if png.len() > crate::VIEW_THUMB_MAX_BYTES {
+            crate::diag::log_line(
+                "view",
+                &format!(
+                    "thumbnail dropped: {} bytes exceeds the {}-byte cap",
+                    png.len(),
+                    crate::VIEW_THUMB_MAX_BYTES
+                ),
+            );
+            return None;
+        }
+        Some(fractadyne_text::base64::encode(&png))
+    }
+
     /// Does the same view render the same picture on a WIDER canvas?
     ///
     /// ⭐⭐**Why this is the check an "the export doesn't match my screen" report needs.**
@@ -2257,7 +2357,7 @@ impl FractadyneApp {
 
     /// [`current_export_request_with_ref`], so a result built from these inputs matches that frame's
     /// synchronous reference. Used by the tour pipeline to precompute the next frame's reference.
-    fn export_reference_inputs_for(
+    pub(crate) fn export_reference_inputs_for(
         &self,
         vp: &Viewport,
         julia: bool,

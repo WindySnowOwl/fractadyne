@@ -779,13 +779,11 @@ impl FractadyneApp {
         // the job asks for, and a rendered comparison could not align pixels anyway once the
         // resolution changes with the aspect — so it would have to re-derive this same rule to
         // know where to look, and a check that re-derives the rule it is checking proves nothing.
-        // ⭐⭐**The embedded thumbnail, end to end**: render it, base64 it, wrap it into a view,
-        // verify the checksum still holds, and decode it back to pixels. Every link in that
-        // chain is somewhere a silent failure would leave a gallery full of blank tiles.
-        //
-        // ⚠It also REPORTS THE SIZE, because size is the whole reason this feature is optional:
-        // a deep fractal is close to incompressible, and if the encoder or the supersampling
-        // ever changes, the number that matters moves without anything else noticing.
+        // ⭐⭐**The embedded thumbnail, end to end** — and above all, that it NEVER builds a
+        // reference orbit. The first version called `current_export_request_for`, which builds
+        // one synchronously; at 9.98e60205× with 2,000,000 iterations that is minutes of bignum
+        // on the UI thread, and the app went "(Not Responding)" on Save .fdn. Reported from a
+        // real session, and the deeper the view the more certain the hang.
         if want("view-thumb") {
             const VTX: &str = "-0.743643887037158704752191506114774";
             const VTY: &str = "0.131825904205311970493132056385139";
@@ -801,67 +799,134 @@ impl FractadyneApp {
             self.viewport.precision = fractadyne_core::precision_for_magnification(1.0e30);
             self.render_cfg.max_iter = 60_000;
             self.render_cfg.auto_iter = false;
+            // ⚠⚠**`install_recompute` writes PERF counters, not just the cache.** Leaving
+            // `rate_count`/`recompute_total` bumped told a later check ("unmeasured budget bounds
+            // the FIRST dispatch") that a measurement had happened, and it failed — a leak in
+            // this block, not a defect in that one. Second time this exact shape has bitten in
+            // this file; restore everything a check MUTATES, not just what it obviously owns.
+            let saved_perf = (
+                self.perf.recompute_ms,
+                self.perf.recompute_total,
+                self.perf.rate_count,
+            );
+            // ⚠⚠**And the CHUNK PROGRESSION.** `install_recompute` bumps `orbit_id`, which is part
+            // of `chunk_sig` — the view identity the cursor belongs to — so installing a reference
+            // here silently restarts the progression for every later check. Measured: it flipped
+            // the live-budget arm frame from a chunked 244-iteration dispatch to an unchunked 256,
+            // pushing 3.998e8 steps to 4.195e8 and failing a bound it had nothing to do with.
+            let saved_chunk = (
+                self.perf.chunk_cursor,
+                self.perf.chunk_idx,
+                self.perf.chunk_sig,
+                self.perf.chunk_pending,
+                self.perf.chunk_dirty,
+                self.perf.chunk_last_range,
+                self.perf.chunk_inflight,
+            );
+            // ⛔⭐⭐**And the REFERENCE CACHE itself** — the piece that actually mattered. The
+            // live-budget check keys its chunk progression on the orbit identity, so leaving the
+            // cache disturbed made its arm frame dispatch an UNCHUNKED 256 iterations instead of a
+            // chunked 244: 3.998e8 steps against 4.195e8, failing a bound with nothing to do with
+            // thumbnails. ⭐Snapshot and put back rather than clear — the orbit is an `Arc`, so
+            // this costs almost nothing.
+            let saved_cache = self.ref_cache.clone();
 
-            let b64 = self.render_view_thumbnail(device, queue);
+            // ⛔⭐⭐**GUARD FIRST, with NOTHING resident.** This is the state the bug lived in:
+            // a deep view whose reference cannot be borrowed. The answer must be "no thumbnail",
+            // never "build one here".
+            self.invalidate_refs();
+            let t0 = std::time::Instant::now();
+            let refused = self.render_view_thumbnail(device, queue);
+            let guard_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+            // Now give it what the LIVE view would have had, and it must borrow that.
             let mut why: Option<String> = None;
+            if refused.is_some() {
+                why = Some("with no resident reference it rendered anyway — it built one".into());
+            }
+            let vp_now = self.viewport.clone();
             let mut bytes = 0usize;
             let mut dims = (0u32, 0u32);
-            match &b64 {
-                None => why = Some("render_view_thumbnail returned nothing".into()),
-                Some(b) => {
-                    bytes = b.len();
-                    let bare = format!("{}thumb={b}\n", self.view_metadata());
-                    let doc = crate::export::wrap_view_text(&bare);
-                    // 1. A thumbnail must not break the checksum of the view carrying it.
-                    if crate::export::view_checksum_state(&doc)
-                        != crate::export::ChecksumState::Match
-                    {
-                        why = Some("the checksum failed on a view carrying a thumbnail".into());
-                    }
-                    // 2. And it must survive the wrap and come back as pixels.
-                    match crate::export::decode_embedded_thumbnail(&doc) {
-                        None => {
-                            if why.is_none() {
-                                why = Some("the embedded thumbnail did not decode".into());
-                            }
+            let mut borrow_ms = 0.0f64;
+            if false { why = None; } else if let Some(inputs) = // BISECT2
+                self.export_reference_inputs_for(&vp_now, false, crate::render::IterBudget::current(self))
+            {
+                let res = crate::render::recompute_worker(inputs);
+                self.install_recompute_for_selftest(0, res);
+                let t1 = std::time::Instant::now();
+                let b64 = self.render_view_thumbnail(device, queue);
+                borrow_ms = t1.elapsed().as_secs_f64() * 1000.0;
+                match &b64 {
+                    None => {
+                        if why.is_none() {
+                            why = Some("a resident reference was NOT borrowed".into());
                         }
-                        Some((w, h, rgba)) => {
-                            dims = (w, h);
-                            if (w, h) != (crate::VIEW_THUMB_W, crate::VIEW_THUMB_H) {
-                                why = Some(format!("decoded {w}x{h}, expected 128x96"));
-                            } else if rgba.len() != (w * h * 4) as usize {
-                                why = Some(format!("decoded {} bytes of pixels", rgba.len()));
-                            } else if rgba.chunks(4).all(|p| p[..3] == rgba[..3]) {
-                                // ⚠⚠A uniformly flat thumbnail is what a broken render looks
-                                // like, and it decodes perfectly. Without this the check would
-                                // pass on a blank picture.
-                                why = Some("every pixel is the same colour — a blank render".into());
+                    }
+                    Some(b) => {
+                        bytes = b.len();
+                        let bare = format!("{}thumb={b}\n", self.view_metadata());
+                        let doc = crate::export::wrap_view_text(&bare);
+                        if crate::export::view_checksum_state(&doc)
+                            != crate::export::ChecksumState::Match
+                        {
+                            why = Some("the checksum failed on a view carrying a thumbnail".into());
+                        }
+                        match crate::export::decode_embedded_thumbnail(&doc) {
+                            None => {
+                                if why.is_none() {
+                                    why = Some("the embedded thumbnail did not decode".into());
+                                }
+                            }
+                            Some((w, h, rgba)) => {
+                                dims = (w, h);
+                                if (w, h) != (crate::VIEW_THUMB_W, crate::VIEW_THUMB_H) {
+                                    why = Some(format!("decoded {w}x{h}, expected 128x96"));
+                                } else if rgba.len() != (w * h * 4) as usize {
+                                    why = Some(format!("decoded {} bytes of pixels", rgba.len()));
+                                } else if rgba.chunks(4).all(|p| p[..3] == rgba[..3]) {
+                                    // ⚠⚠A flat thumbnail is what a broken render looks like, and it
+                                    // decodes perfectly. Without this the check passes on a blank.
+                                    why = Some("every pixel is the same colour — a blank render".into());
+                                }
                             }
                         }
                     }
                 }
+            } else if why.is_none() {
+                why = Some("could not build the reference the LIVE view would hold".into());
             }
+
             self.viewport = saved_vp;
             self.render_cfg.max_iter = saved_iter;
             self.render_cfg.auto_iter = saved_auto;
+            self.ref_cache = saved_cache;
+            self.perf.recompute_ms = saved_perf.0;
+            self.perf.recompute_total = saved_perf.1;
+            self.perf.rate_count = saved_perf.2;
+            self.perf.chunk_cursor = saved_chunk.0;
+            self.perf.chunk_idx = saved_chunk.1;
+            self.perf.chunk_sig = saved_chunk.2;
+            self.perf.chunk_pending = saved_chunk.3;
+            self.perf.chunk_dirty = saved_chunk.4;
+            self.perf.chunk_last_range = saved_chunk.5;
+            self.perf.chunk_inflight = saved_chunk.6;
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "View format",
-                name: "an embedded thumbnail survives a round trip".into(),
-                params: "1e30x, 128x96, ss=2, base64 in a wrapped view".into(),
+                name: "a thumbnail borrows the live reference, never builds one".into(),
+                params: "1e30x, 128x96, ss=2; refused with none resident, then borrowed".into(),
                 result: why.clone().unwrap_or_else(|| {
                     format!(
-                        "{}x{} decoded; {:.1} KB of base64 ({:.1} KB as PNG)",
+                        "refused in {guard_ms:.1}ms; borrowed and rendered {}x{} in {borrow_ms:.0}ms; \
+                         {:.1} KB of base64",
                         dims.0,
                         dims.1,
-                        bytes as f64 / 1024.0,
-                        bytes as f64 * 0.75 / 1024.0
+                        bytes as f64 / 1024.0
                     )
                 }),
-                threshold: "decodes at 128x96, not blank, checksum intact",
+                threshold: "None when nothing is resident; a real 128x96 when it is",
                 pass: why.is_none(),
             });
         }
-
         if want("export-contain") {
             let saved_w = self.export.width;
             let saved_aspect = self.export.aspect.clone();

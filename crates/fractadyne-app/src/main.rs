@@ -3431,6 +3431,11 @@ impl Default for TourRenderUi {
 }
 
 /// Per-view cached perturbation reference orbit (arbitrary precision).
+///
+/// ⭐`Clone` is cheap — the orbit is an `Arc` — and exists so `--selftest` can SNAPSHOT the
+/// cache around a check that has to perturb it. Clearing it instead leaked into the live-budget
+/// checks, which key their chunk progression on the orbit identity.
+#[derive(Clone)]
 struct RefCache {
     ref_pt: Option<[fractadyne_core::BigFloat; 2]>,
     orbit: std::sync::Arc<Vec<[f32; 4]>>,
@@ -7232,28 +7237,6 @@ impl FractadyneApp {
         self.share.text = crate::export::wrap_view_text(&self.view_metadata());
     }
 
-    /// The bytes written to a `.fdn`: the shared text, plus a thumbnail if the user wants one.
-    ///
-    /// ⭐⭐**The thumbnail goes in the FILE, never in the dialog's text box.** The dialog's job
-    /// is text a person pastes into a message, and nobody wants 55 KB of base64 in a forum post;
-    /// the file's job is to be findable again in a folder, which is what needs the picture.
-    ///
-    /// ⚠Each is wrapped separately and so carries its OWN checksum, over its own field set.
-    /// That is correct rather than a discrepancy: the digest describes the document it sits in.
-    pub(crate) fn share_file_bytes(&mut self) -> String {
-        let mut bare = self.view_metadata();
-        if self.share.include_thumb {
-            if let Some(b64) = self
-                .gpu
-                .clone()
-                .and_then(|(d, q)| self.render_view_thumbnail(&d, &q))
-            {
-                bare.push_str(&format!("thumb={b64}
-"));
-            }
-        }
-        crate::export::wrap_view_text(&bare)
-    }
 
     /// Open the Share-location dialog, pre-filled with the current view as `.fdn` text.
     fn open_share(&mut self) {
@@ -7287,21 +7270,58 @@ impl FractadyneApp {
 
     /// Save the Share dialog's text to a `.fdn` file.
     fn save_share_file(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
+        let Some(path) = rfd::FileDialog::new()
             .add_filter("Fractadyne location", &["fdn"])
             .set_directory(self.dialog_dir_default())
             .set_file_name("location.fdn")
             .save_file()
-        {
-            self.remember_dir(&path);
-            // ⭐The FILE gets the thumbnail; the dialog's text box does not. See
-            // `share_file_bytes` for why that split exists.
-            let bytes = self.share_file_bytes();
-            match std::fs::write(&path, bytes.as_bytes()) {
-                Ok(()) => self.share.msg = Some("Saved.".into()),
-                Err(e) => self.share.msg = Some(format!("Save failed: {e}")),
-            }
+        else {
+            return;
+        };
+        self.remember_dir(&path);
+
+        // ⭐⭐**THE LOCATION LANDS FIRST, ALWAYS.** The thumbnail is an enhancement; the
+        // coordinates are the thing the user asked to keep. Writing them before attempting any
+        // render means a deep view is saved even if the picture never arrives — nobody has to
+        // hope a long process finishes to get their location out of the app.
+        //
+        // ⛔This ordering exists because the opposite shipped and was reported: the thumbnail
+        // was generated INTO the bytes being written, so at 9.98e60205× the app went
+        // "(Not Responding)" on Save and nothing reached disk at all.
+        let located = crate::export::wrap_view_text(&self.view_metadata());
+        if let Err(e) = std::fs::write(&path, located.as_bytes()) {
+            self.share.msg = Some(format!("Save failed: {e}"));
+            return;
         }
+        if !self.share.include_thumb {
+            self.share.msg = Some("Saved.".into());
+            return;
+        }
+
+        // ⭐Now the picture, as a SECOND pass over a file that is already safe. A failure here
+        // costs the thumbnail and nothing else, and says so rather than looking like a failed
+        // save.
+        self.share.msg = Some("Saved. Rendering the thumbnail…".into());
+        let thumb = self
+            .gpu
+            .clone()
+            .and_then(|(d, q)| self.render_view_thumbnail(&d, &q));
+        let Some(b64) = thumb else {
+            self.share.msg =
+                Some("Saved — without a thumbnail (none could be rendered for this view).".into());
+            return;
+        };
+        // ⚠Rebuilt through the writer, not patched: the checksum covers the field list, so a
+        // thumbnail appended by hand would leave the file reporting itself corrupt.
+        let with_thumb = crate::export::wrap_view_text(&format!(
+            "{}thumb={b64}\n",
+            self.view_metadata()
+        ));
+        self.share.msg = Some(match std::fs::write(&path, with_thumb.as_bytes()) {
+            Ok(()) => "Saved, with a thumbnail.".to_string(),
+            // The location is still on disk from the first write — say so, precisely.
+            Err(e) => format!("Saved, but the thumbnail could not be added: {e}"),
+        });
     }
 
     /// Load a `.fdn` file into the Share dialog's text box (size-bounded; not auto-applied,
@@ -10997,59 +11017,6 @@ pub(crate) fn contain_span(sx: f64, sy: f64, w: f64, h: f64) -> (f64, f64) {
     let aspect = w / h.max(1.0e-12);
     let y = sy.max(sx / aspect);
     (y * aspect, y)
-}
-
-impl FractadyneApp {
-    /// Render the current view small, as a base64 PNG for embedding in a saved view.
-    ///
-    /// ⭐**Why a `.fdn` wants a picture at all.** A folder of deep locations is a folder of
-    /// coordinate files that look identical; the gallery can list them but not tell you which is
-    /// which. With a thumbnail the same folder becomes a catalogue.
-    ///
-    /// ⚠⚠**Unlike the Misiurewicz explorer's tiles, this one KEEPS the live normalization.**
-    /// That code has a long comment on why a FOREIGN view must not wear the live view's
-    /// palette mapping — but this is not a foreign view, it is the view itself, and the
-    /// thumbnail's whole job is to look like what the user is looking at.
-    pub(crate) fn render_view_thumbnail(
-        &self,
-        dev: &eframe::wgpu::Device,
-        q: &eframe::wgpu::Queue,
-    ) -> Option<String> {
-        use std::sync::atomic::{AtomicBool, AtomicU32};
-        let mut req = self.current_export_request_for(&self.viewport, self.julia_mode);
-        req.width = VIEW_THUMB_W;
-        req.height = VIEW_THUMB_H;
-        // ⭐Supersampled: at 128×96 a deep view is mostly filigree, and one sample per texel
-        // turns it into noise that is both uglier and (being noise) markedly larger as a PNG.
-        req.ss = 2;
-        let (sx, sy) = contain_span(
-            req.span_mantissa.x,
-            req.span_mantissa.y,
-            VIEW_THUMB_W as f64,
-            VIEW_THUMB_H as f64,
-        );
-        req.span_mantissa = fractadyne_core::SpanMantissa::new(sx, sy);
-        let progress = AtomicU32::new(0);
-        let cancel = AtomicBool::new(false);
-        let res = fractadyne_gpu::render_export(dev, q, &req, &progress, &cancel).ok()?;
-        // ⚠`to_srgb8`, NOT `to_srgb8_dithered`. The dither exists to hide banding in a big
-        // export; here it is per-pixel noise that PNG cannot compress, and measured it made the
-        // encoded thumbnail LARGER THAN RAW RGB.
-        let bytes = fractadyne_export::to_srgb8(&res.pixels);
-        let png = fractadyne_export::encode_png_rgba8(res.width, res.height, &bytes).ok()?;
-        // ⚠A thumbnail that would dominate the file it rides in is not worth carrying.
-        if png.len() > VIEW_THUMB_MAX_BYTES {
-            crate::diag::log_line(
-                "view",
-                &format!(
-                    "thumbnail dropped: {} bytes exceeds the {VIEW_THUMB_MAX_BYTES}-byte cap",
-                    png.len()
-                ),
-            );
-            return None;
-        }
-        Some(fractadyne_text::base64::encode(&png))
-    }
 }
 
 impl FractadyneApp {

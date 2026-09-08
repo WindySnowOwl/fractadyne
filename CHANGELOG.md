@@ -12,6 +12,31 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Save .fdn froze the app at deep zoom — fixed, and the location now lands first** (beta.75).
+  A regression I introduced with the thumbnail in beta.72: generating it called the export path
+  that builds a FRESH reference orbit, synchronously, on the UI thread. At shallow depth that is
+  milliseconds and invisible; at 9.98e60205× with 2,000,000 iterations it is minutes of
+  arbitrary-precision arithmetic, and the app went "(Not Responding)" the moment you pressed Save.
+  The deeper the view, the more certain the hang — exactly where a location is most worth keeping.
+
+  Two independent changes, either of which would have prevented it:
+
+  **The location is written before anything is rendered.** The coordinates are what you asked to
+  keep; the picture is an enhancement. The file lands immediately, and the thumbnail is added by a
+  second write to a file that is already safe. A failure there costs the thumbnail and says so,
+  rather than looking like a failed save.
+
+  **The thumbnail never builds a reference orbit.** It borrows the live view's already-resident
+  one — no arbitrary-precision work at all — and returns nothing if it cannot, instead of falling
+  back to building one. That fallback is silent and lives inside the request builder, so the guard
+  has to happen before the call.
+
+  Measured by the new check: refused in 0.3 ms with nothing resident, borrowed and rendered
+  128×96 in 116 ms with a reference in place. The check installs a reference the way the render
+  loop does, because `--selftest` has no render loop — without that it could only ever exercise the
+  refusing branch, which is how the freeze shipped.
+
+
 - **Share location is on the toolbar** (beta.74), as the fourth of the file verbs — open, gallery,
   export, snapshot, share. Its menu entry stays under Navigate, where a location is a places
   concern; on a toolbar its neighbours are the things that read and write files, which is what it
