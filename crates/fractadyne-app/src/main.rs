@@ -10877,6 +10877,26 @@ impl FractadyneApp {
         ((self.export.width as f64) / ratio).round().max(1.0) as u32
     }
 
+    /// How much more of the plane the export will show than the window, as `(axis, percent)`, or
+    /// `None` when the framing is identical (the "Match window" default, and any aspect that
+    /// happens to equal the window's).
+    ///
+    /// ⭐Derived from the SAME `max` that `build_export_job` applies, not from a second copy of the
+    /// rule — a readout that can disagree with the thing it describes is worse than no readout.
+    pub(crate) fn export_extra_view(&self) -> Option<(&'static str, f64)> {
+        let (w, h) = (self.export.width.max(1) as f64, self.export_height().max(1) as f64);
+        let (cw, ch) = (self.viewport.width_px, self.viewport.height_px.max(1.0));
+        let (aspect, canvas_aspect) = (w / h, cw / ch);
+        // Contain grows exactly one axis, and which one is decided by the same comparison.
+        let grow = if aspect > canvas_aspect {
+            ("width", aspect / canvas_aspect)
+        } else {
+            ("height", canvas_aspect / aspect)
+        };
+        // Below a quarter of a percent this is rounding in the aspect table, not a framing change.
+        (grow.1 > 1.0025).then(|| (grow.0, (grow.1 - 1.0) * 100.0))
+    }
+
     fn build_export_job(&self) -> ExportJob {
         // Apply the chosen aspect: override the request height (the render centers the extra/fewer
         // rows on the same center; width stays `export_width`). For "window" this equals the height
@@ -10884,10 +10904,30 @@ impl FractadyneApp {
         let h = self.export_height();
         let fit = |mut req: fractadyne_gpu::ExportRequest| {
             req.height = h;
-            // Keep the per-texel step isotropic (the GPU derives step = span/resolution per axis):
-            // set the vertical span to match the horizontal step × the chosen height, so the fractal
-            // isn't stretched when the aspect differs from the window. No-op for "Match window".
-            req.span_mantissa.y = req.span_mantissa.x * (h as f64 / req.width.max(1) as f64);
+            // ⭐⭐**CONTAIN.** The exported frame is the SMALLEST rectangle of the chosen aspect that
+            // still holds the whole window view: everything composed on screen survives the export,
+            // and the aspect difference is paid for by revealing MORE plane on one axis — never by
+            // cropping. For a fractal that is free, because the revealed area is more fractal, not
+            // an empty letterbox bar.
+            //
+            // ⛔**This replaces a WIDTH-anchored rule** (`span.y = span.x · h/w`), which held the
+            // horizontal extent and let the vertical follow. That is contain in one direction and a
+            // silent crop in the other: exporting 16:9 from a taller window cut the top and bottom
+            // off the composition with nothing said. The two rules agree exactly whenever the
+            // export is NARROWER than the window — that branch was already the tight fit — and
+            // "Match window" is a no-op under both, which is why the default never showed it.
+            //
+            // ⚠Both axes are scaled from the SAME target, so the per-texel step stays isotropic
+            // (the GPU derives step = span/resolution per axis); a stretched fractal is the other
+            // way to get this wrong.
+            let (w, hf) = (req.width.max(1) as f64, h.max(1) as f64);
+            let aspect = w / hf;
+            // Height binds when the export is wider than the window, width binds when it is taller.
+            // `max` picks the binding axis without a branch, and returns the window's own span when
+            // the aspects match — so this is exactly an identity for "Match window".
+            let span_y = req.span_mantissa.y.max(req.span_mantissa.x / aspect);
+            req.span_mantissa =
+                fractadyne_core::SpanMantissa::new(span_y * aspect, span_y);
             req
         };
         if self.dual {

@@ -769,6 +769,130 @@ impl FractadyneApp {
         // failure this check exists for, which is GROSS — a mis-centred or mirrored frame differs
         // in tens of thousands of pixels, not tens. ⛔So the loose bound is deliberately far
         // below any real misframing and far above the measured noise.
+        // ⭐⭐**The EXPORT dialog's aspect override — a different code path from the one above.**
+        // `selfcheck_width_independence` exercises `build_export_request`; the chosen aspect is
+        // applied later, in `build_export_job`, and NOTHING covered it. That gap is how a
+        // width-anchored rule (`span.y = span.x · h/w`) sat there silently cropping the top and
+        // bottom off every 16:9 export from a taller window.
+        //
+        // ⚠Deliberately ARITHMETIC, not rendered. The property is about the complex rectangle
+        // the job asks for, and a rendered comparison could not align pixels anyway once the
+        // resolution changes with the aspect — so it would have to re-derive this same rule to
+        // know where to look, and a check that re-derives the rule it is checking proves nothing.
+        if want("export-contain") {
+            let saved_w = self.export.width;
+            let saved_aspect = self.export.aspect.clone();
+            let saved_dual = self.dual;
+            self.dual = false;
+            self.export.width = 1920;
+            // ⛔⭐⭐**PIN THE CANVAS — the first version of this check did not, and it PASSED
+            // against the very width-anchored rule it was written to catch.** Whether the old
+            // rule crops depends entirely on the ambient window aspect: `span_y = span_x/aspect`
+            // shrinks the vertical span only when the export is WIDER than the window, so a
+            // session that happened to boot wide made every tested aspect narrower, every
+            // assertion vacuous, and the check green against a known defect.
+            let (saved_cw, saved_chh) = (self.viewport.width_px, self.viewport.height_px);
+            self.viewport.width_px = 1200.0;
+            self.viewport.height_px = 900.0;
+            let (cw, ch) = (self.viewport.width_px, self.viewport.height_px);
+            let canvas_aspect = cw / ch;
+            let (base_x, base_y) = {
+                let sm = self.viewport.gpu_scale().span_mantissa;
+                (sm.x, sm.y)
+            };
+            let aspect_of = |key: &str, fallback: f64| -> f64 {
+                if key == "window" {
+                    fallback
+                } else {
+                    crate::EXPORT_ASPECTS
+                        .iter()
+                        .find(|(k, _)| *k == key)
+                        .map(|(_, r)| *r)
+                        .unwrap_or(fallback)
+                }
+            };
+            let (mut wider, mut narrower) = (0usize, 0usize);
+            let mut worst: Option<String> = None;
+            let mut checked = 0usize;
+            for key in ["window", "16:9", "2:1", "1:1", "9:16", "32:9"] {
+                // ⚠⚠**A key that is not in the table silently becomes the WINDOW aspect** — both
+                // here and in `export_height`. The first draft asked for "21:9", which the table
+                // spells "64:27", so that row tested nothing at all and the branch counter was the
+                // only thing that noticed. Refuse the typo instead of absorbing it.
+                if key != "window" && !crate::EXPORT_ASPECTS.iter().any(|(k, _)| *k == key) {
+                    worst = Some(format!("{key:?} is not an EXPORT_ASPECTS key"));
+                    break;
+                }
+                self.export.aspect = key.to_string();
+                let h = self.export_height();
+                let job = self.build_export_job();
+                let crate::ExportJob::Single(req) = &job else {
+                    worst = Some("dual job from a single view".into());
+                    break;
+                };
+                let (sx, sy) = (req.span_mantissa.x, req.span_mantissa.y);
+                let mut fail = |why: String| {
+                    if worst.is_none() {
+                        worst = Some(format!("{key}: {why}"));
+                    }
+                };
+                // 1. CONTAINS the window view — neither axis may shrink. This is the whole point.
+                if sx < base_x * (1.0 - 1.0e-9) || sy < base_y * (1.0 - 1.0e-9) {
+                    fail(format!(
+                        "CROPS: span {sx:.6}x{sy:.6} vs window {base_x:.6}x{base_y:.6}"
+                    ));
+                }
+                // 2. TIGHT — the binding axis is equal, not merely >=. A rule that grew both
+                //    axes would also "contain", and would zoom out for no reason.
+                let tight = (sx - base_x).abs() <= base_x * 1.0e-9
+                    || (sy - base_y).abs() <= base_y * 1.0e-9;
+                if !tight {
+                    fail(format!("not tight: {sx:.6}x{sy:.6} vs {base_x:.6}x{base_y:.6}"));
+                }
+                // 3. ISOTROPIC texels — the other way to get this wrong is a stretched fractal.
+                let (stepx, stepy) = (sx / req.width.max(1) as f64, sy / h.max(1) as f64);
+                if (stepx - stepy).abs() > stepx.abs() * 1.0e-9 {
+                    fail(format!("anisotropic texels: {stepx:.9} vs {stepy:.9}"));
+                }
+                // 4. "Match window" must be EXACTLY an identity, or the default drifts.
+                if key == "window"
+                    && ((sx - base_x).abs() > base_x * 1.0e-12
+                        || (sy - base_y).abs() > base_y * 1.0e-12)
+                {
+                    fail(format!("window aspect is not an identity: {sx:.9}x{sy:.9}"));
+                }
+                // ⭐Record which BRANCH this aspect took, so the check can prove below that it
+                // exercised both. Contain and the rule it replaced agree on every aspect
+                // narrower than the window; only the wider ones discriminate.
+                if aspect_of(key, canvas_aspect) > canvas_aspect * (1.0 + 1.0e-9) {
+                    wider += 1;
+                } else if aspect_of(key, canvas_aspect) < canvas_aspect * (1.0 - 1.0e-9) {
+                    narrower += 1;
+                }
+                checked += 1;
+            }
+            self.export.width = saved_w;
+            self.export.aspect = saved_aspect;
+            self.dual = saved_dual;
+            self.viewport.width_px = saved_cw;
+            self.viewport.height_px = saved_chh;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Framing",
+                name: "an export CONTAINS the window view at any aspect".into(),
+                params: format!("window {cw:.0}x{ch:.0} (aspect {canvas_aspect:.3}), {checked} aspects"),
+                result: worst.clone().unwrap_or_else(|| {
+                    format!(
+                        "{checked} aspects ({wider} wider, {narrower} narrower than the window): \
+                         contained, tight, isotropic; window = identity"
+                    )
+                }),
+                threshold: "no axis shrinks; binding axis exact; isotropic; BOTH branches tried",
+                // ⚠⚠The branch counts are part of the VERDICT, not decoration: without a wider
+                // aspect in the set this check cannot fail, whatever the rule under it does.
+                pass: worst.is_none() && checked == 6 && wider >= 2 && narrower >= 2,
+            });
+        }
+
         if want("width-independence") {
             const WIX: &str = "-0.743643887037158704752191506114774";
             const WIY: &str = "0.131825904205311970493132056385139";

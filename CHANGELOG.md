@@ -12,6 +12,32 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **An export at a different aspect no longer crops your composition** (beta.71). Choosing a
+  fixed aspect ratio in the export dialog held the horizontal extent and let the vertical follow
+  it, so exporting 16:9 from a taller window silently cut the top and bottom off the frame you
+  had composed — measured, a 25% vertical crop at 16:9 from a 4:3 window.
+
+  The export is now the smallest rectangle of the chosen aspect that still contains the whole
+  window view. Everything you framed survives; the aspect difference is paid for by revealing
+  more plane on one axis instead of cropping the other. For a fractal that costs nothing, because
+  the revealed area is more fractal rather than an empty letterbox bar. The dialog says so when
+  it applies ("Shows 33% more width than the window"), and "Match window" — the default — is
+  exactly unchanged.
+
+- **The check that was written for this bug passed against it, twice over.** Worth recording,
+  because both failures were in the check rather than the code. It first compared spans without
+  pinning the window aspect, and whether the old rule crops depends entirely on that: a session
+  that boots wide makes every tested aspect narrower, every assertion vacuous, and the check
+  green against a known defect. Then the aspect chosen to fix that — "21:9" — is spelled "64:27"
+  in the table, and an unknown key silently falls back to the window aspect, so that row tested
+  nothing either.
+
+  It now pins the window, refuses an aspect key the table does not contain, and counts how many
+  aspects fell on each side of the window — with those counts part of the verdict, because
+  without a wider aspect in the set the check cannot fail whatever the rule beneath it does.
+  Verified red against the rule it replaced (181 checks now).
+
+
 - **"The exported image does not match my screen" — measured, and gated** (beta.70). A report
   that a spiral's centre appeared to have moved in an exported EXR, and might be mirrored.
   Neither turned out to be happening, and the measurements are worth writing down.

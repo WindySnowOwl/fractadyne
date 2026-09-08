@@ -1790,6 +1790,19 @@ impl FractadyneApp {
                     self.export_height(),
                     120usize.saturating_sub(self.export.notes.chars().count()),
                 ));
+                // ⭐**Say what a different aspect does to the framing.** The export CONTAINS the
+                // window view, so a mismatched aspect always reveals more plane on one axis and
+                // never crops — but "you will see more than you composed" is exactly the kind of
+                // thing that should not be discovered in Photoshop.
+                if let Some((axis, pct)) = self.export_extra_view() {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Shows {pct:.0}% more {axis} than the window (nothing is cropped)"
+                        ))
+                        .weak()
+                        .small(),
+                    );
+                }
                 ui.label(
                     egui::RichText::new(
                         "Rendered in tiles (no size cap) on a background thread. The \

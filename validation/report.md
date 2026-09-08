@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.41-beta.48 (build 2732)
-- **Generated:** 2026-09-06 14:19:46 UTC (unix 1788704386)
+- **Version:** 0.2.41-beta.70 (build 2897)
+- **Generated:** 2026-09-08 00:52:08 UTC (unix 1788828728)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -26,6 +26,10 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | IterChunk | chunked render is bit-identical | mode2 97-sample ref (orbit wraps), 21k iter, chunk 2600 | mode 2 — 0 texels differ (max Δ 0.000e0), bla_skip 0, rebase 1790800 | 0 texels differ (mode 2: and BLA engaged) | ✅ PASS |
 | IterChunk | tiled chunked export is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, colored | 0 texels differ; max dispatch 5ms vs control 6ms | 0 texels differ | ✅ PASS |
 | IterChunk | tiled chunked iter buffer is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, raw | 0 texels differ | 0 texels differ | ✅ PASS |
+| RefReuse | a reused reference renders the same as a fresh pick | corpus07 1e30x, 200k iter, extend vs fresh pick | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 175ms fresh vs 169ms extend | reuse engaged AND 0 texels differ | ✅ PASS |
+| Framing | an export CONTAINS the window view at any aspect | window 1200x900 (aspect 1.333), 6 aspects | 6 aspects (3 wider, 2 narrower than the window): contained, tight, isotropic; window = identity | no axis shrinks; binding axis exact; isotropic; BOTH branches tried | ✅ PASS |
+| Framing | a wider canvas contains the narrower one — direct f64 (1e2x) | 160px vs 240px at h=128, 2000 iter, 20480 texels compared | 160px inside 240px at h=128: identical over 20480 texels | 0 texels differ | ✅ PASS |
+| Framing | a wider canvas contains the narrower one — perturbation (1e30x) | 160px vs 240px at h=128, 60000 iter, 20480 texels compared | 160px inside 240px at h=128: identical over 20480 texels | <= 64 texels differ (measured glitch noise; a misframing differs in 10,000s) | ✅ PASS |
 | IterChunk | mode-0 render uses ONE entry point | corpus06 1e24x, 400k iter, ss2, multi-tile | 5/5 tiles chunked | all tiles chunked | ✅ PASS |
 | Numeric | df32 perturbation vs CPU f64 dwell | seahorse, 2e4×, 5763 iter, n=6913 | 95.7% agree within 1 iter | ≥90% within 1 iter | ✅ PASS |
 | Finiteness | dwell finite (perturbation @2e4×) | all sampled pixels | all finite | all finite | ✅ PASS |
@@ -128,6 +132,10 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | View format | metadata round-trips a deep view | serialize → scramble → load | iter 1234 aa 3 upp_log2 -120.000 cx -0.743643887037151 | clean load; fractal/iter/aa/zoom/center preserved | ✅ PASS |
 | View format | newer format_version flagged | format_version=999 | saved by a newer Fractadyne (format v999); some settings may not apply — consider updating | newer == Some(999) | ✅ PASS |
 | View format | hostile fields clamped + reported | upp_log2=-1e30, max_iter=4e9, aa=9999, cycle=inf, bogus_field | iter 10000000 aa 16 upp_log2 -3.40e7; clamped [zoom depth, max_iter, cycle, offset, anti-aliasing]; unknown [bogus_field] | clamped & finite; report lists clamped + unknown | ✅ PASS |
+| View format | custom gradient round-trips in the view | 2 segments: off-centre mid, Bézier blend, HSV space, alpha | 2 segments back, custom true, 3 derived stops | every field bit-identical; custom palette re-selected | ✅ PASS |
+| View format | every emitted key is a known key | 22 keys written | all known | writer ⊆ KNOWN_VIEW_KEYS | ✅ PASS |
+| View format | preset views carry no embedded gradient | use_custom_palette = false | absent | no palette_custom key | ✅ PASS |
+| View format | a corrupt gradient is refused, not applied | palette_custom spanning 0.3..0.9 | 2 segments kept; clamped [custom palette] | live gradient untouched + reported clamped | ✅ PASS |
 | Formatting | zoom mantissa grouped | 3.38050027227e15 | 3.38050 02722 7e15 | "3.38050 02722 7e15" | ✅ PASS |
 | Formatting | deep coordinate elides middle | 32-digit center @ ~1e30×; and -0.5 | -0.74364 38870 … 11477 40000  |  -0.5 | leading … frontier; short coord safe | ✅ PASS |
 | appearance | method coherent — Smooth iteration | 480x270 | stddev 87.6, 16 buckets | stddev ≥ 6, ≥ 3 buckets | ✅ PASS |
@@ -188,7 +196,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | bench-matrix | fractal-phoenix | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 | bench-matrix | fractal-newton | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 
-**173/173 checks passed.**
+**181/181 checks passed.**
 
 ## Coverage & scope
 
