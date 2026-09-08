@@ -317,6 +317,7 @@ once. Export, Render tour, Benchmark and the Misiurewicz explorer all already di
 | Tour from current view | Save tour… | Cancel | ✅already correct |
 | Misiurewicz explorer | Solve & jump | *(progress)* Cancel | ✅if/else, correct |
 | Reset application state | Reset everything | Cancel | ⛔**deliberate exception**: Cancel is FIRST |
+| Reference cache (beta.78) | — | Close | the limit applies at once; the red **Clear cache…** takes the Reset layout (Close left, red button RIGHTMOST) and confirms INLINE the same way (Cancel first, red Delete second) — it costs time, never data |
 | Running benchmark… | — | Cancel | progress only ✅ |
 | Notice | — | Close | ✅ |
 | Help · Welcome · Gallery · Bookmarks · Diagnostics · Benchmark results · Share · Report | — | *(title bar ✕)* | ✅present information; nothing to abandon |

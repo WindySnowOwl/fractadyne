@@ -945,6 +945,7 @@ impl FractadyneApp {
                 ui.add_space(2.0);
                 ui.label("• the saved session (current view, coloring, preferences)");
                 ui.label("• all bookmarks and their thumbnails");
+                ui.label("• the reference-orbit cache (rebuilt as you revisit locations)");
                 ui.add_space(6.0);
                 ui.label(egui::RichText::new("Location").weak().small());
                 ui.label(
@@ -985,6 +986,9 @@ impl FractadyneApp {
                     // Don't recreate what we just deleted; reflect the cleared bookmarks in the UI.
                     self.suppress_autosave = true;
                     self.bookmarks.clear();
+                    // The orbit cache lived in that directory too: drop its index so a later
+                    // lookup does not hand out paths that no longer exist.
+                    crate::refcache_persist::set_dir_override(None);
                     self.set_toast(
                         "Application state reset — defaults will load on the next launch.",
                         ctx,

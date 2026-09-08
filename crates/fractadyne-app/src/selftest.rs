@@ -321,7 +321,7 @@ impl FractadyneApp {
         const GROUPS: &[&str] = &[
             "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
             "consistency", "counters", "iter-budget", "iter-chunk", "nr-zoom", "coords",
-            "ref-pick", "script", "metadata",
+            "ref-pick", "ref-reuse", "orbit-cache", "script", "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
             "checklist",
         ];
@@ -768,6 +768,45 @@ impl FractadyneApp {
                 params: "corpus07 1e30x, 200k iter, extend vs fresh pick".into(),
                 result,
                 threshold: "reuse engaged AND 0 texels differ",
+                pass,
+            });
+        }
+
+        // ⭐⭐**The on-disk orbit cache renders the same image as a fresh pick.** The cache exists
+        // so an extreme location costs seconds instead of an hour to return to, and its failure
+        // mode is a WRONG picture arrived at quickly: a blob that decodes into a subtly different
+        // reference renders fine and wrong, and nothing downstream would notice. The codec's unit
+        // tests pin the bytes; only a render can pin the picture, so this does — the same
+        // identity check as `ref-reuse`, with the reference sent through the store's own write,
+        // lookup and load on the way, plus an UNAIDED arm: a worker given no hint must find the
+        // entry itself, because a lookup that silently misses builds fresh and renders the same
+        // picture, which is the one failure the identity arm cannot see.
+        //
+        // At 1e30, like `ref-reuse`, so it runs in every bare `--selftest` even though the payoff
+        // is at e60205 — a gate people learn to skip is no gate. Against a scratch directory; the
+        // cache itself stays OFF for the rest of the run, as for every task invocation.
+        if want("orbit-cache") {
+            let mag = 1.0e30;
+            const OCX: &str = "-0.743643887037158704752191506114774";
+            const OCY: &str = "0.131825904205311970493132056385139";
+            let mut vp = Viewport::new(N as f64, N as f64);
+            vp.center_x = fractadyne_core::parse_bf(OCX).unwrap();
+            vp.center_y = fractadyne_core::parse_bf(OCY).unwrap();
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
+            vp.precision = fractadyne_core::precision_for_magnification(mag);
+            let saved_iter = self.render_cfg.max_iter;
+            let saved_auto = self.render_cfg.auto_iter;
+            self.render_cfg.max_iter = 200_000;
+            self.render_cfg.auto_iter = false;
+            let (pass, result) = self.selfcheck_orbit_cache(device, queue, &vp, N as u32, 20_000);
+            self.render_cfg.max_iter = saved_iter;
+            self.render_cfg.auto_iter = saved_auto;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "OrbitCache",
+                name: "an orbit from the disk cache renders the same as a fresh pick".into(),
+                params: "corpus07 1e30x, 200k iter; written, found, loaded, extended; then unaided".into(),
+                result,
+                threshold: "found AND reuse engaged AND 0 texels differ AND the unaided worker hit",
                 pass,
             });
         }

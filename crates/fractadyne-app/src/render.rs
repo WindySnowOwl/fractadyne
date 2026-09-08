@@ -126,15 +126,15 @@ pub(crate) struct CorrectedIter {
 // it at all because the resolution shrink normalises the frame back onto the budget. Reading
 // the real numbers settles in one run what guessing at the constants does not.
 
+/// Serializing a reference orbit so an extreme location can be returned to in seconds
+/// instead of an hour. See the module for why the artifact is far smaller than it sounds.
+pub(crate) mod orbit_blob;
+
 /// A completed reference recompute (orbit + series-approximation + BLA), ready to install into a
 /// view's reference cache. Produced by [`recompute_worker`], off the render thread, so the slow
 /// deep-zoom bignum work never blocks a frame.
 ///
 /// `Clone` is cheap on purpose (the orbit and BLA are `Arc`s): the coarse-preview probe clones a
-/// Serializing a reference orbit so an extreme location can be returned to in seconds
-/// instead of an hour. See the module for why the artifact is far smaller than it sounds.
-pub(crate) mod orbit_blob;
-
 /// result to render a 56×56 verdict frame before deciding whether to install the original.
 #[derive(Clone)]
 pub(crate) struct RecomputeResult {
@@ -189,11 +189,18 @@ pub(crate) struct RecomputeResult {
     /// that compares the two must assert this first. (The same rule the chunking A/Bs learned:
     /// assert the mechanism RAN before believing a null result.)
     reused: bool,
+    /// True when the reused reference came from the ON-DISK orbit cache (`refcache_persist`)
+    /// rather than from the live view's memory — the same non-vacuity purpose as `reused`, for
+    /// the `orbit-cache` selftest: "the worker found the entry unaided" must be asserted, not
+    /// assumed, because a lookup that silently misses falls back to a fresh build that renders
+    /// the same picture.
+    from_disk: bool,
 }
 
 /// A cached reference the worker may EXTEND instead of rebuilding from scratch: the prior orbit's
 /// point, df32 samples, full-precision tail, and the precision it was built at. Supplied by
-/// `build_params` when the current recompute is a deeper zoom at a still-in-view reference.
+/// `build_params` when the current recompute is a deeper zoom at a still-in-view reference, and
+/// by the on-disk orbit cache (`refcache_persist`) for a location visited in an earlier session.
 pub(crate) struct ReuseRef {
     pub(crate) point: [fractadyne_core::BigFloat; 2],
     pub(crate) prefix: std::sync::Arc<Vec<[f32; 4]>>,
@@ -420,8 +427,26 @@ pub(crate) fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
     // Deep-dive reuse: when the prior reference is still valid for this (deeper) frame, EXTEND its
     // orbit instead of recomputing every bignum step (the orbit build dominates a deep frame). Falls
     // back to a fresh pick + full build when there's no reusable orbit or it no longer qualifies.
+    let key = orbit_key_for(&inp);
     if let Some(res) = try_reuse_reference(&inp) {
+        offer_to_orbit_cache(&res, key, inp.origin);
         return res;
+    }
+    // ⭐⭐**The on-disk orbit cache, consulted BEFORE the pick.** A location visited in an earlier
+    // session — or a view NEAR one — has its orbit on disk, keyed on the reference point, and
+    // the lookup admits any entry whose point this view could reuse (the same test as above).
+    // Before the pick, not after it, because the pick is not cheap where this matters: at
+    // 2.37e4000× the candidate scoring cost 113.7 s against 32.8 s for the orbit itself, so a
+    // cache that paid the pick to find its key would leave most of the saving on the table.
+    let mut inp = inp;
+    if let Some(reuse) = orbit_cache_lookup(&inp, key) {
+        inp.reuse = Some(reuse);
+        if let Some(mut res) = try_reuse_reference(&inp) {
+            res.from_disk = true;
+            offer_to_orbit_cache(&res, key, inp.origin);
+            return res;
+        }
+        inp.reuse = None; // cannot happen (the lookup used the same test) — build fresh if it does
     }
     // pick_reference scores candidate orbits in bignum; at extreme depth (cold, no reusable
     // reference) this is the DOMINANT export cost — ~7 s of a ~15 s me148 render, far more
@@ -431,7 +456,106 @@ pub(crate) fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
     if crate::diag::trace_on("ref") {
         crate::diag::trace("ref", format!("pick_reference (candidate scoring) took {:.0}ms", t_pick.elapsed().as_secs_f64() * 1000.0));
     }
-    build_reference_from_point(rp, inp.gpu_iter, inp.do_sa, &inp)
+    let res = build_reference_from_point(rp, inp.gpu_iter, inp.do_sa, &inp);
+    offer_to_orbit_cache(&res, key, inp.origin);
+    res
+}
+
+/// The identity of the orbit `inp` would build: formula, Julia c, and the backend a fresh build
+/// would run in. (An EXTENDED orbit keeps the backend of its tail; `offer_to_orbit_cache`
+/// substitutes that.)
+fn orbit_key_for(inp: &RecomputeInputs) -> orbit_blob::OrbitKey {
+    orbit_blob::OrbitKey {
+        formula_id: inp.formula,
+        julia: inp.julia,
+        julia_c: [inp.julia_c.0, inp.julia_c.1],
+        backend: fractadyne_core::selected_backend().bit(),
+    }
+}
+
+/// ⭐⭐**The ONE admissibility test for reusing a reference**, whether it comes from the live
+/// view's memory (`inp.reuse`) or from the disk cache: built at a precision this depth can use,
+/// and its point still inside the view. Returns the drift in spans (the larger axis) when the
+/// reference may be reused.
+///
+/// The disk lookup calls THIS through `refcache_persist::Query::fits`, and `try_reuse_reference`
+/// calls it on what the lookup returns — the producer is gated on the consumer's predicate, so a
+/// cache entry can never be selected by one rule and refused by another.
+fn reuse_drift(inp: &RecomputeInputs, point: &[fractadyne_core::BigFloat; 2], prec: usize) -> Option<f64> {
+    use fractadyne_core as fc;
+    if prec < inp.precision {
+        return None;
+    }
+    let dx = fc::ref_offset_mantissa(&inp.center_bf[0], &point[0], inp.delta_exp, inp.precision)
+        / inp.span_mantissa.x;
+    let dy = fc::ref_offset_mantissa(&inp.center_bf[1], &point[1], inp.delta_exp, inp.precision)
+        / inp.span_mantissa.y;
+    if dx.abs() > REUSE_MAX_DRIFT || dy.abs() > REUSE_MAX_DRIFT {
+        return None;
+    }
+    Some(dx.abs().max(dy.abs()))
+}
+
+/// Look for an orbit on disk this build could reuse. `None` when the cache is off, holds nothing
+/// admissible, or the chosen entry failed to verify (in which case it has been removed).
+fn orbit_cache_lookup(inp: &RecomputeInputs, key: orbit_blob::OrbitKey) -> Option<ReuseRef> {
+    if !crate::refcache_persist::enabled() {
+        return None;
+    }
+    let t = Instant::now();
+    let fits = |point: &[fractadyne_core::BigFloat; 2], prec: usize| reuse_drift(inp, point, prec);
+    let hit = crate::refcache_persist::find(&crate::refcache_persist::Query { key, fits: &fits })?;
+    let decoded = crate::refcache_persist::load(&hit.path);
+    // The index said `len`/`prec`; the rest comes from the file itself, once it has verified.
+    let on_disk = decoded
+        .as_ref()
+        .map(|d| format!(" (built for ask={} at req_prec={}, partial={})", d.header.iter, d.header.req_prec, d.header.partial))
+        .unwrap_or_default();
+    crate::diag::log_line(
+        "cache",
+        &format!(
+            "orbit cache {} [{}]: {} len={} prec={}{on_disk} drift={:.3} spans ({} of this identity) in {:.0} ms",
+            if decoded.is_some() { "HIT" } else { "entry REFUSED" },
+            inp.origin,
+            hit.path.file_name().and_then(|f| f.to_str()).unwrap_or("?"),
+            hit.orbit_len,
+            hit.prec,
+            hit.drift,
+            hit.candidates,
+            t.elapsed().as_secs_f64() * 1000.0,
+        ),
+    );
+    decoded.map(|d| d.reuse)
+}
+
+/// `--uitest`'s seed for the Reference cache window: build one orbit and write it to the store
+/// SYNCHRONOUSLY, bypassing the build-time threshold, so the window photographs a populated
+/// layout rather than chrome around no data. Returns whether an entry was written.
+pub(crate) fn seed_orbit_cache_for_uitest(inp: RecomputeInputs) -> bool {
+    let key = orbit_key_for(&inp);
+    let res = recompute_worker(inp);
+    let Some(tail) = &res.orbit_tail else { return false };
+    let key = orbit_blob::OrbitKey { backend: tail.backend, ..key };
+    orbit_blob::encode(&res, key)
+        .and_then(|b| crate::refcache_persist::offer(b).ok().flatten())
+        .is_some()
+}
+
+/// Hand a finished build to the on-disk cache, on a detached thread so the worker returns at once.
+/// The store decides whether it is worth a file (build-time threshold for a new identity; only a
+/// LONGER orbit replaces an existing one), and this checks that first so the common case — a
+/// cheap shallow build — costs one lock and no clone.
+fn offer_to_orbit_cache(res: &RecomputeResult, key: orbit_blob::OrbitKey, origin: &'static str) {
+    if !crate::refcache_persist::enabled() || res.coarse_stage || res.orbit.is_empty() {
+        return;
+    }
+    let Some(tail) = &res.orbit_tail else { return };
+    let key = orbit_blob::OrbitKey { backend: tail.backend, ..key };
+    let id = orbit_blob::key_id(&key, res.prec, &res.rp);
+    if !crate::refcache_persist::wanted(id, res.orbit_len, res.ref_ms) {
+        return;
+    }
+    crate::refcache_persist::offer_async(res.clone(), key, origin);
 }
 
 /// Choose the reference point for `inp`. The ranking scan is internally capped (`REF_SCORE_SCAN`),
@@ -658,8 +782,9 @@ fn finish_reference(
         orbit_tail,
         spawn_orbit_id: inp.spawn_orbit_id,
         // The reuse path sets this on the way out; every other caller of `finish_reference` built
-        // the orbit from a fresh pick.
+        // the orbit from a fresh pick. `from_disk` likewise, by `recompute_worker`.
         reused: false,
+        from_disk: false,
     }
 }
 
@@ -675,18 +800,13 @@ fn finish_reference(
 fn try_reuse_reference(inp: &RecomputeInputs) -> Option<RecomputeResult> {
     use fractadyne_core as fc;
     let reuse = inp.reuse.as_ref()?;
-    if reuse.prec < inp.precision || reuse.prefix.is_empty() {
+    if reuse.prefix.is_empty() {
         return None;
     }
-    // Re-verify the point is still a good in-view reference (defence in depth; the caller already
-    // gated on `!out_of_view`, but this snapshot could in principle lag).
-    let dx = fc::ref_offset_mantissa(&inp.center_bf[0], &reuse.point[0], inp.delta_exp, inp.precision)
-        / inp.span_mantissa.x;
-    let dy = fc::ref_offset_mantissa(&inp.center_bf[1], &reuse.point[1], inp.delta_exp, inp.precision)
-        / inp.span_mantissa.y;
-    if dx.abs() > REUSE_MAX_DRIFT || dy.abs() > REUSE_MAX_DRIFT {
-        return None;
-    }
+    // Re-verify the point is still a good in-view reference at a usable precision (defence in
+    // depth; the caller already gated on `!out_of_view`, but this snapshot could in principle
+    // lag). ⭐The same test the disk lookup selects by — see `reuse_drift`.
+    reuse_drift(inp, &reuse.point, reuse.prec)?;
     let t = Instant::now();
     let (cx0, cy0) = if inp.julia {
         (
@@ -761,6 +881,22 @@ fn recompute_worker_staged(
     // normal views → a single full build.
     const COARSE_ITER: u32 = 16384;
     if progressive && COARSE_ITER < inp.gpu_iter {
+        // ⭐A cold start at a location the on-disk cache holds is not cold: the full orbit is
+        // there, and a coarse preview would only put a capped frame on screen for the instant
+        // it takes to load. Same lookup as `recompute_worker`, and for the same reason it comes
+        // before the pick. This is also how a restored session gets its deep view back.
+        let key = orbit_key_for(&inp);
+        let mut inp = inp;
+        if let Some(reuse) = orbit_cache_lookup(&inp, key) {
+            inp.reuse = Some(reuse);
+            if let Some(mut res) = try_reuse_reference(&inp) {
+                res.from_disk = true;
+                offer_to_orbit_cache(&res, key, inp.origin);
+                let _ = tx.send(res);
+                return;
+            }
+            inp.reuse = None;
+        }
         let rp = pick_reference(&inp);
         // Coarse stage skips series approximation: its `series_skip` is a bignum coefficient pass
         // that costs seconds at extreme depth (≈ as much as the whole reference), and this stage
@@ -781,6 +917,7 @@ fn recompute_worker_staged(
             return; // receiver dropped (view/formula changed) → abandon the full stage
         }
         let full = build_reference_from_point(rp, inp.gpu_iter, inp.do_sa, &inp);
+        offer_to_orbit_cache(&full, key, inp.origin);
         let _ = tx.send(full);
     } else {
         let _ = tx.send(recompute_worker(inp));
@@ -1728,69 +1865,6 @@ impl FractadyneApp {
         self.hold_prefetch.iter().any(|h| t >= h.at && t <= h.until)
     }
 
-    /// Snapshot view 0's FULL reference for on-disk persistence (see `refcache_persist`), or `None`
-    /// if there's nothing worth saving yet — no reference, an empty orbit, or only a truncated coarse
-    /// one (which would render capped; better to rebuild the full one next launch). The view-key is
-    /// taken from the primary viewport, so this is meaningful only for `vi == 0`.
-    pub(crate) fn build_saved_ref(&self, vi: usize) -> Option<crate::refcache_persist::SavedRef> {
-        let vc = &self.ref_cache[vi];
-        let rp = vc.ref_pt.as_ref()?;
-        if vc.partial || vc.orbit.is_empty() {
-            return None;
-        }
-        Some(crate::refcache_persist::SavedRef {
-            center_x_str: fractadyne_core::to_decimal_string(&self.viewport.center_x),
-            center_y_str: fractadyne_core::to_decimal_string(&self.viewport.center_y),
-            upp_e: self.viewport.units_per_pixel.e,
-            formula_id: self.fractal.formula_id(),
-            julia: self.julia_mode,
-            julia_c: self.julia_c,
-            rp_x_str: fractadyne_core::to_decimal_string(&rp[0]),
-            rp_y_str: fractadyne_core::to_decimal_string(&rp[1]),
-            orbit: vc.orbit.clone(),
-            orbit_len: vc.orbit_len,
-            orbit_iter: vc.orbit_iter,
-            orbit_prec: vc.orbit_prec as u64,
-            partial: vc.partial,
-            sa: vc.sa,
-            bla: vc.bla.clone(),
-            bla_dc_max_log2: vc.bla_dc_max_log2,
-        })
-    }
-
-    /// Install a persisted reference snapshot into view `vi` (reverse of `build_saved_ref`), so a
-    /// restored session renders its deep view at once instead of rebuilding the (up to ~10 s) bignum
-    /// orbit. Mirrors `install_recompute`'s field writes. Returns false and installs nothing if the
-    /// stored reference point can't be parsed (treated as a cache miss → normal rebuild).
-    pub(crate) fn install_saved_ref(&mut self, vi: usize, s: crate::refcache_persist::SavedRef) -> bool {
-        let (Some(rx), Some(ry)) = (
-            fractadyne_core::parse_bf(&s.rp_x_str),
-            fractadyne_core::parse_bf(&s.rp_y_str),
-        ) else {
-            return false;
-        };
-        let vc = &mut self.ref_cache[vi];
-        vc.ref_pt = Some([rx, ry]);
-        vc.orbit = s.orbit;
-        vc.orbit_len = s.orbit_len;
-        vc.orbit_id = vc.orbit_id.wrapping_add(1);
-        vc.orbit_prec = s.orbit_prec as usize;
-        vc.orbit_iter = s.orbit_iter;
-        vc.partial = s.partial;
-        vc.last_recompute = Some(Instant::now());
-        vc.sa = s.sa;
-        vc.sa_key = (vc.orbit_id, s.orbit_iter);
-        vc.bla = s.bla;
-        // The persisted tree's stripe-frequency / trap-type aren't stored (not part of the view-key),
-        // so mark them unknown — a stripe/trap render then rebuilds once against the live params
-        // (cheap, ~20 ms).
-        vc.bla_stripe_freq = f64::NEG_INFINITY;
-        vc.bla_trap_type = u32::MAX;
-        vc.bla_id = vc.orbit_id;
-        vc.bla_dc_max_log2 = s.bla_dc_max_log2;
-        true
-    }
-
     /// Pick a reference point and compute its high-precision orbit for the current
     /// formula, arranging `Z₀`/`c` for Mandelbrot vs Julia mode. Returns the orbit,
     /// its length, and the chosen reference point (for the δ-offset).
@@ -2066,6 +2140,114 @@ impl FractadyneApp {
         size: u32,
         short_iter: u32,
     ) -> (bool, String) {
+        self.selfcheck_reuse_identity(device, queue, vp, size, short_iter, &|s, _| {
+            let tail = s.orbit_tail.clone().ok_or_else(|| "the short orbit carries no tail".to_string())?;
+            Ok(ReuseRef { point: s.rp.clone(), prefix: s.orbit.clone(), tail, prec: s.prec })
+        })
+    }
+
+    /// ⭐⭐**Does an orbit that went through the DISK render the same image as a fresh pick?**
+    ///
+    /// The on-disk cache (`refcache_persist`) exists so an extreme location costs seconds instead
+    /// of an hour to return to; its failure mode is a WRONG picture arrived at quickly, which
+    /// nothing downstream would notice. The codec's own tests pin the bytes; this pins the claim
+    /// that matters, with a GPU: a reference written to disk, found by the cache's own lookup,
+    /// decoded and EXTENDED renders bit-identically to one built fresh.
+    ///
+    /// Two arms, both with non-vacuity guards:
+    /// 1. **Through the store**: the short reference is encoded, written, looked up and loaded,
+    ///    and the identity check runs on what came back (reuse must ENGAGE and GROW).
+    /// 2. **Unaided**: a worker given NO reuse hint must find the entry on its own, because a
+    ///    lookup that silently misses falls back to a fresh build that renders the same picture
+    ///    — the one failure the identity arm cannot see.
+    ///
+    /// ⚠Runs against a scratch directory, with the cache forced ON for its duration and restored
+    /// after, so it neither reads nor pollutes the real cache. Background writes are drained
+    /// before the restore, so none can land in the real directory afterwards.
+    pub(crate) fn selfcheck_orbit_cache(
+        &self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        vp: &Viewport,
+        size: u32,
+        short_iter: u32,
+    ) -> (bool, String) {
+        use crate::refcache_persist as cache;
+        let scratch = std::env::temp_dir().join("fractadyne-selftest-orbits");
+        let _ = std::fs::remove_dir_all(&scratch);
+        let was_on = cache::enabled();
+        cache::set_dir_override(Some(scratch.clone()));
+        cache::set_enabled(true);
+        let verdict = self.selfcheck_orbit_cache_inner(device, queue, vp, size, short_iter);
+        cache::drain();
+        cache::set_enabled(was_on);
+        cache::set_dir_override(None);
+        let _ = std::fs::remove_dir_all(&scratch);
+        verdict
+    }
+
+    fn selfcheck_orbit_cache_inner(
+        &self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        vp: &Viewport,
+        size: u32,
+        short_iter: u32,
+    ) -> (bool, String) {
+        use crate::refcache_persist as cache;
+        let via = |s: &RecomputeResult, inp: &RecomputeInputs| -> Result<ReuseRef, String> {
+            let tail = s.orbit_tail.as_ref().ok_or("the short orbit carries no tail")?;
+            let key = orbit_blob::OrbitKey { backend: tail.backend, ..orbit_key_for(inp) };
+            let bytes = orbit_blob::encode(s, key).ok_or("encode refused the short reference")?;
+            let written = cache::offer(bytes).map_err(|e| format!("write failed: {e}"))?;
+            if written.is_none() {
+                return Err("the store declined the entry".into());
+            }
+            orbit_cache_lookup(inp, key).ok_or_else(|| "the lookup MISSED the entry just written".to_string())
+        };
+        let (pass, msg) = self.selfcheck_reuse_identity(device, queue, vp, size, short_iter, &via);
+        if !pass {
+            return (false, msg);
+        }
+        // Arm 2. The identity arm's extension was offered to the store on a background thread;
+        // let it land so the unaided lookup sees the store as a later session would.
+        cache::drain();
+        let Some(inp) = self.export_reference_inputs_for(vp, false, IterBudget::current(self)) else {
+            return (false, "could not rebuild the inputs for the unaided arm".into());
+        };
+        let t = Instant::now();
+        let c = recompute_worker(inp);
+        let unaided_ms = t.elapsed().as_secs_f64() * 1000.0;
+        if !c.from_disk {
+            return (
+                false,
+                format!("{msg}; but the worker did NOT consult the cache on its own (reused={})", c.reused),
+            );
+        }
+        let u = cache::usage();
+        (
+            true,
+            format!(
+                "{msg}; unaided, the worker served len={} from disk in {unaided_ms:.0}ms ({} entries, {})",
+                c.orbit_len,
+                u.entries,
+                cache::fmt_bytes(u.bytes)
+            ),
+        )
+    }
+
+    /// The shared body of the two reuse-identity checks: a fresh CONTROL build, a SHORT build,
+    /// a reuse arm seeded from the short build by `via`, and a bit-for-bit comparison of the two
+    /// renders — with the guards that keep the comparison from passing vacuously.
+    fn selfcheck_reuse_identity(
+        &self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        vp: &Viewport,
+        size: u32,
+        short_iter: u32,
+        via: &dyn Fn(&RecomputeResult, &RecomputeInputs) -> Result<ReuseRef, String>,
+    ) -> (bool, String) {
         use std::sync::atomic::{AtomicBool, AtomicU32};
         let Some(inp_a) = self.export_reference_inputs_for(vp, false, IterBudget::current(self)) else {
             return (false, "no reference for this view (direct path) — nothing to compare".into());
@@ -2084,19 +2266,17 @@ impl FractadyneApp {
             return (false, "could not build the short (live-like) reference inputs".into());
         };
         let sref = recompute_worker(inp_s);
-        let Some(tail) = sref.orbit_tail.clone() else {
+        if sref.orbit_tail.as_ref().is_none_or(|t| t.escaped) {
             return (false, "the short orbit ESCAPED, so there is no tail to extend from".into());
-        };
+        }
         let short_len = sref.orbit_len;
         let Some(mut inp_b) = self.export_reference_inputs_for(vp, false, IterBudget::current(self)) else {
             return (false, "could not rebuild the inputs for the reuse arm".into());
         };
-        inp_b.reuse = Some(ReuseRef {
-            point: sref.rp.clone(),
-            prefix: sref.orbit.clone(),
-            tail,
-            prec: sref.prec,
-        });
+        inp_b.reuse = match via(&sref, &inp_b) {
+            Ok(r) => Some(r),
+            Err(e) => return (false, e),
+        };
         let b = recompute_worker(inp_b);
         // ⚠⚠**THE NON-VACUITY GUARD.** Reuse declines silently — wrong precision, drifted point,
         // no prefix — and falls back to a fresh build, in which case both arms are the same build

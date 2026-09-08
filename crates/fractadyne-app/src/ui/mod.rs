@@ -10,5 +10,6 @@ mod dialogs;
 mod menus;
 mod panels;
 pub(crate) mod diagnostics;
+mod orbit_cache;
 pub(crate) mod misiurewicz_explorer;
 pub(crate) mod tour_render;

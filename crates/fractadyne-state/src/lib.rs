@@ -127,6 +127,10 @@ pub struct SessionState {
     /// otherwise reload as the default 60 instead of staying uncapped.
     #[serde(default = "default_fps_cap")]
     pub fps_cap: f64,
+    /// Size limit of the on-disk reference-orbit cache, in MB (File ▸ Settings ▸ Reference
+    /// cache…). Default 1024. `serde(default)` keeps older session files loadable.
+    #[serde(default = "default_orbit_cache_mb")]
+    pub orbit_cache_mb: u32,
     /// Last-used export settings (remembered across sessions).
     #[serde(default = "default_export_width")]
     pub export_width: u32,
@@ -366,6 +370,10 @@ fn default_fps_cap() -> f64 {
     60.0
 }
 
+fn default_orbit_cache_mb() -> u32 {
+    1024
+}
+
 fn default_fractal() -> String {
     "Mandelbrot".to_string()
 }
@@ -477,6 +485,7 @@ impl Default for SessionState {
             aa: default_aa(),
             finish_sound: default_finish_sound(),
             fps_cap: default_fps_cap(), // 60 (0 = uncapped)
+            orbit_cache_mb: default_orbit_cache_mb(),
             export_width: default_export_width(),
             export_ss: default_export_ss(),
             export_format: default_export_format(),

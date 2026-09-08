@@ -613,6 +613,19 @@ pub(crate) const DEEP_LAG_HOLD: f64 = 1.8;
 /// leaves the df32 samples byte-identical — this only grows the accumulation margin, not the render.
 pub(crate) const REF_PREC_HEADROOM: usize = 128;
 
+/// An orbit whose build took less than this is not written to the on-disk orbit cache
+/// (`refcache_persist`) — a 5 ms orbit is not worth a 4 MB file, and a dive at moderate depth
+/// would otherwise write one every rebuild. Only a NEW identity is held to it: a longer build of
+/// an orbit already on disk always replaces it, however quick the extension was. At the live cap
+/// this admits builds from roughly e300-e1000 on, where a rebuild first becomes something you wait
+/// for.
+pub(crate) const ORBIT_CACHE_MIN_BUILD_MS: f64 = 1000.0;
+
+/// Default size limit of the on-disk orbit cache, in MB (user-settable in File ▸ Settings ▸
+/// Reference cache…). One live-cap orbit is ~4 MB, so this holds ~250 extreme locations; a
+/// full-quality 2,000,000-iteration orbit is 32 MB.
+pub(crate) const ORBIT_CACHE_DEFAULT_MB: u32 = 1024;
+
 /// BLA per-step linear tolerance (drops δz² with relative error ≤ this). Smaller ⇒ more
 /// accurate but fewer/smaller skips; 1e-6 keeps pixel error negligible while still merging.
 pub(crate) const BLA_EPS: f64 = 1.0e-6;

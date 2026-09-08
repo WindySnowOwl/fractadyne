@@ -283,6 +283,20 @@ impl FractadyneApp {
                                 )
                                 .on_hover_text("Otherwise, check manually via Help → Check for updates.");
                             });
+                            ui.separator();
+                            // Opens another surface, so no verb of its own and no icon (§8.1).
+                            if ui
+                                .button("Reference cache…")
+                                .on_hover_text(
+                                    "Deep-zoom reference orbits kept on disk, so a location you \
+                                     return to renders in seconds. Where it is, how big, the \
+                                     limit, and a way to clear it.",
+                                )
+                                .clicked()
+                            {
+                                self.dialogs.orbit_cache_open = true;
+                                ui.close_menu();
+                            }
                         });
                         ui.separator();
                         if ui

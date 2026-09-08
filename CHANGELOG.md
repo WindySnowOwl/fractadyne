@@ -12,6 +12,37 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Returning to an extreme location now costs seconds, not an hour: the reference-orbit cache**
+  (beta.78). Every deep reference orbit that took more than a second to build is kept on disk
+  (`<config>/orbits/`, ~4 MB each at the live cap), and the next build that could use it — the
+  same location, or any nearby view the orbit's point lies inside of, at any precision up to the
+  one it was built at — loads it instead of rebuilding. A restored session gets its deep view back
+  the same way, which retires the old one-slot `last_reference.bin`.
+
+  **Before the pick, not after it.** The design first keyed the lookup on the *picked* reference
+  point. Numbers already in the tree said otherwise: at 2.37e4000× the candidate scoring cost
+  113.7 s against 32.8 s for the orbit itself. So the worker consults the cache first, admitting any
+  entry whose point is inside the view — by exactly the test the live deep-dive reuse applies, one
+  function, so an entry can never be selected by one rule and refused by another.
+
+  **Evicted by build cost, not recency.** A dive writes a stream of cheap orbits; under LRU they
+  would evict the hour-long one from last week before any of themselves. The cheapest orbit
+  (`iterations × precision²`) goes first, and an entry that would not survive its own eviction is
+  refused before it is written.
+
+  **Gated.** `--selftest` gains `orbit-cache`: a reference written, found, loaded and extended
+  through the cache must render bit-identically to a fresh pick, and a worker given no hint must
+  find the entry on its own — a lookup that silently misses builds fresh and renders the same
+  picture, which the identity check alone cannot see. The codec grew a self-verifying header (so the
+  index reads ~50 KB per entry, not 4 MB) and is again pinned by flipping every byte in turn.
+
+  **Visible, like a browser's cache.** File ▸ Settings ▸ **Reference cache…** shows where it is
+  (openable), usage against the limit, what it holds, a limit you can set (persisted), and a Clear
+  with a confirmation — clearing costs time, never data. Off for every task invocation
+  (`--render`, `--selftest`, `--bench-matrix`, tours…), so a gate builds what it measures;
+  `--orbit-cache` / `--no-orbit-cache` override either way.
+
+
 - **Groundwork for returning to an extreme location in seconds instead of an hour** (beta.77).
   The hour is spent building the reference orbit — but what the GPU consumes from it is 16 bytes
   per iteration, so the artifact that took an hour is **4.1 MB** at the live cap and 32 MB at full

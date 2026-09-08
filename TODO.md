@@ -3585,16 +3585,18 @@ eleaseractadyne.exe),
     pixels within `ThresholdC`) third, which lands exactly on our Misiurewicz-spar pain case.
     ⚠Read `HarmonicLLA`/`HarmonicMLA` before committing the stage design — possibly the successor
     construction, but the reviewer's own read is low-confidence and the theory is undocumented.
-  - [ ] **T2b′. Multi-entry reference-orbit CACHE — design written, codecs landed beta.77.**
+  - [x] ✅**T2b′. Multi-entry reference-orbit CACHE — SHIPPED beta.78** (codecs beta.77).
     ⭐⭐Returning to an extreme location costs **30-60+ min**, all of it the reference orbit — but
     the GPU consumes 16 bytes/iteration, so the artifact is **4.1 MB** at `LIVE_REF_CAP`. And one
     orbit serves a NEIGHBOURHOOD (perturbation renders every pixel as a delta from it), so coming
-    back and zooming *nearby* is free too. ⛔**`refcache_persist` ALREADY EXISTS** (one slot, keyed
-    on the exact view, no tail ⇒ not extendable): this GROWS it, it does not sit beside it.
-    ▶Full design, the comparison table, and the plan: **`design/orbit-cache.md`**.
-    ✅Landed: `fractadyne_core::bfbytes` (exact BigFloat words) + `render::orbit_blob` (+ tests).
-    ▶Next: the bit-identity GATE, then measure SA/BLA rebuild at depth, then the cache + its
-    browser-style controls (path, usage, limit, clear — author's requirement 2026-09-08).
+    back and zooming *nearby* is free too. `refcache_persist` GREW from its one-slot form into the
+    store; the worker consults it BEFORE the pick (⭐at e4000 the pick cost 3.5× the orbit) with the
+    same admissibility test the live reuse applies; eviction is by BUILD COST, not LRU (a dive's
+    cheap entries must never displace the hour-long one). Gated by `--selftest` `orbit-cache`
+    (bit-identity + an unaided-lookup arm); controls in File ▸ Settings ▸ Reference cache…
+    ▶Design, corrections and the numbers: **`design/orbit-cache.md`**.
+    ▶**Remaining: the cold-vs-cached measurement at `validation/spiral-9.98e60205.fdn`** (30-60
+    min per cold build), and the e60205 orbit/pick/BLA split from the traced `deep-location` run.
   - [ ] **T2d. Self-referential orbit compression for `refcache_persist`.** Imagina's scheme (perturb the
     orbit against its own PREFIX, waypoint + rebase-bit + rebase-index list, emit only where the
     self-perturbation drifts past a relative-error bound) is materially better than FractalShark's
@@ -4354,7 +4356,7 @@ eleaseractadyne.exe),
   - ⚠**`fe_steps_last` cannot distinguish a chunked frame from an unchunked one** — the `if
     key_changed` block overwrites it with the FULL ask, which is every frame of a dive. The honest
     signal is `FRACTADYNE_TRACE=tile` `chunk f=… cur=… step=…`, printed ONLY when `chunk_over` is true.
-  - ⭐**Fast mode-2 repro without a 15-minute dive**: copy `session.toml` (+ `last_reference.bin`)
+  - ⭐**Fast mode-2 repro without a 15-minute dive**: copy `session.toml` (+ the `orbits/` cache dir)
     into a throwaway `FRACTADYNE_CONFIG_DIR` — the saved spar view boots straight into mode 2 at
     2^341.5× with an explicit 4,000,000 count.
 

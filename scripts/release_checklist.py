@@ -603,6 +603,34 @@ STEPS = [
      "it, open the gradient editor and load that entry from the 'Saved' menu.",
      "It is still there after the restart and comes back with its curves, midpoints and colour "
      "spaces intact - not flattened to plain stops."),
+
+    # ------------------------------------------------- the on-disk reference-orbit cache (beta.78)
+    # The thing it saves is minutes to an hour of arbitrary-precision work; the thing it can get
+    # wrong is a plausible picture of the wrong place. The selftest pins the second (bit-identity
+    # against a fresh build, and that the worker finds the entry unaided); these rows are the
+    # user-visible half - that a return visit is actually fast, and that the controls tell the truth.
+    ("Reference cache",
+     "Open a deep location (validation/spiral-9.98e60205.fdn, or any view past ~1e1000) and let it "
+     "finish its reference build. Quit, relaunch, and open the SAME location again; then zoom or "
+     "pan a little way from it.",
+     "The second visit renders in seconds, not minutes - the log carries an 'orbit cache HIT' line "
+     "and no long 'building reference' phase - and the nearby view reuses the same orbit (another "
+     "HIT, no rebuild). The picture is the one the first visit showed."),
+    ("Reference cache",
+     "File > Settings > Reference cache... . Press 'Open folder'.",
+     "The window shows the cache's folder path, a usage bar against the limit with the orbit "
+     "count, and the orbits it holds (iterations, precision, size, last used). 'Open folder' "
+     "opens that folder in the file manager and the .orbit files are there."),
+    ("Reference cache",
+     "Set the limit BELOW the current usage (drag the MB value down).",
+     "Usage drops under the new limit at once. What went was the CHEAPEST orbits (short, shallow); "
+     "the deep one from the first row is still listed - a stream of quick entries must never "
+     "displace the hour-long one."),
+    ("Reference cache",
+     "Press 'Clear cache...'. Cancel once; then do it again and confirm.",
+     "It asks first (Cancel first, the red Delete second). After Delete the usage reads 0 orbits, "
+     "the folder is empty, and the next visit to the deep location rebuilds its reference (slow "
+     "again) - clearing cost time, not data."),
     ("Sign-off",
      "Review every FAIL and BLOCKED row above with the release decision in mind.",
      "Either all rows PASS, or each non-PASS has an agreed decision (fix before release / accept "
@@ -773,6 +801,12 @@ ENFORCERS = [
     ("Palette interchange", "manual"),
     ("Palette interchange", "manual"),
     ("Palette interchange", "partial:test:a_saved_gradient_round_trips_through_toml_without_flattening"),
+    # The identity and the unaided hit are machine-proven at 1e30; the relaunch and the "seconds,
+    # not minutes" at real depth are the human half.
+    ("Reference cache", "partial:selftest:an orbit from the disk cache renders the same as a fresh pick"),
+    ("Reference cache", "uitest:reference-cache"),
+    ("Reference cache", "partial:test:eviction_drops_the_cheapest_orbit_not_the_oldest"),
+    ("Reference cache", "partial:test:clear_removes_every_entry_and_stray_temp_files"),
     ("Sign-off", "process"),
 ]
 

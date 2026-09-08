@@ -54,7 +54,7 @@ freeze-reproject + export requests + the staged `build_params` frame builder), `
 (`CLI_REFERENCE` + Help window), `cli.rs` (headless commands, the CLI-launched mode-state
 structs, and `update()`'s harness hooks + mode ladder), `export.rs` (view-metadata / `.fdn`),
 `tunables.rs` (every frame-cost constant; `--set` overrides), `fractal.rs`
-(`FractalKind`), `refcache_persist.rs` (persist/restore the deep-zoom reference), `error.rs`
+(`FractalKind`), `refcache_persist.rs` (the on-disk reference-orbit cache), `error.rs`
 (`AppError`), `selftest.rs` (GPU validation), `theme.rs`, `profile.rs` (profiling + the
 `--frametest`/`--divetest` harnesses), `livetest.rs` (the live-vs-offline output harness),
 `sysinfo.rs`, `diag.rs` (log/crash/watchdog/trace), `alloc.rs` (allocation-failure hook),
@@ -145,7 +145,8 @@ stall, so it runs on a spawned `std::thread`; the render keeps drawing with the 
 and installs the fresh one when it lands. A deeper rebuild **reuses** the cached orbit — it
 *extends* the stored bignum prefix from a saved tail (byte-identical) instead of recomputing every
 step, since the orbit build is ~90% of a deep frame (~20× faster dive-rebuilds). The last deep
-view's reference also persists across sessions (`refcache_persist.rs`) so it resumes instantly.
+view's reference is also kept in the on-disk orbit cache (`refcache_persist.rs`), so a restored
+session resumes in seconds and any later view near that point reuses the orbit.
 
 **Script-playback reference lookahead + pacing.** A tour knows its future camera path, so during
 playback a small queue of workers pre-builds the references the dive is about to need
@@ -267,6 +268,10 @@ Stored in the OS per-user config dir (`FRACTADYNE_CONFIG_DIR` overrides it):
   (`state_version`): a file from a newer build loads best-effort and warns. Center stored as
   full-precision decimal strings + a `FloatExp` scale exponent so deep locations survive restart.
 - **`bookmarks.toml`** + **`bookmark_thumbs/`** — saved locations + thumbnails.
+- **`orbits/*.orbit`** — the reference-orbit cache (`refcache_persist.rs`, `design/orbit-cache.md`):
+  one verified blob per deep reference orbit (~4 MB at the live cap), keyed on the reference point,
+  found by any later view the point lies inside of, evicted cheapest-first against a user-set
+  budget (`orbit_cache_mb`, File ▸ Settings ▸ Reference cache…). Off for task invocations.
 - **`.fdn` share files** — self-contained key=value locations (copy/paste/save/load); parsed through
   the hardened, fuzzed metadata reader (allow-list, every field validated/clamped).
 

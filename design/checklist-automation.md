@@ -266,11 +266,27 @@ another application can say whether the file means to it what it means to us. `p
 | 137 | M | A **real** Adobe `.ase`. ⚠The one importer written from the published layout rather than against a real file; its fixtures share the parser's understanding, so they prove consistency only. |
 | 138 | B | `a_saved_gradient_round_trips_through_toml_without_flattening` — the library keeps segments, not stops. ⚠Partial: the restart itself is human. |
 
-### Sign-off (139)
+### Reference cache (139–142)
+
+The on-disk reference-orbit cache (beta.78, `orbit-cache.md`). What it saves is minutes to an hour
+of arbitrary-precision work; what it could get wrong is a plausible picture of the wrong place. The
+second is machine-pinned — `--selftest` `orbit-cache` renders a reference that went through the
+store's own write, lookup and load bit-identically against a fresh pick, and asserts a worker with
+no hint finds the entry unaided. These rows are the human half: that a return visit is actually
+fast at real depth, and that the controls tell the truth.
 
 | # | class | enforcer |
 |---|---|---|
-| 139 | P | Not a behaviour. `checklist_coverage.py` can assert every row carries a verdict and no row is blank, which is the mechanical half. |
+| 139 | B | `an orbit from the disk cache renders the same as a fresh pick` — identity + the unaided hit, at 1e30. ⚠Partial: the relaunch, and "seconds not minutes" at e60205, are human. |
+| 140 | A | `uitest:reference-cache` — the window photographed with one real entry seeded, so path, usage bar, rows and the Clear button all render populated. |
+| 141 | B | `eviction_drops_the_cheapest_orbit_not_the_oldest` — the budget change evicts at once and takes the cheapest, never the dearest. ⚠Partial: the drag gesture is human. |
+| 142 | B | `clear_removes_every_entry_and_stray_temp_files` — the store empties. ⚠Partial: that it ASKED first is the inline confirm, seen only by eye. |
+
+### Sign-off (143)
+
+| # | class | enforcer |
+|---|---|---|
+| 143 | P | Not a behaviour. `checklist_coverage.py` can assert every row carries a verdict and no row is blank, which is the mechanical half. |
 
 ---
 

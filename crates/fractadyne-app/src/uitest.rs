@@ -42,6 +42,10 @@ enum Screen {
     ScriptExport,
     TourRender,
     ResetConfirm,
+    /// File ▸ Settings ▸ Reference cache… — the on-disk orbit cache's controls. ⚠Seeded with
+    /// one real entry first, so the usage bar, the rows and the Clear button all render
+    /// populated: a screenshot of the empty state would photograph chrome around no data.
+    OrbitCache,
     Notice,
     PaletteEditor,
     /// The same editor in RING view. ⭐A palette is cycled, so the ring is the only place the
@@ -651,6 +655,7 @@ fn build_steps() -> Vec<Step> {
         screen("script-to-view", Screen::ScriptExport),
         screen("tour-render", Screen::TourRender),
         screen("reset-confirm", Screen::ResetConfirm),
+        screen("reference-cache", Screen::OrbitCache),
         screen("notice", Screen::Notice),
         screen("palette-editor", Screen::PaletteEditor),
         screen("palette-editor-ring", Screen::PaletteEditorRing),
@@ -967,6 +972,8 @@ impl FractadyneApp {
         self.dialogs.bench_open = false;
         self.dialogs.bench_dialog_open = false;
         self.dialogs.reset_confirm_open = false;
+        self.dialogs.orbit_cache_open = false;
+        self.dialogs.orbit_cache_confirm = false;
         self.dialogs.script_export_open = false;
         self.dialogs.notice = None;
         self.gallery.open = false;
@@ -985,6 +992,9 @@ impl FractadyneApp {
         self.diagnostics.open = false;
         self.misi.open = false;
         self.dialogs.minimap = false;
+        // The Reference cache screen turns the (task-invocation-disabled) orbit cache on against a
+        // scratch store; no later step may render from it, so it goes back off with the window.
+        crate::refcache_persist::set_enabled(false);
     }
 
     fn uitest_open_screen(&mut self, ctx: &egui::Context, s: Screen) {
@@ -1034,6 +1044,31 @@ impl FractadyneApp {
             Screen::ScriptExport => self.dialogs.script_export_open = true,
             Screen::TourRender => self.tour_render.open = true,
             Screen::ResetConfirm => self.dialogs.reset_confirm_open = true,
+            Screen::OrbitCache => {
+                // The walk runs as a task invocation, so the cache is OFF and empty. Point it at
+                // a scratch directory holding one real (shallow) orbit for the duration, so the
+                // window photographs the populated layout. `uitest_close_all` restores nothing
+                // here on purpose: the walk's config dir is a throwaway, and the store is put
+                // back when the process ends.
+                let scratch = std::env::temp_dir().join("fractadyne-uitest-orbits");
+                let _ = std::fs::remove_dir_all(&scratch);
+                crate::refcache_persist::set_dir_override(Some(scratch));
+                crate::refcache_persist::set_enabled(true);
+                let mut vp = fractadyne_core::Viewport::new(256.0, 256.0);
+                vp.set_center_log2mag(
+                    fractadyne_core::parse_bf("-0.7436438870371587047521915061147707").unwrap(),
+                    fractadyne_core::parse_bf("0.131825904205311970493132056385139").unwrap(),
+                    100.0,
+                );
+                if let Some(inp) = self.export_reference_inputs_for(
+                    &vp,
+                    false,
+                    crate::render::IterBudget { max_iter: 20_000, auto_iter: false },
+                ) {
+                    crate::render::seed_orbit_cache_for_uitest(inp);
+                }
+                self.dialogs.orbit_cache_open = true;
+            }
             Screen::Notice => {
                 self.dialogs.notice = Some((
                     "UI-test notice".to_string(),
