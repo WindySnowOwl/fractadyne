@@ -12,6 +12,40 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Locations saved before v0.2.20 had been loading without their coordinates** (beta.73), and
+  the sample location that ships in the release archive was one of them.
+
+  `v0.2.20` renamed the centre from `center_x`/`center_y` to `center_re`/`center_im` — the right
+  call, since Re/Im is what the deep-zoom community and our own `.kfr` output use — but it
+  changed the writer and the reader in one step and left nothing that could read the old
+  spelling. Every `.fdn`, and every exported PNG and EXR, written before that release therefore
+  loaded with its **coordinates silently dropped**: the zoom, palette and iteration count
+  applied, and the view stayed wherever it already was. Both spellings are now read; the writer
+  still emits only the current one.
+
+  `scripts/deep-sample.fdn` — the ~1e1108× location the README points new users at — has been
+  in that state for fifty-two releases. It is deliberately left in its old format, because it is
+  the only genuine pre-rename file we have and it is what proves the compatibility path works
+  against something real rather than a string built in a test.
+
+- **Every location file in the repository is now checked on every test run.** The sweep covers
+  all 81 `.fdn` files, the 39 `.kfr` locations, and the view metadata in the golden PNGs, and it
+  asserts they load with no complaint at all — including that their lack of markers and
+  checksums stays silent, since absence is the norm for anything written before those existed.
+  It is what found the rename above. The shipped sample additionally has to survive DOS and
+  classic-Mac line endings, a word processor's minus signs, and a stray byte-order mark.
+
+- **A PNG carrying Fractadyne metadata is not necessarily a view.** The golden images store the
+  command line that reproduces them under the same `tEXt` keyword an exported view uses, which
+  is the right payload for a golden and indistinguishable to the reader. The gallery already
+  filtered on this; Open view did not, and would have told someone opening a golden that their
+  file was "missing center_re, center_im" rather than that it holds no view. Found by writing a
+  test against the wrong assumption and then reading what the files actually say.
+
+- The view reader's parse-and-diagnose step is now separate from applying it, so a file can be
+  checked without moving the camera — which is what made the sweep above possible at all.
+
+
 - **A saved view is now a document, not just a blob of fields** (beta.72). Locations travel by
   clipboard — a forum post, a chat message, a file mailed to someone — and that journey is lossy
   in ways the sender never sees. Several changes, all aimed at that.

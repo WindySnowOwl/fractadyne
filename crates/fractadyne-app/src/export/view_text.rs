@@ -163,3 +163,64 @@ fn the_digest_is_order_independent_but_value_sensitive() {
     let d = view_digest([("center_r", "e-0.5"), ("max_iter", "100")].into_iter());
     assert_ne!(a, d, "the key/value separator must be part of the digest");
 }
+
+// ---------------------------------------------------------------- legacy key names
+
+/// ⛔⭐⭐**A rename without an alias orphans every file already written.** `v0.2.20` moved the centre
+/// from `center_x`/`center_y` to `center_re`/`center_im` and changed the writer AND the reader in
+/// one step. Every `.fdn`, PNG and EXR written before that release then loaded with its coordinates
+/// SILENTLY DROPPED — zoom, palette and iterations applied, and the view stayed where it was.
+///
+/// This is pinned synthetically as well as against the real shipped specimen, so the behaviour
+/// survives that file being regenerated.
+#[test]
+fn pre_v0_2_20_centre_keys_are_still_read() {
+    let old = "app=Fractadyne\nformat_version=1\nfractal=Mandelbrot\njulia=0\n\
+               center_x=-0.743643887037158704752191506114774\n\
+               center_y=0.131825904205311970493132056385139\n\
+               upp_log2=-9.96578428466208700e1\nmax_iter=60000\n";
+    let (report, fields) = crate::export::inspect_view_text(old);
+    let get = |k: &str| {
+        fields.iter().find(|(f, _, _, _)| f == k).map(|(_, v, _, _)| v.clone()).unwrap_or_default()
+    };
+    assert_eq!(get("center_re"), "-0.743643887037158704752191506114774");
+    assert_eq!(get("center_im"), "0.131825904205311970493132056385139");
+    assert!(report.missing.is_empty(), "the centre must count as present: {:?}", report.missing);
+    assert_eq!(report.note(), None, "an old file must load in silence, not with a warning");
+}
+
+/// ⚠The legacy spellings must not be reported as unknown keys — that is the same "warned about a
+/// field it had just honoured" defect the `KNOWN_VIEW_KEYS` gate exists to prevent.
+#[test]
+fn legacy_keys_are_not_reported_as_unknown() {
+    for (old, new) in crate::export::LEGACY_VIEW_KEYS {
+        assert!(
+            crate::export::KNOWN_VIEW_KEYS.contains(old),
+            "{old:?} is read but not in KNOWN_VIEW_KEYS — every load of an old file would warn"
+        );
+        assert!(crate::export::KNOWN_VIEW_KEYS.contains(new), "{new:?} missing from KNOWN_VIEW_KEYS");
+    }
+}
+
+/// ⚠**The current name wins**, so a file carrying both is read as whatever wrote the newer key.
+#[test]
+fn the_current_name_wins_over_the_legacy_one() {
+    let both = "app=Fractadyne\ncenter_re=-0.5\ncenter_im=0.25\n\
+                center_x=-9.9\ncenter_y=-9.9\nupp_log2=-3\n";
+    let (_, fields) = crate::export::inspect_view_text(both);
+    let re: Vec<&String> =
+        fields.iter().filter(|(k, _, _, _)| k == "center_re").map(|(_, v, _, _)| v).collect();
+    assert_eq!(re, vec!["-0.5"], "the legacy value must not shadow or duplicate the current one");
+}
+
+/// ⭐And the writer must never START emitting the legacy names — they are read-only compatibility.
+#[test]
+fn the_writer_never_emits_a_legacy_key() {
+    let w = wrap_view_text(&bare());
+    for (old, _) in crate::export::LEGACY_VIEW_KEYS {
+        assert!(
+            !w.contains(&format!("{old}=")),
+            "the writer emitted the legacy key {old:?}; it is for READING old files only"
+        );
+    }
+}

@@ -269,11 +269,32 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "app", "version", "format_version", "saved_unix", "saved", "notes", "fractal", "julia",
     "julia_c_re", "julia_c_im", "center_re", "center_im", "upp", "upp_log2", "zoom", "max_iter",
     "auto_iter", "palette", "cycle", "offset", "aa", "palette_custom", "thumb", "checksum",
+    // Pre-v0.2.20 spellings, still read. See `LEGACY_VIEW_KEYS`.
+    "center_x", "center_y",
 ];
 
 /// Without these a "view" is not a view. Their absence is reported by NAME, so a paste that
 /// lost its tail says what to go back for instead of silently landing somewhere else.
 pub(crate) const ESSENTIAL_VIEW_KEYS: &[&str] = &["center_re", "center_im"];
+
+/// Keys a PREVIOUS version of Fractadyne wrote, mapped to their current names: `(old, new)`.
+///
+/// ⛔⭐⭐**A rename without an alias orphans every file already written.** `v0.2.20` moved the
+/// centre from `center_x`/`center_y` to `center_re`/`center_im` — the right call, since Re/Im
+/// is what the deep-zoom community and our own `.kfr` output use — but it changed the writer
+/// AND the reader in one step and left nothing to read the old spelling. Every `.fdn`, and
+/// every exported PNG and EXR, written before that release therefore loaded with its
+/// COORDINATES SILENTLY DROPPED: zoom, palette and iteration count applied, and the view stayed
+/// wherever it happened to be. Our own shipped sample location was one of them, unnoticed for
+/// fifty-two releases, and it is the file the README points new users at.
+///
+/// ⭐**Read-only.** The writer emits the current names and only those; this exists so old data
+/// keeps working, not so the format has two spellings going forward.
+///
+/// ⚠**The new name wins when both are present**, so a file carrying both (nothing we write,
+/// but a hand-merged one might) is read as the version that wrote the newer key.
+pub(crate) const LEGACY_VIEW_KEYS: &[(&str, &str)] =
+    &[("center_x", "center_re"), ("center_y", "center_im")];
 
 /// What each key's value has to BE, so an unreadable one is reported with a position instead of
 /// being silently skipped.
@@ -292,6 +313,9 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("julia_c_im", ValueKind::Float),
     ("center_re", ValueKind::BigFloat),
     ("center_im", ValueKind::BigFloat),
+    // The pre-v0.2.20 spellings get the same scrutiny as the current ones.
+    ("center_x", ValueKind::BigFloat),
+    ("center_y", ValueKind::BigFloat),
     ("upp", ValueKind::Float),
     ("upp_log2", ValueKind::Float),
     ("max_iter", ValueKind::Uint),
@@ -464,6 +488,146 @@ pub(crate) fn decode_embedded_thumbnail(meta: &str) -> Option<(u32, u32, Vec<u8>
         .find(|(k, _)| *k == "thumb")?;
     let png = fractadyne_text::base64::decode(b64)?;
     fractadyne_export::read_png_rgba8_bytes(&png).ok()
+}
+
+/// Does this metadata blob look like a VIEW at all?
+///
+/// ⛔⭐⭐**A PNG `tEXt` chunk under our keyword is not necessarily a view.** The golden images
+/// use the same `Fractadyne` keyword to store the command line that reproduces them, which is the
+/// right thing for a golden and indistinguishable from a view to `read_png_metadata`. Without this
+/// check, opening one reported "missing: center_re, center_im" — a complaint about a file that
+/// was never claiming to be a location.
+///
+/// ⭐The rule is the gallery's own, which already had to solve this: the blob must carry
+/// `app=Fractadyne`.
+pub(crate) fn looks_like_a_view(meta: &str) -> bool {
+    view_field_pairs(meta)
+        .into_iter()
+        .any(|(k, v)| k == "app" && v == "Fractadyne")
+}
+
+/// Parse and DIAGNOSE view text without applying any of it.
+///
+/// ⭐⭐**Split out so a file can be checked without moving the view.** `load_view_metadata`
+/// jumps the camera and records history as it parses, which makes it useless for answering
+/// "would this file load cleanly?" — the question a shipped-data gate has to ask of every
+/// location in the repo.
+///
+/// Returns the report so far and the parsed fields as `(key, value, line, value column)`.
+/// ⚠`clamped` stays empty: clamping is something APPLYING does, and this does not apply.
+pub(crate) fn inspect_view_text(meta: &str) -> (ViewLoad, Vec<(String, String, usize, usize)>) {
+    let mut report = ViewLoad::default();
+    // ⭐⭐**Repair the clipboard first, parse second.** A location that has been through a chat
+    // client or a word processor comes back with a Unicode minus sign where a hyphen was, or a
+    // zero-width space inside a number — invisible changes that make a perfectly good
+    // coordinate unparseable. `clean` also normalizes CR / CRLF / LF, so a file saved on any
+    // platform (or mangled by a transfer that rewrote endings) reads the same.
+    let cleaned = fractadyne_text::clean(meta);
+    report.repairs = cleaned.summary();
+    let meta = cleaned.text.as_str();
+
+    // One pass, keeping WHERE each field came from. The old reader re-scanned every line for
+    // every key and kept no positions, so it could not say anything about a bad line beyond
+    // ignoring it.
+    let mut fields: Vec<(String, String, usize, usize)> = Vec::new();
+    let (mut saw_begin, mut saw_end) = (false, false);
+    for (n, raw) in fractadyne_text::numbered_lines(meta) {
+        let t = raw.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if t.starts_with('#') {
+            // ⚠Check BEGIN first: neither marker is a substring of the other, but relying on
+            // that silently is how a renamed marker becomes a mystery.
+            if t.contains("BEGIN FRACTADYNE VIEW") {
+                saw_begin = true;
+            } else if t.contains("END FRACTADYNE VIEW") {
+                saw_end = true;
+            }
+            continue;
+        }
+        let Some((k, v)) = raw.split_once('=') else {
+            // ⚠Named, not silently dropped — this is usually a wrapped long line from a paste,
+            // and the user can only fix what they are told about.
+            if report.problems.len() < 8 {
+                let shown: String = t.chars().take(32).collect();
+                report.problems.push(format!(
+                    "line {n}: no \u{27}=\u{27} and not a comment, ignored ({shown:?})"
+                ));
+            }
+            continue;
+        };
+        let key = k.trim().to_string();
+        // 1-based CHARACTER column of the first character of the value — what an editor shows,
+        // which a byte offset is not.
+        let col = k.chars().count() + 1 + v.chars().take_while(|c| c.is_whitespace()).count() + 1;
+        if fields.iter().any(|(existing, _, _, _)| *existing == key) && report.problems.len() < 8
+        {
+            report.problems.push(format!(
+                "line {n}: {key:?} appears more than once; the first one is used"
+            ));
+        }
+        fields.push((key, v.trim().to_string(), n, col));
+    }
+    // ⚠⚠BEGIN with no END is the shape a truncated paste takes. No BEGIN at all is NOT a
+    // problem: bare metadata is what lives in a PNG chunk and in every file written before the
+    // markers existed.
+    report.truncated = saw_begin && !saw_end;
+
+    // ⭐⭐**Fold the pre-v0.2.20 spellings in HERE**, before anything else looks at `fields`, so
+    // every consumer — the essential-key check, the apply stage, the shipped-file gate — sees
+    // one vocabulary. Doing it at each read site instead is how one of them gets missed.
+    for (old, new) in LEGACY_VIEW_KEYS {
+        let has_new = fields.iter().any(|(k, _, _, _)| k == new);
+        if has_new {
+            continue;
+        }
+        if let Some((_, v, line, col)) = fields.iter().find(|(k, _, _, _)| k == old).cloned() {
+            fields.push(((*new).to_string(), v, line, col));
+        }
+    }
+
+    let field = |key: &str| fields.iter().find(|(k, _, _, _)| k == key);
+
+    // ⭐Every typed key that is PRESENT but unreadable, named with its position. The apply
+    // stage still uses `.parse().ok()` and keeps the current value on failure — this is what
+    // stops that being invisible.
+    for (key, kind) in TYPED_VIEW_KEYS {
+        if let Some((_, v, line, col)) = field(key) {
+            if !kind.accepts(v) && report.problems.len() < 8 {
+                let shown: String = v.chars().take(24).collect();
+                report.problems.push(format!(
+                    "line {line}, col {col}: {key} needs {} but found {shown:?}",
+                    kind.describe()
+                ));
+            }
+        }
+    }
+    for key in ESSENTIAL_VIEW_KEYS {
+        if field(key).is_none() {
+            report.missing.push(key);
+        }
+    }
+
+    // A file with no `format_version` predates the field but is format-1 compatible.
+    let file_ver = field("format_version")
+        .and_then(|(_, v, _, _)| v.parse::<u32>().ok())
+        .unwrap_or(VIEW_FORMAT_VERSION);
+    report.newer = (file_ver > VIEW_FORMAT_VERSION).then_some(file_ver);
+
+    // Keys we do not recognize (capped, so a junk file cannot flood the report).
+    for (k, _, line, _) in &fields {
+        if !k.is_empty()
+            && !KNOWN_VIEW_KEYS.contains(&k.as_str())
+            && !report.unknown.iter().any(|u| u.starts_with(k.as_str()))
+        {
+            report.unknown.push(format!("{k} (line {line})"));
+            if report.unknown.len() >= 8 {
+                break;
+            }
+        }
+    }
+    (report, fields)
 }
 
 pub(crate) fn wrap_view_text(bare: &str) -> String {
@@ -646,94 +810,11 @@ impl FractadyneApp {
     /// Returns whether the file's `format_version` is within this build's range so callers
     /// can warn on a forward-incompatible (newer) file.
     pub(crate) fn load_view_metadata(&mut self, meta: &str) -> ViewLoad {
-        let mut report = ViewLoad::default();
-        // ⭐⭐**Repair the clipboard first, parse second.** A location that has been through a
-        // chat client or a word processor comes back with a Unicode minus sign where a hyphen
-        // was, or a zero-width space inside a number — invisible changes that make a perfectly
-        // good coordinate unparseable. `clean` also normalizes CR / CRLF / LF, so a file saved
-        // on any platform (or mangled by a transfer that rewrote endings) reads the same.
-        let cleaned = fractadyne_text::clean(meta);
-        report.repairs = cleaned.summary();
-        let meta = cleaned.text.as_str();
-
-        // One pass, keeping WHERE each field came from. The old reader re-scanned every line
-        // for every key and kept no positions, so it could not say anything about a bad line
-        // beyond ignoring it.
-        let mut fields: Vec<(String, String, usize, usize)> = Vec::new();
-        let (mut saw_begin, mut saw_end) = (false, false);
-        for (n, raw) in fractadyne_text::numbered_lines(meta) {
-            let t = raw.trim();
-            if t.is_empty() {
-                continue;
-            }
-            if t.starts_with('#') {
-                // ⚠Check BEGIN first: neither marker is a substring of the other, but relying
-                // on that silently is how a renamed marker becomes a mystery.
-                if t.contains("BEGIN FRACTADYNE VIEW") {
-                    saw_begin = true;
-                } else if t.contains("END FRACTADYNE VIEW") {
-                    saw_end = true;
-                }
-                continue;
-            }
-            let Some((k, v)) = raw.split_once('=') else {
-                // ⚠Named, not silently dropped — this is usually a wrapped long line from a
-                // paste, and the user can only fix what they are told about.
-                if report.problems.len() < 8 {
-                    let shown: String = t.chars().take(32).collect();
-                    report.problems.push(format!(
-                        "line {n}: no \u{27}=\u{27} and not a comment, ignored ({shown:?})"
-                    ));
-                }
-                continue;
-            };
-            let key = k.trim().to_string();
-            // 1-based CHARACTER column of the first character of the value — what an editor
-            // shows, which a byte offset is not.
-            let col = k.chars().count()
-                + 1
-                + v.chars().take_while(|c| c.is_whitespace()).count()
-                + 1;
-            if fields.iter().any(|(existing, _, _, _)| *existing == key)
-                && report.problems.len() < 8
-            {
-                report.problems.push(format!(
-                    "line {n}: {key:?} appears more than once; the first one is used"
-                ));
-            }
-            fields.push((key, v.trim().to_string(), n, col));
-        }
-        // ⚠⚠BEGIN with no END is the shape a truncated paste takes. No BEGIN at all is NOT a
-        // problem: bare metadata is what lives in a PNG chunk and in every file written before
-        // the markers existed.
-        report.truncated = saw_begin && !saw_end;
+        // ⭐Parse and diagnose first, apply second — see `inspect_view_text`.
+        let (mut report, fields) = inspect_view_text(meta);
         let field = |key: &str| fields.iter().find(|(k, _, _, _)| k == key);
         let get = |key: &str| -> Option<String> { field(key).map(|(_, v, _, _)| v.clone()) };
-
-        // ⭐Every typed key that is PRESENT but unreadable, named with its position. The call
-        // sites below still use `.parse().ok()` and keep the current value on failure — this is
-        // what stops that being invisible.
-        for (key, kind) in TYPED_VIEW_KEYS {
-            if let Some((_, v, line, col)) = field(key) {
-                if !kind.accepts(v) && report.problems.len() < 8 {
-                    let shown: String = v.chars().take(24).collect();
-                    report.problems.push(format!(
-                        "line {line}, col {col}: {key} needs {} but found {shown:?}",
-                        kind.describe()
-                    ));
-                }
-            }
-        }
-        for key in ESSENTIAL_VIEW_KEYS {
-            if field(key).is_none() {
-                report.missing.push(key);
-            }
-        }
-
-        // A file with no `format_version` predates the field but is format-1 compatible.
-        let file_ver = get("format_version")
-            .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(VIEW_FORMAT_VERSION);
+        let file_ver = report.newer.unwrap_or(VIEW_FORMAT_VERSION);
         if let Some(f) = get("fractal").and_then(|s| FractalKind::from_name(&s)) {
             self.fractal = f;
         }
@@ -855,20 +936,9 @@ impl FractadyneApp {
         self.invalidate_refs();
         self.pointer.zoom_vel = 0.0;
         self.record_nav();
-        // Report any keys we did not recognize (cap the list so a junk file cannot flood it).
-        // ⭐Now from the PARSED fields, so a comment can never be mistaken for a key.
-        for (k, _, line, _) in &fields {
-            if !k.is_empty()
-                && !KNOWN_VIEW_KEYS.contains(&k.as_str())
-                && !report.unknown.iter().any(|u| u.starts_with(k.as_str()))
-            {
-                report.unknown.push(format!("{k} (line {line})"));
-                if report.unknown.len() >= 8 {
-                    break;
-                }
-            }
-        }
-        report.newer = (file_ver > VIEW_FORMAT_VERSION).then_some(file_ver);
+        // ⚠Unknown keys and `newer` are already in `report` — `inspect_view_text` produced them.
+        // A second pass here would list every unrecognized key twice.
+        let _ = file_ver;
         report
     }
 
@@ -956,6 +1026,13 @@ impl FractadyneApp {
                     fractadyne_export::read_png_metadata(&path)
                 };
                 match meta {
+                    // ⚠Our keyword, but not necessarily a view: the golden images store a
+                    // repro command line under it. Say so, rather than complaining that a
+                    // location which never claimed to be one is missing its centre.
+                    Ok(Some(m)) if !looks_like_a_view(&m) => self.set_toast(
+                        format!("{} has Fractadyne metadata, but not a view.", path.display()),
+                        ctx,
+                    ),
                     Ok(Some(m)) => {
                         if let Some(report) =
                             self.load_view_checked(&m, path.display().to_string())
@@ -1521,3 +1598,5 @@ impl FractadyneApp {
 mod palette_embed;
 #[cfg(test)]
 mod view_text;
+#[cfg(test)]
+mod shipped_files;

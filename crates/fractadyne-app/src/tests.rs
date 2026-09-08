@@ -318,6 +318,12 @@ fn the_sample_location_covers_every_view_key() {
         if SAMPLE_OPTIONAL_KEYS.contains(k) {
             continue;
         }
+        // ⭐A legacy alias is READ-ONLY compatibility — the writer never emits it, so the sample
+        // (which mirrors what the writer produces) must not carry it. Derived from the alias table
+        // rather than listed by hand, so adding a future alias needs no edit here.
+        if crate::export::LEGACY_VIEW_KEYS.iter().any(|(old, _)| old == k) {
+            continue;
+        }
         // `julia=0` is the one legitimately-empty-looking value (a flag, not a string).
         assert!(
             !meta_get(SAMPLE_LOCATION, k).is_empty() || *k == "julia",
