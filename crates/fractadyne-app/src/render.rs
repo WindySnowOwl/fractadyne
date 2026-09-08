@@ -131,6 +131,10 @@ pub(crate) struct CorrectedIter {
 /// deep-zoom bignum work never blocks a frame.
 ///
 /// `Clone` is cheap on purpose (the orbit and BLA are `Arc`s): the coarse-preview probe clones a
+/// Serializing a reference orbit so an extreme location can be returned to in seconds
+/// instead of an hour. See the module for why the artifact is far smaller than it sounds.
+pub(crate) mod orbit_blob;
+
 /// result to render a 56×56 verdict frame before deciding whether to install the original.
 #[derive(Clone)]
 pub(crate) struct RecomputeResult {
@@ -190,11 +194,11 @@ pub(crate) struct RecomputeResult {
 /// A cached reference the worker may EXTEND instead of rebuilding from scratch: the prior orbit's
 /// point, df32 samples, full-precision tail, and the precision it was built at. Supplied by
 /// `build_params` when the current recompute is a deeper zoom at a still-in-view reference.
-struct ReuseRef {
-    point: [fractadyne_core::BigFloat; 2],
-    prefix: std::sync::Arc<Vec<[f32; 4]>>,
-    tail: fractadyne_core::OrbitTail,
-    prec: usize,
+pub(crate) struct ReuseRef {
+    pub(crate) point: [fractadyne_core::BigFloat; 2],
+    pub(crate) prefix: std::sync::Arc<Vec<[f32; 4]>>,
+    pub(crate) tail: fractadyne_core::OrbitTail,
+    pub(crate) prec: usize,
 }
 
 /// Which queued lookahead slot the dive has ARRIVED at: the DEEPEST ready target at or below the

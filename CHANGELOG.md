@@ -12,6 +12,29 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Groundwork for returning to an extreme location in seconds instead of an hour** (beta.77).
+  The hour is spent building the reference orbit — but what the GPU consumes from it is 16 bytes
+  per iteration, so the artifact that took an hour is **4.1 MB** at the live cap and 32 MB at full
+  quality. Small enough to keep, which is the whole opportunity. And because perturbation renders
+  every pixel as a delta from the reference, one saved orbit covers the whole NEIGHBOURHOOD — come
+  back, then zoom somewhere else nearby, with no rebuild.
+
+  This release adds the two codecs and their tests, not the cache itself.
+
+  **Exact `BigFloat` bytes.** A location stores its centre as decimal because a human pastes it,
+  and "correct to the view's precision" is all a location needs. An orbit is a different contract:
+  the stored orbit is the orbit *of a specific point*, so a point that returns differing in its
+  last bits gives a wrong picture, arrived at quickly. Sign, exponent and mantissa words go out and
+  come back verbatim. A ~200,000-bit coordinate is ~25 KB this way against ~60,000 decimal digits.
+
+  **The orbit blob**, carrying everything that determines what the orbit IS — formula, Julia c,
+  backend, precision, iteration count, the exact reference point and the extendable tail — under a
+  digest covering the whole file. Anything not exactly what the writer produced is refused rather
+  than repaired: unlike a pasted location, where a mangled hyphen has an obvious intent, a damaged
+  orbit has no salvageable reading. Tested by flipping one bit at every byte offset in turn; all of
+  them are rejected.
+
+
 - **The deepest location we track: 9.98e60205×** (beta.76). `validation/spiral-9.98e60205.fdn` —
   a 60,231-digit centre, 121 KB. The previous deepest was ~e21000. It is checked by the
   shipped-file sweep like every other location, so it stays loadable for free.

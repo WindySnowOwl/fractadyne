@@ -25,6 +25,10 @@ mod floatexp;
 pub use floatexp::*;
 
 mod bignum;
+
+/// Exact byte serialization of a `BigFloat` — for the reference-orbit cache, where a coordinate
+/// that comes back differing in its last bits is the orbit of a DIFFERENT point.
+pub mod bfbytes;
 pub use bignum::*;
 
 mod viewport;
