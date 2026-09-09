@@ -31,7 +31,8 @@ detail is in the git history.
   **Evicted by build cost, not recency.** A dive writes a stream of cheap orbits; under LRU they
   would evict the hour-long one from last week before any of themselves. The cheapest orbit
   (`iterations × precision²`) goes first, and an entry that would not survive its own eviction is
-  refused before it is written.
+  refused before it is written. A live rebuild that grows an orbit by a single sample no longer
+  rewrites the whole entry either: a replacement has to be more than 1/64 longer than what is stored.
 
   **Gated.** `--selftest` gains `orbit-cache`: a reference written, found, loaded and extended
   through the cache must render bit-identically to a fresh pick, and a worker given no hint must
