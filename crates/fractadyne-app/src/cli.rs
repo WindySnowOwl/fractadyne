@@ -98,17 +98,23 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
     }
     // Check GitHub for a newer release, print the result, and exit (validates the in-app update
     // check headlessly; handy for automation). Optional track: `--check-updates beta` or
-    // `--check-updates=beta` (default stable). Set FRACTADYNE_FAKE_VERSION to pretend the running
-    // build is an older/newer version — the only way to exercise the "update available" branch
-    // while the dev build is ahead of the latest release.
+    // `--check-updates=beta`; with none named it follows the build's own track — beta for a
+    // pre-release build, stable otherwise, the same rule a fresh install applies. Set
+    // FRACTADYNE_FAKE_VERSION to pretend the running build is an older/newer version — the only
+    // way to exercise the "update available" branch while the dev build is ahead of the latest
+    // release (it moves this default too, since the pretend version decides the track).
     if let Some(pos) = args.iter().position(|a| a == "--check-updates" || a.starts_with("--check-updates=")) {
         let track_arg = args[pos]
             .split_once('=')
             .map(|(_, v)| v.to_string())
             .or_else(|| args.get(pos + 1).filter(|a| !a.starts_with('-')).cloned())
             .unwrap_or_default();
-        let track = crate::update::UpdateTrack::from_str(&track_arg);
         let cur = crate::update::running_version();
+        let track = if track_arg.is_empty() {
+            crate::update::default_track_for(&cur)
+        } else {
+            crate::update::UpdateTrack::from_str(&track_arg)
+        };
         println!("Checking {} track (running {cur})…", track.as_str());
         match crate::update::check(track, &cur) {
             crate::update::UpdateStatus::Available { version, url, prerelease } => {

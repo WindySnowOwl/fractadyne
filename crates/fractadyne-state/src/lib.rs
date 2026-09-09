@@ -297,7 +297,9 @@ pub struct SessionState {
     /// UI theme: `"dark"` (default) or `"light"`.
     #[serde(default = "default_theme")]
     pub theme: String,
-    /// Update-check track: `"stable"` (default) or `"beta"` (include pre-releases).
+    /// Update-check track: `"stable"` (default) or `"beta"` (include pre-releases). The app moves
+    /// a session that came back as DEFAULTS onto `"beta"` when the running build is itself a
+    /// pre-release (`update::default_track_for`); a saved value is never touched.
     #[serde(default = "default_update_track")]
     pub update_track: String,
     /// Automatically check for updates on launch (off by default — no network calls unless enabled).

@@ -75,8 +75,9 @@ A fractal explorer for Windows and Linux in Rust (wgpu + egui/eframe), built for
   the missing frames); `scripts/render-spiral-dive.ps1` detects a prior run and offers Resume / Over.
 - **Updates & issue reporting** — an in-app update check (Help → "Check for updates", or on
   launch if enabled) against GitHub Releases, with a persisted **Stable / Beta** track choice
-  (View → Settings → Updates; a Beta user is always offered the newest of either channel) and a
-  direct download link — no auto-install. **Help → "Report an issue…"** pre-fills an email
+  (View → Settings → Updates; a pre-release build starts on Beta and a stable build on Stable,
+  and a Beta user is always offered the newest of either channel) and a direct download link —
+  no auto-install. **Help → "Report an issue…"** pre-fills an email
   (type picker, optional system info, log/`.fdn`/screenshot attach notes).
 - **Open-source notices** — the bundled dependency licenses are reproduced in
   `THIRD-PARTY-NOTICES.md` (shipped with each release) and in-app under **Help → Licenses**.

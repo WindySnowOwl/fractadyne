@@ -4743,7 +4743,7 @@ impl FractadyneApp {
         // Restore the last session (or defaults). The center comes from the
         // full-precision decimal strings when present (deep-zoom locations survive
         // restart); older session files without them fall back to the f64 fields.
-        let (s, state_load) = fractadyne_state::load_with_status();
+        let (mut s, state_load) = fractadyne_state::load_with_status();
         // ⭐WHICH session this run is using, on the record. Every setting with no CLI flag —
         // coloring method, DE/lighting, series approximation, glitch correction — comes from that
         // file, so "which file, and did it actually load" is the first question behind any "why
@@ -4765,6 +4765,28 @@ impl FractadyneApp {
                 }
             ),
         );
+        // ⭐A pre-release build with NO saved choice starts on the Beta update track. The first
+        // public announcement points at a beta, and whoever downloads it should hear about the next
+        // beta without first finding View ▸ Settings ▸ Updates. Only when the session came back as
+        // defaults — a fresh install, or a file that could not be read — because a saved "stable"
+        // is a choice and is kept. Written into the state so the session records it explicitly.
+        // The launch check itself stays opt-in; this decides only which track a check follows.
+        if matches!(
+            &state_load,
+            fractadyne_state::StateLoad::Fresh | fractadyne_state::StateLoad::Unreadable
+        ) {
+            let track = update::default_track_for(&update::running_version());
+            if track != update::UpdateTrack::from_str(&s.update_track) {
+                s.update_track = track.as_str().to_string();
+                crate::diag::log_line(
+                    "start",
+                    &format!(
+                        "update track: {} — the default for a pre-release build with no saved session",
+                        track.as_str()
+                    ),
+                );
+            }
+        }
         // Surface a warning (once the UI is up) if the session file was written by a newer build
         // than this one can fully account for.
         let pending_state_warning = match state_load {

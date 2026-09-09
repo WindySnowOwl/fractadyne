@@ -12,6 +12,16 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A beta build now starts on the beta update track** (beta.79). The first public announcement
+  will point at a pre-release, and someone who downloads it should hear about the next one
+  without first finding View ▸ Settings ▸ Updates. On a fresh install — or when the saved session
+  cannot be read — a build whose version carries a pre-release suffix (`0.2.41-beta.79`) sets the
+  track to Beta; a stable build keeps Stable. A saved choice is never touched, so a beta user who
+  picked Stable stays there, and the launch check itself stays opt-in: nothing is asked of the
+  network until you turn it on. `--check-updates` with no track named follows the same rule, and
+  the start-up log records the decision.
+
+
 - **Returning to an extreme location now costs seconds, not hours: the reference-orbit cache**
   (beta.78). Measured at 9.98e60205× with a 2,000,000-iteration ask: the live view's reference
   took **6 h 26 min cold and 1.3 s cached**; an export-grade build **8 h 52 min cold and 3 s

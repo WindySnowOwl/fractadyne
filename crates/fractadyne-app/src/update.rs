@@ -5,7 +5,7 @@
 const REPO: &str = "WindySnowOwl/fractadyne";
 
 /// Which release track the update check follows.
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub(crate) enum UpdateTrack {
     /// Latest stable release (GitHub "latest", excludes pre-releases).
     #[default]
@@ -61,6 +61,26 @@ pub(crate) fn channel_word(prerelease: bool) -> &'static str {
 /// prompt) can be exercised while the running build is already current.
 pub(crate) fn running_version() -> String {
     std::env::var("FRACTADYNE_FAKE_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string())
+}
+
+/// Is `version` a pre-release (`0.2.41-beta.78`, `0.3.0-rc.1`), by the same reading the
+/// comparator uses — a `-` suffix after the core triple. A leading `v` is tolerated.
+pub(crate) fn is_prerelease(version: &str) -> bool {
+    parse_ver(strip_v(version)).1.is_some()
+}
+
+/// The track a build with NO saved choice starts on: **Beta for a pre-release build, Stable
+/// otherwise.** The first public announcement points at a beta, and someone who downloads a beta
+/// should hear about the next one without first discovering View ▸ Settings ▸ Updates; someone on
+/// a stable build did not ask for pre-releases and is not moved onto them. Applied only where no
+/// choice exists — a fresh install, an unreadable session, a bare `--check-updates` — never over a
+/// saved track.
+pub(crate) fn default_track_for(version: &str) -> UpdateTrack {
+    if is_prerelease(version) {
+        UpdateTrack::Beta
+    } else {
+        UpdateTrack::Stable
+    }
 }
 
 /// Blocking update check. `current` is the running semver (e.g. `env!("CARGO_PKG_VERSION")`).
@@ -251,8 +271,28 @@ fn cmp_ver(a: &str, b: &str) -> std::cmp::Ordering {
 
 #[cfg(test)]
 mod tests {
-    use super::{cmp_ver, version_gt};
+    use super::{cmp_ver, default_track_for, is_prerelease, version_gt, UpdateTrack};
     use std::cmp::Ordering;
+
+    #[test]
+    fn a_prerelease_build_starts_on_the_beta_track_and_a_stable_one_does_not() {
+        assert_eq!(default_track_for("0.2.41-beta.78"), UpdateTrack::Beta);
+        assert_eq!(default_track_for("v0.2.41-beta.78"), UpdateTrack::Beta);
+        assert_eq!(default_track_for("0.3.0-rc.1"), UpdateTrack::Beta);
+        assert_eq!(default_track_for("0.2.40"), UpdateTrack::Stable);
+        assert_eq!(default_track_for("1.0.0"), UpdateTrack::Stable);
+        // The reading must be the comparator's: what `version_gt` ranks as a pre-release of its
+        // core is exactly what starts on the beta track, so the two can never disagree.
+        for v in ["0.2.41-beta.78", "0.3.0-rc.1", "0.3.0-beta"] {
+            assert!(is_prerelease(v));
+            assert!(version_gt(v.split('-').next().unwrap(), v), "{v} is not below its own core");
+        }
+        // And THIS build decides by its own version string — pin the mapping so a change in how
+        // the version is spelled cannot silently move a beta's first launch onto Stable.
+        let compiled = env!("CARGO_PKG_VERSION");
+        assert_eq!(is_prerelease(compiled), compiled.contains('-'));
+    }
+
     #[test]
     fn beta_picks_newest_of_either_channel() {
         // Graduation: once stable ships it outranks its own prerelease, so a Beta user moves to it.
