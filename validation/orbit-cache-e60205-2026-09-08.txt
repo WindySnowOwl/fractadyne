@@ -1,0 +1,34 @@
+# Raw trace lines behind design/orbit-cache.md's e60205 table (2026-09-08, author's machine, astro-float).
+# All runs: validation/spiral-9.98e60205.fdn, 2,000,000-iteration ask, FRACTADYNE_TRACE=ref.
+
+## export-grade COLD, beta.77 (--selftest-filter deep-location, no cache) — 8.8 h
+[fd-ref] [+20787.309s] pick_reference (candidate scoring) took 20786329ms
+[fd-ref] [+31649.951s] [export] len=1645896 iter=2000000 prec=200193 partial=false escaped=true sa_skip=0 bla_dc_max_log2=-199996.3 bla_nodes=13167200 | orbit_ms=10860669 sa_ms=0 bla_ms=1970
+
+## export-grade COLD, beta.78 (--orbit-cache, writes the entry) — wall 07:41:53 -> 16:33:54 CDT
+[fd-ref] [+21364.900s] pick_reference (candidate scoring) took 21363935ms
+[fd-ref] [+31918.457s] [export] len=1645896 iter=2000000 prec=200193 partial=false escaped=true sa_skip=0 bla_dc_max_log2=-199996.3 bla_nodes=13167200 | orbit_ms=10552106 sa_ms=0 bla_ms=1450
+[fd-cache] [+31918.521s] orbit cache WRITE [export]: b135ab5ac075eff5.orbit (25.2 MB, len=1645896 prec=200193) in 60 ms
+
+## export-grade CACHED, beta.78 — 3 s wall
+[fd-cache] [+    0.927s] orbit cache HIT [export]: b135ab5ac075eff5.orbit len=1645896 prec=200193 (built for ask=2000000 at req_prec=200065, partial=false) drift=0.020 spans (1 of this identity) in 53 ms
+[fd-ref] [+    0.934s] reuse-extend [export]: prefix=1645896 → len=1645896 (target 2000000 = min(gpu_iter 2000000, orbit_len_cap 4294967295, device 7452444))  ⚠DID NOT GROW
+[fd-ref] [+    2.417s] [export] len=1645896 iter=2000000 prec=200193 partial=false escaped=true sa_skip=0 bla_dc_max_log2=-199996.3 bla_nodes=13167200 | orbit_ms=7 sa_ms=0 bla_ms=1482
+checks 1/1, goldens 0/0 — OK
+
+## LIVE COLD (--shot, 256k cap) — first install at +23164 s = 6 h 26 min
+[fd-ref] [+21465.923s] pick [live]: ask=2008192 scored@200064bits survivors=101 winner_len=1645857 offset=(-0.040,0.000) spans deep=perturb(scored=15 rb=78 fb=0)
+[fd-ref] [+21570.835s] [live] len=16385 iter=16384 prec=200192 partial=true escaped=false sa_skip=0 bla_dc_max_log2=-199995.4 bla_nodes=131068 | orbit_ms=104889 sa_ms=0 bla_ms=20
+[fd-ref] [+23164.018s] [live] len=256001 iter=2008192 prec=200192 partial=true escaped=false sa_skip=0 bla_dc_max_log2=-199995.4 bla_nodes=2048004 | orbit_ms=1592890 sa_ms=0 bla_ms=291
+[fd-cache] [+23164.030s] orbit cache WRITE [live]: 2c6860d1daaaf985.orbit (4.0 MB, len=256001 prec=200192) in 10 ms
+[fd-ref] [+23164.089s] install v0: len=256001 partial=true prec=200192 (was len=0 partial=false)
+
+## LIVE CACHED (--shot) — first install at +1.318 s
+[fd-cache] [+    1.074s] orbit cache HIT [live]: 2c6860d1daaaf985.orbit len=256001 prec=200192 (built for ask=2008192 at req_prec=200064, partial=true) drift=0.040 spans (1 of this identity) in 9 ms
+[fd-ref] [+    1.076s] reuse-extend [live]: prefix=256001 → len=256001 (target 256000 = min(gpu_iter 2008192, orbit_len_cap 256000, device 7452444))  ⚠DID NOT GROW
+[fd-ref] [+    1.303s] [live] len=256001 iter=2008192 prec=200192 partial=true escaped=false sa_skip=0 bla_dc_max_log2=-199995.4 bla_nodes=2048004 | orbit_ms=2 sa_ms=0 bla_ms=227
+[fd-ref] [+    1.318s] install v0: len=256001 partial=true prec=200192 (was len=0 partial=false)
+[fd-ref] [+    1.418s] reuse-extend [live]: prefix=256001 → len=256002 (target 256001 = min(gpu_iter 2008192, orbit_len_cap 256001, device 7452444))
+[fd-ref] [+    1.642s] [live] len=256002 iter=2008192 prec=200192 partial=true escaped=false sa_skip=0 bla_dc_max_log2=-199996.9 bla_nodes=2048052 | orbit_ms=7 sa_ms=0 bla_ms=223
+[fd-cache] [+    1.655s] orbit cache WRITE [live]: 2c6860d1daaaf985.orbit (4.0 MB, len=256002 prec=200192) in 12 ms
+[fd-ref] [+    1.714s] install v0: len=256002 partial=true prec=200192 (was len=256001 partial=true)

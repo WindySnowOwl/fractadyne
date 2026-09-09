@@ -8585,6 +8585,10 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   offers no headless/offscreen switch. So it was FractalShark, not its argument parsing, and not
   our scripting; nothing upstream reports it (no matching issue). Filing it upstream with the
   root cause is the useful next step (the user's call — it is a public post).
+  ▶**Upstream reports drafted, NOT filed**: `local/fractalshark-upstream-issues-2026-09-09.md`
+  (⚠`local/` is gitignored — not backed up by a push). Issue 1 = release binaries carry sm_89 +
+  sm_120 only (driver error 209 on 33/33 fat binaries, README says RTX 2xxx+); Issue 2 = the CLI's
+  GL consumer needs a window it never creates. Filing is the user's call.
   **Remaining to close**: ②validate Imagina + FractalShark actually import our `.kfr`
   (operator-assisted — needs the user at the keyboard; DNF instructions in place but untested);
   ③a Radeon-box run (FractalShark lane exercises the N/A path; bench-latest skips its download
