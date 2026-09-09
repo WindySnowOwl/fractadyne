@@ -135,8 +135,15 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
     // backend this machine offers. Headless (the test renders offscreen), so it belongs here
     // rather than in the app: no window flashes, it works over SSH, and it reaches backends the
     // windowed path cannot create a surface for. Exit 1 if any backend's arithmetic is unsound.
+    // Optional `--out FILE` also writes the verbatim report (the Diagnostics dialog passes it so
+    // the result can be opened and attached to a bug report); stdout is unchanged either way.
     if args.iter().any(|a| a == "--gputest") {
-        let fails = crate::gputest::run_gputest_sweep();
+        let out = args
+            .iter()
+            .position(|a| a == "--out")
+            .and_then(|i| args.get(i + 1))
+            .map(std::path::PathBuf::from);
+        let fails = crate::gputest::run_gputest_sweep(out.as_deref());
         crate::exit(if fails > 0 { 1 } else { 0 });
     }
 

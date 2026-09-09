@@ -12,6 +12,18 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The GPU arithmetic check is one click in Help ▸ Diagnostics** (beta.80). The double-float
+  self-test that used to need `--gputest` from a command line is now a third button beside the
+  self-test and the UI test, so the people most able to help — testers on GPUs we do not own,
+  many of them on laptops that never see a terminal — can run it and attach the result to a
+  report without leaving the app. It grades every graphics backend the machine offers in a few
+  seconds and opens no window. Deliberately **informational**, not pass/fail: on every NVIDIA
+  stack tried it reports that the shader compiler folds the error-free transforms, and that is
+  the finding we are trying to map across vendors, not a fault in anyone's machine — so it says
+  "result captured" rather than showing a red failure, and asks for the report either way. The
+  full per-backend table is written to a file that "Open results" shows and "Attach to an issue
+  report…" includes. `--gputest` gains an optional `--out FILE`; its console output is unchanged.
+
 - **A beta build now starts on the beta update track** (beta.79). The first public announcement
   will point at a pre-release, and someone who downloads it should hear about the next one
   without first finding View ▸ Settings ▸ Updates. On a fresh install — or when the saved session

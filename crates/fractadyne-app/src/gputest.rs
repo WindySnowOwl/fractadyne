@@ -274,9 +274,29 @@ fn check_rows(w: u32, h: u32, px: &[f32]) -> Vec<OpCheck> {
     out
 }
 
+/// A tee: every line goes to stdout (so a terminal and the Diagnostics dialog's stream see it as
+/// it happens) and, when a report file was asked for, is also retained VERBATIM for that file —
+/// the dialog trims each streamed line, which would wreck the column alignment, so the on-disk
+/// copy has to come from here rather than from captured stdout.
+struct Sink {
+    lines: Vec<String>,
+    save: bool,
+}
+impl Sink {
+    fn new(save: bool) -> Self {
+        Sink { lines: Vec::new(), save }
+    }
+    fn line(&mut self, s: String) {
+        println!("{s}");
+        if self.save {
+            self.lines.push(s);
+        }
+    }
+}
+
 /// Grade one device's results and print the verdict table. Returns failing op-family count.
-fn report(w: u32, h: u32, px: &[f32]) -> usize {
-    println!("  {:<52} {:>12} {:>10} {:>6}", "op", "max rel err", "tolerance", "");
+fn report(sink: &mut Sink, w: u32, h: u32, px: &[f32]) -> usize {
+    sink.line(format!("  {:<52} {:>12} {:>10} {:>6}", "op", "max rel err", "tolerance", ""));
     let checks = check_rows(w, h, px);
     let mut failed = 0usize;
     for c in &checks {
@@ -286,27 +306,27 @@ fn report(w: u32, h: u32, px: &[f32]) -> usize {
         }
         let verdict = if ok { "PASS" } else { "FAIL" };
         if c.tol == 0.0 {
-            println!(
+            sink.line(format!(
                 "  {:<52} {:>12} {:>10} {:>6}",
                 c.name,
                 if ok { "exact".to_string() } else { format!("{} wrong", c.fails) },
                 "exact",
                 verdict
-            );
+            ));
         } else {
-            println!("  {:<52} {:>12.2e} {:>10.1e} {:>6}", c.name, c.max_err, c.tol, verdict);
+            sink.line(format!("  {:<52} {:>12.2e} {:>10.1e} {:>6}", c.name, c.max_err, c.tol, verdict));
         }
         if !ok && !c.detail.is_empty() {
-            println!("      {}", c.detail);
+            sink.line(format!("      {}", c.detail));
         }
     }
     if failed == 0 {
-        println!("  All {} op families within tolerance.", checks.len());
+        sink.line(format!("  All {} op families within tolerance.", checks.len()));
     } else {
-        println!(
+        sink.line(format!(
             "  {failed} op FAMILY(IES) FAILED — the shader's extended-precision arithmetic does \
              not hold on this stack."
-        );
+        ));
     }
     failed
 }
@@ -337,29 +357,30 @@ fn block_on<F: std::future::Future>(fut: F) -> F::Output {
 /// the blame to a specific compiler instead of "the GPU".
 ///
 /// Returns the number of backends that failed (0 = every available backend is sound).
-pub(crate) fn run_gputest_sweep() -> usize {
+pub(crate) fn run_gputest_sweep(out: Option<&std::path::Path>) -> usize {
     let candidates: [(wgpu::Backends, &str); 3] = [
         (wgpu::Backends::DX12, "DX12"),
         (wgpu::Backends::VULKAN, "Vulkan"),
         (wgpu::Backends::GL, "OpenGL"),
     ];
+    let mut sink = Sink::new(out.is_some());
     // Which backends exist in THIS BINARY is a build-time fact (wgpu gates each behind a Cargo
     // feature), and it is not obvious from the outside: a backend that was never compiled in
     // looks exactly like a missing GPU at runtime. State it, so a report that omits a backend
     // says which of the two happened.
     let compiled = wgpu::Instance::enabled_backend_features();
-    println!(
+    sink.line(format!(
         "Fractadyne GPU primitive self-test — {} · sweeping every available backend\n\
          Verifies the renderer's own df32/floatexp helpers against CPU oracles. The error-free\n\
          transforms (two_sum/two_prod) must be EXACT: they are what makes df32 more than f32.\n\
          Backends compiled into this binary: {compiled:?}\n",
         crate::version_string()
-    );
+    ));
     let mut ran = 0usize;
     let mut failed = 0usize;
     for (backends, label) in candidates {
         if !compiled.contains(backends) {
-            println!("{label}: not compiled into this binary — skipped\n");
+            sink.line(format!("{label}: not compiled into this binary — skipped\n"));
             continue;
         }
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -371,7 +392,7 @@ pub(crate) fn run_gputest_sweep() -> usize {
             force_fallback_adapter: false,
             compatible_surface: None,
         })) else {
-            println!("{label}: no adapter — skipped\n");
+            sink.line(format!("{label}: no adapter — skipped\n"));
             continue;
         };
         let info = adapter.get_info();
@@ -389,37 +410,47 @@ pub(crate) fn run_gputest_sweep() -> usize {
         let (device, queue) = match dev {
             Ok(d) => d,
             Err(e) => {
-                println!("{label}: device request failed ({e}) — skipped\n");
+                sink.line(format!("{label}: device request failed ({e}) — skipped\n"));
                 continue;
             }
         };
-        println!("── {label} · {} · driver: {} {}", info.name, info.driver, info.driver_info);
+        sink.line(format!("── {label} · {} · driver: {} {}", info.name, info.driver, info.driver_info));
         ran += 1;
         match fractadyne_gpu::gputest(&device, &queue) {
             Ok((w, h, px)) => {
-                if report(w, h, &px) > 0 {
+                if report(&mut sink, w, h, &px) > 0 {
                     failed += 1;
                 }
             }
             Err(e) => {
-                println!("  GPU run failed: {e}");
+                sink.line(format!("  GPU run failed: {e}"));
                 failed += 1;
             }
         }
-        println!();
+        sink.line(String::new());
     }
     if ran == 0 {
-        println!("No usable backend found — nothing tested.");
-        return 1;
-    }
-    if failed == 0 {
-        println!("{ran} backend(s) tested, all sound.");
+        sink.line("No usable backend found — nothing tested.".to_string());
+    } else if failed == 0 {
+        sink.line(format!("{ran} backend(s) tested, all sound."));
     } else {
-        println!(
+        sink.line(format!(
             "{failed} of {ran} backend(s) FAILED. Include this whole report in a bug report — a\n\
              failing two_sum means the shader compiler is folding the error-free transforms, and\n\
              every extended-precision path silently degrades to plain f32."
-        );
+        ));
+    }
+    // Persist the verbatim report when asked (the Diagnostics dialog's "Open results" and the
+    // attach-to-report path both point at this file). A write failure must not change the verdict
+    // the caller exits on, so it is reported and swallowed.
+    if let Some(path) = out {
+        let body = sink.lines.join("\n") + "\n";
+        if let Err(e) = std::fs::write(path, body) {
+            eprintln!("gputest: could not write report to {}: {e}", path.display());
+        }
+    }
+    if ran == 0 {
+        return 1;
     }
     failed
 }

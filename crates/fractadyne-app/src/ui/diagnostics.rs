@@ -6,11 +6,19 @@
 //! 1. **No CLI gate.** The people who benefit most are exactly the ones who will never pass a
 //!    flag, so the dialog is always in the Help menu. That is also what makes cross-GPU
 //!    validation crowdsourceable instead of limited to cards we can buy.
-//! 2. **Only the two tests that mean something without context**: the self-test (does the maths
-//!    hold on this GPU?) and the UI test (does it draw and lay out correctly?). The dev harnesses
-//!    — `--livetest`, `--bench-matrix`, `--divetest`, `--juliadive` — stay CLI-only on purpose: a
-//!    button for those produces confused bug reports, not information. `scripts/gpu-validate.*`
-//!    is the power-user path and runs the full battery.
+//! 2. **Only the tests that mean something without context**: the self-test (does the maths hold
+//!    on this GPU?), the UI test (does it draw and lay out correctly?), and the GPU arithmetic
+//!    check (do the shader's extended-precision transforms survive this compiler?). The dev
+//!    harnesses — `--livetest`, `--bench-matrix`, `--divetest`, `--juliadive` — stay CLI-only on
+//!    purpose: a button for those produces confused bug reports, not information.
+//!    `scripts/gpu-validate.*` is the power-user path and runs the full battery.
+//!
+//!    The GPU arithmetic check is deliberately **informational**, not pass/fail. On every NVIDIA
+//!    stack tested it "fails" — the compiler folds the error-free transforms — and that failure is
+//!    precisely the finding the project wants reported, not a fault in the user's machine. A green
+//!    tick would be wrong and a red cross would scare the most common hardware into silence, so it
+//!    reports "result captured" and asks for the report either way. It is the one-click form of the
+//!    df32 corroboration request the announcement makes.
 //! 3. **Results attach to an issue report**, upgrading "Report an issue…" from *here is my crash
 //!    log* to *here is my crash log plus a machine-validated test result*.
 //!
@@ -33,13 +41,18 @@ use std::path::PathBuf;
 pub(crate) enum DiagTest {
     SelfTest,
     UiTest,
+    GpuTest,
 }
 
 impl DiagTest {
+    /// The three tests, in the order they appear in the dialog.
+    pub(crate) const ALL: [DiagTest; 3] = [DiagTest::SelfTest, DiagTest::UiTest, DiagTest::GpuTest];
+
     pub(crate) fn label(self) -> &'static str {
         match self {
             DiagTest::SelfTest => "Self-test",
             DiagTest::UiTest => "UI test",
+            DiagTest::GpuTest => "GPU arithmetic check",
         }
     }
 
@@ -49,6 +62,7 @@ impl DiagTest {
         match self {
             DiagTest::SelfTest => "Run self-test",
             DiagTest::UiTest => "Run UI test",
+            DiagTest::GpuTest => "Run GPU arithmetic check",
         }
     }
 
@@ -63,7 +77,21 @@ impl DiagTest {
                 "Walks the interface and the live view, capturing screenshots at several zoom \
                  depths. Takes a minute or two and opens windows while it runs."
             }
+            DiagTest::GpuTest => {
+                "Checks the shader's double-float arithmetic against known-correct values on every \
+                 graphics backend your machine offers. Takes a few seconds, opens no window. If it \
+                 reports a failure, that is a genuine finding we would like to see — please attach \
+                 it to a report."
+            }
         }
+    }
+
+    /// An informational test has no right answer to grade — it captures a result to send back
+    /// rather than passing or failing. The GPU arithmetic check is one: on NVIDIA it "fails" by
+    /// design (the compiler folds the transforms), and that is the datum, not a fault, so the
+    /// dialog must not paint it red. See the module docs.
+    pub(crate) fn is_informational(self) -> bool {
+        matches!(self, DiagTest::GpuTest)
     }
 }
 
@@ -150,10 +178,51 @@ pub(crate) fn parse_uitest_verdict(line: &str) -> Option<(u32, u32, u32)> {
     Some((nums[0], nums[1], nums[2]))
 }
 
-/// Is this a per-check/per-step progress line worth counting and showing?
+/// Parse the GPU arithmetic sweep's final line into `(backends_tested, backends_failed)`:
+/// `"3 backend(s) tested, all sound."` → `(3, 0)`;
+/// `"2 of 3 backend(s) FAILED. …"` → `(3, 2)`;
+/// `"No usable backend found — nothing tested."` → `(0, 0)`.
+///
+/// Both quantities matter to the headline, and "failed" is not a fault here (see
+/// [`DiagTest::is_informational`]) — it is what the df32 request is asking people to report.
+pub(crate) fn parse_gputest_verdict(line: &str) -> Option<(u32, u32)> {
+    let l = line.trim();
+    if let Some(rest) = l.strip_suffix("backend(s) tested, all sound.") {
+        return Some((rest.trim().parse().ok()?, 0));
+    }
+    if let Some(idx) = l.find(" of ") {
+        if l[idx..].contains("backend(s) FAILED") {
+            let failed: u32 = l[..idx].trim().parse().ok()?;
+            let ran: String = l[idx + 4..].chars().take_while(|c| c.is_ascii_digit()).collect();
+            return Some((ran.parse().ok()?, failed));
+        }
+    }
+    if l.starts_with("No usable backend found") {
+        return Some((0, 0));
+    }
+    None
+}
+
+/// The one-line headline shown for a finished GPU arithmetic run and carried into a report.
+/// Synthesised rather than taken from the sweep's own last line, whose FAILED variant wraps mid
+/// sentence and reads badly on its own.
+pub(crate) fn gputest_headline(ran: u32, failed: u32) -> String {
+    match (ran, failed) {
+        (0, _) => "no usable graphics backend — nothing tested".to_string(),
+        (n, 0) => format!("{n} backend(s) tested — all double-float transforms intact"),
+        (n, f) => format!(
+            "{n} backend(s) tested — {f} fold the error-free transforms (expected on NVIDIA; please attach this)"
+        ),
+    }
+}
+
+/// Is this a per-check/per-step progress line worth counting and showing? The GPU sweep has no
+/// per-check markers, but it prints a `── <backend>` header per device, which serves the same
+/// role — it lets the count advance and names the backend under test.
 pub(crate) fn is_progress_line(line: &str) -> bool {
     let l = line.trim_start();
     l.starts_with("[selftest") || l.starts_with("[uitest") || l.starts_with("=== step")
+        || l.starts_with("──")
 }
 
 #[cfg(test)]
@@ -210,6 +279,20 @@ impl FractadyneApp {
                 vec!["--uitest".to_string(), dir.display().to_string()],
                 Some(dir.clone()),
             ),
+            // `--gputest --out FILE` writes the verbatim table (see gputest.rs): the streamed
+            // copy is trimmed per line and loses the column alignment, so the on-disk report the
+            // user opens and attaches comes from the child, not from captured stdout.
+            DiagTest::GpuTest => {
+                let out = dir.join(format!("gputest-{stamp}.txt"));
+                (
+                    vec![
+                        "--gputest".to_string(),
+                        "--out".to_string(),
+                        out.display().to_string(),
+                    ],
+                    Some(out),
+                )
+            }
         };
 
         // A fresh run must not inherit the previous one's failure or counts.
@@ -268,8 +351,12 @@ impl FractadyneApp {
                     DiagLine::Err(l) => (l, true),
                 };
                 // Verdicts can arrive on either stream depending on the test — classify by
-                // content, never by pipe (see module docs).
-                if parse_selftest_verdict(&text).is_some() || parse_uitest_verdict(&text).is_some()
+                // content, never by pipe (see module docs). The GPU sweep's own last line wraps
+                // mid-sentence on failure, so it is replaced with a clean synthesised headline.
+                if let Some((ran, failed)) = parse_gputest_verdict(&text) {
+                    verdict_line = Some(gputest_headline(ran, failed));
+                } else if parse_selftest_verdict(&text).is_some()
+                    || parse_uitest_verdict(&text).is_some()
                 {
                     verdict_line = Some(text.clone());
                 }
@@ -308,13 +395,20 @@ impl FractadyneApp {
             // Trust the test's own verdict line over the exit code where we have one: the
             // self-test exits non-zero on golden mismatches, which on non-reference hardware are
             // expected rather than failures, and a red banner there teaches testers to ignore it.
-            let ok = match (
-                parse_selftest_verdict(&headline),
-                parse_uitest_verdict(&headline),
-            ) {
-                (Some((cp, ct, _, _)), _) => cp == ct,
-                (_, Some((_, _, fail))) => fail == 0,
-                _ => success,
+            // An informational test is never graded — it captures a result to send back — so it is
+            // always "ok" for the purpose of colour; the GPU sweep exits non-zero precisely when it
+            // has found the thing worth reporting, which must not read as a fault.
+            let ok = if test.is_informational() {
+                true
+            } else {
+                match (
+                    parse_selftest_verdict(&headline),
+                    parse_uitest_verdict(&headline),
+                ) {
+                    (Some((cp, ct, _, _)), _) => cp == ct,
+                    (_, Some((_, _, fail))) => fail == 0,
+                    _ => success,
+                }
             };
             self.diagnostics.last = Some(DiagVerdict {
                 test,
@@ -366,7 +460,7 @@ impl FractadyneApp {
                 );
                 ui.add_space(8.0);
 
-                for test in [DiagTest::SelfTest, DiagTest::UiTest] {
+                for test in DiagTest::ALL {
                     ui.horizontal(|ui| {
                         let busy = running.is_some();
                         let btn = ui.add_enabled(!busy, egui::Button::new(test.button()));
@@ -398,18 +492,33 @@ impl FractadyneApp {
 
                 if let Some(v) = &self.diagnostics.last {
                     ui.separator();
-                    let (colour, word) = if v.ok {
+                    // An informational test is neutral — never green/red — because its "failure"
+                    // is the datum, not a fault (see DiagTest::is_informational).
+                    let (colour, word) = if v.test.is_informational() {
+                        (egui::Color32::from_rgb(0x9a, 0x9d, 0xa6), "result captured")
+                    } else if v.ok {
                         (egui::Color32::from_rgb(0x4c, 0xaf, 0x50), "passed")
                     } else {
                         (egui::Color32::from_rgb(0xe5, 0x73, 0x73), "reported problems")
                     };
                     ui.label(
-                        egui::RichText::new(format!("{} {word}", v.test.label()))
+                        egui::RichText::new(format!("{} — {word}", v.test.label()))
                             .color(colour)
                             .strong(),
                     );
                     ui.label(egui::RichText::new(&v.headline).monospace().small());
-                    if !v.ok {
+                    if v.test.is_informational() {
+                        ui.label(
+                            egui::RichText::new(
+                                "This one has no pass or fail: it records how your GPU computes, \
+                                 and a reported failure is a real finding rather than a fault in \
+                                 your machine. Either way, attaching it to a report is the most \
+                                 useful thing you can do with it.",
+                            )
+                            .weak()
+                            .small(),
+                        );
+                    } else if !v.ok {
                         ui.label(
                             egui::RichText::new(
                                 "Some differences are expected on hardware other than the \
@@ -498,12 +607,14 @@ impl FractadyneApp {
     /// The test-result block for an issue report, when one has been run and the user kept it.
     pub(crate) fn test_result_block(&self) -> Option<String> {
         let v = self.diagnostics.last.as_ref()?;
-        let mut s = format!(
-            "{}: {}\n{}\n",
-            v.test.label(),
-            if v.ok { "passed" } else { "reported problems" },
-            v.headline
-        );
+        let status = if v.test.is_informational() {
+            "result captured"
+        } else if v.ok {
+            "passed"
+        } else {
+            "reported problems"
+        };
+        let mut s = format!("{}: {status}\n{}\n", v.test.label(), v.headline);
         if let Some(p) = &v.artifact {
             s.push_str(&format!("Results: {}\n", p.display()));
         }

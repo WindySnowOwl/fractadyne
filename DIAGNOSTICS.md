@@ -163,6 +163,13 @@ goldens), `--selftest-filter live-res` (the settled-resolution invariant), `--be
 the last two, taking the run from ~15 minutes to ~3. They find the binary beside themselves
 (extracted release zip) or in `target/release`, so testers need no repo and no toolchain.
 
+For a tester who will not touch a command line at all, **Help ▸ Diagnostics** runs the two headless
+checks that need no context — the self-test and the **GPU arithmetic check** (`--gputest` behind a
+button) — streams progress, and attaches the result to an issue report. The arithmetic check is
+deliberately informational: on NVIDIA it reports that the compiler folds the error-free transforms,
+which is the finding to collect, not a fault, so the dialog says "result captured" rather than
+grading it. It is the one-click form of the df32 corroboration request.
+
 Three properties worth preserving if you edit them:
 
 - **Hermetic.** Everything runs against a private config dir inside the bundle

@@ -243,9 +243,11 @@ or internal cross-checks):
   and on any other it uses a wider, measured tolerance, because cross-vendor floating point
   legitimately disagrees and a check that cries wolf on every other GPU teaches people to
   ignore it.
-- **Validation on your own hardware** — **Help → "Diagnostics…"** runs the self-test and the
-  UI test from the interface, streams progress, and can attach the result to an issue report,
-  so a bug report carries a machine-validated verdict rather than only a description. For a
+- **Validation on your own hardware** — **Help → "Diagnostics…"** runs the self-test, the UI
+  test, and a GPU arithmetic check (the shader's double-float primitives on every backend, the
+  one-click form of the df32 corroboration request) from the interface, streams progress, and can
+  attach the result to an issue report, so a bug report carries a machine-validated verdict rather
+  than only a description. For a
   full sweep, `scripts/gpu-validate.ps1` / `.sh` run six checks in a fixed order and leave a
   single bundle to send back — the same steps and file names on Windows and Linux, run against
   a private config directory so results are comparable between machines and nobody's settings

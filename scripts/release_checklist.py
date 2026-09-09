@@ -373,7 +373,10 @@ STEPS = [
     ("Help & settings",
      "Help > Diagnostics… ",
      "Diagnostics window opens and shows real values (GPU/adapter, paths, log location), "
-     "including a 'Deep-zoom arithmetic' line naming the backend in use."),
+     "including a 'Deep-zoom arithmetic' line naming the backend in use. Three test buttons: "
+     "Run self-test, Run UI test, Run GPU arithmetic check. The arithmetic check reports "
+     "'result captured' (neutral, never green/red) and writes a report that Open results shows "
+     "and Attach to an issue report… includes."),
     ("Help & settings",
      "Help > About (the last Help section). Read the 'Deep-zoom arithmetic' line.",
      "Names the arithmetic that has actually run and what the build contains. On the standard "

@@ -626,8 +626,18 @@ pub(crate) fn help_hardware(ui: &mut egui::Ui) {
         "Help → \"Diagnostics…\" runs the same tests the developers do, on your machine. \"Run \
          self-test\" checks the mathematics and rendering against known-correct results in about \
          fifteen seconds; \"Run UI test\" walks the interface and the live view at several zoom \
-         depths, capturing screenshots. Each runs as a separate process, so a test that upsets \
-         the graphics driver takes the test down rather than your session.",
+         depths, capturing screenshots; \"Run GPU arithmetic check\" verifies the shader's \
+         double-float arithmetic on every graphics backend your machine offers, in a few seconds \
+         and with no window. Each runs as a separate process, so a test that upsets the graphics \
+         driver takes the test down rather than your session.",
+    );
+    help_p(
+        ui,
+        "The GPU arithmetic check has no pass or fail — it records how your particular GPU and \
+         driver compute, and on some hardware (every NVIDIA card tried so far) it reports that the \
+         shader compiler discards part of the extended-precision arithmetic. That is a genuine \
+         finding we are trying to map across vendors, not a fault in your machine, so whatever it \
+         says, attaching it to a report genuinely helps.",
     );
     help_p(
         ui,
