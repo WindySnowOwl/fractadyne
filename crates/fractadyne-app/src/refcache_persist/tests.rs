@@ -88,10 +88,31 @@ fn wanted_holds_only_a_new_identity_to_the_build_time_threshold() {
     assert!(!wanted(id, 64, min * 0.5), "a quick new orbit is not worth a file");
     assert!(wanted(id, 64, min), "a slow new orbit is");
     offer(blob(&sample_orbit(64), 512, 1000, key())).unwrap().unwrap();
-    assert!(wanted(id, 65, 0.0), "a longer build of an existing entry always replaces it");
+    assert!(wanted(id, 96, 0.0), "a materially longer build of an existing entry replaces it, however quick");
+    assert!(!wanted(id, 65, 0.0), "a one-sample creep is not worth rewriting the file");
     assert!(!wanted(id, 64, min * 10.0), "the same length gains nothing, however slow");
     set_enabled(false);
-    assert!(!wanted(id, 65, min), "nothing is wanted while the cache is off");
+    assert!(!wanted(id, 96, min), "nothing is wanted while the cache is off");
+}
+
+/// ⭐The live path grows a capped reference by ONE sample per rebuild (measured at e60205:
+/// 256,001 → 256,002, 0.6 s after the entry it would have replaced). That creep must not rewrite
+/// 4 MB each time; a real extension must.
+#[test]
+fn a_replacement_must_be_materially_longer() {
+    assert!(!worth_replacing(256_001, 256_002), "the live cap's one-sample creep");
+    assert!(!worth_replacing(256_001, 258_000), "under the 1/64 margin");
+    assert!(worth_replacing(256_001, 2_008_193), "the live cap extended to a 2M ask");
+    assert!(!worth_replacing(64, 65));
+    assert!(worth_replacing(64, 66));
+    assert!(!worth_replacing(64, 64));
+    assert!(worth_replacing(0, 1));
+    // And the store applies it: a creep is declined on disk too.
+    let s = Scratch::new("creep");
+    offer(blob(&sample_orbit(64), 512, 1000, key())).unwrap().unwrap();
+    assert!(offer(blob(&sample_orbit(65), 512, 1000, key())).unwrap().is_none());
+    assert_eq!(find(&Query { key: key(), fits: &accept_all }).unwrap().orbit_len, 64);
+    assert_eq!(s.files(), 1);
 }
 
 /// ⭐⭐**Cost-aware eviction, not LRU.** The most recent entry is the CHEAPEST here, and it is the

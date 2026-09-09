@@ -228,9 +228,20 @@ pub(crate) fn wanted(id: u64, orbit_len: u32, build_ms: f64) -> bool {
     let Some(dir) = s.dir() else { return false };
     s.ensure_scanned(&dir);
     match s.entries.as_deref().and_then(|v| v.iter().find(|e| e.id() == id)) {
-        Some(e) => e.header.orbit_len < orbit_len,
+        Some(e) => worth_replacing(e.header.orbit_len, orbit_len),
         None => build_ms >= crate::tunables::ORBIT_CACHE_MIN_BUILD_MS,
     }
+}
+
+/// Is an orbit of `new_len` samples worth REPLACING a stored one of `old_len`? Longer, and by a
+/// margin. ⭐The live path grows a capped reference by ONE sample per rebuild — `live_orbit_cap`
+/// floors the target at the installed length, and a length in samples is an iteration count plus
+/// one — so "any longer orbit replaces" meant a 4 MB rewrite on every rebuild for nothing.
+/// Measured on the cached live run at 9.98e60205×: 256,001 → 256,002, written 0.6 s after the
+/// entry it replaced. A 1/64 margin ignores that creep and still admits every extension that
+/// matters (the live cap to a 2,000,000 ask is 8×).
+pub(crate) fn worth_replacing(old_len: u32, new_len: u32) -> bool {
+    new_len > old_len.saturating_add(old_len / 64)
 }
 
 /// Find the best usable entry for `q`: among the entries whose identity matches and whose point
@@ -303,8 +314,8 @@ pub(crate) fn load(path: &Path) -> Option<DecodedOrbit> {
 }
 
 /// Write an encoded entry (temp-then-rename), index it, and evict down to the budget. Replaces an
-/// existing entry of the same identity only if this one is LONGER. Returns the path written, or
-/// `None` when it was not (cache off, no directory, or nothing gained).
+/// existing entry of the same identity only if this one is materially LONGER ([`worth_replacing`]).
+/// Returns the path written, or `None` when it was not (cache off, no directory, or nothing gained).
 pub(crate) fn offer(bytes: Vec<u8>) -> std::io::Result<Option<PathBuf>> {
     let (header, _) = orbit_blob::read_header(&bytes)
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "not an orbit blob"))?;
@@ -316,7 +327,7 @@ pub(crate) fn offer(bytes: Vec<u8>) -> std::io::Result<Option<PathBuf>> {
     s.ensure_scanned(&dir);
     let id = header.key_id();
     if let Some(e) = s.entries.as_deref().and_then(|v| v.iter().find(|e| e.id() == id)) {
-        if e.header.orbit_len >= header.orbit_len {
+        if !worth_replacing(e.header.orbit_len, header.orbit_len) {
             return Ok(None);
         }
     }

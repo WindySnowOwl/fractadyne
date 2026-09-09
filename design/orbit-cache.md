@@ -3,10 +3,10 @@
 Returning to a location you have already visited at extreme depth costs **30–60+ minutes** — all of
 it spent rebuilding a reference orbit you already had. This is the design for keeping it.
 
-Status at `v0.2.41-beta.78`: **built, gated, and in the app.** The codecs (beta.77), the store, the
-worker-side lookup and write-back, the `orbit-cache` selftest and the File ▸ Settings ▸ Reference
-cache… window are all in. What remains is the measurement that started this — cold vs cached at
-`validation/spiral-9.98e60205.fdn` — see **Plan**.
+Status at `v0.2.41-beta.78`: **built, gated, in the app, and measured.** The codecs (beta.77), the
+store, the worker-side lookup and write-back, the `orbit-cache` selftest and the File ▸ Settings ▸
+Reference cache… window are all in. At `validation/spiral-9.98e60205.fdn` the live view's
+reference costs **6 h 26 min cold and 1.3 s cached** — see **Plan**, step 5.
 
 ## ⛔Read this first: `refcache_persist` already existed
 
@@ -116,8 +116,10 @@ thread, so the worker returns at once.
 
 **Write** — a NEW identity only past `ORBIT_CACHE_MIN_BUILD_MS` (1 s of orbit build; a 5 ms orbit
 is not worth a file, and a dive at moderate depth would otherwise write one per rebuild). An
-existing identity is replaced whenever the new orbit is longer, however quick the extension.
-Temp name then rename, so an interrupted write cannot leave a half-file.
+existing identity is replaced whenever the new orbit is materially longer (more than 1/64), however
+quick the extension — the margin exists because the live path grows a capped reference by one
+sample per rebuild (see the measurement notes). Temp name then rename, so an interrupted write
+cannot leave a half-file.
 
 ⭐⭐**Evict by BUILD COST, not recency.** LRU was the first draft, and it is wrong for this cache: a
 dive writes a stream of cheap entries, and under LRU they would evict the hour-long orbit visited
@@ -153,16 +155,27 @@ expires when its denominator moves.*
 3. ✅**Grow `refcache_persist`** — done, with the two corrections recorded above (lookup before the
    pick; cost-aware eviction).
 4. ✅**The controls.**
-5. ▶**Then measure the thing that started this**: cold vs cached time to reach
-   `validation/spiral-9.98e60205.fdn`, and put the number here.
+5. ✅**Then measure the thing that started this**: cold vs cached time to reach
+   `validation/spiral-9.98e60205.fdn` — the table above. Live: **6 h 26 min → 1.3 s.**
 
 | 9.98e60205×, 200,193 bits, 2,000,000 ask | cold | cached |
 |---|---|---|
 | export-grade (`--selftest deep-location --orbit-cache`, whole process) | **8 h 52 min** — pick 5.93 h (101 survivors, deep-perturb scoring) + orbit 2.93 h (escaped at 1,645,896) + BLA 1.5 s, SA skipped; the 25.2 MB entry written in 60 ms | **3 s** — HIT: found, loaded and verified in 53 ms, no extension (the orbit is complete), BLA 1.5 s, two bit-identical 96×96 renders |
-| live, 256,000 cap (`--shot`, the author's return-visit scenario) | *(pending)* | *(pending)* |
+| live, 256,000 cap (`--shot`, the author's return-visit scenario; time to the first reference INSTALL) | **6 h 26 min** — pick 5 h 58 min (the same 101 survivors) + coarse stage 1.7 min + orbit 26.5 min + BLA 0.3 s; the 4.0 MB entry written in 10 ms. The settled extension toward the 2,008,192 ask then ran on in the background — quality work, not return-visit cost | **1.3 s** — HIT in 9 ms, no extension, BLA 0.23 s |
 
-Both measured 2026-09-08 on the author's machine (astro-float backend). The export-grade cold
+All measured 2026-09-08 on the author's machine (astro-float backend). The export-grade cold
 figure was taken twice (beta.77 without the cache: 8.8 h; beta.78 with it: 8 h 52 min) and agrees.
+
+⭐**The pick dominates in BOTH shapes** — 5.9 of 6.4 hours live — because it deep-ranks survivors
+to the ASK, which is the same 2,008,192 whether the orbit is then capped at 256k or not. So the
+author's "30-60+ minutes" was itself an underestimate of a cold live visit here; the cache turns
+the whole thing into a second either way.
+
+⚠**A finding from the cached live run, fixed the same day**: the live path's next rebuild grew the
+capped reference by exactly ONE sample (256,001 → 256,002 — `live_orbit_cap` floors the target at
+the installed length, and samples are iterations plus one) and the store rewrote 4 MB for it. A
+replacement now has to be materially longer (`worth_replacing`, a 1/64 margin), which still admits
+every extension that matters.
 
 ⭐**The pick is 1.9× the orbit at this depth**, so a lookup keyed on the picked point would have
 paid 5.8 of the 8.8 hours to find its key. ⚠The `deep-location` banner's "30-60+ minutes" was the

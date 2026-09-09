@@ -3595,11 +3595,13 @@ eleaseractadyne.exe),
     cheap entries must never displace the hour-long one). Gated by `--selftest` `orbit-cache`
     (bit-identity + an unaided-lookup arm); controls in File ▸ Settings ▸ Reference cache…
     ▶Design, corrections and the numbers: **`design/orbit-cache.md`**.
-    ✅⭐⭐**Measured at e60205 (export-grade, 2,000,000 ask): 8 h 52 min cold → 3 s cached.** Cold =
-    pick 5.9 h + orbit 2.9 h + BLA 1.5 s — the pick is 2× the orbit, so lookup-before-pick is two
-    thirds of the saving; cached = HIT in 53 ms + BLA 1.5 s + renders, bit-identical. The
-    `deep-location` banner's "30-60 min" (the author's LIVE experience) was 9× under; corrected.
-    ▶**Remaining: the live-path pair** (`--shot`, 256k cap) for the author's own scenario.
+    ✅⭐⭐**Measured at e60205 (2,000,000 ask): LIVE 6 h 26 min cold → 1.3 s cached; export-grade
+    8 h 52 min → 3 s.** Cold = pick 5.9 h (the same in both shapes: it deep-ranks to the ASK) +
+    orbit (26.5 min at the 256k cap / 2.9 h to escape) + BLA ≤ 1.5 s — so lookup-before-pick is
+    most of the saving; cached = HIT in 9-53 ms + BLA + renders, bit-identical. The `deep-location`
+    banner's "30-60 min" was 9× under; corrected. ⚠The cached live run exposed a one-sample
+    creep (256,001 → 256,002 per rebuild) that rewrote 4 MB each time — replacements now need
+    a 1/64 margin (`worth_replacing`). Nothing remains on this item.
   - [ ] **T2d. Self-referential orbit compression for `refcache_persist`.** Imagina's scheme (perturb the
     orbit against its own PREFIX, waypoint + rebase-bit + rebase-index list, emit only where the
     self-perturbation drifts past a relative-error bound) is materially better than FractalShark's
