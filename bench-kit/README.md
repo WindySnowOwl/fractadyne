@@ -122,15 +122,18 @@ benchmark that doesn't say which latest it measured is not reproducible.
 FractalShark ships `FractalSharkCli.exe` beside the GUI, so this lane is automated — but what it
 can measure is narrower than it looks, and the kit says so rather than papering over it:
 
-- **Every GPU algorithm renders blank headlessly** (0.532). Each pixel comes back with iteration
-  count 1, the PNG is one flat colour, and the exit status is **0**. The CLI admits it on the
-  `--console` path ("all exterior pixels have the same iteration count 1") and its stderr says
-  "OpenGL context creation FAILED, no rendering will occur". `AutoSelect` picks a GPU algorithm,
-  so the obvious invocation is silently broken. Upstream CI smoke-tests `Cpu64` only.
+- **Every GPU algorithm renders blank headlessly** (0.532, and unchanged in 0.54 — re-tested
+  2026-09-08). Each pixel comes back with iteration count 1, the PNG is one flat colour, and the
+  exit status is **0**. The CLI admits it on the `--console` path ("all exterior pixels have the
+  same iteration count 1") and its stderr says "OpenGL context creation FAILED, no rendering will
+  occur". `AutoSelect` picks a GPU algorithm, so the obvious invocation is silently broken.
+  Upstream CI smoke-tests `Cpu64` only. Not an argument-parsing bug: the parser is honest (a bad
+  value exits 2 with a message). The GPU results are consumed through an OpenGL texture path that
+  needs a window handle the CLI never creates, so no CUDA work is dispatched at all.
 - **The CPU algorithms work at shallow and mid depth** — verified 1e6 through 1e27 — and come back
   blank on the deeper corpus locations, regardless of how many digits of centre they are given
-  (40, 60, 100 and 196 all blank). Expect real numbers for the shallow scenes, `DNF-blank` for the
-  rest.
+  (40, 60, 100 and 196 all blank; 0.54 the same). Expect real numbers for the shallow scenes,
+  `DNF-blank` for the rest.
 - Because of that, **no FractalShark row records a time without a picture**: every render is
   checked for structure first, and a flat image becomes `DNF-blank`. This kit once published
   "144x faster than Fraktaler-3" for a frame that was entirely empty; never again.

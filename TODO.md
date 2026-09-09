@@ -8556,6 +8556,15 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   renders were flat all along. ⭐**A blankness test must measure VARIATION ACROSS PIXELS, never
   variance across channels.**
 
+  ⭐**RE-TESTED 2026-09-08 against FractalShark 0.54 (released 2026-09-07): UNCHANGED.** Same
+  probes, same box, same driver (596.21): `AutoSelect` and `Gpu1x32PerturbedLAv2` headless ⇒ one
+  black colour at exit 0 with `OpenGlContext: null HWND` / `GlConsumerLoop: OpenGL context
+  creation FAILED`; `Cpu64PerturbedBLAV2HDR` draws scene 03 (1,785 colours) and is FLAT at
+  6.6e43 and at the 1e27.7 spar (2 colours, 1.5-2.4 s — too fast to have iterated at all). The
+  0.54 notes cover only the GPU reference-orbit rewrite; the CLI's option set is the same and
+  offers no headless/offscreen switch. So it was FractalShark, not its argument parsing, and not
+  our scripting; nothing upstream reports it (no matching issue). Filing it upstream with the
+  root cause is the useful next step (the user's call — it is a public post).
   **Remaining to close**: ②validate Imagina + FractalShark actually import our `.kfr`
   (operator-assisted — needs the user at the keyboard; DNF instructions in place but untested);
   ③a Radeon-box run (FractalShark lane exercises the N/A path; bench-latest skips its download

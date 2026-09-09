@@ -41,7 +41,8 @@ param(
     # FractalShark ships a headless renderer, FractalSharkCli.exe, beside the GUI. Point at it to
     # automate the lane; left empty it is looked for next to -FractalSharkExe.
     [string]$FractalSharkCliExe = '',
-    # WARNING: CPU BY DEFAULT, AND THAT IS NOT A PREFERENCE. In FractalShark 0.532 every GPU
+    # WARNING: CPU BY DEFAULT, AND THAT IS NOT A PREFERENCE. In FractalShark 0.532 (and still
+    # in 0.54, re-tested 2026-09-08) every GPU
     # render algorithm returns an EMPTY image headlessly: each pixel comes back with iteration
     # count 1, the PNG is a single flat colour, and the exit status is 0. The CLI says so itself
     # on the --console path ("all exterior pixels have the same iteration count 1"), and its
@@ -215,7 +216,7 @@ if ($have.fraktaler3) {
 
 # ---- lane: FractalShark (automated, via FractalSharkCli) ----
 # WARNING: read the algorithm note on -FractalSharkAlgo before changing it. Every GPU algorithm
-# returns a BLANK image headlessly in 0.532, at exit status 0, so this lane checks that a render
+# returns a BLANK image headlessly in 0.532 and 0.54, at exit status 0, so this lane checks that a render
 # is actually a PICTURE before it records a TIME. What it measures is FractalShark's CPU path,
 # which must be said wherever the number appears: it is not what the app is for.
 if ($have.fractalsharkcli) {
@@ -241,7 +242,7 @@ if ($have.fractalsharkcli) {
             $argLine = ('--render-algorithm {0} --center-x {1} --center-y {2} --zoom {3} --iterations {4} --width {5} --height {6} --antialiasing 1 --out "{7}" --quiet' -f `
                         $FractalSharkAlgo, $kfr['Re'], $kfr['Im'], $zoom, $s.iterations, $wh[0], $wh[1], $stem)
             $r = Invoke-TimedRender $FractalSharkCliExe $argLine $TimeoutS $outDir
-            $note = 'CPU path; its GPU algorithms render blank headlessly in 0.532'
+            $note = 'CPU path; its GPU algorithms render blank headlessly (0.532 and 0.54)'
             $status = $r.status
             if ($status -eq 'ok') {
                 if (-not (Test-Path $png)) {
