@@ -26,6 +26,7 @@ public static class W {
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
     [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
@@ -106,13 +107,14 @@ $h = $p.MainWindowHandle
 "pid=$($p.Id) title='$($p.MainWindowTitle)' handle=$h"
 if ($h -eq [IntPtr]::Zero) { "no main window"; Stop-Process -Id $p.Id -Force; exit 1 }
 Capture $h (Join-Path $OutDir 'pw-launch.png')
-[W]::SetForegroundWindow($h) | Out-Null
-Start-Sleep -Milliseconds 400
-$r = New-Object W+RECT; [W]::GetWindowRect($h, [ref]$r) | Out-Null
-$cx = [int](($r.L + $r.R) / 2); $cy = [int](($r.T + $r.B) / 2)
-[W]::SetCursorPos($cx, $cy) | Out-Null
-Start-Sleep -Milliseconds 200
-[W]::mouse_event(0x0008, 0, 0, 0, [UIntPtr]::Zero); [W]::mouse_event(0x0010, 0, 0, 0, [UIntPtr]::Zero)
+# Open the popup by MESSAGES addressed to the window - no cursor movement, no focus change. An
+# earlier version synthesised a real right-click and dismissed the menu with an Escape keystroke;
+# on a desktop someone is using, input like that lands wherever THEIR focus is (2026-09-09).
+# The app tracks its popup on a right-button release in the client area. UNTESTED since the rewrite.
+$cr = New-Object W+RECT; [W]::GetClientRect($h, [ref]$cr) | Out-Null
+$lp = [IntPtr](([int](($cr.B - $cr.T) / 2) -shl 16) -bor [int](($cr.R - $cr.L) / 2))
+[W]::PostMessage($h, 0x0204, [IntPtr]2, $lp) | Out-Null    # WM_RBUTTONDOWN, MK_RBUTTON
+[W]::PostMessage($h, 0x0205, [IntPtr]0, $lp) | Out-Null    # WM_RBUTTONUP
 Start-Sleep -Milliseconds 900
 $popup = [W]::FindWindow('#32768', $null)
 "popup window: $popup"
@@ -121,7 +123,7 @@ if ($popup -ne [IntPtr]::Zero) {
     "hmenu: $hmenu"
     if ($hmenu -ne [IntPtr]::Zero) { Walk $hmenu 0 '' }
 }
-[System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+[W]::SendMessage($h, 0x001F, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null   # WM_CANCELMODE ends the menu
 Start-Sleep -Milliseconds 400
 "=== MENU TREE ($($script:tree.Count) lines) ==="
 $script:tree

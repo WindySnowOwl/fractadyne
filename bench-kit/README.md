@@ -127,8 +127,13 @@ can measure is narrower than it looks, and the kit says so rather than papering 
   `sm_120` and nothing else; PTX cannot run on an older architecture, so on an RTX 3080 (`sm_86`)
   — or anything older — **no FractalShark GPU kernel can run at all**, and every GPU algorithm
   returns a flat image at exit 0, in the GUI exactly as in the CLI (the GUI's own "Run Basic Test"
-  wrote 89 flat GPU images and 16 real CPU ones here). The README's "900-series or newer" is not
-  what ships. `AutoSelect` picks a GPU algorithm, so the obvious invocation is silently broken.
+  wrote 89 flat GPU images and 16 real CPU ones here). The CUDA driver says the same thing
+  directly: `tools/cuda-load-check.py` hands every embedded fat binary to `cuModuleLoadData` on
+  this GPU and all 33 of them (10 + 10 in 0.54, 13 in 0.532) come back `CUDA_ERROR_NO_BINARY_FOR_GPU`
+  (209, "no kernel image is available for execution on the device"). Upstream's README says
+  "RTX 2xxx series or newer ... RTX 3xxx/4xxx/5xxx should all work with recent drivers"; the
+  shipped binaries do not. `AutoSelect` picks a GPU algorithm, so the obvious invocation is
+  silently broken.
 - **The CLI has a second, independent defect**: its GPU results are consumed through an OpenGL
   texture path that needs a window handle the CLI never creates ("OpenGL context creation FAILED,
   no rendering will occur" on stderr, exit 0). On a supported card that alone would blank every

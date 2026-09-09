@@ -8569,6 +8569,13 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   is not what ships. Deep CPU flatness is a third, separate limitation (forcing `--perturbation-alg
   MT`/`MTPeriodicity3` changes nothing). ⭐**A GUI-automation lane is feasible and prototyped, but
   only pays on an RTX 40/50 machine.** Two upstream reports are warranted (user's call).
+  ✅**2026-09-09, the driver's own verdict** (`tools/cuda-load-check.py`): `cuModuleLoadData` on
+  this RTX 3080 (driver API 13.2) refuses **all 33** embedded fat binaries of 0.532 and 0.54 with
+  **209 `CUDA_ERROR_NO_BINARY_FOR_GPU`**. Upstream's README ("RTX 2xxx or newer … 3xxx/4xxx/5xxx
+  should all work") describes a build target the release does not ship. ⚠The README's own recipe
+  (HDRx32 GPU LAv2 + GPU reference orbit + View #5) was attempted through the GUI but the image
+  save was botched by keystroke injection landing in the user's window — that method is banned;
+  the tools now drive dialogs by `WM_SETTEXT`/`BM_CLICK` only (untested since the rewrite).
   ⭐**RE-TESTED 2026-09-08 against FractalShark 0.54 (released 2026-09-07): UNCHANGED.** Same
   probes, same box, same driver (596.21): `AutoSelect` and `Gpu1x32PerturbedLAv2` headless ⇒ one
   black colour at exit 0 with `OpenGlContext: null HWND` / `GlConsumerLoop: OpenGL context

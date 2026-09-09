@@ -159,23 +159,34 @@ foreach ($d in (Windows-Of $p.Id '#32770')) { [W]::PostMessage($d, $WM_CLOSE, [I
 Start-Sleep -Seconds 1
 "[$Tag] final details -> " + (Summ (Details $h $p.Id))
 
-# 5. Save Bitmap Image through the Save dialog: bring it to the front and type the path.
+# 5. Save Bitmap Image through the Save dialog - BY MESSAGES ADDRESSED TO THE DIALOG, never by
+# typing. An earlier version used SendKeys; the keystrokes went to the USER'S foreground window
+# while they were at the keyboard (2026-09-09). Keystroke injection is banned in this kit.
+# The common file dialog's filename box is control id 1148 and its Save button is id 1 (IDOK);
+# WM_SETTEXT + BM_CLICK need no focus and cannot land anywhere else. UNTESTED since the rewrite.
 $png = Join-Path $OutDir ($Tag + '.png')
 Remove-Item -Force -ErrorAction SilentlyContinue $png
 [W]::PostMessage($h, $WM_COMMAND, [IntPtr]$ID_SAVE_BMP, [IntPtr]::Zero) | Out-Null
 $dlg = Wait-Dialog $p.Id 15
 if ($dlg) {
     "[$Tag] save dialog '$([W]::Txt($dlg))'"
-    [W]::SetForegroundWindow($dlg) | Out-Null
-    Start-Sleep -Milliseconds 600
-    [System.Windows.Forms.SendKeys]::SendWait('^a')
-    [System.Windows.Forms.SendKeys]::SendWait($png.Replace('{', '{{}').Replace('}', '{}}').Replace('+', '{+}').Replace('^', '{^}').Replace('%', '{%}').Replace('~', '{~}').Replace('(', '{(}').Replace(')', '{)}'))
-    Start-Sleep -Milliseconds 300
-    [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
-    $t0 = Get-Date
-    while (-not (Test-Path $png) -and ((Get-Date) - $t0).TotalSeconds -lt 60) { Start-Sleep -Milliseconds 500 }
-    Start-Sleep -Seconds 2
-    "[$Tag] saved: $(Test-Path $png) $(if (Test-Path $png) { (Get-Item $png).Length })"
+    $nameEdit = $null; $okBtn = $null
+    foreach ($c in (Children $dlg)) {
+        $id = [W]::GetDlgCtrlID($c); $cls = [W]::Cls($c)
+        if ($cls -eq 'Edit' -and $id -eq 1148) { $nameEdit = $c }
+        if ($cls -eq 'Button' -and $id -eq 1) { $okBtn = $c }
+    }
+    if ($nameEdit -and $okBtn) {
+        [W]::SendMessage($nameEdit, $WM_SETTEXT, [IntPtr]::Zero, $png) | Out-Null
+        Start-Sleep -Milliseconds 300
+        [W]::PostMessage($okBtn, $BM_CLICK, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        $t0 = Get-Date
+        while (-not (Test-Path $png) -and ((Get-Date) - $t0).TotalSeconds -lt 60) { Start-Sleep -Milliseconds 500 }
+        Start-Sleep -Seconds 2
+        "[$Tag] saved: $(Test-Path $png) $(if (Test-Path $png) { (Get-Item $png).Length })"
+    } else {
+        "[$Tag] filename edit (id 1148) / Save button (id 1) not found in the dialog; closing it"
+    }
 } else { "[$Tag] no save dialog appeared" }
 foreach ($d in (Windows-Of $p.Id '#32770')) { [W]::PostMessage($d, $WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null }
 Stop-Process -Id $p.Id -Force
