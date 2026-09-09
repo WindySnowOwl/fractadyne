@@ -2046,9 +2046,9 @@ Mockups: [design/mockups/](design/mockups/).
 
   | file | words | state |
   |---|---|---|
-  | `local/post-1-announcement.bbcode.txt` | ~1,050 | BBCode, fact-checked against `v0.2.40-beta.150` |
-  | `local/post-2-df32.bbcode.txt` | ~770 | BBCode, standalone df32 corroboration request |
-  | `local/fractalforums-announce-2026-08-16.md` | ~3,000 | the long markdown original, superseded |
+  | `local/post-1-announcement.bbcode.txt` | ~1,300 | BBCode, fact-checked against `v0.2.41-beta.78` (2026-09-09: 183+18 self-test, 39-row corpus to 5.6e18003×, orbit cache, palette import, `.fdn` as a document, "not finished" rewritten) |
+  | `local/post-2-df32.bbcode.txt` | ~800 | BBCode, df32 request; 2026-09-09 adds the RTX 3070/Linux row |
+  | `local/fractalforums-announce-2026-08-16.md` | ~3,000 | the long markdown original — STAMPED superseded / do-not-post 2026-09-09, deliberately NOT updated |
   | `local/announce-images/hero-6.6e43.png` | — | 1600×900 offline render |
   | `local/announce-images/depth-ladder.png` | — | 1e6 / 6.6e43 / 6.1e500 / 4.6e1105, captioned |
 
