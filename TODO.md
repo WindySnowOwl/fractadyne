@@ -8556,6 +8556,19 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   renders were flat all along. ⭐**A blankness test must measure VARIATION ACROSS PIXELS, never
   variance across channels.**
 
+  ⛔⭐⭐**CORRECTION (2026-09-08, later the same day): "CUDA itself is fine" above was WRONG.** The
+  user asked whether a GUI instance could be automated around the CLI defect. Built it (menu ids
+  read from the live HMENU via `MN_GETHMENU`, Enter Location filled by `WM_SETTEXT`, everything
+  else by `WM_COMMAND`, `BenchmarkResults.txt`, Save As by typed path — `bench-kit/tools/`), and
+  the GUI's own "Run Basic Test" then wrote **89 flat GPU images and 16 real CPU ones** — with a
+  window. Parsing the CUDA fat binaries (`tools/cuda-arch-inventory.py`): 0.532 and 0.54 embed
+  PTX+SASS for **sm_89 and sm_120 only**; PTX is forward-only, this RTX 3080 is sm_86 ⇒ **no
+  FractalShark GPU kernel can run here at all**, CLI or GUI. That, not the OpenGL context, is why
+  the GPU wall time never depended on the iteration count. The null-HWND GL failure is a second,
+  independent CLI defect that would bite on a supported card. The README's "900-series or newer"
+  is not what ships. Deep CPU flatness is a third, separate limitation (forcing `--perturbation-alg
+  MT`/`MTPeriodicity3` changes nothing). ⭐**A GUI-automation lane is feasible and prototyped, but
+  only pays on an RTX 40/50 machine.** Two upstream reports are warranted (user's call).
   ⭐**RE-TESTED 2026-09-08 against FractalShark 0.54 (released 2026-09-07): UNCHANGED.** Same
   probes, same box, same driver (596.21): `AutoSelect` and `Gpu1x32PerturbedLAv2` headless ⇒ one
   black colour at exit 0 with `OpenGlContext: null HWND` / `GlConsumerLoop: OpenGL context

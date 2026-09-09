@@ -43,7 +43,10 @@ param(
     [string]$FractalSharkCliExe = '',
     # WARNING: CPU BY DEFAULT, AND THAT IS NOT A PREFERENCE. In FractalShark 0.532 (and still
     # in 0.54, re-tested 2026-09-08) every GPU
-    # render algorithm returns an EMPTY image headlessly: each pixel comes back with iteration
+    # render algorithm returns an EMPTY image on this box for TWO independent reasons: the
+    # release binaries carry CUDA code for sm_89 and sm_120 only (RTX 40/50 series; see
+    # tools/cuda-arch-inventory.py), so on an RTX 3080 no kernel can run, GUI or CLI; and the
+    # CLI's GL consumer needs a window it never creates. Headlessly each pixel comes back with iteration
     # count 1, the PNG is a single flat colour, and the exit status is 0. The CLI says so itself
     # on the --console path ("all exterior pixels have the same iteration count 1"), and its
     # stderr carries "OpenGL context creation FAILED, no rendering will occur" - the GPU results

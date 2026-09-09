@@ -122,18 +122,28 @@ benchmark that doesn't say which latest it measured is not reproducible.
 FractalShark ships `FractalSharkCli.exe` beside the GUI, so this lane is automated — but what it
 can measure is narrower than it looks, and the kit says so rather than papering over it:
 
-- **Every GPU algorithm renders blank headlessly** (0.532, and unchanged in 0.54 — re-tested
-  2026-09-08). Each pixel comes back with iteration count 1, the PNG is one flat colour, and the
-  exit status is **0**. The CLI admits it on the `--console` path ("all exterior pixels have the
-  same iteration count 1") and its stderr says "OpenGL context creation FAILED, no rendering will
-  occur". `AutoSelect` picks a GPU algorithm, so the obvious invocation is silently broken.
-  Upstream CI smoke-tests `Cpu64` only. Not an argument-parsing bug: the parser is honest (a bad
-  value exits 2 with a message). The GPU results are consumed through an OpenGL texture path that
-  needs a window handle the CLI never creates, so no CUDA work is dispatched at all.
+- **The release binaries carry GPU code for RTX 40 and 50 series only.** Parsing the CUDA fat
+  binaries in 0.532 and 0.54 (`tools/cuda-arch-inventory.py`) finds PTX and SASS for `sm_89` and
+  `sm_120` and nothing else; PTX cannot run on an older architecture, so on an RTX 3080 (`sm_86`)
+  — or anything older — **no FractalShark GPU kernel can run at all**, and every GPU algorithm
+  returns a flat image at exit 0, in the GUI exactly as in the CLI (the GUI's own "Run Basic Test"
+  wrote 89 flat GPU images and 16 real CPU ones here). The README's "900-series or newer" is not
+  what ships. `AutoSelect` picks a GPU algorithm, so the obvious invocation is silently broken.
+- **The CLI has a second, independent defect**: its GPU results are consumed through an OpenGL
+  texture path that needs a window handle the CLI never creates ("OpenGL context creation FAILED,
+  no rendering will occur" on stderr, exit 0). On a supported card that alone would blank every
+  headless GPU render. Not an argument-parsing bug: the parser is honest (a bad value exits 2 with
+  a message). Upstream CI smoke-tests `Cpu64` only, so it sees neither.
+- **The GUI can be driven without a mouse** — `tools/fractalshark-gui-scene.ps1` is a working
+  prototype: window sized, the Enter Location dialog filled (real, imaginary, zoom, iterations),
+  algorithm and antialiasing chosen by posted menu commands, "Benchmark (5x, full recalc)" writing
+  `BenchmarkResults.txt`, the bitmap saved through the Save As dialog. On a card the release was
+  built for it would give real GPU numbers; here it gives the same flat images as the CLI.
 - **The CPU algorithms work at shallow and mid depth** — verified 1e6 through 1e27 — and come back
   blank on the deeper corpus locations, regardless of how many digits of centre they are given
-  (40, 60, 100 and 196 all blank; 0.54 the same). Expect real numbers for the shallow scenes,
-  `DNF-blank` for the rest.
+  (40, 60, 100 and 196 all blank; 0.54 the same; forcing a CPU reference orbit with
+  `--perturbation-alg MT` or `MTPeriodicity3` changes nothing). Expect real numbers for the
+  shallow scenes, `DNF-blank` for the rest.
 - Because of that, **no FractalShark row records a time without a picture**: every render is
   checked for structure first, and a flat image becomes `DNF-blank`. This kit once published
   "144x faster than Fraktaler-3" for a frame that was entirely empty; never again.
