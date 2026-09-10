@@ -130,6 +130,39 @@ fn recommended_max_iter_never_decreases_with_depth() {
     );
 }
 
+/// The 2026-09-10 black-minibrot bug: the auto appetite capped the TOTAL at 2,000,000, so a user's
+/// explicit high base was silently pulled DOWN — a base of 10,000,000 at ~1e80× came back 2,000,000
+/// and the view rendered black under auto while the same explicit count resolved. The base must pass
+/// through; only the depth BONUS is bounded.
+#[test]
+fn recommended_max_iter_honours_a_high_user_base() {
+    let mut vp = Viewport::new(1920.0, 1080.0);
+    // ~269 octaves ≈ the reported 9.34e80× view.
+    vp.set_center_log2mag(
+        crate::BigFloat::from_f64(-0.5, 64),
+        crate::BigFloat::from_f64(0.0, 64),
+        269.0,
+    );
+    let got = vp.recommended_max_iter(10_000_000);
+    assert!(
+        got >= 10_000_000,
+        "a 10,000,000 base was capped to {got} at depth — the black-minibrot bug"
+    );
+    // The depth bonus is still bounded, so a small DEFAULT base cannot explode at extreme depth
+    // (e21000-class, where 220/octave alone would ask for ~15M).
+    let mut extreme = Viewport::new(1920.0, 1080.0);
+    extreme.set_center_log2mag(
+        crate::BigFloat::from_f64(-0.5, 64),
+        crate::BigFloat::from_f64(0.0, 64),
+        70_000.0,
+    );
+    assert_eq!(
+        extreme.recommended_max_iter(1000),
+        1000 + 2_000_000,
+        "the depth bonus must stay bounded at 2M for a small base"
+    );
+}
+
 /// `zoom_by` must leave the centre exactly where it was, at any depth - it is the
 /// gesture for "deeper from here", so any drift is the bug.
 #[test]

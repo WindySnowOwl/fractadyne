@@ -285,16 +285,22 @@ impl Viewport {
 
     pub fn recommended_max_iter(&self, base: u32) -> u32 {
         let octaves = self.log2_magnification().max(0.0);
-        // The iteration count a given depth genuinely wants (~220 per octave). This is the
-        // *export* / full-quality appetite; the live preview caps it lower (see `build_params`)
-        // for responsiveness, so deep views can look smoother on screen than in an export.
+        // The iteration count a given depth genuinely wants (~220 per octave), ADDED to the user's
+        // base. This is the *export* / full-quality appetite; the live preview caps it lower (see
+        // `build_params`) for responsiveness, so deep views can look smoother on screen than in an
+        // export.
         //
-        // The 2M ceiling bounds AUTO mode only (a manual slider value passes through as `base`,
-        // up to the app's `MAX_ITER_LIMIT`): it keeps an auto-iter export at extreme depth
-        // (e21000-class, where the formula asks for ~15M) from a runaway reference build, while
-        // no longer starving deep dense fields the way the old 500k ceiling did (the 2.6e72×
-        // spar needs ~1M to resolve; measured 33% capped at 500k, 0% at 1M).
-        (base + (octaves * 220.0) as u32).min(2_000_000)
+        // ⭐The 2M bound is on the DEPTH BONUS, not the total, so the user's own base always passes
+        // through (the callers clamp the result to the app's `MAX_ITER_LIMIT`). Capping the TOTAL
+        // was a bug: a base of 10,000,000 at ~1e80× (≈269 octaves) came back **2,000,000**, so an
+        // auto-iter view of a deep minibrot rendered solid BLACK — the adaptive boost climbed to the
+        // 2M appetite, measured everything still capped, called it interior and reverted — while the
+        // identical view with auto OFF at 10,000,000 resolved in full. (2026-09-10 field report +
+        // gpu trace: "adaptive iter: exhausted — 100.0% capped at the full appetite (2000000);
+        // reverting boost 33.5→1.0".) Bounding only the bonus keeps a small DEFAULT base from a
+        // runaway ask at extreme depth (e21000-class wants ~15M of bonus → still capped to 2M)
+        // without ever pulling the appetite below what the user explicitly asked for.
+        base.saturating_add(((octaves * 220.0) as u32).min(2_000_000))
     }
 
     /// Center as `f64` (for display / coarse use).

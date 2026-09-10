@@ -12,6 +12,18 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Auto-iterations honours the iteration count you set — deep minibrots no longer go black under
+  auto** (beta.83). This is the real fix for the black-minibrot report the beta.81 change did not
+  solve. With "Auto-scale iterations with zoom" on, the appetite the renderer would climb to was
+  capped at 2,000,000 regardless of the base count you set, so a view of a deep minibrot with the
+  Iterations field at 10,000,000 climbed to 2,000,000, found the filaments still unresolved, decided
+  the view was solid interior, and reverted to black — while the identical view with auto off at
+  10,000,000 resolved in full. The 2,000,000 cap was meant to stop a small default count from asking
+  for tens of millions at extreme depth; it was applied to the whole count instead of to the
+  depth-proportional part, so it silently overrode the number you typed. It now bounds only the
+  depth bonus, so your base always passes through (up to the ten-million ceiling), and a small
+  default is still protected from a runaway ask. Found from a GPU trace at 9.34e80×, not guessed.
+
 - **A "LIVE TEST" banner marks a window a test harness is driving** (beta.82). The developer
   harnesses that open a real window and drive the live view — the live-vs-offline check, the motion
   test, the UI walk, the autopilot dive and the rest — now paint a red "LIVE TEST" banner across the
