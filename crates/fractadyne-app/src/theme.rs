@@ -122,7 +122,8 @@ impl Palette {
             dark_mode: true,
         }
     }
-    /// Fissiodyne Light: warm off-whites, near-black ink, a deeper amber `#B98212` for contrast.
+    /// Fissiodyne Light: warm off-whites, near-black ink, a deep amber `#855C0C` — the shallowest
+    /// amber that clears WCAG AA (4.5:1) as label text on every UI surface (see `theme_tests`).
     fn light() -> Self {
         Palette {
             window: rgb(0xFB, 0xFA, 0xF8),
@@ -133,7 +134,7 @@ impl Palette {
             active: rgb(0xE5, 0xE2, 0xDC),
             border: rgb(0xD8, 0xD5, 0xCE),
             text: rgb(0x2A, 0x2B, 0x2E),
-            accent: rgb(0xB9, 0x82, 0x12),
+            accent: rgb(0x85, 0x5C, 0x0C),
             selection: rgb(0xF0, 0xE3, 0xBC),
             ok: OK_LIGHT,
             danger: DANGER_LIGHT,

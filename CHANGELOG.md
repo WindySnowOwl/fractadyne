@@ -12,6 +12,26 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The minibrot period is now shown ambiently in the status bar, not just in a toast** (beta.88).
+  Jumping to a minibrot (the `M` key, or Go to location ▸ Go to feature) announced its period only
+  in a two-second toast. The period now also sits in the status bar and stays there while the view
+  is on that feature, clearing the moment you pan or zoom away. It is tied to the exact centre and
+  zoom it was solved at, so a view settling in place does not make it flicker; the slot is
+  reserved-width and drawn invisibly when no period applies, so its coming and going never reflows
+  the bar.
+
+- **Light theme: the amber accent now meets WCAG AA contrast** (beta.88). The light theme's accent
+  also draws the text of hovered and active widget labels, and at `#B98212` it read only 2.59:1 at
+  worst against the seven UI surfaces it appears on — below the 4.5:1 floor for readable text on
+  every one of them. It is deepened to `#855C0C`, the shallowest amber that clears 4.5:1 on all
+  seven (worst 4.60:1). The theme contrast test now holds the light accent to the full 4.5:1, so it
+  cannot drift back. The dark theme is unchanged.
+
+- **First-run Controls panel: the advanced sections start collapsed** (verified beta.88). Confirmed
+  the agreed first-run design is in place — Effects, Overlays, Advanced (accelerators) and the
+  per-fractal About section open collapsed, while Navigate, Coloring, Quality and Performance stay
+  open — so a newcomer sees a short, legible panel without anything being hidden behind a mode.
+
 - **The famous-locations menu now reaches a real deep minibrot, and every curated landmark is
   gated** (beta.87). The Navigate ▸ famous-locations list stopped at 1.3e7× — a depth any renderer
   reaches — so nothing in it showed what the app is actually for. It now also offers "Seahorse

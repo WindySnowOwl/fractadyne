@@ -1,6 +1,6 @@
 use super::{
-    commas, fmt_zoom_log2, iter_readout, iter_slot_width, zoom_readout, zoom_slot_width,
-    MAX_ITER_LIMIT,
+    commas, fmt_zoom_log2, iter_readout, iter_slot_width, period_readout, zoom_readout,
+    zoom_slot_width, MAX_ITER_LIMIT,
 };
 
 /// ⭐⭐**THE REGRESSION NET THE beta.149 REFLOW LOOP NEVER HAD.** The uitest height check passed
@@ -60,6 +60,25 @@ fn zoom_slot_fits_every_magnification() {
         "zoom slot {} too narrow: {} chars at log2mag {} ({:?})",
         zoom_slot_width(), worst.0, worst.1, worst.2
     );
+}
+
+/// The ambient period slot obeys the same reflow law as the readouts above: ONE width for every
+/// period it can show AND for the empty `—` state, or the finder result arriving (or the view
+/// moving off a feature) would wrap the bar and restart the render loop. Swept up to the finder's
+/// `max_period` clamp of 100,000, the widest value either solve path can report.
+#[test]
+fn period_readout_never_changes_width() {
+    let w0 = period_readout(None).chars().count();
+    let mut periods: Vec<u32> = (0..=5).map(|d| 10u32.pow(d)).collect();
+    periods.extend([2, 3, 998, 12_345, 99_999, 100_000]);
+    for &p in &periods {
+        let w = period_readout(Some(p)).chars().count();
+        assert_eq!(
+            w, w0,
+            "period readout width moved ({w0} → {w} chars at period {p}) — the bar can wrap when a \
+             feature is solved or left, restarting the render loop"
+        );
+    }
 }
 
 #[test]

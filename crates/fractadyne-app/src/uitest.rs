@@ -1421,7 +1421,10 @@ impl FractadyneApp {
         let texts = &self.perf.status_bar_texts;
         let find = |prefix: &str| texts.iter().find(|t| t.trim_start().starts_with(prefix));
         let mut sb_problems: Vec<String> = Vec::new();
-        for want in ["center ", "cursor ", "zoom", "iter "] {
+        // `period ` is the ambient minibrot-period slot: always drawn (transparent when no period
+        // applies), so its RESERVED presence is itself the reflow invariant to assert — the harness
+        // has no pointer or M-key, so it is exercised in exactly that empty-but-present state.
+        for want in ["center ", "cursor ", "zoom", "iter ", "period "] {
             if find(want).is_none() {
                 sb_problems.push(format!("no {want:?} readout"));
             }

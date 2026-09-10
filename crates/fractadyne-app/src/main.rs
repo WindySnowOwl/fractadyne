@@ -2470,6 +2470,19 @@ pub(crate) fn iter_slot_width() -> usize {
     commas(&MAX_ITER_LIMIT.to_string()).chars().count()
 }
 
+/// The status bar's ambient minibrot-period readout. `Some(p)` renders `period p`; `None` renders
+/// a reserved-width `—` so the slot is drawn (transparent) even when no period applies — its
+/// presence never reflows the bar, the same discipline as every readout above and the diagnostic
+/// slot below. The field is pinned to grouped `100,000`, the finder's `max_period` clamp, which is
+/// the widest period either solve path can report.
+pub(crate) fn period_readout(period: Option<u32>) -> String {
+    let w = commas(&100_000u32.to_string()).chars().count(); // "100,000" → 7
+    match period {
+        Some(p) => format!("period {:>w$}", commas(&p.to_string())),
+        None => format!("period {:>w$}", "—"),
+    }
+}
+
 #[cfg(test)]
 mod status_bar_slots;
 
@@ -4281,6 +4294,12 @@ struct FractadyneApp {
     /// A toast queued from a context without an `egui::Context` (e.g. a bookmark auto-save
     /// failure in `save_bookmarks`); drained into `toast` early in `update()`.
     pending_toast: Option<String>,
+    /// The last solved minibrot period and the exact view ([`view_key`]) it was solved at, shown
+    /// ambiently in the status bar (§3.1) — not just in the 2-second finder toast. Kept as a
+    /// (period, view-key) pair rather than cleared on navigation: the status bar shows it only
+    /// while the key still matches what is on screen, so it survives settling (same centre/zoom)
+    /// and disappears the instant the view moves, with no coupling to the reference lifecycle.
+    feature_period: Option<(u32, String)>,
     /// `max_texture_dimension_2d` this device was created with — the ceiling a window's surface
     /// must stay under. 0 means "unknown".
     max_texture_dim: u32,
@@ -5108,6 +5127,7 @@ impl FractadyneApp {
             misi: ui::misiurewicz_explorer::MisiExplorer::default(),
             share: ShareDialog { include_thumb: s.share_include_thumb, ..Default::default() },
             toast: None,
+            feature_period: None,
             // Booted by the device-loss handler's relaunch? Tell the user why the window blinked
             // (the session file restored their exact view; without this the restart is a mystery).
             pending_toast: (std::env::var_os("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS").is_some())
@@ -6294,6 +6314,22 @@ impl FractadyneApp {
         self.nav.record(snap);
     }
 
+    /// A stable identity for the Mandelbrot view on screen — fractal family, Julia mode, zoom, and
+    /// the full-precision centre. Used by the ambient period readout to tell whether a solved
+    /// minibrot period still describes what is displayed: it changes only when the user moves the
+    /// view (settling re-renders the same centre and zoom, so the readout doesn't flicker), and it
+    /// carries the family so a period never bleeds across a fractal or Julia switch.
+    fn view_key(&self) -> String {
+        format!(
+            "{}:{}|{}|{}|{}",
+            self.fractal.formula_id(),
+            self.julia_mode as u8,
+            fmt_zoom_field(self.viewport.log2_magnification()),
+            fractadyne_core::to_decimal_string(&self.viewport.center_x),
+            fractadyne_core::to_decimal_string(&self.viewport.center_y),
+        )
+    }
+
     /// Step back / forward through visited locations.
     fn undo_view(&mut self) {
         if let Some(prev) = self.nav.undo() {
@@ -6831,6 +6867,7 @@ impl FractadyneApp {
                     Some(t) => {
                         self.viewport.set_center_log2mag(cx, cy, t);
                         self.finish_nav_jump();
+                        self.feature_period = Some((n.period, self.view_key()));
                         self.set_toast(
                             format!(
                                 "Zoomed to the period-{} minibrot — {}×",
@@ -6845,6 +6882,7 @@ impl FractadyneApp {
                     None => {
                         self.viewport.set_center_log2mag(cx, cy, cur_l2);
                         self.finish_nav_jump();
+                        self.feature_period = Some((n.period, self.view_key()));
                         self.set_toast(
                             format!("Snapped to period-{} minibrot center", n.period),
                             ctx,
@@ -7054,10 +7092,16 @@ impl FractadyneApp {
         let cur_l2 = self.viewport.log2_magnification();
         let mut zoom_to = solve.zoom_to;
         let mut misi_miss = None;
+        // Set for the minibrot (nucleus) outcome only, and surfaced ambiently after the jump. The
+        // Misiurewicz outcome also carries a "period", but that is the cycle period behind its
+        // multiplier, a different quantity from a minibrot's — so the status-bar readout stays
+        // minibrot-only rather than showing two unlike numbers under one label.
+        let mut minibrot_period: Option<u32> = None;
 
         let (found, label) = match outcome {
             FeatureOutcome::Nucleus(Some(n)) => {
                 let period = n.period;
+                minibrot_period = Some(period);
                 let (cx, cy, t) = self.newton_raphson_target(n.cx, n.cy, period, 0);
                 zoom_to = t.filter(|t| *t > cur_l2);
                 (Some((cx, cy)), format!("period-{period} minibrot"))
@@ -7121,6 +7165,9 @@ impl FractadyneApp {
                 let l2 = zoom_to.unwrap_or(cur_l2);
                 self.viewport.set_center_log2mag(cx, cy, l2);
                 self.finish_nav_jump();
+                if let Some(p) = minibrot_period {
+                    self.feature_period = Some((p, self.view_key()));
+                }
                 self.goto.open = false;
                 let took = solve.started.elapsed().as_secs_f64();
                 // The flat-frame trap, said out loud at the moment it is entered: a fixed

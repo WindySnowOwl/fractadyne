@@ -1205,6 +1205,14 @@ impl FractadyneApp {
     }
 
     pub(crate) fn draw_status_bar(&mut self, ctx: &egui::Context) {
+        // Ambient minibrot period: the last solved period, but only while the view still equals the
+        // one it was solved at (`view_key`). Resolved here, before the panel closure borrows `self`,
+        // so the bar just paints the answer. `None` while nothing is solved or the view has moved.
+        let period_now = self
+            .feature_period
+            .as_ref()
+            .filter(|(_, key)| key == &self.view_key())
+            .map(|(p, _)| *p);
         let resp = egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             // WRAPPED, not a single row: at depth the centre coordinates alone can be most of the
             // width, and a plain `horizontal` silently CLIPS whatever doesn't fit — the limit
@@ -1295,6 +1303,32 @@ impl FractadyneApp {
                 };
                 // Widest is `MAX_ITER_LIMIT` grouped — see the reservation note on `zoom` above.
                 mono(ui, crate::iter_readout(eff_iter));
+                // Ambient minibrot period (§3.1): the finder result stays on screen instead of
+                // fading with its toast. RESERVED WIDTH, and drawn TRANSPARENT when no period
+                // applies (none solved yet, or the view has moved off the feature), so the slot's
+                // presence never reflows the bar — the device the diagnostic slot below also uses.
+                // `mono`'s last call is the iter readout above, so `drawn.push` here is free of it.
+                ui.separator();
+                {
+                    let ptext = crate::period_readout(period_now);
+                    let pcolor = if period_now.is_some() {
+                        ui.visuals().text_color()
+                    } else {
+                        egui::Color32::TRANSPARENT
+                    };
+                    drawn.push(ptext.clone());
+                    let r = ui.add(
+                        egui::Label::new(egui::RichText::new(ptext).monospace().color(pcolor))
+                            .wrap_mode(egui::TextWrapMode::Extend),
+                    );
+                    if period_now.is_some() {
+                        r.on_hover_text(
+                            "Period of the minibrot you jumped to (press M, or Go to location ▸ Go \
+                             to feature). It stays while the view sits on the feature and clears \
+                             when you move away.",
+                        );
+                    }
+                }
                 // Rendering-limit diagnostics: when a cap is genuinely binding, say so where the
                 // user is already looking, instead of leaving a black/flat view unexplained (the
                 // Misiurewicz-spar reports arrived as mystery screenshots precisely because the

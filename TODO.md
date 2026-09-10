@@ -7989,9 +7989,12 @@ for fun, informative value, and ease of use.
   NVIDIA drivers and the widest wgpu/Vulkan testing. Work is mostly `release.yml` (add a
   ubuntu-22.04 job producing a tar.gz + sha256) plus whatever the first real run turns up
   (file dialogs via rfd need a portal/GTK dep; check the icon/font loading paths).
-- [x] **First-run experience — DONE beta.59** (welcome overlay, see triage C12). Remaining
-  half of the agreed design (collapse advanced Controls sections by default) is separate and
-  still open. Original spec: a welcome overlay on first launch
+- [x] **First-run experience — DONE beta.59; panel-collapse verified beta.88** (welcome overlay,
+  see triage C12). The remaining half of the agreed design — advanced Controls sections collapsed
+  by default — is in place and confirmed by `--uitest` on a fresh config: Effects, Overlays,
+  Advanced (accelerators) and the per-fractal About section open collapsed, while Navigate,
+  Coloring, Quality and Performance stay open. Nothing hidden behind a mode. Original spec: a
+  welcome overlay on first launch
   covering navigation (drag to pan, wheel to zoom, click-to-zoom, `M` for the minibrot jump) and
   a couple of preset destinations, since deep-zoom apps are opaque to newcomers and this is the
   friction a forum reader hits in the first two minutes. ⚠**Not** a Simple/Advanced *mode*:
@@ -8257,9 +8260,12 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
 
 ### Structural mathematics
 
-- [ ] **Live period readout in the HUD** (P0, §3.1 partial) — period is computed by the nucleus
-  finder and shown in a transient toast; the proposal wants it ambient. Note detection is argmin
-  of |Z_n| over the critical orbit, not box-period/ball arithmetic.
+- [x] **Live period readout in the HUD** (P0, §3.1) — **DONE beta.88.** The minibrot period from
+  the M-key / Go-to feature solve now sits ambiently in the status bar (reserved-width, drawn
+  transparent when none applies so it never reflows the bar), keyed to the exact centre+zoom it was
+  solved at so a settling view doesn't flicker it and any pan/zoom clears it. `view_key` +
+  `feature_period`; `period_readout` width-gated by `status_bar_slots`. Detection is argmin of
+  |Z_n| over the critical orbit, not box-period/ball arithmetic.
 - [x] **Misiurewicz (k,p) discovery** (P1, §3.4) — ✅**DONE** (stale entry, checked 2026-09-04):
   `detect_misiurewicz` (core) derives `(preperiod, period)` from the view's critical orbit, and
   blank k/p in the Go-to feature finder means AUTO; the beta.14 Misiurewicz explorer's threaded
