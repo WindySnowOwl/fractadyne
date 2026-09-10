@@ -537,6 +537,16 @@ fn write_crash_report_at(msg: &str, loc: &str) {
         if std::fs::write(&path, &report).is_ok() {
             let _ = writeln!(std::io::stderr(), "[fd-panic] crash report written: {}", path.display());
         }
+        // Beside the report, the crashing VIEW as a loadable `.fdn` — the full-precision coordinates
+        // the manifest line omits. This is what turns a field device loss into a reproducible case:
+        // `fractadyne --deviceloss-repro --center <center_re> <center_im> --zoom-log2 <log2mag>`, or
+        // just File ▸ Open on the file. Formatting happens HERE (once), not on the hot path.
+        if let Some(fdn) = crate::crash_view_fdn() {
+            let vpath = dir.join(format!("crash-view-{secs}-{n}.fdn"));
+            if std::fs::write(&vpath, &fdn).is_ok() {
+                let _ = writeln!(std::io::stderr(), "[fd-panic] crash view written: {}", vpath.display());
+            }
+        }
     }
 }
 

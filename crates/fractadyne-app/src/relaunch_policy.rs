@@ -1,5 +1,36 @@
 use super::relaunch_decision;
 
+/// The device-lost handler writes the crashing view as a `.fdn` beside the crash report (the
+/// manifest omits the coordinates, which is what made the 2026-09-10 field loss unreproducible).
+/// This pins that the formatted view is actually a LOADABLE location — `center_re`/`center_im` and
+/// the iteration count survive, and the app's own location gate accepts it — so a future device
+/// loss becomes a reproducible case rather than a lost one.
+#[test]
+fn crash_view_fdn_is_a_loadable_location() {
+    *super::CRASH_VIEW.lock().unwrap() = Some(super::CrashView {
+        fractal: super::FractalKind::Mandelbrot,
+        julia: false,
+        julia_c: (0.0, 0.0),
+        cx: fractadyne_core::parse_bf("-0.7436438870371588707780645434936425750476").unwrap(),
+        cy: fractadyne_core::parse_bf("0.1318259042053122928210973548747672652630").unwrap(),
+        upp_log2: -55.0,
+        log2mag: 54.0,
+        max_iter: 10_000_000,
+        auto_iter: false,
+    });
+    let fdn = super::crash_view_fdn().expect("a view was stashed");
+    assert!(super::location_text_verdict(&fdn).is_ok(), "not accepted as a location:\n{fdn}");
+    assert!(fdn.contains("max_iter=10000000"), "iteration count missing:\n{fdn}");
+    // The centre round-trips (notation-independent — `to_decimal_string` writes scientific form for
+    // |x| < 1, e.g. `-7.436…e-1`), which is what makes the crashing spot recoverable.
+    let cre = fdn.lines().find_map(|l| l.strip_prefix("center_re=")).expect("center_re present");
+    let v = fractadyne_core::parse_bf(cre).expect("center_re parses");
+    assert!(
+        (fractadyne_core::to_f64(&v) - (-0.7436438870371589)).abs() < 1e-12,
+        "centre did not round-trip: {cre}"
+    );
+}
+
 #[test]
 fn a_first_loss_recovers_at_any_uptime() {
     // THE FIELD CASE (2026-08-18): a deep view + Home glide lost the device at 50.4s. The old

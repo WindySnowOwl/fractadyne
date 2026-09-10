@@ -12,6 +12,15 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A device loss (or any crash) now records the exact view as a loadable `.fdn`** (beta.92). The
+  crash report already captured the render manifest, but not the coordinates — which is why the
+  2026-09-10 field device loss could not be reproduced. The app now writes a `crash-view-<stamp>.fdn`
+  beside the crash report, holding the full-precision centre, zoom and iteration count of the view
+  that was on screen when it crashed. Open it (File ▸ Open) to return to the spot, or hand it to the
+  `--deviceloss-repro` diagnostic to characterise what happened. The view is captured cheaply every
+  frame (a couple of coordinate clones, no formatting); the file is written only when a crash occurs,
+  so a device loss never does expensive work to record its own cause.
+
 - **`--deviceloss-repro` now walks the full iteration range and can reproduce the M-key jump**
   (beta.91). Two additions to the device-loss harness. It now finds the hottest floor window across
   the *whole* orbit, not just the cheap shallow start — a real correction, since on a structured

@@ -562,6 +562,48 @@ pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
 #[cfg(test)]
 mod task_invocation;
 
+/// The main view, stashed each frame so the device-lost handler can write it as a loadable `.fdn`
+/// beside the crash report — the coordinates the manifest OMITS, which is what makes a field device
+/// loss reproducible (`--deviceloss-repro --center …`, or File ▸ Open). Raw values (no formatting)
+/// so the per-frame cost is a couple of `BigFloat` clones; the crash handler formats once, off the
+/// hot path — a device loss must not itself do expensive work to record its own cause.
+struct CrashView {
+    fractal: FractalKind,
+    julia: bool,
+    julia_c: (f64, f64),
+    cx: fractadyne_core::BigFloat,
+    cy: fractadyne_core::BigFloat,
+    upp_log2: f64,
+    log2mag: f64,
+    max_iter: u32,
+    auto_iter: bool,
+}
+
+/// Process-global so the wgpu device-lost callback (a different thread, no `&self`) can reach it,
+/// the same way the crash report reads the manifest global.
+static CRASH_VIEW: std::sync::Mutex<Option<CrashView>> = std::sync::Mutex::new(None);
+
+/// Format the last-stashed view as a minimal, loadable `.fdn`. Called by the crash / device-lost
+/// handler (`diag::write_crash_report_at`). `None` before the first frame stashed one.
+pub(crate) fn crash_view_fdn() -> Option<String> {
+    let g = CRASH_VIEW.lock().ok()?;
+    let v = g.as_ref()?;
+    Some(format!(
+        "app=Fractadyne\nfractal={}\njulia={}\njulia_c_re={:.17e}\njulia_c_im={:.17e}\n\
+         center_re={}\ncenter_im={}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n",
+        v.fractal.name(),
+        v.julia as u32,
+        v.julia_c.0,
+        v.julia_c.1,
+        fractadyne_core::to_decimal_string(&v.cx),
+        fractadyne_core::to_decimal_string(&v.cy),
+        v.upp_log2,
+        fmt_zoom_field(v.log2mag),
+        v.max_iter,
+        v.auto_iter as u32,
+    ))
+}
+
 /// Whether a lost device may relaunch, and as which generation. `None` means stop.
 ///
 /// Split out as a pure function so the policy is testable: it decides whether the user sees a
@@ -6329,6 +6371,24 @@ impl FractadyneApp {
         self.record_nav();
     }
 
+    /// Stash the main view for the crash-view `.fdn` (see [`CrashView`]). Cheap — two `BigFloat`
+    /// clones and a lock; called every frame so the device-lost handler always has the CURRENT view.
+    fn stash_crash_view(&self) {
+        if let Ok(mut g) = CRASH_VIEW.lock() {
+            *g = Some(CrashView {
+                fractal: self.fractal,
+                julia: self.julia_mode,
+                julia_c: self.julia_c,
+                cx: self.viewport.center_x.clone(),
+                cy: self.viewport.center_y.clone(),
+                upp_log2: self.viewport.units_per_pixel.log2(),
+                log2mag: self.viewport.log2_magnification(),
+                max_iter: self.render_cfg.max_iter,
+                auto_iter: self.render_cfg.auto_iter,
+            });
+        }
+    }
+
     /// Snapshot the current location for navigation history.
     fn snapshot_view(&self) -> ViewSnapshot {
         ViewSnapshot {
@@ -11493,6 +11553,9 @@ impl eframe::App for FractadyneApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let frame_start = Instant::now();
         diag::alive(); // heartbeat: a frame loop that stops arriving here is a hang (D1.4)
+        // Record the on-screen view so a device loss can write it as a loadable `.fdn` beside the
+        // crash report (the manifest omits the coordinates). Cheap; must run before the GPU submit.
+        self.stash_crash_view();
 
         // `FRACTADYNE_TRACE=dpi` — one line per real change of scale factor or window size.
         //
