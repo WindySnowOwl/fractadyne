@@ -4603,6 +4603,36 @@ zoom = \"1e94\"
                 threshold: "re-derived deep on-point (< 1e-40); unchanged + kept off-point",
                 pass: grew && live_err < 1.0e-40 && held,
             });
+
+            // ⭐The exact-points menu (`EXPRESSION_POI`): the main-cardioid bulb roots, given as
+            // transcendental expressions. Verify each evaluates to a point genuinely ON the cardioid
+            // boundary — where the fixed point z=(1−√(1−4c))/2 has multiplier |2z|=1 — and that each
+            // is kept as an expression (never a bare decimal). A typo in a formula moves the point
+            // off the boundary and fails here rather than shipping a menu item that lands on nothing.
+            let z0 = fractadyne_core::parse_bf("0").unwrap();
+            let mut worst_mult = 0.0_f64;
+            let mut poi_all_expr = true;
+            for (_, re, im, _) in crate::EXPRESSION_POI {
+                let cr = fractadyne_core::to_f64(&fractadyne_core::parse_bf_prec(re, 256).unwrap());
+                let ci = fractadyne_core::to_f64(&fractadyne_core::parse_bf_prec(im, 256).unwrap());
+                // w = 1 − 4c; principal complex √; multiplier μ = 2z = 1 − √w, and |μ| = 1 on the
+                // cardioid boundary.
+                let (wa, wb) = (1.0 - 4.0 * cr, -4.0 * ci);
+                let r = wa.hypot(wb);
+                let sr = ((r + wa) * 0.5).max(0.0).sqrt();
+                let si = wb.signum() * ((r - wa) * 0.5).max(0.0).sqrt();
+                worst_mult = worst_mult.max(((1.0 - sr).hypot(si) - 1.0).abs());
+                poi_all_expr &=
+                    crate::CenterExpr::capture(re, im, z0.clone(), z0.clone(), 64).is_some();
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "View format",
+                name: "exact bulb-root expressions land on the cardioid".into(),
+                params: format!("{} EXPRESSION_POI entries; |2z| at each", crate::EXPRESSION_POI.len()),
+                result: format!("worst ||μ|−1| {worst_mult:.2e}; all kept as expressions {poi_all_expr}"),
+                threshold: "on the boundary (< 1e-9) and every point preserved as an expression",
+                pass: worst_mult < 1.0e-9 && poi_all_expr,
+            });
             self.center_expr = None;
 
             // A newer format_version must be detected (not silently consumed).

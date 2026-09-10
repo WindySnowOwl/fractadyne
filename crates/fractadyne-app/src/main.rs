@@ -2742,6 +2742,53 @@ const MISIUREWICZ_POI: &[(&str, &str, &str, f64)] = &[
     ),
 ];
 
+/// Curated points given as EXACT coordinate expressions rather than decimals — the showcase for
+/// coordinate-expression preservation: `(name, center_re_expr, center_im_expr, magnification)`.
+///
+/// These are the ROOTS OF THE MAIN-CARDIOID BULBS. The cardioid boundary is `c(θ) = e^{iθ}/2 −
+/// e^{2iθ}/4`, and the period-`q` bulb attached at internal angle `p/q` has its root at `θ = 2π·p/q`
+/// (`tau` = 2π in the evaluator), so:
+///   `center_re = cos(θ)/2 − cos(2θ)/4`,  `center_im = sin(θ)/2 − sin(2θ)/4`.
+/// For `q ≥ 3` those are transcendental (a cosine of a rational multiple of 2π), so a fixed decimal
+/// would truncate — the expression is re-derived at the view's precision instead, staying exactly on
+/// the root at any depth. The two rational cases (`θ = 0` cusp → ¼, `θ = π` period-2 → −¾) are
+/// written as the plain fractions they are. Mandelbrot only; jumped to via [`goto_expression`], which
+/// preserves the expression (unlike [`goto_location`], whose entries are fixed decimals).
+const EXPRESSION_POI: &[(&str, &str, &str, f64)] = &[
+    ("Cardioid cusp (c = 1/4)", "1/4", "0", 20.0),
+    ("Period-2 root (c = -3/4)", "-3/4", "0", 20.0),
+    (
+        "Period-3 bulb root",
+        "cos(tau/3)/2 - cos(2*tau/3)/4",
+        "sin(tau/3)/2 - sin(2*tau/3)/4",
+        50.0,
+    ),
+    (
+        "Period-4 bulb root",
+        "cos(tau/4)/2 - cos(2*tau/4)/4",
+        "sin(tau/4)/2 - sin(2*tau/4)/4",
+        120.0,
+    ),
+    (
+        "Period-5 bulb root (1/5)",
+        "cos(tau/5)/2 - cos(2*tau/5)/4",
+        "sin(tau/5)/2 - sin(2*tau/5)/4",
+        300.0,
+    ),
+    (
+        "Period-5 bulb root (2/5)",
+        "cos(2*tau/5)/2 - cos(4*tau/5)/4",
+        "sin(2*tau/5)/2 - sin(4*tau/5)/4",
+        300.0,
+    ),
+    (
+        "Period-7 bulb root (1/7)",
+        "cos(tau/7)/2 - cos(2*tau/7)/4",
+        "sin(tau/7)/2 - sin(2*tau/7)/4",
+        1000.0,
+    ),
+];
+
 /// How deep a feature solve will go, in octaves. Not an arithmetic limit any more — the solver
 /// works in log magnification — but a sanity bound: its working precision grows with the ask, so
 /// a mistyped 1e1000000× would grind for hours producing a point no renderer could use. 200,000
@@ -6770,6 +6817,37 @@ impl FractadyneApp {
         self.viewport.set_center_mag(x, y, mag.max(1.0));
         self.viewport.precision = fractadyne_core::precision_for_magnification(mag);
         self.center_expr = None; // a discrete jump to a fixed coordinate — no anchor to re-derive
+        self.pointer.zoom_vel = 0.0;
+        self.invalidate_refs();
+        self.record_nav();
+        self.set_toast(format!("{name} · {}×", fmt_zoom(mag)), ctx);
+    }
+
+    /// Jump to a Mandelbrot point given as coordinate EXPRESSIONS, PRESERVING the expression as the
+    /// centre's anchor so a deeper zoom re-derives it exactly ([`CenterExpr`]) — the opposite of
+    /// [`goto_location`], whose entries are fixed decimals. Used by the [`EXPRESSION_POI`] menu: the
+    /// cardioid bulb roots are transcendental, so a decimal would drift off the point at depth.
+    fn goto_expression(&mut self, re: &str, im: &str, mag: f64, name: &str, ctx: &egui::Context) {
+        let prec = fractadyne_core::precision_for_magnification(mag);
+        let (Some(x), Some(y)) =
+            (fractadyne_core::parse_bf_prec(re, prec), fractadyne_core::parse_bf_prec(im, prec))
+        else {
+            self.set_toast(format!("{name}: could not evaluate the coordinates"), ctx);
+            return;
+        };
+        self.fractal = FractalKind::Mandelbrot;
+        self.julia_mode = false;
+        self.viewport.set_center_mag(x, y, mag.max(1.0));
+        self.viewport.precision = prec;
+        // Capture against the live centre (post-set) so it reads as on-point immediately, and the
+        // next zoom re-derives the expression at the deeper precision.
+        self.center_expr = CenterExpr::capture(
+            re,
+            im,
+            self.viewport.center_x.clone(),
+            self.viewport.center_y.clone(),
+            self.viewport.precision,
+        );
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
         self.record_nav();

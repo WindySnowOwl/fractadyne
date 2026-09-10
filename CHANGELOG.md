@@ -12,6 +12,18 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Exact points menu — the main-cardioid bulb roots** (beta.96). A new "Exact points (expressions)"
+  submenu under Navigate jumps to the roots of the main-cardioid bulbs — where each period-`q` bud
+  attaches to the cardioid — given as EXACT coordinate expressions rather than decimals. The boundary
+  is `c(θ) = e^{iθ}/2 − e^{2iθ}/4`, so the period-`q` bulb at internal angle `p/q` has its root at
+  `θ = 2π·p/q`, i.e. `cos(θ)/2 − cos(2θ)/4` + `i·(sin(θ)/2 − sin(2θ)/4)`. For `q ≥ 3` those are
+  transcendental, so a decimal would drift off the point at depth — which makes them the natural
+  showcase for beta.95's expression preservation: jump to one and zoom in and the centre stays
+  exactly on the root at any depth. The set spans periods 2–7 (period 2 is the −¾ Seahorse Valley
+  neck), with the cardioid cusp (¼) rounding it out. Mandelbrot only; each is jumped to by a path
+  that keeps the expression, and a self-test confirms every point lands on the cardioid boundary
+  (its fixed-point multiplier has magnitude 1) so a typo can't ship a menu item that goes nowhere.
+
 - **Coordinate expressions are preserved and re-derived at depth** (beta.95). Entering a centre as an
   expression — `1/3`, `-0.5 + 0.25*cos(pi/4)` — used to resolve to a decimal the instant you applied
   it, capped at the digits that depth needed; zooming deeper then slowly drifted off the exact point,

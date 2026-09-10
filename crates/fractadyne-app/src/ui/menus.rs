@@ -695,6 +695,24 @@ impl FractadyneApp {
                                 ui.close_menu();
                             }
                         }
+                        ui.menu_button("Exact points (expressions)", |ui| {
+                            ui.label(
+                                egui::RichText::new(
+                                    "Roots of the main-cardioid bulbs, given as exact expressions \
+                                     (cos/sin of a fraction of 2π). The coordinate is kept as its \
+                                     expression, so zooming in stays exactly on the point.",
+                                )
+                                .weak()
+                                .small(),
+                            );
+                            ui.separator();
+                            for (name, re, im, mag) in crate::EXPRESSION_POI {
+                                if ui.button(*name).clicked() {
+                                    self.goto_expression(re, im, *mag, name, &ctx);
+                                    ui.close_menu();
+                                }
+                            }
+                        });
                         ui.separator();
                         if ui
                             .button(format!("{}  Random location", crate::icons::RANDOM))
