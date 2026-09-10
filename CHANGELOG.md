@@ -12,6 +12,13 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Polar coordinate entry in "Go to location"** (beta.94). The coordinate evaluator has understood
+  `x0 + 0.25*cos(pi/4)` since beta.17, but you had to know to type it. Go to location now has a
+  discoverable polar mode: a "x, y  ↔  offset + r ∠ θ" toggle, then offset (x0, y0), radius and angle
+  fields with a degrees/radians/turns selector. It composes the expression and runs it through the
+  exact same parse-and-jump, so Copy, the depth-matched precision, and the flat-frame warning are all
+  unchanged. This finishes the coordinate-expression feature — the last, discoverable half.
+
 - **The issue reporter now attaches the location that crashed** (beta.93). Following on from the
   `crash-view.fdn` recording, Help ▸ Report an issue now offers "Location that crashed (.fdn)" as a
   selectable artifact — included by default whenever one exists — and the after-a-crash prompt says

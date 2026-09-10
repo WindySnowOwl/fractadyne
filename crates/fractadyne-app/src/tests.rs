@@ -977,6 +977,34 @@ fn about_names_the_running_backend() {
     }
 }
 
+/// The Go-to dialog's polar entry composes `x0 + r·cos θ`, `y0 + r·sin θ` as EXPRESSIONS and hands
+/// them to the same coordinate evaluator `apply_goto` uses (`parse_bf_prec`). This pins that the
+/// composed strings evaluate to the right point, in all three angle units, and that empty fields
+/// read as 0 — the maths that makes the feature correct, and the part the UI can't show.
+#[test]
+fn compose_polar_evaluates_to_the_offset_polar_point() {
+    let prec = 160usize;
+    let ev = |s: &str| fractadyne_core::to_f64(&fractadyne_core::parse_bf_prec(s, prec).expect(s));
+    let inv_root2 = std::f64::consts::FRAC_1_SQRT_2; // cos 45° = sin 45° = 1/√2
+
+    // Offset (-0.5, 0.1) + 0.25 at 45°.
+    let (re, im) = crate::compose_polar("-0.5", "0.1", "0.25", "45", crate::AngleUnit::Degrees);
+    assert!((ev(&re) - (-0.5 + 0.25 * inv_root2)).abs() < 1e-12, "re={re}");
+    assert!((ev(&im) - (0.1 + 0.25 * inv_root2)).abs() < 1e-12, "im={im}");
+
+    // Radians: cos π ≈ -1.
+    let (re_r, _) = crate::compose_polar("0", "0", "1", "3.14159265358979", crate::AngleUnit::Radians);
+    assert!((ev(&re_r) - (-1.0)).abs() < 1e-9, "re={re_r}");
+
+    // Turns: a quarter turn is 90°, so sin = 1.
+    let (_, im_t) = crate::compose_polar("0", "0", "1", "1/4", crate::AngleUnit::Turns);
+    assert!((ev(&im_t) - 1.0).abs() < 1e-9, "im={im_t}");
+
+    // Empty fields read as 0 and still compose to a valid, evaluable expression (the origin).
+    let (re_e, im_e) = crate::compose_polar("", "", "", "", crate::AngleUnit::Degrees);
+    assert!(ev(&re_e).abs() < 1e-12 && ev(&im_e).abs() < 1e-12, "re={re_e} im={im_e}");
+}
+
 /// Checklist step 91, "Help > Report an issue opens the issue reporting path correctly with
 /// the app's details". Both doors, because the mailto is the fallback for anyone without a
 /// GitHub account, and a broken URL there is silent — the browser simply opens nothing useful.

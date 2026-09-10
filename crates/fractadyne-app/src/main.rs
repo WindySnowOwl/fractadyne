@@ -3392,6 +3392,49 @@ pub(crate) enum FeatureKind {
     Minibrot,
 }
 
+/// The angle unit for the Go-to dialog's polar entry. The coordinate GRAMMAR is radians-only (and
+/// stays small and total); this is a UI convenience that composes the right radian expression.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum AngleUnit {
+    #[default]
+    Degrees,
+    Radians,
+    Turns,
+}
+
+impl AngleUnit {
+    fn label(self) -> &'static str {
+        match self {
+            AngleUnit::Degrees => "degrees",
+            AngleUnit::Radians => "radians",
+            AngleUnit::Turns => "turns",
+        }
+    }
+    pub(crate) const ALL: [AngleUnit; 3] = [AngleUnit::Degrees, AngleUnit::Radians, AngleUnit::Turns];
+}
+
+/// Compose a polar centre entry — `x0, y0` offset plus radius `r` at angle `θ` — into the pair of
+/// REAL coordinate EXPRESSIONS the Go-to evaluator already understands: `re = x0 + r·cos θ`,
+/// `im = y0 + r·sin θ`, with `θ` converted to radians for the unit. The fields may themselves be
+/// expressions (`r = 1/2`), so each is parenthesised; empty fields read as 0. The maths lives in the
+/// one evaluator (no duplicate trig here) — this only builds the string it evaluates, which is what
+/// keeps the grammar small and total while the UI stays discoverable.
+pub(crate) fn compose_polar(x0: &str, y0: &str, r: &str, theta: &str, unit: AngleUnit) -> (String, String) {
+    // Parenthesise a field, or read empty as 0 — so a blank offset or a `1/2` radius both compose.
+    let f = |s: &str| -> String {
+        let t = s.trim();
+        if t.is_empty() { "0".to_string() } else { format!("({t})") }
+    };
+    let theta_rad = match unit {
+        AngleUnit::Radians => f(theta),
+        AngleUnit::Degrees => format!("{}*pi/180", f(theta)),
+        AngleUnit::Turns => format!("{}*tau", f(theta)),
+    };
+    let re = format!("{} + {}*cos(({}))", f(x0), f(r), theta_rad);
+    let im = format!("{} + {}*sin(({}))", f(y0), f(r), theta_rad);
+    (re, im)
+}
+
 // System-facts helpers (process_memory, SysInfo, gather_system_info, CPU/VRAM probes)
 // moved to sysinfo.rs (re-exported below).
 // ---- Scripting: keyframe camera tours (also drives the benchmark) ----
@@ -3440,6 +3483,14 @@ struct GotoDialog {
     y: String,
     zoom: String,
     msg: Option<String>,
+    /// Polar entry mode: the centre is composed from `x0, y0 + r∠θ` instead of typed as x/y. The
+    /// `x`/`y` fields above still receive the resolved expression on Go, so Copy / apply are unchanged.
+    polar: bool,
+    polar_x0: String,
+    polar_y0: String,
+    polar_r: String,
+    polar_theta: String,
+    polar_unit: AngleUnit,
     /// Feature-finder inputs (parameterized "go to feature").
     feat_kind: FeatureKind,
     feat_k: String,

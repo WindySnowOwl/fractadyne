@@ -1024,7 +1024,15 @@ impl FractadyneApp {
                 self.dialogs.bench_open = true;
             }
             Screen::Gallery => self.gallery.open = true,
-            Screen::Goto => self.goto.open = true,
+            Screen::Goto => {
+                self.goto.open = true;
+                // Show the POLAR entry mode — the newer, busier half of the dialog (mode toggle +
+                // offset/radius/angle fields + unit selector); the plain x/y mode is trivial.
+                self.goto.polar = true;
+                self.goto.polar_x0 = "-0.5".into();
+                self.goto.polar_r = "0.25".into();
+                self.goto.polar_theta = "45".into();
+            }
             Screen::MisiurewiczExplorer => self.open_misiurewicz_explorer(),
             Screen::MisiurewiczJump => {
                 self.open_misiurewicz_explorer();

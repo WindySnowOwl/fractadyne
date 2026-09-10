@@ -290,10 +290,42 @@ impl FractadyneApp {
             .resizable(false)
             .default_width(420.0)
             .show(ctx, |ui| {
-                ui.label(egui::RichText::new("Center — real (Re)").weak().small());
-                let rx = ui.add(egui::TextEdit::singleline(&mut self.goto.x).desired_width(f32::INFINITY));
-                ui.label(egui::RichText::new("Center — imaginary (Im)").weak().small());
-                let ry = ui.add(egui::TextEdit::singleline(&mut self.goto.y).desired_width(f32::INFINITY));
+                // Cartesian or polar entry. The maths is the ONE evaluator either way; polar just
+                // composes `x0 + r·cos θ`, `y0 + r·sin θ` (see `compose_polar`) on Go — the
+                // discoverable half of the coordinate-expression feature, no new grammar.
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Enter as:").weak().small());
+                    ui.selectable_value(&mut self.goto.polar, false, "x, y");
+                    ui.selectable_value(&mut self.goto.polar, true, "offset + r ∠ θ");
+                });
+                let mut fields_changed = false;
+                if self.goto.polar {
+                    ui.label(egui::RichText::new("Offset centre  (x0, y0 — leave 0 for a pure polar point)").weak().small());
+                    ui.horizontal(|ui| {
+                        let w = (ui.available_width() - 8.0) * 0.5;
+                        fields_changed |= ui.add(egui::TextEdit::singleline(&mut self.goto.polar_x0).desired_width(w).hint_text("x0")).changed();
+                        fields_changed |= ui.add(egui::TextEdit::singleline(&mut self.goto.polar_y0).desired_width(f32::INFINITY).hint_text("y0")).changed();
+                    });
+                    ui.label(egui::RichText::new("Radius r, angle θ").weak().small());
+                    ui.horizontal(|ui| {
+                        fields_changed |= ui.add(egui::TextEdit::singleline(&mut self.goto.polar_r).desired_width(150.0).hint_text("r")).changed();
+                        fields_changed |= ui.add(egui::TextEdit::singleline(&mut self.goto.polar_theta).desired_width(120.0).hint_text("θ")).changed();
+                        egui::ComboBox::from_id_salt("goto_angle_unit")
+                            .selected_text(self.goto.polar_unit.label())
+                            .show_ui(ui, |ui| {
+                                for u in crate::AngleUnit::ALL {
+                                    if ui.selectable_value(&mut self.goto.polar_unit, u, u.label()).changed() {
+                                        fields_changed = true;
+                                    }
+                                }
+                            });
+                    });
+                } else {
+                    ui.label(egui::RichText::new("Center — real (Re)").weak().small());
+                    fields_changed |= ui.add(egui::TextEdit::singleline(&mut self.goto.x).desired_width(f32::INFINITY)).changed();
+                    ui.label(egui::RichText::new("Center — imaginary (Im)").weak().small());
+                    fields_changed |= ui.add(egui::TextEdit::singleline(&mut self.goto.y).desired_width(f32::INFINITY)).changed();
+                }
                 ui.label(egui::RichText::new("Zoom (magnification)").weak().small());
                 let rz = ui.add(egui::TextEdit::singleline(&mut self.goto.zoom).desired_width(220.0));
                 // Live warning for the flat-frame trap BEFORE the jump is made: the solver
@@ -319,7 +351,7 @@ impl FractadyneApp {
                 }
                 // Same rule as the k/p boxes below: a message describes the inputs that produced
                 // it, so editing any of them retires it rather than leaving a stale verdict.
-                if rx.changed() || ry.changed() || rz.changed() {
+                if fields_changed || rz.changed() {
                     self.goto.msg = None;
                 }
                 if let Some(m) = &self.goto.msg {
@@ -335,6 +367,10 @@ impl FractadyneApp {
                         self.goto.x = fractadyne_core::to_decimal_string(&self.viewport.center_x);
                         self.goto.y = fractadyne_core::to_decimal_string(&self.viewport.center_y);
                         self.goto.zoom = fmt_zoom_field(self.viewport.log2_magnification());
+                        // A view's centre is x/y — there's no natural offset+angle for it, so show
+                        // the filled cartesian fields rather than leaving the polar fields (which it
+                        // did not touch) looking as if the button did nothing.
+                        self.goto.polar = false;
                         self.goto.msg = None;
                     }
                     // ⚠**Not the last row in this window, and that is deliberate.** The Go-to
@@ -526,6 +562,19 @@ impl FractadyneApp {
             ));
         }
         if go {
+            // Polar entry composes into the real/imaginary expression fields, then goes through the
+            // exact same parse-and-jump — so Copy, precision, and the flat-frame warning are unchanged.
+            if self.goto.polar {
+                let (re, im) = crate::compose_polar(
+                    &self.goto.polar_x0,
+                    &self.goto.polar_y0,
+                    &self.goto.polar_r,
+                    &self.goto.polar_theta,
+                    self.goto.polar_unit,
+                );
+                self.goto.x = re;
+                self.goto.y = im;
+            }
             self.apply_goto(); // clears goto_open on success
         }
         // Closed if the user hit the window's ✕ (open=false) or Go succeeded.
