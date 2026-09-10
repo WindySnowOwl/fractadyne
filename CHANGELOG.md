@@ -12,6 +12,16 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **`--deviceloss-repro` now walks the full iteration range and can reproduce the M-key jump**
+  (beta.91). Two additions to the device-loss harness. It now finds the hottest floor window across
+  the *whole* orbit, not just the cheap shallow start — a real correction, since on a structured
+  view the per-step cost is highest deep, where deltas have grown and rebase often. And `--m-jump`
+  reproduces the exact crash action ("hit M during a zoom"): it runs the minibrot finder from the
+  view and measures at the minibrot it lands on. Result across the Seahorse-998 nucleus, the last
+  session view, and its M-jump target: every constructible deep view is cheap (~10–70 ms at full
+  res), so the field's device loss lived at a specific hot location ~70× hotter per step, which is
+  not in the current config — reproducing it needs those exact coordinates. Dev-only.
+
 - **New diagnostic `--deviceloss-repro` for the open deep-zoom device-loss investigation** (beta.90,
   issue #1). A safe, headless harness: it builds a deep interior reference and times the honest
   per-dispatch GPU cost (one submission against `poll(Wait)`) at small pixel areas, scaling up only

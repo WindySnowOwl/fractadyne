@@ -70,6 +70,10 @@ pub(crate) struct DeviceLossRepro {
     center: Option<(String, String)>,
     zoom_log2: f64,
     ref_iter: u32,
+    /// `--m-jump`: before measuring, do the minibrot-finder jump (the `M` key) from the view — the
+    /// field crash was "hit M during a zoom", which lands on the minibrot's OWN deep scale, a far
+    /// hotter interior than the view M was pressed from.
+    m_jump: bool,
     done: bool,
 }
 
@@ -97,7 +101,8 @@ impl DeviceLossRepro {
             .map(|n| n as u32)
             .unwrap_or(1_000_000)
             .clamp(50_000, 100_000_000);
-        Some(Self { center, zoom_log2, ref_iter, done: false })
+        let m_jump = args.iter().any(|a| a == "--m-jump");
+        Some(Self { center, zoom_log2, ref_iter, m_jump, done: false })
     }
 }
 
@@ -118,9 +123,10 @@ impl FractadyneApp {
         if r.done {
             return true;
         }
-        let (zoom_log2, ref_iter, center) = (r.zoom_log2, r.ref_iter, r.center.clone());
+        let (zoom_log2, ref_iter, center, m_jump) =
+            (r.zoom_log2, r.ref_iter, r.center.clone(), r.m_jump);
         self.harness.deviceloss_repro.as_mut().unwrap().done = true;
-        self.run_deviceloss_repro(device, queue, zoom_log2, ref_iter, center);
+        self.run_deviceloss_repro(device, queue, zoom_log2, ref_iter, center, m_jump);
         true
     }
 
@@ -131,6 +137,7 @@ impl FractadyneApp {
         zoom_log2: f64,
         ref_iter: u32,
         center: Option<(String, String)>,
+        m_jump: bool,
     ) {
         println!(
             "Fractadyne device-loss repro — {}\n\
@@ -163,17 +170,47 @@ impl FractadyneApp {
         self.render_cfg.max_iter = ref_iter;
         let home = !custom;
 
+        // Reproduce "hit M during a zoom": jump to the minibrot the finder lands on — its OWN deep
+        // scale, a far hotter interior than the view M was pressed from, and where the field crashed.
+        // Replicates find_minibrot's core (find_nucleus → newton_raphson_target → jump), no toast.
+        if m_jump {
+            let mag_l2 = self.viewport.log2_magnification();
+            let ctr = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
+            let max_period = self
+                .viewport
+                .recommended_max_iter(self.render_cfg.max_iter)
+                .clamp(1_000, 100_000);
+            match fractadyne_core::find_nucleus(&ctr, mag_l2, 0, max_period) {
+                Some(n) => {
+                    let period = n.period;
+                    let (jx, jy, target) = self.newton_raphson_target(n.cx, n.cy, period, 0);
+                    let t = target.filter(|t| *t > mag_l2).unwrap_or(mag_l2);
+                    self.viewport.set_center_log2mag(jx, jy, t);
+                    self.viewport.precision =
+                        fractadyne_core::precision_for_octaves(t.max(0.0).ceil() as u64);
+                    println!(
+                        "M-jump    : found a period-{period} minibrot ⇒ jumped to 2^{t:.1} (~{:.2e}x)",
+                        2f64.powf(t.min(1020.0))
+                    );
+                }
+                None => {
+                    println!("M-jump    : no minibrot found near the centre — measuring the view as given.")
+                }
+            }
+        }
+
         // Build the reference SYNCHRONOUSLY (a multi-minute bignum build for a large interior orbit;
         // the watchdog will note the pause — that is expected). `current_export_request_for` runs
         // `recompute_worker` inline and carries the orbit into the request.
         println!(
             "view      : centre {} , {}\n\
-             zoom      : 2^{zoom_log2:.1} (~{:.2e}x){}\n\
+             zoom      : 2^{:.1} (~{:.2e}x){}\n\
              building reference at iter={ref_iter} (a non-escaping/interior orbit builds to the cap) ...",
             fractadyne_core::to_decimal_string(&self.viewport.center_x),
             fractadyne_core::to_decimal_string(&self.viewport.center_y),
-            2f64.powf(zoom_log2.min(1020.0)),
-            if home { "  [canonical Seahorse-998 nucleus]" } else { "  [--center override]" },
+            self.viewport.log2_magnification(),
+            2f64.powf(self.viewport.log2_magnification().min(1020.0)),
+            if m_jump { "  [after M-jump]" } else if home { "  [canonical Seahorse-998 nucleus]" } else { "  [--center override]" },
         );
         let t0 = std::time::Instant::now();
         let base = self.current_export_request_for(&self.viewport, false);
@@ -247,13 +284,52 @@ impl FractadyneApp {
             }
         }
 
-        // ── axis 2: WINDOW size at a fixed safe area — the actuator the field's loss actually used.
-        // The area axis fixed the window at the floor and found it cheap; the field's lethal
-        // in-flight pass was a 10,236-iteration WINDOW, not the 256 floor. Grow the window at a small
-        // (safe) area, then combine with the area exponent to predict the window size whose full-res
-        // dispatch hits the watchdog.
+        // ── ⭐the HOTTEST floor window across the FULL iteration range, at a fixed safe area. The
+        // area axis above measured only the SHALLOW start of the orbit — the CHEAP part. On a
+        // structured deep view the per-step cost is highest DEEP, where pixels' deltas have grown and
+        // rebase every few steps; that is where the field's render actually spent its time. Walk
+        // [0, cap) once in floor windows and take the worst, with its position and the trend.
         let (safe_w, safe_h) = (512u32, 384u32);
         let safe_px = (safe_w as f64) * (safe_h as f64);
+        let walk_cap = base.orbit_len.min(1_000_000);
+        let (mut hot_ms, mut hot_pos) = (0.0_f64, 0u32);
+        let mut trend: Vec<(u32, f64)> = Vec::new();
+        {
+            let mut req = base.clone();
+            req.width = safe_w;
+            req.height = safe_h;
+            req.ss = 1;
+            req.max_iter = walk_cap;
+            let mut passes = Vec::new();
+            if fractadyne_gpu::render_iter_chunked_timed(device, queue, &req, FLOOR_WINDOW, &mut passes)
+                .is_ok()
+            {
+                let step = (passes.len() / 6).max(1);
+                for (i, p) in passes.iter().enumerate().filter(|(_, p)| p.end_iter > skip) {
+                    if p.wall_ms > hot_ms {
+                        hot_ms = p.wall_ms;
+                        hot_pos = p.start_iter;
+                    }
+                    if i % step == 0 {
+                        trend.push((p.start_iter, p.wall_ms));
+                    }
+                }
+            }
+        }
+        println!(
+            "\n── hottest floor window across [0,{walk_cap}) at {safe_w}x{safe_h} ── (the DEEP part the area axis missed)"
+        );
+        for (pos, ms) in &trend {
+            println!("  iter {pos:>9}: {ms:6.1} ms");
+        }
+        let shallow_ms = pts.first().map(|p| p.worst_ms).unwrap_or(0.0);
+        println!(
+            "  ⇒ hottest {hot_ms:.1} ms at iteration {hot_pos} — {:.1}× the shallow start ({shallow_ms:.1} ms)",
+            if shallow_ms > 0.0 { hot_ms / shallow_ms } else { 0.0 }
+        );
+
+        // ── window-size cost at the safe area — the actuator the field's loss actually used (its
+        // lethal in-flight pass was a 10,236-iteration WINDOW, not the 256 floor).
         println!(
             "\n── window-size cost at {safe_w}x{safe_h} (safe) ── (worst single submission, one full window past the SA skip)"
         );
@@ -286,13 +362,14 @@ impl FractadyneApp {
             }
         }
 
-        self.report_deviceloss_verdict(&pts, &win_pts, safe_px, target_px);
+        self.report_deviceloss_verdict(&pts, &win_pts, hot_ms, safe_px, target_px);
     }
 
     fn report_deviceloss_verdict(
         &self,
         pts: &[AreaPoint],
         win_pts: &[(f64, f64)],
+        hot_ms: f64,
         safe_px: f64,
         target_px: f64,
     ) {
@@ -340,10 +417,38 @@ impl FractadyneApp {
             );
         } else {
             println!(
-                "  ⇒ The full-res floor window is ~{worst_case:.0} ms — under the lethal band at this depth.\n\
-                 \x20  The field loss here was a LARGER window (before the shed) or a deeper/slower region;\n\
-                 \x20  re-run at a greater ZOOM_LOG2, or measure a deeper iteration bracket."
+                "  ⇒ The full-res floor window is ~{worst_case:.0} ms — under the lethal band at this depth\n\
+                 \x20  (but this is the SHALLOW start of the orbit; see the deep-hot figure below)."
             );
+        }
+
+        // ⭐The DEEP hottest floor window scaled to full res — the real floor cost, since the shallow
+        // figure above is the cheap start of the orbit. This is the number that decides whether
+        // shedding to the 256 floor can save the view.
+        if hot_ms > 0.0 {
+            let hot_full = hot_ms * (target_px / safe_px).powf(a);
+            println!(
+                "  HOT (deep) floor window at full res: ~{hot_full:.0} ms  (from {hot_ms:.1} ms at the safe area × area^{a:.2})"
+            );
+            if hot_full >= 1000.0 {
+                let tiles = (hot_full / BUDGET_TARGET_MS).ceil() as u32;
+                println!(
+                    "  ⇒ ⭐THE DEEP FLOOR WINDOW IS LETHAL AT FULL RESOLUTION (~{hot_full:.0} ms ≥ the ~1 s watchdog).\n\
+                     \x20  Shedding the iteration window to 256 CANNOT save this view — REPRODUCED. AREA is\n\
+                     \x20  the only actuator left below the floor: ~{tiles} native-scale tiles keep each\n\
+                     \x20  dispatch under the {BUDGET_TARGET_MS:.0} ms budget."
+                );
+            } else if hot_full >= SAFETY_MS * 0.5 {
+                println!(
+                    "  ⇒ The deep floor window lands in the lethal BAND (~{hot_full:.0} ms) — marginal; a\n\
+                     \x20  slightly hotter location (or a deeper reference) tips it past the watchdog."
+                );
+            } else {
+                println!(
+                    "  ⇒ Even the deep floor window is ~{hot_full:.0} ms — under the band. A hotter location\n\
+                     \x20  (deeper structure) or a fuller reference (larger REF_ITER) is needed to reproduce."
+                );
+            }
         }
         // ── the WINDOW actuator: at what iteration window does a FULL-RES dispatch hit the watchdog?
         // This is the field's real question — its lethal in-flight pass was a large window, not the
