@@ -2065,7 +2065,24 @@ fn fs_resolve(in: VsOut) -> FragOut {
         // frame would under-report the fraction by 16x.
         // ⚠The chunk entry points no longer commit it, so this does not double-count. Every path
         // that runs `fs_iterate_chunk*` also runs `fs_resolve`.
-        atomicAdd(&counters[CTR_MAXITER], 1u);
+        //
+        // ⭐⭐2026-09-10 CORRECTION — count ONLY GENUINELY-CAPPED pixels (`ST_INTERIOR`), never ones
+        // still iterating mid-chunk (`ST_RUNNING`). `ST_INTERIOR` is set only at `iter >= iu.max_iter`
+        // (the FULL budget); a chunked walk leaves every not-yet-finished pixel `ST_RUNNING`, so the
+        // old `st != ST_ESCAPED` counted still-running pixels as capped. A deep chunked walk then read
+        // ~100% capped MID-FLIGHT — most pixels are still running most of the walk — and the adaptive
+        // iteration boost's exhausted-revert fired on that false 100% and reverted a RESOLVABLE view
+        // to solid BLACK, while the identical view with an explicit count (no boost, no revert)
+        // rendered every window to completion and resolved. (Field report + `FRACTADYNE_TRACE=gpu` at
+        // 9.34e80×: boost climbed to the full 10,000,000 appetite, "exhausted — 100.0% capped",
+        // reverted to 1.0, black; auto vs explicit differed only in the revert.) Counting `ST_INTERIOR`
+        // reports the TRUE capped total: 0 until pixels actually reach the budget, the real interior
+        // fraction once the walk completes. It does NOT reintroduce the 2026-08-25 "finished walk reads
+        // zero" bug — `ST_INTERIOR` is a settled STATE that persists on a completed walk, not the
+        // one-shot transition the old chunk-entry `atomicAdd` counted.
+        if (st == ST_INTERIOR) {
+            atomicAdd(&counters[CTR_MAXITER], 1u);
+        }
         return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), AUX_NONE);
     }
     // Both modes store the FULL z (df32) in st_z at escape and the display derivative's mantissa

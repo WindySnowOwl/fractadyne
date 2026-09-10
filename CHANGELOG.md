@@ -12,6 +12,20 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Auto-iterations no longer reverts a resolvable deep view to black** (beta.84). The real fix for
+  the black-minibrot report, found from a GPU trace after beta.83 cleared the appetite cap and
+  exposed this. The adaptive iteration boost decides whether to keep raising the count from the
+  fraction of pixels that hit the limit without escaping, and that count was being read wrong during
+  a deep render: a deep view is computed in pieces along the iteration axis, and a pixel still
+  working through those pieces was counted as "hit the limit" even though it had not yet reached the
+  limit. So mid-render the fraction read as 100%, the boost concluded the whole view was solid
+  interior, and it reverted to a low count and left the frame black — while the same view with
+  auto-scale off, which does no such revert, rendered every piece to completion and resolved. The
+  counter now counts only pixels that genuinely reached the full count without escaping, so the
+  fraction reads true and a resolvable view is no longer abandoned. The change is to a diagnostic
+  counter only; rendered pixels are unaffected (the golden and cross-renderer image comparisons are
+  byte-identical).
+
 - **Auto-iterations honours the iteration count you set — deep minibrots no longer go black under
   auto** (beta.83). This is the real fix for the black-minibrot report the beta.81 change did not
   solve. With "Auto-scale iterations with zoom" on, the appetite the renderer would climb to was
