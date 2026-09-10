@@ -4145,6 +4145,10 @@ struct ReportState {
     include_location: bool,
     include_log: bool,
     include_crash: bool,
+    /// Include the newest `crash-view-*.fdn` — the exact location a crash happened at. Its own
+    /// artifact because the crash report omits the coordinates and a device-loss relaunch reopens at
+    /// Home, so neither "Current location" nor "Latest crash report" carries the reproducing view.
+    include_crash_view: bool,
     /// Include the most recent Diagnostics test result. Off unless a test has actually been run
     /// and the user chose to attach it — an issue that claims a test result it doesn't have is
     /// worse than one that claims nothing.
@@ -4165,6 +4169,7 @@ impl Default for ReportState {
             include_location: true,
             include_log: true,
             include_crash: true,
+            include_crash_view: true,
             include_test: false,
             msg: None,
         }
@@ -7634,6 +7639,16 @@ impl FractadyneApp {
         if self.report.include_crash {
             if let Some((name, body)) = crate::diag::latest_crash() {
                 s.push_str(&format!("== Latest crash report ({name}) ==\n"));
+                s.push_str(body.trim_end());
+                s.push_str("\n\n");
+            }
+        }
+        // The exact location the crash happened at — the crash report's manifest omits the
+        // coordinates, and after a device-loss relaunch "Current location" above is Home, so this is
+        // the only artifact that lets a maintainer reproduce the loss.
+        if self.report.include_crash_view {
+            if let Some((name, body)) = crate::diag::latest_crash_view() {
+                s.push_str(&format!("== Latest crash view ({name}) — the location that crashed ==\n"));
                 s.push_str(body.trim_end());
                 s.push_str("\n\n");
             }

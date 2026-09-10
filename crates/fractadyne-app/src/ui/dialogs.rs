@@ -61,8 +61,8 @@ impl FractadyneApp {
     ///
     /// ⚠Asking, not sending. `diag` has already written the report to disk either way; this only
     /// offers to open the existing Report-an-issue dialog, which previews the full text before
-    /// anything leaves the machine and carries the crash report as one selectable artifact. Nothing
-    /// is transmitted from here.
+    /// anything leaves the machine and carries the crash report AND the crashing location (`.fdn`)
+    /// as selectable artifacts. Nothing is transmitted from here.
     ///
     /// ⚠Suppressed for `launched_for_a_task` (see where `crash_prompt_open` is initialised): a modal
     /// in front of `--uitest` / `--livetest` would block them exactly the way the welcome dialog
@@ -89,7 +89,7 @@ impl FractadyneApp {
                 ui.horizontal(|ui| {
                     if ui
                         .button(egui::RichText::new("Report it…").strong())
-                        .on_hover_text("Opens Report an issue, with the crash report attached.")
+                        .on_hover_text("Opens Report an issue, with the crash report and the location that crashed attached.")
                         .clicked()
                     {
                         self.report.open = true;
@@ -626,6 +626,7 @@ impl FractadyneApp {
         }
         let mut open = self.report.open;
         let has_crash = crate::diag::latest_crash().is_some();
+        let has_crash_view = crate::diag::latest_crash_view().is_some();
         let (mut copy, mut save, mut email, mut gmail, mut github) =
             (false, false, false, false, false);
         egui::Window::new("Report an issue")
@@ -696,6 +697,23 @@ impl FractadyneApp {
                     ui.checkbox(
                         &mut self.report.include_crash,
                         if has_crash { "Latest crash report" } else { "Latest crash report (none found)" },
+                    );
+                });
+                // The location a crash happened at, recorded as a `.fdn` beside the crash report.
+                // Its own line because the crash report omits the coordinates and a device-loss
+                // relaunch reopens at Home — so this is the only artifact that reproduces the loss.
+                ui.add_enabled_ui(has_crash_view, |ui| {
+                    ui.checkbox(
+                        &mut self.report.include_crash_view,
+                        if has_crash_view {
+                            "Location that crashed (.fdn)"
+                        } else {
+                            "Location that crashed (.fdn) (none found)"
+                        },
+                    )
+                    .on_hover_text(
+                        "The exact view a crash or graphics-device loss happened at — the one thing \
+                         that lets a maintainer reproduce it. Recorded automatically.",
                     );
                 });
                 // Only offered once a test has actually been run — an issue that claims a test

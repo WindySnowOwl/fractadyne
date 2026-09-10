@@ -427,6 +427,29 @@ pub(crate) fn latest_crash() -> Option<(String, String)> {
     Some((path.file_name()?.to_string_lossy().into_owned(), body))
 }
 
+/// The newest `crash-view-*.fdn` (filename, contents), if any exists — the exact location a crash
+/// happened at, written beside the crash report by [`write_crash_report_at`]. Offered in the issue
+/// reporter so a device loss arrives with the coordinates that reproduce it (the crash report's
+/// manifest omits them, and after a device-loss relaunch the CURRENT location is Home, not the spot).
+pub(crate) fn latest_crash_view() -> Option<(String, String)> {
+    let dir = logs_dir()?;
+    let mut best: Option<(SystemTime, PathBuf)> = None;
+    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("crash-view-") && name.ends_with(".fdn") {
+            if let Ok(t) = entry.metadata().and_then(|m| m.modified()) {
+                if best.as_ref().is_none_or(|(bt, _)| t > *bt) {
+                    best = Some((t, entry.path()));
+                }
+            }
+        }
+    }
+    let (_, path) = best?;
+    let body = std::fs::read_to_string(&path).ok()?;
+    Some((path.file_name()?.to_string_lossy().into_owned(), body))
+}
+
 /// Append one JSON record to `<config>/logs/perf.jsonl` (no-op unless `FRACTADYNE_PERF=1`).
 /// Caller supplies the JSON body; timestamp/version are added here. Regression tracking
 /// across builds becomes greppable history instead of memory.

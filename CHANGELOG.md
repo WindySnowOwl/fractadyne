@@ -12,6 +12,14 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The issue reporter now attaches the location that crashed** (beta.93). Following on from the
+  `crash-view.fdn` recording, Help ▸ Report an issue now offers "Location that crashed (.fdn)" as a
+  selectable artifact — included by default whenever one exists — and the after-a-crash prompt says
+  the crashing location is attached alongside the report. This is the piece that lets a maintainer
+  actually reproduce a graphics-device loss: the crash report omits the coordinates, and after a
+  device-loss relaunch the "Current location" is the home view, so without this the reproducing view
+  never reaches the report.
+
 - **A device loss (or any crash) now records the exact view as a loadable `.fdn`** (beta.92). The
   crash report already captured the render manifest, but not the coordinates — which is why the
   2026-09-10 field device loss could not be reproduced. The app now writes a `crash-view-<stamp>.fdn`
