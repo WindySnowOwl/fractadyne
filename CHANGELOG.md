@@ -12,6 +12,19 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The famous-locations menu now reaches a real deep minibrot, and every curated landmark is
+  gated** (beta.87). The Navigate ▸ famous-locations list stopped at 1.3e7× — a depth any renderer
+  reaches — so nothing in it showed what the app is actually for. It now also offers "Seahorse
+  minibrot ·998", the period-998 minibrot at the bottom of Seahorse Valley, framed at its own atom
+  size (~1.6e15×), the one jump that exercises the deep perturbation engine. Two safeguards ride
+  with it. A new self-test group (`curated-poi`) re-derives every curated coordinate from scratch on
+  each run — the deep nucleus via the Newton solver (it must come back period 998, on the same
+  atom), and all five Misiurewicz points via the detector (each must reproduce the (preperiod,
+  period) written into its name) — so a mistyped digit fails the gate instead of shipping as a jump
+  to blank space. And a new golden image locks the render itself: the first golden past 1e6×, closing
+  a real gap where no image test covered the deep pipeline at all. Menu data and test coverage only;
+  no change to any render.
+
 - **A deep minibrot under auto now re-picks a better reference instead of settling for a black
   interior** (beta.86). The finish of the black-minibrot arc. beta.84 stopped the false revert, but
   a view could still come up only partly resolved, with a large black body, because the reference

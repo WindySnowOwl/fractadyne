@@ -2620,7 +2620,25 @@ const FAMOUS: &[(&str, &str, &str, f64)] = &[
     ("Spiral Galaxy", "-0.7269", "0.1889", 2.667e3),
     ("Mini Mandelbrot", "-1.7687788", "0.0017388", 8.0e3),
     ("Deep Seahorse", "-0.743643887037151", "0.131825904205330", 1.333e7),
+    // A genuine deep dive: the period-998 minibrot at the bottom of Seahorse Valley, framed at
+    // its own atom size (~1.6e15×, ATOM_FILL of the height). The last entry above stops at 1.3e7×
+    // — a depth any renderer reaches — so this is the one famous-locations jump that actually
+    // exercises the perturbation engine. Coordinates are the Newton-refined nucleus (the deep
+    // test battery's NX/NY, carried to full precision); the `curated-poi` self-test re-solves it
+    // to period 998 on every run, so a typo here fails the gate rather than landing on blank space.
+    (
+        "Seahorse minibrot ·998",
+        "-0.7436438870371588707780645434936425750476099623212550602141",
+        "0.1318259042053122928210973548747672652629885996790429749374",
+        1.597e15,
+    ),
 ];
+
+/// The one deep [`FAMOUS`] entry that carries a claimed period, so the `curated-poi` self-test can
+/// re-derive it: `(famous_index, seed_log2_mag, period)`. Split out (rather than widening the whole
+/// `FAMOUS` tuple with a mostly-unused period column) because only minibrot nuclei have a period —
+/// the valleys and spirals above are regions, not atoms.
+const FAMOUS_DEEP_NUCLEI: &[(usize, f64, u32)] = &[(7, 50.5, 998)];
 
 /// Curated well-known Misiurewicz points of interest: (name, center_re, center_im, magnification).
 /// Every center is an exact pre-periodic point (verified by Newton solve); the name carries its

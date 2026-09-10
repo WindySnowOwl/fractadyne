@@ -321,7 +321,7 @@ impl FractadyneApp {
         const GROUPS: &[&str] = &[
             "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
             "consistency", "counters", "iter-budget", "iter-chunk", "nr-zoom", "coords",
-            "ref-pick", "ref-reuse", "orbit-cache", "script", "metadata",
+            "curated-poi", "ref-pick", "ref-reuse", "orbit-cache", "script", "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
             "checklist",
         ];
@@ -3986,6 +3986,94 @@ impl FractadyneApp {
             });
         }
 
+        // ---- curated Navigate-menu landmarks: each must BE what it claims ----
+        // Nothing else gates the FAMOUS / MISIUREWICZ_POI coordinate STRINGS, so a mistyped digit
+        // would ship as a menu jump to blank space with no test to catch it. Re-derive each landmark
+        // from its stored centre: deep minibrot nuclei via `find_nucleus` (the period must match and
+        // the solve must stay on the named atom), and the Misiurewicz points via `detect_misiurewicz`
+        // (the (preperiod, period) written into the name). Cheap — a few shallow orbit walks plus one
+        // 998-period nucleus solve — so it belongs in the default suite, not the opt-in tier.
+        if want("curated-poi") {
+            // (a) Deep minibrot nuclei carried in FAMOUS (only the entries with a claimed period).
+            let mut bad = Vec::new();
+            for &(idx, seed_l2, want_p) in crate::FAMOUS_DEEP_NUCLEI {
+                let (name, cx, cy, _mag) = crate::FAMOUS[idx];
+                let (Some(x), Some(y)) =
+                    (fractadyne_core::parse_bf(cx), fractadyne_core::parse_bf(cy))
+                else {
+                    bad.push(format!("{name}: centre did not parse"));
+                    continue;
+                };
+                match fractadyne_core::find_nucleus(&[x.clone(), y.clone()], seed_l2, 0, 100_000) {
+                    Some(n) if n.period == want_p => {
+                        // Landed on the atom we named, not some unrelated far component: the refined
+                        // nucleus must sit within the atom's own width of the stored centre.
+                        let moved = (fractadyne_core::sub_f64(&n.cx, &x, 256).powi(2)
+                            + fractadyne_core::sub_f64(&n.cy, &y, 256).powi(2))
+                        .sqrt();
+                        if moved > 2f64.powf(-seed_l2 + 2.0) {
+                            bad.push(format!("{name}: p{} but moved {moved:.1e}", n.period));
+                        }
+                    }
+                    Some(n) => bad.push(format!("{name}: period {} (want {want_p})", n.period)),
+                    None => bad.push(format!("{name}: no nucleus")),
+                }
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Curated",
+                name: "deep minibrot menu entries re-solve to their period".into(),
+                params: format!("{} nucleus entries", crate::FAMOUS_DEEP_NUCLEI.len()),
+                result: if bad.is_empty() { "all exact".into() } else { bad.join("; ") },
+                threshold: "period matches, solve within one atom width",
+                pass: bad.is_empty(),
+            });
+
+            // (b) Misiurewicz points of interest — the (k,p) is written into each name as "(k,p)".
+            let mut mbad = Vec::new();
+            for &(name, cx, cy, mag) in crate::MISIUREWICZ_POI {
+                let want_kp: Option<(u32, u32)> = (|| {
+                    let inside = name.rsplit_once('(')?.1.split_once(')')?.0;
+                    let (a, b) = inside.split_once(',')?;
+                    Some((a.trim().parse::<u32>().ok()?, b.trim().parse::<u32>().ok()?))
+                })();
+                let Some((wk, wp)) = want_kp else {
+                    mbad.push(format!("{name}: name carries no (k,p)"));
+                    continue;
+                };
+                let (Some(x), Some(y)) =
+                    (fractadyne_core::parse_bf(cx), fractadyne_core::parse_bf(cy))
+                else {
+                    mbad.push(format!("{name}: centre did not parse"));
+                    continue;
+                };
+                // Select the pair whose feature is the size of the framed view (~4/mag tall, the
+                // REFERENCE_HEIGHT convention), so a point can't be mistaken for a coarser feature
+                // it sits inside.
+                let span_l2 = (4.0_f64 / mag).log2();
+                match fractadyne_core::detect_misiurewicz_at_scale(
+                    &x,
+                    &y,
+                    0,
+                    2_000,
+                    32,
+                    256,
+                    Some(span_l2),
+                ) {
+                    Some((k, p)) if k == wk && p == wp => {}
+                    Some((k, p)) => mbad.push(format!("{name}: got ({k},{p})")),
+                    None => mbad.push(format!("{name}: not detected")),
+                }
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Curated",
+                name: "Misiurewicz menu entries re-derive their (k,p)".into(),
+                params: format!("{} points", crate::MISIUREWICZ_POI.len()),
+                result: if mbad.is_empty() { "all match".into() } else { mbad.join("; ") },
+                threshold: "detected (preperiod,period) == name",
+                pass: mbad.is_empty(),
+            });
+        }
+
         // ---- tour scripts (format v2) ----
         // The shipped tours are the app's demo reel AND its deep-render regression gauntlet, so a
         // script that no longer resolves is a shipped-content break, not a test-fixture break.
@@ -5678,6 +5766,15 @@ zoom = \"1e94\"
             ("multibrot3-1e6", FractalKind::Multibrot3, "2.19533102209775940218788168856401426185991366731348781648e-1", "7.317770073659198278104833118192370226116695264984596408352e-1", 1.0e6, 3000, 0, 0, false),
             ("multibrot4-1e6", FractalKind::Multibrot4, "2.28757960884408080137002307307431367850187620104115769219e-1", "7.625265362813602953424916065993043372187655480595946595141e-1", 1.0e6, 3000, 0, 0, false),
             ("multibrot5-1e6", FractalKind::Multibrot5, "2.320768669674853369085651557338865001525750889159483426277e-1", "7.735895565582844849904484291320284693154748744446630197764e-1", 1.0e6, 3000, 0, 0, false),
+            // ⭐The first golden PAST 1e6× — the period-998 Seahorse minibrot at its own atom size
+            // (~1.6e15×), the new "Seahorse minibrot ·998" Navigate-menu destination. Every other
+            // deep golden stops at 1e6×, so nothing gated the perturbation pipeline at the depth the
+            // whole app exists for. Safe as a golden because this is the `render_export` path — one
+            // arithmetic backend, byte-identical (why the F3 corpus holds maxD 0), df32 perturbation
+            // (mode 0), well below the ~1e300× floatexp tier whose LIVE rendering is hardware-varying.
+            // 25k iter: enough that the minibrot's exterior escapes and the body resolves rather than
+            // flooding black (the adaptive appetite here is ~12k — see the black-minibrot arc).
+            ("seahorse-998", FractalKind::Mandelbrot, "-0.7436438870371588707780645434936425750476099623212550602141", "0.1318259042053122928210973548747672652629885996790429749374", 1.597e15, 25000, 0, 1, false),
         ];
         // 1920x1080, raised from 320x240 (2026-08-22). 27x the pixels: a rendering
         // regression that survives 2M pixels is not one worth calling a golden, and the
