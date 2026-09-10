@@ -12,6 +12,25 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Auto-iterations no longer leaves a minibrot black when it can resolve it** (beta.81). With
+  "Auto-scale iterations with zoom" on, the iteration budget was derived from depth alone
+  (a fixed slope of iterations per octave) and then raised by feedback if the picture came back
+  under-resolved. At a minibrot that slope is far short — the view could sit capped at ~69,000
+  iterations and render solid black, while the same view with a forced high count resolves in
+  full — and the feedback climb toward the right number is slow at extreme depth and can give up
+  before it arrives, mistaking "needs far more iterations" for "solid interior".
+
+  The budget is now seeded from the reference orbit the renderer has already built for the view.
+  No pixel can iterate past that orbit, so its length is a direct, per-location estimate of what
+  the view needs — where the old slope was only a guess from how deep you happen to be. The budget
+  jumps to that estimate in a single settled frame instead of climbing to it in slow steps. It only
+  ever raises the count and never past your own Iterations setting, it runs only on a settled view
+  (motion is untouched), and it applies only in auto mode — a forced count is still honoured exactly
+  as typed. A genuinely solid interior still costs nothing extra: it reverts to the cheap budget as
+  before, just without the long black wait first. `validation/minibrot-auto-iter-9.3e78.fdn` is the
+  reported location, kept as a reproduction. Visible live under `FRACTADYNE_TRACE=gpu`
+  ("adaptive iter: seeded boost …").
+
 - **The GPU arithmetic check is one click in Help ▸ Diagnostics** (beta.80). The double-float
   self-test that used to need `--gputest` from a command line is now a third button beside the
   self-test and the UI test, so the people most able to help — testers on GPUs we do not own,

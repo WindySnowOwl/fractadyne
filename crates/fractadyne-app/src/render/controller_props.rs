@@ -174,6 +174,35 @@ fn an_explicit_iteration_count_is_honoured_verbatim() {
 }
 
 #[test]
+fn the_boost_seed_reaches_the_reference_length_and_only_ever_raises() {
+    use crate::render::boost_seed_from_reference;
+    // The reported minibrot: zoom_iter_cap ≈ 69,157 at ~262 octaves, a settled reference ≈ 256,001
+    // samples. The seed must lift the boost so cap×boost reaches the reference the app already built,
+    // instead of leaving pixels capped at the 69k depth slope (the black frame).
+    let cap = 69_157.0;
+    let seed = boost_seed_from_reference(256_001, cap);
+    assert!((seed - 256_001.0 / cap).abs() < 1e-6, "seed should hit ref/cap, got {seed}");
+    assert!((cap * seed).round() as u32 >= 256_000, "cap×seed must reach the reference length");
+    // It is a FLOOR: at least 1.0 so it can only raise a climb that is already higher.
+    assert_eq!(boost_seed_from_reference(1, cap), 1.0, "a short reference never lowers the boost");
+    assert_eq!(boost_seed_from_reference(0, cap), 1.0);
+    // Clamped to the same ceiling the climb respects — an enormous reference cannot overshoot it.
+    assert_eq!(
+        boost_seed_from_reference(u32::MAX, 256.0),
+        crate::ITER_BOOST_MAX,
+        "the seed is bounded by ITER_BOOST_MAX like every other boost value"
+    );
+    // Where the depth cap already exceeds the reference (very deep, short-escaping reference) there
+    // is nothing to seed: the slope is enough and the boost stays at 1.0.
+    assert_eq!(boost_seed_from_reference(50_000, 260_000.0), 1.0);
+    // Degenerate zoom caps never panic or seed (zoom_iter_cap floors at 256, so these cannot occur
+    // in practice, but the pure function must be total).
+    assert_eq!(boost_seed_from_reference(256_001, 0.0), 1.0);
+    assert_eq!(boost_seed_from_reference(256_001, f64::NAN), 1.0);
+    assert_eq!(boost_seed_from_reference(256_001, -1.0), 1.0);
+}
+
+#[test]
 fn a_wall_probe_is_not_priced_by_the_frame_that_submitted_it() {
     // Arm on frame 10 with a vsync-shaped interval — the lie that killed the device.
     let (p, out) = wall_probe_step(None, true, 400_000_000, 10, 18.4);

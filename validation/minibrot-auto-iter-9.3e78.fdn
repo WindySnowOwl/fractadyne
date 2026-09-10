@@ -1,0 +1,37 @@
+# Fractadyne view. Open it with File ▸ Open view, or paste it into
+# File ▸ Share location. Copy the BEGIN and END lines too.
+# Lines starting with # are comments and are ignored.
+#
+# REPRODUCTION for the auto-iteration black-minibrot case (2026-09-10):
+# with "Auto-scale iterations with zoom" ON this view rendered BLACK (the depth
+# slope capped the budget at ~69,157 while the field needs far more), yet a forced
+# max_iter of 10,000,000 with auto OFF resolves it in full. The reference-orbit
+# boost seed (render::boost_seed_from_reference) exists to close that gap: the
+# settled reference the app already builds here is 256k+ samples, so the budget
+# should reach it rather than sitting at the depth cap. Verify live under
+# FRACTADYNE_TRACE=gpu (look for "adaptive iter: seeded boost …").
+# ----- BEGIN FRACTADYNE VIEW -----
+app=Fractadyne
+version=0.2.41-beta.80 (build 2991)
+format_version=1
+saved_unix=1789005933
+saved=2026-09-10 02:05:33 UTC
+notes=
+fractal=Mandelbrot
+julia=0
+julia_c_re=-8.00000000000000044e-1
+julia_c_im=1.56000000000000000e-1
+center_re=-9.5615882490732676063982994499490578147935343195074805633443741253353130261608583401177598055702619474609439701446982e-2
+center_im=9.2407201125877521262558092669605306283394020346180079142271967031202190501107148187554958943606565429410592657638281e-1
+upp=3.88605923502196029e-82
+upp_log2=-2.70439795888738786e2
+zoom=9.336239347910426e78
+max_iter=10000000
+auto_iter=0
+palette=0
+cycle=0.27
+offset=0.1
+aa=2
+# Detects accidental damage in transit; it is not a signature.
+checksum=553a44f996fe16ea
+# ----- END FRACTADYNE VIEW -----

@@ -3728,6 +3728,40 @@ impl FractadyneApp {
             // stale pre-raise reading ("still 100% capped") right after a raise falsely reads as
             // "the raise didn't help" → the interior plateau latches and the view sticks black at
             // fully-starved views (observed live at a 100%-capped spar session).
+            // ⭐SEED THE BOOST FROM THE REFERENCE ORBIT, so the budget reaches this location's real
+            // need in ONE settle instead of climbing there blind. The depth slope (`zoom_iter_cap`)
+            // leaves a settled deep view capping pixels at, say, 69k while the reference we already
+            // built for it is 256k+ samples long — pure waste, and the direct cause of a minibrot
+            // rendering solid black under auto-iterations when a forced high count resolves it. The
+            // reference length is the honest per-location estimate (no pixel can outrun the orbit),
+            // so jump the boost to it rather than walking up in slow 2.5× steps that a deep mode-2
+            // view spends seconds on and that the interior-plateau guard can abandon before arriving.
+            //
+            // Raise-only, settled-only, auto-only, and never past a latched interior plateau: the
+            // existing climb/plateau/exhausted logic keeps ownership of termination. A genuine
+            // interior seeded high is still fully capped, so it climbs the rest to the appetite and
+            // reverts to the cheap budget exactly as before — just without the long black stare on
+            // the way. The seed feeds `boost_now` below, so the probe's `budget_now` and the frame's
+            // dispatched budget (which reads `iter_boost[vb]` afresh) stay the one shared value.
+            if !interacting && self.render_cfg.auto_iter && !self.perf.iter_plateau[vb] {
+                let cap = zoom_iter_cap(log2mag).max(256) as f64;
+                let ref_len = self.ref_cache[vb].orbit_len;
+                let seed = boost_seed_from_reference(ref_len, cap);
+                if seed > self.perf.iter_boost[vb] {
+                    let old = self.perf.iter_boost[vb];
+                    self.perf.iter_boost[vb] = seed;
+                    // The climb, if the seed is not enough, re-measures from here; a stale baseline
+                    // from before the jump would read the first post-seed frame as "unhelpful".
+                    self.perf.iter_probe[vb] = None;
+                    self.perf.iter_stall[vb] = 0;
+                    crate::diag::trace(
+                        "gpu",
+                        format!(
+                            "adaptive iter: seeded boost {old:.1}→{seed:.1} from reference len {ref_len}"
+                        ),
+                    );
+                }
+            }
             let boost_now = self.perf.iter_boost[vb];
             let budget_now =
                 live_iter_budget(eff_iter, log2mag, boost_now, !self.render_cfg.auto_iter);
@@ -6649,6 +6683,24 @@ pub(crate) fn live_iter_budget(eff_iter: u32, log2mag: f64, boost: f64, explicit
         return capped;
     }
     capped.min(((zoom_iter_cap(log2mag).max(256) as f64) * boost) as u32)
+}
+
+/// The adaptive-boost value that makes `zoom_iter_cap × boost` reach the reference-orbit length —
+/// the per-location budget SEED (see the "seed the boost from the reference" block in
+/// `build_params`). `zoom_iter_cap` is a straight line in depth and badly under-budgets hard fields
+/// (a minibrot at any depth needs far more than 256/octave, which is the very reason tour keyframes
+/// carry explicit budgets); the reference orbit we already built for a settled view is instead a
+/// direct estimate of the iterations pixels here need, because no pixel can outrun the orbit.
+///
+/// Clamped to `[1.0, ITER_BOOST_MAX]`: it is a floor, never lowering the boost the climb has
+/// reached, and never past the ceiling the climb itself respects. `ref_len` is in SAMPLES
+/// (`iters + 1`); the off-by-one is immaterial to a boost seed. A non-positive or non-finite
+/// `zoom_cap` (never produced by `zoom_iter_cap`, which floors at 256) yields no seed.
+pub(crate) fn boost_seed_from_reference(ref_len: u32, zoom_cap: f64) -> f64 {
+    if !(zoom_cap > 0.0) {
+        return 1.0;
+    }
+    (ref_len as f64 / zoom_cap).clamp(1.0, crate::ITER_BOOST_MAX)
 }
 
 /// ⭐The OPENING GUESS, derived from a measured per-step rate rather than assumed.
