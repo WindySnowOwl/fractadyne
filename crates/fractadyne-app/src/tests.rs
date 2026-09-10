@@ -643,6 +643,22 @@ fn welcome_shows_once() {
     assert!(!welcome_should_open(back.welcome_seen, false));
 }
 
+/// The LIVE TEST banner: on by default for a windowed harness run, forcibly on or off by flag,
+/// and — the safety property — `--no-test-banner` wins when both flags are present, so it can only
+/// ever end up hidden by accident, never shown over a capture that wanted it clean.
+#[test]
+fn test_banner_defaults_on_for_harness_and_off_wins() {
+    // Default: follows launched_for_a_task.
+    assert!(test_banner_on(true, false, false), "a harness window is unlabelled");
+    assert!(!test_banner_on(false, false, false), "an interactive window wears a test banner");
+    // Explicit overrides.
+    assert!(test_banner_on(false, true, false), "--test-banner did not force it on");
+    assert!(!test_banner_on(true, false, true), "--no-test-banner did not hide it");
+    // Both flags → OFF is the safe resolution (a clean --uitest bundle is never accidentally banded).
+    assert!(!test_banner_on(true, true, true), "--no-test-banner must win over --test-banner");
+    assert!(!test_banner_on(false, true, true));
+}
+
 // ---------------------------------------------------------------- dual view (steps 45-47)
 
 /// Checklist step 45, "the window splits; left is the parameter set, right is the Julia".

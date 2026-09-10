@@ -1169,6 +1169,41 @@ impl FractadyneApp {
     /// sized by its content, and the centre coordinates gain and lose digits as the view moves, so
     /// a control placed here slides horizontally under the cursor. The playback transport lives in
     /// `draw_playback_transport` for exactly that reason.
+    /// Paint the LIVE TEST banner across the top of a harness-driven window. Drawn on a foreground
+    /// LAYER PAINTER, not an `Area` — the painter draws on top and senses no input, so it neither
+    /// blocks `--uitest`'s synthetic clicks nor reflows the layout. It is egui, outside the fractal
+    /// render target, so nothing the goldens / F3 corpus / `--livetest` compare can see it; it does
+    /// appear in `--uitest` screenshots (which capture the whole frame), correctly labelling that
+    /// bundle as a test — `--no-test-banner` removes it there when a pristine capture is wanted.
+    pub(crate) fn draw_test_banner(&self, ctx: &egui::Context) {
+        let Some(mode) = self.test_banner.as_deref() else {
+            return;
+        };
+        let screen = ctx.screen_rect();
+        let pr = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("live_test_banner"),
+        ));
+        let galley = pr.layout_no_wrap(
+            format!("⚠ LIVE TEST · {mode} — automated window, not an interactive session"),
+            egui::FontId::proportional(14.0),
+            egui::Color32::WHITE,
+        );
+        let pad = egui::vec2(14.0, 7.0);
+        let rect = egui::Rect::from_center_size(
+            egui::pos2(screen.center().x, screen.min.y + 46.0),
+            galley.size() + pad * 2.0,
+        );
+        pr.rect_filled(rect, 6.0, egui::Color32::from_rgb(0xC0, 0x2A, 0x2A));
+        pr.rect_stroke(
+            rect,
+            6.0,
+            egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(0x3a, 0x06, 0x06)),
+            egui::StrokeKind::Inside,
+        );
+        pr.galley(rect.min + pad, galley, egui::Color32::PLACEHOLDER);
+    }
+
     pub(crate) fn draw_status_bar(&mut self, ctx: &egui::Context) {
         let resp = egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             // WRAPPED, not a single row: at depth the centre coordinates alone can be most of the

@@ -12,6 +12,16 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A "LIVE TEST" banner marks a window a test harness is driving** (beta.82). The developer
+  harnesses that open a real window and drive the live view — the live-vs-offline check, the motion
+  test, the UI walk, the autopilot dive and the rest — now paint a red "LIVE TEST" banner across the
+  top of that window and add the same note to its title bar, so a harness window can't be mistaken
+  for an ordinary session left open. It is a foreground overlay drawn on top of the picture, outside
+  the image the self-test, goldens and live-vs-offline check compare, so it changes none of their
+  results, and it captures no input, so it cannot interfere with the UI walk's own clicks. On by
+  default for those runs; `--no-test-banner` hides it (for a pristine screenshot bundle) and
+  `--test-banner` forces it on.
+
 - **Auto-iterations no longer leaves a minibrot black when it can resolve it** (beta.81). With
   "Auto-scale iterations with zoom" on, the iteration budget was derived from depth alone
   (a fixed slope of iterations per octave) and then raised by feedback if the picture came back

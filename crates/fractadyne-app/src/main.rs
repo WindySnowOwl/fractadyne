@@ -1403,6 +1403,19 @@ fn ema(prev: f64, sample: f64) -> f64 {
 /// limited but an inflated base is. Used for both the live view and exports so they match.
 /// Zoom-appropriate iteration cap from the zoom **octaves** (`log2(magnification)`), taken
 /// directly so it stays finite past 1e308× where `magnification()` saturates to `∞`.
+/// Whether to paint the LIVE TEST banner: on by default for a windowed harness run
+/// (`launched_for_a_task`), with `--no-test-banner` overriding off and `--test-banner` overriding
+/// on. `force_off` wins over `force_on`, so a script that sets both gets the safe (hidden) result.
+pub(crate) fn test_banner_on(launched_for_a_task: bool, force_on: bool, force_off: bool) -> bool {
+    if force_off {
+        false
+    } else if force_on {
+        true
+    } else {
+        launched_for_a_task
+    }
+}
+
 pub(crate) fn zoom_iter_cap(octaves: f64) -> u32 {
     let o = octaves.max(0.0);
     (ZOOM_ITER_BASE + o * ZOOM_ITER_PER_OCTAVE).min(u32::MAX as f64) as u32
@@ -4133,6 +4146,9 @@ struct FractadyneApp {
     /// user starts navigating the fractal view (wheel-zoom doesn't count as a "click elsewhere",
     /// so egui would otherwise leave the dropdown hanging over the canvas).
     menu_bar_id: Option<egui::Id>,
+    /// `Some(mode)` when a harness is driving this window: paints a LIVE TEST banner so it can't be
+    /// mistaken for an interactive session left open (the 2026-09-09 confusion). `None` = interactive.
+    test_banner: Option<String>,
     /// Viewport for the Julia panel in dual view.
     julia_viewport: Viewport,
     /// Pointer / zoom / pan interaction state (zoom box, pan reprojection, eased zoom, settle timers).
@@ -4740,6 +4756,45 @@ impl FractadyneApp {
         let auto_benchmark_out = out_path.clone();
         let auto_render_out = out_path.clone();
 
+        // ⭐LIVE TEST banner. A harness that drives a real window (livetest, motiontest, uitest, …)
+        // is easily mistaken for an interactive session left open — that confusion happened on
+        // 2026-09-09. Label such a window: a red banner across the top, on by default whenever this
+        // is a windowed task run (`launched_for_a_task`, the same signal that suppresses the welcome
+        // modal), overridable with `--test-banner` / `--no-test-banner`. It is a foreground egui
+        // overlay OUTSIDE the fractal texture, so — like the toolbar and the Controls panel — it is
+        // excluded from everything the goldens, the F3 corpus and `--livetest` compare (those read
+        // the render target), and it captures no input, so `--uitest`'s synthetic clicks pass through.
+        let test_banner = {
+            let force_on = args.iter().any(|a| a == "--test-banner");
+            let force_off = args.iter().any(|a| a == "--no-test-banner");
+            test_banner_on(launched_for_a_task, force_on, force_off).then(|| {
+                // A best-effort specific mode name; the "LIVE TEST" umbrella already distinguishes a
+                // harness window from an interactive one, so an unmatched task is simply "harness".
+                if livetest.is_some() { "livetest" }
+                else if motiontest.is_some() { "motiontest" }
+                else if uitest.is_some() { "uitest" }
+                else if juliadive.is_some() { "juliadive" }
+                else if dualsettle.is_some() { "dualsettle" }
+                else if autodive.is_some() { "autodive" }
+                else if divetest.is_some() { "divetest" }
+                else if chunk_sweep.is_some() { "chunk-sweep" }
+                else if play_tour.is_some() { "play-tour" }
+                else if reusetest { "reusetest" }
+                else if resizetest { "resizetest" }
+                else if frametest { "frametest" }
+                else { "harness" }
+                .to_string()
+            })
+        };
+        // The window title carries it too, so alt-tab and the taskbar name a test window even when
+        // it is behind others. Sent once here — `cc.egui_ctx` is live in the constructor.
+        if let Some(mode) = &test_banner {
+            cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
+                "{} — LIVE TEST ({mode})",
+                crate::window_title()
+            )));
+        }
+
         // Restore the last session (or defaults). The center comes from the
         // full-precision decimal strings when present (deep-zoom locations survive
         // restart); older session files without them fall back to the f64 fields.
@@ -4836,6 +4891,7 @@ impl FractadyneApp {
             dual_split: s.dual_split.clamp(DUAL_SPLIT_MIN, DUAL_SPLIT_MAX),
             fullscreen: false,
             menu_bar_id: None,
+            test_banner,
             julia_viewport: {
                 let mut v = Viewport::new(800.0, 800.0);
                 v.center_x = fractadyne_core::BigFloat::from_f64(0.0, 64);
@@ -11883,6 +11939,9 @@ impl eframe::App for FractadyneApp {
         self.draw_menu_bar(ctx, &gpu);
 
         self.draw_status_bar(ctx);
+
+        // LIVE TEST banner, on top of everything, when a harness drives this window.
+        self.draw_test_banner(ctx);
 
         // Playback transport, over the view. Drawn after the panels so `available_rect` is the
         // fractal area (below the menu bar, inside the right panel) — the transport anchors to
