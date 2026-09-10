@@ -3720,6 +3720,7 @@ impl FractadyneApp {
                 self.perf.iter_plateau[vb] = false;
                 self.perf.iter_stall[vb] = 0;
                 self.perf.iter_exhausted[vb] = false;
+                self.perf.iter_repicked[vb] = false; // a new settle earns a fresh appetite re-pick
                 self.perf.capped_frac[vb] = None; // a moving frame's reading describes another view
             }
             let v = self.perf.maxiter_sink[vb].swap(u64::MAX, SeqCst);
@@ -3925,17 +3926,49 @@ impl FractadyneApp {
                 // pixel to render the same flat frame.
                 let frac = f32::from_bits(frac_bits) as f64;
                 if frac.is_finite() && frac > 0.98 && boost > 1.0 {
-                    self.perf.iter_plateau[vb] = true;
-                    self.perf.iter_exhausted[vb] = true;
-                    self.perf.iter_boost[vb] = 1.0;
-                    crate::diag::trace(
-                        "gpu",
-                        format!(
-                            "adaptive iter: exhausted — {:.1}% capped at the full appetite \
-                             ({budget_now}); reverting boost {boost:.1}→1.0",
-                            frac * 100.0
-                        ),
-                    );
+                    // ⭐Before concluding INTERIOR and reverting to black, try ONE fresh reference
+                    // pick at the full appetite. The reference in hand may have been chosen cheaply
+                    // during motion — the view CENTRE, which escapes early and covers this view
+                    // badly — and the settled path reuse-EXTENDED it rather than re-picking. A pick
+                    // at the appetite runs the deep-perturb engine and finds a better point (measured
+                    // 2026-09-10 at 9.34e80×: the export/appetite pick lands OFF-CENTRE, offset
+                    // ≈(−0.04,+0.02), and resolves where the reused motion pick stays solid black).
+                    // Clearing `ref_pt` forces the next build to pick fresh instead of reuse — and it
+                    // picks at the appetite ask, because the boost is at the appetite right here.
+                    // ⚠Wait for that build to land before deciding: reverting while it is in flight
+                    // would drop the boost, and the re-pick would then rebuild at the throttled ask
+                    // and pick the poor centre all over again. Once per settle (`iter_repicked`): if
+                    // the appetite-picked reference is STILL all-capped, the view is genuinely
+                    // interior and the revert below stands.
+                    if !self.perf.iter_repicked[vb] {
+                        self.perf.iter_repicked[vb] = true;
+                        self.ref_cache[vb].ref_pt = None; // force a fresh pick (no reuse-extend)
+                        self.recompute_rx[vb] = None; // drop any in-flight extend of the poor incumbent
+                        self.perf.iter_probe[vb] = None; // re-measure cleanly against the new reference
+                        self.perf.iter_stall[vb] = 0;
+                        crate::diag::trace(
+                            "gpu",
+                            format!(
+                                "adaptive iter: {:.1}% capped at the full appetite ({budget_now}) — \
+                                 re-picking the reference at the full ask before concluding interior",
+                                frac * 100.0
+                            ),
+                        );
+                    } else if self.recompute_rx[vb].is_none() {
+                        // The appetite re-pick has landed and it is still all-capped: genuinely
+                        // interior. Revert to the cheap budget (same flat image) as before.
+                        self.perf.iter_plateau[vb] = true;
+                        self.perf.iter_exhausted[vb] = true;
+                        self.perf.iter_boost[vb] = 1.0;
+                        crate::diag::trace(
+                            "gpu",
+                            format!(
+                                "adaptive iter: exhausted — {:.1}% capped at the full appetite \
+                                 ({budget_now}) even after a fresh appetite pick; reverting boost {boost:.1}→1.0",
+                                frac * 100.0
+                            ),
+                        );
+                    }
                 }
             }
             if v != u64::MAX && !interacting && cap_bound && !self.perf.iter_plateau[vb] {

@@ -12,6 +12,18 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A deep minibrot under auto now re-picks a better reference instead of settling for a black
+  interior** (beta.86). The finish of the black-minibrot arc. beta.84 stopped the false revert, but
+  a view could still come up only partly resolved, with a large black body, because the reference
+  orbit it was using had been chosen cheaply while the view was still moving — the centre of the
+  view, which stops iterating early and represents the surrounding structure poorly — and the
+  settled view kept re-using it. When the picture is settled and still all-black at the highest
+  count the view allows, the app now discards that reference once and picks a fresh one at the full
+  count, which runs the thorough picker and finds a better-placed orbit (off to one side, the same
+  one an offline render chooses), and the detail resolves. If even the fresh reference is solid
+  black, the view really is interior and it reverts to the cheap budget as before. Live view only;
+  it costs one extra reference build on a view that would otherwise have stayed black.
+
 - **A tour-harness flag with no tour file now fails loudly** (beta.85). `--livetest` and
   `--divetest` take the tour as the following argument. Given none, the flag parsed as "no tour",
   and because that also cleared the "launched for a task" state the app quietly opened an ordinary

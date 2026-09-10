@@ -1137,6 +1137,13 @@ struct Perf {
     /// has to see several flat steps in a row before concluding there is nothing to find.
     iter_stall: [u8; 2],
     iter_stall_base: [f64; 2],
+    /// One fresh appetite re-pick has been tried for this settle. When a settled view is capped at
+    /// the full appetite, the reference may be a poor motion-time pick (the view centre, which
+    /// escapes early and covers this view badly) that the settled path reuse-extended instead of
+    /// re-picking; a fresh pick at the appetite runs the deep-perturb engine and finds a better one.
+    /// Bounded to once per settle — if the appetite-picked reference is STILL all-capped the view is
+    /// genuinely interior and the revert stands. Cleared with the view (motion / `invalidate_refs`).
+    iter_repicked: [bool; 2],
     /// Escape-range sink per view (GPU → app: packed `(min_bits << 32) | max_bits` f32 bits of the
     /// frame's escaped smooth-iter range; drained with `swap(u64::MAX)`).
     norm_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
@@ -1362,6 +1369,7 @@ impl Default for Perf {
             iter_exhausted: [false, false],
             iter_stall: [0, 0],
             iter_stall_base: [1.0, 1.0],
+            iter_repicked: [false, false],
             norm_sink: [
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
@@ -6213,6 +6221,7 @@ impl FractadyneApp {
         self.perf.iter_plateau = [false, false];
         self.perf.iter_stall = [0, 0];
         self.perf.iter_stall_base = [1.0, 1.0];
+        self.perf.iter_repicked = [false, false];
         self.perf.capped_frac = [None, None];
         self.perf.iter_exhausted = [false, false];
         self.perf.norm_range = [None, None];
