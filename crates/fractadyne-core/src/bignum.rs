@@ -145,7 +145,12 @@ pub fn parse_bf(s: &str) -> Option<BigFloat> {
 /// digit of a pasted deep-zoom center (see `deep_roundtrip_bits`) — and it is the *validation*
 /// `FromStr` doesn't do: astro-float happily parses `"1 2"` as `1`, silently dropping the rest of
 /// what the user typed. A coordinate must never be half-read.
-fn is_decimal_literal(t: &str) -> bool {
+///
+/// ⭐Also the test the app uses to decide whether a coordinate is worth PRESERVING as an
+/// expression: a plain decimal cannot gain precision when re-parsed (its digits are all there is),
+/// so only a NON-literal — a rational or a function/constant expression — is re-derivable to a
+/// deeper zoom's precision, and only that is stored alongside the resolved centre.
+pub fn is_decimal_literal(t: &str) -> bool {
     let b = t.as_bytes();
     let mut i = 0;
     if matches!(b.get(i), Some(b'+') | Some(b'-')) {
@@ -954,4 +959,18 @@ pub(crate) fn mul_u32_bf(x: &BigFloat, n: u32, p: usize) -> BigFloat {
 pub fn lerp_bf(a: &BigFloat, b: &BigFloat, t: f64, p: usize) -> BigFloat {
     let f = bf(t, p);
     a.add(&b.sub(a, p, RM).mul(&f, p, RM), p, RM)
+}
+
+/// `a − b` at precision `p`. A thin wrapper so callers outside this crate (the app, computing the
+/// offset of a view centre from an anchor expression, and testing whether a centre still sits
+/// exactly on that anchor) can do coordinate arithmetic without importing astro-float's rounding
+/// vocabulary — and get the same rounding the viewport's own centre math uses.
+pub fn bf_sub(a: &BigFloat, b: &BigFloat, p: usize) -> BigFloat {
+    a.sub(b, p, RM)
+}
+
+/// `a + b` at precision `p`. Companion to [`bf_sub`], for reconstructing a centre from an anchor
+/// expression plus a saved offset.
+pub fn bf_add(a: &BigFloat, b: &BigFloat, p: usize) -> BigFloat {
+    a.add(b, p, RM)
 }

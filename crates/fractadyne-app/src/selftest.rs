@@ -4497,6 +4497,114 @@ zoom = \"1e94\"
                 pass: rt_ok,
             });
 
+            // ⭐A coordinate ENTERED AS AN EXPRESSION travels with the view and is re-derived on
+            // load, so a reopened file can be zoomed deeper than it was saved without the centre
+            // freezing at the digits a plain decimal would carry. Round-tripped through the real
+            // writer and reader; the centre must come back as `1/3` to far more than the ~15 digits
+            // a shallow decimal holds.
+            self.center_expr = crate::CenterExpr::capture(
+                "1/3", "0",
+                fractadyne_core::parse_bf_prec("1/3", 300).unwrap(),
+                fractadyne_core::parse_bf_prec("0", 300).unwrap(),
+                300,
+            );
+            self.viewport.center_x = fractadyne_core::parse_bf_prec("1/3", 300).unwrap();
+            self.viewport.center_y = fractadyne_core::parse_bf_prec("0", 300).unwrap();
+            self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0).mul_pow2(-200.0);
+            self.viewport.precision = fractadyne_core::precision_for_octaves(200);
+            let xblob = self.view_metadata();
+            let has_expr_key = xblob.contains("center_re_expr=1/3");
+            self.viewport.center_x = fractadyne_core::parse_bf("0.5").unwrap();
+            self.center_expr = None;
+            let xr = self.load_view_metadata(&xblob);
+            let third = fractadyne_core::parse_bf_prec("1/3", 400).unwrap();
+            let x_err = fractadyne_core::to_f64(&fractadyne_core::bf_sub(
+                &self.viewport.center_x, &third, 400,
+            )).abs();
+            let expr_rt_ok =
+                xr.note().is_none() && has_expr_key && self.center_expr.is_some() && x_err < 1.0e-30;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "View format",
+                name: "coordinate expression round-trips".into(),
+                params: "center_re_expr=1/3 → save → scramble → load".into(),
+                result: format!("has key {has_expr_key}, kept {}, |c−1/3| {x_err:.2e}", self.center_expr.is_some()),
+                threshold: "key written; expression kept; centre re-derived (|c−1/3| < 1e-30)",
+                pass: expr_rt_ok,
+            });
+
+            // ⭐The reader must re-derive the expression at the VIEW'S precision, not trust a short
+            // decimal beside it: a deep file whose `center_re` holds only 10 digits but carries the
+            // exact expression must reconstruct the centre to the depth, and a saved offset must be
+            // re-applied on top of the re-derived anchor.
+            let deep_expr = "app=Fractadyne\nformat_version=1\ncenter_re=0.3333333333\ncenter_im=0\n\
+                             center_re_expr=1/3\ncenter_im_expr=0\nupp_log2=-400\n";
+            let _ = self.load_view_metadata(deep_expr);
+            let third_deep = fractadyne_core::parse_bf_prec("1/3", 600).unwrap();
+            let deep_err = fractadyne_core::to_f64(&fractadyne_core::bf_sub(
+                &self.viewport.center_x, &third_deep, 600,
+            )).abs();
+            let off_blob = "app=Fractadyne\nformat_version=1\ncenter_re=0\ncenter_im=0\n\
+                            center_re_expr=1/3\ncenter_im_expr=0\ncenter_re_offset=1e-40\n\
+                            center_im_offset=0\nupp_log2=-200\n";
+            let _ = self.load_view_metadata(off_blob);
+            let want = fractadyne_core::bf_add(
+                &fractadyne_core::parse_bf_prec("1/3", 400).unwrap(),
+                &fractadyne_core::parse_bf_prec("1e-40", 400).unwrap(),
+                400,
+            );
+            let off_err = fractadyne_core::to_f64(&fractadyne_core::bf_sub(
+                &self.viewport.center_x, &want, 400,
+            )).abs();
+            // A shallow decimal centre sits ~1e-10 from 1/3, and a dropped offset ~1e-40 away — both
+            // far above these bars, so a regression to either shows up here.
+            let deep_ok = deep_err < 1.0e-40 && off_err < 1.0e-60;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "View format",
+                name: "expression re-derived at view precision + offset".into(),
+                params: "deep view, 10-digit center_re, exact expr; anchor + 1e-40 offset".into(),
+                result: format!("|c−1/3| {deep_err:.2e}; |c−(1/3+1e-40)| {off_err:.2e}"),
+                threshold: "re-derived deep (< 1e-40) and offset applied (< 1e-60)",
+                pass: deep_ok,
+            });
+            // ⭐The LIVE hook `update()` runs every frame: while the centre still sits on the
+            // expression's point, a deeper zoom re-derives it to the precision that depth needs;
+            // once panned off, it neither re-derives nor drops (the offset is materialised at save
+            // time). Drive `refresh_center_expr` directly — selftest has no frame loop.
+            self.viewport.center_x = fractadyne_core::parse_bf_prec("1/3", 100).unwrap();
+            self.viewport.center_y = fractadyne_core::parse_bf_prec("0", 100).unwrap();
+            self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0).mul_pow2(-400.0);
+            self.viewport.precision = fractadyne_core::precision_for_octaves(400);
+            self.center_expr = crate::CenterExpr::capture(
+                "1/3", "0",
+                self.viewport.center_x.clone(), self.viewport.center_y.clone(), 100,
+            );
+            self.refresh_center_expr(); // on-point, view now far deeper than 100 bits → re-derives
+            let live_third = fractadyne_core::parse_bf_prec("1/3", 700).unwrap();
+            let live_err = fractadyne_core::to_f64(&fractadyne_core::bf_sub(
+                &self.viewport.center_x, &live_third, 700,
+            )).abs();
+            let grew = self.center_expr.as_ref().map(|c| c.prec).unwrap_or(0) > 400;
+            // Pan off the point: the hook must NOT re-derive (centre stays where the pan left it) and
+            // must NOT drop the anchor (kept so the offset can be written at save time).
+            self.viewport.center_x = fractadyne_core::bf_add(
+                &self.viewport.center_x,
+                &fractadyne_core::parse_bf_prec("0.01", 700).unwrap(),
+                700,
+            );
+            let moved = self.viewport.center_x.clone();
+            self.refresh_center_expr();
+            let held = self.center_expr.is_some()
+                && fractadyne_core::bf_sub(&self.viewport.center_x, &moved, 700).is_zero();
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "View format",
+                name: "live zoom re-derives on-point, holds off-point".into(),
+                params: "on-point deep zoom, then pan; refresh_center_expr()".into(),
+                result: format!("grew {grew}, |c−1/3| {live_err:.2e}, held-off-point {held}"),
+                threshold: "re-derived deep on-point (< 1e-40); unchanged + kept off-point",
+                pass: grew && live_err < 1.0e-40 && held,
+            });
+            self.center_expr = None;
+
             // A newer format_version must be detected (not silently consumed).
             let newer = "app=Fractadyne\nformat_version=999\ncenter_re=-0.5\ncenter_im=0\nupp_log2=-3\n";
             let nr = self.load_view_metadata(newer);

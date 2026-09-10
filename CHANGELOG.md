@@ -12,12 +12,27 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Coordinate expressions are preserved and re-derived at depth** (beta.95). Entering a centre as an
+  expression — `1/3`, `-0.5 + 0.25*cos(pi/4)` — used to resolve to a decimal the instant you applied
+  it, capped at the digits that depth needed; zooming deeper then slowly drifted off the exact point,
+  because a decimal cannot grow more digits than it was written with. The expression is now kept as
+  the centre's anchor and re-evaluated at the precision each depth demands, so zooming straight into
+  an exact landmark stays exact all the way down. It travels with the file too: a `.fdn` now records
+  `center_re_expr`/`center_im_expr` (plus a small `center_re_offset`/`center_im_offset` when you have
+  panned near — but off — the point), so a saved location can be reopened and zoomed far past where it
+  was saved without the centre freezing. These are written *in addition* to the resolved
+  `center_re`/`center_im`, so an older reader still lands in the right place; the offset is computed
+  against the anchor only at save time, which keeps live pan and zoom on the fast plain-decimal path.
+  The anchor is dropped the moment you jump elsewhere (a landmark, a feature snap, Home). Reopening
+  "Go to location" while still on the point now shows the expression you typed rather than its decimal.
+
 - **Polar coordinate entry in "Go to location"** (beta.94). The coordinate evaluator has understood
   `x0 + 0.25*cos(pi/4)` since beta.17, but you had to know to type it. Go to location now has a
   discoverable polar mode: a "x, y  ↔  offset + r ∠ θ" toggle, then offset (x0, y0), radius and angle
   fields with a degrees/radians/turns selector. It composes the expression and runs it through the
   exact same parse-and-jump, so Copy, the depth-matched precision, and the flat-frame warning are all
-  unchanged. This finishes the coordinate-expression feature — the last, discoverable half.
+  unchanged. This finishes the *entry* half of the coordinate-expression feature — the discoverable
+  way to type one in (beta.95 then made the expression itself survive save/reload and deeper zoom).
 
 - **The issue reporter now attaches the location that crashed** (beta.93). Following on from the
   `crash-view.fdn` recording, Help ▸ Report an issue now offers "Location that crashed (.fdn)" as a

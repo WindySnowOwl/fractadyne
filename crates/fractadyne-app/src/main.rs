@@ -3435,6 +3435,56 @@ pub(crate) fn compose_polar(x0: &str, y0: &str, r: &str, theta: &str, unit: Angl
     (re, im)
 }
 
+/// A view centre entered as an EXPRESSION rather than a fixed decimal — kept so the exact point can
+/// be RE-DERIVED to whatever precision a deeper zoom demands. A saved decimal is capped at the digits
+/// it was written with; `-0.5 + 0.25*cos(pi/4)` is not, so it stays exact at any depth. Dropped the
+/// moment the centre is moved off the expression's point (a pan, drag, or feature jump), detected by
+/// comparing the live centre to the value this last produced — no need to instrument every move site.
+pub(crate) struct CenterExpr {
+    re: String,
+    im: String,
+    /// The last values this expression produced — equal to the viewport centre until the user moves
+    /// it (a pure zoom leaves the centre untouched; a pan/jump replaces it).
+    res_re: fractadyne_core::BigFloat,
+    res_im: fractadyne_core::BigFloat,
+    /// The working precision `res_*` were derived at; re-derived when the view comes to need more.
+    prec: usize,
+}
+
+impl CenterExpr {
+    /// Keep the entered expression strings alongside the centre they resolved to — but only if at
+    /// least one field is a genuine expression, since a pair of plain decimals cannot gain precision
+    /// and is not worth preserving. `res_*` are the LIVE viewport centre (not a re-parse), so the
+    /// on-point check ([`FractadyneApp::refresh_center_expr`]) matches immediately.
+    pub(crate) fn capture(
+        re: &str,
+        im: &str,
+        res_re: fractadyne_core::BigFloat,
+        res_im: fractadyne_core::BigFloat,
+        prec: usize,
+    ) -> Option<Self> {
+        let (re, im) = (re.trim(), im.trim());
+        if fractadyne_core::is_decimal_literal(re) && fractadyne_core::is_decimal_literal(im) {
+            return None;
+        }
+        Some(CenterExpr { re: re.to_string(), im: im.to_string(), res_re, res_im, prec })
+    }
+
+    /// Reconstruct from a loaded `.fdn`: the expression strings plus the anchor they resolved to at
+    /// the view's precision. Any saved offset has already been folded into the live centre by the
+    /// caller, so `res_*` are the ANCHOR — an on-point check then reads true only when the file was
+    /// saved right on the point (zero offset), which is exactly when a deeper zoom should re-derive.
+    pub(crate) fn loaded(
+        re: String,
+        im: String,
+        res_re: fractadyne_core::BigFloat,
+        res_im: fractadyne_core::BigFloat,
+        prec: usize,
+    ) -> Self {
+        CenterExpr { re, im, res_re, res_im, prec }
+    }
+}
+
 // System-facts helpers (process_memory, SysInfo, gather_system_info, CPU/VRAM probes)
 // moved to sysinfo.rs (re-exported below).
 // ---- Scripting: keyframe camera tours (also drives the benchmark) ----
@@ -4418,6 +4468,9 @@ struct FractadyneApp {
     /// while the key still matches what is on screen, so it survives settling (same centre/zoom)
     /// and disappears the instant the view moves, with no coupling to the reference lifecycle.
     feature_period: Option<(u32, String)>,
+    /// The centre entered as an expression, kept so it can be re-derived at a deeper zoom's precision
+    /// (see [`CenterExpr`]). `None` once the centre is a fixed value the user typed or navigated to.
+    center_expr: Option<CenterExpr>,
     /// `max_texture_dimension_2d` this device was created with — the ceiling a window's surface
     /// must stay under. 0 means "unknown".
     max_texture_dim: u32,
@@ -5264,6 +5317,7 @@ impl FractadyneApp {
             share: ShareDialog { include_thumb: s.share_include_thumb, ..Default::default() },
             toast: None,
             feature_period: None,
+            center_expr: None,
             // Booted by the device-loss handler's relaunch? Tell the user why the window blinked,
             // AND why they are at Home rather than where they were: the crash-loop guard reopens at
             // Home instead of the view that lost the device, so the restart cannot immediately
@@ -6445,6 +6499,48 @@ impl FractadyneApp {
         }
     }
 
+    /// Keep an expression-defined centre exact as the view zooms deeper.
+    ///
+    /// A centre entered as an expression ([`CenterExpr`]) is resolved to a `BigFloat` at the depth it
+    /// was entered. A pure zoom-in never refreshes that value (it only pads it with zeros), so past
+    /// the entered precision the centre would silently drift. While the live centre still sits
+    /// EXACTLY on the expression's point — i.e. only zoom, no pan, has happened since — re-derive the
+    /// expression at the precision the current magnification needs, so an exact landmark stays exact
+    /// all the way down. Once the centre is panned off the point, this is a two-comparison no-op and
+    /// the plain centre carries the exploration (the offset is materialised only when saving).
+    fn refresh_center_expr(&mut self) {
+        let Some(ce) = self.center_expr.as_ref() else { return };
+        // On-point iff the live centre equals what the expression last produced (an exact-value
+        // check via subtraction: a centre-preserving zoom re-sizes the value but does not change it).
+        let p = self.viewport.precision;
+        let on_point = fractadyne_core::bf_sub(&self.viewport.center_x, &ce.res_re, p).is_zero()
+            && fractadyne_core::bf_sub(&self.viewport.center_y, &ce.res_im, p).is_zero();
+        if !on_point {
+            return;
+        }
+        let needed =
+            fractadyne_core::precision_for_octaves(self.viewport.log2_magnification().max(0.0).ceil() as u64);
+        if needed <= ce.prec {
+            return; // the current derivation already carries enough precision for this depth
+        }
+        // Re-derive with headroom so a slow zoom doesn't re-parse (and rebuild the reference) every
+        // frame — only when the depth crosses past the precision we last derived at.
+        let target = needed + 64;
+        let (Some(re), Some(im)) = (
+            fractadyne_core::parse_bf_prec(&ce.re, target),
+            fractadyne_core::parse_bf_prec(&ce.im, target),
+        ) else {
+            return;
+        };
+        self.viewport.center_x = re.clone();
+        self.viewport.center_y = im.clone();
+        let ce = self.center_expr.as_mut().unwrap();
+        ce.res_re = re;
+        ce.res_im = im;
+        ce.prec = target;
+        self.invalidate_refs();
+    }
+
     /// Snapshot the current location for navigation history.
     fn snapshot_view(&self) -> ViewSnapshot {
         ViewSnapshot {
@@ -6461,6 +6557,9 @@ impl FractadyneApp {
         self.viewport.center_y = s.cy.clone();
         self.viewport.units_per_pixel = s.upp;
         self.viewport.precision = s.prec;
+        // Undo/redo restores the centre as a fixed value; drop any live expression anchor (the
+        // history records the decimal centre, not the expression it may have come from).
+        self.center_expr = None;
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
     }
@@ -6505,6 +6604,8 @@ impl FractadyneApp {
 
     /// Shared tail of a navigation jump: stop any glide, drop cached references, push history.
     fn finish_nav_jump(&mut self) {
+        // A feature jump (minibrot snap/solve) lands on a solved coordinate, not an expression.
+        self.center_expr = None;
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
         self.record_nav();
@@ -6517,6 +6618,7 @@ impl FractadyneApp {
         if self.dual {
             self.julia_viewport.reset_to(0.0, 0.0);
         }
+        self.center_expr = None; // home is a fixed default, not an expression anchor
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
         self.record_nav();
@@ -6550,6 +6652,7 @@ impl FractadyneApp {
             j_start_logmag: j_logmag,
             dual: self.dual,
         });
+        self.center_expr = None; // heading home leaves the anchor behind
         self.pointer.zoom_vel = 0.0;
     }
 
@@ -6666,6 +6769,7 @@ impl FractadyneApp {
         self.julia_mode = false;
         self.viewport.set_center_mag(x, y, mag.max(1.0));
         self.viewport.precision = fractadyne_core::precision_for_magnification(mag);
+        self.center_expr = None; // a discrete jump to a fixed coordinate — no anchor to re-derive
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
         self.record_nav();
@@ -6686,16 +6790,35 @@ impl FractadyneApp {
             mag,
         );
         self.viewport.precision = fractadyne_core::precision_for_magnification(mag);
+        self.center_expr = None; // a discrete jump to a fixed coordinate — no anchor to re-derive
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
         self.record_nav();
         self.set_toast(format!("Random location · {}×", fmt_zoom(mag)), ctx);
     }
 
-    /// Open the go-to-location dialog, pre-filled with the current view.
+    /// Open the go-to-location dialog, pre-filled with the current view. When the centre is still
+    /// sitting on a coordinate expression (entered as one and not yet panned off), show the
+    /// EXPRESSION rather than its resolved decimal — so the user sees the exact `1/3` or
+    /// `-0.5 + 0.25*cos(pi/4)` they typed, and Go re-preserves it. Falls back to the decimal once
+    /// the centre has been moved off the point (the expression alone would then be the wrong place).
     fn open_goto(&mut self) {
-        self.goto.x = fractadyne_core::to_decimal_string(&self.viewport.center_x);
-        self.goto.y = fractadyne_core::to_decimal_string(&self.viewport.center_y);
+        let on_expr = self.center_expr.as_ref().filter(|ce| {
+            let p = self.viewport.precision;
+            fractadyne_core::bf_sub(&self.viewport.center_x, &ce.res_re, p).is_zero()
+                && fractadyne_core::bf_sub(&self.viewport.center_y, &ce.res_im, p).is_zero()
+        });
+        match on_expr {
+            Some(ce) => {
+                self.goto.x = ce.re.clone();
+                self.goto.y = ce.im.clone();
+                self.goto.polar = false; // show the composed expression in the x/y fields
+            }
+            None => {
+                self.goto.x = fractadyne_core::to_decimal_string(&self.viewport.center_x);
+                self.goto.y = fractadyne_core::to_decimal_string(&self.viewport.center_y);
+            }
+        }
         self.goto.zoom = fmt_zoom_field(self.viewport.log2_magnification());
         self.goto.msg = None;
         self.goto.open = true;
@@ -6713,20 +6836,37 @@ impl FractadyneApp {
         // The real field also accepts a whole complex expression — `(37+16i)/100` fills both
         // coordinates at once. Both fields are rewritten to the resolved decimals so what was
         // applied is visible rather than implied.
-        let (cx, cy) = match fractadyne_core::parse_complex_prec(self.goto.x.trim(), prec) {
+        // A whole-complex value (`(37+16i)/100`) fills both coordinates and is rewritten to
+        // decimals; the separate-fields branch is the one that can carry a re-derivable expression.
+        let (cx, cy, separate) = match fractadyne_core::parse_complex_prec(self.goto.x.trim(), prec) {
             Some((re, im)) if !im.is_zero() => {
                 self.goto.x = fractadyne_core::to_decimal_string(&re);
                 self.goto.y = fractadyne_core::to_decimal_string(&im);
-                (Some(re), Some(im))
+                (Some(re), Some(im), false)
             }
             _ => (
                 fractadyne_core::parse_bf_prec(self.goto.x.trim(), prec),
                 fractadyne_core::parse_bf_prec(self.goto.y.trim(), prec),
+                true,
             ),
         };
         match (cx, cy, log2mag) {
             (Some(cx), Some(cy), Some(l)) => {
                 self.viewport.set_center_log2mag(cx, cy, l);
+                // Preserve a re-derivable coordinate expression so a deeper zoom can recompute the
+                // centre at the precision it then needs — a fixed decimal is capped at its digits.
+                // Captured against the LIVE centre (post-set), so it reads as on-point immediately.
+                self.center_expr = if separate {
+                    CenterExpr::capture(
+                        &self.goto.x,
+                        &self.goto.y,
+                        self.viewport.center_x.clone(),
+                        self.viewport.center_y.clone(),
+                        self.viewport.precision,
+                    )
+                } else {
+                    None
+                };
                 self.pointer.zoom_vel = 0.0;
                 self.invalidate_refs();
                 self.record_nav();
@@ -7440,6 +7580,7 @@ impl FractadyneApp {
         }
         self.viewport.set_center_mag(v.cx, v.cy, zoom.max(1.0));
         self.viewport.precision = fractadyne_core::precision_for_magnification(zoom);
+        self.center_expr = None; // imported foreign file — a fixed decimal centre, no expression
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
         self.record_nav();
@@ -7478,6 +7619,7 @@ impl FractadyneApp {
         }
         self.viewport.set_center_mag(v.cx, v.cy, zoom.max(1.0));
         self.viewport.precision = fractadyne_core::precision_for_magnification(zoom);
+        self.center_expr = None; // imported foreign file — a fixed decimal centre, no expression
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
         self.record_nav();
@@ -11622,6 +11764,10 @@ impl eframe::App for FractadyneApp {
         // Record the on-screen view so a device loss can write it as a loadable `.fdn` beside the
         // crash report (the manifest omits the coordinates). Cheap; must run before the GPU submit.
         self.stash_crash_view();
+        // While the centre still sits exactly on a coordinate expression, top its precision up to
+        // whatever the current zoom needs — so zooming straight into an exact landmark stays exact
+        // rather than freezing at the digits it was entered with. Cheap no-op once off-point.
+        self.refresh_center_expr();
 
         // `FRACTADYNE_TRACE=dpi` — one line per real change of scale factor or window size.
         //

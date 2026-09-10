@@ -310,7 +310,13 @@ palette_custom=0,0.25,0.5,0,0,0,1,1,0.2,0.1,1,0,0,0,0,0,0;\
 ///   it is exercised by its own round-trip tests instead.
 /// - `checksum` is DERIVED from the other fields, so a hand-written one would be wrong the moment
 ///   anything else in the sample changed. `view_text.rs` covers it against a computed value.
-const SAMPLE_OPTIONAL_KEYS: &[&str] = &["thumb", "checksum"];
+/// - `center_re_expr` / `center_im_expr` / `center_re_offset` / `center_im_offset` appear ONLY when
+///   the centre was entered as a re-derivable expression (see `center_expr_metadata`); an ordinary
+///   view — which the sample is — carries none of them, and their round-trip has its own selftest.
+const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
+    "thumb", "checksum",
+    "center_re_expr", "center_im_expr", "center_re_offset", "center_im_offset",
+];
 
 #[test]
 fn the_sample_location_covers_every_view_key() {
@@ -1003,6 +1009,31 @@ fn compose_polar_evaluates_to_the_offset_polar_point() {
     // Empty fields read as 0 and still compose to a valid, evaluable expression (the origin).
     let (re_e, im_e) = crate::compose_polar("", "", "", "", crate::AngleUnit::Degrees);
     assert!(ev(&re_e).abs() < 1e-12 && ev(&im_e).abs() < 1e-12, "re={re_e} im={im_e}");
+}
+
+/// The centre expression is preserved only when it can actually gain precision: a pair of plain
+/// decimals is capped at the digits typed, so nothing a deeper zoom could recover, while a rational
+/// or a transcendental is re-derivable. And re-deriving a kept expression deeper genuinely narrows
+/// the error toward the true value — which is the whole reason the expression, not the resolved
+/// decimal, is the anchor. See `CenterExpr`, `FractadyneApp::refresh_center_expr`.
+#[test]
+fn center_expr_kept_only_when_re_derivable() {
+    let z = fractadyne_core::parse_bf("0").unwrap();
+    // Two plain decimals: nothing a deeper zoom could recover, so not kept.
+    assert!(crate::CenterExpr::capture("-0.5", "0.0", z.clone(), z.clone(), 64).is_none());
+    // A rational or transcendental in EITHER field is re-derivable and kept.
+    assert!(crate::CenterExpr::capture("1/3", "0", z.clone(), z.clone(), 64).is_some());
+    assert!(crate::CenterExpr::capture("-0.5", "0.25*cos(1)", z.clone(), z.clone(), 64).is_some());
+
+    // Re-deriving `1/3` deeper drives the gap to the true value far below a shallow derivation's —
+    // the concrete precision win a deeper zoom of a preserved expression gets.
+    let truth = fractadyne_core::parse_bf_prec("1/3", 2000).unwrap();
+    let err = |bits| {
+        let v = fractadyne_core::parse_bf_prec("1/3", bits).unwrap();
+        fractadyne_core::to_f64(&fractadyne_core::bf_sub(&v, &truth, 2000)).abs()
+    };
+    let (shallow, deep) = (err(64), err(600));
+    assert!(deep < shallow * 1e-40, "shallow={shallow:.3e} deep={deep:.3e}");
 }
 
 /// Checklist step 91, "Help > Report an issue opens the issue reporting path correctly with

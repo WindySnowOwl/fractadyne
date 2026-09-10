@@ -269,6 +269,11 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "app", "version", "format_version", "saved_unix", "saved", "notes", "fractal", "julia",
     "julia_c_re", "julia_c_im", "center_re", "center_im", "upp", "upp_log2", "zoom", "max_iter",
     "auto_iter", "palette", "cycle", "offset", "aa", "palette_custom", "thumb", "checksum",
+    // The centre's source EXPRESSION and its offset from that anchor, when the centre was entered
+    // as a re-derivable expression. Optional and written IN ADDITION to `center_re`/`center_im`, so
+    // an older reader still lands on the resolved decimal; a newer one re-derives at the view's
+    // precision so a deeper zoom of the same file stays exact. See `CenterExpr`.
+    "center_re_expr", "center_im_expr", "center_re_offset", "center_im_offset",
     // Pre-v0.2.20 spellings, still read. See `LEGACY_VIEW_KEYS`.
     "center_x", "center_y",
 ];
@@ -313,6 +318,10 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("julia_c_im", ValueKind::Float),
     ("center_re", ValueKind::BigFloat),
     ("center_im", ValueKind::BigFloat),
+    ("center_re_expr", ValueKind::Expr),
+    ("center_im_expr", ValueKind::Expr),
+    ("center_re_offset", ValueKind::BigFloat),
+    ("center_im_offset", ValueKind::BigFloat),
     // The pre-v0.2.20 spellings get the same scrutiny as the current ones.
     ("center_x", ValueKind::BigFloat),
     ("center_y", ValueKind::BigFloat),
@@ -333,6 +342,10 @@ enum ValueKind {
     Flag,
     /// A full-precision decimal, read by `parse_bf`.
     BigFloat,
+    /// A coordinate expression (a rational, or one built from `cos`/`sin`/`pi`/`sqrt`/…), read by
+    /// `parse_bf` — which also accepts a plain decimal, so this is a strict superset of `BigFloat`
+    /// that just reports itself differently when unreadable.
+    Expr,
 }
 
 impl ValueKind {
@@ -343,7 +356,7 @@ impl ValueKind {
             ValueKind::Uint => v.parse::<u64>().is_ok(),
             ValueKind::Float => v.parse::<f64>().is_ok(),
             ValueKind::Flag => v == "0" || v == "1",
-            ValueKind::BigFloat => fractadyne_core::parse_bf(v).is_some(),
+            ValueKind::BigFloat | ValueKind::Expr => fractadyne_core::parse_bf(v).is_some(),
         }
     }
 
@@ -353,6 +366,7 @@ impl ValueKind {
             ValueKind::Float => "a number",
             ValueKind::Flag => "0 or 1",
             ValueKind::BigFloat => "a decimal number",
+            ValueKind::Expr => "a coordinate expression",
         }
     }
 }
@@ -756,7 +770,7 @@ impl FractadyneApp {
             "app=Fractadyne\nversion={}\nformat_version={}\nsaved_unix={}\nsaved={}\n\
              notes={}\nfractal={}\njulia={}\njulia_c_re={:.17e}\njulia_c_im={:.17e}\n\
              center_re={}\ncenter_im={}\nupp={:.17e}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n\
-             palette={}\ncycle={}\noffset={}\naa={}\n{}",
+             palette={}\ncycle={}\noffset={}\naa={}\n{}{}",
             version_string(),
             VIEW_FORMAT_VERSION,
             secs,
@@ -801,7 +815,48 @@ impl FractadyneApp {
             } else {
                 String::new()
             },
+            // The centre's source expression + offset, when it was entered as one (empty otherwise,
+            // so an ordinary view's metadata is byte-identical to before this existed).
+            self.center_expr_metadata(),
         )
+    }
+
+    /// The centre's source expression and its offset from that anchor — the `center_re_expr` /
+    /// `center_im_expr` (+ `center_re_offset` / `center_im_offset`) lines — when the centre was
+    /// entered as a re-derivable expression. Empty otherwise.
+    ///
+    /// Written IN ADDITION to the resolved `center_re`/`center_im`: an older reader (or one that
+    /// never had an expression) still lands on the decimal centre, while a current reader
+    /// reconstructs `expression(re-derived at the view's precision) + offset`, so a deeper zoom of
+    /// the reloaded file stays exact instead of freezing at the digits the decimal was written with.
+    /// The offset is zero while the centre still sits on the point and small while exploring near it;
+    /// past the set's own ~8-unit span it cannot be a meaningful offset from the anchor (a discrete
+    /// jump we failed to clear), so the expression is dropped and only the plain decimal is written.
+    fn center_expr_metadata(&self) -> String {
+        let Some(ce) = self.center_expr.as_ref() else {
+            return String::new();
+        };
+        let p = self.viewport.precision.max(ce.prec);
+        let (Some(anchor_re), Some(anchor_im)) = (
+            fractadyne_core::parse_bf_prec(&ce.re, p),
+            fractadyne_core::parse_bf_prec(&ce.im, p),
+        ) else {
+            return String::new();
+        };
+        let off_re = fractadyne_core::bf_sub(&self.viewport.center_x, &anchor_re, p);
+        let off_im = fractadyne_core::bf_sub(&self.viewport.center_y, &anchor_im, p);
+        if fractadyne_core::to_f64(&off_re).abs() >= 8.0 || fractadyne_core::to_f64(&off_im).abs() >= 8.0 {
+            return String::new();
+        }
+        let mut s = format!("center_re_expr={}\ncenter_im_expr={}\n", ce.re, ce.im);
+        if !off_re.is_zero() || !off_im.is_zero() {
+            s.push_str(&format!(
+                "center_re_offset={}\ncenter_im_offset={}\n",
+                fractadyne_core::to_decimal_string(&off_re),
+                fractadyne_core::to_decimal_string(&off_im),
+            ));
+        }
+        s
     }
 
     /// Restore the view from view-state metadata (exported image, `.fdn`, or bookmark).
@@ -933,6 +988,30 @@ impl FractadyneApp {
         self.viewport.precision = fractadyne_core::precision_for_octaves(
             self.viewport.log2_magnification().max(0.0).ceil() as u64,
         );
+        // ⭐If the file carries the centre's SOURCE EXPRESSION, re-derive it at that precision and
+        // re-apply the saved offset — overriding the decimal `center_re`/`center_im` read above — so
+        // the centre is exact for THIS depth and for any deeper zoom from here, not frozen at the
+        // digits the decimal was written with. Read after the depth so the precision is known; a
+        // file with no expression keys is unchanged. See `CenterExpr` / `center_expr_metadata`.
+        self.center_expr = None;
+        if let (Some(re_expr), Some(im_expr)) = (get("center_re_expr"), get("center_im_expr")) {
+            let target = self.viewport.precision + 64;
+            if let (Some(anchor_re), Some(anchor_im)) = (
+                fractadyne_core::parse_bf_prec(&re_expr, target),
+                fractadyne_core::parse_bf_prec(&im_expr, target),
+            ) {
+                let off_re = get("center_re_offset")
+                    .and_then(|s| fractadyne_core::parse_bf_prec(&s, target))
+                    .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(0.0, target));
+                let off_im = get("center_im_offset")
+                    .and_then(|s| fractadyne_core::parse_bf_prec(&s, target))
+                    .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(0.0, target));
+                self.viewport.center_x = fractadyne_core::bf_add(&anchor_re, &off_re, target);
+                self.viewport.center_y = fractadyne_core::bf_add(&anchor_im, &off_im, target);
+                self.center_expr =
+                    Some(crate::CenterExpr::loaded(re_expr, im_expr, anchor_re, anchor_im, target));
+            }
+        }
         self.invalidate_refs();
         self.pointer.zoom_vel = 0.0;
         self.record_nav();
