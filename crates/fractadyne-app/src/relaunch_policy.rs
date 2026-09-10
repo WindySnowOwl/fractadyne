@@ -14,13 +14,19 @@ fn a_first_loss_recovers_at_any_uptime() {
 
 #[test]
 fn a_relaunch_that_did_not_help_stops() {
-    // Restarted, then died again within 15s: restarting is not working, so stop rather than
-    // spin. This is the case the original uptime guard was really aiming at.
+    // Restarted, then died again before it genuinely recovered: restarting is not working, so stop
+    // rather than spin — "twice in a row, do not auto-restart again". ⚠The window is 600s, raised
+    // from 15s after the 2026-09-10 field loop: each relaunch survived ~30-200s rebuilding the same
+    // lethal reference (watchdog hangs of 100-160s) before dying, clearing 15s every time, so the
+    // guard kept restarting into the identical crash.
     assert_eq!(relaunch_decision(1, 2.0), None);
+    assert_eq!(relaunch_decision(1, 200.0), None); // the field loop's rebuild-and-recrash window
+    assert_eq!(relaunch_decision(1, 599.9), None);
     assert_eq!(relaunch_decision(2, 14.9), None);
-    // But a restarted generation that ran a while before dying gets another go.
-    assert_eq!(relaunch_decision(1, 15.0), Some(2));
-    assert_eq!(relaunch_decision(2, 600.0), Some(3));
+    // But a generation that ran a genuinely healthy stretch before a later (unrelated) loss gets
+    // another go — transient recovery, not a loop.
+    assert_eq!(relaunch_decision(1, 600.0), Some(2));
+    assert_eq!(relaunch_decision(2, 3600.0), Some(3));
 }
 
 #[test]

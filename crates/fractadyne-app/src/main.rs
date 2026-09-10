@@ -562,11 +562,24 @@ mod task_invocation;
 /// was wrong in the field. See `relaunch_after_device_loss` for the reasoning.
 pub(crate) fn relaunch_decision(generation: u32, elapsed_s: f64) -> Option<u32> {
     const MAX_GENERATIONS: u32 = 3;
+    // How long a RESTARTED generation must run to count as a genuine recovery rather than another
+    // link in a crash loop. A second crash sooner than this is "twice in a row" — stop, do not
+    // auto-restart again.
+    //
+    // ⚠**Raised from 15s after the 2026-09-10 field loop.** A device loss at a deep interior
+    // minibrot with `Iterations (base) = 10M` restored the exact same view, spent ~30–200s
+    // rebuilding its 7.45M-sample reference (the watchdog logged 100–160s hangs), then died again —
+    // comfortably past 15s, so the old "died almost immediately" test never fired and it kept
+    // restarting into the identical crash. 600s cleanly clears that rebuild-and-recrash window while
+    // still letting a genuinely healthy session that later hits an unrelated transient loss recover.
+    // (The companion fix opens a recovery relaunch at Home, not the crashing view — see
+    // `FractadyneApp::new` — so in practice generation 1 no longer re-crashes from the same cause;
+    // this bound is the backstop for when even that still dies.)
+    const HEALTHY_UPTIME_S: f64 = 600.0;
     if generation >= MAX_GENERATIONS {
         return None;
     }
-    // A restarted generation that dies again almost immediately was not helped by restarting.
-    if generation > 0 && elapsed_s < 15.0 {
+    if generation > 0 && elapsed_s < HEALTHY_UPTIME_S {
         return None;
     }
     Some(generation + 1)
@@ -4436,12 +4449,12 @@ impl FractadyneApp {
         //
         // A lost device (Windows TDR — our own oversized dispatch, a driver reset, sleep/resume,
         // another app wedging the GPU) is unrecoverable in-place under eframe, but it is NOT an
-        // app bug the user should experience as a crash: the session file already persists the
-        // exact view, so a fresh process resumes almost seamlessly. Both crash reports on this
-        // machine (2026-08-02 shallow view, 2026-08-06 deep spar) are this exact class. The
-        // panic hook still writes the crash report first (durable artifact), then we relaunch —
-        // bounded by the generation guard in `relaunch_after_device_loss` so a loss that recurs
-        // cannot restart-loop forever.
+        // app bug the user should experience as a crash: a fresh process restores the whole session
+        // (fractal, palette, window) and comes up at Home — deliberately NOT the view that lost the
+        // device, because restoring that verbatim re-crashed on it (2026-09-10 field loop, a deep
+        // interior minibrot at iter-base 10M). The panic hook still writes the crash report first
+        // (durable artifact), then we relaunch — bounded by the generation guard in
+        // `relaunch_after_device_loss` so a loss that recurs cannot restart-loop forever.
         // ONE place decides whether a lost device may relaunch, because the two paths below drifted
         // apart in exactly the way that matters: both used `elapsed_s() > 60`, and that conflates
         // "early in this process's life" with "restart loop". FIELD CASE (2026-08-18, build 1675):
@@ -4922,6 +4935,21 @@ impl FractadyneApp {
         };
         viewport.precision =
             fractadyne_core::precision_for_octaves(viewport.log2_magnification().max(0.0).ceil() as u64);
+        // ⭐⭐**Crash-loop guard companion (see `relaunch_after_device_loss`).** A GPU-loss RELAUNCH
+        // must NOT come back up on the exact view that lost the device — restoring it verbatim is the
+        // loop the 2026-09-10 field capture hit: a deep interior minibrot rebuilt its 7.45M-sample
+        // reference and died again, and the restart kept landing on it. Everything else from the
+        // session still applies (fractal, palette, coloring, window); only the VIEW opens at Home,
+        // which is trivially renderable, so the restart RECOVERS instead of re-crashing. The lost
+        // location is still in the session file and the crash report if the user wants to return to
+        // it deliberately. Detected by the same env var the relaunch handler sets on the child.
+        if std::env::var_os("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS").is_some() {
+            viewport.reset();
+            diag::log_line(
+                "start",
+                "GPU-loss recovery relaunch — opening at Home, not the view that lost the device (crash-loop guard)",
+            );
+        }
         // Restore the saved fractal family (so the view you left is fully recreated).
         let fractal = FractalKind::from_name(&s.fractal).unwrap_or(FractalKind::Mandelbrot);
 
@@ -5128,11 +5156,15 @@ impl FractadyneApp {
             share: ShareDialog { include_thumb: s.share_include_thumb, ..Default::default() },
             toast: None,
             feature_period: None,
-            // Booted by the device-loss handler's relaunch? Tell the user why the window blinked
-            // (the session file restored their exact view; without this the restart is a mystery).
+            // Booted by the device-loss handler's relaunch? Tell the user why the window blinked,
+            // AND why they are at Home rather than where they were: the crash-loop guard reopens at
+            // Home instead of the view that lost the device, so the restart cannot immediately
+            // reproduce the loss. Without this the restart (and the moved view) is a mystery.
             pending_toast: (std::env::var_os("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS").is_some())
                 .then(|| {
-                    "Recovered from a graphics device reset — your view was restored.".to_string()
+                    "Recovered from a graphics device reset — reopened at the home view, since the \
+                     previous location was too demanding to render."
+                        .to_string()
                 }),
             max_texture_dim: cc
                 .wgpu_render_state

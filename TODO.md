@@ -700,23 +700,20 @@ to HARDWARE VARIANCE (everything blessed on one RTX 3080). Sequenced by announce
    Applies to the Linux rig too; `scripts/pull-linux-reports.ps1` already establishes the scp/ssh
    half of the same idea.
 
-- [ ] ⛔**Crash-loop guard: stop auto-restarting after 2 crashes in a row** (user, 2026-09-10). A
-   device loss auto-relaunches the process (`relaunch_decision` in main.rs, tested in
-   `relaunch_policy.rs`): generation 0 always restarts once; a generation that dies **within 15s**
-   stops; hard cap 3 generations. The gap the field hit (beta.88, 2026-09-10): a device loss at a
-   period-3992 minibrot with **Iterations (base) = 10,000,000** (ref orbit 7.45M samples, frame
-   budget climbed to 6e10 steps → GPU TDR). The relaunch **restored the exact same lethal view**,
-   spent ~30s rebuilding that reference, and device-lost again — but ~30s **> 15s**, so the
-   "died-quickly" heuristic never fired and it would restart up to the 3-generation cap, each time
-   restoring the same crashing view. **Two fixes, either closes the loop:** (a) count CONSECUTIVE
-   crashes across the relaunch chain (persist a counter in the `session.running`/marker file) and
-   refuse the auto-restart at 2, independent of survival time — the user's exact ask; and/or (b) on
-   a post-device-loss relaunch, do NOT restore the crashing view verbatim — come up at Home (or with
-   the iteration base clamped down) so a restart cannot immediately reproduce the loss. (b) is the
-   stronger fix because it also makes a permitted restart actually *recover* instead of re-crashing.
-   ⚠Interacts with the open device-loss investigation ([[topic-device-loss-actuator]]): the real
-   trigger here is the 10M iteration base at a deep interior minibrot, which the frame-cost budget's
-   resolution actuator did not tame — but the crash-loop guard is worth doing on its own regardless.
+- [x] ⛔**Crash-loop guard: stop auto-restarting after 2 crashes in a row — DONE beta.89** (user,
+   2026-09-10). A device loss auto-relaunches the process (`relaunch_decision` in main.rs, tested in
+   `relaunch_policy.rs`). The field gap (beta.88, 2026-09-10): a device loss at a period-3992
+   minibrot with **Iterations (base) = 10,000,000** (ref orbit 7.45M samples, frame budget 6e10
+   steps → GPU TDR); the relaunch **restored the exact same lethal view**, spent ~30-200s rebuilding
+   that reference, and died again — ~30s **> 15s**, so the old "died-quickly" test never fired and it
+   restarted up to the 3-generation cap into the same crash. **Both fixes shipped:** (a) the relaunch
+   now opens at **Home**, not the crashing view (`FractadyneApp::new`, gated on
+   `FRACTADYNE_RESTARTED_AFTER_GPU_LOSS`) — the whole session is restored except the view, so a
+   restart RECOVERS instead of re-crashing; (b) the loop guard's "recovered?" window is **15s → 600s**
+   so a second crash within ten minutes counts as consecutive and stops. ⚠The underlying **10M
+   iteration base at a deep interior minibrot** is still the device-loss trigger — a separate
+   guard-rail (warn / soft-cap the base when the reference is partial-and-huge) remains open under
+   [[topic-device-loss-actuator]].
 
 ### E — (b) fundamentally missing features: assessed, nothing blocking
 

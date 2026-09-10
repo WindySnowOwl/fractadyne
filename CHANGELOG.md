@@ -12,6 +12,19 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A lost graphics device no longer restarts into the same crash** (beta.89). When the GPU device
+  is lost the app writes a crash report and relaunches itself; a field capture showed that becoming
+  a loop — a deep interior minibrot with the iteration base at its 10-million maximum lost the
+  device, and each relaunch restored that exact view, spent ~30 seconds (sometimes minutes)
+  rebuilding its enormous reference orbit, then died again. Two changes stop it. First, a relaunch
+  after a device loss now opens at the **home view** rather than the location that lost the device:
+  everything else about your session is restored (fractal, colors, window), but the view that was
+  too demanding to render is not reproduced, so the restart recovers instead of re-crashing — a
+  toast says so, and the location is still in the session file if you want to return to it
+  carefully. Second, the loop guard now treats a second crash within **ten minutes** as consecutive
+  (it was fifteen seconds, which the slow rebuild-and-recrash cleared every time), so two crashes in
+  a row will not auto-restart a third.
+
 - **The minibrot period is now shown ambiently in the status bar, not just in a toast** (beta.88).
   Jumping to a minibrot (the `M` key, or Go to location ▸ Go to feature) announced its period only
   in a two-second toast. The period now also sits in the status bar and stays there while the view
