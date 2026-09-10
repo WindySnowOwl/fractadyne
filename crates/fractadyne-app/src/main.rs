@@ -71,6 +71,7 @@ mod export;
 mod bench_matrix;
 mod fractal;
 mod chunksweep;
+mod deviceloss_repro;
 mod gputest;
 mod help;
 mod icons;
@@ -334,6 +335,12 @@ fn main() -> eframe::Result<()> {
                 .with_inner_size([1280.0, 800.0])
                 .with_title(window_title())
                 .with_icon(brand_icon());
+            // `--deviceloss-repro` is a non-interactive measurement harness (it builds a reference
+            // and times GPU submissions for minutes); keep its window off the user's desktop. It
+            // still gets a real wgpu device — visibility is orthogonal to the surface/device.
+            if args.iter().any(|a| a == "--deviceloss-repro") {
+                vp = vp.with_visible(false);
+            }
             // ⚠⚠**THE ONE UNTESTED HYPOTHESIS THAT IS OURS, now switchable without a rebuild.**
             // `with_min_inner_size` is specified in logical POINTS, and winit applies min/max
             // constraints while handling `WM_DPICHANGED` — a stale-factor conversion there is
@@ -547,7 +554,7 @@ pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
         "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
         "--render", "--render-tour", "--torture", "--gputest", "--oomtest", "--refdiag",
         "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
-        "--chunk-sweep", "--bench-bignum", "--shot", "--soak", "--pickcheck",
+        "--chunk-sweep", "--deviceloss-repro", "--bench-bignum", "--shot", "--soak", "--pickcheck",
     ];
     args.iter().any(|a| TASK_FLAGS.contains(&a.as_ref()))
 }
@@ -4766,6 +4773,7 @@ impl FractadyneApp {
             None
         };
         let chunk_sweep = chunksweep::ChunkSweep::from_args(args);
+        let deviceloss_repro = deviceloss_repro::DeviceLossRepro::from_args(args);
         let play_tour = val("--play").map(std::path::PathBuf::from);
         // Was the app launched to DO something specific, rather than to be explored? If so, no
         // first-run onboarding: a modal is either something nobody will ever click (a headless
@@ -4787,6 +4795,7 @@ impl FractadyneApp {
             || autodive.is_some()
             || motiontest.is_some()
             || chunk_sweep.is_some()
+            || deviceloss_repro.is_some()
             || play_tour.is_some()
             || selftest
             || bench_matrix
@@ -5063,6 +5072,7 @@ impl FractadyneApp {
                 juliadive,
                 dualsettle,
                 chunk_sweep,
+                deviceloss_repro,
                 autodive,
                 motiontest,
             },

@@ -1230,6 +1230,10 @@ pub(crate) struct HarnessModes {
     /// iterate at the current view. The one measurement that separates the two branches of the
     /// 2026-08-22 device loss — see `mod chunksweep`.
     pub(crate) chunk_sweep: Option<crate::chunksweep::ChunkSweep>,
+    /// CLI `--deviceloss-repro [ZOOM_LOG2] [REF_ITER]`: a SAFE reproduction of the deep-interior
+    /// device loss — measures the honest floor-window submission cost at small areas and extrapolates
+    /// to full resolution, predicting the lethal dispatch without running it. See `mod deviceloss_repro`.
+    pub(crate) deviceloss_repro: Option<crate::deviceloss_repro::DeviceLossRepro>,
     /// CLI `--motiontest`: the motion-presentation gate (design/mode2-chunking.md §11) — the
     /// in-loop harness that can see what `--livetest`'s settled checkpoints cannot: what a
     /// chunked view ADOPTS as its frozen texture while the camera is moving.
@@ -1299,6 +1303,20 @@ impl crate::FractadyneApp {
                 let dev = dev.clone();
                 let q = q.clone();
                 if self.chunk_sweep_step(&dev, &q) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                } else {
+                    ctx.request_repaint();
+                }
+            }
+        }
+        // --deviceloss-repro: builds its own reference synchronously and measures the floor-window
+        // cost, so it does NOT wait for the live pipeline — it runs on the first frame it gets a
+        // device and closes. Same in-loop pattern as chunk-sweep.
+        if self.harness.deviceloss_repro.is_some() {
+            if let Some((dev, q)) = gpu {
+                let dev = dev.clone();
+                let q = q.clone();
+                if self.deviceloss_repro_step(&dev, &q) {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 } else {
                     ctx.request_repaint();

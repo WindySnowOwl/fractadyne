@@ -12,6 +12,16 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **New diagnostic `--deviceloss-repro` for the open deep-zoom device-loss investigation** (beta.90,
+  issue #1). A safe, headless harness: it builds a deep interior reference and times the honest
+  per-dispatch GPU cost (one submission against `poll(Wait)`) at small pixel areas, scaling up only
+  under a safety bound and extrapolating to full resolution — so it predicts a watchdog-crossing
+  dispatch without ever running one, and can be pointed at any view with `--center`. First findings,
+  which redirect the fix: on interior views the cost is low, and both actuators — the iteration
+  window and the pixel area — are sub-linear (≈window^0.8, ≈area^0.6), so the lethal cost is not the
+  reference buffer (a small reference measures the same as the 7.4M one) but the per-step cost at
+  specific hot *structured* locations. Dev-only; changes nothing about normal rendering.
+
 - **A lost graphics device no longer restarts into the same crash** (beta.89). When the GPU device
   is lost the app writes a crash report and relaunches itself; a field capture showed that becoming
   a loop — a deep interior minibrot with the iteration base at its 10-million maximum lost the
