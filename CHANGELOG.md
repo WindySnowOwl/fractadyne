@@ -12,6 +12,14 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A tour-harness flag with no tour file now fails loudly** (beta.85). `--livetest` and
+  `--divetest` take the tour as the following argument. Given none, the flag parsed as "no tour",
+  and because that also cleared the "launched for a task" state the app quietly opened an ordinary
+  window instead of running the harness — the first-run welcome appeared, nothing ran, and on a
+  covered window the frame loop stalled for tens of seconds waiting to present. It now exits with a
+  clear message naming the right invocation, so the mistake can never again look like a harness
+  hang. (Development-only flags; no effect on normal use.)
+
 - **Auto-iterations no longer reverts a resolvable deep view to black** (beta.84). The real fix for
   the black-minibrot report, found from a GPU trace after beta.83 cleared the appetite cap and
   exposed this. The adaptive iteration boost decides whether to keep raising the count from the

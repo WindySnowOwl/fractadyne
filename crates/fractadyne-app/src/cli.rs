@@ -71,8 +71,40 @@ fn first_bad_option(args: &[String]) -> Option<BadOption> {
 #[cfg(test)]
 mod bad_options;
 
+/// A harness flag that names a tour FILE but was given none. `--livetest` / `--divetest` take the
+/// tour as the FOLLOWING argument (`--livetest tours/grand-tour.toml`). Given none, the value parses
+/// as `None`, so `launched_for_a_task` is never set — and the app then opens an ORDINARY GUI window
+/// instead of running the harness: the welcome dialog appears, the harness never starts, and on an
+/// occluded window the frame loop stalls on present for tens of seconds. That is exactly how a bare
+/// `--livetest` wedged a gate for minutes on 2026-09-10, masquerading as a livetest bug. Caught here
+/// so it fails loudly with the right invocation instead of a silent no-op GUI.
+pub(crate) fn missing_tour_flag(args: &[String]) -> Option<&'static str> {
+    for &flag in &["--livetest", "--divetest"] {
+        if let Some(pos) = args.iter().position(|a| a == flag) {
+            // Satisfied only by a following non-flag token (the tour path).
+            let has_file = args.get(pos + 1).is_some_and(|a| !a.starts_with('-'));
+            if !has_file {
+                return Some(flag);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod missing_tour_flag_tests;
+
 /// Dispatch the headless CLI modes. Returns true if one ran (caller should exit).
 pub(crate) fn run_headless(args: &[String]) -> bool {
+    // A tour-harness flag with no tour file would otherwise fall through to a bare GUI launch (see
+    // `missing_tour_flag`). Refuse it before any window opens.
+    if let Some(flag) = missing_tour_flag(args) {
+        eprintln!(
+            "fractadyne: {flag} needs a tour file — e.g. `{flag} tours/grand-tour.toml`.\n\
+             (Bare {flag} would open an ordinary window instead of running the harness.)"
+        );
+        crate::exit(2);
+    }
     // Explicit help request (--help / -h / -? / /? / /h / /help / help) → reference to stdout, exit 0.
     if args.iter().skip(1).any(|a| HELP_TOKENS.contains(&a.as_str())) {
         print!("{}", crate::help::cli_help_text());
