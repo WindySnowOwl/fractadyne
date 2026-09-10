@@ -8034,7 +8034,8 @@ descent and the Tan Lei self-checking test).
 
 ### Sequenced first — small, high-value, hard to get wrong
 
-- [ ] **Coordinate-expression entry: functions, constants, and polar form** (user, 2026-08-12).
+- [x] **Coordinate-expression entry: functions, constants, and polar form** (user, 2026-08-12) —
+  ✅**COMPLETE: language beta.17, polar UI beta.94.**
   ✅**The LANGUAGE half SHIPPED v0.2.41-beta.17**: `parse_complex_prec` now evaluates `sqrt`
   (complex-capable, principal), `cbrt`, `root(x,n)` (odd roots of negatives allowed),
   `sin cos tan asin acos atan` (radians), `ln log exp abs`, powers `^` (right-assoc, `-2^2=-4`;
@@ -8049,7 +8050,13 @@ descent and the Tan Lei self-checking test).
   Verified: 3 core unit tests (exact values, identities at a 264-bit floor incl.
   `cos(pi/3)=1/2` and the polar composition, 21 refusals + flood/chain bounds), fuzz charset
   extended with `^,`+function letters, selftest `coords` gained an identities+refusals check.
-  ⚠**REMAINING (the discoverable half)** — the dedicated polar UI:
+  ✅**DONE v0.2.41-beta.94 — the discoverable half (polar UI):** Go to location has a "x, y ↔
+  offset + r ∠ θ" mode toggle; polar mode shows offset (x0, y0), radius and angle fields + a
+  degrees/radians/turns selector. `compose_polar` (main.rs) builds `re = x0 + r·cos θ`,
+  `im = y0 + r·sin θ` as EXPRESSIONS and Go routes them through the SAME `apply_goto` — Copy,
+  precision, and the flat-frame warning unchanged; the grammar stays radians-only. Verified:
+  `compose_polar_evaluates_to_the_offset_polar_point` (all 3 units + empty-fields-as-0) + a
+  `--uitest` screenshot of the polar dialog. Original spec:
   - **Polar form with cartesian offset**: enter a centre as `x0, y0 + r ∠ θ` — i.e.
     `re = x0 + r·cos(θ)`, `im = y0 + r·sin(θ)`, all evaluated at target precision. UI shape: a
     mode switch (x,y ↔ offset+polar) in the Go-to dialog with fields (x0, y0, r, θ) and a
