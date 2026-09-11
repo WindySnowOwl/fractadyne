@@ -12,21 +12,31 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
-- **A settled deep view no longer crawls — the chunk walk was pricing its own idle** (beta.98).
-  Re-zooming the period-3 bulb root on beta.97 no longer lost the device, but the view then sat
-  "computing" indefinitely: hundreds of lethal-band sheds, most of them 2-iteration windows, with
-  every frame idle. The cause was pre-existing and independent of the device-loss fix (it began in
-  direct mode, before any reference existed): a chunk pass in flight is released only by a *quick
-  present* (under 100 ms), but while a walk was pending the settled repaint beat deliberately idled
-  250–1000 ms between frames and charged that whole interval to the pass — so no present could ever
-  be quick, the ledger shed on the second frame, and the wall-aware floor (a running minimum)
-  collapsed the window to two iterations and never recovered. The beat now drops to one vsync while a
-  pass is in flight, so an idle GPU drains on the next present while a busy one still blocks it —
-  the accumulator measures GPU time again. Pinned by an invariant test (the in-flight beat must
-  undercut the drain threshold). Gates: selftest 189/189, grand-tour livetest 24/24 with zero drift,
-  motiontest PASS. Still open, and now visible rather than masked: the first pass after a reference
-  lands is GPU-timestamped at ~1.5 s for a no-op window (livetest shows it at each keyframe) — a
-  separate mis-price.
+- **A settled deep view no longer crawls at the exact points — two stacked defects** (beta.99).
+  Re-zooming a parabolic exact point (the period-3 bulb root at ~5.1e10×) settled correctly on
+  beta.97 but then sat "computing" for many minutes. Two independent bugs compounded, and a headless
+  reproduction (`--deviceloss-repro` with a new width/height parity axis) pinned both:
+  *(1) The chunk walk marched through the series-approximation skip.* A settled view iterates in
+  watchdog-safe windows, resuming a cursor that started at iteration 0 — but series approximation
+  seeds every pixel at `iter = sa_skip` in the first pass, so every window below the skip did zero
+  iterations yet still dispatched a full-resolution pass and a present cycle. At a parabolic point the
+  reference never escapes, fills the ~7.45M-sample cap, and the skip is nearly the whole orbit, so the
+  walk launched roughly 29,000 empty full-frame passes before the one real iteration. The walk now
+  covers only the live range `[sa_skip, capped_end)`: the first pass still seeds (it keeps its start at
+  0) but its end jumps past the skip, and the end is the reference's real cap rather than the raw ask,
+  so a partial reference no longer marches the dead tail up to 10,000,000 either.
+  *(2) Odd render-target WIDTH cost ~200× per chunk pass* — the twin of the beta.137 odd-height
+  penalty. The scratch state textures were padded to even height but not width; that view rendered at
+  width 1441, and the parity axis measures 948 ms per pass at 1441 versus ~5 ms at 1440 and 1442. Both
+  scratch dimensions are now padded to even. The image is unchanged: the pad column is written but
+  never read. Gates: selftest 189/189, corpus 38/38, grand-tour livetest 24/24 with zero drift,
+  motiontest PASS.
+
+- **The settled-walk repaint beat tightens while a pass is in flight** (beta.98). During a chunked
+  settle the perf overlay now refreshes at one vsync rather than its 250–1000 ms idle beat, so its
+  readouts track a walk in progress. This shipped as a claimed fix for the parabolic-point crawl;
+  that diagnosis was wrong — the real causes are the two defects fixed in beta.99 — but the change is
+  retained because a tighter overlay refresh during a walk is correct on its own.
 
 - **A device loss when zooming into an exact point is fixed — the SA-skip inversion** (beta.97).
   Zooming into one of the new exact points with auto-iterations on could lose the graphics device

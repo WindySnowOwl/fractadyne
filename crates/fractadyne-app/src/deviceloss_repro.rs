@@ -310,6 +310,77 @@ impl FractadyneApp {
             }
         }
 
+        // ── ⭐PARITY axis at the FIELD geometry. The 2026-09-11 live loss (and the user's 5e10×
+        // crawl) both ran a 1441x1102 target — an ODD width. The odd-HEIGHT penalty is padded away
+        // in `make_state_textures` (beta.137), but odd WIDTH was never measured: every sweep and the
+        // area axis above force even dims. Two readings per geometry: the NO-OP windows below the
+        // skip (the live walk starts at 0, so these are exactly the passes the field ran first) and
+        // the REAL windows past it. A geometry whose no-op window is already slow skips its real
+        // bracket — ~1,000 slow windows would be minutes for a number the no-op reading already gave.
+        println!(
+            "\n── WIDTH/HEIGHT PARITY at the field geometry ── (floor window {FLOOR_WINDOW}: no-op windows below the skip vs real windows past it)"
+        );
+        for &(w, h) in &[(1440u32, 1102u32), (1441, 1102), (1442, 1102), (1440, 1101), (1441, 1101)] {
+            let parity = format!(
+                "{} width, {} height",
+                if w % 2 == 0 { "even" } else { "ODD" },
+                if h % 2 == 0 { "even" } else { "ODD" }
+            );
+            let mut req = base.clone();
+            req.width = w;
+            req.height = h;
+            req.ss = 1;
+            // (a) four floor windows from 0 — all below the skip when it is ≥ 1,024, i.e. no-ops.
+            req.max_iter = (FLOOR_WINDOW * 4).min(bracket);
+            let mut passes = Vec::new();
+            let noop = match fractadyne_gpu::render_iter_chunked_timed(device, queue, &req, FLOOR_WINDOW, &mut passes) {
+                Ok(_) if !passes.is_empty() => {
+                    let worst = passes.iter().map(|p| p.wall_ms).fold(0.0_f64, f64::max);
+                    let free = passes.iter().filter(|p| p.end_iter <= skip).count();
+                    println!(
+                        "  {w:>5}x{h:<5} [{parity}]: {} windows from 0 ({free} below the skip): worst {worst:8.1} ms",
+                        passes.len()
+                    );
+                    Some(worst)
+                }
+                Ok(_) => {
+                    println!("  {w:>5}x{h:<5} [{parity}]: NOT MEASURED (unsupported-scope fallback)");
+                    None
+                }
+                Err(e) => {
+                    println!("  {w:>5}x{h:<5} [{parity}]: GPU ERROR — {e}");
+                    None
+                }
+            };
+            // (b) the real windows past the skip, only when (a) says the geometry is sane.
+            match noop {
+                Some(ms) if ms <= 50.0 => {
+                    req.max_iter = bracket;
+                    let mut passes = Vec::new();
+                    if fractadyne_gpu::render_iter_chunked_timed(device, queue, &req, FLOOR_WINDOW, &mut passes).is_ok() {
+                        let worst_real = passes
+                            .iter()
+                            .filter(|p| p.end_iter > skip)
+                            .map(|p| p.wall_ms)
+                            .fold(0.0_f64, f64::max);
+                        let worst_free = passes
+                            .iter()
+                            .filter(|p| p.end_iter <= skip)
+                            .map(|p| p.wall_ms)
+                            .fold(0.0_f64, f64::max);
+                        println!(
+                            "  {w:>5}x{h:<5} [{parity}]: full bracket, {} windows: worst no-op {worst_free:8.1} ms · worst real {worst_real:8.1} ms",
+                            passes.len()
+                        );
+                    }
+                }
+                Some(ms) => println!(
+                    "  {w:>5}x{h:<5} [{parity}]: real bracket SKIPPED — a no-op window already costs {ms:.0} ms (> 50 ms)"
+                ),
+                None => {}
+            }
+        }
+
         // ── ⭐the HOTTEST floor window across the FULL iteration range, at a fixed safe area. The
         // area axis above measured only the SHALLOW start of the orbit — the CHEAP part. On a
         // structured deep view the per-step cost is highest DEEP, where pixels' deltas have grown and

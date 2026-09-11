@@ -3180,8 +3180,15 @@ impl FractadyneApp {
                     0, None,
                 );
                 // A chunked frame's dispatch runs only its iteration RANGE — that is the count
-                // the budget bound applies to (the full ask is honoured across frames).
-                let disp_iter = pr.chunk_range.map(|[s, e]| e.saturating_sub(s).max(1)).unwrap_or(ITER);
+                // the budget bound applies to (the full ask is honoured across frames). ⭐The SA
+                // seed covers [0, sa_skip) in ONE O(1)/pixel polynomial evaluation (the shader's
+                // `start_iter==0` branch), so a first window [0, sa_skip+step) LOOPS only `step`
+                // real iterations — the GPU cost is `e - max(s, sa_skip)`, not the nominal `e - s`.
+                // Measuring the raw range would price the free skip prefix as work (beta.99).
+                let disp_iter = pr
+                    .chunk_range
+                    .map(|[s, e]| e.saturating_sub(s.max(pr.sa_skip)).max(1))
+                    .unwrap_or(ITER);
                 (pr.resolution[0], pr.resolution[1], pr.ss, disp_iter)
             };
 
@@ -3536,11 +3543,13 @@ impl FractadyneApp {
                             center_bf, center, span, mag, l2, self.fractal, false, DEEP_ITER,
                             false, 1, DEEP, 0, None,
                         );
+                        // Real work past the SA seed (see the FIRST-dispatch check): [0, sa_skip)
+                        // is a free O(1)/pixel seed, so the pass costs `e - max(s, sa_skip)` loops.
                         let d = pr.chunk_range.map(|[s, e]| {
                             (pr.resolution[0] as u64)
                                 * (pr.resolution[1] as u64)
                                 * (pr.ss as u64).pow(2)
-                                * (e.saturating_sub(s).max(1) as u64)
+                                * (e.saturating_sub(s.max(pr.sa_skip)).max(1) as u64)
                         });
                         disp = disp.max(d);
                     }

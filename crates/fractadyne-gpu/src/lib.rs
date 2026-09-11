@@ -836,15 +836,20 @@ pub(crate) fn make_state_textures(
     // ⭐Padding is safe BY CONSTRUCTION here, which is why it belongs in this helper rather than at
     // the call sites: these textures are only ever ping-pong STATE. Nothing resolves or reads them
     // back at their own size — the resolve pass renders into separate `w×h` targets and the
-    // readback copies `h` rows — so the extra row is written and never observed. The image is
+    // readback copies `w×h` — so the extra row/column is written and never observed. The image is
     // unchanged, which the bit-identity selftests and the F3 corpus both gate.
     //
     // ⚠This does NOT round the RENDER resolution. Rounding live resolutions to even would hide the
     // defect while leaving every other consumer of odd targets slow, which the TODO entry
     // explicitly forbids; this changes only the scratch attachments' allocation.
-    // ⚠Only the HEIGHT is padded, because only height parity was measured. Whether an odd WIDTH
-    // costs the same is untested — the sweeps all ran at even widths (1280/640/320).
-    let size = [size[0].max(1), size[1].max(1).next_multiple_of(2)];
+    // ⭐⭐**BOTH dimensions are padded to even, and WIDTH is worth the same ~200×.** Only HEIGHT
+    // was padded originally (only height parity had been measured); the 2026-09-11 period-3 bulb
+    // crawl ran a **1441-wide** render target and paid it. `--deviceloss-repro`'s parity axis at
+    // the field geometry, 1003 floor windows: **1440×1102 = 4.5 ms/pass, 1441×1102 = 948 ms/pass,
+    // 1442×1102 = 5.1 ms** — the odd-WIDTH penalty is the same driver fast-clear disqualification
+    // as the odd-HEIGHT one. Padding width is safe for the same reason height is: the extra column
+    // at x=w is written by the pad fragment but never read (the resolve reads only [0,w)).
+    let size = [size[0].max(1).next_multiple_of(2), size[1].max(1).next_multiple_of(2)];
     let mk = |label: &str| {
         device
             .create_texture(&wgpu::TextureDescriptor {

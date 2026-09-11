@@ -4320,6 +4320,41 @@ impl FractadyneApp {
                 // A restarted walk's escape bands are a different progression's data.
             }
             let cur = self.perf.chunk_cursor[vs];
+            // ⭐⭐THE SA-SKIP FLOOR. When a reference is SA-seeded, the `start_iter==0` pass places
+            // EVERY pixel at `iter = sa_skip` in one dispatch — so iterations [0, sa_skip) are
+            // covered for free by that single pass. Marching the cursor from 0 through them in
+            // floor windows dispatches thousands of full-frame NO-OPS (each pixel loads its state,
+            // sees iter=sa_skip ≥ the window end, and stores it back unchanged) — every one paying
+            // a full-resolution chunk+resolve pass and a present cycle. At the period-3 bulb root
+            // sa_skip≈7.45M and the floor window is 256, so ~29,000 dead passes at ~1 s each: the
+            // "still spinning" crawl (crash-1789092955 / the 5.1e10× field report). The walk must
+            // cover only the LIVE range [sa_skip, walk_end): the first pass keeps its START at 0
+            // (so the shader SA-seeds), but jumps its END past the skip; windows past it resume
+            // from state as before.
+            //
+            // `walk_end` mirrors `build_mandelbrot_params`' `shader_iter` cap. A PARTIAL reference
+            // caps the shader at orbit_len-1 (it cannot iterate past the orbit it holds), so
+            // [shader_iter, gpu_iter) is a SECOND dead range; targeting the uncapped `gpu_iter`
+            // marched that too. `sa_skip_rescue` keeps the two in lockstep with the params builder.
+            // ⚠MOTION frames are EXEMPT — `(0, gpu_iter)` keeps them bit-for-bit on the historical
+            // path. They reset the cursor to 0 every frame (the sig/interacting reset above), so they
+            // never accumulate the dead prefix: there is no crawl to fix, and a motion preview is
+            // meant to be `[0, step]`. Confirmed by an A/B: the `--motiontest` A2 adoption flake rate
+            // is identical with and without this fix (baseline failed MORE often than the fix under
+            // the same load). The floor/cap is strictly a SETTLED-walk fix; pins inherit it only once
+            // they settle (`interacting` false).
+            let (walk_floor, walk_end) = if interacting || self.ref_cache[vidx].ref_pt.is_none() {
+                (0u32, gpu_iter)
+            } else {
+                let raw_skip = self.ref_cache[vidx].sa.skip;
+                let capped = if self.ref_cache[vidx].partial {
+                    gpu_iter.min(self.ref_cache[vidx].orbit_len.saturating_sub(1))
+                } else {
+                    gpu_iter
+                };
+                let we = sa_skip_rescue(capped, raw_skip, self.ref_cache[vidx].orbit_len);
+                (usable_sa_skip(raw_skip, we), we)
+            };
             // Gate observability (design/mode2-chunking.md §11): a chunk-eligible frame built
             // during interaction is the regime the motion-presentation assertions cover —
             // `--motiontest` fails a run that never produced any (anti-vacuity).
@@ -4332,12 +4367,13 @@ impl FractadyneApp {
                     "tile",
                     format!(
                         "chunk f={} vs={vs} cur={cur} step={budget_step} gpu_iter={gpu_iter} \
+                         walk=[{walk_floor},{walk_end}) \
                          sig=({:x},{},{}x{},{}) interacting={interacting} pin={pin_frame}",
                         self.perf.frame_idx, sig.0, sig.1, sig.2[0], sig.2[1], sig.3
                     ),
                 );
             }
-            if cur < gpu_iter {
+            if cur < walk_end {
                 // ---- PRICE-SERIALIZED WALKING, dispatch half ----
                 // A settled pass may only launch when the previous one has been PRICED
                 // (chunk_inflight is None). While one is in flight, hold the LAST DISPATCHED
@@ -4360,7 +4396,13 @@ impl FractadyneApp {
                     // half its predecessor's license, so a cost cliff is met with at most ONE
                     // modestly-sized unpriced pass — and serialization guarantees its price is
                     // seen before anything else launches.
-                    let band = chunk_band_of(cur) as u8;
+                    // The first settling pass has cur=0 but does its real work at `walk_floor` (the
+                    // SA seed); every later pass has cur ≥ walk_floor. `real_lo` is where this
+                    // window's real iterations begin, so the band, the step count and the price all
+                    // describe the work actually done, not the free prefix folded into the first
+                    // dispatch. (Motion frames carry `walk_floor = 0`, so `real_lo = cur` there.)
+                    let real_lo = cur.max(walk_floor);
+                    let band = chunk_band_of(real_lo) as u8;
                     let step = if interacting || pin_frame {
                         budget_step
                     } else {
@@ -4370,7 +4412,9 @@ impl FractadyneApp {
                             floor.max(256),
                         ))
                     };
-                    let end = cur.saturating_add(step).min(gpu_iter);
+                    let end = real_lo.saturating_add(step).min(walk_end);
+                    // START stays `cur` (0 on the first pass) so the shader takes its SA-seed
+                    // branch; the live work is [real_lo, end).
                     chunk_range = Some([cur, end]);
                     chunk_idx = self.perf.chunk_idx[vs];
                     // Moving frames restart at 0 next frame (the sig reset above); settled frames
@@ -4380,7 +4424,7 @@ impl FractadyneApp {
                     if !interacting || pin_frame {
                         self.perf.chunk_cursor[vs] = end;
                         self.perf.chunk_idx[vs] = chunk_idx.wrapping_add(1);
-                        self.perf.chunk_pending[vs] = end < gpu_iter || pin_frame;
+                        self.perf.chunk_pending[vs] = end < walk_end || pin_frame;
                         // THE COMPLETION EVENT: the walk's whole-ask escape range feeds the
                         // palette window here, once. The completing pass's own band is still in
                         // flight (readings lag) — it folds into the NEXT walk's accumulator,
@@ -4394,18 +4438,21 @@ impl FractadyneApp {
                     self.perf.chunk_last_range[vs] = chunk_range;
                     if !interacting && !pin_frame {
                         self.perf.chunk_inflight[vs] =
-                            Some((end.saturating_sub(cur), band, 0.0, false));
+                            Some((end.saturating_sub(real_lo), band, 0.0, false));
                     }
-                    // This frame runs a real bounded pass; pair the measurement with ITS cost.
+                    // This frame runs a real bounded pass; pair the measurement with ITS cost —
+                    // the iterations past the SA seed, not the free [0, sa_skip) prefix.
                     self.perf.fe_steps_last[vs] =
-                        spx.saturating_mul(ss2).saturating_mul((end - cur).max(1) as u64);
+                        spx.saturating_mul(ss2).saturating_mul((end - real_lo).max(1) as u64);
                     self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
                 }
             } else {
                 // Progression complete: emit the empty tail range — the (key, tile, chunk) triple
                 // stops changing after one cheap pass-through frame, and the view is served from
-                // the texture like any settled one.
-                chunk_range = Some([gpu_iter, gpu_iter]);
+                // the texture like any settled one. The tail sits at `walk_end` (the capped ask),
+                // not the raw `gpu_iter`, so a partial reference completes instead of marching the
+                // dead [shader_iter, gpu_iter) range forever.
+                chunk_range = Some([walk_end, walk_end]);
                 chunk_idx = self.perf.chunk_idx[vs];
             }
         }
@@ -4731,10 +4778,14 @@ impl FractadyneApp {
             // same honesty rule the fe_steps stamp follows. The 985x735 "steps=1.810e11 vs
             // budget=6.000e10" manifest in crash-1787275348-0 read as a frame that ignored its
             // budget; it was a budget-sized chunk pass wearing the whole frame's price tag.
+            // The first pass runs start_iter=0 through the SA skip, but the shader seeds at
+            // `sa_skip_eff` and iterates only past it — so the real range is [max(s, sa_skip_eff),
+            // e). Pricing the free [0, sa_skip) prefix would restore the very over-count this stamp
+            // exists to avoid, in a second place (a frame that did 256 iters reading as 256k).
             let steps = match chunk_range {
                 Some([s, e]) => spx
                     .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                    .saturating_mul(u64::from(e.saturating_sub(s)).max(1)),
+                    .saturating_mul(u64::from(e.saturating_sub(s.max(sa_skip_eff))).max(1)),
                 None => spx
                     .saturating_mul((ss as u64).saturating_mul(ss as u64))
                     .saturating_mul(shader_iter.max(1) as u64),
