@@ -1,4 +1,4 @@
-use super::usable_sa_skip;
+use super::{sa_skip_rescue, usable_sa_skip};
 
 #[test]
 fn a_skip_at_or_past_the_budget_is_refused_not_clamped() {
@@ -48,4 +48,30 @@ fn a_giant_skip_refused_by_the_throttle_forces_an_unbounded_from_zero_window() {
         "the refused-skip fallback issues a {from_zero_window}-iteration from-zero window in one \
          dispatch — the unbounded first dispatch that must be chunked"
     );
+}
+
+#[test]
+fn sa_skip_rescue_applies_a_giant_skip_the_throttle_inverted() {
+    // The crash values: reference pinned at the cap (orbit_len 7_452_445), SA skip over nearly the
+    // whole orbit, throttle sized the dispatch to 2_843_648 (< skip). The rescue raises the budget to
+    // orbit_len-1 so the skip APPLIES — the shader then renders the 1-iteration window past it rather
+    // than grinding from zero, turning the 1.86e10-step lethal frame into ~1 step/pixel.
+    assert_eq!(sa_skip_rescue(2_843_648, 7_452_443, 7_452_445), 7_452_444);
+    assert_eq!(
+        usable_sa_skip(7_452_443, sa_skip_rescue(2_843_648, 7_452_443, 7_452_445)),
+        7_452_443,
+        "after the rescue the skip is applied, not refused",
+    );
+
+    // ⚠It must be SURGICAL — fire ONLY on the cheap-to-apply inversion, nothing else:
+    // - an ordinary small-skip deep frame (skip already below the budget ⇒ was going to apply):
+    assert_eq!(sa_skip_rescue(205_343, 37_494, 250_000), 205_343);
+    // - the 2026-09-10 regime, a SMALL skip below a huge partial reference: applying it would render
+    //   ~7.45M iters, so the from-zero grind is the cheaper path — rescue must NOT fire (that is the
+    //   separate "bound the first dispatch" problem, not this one):
+    assert_eq!(sa_skip_rescue(2_843_648, 3_024, 7_452_445), 2_843_648);
+    // - no window past the skip inside the reference (skip == usable end): nothing to apply:
+    assert_eq!(sa_skip_rescue(100, 7_452_444, 7_452_445), 100);
+    // - not an inversion (budget already above the skip):
+    assert_eq!(sa_skip_rescue(9_000_000, 7_452_443, 7_452_445), 9_000_000);
 }

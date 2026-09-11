@@ -4687,6 +4687,29 @@ impl FractadyneApp {
         } else {
             gpu_iter
         };
+        // ⭐Rescue the SA-skip INVERSION (device loss crash-1789092955, 2026-09-11): if the throttle
+        // sized this dispatch's budget below the reference's SA skip, `usable_sa_skip` would refuse it
+        // and the shader would grind from iteration ZERO — the lethal frame. `sa_skip_rescue` raises
+        // the budget above the skip so it stays applied, but only when that is the cheaper path (an
+        // ordinary small-skip frame is untouched). Self-correcting: the cheap frame lets the throttle
+        // grow the budget past the skip, after which normal skip-applied rendering resumes.
+        let shader_iter = if !mode.is_direct() && self.ref_cache[vi].ref_pt.is_some() {
+            let raised = sa_skip_rescue(shader_iter, sa.skip, self.ref_cache[vi].orbit_len);
+            if raised != shader_iter && crate::diag::trace_on("tile") {
+                crate::diag::trace(
+                    "tile",
+                    format!(
+                        "sa-skip inversion averted: budget {shader_iter} < sa_skip {} ⇒ raised to \
+                         {raised} (post-skip window {} iters)",
+                        sa.skip,
+                        raised.saturating_sub(sa.skip),
+                    ),
+                );
+            }
+            raised
+        } else {
+            shader_iter
+        };
 
         // LIVE MANIFEST. A frame that re-iterates is the only thing here that can lose the device,
         // and until now the crash report's `manifest:` line was EMPTY for every live crash — it is
@@ -7090,6 +7113,30 @@ mod norm_map_choice;
 
 pub(crate) fn usable_sa_skip(skip: u32, max_iter: u32) -> u32 {
     if skip >= max_iter { 0 } else { skip }
+}
+
+/// Rescue a dispatch from the SA-skip INVERSION that lost the device on 2026-09-11
+/// (`crash-1789092955-0`, a beta.96 parabolic bulb-root exact point). A non-escaping view pins its
+/// reference at the cap, so SA computes a skip covering nearly the whole orbit; when the frame-cost
+/// throttle then sizes a dispatch's budget BELOW that skip, [`usable_sa_skip`] refuses it and the
+/// shader grinds from iteration ZERO across the whole budget — the 1.86e10-step, 33-second frame that
+/// tripped the watchdog.
+///
+/// ⭐The escape: when the skip is that large, APPLYING it and rendering only the window between the
+/// skip and the reference's usable end (`orbit_len − 1`) is far cheaper than the from-zero grind, so
+/// raise the budget just above the skip to keep it applied. Returns the (possibly raised)
+/// `shader_iter`.
+///
+/// ⚠**Fires ONLY when applying the skip is genuinely the cheaper path** (`post-skip window <
+/// from-zero grind`), so an ordinary small-skip deep frame — where the throttle's window bound IS the
+/// right actuator — is returned untouched. Also a no-op when the skip reaches the reference's end
+/// (no window past it) or was not going to be refused at all. Pinned by `render::sa_skip_budget`.
+pub(crate) fn sa_skip_rescue(shader_iter: u32, sa_skip: u32, orbit_len: u32) -> u32 {
+    let post_skip_cap = orbit_len.saturating_sub(1);
+    let inverted = sa_skip > shader_iter // the throttle put this budget below the skip ⇒ refusal
+        && post_skip_cap > sa_skip // there is a window past the skip inside the reference
+        && post_skip_cap - sa_skip < shader_iter; // and applying the skip is the cheaper path
+    if inverted { post_skip_cap } else { shader_iter }
 }
 
 #[cfg(test)]
