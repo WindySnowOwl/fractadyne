@@ -116,8 +116,20 @@ pub(crate) fn help_navigation(ui: &mut egui::Ui) {
     help_p(
         ui,
         "Navigate → \"Go to location…\" lets you read, type, paste, or copy the exact center and zoom \
-         (full precision, any depth) — handy for revisiting a spot. Navigate → Bookmarks saves and \
-         recalls locations.",
+         (full precision, any depth). The center fields accept more than plain numbers: fractions \
+         like \"1/3\" and expressions built from pi, tau, e, sqrt and sin/cos/tan — so \
+         \"-0.5 + 0.25*cos(pi/4)\" is a valid coordinate. An expression is kept with the view and \
+         re-evaluated at the precision each depth needs, so a point entered that way stays exact no \
+         matter how far you zoom in (a rounded decimal eventually would not). A polar mode \
+         (offset + r ∠ θ, in degrees / radians / turns) composes one of these expressions for you. \
+         Navigate → Bookmarks saves and recalls locations.",
+    );
+    help_p(
+        ui,
+        "Navigate → \"Exact points (expressions)\" jumps to points defined exactly rather than by a \
+         rounded decimal — the roots of the main-cardioid bulbs, where each period-q bud attaches, \
+         written as cos/sin expressions. Because the expression travels with the view, you can zoom \
+         into one without it ever drifting off the point.",
     );
     help_p(
         ui,

@@ -45,7 +45,12 @@ A fractal explorer for Windows and Linux in Rust (wgpu + egui/eframe), built for
   nucleus** (period auto-detected) or a **Misiurewicz point** (parameterized by preperiod
   `k` + period `p`) near the current view, in bignum — then dive arbitrarily deep with zero
   drift. A curated list of well-known Misiurewicz points is one click away
-  (Locations → "Go to location…"; nearest minibrot also on **M**).
+  (Navigate → "Go to location…"; nearest minibrot also on **M**).
+- **Exact points from expressions** — the "Go to location" fields accept fractions and
+  expressions (`pi`, `tau`, `e`, `sqrt`, `sin`/`cos`/`tan`), with a polar `offset + r ∠ θ`
+  mode; the expression is kept with the view and re-evaluated at each depth's precision, so a
+  point stays exact however far you zoom. Navigate → "Exact points (expressions)" collects the
+  main-cardioid bulb roots (`cos`/`sin` of a fraction of 2π) as a ready-made showcase.
 - **High-res export** — tiled PNG / OpenEXR with reloadable view metadata, a gallery
   browser, background rendering with progress + cancel.
 - **Bookmarks** — save and instantly return to favorite (deep) locations.
@@ -279,8 +284,8 @@ or internal cross-checks):
 - **Pan** left-drag · **Zoom** wheel (cursor-centered) · **Box-zoom** right-drag or Shift+drag
 - **Continuous zoom** hold Space (in) / Shift+Space (out) · **Click-to-zoom** optional 🎯 tool (left-click dives into the point by a set factor, right-click backs out; drag still pans)
 - **A** auto-zoom (autopilot) · **M** find nearest minibrot · **Ctrl+S** quick-save · **★** bookmark · **🏠** zoom-home · **Backspace** undo view · **Esc** stop / exit fullscreen
-- **Go to a feature** — Locations → "Go to location…": jump to a well-known point, or Newton-snap onto an exact **Misiurewicz** (preperiod, period) / **minibrot** center near the view.
-- Menus grouped by intent: **File** (open/export/share/snapshot), **View** (display + Settings incl. update track), **Locations** (go-to / famous / find), **Tools** (benchmark / autopilot / play script / script to current view), **Bookmarks** (with inline thumbnails), **Help** (help / report an issue / check for updates). Right panel: **Coloring · Effects · Rendering · Navigation · Performance**.
+- **Go to a feature** — Navigate → "Go to location…": jump to a well-known point, type a coordinate or an expression (`1/3`, `-0.5 + 0.25*cos(pi/4)`, or polar `offset + r ∠ θ`), or Newton-snap onto an exact **Misiurewicz** (preperiod, period) / **minibrot** center near the view.
+- Menus grouped by intent: **File** (open/export/share/snapshot), **Fractal** (family + Julia), **View** (display + Settings incl. update track), **Color** (method / palette), **Tools** (benchmark / autopilot / play script / script to current view), **Navigate** (go-to / exact points / famous / find / bookmarks), **Help** (help / report an issue / check for updates). Right panel: **Coloring · Effects · Rendering · Navigation · Performance**.
 
 ## Layout
 
