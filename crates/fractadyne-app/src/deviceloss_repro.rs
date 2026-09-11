@@ -74,6 +74,11 @@ pub(crate) struct DeviceLossRepro {
     /// field crash was "hit M during a zoom", which lands on the minibrot's OWN deep scale, a far
     /// hotter interior than the view M was pressed from.
     m_jump: bool,
+    /// `--throttled-iter N`: the per-dispatch budget the LIVE frame-cost throttle would hand this
+    /// view — the field's `gpu_iter` (2,843,648 in crash-1789092955). When it is BELOW the reference's
+    /// SA skip, `usable_sa_skip` refuses the skip and the shader grinds from zero: the SA-skip
+    /// INVERSION. The harness reproduces that decision and measures what `sa_skip_rescue` does to it.
+    throttled_iter: Option<u32>,
     done: bool,
 }
 
@@ -102,7 +107,8 @@ impl DeviceLossRepro {
             .unwrap_or(1_000_000)
             .clamp(50_000, 100_000_000);
         let m_jump = args.iter().any(|a| a == "--m-jump");
-        Some(Self { center, zoom_log2, ref_iter, m_jump, done: false })
+        let throttled_iter = named("--throttled-iter").map(|n| n as u32).filter(|n| *n > 0);
+        Some(Self { center, zoom_log2, ref_iter, m_jump, throttled_iter, done: false })
     }
 }
 
@@ -110,6 +116,25 @@ impl DeviceLossRepro {
 struct AreaPoint {
     px: f64,
     worst_ms: f64,
+}
+
+/// The live throttle's per-dispatch budget in the field crash whose SA-skip inversion this harness
+/// reproduces: `crash-1789092955` manifest `gpu_iter=2843648`, below its reference's SA skip of
+/// 7,452,443. Override with `--throttled-iter N`.
+const FIELD_THROTTLED_ITER: u32 = 2_843_648;
+
+/// The SA-skip inversion reproduced against the built reference (see `measure_sa_skip_inversion`).
+struct Inversion {
+    /// The live throttle's per-dispatch budget (the field's `gpu_iter`).
+    throttled: u32,
+    /// The reference's SA skip — above `throttled` here, which is what gets it refused.
+    skip: u32,
+    /// `sa_skip_rescue(throttled, skip, orbit_len)`: the raised budget, or `throttled` when no rescue.
+    rescued_iter: u32,
+    /// `usable_sa_skip(skip, rescued_iter)`: the skip the rescued dispatch is actually handed.
+    rescued_skip: u32,
+    /// Wall of the rescued dispatch's real pass(es) at the safe area, when measured.
+    rescued_ms: Option<f64>,
 }
 
 impl FractadyneApp {
@@ -123,10 +148,10 @@ impl FractadyneApp {
         if r.done {
             return true;
         }
-        let (zoom_log2, ref_iter, center, m_jump) =
-            (r.zoom_log2, r.ref_iter, r.center.clone(), r.m_jump);
+        let (zoom_log2, ref_iter, center, m_jump, throttled_iter) =
+            (r.zoom_log2, r.ref_iter, r.center.clone(), r.m_jump, r.throttled_iter);
         self.harness.deviceloss_repro.as_mut().unwrap().done = true;
-        self.run_deviceloss_repro(device, queue, zoom_log2, ref_iter, center, m_jump);
+        self.run_deviceloss_repro(device, queue, zoom_log2, ref_iter, center, m_jump, throttled_iter);
         true
     }
 
@@ -138,6 +163,7 @@ impl FractadyneApp {
         ref_iter: u32,
         center: Option<(String, String)>,
         m_jump: bool,
+        throttled_iter: Option<u32>,
     ) {
         println!(
             "Fractadyne device-loss repro — {}\n\
@@ -362,7 +388,108 @@ impl FractadyneApp {
             }
         }
 
-        self.report_deviceloss_verdict(&pts, &win_pts, hot_ms, safe_px, target_px);
+        // ── ⭐THE SA-SKIP INVERSION — crash-1789092955 (2026-09-11), the loss the sweeps above could
+        // not reproduce. They price windows PAST the skip, which is exactly the cheap path the live
+        // frame did NOT take: the throttle handed it a budget BELOW the reference's SA skip, so
+        // `usable_sa_skip` refused the skip and the shader ground from iteration ZERO across the
+        // whole budget. Reproduce that decision against the real reference, let the verdict price
+        // the from-zero window from the fit (never run), and MEASURE the dispatch `sa_skip_rescue`
+        // issues instead.
+        let inversion = self.measure_sa_skip_inversion(
+            device,
+            queue,
+            &base,
+            throttled_iter.unwrap_or(FIELD_THROTTLED_ITER),
+            safe_w,
+            safe_h,
+        );
+        self.report_deviceloss_verdict(&pts, &win_pts, hot_ms, safe_px, target_px, inversion.as_ref());
+    }
+
+    /// Reproduce the SA-skip inversion against the built reference: what the live throttle's budget
+    /// does to the skip, and what the dispatch becomes with the rescue. Only the RESCUED dispatch is
+    /// submitted — it is the small window past the skip, which is the rescue's precondition; the
+    /// refused, from-zero one is priced by the verdict from the window fit and never run.
+    fn measure_sa_skip_inversion(
+        &self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        base: &fractadyne_gpu::ExportRequest,
+        throttled: u32,
+        safe_w: u32,
+        safe_h: u32,
+    ) -> Option<Inversion> {
+        let skip = base.sa_skip;
+        let orbit_len = base.orbit_len;
+        println!(
+            "\n── the SA-skip INVERSION (crash-1789092955) ── throttled budget {throttled} vs SA skip {skip}, orbit_len {orbit_len}"
+        );
+        let refused_skip = crate::render::usable_sa_skip(skip, throttled);
+        if skip <= throttled || refused_skip != 0 {
+            println!(
+                "  no inversion at this reference: the skip ({skip}) is not above the throttled budget\n\
+                 \x20 ({throttled}), so `usable_sa_skip` keeps it applied. A fuller reference (larger REF_ITER on\n\
+                 \x20 a non-escaping/parabolic view) or a lower --throttled-iter is needed to reproduce it."
+            );
+            return None;
+        }
+        let rescued_iter = crate::render::sa_skip_rescue(throttled, skip, orbit_len);
+        let rescued_skip = crate::render::usable_sa_skip(skip, rescued_iter);
+        println!(
+            "  usable_sa_skip({skip}, {throttled}) = {refused_skip}  ⇒ REFUSED: the live frame seeds the shader at\n\
+             \x20 iteration 0 and grinds [0, {throttled}) — the field's 1.86e10-step, 33 s frame.\n\
+             \x20 sa_skip_rescue({throttled}, {skip}, {orbit_len}) = {rescued_iter}  ⇒ usable_sa_skip → {rescued_skip}{}",
+            if rescued_iter == throttled {
+                "  (rescue does NOT apply: the post-skip window is not the cheaper path)"
+            } else {
+                "  (APPLIED: the shader seeds at the skip)"
+            }
+        );
+        if rescued_iter == throttled {
+            return Some(Inversion { throttled, skip, rescued_iter, rescued_skip, rescued_ms: None });
+        }
+        // Time the rescued dispatch for real. It is the window [skip, orbit_len−1) — provably small,
+        // that being the rescue's precondition. Walked in bounded windows rather than one wide pass
+        // so that even if the seed were somehow not honoured no single submission could approach
+        // the watchdog; windows ending at or below the skip break on entry and cost ~0 ms, so only
+        // the pass past the skip carries the real work.
+        const RESCUE_WALK_WINDOW: u32 = 4096;
+        let mut req = base.clone();
+        req.width = safe_w;
+        req.height = safe_h;
+        req.ss = 1;
+        req.max_iter = rescued_iter;
+        req.sa_skip = rescued_skip;
+        let mut passes = Vec::new();
+        let rescued_ms = match fractadyne_gpu::render_iter_chunked_timed(
+            device,
+            queue,
+            &req,
+            RESCUE_WALK_WINDOW,
+            &mut passes,
+        ) {
+            Ok(_) if !passes.is_empty() => {
+                let real: Vec<&_> = passes.iter().filter(|p| p.end_iter > skip).collect();
+                let ms: f64 = real.iter().map(|p| p.wall_ms).sum();
+                println!(
+                    "  rescued dispatch at {safe_w}x{safe_h}: [{rescued_skip}, {rescued_iter}) = {} iteration(s) past the skip,\n\
+                     \x20 in {} real pass(es) of {} walked: {ms:.1} ms MEASURED",
+                    rescued_iter.saturating_sub(rescued_skip),
+                    real.len(),
+                    passes.len(),
+                );
+                Some(ms)
+            }
+            Ok(_) => {
+                println!("  rescued dispatch: NOT MEASURED (scope fallback)");
+                None
+            }
+            Err(e) => {
+                println!("  rescued dispatch: GPU ERROR — {e}");
+                None
+            }
+        };
+        Some(Inversion { throttled, skip, rescued_iter, rescued_skip, rescued_ms })
     }
 
     fn report_deviceloss_verdict(
@@ -372,6 +499,7 @@ impl FractadyneApp {
         hot_ms: f64,
         safe_px: f64,
         target_px: f64,
+        inversion: Option<&Inversion>,
     ) {
         println!("\n── verdict ──");
         if pts.len() < 2 {
@@ -481,6 +609,47 @@ impl FractadyneApp {
                     w_lethal,
                     if 10236.0 >= w_lethal { "past that line ⇒ REPRODUCED as the lethal window" } else { "below it here — a hotter (structured) location lowers this bound" }
                 );
+            }
+            // ── ⭐THE INVERSION VERDICT: the from-zero window a refused skip forces, priced by this
+            // window fit (never run), against the rescued dispatch that was actually measured.
+            if let Some(inv) = inversion {
+                let unrescued_full = (winter + b * (inv.throttled as f64).ln()).exp() * area_factor;
+                println!(
+                    "\n  SA-skip inversion (skip {} refused under budget {}): the live frame becomes ONE from-zero\n\
+                     \x20 window of {} iterations at full res — priced by this window fit at ~{:.0} ms; the\n\
+                     \x20 field's frame measured 32,993 ms. {}",
+                    inv.skip,
+                    inv.throttled,
+                    inv.throttled,
+                    unrescued_full,
+                    if unrescued_full >= 1000.0 {
+                        "⇒ LETHAL — reproduced from the fit."
+                    } else {
+                        "(under the watchdog by this fit, which prices the structured post-skip region — read as a floor)"
+                    }
+                );
+                match inv.rescued_ms {
+                    Some(ms) => {
+                        let rescued_full = ms * area_factor;
+                        println!(
+                            "  with sa_skip_rescue: the dispatch is [{}, {}) — {} iteration(s) past the skip —\n\
+                             \x20 MEASURED {ms:.1} ms at the safe area ⇒ ~{rescued_full:.0} ms at full res: {}.",
+                            inv.rescued_skip,
+                            inv.rescued_iter,
+                            inv.rescued_iter.saturating_sub(inv.rescued_skip),
+                            if rescued_full < SAFETY_MS * 0.5 {
+                                "under the band — the inversion is DEFUSED"
+                            } else {
+                                "still in the band — the post-skip window is not small here"
+                            }
+                        );
+                    }
+                    None if inv.rescued_iter == inv.throttled => println!(
+                        "  with sa_skip_rescue: does not apply here (the post-skip window is not the cheaper\n\
+                         \x20 path) — this view is the OTHER regime: bound the from-zero first dispatch instead."
+                    ),
+                    None => println!("  with sa_skip_rescue: rescued dispatch not measured."),
+                }
             }
         }
         println!(

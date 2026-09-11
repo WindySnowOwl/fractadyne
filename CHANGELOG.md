@@ -12,6 +12,22 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A device loss when zooming into an exact point is fixed — the SA-skip inversion** (beta.97).
+  Zooming into one of the new exact points with auto-iterations on could lose the graphics device
+  (the 2026-09-11 crash at the period-3 bulb root). Those points are *parabolic*, so the reference
+  orbit never escapes and pins at the ~7.45M-sample device cap, and series approximation computes a
+  skip over nearly the whole orbit — then the frame-cost throttle handed a dispatch a budget *below*
+  that skip, so the skip was (correctly) refused and the shader ground from iteration zero across
+  the whole budget: a 1.86e10-step, 33-second frame, far past the driver watchdog. The fix
+  (`sa_skip_rescue`) keeps the skip applied whenever that is the cheaper path, so the dispatch becomes
+  the tiny window past the skip instead. Verified deterministically: `--deviceloss-repro` now
+  reproduces the inversion against the real reference (new `--throttled-iter N`), pricing the
+  refused from-zero window at ~32.4 s — the field's frame measured 33.0 s — and measuring the
+  rescued dispatch at 1 iteration, ~1 ms. It fires only on that inversion (the F3 corpus is
+  byte-identical) and self-corrects as the throttle grows its budget past the skip. Known residual:
+  a brief interior-black transient while that budget ramps. The 2026-09-10 hot-per-step device loss
+  is a different regime, not addressed here.
+
 - **Exact points menu — the main-cardioid bulb roots** (beta.96). A new "Exact points (expressions)"
   submenu under Navigate jumps to the roots of the main-cardioid bulbs — where each period-`q` bud
   attaches to the cardioid — given as EXACT coordinate expressions rather than decimals. The boundary
