@@ -12,6 +12,14 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A GPU device-loss crash report now suggests updating the graphics driver** (beta.100). A device
+  loss is often a driver bug rather than anything the renderer can bound: the parabolic-point loss
+  that motivated the beta.99 work turned out to be an NVIDIA Vulkan driver bug — deterministic on
+  driver 596.21, gone on 616.92, with no code change. So a device-loss crash report (and the in-app
+  diagnostics view that shows it) now leads with a one-line hint to update the graphics driver first
+  and, if it persists, attach the report. Only device-loss / device-removed crashes get the line; a
+  panic or an out-of-memory report does not, where a driver hint would be misdirection.
+
 - **A settled deep view no longer crawls at the exact points — two stacked defects** (beta.99).
   Re-zooming a parabolic exact point (the period-3 bulb root at ~5.1e10×) settled correctly on
   beta.97 but then sat "computing" for many minutes. Two independent bugs compounded, and a headless
