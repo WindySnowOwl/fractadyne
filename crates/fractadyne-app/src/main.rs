@@ -12560,7 +12560,12 @@ impl eframe::App for FractadyneApp {
                 );
             }
             if !self.render_quiescent() {
-                let refresh_ms = (self.perf.frame_ms * 4.0).clamp(250.0, 1000.0);
+                // ⭐While a chunk pass is in flight the beat must undercut the drain threshold — see
+                // `render::walk_repaint_ms`. The 250–1000 ms settled beat made the quick-present
+                // drain impossible, so the walk priced its own idle as cost and collapsed its
+                // window to 2 iterations (2026-09-11).
+                let in_flight = self.perf.chunk_inflight.iter().any(|c| c.is_some());
+                let refresh_ms = render::walk_repaint_ms(in_flight, self.perf.frame_ms);
                 ctx.request_repaint_after(std::time::Duration::from_millis(refresh_ms as u64));
             }
         }

@@ -7553,6 +7553,32 @@ pub(crate) const PRESENT_THROTTLE_FRAMES: u32 = 5;
 #[cfg(test)]
 mod present_throttle_tests;
 
+/// The settled repaint beat while the view is not quiescent. Ordinarily 4× the frame EMA held to
+/// 250–1000 ms, so a settling view is not redrawn at full rate (the colour pass is uncached).
+///
+/// ⭐⭐**But while a chunk pass is IN FLIGHT the beat must stay UNDER `CHUNK_DRAIN_DT_MS`.** The pass
+/// is released only by a QUICK PRESENT (`last_dt_ms < CHUNK_DRAIN_DT_MS` — the proof the queue
+/// drained), and a deliberate idle longer than that makes the drain unsatisfiable: every following
+/// interval is accumulated as the pass's cost, the ledger sheds at the lethal band on the second
+/// frame, and the wall-aware floor — a running MINIMUM — collapses the window and never recovers.
+/// 2026-09-11, at a parabolic exact point with beta.97's rescue keeping the GPU idle: `size=2`
+/// passes each "costing" ~1 s of pure idle, 243 sheds over ~700 s, the walk crawling at two
+/// iterations per release toward a 7.45M-iteration skip. The walk's own comment ("keep repaints
+/// coming so the drain frames actually happen") was defeated by this beat three screens later.
+/// Under the threshold an idle GPU drains on the next present, while a busy one still blocks the
+/// present — so `acc` measures GPU time again, which is the only thing it was ever meant to.
+pub(crate) fn walk_repaint_ms(pass_in_flight: bool, frame_ms: f64) -> f64 {
+    if pass_in_flight { WALK_REPAINT_MS } else { (frame_ms * 4.0).clamp(250.0, 1000.0) }
+}
+
+/// The beat while a pass is in flight: one vsync. Must be below `CHUNK_DRAIN_DT_MS` — pinned by
+/// `walk_repaint`, so raising this or lowering the threshold goes red rather than quietly
+/// re-creating the crawl.
+pub(crate) const WALK_REPAINT_MS: f64 = 16.0;
+
+#[cfg(test)]
+mod walk_repaint;
+
 /// A window's DPI state for one frame: the scale factor and the LOGICAL size egui reports.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct DpiState {

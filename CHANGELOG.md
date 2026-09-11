@@ -12,6 +12,22 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A settled deep view no longer crawls — the chunk walk was pricing its own idle** (beta.98).
+  Re-zooming the period-3 bulb root on beta.97 no longer lost the device, but the view then sat
+  "computing" indefinitely: hundreds of lethal-band sheds, most of them 2-iteration windows, with
+  every frame idle. The cause was pre-existing and independent of the device-loss fix (it began in
+  direct mode, before any reference existed): a chunk pass in flight is released only by a *quick
+  present* (under 100 ms), but while a walk was pending the settled repaint beat deliberately idled
+  250–1000 ms between frames and charged that whole interval to the pass — so no present could ever
+  be quick, the ledger shed on the second frame, and the wall-aware floor (a running minimum)
+  collapsed the window to two iterations and never recovered. The beat now drops to one vsync while a
+  pass is in flight, so an idle GPU drains on the next present while a busy one still blocks it —
+  the accumulator measures GPU time again. Pinned by an invariant test (the in-flight beat must
+  undercut the drain threshold). Gates: selftest 189/189, grand-tour livetest 24/24 with zero drift,
+  motiontest PASS. Still open, and now visible rather than masked: the first pass after a reference
+  lands is GPU-timestamped at ~1.5 s for a no-op window (livetest shows it at each keyframe) — a
+  separate mis-price.
+
 - **A device loss when zooming into an exact point is fixed — the SA-skip inversion** (beta.97).
   Zooming into one of the new exact points with auto-iterations on could lose the graphics device
   (the 2026-09-11 crash at the period-3 bulb root). Those points are *parabolic*, so the reference
