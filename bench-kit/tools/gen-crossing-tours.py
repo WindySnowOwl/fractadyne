@@ -67,10 +67,11 @@ TOURS = [
     ("nucleus-x1e28",  read_kfr("24-nucleus-p148-1e28.2"), 28.0, 2.0, 200000, None),
     # the f64 magnitude edge near 1e308 (deep floatexp; historically a NaN-guard danger zone)
     ("deep-x1e308",    read_kfr("09-deep-6.1e500"),    308.0, 2.0, 250000, None),
-    # TODO: a Julia band across PERT_JULIA_THRESHOLD = 1e2. The write_tour julia_c path works, but a
-    # useful deep Julia test needs a view center curated ONTO the set's filaments (zooming at the
-    # origin lands in the exterior and goes flat). Add once a good on-set center is picked in-app:
-    #   ("julia-x1e2", (view_re, view_im), 2.0, 2.0, 20000, (c_re, c_im)),
+    # direct -> perturbation at PERT_JULIA_THRESHOLD = 1e2, spiral Julia c = -0.8 + 0.156i. The view
+    # center is the REPELLING FIXED POINT z- = (1 - sqrt(1-4c)) / 2: the Julia set is self-similar
+    # under the map's linear action there, so the band stays a rich picture at every zoom (zooming at
+    # the origin instead lands in the exterior and goes flat).
+    ("julia-x1e2",     ("-0.5275031186435346", "0.07591217835228786"), 2.0, 2.0, 20000, ("-0.8", "0.156")),
 ]
 
 
@@ -95,9 +96,10 @@ def write_tour(path, name, re, im, cutoff, half, frames, size, iters, julia_c, f
                   'id = "f%02d"' % i,
                   't = %d' % i]
         if julia_c is not None:
-            # Julia mode is triggered by the presence of julia_re/julia_im, not by a `fractal`
-            # value ("Julia" is not a family). The base family stays Mandelbrot.
-            lines += ['julia_re = %s' % julia_c[0],
+            # Julia MODE needs the `julia` bool flag; julia_re/julia_im only pin the parameter c.
+            # "Julia" is not a `fractal` family. The base family stays Mandelbrot.
+            lines += ['julia = true',
+                      'julia_re = %s' % julia_c[0],
                       'julia_im = %s' % julia_c[1]]
         lines += ['re = "%s"' % re,
                   'im = "%s"' % im,
