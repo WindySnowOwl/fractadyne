@@ -1011,6 +1011,37 @@ fn compose_polar_evaluates_to_the_offset_polar_point() {
     assert!(ev(&re_e).abs() < 1e-12 && ev(&im_e).abs() < 1e-12, "re={re_e} im={im_e}");
 }
 
+/// A failed Go-to names the FIELD and quotes the evaluator's reason with its character position,
+/// one line per failed input — the replacement for the old "Invalid input — check the coordinates
+/// and zoom.", which told the user nothing about which box or what was wrong.
+#[test]
+fn goto_error_names_the_field_and_the_position() {
+    let re = fractadyne_core::parse_real_expr("−0.5", 64).unwrap_err(); // typographic minus
+    let im = fractadyne_core::parse_real_expr("0.25i", 64).unwrap_err(); // imaginary in a real field
+    let msg = crate::goto_error_message(Some(&re), Some(&im), Some("abc"));
+    let lines: Vec<&str> = msg.lines().collect();
+    assert_eq!(lines.len(), 3, "{msg}");
+    assert!(lines[0].starts_with("Re: unexpected '−'") && lines[0].contains("(at character 1)"), "{}", lines[0]);
+    assert!(lines[1].starts_with("Im: ") && lines[1].contains("without the i"), "{}", lines[1]);
+    assert!(lines[2].starts_with("Zoom: cannot read \"abc\""), "{}", lines[2]);
+    // Only the failed inputs are mentioned.
+    assert_eq!(crate::goto_error_message(None, None, Some("")).lines().count(), 1);
+    assert!(crate::goto_error_message(None, Some(&im), None).starts_with("Im: "));
+}
+
+/// Polar entry is checked field by field BEFORE composition, so the message points into the
+/// text the user typed ("r: … at character 2") — never into the composed `(x0) + (r)*cos(…)`.
+#[test]
+fn polar_fields_are_validated_by_name_before_composition() {
+    assert_eq!(crate::polar_field_error("", "", "", ""), None, "empty fields read as 0");
+    assert_eq!(crate::polar_field_error("-0.5", "0", "1/4", "45"), None);
+    let msg = crate::polar_field_error("-0.5", "0", "1//4", "45°").unwrap();
+    let lines: Vec<&str> = msg.lines().collect();
+    assert_eq!(lines.len(), 2, "{msg}");
+    assert!(lines[0].starts_with("r: ") && lines[0].contains("(at character 3)"), "{}", lines[0]);
+    assert!(lines[1].starts_with("θ: ") && lines[1].contains("radians"), "{}", lines[1]);
+}
+
 /// The centre expression is preserved only when it can actually gain precision: a pair of plain
 /// decimals is capped at the digits typed, so nothing a deeper zoom could recover, while a rational
 /// or a transcendental is re-derivable. And re-deriving a kept expression deeper genuinely narrows

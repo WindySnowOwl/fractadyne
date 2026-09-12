@@ -446,10 +446,10 @@ fn arg_size(name: &str, s: &str) -> (Option<u32>, Option<u32>) {
 /// pasted y ordinate threw the whole location away and rendered the fractal default centre at the
 /// requested depth — solid interior, full cost, exit 0.
 fn arg_center(name: &str, xs: &str, ys: &str) -> (fractadyne_core::BigFloat, fractadyne_core::BigFloat) {
-    let one = |t: &str| match fractadyne_core::parse_bf(t) {
-        Some(v) => v,
-        None => {
-            eprintln!("fractadyne: {name}: cannot read \"{t}\" as a decimal coordinate.");
+    let one = |t: &str| match fractadyne_core::parse_real_expr(t, 0) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("fractadyne: {name}: cannot read \"{t}\" as a coordinate: {e}.");
             crate::exit(2)
         }
     };
@@ -3480,6 +3480,61 @@ pub(crate) fn compose_polar(x0: &str, y0: &str, r: &str, theta: &str, unit: Angl
     let re = format!("{} + {}*cos(({}))", f(x0), f(r), theta_rad);
     let im = format!("{} + {}*sin(({}))", f(y0), f(r), theta_rad);
     (re, im)
+}
+
+/// Polar entry is checked FIELD BY FIELD before it is composed, so a mistake is reported as
+/// "r: … (at character 3)" — a position in what the user typed — and never as a position inside
+/// the composed `(x0) + (r)*cos(((θ))*pi/180)` string they never saw. An empty field reads as 0
+/// (see [`compose_polar`]) and is not an error. `None` means every field evaluates.
+pub(crate) fn polar_field_error(x0: &str, y0: &str, r: &str, theta: &str) -> Option<String> {
+    let mut lines = Vec::new();
+    for (label, text) in [("x0", x0), ("y0", y0), ("r", r), ("θ", theta)] {
+        if text.trim().is_empty() {
+            continue;
+        }
+        if let Err(e) = fractadyne_core::parse_real_expr(text, 64) {
+            lines.push(format!("{label}: {e}"));
+        }
+    }
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+/// The Go-to dialog's verdict when a jump cannot be made: one line per input that failed, each
+/// naming the field and quoting the evaluator's reason (which carries the character position) —
+/// so the message says WHAT to fix, where "Invalid input" used to make the user guess. `zoom` is
+/// the zoom text when THAT failed, `None` when it read fine.
+fn goto_error_message(
+    re: Option<&fractadyne_core::ExprError>,
+    im: Option<&fractadyne_core::ExprError>,
+    zoom: Option<&str>,
+) -> String {
+    let mut lines = Vec::new();
+    if let Some(e) = re {
+        lines.push(format!("Re: {e}"));
+    }
+    if let Some(e) = im {
+        // Only Im can be refused for HAVING an imaginary part (a complex value in Re is the
+        // whole-value form and is accepted), so the fix is specific and worth stating.
+        if e.pos.is_none() && e.reason.contains("imaginary part") {
+            lines.push(format!("Im: {e} — type the imaginary part as a real number, without the i"));
+        } else {
+            lines.push(format!("Im: {e}"));
+        }
+    }
+    if let Some(z) = zoom {
+        let z = z.trim();
+        lines.push(if z.is_empty() {
+            "Zoom: enter a magnification, e.g. 1e50 or 250000".to_string()
+        } else {
+            format!("Zoom: cannot read {z:?} — enter a positive magnification such as 1e50 or 250000")
+        });
+    }
+    if lines.is_empty() {
+        // Unreachable by construction (a failed jump has at least one failed input); kept so the
+        // dialog can never show an empty verdict.
+        return "Invalid input — check the coordinates and zoom.".to_string();
+    }
+    lines.join("\n")
 }
 
 /// A view centre entered as an EXPRESSION rather than a fixed decimal — kept so the exact point can
@@ -6916,20 +6971,22 @@ impl FractadyneApp {
         // applied is visible rather than implied.
         // A whole-complex value (`(37+16i)/100`) fills both coordinates and is rewritten to
         // decimals; the separate-fields branch is the one that can carry a re-derivable expression.
-        let (cx, cy, separate) = match fractadyne_core::parse_complex_prec(self.goto.x.trim(), prec) {
-            Some((re, im)) if !im.is_zero() => {
+        // The fields are passed UNTRIMMED: the evaluator trims, and its error positions count
+        // characters of the text as typed, which is what the user sees in the box.
+        let (cx, cy, separate) = match fractadyne_core::parse_complex_expr(&self.goto.x, prec) {
+            Ok((re, im)) if !im.is_zero() => {
                 self.goto.x = fractadyne_core::to_decimal_string(&re);
                 self.goto.y = fractadyne_core::to_decimal_string(&im);
-                (Some(re), Some(im), false)
+                (Ok(re), Ok(im), false)
             }
             _ => (
-                fractadyne_core::parse_bf_prec(self.goto.x.trim(), prec),
-                fractadyne_core::parse_bf_prec(self.goto.y.trim(), prec),
+                fractadyne_core::parse_real_expr(&self.goto.x, prec),
+                fractadyne_core::parse_real_expr(&self.goto.y, prec),
                 true,
             ),
         };
         match (cx, cy, log2mag) {
-            (Some(cx), Some(cy), Some(l)) => {
+            (Ok(cx), Ok(cy), Some(l)) => {
                 self.viewport.set_center_log2mag(cx, cy, l);
                 // Preserve a re-derivable coordinate expression so a deeper zoom can recompute the
                 // centre at the precision it then needs — a fixed decimal is capped at its digits.
@@ -6951,8 +7008,9 @@ impl FractadyneApp {
                 self.goto.msg = None;
                 self.goto.open = false;
             }
-            _ => {
-                self.goto.msg = Some("Invalid input — check the coordinates and zoom.".into());
+            (cx, cy, l) => {
+                let zoom = l.is_none().then_some(self.goto.zoom.as_str());
+                self.goto.msg = Some(goto_error_message(cx.err().as_ref(), cy.err().as_ref(), zoom));
             }
         }
     }

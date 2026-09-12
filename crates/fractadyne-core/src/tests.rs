@@ -1364,6 +1364,93 @@ fn parse_bf_functions_reject_malformed() {
     assert!(parse_bf(&chain).is_none(), "unbounded ^ chain accepted");
 }
 
+/// Every refusal says what was found, where, and — for the usual slips — what to type instead.
+/// The Go-to dialog shows these verbatim (prefixed by the field), so the wording is pinned here
+/// rather than left to drift into "invalid input" again.
+#[test]
+fn expr_errors_say_what_and_where() {
+    let err = |s: &str| parse_complex_expr(s, 64).expect_err(&format!("accepted {s:?}"));
+    let has = |s: &str, needle: &str| {
+        let e = err(s);
+        assert!(e.reason.contains(needle), "{s:?}: {:?} lacks {needle:?}", e.reason);
+        e
+    };
+    // Positions are CHARACTER indexes into the string as given — leading whitespace and
+    // multi-byte characters included — so a caret or "character N" lands where the eye does.
+    assert_eq!(has("1 $ 2", "unexpected '$'").pos, Some(2));
+    assert_eq!(has("  1 $ 2", "unexpected '$'").pos, Some(4));
+    assert_eq!(has("π/4", "write pi").pos, Some(0));
+    assert_eq!(has("−0.5", "typographic dash").pos, Some(0));
+    assert_eq!(has("0,5", "decimal point is '.'").pos, Some(1));
+    assert_eq!(has("2×3", "use '*'").pos, Some(1));
+    assert_eq!(has("2pi", "write '*'").pos, Some(1));
+    assert_eq!(has("pi(4)", "not a function").pos, Some(2));
+    assert_eq!(has("sin 1", "is a function").pos, Some(0));
+    assert_eq!(has("sinn(1)", "unknown function \"sinn\"").pos, Some(0));
+    assert_eq!(has("bogus", "unknown name \"bogus\"").pos, Some(0));
+    assert_eq!(has("(1+2", "never closed").pos, Some(0));
+    assert_eq!(has("sin(1", "missing ')' to close sin(").pos, Some(0));
+    assert_eq!(has("sin()", "needs an argument").pos, Some(0));
+    assert_eq!(has("sin(1,2)", "takes one argument").pos, Some(0));
+    assert_eq!(has("root(8)", "takes two arguments").pos, Some(0));
+    assert_eq!(has("root(-4,2)", "even root").pos, Some(0));
+    assert_eq!(has("1/0", "division by zero").pos, Some(1));
+    assert_eq!(has("1/", "expression ends where").pos, Some(2));
+    assert_eq!(has("1 2", "two numbers in a row").pos, Some(2));
+    assert_eq!(has("()", "nothing to evaluate").pos, Some(1));
+    assert_eq!(has("ln(-1)", "positive argument").pos, Some(0));
+    assert_eq!(has("asin(2)", "between -1 and 1").pos, Some(0));
+    assert_eq!(has("sin(i)", "real argument").pos, Some(0));
+    assert_eq!(has("(-2)^(1/2)", "use root(x, n)").pos, Some(4));
+    assert_eq!(has("2^i", "exponent must be real").pos, Some(1));
+    assert_eq!(has("0^-1", "negative power").pos, Some(1));
+    assert_eq!(has("sin(1e999)", "too large").pos, Some(0));
+    assert_eq!(has("45°", "radians").pos, Some(2));
+    assert_eq!(has("[1]", "round parentheses").pos, Some(0));
+    let deep = format!("{}1{}", "(".repeat(40), ")".repeat(40));
+    assert!(err(&deep).reason.contains("too deeply nested"));
+    // Whole-value verdicts carry no position.
+    assert_eq!(err("").pos, None);
+    assert_eq!(err("   ").pos, None);
+    let e = parse_real_expr("1+2i", 64).unwrap_err();
+    assert_eq!(e.pos, None);
+    assert!(e.reason.contains("imaginary part"), "{}", e.reason);
+    // `Display` carries the 1-based position a person counts to.
+    assert_eq!(
+        err("1 $ 2").to_string(),
+        "unexpected '$'; expected an operator (+ - * / ^) or the end of the expression (at character 3)"
+    );
+    // And the `Option` wrappers are exactly the `Result` forms with the reason dropped.
+    assert_eq!(parse_bf_prec("1 $ 2", 64), None);
+    assert!(parse_bf_prec("1/3", 64).is_some());
+}
+
+/// The help page renders `EXPR_FUNCTIONS` / `EXPR_CONSTANTS`; the evaluator has its own match
+/// chain. They must agree: every listed function evaluates and gets the "is a function" hint
+/// when written bare, every listed constant evaluates, and a plausible name in neither table is
+/// refused as unknown — so the help cannot list what the parser rejects, or omit what it accepts.
+#[test]
+fn expr_tables_match_the_evaluator() {
+    for (name, sig, what) in EXPR_FUNCTIONS {
+        let call = if *name == "root" { "root(8, 3)".to_string() } else { format!("{name}(0.5)") };
+        assert!(parse_complex_expr(&call, 64).is_ok(), "listed function {name} does not evaluate: {call}");
+        assert!(sig.starts_with(name) && sig.ends_with(')'), "signature {sig:?} is not a call of {name}");
+        assert!(!what.trim().is_empty(), "{name} has no description");
+        let e = parse_complex_expr(name, 64).unwrap_err();
+        assert!(e.reason.contains("is a function"), "{name}: {}", e.reason);
+    }
+    for (name, what) in EXPR_CONSTANTS {
+        assert!(parse_complex_expr(name, 64).is_ok(), "listed constant {name} does not evaluate");
+        assert!(!what.trim().is_empty(), "{name} has no description");
+    }
+    for decoy in ["sec", "cot", "sinh", "log2", "gamma", "floor", "re", "im", "inf", "nan"] {
+        let bare = parse_complex_expr(decoy, 64).unwrap_err();
+        assert!(bare.reason.contains("unknown name"), "{decoy}: {}", bare.reason);
+        let call = parse_complex_expr(&format!("{decoy}(1)"), 64).unwrap_err();
+        assert!(call.reason.contains("unknown function"), "{decoy}(1): {}", call.reason);
+    }
+}
+
 #[test]
 fn fuzz_parse_complex_panic_free() {
     let mut s = 0x0bad_f00d_dead_beefu64;

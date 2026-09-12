@@ -2308,10 +2308,10 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
         let (re, im) = center
             .clone()
             .unwrap_or_else(|| ("-0.5".to_string(), "0.0".to_string()));
-        let cx = fractadyne_core::parse_bf_prec(&re, prec)
-            .ok_or_else(|| format!("keyframe {id}: invalid coordinate re = \"{re}\""))?;
-        let cy = fractadyne_core::parse_bf_prec(&im, prec)
-            .ok_or_else(|| format!("keyframe {id}: invalid coordinate im = \"{im}\""))?;
+        let cx = fractadyne_core::parse_real_expr(&re, prec)
+            .map_err(|e| format!("keyframe {id}: invalid coordinate re = \"{re}\": {e}"))?;
+        let cy = fractadyne_core::parse_real_expr(&im, prec)
+            .map_err(|e| format!("keyframe {id}: invalid coordinate im = \"{im}\": {e}"))?;
         if let Some(name) = &k.fractal {
             fractal = FractalKind::from_name(name)
                 .ok_or_else(|| format!("keyframe {id}: unknown fractal \"{name}\""))?;
@@ -2414,10 +2414,10 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
                     ))
                 }
             };
-            let cx = fractadyne_core::parse_bf_prec(&re, anchor_prec)
-                .ok_or_else(|| format!("{kind} {id}: invalid coordinate re = \"{re}\""))?;
-            let cy = fractadyne_core::parse_bf_prec(&im, anchor_prec)
-                .ok_or_else(|| format!("{kind} {id}: invalid coordinate im = \"{im}\""))?;
+            let cx = fractadyne_core::parse_real_expr(&re, anchor_prec)
+                .map_err(|e| format!("{kind} {id}: invalid coordinate re = \"{re}\": {e}"))?;
+            let cy = fractadyne_core::parse_real_expr(&im, anchor_prec)
+                .map_err(|e| format!("{kind} {id}: invalid coordinate im = \"{im}\": {e}"))?;
             Ok((cx, cy))
         };
         let text = || -> Result<String, String> {

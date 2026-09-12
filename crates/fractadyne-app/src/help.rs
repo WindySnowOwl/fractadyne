@@ -82,6 +82,120 @@ pub(crate) fn help_overview(ui: &mut egui::Ui) {
     );
 }
 
+/// The reference for the coordinate grammar. The function and constant tables are rendered from
+/// `fractadyne_core::EXPR_FUNCTIONS` / `EXPR_CONSTANTS` — the same tables the evaluator's error
+/// messages quote and a core test holds equal to what it accepts — so this page cannot list a
+/// function the parser refuses or omit one it takes. Only the prose and examples live here.
+pub(crate) fn help_expressions(ui: &mut egui::Ui) {
+    help_h(ui, EXPRESSIONS_SECTION);
+    help_p(
+        ui,
+        "Wherever Fractadyne takes a coordinate you can type an expression instead of a decimal: \
+         the Re / Im fields of Navigate → \"Go to location…\" (and each field of its polar mode), \
+         the center_re / center_im lines of a .fdn location, a tour script's re / im, and --center \
+         on the command line. The expression is evaluated with as many digits as the zoom needs, \
+         and the Go-to dialog keeps it with the view — so a point you enter as 1/3, or as \
+         -0.5 + 0.25*cos(pi/4), stays exactly on that point however deep you zoom, where a decimal \
+         would drift once its digits ran out.",
+    );
+
+    help_sub(ui, "Examples");
+    help_kv(ui, "1/3", "An exact third. More digits appear as you zoom in.");
+    help_kv(ui, "-3/4", "The neck of Seahorse Valley — the root of the period-2 bulb.");
+    help_kv(
+        ui,
+        "-0.5 + 0.25*cos(pi/4)",
+        "A point on the circle of radius 1/4 around -0.5 (the polar mode composes this for you).",
+    );
+    help_kv(
+        ui,
+        "cos(2*pi/3)/2 - cos(4*pi/3)/4",
+        "Re of the period-3 bulb root; its Im is sin(2*pi/3)/2 - sin(4*pi/3)/4. Navigate → \
+         \"Exact points (expressions)\" has these built in.",
+    );
+    help_kv(ui, "(37+16i)/100", "A whole complex value typed in the Re field fills both Re and Im.");
+    help_kv(ui, "sqrt(2)/2", "Functions and constants combine freely.");
+    help_kv(
+        ui,
+        "2^-20",
+        "Powers: 2^-20 is 1/1048576. -2^2 is -4 — the minus is applied after the power.",
+    );
+    help_kv(
+        ui,
+        "root(-8, 3)",
+        "-2, the real cube root. Even roots of a negative are refused; sqrt(-1) gives i.",
+    );
+    help_kv(ui, "1e-30", "Scientific notation works inside expressions too.");
+
+    help_sub(ui, "Numbers and operators");
+    help_bullet(
+        ui,
+        "Decimals with an optional exponent: 0.25, -1.5e-30, .5. Digits only — no spaces or \
+         grouping commas inside a number, and the decimal point is always '.'.",
+    );
+    help_bullet(ui, "Add an i suffix for an imaginary number (0.25i), or use i by itself: 3 + 4*i.");
+    help_bullet(
+        ui,
+        "+  -  *  /  and ^ (power; evaluated right to left, so 2^3^2 = 2^9). Parentheses group. \
+         There is no implicit multiplication: write 2*pi, not 2pi.",
+    );
+    help_bullet(ui, "Names are case-insensitive: PI, Pi and pi are the same constant.");
+
+    help_sub(ui, "Constants");
+    for (name, what) in fractadyne_core::EXPR_CONSTANTS {
+        help_kv(ui, name, what);
+    }
+
+    help_sub(ui, "Functions");
+    help_p(
+        ui,
+        "Angles are in radians. For degrees, multiply by pi/180 — cos(45*pi/180) — or switch the \
+         Go-to dialog to its polar mode and pick the degrees unit.",
+    );
+    for (_, sig, what) in fractadyne_core::EXPR_FUNCTIONS {
+        help_kv(ui, sig, what);
+    }
+
+    help_sub(ui, "What is refused, and why");
+    help_bullet(
+        ui,
+        "A negative number to a fractional power, such as (-2)^(1/2): the result is complex and \
+         there are several roots to choose from. Use root(x, n) or cbrt(x) for a real root, or \
+         sqrt(x) for the principal complex one.",
+    );
+    help_bullet(
+        ui,
+        "A complex argument to a real-valued function (sin(i), ln(1+i)). Only sqrt and abs accept \
+         a complex argument; the arithmetic operators and integer powers work on complex values.",
+    );
+    help_bullet(
+        ui,
+        "Domain errors: ln or log of a number that is not positive, asin or acos outside -1…1, \
+         0 to a negative power, division by zero.",
+    );
+    help_bullet(
+        ui,
+        "Arguments to sin, cos, tan, exp or ^ beyond ±2^32, and nesting deeper than 32 levels: a \
+         pasted coordinate is untrusted input, and those would take unbounded time.",
+    );
+    help_bullet(
+        ui,
+        "No variables, user-defined functions, comparisons or conditionals. The grammar is kept \
+         deliberately small so a saved location means the same thing in every version.",
+    );
+
+    help_sub(ui, "If it does not parse");
+    help_p(
+        ui,
+        "The message names the field, says what was found and at which character, and — for the \
+         usual slips — what to type instead: a typographic minus sign (−) pasted from a document, \
+         × or ÷, a decimal comma, a missing * between a number and a name, an unclosed \
+         parenthesis, or a function written without its parentheses. Nothing is ever half-read: \
+         if any part of the text cannot be understood, the whole coordinate is refused rather than \
+         silently shortened.",
+    );
+}
+
 pub(crate) fn help_navigation(ui: &mut egui::Ui) {
     help_h(ui, "Navigation");
     help_sub(ui, "Mouse");
@@ -122,6 +236,8 @@ pub(crate) fn help_navigation(ui: &mut egui::Ui) {
          re-evaluated at the precision each depth needs, so a point entered that way stays exact no \
          matter how far you zoom in (a rounded decimal eventually would not). A polar mode \
          (offset + r ∠ θ, in degrees / radians / turns) composes one of these expressions for you. \
+         The full list of functions and constants, with examples, is the \"Coordinate expressions\" \
+         section of this help (the ? button in the dialog opens it). \
          Navigate → Bookmarks saves and recalls locations.",
     );
     help_p(
@@ -813,15 +929,27 @@ pub(crate) fn help_licenses(ui: &mut egui::Ui) {
     });
 }
 
+/// The contents-list name of the coordinate-expression reference, so the Go-to dialog's "?" can
+/// open Help AT it by name rather than by an index that moves when a section is inserted.
+pub(crate) const EXPRESSIONS_SECTION: &str = "Coordinate expressions";
+
+/// Contents-list index of a section by name (the window stores the selection as an index). A
+/// name not in the list yields Overview rather than a panic — the caller passes a constant from
+/// this module, and `section_index_finds_every_named_section` pins that it resolves.
+pub(crate) fn section_index(name: &str) -> usize {
+    SECTION_NAMES.iter().position(|n| *n == name).unwrap_or(0)
+}
+
 /// The Help window's contents list and the body that draws each entry — ONE table, so a section
 /// cannot exist in the list without something to render.
 ///
 /// It replaced a `match` whose `_` arm fell through to About: a section added to the list and not
 /// to the match rendered the About text under its own heading, which is invisible unless someone
 /// clicks that exact entry. Paired here, and pinned by `help_sections_all_render`.
-pub(crate) const SECTION_NAMES: [&str; 11] = [
+pub(crate) const SECTION_NAMES: [&str; 12] = [
     "Overview",
     "Navigation",
+    EXPRESSIONS_SECTION,
     "Coloring & options",
     "Fractals",
     "How it works",
@@ -837,6 +965,7 @@ pub(crate) const SECTION_NAMES: [&str; 11] = [
 pub(crate) const SECTION_BODIES: [fn(&mut egui::Ui); SECTION_NAMES.len()] = [
     help_overview,
     help_navigation,
+    help_expressions,
     help_options,
     help_fractals,
     help_methodology,
@@ -939,5 +1068,15 @@ mod help_tests {
         // About is the last entry, which the window relies on when it clamps an out-of-range
         // index — a stale `help_section` from an older session must land somewhere sensible.
         assert_eq!(*SECTION_NAMES.last().unwrap(), "About");
+    }
+
+    /// The Go-to dialog opens Help at the expression reference BY NAME; a rename that missed
+    /// the constant would silently open Overview instead.
+    #[test]
+    fn section_index_finds_every_named_section() {
+        let i = section_index(EXPRESSIONS_SECTION);
+        assert_eq!(SECTION_NAMES[i], EXPRESSIONS_SECTION);
+        assert!(std::ptr::fn_addr_eq(SECTION_BODIES[i], help_expressions as fn(&mut egui::Ui)));
+        assert_eq!(section_index("no such section"), 0, "an unknown name falls back to Overview");
     }
 }

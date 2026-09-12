@@ -12,6 +12,31 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Coordinate expressions: a Help reference, and refusals that say what and where** (beta.101).
+  Two gaps in the expression feature (beta.17 / 94 / 95). First, the grammar was documented only
+  by example — a sentence in the Navigation help naming `pi`, `sqrt` and `sin/cos/tan` — so the
+  rest of it (`tau`, `phi`, `root`, `cbrt`, `asin`…, `ln`/`log`/`exp`/`abs`, powers, the `i`
+  suffix) was invisible unless you read the source. Help now has a **"Coordinate expressions"**
+  section: where expressions are accepted, worked examples (the period-2 and period-3 bulb roots,
+  a whole complex value, powers, real roots), the number and operator rules, the constants and
+  functions tables — rendered from the evaluator's own `EXPR_FUNCTIONS` / `EXPR_CONSTANTS`
+  tables, which a core test holds equal to what it actually evaluates, so the page cannot list a
+  function the parser rejects — and what is refused and why. The Go-to dialog gains a `?` that
+  opens Help at that section. Second, every parse failure read "Invalid input — check the
+  coordinates and zoom." The evaluator now returns an `ExprError` with the reason and the
+  character position, and the usual slips carry the fix: a typographic minus pasted from a
+  document ("use the ASCII minus '-'"), `×`/`÷`, a decimal comma, `2pi` ("write '*' between a
+  number and a name"), `pi(4)` ("a constant is not a function"), `sin 1` ("write sin(x), with
+  parentheses"), an unclosed `(`, `sin()` / `sin(1,2)` / `root(8)` arity, `root(-4,2)`,
+  `(-2)^(1/2)` ("use root(x, n)"), `ln(-1)`, `asin(2)`, `45°`, `[1]`, division by zero. The
+  Go-to dialog shows one line per failed input, naming the field ("Re:", "Im:", "Zoom:"); polar
+  mode checks each of x0/y0/r/θ by name BEFORE composing them, so a position points into what you
+  typed, never into the composed string. The same messages reach `--center` on the command line,
+  a tour script's `re`/`im` ("keyframe 3: invalid coordinate re = "…": unexpected …"), and the
+  `.fdn` load report. The `Option`-returning parse functions are unchanged wrappers, so no
+  accepted coordinate changed meaning (the 20k-case fuzz, the refusal list and the F3 corpus are
+  the same). A WYSIWYG expression editor is filed in TODO.md as the follow-on.
+
 - **A GPU device-loss crash report now suggests updating the graphics driver** (beta.100). A device
   loss is often a driver bug rather than anything the renderer can bound: the parabolic-point loss
   that motivated the beta.99 work turned out to be an NVIDIA Vulkan driver bug — deterministic on

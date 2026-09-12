@@ -25,12 +25,20 @@ enum Screen {
     RightPanel,    // the controls panel open over the view
     Minimap,       // the minimap overview on
     Help,
+    /// Help opened AT the coordinate-expression reference — the section the Go-to dialog's `?`
+    /// jumps to, and the one page whose tables are rendered from core data rather than prose.
+    HelpExpressions,
     Welcome,
     Bookmarks,
     BenchConfig,
     BenchResults,  // seeded with a synthetic report so the populated layout renders
     Gallery,
     Goto,
+    /// The Go-to dialog after a FAILED Go: every field wrong in a different way (a typographic
+    /// minus and a decimal comma in Re, an imaginary suffix in Im, a word in Zoom), so the
+    /// screenshot shows the per-field verdict with positions — the thing the old "Invalid input"
+    /// line could not, and the thing a passing test cannot show is legible.
+    GotoError,
     MisiurewiczExplorer,
     /// Drive the explorer's REAL jump path: select the antenna tip, solve it to 1e6×, land.
     /// The capture waits for the landing; the check pins where the viewport ended up.
@@ -640,12 +648,14 @@ fn build_steps() -> Vec<Step> {
         screen("right-panel", Screen::RightPanel),
         screen("minimap", Screen::Minimap),
         screen("help", Screen::Help),
+        screen("help-expressions", Screen::HelpExpressions),
         screen("welcome", Screen::Welcome),
         screen("bookmarks", Screen::Bookmarks),
         screen("benchmark-config", Screen::BenchConfig),
         screen("benchmark-results", Screen::BenchResults),
         screen("gallery", Screen::Gallery),
         screen("goto", Screen::Goto),
+        screen("goto-error", Screen::GotoError),
         screen("misiurewicz-explorer", Screen::MisiurewiczExplorer),
         screen("misiurewicz-jump", Screen::MisiurewiczJump),
         screen("share", Screen::Share),
@@ -1010,6 +1020,11 @@ impl FractadyneApp {
             Screen::RightPanel => self.dialogs.right_panel_open = true,
             Screen::Minimap => self.dialogs.minimap = true,
             Screen::Help => self.dialogs.help_open = true,
+            Screen::HelpExpressions => {
+                self.dialogs.help_section =
+                    crate::help::section_index(crate::help::EXPRESSIONS_SECTION);
+                self.dialogs.help_open = true;
+            }
             Screen::Welcome => self.dialogs.welcome_open = true,
             Screen::Bookmarks => self.dialogs.bookmarks_open = true,
             Screen::BenchConfig => self.dialogs.bench_dialog_open = true,
@@ -1032,6 +1047,14 @@ impl FractadyneApp {
                 self.goto.polar_x0 = "-0.5".into();
                 self.goto.polar_r = "0.25".into();
                 self.goto.polar_theta = "45".into();
+            }
+            Screen::GotoError => {
+                self.goto.open = true;
+                self.goto.polar = false;
+                self.goto.x = "\u{2212}0.5 + 0,25\u{d7}cos(pi/4)".into(); // − and , and ×
+                self.goto.y = "0.25i".into();
+                self.goto.zoom = "abc".into();
+                self.apply_goto(); // fails, and leaves its verdict in the dialog
             }
             Screen::MisiurewiczExplorer => self.open_misiurewicz_explorer(),
             Screen::MisiurewiczJump => {

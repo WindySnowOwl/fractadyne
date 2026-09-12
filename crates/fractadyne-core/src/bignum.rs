@@ -196,18 +196,107 @@ fn expr_precision(s: &str, floor: usize) -> usize {
     floor.max(64).max(digits.saturating_mul(4).saturating_add(64))
 }
 
-/// Parse a **real** coordinate: a plain decimal, or an exact rational expression (`-3/4`,
-/// `(1+2)/8`). Rational arithmetic runs at `min_prec` bits or higher (see [`expr_precision`]).
-/// An expression with a nonzero imaginary part is rejected — use [`parse_complex_prec`] for
-/// those.
-pub fn parse_bf_prec(s: &str, min_prec: usize) -> Option<BigFloat> {
+/// Why a coordinate expression could not be read: a plain-language `reason`, and where in the
+/// text it was found — `pos` is the 0-based CHARACTER index into the string exactly as given
+/// (leading whitespace included), or `None` when the problem is the value as a whole (empty
+/// input, a non-finite result, an imaginary part where a real was required).
+///
+/// `Display` renders both: `unknown function "sinn" — the functions are … (at character 6)`.
+/// Callers prefix the FIELD the text came from; the message itself never names one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExprError {
+    pub pos: Option<usize>,
+    pub reason: String,
+}
+
+impl ExprError {
+    fn whole(reason: impl Into<String>) -> Self {
+        ExprError { pos: None, reason: reason.into() }
+    }
+}
+
+impl core::fmt::Display for ExprError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.pos {
+            Some(p) => write!(f, "{} (at character {})", self.reason, p + 1),
+            None => f.write_str(&self.reason),
+        }
+    }
+}
+
+impl std::error::Error for ExprError {}
+
+/// The functions the expression grammar accepts: `(name, signature, what it does)`.
+///
+/// ⭐This table is the ONE source for the in-app help page, the "unknown function" message and
+/// the "is a function — write …" hint, and `expr_tables_match_the_evaluator` (core tests) holds
+/// it equal to what [`parse_complex_expr`] actually evaluates — so the help cannot list a
+/// function the parser rejects, nor the parser accept one the help omits.
+pub const EXPR_FUNCTIONS: &[(&str, &str, &str)] = &[
+    ("sqrt", "sqrt(z)", "Square root, principal branch. Works on negative and complex values: sqrt(-1) = i."),
+    ("cbrt", "cbrt(x)", "Real cube root: cbrt(-8) = -2."),
+    (
+        "root",
+        "root(x, n)",
+        "Real n-th root, n a whole number from 1 to 1000000. Odd roots of a negative are allowed (root(-32, 5) = -2); even ones are not — use sqrt.",
+    ),
+    ("sin", "sin(x)", "Sine of an angle in radians."),
+    ("cos", "cos(x)", "Cosine of an angle in radians."),
+    ("tan", "tan(x)", "Tangent of an angle in radians."),
+    ("asin", "asin(x)", "Inverse sine, in radians; needs -1 ≤ x ≤ 1."),
+    ("acos", "acos(x)", "Inverse cosine, in radians; needs -1 ≤ x ≤ 1."),
+    ("atan", "atan(x)", "Inverse tangent, in radians."),
+    ("ln", "ln(x)", "Natural logarithm; needs x > 0."),
+    ("log", "log(x)", "Base-10 logarithm; needs x > 0."),
+    ("exp", "exp(x)", "e raised to the power x."),
+    ("abs", "abs(z)", "Absolute value; for a complex value, its modulus |z|."),
+];
+
+/// The named constants the grammar knows: `(name, what it is)`. Names are case-insensitive.
+/// Same contract as [`EXPR_FUNCTIONS`]: the help renders this list and a test pins it.
+pub const EXPR_CONSTANTS: &[(&str, &str)] = &[
+    ("pi", "3.14159… — half a turn, in radians"),
+    ("tau", "6.28318… — a full turn (2·pi), in radians"),
+    ("e", "2.71828… — the base of natural logarithms"),
+    ("phi", "1.61803… — the golden ratio, (1 + sqrt(5))/2"),
+    ("i", "the imaginary unit; also a suffix on a number, as in 0.25i"),
+];
+
+fn expr_function_names() -> String {
+    EXPR_FUNCTIONS.iter().map(|f| f.0).collect::<Vec<_>>().join(", ")
+}
+
+fn expr_constant_names() -> String {
+    let names: Vec<&str> = EXPR_CONSTANTS.iter().map(|c| c.0).collect();
+    let (last, rest) = names.split_last().expect("constants table is non-empty");
+    format!("{} and {last}", rest.join(", "))
+}
+
+/// Parse a **real** coordinate, reporting WHY it could not be read: a plain decimal, or an exact
+/// rational / function expression (`-3/4`, `(1+2)/8`, `-0.5 + 0.25*cos(pi/4)`). Arithmetic runs
+/// at `min_prec` bits or higher (see [`expr_precision`]). An expression with a nonzero imaginary
+/// part is an error here — [`parse_complex_expr`] is the entry point for those.
+pub fn parse_real_expr(s: &str, min_prec: usize) -> Result<BigFloat, ExprError> {
     let t = s.trim();
     if is_decimal_literal(t) {
-        let mut cc = Consts::new().ok()?;
-        return parse_literal(t, min_prec, &mut cc);
+        let mut cc = Consts::new().map_err(|_| ExprError::whole("arithmetic constants unavailable"))?;
+        return parse_literal(t, min_prec, &mut cc)
+            .ok_or_else(|| ExprError::whole(format!("the number {t:?} is out of range")));
     }
-    let (re, im) = parse_complex_prec(t, min_prec)?;
-    im.is_zero().then_some(re)
+    let (re, im) = parse_complex_expr(s, min_prec)?;
+    if !im.is_zero() {
+        return Err(ExprError::whole(
+            "this value must be real, but the expression has an imaginary part",
+        ));
+    }
+    Ok(re)
+}
+
+/// Parse a **real** coordinate: [`parse_real_expr`] with the reason discarded — `None` is
+/// "invalid input". Kept for the many call sites that only need the value; anything that shows
+/// a message to a person should use the `Result` form.
+pub fn parse_bf_prec(s: &str, min_prec: usize) -> Option<BigFloat> {
+    parse_real_expr(s, min_prec).ok()
 }
 
 /// Parse a **complex** coordinate expression into `(re, im)`: decimals, an `i` suffix, the four
@@ -230,20 +319,40 @@ pub fn parse_bf_prec(s: &str, min_prec: usize) -> Option<BigFloat> {
 /// **`^`**: real base — any real exponent if the base is positive, integer exponents if negative
 /// (fractional powers of a negative are complex and branch-ambiguous — use `root`); complex base —
 /// integer exponents to ±4096. `0^0 = 1`.
-pub fn parse_complex_prec(s: &str, min_prec: usize) -> Option<(BigFloat, BigFloat)> {
+///
+/// Every refusal comes back as an [`ExprError`] that says what was found, where, and — for the
+/// common slips (a typographic minus, `×`, `2pi`, a decimal comma, a bare `sin`) — what to type
+/// instead. A coordinate must never be silently half-read, so trailing text is an error too.
+pub fn parse_complex_expr(s: &str, min_prec: usize) -> Result<(BigFloat, BigFloat), ExprError> {
+    let lead = s.len() - s.trim_start().len();
     let t = s.trim();
     if t.is_empty() {
-        return None;
+        return Err(ExprError::whole("nothing to read — enter a number or an expression"));
     }
+    // Byte offset in the trimmed text → character index in the text as given.
+    let at = |err: ErrAt| ExprError {
+        pos: Some(s[..(lead + err.pos).min(s.len())].chars().count()),
+        reason: err.reason,
+    };
     let p = expr_precision(t, min_prec);
-    let mut e = Expr { b: t.as_bytes(), i: 0, p, depth: 0, cc: Consts::new().ok()? };
-    let v = e.sum()?;
+    let cc = Consts::new().map_err(|_| ExprError::whole("arithmetic constants unavailable"))?;
+    let mut e = Expr { b: t.as_bytes(), i: 0, p, depth: 0, cc };
+    let v = e.sum().map_err(at)?;
     e.ws();
     if e.i != e.b.len() {
-        return None; // trailing garbage — never silently ignore part of a coordinate
+        // Trailing text — never silently ignore part of a coordinate.
+        return Err(at(e.expected_operator(e.i, None)));
     }
     let bad = |b: &BigFloat| b.is_nan() || b.is_inf();
-    (!bad(&v.0) && !bad(&v.1)).then_some(v)
+    if bad(&v.0) || bad(&v.1) {
+        return Err(ExprError::whole("the result is not a finite number"));
+    }
+    Ok(v)
+}
+
+/// Parse a **complex** coordinate expression: [`parse_complex_expr`] with the reason discarded.
+pub fn parse_complex_prec(s: &str, min_prec: usize) -> Option<(BigFloat, BigFloat)> {
+    parse_complex_expr(s, min_prec).ok()
 }
 
 /// A complex value mid-evaluation.
@@ -352,6 +461,28 @@ struct Expr<'a> {
 
 const EXPR_MAX_DEPTH: u32 = 32;
 
+/// A parse failure inside [`Expr`]: the BYTE offset into the trimmed text plus the reason.
+/// [`parse_complex_expr`] turns the offset into a character index in the caller's string.
+struct ErrAt {
+    pos: usize,
+    reason: String,
+}
+
+impl ErrAt {
+    fn new(pos: usize, reason: impl Into<String>) -> Self {
+        ErrAt { pos, reason: reason.into() }
+    }
+}
+
+type ExprResult<T> = Result<T, ErrAt>;
+
+fn too_deep(pos: usize) -> ErrAt {
+    ErrAt::new(
+        pos,
+        format!("too deeply nested — at most {EXPR_MAX_DEPTH} levels of parentheses, function calls and ^"),
+    )
+}
+
 impl Expr<'_> {
     fn ws(&mut self) {
         while matches!(self.b.get(self.i), Some(c) if c.is_ascii_whitespace()) {
@@ -362,8 +493,93 @@ impl Expr<'_> {
         self.ws();
         self.b.get(self.i).copied()
     }
+    /// The character starting at byte `i`. The cursor only ever advances over ASCII, so `i` is
+    /// always on a character boundary of the (valid UTF-8) input.
+    fn char_at(&self, i: usize) -> Option<char> {
+        std::str::from_utf8(self.b.get(i..)?).ok()?.chars().next()
+    }
+    fn signature(name: &str) -> Option<&'static str> {
+        EXPR_FUNCTIONS.iter().find(|f| f.0.eq_ignore_ascii_case(name)).map(|f| f.1)
+    }
 
-    fn sum(&mut self) -> Option<Cx> {
+    // ---- the messages ----------------------------------------------------------------------
+
+    /// Something other than a value where one was required (the start of the input, after an
+    /// operator, after `(`).
+    fn expected_value(&self, i: usize) -> ErrAt {
+        const WANT: &str = "a number, a constant, a function or '('";
+        let Some(c) = self.char_at(i) else {
+            return ErrAt::new(i, format!("the expression ends where {WANT} was expected"));
+        };
+        match c {
+            ')' => ErrAt::new(i, "unexpected ')' — there is nothing to evaluate before it"),
+            '.' => ErrAt::new(i, "unexpected '.' — a number needs a digit, e.g. 0.5"),
+            _ => self.unexpected(i, c, WANT),
+        }
+    }
+
+    /// Something other than an operator (or the end / the closing bracket) after a complete
+    /// value. `closing` names the bracket that would also be acceptable, inside `(` or a call.
+    fn expected_operator(&self, i: usize, closing: Option<&str>) -> ErrAt {
+        let want = match closing {
+            Some(c) => format!("an operator (+ - * / ^) or {c}"),
+            None => "an operator (+ - * / ^) or the end of the expression".to_string(),
+        };
+        let Some(c) = self.char_at(i) else {
+            return ErrAt::new(i, format!("the expression ends where {want} was expected"));
+        };
+        let hint = match c {
+            '(' => Some(
+                "implicit multiplication is not supported — write '*' before the parenthesis \
+                 (and a constant such as pi is not a function)",
+            ),
+            c if c.is_ascii_alphabetic() => {
+                Some("write '*' between a number and a name, e.g. 2*pi")
+            }
+            c if c.is_ascii_digit() => {
+                Some("two numbers in a row — remove the space, or put an operator between them")
+            }
+            _ => None,
+        };
+        match hint {
+            Some(h) => ErrAt::new(i, format!("unexpected {c:?} — {h}")),
+            None => self.unexpected(i, c, &want),
+        }
+    }
+
+    /// The typo hints shared by both contexts: the characters a word processor, a keyboard
+    /// layout or a maths habit puts into a coordinate, each with what to type instead.
+    fn unexpected(&self, i: usize, c: char, want: &str) -> ErrAt {
+        let hint = match c {
+            '\u{2212}' | '\u{2013}' | '\u{2014}' => "that is a typographic dash; use the ASCII minus '-'",
+            '\u{d7}' | '\u{b7}' | '\u{2219}' | '\u{22c5}' => "use '*' to multiply",
+            '\u{f7}' => "use '/' to divide",
+            '\u{221a}' => "write sqrt(…)",
+            '\u{3c0}' => "write pi",
+            '\u{b2}' => "write ^2",
+            '\u{b3}' => "write ^3",
+            '\u{b0}' => {
+                "angles are in radians — multiply degrees by pi/180, or use the polar entry with \
+                 the degrees unit"
+            }
+            '[' | ']' | '{' | '}' => "only round parentheses ( ) can group",
+            '"' | '\'' | '\u{201c}' | '\u{201d}' | '\u{2018}' | '\u{2019}' => "remove the quotes",
+            ',' => {
+                "the decimal point is '.'; a comma only separates the two arguments of root(x, n)"
+            }
+            '=' => "enter just the value, without an '='",
+            _ => "",
+        };
+        if hint.is_empty() {
+            ErrAt::new(i, format!("unexpected {c:?}; expected {want}"))
+        } else {
+            ErrAt::new(i, format!("unexpected {c:?} — {hint}"))
+        }
+    }
+
+    // ---- the grammar -----------------------------------------------------------------------
+
+    fn sum(&mut self) -> ExprResult<Cx> {
         let mut acc = self.product()?;
         loop {
             match self.peek() {
@@ -377,12 +593,12 @@ impl Expr<'_> {
                     let r = self.product()?;
                     acc = cx_sub(&acc, &r, self.p);
                 }
-                _ => return Some(acc),
+                _ => return Ok(acc),
             }
         }
     }
 
-    fn product(&mut self) -> Option<Cx> {
+    fn product(&mut self) -> ExprResult<Cx> {
         let mut acc = self.unary()?;
         loop {
             match self.peek() {
@@ -392,18 +608,19 @@ impl Expr<'_> {
                     acc = cx_mul(&acc, &r, self.p);
                 }
                 Some(b'/') => {
+                    let op = self.i;
                     self.i += 1;
                     let r = self.unary()?;
-                    acc = cx_div(&acc, &r, self.p)?;
+                    acc = cx_div(&acc, &r, self.p).ok_or_else(|| ErrAt::new(op, "division by zero"))?;
                 }
-                _ => return Some(acc),
+                _ => return Ok(acc),
             }
         }
     }
 
     /// Signs are consumed iteratively, not by self-recursion — a pasted `-----…` must not be
     /// able to blow the stack (untrusted input, same threat model as the depth cap).
-    fn unary(&mut self) -> Option<Cx> {
+    fn unary(&mut self) -> ExprResult<Cx> {
         let mut neg = false;
         loop {
             match self.peek() {
@@ -418,31 +635,34 @@ impl Expr<'_> {
             }
         }
         let v = self.power()?;
-        Some(if neg { cx_neg(&v, self.p) } else { v })
+        Ok(if neg { cx_neg(&v, self.p) } else { v })
     }
 
     /// `atom ['^' unary]` — right-associative (`2^3^2 = 2^(3^2) = 512`), and the exponent
     /// re-enters `unary` so `2^-3` parses. Unary minus binds looser: `-2^2 = -4`.
-    fn power(&mut self) -> Option<Cx> {
+    fn power(&mut self) -> ExprResult<Cx> {
         let base = self.atom()?;
         if self.peek() != Some(b'^') {
-            return Some(base);
+            return Ok(base);
         }
+        let op = self.i;
         if self.depth >= EXPR_MAX_DEPTH {
-            return None;
+            return Err(too_deep(op));
         }
         self.i += 1;
         self.depth += 1;
         let e = self.unary()?;
         self.depth -= 1;
-        self.pow_value(&base, &e)
+        self.pow_value(&base, &e, op)
     }
 
-    fn atom(&mut self) -> Option<Cx> {
-        match self.peek()? {
-            b'(' => {
+    fn atom(&mut self) -> ExprResult<Cx> {
+        match self.peek() {
+            None => Err(self.expected_value(self.i)),
+            Some(b'(') => {
+                let open = self.i;
                 if self.depth >= EXPR_MAX_DEPTH {
-                    return None;
+                    return Err(too_deep(open));
                 }
                 self.i += 1;
                 self.depth += 1;
@@ -450,57 +670,86 @@ impl Expr<'_> {
                 self.depth -= 1;
                 self.ws();
                 if self.b.get(self.i) != Some(&b')') {
-                    return None;
+                    if self.i >= self.b.len() {
+                        return Err(ErrAt::new(open, "this '(' is never closed"));
+                    }
+                    return Err(self.expected_operator(self.i, Some("')'")));
                 }
                 self.i += 1;
-                Some(v)
+                Ok(v)
             }
-            c if c.is_ascii_alphabetic() => self.word(),
-            _ => self.number(),
+            Some(c) if c.is_ascii_alphabetic() => self.word(),
+            Some(c) if c.is_ascii_digit() || c == b'.' => self.number(),
+            Some(_) => Err(self.expected_value(self.i)),
         }
     }
 
     /// An alphanumeric name: the imaginary unit, a constant, or a function call. Lexed as a
     /// whole word so `pi` can never half-read as `p·i`, and unknown names are a parse error —
     /// a coordinate must never be silently misread.
-    fn word(&mut self) -> Option<Cx> {
+    fn word(&mut self) -> ExprResult<Cx> {
         let start = self.i;
         while matches!(self.b.get(self.i), Some(c) if c.is_ascii_alphanumeric()) {
             self.i += 1;
         }
-        let name = std::str::from_utf8(&self.b[start..self.i]).ok()?;
+        let text = self.b; // copy the slice ref out so `self` can be borrowed mutably below
+        let name = std::str::from_utf8(&text[start..self.i]).unwrap_or("");
         let p = self.p;
         let eq = |n: &str| name.eq_ignore_ascii_case(n);
         if eq("i") {
-            return Some((cx_zero(p), BigFloat::from_f64(1.0, p)));
+            return Ok((cx_zero(p), BigFloat::from_f64(1.0, p)));
         }
         if eq("pi") {
-            return Some((self.cc.pi(p, RM), cx_zero(p)));
+            return Ok((self.cc.pi(p, RM), cx_zero(p)));
         }
         if eq("e") {
-            return Some((self.cc.e(p, RM), cx_zero(p)));
+            return Ok((self.cc.e(p, RM), cx_zero(p)));
         }
         if eq("tau") {
-            return Some((double_bf(&self.cc.pi(p, RM)), cx_zero(p)));
+            return Ok((double_bf(&self.cc.pi(p, RM)), cx_zero(p)));
         }
         if eq("phi") {
             let v = BigFloat::from_f64(5.0, p)
                 .sqrt(p, RM)
                 .add(&BigFloat::from_f64(1.0, p), p, RM)
                 .mul(&BigFloat::from_f64(0.5, p), p, RM);
-            return Some((v, cx_zero(p)));
+            return Ok((v, cx_zero(p)));
         }
-        self.call(name)
+        // Not a constant: a function call, or a mistake — and the two mistakes read differently.
+        self.ws();
+        if self.b.get(self.i) == Some(&b'(') {
+            return self.call(name, start);
+        }
+        Err(match Self::signature(name) {
+            Some(sig) => ErrAt::new(start, format!("{name:?} is a function — write {sig}, with parentheses")),
+            None => ErrAt::new(
+                start,
+                format!(
+                    "unknown name {name:?} — the constants are {}; the functions are {}",
+                    expr_constant_names(),
+                    expr_function_names()
+                ),
+            ),
+        })
     }
 
-    /// `name '(' sum [',' sum] ')'` — `root` is the only two-argument function.
-    fn call(&mut self, name: &str) -> Option<Cx> {
-        self.ws();
-        if self.b.get(self.i) != Some(&b'(') || self.depth >= EXPR_MAX_DEPTH {
-            return None;
+    /// `name '(' sum [',' sum] ')'` — `root` is the only two-argument function. `start` is the
+    /// name's position, which is where an error about the call as a whole points.
+    fn call(&mut self, name: &str, start: usize) -> ExprResult<Cx> {
+        let Some(sig) = Self::signature(name) else {
+            return Err(ErrAt::new(
+                start,
+                format!("unknown function {name:?} — the functions are {}", expr_function_names()),
+            ));
+        };
+        if self.depth >= EXPR_MAX_DEPTH {
+            return Err(too_deep(start));
         }
-        self.i += 1;
+        self.i += 1; // past '('
         self.depth += 1;
+        if self.peek() == Some(b')') {
+            return Err(ErrAt::new(start, format!("{name} needs an argument — write {sig}")));
+        }
         let a = self.sum()?;
         let second = if self.peek() == Some(b',') {
             self.i += 1;
@@ -511,58 +760,72 @@ impl Expr<'_> {
         self.depth -= 1;
         self.ws();
         if self.b.get(self.i) != Some(&b')') {
-            return None;
+            if self.i >= self.b.len() {
+                return Err(ErrAt::new(start, format!("missing ')' to close {name}(")));
+            }
+            return Err(self.expected_operator(self.i, Some("')'")));
         }
         self.i += 1;
-        self.apply(name, &a, second.as_ref())
+        self.apply(name, sig, &a, second.as_ref(), start)
     }
 
-    fn apply(&mut self, name: &str, a: &Cx, second: Option<&Cx>) -> Option<Cx> {
+    fn apply(&mut self, name: &str, sig: &str, a: &Cx, second: Option<&Cx>, at: usize) -> ExprResult<Cx> {
         let p = self.p;
         let eq = |n: &str| name.eq_ignore_ascii_case(n);
         // The real-argument gate: reject a nonzero imaginary part instead of guessing a branch.
         let real = |v: &Cx| v.1.is_zero().then(|| v.0.clone());
+        let needs_real = || ErrAt::new(at, format!("{name} needs a real argument, but this one has an imaginary part"));
         if eq("root") {
             // n-th root: real x, integer n ≥ 1; odd roots of negatives are real and allowed.
-            let x = real(a)?;
-            let n = int_exponent(&real(second?)?, p)?;
+            let x = real(a).ok_or_else(needs_real)?;
+            let Some(second) = second else {
+                return Err(ErrAt::new(at, format!("root takes two arguments — write {sig}")));
+            };
+            let n = real(second)
+                .and_then(|n| int_exponent(&n, p))
+                .ok_or_else(|| ErrAt::new(at, "root(x, n): n must be a whole number"))?;
             if !(1..=1_000_000).contains(&n) {
-                return None;
+                return Err(ErrAt::new(at, "root(x, n): n must be between 1 and 1000000"));
             }
             if x.is_zero() {
-                return Some((cx_zero(p), cx_zero(p)));
+                return Ok((cx_zero(p), cx_zero(p)));
             }
             let neg = matches!(x.sign(), Some(Sign::Neg));
             if neg && n % 2 == 0 {
-                return None; // even root of a negative — complex; use sqrt for n=2
+                return Err(ErrAt::new(
+                    at,
+                    "root(x, n): an even root of a negative number is complex — use sqrt for the \
+                     principal value, or an odd n",
+                ));
             }
             let inv_n = BigFloat::from_f64(1.0, p).div(&BigFloat::from_f64(n as f64, p), p, RM);
             let v = abs_bf(&x, p).pow(&inv_n, p, RM, &mut self.cc);
-            return Some((if neg { neg_bf(&v, p) } else { v }, cx_zero(p)));
+            return Ok((if neg { neg_bf(&v, p) } else { v }, cx_zero(p)));
         }
         if second.is_some() {
-            return None; // every other function takes exactly one argument
+            return Err(ErrAt::new(at, format!("{name} takes one argument — write {sig}")));
         }
         if eq("sqrt") {
-            return Some(cx_sqrt(a, p));
+            return Ok(cx_sqrt(a, p));
         }
         if eq("abs") {
-            return Some(if a.1.is_zero() {
+            return Ok(if a.1.is_zero() {
                 (abs_bf(&a.0, p), cx_zero(p))
             } else {
                 (cx_abs(a, p), cx_zero(p))
             });
         }
         if eq("cbrt") {
-            let x = real(a)?;
+            let x = real(a).ok_or_else(needs_real)?;
             let neg = matches!(x.sign(), Some(Sign::Neg));
             let v = abs_bf(&x, p).cbrt(p, RM);
-            return Some((if neg { neg_bf(&v, p) } else { v }, cx_zero(p)));
+            return Ok((if neg { neg_bf(&v, p) } else { v }, cx_zero(p)));
         }
-        let x = real(a)?;
+        let x = real(a).ok_or_else(needs_real)?;
         let v = if eq("sin") || eq("cos") || eq("tan") || eq("exp") {
             if !small_enough(&x) {
-                return None; // argument reduction at absurd magnitude — see `small_enough`
+                // Argument reduction at absurd magnitude — see `small_enough`.
+                return Err(ErrAt::new(at, format!("{name}: the argument is too large (the limit is ±2^32, about 4.3e9)")));
             }
             if eq("sin") {
                 x.sin(p, RM, &mut self.cc)
@@ -584,52 +847,75 @@ impl Expr<'_> {
         } else if eq("log") {
             x.log10(p, RM, &mut self.cc)
         } else {
-            return None; // unknown function name
+            // Unreachable while `signature` and this chain agree; the test pins that.
+            return Err(ErrAt::new(at, format!("unknown function {name:?}")));
         };
         // A domain error (ln of a negative, asin(2)) comes back NaN and is rejected here, so it
         // can't hide inside a larger expression that happens to survive the top-level check.
-        (!v.is_nan()).then_some((v, cx_zero(p)))
+        if v.is_nan() {
+            let why = if eq("ln") || eq("log") {
+                format!("{name} needs a positive argument")
+            } else if eq("asin") || eq("acos") {
+                format!("{name} needs an argument between -1 and 1")
+            } else {
+                format!("{name} is undefined for this argument")
+            };
+            return Err(ErrAt::new(at, why));
+        }
+        Ok((v, cx_zero(p)))
     }
 
     /// `base ^ exponent`. The exponent must be real; see the grammar doc for the base cases.
-    fn pow_value(&mut self, base: &Cx, e: &Cx) -> Option<Cx> {
+    /// `at` is the `^`, which is where every refusal here points.
+    fn pow_value(&mut self, base: &Cx, e: &Cx, at: usize) -> ExprResult<Cx> {
         let p = self.p;
         if !e.1.is_zero() {
-            return None;
+            return Err(ErrAt::new(at, "the exponent must be real"));
         }
         let ex = &e.0;
         if !small_enough(ex) {
-            return None;
+            return Err(ErrAt::new(at, "the exponent is too large (the limit is ±2^32, about 4.3e9)"));
         }
         if base.1.is_zero() {
             let b = &base.0;
             if b.is_zero() {
                 // 0^0 = 1 (the parser convention), 0^positive = 0, 0^negative undefined.
                 if ex.is_zero() {
-                    return Some((BigFloat::from_f64(1.0, p), cx_zero(p)));
+                    return Ok((BigFloat::from_f64(1.0, p), cx_zero(p)));
                 }
                 return if matches!(ex.sign(), Some(Sign::Neg)) {
-                    None
+                    Err(ErrAt::new(at, "0 raised to a negative power is undefined"))
                 } else {
-                    Some((cx_zero(p), cx_zero(p)))
+                    Ok((cx_zero(p), cx_zero(p)))
                 };
             }
             if !matches!(b.sign(), Some(Sign::Neg)) {
                 let v = b.pow(ex, p, RM, &mut self.cc);
-                return (!v.is_nan()).then_some((v, cx_zero(p)));
+                if v.is_nan() {
+                    return Err(ErrAt::new(at, "this power is undefined"));
+                }
+                return Ok((v, cx_zero(p)));
             }
             // Negative real base: integer exponents only (odd roots go through `root`/`cbrt`).
-            let n = int_exponent(ex, p)?;
+            let Some(n) = int_exponent(ex, p) else {
+                return Err(ErrAt::new(
+                    at,
+                    "a negative number to a fractional power is complex and ambiguous — use \
+                     root(x, n) or cbrt(x) for a real root, or sqrt(x) for the principal complex one",
+                ));
+            };
             let v = abs_bf(b, p).pow(ex, p, RM, &mut self.cc);
             if v.is_nan() {
-                return None;
+                return Err(ErrAt::new(at, "this power is undefined"));
             }
-            return Some((if n & 1 == 1 { neg_bf(&v, p) } else { v }, cx_zero(p)));
+            return Ok((if n & 1 == 1 { neg_bf(&v, p) } else { v }, cx_zero(p)));
         }
         // Complex base: small integer exponents by binary powering.
-        let n = int_exponent(ex, p)?;
+        let Some(n) = int_exponent(ex, p) else {
+            return Err(ErrAt::new(at, "a complex base needs a whole-number exponent"));
+        };
         if n.unsigned_abs() > 4096 {
-            return None;
+            return Err(ErrAt::new(at, "a complex base takes an exponent between -4096 and 4096"));
         }
         let mut acc = (BigFloat::from_f64(1.0, p), cx_zero(p));
         let mut sq = base.clone();
@@ -645,13 +931,14 @@ impl Expr<'_> {
         }
         if n < 0 {
             cx_div(&(BigFloat::from_f64(1.0, p), cx_zero(p)), &acc, p)
+                .ok_or_else(|| ErrAt::new(at, "division by zero — the base is 0"))
         } else {
-            Some(acc)
+            Ok(acc)
         }
     }
 
     /// A decimal literal (with optional fraction and exponent) and an optional `i` suffix.
-    fn number(&mut self) -> Option<Cx> {
+    fn number(&mut self) -> ExprResult<Cx> {
         self.ws();
         let start = self.i;
         let mut saw_digit = false;
@@ -667,7 +954,7 @@ impl Expr<'_> {
             }
         }
         if !saw_digit {
-            return None;
+            return Err(self.expected_value(start));
         }
         // Exponent — only if it's actually well-formed, so the `e` of a stray token doesn't
         // swallow input (and `1e` alone stays a parse error rather than becoming `1`).
@@ -686,14 +973,15 @@ impl Expr<'_> {
             }
         }
         let text = self.b; // copy the slice ref out so `self.cc` can be borrowed mutably below
-        let lit = std::str::from_utf8(text.get(start..self.i)?).ok()?;
+        let lit = std::str::from_utf8(&text[start..self.i]).unwrap_or("");
         let p = self.p;
-        let v = parse_literal(lit, p, &mut self.cc)?;
+        let v = parse_literal(lit, p, &mut self.cc)
+            .ok_or_else(|| ErrAt::new(start, format!("the number {lit:?} is out of range")))?;
         if matches!(self.b.get(self.i), Some(b'i') | Some(b'I')) {
             self.i += 1;
-            Some((cx_zero(self.p), v))
+            Ok((cx_zero(self.p), v))
         } else {
-            Some((v, cx_zero(self.p)))
+            Ok((v, cx_zero(self.p)))
         }
     }
 }

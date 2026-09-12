@@ -285,6 +285,7 @@ impl FractadyneApp {
         let mut poi: Option<usize> = None;
         let mut find_feat = false;
         let mut cancel_feat = false;
+        let mut help_expr = false;
         egui::Window::new("Go to location")
             .open(&mut open)
             .resizable(false)
@@ -297,6 +298,20 @@ impl FractadyneApp {
                     ui.label(egui::RichText::new("Enter as:").weak().small());
                     ui.selectable_value(&mut self.goto.polar, false, "x, y");
                     ui.selectable_value(&mut self.goto.polar, true, "offset + r ∠ θ");
+                    // The fields accept a whole grammar (fractions, functions, constants); the
+                    // reference for it is one click away rather than something to remember.
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .small_button("?")
+                            .on_hover_text(
+                                "What the fields accept: fractions, powers, sqrt/sin/cos…, pi and \
+                                 other constants — opens Help → Coordinate expressions",
+                            )
+                            .clicked()
+                        {
+                            help_expr = true;
+                        }
+                    });
                 });
                 let mut fields_changed = false;
                 if self.goto.polar {
@@ -561,21 +576,39 @@ impl FractadyneApp {
                 self.goto.x, self.goto.y, self.goto.zoom
             ));
         }
+        if help_expr {
+            self.dialogs.help_section = crate::help::section_index(crate::help::EXPRESSIONS_SECTION);
+            self.dialogs.help_open = true;
+        }
         if go {
             // Polar entry composes into the real/imaginary expression fields, then goes through the
             // exact same parse-and-jump — so Copy, precision, and the flat-frame warning are unchanged.
-            if self.goto.polar {
-                let (re, im) = crate::compose_polar(
+            // Each polar field is checked on its own FIRST, so an error names "r" or "θ" at a
+            // position in what was typed, not a position in the composed string nobody saw.
+            let polar_err = self.goto.polar.then(|| {
+                crate::polar_field_error(
                     &self.goto.polar_x0,
                     &self.goto.polar_y0,
                     &self.goto.polar_r,
                     &self.goto.polar_theta,
-                    self.goto.polar_unit,
-                );
-                self.goto.x = re;
-                self.goto.y = im;
+                )
+            });
+            match polar_err {
+                Some(Some(err)) => self.goto.msg = Some(err),
+                Some(None) => {
+                    let (re, im) = crate::compose_polar(
+                        &self.goto.polar_x0,
+                        &self.goto.polar_y0,
+                        &self.goto.polar_r,
+                        &self.goto.polar_theta,
+                        self.goto.polar_unit,
+                    );
+                    self.goto.x = re;
+                    self.goto.y = im;
+                    self.apply_goto(); // clears goto_open on success
+                }
+                None => self.apply_goto(),
             }
-            self.apply_goto(); // clears goto_open on success
         }
         // Closed if the user hit the window's ✕ (open=false) or Go succeeded.
         self.goto.open = open && self.goto.open && !close_goto;

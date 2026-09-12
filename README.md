@@ -50,7 +50,10 @@ A fractal explorer for Windows and Linux in Rust (wgpu + egui/eframe), built for
   expressions (`pi`, `tau`, `e`, `sqrt`, `sin`/`cos`/`tan`), with a polar `offset + r ∠ θ`
   mode; the expression is kept with the view and re-evaluated at each depth's precision, so a
   point stays exact however far you zoom. Navigate → "Exact points (expressions)" collects the
-  main-cardioid bulb roots (`cos`/`sin` of a fraction of 2π) as a ready-made showcase.
+  main-cardioid bulb roots (`cos`/`sin` of a fraction of 2π) as a ready-made showcase. The full
+  grammar — examples, every constant and function, what is refused and why — is the "Coordinate
+  expressions" section of the in-app Help (the `?` in the dialog opens it), and a coordinate that
+  does not parse says which field, which character, and what to type instead.
 - **High-res export** — tiled PNG / OpenEXR with reloadable view metadata, a gallery
   browser, background rendering with progress + cancel.
 - **Bookmarks** — save and instantly return to favorite (deep) locations.

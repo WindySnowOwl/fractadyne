@@ -610,8 +610,17 @@ pub(crate) fn inspect_view_text(meta: &str) -> (ViewLoad, Vec<(String, String, u
         if let Some((_, v, line, col)) = field(key) {
             if !kind.accepts(v) && report.problems.len() < 8 {
                 let shown: String = v.chars().take(24).collect();
+                // A coordinate that failed to evaluate says WHY (and where in the value) — the
+                // same message the Go-to dialog gives, so a hand-edited file is as diagnosable.
+                let why = match kind {
+                    ValueKind::BigFloat | ValueKind::Expr => fractadyne_core::parse_real_expr(v, 0)
+                        .err()
+                        .map(|e| format!(" — {e}"))
+                        .unwrap_or_default(),
+                    _ => String::new(),
+                };
                 report.problems.push(format!(
-                    "line {line}, col {col}: {key} needs {} but found {shown:?}",
+                    "line {line}, col {col}: {key} needs {} but found {shown:?}{why}",
                     kind.describe()
                 ));
             }
