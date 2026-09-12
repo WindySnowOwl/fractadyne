@@ -10974,13 +10974,22 @@ impl FractadyneApp {
         if !self.dialogs.accelerated_open {
             return;
         }
-        let have_it = fractadyne_core::available_backends().len() > 1;
+        // `have_build` is the compile-time fact that this binary CONTAINS the MPFR backend;
+        // `mpfr_active` is whether it is actually being used, which is false when the accelerated
+        // build fell back to astro-float because its DLLs were missing. The old dialog only knew
+        // `have_build`, so after a fallback it wrongly claimed MPFR was in use.
+        let have_build = fractadyne_core::available_backends().len() > 1;
+        let mpfr_active = fractadyne_core::selected_backend().name() == "rug";
         let ver = crate::sysinfo::version_string();
         let asset = accelerated_asset_url(&ver);
         let releases = "https://github.com/WindySnowOwl/fractadyne/releases";
 
         let mut open = self.dialogs.accelerated_open;
         let mut close = false;
+        // The startup MPFR-missing warning can be silenced with "don't show again"; captured here
+        // so the fell-back branch can offer to un-silence it, and applied after the closure.
+        let warning_suppressed = self.mpfr_warning_suppressed;
+        let mut unsuppress_warning = false;
         egui::Window::new("Faster deep zoom")
             .open(&mut open)
             .collapsible(false)
@@ -10989,7 +10998,7 @@ impl FractadyneApp {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing.y = 8.0;
-                if have_it {
+                if have_build && mpfr_active {
                     ui.heading("You are running the accelerated build");
                     ui.label(
                         "Deep-zoom reference orbits are being computed with MPFR/GMP, which is \
@@ -11004,6 +11013,46 @@ impl FractadyneApp {
                         .monospace()
                         .small(),
                     );
+                } else if have_build {
+                    // Accelerated binary, but the MPFR libraries were not found at startup, so it
+                    // fell back to the built-in arithmetic. Say so plainly and where to fix it.
+                    ui.heading("Accelerated build — using built-in arithmetic");
+                    ui.label(
+                        "This is the accelerated (MPFR) build, but its math libraries could not be \
+                         found, so it is using the built-in arithmetic (astro-float). The images \
+                         are identical; only the pause before a deep view resolves is slower.",
+                    );
+                    if let Some(dir) = std::env::current_exe()
+                        .ok()
+                        .and_then(|p| p.parent().map(|d| d.display().to_string()))
+                    {
+                        ui.label(
+                            "To use the faster path, put libmpfr-6.dll and libgmp-10.dll (and \
+                             libgcc_s_seh-1.dll, libwinpthread-1.dll) beside fractadyne.exe, then \
+                             restart:",
+                        );
+                        ui.label(egui::RichText::new(dir).monospace().small());
+                    }
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Arithmetic in use: {}",
+                            fractadyne_core::backend_status_line()
+                        ))
+                        .monospace()
+                        .small(),
+                    );
+                    if warning_suppressed {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("The startup warning about this is hidden.")
+                                    .small()
+                                    .weak(),
+                            );
+                            if ui.small_button("Show it again").clicked() {
+                                unsuppress_warning = true;
+                            }
+                        });
+                    }
                 } else {
                     ui.heading("An optional build is 2.5-6.4x faster at depth");
                     ui.label(
@@ -11083,6 +11132,10 @@ impl FractadyneApp {
                     }
                 });
             });
+        if unsuppress_warning {
+            // Re-enable the startup MPFR-missing warning; the autosave persists it.
+            self.mpfr_warning_suppressed = false;
+        }
         self.dialogs.accelerated_open = open && !close;
     }
 

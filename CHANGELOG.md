@@ -24,7 +24,9 @@ detail is in the git history.
   from (where the DLLs must be copied), lists each download link on its own line, and has a "don't
   show this again" box; if the libraries later appear during the session it says so and notes they
   will be used from the next launch. When the libraries are present the accelerated path is used
-  exactly as before. The package build asserts both halves — that the libraries are
+  exactly as before. Help ▸ "Faster deep zoom" no longer claims MPFR is in use after a fallback —
+  it shows the accelerated build fell back to the built-in arithmetic, names the folder to put the
+  DLLs in, and offers to un-hide the startup warning if it was silenced. The package build asserts both halves — that the libraries are
   delay-imported, and that the binary with its DLLs removed starts and falls back — so a
   regression fails the release rather than shipping. (Windows accelerated build only; the standard
   build and the Linux packages are unaffected.)
