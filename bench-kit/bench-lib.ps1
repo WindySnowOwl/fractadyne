@@ -75,17 +75,26 @@ function Test-RenderHasStructure($path) {
         Add-Type -AssemblyName System.Drawing -ErrorAction Stop
         $bmp = [System.Drawing.Bitmap]::FromFile((Resolve-Path $path).Path)
         try {
-            $first = $null
-            for ($i = 0; $i -lt 32; $i++) {
-                for ($j = 0; $j -lt 32; $j++) {
-                    $x = [int](($bmp.Width  - 1) * $i / 31)
-                    $y = [int](($bmp.Height - 1) * $j / 31)
+            # Demand REAL variation, not just two differing pixels. A near-flat blank with a
+            # handful of stray edge pixels used to pass the old "any two differ" test - that is
+            # exactly how a blank GPU frame got scored as a render. Sample a dense grid and
+            # require many distinct colours AND no single colour dominating, matching
+            # tools/image-structure.py (distinct > 16 and modal share < 0.98).
+            $counts = @{}
+            $total = 0
+            $N = 96
+            for ($i = 0; $i -lt $N; $i++) {
+                for ($j = 0; $j -lt $N; $j++) {
+                    $x = [int](($bmp.Width  - 1) * $i / ($N - 1))
+                    $y = [int](($bmp.Height - 1) * $j / ($N - 1))
                     $c = $bmp.GetPixel($x, $y).ToArgb()
-                    if ($null -eq $first) { $first = $c }
-                    elseif ($c -ne $first) { return $true }
+                    if ($counts.ContainsKey($c)) { $counts[$c]++ } else { $counts[$c] = 1 }
+                    $total++
                 }
             }
-            return $false
+            $modal = 0
+            foreach ($v in $counts.Values) { if ($v -gt $modal) { $modal = $v } }
+            return ($counts.Count -gt 16 -and ($modal / $total) -lt 0.98)
         } finally { $bmp.Dispose() }
     } catch {
         # Unreadable is not the same as flat. Say so rather than silently passing or failing.

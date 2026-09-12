@@ -7,7 +7,7 @@ A reproducible head-to-head of deep-zoom Mandelbrot renderers on **your** hardwa
 | **Fractadyne** | automated | GPU (wgpu: Vulkan/DX12/Metal/GL) | the app this kit ships with |
 | **Fraktaler-3** | automated | CPU (OpenMP, BLA + rebasing) | binary + source included (AGPL-3.0) |
 | **Imagina** | operator-assisted | CPU (MipLA) | no headless mode; you transcribe its reported time |
-| **FractalShark** | automated (CPU path) | GPU (CUDA) | headless CLI renders only its CPU algorithms - see below |
+| **FractalShark** | automated (GPU, 0.541+) | GPU (CUDA) | GPU lane works from 0.541 (adds sm_75; runs on RTX 20/30/40/50); earlier releases were CPU-only here - see below |
 
 Ten single-frame scenes from Fractadyne's cross-validated corpus (each verified pixel-for-pixel
 against Fraktaler-3), spanning 1e6× to 4.6e1105× magnification, plus a **zoom sequence** lane
@@ -119,45 +119,45 @@ benchmark that doesn't say which latest it measured is not reproducible.
 
 ## FractalShark, honestly
 
-FractalShark ships `FractalSharkCli.exe` beside the GUI, so this lane is automated — but what it
-can measure is narrower than it looks, and the kit says so rather than papering over it:
+FractalShark ships `FractalSharkCli.exe` beside the GUI, so this lane is automated. Through 0.54
+its GPU path could not run on this RTX 3080 at all; **0.541 (2026-09-12) fixed that**, and the lane
+now measures real GPU renders. The history and the current caveats, because the kit says so rather
+than papering over it:
 
-- **The release binaries carry GPU code for RTX 40 and 50 series only.** Parsing the CUDA fat
-  binaries in 0.532 and 0.54 (`tools/cuda-arch-inventory.py`) finds PTX and SASS for `sm_89` and
-  `sm_120` and nothing else; PTX cannot run on an older architecture, so on an RTX 3080 (`sm_86`)
-  — or anything older — **no FractalShark GPU kernel can run at all**, and every GPU algorithm
-  returns a flat image at exit 0, in the GUI exactly as in the CLI (the GUI's own "Run Basic Test"
-  wrote 89 flat GPU images and 16 real CPU ones here). The CUDA driver says the same thing
-  directly: `tools/cuda-load-check.py` hands every embedded fat binary to `cuModuleLoadData` on
-  this GPU and all 33 of them (10 + 10 in 0.54, 13 in 0.532) come back `CUDA_ERROR_NO_BINARY_FOR_GPU`
-  (209, "no kernel image is available for execution on the device"). Upstream's README says
-  "RTX 2xxx series or newer ... RTX 3xxx/4xxx/5xxx should all work with recent drivers"; the
-  shipped binaries do not. `AutoSelect` picks a GPU algorithm, so the obvious invocation is
-  silently broken.
-- **The CLI has a second, independent defect**: its GPU results are consumed through an OpenGL
-  texture path that needs a window handle the CLI never creates ("OpenGL context creation FAILED,
-  no rendering will occur" on stderr, exit 0). On a supported card that alone would blank every
-  headless GPU render. Not an argument-parsing bug: the parser is honest (a bad value exits 2 with
-  a message). Upstream CI smoke-tests `Cpu64` only, so it sees neither.
-- **The GUI can be driven without a mouse** — `tools/fractalshark-gui-scene.ps1` is a working
-  prototype: window sized, the Enter Location dialog filled (real, imaginary, zoom, iterations),
-  algorithm and antialiasing chosen by posted menu commands, "Benchmark (5x, full recalc)" writing
-  `BenchmarkResults.txt`, the bitmap saved through the Save As dialog. On a card the release was
-  built for it would give real GPU numbers; here it gives the same flat images as the CLI.
-- **The CPU algorithms work at shallow and mid depth** — verified 1e6 through 1e27 — and come back
-  blank on the deeper corpus locations, regardless of how many digits of centre they are given
-  (40, 60, 100 and 196 all blank; 0.54 the same; forcing a CPU reference orbit with
-  `--perturbation-alg MT` or `MTPeriodicity3` changes nothing). Expect real numbers for the
-  shallow scenes, `DNF-blank` for the rest.
-- Because of that, **no FractalShark row records a time without a picture**: every render is
-  checked for structure first, and a flat image becomes `DNF-blank`. This kit once published
-  "144x faster than Fraktaler-3" for a frame that was entirely empty; never again.
+- **0.541 added `sm_75` code, so the GPU lane runs on RTX 20/30/40/50.** Through 0.54 the release
+  binaries embedded PTX and SASS for `sm_89` and `sm_120` only (`tools/cuda-arch-inventory.py`), so
+  on an RTX 3080 (`sm_86`) — or anything below Ada — no kernel could load: `tools/cuda-load-check.py`
+  handed every fat binary to `cuModuleLoadData` and all 33 came back `CUDA_ERROR_NO_BINARY_FOR_GPU`
+  (209), and every GPU algorithm returned a flat image at exit 0. 0.541 embeds `sm_75` + `sm_89` +
+  `sm_120` (PTX and SASS); the added `sm_75` PTX JIT-compiles onto `sm_86`, all 10 fat binaries now
+  load `CUDA_SUCCESS`, and the GPU renders are real pictures. Pass a GPU algorithm explicitly
+  (`-FractalSharkAlgo GpuHDRx32PerturbedLAv2`); `AutoSelect` picks a non-HDR GPU algorithm that goes
+  flat at deep zoom (blank at 6.6e43 here), so it is the wrong lane default.
+- **The old OpenGL-context warning is now cosmetic.** The CLI still prints "OpenGlContext: null HWND
+  / OpenGL context creation FAILED, no rendering will occur" on stderr, but on 0.541 the GPU output
+  reaches the PNG regardless — the blank-headless-GPU symptom is gone. (Through 0.54 that path, on
+  top of the missing kernels, is why headless GPU renders came back blank.)
+- **`GpuHDRx32PerturbedLAv2` renders most of the corpus; it DNFs on a few by location, not depth.**
+  On this box it renders the scenes from 1e6 through the extreme 4.6e1105 (structure-checked). It
+  comes back flat — `DNF-blank` — on the two period nuclei, the Misiurewicz spar, and one very deep
+  field at 4.2e275, while 4.6e1105 succeeds; so the weakness is specific locations, not raw depth.
+  Its CPU algorithms (e.g. `Cpu64PerturbedBLAV2HDR`) still go blank past ~1e27, so for depth use a
+  GPU algorithm.
+- Because of that, **no FractalShark row records a time without a picture**: every render is checked
+  for structure first, and a flat image becomes `DNF-blank`. This kit once published "144x faster
+  than Fraktaler-3" for a frame that was entirely empty; never again. (The structure check itself
+  was tightened in 2026-09: the old "any two sampled pixels differ" test passed a near-flat blank
+  with a few stray edge pixels; it now requires many distinct colours and no single colour over 98%,
+  matching `tools/image-structure.py`.)
+- **The GUI can also be driven without a mouse** — `tools/fractalshark-gui-scene.ps1` is a working
+  prototype (window sized, Enter Location dialog filled, algorithm and antialiasing set by posted
+  menu commands, "Benchmark (5x, full recalc)" writing `BenchmarkResults.txt`, bitmap saved through
+  Save As). Use it for the GUI's own reported figure; the automated CLI lane is the default now that
+  it produces real GPU numbers.
 
-Comparing FractalShark's CPU path against another renderer's GPU path is not a like-for-like
-statement about the app, which is a CUDA renderer. Say which path produced the number.
-
-For its GPU figures, run the GUI by hand and transcribe them: pass `-FractalSharkExe` with no CLI
-beside it and the kit falls back to the assisted prompt.
+FractalShark is a CUDA renderer, and the automated lane now measures its GPU path. Say which path
+produced a number when you compare — a GPU time against another renderer's GPU time is the
+like-for-like one.
 
 ## The assisted lane, honestly
 

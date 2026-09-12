@@ -41,24 +41,21 @@ param(
     # FractalShark ships a headless renderer, FractalSharkCli.exe, beside the GUI. Point at it to
     # automate the lane; left empty it is looked for next to -FractalSharkExe.
     [string]$FractalSharkCliExe = '',
-    # WARNING: CPU BY DEFAULT, AND THAT IS NOT A PREFERENCE. In FractalShark 0.532 (and still
-    # in 0.54, re-tested 2026-09-08) every GPU
-    # render algorithm returns an EMPTY image on this box for TWO independent reasons: the
-    # release binaries carry CUDA code for sm_89 and sm_120 only (RTX 40/50 series; see
-    # tools/cuda-arch-inventory.py), so on an RTX 3080 no kernel can run, GUI or CLI; and the
-    # CLI's GL consumer needs a window it never creates. Headlessly each pixel comes back with iteration
-    # count 1, the PNG is a single flat colour, and the exit status is 0. The CLI says so itself
-    # on the --console path ("all exterior pixels have the same iteration count 1"), and its
-    # stderr carries "OpenGL context creation FAILED, no rendering will occur" - the GPU results
-    # never reach the image. Upstream CI smoke-tests Cpu64 only, so it does not see this.
-    # AutoSelect picks a GPU algorithm, so the obvious invocation is silently broken.
+    # GPU HDR by default, valid from FractalShark 0.541. That release added sm_75 code (PTX+SASS)
+    # which JITs onto sm_86, so a GPU algorithm now renders real pictures on an RTX 3080; verified
+    # 2026-09-12 (10/10 fat binaries load, GpuHDRx32PerturbedLAv2 renders 1e6 through 4.6e1105).
+    # A leftover "OpenGL context creation FAILED" warning still prints but no longer blanks output.
+    # GpuHDRx32PerturbedLAv2 spans the whole corpus; it DNFs by LOCATION (the two nuclei, the spar,
+    # and 4.2e275), not by depth. Do NOT use AutoSelect: it picks a non-HDR GPU algorithm that goes
+    # flat at deep zoom.
     #
-    # The CPU algorithms render correctly at shallow and mid depth - verified 1e6 through 1e27 -
-    # but ALSO come back blank on the deeper corpus locations (5.07e27, 6.6e43, 1.2e148, 1.47e77,
-    # 4.6e1105), and that is independent of how many digits of centre they are given (40, 60, 100
-    # and 196 all blank). So this lane produces real numbers for the shallow scenes and honest
-    # DNF-blank rows for the rest. That is the point of the guard: never a TIME without an IMAGE.
-    [string]$FractalSharkAlgo = 'Cpu64PerturbedBLAV2HDR'
+    # THROUGH 0.54, every GPU algorithm returned an EMPTY image on this box for two independent
+    # reasons: the release binaries carried CUDA code for sm_89 + sm_120 only (RTX 40/50; see
+    # tools/cuda-arch-inventory.py), so no kernel could run on an RTX 3080; and the CLI's GL
+    # consumer needs a window it never creates. If you must benchmark such an old build, switch to a
+    # CPU algorithm (e.g. Cpu64PerturbedBLAV2HDR) - correct at shallow/mid depth, blank past ~1e27.
+    # Either way the structure guard stands: a flat frame is DNF-blank, never a TIME without an IMAGE.
+    [string]$FractalSharkAlgo = 'GpuHDRx32PerturbedLAv2'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -218,10 +215,11 @@ if ($have.fraktaler3) {
 }
 
 # ---- lane: FractalShark (automated, via FractalSharkCli) ----
-# WARNING: read the algorithm note on -FractalSharkAlgo before changing it. Every GPU algorithm
-# returns a BLANK image headlessly in 0.532 and 0.54, at exit status 0, so this lane checks that a render
-# is actually a PICTURE before it records a TIME. What it measures is FractalShark's CPU path,
-# which must be said wherever the number appears: it is not what the app is for.
+# From 0.541 the GPU lane WORKS on this box (see README "FractalShark, honestly"): the release adds
+# sm_75 code that JITs onto sm_86, so a GPU algorithm now renders real pictures. The default here is
+# a GPU HDR algorithm for that reason. Through 0.54 every GPU algorithm returned a BLANK image
+# headlessly (no sm_86 kernel + an OpenGL-consumer bug), which is why this lane STILL checks that a
+# render is actually a PICTURE before it records a TIME - a flat frame is DNF-blank, never a number.
 if ($have.fractalsharkcli) {
     Write-Host ('FractalShark: automated via ' + (Split-Path $FractalSharkCliExe -Leaf) + ', algorithm ' + $FractalSharkAlgo)
     $wh = $Size -split 'x'
@@ -245,7 +243,7 @@ if ($have.fractalsharkcli) {
             $argLine = ('--render-algorithm {0} --center-x {1} --center-y {2} --zoom {3} --iterations {4} --width {5} --height {6} --antialiasing 1 --out "{7}" --quiet' -f `
                         $FractalSharkAlgo, $kfr['Re'], $kfr['Im'], $zoom, $s.iterations, $wh[0], $wh[1], $stem)
             $r = Invoke-TimedRender $FractalSharkCliExe $argLine $TimeoutS $outDir
-            $note = 'CPU path; its GPU algorithms render blank headlessly (0.532 and 0.54)'
+            $note = if ($FractalSharkAlgo -like 'Gpu*') { 'GPU path (CUDA); needs FractalShark 0.541+ on RTX 20/30' } else { 'CPU path' }
             $status = $r.status
             if ($status -eq 'ok') {
                 if (-not (Test-Path $png)) {
