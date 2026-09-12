@@ -12,6 +12,31 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Snapshot asks what it should be, and a large export can no longer freeze the window**
+  (beta.103). Field case 2026-09-12: the toolbar camera button on a 4.4e21× view started a
+  5120×4035, 4× supersampled EXR at 5,223,168 iterations — the Export dialog's remembered
+  settings from a tour render — synchronously on the main thread: seven minutes of "Not
+  Responding" with no way to cancel, then a GPU device loss. Three changes.
+  *(1) The first press of Snapshot (camera button, File ▸ Snapshot, Ctrl+S) now asks:* **Screen
+  capture** — save the view exactly as it appears, at screen resolution, instantly — or **Full
+  render** at the Export settings, with its size, supersampling and format spelled out and the
+  warning that a deep view can take minutes to hours. "Remember my choice and don't ask again" is
+  ticked by default, and File ▸ Settings ▸ Snapshot changes it later (Ask each time / Screen
+  capture / Full render). The screen capture is a window screenshot cropped to the fractal panel
+  (the bookmark-thumbnail mechanism), written as a PNG carrying the view metadata so it reopens as
+  a location; it costs no render work. *(2) The synchronous export path is gated on WORK, not
+  depth.* Exports used to run inline on the main thread (so glitch correction could apply)
+  whenever the view was shallower than the floatexp threshold, on the assumption that shallow
+  means fast; the cost is pixels × samples × iterations, and this one was 1.7e15 steps. Above
+  5e11 nominal steps — a few seconds of GPU time — an export now takes the background worker
+  regardless of depth, with progress and cancel in File ▸ Export image…, and like the deep path it
+  skips glitch correction and says so in its status. A quick export that goes to the background
+  says so in a toast. *(3) The device-loss crash-report hint no longer says "update your driver
+  first".* This loss happened on the current driver (616.92, NVIDIA Event 153, no TDR recovery),
+  the one the beta.100 hint had called the fix; the hint now asks for a current driver AND for
+  the report and the crash-view file either way, since a loss on a current driver is exactly the
+  capture issue #1 needs.
+
 - **"Find minibrot center" (M) no longer refuses a minibrot it has already found at depth**
   (beta.102). Field report 2026-09-12: at 1.8e122× with a period-1411 minibrot ~19 px from the
   centre, M said "No minibrot center found". Newton had in fact converged to the nucleus in two

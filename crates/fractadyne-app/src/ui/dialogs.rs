@@ -614,6 +614,107 @@ impl FractadyneApp {
         self.goto.open = open && self.goto.open && !close_goto;
     }
 
+    /// The Snapshot button's hover text: says what it WILL do, since that now depends on a setting.
+    pub(crate) fn snapshot_hover_text(&self) -> &'static str {
+        match self.snapshot_mode {
+            crate::SnapshotMode::Ask => "Snapshot — save the view as shown, or a full render; the first press asks (Ctrl+S)",
+            crate::SnapshotMode::Screen => "Snapshot — save the view exactly as shown, to the last export folder (Ctrl+S)",
+            crate::SnapshotMode::Render => "Snapshot — full render at the Export settings, to the last export folder (Ctrl+S)",
+        }
+    }
+
+    /// The first-press Snapshot choice. Two accept buttons (screen capture / full render) and a
+    /// Cancel, with the full render's real cost stated in its own words — size, supersampling,
+    /// format and the warning — because a "quick" camera icon that quietly starts a 5K×ss4 EXR
+    /// at five million iterations is how the 2026-09-12 device loss began. "Remember" is on by
+    /// default (the user asked for a choice that sticks) and reversible in File ▸ Settings.
+    pub(crate) fn draw_snapshot_choice_dialog(&mut self, ctx: &egui::Context) {
+        if !self.dialogs.snapshot_choice_open {
+            return;
+        }
+        let mut open = true;
+        let mut choice: Option<crate::SnapshotMode> = None;
+        let mut cancel = false;
+        let (w, h, ss) = (self.export.width.max(1), self.export_height(), self.export.ss.max(1));
+        let fmt = match self.export.format {
+            crate::ExportFormat::Png => "PNG",
+            crate::ExportFormat::Exr => "EXR",
+        };
+        egui::Window::new("Snapshot")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(480.0)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label("What should Snapshot (the camera button, Ctrl+S) save?");
+                ui.add_space(6.0);
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        if crate::theme::confirm_button(ui, "Screen capture").clicked() {
+                            choice = Some(crate::SnapshotMode::Screen);
+                        }
+                        ui.label(egui::RichText::new("instant").weak().small());
+                    });
+                    ui.label(
+                        "Saves the view exactly as it appears on screen, at screen resolution, as a \
+                         PNG in the last export folder. What you see is what you get.",
+                    );
+                });
+                ui.add_space(4.0);
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        if ui.button("Full render").clicked() {
+                            choice = Some(crate::SnapshotMode::Render);
+                        }
+                        ui.label(egui::RichText::new("may take a long time").weak().small());
+                    });
+                    ui.label(format!(
+                        "Renders at the Export settings — {w}×{h}, {ss}× supersampling, {fmt}. Best \
+                         quality, but a deep view can take minutes to hours. It runs in the \
+                         background; File → Export image… shows progress and can cancel it."
+                    ));
+                });
+                ui.add_space(6.0);
+                ui.checkbox(
+                    &mut self.dialogs.snapshot_choice_remember,
+                    "Remember my choice and don't ask again",
+                );
+                ui.label(
+                    egui::RichText::new("You can change it any time in File → Settings → Snapshot.")
+                        .weak()
+                        .small(),
+                );
+                ui.add_space(4.0);
+                crate::theme::action_row(ui, |ui| {
+                    if crate::theme::cancel_button(ui, "Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if let Some(c) = choice {
+            if self.dialogs.snapshot_choice_remember {
+                self.snapshot_mode = c;
+            }
+            self.dialogs.snapshot_choice_open = false;
+            match c {
+                crate::SnapshotMode::Screen => self.quick_screenshot(),
+                crate::SnapshotMode::Render => {
+                    if let Some((dev, q)) = self.gpu.clone() {
+                        self.quick_export(ctx, dev, q);
+                    } else {
+                        self.set_toast("GPU not available", ctx);
+                    }
+                }
+                crate::SnapshotMode::Ask => {}
+            }
+            return;
+        }
+        self.dialogs.snapshot_choice_open = open && !cancel;
+    }
+
     /// "Share location" (.fdn) dialog — copy/paste/apply/save/load a self-contained location.
     pub(crate) fn draw_share_dialog(&mut self, ctx: &egui::Context) {
         if !self.share.open {

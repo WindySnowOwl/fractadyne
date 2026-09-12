@@ -3460,6 +3460,54 @@ impl AngleUnit {
     pub(crate) const ALL: [AngleUnit; 3] = [AngleUnit::Degrees, AngleUnit::Radians, AngleUnit::Turns];
 }
 
+/// What the Snapshot button (toolbar camera, File ▸ Snapshot, Ctrl+S) does. `Ask` until the user
+/// has chosen: the first press opens a dialog offering the two, with "don't ask again"; File ▸
+/// Settings ▸ Snapshot changes it later. Persisted as a string in the session file.
+///
+/// ⭐Why a choice at all: "Snapshot" used to be a silent full export at the Export dialog's last
+/// settings. Field case 2026-09-12: a camera-icon press on a 4.4e21× view with 5K×ss4 EXR
+/// remembered from a tour render started a 1.7e15-step export on the main thread — seven minutes of
+/// "Not Responding" and then a device loss. A camera icon promises a capture of what is on screen;
+/// the full render is the other, expensive thing, and the user should pick it knowingly.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum SnapshotMode {
+    #[default]
+    Ask,
+    /// Save the central view exactly as shown, at screen resolution (a window screenshot cropped
+    /// to the fractal panel — zero render work, WYSIWYG including overlays).
+    Screen,
+    /// A full export at the Export dialog's settings (size, supersampling, format), in the
+    /// background with progress and cancel in File ▸ Export image…
+    Render,
+}
+
+impl SnapshotMode {
+    pub(crate) const ALL: [SnapshotMode; 3] = [SnapshotMode::Ask, SnapshotMode::Screen, SnapshotMode::Render];
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            SnapshotMode::Ask => "ask",
+            SnapshotMode::Screen => "screen",
+            SnapshotMode::Render => "render",
+        }
+    }
+    /// Unknown spellings (a newer file, a hand edit) fall back to asking — the only value that
+    /// cannot silently do the expensive thing.
+    pub(crate) fn from_str(s: &str) -> Self {
+        match s {
+            "screen" => SnapshotMode::Screen,
+            "render" => SnapshotMode::Render,
+            _ => SnapshotMode::Ask,
+        }
+    }
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            SnapshotMode::Ask => "Ask each time",
+            SnapshotMode::Screen => "Screen capture",
+            SnapshotMode::Render => "Full render",
+        }
+    }
+}
+
 /// Compose a polar centre entry — `x0, y0` offset plus radius `r` at angle `θ` — into the pair of
 /// REAL coordinate EXPRESSIONS the Go-to evaluator already understands: `re = x0 + r·cos θ`,
 /// `im = y0 + r·sin θ`, with `θ` converted to radians for the unit. The fields may themselves be
@@ -4410,6 +4458,11 @@ struct DialogState {
     help_open: bool,
     /// Selected Help section index.
     help_section: usize,
+    /// The first-press Snapshot choice (screen capture vs full render) is showing, and whether
+    /// its "remember, don't ask again" box is ticked (on by default — the user asked for a
+    /// choice that sticks).
+    snapshot_choice_open: bool,
+    snapshot_choice_remember: bool,
     /// Whether the right-hand control panel is shown (persisted).
     right_panel_open: bool,
     /// Minimap overview enabled (persisted).
@@ -4545,6 +4598,14 @@ struct FractadyneApp {
     /// A bookmark-thumbnail SCREENSHOT is in flight (the reply lands next frame as
     /// `egui::Event::Screenshot`); holds the bookmark index it belongs to.
     thumb_shot: Option<usize>,
+    /// What the Snapshot button does (persisted; see [`SnapshotMode`]).
+    snapshot_mode: SnapshotMode,
+    /// A screen-capture snapshot was requested this frame; the shot is fired on the next
+    /// `process_pending_snapshot` once no bookmark thumbnail is in flight (they share the one
+    /// screenshot reply channel).
+    snapshot_request: bool,
+    /// A screen-capture snapshot SCREENSHOT is in flight; holds the file it will be written to.
+    snapshot_shot: Option<std::path::PathBuf>,
     /// The central fractal panel's rect in PHYSICAL pixels ([x, y, w, h]), stored each frame by
     /// the central draw — what the bookmark thumbnail crops out of the window screenshot.
     central_rect_px: [u32; 4],
@@ -5358,6 +5419,8 @@ impl FractadyneApp {
                 accelerated_open: false,
                 help_open: false,
                 help_section: 0,
+                snapshot_choice_open: false,
+                snapshot_choice_remember: true,
                 right_panel_open: s.right_panel_open,
                 minimap: s.minimap,
                 script_export_open: false,
@@ -5410,6 +5473,9 @@ impl FractadyneApp {
             pending_thumb: None,
             heal_thumb: None,
             thumb_shot: None,
+            snapshot_mode: SnapshotMode::from_str(&s.snapshot_mode),
+            snapshot_request: false,
+            snapshot_shot: None,
             central_rect_px: [0, 0, 0, 0],
             thumb_cache: std::collections::HashMap::new(),
             bookmark_name: String::new(),
@@ -6052,6 +6118,7 @@ impl FractadyneApp {
             ui_scale: self.ui_scale,
             theme: self.theme.key().to_string(),
             update_track: self.update_track.as_str().to_string(),
+            snapshot_mode: self.snapshot_mode.as_str().to_string(),
             update_check_on_launch: self.update_check_on_launch,
             show_watermark: self.show_watermark,
             crash_prompt_disabled: self.crash_prompt_disabled,
@@ -12218,11 +12285,9 @@ impl eframe::App for FractadyneApp {
 
         self.harness_frame_hooks(ctx, &gpu, &gpu_name);
 
-        // Ctrl+S → quick export (no dialog) to the last folder.
+        // Ctrl+S → Snapshot: screen capture or full render per the persisted choice (asks first).
         if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::S)) {
-            if let Some((dev, q)) = &gpu {
-                self.quick_export(ctx, dev.clone(), q.clone());
-            }
+            self.snapshot(ctx);
         }
 
         // Esc: stop the autopilot / a playing tour first, otherwise leave fullscreen.
@@ -12463,7 +12528,7 @@ impl eframe::App for FractadyneApp {
         // line when the window is wide enough, and wraps the toolbar below otherwise.
         // (We place the menu buttons directly in the wrapped row rather than via
         // `menu::bar`, which would claim the full width and push the toolbar down.)
-        self.draw_menu_bar(ctx, &gpu);
+        self.draw_menu_bar(ctx);
 
         self.draw_status_bar(ctx);
 
@@ -12494,6 +12559,7 @@ impl eframe::App for FractadyneApp {
         self.poll_update_check(ctx);
         self.draw_update_dialog(ctx);
         self.draw_goto_dialog(ctx);
+        self.draw_snapshot_choice_dialog(ctx);
         self.draw_misiurewicz_explorer(ctx);
         self.draw_share_dialog(ctx);
         // Polled unconditionally (like the tour render): a test keeps running and stays reapable
@@ -12509,6 +12575,7 @@ impl eframe::App for FractadyneApp {
         // Render a just-added bookmark's thumbnail (deferred here for GPU access; the current
         // view still matches the bookmark, since adding it didn't move the view).
         self.process_pending_thumb(ctx);
+        self.process_pending_snapshot(ctx);
         self.process_thumb_heal(ctx);
         // ~1 Hz process-memory poll for the perf panel (deliberately not per-frame).
         if self.perf.mem_poll.is_none_or(|t| t.elapsed().as_secs_f64() > 1.0) {

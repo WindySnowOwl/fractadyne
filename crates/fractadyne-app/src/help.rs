@@ -696,7 +696,13 @@ pub(crate) fn help_shortcuts(ui: &mut egui::Ui) {
     help_kv(ui, "M", "Find minibrot + zoom to it (Newton-Raphson)");
     help_kv(ui, "A", "Auto-zoom autopilot (dive toward detail; any input stops)");
     help_kv(ui, "Esc", "Stop autopilot / a playing tour, or exit fullscreen");
-    help_kv(ui, "Ctrl+S", "Quick export to the last folder");
+    help_kv(
+        ui,
+        "Ctrl+S",
+        "Snapshot to the last export folder — a screen capture of the view as shown, or a full \
+         render at the export settings; the first press asks which, and File → Settings → Snapshot \
+         changes it.",
+    );
     help_kv(ui, "F1 / ?", "Open this help");
 }
 

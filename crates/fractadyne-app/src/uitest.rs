@@ -39,6 +39,12 @@ enum Screen {
     /// screenshot shows the per-field verdict with positions — the thing the old "Invalid input"
     /// line could not, and the thing a passing test cannot show is legible.
     GotoError,
+    /// The first-press Snapshot choice: screen capture or full render, with the remember box.
+    SnapshotChoice,
+    /// The screen-capture snapshot itself, END TO END: request → screenshot reply → cropped PNG on
+    /// disk → the "Saved screen snapshot" toast in this step's capture. Writes into a scratch
+    /// folder under the OS temp dir (`last_dir` is redirected there first), never into Pictures.
+    SnapshotScreen,
     MisiurewiczExplorer,
     /// Drive the explorer's REAL jump path: select the antenna tip, solve it to 1e6×, land.
     /// The capture waits for the landing; the check pins where the viewport ended up.
@@ -656,6 +662,8 @@ fn build_steps() -> Vec<Step> {
         screen("gallery", Screen::Gallery),
         screen("goto", Screen::Goto),
         screen("goto-error", Screen::GotoError),
+        screen("snapshot-choice", Screen::SnapshotChoice),
+        screen("snapshot-screen", Screen::SnapshotScreen),
         screen("misiurewicz-explorer", Screen::MisiurewiczExplorer),
         screen("misiurewicz-jump", Screen::MisiurewiczJump),
         screen("share", Screen::Share),
@@ -1002,6 +1010,8 @@ impl FractadyneApp {
         self.diagnostics.open = false;
         self.misi.open = false;
         self.dialogs.minimap = false;
+        // The Snapshot choice is a window too (found standing behind the snapshot-screen step).
+        self.dialogs.snapshot_choice_open = false;
         // The Reference cache screen turns the (task-invocation-disabled) orbit cache on against a
         // scratch store; no later step may render from it, so it goes back off with the window.
         crate::refcache_persist::set_enabled(false);
@@ -1055,6 +1065,13 @@ impl FractadyneApp {
                 self.goto.y = "0.25i".into();
                 self.goto.zoom = "abc".into();
                 self.apply_goto(); // fails, and leaves its verdict in the dialog
+            }
+            Screen::SnapshotChoice => self.dialogs.snapshot_choice_open = true,
+            Screen::SnapshotScreen => {
+                let dir = std::env::temp_dir().join("fractadyne-uitest-snapshots");
+                let _ = std::fs::create_dir_all(&dir);
+                self.export.last_dir = Some(dir);
+                self.quick_screenshot();
             }
             Screen::MisiurewiczExplorer => self.open_misiurewicz_explorer(),
             Screen::MisiurewiczJump => {

@@ -1188,9 +1188,13 @@ impl FractadyneApp {
         self.start_export_to(ctx, device, queue, path);
     }
 
-    /// Quick export (hotkey): no dialog — save to the last-used folder with an auto name.
+    /// Quick export (the Snapshot button's "full render"): no dialog — save to the last-used
+    /// folder with an auto name, at the Export dialog's settings. A render that goes to the
+    /// background says so in a toast, since the Export dialog (where the progress bar lives) is
+    /// not open; a synchronous one toasts its result.
     pub(crate) fn quick_export(&mut self, ctx: &egui::Context, device: eframe::wgpu::Device, queue: eframe::wgpu::Queue) {
         if self.export.task.is_some() || self.export.prep.is_some() {
+            self.set_toast("An export is already running — File → Export image… shows its progress.", ctx);
             return;
         }
         let dir = self
@@ -1200,6 +1204,106 @@ impl FractadyneApp {
             .unwrap_or_else(Self::pictures_dir);
         let path = dir.join(self.export_default_name());
         self.start_export_to(ctx, device, queue, path);
+        let msg = if self.export.task.is_some() || self.export.prep.is_some() {
+            format!(
+                "Snapshot: rendering {}×{} in the background — File → Export image… shows progress and can cancel it.",
+                self.export.width.max(1),
+                self.export_height()
+            )
+        } else {
+            self.export.status.clone().unwrap_or_default()
+        };
+        if !msg.is_empty() {
+            self.set_toast(msg, ctx);
+        }
+    }
+
+    /// The Snapshot button (toolbar camera, File ▸ Snapshot, Ctrl+S): per the persisted choice —
+    /// ask on the first press, or capture the screen, or start a full render.
+    pub(crate) fn snapshot(&mut self, ctx: &egui::Context) {
+        match self.snapshot_mode {
+            crate::SnapshotMode::Ask => self.dialogs.snapshot_choice_open = true,
+            crate::SnapshotMode::Screen => self.quick_screenshot(),
+            crate::SnapshotMode::Render => {
+                if let Some((dev, q)) = self.gpu.clone() {
+                    self.quick_export(ctx, dev, q);
+                } else {
+                    self.set_toast("GPU not available", ctx);
+                }
+            }
+        }
+    }
+
+    /// Screen-capture snapshot: save the central view exactly as it appears, at screen resolution.
+    /// Two-phase like the bookmark thumbnails (request now, harvest the `egui::Event::Screenshot`
+    /// reply next frame) — see `process_pending_snapshot`. Zero render work.
+    pub(crate) fn quick_screenshot(&mut self) {
+        self.snapshot_request = true;
+    }
+
+    /// Where a screen-capture snapshot goes: the last export folder (else Pictures), named like
+    /// an export but always PNG — a screenshot is 8-bit by construction, so EXR would be a lie.
+    fn snapshot_path(&self) -> std::path::PathBuf {
+        let dir = self
+            .export.last_dir
+            .clone()
+            .filter(|d| d.is_dir())
+            .unwrap_or_else(Self::pictures_dir);
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        dir.join(crate::export_file_name(self.fractal.name(), secs, "png"))
+    }
+
+    /// Fire a requested screen-capture snapshot and harvest its reply. The window screenshot is
+    /// cropped to the central fractal panel (`central_rect_px`, the same crop the bookmark
+    /// thumbnails use) and written as an 8-bit PNG carrying the view metadata, so the file
+    /// reopens as a location like any export. One shot in flight at a time, and never while a
+    /// bookmark thumbnail is — both harvest the one `Screenshot` event stream.
+    pub(crate) fn process_pending_snapshot(&mut self, ctx: &egui::Context) {
+        if let Some(path) = self.snapshot_shot.clone() {
+            let shot = ctx.input(|inp| {
+                inp.events.iter().find_map(|e| match e {
+                    egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                    _ => None,
+                })
+            });
+            let Some(img) = shot else { return };
+            self.snapshot_shot = None;
+            let (iw, ih) = (img.size[0] as u32, img.size[1] as u32);
+            let (x0, y0, cw, chh) = crate::thumb_crop(self.central_rect_px, iw, ih);
+            let mut rgba = Vec::with_capacity((cw * chh * 4) as usize);
+            for y in y0..y0 + chh {
+                let row = &img.pixels[(y * iw + x0) as usize..(y * iw + x0 + cw) as usize];
+                for p in row {
+                    rgba.extend_from_slice(&p.to_array());
+                }
+            }
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let meta = self.view_metadata();
+            let msg = match fractadyne_export::write_png_rgba8(&path, cw, chh, &rgba, Some(&meta)) {
+                Ok(()) => {
+                    self.remember_dir(&path);
+                    if let Some(parent) = path.parent() {
+                        self.export.last_dir = Some(parent.to_path_buf());
+                    }
+                    format!("Saved screen snapshot {cw}×{chh} → {}", path.display())
+                }
+                Err(e) => format!("Snapshot failed: {e}"),
+            };
+            crate::diag::breadcrumb(msg.clone());
+            self.export.status = Some(msg.clone());
+            self.set_toast(msg, ctx);
+            return;
+        }
+        if self.snapshot_request && self.thumb_shot.is_none() {
+            self.snapshot_request = false;
+            self.snapshot_shot = Some(self.snapshot_path());
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
     }
 
     /// Stamp the "Fd" mark into a linear RGBA image buffer if the watermark is enabled and built.
@@ -1211,6 +1315,32 @@ impl FractadyneApp {
         }
     }
 
+    }
+
+/// Nominal work of an export, in iteration steps: samples (pixels × ss²) × iterations — the unit
+/// every dispatch budget in this codebase is priced in. Saturating, so an absurd request cannot
+/// wrap to "cheap".
+pub(crate) fn export_nominal_steps(width: u32, height: u32, ss: u32, max_iter: u32) -> u64 {
+    (width as u64)
+        .saturating_mul(height as u64)
+        .saturating_mul((ss as u64).saturating_mul(ss as u64))
+        .saturating_mul(max_iter as u64)
+}
+
+/// Above this nominal work an export never takes the synchronous main-thread path, whatever its
+/// depth. 5e11 steps is a few seconds at the ~1e11 steps/s a mid-range GPU manages in the
+/// perturbation modes — the longest the window may plausibly freeze for a "quick" save — and it
+/// is 3,400× below the 2026-09-12 field case (1.7e15) that froze the UI for seven minutes and
+/// then lost the device. Reached at, e.g., 3840×2160 with 2× supersampling above ~15,000
+/// iterations, or a 1080p export past ~240,000.
+pub(crate) const SYNC_EXPORT_MAX_STEPS: u64 = 500_000_000_000;
+
+/// Is this export too much work for the synchronous (main-thread, glitch-corrected) path?
+pub(crate) fn export_is_heavy(nominal_steps: u64) -> bool {
+    nominal_steps > SYNC_EXPORT_MAX_STEPS
+}
+
+impl FractadyneApp {
     /// Render one export view — glitch-corrected when enabled and applicable, else the plain path.
     /// `vp` + `julia` identify the view (correction maps glitched pixels back to coordinates to seed
     /// fresh references). Correction is synchronous (multi-pass GPU + readback), so this must run on
@@ -1529,7 +1659,18 @@ impl FractadyneApp {
         // Works for single AND dual (the dual Julia panel is usually shallow and builds instantly in
         // the poll). Glitch correction is skipped at this depth (its multi-pass re-render would
         // re-block the UI); shallower exports keep the synchronous path below (fast; correction applies).
-        if self.viewport.magnification() >= crate::PERT_FE_THRESHOLD {
+        //
+        // ⭐⭐**"Shallow" was a proxy for "fast", and the proxy failed.** Depth alone chose the path;
+        // the cost is pixels × samples × iterations. Field case 2026-09-12: 4.4e21× (below the
+        // threshold) at 5120×4035, ss 4, 5,223,168 iterations = 1.7e15 nominal steps went down the
+        // synchronous path — seven minutes of "Not Responding" on the main thread, then a device
+        // loss with no way to cancel. The gate is now depth OR estimated work (`export_is_heavy`):
+        // a heavy export takes the worker path (progress + cancel), and like the deep path it skips
+        // glitch correction, which is stated in the status rather than silently dropped.
+        let (ew, eh, ess) = (self.export.width.max(1), self.export_height(), self.export.ss.max(1));
+        let eiter = self.export_eff_iter(&self.viewport, !self.dual && self.julia_mode);
+        let heavy = export_is_heavy(export_nominal_steps(ew, eh, ess, eiter));
+        if self.viewport.magnification() >= crate::PERT_FE_THRESHOLD || heavy {
             let map_julia = !self.dual && self.julia_mode; // the dual map panel is Mandelbrot
             // The reference is for the view on screen, so the current settings are the right ones.
             let budget = crate::render::IterBudget::current(self);
@@ -1542,8 +1683,14 @@ impl FractadyneApp {
                     dual_mode: self.export.dual_mode,
                     path,
                 });
-                self.export.status =
-                    Some("Preparing deep export — building reference (this can take a while)…".to_string());
+                self.export.status = Some(if heavy {
+                    format!(
+                        "Large export ({ew}×{eh}, {ess}× supersampling, {eiter} iterations) — \
+                         rendering in the background; glitch correction is skipped for exports this size…"
+                    )
+                } else {
+                    "Preparing deep export — building reference (this can take a while)…".to_string()
+                });
                 return;
             }
         }
@@ -1558,7 +1705,9 @@ impl FractadyneApp {
         // Glitch correction re-renders per reference (synchronous, main thread), so it runs here
         // rather than on the tiled worker. Handles single + dual layouts; falls back to the threaded
         // path for aux coloring methods or views past the ~32 MP / single-texture correction limit.
-        if self.render_cfg.glitch_correct {
+        // Never for a heavy export (see above): a direct-mode view has no reference to prepare, so
+        // it lands here, and the synchronous path would freeze the UI for the whole render.
+        if self.render_cfg.glitch_correct && !heavy {
             if let Some(msg) = self.export_corrected_sync(&device, &queue, &path, &job, hud.as_ref()) {
                 self.export.status = Some(self.finish_export_status(msg));
                 return;

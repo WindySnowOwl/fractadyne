@@ -526,9 +526,12 @@ pub(crate) fn write_crash_report(msg: &str) {
 }
 
 /// The crash-report `hint:` line for a GPU device-loss crash, or `""` for any other crash. A device
-/// loss is very often a DRIVER bug, not anything the app can bound — the 2026-09-11 parabolic-point
-/// loss was deterministic on NVIDIA Vulkan 596.21 and gone on 616.92, no code change — so the report
-/// points the reader at a driver update FIRST. A panic or OOM gets no such line (it would be noise).
+/// loss can be a DRIVER bug — the 2026-09-11 parabolic-point loss was deterministic on NVIDIA
+/// Vulkan 596.21 and gone on 616.92, no code change — but not always: the 2026-09-12 loss during a
+/// 5K×ss4 export at 5.2M iterations happened ON 616.92 (nvlddmkm Event 153, no TDR recovery). So the
+/// hint asks for a current driver AND for the report either way, rather than "update first" — a
+/// loss on a current driver is exactly the capture issue #1 needs. A panic or OOM gets no such
+/// line (it would be noise).
 pub(crate) fn device_loss_hint(msg: &str) -> &'static str {
     let m = msg.to_ascii_lowercase();
     // Real device-loss crashes always carry the wgpu wrapper "device lost" (main.rs), but match the
@@ -540,9 +543,11 @@ pub(crate) fn device_loss_hint(msg: &str) -> &'static str {
         || m.contains("device_removed")
         || m.contains("deviceremoved")
     {
-        "hint    : This is a GPU device loss. Update your graphics driver to the latest version \
-         first; a fair share of these are driver bugs, not app faults. If it persists, please \
-         attach this report to https://github.com/WindySnowOwl/fractadyne/issues/1\n"
+        "hint    : This is a GPU device loss. Some of these are graphics-driver bugs (one was \
+         fixed by a driver update alone), so make sure your driver is current — but not all are, \
+         and a loss on a current driver is exactly the capture we need. Either way, please attach \
+         this report and the crash-view .fdn beside it to \
+         https://github.com/WindySnowOwl/fractadyne/issues/1\n"
     } else {
         ""
     }

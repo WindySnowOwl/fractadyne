@@ -1042,6 +1042,39 @@ fn polar_fields_are_validated_by_name_before_composition() {
     assert!(lines[1].starts_with("θ: ") && lines[1].contains("radians"), "{}", lines[1]);
 }
 
+/// The synchronous (main-thread, glitch-corrected) export path is gated on estimated WORK, not on
+/// depth alone. The 2026-09-12 field case — 5120×4035, ss 4, 5,223,168 iterations at 4.4e21×,
+/// below the depth threshold — must read as heavy; an ordinary quick save must not.
+#[test]
+fn export_work_gate_separates_the_field_case_from_a_quick_save() {
+    use crate::export::{export_is_heavy, export_nominal_steps, SYNC_EXPORT_MAX_STEPS};
+    let field = export_nominal_steps(5120, 4035, 4, 5_223_168);
+    assert!(field > 1_000 * SYNC_EXPORT_MAX_STEPS, "field case {field} is not overwhelmingly heavy");
+    assert!(export_is_heavy(field));
+    // A 1080p PNG at a shallow view's iteration count is the quick save the sync path exists for.
+    assert!(!export_is_heavy(export_nominal_steps(1920, 1080, 1, 5_000)));
+    // 4K at 2× supersampling turns heavy past ~15,000 iterations — a deep view's ordinary count.
+    assert!(!export_is_heavy(export_nominal_steps(3840, 2160, 2, 10_000)));
+    assert!(export_is_heavy(export_nominal_steps(3840, 2160, 2, 20_000)));
+    // Saturating: an absurd request cannot wrap around to "cheap".
+    assert!(export_is_heavy(export_nominal_steps(u32::MAX, u32::MAX, u32::MAX, u32::MAX)));
+}
+
+/// The Snapshot mode round-trips through the session file's string, and anything unrecognised
+/// falls back to ASKING — the only value that cannot silently start the expensive render.
+#[test]
+fn snapshot_mode_round_trips_and_unknown_means_ask() {
+    for m in crate::SnapshotMode::ALL {
+        assert_eq!(crate::SnapshotMode::from_str(m.as_str()), m);
+        assert!(!m.label().is_empty());
+    }
+    assert_eq!(crate::SnapshotMode::from_str(""), crate::SnapshotMode::Ask);
+    assert_eq!(crate::SnapshotMode::from_str("quick"), crate::SnapshotMode::Ask);
+    // A fresh session file asks.
+    let s: fractadyne_state::SessionState = toml::from_str("").unwrap_or_default();
+    assert_eq!(crate::SnapshotMode::from_str(&s.snapshot_mode), crate::SnapshotMode::Ask);
+}
+
 /// The centre expression is preserved only when it can actually gain precision: a pair of plain
 /// decimals is capped at the digits typed, so nothing a deeper zoom could recover, while a rational
 /// or a transcendental is re-derivable. And re-deriving a kept expression deeper genuinely narrows

@@ -186,11 +186,7 @@ impl FractadyneApp {
         }
     }
 
-    pub(crate) fn draw_menu_bar(
-        &mut self,
-        ctx: &egui::Context,
-        gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
-    ) {
+    pub(crate) fn draw_menu_bar(&mut self, ctx: &egui::Context) {
         let top = egui::TopBottomPanel::top("topbar").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                     // The id egui keys this row's `menu_button` open-state (`BarState`) under —
@@ -214,12 +210,10 @@ impl FractadyneApp {
                         }
                         if ui
                             .button(format!("{}  Snapshot  (Ctrl+S)", crate::icons::SNAPSHOT))
-                            .on_hover_text("Quick-export to the last-used folder, no dialog")
+                            .on_hover_text(self.snapshot_hover_text())
                             .clicked()
                         {
-                            if let Some((dev, q)) = gpu {
-                                self.quick_export(ctx, dev.clone(), q.clone());
-                            }
+                            self.snapshot(ctx);
                             ui.close_menu();
                         }
                         ui.separator();
@@ -282,6 +276,21 @@ impl FractadyneApp {
                                     "Check for updates on launch",
                                 )
                                 .on_hover_text("Otherwise, check manually via Help → Check for updates.");
+                            });
+                            ui.separator();
+                            // What the camera button does. The first press asks; this is where the
+                            // answer lives afterwards, so "don't ask again" is never a trap.
+                            menu_section(ui, "Snapshot (Ctrl+S)", |ui| {
+                                ui.horizontal(|ui| {
+                                    for m in crate::SnapshotMode::ALL {
+                                        ui.selectable_value(&mut self.snapshot_mode, m, m.label())
+                                            .on_hover_text(match m {
+                                                crate::SnapshotMode::Ask => "Offer the choice on every press",
+                                                crate::SnapshotMode::Screen => "Save the view exactly as it appears on screen (instant, PNG)",
+                                                crate::SnapshotMode::Render => "A full render at the Export settings, in the background (can take a long time on deep views)",
+                                            });
+                                    }
+                                });
                             });
                             ui.separator();
                             // Opens another surface, so no verb of its own and no icon (§8.1).
@@ -936,14 +945,8 @@ impl FractadyneApp {
                 if ui.button(crate::icons::SAVE).on_hover_text("Export image…").clicked() {
                     self.export.open = true;
                 }
-                if ui
-                    .button(crate::icons::SNAPSHOT)
-                    .on_hover_text("Snapshot — quick export to the last folder (Ctrl+S)")
-                    .clicked()
-                {
-                    if let Some((dev, q)) = gpu {
-                        self.quick_export(ctx, dev.clone(), q.clone());
-                    }
+                if ui.button(crate::icons::SNAPSHOT).on_hover_text(self.snapshot_hover_text()).clicked() {
+                    self.snapshot(ctx);
                 }
                 // ⭐Share location sits with the FILE actions, not with navigation, even though
                 // its menu entry lives under Navigate (a location is a PLACES concern there). On

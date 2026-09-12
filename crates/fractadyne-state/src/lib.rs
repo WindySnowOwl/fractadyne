@@ -138,6 +138,12 @@ pub struct SessionState {
     pub export_ss: u32,
     #[serde(default = "default_export_format")]
     pub export_format: String,
+    /// What the Snapshot button (Ctrl+S) does: `"ask"` (the default — the first press offers the
+    /// choice), `"screen"` (save the view exactly as shown) or `"render"` (a full export at the
+    /// export settings, in the background). Set by the first-press dialog when the user asks not
+    /// to be asked again; changeable in File ▸ Settings ▸ Snapshot.
+    #[serde(default = "default_snapshot_mode")]
+    pub snapshot_mode: String,
     /// Last directory an export was saved to; `None` until the first export.
     #[serde(default)]
     pub export_dir: Option<String>,
@@ -412,6 +418,10 @@ fn default_export_ss() -> u32 {
     2
 }
 
+fn default_snapshot_mode() -> String {
+    "ask".to_string()
+}
+
 fn default_export_format() -> String {
     "png".to_string()
 }
@@ -491,6 +501,7 @@ impl Default for SessionState {
             export_width: default_export_width(),
             export_ss: default_export_ss(),
             export_format: default_export_format(),
+            snapshot_mode: default_snapshot_mode(),
             export_dir: None,
             last_dir: None,
             last_script: None,
