@@ -215,9 +215,25 @@ const CHUNK_CHEAP_MS: f64 = 100.0;
 /// where the true serial chain rate is lower, the FIRST hot chunk halves the window and raises
 /// the high-water mark, so subsequent openings tighten; the exposure is one bounded overshoot.
 const CHUNK_SERIAL_FLOOR_IPMS: f64 = 1000.0;
-/// Window floor: keeps the pass count bounded (a 4M ask is at most ~244 passes) — per-pass fixed
-/// overhead is ~1 ms, so the floor bounds chunking overhead well under the serial work it prices.
+/// Window floor in the NORMAL cost regime: keeps the pass count bounded (a 4M ask is at most
+/// ~244 passes) — per-pass fixed overhead is ~1 ms, so the floor bounds chunking overhead well
+/// under the serial work it prices.
+///
+/// ⚠⚠**This is a SOFT floor — it yields to the hot budget** (see [`ChunkPricer::window_floor`]).
+/// Device loss 2026-09-12: at a deep rebase-heavy interior view (mode 0, ~5.2M iters, 5K×ss4) the
+/// serial cost hit ~0.107 ms/iter, so even the minimum 16,384-iter window cost **~1,750 ms** — 4.4×
+/// the 400 ms target and past the ~2 s driver watchdog. The pricer had correctly computed a
+/// ~3,700-iter window from the observed rate, but `.max(CHUNK_MIN_ITERS)` inflated it back to the
+/// lethal 16,384 every pass, and the device was lost after ~500 s of ~1.8 s chunks (reproduced
+/// headlessly, exit-2, twice). A fixed iteration floor is a fixed floor on cost only if the
+/// per-iteration cost is bounded, and it is not. The floor now drops below 16,384 exactly when the
+/// worst observed serial rate says 16,384 iters would exceed `CHUNK_HOT_MS`.
 const CHUNK_MIN_ITERS: u32 = 16_384;
+/// The HARD floor: the window never drops below this however hot the location, so the pass count
+/// stays bounded even in a pathological interior (a 5.2M ask is then at most ~20k passes). If a
+/// single 256-iter dispatch still exceeds the watchdog, only lowering the RESOLUTION can help, and
+/// that is the frame-cost controller's job, not the chunker's.
+const CHUNK_ABS_MIN: u32 = 256;
 
 /// Cross-tile pricing state for the chunked iterate. One per render; both tiled loops carry it.
 pub(crate) struct ChunkPricer {
@@ -231,11 +247,25 @@ impl ChunkPricer {
     pub(crate) fn new() -> Self {
         Self { worst_ms_per_iter: 1.0 / CHUNK_SERIAL_FLOOR_IPMS }
     }
+    /// The window floor for the current worst observed rate. Normally [`CHUNK_MIN_ITERS`], but
+    /// when the worst serial rate says that many iters would exceed [`CHUNK_HOT_MS`] it yields
+    /// down to the hot-budget window — never below the hard [`CHUNK_ABS_MIN`]. This is what lets a
+    /// deep interior view price a sub-16k window instead of pinning at a lethal floor (device loss
+    /// 2026-09-12). In the normal cost regime `hot_window >= CHUNK_MIN_ITERS`, so the floor is
+    /// exactly `CHUNK_MIN_ITERS` and every window size — and therefore every rendered pixel — is
+    /// unchanged (`render_iter_chunked` is bit-identical for any window; the IterChunk goldens
+    /// pin that).
+    fn window_floor(&self) -> u32 {
+        let hot_window = (CHUNK_HOT_MS / self.worst_ms_per_iter) as u32;
+        CHUNK_MIN_ITERS.min(hot_window).max(CHUNK_ABS_MIN)
+    }
     /// Opening window for a tile: the largest window that stays under `CHUNK_HOT_MS` even if some
-    /// pixel runs it fully serial at the worst rate seen so far.
+    /// pixel runs it fully serial at the worst rate seen so far. No `CHUNK_MIN_ITERS` floor here —
+    /// `w` already IS that budget window, and flooring it UP is precisely what made a hot location
+    /// lethal; the hard `CHUNK_ABS_MIN` still bounds the pass count.
     pub(crate) fn open(&self, max_iter: u32) -> u32 {
         let w = (CHUNK_HOT_MS / self.worst_ms_per_iter) as u32;
-        w.max(CHUNK_MIN_ITERS).min(max_iter.max(1))
+        w.max(CHUNK_ABS_MIN).min(max_iter.max(1))
     }
     /// Record a chunk's measured wall. Garbage walls (NaN/negative) are ignored.
     pub(crate) fn observe(&mut self, window: u32, wall_ms: f64) {
@@ -245,7 +275,10 @@ impl ChunkPricer {
     }
     /// Next window within the same tile: halve hot, double cheap, hold the band between. Doubling
     /// past the opening bound is allowed on purpose — within one tile the pixels are the same, so
-    /// a cheap chunk is direct evidence the survivors are skipping, not grinding.
+    /// a cheap chunk is direct evidence the survivors are skipping, not grinding. The floor is the
+    /// rate-aware [`window_floor`](Self::window_floor) — `run_tile` calls `observe` before `next`,
+    /// so the worst rate is current — which is what actually lets a hot chunk shrink below 16,384
+    /// instead of halving down and being floored straight back up.
     pub(crate) fn next(&self, window: u32, wall_ms: f64, max_iter: u32) -> u32 {
         let next = if !wall_ms.is_finite() || wall_ms < 0.0 {
             window
@@ -256,7 +289,7 @@ impl ChunkPricer {
         } else {
             window
         };
-        next.max(CHUNK_MIN_ITERS.min(max_iter.max(1))).min(max_iter.max(1))
+        next.max(self.window_floor().min(max_iter.max(1))).min(max_iter.max(1))
     }
 }
 

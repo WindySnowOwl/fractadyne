@@ -742,6 +742,29 @@ Mockups: [design/mockups/](design/mockups/).
 
 ## Open bugs
 
+- [ ] 🔴⭐⭐**Deep full-quality export: fixed per-dispatch cost + a sustained-load device loss**
+  (2026-09-12, from the export device loss reproduced headlessly — issue #1). The chunk-window
+  floor fix (beta.104) removed the *lethal-chunk* mechanism: the base pass of the 5120×4035 ss4,
+  5.2M-iter export at 4.37e21× now survives where it died at 8.5 min. Two things remain, and
+  neither is a window-size problem:
+  - **Fixed per-dispatch cost.** Fitting the traced chunk walls, `wall ≈ 1000 ms + window×0.045 ms`
+    at this location; the ~1 s fixed term is independent of window and **rises with depth** (1031 →
+    1103 → up to **1830 ms** at the 256-iter hard floor in the deep tail). Window-splitting bottoms
+    out against it. The lever is **smaller TILES** (fewer pixels/dispatch ⇒ less fixed per-dispatch
+    cost) — split the pixel axis, not only the iteration axis, when the fixed term is high. This is
+    a bigger change than the pricer (the tiled export loop assumes a fixed tile size). ⚠at
+    5120×4035×ss4 the sample grid is 20480×16140, which FITS one 32768-max texture ⇒ likely ONE
+    giant tile, so the fixed cost is a whole-frame state-texture round-trip per dispatch.
+  - **A late loss on a SMALL dispatch.** The uncapped rerun ran **149 min**, cleared the base pass,
+    got deep into glitch correction (16,815 × 19×19 tiles, each ≤118 ms), and **then** lost the
+    device on one of those tiny safe dispatches. `nvlddmkm` **Event 153**, no TDR recovery, **4× in
+    6 h** on driver 616.92. A dispatch that small cannot be the watchdog ⇒ this is a sustained-load
+    / thermal / driver-stability fault that no dispatch-sizing can bound. ⭐Next, cheap, non-code:
+    the box has **EVGA Precision X1** registered as an implicit Vulkan layer (an OC/fan tool) — rerun
+    at **stock clocks** (and once on **DX12**, `WGPU_BACKEND=dx12`, to test Vulkan-specificity) before
+    spending more on the app side. ⚠each rerun is ~2.5 h of GPU and CAN take the user's live app down
+    — ask first.
+
 - [ ] ▶⭐⭐**PARAMETRIC GRADIENT EDITING — P1, P2 and P3′ SHIPPED; ▶P4′ (Bézier kind 5) IS NEXT.**
   Plan, traps and phases are in **`design/gradient-curves.md`** §8, and the **editor redesign that
   shipped as P3′ is §9** — including the five decisions P4′ has to honour; read both first.

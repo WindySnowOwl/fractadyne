@@ -12,6 +12,27 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A deep export's chunk pricer can shrink its dispatch below the old 16,384-iteration floor —
+  removing one device-loss mechanism** (beta.104). The export renders each tile in bounded chunks
+  over the iteration axis, sizing each chunk to stay near a 400 ms wall so no single GPU dispatch
+  trips the ~2 s driver watchdog. But the window had a hard floor of 16,384 iterations, and at a
+  deep rebase-heavy interior view a single 16,384-iteration chunk costs far more than 400 ms: at the
+  location behind the 2026-09-12 export device loss (5120×4035, ss 4, 5.2M iterations, 4.37e21×,
+  mode 0) it measured **~1,750 ms per chunk** and climbing, past the watchdog, and the pricer —
+  which had correctly computed a ~3,700-iteration window from the observed rate — was pinning it
+  back at 16,384 every pass. The floor is now **soft**: it yields below 16,384 exactly when the
+  worst observed serial rate says that many iterations would exceed the 400 ms budget, down to a
+  hard floor of 256 that keeps the pass count bounded. Verified by reproducing the loss headlessly
+  (device lost at ~520 s, twice) and confirming the fixed build clears the whole base pass that used
+  to die there. **No rendered pixel changes** — the chunker is bit-identical for any window size (a
+  property the IterChunk goldens pin), so this only changes how the iteration range is subdivided.
+  This does **not** fully fix deep full-quality export: the per-dispatch cost has a large fixed term
+  (~1 s at this location, rising with depth) that window-splitting bottoms out against, and a 2.5-hour
+  full run still lost the device late in glitch correction on a small, safe dispatch — a
+  sustained-load / driver signature (`nvlddmkm` Event 153, no watchdog recovery, on the current
+  driver). Both are tracked in TODO.md and issue #1; the next lever is tiling the pixel axis, not
+  only the iteration axis.
+
 - **Snapshot asks what it should be, and a large export can no longer freeze the window**
   (beta.103). Field case 2026-09-12: the toolbar camera button on a 4.4e21× view started a
   5120×4035, 4× supersampled EXR at 5,223,168 iterations — the Export dialog's remembered
