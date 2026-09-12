@@ -61,6 +61,27 @@ its "sequence" is N processes and its amortisation is 1.0 *by construction*. Tha
 of the command-line interface, not of its engine — F3 has zoom-sequence and exponential-map
 machinery this lane cannot reach. Do not quote it as an engine ceiling.
 
+## The cutoff-crossing lane
+
+Fractadyne switches arithmetic at fixed magnifications — direct→df32 at 1e4, df32→floatexp at 1e28,
+and there is an f64 magnitude edge near 1e308 — and a switch mid-dive is where the reference-reuse,
+prefetch and mode-transition code is most likely to break. `tools/gen-crossing-tours.py` generates
+N-frame tours whose zoom sweeps a band straddling one cutoff at a fixed hard center (the committed
+set lives in `tours/crossing/`: seahorse across 1e4, the Misiurewicz spar and a period-148 nucleus
+across 1e28, a deep field across 1e308). Two harnesses consume them:
+
+- `tools/cutoff-validate.py TOUR` — a Fractadyne correctness gate. Renders the tour twice through the
+  identical `--render-tour` path, reuse OFF (cold oracle) vs reuse ON (warm/sequenced), and diffs
+  every frame: they must be bit-identical, or a caching optimization changed the picture. Then runs
+  `--livetest` for the live/multithreaded path.
+- `tools/crossing-bench.py` — the cross-renderer lane. Drives each renderer through the SAME per-frame
+  views at one sample per pixel: Fractadyne as a sequence (`--render-tour`, plus singles for the
+  amortisation denominator), Fraktaler-3 and FractalShark one process per frame. Every frame is
+  structure-checked, so a blank render is `DNF-blank`, never a time — FractalShark, for instance,
+  renders the seahorse band but comes back blank on the spar and nucleus (a per-location limit).
+  Run `python tools/crossing-bench.py --fractadyne <exe> [--fraktaler3 <exe> --f3-wisdom <toml>]
+  [--fractalshark-cli <exe>] [--size 3840x2160]`.
+
 ## Fairness protocol
 
 - Plug in, high-performance power plan, close other GPU/CPU-heavy apps.
