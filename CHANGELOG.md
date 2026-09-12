@@ -26,7 +26,10 @@ detail is in the git history.
   will be used from the next launch. When the libraries are present the accelerated path is used
   exactly as before. Help ▸ "Faster deep zoom" no longer claims MPFR is in use after a fallback —
   it shows the accelerated build fell back to the built-in arithmetic, names the folder to put the
-  DLLs in, and offers to un-hide the startup warning if it was silenced. The package build asserts both halves — that the libraries are
+  DLLs in, and offers to un-hide the startup warning if it was silenced. And a genuine change of
+  state across launches — the libraries appearing after a fallback, or disappearing after they were
+  in use — is always announced (the accelerated build remembers the previous state), even when the
+  recurring warning has been silenced, because a change is news rather than nagging. The package build asserts both halves — that the libraries are
   delay-imported, and that the binary with its DLLs removed starts and falls back — so a
   regression fails the release rather than shipping. (Windows accelerated build only; the standard
   build and the Linux packages are unaffected.)

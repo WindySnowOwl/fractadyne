@@ -247,6 +247,15 @@ pub fn mpfr_found_message() -> String {
         .to_string()
 }
 
+/// The message shown at STARTUP when the MPFR libraries are present again after a previous launch
+/// had fallen back — a state change worth announcing even if the missing-libraries warning was
+/// silenced. Unlike [`mpfr_found_message`], this is at startup, so MPFR is already in use.
+pub fn mpfr_restored_message() -> String {
+    "The MPFR math libraries are present again — Fractadyne is now using the faster accelerated \
+     arithmetic."
+        .to_string()
+}
+
 /// Decide the startup backend, falling back instead of crashing when the accelerated build cannot
 /// find MPFR. Returns the chosen backend and whether it FELL BACK from MPFR to astro-float because
 /// the libraries were missing; it does NOT call [`select`] (the caller does, so the one selection
@@ -458,5 +467,7 @@ mod tests {
         assert!(mpfr_missing_message(None).contains("fractadyne.exe"));
         // The recovery message says the next launch, not this session.
         assert!(mpfr_found_message().contains("next time you start"));
+        // The restored-at-startup message says it is in use now.
+        assert!(mpfr_restored_message().contains("present again") && mpfr_restored_message().contains("now using"));
     }
 }

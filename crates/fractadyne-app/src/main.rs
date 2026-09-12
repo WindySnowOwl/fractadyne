@@ -4650,6 +4650,9 @@ struct FractadyneApp {
     /// re-probe that tells the user if the DLLs appear later. `None` when we started on MPFR (or
     /// this is not the accelerated build), so the probe never runs in the common case.
     mpfr_recovery: Option<MpfrRecovery>,
+    /// The MPFR-present state this run will persist, so the NEXT launch can detect a change (see
+    /// the state-change popups). Updated to `Some(true)` if the DLLs appear mid-session.
+    mpfr_present_last: Option<bool>,
     /// The central fractal panel's rect in PHYSICAL pixels ([x, y, w, h]), stored each frame by
     /// the central draw — what the bookmark thumbnail crops out of the window screenshot.
     central_rect_px: [u32; 4],
@@ -5224,6 +5227,22 @@ impl FractadyneApp {
         // full-precision decimal strings when present (deep-zoom locations survive
         // restart); older session files without them fall back to the f64 fields.
         let (mut s, state_load) = fractadyne_state::load_with_status();
+
+        // MPFR (accelerated build) startup state, and whether it CHANGED since the last run. A
+        // change — the DLLs appearing or disappearing — is announced even when the recurring
+        // "missing" warning has been silenced, because a state change is news, not nagging. Only the
+        // accelerated build (`is_accel_build`) records the state; the standard build preserves it.
+        let is_accel_build = fractadyne_core::available_backends().len() > 1;
+        let mpfr_present_now = is_accel_build && fractadyne_core::mpfr_runtime_available();
+        let mpfr_fell_back = STARTUP_BACKEND_NOTICE.get().is_some();
+        let mpfr_changed_to_missing = mpfr_fell_back && s.mpfr_present_last == Some(true);
+        let mpfr_changed_to_present = mpfr_present_now && s.mpfr_present_last == Some(false);
+        // The missing-libraries dialog shows when we fell back AND either it is not silenced OR the
+        // state just changed to missing (which overrides the silence).
+        let show_mpfr_missing = mpfr_fell_back
+            && !launched_for_a_task
+            && (!s.mpfr_warning_suppressed || mpfr_changed_to_missing);
+
         // ⭐WHICH session this run is using, on the record. Every setting with no CLI flag —
         // coloring method, DE/lighting, series approximation, glitch correction — comes from that
         // file, so "which file, and did it actually load" is the first question behind any "why
@@ -5467,7 +5486,7 @@ impl FractadyneApp {
                 snapshot_choice_remember: true,
                 // Show the MPFR-missing notice on first frame if we fell back at startup and the
                 // user has not silenced it — never in front of a harness (a modal would block it).
-                backend_notice: (!launched_for_a_task && !s.mpfr_warning_suppressed)
+                backend_notice: show_mpfr_missing
                     .then(|| STARTUP_BACKEND_NOTICE.get().cloned())
                     .flatten(),
                 backend_notice_suppress: s.mpfr_warning_suppressed,
@@ -5476,9 +5495,16 @@ impl FractadyneApp {
                 script_export_open: false,
                 script_export_note: String::new(),
                 script_export_secs: 30.0,
-                // The MPFR-missing warning now has its own dialog (`backend_notice`, above), which
-                // carries the "don't show again" box; the generic notice starts empty.
-                notice: None,
+                // The MPFR-missing warning has its own dialog (`backend_notice`, above). The generic
+                // notice is borrowed here for the opposite transition: the libraries being PRESENT
+                // again after a previous run fell back — announced even if the missing warning was
+                // silenced, because the state changed.
+                notice: (mpfr_changed_to_present && !launched_for_a_task).then(|| {
+                    (
+                        "Accelerated arithmetic restored".to_string(),
+                        fractadyne_core::mpfr_restored_message(),
+                    )
+                }),
             },
             sysinfo: gather_system_info(Some(&gpu_name)),
             gpu_name,
@@ -5529,6 +5555,13 @@ impl FractadyneApp {
             snapshot_request: false,
             snapshot_shot: None,
             mpfr_warning_suppressed: s.mpfr_warning_suppressed,
+            // Record this run's MPFR state (accelerated build only; the standard build preserves the
+            // last accelerated value, since they share the session file).
+            mpfr_present_last: if is_accel_build {
+                Some(mpfr_present_now)
+            } else {
+                s.mpfr_present_last
+            },
             // Re-probe only when we actually fell back at startup (STARTUP_BACKEND_NOTICE was set).
             mpfr_recovery: STARTUP_BACKEND_NOTICE.get().is_some().then(|| MpfrRecovery {
                 next_probe: std::time::Instant::now() + std::time::Duration::from_secs(3),
@@ -6178,6 +6211,7 @@ impl FractadyneApp {
             update_track: self.update_track.as_str().to_string(),
             snapshot_mode: self.snapshot_mode.as_str().to_string(),
             mpfr_warning_suppressed: self.mpfr_warning_suppressed,
+            mpfr_present_last: self.mpfr_present_last,
             update_check_on_launch: self.update_check_on_launch,
             show_watermark: self.show_watermark,
             crash_prompt_disabled: self.crash_prompt_disabled,
@@ -11248,6 +11282,9 @@ impl FractadyneApp {
         };
         if announce {
             crate::diag::log_line("start", "bignum: MPFR libraries appeared — will be used on next launch");
+            // Persist that MPFR is now present, so the next launch (which will actually use it) does
+            // not ALSO announce the change as new.
+            self.mpfr_present_last = Some(true);
             self.set_toast(fractadyne_core::mpfr_found_message(), ctx);
         } else if matches!(&self.mpfr_recovery, Some(rec) if !rec.announced) {
             // Keep the loop alive at an idle window so the probe still fires without user input.

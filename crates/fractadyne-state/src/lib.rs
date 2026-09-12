@@ -149,6 +149,12 @@ pub struct SessionState {
     /// are unconditional. Default false; `serde(default)` keeps older files loadable.
     #[serde(default)]
     pub mpfr_warning_suppressed: bool,
+    /// Accelerated build: whether the MPFR libraries were present on the previous run (`None` until
+    /// first recorded). Used to detect a state CHANGE across launches — appearing or disappearing —
+    /// which is announced even when the recurring warning is silenced. Only the accelerated build
+    /// writes it; the standard build preserves it.
+    #[serde(default)]
+    pub mpfr_present_last: Option<bool>,
     /// Last directory an export was saved to; `None` until the first export.
     #[serde(default)]
     pub export_dir: Option<String>,
@@ -508,6 +514,7 @@ impl Default for SessionState {
             export_format: default_export_format(),
             snapshot_mode: default_snapshot_mode(),
             mpfr_warning_suppressed: false,
+            mpfr_present_last: None,
             export_dir: None,
             last_dir: None,
             last_script: None,
