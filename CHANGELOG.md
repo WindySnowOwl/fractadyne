@@ -12,6 +12,19 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The accelerated Windows download now ships the validation data, so its self-test and UI test
+  work** (beta.105). The accelerated (MPFR) Windows package was built by `scripts/build-accelerated.ps1`,
+  which staged only the executable, its DLLs and the licence texts — not the `validation/` tree, the
+  tours, the example scripts or the benchmark baseline that the standard Windows package and the
+  accelerated *Linux* package both include. So `--selftest`, `--uitest` and `--bench-matrix` all
+  failed from the accelerated Windows download for lack of data (a tester hit it as missing golden
+  images running `--uitest`). The script now stages the same user payload as the standard package,
+  and a packaging gate fails the build if the goldens or the other required data are absent — a green
+  backend build was never a green *package*, which is exactly how this slipped through. The
+  package's README also gains a plain "if it will not start" section: which DLLs must sit beside the
+  executable, where to get them (MSYS2, gmplib.org, mpfr.org), and that the standard download needs
+  no DLLs and uses the built-in library for identical images. No change to the program itself.
+
 - **A deep export's chunk pricer can shrink its dispatch below the old 16,384-iteration floor —
   removing one device-loss mechanism** (beta.104). The export renders each tile in bounded chunks
   over the iteration axis, sizing each chunk to stay near a 400 ms wall so no single GPU dispatch

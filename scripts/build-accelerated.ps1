@@ -175,6 +175,43 @@ foreach ($d in $RUNTIME_DLLS) { Copy-Item (Join-Path $MINGW_BIN $d) -Destination
 foreach ($k in $licenses.Keys) { Copy-Item $licenses[$k] -Destination (Join-Path $dir $k) }
 Copy-Item (Join-Path $root "LICENSE-MIT"), (Join-Path $root "LICENSE-APACHE") -Destination $dir
 
+# **The SAME user payload the standard Windows package ships** (release.yml's `windows` job) and
+# the accelerated LINUX script (`build-accelerated.sh`) already stage. This script used to ship only
+# the exe + DLLs + licences, so `--selftest`, `--uitest` and `--bench-matrix` all FAILED from the
+# accelerated download -- the goldens, tours, scripts and benchmark baseline were simply absent (a
+# tester reported `--uitest` failing on missing goldens, 2026-09-12). A green backend build is not a
+# green PACKAGE: the presence check below is the packaging gate that would have caught this, and the
+# three copy sites (here, the standard windows job, build-accelerated.sh) must stay in step.
+Copy-Item (Join-Path $root "README.md"), (Join-Path $root "CHANGELOG.md"), (Join-Path $root "TOURS.md"), `
+          (Join-Path $root "DIAGNOSTICS.md"), (Join-Path $root "THIRD-PARTY-NOTICES.md") -Destination $dir
+New-Item -ItemType Directory -Force (Join-Path $dir "tours") | Out-Null
+Copy-Item (Join-Path $root "tours\*.toml") -Destination (Join-Path $dir "tours")
+New-Item -ItemType Directory -Force (Join-Path $dir "scripts") | Out-Null
+Copy-Item (Join-Path $root "scripts\*.example.toml") -Destination (Join-Path $dir "scripts")
+Copy-Item (Join-Path $root "scripts\deep-sample.fdn") -Destination (Join-Path $dir "scripts")
+# Validation data so `--selftest` / `--uitest` / `--bench-matrix` work from the extracted install:
+# `anchored()` walks up from the binary and finds this `validation/` tree beside it.
+New-Item -ItemType Directory -Force (Join-Path $dir "validation\golden") | Out-Null
+Copy-Item (Join-Path $root "validation\golden\*.png") -Destination (Join-Path $dir "validation\golden")
+# BLESSED-GPU.txt records which card produced the goldens; without it the self-test uses the strict
+# tolerance (the safe direction), so its absence degrades gracefully.
+Copy-Item (Join-Path $root "validation\golden\BLESSED-GPU.txt") -Destination (Join-Path $dir "validation\golden") -ErrorAction SilentlyContinue
+Copy-Item (Join-Path $root "validation\catalog.toml") -Destination (Join-Path $dir "validation")
+New-Item -ItemType Directory -Force (Join-Path $dir "benchmarks") | Out-Null
+Copy-Item (Join-Path $root "benchmarks\bench-matrix-baseline.json") -Destination (Join-Path $dir "benchmarks")
+
+# **Packaging gate.** A missing golden is invisible until a tester runs `--uitest` on the
+# download -- exactly how this was found. Fail the build if the user-facing payload is incomplete,
+# so a green CI run cannot ship a package that cannot self-test. Goldens are a floor, not an exact
+# count (adding one must not break the release).
+$goldenCount = @(Get-ChildItem (Join-Path $dir "validation\golden") -Filter *.png -ErrorAction SilentlyContinue).Count
+if ($goldenCount -lt 15) { Fail "package staged only $goldenCount golden PNGs (< 15) - validation data is incomplete" }
+foreach ($req in @("validation\catalog.toml", "benchmarks\bench-matrix-baseline.json", "DIAGNOSTICS.md",
+                   "tours", "scripts\deep-sample.fdn")) {
+    if (-not (Test-Path (Join-Path $dir $req))) { Fail "package is missing '$req' - the accelerated payload is incomplete" }
+}
+Write-Host "  staged $goldenCount goldens + validation/tours/scripts/benchmarks (matches the standard package)"
+
 $pacman = Join-Path $MSYS "usr\bin\pacman.exe"
 $gmpVer = (& $pacman -Q mingw-w64-x86_64-gmp) -replace '.*\s'
 $mpfrVer = (& $pacman -Q mingw-w64-x86_64-mpfr) -replace '.*\s'
@@ -195,8 +232,24 @@ in output between the two builds, that is a bug - please report it.
 
 HOW TO USE IT
 -------------
-Extract this folder anywhere and run fractadyne.exe from it. Keep the .dll files next to
-the executable; the program will not start without them.
+Extract this folder anywhere and run fractadyne.exe from it. Keep all four .dll files
+(libgmp-10.dll, libmpfr-6.dll, libgcc_s_seh-1.dll, libwinpthread-1.dll) next to the
+executable; this build loads them at startup and will not start without them.
+
+IF IT WILL NOT START ("The code execution cannot proceed because ...dll was not found",
+or Windows error 0xC0000135): a required .dll is not beside fractadyne.exe. You have two
+easy fixes, either of which is fine:
+
+  * Simplest: use the STANDARD (non-accelerated) download instead. It needs no extra DLLs
+    and computes its numbers with the built-in pure-Rust library. The images are identical
+    - only the pause while a deep view's reference orbit is built is slower. Get it from
+    the releases page: https://github.com/WindySnowOwl/fractadyne/releases
+
+  * Or restore the libraries next to fractadyne.exe: re-extract the whole zip so the DLLs
+    sit beside the exe, or obtain compatible builds of libgmp-10.dll and libmpfr-6.dll
+    (plus libgcc_s_seh-1.dll and libwinpthread-1.dll) from MSYS2
+    (https://www.msys2.org/ - packages mingw-w64-x86_64-gmp and mingw-w64-x86_64-mpfr),
+    or build them from https://gmplib.org/ and https://www.mpfr.org/ , and drop them here.
 
 Your settings, saved session and locations are SHARED with the standard build - they live
 in your user profile, not next to the executable - so you can switch between the two
