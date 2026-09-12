@@ -12,6 +12,21 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The accelerated Windows build no longer fails to start when its MPFR libraries are missing —
+  it warns and falls back to the built-in arithmetic** (beta.105). The accelerated download links
+  GMP and MPFR as DLLs shipped beside the executable; if one went missing (the .zip was split up,
+  antivirus quarantined a file) the program failed to start at all, with a bare Windows error
+  0xC0000135 and no explanation. Those two libraries are now **delay-loaded**, so the program
+  starts regardless; at startup it probes for them, and if they cannot be found it shows a notice
+  explaining what happened, falls back to the built-in pure-Rust arithmetic (astro-float), and
+  runs normally — only the pause while a deep view's reference orbit builds is slower, and the
+  images are byte-identical either way. The notice points at where to get the libraries (or the
+  standard download, which needs none). When the libraries are present the accelerated path is
+  used exactly as before. The package build asserts both halves — that the libraries are
+  delay-imported, and that the binary with its DLLs removed starts and falls back — so a
+  regression fails the release rather than shipping. (Windows accelerated build only; the standard
+  build and the Linux packages are unaffected.)
+
 - **The accelerated Windows download now ships the validation data, so its self-test and UI test
   work** (beta.105). The accelerated (MPFR) Windows package was built by `scripts/build-accelerated.ps1`,
   which staged only the executable, its DLLs and the licence texts — not the `validation/` tree, the

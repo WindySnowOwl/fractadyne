@@ -117,6 +117,11 @@ static GLOBAL: alloc::ReportingAlloc = alloc::ReportingAlloc;
 // Entry: process launch, argv expansion, session restore, relaunch
 // ================================================================================================
 
+/// Set once at startup when the accelerated build could not find its MPFR libraries and fell back
+/// to astro-float; the GUI reads it on the first frame and shows a notice. Headless runs never
+/// read it (they got the message on stderr and in the log). See `resolve_startup_backend`.
+static STARTUP_BACKEND_NOTICE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 fn main() -> eframe::Result<()> {
     env_logger::init();
     // Expand `@response-file` args and `--args-file FILE` so the whole command line can live in a
@@ -151,20 +156,33 @@ fn main() -> eframe::Result<()> {
             .and_then(|i| args.get(i + 1).map(String::as_str))
             .or_else(|| args.iter().find_map(|a| a.strip_prefix("--bignum=")));
         let env = std::env::var("FRACTADYNE_BIGNUM").ok();
-        if let Some(spec) = flag.map(str::to_string).or(env) {
-            match fractadyne_core::parse_backend_choice(&spec) {
-                Ok(choice) => {
-                    if let Err(e) = fractadyne_core::select_backend(choice) {
-                        eprintln!("fractadyne: {e}");
-                        crate::exit(2);
-                    }
-                    diag::log_line("start", &format!("bignum backend selected: {}", choice.name()));
-                }
+        // The explicit request (`--bignum` / env), or None to take the build default.
+        let requested = match flag.map(str::to_string).or(env) {
+            Some(spec) => match fractadyne_core::parse_backend_choice(&spec) {
+                Ok(choice) => Some(choice),
                 Err(e) => {
                     eprintln!("fractadyne: --bignum: {e}");
                     crate::exit(2);
                 }
-            }
+            },
+            None => None,
+        };
+        // ⭐Resolve to what this build can actually run RIGHT NOW. On a Windows accelerated build
+        // whose MPFR libraries are missing, the DLLs are delay-loaded so the process has started at
+        // all; this returns astro-float plus a message rather than letting the first reference orbit
+        // hit a delay-load failure. Selection happens once, here, so the log has one line for it.
+        let (choice, warning) = fractadyne_core::resolve_startup_backend(requested);
+        if let Err(e) = fractadyne_core::select_backend(choice) {
+            eprintln!("fractadyne: {e}");
+            crate::exit(2);
+        }
+        diag::log_line("start", &format!("bignum backend selected: {}", choice.name()));
+        if let Some(w) = warning {
+            diag::log_line("start", "bignum: MPFR libraries not found — fell back to astro-float");
+            eprintln!("fractadyne: {w}");
+            // The GUI surfaces this as a notice on the first frame (see `FractadyneApp::new`);
+            // headless runs have already had it on stderr and in the log.
+            let _ = STARTUP_BACKEND_NOTICE.set(w);
         }
     }
     // ⭐DEBUG TUNABLE OVERRIDES (`--set NAME=VALUE`, repeatable). Applied here — after logging
@@ -5426,7 +5444,13 @@ impl FractadyneApp {
                 script_export_open: false,
                 script_export_note: String::new(),
                 script_export_secs: 30.0,
-                notice: None,
+                // On the accelerated build, if MPFR was missing we fell back to astro-float at
+                // startup; surface that as a notice on first frame — but never in front of a
+                // harness (a modal would block --uitest/--livetest, the same rule as the welcome).
+                notice: (!launched_for_a_task)
+                    .then(|| STARTUP_BACKEND_NOTICE.get())
+                    .flatten()
+                    .map(|m| ("Accelerated build — using built-in arithmetic".to_string(), m.clone())),
             },
             sysinfo: gather_system_info(Some(&gpu_name)),
             gpu_name,

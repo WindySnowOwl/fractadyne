@@ -163,6 +163,87 @@ pub fn selected() -> BackendChoice {
     *SELECTED.get().unwrap_or(&default_choice())
 }
 
+/// Is the MPFR runtime actually loadable in this process?
+///
+/// ⭐**Only meaningful for the accelerated Windows build**, where libmpfr-6.dll / libgmp-10.dll are
+/// linked with DELAY loading (see `scripts/build-accelerated.ps1`): the process starts even when
+/// they are missing, and this probe — a plain `LoadLibrary`, which never triggers the delay-load
+/// helper — decides whether to use MPFR or fall back to astro-float. Everywhere else (non-Windows,
+/// or a build without the `rug` feature) MPFR is either statically present or not compiled in, so
+/// this is trivially `true` and nothing calls it in anger.
+#[cfg(all(feature = "rug", target_os = "windows"))]
+pub fn mpfr_runtime_available() -> bool {
+    fn loadable(dll: &str) -> bool {
+        use std::os::windows::ffi::OsStrExt;
+        // Minimal Win32 FFI (the crate already talks to Win32 this way elsewhere; no new dep).
+        extern "system" {
+            fn LoadLibraryW(name: *const u16) -> *mut core::ffi::c_void;
+            fn FreeLibrary(handle: *mut core::ffi::c_void) -> i32;
+        }
+        let wide: Vec<u16> =
+            std::ffi::OsStr::new(dll).encode_wide().chain(std::iter::once(0)).collect();
+        // SAFETY: `wide` is a NUL-terminated UTF-16 string that outlives the call. `LoadLibraryW`
+        // returns a module handle or null; on success we release it immediately with `FreeLibrary`
+        // (this is a presence probe, not a load — the real use goes through the delay-load stubs).
+        unsafe {
+            let h = LoadLibraryW(wide.as_ptr());
+            if h.is_null() {
+                false
+            } else {
+                FreeLibrary(h);
+                true
+            }
+        }
+    }
+    loadable("libmpfr-6.dll") && loadable("libgmp-10.dll")
+}
+
+/// Non-Windows or non-rug: MPFR is either linked-and-present or not built in, never a
+/// findable-at-runtime question, so the answer is always yes.
+#[cfg(not(all(feature = "rug", target_os = "windows")))]
+pub fn mpfr_runtime_available() -> bool {
+    true
+}
+
+/// The user-facing message shown when the accelerated build cannot find its MPFR libraries and
+/// falls back to astro-float. States what happened, that images are unaffected, how to restore the
+/// fast path, and where the standard (no-DLL) download is.
+pub fn mpfr_missing_message() -> String {
+    "This is the accelerated (MPFR) build, but its math libraries could not be found.\n\n\
+     libmpfr-6.dll and libgmp-10.dll (and libgcc_s_seh-1.dll, libwinpthread-1.dll) must sit in the \
+     same folder as fractadyne.exe. They are missing, so Fractadyne has fallen back to its built-in \
+     arithmetic (astro-float).\n\n\
+     Your images are unaffected — the two are byte-identical. Only the pause while a deep view's \
+     reference orbit is built is slower.\n\n\
+     To restore the faster path: keep every file from the download's .zip together, or re-extract \
+     it. The libraries also come from MSYS2 (https://www.msys2.org/, packages \
+     mingw-w64-x86_64-gmp and mingw-w64-x86_64-mpfr) or from https://gmplib.org/ and \
+     https://www.mpfr.org/.\n\n\
+     Or simply use the standard download, which needs no DLLs: \
+     https://github.com/WindySnowOwl/fractadyne/releases"
+        .to_string()
+}
+
+/// Decide the startup backend, and warn instead of crashing when the accelerated build cannot find
+/// MPFR. Returns the chosen backend plus an optional user-facing message; it does NOT call
+/// [`select`] (the caller does, so the one selection point and its logging stay in one place).
+///
+/// `requested` is the explicit `--bignum` / `FRACTADYNE_BIGNUM` choice, or `None` to take the
+/// build default. On a Windows accelerated build that wants MPFR but cannot load it, this returns
+/// `(Astro, Some(message))` — the load-bearing half of the delay-load design: without it a missing
+/// DLL is a hard `0xC0000135` at process start (nothing can warn), and with delay loading alone the
+/// first MPFR call would raise a delay-load exception. Choosing astro up front avoids both.
+pub fn resolve_startup_backend(requested: Option<BackendChoice>) -> (BackendChoice, Option<String>) {
+    let want = requested.unwrap_or_else(default_choice);
+    #[cfg(all(feature = "rug", target_os = "windows"))]
+    {
+        if want == BackendChoice::Rug && !mpfr_runtime_available() {
+            return (BackendChoice::Astro, Some(mpfr_missing_message()));
+        }
+    }
+    (want, None)
+}
+
 /// Every backend compiled into this build, with the versions that can be queried at runtime.
 /// For MPFR/GMP those are the C libraries linked into this binary — the versions that actually
 /// did the arithmetic, not ones named in a manifest.
@@ -314,5 +395,35 @@ mod tests {
         let back = <BigFloat as RefBackend>::from_carrier(&v, ctx).to_carrier(ctx);
         assert_eq!(crate::to_decimal_string(&v), crate::to_decimal_string(&back));
         assert_eq!(v.to_f64_trunc(), crate::to_f64(&v));
+    }
+
+    /// Startup resolution never returns a backend this build cannot run, and only warns when it had
+    /// to downgrade. On a build without `rug` the default is astro and there is nothing to probe, so
+    /// there is never a warning. (The rug fallback path is compiled only into the accelerated build;
+    /// it is exercised end-to-end by that package's clean-room verify, which runs the binary with
+    /// its MPFR DLLs removed and asserts it falls back.)
+    #[test]
+    fn resolve_startup_backend_stays_within_this_build_and_warns_only_on_downgrade() {
+        // The probe is trivially true when MPFR is statically present or not compiled in.
+        assert!(mpfr_runtime_available() || cfg!(all(feature = "rug", target_os = "windows")));
+
+        let (choice, warn) = resolve_startup_backend(None);
+        assert!(available_backends().contains(&choice), "default is a backend this build lacks");
+
+        let (c2, w2) = resolve_startup_backend(Some(BackendChoice::Astro));
+        assert_eq!(c2, BackendChoice::Astro);
+        assert!(w2.is_none(), "asking for astro never warns");
+
+        #[cfg(not(all(feature = "rug", target_os = "windows")))]
+        {
+            // No delay-load probe here, so resolution is a pure pass-through: no warning ever.
+            assert!(warn.is_none());
+            assert_eq!(choice, default_choice());
+        }
+        let _ = warn;
+
+        // The fallback message names the fix and a link, whichever build this is.
+        let m = mpfr_missing_message();
+        assert!(m.contains("astro-float") && m.contains("releases") && m.contains(".dll"));
     }
 }

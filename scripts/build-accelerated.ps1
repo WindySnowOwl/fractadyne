@@ -148,20 +148,69 @@ if (-not $Tag) {
 }
 Write-Host "  tag: $Tag"
 
-# ---------------------------------------------------------------- build
-# `use-system-libs` is the LGPL section 4(d)(1) shape. See the header.
-Step "Building (GNU toolchain, MPFR backend, dynamically linked)"
+# ---------------------------------------------------------------- delay-load libraries
+# ***DELAY-LOAD GMP AND MPFR*** so a user whose DLLs went missing (they split the zip, antivirus
+# quarantined one) gets an in-app warning and a fall back to the built-in astro-float arithmetic,
+# instead of a bare Windows 0xC0000135 at startup with no message. See
+# `fractadyne_core::resolve_startup_backend` for the app side, and `scripts/make-delay-libs.sh` for
+# why delay loading needs dlltool stubs on this toolchain (no `ld --delayload`, empty libdelayimp).
+# The stubs are SWAPPED IN for the normal import libraries for the duration of the build -- which is
+# deterministic (gmp-mpfr-sys's own `-lmpfr` then resolves to the delay stub, with no linker
+# search-order gamble; a `-L` ahead of its search path was tried and did not reliably win) -- and
+# restored in a `finally` afterwards, so a shared MSYS2 install is never left modified. The
+# eager/delay state is asserted after the build and again in the clean-room verify below; a
+# delay-load regression must fail the release, not ship.
+Step "Building delay-import libraries for GMP/MPFR"
 $bash = Join-Path $MSYS "usr\bin\bash.exe"
-$cargoBinU = ((Join-Path $env:USERPROFILE ".cargo\bin") -replace '\\', '/') -replace '^([A-Za-z]):', '/$1'
+$env:MSYSTEM = "MINGW64"
+$MINGW_LIB = Join-Path $MSYS "mingw64\lib"
 $rootU = ($root -replace '\\', '/') -replace '^([A-Za-z]):', '/$1'
+$delayDir = [IO.Path]::GetFullPath((Join-Path $OutDir "_delaylibs"))
+if (Test-Path $delayDir) { Remove-Item -Recurse -Force $delayDir }
+New-Item -ItemType Directory -Force $delayDir | Out-Null
+$delayDirU = ($delayDir -replace '\\', '/') -replace '^([A-Za-z]):', '/$1'
+& $bash -lc "cd '$rootU' && bash scripts/make-delay-libs.sh '$delayDirU'"
+if ($LASTEXITCODE -ne 0) { Fail "generating the delay-import libraries failed ($LASTEXITCODE)." }
+foreach ($imp in @("libmpfr.dll.a", "libgmp.dll.a")) {
+    if (-not (Test-Path (Join-Path $delayDir $imp))) { Fail "delay lib $imp was not produced." }
+}
+
+# ---------------------------------------------------------------- build (delay stubs swapped in)
+# `use-system-libs` is the LGPL section 4(d)(1) shape. See the header.
+Step "Building (GNU toolchain, MPFR backend, dynamically linked, MPFR/GMP delay-loaded)"
+$cargoBinU = ((Join-Path $env:USERPROFILE ".cargo\bin") -replace '\\', '/') -replace '^([A-Za-z]):', '/$1'
 $cmd = "export PATH=`"`$PATH:$cargoBinU`"; cd '$rootU' && cargo +stable-$TRIPLE build --release " +
        "--target $TRIPLE --bin fractadyne --features fractadyne-core/rug --features gmp-mpfr-sys/use-system-libs"
-$env:MSYSTEM = "MINGW64"
-& $bash -lc $cmd
-if ($LASTEXITCODE -ne 0) { Fail "cargo build failed ($LASTEXITCODE)" }
+$swapped = @()
+$buildExit = 1
+try {
+    foreach ($imp in @("libmpfr.dll.a", "libgmp.dll.a")) {
+        $orig = Join-Path $MINGW_LIB $imp
+        $bak = "$orig.fdbak"
+        Copy-Item $orig $bak -Force
+        Copy-Item (Join-Path $delayDir $imp) $orig -Force
+        $swapped += @{ orig = $orig; bak = $bak }
+    }
+    & $bash -lc $cmd
+    $buildExit = $LASTEXITCODE
+}
+finally {
+    foreach ($s in $swapped) {
+        Copy-Item $s.bak $s.orig -Force
+        Remove-Item $s.bak -Force -ErrorAction SilentlyContinue
+    }
+}
+if ($buildExit -ne 0) { Fail "cargo build failed ($buildExit)" }
 
 $exe = Join-Path $root "target\$TRIPLE\release\fractadyne.exe"
 if (-not (Test-Path $exe)) { Fail "build reported success but $exe is missing" }
+
+# Packaging gate: the DLLs must be DELAY imports, not eager ones. An eager import means the delay
+# libs did not win the link, and the whole graceful-fallback design is silently gone.
+$eager = & (Join-Path $MINGW_BIN "objdump.exe") -p $exe 2>$null | Select-String 'DLL Name:' |
+         Where-Object { $_ -match 'libmpfr-6\.dll|libgmp-10\.dll' }
+if ($eager) { Fail "MPFR/GMP are EAGER imports - delay-load did not take, so a missing DLL would fail at startup instead of falling back." }
+Write-Host "  MPFR/GMP are delay-imported (a missing DLL falls back to astro-float instead of failing to start)"
 
 # ---------------------------------------------------------------- package
 Step "Packaging"
@@ -234,22 +283,21 @@ HOW TO USE IT
 -------------
 Extract this folder anywhere and run fractadyne.exe from it. Keep all four .dll files
 (libgmp-10.dll, libmpfr-6.dll, libgcc_s_seh-1.dll, libwinpthread-1.dll) next to the
-executable; this build loads them at startup and will not start without them.
+executable - that is what makes this build the fast one.
 
-IF IT WILL NOT START ("The code execution cannot proceed because ...dll was not found",
-or Windows error 0xC0000135): a required .dll is not beside fractadyne.exe. You have two
-easy fixes, either of which is fine:
+IF A .DLL IS MISSING, the program still starts: it shows a notice, falls back to the
+built-in pure-Rust arithmetic (astro-float), and runs normally - only the pause while a
+deep view's reference orbit is built is slower. Your images are unaffected; the two are
+byte-identical. To get the fast path back, either:
 
-  * Simplest: use the STANDARD (non-accelerated) download instead. It needs no extra DLLs
-    and computes its numbers with the built-in pure-Rust library. The images are identical
-    - only the pause while a deep view's reference orbit is built is slower. Get it from
-    the releases page: https://github.com/WindySnowOwl/fractadyne/releases
+  * restore the libraries next to fractadyne.exe - re-extract the whole zip so the DLLs sit
+    beside the exe, or obtain compatible builds of libgmp-10.dll and libmpfr-6.dll (plus
+    libgcc_s_seh-1.dll and libwinpthread-1.dll) from MSYS2 (https://www.msys2.org/ -
+    packages mingw-w64-x86_64-gmp and mingw-w64-x86_64-mpfr), or from https://gmplib.org/
+    and https://www.mpfr.org/ , and drop them in this folder; or
 
-  * Or restore the libraries next to fractadyne.exe: re-extract the whole zip so the DLLs
-    sit beside the exe, or obtain compatible builds of libgmp-10.dll and libmpfr-6.dll
-    (plus libgcc_s_seh-1.dll and libwinpthread-1.dll) from MSYS2
-    (https://www.msys2.org/ - packages mingw-w64-x86_64-gmp and mingw-w64-x86_64-mpfr),
-    or build them from https://gmplib.org/ and https://www.mpfr.org/ , and drop them here.
+  * just use the STANDARD (non-accelerated) download, which needs no DLLs at all:
+    https://github.com/WindySnowOwl/fractadyne/releases
 
 Your settings, saved session and locations are SHARED with the standard build - they live
 in your user profile, not next to the executable - so you can switch between the two
@@ -342,6 +390,26 @@ if (-not $SkipVerify) {
         if ($out -notmatch "rug") { Fail "the packaged binary did not report the MPFR backend:`n$out" }
         if ($out -match "DIFFERS") { Fail "backends disagreed - refusing to package:`n$out" }
         Write-Host "  runs, reports the MPFR backend, and both backends agree"
+
+        # ***THE DELAY-LOAD GATE.*** Copy JUST the exe (no DLLs) to a clean folder and confirm it
+        # STARTS and falls back to astro-float instead of dying with 0xC0000135. This is the whole
+        # point of the delay-load work, and the one check that proves a user with missing DLLs gets
+        # a warning rather than a broken program. Without it a delay-load regression ships silently.
+        $noDll = Join-Path $env:TEMP ("fd-accel-nodll-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+        New-Item -ItemType Directory -Force $noDll | Out-Null
+        try {
+            Copy-Item $pkgExe (Join-Path $noDll "fractadyne.exe")
+            $fb = & (Join-Path $noDll "fractadyne.exe") --version 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0) {
+                Fail ("with its DLLs removed the binary did not start (exit $LASTEXITCODE) - delay-load is not " +
+                      "working, so a user missing a DLL gets 0xC0000135 instead of a fallback.`n$fb")
+            }
+            if ($fb -notmatch "fell back to astro-float") {
+                Fail "with its DLLs removed the binary started but did not fall back to astro-float:`n$fb"
+            }
+            Write-Host "  with the DLLs removed it starts and falls back to astro-float (delay-load works)"
+        }
+        finally { Remove-Item -Recurse -Force $noDll -ErrorAction SilentlyContinue }
     }
     finally {
         $env:PATH = $savedPath
@@ -349,6 +417,9 @@ if (-not $SkipVerify) {
         Remove-Item -Recurse -Force $cfg -ErrorAction SilentlyContinue
     }
 }
+
+# The delay-import stubs were a build input, not a package artifact - drop them.
+Remove-Item -Recurse -Force $delayDir -ErrorAction SilentlyContinue
 
 # ---------------------------------------------------------------- zip
 $zip = Join-Path $OutDir "$name.zip"
