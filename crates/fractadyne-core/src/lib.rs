@@ -43,8 +43,9 @@ mod backend;
 #[cfg(feature = "rug")]
 mod backend_rug;
 pub use backend::{
-    available_backends, built_in_backends, mpfr_missing_message, mpfr_runtime_available,
-    observed_backends, parse_choice as parse_backend_choice, resolve_startup_backend,
+    available_backends, built_in_backends, mpfr_found_message, mpfr_missing_message,
+    mpfr_runtime_available, observed_backends, parse_choice as parse_backend_choice,
+    resolve_startup_backend,
     select as select_backend, selected as selected_backend, status_line as backend_status_line,
     BackendChoice, BACKEND_NAMES,
 };

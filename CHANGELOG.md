@@ -20,9 +20,11 @@ detail is in the git history.
   starts regardless; at startup it probes for them, and if they cannot be found it shows a notice
   explaining what happened, falls back to the built-in pure-Rust arithmetic (astro-float), and
   runs normally — only the pause while a deep view's reference orbit builds is slower, and the
-  images are byte-identical either way. The notice points at where to get the libraries (or the
-  standard download, which needs none). When the libraries are present the accelerated path is
-  used exactly as before. The package build asserts both halves — that the libraries are
+  images are byte-identical either way. The notice names the exact folder the program is running
+  from (where the DLLs must be copied), lists each download link on its own line, and has a "don't
+  show this again" box; if the libraries later appear during the session it says so and notes they
+  will be used from the next launch. When the libraries are present the accelerated path is used
+  exactly as before. The package build asserts both halves — that the libraries are
   delay-imported, and that the binary with its DLLs removed starts and falls back — so a
   regression fails the release rather than shipping. (Windows accelerated build only; the standard
   build and the Linux packages are unaffected.)

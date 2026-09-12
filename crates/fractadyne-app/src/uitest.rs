@@ -41,6 +41,10 @@ enum Screen {
     GotoError,
     /// The first-press Snapshot choice: screen capture or full render, with the remember box.
     SnapshotChoice,
+    /// The accelerated build's "MPFR libraries not found" notice: names the folder to copy the DLLs
+    /// into, one URL per line, and a "don't show again" box. Forced here so its layout is reviewable
+    /// (the standard build never hits it).
+    BackendNotice,
     /// The screen-capture snapshot itself, END TO END: request → screenshot reply → cropped PNG on
     /// disk → the "Saved screen snapshot" toast in this step's capture. Writes into a scratch
     /// folder under the OS temp dir (`last_dir` is redirected there first), never into Pictures.
@@ -663,6 +667,7 @@ fn build_steps() -> Vec<Step> {
         screen("goto", Screen::Goto),
         screen("goto-error", Screen::GotoError),
         screen("snapshot-choice", Screen::SnapshotChoice),
+        screen("backend-notice", Screen::BackendNotice),
         screen("snapshot-screen", Screen::SnapshotScreen),
         screen("misiurewicz-explorer", Screen::MisiurewiczExplorer),
         screen("misiurewicz-jump", Screen::MisiurewiczJump),
@@ -1012,6 +1017,7 @@ impl FractadyneApp {
         self.dialogs.minimap = false;
         // The Snapshot choice is a window too (found standing behind the snapshot-screen step).
         self.dialogs.snapshot_choice_open = false;
+        self.dialogs.backend_notice = None;
         // The Reference cache screen turns the (task-invocation-disabled) orbit cache on against a
         // scratch store; no later step may render from it, so it goes back off with the window.
         crate::refcache_persist::set_enabled(false);
@@ -1067,6 +1073,11 @@ impl FractadyneApp {
                 self.apply_goto(); // fails, and leaves its verdict in the dialog
             }
             Screen::SnapshotChoice => self.dialogs.snapshot_choice_open = true,
+            Screen::BackendNotice => {
+                let dir = std::path::Path::new("C:\\Users\\you\\Downloads\\fractadyne-accelerated");
+                self.dialogs.backend_notice = Some(fractadyne_core::mpfr_missing_message(Some(dir)));
+                self.dialogs.backend_notice_suppress = false;
+            }
             Screen::SnapshotScreen => {
                 let dir = std::env::temp_dir().join("fractadyne-uitest-snapshots");
                 let _ = std::fs::create_dir_all(&dir);

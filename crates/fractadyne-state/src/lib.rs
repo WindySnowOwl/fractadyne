@@ -144,6 +144,11 @@ pub struct SessionState {
     /// to be asked again; changeable in File ▸ Settings ▸ Snapshot.
     #[serde(default = "default_snapshot_mode")]
     pub snapshot_mode: String,
+    /// The accelerated build's "MPFR libraries not found" warning was dismissed with "don't show
+    /// again". Only the GUI dialog is suppressed; the fallback, the log line and the stderr message
+    /// are unconditional. Default false; `serde(default)` keeps older files loadable.
+    #[serde(default)]
+    pub mpfr_warning_suppressed: bool,
     /// Last directory an export was saved to; `None` until the first export.
     #[serde(default)]
     pub export_dir: Option<String>,
@@ -502,6 +507,7 @@ impl Default for SessionState {
             export_ss: default_export_ss(),
             export_format: default_export_format(),
             snapshot_mode: default_snapshot_mode(),
+            mpfr_warning_suppressed: false,
             export_dir: None,
             last_dir: None,
             last_script: None,

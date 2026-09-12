@@ -1753,6 +1753,45 @@ impl FractadyneApp {
         }
     }
 
+    /// The accelerated build's "MPFR libraries not found" notice. Like [`draw_notice_dialog`] but
+    /// with a "Don't show this again" checkbox (persisted via `mpfr_warning_suppressed`) — the one
+    /// thing the generic notice cannot carry. The body already names the folder to copy the DLLs
+    /// into and lists each download URL on its own line (see `mpfr_missing_message`).
+    pub(crate) fn draw_backend_notice_dialog(&mut self, ctx: &egui::Context) {
+        let Some(body) = self.dialogs.backend_notice.clone() else {
+            return;
+        };
+        let mut open = true;
+        let mut close_clicked = false;
+        egui::Window::new("Accelerated build — using built-in arithmetic")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .default_width(470.0)
+            .show(ctx, |ui| {
+                // A wrapped label, not monospace: the paths and URLs are long, and monospace with
+                // no wrap would run off the window.
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                ui.label(&body);
+                ui.add_space(6.0);
+                ui.checkbox(&mut self.dialogs.backend_notice_suppress, "Don't show this again");
+                ui.separator();
+                crate::theme::action_row(ui, |ui| {
+                    if crate::theme::cancel_button(ui, "Close").clicked() {
+                        close_clicked = true;
+                    }
+                    if ui.button(format!("{} Copy", crate::icons::COPY)).clicked() {
+                        ui.ctx().copy_text(body.clone());
+                    }
+                });
+            });
+        if !open || close_clicked {
+            // The checkbox is the setting; the autosave persists it (like every other preference).
+            self.mpfr_warning_suppressed = self.dialogs.backend_notice_suppress;
+            self.dialogs.backend_notice = None;
+        }
+    }
+
     /// Benchmark results window — show the report, copy/save it, or reopen the config to run again.
     pub(crate) fn draw_bench_results_dialog(&mut self, ctx: &egui::Context) {
         if !self.dialogs.bench_open {

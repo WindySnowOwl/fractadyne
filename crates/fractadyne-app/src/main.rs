@@ -122,6 +122,14 @@ static GLOBAL: alloc::ReportingAlloc = alloc::ReportingAlloc;
 /// read it (they got the message on stderr and in the log). See `resolve_startup_backend`.
 static STARTUP_BACKEND_NOTICE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
+/// Re-probe state after an accelerated build fell back to astro-float because MPFR was missing:
+/// throttles the `LoadLibrary` check that notices the DLLs appearing later, and remembers once it
+/// has told the user, so the "found" message shows exactly once.
+struct MpfrRecovery {
+    next_probe: std::time::Instant,
+    announced: bool,
+}
+
 fn main() -> eframe::Result<()> {
     env_logger::init();
     // Expand `@response-file` args and `--args-file FILE` so the whole command line can live in a
@@ -171,18 +179,23 @@ fn main() -> eframe::Result<()> {
         // whose MPFR libraries are missing, the DLLs are delay-loaded so the process has started at
         // all; this returns astro-float plus a message rather than letting the first reference orbit
         // hit a delay-load failure. Selection happens once, here, so the log has one line for it.
-        let (choice, warning) = fractadyne_core::resolve_startup_backend(requested);
+        let (choice, mpfr_fell_back) = fractadyne_core::resolve_startup_backend(requested);
         if let Err(e) = fractadyne_core::select_backend(choice) {
             eprintln!("fractadyne: {e}");
             crate::exit(2);
         }
         diag::log_line("start", &format!("bignum backend selected: {}", choice.name()));
-        if let Some(w) = warning {
+        if mpfr_fell_back {
+            // Build the message HERE so it can name the directory the program is running from — the
+            // exact place the user must drop the DLLs.
+            let exe_dir = std::env::current_exe().ok();
+            let msg = fractadyne_core::mpfr_missing_message(exe_dir.as_deref().and_then(|p| p.parent()));
             diag::log_line("start", "bignum: MPFR libraries not found — fell back to astro-float");
-            eprintln!("fractadyne: {w}");
-            // The GUI surfaces this as a notice on the first frame (see `FractadyneApp::new`);
-            // headless runs have already had it on stderr and in the log.
-            let _ = STARTUP_BACKEND_NOTICE.set(w);
+            eprintln!("fractadyne: {msg}");
+            // The GUI surfaces this as a dedicated notice on the first frame (see `FractadyneApp::new`),
+            // and re-probes so it can say if the DLLs appear later; headless runs already have it on
+            // stderr and in the log.
+            let _ = STARTUP_BACKEND_NOTICE.set(msg);
         }
     }
     // ⭐DEBUG TUNABLE OVERRIDES (`--set NAME=VALUE`, repeatable). Applied here — after logging
@@ -4481,6 +4494,11 @@ struct DialogState {
     /// choice that sticks).
     snapshot_choice_open: bool,
     snapshot_choice_remember: bool,
+    /// Accelerated build "MPFR libraries not found" notice: `Some(body)` while shown, plus the
+    /// "don't show this again" checkbox state. A dedicated dialog rather than the generic `notice`
+    /// because it carries that checkbox.
+    backend_notice: Option<String>,
+    backend_notice_suppress: bool,
     /// Whether the right-hand control panel is shown (persisted).
     right_panel_open: bool,
     /// Minimap overview enabled (persisted).
@@ -4624,6 +4642,14 @@ struct FractadyneApp {
     snapshot_request: bool,
     /// A screen-capture snapshot SCREENSHOT is in flight; holds the file it will be written to.
     snapshot_shot: Option<std::path::PathBuf>,
+    /// Accelerated build: the "MPFR libraries not found" warning was dismissed with "don't show
+    /// again" (persisted). Suppresses the DIALOG only — the fallback, the log and stderr are
+    /// unconditional.
+    mpfr_warning_suppressed: bool,
+    /// Accelerated build: MPFR was missing at startup and we fell back to astro-float. Drives the
+    /// re-probe that tells the user if the DLLs appear later. `None` when we started on MPFR (or
+    /// this is not the accelerated build), so the probe never runs in the common case.
+    mpfr_recovery: Option<MpfrRecovery>,
     /// The central fractal panel's rect in PHYSICAL pixels ([x, y, w, h]), stored each frame by
     /// the central draw — what the bookmark thumbnail crops out of the window screenshot.
     central_rect_px: [u32; 4],
@@ -5439,18 +5465,20 @@ impl FractadyneApp {
                 help_section: 0,
                 snapshot_choice_open: false,
                 snapshot_choice_remember: true,
+                // Show the MPFR-missing notice on first frame if we fell back at startup and the
+                // user has not silenced it — never in front of a harness (a modal would block it).
+                backend_notice: (!launched_for_a_task && !s.mpfr_warning_suppressed)
+                    .then(|| STARTUP_BACKEND_NOTICE.get().cloned())
+                    .flatten(),
+                backend_notice_suppress: s.mpfr_warning_suppressed,
                 right_panel_open: s.right_panel_open,
                 minimap: s.minimap,
                 script_export_open: false,
                 script_export_note: String::new(),
                 script_export_secs: 30.0,
-                // On the accelerated build, if MPFR was missing we fell back to astro-float at
-                // startup; surface that as a notice on first frame — but never in front of a
-                // harness (a modal would block --uitest/--livetest, the same rule as the welcome).
-                notice: (!launched_for_a_task)
-                    .then(|| STARTUP_BACKEND_NOTICE.get())
-                    .flatten()
-                    .map(|m| ("Accelerated build — using built-in arithmetic".to_string(), m.clone())),
+                // The MPFR-missing warning now has its own dialog (`backend_notice`, above), which
+                // carries the "don't show again" box; the generic notice starts empty.
+                notice: None,
             },
             sysinfo: gather_system_info(Some(&gpu_name)),
             gpu_name,
@@ -5500,6 +5528,12 @@ impl FractadyneApp {
             snapshot_mode: SnapshotMode::from_str(&s.snapshot_mode),
             snapshot_request: false,
             snapshot_shot: None,
+            mpfr_warning_suppressed: s.mpfr_warning_suppressed,
+            // Re-probe only when we actually fell back at startup (STARTUP_BACKEND_NOTICE was set).
+            mpfr_recovery: STARTUP_BACKEND_NOTICE.get().is_some().then(|| MpfrRecovery {
+                next_probe: std::time::Instant::now() + std::time::Duration::from_secs(3),
+                announced: false,
+            }),
             central_rect_px: [0, 0, 0, 0],
             thumb_cache: std::collections::HashMap::new(),
             bookmark_name: String::new(),
@@ -6143,6 +6177,7 @@ impl FractadyneApp {
             theme: self.theme.key().to_string(),
             update_track: self.update_track.as_str().to_string(),
             snapshot_mode: self.snapshot_mode.as_str().to_string(),
+            mpfr_warning_suppressed: self.mpfr_warning_suppressed,
             update_check_on_launch: self.update_check_on_launch,
             show_watermark: self.show_watermark,
             crash_prompt_disabled: self.crash_prompt_disabled,
@@ -11139,6 +11174,34 @@ impl FractadyneApp {
         self.toast = Some((msg.into(), ctx.input(|i| i.time)));
     }
 
+    /// Accelerated build only: if MPFR was missing at startup and we fell back to astro-float, keep
+    /// checking (throttled, and only until it happens once) whether the DLLs have since appeared —
+    /// the user dropping them in beside the exe. When they do, say so; the choice is fixed for the
+    /// process, so it takes effect on the next launch (`mpfr_found_message`). `mpfr_recovery` is
+    /// `None` whenever we started on MPFR or this is not the accelerated build, so this is a cheap
+    /// early return in the common case.
+    fn poll_mpfr_recovery(&mut self, ctx: &egui::Context) {
+        let announce = match &mut self.mpfr_recovery {
+            Some(rec) if !rec.announced && std::time::Instant::now() >= rec.next_probe => {
+                if fractadyne_core::mpfr_runtime_available() {
+                    rec.announced = true;
+                    true
+                } else {
+                    rec.next_probe = std::time::Instant::now() + std::time::Duration::from_secs(3);
+                    false
+                }
+            }
+            _ => false,
+        };
+        if announce {
+            crate::diag::log_line("start", "bignum: MPFR libraries appeared — will be used on next launch");
+            self.set_toast(fractadyne_core::mpfr_found_message(), ctx);
+        } else if matches!(&self.mpfr_recovery, Some(rec) if !rec.announced) {
+            // Keep the loop alive at an idle window so the probe still fires without user input.
+            ctx.request_repaint_after(std::time::Duration::from_secs(3));
+        }
+    }
+
     /// "Zoom to center": find the nearby minibrot's exact nucleus (Newton-Raphson in
     /// arbitrary precision) and snap the view center to it, keeping the current zoom.
     /// Reports the period. Holomorphic families only (Mandelbrot / Multibrot).
@@ -12616,6 +12679,8 @@ impl eframe::App for FractadyneApp {
         self.draw_bench_progress_dialog(ctx);
         self.draw_bench_results_dialog(ctx);
         self.draw_notice_dialog(ctx);
+        self.draw_backend_notice_dialog(ctx);
+        self.poll_mpfr_recovery(ctx);
 
         self.draw_gallery_dialog(ctx);
         self.draw_checksum_dialog(ctx);

@@ -206,42 +206,67 @@ pub fn mpfr_runtime_available() -> bool {
 }
 
 /// The user-facing message shown when the accelerated build cannot find its MPFR libraries and
-/// falls back to astro-float. States what happened, that images are unaffected, how to restore the
-/// fast path, and where the standard (no-DLL) download is.
-pub fn mpfr_missing_message() -> String {
-    "This is the accelerated (MPFR) build, but its math libraries could not be found.\n\n\
-     libmpfr-6.dll and libgmp-10.dll (and libgcc_s_seh-1.dll, libwinpthread-1.dll) must sit in the \
-     same folder as fractadyne.exe. They are missing, so Fractadyne has fallen back to its built-in \
-     arithmetic (astro-float).\n\n\
-     Your images are unaffected — the two are byte-identical. Only the pause while a deep view's \
-     reference orbit is built is slower.\n\n\
-     To restore the faster path: keep every file from the download's .zip together, or re-extract \
-     it. The libraries also come from MSYS2 (https://www.msys2.org/, packages \
-     mingw-w64-x86_64-gmp and mingw-w64-x86_64-mpfr) or from https://gmplib.org/ and \
-     https://www.mpfr.org/.\n\n\
-     Or simply use the standard download, which needs no DLLs: \
-     https://github.com/WindySnowOwl/fractadyne/releases"
+/// falls back to astro-float. States what happened, WHERE the DLLs need to go (the folder the
+/// program started from, so the fix is unambiguous), that images are unaffected, and — each on its
+/// own line so they copy cleanly — where to get the libraries or the no-DLL standard download.
+///
+/// `exe_dir` is the directory Fractadyne is running from; `None` (e.g. it could not be determined)
+/// falls back to naming the executable instead.
+pub fn mpfr_missing_message(exe_dir: Option<&std::path::Path>) -> String {
+    let where_to = match exe_dir {
+        Some(d) => format!(
+            "They must sit in the folder Fractadyne is running from — copy them here:\n\
+             \x20   {}",
+            d.display()
+        ),
+        None => "They must sit in the same folder as fractadyne.exe.".to_string(),
+    };
+    format!(
+        "This is the accelerated (MPFR) build, but its math libraries could not be found.\n\n\
+         libmpfr-6.dll and libgmp-10.dll (and libgcc_s_seh-1.dll, libwinpthread-1.dll) are missing.\n\
+         {where_to}\n\n\
+         Fractadyne has fallen back to its built-in arithmetic (astro-float). Your images are \
+         unaffected — the two are byte-identical. Only the pause while a deep view's reference \
+         orbit is built is slower.\n\n\
+         To restore the faster path, keep every file from the download's .zip together (or \
+         re-extract it). The libraries also come from:\n\
+         https://www.msys2.org/  (packages mingw-w64-x86_64-gmp and mingw-w64-x86_64-mpfr)\n\
+         https://gmplib.org/\n\
+         https://www.mpfr.org/\n\n\
+         Or use the standard download, which needs no DLLs:\n\
+         https://github.com/WindySnowOwl/fractadyne/releases"
+    )
+}
+
+/// The message shown if the MPFR libraries APPEAR during a session after a fallback (the user
+/// dropped them in). The selected backend is fixed for the process — the design forbids running
+/// half a session in each — so they take effect on the next launch, which this says plainly.
+pub fn mpfr_found_message() -> String {
+    "The MPFR math libraries are now present — Fractadyne will use the faster accelerated \
+     arithmetic the next time you start it. This session continues with the built-in one."
         .to_string()
 }
 
-/// Decide the startup backend, and warn instead of crashing when the accelerated build cannot find
-/// MPFR. Returns the chosen backend plus an optional user-facing message; it does NOT call
-/// [`select`] (the caller does, so the one selection point and its logging stay in one place).
+/// Decide the startup backend, falling back instead of crashing when the accelerated build cannot
+/// find MPFR. Returns the chosen backend and whether it FELL BACK from MPFR to astro-float because
+/// the libraries were missing; it does NOT call [`select`] (the caller does, so the one selection
+/// point and its logging stay in one place) and does NOT format the message (the caller builds it
+/// with the running directory).
 ///
 /// `requested` is the explicit `--bignum` / `FRACTADYNE_BIGNUM` choice, or `None` to take the
 /// build default. On a Windows accelerated build that wants MPFR but cannot load it, this returns
-/// `(Astro, Some(message))` — the load-bearing half of the delay-load design: without it a missing
-/// DLL is a hard `0xC0000135` at process start (nothing can warn), and with delay loading alone the
-/// first MPFR call would raise a delay-load exception. Choosing astro up front avoids both.
-pub fn resolve_startup_backend(requested: Option<BackendChoice>) -> (BackendChoice, Option<String>) {
+/// `(Astro, true)` — the load-bearing half of the delay-load design: without it a missing DLL is a
+/// hard `0xC0000135` at process start (nothing can warn), and with delay loading alone the first
+/// MPFR call would raise a delay-load exception. Choosing astro up front avoids both.
+pub fn resolve_startup_backend(requested: Option<BackendChoice>) -> (BackendChoice, bool) {
     let want = requested.unwrap_or_else(default_choice);
     #[cfg(all(feature = "rug", target_os = "windows"))]
     {
         if want == BackendChoice::Rug && !mpfr_runtime_available() {
-            return (BackendChoice::Astro, Some(mpfr_missing_message()));
+            return (BackendChoice::Astro, true);
         }
     }
-    (want, None)
+    (want, false)
 }
 
 /// Every backend compiled into this build, with the versions that can be queried at runtime.
@@ -407,23 +432,31 @@ mod tests {
         // The probe is trivially true when MPFR is statically present or not compiled in.
         assert!(mpfr_runtime_available() || cfg!(all(feature = "rug", target_os = "windows")));
 
-        let (choice, warn) = resolve_startup_backend(None);
+        let (choice, fell_back) = resolve_startup_backend(None);
         assert!(available_backends().contains(&choice), "default is a backend this build lacks");
 
-        let (c2, w2) = resolve_startup_backend(Some(BackendChoice::Astro));
+        let (c2, fb2) = resolve_startup_backend(Some(BackendChoice::Astro));
         assert_eq!(c2, BackendChoice::Astro);
-        assert!(w2.is_none(), "asking for astro never warns");
+        assert!(!fb2, "asking for astro never falls back");
 
         #[cfg(not(all(feature = "rug", target_os = "windows")))]
         {
-            // No delay-load probe here, so resolution is a pure pass-through: no warning ever.
-            assert!(warn.is_none());
+            // No delay-load probe here, so resolution is a pure pass-through: never a fallback.
+            assert!(!fell_back);
             assert_eq!(choice, default_choice());
         }
-        let _ = warn;
+        let _ = fell_back;
 
-        // The fallback message names the fix and a link, whichever build this is.
-        let m = mpfr_missing_message();
+        // The fallback message names the fix and the links, and the running directory when known.
+        let m = mpfr_missing_message(Some(std::path::Path::new("C:\\Fractadyne\\accel")));
         assert!(m.contains("astro-float") && m.contains("releases") && m.contains(".dll"));
+        assert!(m.contains("C:\\Fractadyne\\accel"), "the running directory is named");
+        assert!(m.contains("https://gmplib.org/") && m.contains("https://www.mpfr.org/"));
+        // Each URL on its own line (for clean copy-paste): no two https on the same line.
+        assert!(m.lines().all(|l| l.matches("https://").count() <= 1), "two URLs share a line");
+        // The no-dir form still names the executable.
+        assert!(mpfr_missing_message(None).contains("fractadyne.exe"));
+        // The recovery message says the next launch, not this session.
+        assert!(mpfr_found_message().contains("next time you start"));
     }
 }
