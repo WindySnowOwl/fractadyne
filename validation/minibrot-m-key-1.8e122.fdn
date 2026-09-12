@@ -1,0 +1,34 @@
+# Fractadyne view. Open it with File ▸ Open view, or paste it into
+# File ▸ Share location. Copy the BEGIN and END lines too.
+# Lines starting with # are comments and are ignored.
+#
+# Field report 2026-09-12: at this view the M key ("Find minibrot center") said
+# "No minibrot center found" with a period-1411 minibrot ~19 px from the centre.
+# Newton converged; the finder's raw |Z_n| verification could not reach its tolerance
+# at the working precision. Fixed in v0.2.41-beta.102 (derivative-relative check);
+# pinned by find_nucleus_deep_period_1411_at_1e122 (core tests).
+# ----- BEGIN FRACTADYNE VIEW -----
+app=Fractadyne
+version=0.2.41-beta.101 (build 3096)
+format_version=1
+saved_unix=1789178306
+saved=2026-09-12 01:58:26 UTC
+notes=
+fractal=Mandelbrot
+julia=0
+julia_c_re=-8.00000000000000044e-1
+julia_c_im=1.56000000000000000e-1
+center_re=-1.0170448185864393243530511801394791066232738025125737832856691458438106787700409978947040659432857423648735888535728739962764057095040024217236318569522459e-1
+center_im=9.2462201825922887282648293215874470644756581078631657218247070444163971710542007291172028582521584591308867541816770697639168679943957234382482501618715513e-1
+upp=2.00681669418488061e-125
+upp_log2=-4.14236103016251604e2
+zoom=1.807897016376924e122
+max_iter=10000
+auto_iter=1
+palette=0
+cycle=0.27
+offset=0.1
+aa=2
+# Detects accidental damage in transit; it is not a signature.
+checksum=96f236a714389763
+# ----- END FRACTADYNE VIEW -----

@@ -12,6 +12,22 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **"Find minibrot center" (M) no longer refuses a minibrot it has already found at depth**
+  (beta.102). Field report 2026-09-12: at 1.8e122× with a period-1411 minibrot ~19 px from the
+  centre, M said "No minibrot center found". Newton had in fact converged to the nucleus in two
+  steps; the finder's final verification — iterate the critical orbit at the nucleus and require
+  `|Z_n|` below 10⁻³ of the view span — then failed, because `Z_n` is not a c-plane length: at
+  that nucleus it is `2^204` times more sensitive than `c`, so at the finder's 471-bit working
+  precision the computed `|Z_1411|` floors at `2^-268` against a tolerance of `2^-414`, and no
+  reachable precision fixes that in general (this view alone needs ~620 bits). The check now
+  measures the c-plane distance to the period-`n` nucleus, `|Z_n / dZ_n/dc|` — one Newton step,
+  from the derivative the solve already computes — which sits at the precision floor at the
+  true period (`2^-472` here) whatever the sensitivity, and stays far above the tolerance at
+  every smaller `n` (`2^-206` at best), so the recovered period is unchanged. Shallow behaviour
+  is identical (period-2 disk, period-3 bulb and the curated deep landmarks all re-derive the
+  same nuclei). The location is kept as `validation/minibrot-m-key-1.8e122.fdn` and pinned by
+  a core test; `--find-minibrot` at that centre and zoom now prints period 1411.
+
 - **Coordinate expressions: a Help reference, and refusals that say what and where** (beta.101).
   Two gaps in the expression feature (beta.17 / 94 / 95). First, the grammar was documented only
   by example — a sentence in the Navigation help naming `pi`, `sqrt` and `sin/cos/tan` — so the

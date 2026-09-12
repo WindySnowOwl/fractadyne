@@ -1982,13 +1982,28 @@ fn detect_period(cx: &BigFloat, cy: &BigFloat, formula: u32, max: u32, p: usize)
     (best_p > 0).then_some(best_p)
 }
 
-/// True (smallest) period at a converged nucleus `c`: the first `n` for which
-/// `log2|Z_n| < tol_log2` (the critical orbit returns to 0). `None` if the orbit never
-/// returns within `p_est` steps — i.e. `c` is not actually a nucleus (Newton didn't
-/// converge). ⚠The tolerance is a LOG: the old linear `tol2` underflowed to `0.0` past
-/// ~1e305×, so past the ceiling this returned `None` for every genuine nucleus — the
-/// silent half of the finder's f64 wall. (A perfect nucleus's exact-zero return is safe:
-/// `log2_abs_c` reads zero as −∞.)
+/// True (smallest) period at a converged nucleus `c`: the first `n` for which the critical
+/// orbit returns to 0 — measured as the **c-plane distance to the period-`n` nucleus**,
+/// `|Z_n| / |dZ_n/dc|` (one Newton step), which must fall below `tol_log2`. `None` if no
+/// `n ≤ p_est` does — i.e. `c` is not actually a nucleus (Newton didn't converge).
+///
+/// ⚠⚠**Why the derivative, not `|Z_n|` alone.** The test used to be `log2|Z_n| < tol_log2`
+/// with `tol` a c-plane length (10⁻³ of the view span). But `Z_n` is not a c-plane length:
+/// at a deep nucleus it is `|dZ_n/dc|` times more sensitive than `c` itself, and the
+/// working precision bounds how small a COMPUTED `|Z_n|` can get to `≈ 2^(−prec + log2|D_n|)`.
+/// Field case 2026-09-12 (`validation/minibrot-m-key-1.8e122.fdn`): a period-1411 minibrot
+/// at 1.8e122× has `|D_1411| ≈ 2^204`, so at the finder's 471 bits `|Z_1411|` bottomed out
+/// at `2^-268` against a tolerance of `2^-414` — Newton had converged in two steps to the
+/// nucleus 19 px from the view centre, and the verification then declared "no minibrot".
+/// Raising precision only moves the wall (that view needs ~620 bits; deeper ones more).
+/// `|Z_n / D_n|` IS a c-plane length, so the tolerance compares like with like, and at the
+/// true period it sits at the precision floor (`2^-472` there) regardless of `|D_n|`.
+///
+/// ⚠The tolerance is a LOG: the old linear `tol2` underflowed to `0.0` past ~1e305×, so
+/// past the ceiling this returned `None` for every genuine nucleus — the silent half of the
+/// finder's f64 wall. (A perfect nucleus's exact-zero return is safe: `log2_abs_c` reads
+/// zero as −∞.) A zero derivative (which no critical orbit produces past `n = 1`) is
+/// skipped rather than read as a hit.
 fn reduce_period(
     cx: &BigFloat,
     cy: &BigFloat,
@@ -1997,13 +2012,29 @@ fn reduce_period(
     tol_log2: f64,
     p: usize,
 ) -> Option<u32> {
+    let k = formula_power(formula)?;
+    let one = bf(1.0, p);
+    let kf = bf(k as f64, p);
     let mut zx = bf(0.0, p);
     let mut zy = bf(0.0, p);
+    let mut dx = bf(0.0, p);
+    let mut dy = bf(0.0, p);
     for n in 1..=p_est {
+        // Same recurrence as the Newton loop: D_{n+1} = k·Z_n^{k-1}·D_n + 1, Z_{n+1} = Z_n^k + c.
+        let (zk1x, zk1y) = if k == 2 { (zx.clone(), zy.clone()) } else { cpow_bf(&zx, &zy, k - 1, p) };
+        let (mzx, mzy) = cmul_bf(&zk1x, &zk1y, &dx, &dy, p);
+        let ndx = mzx.mul(&kf, p, RM).add(&one, p, RM);
+        let ndy = mzy.mul(&kf, p, RM);
         let (nx, ny) = step_bf(&zx, &zy, cx, cy, formula, p);
         zx = nx;
         zy = ny;
-        if log2_abs_c(&zx, &zy) < tol_log2 {
+        dx = ndx;
+        dy = ndy;
+        let d_l2 = log2_abs_c(&dx, &dy);
+        if !d_l2.is_finite() {
+            continue;
+        }
+        if log2_abs_c(&zx, &zy) - d_l2 < tol_log2 {
             return Some(n);
         }
     }

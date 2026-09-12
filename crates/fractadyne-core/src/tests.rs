@@ -705,6 +705,31 @@ fn find_nucleus_period3_bulb() {
     assert!((to_f64(&n.cy) - 0.744862).abs() < 1e-5, "cy={}", to_f64(&n.cy));
 }
 
+/// Field report 2026-09-12: at this view (1.8e122×) the M key said "No minibrot center found"
+/// with a period-1411 minibrot ~19 px from the centre and 8 px wide. Newton converged to its
+/// nucleus in two steps; the final `reduce_period` check then failed, because it compared
+/// `|Z_1411|` — whose computed value floors at `2^(−471 + 204)` for `|dZ/dc| ≈ 2^204` at the
+/// finder's 471 bits — against a c-plane tolerance of `2^-414`. The check now measures the
+/// c-plane distance `|Z_n / D_n|`, which is precision-floor-bound at the true period. The
+/// location is kept verbatim in `validation/minibrot-m-key-1.8e122.fdn`.
+#[test]
+fn find_nucleus_deep_period_1411_at_1e122() {
+    let cx = parse_bf("-1.0170448185864393243530511801394791066232738025125737832856691458438106787700409978947040659432857423648735888535728739962764057095040024217236318569522459e-1").unwrap();
+    let cy = parse_bf("9.2462201825922887282648293215874470644756581078631657218247070444163971710542007291172028582521584591308867541816770697639168679943957234382482501618715513e-1").unwrap();
+    // The app's own magnification for that view (`zoom=1.807897016376924e122`), as log2.
+    let log2_mag = 1.807897016376924e122f64.log2();
+    let n = find_nucleus(&[cx.clone(), cy.clone()], log2_mag, 0, 100_000)
+        .expect("the period-1411 minibrot 19 px from the centre must be found");
+    assert_eq!(n.period, 1411);
+    // The nucleus is ~2^-408 from the centre — inside the view (span 2^-404.5), off-centre.
+    let p = precision_for_octaves(log2_mag.ceil() as u64);
+    let d = log2_abs(&bf_sub(&n.cx, &cx, p)).max(log2_abs(&bf_sub(&n.cy, &cy, p)));
+    assert!((-410.0..-406.5).contains(&d), "nucleus distance log2 {d}");
+    // And it really is a nucleus: the residual there is at the precision floor, not 2^-268.
+    let res = nucleus_residual_log2(&n.cx, &n.cy, 1411, 0, p + 64).unwrap();
+    assert!(res < -300.0, "residual log2 {res}");
+}
+
 // ---- analytic ground-truth validation (no external data; exact mathematics) ----
 
 /// Plain-f64 Mandelbrot escape-time dwell (test ground truth). `None` = interior
