@@ -25,10 +25,26 @@ import os
 import re
 import subprocess
 import time
+from decimal import Decimal, getcontext
 
 from PIL import Image
 
+getcontext().prec = 2000  # centers reach ~1139 digits; give the box math generous headroom
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def write_fsloc(path, re_, im_, zoom, w, h, iters, desc):
+    """Write a FractalShark saved-location file (its --locations format):
+        width height minX minY maxX maxY iterations antialiasing
+        <description>
+    The bounding box is center +/- 2/zoom, i.e. FractalShark's own point+zoom -> box formula
+    (PointZoomBBConverter, Factor=2). Feeding the box via --locations dodges the --center-x parse
+    bug that blanks some locations in the 0.541 CLI, and has no command-line length limit."""
+    half = Decimal(2) / Decimal(zoom)
+    cx, cy = Decimal(re_), Decimal(im_)
+    with open(path, "w", newline="\n") as f:
+        f.write("%s %s\n%s\n%s\n%s\n%s\n%s 1\n%s\n"
+                % (w, h, cx - half, cy - half, cx + half, cy + half, iters, desc))
 F3_BASE = os.path.join(REPO, "validation", "corpus", "locations", "21-m43-spar-1e27.7.f3.toml")
 
 
@@ -57,7 +73,7 @@ def parse_tour(path):
             cur["iters"] = int(m.group(1))
     if cur:
         frames.append(cur)
-    return size, [(f["re"], f["im"], f["zoom"], f["iters"]) for f in frames if "zoom" in f]
+    return size, [(f["re"], f["im"], f["zoom"], f["iters"]) for f in frames if "zoom" in f], is_julia
 
 
 def has_structure(png):
@@ -208,9 +224,11 @@ def main():
             tot, ok, blank, done = 0.0, True, 0, 0
             for i, (r, im_, z, it) in enumerate(frames):
                 w, h = size.split("x")
-                stem_out = os.path.join(wdir, "fs-%03d" % i)
+                stem_out = os.path.join(wdir, "fs-%03d" % i)   # dot-free stem (FS strips after a dot)
+                loc = os.path.join(wdir, "fs-%03d.fsloc" % i)
+                write_fsloc(loc, r, im_, z, w, h, it, "%s f%03d" % (stem, i))
                 cmd = [a.fractalshark_cli, "--render-algorithm", a.fs_algo,
-                       "--center-x", r, "--center-y", im_, "--zoom", z, "--iterations", str(it),
+                       "--locations", loc, "--iterations", str(it),
                        "--width", w, "--height", h, "--antialiasing", "1", "--out", stem_out, "--quiet"]
                 st1, w1 = timed(cmd, timeout=a.timeout)
                 png = stem_out + ".png"
@@ -225,7 +243,7 @@ def main():
             elif blank:
                 status = "partial-blank(%d/%d)" % (blank, done)
             wr.writerow(["fractalshark", stem, status, round(tot, 2), "1.0 (N processes)", done,
-                         "GPU %s; 0.541+ required" % a.fs_algo])
+                         "GPU %s via --locations (dodges the 0.541 --center-x blank bug)" % a.fs_algo])
             print("  fractalshark %-14s %.1fs  (%d/%d structured)" % (status, tot, done - blank, done))
 
     csv_fh.close()
