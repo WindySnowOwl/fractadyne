@@ -33,14 +33,17 @@ F3_BASE = os.path.join(REPO, "validation", "corpus", "locations", "21-m43-spar-1
 
 
 def parse_tour(path):
-    """Return (size, [(re, im, zoom, iters), ...]) from a generated crossing tour."""
+    """Return (size, [(re, im, zoom, iters), ...], is_julia) from a generated crossing tour."""
     size = "3840x2160"
+    is_julia = False
     frames, cur = [], {}
     for line in open(path):
         s = line.strip()
         m = re.match(r'size\s*=\s*"([^"]+)"', s)
         if m:
             size = m.group(1)
+        if s == "julia = true":
+            is_julia = True
         if s == "[[keyframe]]":
             if cur:
                 frames.append(cur)
@@ -136,7 +139,7 @@ def main():
     for tf in tours:
         stem = os.path.splitext(tf)[0]
         tour_path = os.path.join(a.tours, tf)
-        size, frames = parse_tour(tour_path)
+        size, frames, is_julia = parse_tour(tour_path)
         size = a.size or size
         n = len(frames)
         print("\n### %s  (%d frames, %s)" % (stem, n, size))
@@ -171,7 +174,11 @@ def main():
             print("  fractadyne   %-14s seq=%.1fs  singles=%.1fs  amort=%s" % (st, seq, ss, amort))
 
         # ---- Fraktaler-3: one process per frame ----
-        if a.fraktaler3:
+        if a.fraktaler3 and is_julia:
+            wr.writerow(["fraktaler3", stem, "NA-julia", "", "", n,
+                         "Julia not wired to this lane (view center only; c is not passed)"])
+            print("  fraktaler3   NA-julia       (Julia c not passed to this lane)")
+        elif a.fraktaler3:
             tot, ok, blank = 0.0, True, 0
             for i, (r, im_, z, it) in enumerate(frames):
                 cfg = os.path.join(wdir, "f3-%03d.toml" % i)
@@ -193,7 +200,11 @@ def main():
             print("  fraktaler3   %-14s %.1fs  (N processes, amort 1.0 by construction)" % (status, tot))
 
         # ---- FractalShark: GPU, one process per frame ----
-        if a.fractalshark_cli:
+        if a.fractalshark_cli and is_julia:
+            wr.writerow(["fractalshark", stem, "NA-julia", "", "", n,
+                         "Julia not wired to this lane (view center only; c is not passed)"])
+            print("  fractalshark NA-julia       (Julia c not passed to this lane)")
+        elif a.fractalshark_cli:
             tot, ok, blank, done = 0.0, True, 0, 0
             for i, (r, im_, z, it) in enumerate(frames):
                 w, h = size.split("x")
