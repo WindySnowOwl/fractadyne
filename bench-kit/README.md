@@ -6,7 +6,7 @@ A reproducible head-to-head of deep-zoom Mandelbrot renderers on **your** hardwa
 |---|---|---|---|
 | **Fractadyne** | automated | GPU (wgpu: Vulkan/DX12/Metal/GL) | the app this kit ships with |
 | **Fraktaler-3** | automated | CPU (OpenMP, BLA + rebasing) | binary + source included (AGPL-3.0) |
-| **Imagina** | operator-assisted | CPU (MipLA) | no headless mode; you transcribe its reported time |
+| **Imagina** | assisted, or automated via a headless build | CPU (MipLA) | upstream is GUI-only; a small headless `imagina-cli` fork enables an automated lane - see "Imagina" below |
 | **FractalShark** | automated (GPU, 0.541+) | GPU (CUDA) | GPU lane works from 0.541 (adds sm_75; runs on RTX 20/30/40/50); earlier releases were CPU-only here - see below |
 
 Ten single-frame scenes from Fractadyne's cross-validated corpus (each verified pixel-for-pixel
@@ -34,6 +34,26 @@ semantics differ per renderer and would silently benchmark different work. The s
 correctness fixtures first, so they carry the corpus's own resolution and sample count
 (Fraktaler-3's `subframes = 4`, paired there with Fractadyne's `--ss 2`); `run-all.ps1` rewrites
 both into a per-run copy, and the corpus originals are never touched.
+
+## Prerequisites & quick start
+
+Prerequisites: **PowerShell** (Windows) or **bash** (Linux), and **Python 3 with Pillow**
+(`pip install pillow`) — Python drives the zoom-sequence lane, the cutoff-crossing lane, and the
+blank-frame structure checks. Every renderer is optional; a lane you don't supply is simply skipped.
+
+- **Fastest path** — `bench-latest` fetches each renderer's current release and runs the whole
+  single-frame + zoom-sequence benchmark (see "One command" below).
+- **Local build or a subset** — point `run-all.ps1` at the exes you have (see "Running by hand").
+- **Cutoff-crossing lane** — a separate tool for the arithmetic-mode transitions (see that section).
+
+Every run writes `results/<host>-<timestamp>/` with `sysinfo.txt`, `results.csv`, `summary.md`, and
+an `apps-manifest.txt` stamping each renderer's version and binary hash — so a result says exactly
+what produced it and can be reproduced or challenged.
+
+Note on scene files: the distributed kit zip already contains the ten scenes in all three formats.
+From a **git clone** they are generated, not committed (only the four cutoff-crossing `.kfr` are) —
+run `powershell -File package.ps1` once to stage `scenes/` before `run-all.ps1`. The cutoff-crossing
+tours in `tours/crossing/` are committed and need no staging.
 
 ## The zoom-sequence lane
 
@@ -76,11 +96,14 @@ across 1e28, a deep field across 1e308). Two harnesses consume them:
   `--livetest` for the live/multithreaded path.
 - `tools/crossing-bench.py` — the cross-renderer lane. Drives each renderer through the SAME per-frame
   views at one sample per pixel: Fractadyne as a sequence (`--render-tour`, plus singles for the
-  amortisation denominator), Fraktaler-3 and FractalShark one process per frame. Every frame is
-  structure-checked, so a blank render is `DNF-blank`, never a time — FractalShark, for instance,
-  renders the seahorse band but comes back blank on the spar and nucleus (a per-location limit).
-  Run `python tools/crossing-bench.py --fractadyne <exe> [--fraktaler3 <exe> --f3-wisdom <toml>]
-  [--fractalshark-cli <exe>] [--size 3840x2160]`.
+  amortisation denominator), and Fraktaler-3, FractalShark and Imagina one process per frame. Every
+  frame is structure-checked, so a blank render is `DNF-blank`, never a time. FractalShark is driven
+  through its `--locations` file (not `--center-x`) to dodge a 0.541 CLI parse bug that otherwise
+  blanks the spar and nuclei; the Imagina lane uses the headless `imagina-cli` (see "Imagina"); Julia
+  tours record `NA-julia` for the F3/FractalShark/Imagina lanes (the Julia parameter is not passed to
+  them). Run:
+  `python tools/crossing-bench.py --fractadyne <exe> [--fraktaler3 <exe> --f3-wisdom <toml>]
+  [--fractalshark-cli <exe>] [--imagina-cli <exe>] [--size 3840x2160]`.
 
 ## Fairness protocol
 
@@ -180,12 +203,22 @@ FractalShark is a CUDA renderer, and the automated lane now measures its GPU pat
 produced a number when you compare — a GPU time against another renderer's GPU time is the
 like-for-like one.
 
-## The assisted lane, honestly
+## Imagina
 
-Imagina has no headless render mode, so its lane launches the app per scene and prompts you for
-the render time it displays. That is transcription, not automation — type what the app shows,
-don't estimate. If a scene doesn't import cleanly (it imports `.kfr`, but format drift happens),
-record DNF and note why in the prompt.
+Upstream Imagina ships a GUI only — no headless render mode — so it has two lanes:
+
+- **Automated (`imagina-cli`)** — a small headless fork of Imagina drives the engine directly
+  (`SetLocation` → render loop → read the pixel buffer → PPM), with no GUI, no GL context, and no
+  libpng. It renders the whole corpus (1e6 through 4.6e1105) and `crossing-bench.py` uses it via
+  `--imagina-cli <exe>`. Because it is a derivative of Imagina it is **AGPL-3.0**, kept in a separate
+  repo and never linked into Fractadyne. Building it needs msys2 mingw-clang and GMP; the changes
+  from upstream are a headless entry point, an MPIR→GMP switch, and a Windows LLP64 fix to
+  `FloatExp`'s `mpf` exponent read. Ask us for the fork, or reproduce it from upstream with those
+  notes.
+- **Assisted (the GUI)** — with no headless build, `run-all.ps1`'s Imagina lane launches the app per
+  scene and prompts you for the render time it displays. That is transcription, not automation — type
+  what the app shows, don't estimate. It imports `.kfr` (format drift happens; record DNF and say why
+  if a scene won't load).
 
 ## Licenses
 
