@@ -88,6 +88,13 @@ def has_structure(png):
     return len(c) > 16 and modal < 0.98
 
 
+def imagina_precision(re_str):
+    """Precision (bits) for imagina-cli: enough to hold the center's full digit count, so a deep
+    location is not truncated. The center string carries the location's own precision."""
+    digits = len(re_str.replace("-", "").replace(".", "").replace("+", ""))
+    return max(128, int(digits * 3.3219) + 96)
+
+
 def timed(cmd, cwd=None, timeout=7200, env=None):
     t0 = time.time()
     try:
@@ -124,6 +131,7 @@ def main():
     ap.add_argument("--f3-wisdom")
     ap.add_argument("--fractalshark-cli")
     ap.add_argument("--fs-algo", default="GpuHDRx32PerturbedLAv2")
+    ap.add_argument("--imagina-cli", help="path to the headless imagina-cli (AGPL fork)")
     ap.add_argument("--tours", default=os.path.join(REPO, "tours", "crossing"))
     ap.add_argument("--size", default="3840x2160")
     ap.add_argument("--out", default=None)
@@ -133,7 +141,7 @@ def main():
 
     # Absolute paths: the Fraktaler-3 lane runs with cwd = the work dir, so a relative exe or wisdom
     # path would not resolve there (WinError 2).
-    for attr in ("fractadyne", "fraktaler3", "f3_wisdom", "fractalshark_cli"):
+    for attr in ("fractadyne", "fraktaler3", "f3_wisdom", "fractalshark_cli", "imagina_cli"):
         v = getattr(a, attr)
         if v:
             setattr(a, attr, os.path.abspath(v))
@@ -245,6 +253,34 @@ def main():
             wr.writerow(["fractalshark", stem, status, round(tot, 2), "1.0 (N processes)", done,
                          "GPU %s via --locations (dodges the 0.541 --center-x blank bug)" % a.fs_algo])
             print("  fractalshark %-14s %.1fs  (%d/%d structured)" % (status, tot, done - blank, done))
+
+        # ---- Imagina: headless imagina-cli (AGPL fork), one process per frame ----
+        if a.imagina_cli and is_julia:
+            wr.writerow(["imagina", stem, "NA-julia", "", "", n,
+                         "Julia not wired to this lane (imagina-cli has no --julia)"])
+            print("  imagina      NA-julia       (Julia not wired to this lane)")
+        elif a.imagina_cli:
+            tot, ok, blank, done = 0.0, True, 0, 0
+            for i, (r, im_, z, it) in enumerate(frames):
+                w, h = size.split("x")
+                ppm = os.path.join(wdir, "im-%03d.ppm" % i)
+                cmd = [a.imagina_cli, "--center-x", r, "--center-y", im_,
+                       "--precision", str(imagina_precision(r)), "--zoom", z, "--iter", str(it),
+                       "--width", w, "--height", h, "--out", ppm]
+                st1, w1 = timed(cmd, timeout=a.timeout)
+                if not os.path.exists(ppm):
+                    ok = False; break
+                if not has_structure(ppm):
+                    blank += 1
+                tot += w1; done += 1
+            status = ("ok" if ok else "fail")
+            if blank == done and done:
+                status = "DNF-blank(all)"
+            elif blank:
+                status = "partial-blank(%d/%d)" % (blank, done)
+            wr.writerow(["imagina", stem, status, round(tot, 2), "1.0 (N processes)", done,
+                         "headless imagina-cli (AGPL fork); --zoom, PPM out"])
+            print("  imagina      %-14s %.1fs  (%d/%d structured)" % (status, tot, done - blank, done))
 
     csv_fh.close()
     print("\nresults -> %s" % os.path.join(out, "results.csv"))
