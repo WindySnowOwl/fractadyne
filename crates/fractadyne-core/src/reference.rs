@@ -846,55 +846,133 @@ fn bla_merge(x: BlaNode, y: BlaNode, dc_max: FloatExp) -> BlaNode {
 /// tolerance (smaller ⇒ more accurate but fewer skips). `levels[l][j]` covers the steps
 /// starting at `j·2^l`; level 0 has one node per step `n` (using `Zₙ`), higher levels merge
 /// pairs (an odd tail carries up with its smaller span).
+/// Below this element count a level is built serially: the per-node work (a handful of `FloatExp`
+/// ops) is small enough that thread-spawn overhead would dominate. Above it, the level is filled by
+/// scoped worker threads. Level 0 is `nstep` long and the merge levels halve each step, so the
+/// deep-and-expensive levels parallelize while the tiny top levels stay serial — with no effect on
+/// the output either way. 8192 is where the per-level work (~1 µs/node) clears scoped-thread spawn
+/// overhead on this class of machine; a mid-deep orbit's first couple of levels clear it, a shallow
+/// build stays entirely serial.
+const BLA_PAR_THRESHOLD: usize = 8_192;
+
+/// Fill `out[i] = f(i)` for every `i`, in parallel over scoped threads when `out` is large enough.
+///
+/// ⭐**Byte-identity is by construction.** Each slot is written by exactly ONE thread from a fixed
+/// index via the same deterministic `f`; there is no reduction and no reassociation, so the result
+/// is bit-for-bit what the serial `for i { out[i] = f(i) }` produces. The corpus + IterChunk/BLA
+/// goldens gate that. Mirrors [`par_orbit_scores`]'s scoped-thread chunking.
+fn par_fill<T: Send>(out: &mut [T], par_threshold: usize, f: impl Fn(usize) -> T + Sync) {
+    let n = out.len();
+    let threads = std::thread::available_parallelism().map_or(1, |x| x.get()).min(n.max(1));
+    if threads <= 1 || n < par_threshold {
+        for (i, slot) in out.iter_mut().enumerate() {
+            *slot = f(i);
+        }
+        return;
+    }
+    let chunk = n.div_ceil(threads);
+    let f = &f;
+    std::thread::scope(|s| {
+        for (ci, part) in out.chunks_mut(chunk).enumerate() {
+            let base = ci * chunk;
+            s.spawn(move || {
+                for (k, slot) in part.iter_mut().enumerate() {
+                    *slot = f(base + k);
+                }
+            });
+        }
+    });
+}
+
+/// One level-0 BLA node — the single-step linear approximation at orbit sample `n`, plus its aux
+/// coloring aggregates. Pure function of `orbit[n]`, `orbit[n+1]`, and `aux`; split out of
+/// [`build_bla_mandel`] so [`par_fill`] can build every node independently. Byte-identical to the
+/// former inline loop body.
+#[inline]
+fn bla_level0_node(
+    n: usize,
+    orbit: &[[f32; 4]],
+    eps: f64,
+    aux: AuxAggParams,
+    one: CFloatExp,
+) -> BlaNode {
+    // `sample_xy`, not lane sums: an extended-range dip sample carries a NaN marker.
+    let (zr, zi) = sample_xy(&orbit[n]);
+    let a = CFloatExp { re: FloatExp::from_f64(2.0 * zr), im: FloatExp::from_f64(2.0 * zi) };
+    let r = a.abs().mul_f64(eps); // |2Z|·eps : drops δz² with rel error ≤ eps
+    // Aux aggregate for this node's single landing iterate Z_{n+1} (the shader accumulates the
+    // POST-step value). TIA's `prev` is |Z_n|; node 0 lands on the global first iterate z_1,
+    // whose TIA is skipped by the `n>=1` guard, so its TIA seed is 0.
+    let z1 = orbit[n + 1];
+    let (z1r, z1i) = (z1[0] as f64 + z1[2] as f64, z1[1] as f64 + z1[3] as f64);
+    let agg_trap = aux_trap_dist(z1r, z1i, aux.trap_type);
+    let agg_stripe = aux_stripe_term(z1r, z1i, aux.stripe_freq);
+    let agg_tia = if n == 0 {
+        0.0
+    } else {
+        aux_tia_term(
+            (zr * zr + zi * zi).sqrt(),
+            (z1r * z1r + z1i * z1i).sqrt(),
+            aux.cmag,
+            aux.power,
+        )
+    };
+    BlaNode { a, b: one, r, span: 1, agg_trap, agg_tia, agg_stripe }
+}
+
 pub fn build_bla_mandel(
     orbit: &[[f32; 4]],
     dc_max: FloatExp,
     eps: f64,
     aux: AuxAggParams,
 ) -> Vec<Vec<BlaNode>> {
+    build_bla_mandel_impl(orbit, dc_max, eps, aux, BLA_PAR_THRESHOLD)
+}
+
+/// The body of [`build_bla_mandel`], with the parallel-fill threshold exposed so a test can force
+/// the serial (`usize::MAX`) and parallel (`0`) paths on the same orbit and assert byte-identity.
+fn build_bla_mandel_impl(
+    orbit: &[[f32; 4]],
+    dc_max: FloatExp,
+    eps: f64,
+    aux: AuxAggParams,
+    par_threshold: usize,
+) -> Vec<Vec<BlaNode>> {
     let nstep = orbit.len().saturating_sub(1);
     if nstep == 0 {
         return Vec::new();
     }
     let one = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
-    let mut lvl0 = Vec::with_capacity(nstep);
-    for n in 0..nstep {
-        // `sample_xy`, not lane sums: an extended-range dip sample carries a NaN marker.
-        let (zr, zi) = sample_xy(&orbit[n]);
-        let a = CFloatExp { re: FloatExp::from_f64(2.0 * zr), im: FloatExp::from_f64(2.0 * zi) };
-        let r = a.abs().mul_f64(eps); // |2Z|·eps : drops δz² with rel error ≤ eps
-        // Aux aggregate for this node's single landing iterate Z_{n+1} (the shader accumulates the
-        // POST-step value). TIA's `prev` is |Z_n|; node 0 lands on the global first iterate z_1,
-        // whose TIA is skipped by the `n>=1` guard, so its TIA seed is 0.
-        let z1 = orbit[n + 1];
-        let (z1r, z1i) = (z1[0] as f64 + z1[2] as f64, z1[1] as f64 + z1[3] as f64);
-        let agg_trap = aux_trap_dist(z1r, z1i, aux.trap_type);
-        let agg_stripe = aux_stripe_term(z1r, z1i, aux.stripe_freq);
-        let agg_tia = if n == 0 {
-            0.0
-        } else {
-            aux_tia_term(
-                (zr * zr + zi * zi).sqrt(),
-                (z1r * z1r + z1i * z1i).sqrt(),
-                aux.cmag,
-                aux.power,
-            )
-        };
-        lvl0.push(BlaNode { a, b: one, r, span: 1, agg_trap, agg_tia, agg_stripe });
-    }
+    // Overwritten placeholder (every slot is filled below); never read.
+    let placeholder = BlaNode {
+        a: CFloatExp { re: FloatExp::ZERO, im: FloatExp::ZERO },
+        b: one,
+        r: FloatExp::ZERO,
+        span: 0,
+        agg_trap: 0.0,
+        agg_tia: 0.0,
+        agg_stripe: 0.0,
+    };
+    // Level 0 — every node is an independent pure function of the orbit + aux, so build them in
+    // parallel over scoped threads (byte-identical to the serial loop; see `par_fill`).
+    let mut lvl0 = vec![placeholder; nstep];
+    par_fill(&mut lvl0, par_threshold, |n| bla_level0_node(n, orbit, eps, aux, one));
     let mut levels = vec![lvl0];
+    // Each higher level merges disjoint adjacent pairs of the level below — `next[k]` depends only
+    // on `prev[2k]` and `prev[2k+1]`, so a level is also independent per output index. Levels stay
+    // sequential (each reads the one below), a barrier between them.
     while levels.last().unwrap().len() > 1 {
         let prev = levels.last().unwrap();
-        let mut next = Vec::with_capacity(prev.len().div_ceil(2));
-        let mut j = 0;
-        while j < prev.len() {
+        let out_len = prev.len().div_ceil(2);
+        let mut next = vec![placeholder; out_len];
+        par_fill(&mut next, par_threshold, |k| {
+            let j = 2 * k;
             if j + 1 < prev.len() {
-                next.push(bla_merge(prev[j], prev[j + 1], dc_max));
+                bla_merge(prev[j], prev[j + 1], dc_max)
             } else {
-                next.push(prev[j]); // odd tail carries up (smaller span, still aligned)
+                prev[j] // odd tail carries up (smaller span, still aligned)
             }
-            j += 2;
-        }
+        });
         levels.push(next);
     }
     levels
