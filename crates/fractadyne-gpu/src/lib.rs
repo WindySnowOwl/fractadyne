@@ -1389,6 +1389,19 @@ pub fn method_needs_aux(method: u32) -> bool {
     matches!(method, 1 | 2 | 3 | 5)
 }
 
+/// The `IterKey` aux selector — ONE source of truth for both the GPU key (here) and the app-side
+/// `settings_hash`, so they cannot disagree on when a color-method switch re-iterates. `u32::MAX`
+/// when all four aux statistics are resident (`aux_all`): a method switch then does NOT change the
+/// key, so it recolors from the resident textures instead of re-iterating. Otherwise the method id,
+/// so a switch between single-stat methods still re-iterates the one statistic it now needs.
+pub fn aux_sel(aux_all: bool, color_method: u32) -> u32 {
+    if aux_all {
+        u32::MAX
+    } else {
+        color_method
+    }
+}
+
 impl CallbackTrait for MandelbrotParams {
     fn prepare(
         &self,
@@ -1607,10 +1620,7 @@ impl CallbackTrait for MandelbrotParams {
             formula: self.formula,
             julia: self.julia,
             delta_exp: self.delta_exp,
-            // When all four aux stats are resident, the key must NOT depend on which method is
-            // selected (so a method switch recolors instead of re-iterating); single-stat keeps
-            // discriminating by method (so a switch re-iterates the one stat it now needs).
-            aux_sel: if self.aux_all { u32::MAX } else { self.color_method },
+            aux_sel: aux_sel(self.aux_all, self.color_method),
             stripe_freq: self.stripe_freq,
             trap_type: self.trap_type,
             sa_skip: self.sa_skip,

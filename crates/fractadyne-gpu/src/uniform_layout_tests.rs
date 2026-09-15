@@ -8,7 +8,7 @@
 //! So: parse the WGSL struct, lay it out under WGSL's alignment rules, and compare the total with
 //! `size_of::<ColorUniforms>()`. A mismatch is not a style problem; it is a wrong picture.
 
-use super::ColorUniforms;
+use super::{aux_sel, ColorUniforms, IterUniforms};
 
 /// `(size, align)` for the WGSL types this struct uses. An unrecognised type fails the test rather
 /// than being guessed at — a new type in the uniform is a deliberate change and should say so.
@@ -102,4 +102,46 @@ fn lut_binding_is_declared_and_sized() {
     // bake uses, so this pins the element size the shader assumes.
     assert_eq!(std::mem::size_of::<[f32; 4]>(), 16);
     assert!(fractadyne_color::segment::LUT_SIZE >= 256, "a LUT below 256 entries bands visibly");
+}
+
+/// ⭐⭐The SAME gate for the ITERATE uniform: `IterUniforms` (Rust) and `IterU` (WGSL) must agree
+/// byte for byte. `IterU` is bound by every iterate pipeline; a field added to one and not the
+/// other reads every field past the seam from the wrong offset. The `aux_all` + `_pad_aux` tail
+/// added for gated method-switching is exactly the kind of edit this catches.
+#[test]
+fn iter_uniform_matches_the_shader() {
+    let src = include_str!("mandelbrot.wgsl");
+    let fields = wgsl_struct_fields(src, "IterU");
+    assert_eq!(
+        wgsl_struct_size(&fields),
+        std::mem::size_of::<IterUniforms>(),
+        "IterU (WGSL, {} fields) and IterUniforms (Rust) disagree on size — one was edited without \
+         the other, and every iterate pipeline will read its uniform from the wrong offsets",
+        fields.len(),
+    );
+    // The gated-all-aux field and its pad must be present in the shader, or `aux_all` is read from
+    // stale bytes and method switching silently re-iterates (or worse, recolors a single-stat pass).
+    assert!(
+        fields.iter().any(|(n, _)| n == "aux_all"),
+        "IterU lost `aux_all` — gated method-switching needs it in both definitions",
+    );
+}
+
+/// ⭐The no-re-iterate contract, at the cache key. `aux_sel` is the ONLY thing in `IterKey` that a
+/// color-method change moves, and both the GPU key and the app `settings_hash` derive it from this
+/// one function. When all four aux stats are resident (`aux_all`), switching method must NOT change
+/// the selector (⇒ the key is unchanged ⇒ a free recolor); otherwise it must (⇒ a re-iterate).
+#[test]
+fn aux_sel_frees_method_switch_only_when_all_resident() {
+    // Settled/all-resident: every method maps to the same selector, so a switch never re-iterates.
+    for m in 0u32..=5 {
+        assert_eq!(aux_sel(true, m), u32::MAX, "aux_all must erase the method id from the key");
+    }
+    assert_eq!(aux_sel(true, 1), aux_sel(true, 2), "stripe↔TIA switch must be a free recolor");
+    assert_eq!(aux_sel(true, 0), aux_sel(true, 3), "smooth↔trap switch must be a free recolor");
+
+    // Single-stat: the selector IS the method, so a switch between distinct methods re-iterates.
+    assert_eq!(aux_sel(false, 2), 2);
+    assert_ne!(aux_sel(false, 1), aux_sel(false, 2), "single-stat method switch must re-iterate");
+    assert_ne!(aux_sel(false, 0), aux_sel(false, 4), "single-stat smooth↔DE switch must re-iterate");
 }

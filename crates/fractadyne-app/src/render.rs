@@ -5723,11 +5723,11 @@ impl FractadyneApp {
             // confirmed fix for that report.)
             fractal.formula_id().hash(&mut h);
             julia.hash(&mut h);
-            // Hash the same aux SELECTOR the GPU IterKey uses (`aux_sel`): with all four stats
-            // resident (`aux_all`) a method switch must NOT change the key, so it recolors from the
-            // resident texture instead of forcing a re-iterate; single-stat keeps discriminating by
-            // method. `stripe_freq`/`trap_type` below stay hashed — they are accumulation params.
-            (if aux_all { u32::MAX } else { self.coloring.color_method.to_u32() }).hash(&mut h);
+            // Hash the SAME aux selector the GPU IterKey uses (one source of truth in fractadyne_gpu):
+            // with all four stats resident (`aux_all`) a method switch must NOT change the key, so it
+            // recolors from the resident texture instead of re-iterating; single-stat keeps
+            // discriminating by method. `stripe_freq`/`trap_type` below stay hashed — accumulation params.
+            fractadyne_gpu::aux_sel(aux_all, self.coloring.color_method.to_u32()).hash(&mut h);
             self.coloring.stripe_freq.to_bits().hash(&mut h);
             self.coloring.trap_type.to_u32().hash(&mut h);
             self.render_cfg.series_approx.hash(&mut h);
