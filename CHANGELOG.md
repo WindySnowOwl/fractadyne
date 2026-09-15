@@ -12,6 +12,19 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Security hardening: malformed image files, oversized response files, and untrusted tool/URL
+  resolution are now bounded** (beta.106). Opening a crafted or corrupt PNG/EXR — including during
+  a gallery scan or an image comparison — can no longer drive a runaway allocation: the decoders
+  reject an image whose header declares impossible dimensions before allocating for it. Response
+  files (`@file` / `--args-file`) are bounded in per-file and total size, token count, token length
+  and nesting depth, and reject include cycles, so a malicious argument file cannot exhaust memory
+  at startup. External tools (`nvidia-smi`, `ffmpeg`, `python`) are resolved to a trusted absolute
+  path rather than by bare name — closing a path in which a program of the same name in the current
+  directory could run instead — and the in-app "download update" link opens only when it is an
+  `https` link on `github.com`. The bundled TLS and browser-launch libraries were also updated to
+  pick up upstream security fixes. Images and behaviour are unchanged; the release goldens,
+  chunk-identity, determinism and live-vs-offline gates all still pass byte-for-byte.
+
 - **The accelerated Windows build no longer fails to start when its MPFR libraries are missing —
   it warns and falls back to the built-in arithmetic** (beta.105). The accelerated download links
   GMP and MPFR as DLLs shipped beside the executable; if one went missing (the .zip was split up,
