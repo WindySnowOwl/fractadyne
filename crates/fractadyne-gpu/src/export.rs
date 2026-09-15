@@ -59,7 +59,7 @@ fn check_orbit_binding(device: &wgpu::Device, orbit_len: usize, bla_len: usize) 
 
 /// How a bounded GPU-completion wait ended. Every offscreen readback in this module resolves to one
 /// of these instead of blocking forever inside `device.poll(Maintain::Wait)` + `Receiver::recv()`.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum ReadbackWait {
     /// The mapped buffer (or submitted work) completed successfully — proceed.
     Ready,
@@ -109,7 +109,6 @@ fn poll_until(
     deadline: Option<std::time::Instant>,
     mut check: impl FnMut() -> Option<ReadbackWait>,
 ) -> ReadbackWait {
-    use std::sync::atomic::Ordering::Relaxed;
     // Busy-poll (no sleep) for this long so quick readbacks return with essentially no added
     // latency, then back off to sleeping to stop burning a core on a long deep tile.
     const SPIN_WINDOW: std::time::Duration = std::time::Duration::from_millis(2);
@@ -117,25 +116,54 @@ fn poll_until(
     let start = std::time::Instant::now();
     loop {
         let _ = device.poll(wgpu::Maintain::Poll);
-        if let Some(outcome) = check() {
+        if let Some(outcome) = readback_step(&mut check, cancel, deadline) {
             return outcome;
-        }
-        // Cancellation and device-loss take precedence over the (usually absent) time deadline.
-        if let Some(c) = cancel {
-            if c.load(Relaxed) {
-                return ReadbackWait::Canceled;
-            }
-        }
-        if let Some(dl) = deadline {
-            if std::time::Instant::now() >= dl {
-                return ReadbackWait::Deadline;
-            }
         }
         if start.elapsed() < SPIN_WINDOW {
             std::hint::spin_loop();
         } else {
             std::thread::sleep(POLL_STEP);
         }
+    }
+}
+
+/// One poll iteration's terminal decision, factored out of [`poll_until`]'s loop so the
+/// completion / cancel / deadline PRECEDENCE is unit-testable without a GPU device. Order is
+/// load-bearing: a completed readback (or a real map error / lost-callback signal from `check`) is
+/// reported even when cancel is also set — a finished result must never be discarded as "canceled".
+/// `None` = nothing terminal yet, keep polling.
+fn readback_step(
+    check: &mut impl FnMut() -> Option<ReadbackWait>,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+    deadline: Option<std::time::Instant>,
+) -> Option<ReadbackWait> {
+    use std::sync::atomic::Ordering::Relaxed;
+    if let Some(outcome) = check() {
+        return Some(outcome);
+    }
+    // Cancellation and device-loss take precedence over the (usually absent) time deadline.
+    if cancel.is_some_and(|c| c.load(Relaxed)) {
+        return Some(ReadbackWait::Canceled);
+    }
+    if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+        return Some(ReadbackWait::Deadline);
+    }
+    None
+}
+
+/// Map a readback channel's `try_recv` to a terminal [`ReadbackWait`] (or `None` = not ready).
+/// Factored out of [`await_readback`] so the device-loss (dropped-callback → `Disconnected`) and
+/// map-error mappings are unit-testable without a device.
+fn recv_readback_outcome(
+    r: Result<Result<(), wgpu::BufferAsyncError>, std::sync::mpsc::TryRecvError>,
+) -> Option<ReadbackWait> {
+    match r {
+        Ok(Ok(())) => Some(ReadbackWait::Ready),
+        Ok(Err(e)) => Some(ReadbackWait::MapError(e.to_string())),
+        // Sender dropped without sending = the callback was discarded (device lost / buffer gone).
+        // A real completion always delivers its `Ok`/`Err` value first, so we never miss it here.
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(ReadbackWait::DeviceLost),
+        Err(std::sync::mpsc::TryRecvError::Empty) => None,
     }
 }
 
@@ -148,14 +176,7 @@ fn await_readback(
     cancel: Option<&std::sync::atomic::AtomicBool>,
     deadline: Option<std::time::Instant>,
 ) -> ReadbackWait {
-    poll_until(device, cancel, deadline, || match rx.try_recv() {
-        Ok(Ok(())) => Some(ReadbackWait::Ready),
-        Ok(Err(e)) => Some(ReadbackWait::MapError(e.to_string())),
-        // Sender dropped without sending = the callback was discarded (device lost / buffer gone).
-        // A real completion always delivers its `Ok`/`Err` value first, so we never miss it here.
-        Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(ReadbackWait::DeviceLost),
-        Err(std::sync::mpsc::TryRecvError::Empty) => None,
-    })
+    poll_until(device, cancel, deadline, || recv_readback_outcome(rx.try_recv()))
 }
 
 /// Bounded barrier: wait until all queue-submitted work so far has completed, without a readback
@@ -429,6 +450,9 @@ impl ChunkPricer {
 
 #[cfg(test)]
 mod chunk_pricer;
+
+#[cfg(test)]
+mod readback;
 
 /// Per-render plumbing for the chunked per-tile iterate: the resumable chunk pipeline, the
 /// state->G-buffer resolve pipeline, and one max-tile-sized pair of ping-pong state texture sets
