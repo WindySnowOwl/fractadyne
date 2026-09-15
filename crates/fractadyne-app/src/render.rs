@@ -922,13 +922,36 @@ fn recompute_worker_staged(
         // the final answer — only the truncated preview the receiver may decline to show.
         coarse.coarse_stage = true;
         if tx.send(coarse).is_err() {
+            // Receiver dropped (view/formula changed) → abandon the full stage. The coarse preview
+            // itself (~16384 iters) was cheap; the win is skipping the full build below.
+            refwaste_log(inp.origin, "COARSE-DROPPED-full-skipped", 0.0);
             return; // receiver dropped (view/formula changed) → abandon the full stage
         }
         let full = build_reference_from_point(rp, inp.gpu_iter, inp.do_sa, &inp);
         offer_to_orbit_cache(&full, key, inp.origin);
-        let _ = tx.send(full);
+        let cost = full.ref_ms + full.series_ms + full.bla_ms;
+        if tx.send(full).is_err() {
+            // The full build finished, but by then nobody was listening: its whole cost was spent
+            // on a reference that will never be displayed.
+            refwaste_log(inp.origin, "DROPPED-full", cost);
+        }
     } else {
-        let _ = tx.send(recompute_worker(inp));
+        let res = recompute_worker(inp);
+        let cost = res.ref_ms + res.series_ms + res.bla_ms;
+        if tx.send(res).is_err() {
+            refwaste_log("shallow", "DROPPED", cost);
+        }
+    }
+}
+
+/// Reference-build waste accounting (see the `refwaste` trace category). One line per terminal
+/// build outcome — `USED` / `SUPERSEDED` (installed vs discarded-stale) from the main thread,
+/// `DROPPED` (receiver gone before the result could be sent) from the worker thread — each with the
+/// build's CPU cost in ms, so a dive's log sums to useful-vs-wasted reference CPU. Pure diagnostics;
+/// gated off unless `FRACTADYNE_TRACE=refwaste` (or `=1`).
+fn refwaste_log(origin: &str, outcome: &str, cost_ms: f64) {
+    if crate::diag::trace_on("refwaste") {
+        crate::diag::trace("refwaste", format!("[{origin}] {outcome} cost={cost_ms:.0}ms"));
     }
 }
 
@@ -1211,6 +1234,7 @@ impl FractadyneApp {
                     ),
                 );
             }
+            refwaste_log("install", "SUPERSEDED", res.ref_ms + res.series_ms + res.bla_ms);
             return;
         }
         // ⭐A coarse preview stage is PARKED for a usefulness probe, not installed sight-unseen.
@@ -1364,6 +1388,8 @@ impl FractadyneApp {
         self.perf.recompute_ms = res.ref_ms;
         self.perf.recompute_total += 1;
         self.perf.rate_count += 1;
+        // res.orbit etc. are moved above; ref_ms/series_ms/bla_ms are Copy and still readable.
+        refwaste_log("install", "USED", res.ref_ms + res.series_ms + res.bla_ms);
     }
 
     /// Probe a parked coarse-preview reference (56×56, at the preview's own iteration cap) and
@@ -1655,7 +1681,12 @@ impl FractadyneApp {
             };
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
-                let _ = tx.send(recompute_worker(inputs));
+                let origin = inputs.origin;
+                let res = recompute_worker(inputs);
+                let cost = res.ref_ms + res.series_ms + res.bla_ms;
+                if tx.send(res).is_err() {
+                    refwaste_log(origin, "DROPPED-prefetch", cost);
+                }
             });
             self.perf.build_count += 1;
             self.perf.prefetch_count += 1;
@@ -1853,7 +1884,12 @@ impl FractadyneApp {
         }
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(recompute_worker(inputs));
+            let origin = inputs.origin;
+            let res = recompute_worker(inputs);
+            let cost = res.ref_ms + res.series_ms + res.bla_ms;
+            if tx.send(res).is_err() {
+                refwaste_log(origin, "DROPPED-prefetch", cost);
+            }
         });
         self.perf.build_count += 1;
         self.hold_prefetch.push(HoldPrefetch {
@@ -2622,7 +2658,12 @@ impl FractadyneApp {
         // this raw `Receiver` + the `pub` `ExportPrep.rx` should be wrapped behind a method API
         // before crossing a crate boundary.
         std::thread::spawn(move || {
-            let _ = tx.send(recompute_worker(inputs));
+            let origin = inputs.origin;
+            let res = recompute_worker(inputs);
+            let cost = res.ref_ms + res.series_ms + res.bla_ms;
+            if tx.send(res).is_err() {
+                refwaste_log(origin, "DROPPED-prefetch", cost);
+            }
         });
         Some(rx)
     }
