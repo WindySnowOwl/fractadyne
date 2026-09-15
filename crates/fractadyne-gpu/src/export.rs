@@ -697,6 +697,8 @@ fn render_export_impl(
                 start_iter: 0,
                 end_iter: 0,
                 gather: [0; 2],
+                aux_all: 0, // offline/export: single-stat, unchanged
+                _pad_aux: [0; 3],
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -1159,6 +1161,8 @@ pub fn render_iter_tiled(
                 start_iter: 0,
                 end_iter: 0,
                 gather: [0; 2],
+                aux_all: 0, // offline/export: single-stat, unchanged
+                _pad_aux: [0; 3],
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -1613,6 +1617,8 @@ impl GatherPass {
                 start_iter: 0,
                 end_iter: 0,
                 gather: [gw, n as u32],
+                aux_all: 0, // offline/export: single-stat, unchanged
+                _pad_aux: [0; 3],
             };
             queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -1870,6 +1876,8 @@ pub fn render_iter(
         start_iter: 0,
         end_iter: 0,
         gather: [0; 2],
+        aux_all: 0, // offline/export: single-stat, unchanged
+        _pad_aux: [0; 3],
     };
     queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -2211,6 +2219,8 @@ pub fn render_iter_chunked_timed(
         start_iter: 0,
         end_iter: 0,
         gather: [0; 2],
+        aux_all: 0, // offline/export: single-stat, unchanged
+        _pad_aux: [0; 3],
     };
 
     // One bounded submission per iteration range; poll-wait between them so each stays a short,

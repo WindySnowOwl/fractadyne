@@ -65,6 +65,16 @@ pub(crate) struct IterUniforms {
     /// take them without moving a single existing field — this one struct is bound by every iterate
     /// pipeline in the app, the live view included.
     pub(crate) gather: [u32; 2],
+    /// 1 = accumulate ALL FOUR aux statistics this pass (stripe → aux.x, triangle-inequality →
+    /// aux.y, orbit-trap → aux.z; decomposition reads only the final angle in `aux_pack`, so it
+    /// accumulates nothing), so switching color METHOD becomes a free recolor with no re-iterate.
+    /// 0 = accumulate only the active method's statistic (today's behavior). Set to 1 only on live,
+    /// settled, non-extreme frames; every offline/export path leaves it 0.
+    pub(crate) aux_all: u32,
+    /// Pads the uniform back to a 16-byte multiple. WGSL rounds a struct up to its alignment (16);
+    /// Rust `#[repr(C)]` does not — so without this the two definitions would disagree on size and
+    /// the iterate pass would read every field past this point from the wrong offset.
+    pub(crate) _pad_aux: [u32; 3],
 }
 
 #[repr(C)]
@@ -134,7 +144,11 @@ struct IterKey {
     formula: u32,
     julia: u32,
     delta_exp: i32,
-    color_method: u32,
+    // Aux SELECTOR, not the color method: `u32::MAX` when all four aux stats are resident
+    // (`aux_all`) so a method switch does NOT change the key (⇒ a free recolor); otherwise the
+    // color method id, so a switch between single-stat methods still re-iterates. `stripe_freq`
+    // and `trap_type` remain accumulation PARAMETERS — changing them must still re-iterate.
+    aux_sel: u32,
     stripe_freq: f32,
     trap_type: u32,
     sa_skip: u32,
@@ -1341,6 +1355,10 @@ pub struct MandelbrotParams {
     pub color_method: u32,
     pub stripe_freq: f32,
     pub trap_type: u32,
+    /// When true, the iterate pass accumulates ALL FOUR aux statistics so switching color method
+    /// becomes a free recolor (no re-iterate). Set only on live, settled, non-extreme (mode != 2)
+    /// frames; every offline/export build leaves it false, preserving today's single-stat behavior.
+    pub aux_all: bool,
     /// Color-pass box-filter taps per axis (≥1). >1 anti-aliases an upscaled iteration
     /// texture (set when the work-budget reduced its resolution below the display).
     pub aa_filter: u32,
@@ -1589,7 +1607,10 @@ impl CallbackTrait for MandelbrotParams {
             formula: self.formula,
             julia: self.julia,
             delta_exp: self.delta_exp,
-            color_method: self.color_method,
+            // When all four aux stats are resident, the key must NOT depend on which method is
+            // selected (so a method switch recolors instead of re-iterating); single-stat keeps
+            // discriminating by method (so a switch re-iterates the one stat it now needs).
+            aux_sel: if self.aux_all { u32::MAX } else { self.color_method },
             stripe_freq: self.stripe_freq,
             trap_type: self.trap_type,
             sa_skip: self.sa_skip,
@@ -1631,7 +1652,7 @@ impl CallbackTrait for MandelbrotParams {
                 color_method: self.color_method,
                 stripe_freq: self.stripe_freq,
                 trap_type: self.trap_type,
-                aux_on: method_needs_aux(self.color_method) as u32,
+                aux_on: (self.aux_all || method_needs_aux(self.color_method)) as u32,
                 sa_skip: self.sa_skip,
                 glitch_on: 0, // live view never runs glitch detection (single-ref + rebasing)
                 sa_a: self.sa_a,
@@ -1644,6 +1665,8 @@ impl CallbackTrait for MandelbrotParams {
                 start_iter: 0,
                 end_iter: 0,
                 gather: [0; 2],
+                aux_all: self.aux_all as u32,
+                _pad_aux: [0; 3],
             };
             // Effective chunk: requested AND the resumable pipelines exist (the device granted the
             // 48-byte color-attachment limit). A device that couldn't grant it clamps THIS dispatch

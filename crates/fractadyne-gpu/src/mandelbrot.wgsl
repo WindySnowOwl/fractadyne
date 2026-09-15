@@ -433,6 +433,12 @@ struct IterU {
     // the live view included.
     gather_w: u32,         // width in texels of the tiny gather texture
     gather_n: u32,         // how many of its texels carry a real coordinate
+    aux_all: u32,          // 1 = accumulate ALL FOUR aux stats this pass (method switch = free recolor)
+    // Pads the struct back to a 16-byte multiple so the Rust `IterUniforms` and this `IterU` agree
+    // on size (WGSL rounds a struct up to its alignment; Rust `#[repr(C)]` does not). Unread.
+    _pad_aux0: u32,
+    _pad_aux1: u32,
+    _pad_aux2: u32,
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo). When BLA is on,
@@ -512,20 +518,22 @@ fn aux_init(z0: vec2<f32>) -> Aux {
 // dead ones cost ~10-17× at depth (e.g. stripe at 1e30× carried a pointless per-iteration `pow`).
 // Each branch preserves its own method's exact accumulation order, so per-method output is bit-identical.
 fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
-    let method = iu.color_method;
-    if (method == 3u) {
+    if (iu.aux_all == 1u) {
+        // All-four resident (`aux_all`): accumulate trap AND stripe AND triangle-inequality this
+        // pass so a color-method switch is a free recolor. Each block is VERBATIM the method==3 /
+        // ==1 / ==2 branch below — same expressions, same order — and the three touch disjoint
+        // Aux fields, so for any single method the packed result is bit-identical to single-stat.
+        // (Decomposition needs no accumulation; `aux_pack` reads only the final angle.)
         // Orbit trap: nearest approach to a shape (point / axes-cross / unit circle).
         var d: f32;
         if (iu.trap_type == 1u) { d = min(abs(zf.x), abs(zf.y)); }
         else if (iu.trap_type == 2u) { d = abs(length(zf) - 1.0); }
         else { d = length(zf); }
         (*a).trap = min((*a).trap, d);
-    } else if (method == 1u) {
         // Stripe average: smooth orbit average of a sinusoid of the argument.
         let term = 0.5 + 0.5 * sin(iu.stripe_freq * atan2(zf.y, zf.x));
         (*a).sac_prev = (*a).sac_sum;
         (*a).sac_sum = (*a).sac_sum + term;
-    } else if (method == 2u) {
         // Triangle-inequality average: where |z_{n+1}| sits between ||z_n|^p − |c|| and
         // |z_n|^p + |c|. Needs a valid previous |z|.
         let cur_abs = length(zf);
@@ -538,8 +546,36 @@ fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
             (*a).tia_sum = (*a).tia_sum + tt;
         }
         (*a).prev_abs = cur_abs;
+    } else {
+        let method = iu.color_method;
+        if (method == 3u) {
+            // Orbit trap: nearest approach to a shape (point / axes-cross / unit circle).
+            var d: f32;
+            if (iu.trap_type == 1u) { d = min(abs(zf.x), abs(zf.y)); }
+            else if (iu.trap_type == 2u) { d = abs(length(zf) - 1.0); }
+            else { d = length(zf); }
+            (*a).trap = min((*a).trap, d);
+        } else if (method == 1u) {
+            // Stripe average: smooth orbit average of a sinusoid of the argument.
+            let term = 0.5 + 0.5 * sin(iu.stripe_freq * atan2(zf.y, zf.x));
+            (*a).sac_prev = (*a).sac_sum;
+            (*a).sac_sum = (*a).sac_sum + term;
+        } else if (method == 2u) {
+            // Triangle-inequality average: where |z_{n+1}| sits between ||z_n|^p − |c|| and
+            // |z_n|^p + |c|. Needs a valid previous |z|.
+            let cur_abs = length(zf);
+            if ((*a).n >= 1.0) {
+                let m = pow(max((*a).prev_abs, 1.0e-12), power_f);
+                let lower = abs(m - cmag);
+                let upper = m + cmag;
+                let tt = clamp((cur_abs - lower) / max(upper - lower, 1.0e-9), 0.0, 1.0);
+                (*a).tia_prev = (*a).tia_sum;
+                (*a).tia_sum = (*a).tia_sum + tt;
+            }
+            (*a).prev_abs = cur_abs;
+        }
+        // method == 5u (decomposition): nothing to accumulate — aux_pack reads only the final angle.
     }
-    // method == 5u (decomposition): nothing to accumulate — aux_pack reads only the final angle.
     (*a).n = (*a).n + 1.0;
 }
 // Pack the accumulated statistics into the aux target. `frac` is the fractional part

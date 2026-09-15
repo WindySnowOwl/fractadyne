@@ -4691,6 +4691,10 @@ impl FractadyneApp {
         gpu_iter: u32,
         interacting: bool,
         will_reproject: bool,
+        // All-four aux accumulation for this live build (settled, not moving, mode != 2). Must be
+        // the SAME value the caller hashed into `settings_hash`, or a method switch could recolor a
+        // texture that was iterated single-stat. Always false for offscreen/export builds.
+        aux_all: bool,
         key_changed: bool,
         resolution: [u32; 2],
         ss: u32,
@@ -5012,6 +5016,7 @@ impl FractadyneApp {
             color_method: self.coloring.color_method.to_u32(),
             stripe_freq: self.coloring.stripe_freq,
             trap_type: self.coloring.trap_type.to_u32(),
+            aux_all,
             aa_filter,
             interior_col: self.interior_color(),
             resolution,
@@ -5684,6 +5689,19 @@ impl FractadyneApp {
         // frames — and it does not apply when the count is the user's, since then there is no
         // probe running to starve.
         let can_tile = self.allow_tiled_settle && !offscreen && !interacting && !will_reproject;
+        // Option C, gated all-aux: on LIVE, SETTLED (not moving, not reprojecting/holding),
+        // non-extreme (mode != 2) frames, accumulate ALL FOUR aux statistics so a color-method
+        // switch becomes a free recolor with no re-iterate. Excluded elsewhere: offscreen/export
+        // renders, motion/interaction frames, and mode-2 floatexp (all-four is ~10-17× there). The
+        // `RenderMode::select` here uses the same (post-pin) `magnification` as the `mode` computed
+        // below, so this bool matches the frame's actual mode. This SAME value is hashed into
+        // `settings_hash` and passed to `bp_finish_params`, so the app-side key and the GPU key
+        // agree on whether a method switch re-iterates.
+        let aux_all = !offscreen
+            && !interacting
+            && !will_reproject
+            && reproject.is_none()
+            && RenderMode::select(fractal.supports_perturbation(), julia, magnification).to_u32() != 2;
         // Everything the ITERATE's output depends on that isn't covered by orbit_id / gen /
         // resolution, folded to one hash. The GPU re-renders whenever ITS IterKey changes
         // (color method, stripe frequency, trap type, SA/BLA toggles, Julia c, …) — but under a
@@ -5705,7 +5723,11 @@ impl FractadyneApp {
             // confirmed fix for that report.)
             fractal.formula_id().hash(&mut h);
             julia.hash(&mut h);
-            self.coloring.color_method.to_u32().hash(&mut h);
+            // Hash the same aux SELECTOR the GPU IterKey uses (`aux_sel`): with all four stats
+            // resident (`aux_all`) a method switch must NOT change the key, so it recolors from the
+            // resident texture instead of forcing a re-iterate; single-stat keeps discriminating by
+            // method. `stripe_freq`/`trap_type` below stay hashed — they are accumulation params.
+            (if aux_all { u32::MAX } else { self.coloring.color_method.to_u32() }).hash(&mut h);
             self.coloring.stripe_freq.to_bits().hash(&mut h);
             self.coloring.trap_type.to_u32().hash(&mut h);
             self.render_cfg.series_approx.hash(&mut h);
@@ -6699,6 +6721,7 @@ impl FractadyneApp {
             gpu_iter,
             interacting,
             will_reproject,
+            aux_all,
             key_changed,
             resolution,
             ss,
