@@ -1006,6 +1006,104 @@ pub fn bla_to_gpu(levels: &[Vec<BlaNode>]) -> Vec<[f32; 4]> {
     out
 }
 
+/// The three aux aggregates `[trap, tia, stripe]` for one level-0 node — the coloring half of
+/// [`bla_level0_node`], with no geometry. Kept in lockstep with it so the two produce identical
+/// `agg_*`.
+#[inline]
+fn bla_level0_aux(n: usize, orbit: &[[f32; 4]], aux: AuxAggParams) -> [f64; 3] {
+    let (zr, zi) = sample_xy(&orbit[n]);
+    let z1 = orbit[n + 1];
+    let (z1r, z1i) = (z1[0] as f64 + z1[2] as f64, z1[1] as f64 + z1[3] as f64);
+    let agg_trap = aux_trap_dist(z1r, z1i, aux.trap_type);
+    let agg_stripe = aux_stripe_term(z1r, z1i, aux.stripe_freq);
+    let agg_tia = if n == 0 {
+        0.0
+    } else {
+        aux_tia_term(
+            (zr * zr + zi * zi).sqrt(),
+            (z1r * z1r + z1i * z1i).sqrt(),
+            aux.cmag,
+            aux.power,
+        )
+    };
+    [agg_trap, agg_tia, agg_stripe]
+}
+
+/// The aux-only counterpart of [`bla_merge`]: trap is a running min, TIA/stripe running sums —
+/// exactly what `bla_merge` does to `agg_*`, and (unlike the geometry) independent of `dc_max`.
+#[inline]
+fn merge_aux(x: [f64; 3], y: [f64; 3]) -> [f64; 3] {
+    [x[0].min(y[0]), x[1] + y[1], x[2] + y[2]]
+}
+
+/// Recompute ONLY the BLA aux aggregate lanes for `orbit` under coloring params `aux`, in the
+/// flattened node order [`bla_to_gpu`] emits — one `[trap, tia, stripe]` (as f32, matching the
+/// buffer) per node.
+///
+/// ⭐The aggregates fold associatively and depend on NEITHER the geometry (`a`,`b`,`r`) nor
+/// `dc_max` (see [`bla_merge`]), and the tree SHAPE depends only on the orbit length. So when only
+/// a coloring parameter changed (stripe frequency / trap type) this reproduces bit-for-bit the
+/// `agg_*` a full `build_bla_mandel` would produce — at a fraction of the cost, since it skips
+/// every per-node `FloatExp` geometry op. Same level shape and `par_fill` as `build_bla_mandel`.
+pub fn bla_aux_lanes(orbit: &[[f32; 4]], aux: AuxAggParams) -> Vec<[f32; 3]> {
+    let nstep = orbit.len().saturating_sub(1);
+    if nstep == 0 {
+        return Vec::new();
+    }
+    let mut lvl0 = vec![[0.0f64; 3]; nstep];
+    par_fill(&mut lvl0, BLA_PAR_THRESHOLD, |n| bla_level0_aux(n, orbit, aux));
+    let mut levels = vec![lvl0];
+    while levels.last().unwrap().len() > 1 {
+        let prev = levels.last().unwrap();
+        let out_len = prev.len().div_ceil(2);
+        let mut next = vec![[0.0f64; 3]; out_len];
+        par_fill(&mut next, BLA_PAR_THRESHOLD, |k| {
+            let j = 2 * k;
+            if j + 1 < prev.len() {
+                merge_aux(prev[j], prev[j + 1])
+            } else {
+                prev[j]
+            }
+        });
+        levels.push(next);
+    }
+    let total: usize = levels.iter().map(|l| l.len()).sum();
+    let mut out = Vec::with_capacity(total);
+    for level in &levels {
+        for a in level {
+            out.push([a[0] as f32, a[1] as f32, a[2] as f32]);
+        }
+    }
+    out
+}
+
+/// Patch a flattened BLA GPU buffer's aggregate lanes in place — the fast path for a coloring
+/// change that leaves the reference orbit and `dc_max` untouched: recompute only the aux lanes
+/// (see [`bla_aux_lanes`]) and overwrite each node's `[_, trap, tia, stripe]` vec4, keeping the
+/// cached geometry. The result is identical to rebuilding the whole tree with the new `aux`.
+pub fn apply_bla_aux(gpu: &mut [[f32; 4]], orbit: &[[f32; 4]], aux: AuxAggParams) {
+    let lanes = bla_aux_lanes(orbit, aux);
+    // The caller only reaches here with a buffer built for THIS orbit (same node count), but a GPU
+    // buffer patch fails safe: on any mismatch, leave the buffer untouched rather than risk an
+    // out-of-bounds write. The debug assert makes a broken caller loud in tests.
+    debug_assert_eq!(
+        gpu.len(),
+        lanes.len() * 4,
+        "BLA buffer node count {} does not match aux node count {}",
+        gpu.len() / 4,
+        lanes.len()
+    );
+    if gpu.len() != lanes.len() * 4 {
+        return;
+    }
+    for (i, l) in lanes.iter().enumerate() {
+        let v = &mut gpu[4 * i + 3];
+        v[1] = l[0];
+        v[2] = l[1];
+        v[3] = l[2];
+    }
+}
+
 /// Full value `z = Zₘ + δz` (f64) for a df32 reference orbit — for bailout / escape tests.
 fn bla_full_z(orbit: &[[f32; 4]], m: u32, dz: &CFloatExp) -> (f64, f64) {
     let z = orbit[m as usize];
