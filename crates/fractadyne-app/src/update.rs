@@ -4,6 +4,42 @@
 
 const REPO: &str = "WindySnowOwl/fractadyne";
 
+/// The canonical releases page. Used as the safe fallback whenever a release's `html_url` fails
+/// validation (F-07) — always a known-good destination the user can act on.
+pub const RELEASES_URL: &str = "https://github.com/WindySnowOwl/fractadyne/releases";
+
+/// Return `url` only when it is an `https` URL on the `github.com` host; otherwise the canonical
+/// [`RELEASES_URL`].
+///
+/// ⭐**Why (F-07).** A release's `html_url` comes from a GitHub API response we do not fully trust
+/// to stay well-formed — a proxy, an unexpected field, or compromised release metadata could put
+/// an arbitrary string here, and it is handed straight to the OS URL handler (`ctx.open_url`). A
+/// non-`https` scheme (`file:`, a custom handler) or a foreign host must never reach the handler,
+/// so validate scheme AND host and fall back to the hard-coded releases page on anything else.
+pub fn safe_release_url(url: &str) -> String {
+    if is_trusted_github_https(url) {
+        url.to_string()
+    } else {
+        RELEASES_URL.to_string()
+    }
+}
+
+/// `https` scheme, host exactly `github.com`. A dependency-free parse deliberately robust to the
+/// classic spoofs: userinfo (`https://github.com@evil.com/`), a foreign host with `github.com` in
+/// the path, and look-alike hosts (`github.com.evil.com`).
+fn is_trusted_github_https(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false; // scheme must be exactly https (rejects http:, file:, custom handlers)
+    };
+    // Authority is everything up to the first '/', '?' or '#'.
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    // Any userinfo precedes the LAST '@'; the real host is what follows it.
+    let host_port = authority.rsplit('@').next().unwrap_or("");
+    // Drop a :port suffix, then compare case-insensitively.
+    let host = host_port.split(':').next().unwrap_or("").to_ascii_lowercase();
+    host == "github.com"
+}
+
 /// Which release track the update check follows.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub(crate) enum UpdateTrack {
@@ -271,8 +307,37 @@ fn cmp_ver(a: &str, b: &str) -> std::cmp::Ordering {
 
 #[cfg(test)]
 mod tests {
-    use super::{cmp_ver, default_track_for, is_prerelease, version_gt, UpdateTrack};
+    use super::{
+        cmp_ver, default_track_for, is_prerelease, safe_release_url, version_gt, UpdateTrack,
+        RELEASES_URL,
+    };
     use std::cmp::Ordering;
+
+    #[test]
+    fn a_normal_github_release_url_passes_through_untouched() {
+        let url = "https://github.com/WindySnowOwl/fractadyne/releases/tag/v0.2.41-beta.105";
+        assert_eq!(safe_release_url(url), url);
+        // A path or query on github.com is still fine.
+        let q = "https://github.com/WindySnowOwl/fractadyne/releases?page=2#latest";
+        assert_eq!(safe_release_url(q), q);
+    }
+
+    #[test]
+    fn a_hostile_or_malformed_html_url_falls_back_to_the_releases_page() {
+        for bad in [
+            "http://github.com/WindySnowOwl/fractadyne/releases", // not https
+            "file:///C:/Windows/System32/calc.exe",              // dangerous scheme
+            "javascript:alert(1)",                               // dangerous scheme
+            "https://evil.com/WindySnowOwl/fractadyne/releases", // foreign host
+            "https://github.com@evil.com/pwn",                   // userinfo spoof — real host evil.com
+            "https://github.com.evil.com/pwn",                   // look-alike host
+            "https://notgithub.com/x",                           // suffix confusion
+            "",                                                   // empty
+            "ftp://github.com/x",                                // wrong scheme
+        ] {
+            assert_eq!(safe_release_url(bad), RELEASES_URL, "must not open {bad:?} verbatim");
+        }
+    }
 
     #[test]
     fn a_prerelease_build_starts_on_the_beta_track_and_a_stable_one_does_not() {
