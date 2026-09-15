@@ -843,7 +843,13 @@ fn run_rung(exe: &Path, rung: &Rung, out_dir: &Path) -> RunRecord {
             c
         }
         Cmd::External(prog, a) => {
-            let mut c = Command::new(prog);
+            // F-06: resolve to an absolute path (FRACTADYNE_<NAME> override → PATH, never cwd). If
+            // unresolved, keep the bare name so the spawn below fails NotFound → SkipUnsupported
+            // (the honest "this machine can't run this gate" outcome).
+            let mut c = match crate::exec_resolve::external(prog) {
+                Some(bin) => Command::new(bin),
+                None => Command::new(prog),
+            };
             c.args(a.iter().map(subst));
             c
         }

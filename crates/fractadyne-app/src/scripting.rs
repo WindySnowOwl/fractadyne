@@ -3534,11 +3534,26 @@ impl FractadyneApp {
         // frames so a failed/absent ffmpeg never loses the render).
         let pattern = out_dir.join(format!("{prefix}_%05d.png"));
         if let Some(mp4_path) = mp4 {
-            say(&format!("Encoding → {} (ffmpeg)…", mp4_path.display()));
+            // F-06: resolve ffmpeg to an absolute path (FRACTADYNE_FFMPEG override → PATH, never
+            // cwd) and surface where it came from, so a surprising binary is visible before it runs.
+            let Some(ffmpeg) = crate::exec_resolve::external("ffmpeg") else {
+                return Ok(format!(
+                    "Could not find ffmpeg (set FRACTADYNE_FFMPEG or add it to PATH); frames are \
+                     intact. Assemble:\n  ffmpeg -framerate {fps} -i {} -c:v libx264 -pix_fmt \
+                     yuv420p {}",
+                    pattern.display(),
+                    mp4_path.display()
+                ));
+            };
+            say(&format!(
+                "Encoding → {} (ffmpeg: {})…",
+                mp4_path.display(),
+                ffmpeg.display()
+            ));
             let enc = std::time::Instant::now();
             // `-vf pad…` rounds the frame up to even dimensions (yuv420p/H.264 requires it) without
             // resampling; `-crf 18` is visually near-lossless.
-            let status = std::process::Command::new("ffmpeg")
+            let status = std::process::Command::new(&ffmpeg)
                 .arg("-y")
                 .arg("-hide_banner")
                 .args(["-framerate", &format!("{fps}")])
