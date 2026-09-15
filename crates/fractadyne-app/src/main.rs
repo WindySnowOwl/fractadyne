@@ -534,8 +534,40 @@ fn tokenize_args_file(text: &str) -> Vec<String> {
 /// place; every other argument passes through untouched. `#` comments and quoting are supported.
 /// A missing/unreadable file is a hard error (the `@`/`--args-file` sigil is an explicit request).
 fn expand_arg_files(raw: &[String]) -> Result<Vec<String>, String> {
-    fn go(args: &[String], out: &mut Vec<String>, depth: u32) -> Result<(), String> {
-        if depth > 16 {
+    // F-02: depth alone does not bound expansion — a single huge file, an over-long token, or
+    // exponential fan-out through repeated includes can each exhaust memory/startup time before
+    // diagnostics exist. Bound every axis: per-file bytes, cumulative bytes, expanded-token count,
+    // one token's length, nesting depth, AND include cycles (by canonicalized identity).
+    const MAX_DEPTH: u32 = 16;
+    const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024; // one response file (matches the .kfr/Imagina cap)
+    const MAX_TOTAL_BYTES: u64 = 16 * 1024 * 1024; // all response files read, combined
+    const MAX_TOKENS: usize = 100_000; // final argv length after expansion
+    const MAX_TOKEN_LEN: usize = 64 * 1024; // one argument (a path/url/number fits with room to spare)
+
+    struct Ctx {
+        out: Vec<String>,
+        total_bytes: u64,
+        // Canonicalized include stack: detects A→B→A rings while still allowing the same file to be
+        // included twice in sequence (bounded, legitimate). The byte/token caps bound fan-out.
+        active: Vec<std::path::PathBuf>,
+    }
+
+    fn push_tok(ctx: &mut Ctx, tok: String) -> Result<(), String> {
+        if tok.len() > MAX_TOKEN_LEN {
+            return Err(format!(
+                "args file token too long ({} bytes; max {MAX_TOKEN_LEN})",
+                tok.len()
+            ));
+        }
+        if ctx.out.len() >= MAX_TOKENS {
+            return Err(format!("args file expansion produced too many arguments (max {MAX_TOKENS})"));
+        }
+        ctx.out.push(tok);
+        Ok(())
+    }
+
+    fn go(ctx: &mut Ctx, args: &[String], depth: u32) -> Result<(), String> {
+        if depth > MAX_DEPTH {
             return Err("--args-file nesting too deep (cycle?)".to_string());
         }
         let mut i = 0;
@@ -551,19 +583,49 @@ fn expand_arg_files(raw: &[String]) -> Result<Vec<String>, String> {
             };
             match path {
                 Some(p) => {
-                    let text = std::fs::read_to_string(&p).map_err(|e| format!("args file '{p}': {e}"))?;
-                    go(&tokenize_args_file(&text), out, depth + 1)?;
+                    // Cycle detection by canonicalized identity; fall back to the raw path if it
+                    // can't be canonicalized (the read below then reports the real error).
+                    let canon = std::fs::canonicalize(&p)
+                        .unwrap_or_else(|_| std::path::PathBuf::from(&p));
+                    if ctx.active.contains(&canon) {
+                        return Err(format!("args file '{p}': include cycle"));
+                    }
+                    // Per-file and cumulative byte caps, checked from metadata BEFORE reading in.
+                    let len = std::fs::metadata(&p)
+                        .map_err(|e| format!("args file '{p}': {e}"))?
+                        .len();
+                    if len > MAX_FILE_BYTES {
+                        return Err(format!(
+                            "args file '{p}': too large ({len} bytes; max {MAX_FILE_BYTES})"
+                        ));
+                    }
+                    ctx.total_bytes = ctx.total_bytes.saturating_add(len);
+                    if ctx.total_bytes > MAX_TOTAL_BYTES {
+                        return Err(format!(
+                            "args files exceed the combined size limit ({MAX_TOTAL_BYTES} bytes)"
+                        ));
+                    }
+                    let text = std::fs::read_to_string(&p)
+                        .map_err(|e| format!("args file '{p}': {e}"))?;
+                    let toks = tokenize_args_file(&text);
+                    ctx.active.push(canon);
+                    go(ctx, &toks, depth + 1)?;
+                    ctx.active.pop();
                 }
-                None => out.push(a.clone()),
+                None => push_tok(ctx, a.clone())?,
             }
             i += 1;
         }
         Ok(())
     }
-    let mut out = Vec::new();
-    go(raw, &mut out, 0)?;
-    Ok(out)
+
+    let mut ctx = Ctx { out: Vec::new(), total_bytes: 0, active: Vec::new() };
+    go(&mut ctx, raw, 0)?;
+    Ok(ctx.out)
 }
+
+#[cfg(test)]
+mod arg_files;
 
 /// Whether this process was launched to run a HARNESS or an offline job rather than to be sat in
 /// front of. Used only to decide that a lost device must NOT relaunch.

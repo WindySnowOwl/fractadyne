@@ -827,7 +827,11 @@ impl FractadyneApp {
                                     )
                                     .clicked()
                                 {
-                                    ctx.open_url(egui::OpenUrl::new_tab(url));
+                                    // F-07: never open update metadata verbatim — require https +
+                                    // github.com, else fall back to the canonical releases page.
+                                    ctx.open_url(egui::OpenUrl::new_tab(
+                                        crate::update::safe_release_url(&url),
+                                    ));
                                     ui.close_menu();
                                 }
                             }

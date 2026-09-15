@@ -37,6 +37,115 @@ pub enum ExportError {
     /// A buffer smaller than `width*height*4`, or decoded channel data that didn't match dims.
     #[error("buffer/size mismatch: expected {expected}, got {got}")]
     SizeMismatch { expected: usize, got: usize },
+    /// An image whose declared size (from its header) exceeds [`ImageLimits`]. Rejected BEFORE
+    /// any full-resolution allocation, so a crafted or corrupt file cannot drive an OOM (F-01).
+    #[error("image too large: {what} {value} exceeds limit {limit}")]
+    TooLarge { what: &'static str, value: u64, limit: u64 },
+}
+
+/// Resource limits applied from an image **header** before the decoders allocate full-resolution
+/// pixel storage.
+///
+/// ⭐**Why this exists (F-01).** Every decode below sizes its output buffer from the width/height
+/// the file *declares* — `vec![0u8; w*h*4]` (PNG), `vec![0.0f32; w*h*4]` (EXR). Those numbers are
+/// attacker-controlled: a PNG whose IHDR claims 100000×100000, or an EXR header naming an enormous
+/// data window, would drive a multi-gigabyte allocation (OOM, paging, process death) long before
+/// the pixels themselves are validated. Gallery/thumbnail scanning and `--compare`/cross-render
+/// validation auto-decode user-supplied files, so one opened file is enough. The bound therefore
+/// has to be checked *from the header, before allocation* — not after.
+///
+/// The caps are deliberately generous: a real fractal export (4K ≈ 8 Mpix, even 16K ≈ 134 Mpix)
+/// passes untouched. They exist to reject the absurd, not to police legitimate output.
+#[derive(Debug, Clone, Copy)]
+pub struct ImageLimits {
+    /// Max width or height in pixels (each dimension, independently).
+    pub max_dim: u64,
+    /// Max total pixels (`w * h`) — bounds the decoded buffer regardless of aspect.
+    pub max_pixels: u64,
+    /// Max encoded file size in bytes (checked from `fs::metadata`, or an in-memory slice's len).
+    pub max_encoded_bytes: u64,
+}
+
+impl ImageLimits {
+    /// The default policy applied by every decoder in this crate.
+    pub const fn new() -> Self {
+        Self {
+            max_dim: 65_535,                        // one 16-bit dimension; > any real export
+            max_pixels: 512 * 1024 * 1024,          // 512 Mpix (a 22627² square)
+            max_encoded_bytes: 512 * 1024 * 1024,   // 512 MB on disk
+        }
+    }
+
+    /// Reject dimensions read from a header before allocation. `w`/`h` are `u64` so a header value
+    /// that would overflow `u32`/`usize` is compared, not truncated.
+    pub fn check_dims(&self, w: u64, h: u64) -> Result<(), ExportError> {
+        if w > self.max_dim {
+            return Err(ExportError::TooLarge { what: "width", value: w, limit: self.max_dim });
+        }
+        if h > self.max_dim {
+            return Err(ExportError::TooLarge { what: "height", value: h, limit: self.max_dim });
+        }
+        let pixels = w.saturating_mul(h);
+        if pixels > self.max_pixels {
+            return Err(ExportError::TooLarge {
+                what: "pixels",
+                value: pixels,
+                limit: self.max_pixels,
+            });
+        }
+        Ok(())
+    }
+
+    /// Reject an encoded file/slice larger than the cap.
+    pub fn check_encoded_bytes(&self, bytes: u64) -> Result<(), ExportError> {
+        if bytes > self.max_encoded_bytes {
+            return Err(ExportError::TooLarge {
+                what: "encoded bytes",
+                value: bytes,
+                limit: self.max_encoded_bytes,
+            });
+        }
+        Ok(())
+    }
+
+    /// The equivalent bound for `png`'s own internal allocation guard (RGBA8 upper bound on the
+    /// decoded buffer), so the decoder and this policy agree instead of the decoder applying an
+    /// unrelated 64 MiB default that could reject an image this policy allows.
+    fn png_bytes(&self) -> usize {
+        usize::try_from(self.max_pixels.saturating_mul(4)).unwrap_or(usize::MAX)
+    }
+}
+
+impl Default for ImageLimits {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The limits every decoder in this crate applies. See [`ImageLimits`].
+pub const DEFAULT_IMAGE_LIMITS: ImageLimits = ImageLimits::new();
+
+/// Check an encoded file's on-disk size against [`DEFAULT_IMAGE_LIMITS`] before opening it for
+/// decode. A missing/unreadable file is left for the decoder to report with its real error.
+fn check_file_bytes(path: &Path) -> Result<(), ExportError> {
+    if let Ok(meta) = std::fs::metadata(path) {
+        DEFAULT_IMAGE_LIMITS.check_encoded_bytes(meta.len())?;
+    }
+    Ok(())
+}
+
+/// Read only the EXR headers and reject an image whose declared dimensions exceed
+/// [`DEFAULT_IMAGE_LIMITS`], BEFORE a full-resolution decode allocates `w*h*4` floats. The RGBA
+/// reader's create-closure allocates straight from the (attacker-controlled) data-window size, so
+/// the bound must be applied here first.
+fn check_exr_dims(path: &Path) -> Result<(), ExportError> {
+    let meta = exr::meta::MetaData::read_from_file(path, false)?;
+    let (mut w, mut h) = (0u64, 0u64);
+    for header in &meta.headers {
+        w = w.max(header.layer_size.0 as u64);
+        h = h.max(header.layer_size.1 as u64);
+    }
+    DEFAULT_IMAGE_LIMITS.check_dims(w, h)
 }
 
 // Color-space note (why there's no linear→sRGB encode on the PNG path):
@@ -159,6 +268,8 @@ mod dither_tests;
 /// per pixel). Used by the `--compare` tool to diff raw iteration data.
 pub fn read_exr_rgba_f32(path: &Path) -> Result<(u32, u32, Vec<f32>), ExportError> {
     use exr::prelude::*;
+    check_file_bytes(path)?;
+    check_exr_dims(path)?;
     let image = read_first_rgba_layer_from_file(
         path,
         |size: Vec2<usize>, _| -> (usize, usize, Vec<f32>) {
@@ -188,6 +299,8 @@ pub fn read_exr_rgba_f32(path: &Path) -> Result<(u32, u32, Vec<f32>), ExportErro
 /// `0xFFFFFFFF`) and the smooth fraction in float channel `"NF"`.
 pub fn read_exr_channel_f32(path: &Path, name: &str) -> Result<(u32, u32, Vec<f32>), ExportError> {
     use exr::prelude::*;
+    check_file_bytes(path)?;
+    check_exr_dims(path)?;
     let image = read()
         .no_deep_data()
         .largest_resolution_level()
@@ -232,6 +345,7 @@ pub fn list_exr_channels(path: &Path) -> Result<Vec<String>, ExportError> {
 
 /// Decode a PNG at full resolution to `(width, height, rgba8)` (for golden-image diffs).
 pub fn read_png_rgba8(path: &Path) -> Result<(u32, u32, Vec<u8>), ExportError> {
+    check_file_bytes(path)?;
     let file = std::fs::File::open(path)?;
     decode_png_rgba8(std::io::BufReader::new(file))
 }
@@ -239,12 +353,20 @@ pub fn read_png_rgba8(path: &Path) -> Result<(u32, u32, Vec<u8>), ExportError> {
 /// Decode a PNG from an in-memory byte slice (e.g. an `include_bytes!` asset) to
 /// `(width, height, rgba8)`.
 pub fn read_png_rgba8_bytes(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), ExportError> {
+    DEFAULT_IMAGE_LIMITS.check_encoded_bytes(bytes.len() as u64)?;
     decode_png_rgba8(std::io::Cursor::new(bytes))
 }
 
 fn decode_png_rgba8<R: std::io::Read>(r: R) -> Result<(u32, u32, Vec<u8>), ExportError> {
     let mut decoder = png::Decoder::new(r);
+    decoder.set_limits(png::Limits { bytes: DEFAULT_IMAGE_LIMITS.png_bytes() });
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    // Reject an oversized image from IHDR alone, before `output_buffer_size()` (which is derived
+    // from those same declared dimensions) drives the `vec![0u8; …]` allocation below (F-01).
+    {
+        let info = decoder.read_header_info()?;
+        DEFAULT_IMAGE_LIMITS.check_dims(info.width as u64, info.height as u64)?;
+    }
     let mut reader = decoder.read_info()?;
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf)?;
@@ -444,9 +566,15 @@ pub fn read_thumbnail(path: &Path, max: u32) -> Result<(u32, u32, Vec<u8>), Expo
 }
 
 fn thumbnail_png(path: &Path, max: u32) -> Result<(u32, u32, Vec<u8>), ExportError> {
+    check_file_bytes(path)?;
     let file = std::fs::File::open(path)?;
     let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    decoder.set_limits(png::Limits { bytes: DEFAULT_IMAGE_LIMITS.png_bytes() });
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    {
+        let info = decoder.read_header_info()?;
+        DEFAULT_IMAGE_LIMITS.check_dims(info.width as u64, info.height as u64)?;
+    }
     let mut reader = decoder.read_info()?;
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf)?;
@@ -508,6 +636,8 @@ fn thumbnail_png(path: &Path, max: u32) -> Result<(u32, u32, Vec<u8>), ExportErr
 /// Decode an OpenEXR (linear f32) and box-downsample it to an sRGB thumbnail.
 fn thumbnail_exr(path: &Path, max: u32) -> Result<(u32, u32, Vec<u8>), ExportError> {
     use exr::prelude::*;
+    check_file_bytes(path)?;
+    check_exr_dims(path)?;
     let image = read_first_rgba_layer_from_file(
         path,
         |size: Vec2<usize>, _| -> (usize, usize, Vec<f32>) {
@@ -716,3 +846,6 @@ pub fn read_exr_metadata(path: &Path) -> Result<Option<String>, ExportError> {
 
 #[cfg(test)]
 mod writer_roundtrip_tests;
+
+#[cfg(test)]
+mod decode_limits;
