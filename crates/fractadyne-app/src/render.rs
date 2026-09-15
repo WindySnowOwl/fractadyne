@@ -307,8 +307,16 @@ fn aux_agg_from_orbit(orbit: &[[f32; 4]], stripe_freq: f64, trap_type: u32) -> f
 
 /// Device-derived ceiling on the stored reference-orbit LENGTH (in samples), set once at startup
 /// from `max_storage_buffer_binding_size`. The orbit and its BLA tree upload together as one storage
-/// buffer sized ~9× the orbit (16 B/sample); past this the bind exceeds the GPU limit and the live
-/// path panics in `make_iter_bg` (the same overflow the export path returns `OrbitTooLarge` for).
+/// buffer sized ~9× the orbit (16 B/sample).
+///
+/// ⭐This is a BUILD BUDGET, not the hard safety boundary (audit F-05). The hard boundary is the
+/// EXACT clamp in `ensure_orbit_capacity` (`fractadyne-gpu::lib`), which clamps the orbit buffer to
+/// `max_storage_buffer_binding_size / 16` slots so the bind can NEVER exceed the GPU limit — and
+/// because WGSL storage reads are bounds-checked, an under-margined build yields at worst a
+/// truncated orbit (wrong pixels), never a `create_bind_group` panic. (Export's analogous exact
+/// guard is `check_orbit_binding`, which returns `OrbitTooLarge` rather than clamping.) This cap
+/// only keeps the app from spending time BUILDING an orbit that would then be clamped away.
+///
 /// We cap the orbit BUILD, never the render's `max_iter`: a deep INTERIOR reference that never
 /// escapes is truncated to fit, while pixels still iterate to the full count by REBASING past the
 /// truncated orbit. An escaping reference shorter than the cap (every corpus location — loc 15's
