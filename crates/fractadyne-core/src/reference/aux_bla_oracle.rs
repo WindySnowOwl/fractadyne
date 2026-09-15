@@ -393,6 +393,89 @@ fn build_bla_parallel_matches_serial() {
     }
 }
 
+/// The aux fast-path (`apply_bla_aux`) must produce a buffer BYTE-IDENTICAL to a full rebuild.
+/// Build the tree with coloring A, patch it to coloring B in place, and compare against a full
+/// `build_bla_mandel` + `bla_to_gpu` with B — across ALL FOUR lanes, so it checks both that the
+/// geometry lanes survived untouched and that every agg lane was regenerated exactly. A 20k-node
+/// interior orbit crosses `BLA_PAR_THRESHOLD`, exercising the parallel agg fold too.
+#[test]
+fn apply_bla_aux_matches_full_rebuild() {
+    let p = crate::precision_for_octaves(4);
+    let cx = crate::parse_bf("-0.5").unwrap();
+    let cy = crate::parse_bf("0.0").unwrap();
+    let z0 = BigFloat::from_f64(0.0, p);
+    let (orbit, _len) = reference_orbit(&z0, &z0, &cx, &cy, formula::MANDELBROT, 20_000, p);
+    assert!(orbit.len().saturating_sub(1) > BLA_PAR_THRESHOLD, "orbit too short for the parallel path");
+    let dc_max = FloatExp::from_f64(1.0e-6);
+    let cmag = mag(to_f64(&cx), to_f64(&cy));
+    // Coloring A: trap type 0 (|Z|), one stripe frequency.
+    let aux_a = AuxAggParams { trap_type: 0, stripe_freq: 5.0, cmag, power: POWER };
+    let mut buf = bla_to_gpu(&build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_a));
+    // Change to coloring B (trap type 2 + a different frequency) via the fast path.
+    let aux_b = AuxAggParams { trap_type: 2, stripe_freq: 12.5, cmag, power: POWER };
+    apply_bla_aux(&mut buf, &orbit, aux_b);
+    // Ground truth: a full rebuild with B.
+    let full_b = bla_to_gpu(&build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_b));
+    assert_eq!(buf.len(), full_b.len(), "node count differs");
+    for (i, (a, b)) in buf.iter().zip(&full_b).enumerate() {
+        for lane in 0..4 {
+            assert_eq!(
+                a[lane].to_bits(),
+                b[lane].to_bits(),
+                "vec4 {i} lane {lane}: patched {} vs full-rebuild {}",
+                a[lane],
+                b[lane]
+            );
+        }
+    }
+}
+
+/// Not a correctness gate (that is `apply_bla_aux_matches_full_rebuild`) — a manual measurement of
+/// the aux fast-path speedup on a large orbit. Run with:
+///   cargo test -p fractadyne-core aux_regen_speedup -- --ignored --nocapture
+#[test]
+#[ignore = "timing measurement, run manually"]
+fn aux_regen_speedup() {
+    let p = crate::precision_for_octaves(4);
+    let cx = crate::parse_bf("-0.5").unwrap();
+    let cy = crate::parse_bf("0.0").unwrap();
+    let z0 = BigFloat::from_f64(0.0, p);
+    let (orbit, _len) = reference_orbit(&z0, &z0, &cx, &cy, formula::MANDELBROT, 500_000, p);
+    let nstep = orbit.len().saturating_sub(1);
+    let dc_max = FloatExp::from_f64(1.0e-6);
+    let cmag = mag(to_f64(&cx), to_f64(&cy));
+    let aux_a = AuxAggParams { trap_type: 0, stripe_freq: 5.0, cmag, power: POWER };
+    let aux_b = AuxAggParams { trap_type: 2, stripe_freq: 12.5, cmag, power: POWER };
+    let mut base = bla_to_gpu(&build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_a));
+    let median = |mut v: Vec<f64>| {
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        v[v.len() / 2]
+    };
+    let full = median(
+        (0..5)
+            .map(|_| {
+                let t = std::time::Instant::now();
+                let _ = bla_to_gpu(&build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_b));
+                t.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect(),
+    );
+    let fast = median(
+        (0..5)
+            .map(|_| {
+                let t = std::time::Instant::now();
+                apply_bla_aux(&mut base, &orbit, aux_b);
+                t.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect(),
+    );
+    eprintln!(
+        "aux regen (nstep={nstep}): full rebuild {full:.1} ms → aux patch {fast:.1} ms  ({:.1}× faster)",
+        full / fast
+    );
+    assert!(fast < full, "aux patch ({fast:.1} ms) should beat a full rebuild ({full:.1} ms)");
+}
+
 // The Misiurewicz finder must Newton-snap from a nearby seed onto the exact pre-periodic point.
 #[test]
 fn misiurewicz_solver_snaps_to_known_points() {

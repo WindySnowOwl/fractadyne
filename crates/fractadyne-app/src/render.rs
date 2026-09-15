@@ -6688,9 +6688,11 @@ impl FractadyneApp {
                     || (self.coloring.color_method.to_u32() == 3
                         && self.coloring.trap_type as u32 != self.ref_cache[vi].bla_trap_type);
                 let vc = &self.ref_cache[vi];
-                // Rebuild if the orbit changed, the current view needs a bigger dc_max than the cached
-                // tree was built for (tiny epsilon guards float noise), or the active aux param moved.
-                if vc.bla_id != oid || need_log2 > vc.bla_dc_max_log2 + 1.0e-6 || aux_stale {
+                // Rebuild the GEOMETRY if the orbit changed or the current view needs a bigger dc_max
+                // than the cached tree was built for (tiny epsilon guards float noise). A pure aux
+                // change (only a coloring param moved) is handled by the cheap patch below instead.
+                let geometry_stale = vc.bla_id != oid || need_log2 > vc.bla_dc_max_log2 + 1.0e-6;
+                if geometry_stale {
                     let orbit = self.ref_cache[vi].orbit.clone();
                     // Build with 2× headroom (dc_max·2 ⇒ +1 in log2) so continuous zoom-out doesn't
                     // rebuild every frame; still valid (a larger dc_max only shrinks skip radii).
@@ -6700,6 +6702,25 @@ impl FractadyneApp {
                     vc.bla = built.unwrap_or_else(|| std::sync::Arc::new(Vec::new()));
                     vc.bla_id = oid;
                     vc.bla_dc_max_log2 = build_dc.log2();
+                    vc.bla_stripe_freq = self.coloring.stripe_freq as f64;
+                    vc.bla_trap_type = self.coloring.trap_type as u32;
+                } else if aux_stale && !self.ref_cache[vi].bla.is_empty() {
+                    // ⭐Only a coloring param (stripe frequency / trap type) moved and the cached
+                    // geometry is still valid: patch just the aggregate lanes in place rather than
+                    // rebuilding the whole tree. The aggregates fold independently of the geometry
+                    // and `dc_max` (see `bla_merge`), so this is BYTE-IDENTICAL to a full rebuild
+                    // with the new params — while skipping every per-node FloatExp geometry op, the
+                    // part that dominates a deep build (bla ms 163 → a handful at 1e148).
+                    let orbit = self.ref_cache[vi].orbit.clone();
+                    let aux = aux_agg_from_orbit(
+                        &orbit,
+                        self.coloring.stripe_freq as f64,
+                        self.coloring.trap_type as u32,
+                    );
+                    let vc = &mut self.ref_cache[vi];
+                    let mut buf = (*vc.bla).clone();
+                    fractadyne_core::apply_bla_aux(&mut buf, &orbit, aux);
+                    vc.bla = std::sync::Arc::new(buf);
                     vc.bla_stripe_freq = self.coloring.stripe_freq as f64;
                     vc.bla_trap_type = self.coloring.trap_type as u32;
                 }
