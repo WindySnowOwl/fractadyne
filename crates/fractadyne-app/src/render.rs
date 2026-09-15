@@ -2953,7 +2953,12 @@ impl FractadyneApp {
         // overprice a BLA/SA-skipping deep frame: the 2.37e4000× base measured 0.58 s of GPU.)
         // The budget bounds the CORRECTION OVERHEAD — the optional passes beyond this frame.
         // Per-dispatch TDR safety inside the base is CORRECT_WORK_BUDGET's tiling, unchanged.
-        let base = fractadyne_gpu::render_iter_tiled(device, queue, &req, CORRECT_WORK_BUDGET, None, None).ok()?;
+        // Iterate scaffold (shader + pipeline) built ONCE and reused across the base pass and every
+        // ROI correction pass below — the same laziness as `gather`. The corrector can call
+        // `render_iter_tiled` up to `max_refs` (≤64) times, and its per-call setup was measured at
+        // ~7 s over a correction-heavy render (14.3 → 21.7 s); reuse removes all but the first build.
+        let iter_scaffold = fractadyne_gpu::IterScaffold::new(device);
+        let base = fractadyne_gpu::render_iter_tiled(device, queue, &req, CORRECT_WORK_BUDGET, None, None, Some(&iter_scaffold)).ok()?;
         for (c, v) in counters.iter_mut().zip(base.counters) {
             *c += v;
         }
@@ -3125,7 +3130,7 @@ impl FractadyneApp {
                     roi[i] = true;
                 }
                 match fractadyne_gpu::render_iter_tiled(
-                    device, queue, &r, CORRECT_WORK_BUDGET, None, Some(&roi),
+                    device, queue, &r, CORRECT_WORK_BUDGET, None, Some(&roi), Some(&iter_scaffold),
                 ) {
                     Ok(p) => {
                         for (c, v) in counters.iter_mut().zip(p.counters) {
@@ -3268,7 +3273,7 @@ impl FractadyneApp {
         // Pass 1 — supersampled iteration buffer (tiled → bounded dispatches, any size). The
         // caller-supplied `work_budget` keeps each tile's dispatch under the OS watchdog for a
         // shallow-view/high-iter tour frame (see `render_export`'s `work_budget`).
-        let iter = fractadyne_gpu::render_iter_tiled(device, queue, &req, work_budget, None, None).ok()?;
+        let iter = fractadyne_gpu::render_iter_tiled(device, queue, &req, work_budget, None, None, None).ok()?;
         let (clo, chi) = match norm {
             // A time-keyed range is applied EXACTLY — no measurement reduction, and no
             // all-interior fallback: a frame with nothing escaped keeps the sequence's mapping

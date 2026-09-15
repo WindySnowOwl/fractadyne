@@ -29,6 +29,18 @@ pub enum GpuError {
     /// panicking in `create_bind_group`; the caller shows this and the render is skipped.
     #[error("reference orbit too large for this GPU: {bytes} B exceeds the {limit} B storage-buffer binding limit (reduce iterations)")]
     OrbitTooLarge { bytes: u64, limit: u64 },
+    /// The device was lost (or the readback callback was dropped without firing) while a bounded
+    /// wait was polling for completion. Distinct from [`GpuError::Readback`] so a caller — export
+    /// worker, shutdown, correction — can react to a lost device rather than folding it into a
+    /// generic readback string. The unbounded `poll(Wait)` this replaced would have hung here.
+    #[error("GPU device lost or wedged during readback")]
+    DeviceLost,
+    /// A bounded readback wait exceeded its deadline. Only produced when a caller passes an explicit
+    /// deadline; the normal export/live paths pass none (a legitimate deep tile may take a long
+    /// time, and capping the wait by time — rather than by cancellation or a real device-loss
+    /// signal — would wrongly abort honest work).
+    #[error("GPU readback exceeded its deadline")]
+    Deadline,
 }
 
 /// Guard the reference-orbit storage binding against the GPU's max binding size. The orbit and its
@@ -43,6 +55,128 @@ fn check_orbit_binding(device: &wgpu::Device, orbit_len: usize, bla_len: usize) 
         return Err(GpuError::OrbitTooLarge { bytes, limit });
     }
     Ok(())
+}
+
+/// How a bounded GPU-completion wait ended. Every offscreen readback in this module resolves to one
+/// of these instead of blocking forever inside `device.poll(Maintain::Wait)` + `Receiver::recv()`.
+#[derive(Debug)]
+enum ReadbackWait {
+    /// The mapped buffer (or submitted work) completed successfully — proceed.
+    Ready,
+    /// The caller's cancel flag was observed set — unwind cleanly (shutdown / superseded export).
+    Canceled,
+    /// The optional deadline passed before completion. Only reachable when a deadline was supplied.
+    Deadline,
+    /// The `map_async`/submission callback was dropped without firing — the device was lost or the
+    /// resource was destroyed under us. The unbounded wait this replaced would have hung here.
+    DeviceLost,
+    /// The callback fired with an error (a real map failure). Carried string is the wgpu message.
+    MapError(String),
+}
+
+impl ReadbackWait {
+    /// Fold a completed wait into the caller's `Result`. `Ready` → `Ok`; everything else is the
+    /// matching terminal [`GpuError`]. Keeps the call sites to `wait.into_result()?`.
+    fn into_result(self) -> Result<(), GpuError> {
+        match self {
+            ReadbackWait::Ready => Ok(()),
+            ReadbackWait::Canceled => Err(GpuError::Canceled),
+            ReadbackWait::Deadline => Err(GpuError::Deadline),
+            ReadbackWait::DeviceLost => Err(GpuError::DeviceLost),
+            ReadbackWait::MapError(s) => Err(GpuError::Readback(s)),
+        }
+    }
+}
+
+/// Spin `device.poll(Maintain::Poll)` until `check` returns a terminal outcome, honoring `cancel`
+/// and `deadline` between polls. This is the one place the module waits on the GPU; both the
+/// buffer-readback and submitted-work-done waits are expressed through it.
+///
+/// **Why not `Maintain::Wait`.** wgpu 24 has no *timed* wait, so a plain `poll(Wait)` on a lost or
+/// wedged device blocks the calling worker thread forever — the exact hang the device-lost callback
+/// in `main.rs` force-`exit(2)`s the whole process to escape (see its comment). Polling in a loop
+/// keeps the wait cancellable and lets a dropped callback surface as [`ReadbackWait::DeviceLost`],
+/// so the caller can fail the tile and unwind instead of hanging, and shutdown can reclaim the
+/// worker.
+///
+/// **Latency.** The common case (small/fast readbacks — counters, timestamps, cheap tiles) is
+/// caught during a short busy-poll window with ~zero added latency versus `Wait`; only a genuinely
+/// long wait falls back to sleeping `POLL_STEP` between polls, which bounds CPU while a deep tile
+/// finishes. Worst-case added latency over `Wait` is one `POLL_STEP`.
+fn poll_until(
+    device: &wgpu::Device,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+    deadline: Option<std::time::Instant>,
+    mut check: impl FnMut() -> Option<ReadbackWait>,
+) -> ReadbackWait {
+    use std::sync::atomic::Ordering::Relaxed;
+    // Busy-poll (no sleep) for this long so quick readbacks return with essentially no added
+    // latency, then back off to sleeping to stop burning a core on a long deep tile.
+    const SPIN_WINDOW: std::time::Duration = std::time::Duration::from_millis(2);
+    const POLL_STEP: std::time::Duration = std::time::Duration::from_micros(200);
+    let start = std::time::Instant::now();
+    loop {
+        let _ = device.poll(wgpu::Maintain::Poll);
+        if let Some(outcome) = check() {
+            return outcome;
+        }
+        // Cancellation and device-loss take precedence over the (usually absent) time deadline.
+        if let Some(c) = cancel {
+            if c.load(Relaxed) {
+                return ReadbackWait::Canceled;
+            }
+        }
+        if let Some(dl) = deadline {
+            if std::time::Instant::now() >= dl {
+                return ReadbackWait::Deadline;
+            }
+        }
+        if start.elapsed() < SPIN_WINDOW {
+            std::hint::spin_loop();
+        } else {
+            std::thread::sleep(POLL_STEP);
+        }
+    }
+}
+
+/// Bounded wait for a mapped-buffer readback: poll until the `map_async` callback delivers `rx`'s
+/// result (or the wait is canceled / deadlined / the device is lost). Replaces
+/// `device.poll(Maintain::Wait); rx.recv()`.
+fn await_readback(
+    device: &wgpu::Device,
+    rx: &std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+    deadline: Option<std::time::Instant>,
+) -> ReadbackWait {
+    poll_until(device, cancel, deadline, || match rx.try_recv() {
+        Ok(Ok(())) => Some(ReadbackWait::Ready),
+        Ok(Err(e)) => Some(ReadbackWait::MapError(e.to_string())),
+        // Sender dropped without sending = the callback was discarded (device lost / buffer gone).
+        // A real completion always delivers its `Ok`/`Err` value first, so we never miss it here.
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(ReadbackWait::DeviceLost),
+        Err(std::sync::mpsc::TryRecvError::Empty) => None,
+    })
+}
+
+/// Bounded barrier: wait until all queue-submitted work so far has completed, without a readback
+/// buffer. Replaces a bare `device.poll(Maintain::Wait)` used only to fence between passes
+/// (per-chunk-window timing barriers). Uses `Queue::on_submitted_work_done` as the completion
+/// signal so it is cancellable and device-loss-aware like [`await_readback`].
+fn await_submitted(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+    deadline: Option<std::time::Instant>,
+) -> ReadbackWait {
+    let (tx, rx) = std::sync::mpsc::channel();
+    queue.on_submitted_work_done(move || {
+        let _ = tx.send(());
+    });
+    poll_until(device, cancel, deadline, || match rx.try_recv() {
+        Ok(()) => Some(ReadbackWait::Ready),
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(ReadbackWait::DeviceLost),
+        Err(std::sync::mpsc::TryRecvError::Empty) => None,
+    })
 }
 
 /// Everything needed to render one frame offscreen at an arbitrary resolution.
@@ -422,7 +556,11 @@ impl TileChunker {
                 pass.draw(0..3, 0..1);
             }
             queue.submit(std::iter::once(enc.finish()));
-            let _ = device.poll(wgpu::Maintain::Wait);
+            // Bounded barrier: fence this chunk (for its wall measurement and before the next)
+            // while honoring the cancel flag and escaping a lost device. `deadline` stays enforced
+            // between chunks above (returning `Canceled`), so the wait itself takes no deadline —
+            // a single chunk is already `CHUNK_HOT_MS`-bounded when healthy.
+            await_submitted(device, queue, cancel, None).into_result()?;
             let wall = t.elapsed().as_secs_f64() * 1000.0;
             if tile_trace_on() {
                 eprintln!("[fd-export] chunk [{s},{e}) wall={wall:.1}ms");
@@ -883,10 +1021,12 @@ fn render_export_impl(
             counters_read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
                 let _ = ctx_.send(r);
             });
-            let _ = device.poll(wgpu::Maintain::Wait);
-            rx.recv()
-                .map_err(|e| GpuError::Readback(e.to_string()))?
-                .map_err(|e| GpuError::Readback(e.to_string()))?;
+            // Bounded wait for THIS tile's output readback instead of an unbounded `poll(Wait)`:
+            // honors the export's cancel flag (shutdown / superseded) and surfaces a lost device
+            // rather than hanging the export worker. The counter/timestamp `recv()`s below are
+            // driven by the same submission, so the poll that completes this one has already fired
+            // their callbacks — they no longer block.
+            await_readback(device, &rx, Some(cancel), None).into_result()?;
 
             // This tile's event counts → the u64 running totals.
             if ctr_rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
@@ -996,6 +1136,40 @@ cap={cap} chunks={chunk_passes}"
 ///
 /// ⚠A skipped tile's pixels read back as 0.0, which is a *valid-looking* escape value — so a
 /// caller passing `roi` must never read outside its own mask.
+/// Reusable, size-independent iterate scaffolding for [`render_iter_tiled`]: the WGSL module, the
+/// iterate bind-group layout, and the `fs_iterate` pipeline. Building these costs a WGSL compile
+/// (~9 ms) plus pipeline creation, and it is IDENTICAL for every call on a given device — nothing
+/// here depends on the request, tile size, or ROI. The multi-reference corrector calls
+/// `render_iter_tiled` up to 64 times per render (once for the base pass, once per ROI correction
+/// pass), so hoisting this out of the per-call path — the same move [`GatherPass`] already makes —
+/// removes that repeated setup (measured at ~7 s over a correction-heavy render, 14.3 → 21.7 s).
+///
+/// Pass `Some(&scaffold)` to reuse it; `None` makes `render_iter_tiled` build a private one, exactly
+/// as it always did. The chunker's own pipelines are still built per call, but from this cached
+/// shader rather than a fresh compile.
+pub struct IterScaffold {
+    shader: wgpu::ShaderModule,
+    iter_bgl: wgpu::BindGroupLayout,
+    iter_pipeline: wgpu::RenderPipeline,
+}
+
+impl IterScaffold {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let shader = shader_module(device);
+        let iter_bgl = iter_bind_group_layout(device);
+        let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("itertiled.layout"),
+            bind_group_layouts: &[&iter_bgl],
+            push_constant_ranges: &[],
+        });
+        let iter_pipeline = fullscreen_pipeline(
+            device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+            "itertiled.pipeline",
+        );
+        Self { shader, iter_bgl, iter_pipeline }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn render_iter_tiled(
     device: &wgpu::Device,
@@ -1004,6 +1178,7 @@ pub fn render_iter_tiled(
     work_budget: u64,
     deadline: Option<std::time::Instant>,
     roi: Option<&[bool]>,
+    scaffold: Option<&IterScaffold>,
 ) -> Result<ExportResult, GpuError> {
     let max_dim = device.limits().max_texture_dimension_2d;
     let max_buf = device.limits().max_buffer_size;
@@ -1030,17 +1205,19 @@ pub fn render_iter_tiled(
     let tile = by_tex.min(by_buf).min(by_work).clamp(1, 2048);
 
     let t_setup = std::time::Instant::now();
-    let shader = shader_module(device);
-    let iter_bgl = iter_bind_group_layout(device);
-    let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("itertiled.layout"),
-        bind_group_layouts: &[&iter_bgl],
-        push_constant_ranges: &[],
-    });
-    let iter_pipeline = fullscreen_pipeline(
-        device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
-        "itertiled.pipeline",
-    );
+    // Reuse the caller's scaffold (the corrector hoists one across its up-to-64 passes) or build a
+    // private one — same shader/layout/pipeline either way, so output is byte-identical.
+    let local_scaffold;
+    let sc = match scaffold {
+        Some(s) => s,
+        None => {
+            local_scaffold = IterScaffold::new(device);
+            &local_scaffold
+        }
+    };
+    let shader = &sc.shader;
+    let iter_bgl = &sc.iter_bgl;
+    let iter_pipeline = &sc.iter_pipeline;
     let setup_ms = t_setup.elapsed().as_secs_f64() * 1000.0;
 
     // Chunked per-tile iterate, same rule and reason as `render_export`. ⭐Glitch detection is
@@ -1086,7 +1263,7 @@ pub fn render_iter_tiled(
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let iter_bg = make_iter_bg(device, &iter_bgl, &iter_uniform, &orbit_buf, &counters_buf);
+    let iter_bg = make_iter_bg(device, iter_bgl, &iter_uniform, &orbit_buf, &counters_buf);
 
     let split = |v: f64| -> (f32, f32) {
         let hi = v as f32;
@@ -1191,7 +1368,7 @@ pub fn render_iter_tiled(
             // Same lazy trigger as `render_export`.
             if chunk_scope && chunker.is_none() && pricer.open(req.max_iter) < req.max_iter {
                 chunker =
-                    Some(TileChunker::new(device, &shader, &iter_bgl, req.mode == 2, [tile, tile]));
+                    Some(TileChunker::new(device, shader, iter_bgl, req.mode == 2, [tile, tile]));
             }
             // Chunked tiles iterate BEFORE the main encoder, one polled submission per window;
             // the first window clears the counters. The deadline is honoured between windows.
@@ -1241,7 +1418,7 @@ pub fn render_iter_tiled(
                         pass.draw(0..3, 0..1);
                     }
                     _ => {
-                        pass.set_pipeline(&iter_pipeline);
+                        pass.set_pipeline(iter_pipeline);
                         pass.set_bind_group(0, &iter_bg, &[]);
                         pass.draw(0..3, 0..1);
                     }
@@ -1278,10 +1455,10 @@ pub fn render_iter_tiled(
             counters_read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
                 let _ = ctx_.send(r);
             });
-            let _ = device.poll(wgpu::Maintain::Wait);
-            rx.recv()
-                .map_err(|e| GpuError::Readback(e.to_string()))?
-                .map_err(|e| GpuError::Readback(e.to_string()))?;
+            // Bounded readback: escapes a lost device rather than blocking here forever. This path
+            // has no cancel flag yet (the deadline stays enforced between tiles); the counter
+            // `recv()` below shares this submission and so is already complete once we return.
+            await_readback(device, &rx, None, None).into_result()?;
             if ctr_rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
                 let mapped = counters_read.slice(..).get_mapped_range();
                 let tile_ctr: &[u32] = bytemuck::cast_slice(&mapped[..crate::COUNTER_SLOTS * 4]);
@@ -1715,10 +1892,8 @@ impl GatherPass {
                 .map_async(wgpu::MapMode::Read, move |r| {
                     let _ = ctx_.send(r);
                 });
-            let _ = device.poll(wgpu::Maintain::Wait);
-            rx.recv()
-                .map_err(|e| GpuError::Readback(e.to_string()))?
-                .map_err(|e| GpuError::Readback(e.to_string()))?;
+            // Bounded readback (device-loss-aware); the deadline stays enforced between batches.
+            await_readback(device, &rx, None, None).into_result()?;
             if ctr_rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
                 let mapped = self.counters_read.slice(..).get_mapped_range();
                 let batch_ctr: &[u32] = bytemuck::cast_slice(&mapped[..crate::COUNTER_SLOTS * 4]);
@@ -1771,9 +1946,11 @@ fn read_counters(
     slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = tx.send(r);
     });
-    let _ = device.poll(wgpu::Maintain::Wait);
+    // Bounded wait (device-loss-aware); on anything but success the counters stay zero, as the old
+    // `recv().is_ok()` guard already did.
+    let ready = matches!(await_readback(device, &rx, None, None), ReadbackWait::Ready);
     let mut out = [0u64; crate::COUNTER_SLOTS];
-    if rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
+    if ready {
         let mapped = slice.get_mapped_range();
         let raw: &[u32] = bytemuck::cast_slice(&mapped[..crate::COUNTER_SLOTS * 4]);
         for (o, &c) in out.iter_mut().zip(raw) {
@@ -1997,8 +2174,9 @@ pub fn render_iter(
         });
         trx
     });
-    let _ = device.poll(wgpu::Maintain::Wait);
-    rx.recv().map_err(|e| GpuError::Readback(e.to_string()))?.map_err(|e| GpuError::Readback(e.to_string()))?;
+    // Bounded readback (device-loss-aware). The timestamp `recv()` below shares this submission, so
+    // it is already complete once this returns.
+    await_readback(device, &rx, None, None).into_result()?;
     let mut iterate_ms = 0.0f64;
     if let (Some((_, _, read)), Some(ts_rx)) = (&ts, &ts_rx) {
         if ts_rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
@@ -2248,7 +2426,9 @@ pub fn render_iter_chunked_timed(
             pass.draw(0..3, 0..1);
         }
         queue.submit(std::iter::once(enc.finish()));
-        let _ = device.poll(wgpu::Maintain::Wait);
+        // Bounded per-window barrier (device-loss-aware) — this is the deliberate one-submission-
+        // per-poll shape the device-loss repro drives; a wedged window escapes instead of hanging.
+        await_submitted(device, queue, None, None).into_result()?;
         passes.push(ChunkPassTiming {
             start_iter: iu.start_iter,
             end_iter: iu.end_iter,
@@ -2331,10 +2511,8 @@ pub fn render_iter_chunked_timed(
     slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = tx.send(r);
     });
-    let _ = device.poll(wgpu::Maintain::Wait);
-    rx.recv()
-        .map_err(|e| GpuError::Readback(e.to_string()))?
-        .map_err(|e| GpuError::Readback(e.to_string()))?;
+    // Bounded final readback (device-loss-aware).
+    await_readback(device, &rx, None, None).into_result()?;
     let data = slice.get_mapped_range();
     let mut pixels = vec![0.0_f32; (w as usize) * (h as usize) * 4];
     let row_floats = (w * 4) as usize;
@@ -2526,8 +2704,8 @@ pub fn color_iter_buffer(
     slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = tx.send(r);
     });
-    let _ = device.poll(wgpu::Maintain::Wait);
-    rx.recv().map_err(|e| GpuError::Readback(e.to_string()))?.map_err(|e| GpuError::Readback(e.to_string()))?;
+    // Bounded readback (device-loss-aware) — the glitch-correction coloring path.
+    await_readback(device, &rx, None, None).into_result()?;
 
     let data = slice.get_mapped_range();
     let mut pixels = vec![0.0_f32; (w as usize) * (h as usize) * 4];
@@ -2636,10 +2814,8 @@ pub fn gputest(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(u32, u32, 
     slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = tx.send(r);
     });
-    let _ = device.poll(wgpu::Maintain::Wait);
-    rx.recv()
-        .map_err(|e| GpuError::Readback(e.to_string()))?
-        .map_err(|e| GpuError::Readback(e.to_string()))?;
+    // Bounded readback (device-loss-aware) — the GPU-primitive test harness.
+    await_readback(device, &rx, None, None).into_result()?;
     let data = slice.get_mapped_range();
     let mut pixels = vec![0.0_f32; (W * H * 4) as usize];
     for r in 0..H {

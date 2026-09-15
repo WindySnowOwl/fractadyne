@@ -166,8 +166,19 @@ struct IterTiming {
     /// (usually smaller, clamped-edge) tile and discarded as undersized, which froze the budget.
     steps: u64,
     state: TimingState,
-    done: Arc<std::sync::atomic::AtomicBool>,
+    /// `map_async` outcome for the in-flight readback, written by the callback thread:
+    /// [`MAP_PENDING`] / [`MAP_OK`] / [`MAP_ERR`]. Distinguishing error from pending is what lets a
+    /// failed map RESET the machine to `Idle` instead of stranding it in `Mapping` forever (the old
+    /// `AtomicBool` recorded only success, so an error looked identical to "not ready yet").
+    status: Arc<std::sync::atomic::AtomicU8>,
+    /// Consecutive map failures — only to rate-limit the diagnostic; the machine recovers regardless.
+    fails: u32,
 }
+
+/// `IterTiming`/`CounterRead` `map_async` status codes (see [`IterTiming::status`]).
+const MAP_PENDING: u8 = 0;
+const MAP_OK: u8 = 1;
+const MAP_ERR: u8 = 2;
 
 #[derive(Clone, Copy, PartialEq)]
 enum TimingState {
@@ -208,7 +219,8 @@ impl IterTiming {
             ),
             steps: 0,
             state: TimingState::Idle,
-            done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            status: Arc::new(std::sync::atomic::AtomicU8::new(MAP_PENDING)),
+            fails: 0,
         })
     }
 
@@ -226,35 +238,50 @@ impl IterTiming {
             // The encoder that wrote these timestamps was submitted after last frame's `prepare`
             // returned, so the copy is queued now and `map_async` can be issued against it.
             TimingState::Recorded => {
-                self.done.store(false, SeqCst);
-                let done = self.done.clone();
+                self.status.store(MAP_PENDING, SeqCst);
+                let status = self.status.clone();
                 self.read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
-                    if r.is_ok() {
-                        done.store(true, SeqCst);
-                    }
+                    status.store(if r.is_ok() { MAP_OK } else { MAP_ERR }, SeqCst);
                 });
                 self.state = TimingState::Mapping;
             }
             TimingState::Mapping => {
                 let _ = device.poll(wgpu::Maintain::Poll);
-                if self.done.load(SeqCst) {
-                    {
-                        let data = self.read.slice(..).get_mapped_range();
-                        let ticks: [u64; 2] = bytemuck::pod_read_unaligned(&data[..16]);
-                        let ns = ticks[1].saturating_sub(ticks[0]) as f64
-                            * queue.get_timestamp_period() as f64;
-                        // Steps FIRST: the app treats a non-zero `iterate_ms` as "a reading is
-                        // ready" and reads the paired count in the same breath, so publishing the
-                        // time first would expose one frame's timing against the previous count.
-                        if let Some(o) = out_steps {
-                            o.store(self.steps, SeqCst);
+                match self.status.load(SeqCst) {
+                    MAP_OK => {
+                        {
+                            let data = self.read.slice(..).get_mapped_range();
+                            let ticks: [u64; 2] = bytemuck::pod_read_unaligned(&data[..16]);
+                            let ns = ticks[1].saturating_sub(ticks[0]) as f64
+                                * queue.get_timestamp_period() as f64;
+                            // Steps FIRST: the app treats a non-zero `iterate_ms` as "a reading is
+                            // ready" and reads the paired count in the same breath, so publishing the
+                            // time first would expose one frame's timing against the previous count.
+                            if let Some(o) = out_steps {
+                                o.store(self.steps, SeqCst);
+                            }
+                            if let Some(o) = out {
+                                o.store((ns / 1.0e6).to_bits(), SeqCst);
+                            }
                         }
-                        if let Some(o) = out {
-                            o.store((ns / 1.0e6).to_bits(), SeqCst);
-                        }
+                        self.read.unmap();
+                        self.fails = 0;
+                        self.state = TimingState::Idle;
                     }
-                    self.read.unmap();
-                    self.state = TimingState::Idle;
+                    // Map failed: the buffer is NOT mapped, so do not read or unmap it — just
+                    // recover to Idle and let the next frame re-arm. Without this the machine used
+                    // to sit in Mapping forever, silently killing adaptive iterate timing.
+                    MAP_ERR => {
+                        self.fails += 1;
+                        if self.fails == 1 || self.fails % 600 == 0 {
+                            eprintln!(
+                                "[fd-gpu] iterate-timing readback map failed ({} in a row) — skipping this reading",
+                                self.fails
+                            );
+                        }
+                        self.state = TimingState::Idle;
+                    }
+                    _ => {} // still pending — keep polling next frame
                 }
             }
             TimingState::Idle => {}
@@ -272,7 +299,10 @@ struct CounterRead {
     /// MAP_READ staging copy of the whole counters buffer.
     read: wgpu::Buffer,
     state: TimingState,
-    done: Arc<std::sync::atomic::AtomicBool>,
+    /// `map_async` outcome ([`MAP_PENDING`]/[`MAP_OK`]/[`MAP_ERR`]) — see [`IterTiming::status`].
+    status: Arc<std::sync::atomic::AtomicU8>,
+    /// Consecutive map failures — rate-limits the diagnostic only.
+    fails: u32,
     /// Iterated pixel count (texture px incl. ss) of the armed frame — the fraction denominator,
     /// recorded at copy time so it always matches the copied counters.
     px: u64,
@@ -304,7 +334,8 @@ impl CounterRead {
                 mapped_at_creation: false,
             }),
             state: TimingState::Idle,
-            done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            status: Arc::new(std::sync::atomic::AtomicU8::new(MAP_PENDING)),
+            fails: 0,
             px: 0,
             max_iter: 0,
             norm_sig: 0,
@@ -329,19 +360,18 @@ impl CounterRead {
         use std::sync::atomic::Ordering::SeqCst;
         match self.state {
             TimingState::Recorded => {
-                self.done.store(false, SeqCst);
-                let done = self.done.clone();
+                self.status.store(MAP_PENDING, SeqCst);
+                let status = self.status.clone();
                 self.read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
-                    if r.is_ok() {
-                        done.store(true, SeqCst);
-                    }
+                    status.store(if r.is_ok() { MAP_OK } else { MAP_ERR }, SeqCst);
                 });
                 self.state = TimingState::Mapping;
             }
             TimingState::Mapping => {
                 let _ = device.poll(wgpu::Maintain::Poll);
-                if self.done.load(SeqCst) {
-                    {
+                match self.status.load(SeqCst) {
+                    MAP_OK => {
+                        {
                         let data = self.read.slice(..).get_mapped_range();
                         let slots: [u32; COUNTER_SLOTS] =
                             bytemuck::pod_read_unaligned(&data[..COUNTER_SLOTS * 4]);
@@ -383,9 +413,25 @@ impl CounterRead {
                                 | ((slots[CTR_BLA_SKIP] as u64) + 1);
                             o.store(packed, SeqCst);
                         }
+                        }
+                        self.read.unmap();
+                        self.fails = 0;
+                        self.state = TimingState::Idle;
                     }
-                    self.read.unmap();
-                    self.state = TimingState::Idle;
+                    // Map failed: the buffer is NOT mapped — recover to Idle without reading it,
+                    // rather than stranding the counter readback (and so the adaptive iteration
+                    // budget + live normalization) in Mapping forever.
+                    MAP_ERR => {
+                        self.fails += 1;
+                        if self.fails == 1 || self.fails % 600 == 0 {
+                            eprintln!(
+                                "[fd-gpu] counter readback map failed ({} in a row) — skipping this reading",
+                                self.fails
+                            );
+                        }
+                        self.state = TimingState::Idle;
+                    }
+                    _ => {} // still pending — keep polling next frame
                 }
             }
             TimingState::Idle => {}
