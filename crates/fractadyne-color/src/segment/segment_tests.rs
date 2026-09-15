@@ -964,3 +964,77 @@ fn promoting_linear_segments_to_bezier_changes_nothing_and_skips_the_kinked_ones
     plain.promote_linear_to_bezier();
     assert!(plain.is_stop_expressible(), "an unbent Bézier is still just a stop list");
 }
+
+// ---- analytic palette anti-aliasing (Lut::prefix_sum / sample_box) --------------------------
+
+fn ember_lut() -> Lut {
+    Gradient::from_stops("Ember", PRESETS[0].stops).bake(LUT_SIZE)
+}
+
+/// The box floor equals the point sample: a footprint of one texel or less must be exactly
+/// `sample`, so a barely-undersampled pixel colours identically to today (no seam where the
+/// filter turns on). Verified algebraically (a 1-texel box == the two-tap lerp); pin it.
+#[test]
+fn palette_box_at_texel_floor_equals_sample() {
+    let lut = ember_lut();
+    let texel = 1.0 / LUT_SIZE as f32;
+    for k in 0..16 {
+        let t = k as f32 / 16.0;
+        approx(lut.sample_box(t, 0.5 * texel), lut.sample(t), 1e-6, &format!("t={t}"));
+        // At exactly one texel the box path would engage, and it must still equal sample.
+        approx(lut.sample_box(t, texel), lut.sample(t), 1e-6, &format!("1-texel t={t}"));
+    }
+}
+
+/// A footprint of a whole cycle (or more) is the palette's DC mean, independent of `t` — the
+/// analytic limit that replaces speckle with a flat average once the palette is unresolvable.
+#[test]
+fn palette_box_full_cycle_is_dc_mean() {
+    let lut = ember_lut();
+    let n = lut.entries.len();
+    let mut mean = [0.0f32; 4];
+    for e in &lut.entries {
+        for c in 0..4 {
+            mean[c] += e[c] / n as f32;
+        }
+    }
+    for t in [0.0, 0.2, 0.5, 0.73, 0.99] {
+        approx(lut.sample_box(t, 1.0), mean, 1e-3, &format!("one cycle t={t}"));
+        approx(lut.sample_box(t, 4.0), mean, 1e-3, &format!("clamped >1 cycle t={t}"));
+    }
+}
+
+/// The requirement: continuous in the footprint width, so a live/rendered zoom (which slides
+/// the width smoothly) never pops. Sweep width across the whole range — including the w=1 texel
+/// crossover from the `sample` path to the box path — and assert no step exceeds a small bound.
+#[test]
+fn palette_box_is_continuous_in_width() {
+    let lut = ember_lut();
+    let texel = 1.0 / LUT_SIZE as f32;
+    for &t in &[0.12, 0.4, 0.85] {
+        // No jump where the `sample` path hands off to the box path (w = 1 texel).
+        approx(
+            lut.sample_box(t, texel),
+            lut.sample_box(t, 1.0001 * texel),
+            1e-3,
+            &format!("crossover t={t}"),
+        );
+        // Fine MULTIPLICATIVE sweep from one texel to several cycles: dw/w is held at 2%, and the
+        // box average is Lipschitz in log-width (|dA| ≲ |edge − A|·dw/w ≤ dw/w), so every step
+        // stays tiny. A discontinuity would blow this bound regardless of step size.
+        let mut w = texel;
+        let mut prev = lut.sample_box(t, w);
+        while w < 4.0 {
+            let nw = w * 1.02;
+            let cur = lut.sample_box(t, nw);
+            for c in 0..4 {
+                assert!(
+                    (cur[c] - prev[c]).abs() < 0.03,
+                    "discontinuity at t={t} w={w}->{nw} ch{c}: {prev:?} -> {cur:?}"
+                );
+            }
+            w = nw;
+            prev = cur;
+        }
+    }
+}

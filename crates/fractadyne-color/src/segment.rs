@@ -1163,6 +1163,77 @@ impl Lut {
             a[3] + (b[3] - a[3]) * f,
         ]
     }
+
+    /// Cyclic running integral of the entries, for exact box-filtering (analytic palette
+    /// anti-aliasing). Length `n + 1`: `psum[0] = 0`, `psum[k] = Σ entries[0..k]`, and
+    /// `psum[n]` is the whole-palette total. Treating each entry `i` as a unit-width texel
+    /// holding a constant colour, `psum` is the antiderivative sampled at the texel boundaries,
+    /// so the average colour over any sub-range is one subtraction. This is the exact companion
+    /// to [`Lut::sample`] and is what the shader reads (appended after the LUT at binding 3).
+    pub fn prefix_sum(&self) -> Vec<[f32; 4]> {
+        let n = self.entries.len();
+        let mut ps = Vec::with_capacity(n + 1);
+        let mut acc = [0.0f32; 4];
+        ps.push(acc);
+        for e in &self.entries {
+            for c in 0..4 {
+                acc[c] += e[c];
+            }
+            ps.push(acc);
+        }
+        ps
+    }
+
+    /// Box-average of the palette over a footprint `width` **cycles** wide, centred at `t`.
+    /// This is the analytic anti-aliasing the renderer applies per pixel: `width` is how much
+    /// of the palette a single pixel spans, so wide-footprint (undersampled) pixels get the
+    /// mean colour over what they cover instead of a point sample that aliases into speckle.
+    ///
+    /// Continuous in `width` by construction, which is what keeps a live/rendered zoom free of
+    /// pops: `width ≤ 1 texel` returns exactly [`Lut::sample`] (a box one texel wide equals the
+    /// smooth two-tap lerp — verified algebraically), and `width ≥ 1 full cycle` returns the
+    /// palette's DC mean; everything between is the exact cyclic box integral. Hard-banded
+    /// (`!smooth`) palettes keep their crisp `sample` fetch until the footprint exceeds a texel,
+    /// then average — bands alias too, but only once they are no longer resolvable.
+    pub fn sample_box(&self, t: f32, width: f32) -> [f32; 4] {
+        let n = self.entries.len();
+        if n == 0 {
+            return [0.0, 0.0, 0.0, 1.0];
+        }
+        let nf = n as f32;
+        let t = if t.is_finite() { t.rem_euclid(1.0) } else { 0.0 };
+        // Footprint in texels, capped at the whole palette (one full cycle = the DC mean).
+        let w = if width.is_finite() { (width * nf).clamp(0.0, nf) } else { 0.0 };
+        if w <= 1.0 {
+            return self.sample(t);
+        }
+        let ps = self.prefix_sum();
+        let total = ps[n];
+        // Cyclic antiderivative at texel coordinate `x` (may be negative or > n): whole cycles
+        // contribute `total` each, the fractional remainder is the per-texel piecewise-constant
+        // integral `psum[floor(r)] + frac(r)·entries[floor(r)]`.
+        let fc = |x: f32| -> [f32; 4] {
+            let cycles = (x / nf).floor();
+            let r = x - cycles * nf; // in [0, n)
+            let i = (r.floor() as usize).min(n - 1);
+            let f = r - r.floor();
+            let mut out = [0.0f32; 4];
+            for c in 0..4 {
+                out[c] = cycles * total[c] + ps[i][c] + f * self.entries[i][c];
+            }
+            out
+        };
+        let cc = t * nf;
+        let hi = fc(cc + w * 0.5);
+        let lo = fc(cc - w * 0.5);
+        let inv = 1.0 / w;
+        [
+            (hi[0] - lo[0]) * inv,
+            (hi[1] - lo[1]) * inv,
+            (hi[2] - lo[2]) * inv,
+            (hi[3] - lo[3]) * inv,
+        ]
+    }
 }
 
 #[cfg(test)]

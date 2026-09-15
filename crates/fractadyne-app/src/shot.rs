@@ -151,7 +151,10 @@ impl crate::FractadyneApp {
         let orbit = self.perf.last_orbit_len;
         let building = self.recompute_rx[0].is_some()
             || self.perf.tile_pending[0]
-            || self.perf.chunk_pending[0];
+            || self.perf.chunk_pending[0]
+            // Progressive on-settle supersampling: wait for the running average to converge before
+            // capturing, so the shot shows the de-speckled result, not the first (single) sample.
+            || (self.perf.accum_active[0] && self.perf.accum_count[0] < crate::accum_target());
         let s = self.harness.shot.as_mut().unwrap();
         if orbit != s.ref_len_seen {
             s.ref_len_seen = orbit;

@@ -2895,6 +2895,7 @@ impl FractadyneApp {
                 let vi = (self.dual && julia) as usize;
                 self.live_norm_cycle_offset(vi).map_or(0.0, |m| m.lo)
             },
+            aa_palette: crate::palette_aa_enabled(),
             lut,
             lut_smooth,
             light: self.effects.light as u32,
@@ -4341,11 +4342,18 @@ impl FractadyneApp {
             // pass that stored it. The install runs later in this frame than this check, so the
             // change is seen one frame late; that is harmless, because a sig change resets the
             // cursor to 0 and the offending pass's state is discarded rather than resumed.
+            // Progressive-SSAA jitter is part of the walk's identity: each accumulation sample is a
+            // sub-pixel-shifted view, so a new jitter must RESTART the chunk walk from scratch (else
+            // the resumable per-pixel state carries the previous sample's positions and every sample
+            // comes out identical — no de-speckle). Fold the jitter bits into the sig hash.
+            let jitter = self.perf.accum_cmd[vs.min(1)].jitter;
+            let jbits = (jitter[0].to_bits() as u64) ^ (jitter[1].to_bits() as u64).rotate_left(23);
             let sig = (
                 center.0.to_bits()
                     ^ center.1.to_bits().rotate_left(17)
                     ^ magnification.to_bits().rotate_left(34)
-                    ^ (self.ref_cache[vidx].orbit_len as u64).rotate_left(51),
+                    ^ (self.ref_cache[vidx].orbit_len as u64).rotate_left(51)
+                    ^ jbits.rotate_left(7),
                 gpu_iter,
                 resolution,
                 ss,
@@ -5054,6 +5062,7 @@ impl FractadyneApp {
             offset: offset_eff,
             norm_mode: nm.mode,
             norm_lo: nm.lo,
+            aa_palette: crate::palette_aa_enabled(),
             lut,
             lut_smooth,
             light: self.effects.light as u32,
@@ -5094,6 +5103,12 @@ impl FractadyneApp {
                 Default::default()
             },
             view_id,
+            // Progressive on-settle supersampling command for this view (computed in
+            // `drive_accumulation`). All-off on a moving/shallow/harness frame → a classic frame.
+            jitter: self.perf.accum_cmd[vsub].jitter,
+            accum_present: self.perf.accum_cmd[vsub].present,
+            accum_commit: self.perf.accum_cmd[vsub].commit,
+            accum_reset: self.perf.accum_cmd[vsub].reset,
         };
         // Record whether THIS frame really re-iterates (vs reprojecting a held frame) — the
         // motion-res controller adapts only on the interval that FOLLOWS a real frame, since

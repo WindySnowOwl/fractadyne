@@ -763,6 +763,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         // path stays on the classic linear map regardless of the session's setting.
         norm_mode: 0,
         norm_lo: 0.0,
+        aa_palette: false,
         glitch_on: 0,
         vignette: p.vignette,
         sa_a: p.sa_a,

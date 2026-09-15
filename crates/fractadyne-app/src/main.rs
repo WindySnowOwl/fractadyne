@@ -653,6 +653,19 @@ pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
     args.iter().any(|a| TASK_FLAGS.contains(&a.as_ref()))
 }
 
+/// Whether analytic palette anti-aliasing is on (box-filter the palette over each pixel's
+/// footprint). It band-limits palette-phase aliasing, but the footprint is high at the fractal
+/// BOUNDARY at every depth (the dwell packs densely there), so it also softens the crisp boundary
+/// shell on shallow views — a global look change. OFF by default for that reason; the real
+/// deep-zoom speckle fix is progressive on-settle supersampling (`drive_accumulation`).
+/// `FRACTADYNE_PALETTE_AA=1` (or `on`/`true`) opts in.
+pub(crate) fn palette_aa_enabled() -> bool {
+    matches!(
+        std::env::var("FRACTADYNE_PALETTE_AA").ok().as_deref().map(str::trim),
+        Some("1") | Some("on") | Some("true") | Some("yes")
+    )
+}
+
 #[cfg(test)]
 mod task_invocation;
 
@@ -921,6 +934,20 @@ impl RenderMode {
 /// ⚠**`enabled` is OFF by default and persisted** (`SessionState::perf_panel`) — the real value is
 /// resolved where the app is built, from the session plus `--perf` / `--no-perf`. Toggle it from
 /// View ▸ Performance panel or the toolbar button.
+/// Per-frame progressive-SSAA command the app computes (`drive_accumulation`) and hands the GPU
+/// through `MandelbrotParams`. All-default = accumulation off (classic live frame).
+#[derive(Clone, Copy, Default)]
+struct AccumCmd {
+    /// Sub-pixel jitter of the sampling grid, in fractions of a pixel.
+    jitter: [f32; 2],
+    /// Present the running average (vs this frame's colour).
+    present: bool,
+    /// Fold this (complete, jittered) frame into the average.
+    commit: bool,
+    /// Restart the average before folding (sample 0 / view change).
+    reset: bool,
+}
+
 struct Perf {
     enabled: bool,
     /// Height (px) of the bottom status bar as of the last frame — instrumentation for `--uitest`,
@@ -1227,6 +1254,17 @@ struct Perf {
     hold_uv: [[f32; 3]; 2],
     /// True while a view's settle grid has tiles left — holds the AA ramp and keeps repaints coming.
     tile_pending: [bool; 2],
+    /// Progressive on-settle supersampling (deep-zoom despeckle): samples folded so far, whether the
+    /// accumulation stage is active for this view, the current sample's sub-pixel jitter, and the
+    /// per-frame command handed to the GPU via `MandelbrotParams`. See `drive_accumulation`.
+    accum_count: [u32; 2],
+    accum_active: [bool; 2],
+    /// The current sample has been folded; the NEXT frame advances (re-arms the grid for the next
+    /// jitter). Split across two frames so the fold reads the completed frame before a re-arm
+    /// re-iterates over `tex_view`.
+    accum_committed: [bool; 2],
+    accum_jitter: [[f32; 2]; 2],
+    accum_cmd: [AccumCmd; 2],
     /// `frame_idx` of the last frame that spent its tile: one budget-sized tile per submission, so
     /// two deep views can't pair their dispatches past the watchdog.
     tile_turn: u64,
@@ -1485,6 +1523,11 @@ impl Default for Perf {
             bla_suppress_until: [0, 0],
             tile_state: [None, None],
             tile_pending: [false, false],
+            accum_count: [0, 0],
+            accum_active: [false, false],
+            accum_committed: [false, false],
+            accum_jitter: [[0.0, 0.0], [0.0, 0.0]],
+            accum_cmd: [AccumCmd::default(), AccumCmd::default()],
             chunk_ok: false,
             chunk_fe_ok: false,
             chunk_cursor: [0, 0],
@@ -1623,6 +1666,46 @@ mod deep_jump_warning;
 /// blocking on one expensive full-AA frame. `frame` is capped so the shift can't overflow.
 pub(crate) fn aa_ramp(frame: u32, target: u32) -> u32 {
     (1u32 << frame.min(5)).min(target.max(1))
+}
+
+/// Progressive on-settle supersampling (deep-zoom despeckle) tunables.
+/// Only accumulate deeper than `ACCUM_MIN_LOG2` (≈1e10×), where the escape field is undersampled
+/// and speckles.
+pub(crate) const ACCUM_MIN_LOG2: f64 = 33.0;
+
+/// How many sub-pixel samples to fold once the view settles. Each is a full deep re-render, so this
+/// trades convergence quality against how long the view keeps the GPU busy while idle — a real
+/// consideration on hardware prone to sustained-load device loss. Default 24 (a good de-speckle in
+/// ~10–15 s); `FRACTADYNE_ACCUM_TARGET` overrides (clamped 2..=256), or `FRACTADYNE_NO_ACCUM`
+/// disables accumulation entirely.
+pub(crate) fn accum_target() -> u32 {
+    std::env::var("FRACTADYNE_ACCUM_TARGET")
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .map(|n| n.clamp(2, 256))
+        .unwrap_or(24)
+}
+
+/// Van der Corput radical inverse of `i` in `base` (a low-discrepancy value in `[0, 1)`).
+fn radical_inverse(mut i: u32, base: u32) -> f32 {
+    let mut f = 1.0f32;
+    let mut r = 0.0f32;
+    while i > 0 {
+        f /= base as f32;
+        r += f * (i % base) as f32;
+        i /= base;
+    }
+    r
+}
+
+/// Sub-pixel jitter for accumulation sample `i` — a 2D Halton (base 2, 3) sequence mapped to
+/// `[-0.5, 0.5]`. Sample 0 is the pixel centre `(0, 0)`, so the first accumulated frame equals
+/// today's settled frame exactly (a seamless hand-off from the ordinary settle into accumulation).
+pub(crate) fn accum_jitter_seq(i: u32) -> [f32; 2] {
+    if i == 0 {
+        return [0.0, 0.0];
+    }
+    [radical_inverse(i, 2) - 0.5, radical_inverse(i, 3) - 0.5]
 }
 
 // ================================================================================================
@@ -7394,6 +7477,14 @@ impl FractadyneApp {
             }
             ss
         };
+        // Progressive on-settle supersampling (deep-zoom despeckle): once the ordinary settle
+        // finishes, fold sub-pixel-jittered samples into a running average until it converges (see
+        // `drive_accumulation`). `busy` = a settle grid / chunk progression / reference build is
+        // still in flight, so the current sample is not yet a complete frame.
+        let accum_busy = self.perf.tile_pending[view]
+            || self.perf.chunk_pending[view]
+            || self.recompute_rx[view].is_some();
+        self.drive_accumulation(ctx, view, interacting, accum_busy, log2mag);
         let res = [
             (rect.width() as f64 * ppp) as u32,
             (rect.height() as f64 * ppp) as u32,
@@ -11947,6 +12038,96 @@ impl FractadyneApp {
     /// stale tiles has to assert rather than assume.
     pub(crate) fn tile_state_present(&self, v: usize) -> bool {
         self.perf.tile_state.get(v).is_some_and(|g| g.is_some())
+    }
+
+    /// Whether progressive on-settle supersampling may run at all: off under every harness / task
+    /// (so `--livetest`, `--uitest`, tours, autopilot, headless renders and the corpus stay
+    /// deterministic and unperturbed — the same "off for tasks" stance as the orbit cache), and
+    /// off when `FRACTADYNE_NO_ACCUM` is set.
+    pub(crate) fn accumulation_allowed(&self) -> bool {
+        std::env::var_os("FRACTADYNE_NO_ACCUM").is_none()
+            && self.playback.is_none()
+            && !self.autopilot.active
+            && !self.uitest_active()
+            && !self.render_cli.run
+            && self.render_cli.tour.is_none()
+            && !self.selftest.run
+            && !self.profile.run
+    }
+
+    /// Progressive on-settle supersampling state machine (deep-zoom despeckle). Called once per view
+    /// per frame with this view's motion / `busy` state (`busy` = a settle grid, chunk progression or
+    /// reference build is still in flight, so the current sample is not yet a complete frame). It
+    /// advances `accum_*` and stores `accum_cmd[view]`, which `build_params` hands the GPU. The fold
+    /// and the re-arm are split across two frames so the fold reads the completed frame before a
+    /// re-arm re-iterates over it.
+    fn drive_accumulation(
+        &mut self,
+        ctx: &egui::Context,
+        view: usize,
+        interacting: bool,
+        busy: bool,
+        log2mag: f64,
+    ) {
+        let allowed = self.accumulation_allowed()
+            && !interacting
+            && !self.tour_playing()
+            && log2mag >= ACCUM_MIN_LOG2;
+        if !allowed {
+            self.perf.accum_active[view] = false;
+            self.perf.accum_committed[view] = false;
+            self.perf.accum_cmd[view] = AccumCmd::default();
+            return;
+        }
+        // `accum_count` = samples FOLDED so far; `accum_committed` = the current sample has been
+        // folded and the next frame should advance (re-arm the grid at the next jitter). The fold
+        // and the re-arm are on separate frames so the fold reads the completed `tex_view` before a
+        // re-arm re-iterates over it.
+        let mut cmd = AccumCmd { present: true, ..Default::default() };
+        if !self.perf.accum_active[view] {
+            // Not yet accumulating. Wait for the ordinary settle to finish; its (complete,
+            // unjittered) frame is sample 0. Present the classic frame until then.
+            if busy {
+                self.perf.accum_cmd[view] = AccumCmd::default();
+                self.schedule_repaint(ctx);
+                return;
+            }
+            self.perf.accum_active[view] = true;
+            self.perf.accum_count[view] = 0;
+            self.perf.accum_committed[view] = false;
+            self.perf.accum_jitter[view] = [0.0, 0.0];
+            crate::diag::log_line(
+                "accum",
+                &format!("view {view}: begin (2^{log2mag:.1}, target {})", accum_target()),
+            );
+        }
+        let count = self.perf.accum_count[view];
+        cmd.jitter = self.perf.accum_jitter[view];
+        if count >= accum_target() {
+            // Converged: keep presenting the average, request no repaint → the view quiesces.
+        } else if busy {
+            self.schedule_repaint(ctx); // this sample is still rendering
+        } else if !self.perf.accum_committed[view] {
+            // The current sample's (jittered) frame is complete → fold it, WITHOUT re-arming this
+            // frame (so `tex_view` is not overwritten before the fold reads it).
+            cmd.commit = true;
+            cmd.reset = count == 0;
+            let folded = count + 1;
+            self.perf.accum_count[view] = folded;
+            self.perf.accum_committed[view] = true;
+            if folded >= accum_target() {
+                crate::diag::log_line("accum", &format!("view {view}: converged at {folded} samples"));
+            }
+            self.schedule_repaint(ctx); // advance (or reach the terminal state) next frame
+        } else {
+            // Folded — advance to the next sample: re-arm the settle grid at the next jitter.
+            self.perf.accum_committed[view] = false;
+            self.perf.accum_jitter[view] = accum_jitter_seq(count);
+            self.perf.view_gen[view] = self.perf.frame_idx;
+            cmd.jitter = self.perf.accum_jitter[view];
+            self.schedule_repaint(ctx);
+        }
+        self.perf.accum_cmd[view] = cmd;
     }
 
     /// The live-render work budget (`WORK_BUDGET`) scaled by the user's `work_budget_scale`. Higher

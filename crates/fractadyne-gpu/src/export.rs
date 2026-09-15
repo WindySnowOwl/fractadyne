@@ -240,6 +240,10 @@ pub struct ExportRequest {
     /// Palette-range mapping: 0 = linear (`cycle`/`offset` alone), 1 = log about `norm_lo`.
     pub norm_mode: u32,
     pub norm_lo: f32,
+    /// Analytic palette anti-aliasing (box-filter the palette over the pixel footprint;
+    /// `palette_box` in the shader). `false` = point sample. Set identically to the live path so
+    /// an export matches the view.
+    pub aa_palette: bool,
     /// The baked palette LUT and its fetch mode — see [`crate::RenderParams::lut`].
     /// ⚠Both `ColorU` definitions consume this; an export that kept the old shape would silently
     /// render through a different palette than the live view.
@@ -792,6 +796,8 @@ fn render_export_impl(
         out_res: [w as f32, h as f32],
         norm_mode: req.norm_mode,
         norm_lo: req.norm_lo,
+        aa_palette: req.aa_palette as u32,
+        _pad_aa: [0; 3],
     };
     queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
     let split = |v: f64| -> (f32, f32) {
@@ -2619,6 +2625,8 @@ pub fn color_iter_buffer(
         out_res: [w as f32, h as f32],
         norm_mode: req.norm_mode,
         norm_lo: req.norm_lo,
+        aa_palette: req.aa_palette as u32,
+        _pad_aa: [0; 3],
     };
     queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
 
