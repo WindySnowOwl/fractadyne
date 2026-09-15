@@ -66,6 +66,7 @@ mod cli;
 mod diag;
 mod color_picker;
 mod error;
+mod exec_resolve;
 mod eyedropper;
 mod export;
 mod bench_matrix;

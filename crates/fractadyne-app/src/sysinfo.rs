@@ -340,7 +340,11 @@ fn read_cpu_times() -> Option<(u64, u64)> {
 /// never as zero — an AMD box reporting 0% GPU would be a lie, and the RX 6800 XT is exactly the
 /// machine whose numbers matter most right now.
 pub(crate) fn gpu_usage() -> Option<(f64, u64, u64)> {
-    let out = std::process::Command::new("nvidia-smi")
+    // F-06: an absolute, trusted path only — never a bare name the OS resolves against cwd/PATH.
+    // `None` here (nvidia-smi not in a trusted location) means "GPU stats unavailable", the same as
+    // an AMD box or a failed query.
+    let prog = crate::exec_resolve::nvidia_smi()?;
+    let out = std::process::Command::new(&prog)
         .args([
             "--query-gpu=utilization.gpu,memory.used,memory.total",
             "--format=csv,noheader,nounits",
@@ -655,8 +659,12 @@ fn gpu_vram_bytes(_active_gpu: Option<&str>) -> u64 {
         return best;
     }
     // NVIDIA has no sysfs equivalent — ask nvidia-smi (absent ⇒ 0; this is diagnostics-grade,
-    // best-effort by design, and runs once at startup).
-    std::process::Command::new("nvidia-smi")
+    // best-effort by design, and runs once at startup). F-06: resolve to a trusted absolute path,
+    // never a bare name (see `exec_resolve`); not found ⇒ 0.
+    let Some(prog) = crate::exec_resolve::nvidia_smi() else {
+        return 0;
+    };
+    std::process::Command::new(&prog)
         .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
         .output()
         .ok()
