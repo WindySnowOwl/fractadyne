@@ -273,6 +273,57 @@ most editors; sections are the `##` headings the items live under.
   SATURATES; and the unit test written alongside it asserted `INFINITY → Direct`, so the defect
   shipped with a green test defending it. **When a guard rejects a CLASS, enumerate the class.**~~
 
+## ▶ Image rendering path rework (2026-09-15)
+
+From `local/image-rendering-path-analysis-2026-09-14.md` (source-inspection analysis); full plan +
+per-phase gates + checkpoint log in `local/image-rendering-implementation-plan-2026-09-15.md`.
+Shipped set is byte-neutral (goldens 19/19 + bench-matrix 0 drift throughout) and on `main`.
+
+- [x] ✅⭐**A — bounded, cancellable, device-loss-aware readback + telemetry recovery** (merge
+  `390f5bc`). Replaced the 9 unbounded `poll(Maintain::Wait)`+blocking `recv()` sites in
+  `fractadyne-gpu/export.rs` with a `Poll` loop that honors cancel and surfaces a dropped map
+  callback as `GpuError::DeviceLost`; fixed the two live telemetry pumps to recover from a
+  `map_async` error instead of wedging in `Mapping`. ⛔Does NOT close device-loss #1 — makes a lost
+  device recoverable in-thread; the zoom-home repro is still the acceptance test.
+- [x] ✅**C — corrector iterate-scaffold reuse** (merge `390f5bc`). `IterScaffold` reused across the
+  multi-reference corrector's up-to-64 `render_iter_tiled` passes; per-pass setup 9 → 0 ms.
+- [x] ✅**B — worker cancellation MEASURED, mechanism declined** (merge `af97b5f`). The spawn-site
+  comment defers a cooperative-cancel `AtomicBool` "until profiling shows it matters"; the `refwaste`
+  trace measured 0 % waste on dives and 2.1 % worst-case (grand tour, 4 concurrent builders, already
+  discarded by the stale-clobber guard). Only the diagnostic landed. Re-measure with
+  `FRACTADYNE_TRACE=refwaste`.
+- [x] ✅⭐**D — parallel BLA level builder** (merge `5c8adee`). `build_bla_mandel` fills level 0 + each
+  merge level via scoped threads (deterministic per-index writes; threshold 8192). **deep-interior
+  1e148 bla 781 → 163 ms (4.8×)**; byte-identical (direct parallel-vs-serial `to_bits` test).
+- [x] ✅⭐**D1 — aux-only BLA regen on coloring change** (merge `e8de8b9`). A stripe-freq/trap-type
+  change with valid cached geometry patches only the agg lanes (`apply_bla_aux`) — the aggregates
+  fold independently of geometry+dc_max. **4.0×** (500k orbit 76 → 19 ms), ≈19× vs original serial.
+- [x] ✅**E — readback failure-test coverage** (merge `579f5a5`). 8 pure tests for the bounded wait's
+  device-loss/cancel/deadline/completion-precedence logic (`recv_readback_outcome` + `readback_step`
+  factored out of the poll loop, behavior-neutral).
+
+Remaining (diminishing returns — deferred, not hidden):
+
+- [ ] **C1 — in-flight tile ring** for large multi-tile exports (submit 2–3 tiles, map whichever
+  completes first, bounded aggregate in-flight budget). Wants **C2 — a reusable per-device export
+  resource pool** (textures/buffers/timestamp resources) first, or the ring allocates N× per-tile
+  resources. Byte-neutral; measure via a large `--render` export timing (NOT bench-matrix — it is
+  single-tile at 384px and warm-up-primed).
+- [ ] **C3 — GPU work arbiter**: give live rendering a latency budget and export a bounded share
+  while an export owns the device; keep lightweight color/reprojection alive. Interactive (livetest,
+  not bench-matrix). Separate queues are NOT the fix — many backends serialize internally.
+- [ ] **D3 — cache I/O outside the `STORE` mutex** (`refcache_persist.rs offer`): reserve under the
+  lock → release → temp-write+rename → reacquire to commit the index → bound `offer_async` writers to
+  one coalescing queue. ⚠Marginal on a fast SSD (the 4 MB write under the lock is a few ms and the
+  writers just serialize on the lock anyway); real win is a slow/network filesystem.
+- [ ] **E (chunking-coverage half)**: resumable state for auxiliary/non-holomorphic paths where
+  practical, else a conservative wall-priced cap for non-chunkable modes; a per-mode cost model, and
+  a test for every `chunk_scope == false` reason (the first unchunked dispatch after a workload
+  change is the exposure). Also the telemetry-pump-recovery test left to review under E.
+- [ ] **D — B3 async export-prep** was assessed as very high blast-radius (`build_export_request` is
+  called synchronously by export/probe/tour/bench/selftest) and left untouched; revisit only if the
+  UI-thread stall on a cold export-prep reference build is observed to matter.
+
 ## ▶ Announce readiness (fractalforums) — TRIAGE 2026-08-08
 
 Goal restated by the user: a release **stable enough to announce publicly**, meaning (a) no easily
