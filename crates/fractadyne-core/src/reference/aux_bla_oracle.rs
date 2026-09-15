@@ -351,6 +351,48 @@ fn aux_bla_fold_error() {
     );
 }
 
+/// The parallel BLA build (scoped-thread level fill) must be BYTE-IDENTICAL to the serial build.
+/// A non-escaping interior point (`c = -0.5`) runs the orbit to `max_iter`, giving `nstep` well
+/// above `BLA_PAR_THRESHOLD` so the parallel path actually engages; the same orbit is built with
+/// the threshold forced to `usize::MAX` (serial) and `0` (parallel) and the two GPU-flattened
+/// trees are compared bit-for-bit (`to_bits`, so an extended-range NaN dip marker compares equal).
+#[test]
+fn build_bla_parallel_matches_serial() {
+    let p = crate::precision_for_octaves(4);
+    let cx = crate::parse_bf("-0.5").unwrap();
+    let cy = crate::parse_bf("0.0").unwrap();
+    let z0 = BigFloat::from_f64(0.0, p);
+    let max_iter = 40_000u32;
+    let (orbit, _len) = reference_orbit(&z0, &z0, &cx, &cy, formula::MANDELBROT, max_iter, p);
+    let nstep = orbit.len().saturating_sub(1);
+    assert!(
+        nstep > BLA_PAR_THRESHOLD,
+        "orbit too short to exercise the parallel path: nstep={nstep} <= {BLA_PAR_THRESHOLD}"
+    );
+    let dc_max = FloatExp::from_f64(1.0e-6);
+    let aux_p = AuxAggParams {
+        trap_type: 0,
+        stripe_freq: FREQ,
+        cmag: mag(to_f64(&cx), to_f64(&cy)),
+        power: POWER,
+    };
+    let serial = build_bla_mandel_impl(&orbit, dc_max, 1.0e-6, aux_p, usize::MAX);
+    let parallel = build_bla_mandel_impl(&orbit, dc_max, 1.0e-6, aux_p, 0);
+    let (gs, gp) = (bla_to_gpu(&serial), bla_to_gpu(&parallel));
+    assert_eq!(gs.len(), gp.len(), "flattened node count differs (level/merge shape changed)");
+    for (i, (a, b)) in gs.iter().zip(&gp).enumerate() {
+        for lane in 0..4 {
+            assert_eq!(
+                a[lane].to_bits(),
+                b[lane].to_bits(),
+                "BLA node {i} lane {lane}: serial {} vs parallel {}",
+                a[lane],
+                b[lane]
+            );
+        }
+    }
+}
+
 // The Misiurewicz finder must Newton-snap from a nearby seed onto the exact pre-periodic point.
 #[test]
 fn misiurewicz_solver_snaps_to_known_points() {
