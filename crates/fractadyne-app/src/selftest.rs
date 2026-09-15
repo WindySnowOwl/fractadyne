@@ -673,7 +673,7 @@ impl FractadyneApp {
 
                 // Same claim for `render_iter_tiled` (the normalized export's pass 1): raw
                 // iteration buffer against the trusted single-dispatch `render_iter`.
-                let t = fractadyne_gpu::render_iter_tiled(device, queue, &req, 20_000_000_000, None, None)
+                let t = fractadyne_gpu::render_iter_tiled(device, queue, &req, 20_000_000_000, None, None, None)
                     .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_tiled): {e}"))
                     .ok();
                 let u = fractadyne_gpu::render_iter(device, queue, &req)
@@ -1785,7 +1785,7 @@ impl FractadyneApp {
                 {
                     let mut g = with_ref(0.45 * span, 0.35 * span);
                     g.glitch_on = 1;
-                    let tiled = fractadyne_gpu::render_iter_tiled(device, queue, &g, 2_000_000_000, None, None)
+                    let tiled = fractadyne_gpu::render_iter_tiled(device, queue, &g, 2_000_000_000, None, None, None)
                         .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_tiled): {e}"))
                         .ok();
                     if let (Some(single), Some(t)) = (render(&g), &tiled) {
@@ -1822,7 +1822,7 @@ impl FractadyneApp {
                 {
                     let mut g = with_ref(0.45 * span, 0.35 * span);
                     g.glitch_on = 1;
-                    let full = fractadyne_gpu::render_iter_tiled(device, queue, &g, 2_000_000_000, None, None)
+                    let full = fractadyne_gpu::render_iter_tiled(device, queue, &g, 2_000_000_000, None, None, None)
                         .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_tiled): {e}"))
                         .ok();
                     let nn = N as usize;

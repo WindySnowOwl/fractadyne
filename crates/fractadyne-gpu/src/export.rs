@@ -1136,6 +1136,40 @@ cap={cap} chunks={chunk_passes}"
 ///
 /// ⚠A skipped tile's pixels read back as 0.0, which is a *valid-looking* escape value — so a
 /// caller passing `roi` must never read outside its own mask.
+/// Reusable, size-independent iterate scaffolding for [`render_iter_tiled`]: the WGSL module, the
+/// iterate bind-group layout, and the `fs_iterate` pipeline. Building these costs a WGSL compile
+/// (~9 ms) plus pipeline creation, and it is IDENTICAL for every call on a given device — nothing
+/// here depends on the request, tile size, or ROI. The multi-reference corrector calls
+/// `render_iter_tiled` up to 64 times per render (once for the base pass, once per ROI correction
+/// pass), so hoisting this out of the per-call path — the same move [`GatherPass`] already makes —
+/// removes that repeated setup (measured at ~7 s over a correction-heavy render, 14.3 → 21.7 s).
+///
+/// Pass `Some(&scaffold)` to reuse it; `None` makes `render_iter_tiled` build a private one, exactly
+/// as it always did. The chunker's own pipelines are still built per call, but from this cached
+/// shader rather than a fresh compile.
+pub struct IterScaffold {
+    shader: wgpu::ShaderModule,
+    iter_bgl: wgpu::BindGroupLayout,
+    iter_pipeline: wgpu::RenderPipeline,
+}
+
+impl IterScaffold {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let shader = shader_module(device);
+        let iter_bgl = iter_bind_group_layout(device);
+        let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("itertiled.layout"),
+            bind_group_layouts: &[&iter_bgl],
+            push_constant_ranges: &[],
+        });
+        let iter_pipeline = fullscreen_pipeline(
+            device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+            "itertiled.pipeline",
+        );
+        Self { shader, iter_bgl, iter_pipeline }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn render_iter_tiled(
     device: &wgpu::Device,
@@ -1144,6 +1178,7 @@ pub fn render_iter_tiled(
     work_budget: u64,
     deadline: Option<std::time::Instant>,
     roi: Option<&[bool]>,
+    scaffold: Option<&IterScaffold>,
 ) -> Result<ExportResult, GpuError> {
     let max_dim = device.limits().max_texture_dimension_2d;
     let max_buf = device.limits().max_buffer_size;
@@ -1170,17 +1205,19 @@ pub fn render_iter_tiled(
     let tile = by_tex.min(by_buf).min(by_work).clamp(1, 2048);
 
     let t_setup = std::time::Instant::now();
-    let shader = shader_module(device);
-    let iter_bgl = iter_bind_group_layout(device);
-    let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("itertiled.layout"),
-        bind_group_layouts: &[&iter_bgl],
-        push_constant_ranges: &[],
-    });
-    let iter_pipeline = fullscreen_pipeline(
-        device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
-        "itertiled.pipeline",
-    );
+    // Reuse the caller's scaffold (the corrector hoists one across its up-to-64 passes) or build a
+    // private one — same shader/layout/pipeline either way, so output is byte-identical.
+    let local_scaffold;
+    let sc = match scaffold {
+        Some(s) => s,
+        None => {
+            local_scaffold = IterScaffold::new(device);
+            &local_scaffold
+        }
+    };
+    let shader = &sc.shader;
+    let iter_bgl = &sc.iter_bgl;
+    let iter_pipeline = &sc.iter_pipeline;
     let setup_ms = t_setup.elapsed().as_secs_f64() * 1000.0;
 
     // Chunked per-tile iterate, same rule and reason as `render_export`. ⭐Glitch detection is
@@ -1226,7 +1263,7 @@ pub fn render_iter_tiled(
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let iter_bg = make_iter_bg(device, &iter_bgl, &iter_uniform, &orbit_buf, &counters_buf);
+    let iter_bg = make_iter_bg(device, iter_bgl, &iter_uniform, &orbit_buf, &counters_buf);
 
     let split = |v: f64| -> (f32, f32) {
         let hi = v as f32;
@@ -1331,7 +1368,7 @@ pub fn render_iter_tiled(
             // Same lazy trigger as `render_export`.
             if chunk_scope && chunker.is_none() && pricer.open(req.max_iter) < req.max_iter {
                 chunker =
-                    Some(TileChunker::new(device, &shader, &iter_bgl, req.mode == 2, [tile, tile]));
+                    Some(TileChunker::new(device, shader, iter_bgl, req.mode == 2, [tile, tile]));
             }
             // Chunked tiles iterate BEFORE the main encoder, one polled submission per window;
             // the first window clears the counters. The deadline is honoured between windows.
@@ -1381,7 +1418,7 @@ pub fn render_iter_tiled(
                         pass.draw(0..3, 0..1);
                     }
                     _ => {
-                        pass.set_pipeline(&iter_pipeline);
+                        pass.set_pipeline(iter_pipeline);
                         pass.set_bind_group(0, &iter_bg, &[]);
                         pass.draw(0..3, 0..1);
                     }
