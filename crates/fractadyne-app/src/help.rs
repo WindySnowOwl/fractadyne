@@ -596,6 +596,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--palette-ase FILE", "Colour through an Adobe swatch list (.ase). Swatches carry no positions, so they are spread evenly and blended linearly. RGB, Gray and (naively converted) CMYK swatches are read; LAB is refused rather than converted with a guessed colour profile."),
         Flag("--method NAME", "smooth | stripe | triangle | trap | distance | decomposition."),
         Flag("--stripe-freq N", "Stripe density (stripe method)."),
+        Flag("--stripe-tail N", "Stripe average over the tail only (stripe method): an exponential window over the last N iterations of each orbit instead of the whole orbit, so extreme-depth views keep their stripe contrast (4..=1048576, 16 is the classic look; the Tail only option in Coloring)."),
         Flag("--trap SHAPE", "point | cross | circle (orbit-trap method)."),
         Flag("--binary", "Binary-decomposition coloring."),
         Flag("--light [--light-angle R]", "Enable 3D relief lighting."),

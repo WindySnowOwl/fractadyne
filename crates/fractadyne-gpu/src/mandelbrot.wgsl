@@ -414,7 +414,10 @@ struct IterU {
     color_method: u32,     // selected coloring method (drives whether aux is accumulated)
     stripe_freq: f32,      // stripe-average angular frequency
     trap_type: u32,        // 0 = point, 1 = cross, 2 = unit circle
-    aux_on: u32,           // 1 = accumulate orbit statistics into the aux target
+    // Bitfield: bit 0 = accumulate orbit statistics into the aux target; bit 1 = stripe average
+    // over the TAIL only (an exponential window, see `stripe_tail_on`); bits 2.. = that window's
+    // length in iterations. Mirrors `aux_on_word` in lib.rs.
+    aux_on: u32,
     sa_skip: u32,          // series-approximation skip (0 = none): seed δz at this iteration
     glitch_on: u32,        // 1 = flag Pauldelbrot-glitched pixels (multi-reference correction)
     sa_a: vec4<f32>,       // order-3 series coeffs (complex df32 mantissa): δz ≈ A·δc + B·δc² + C·δc³
@@ -498,6 +501,27 @@ struct Aux {
     prev_abs: f32, // |z| of the previous iteration (TIA needs it)
     trap: f32,     // min orbit-trap distance so far
 };
+// ---- stripe average over the TAIL only ------------------------------------------------------
+// At extreme depth every pixel's orbit shadows the reference for all but its last few hundred
+// iterates (δ grows from the pixel spacing to O(1) in ~ln(zoom)/λ steps), and the stripe term is
+// a function of z alone — so the FULL-orbit mean is the same colour for the whole view (2.5e246×,
+// field report 2026-09-16). The tail mode replaces the plain mean with an exponentially-weighted
+// mean over the last `tail_len` iterates: `s += (term − s)·α`, α = 1/tail_len, bias-corrected by
+// `1 − (1−α)^n` so a SHORT orbit reads exactly like the plain mean (no look change on shallow
+// views). Across a BLA-skipped span the same recurrence with the span's constant mean term `m`
+// has the closed form `s = m + (s − m)·(1−α)^span`, which is what the fold applies — the plain
+// mean is recovered as α → 0. `sac_sum` holds the EMA and `sac_prev` the previous one, so the
+// `frac` blend in `aux_pack` works unchanged.
+fn stripe_tail_on() -> bool {
+    return (iu.aux_on & 2u) != 0u && iu.color_method == 1u;
+}
+fn stripe_tail_alpha() -> f32 {
+    return 1.0 / f32(max(iu.aux_on >> 2u, 1u));
+}
+// (1 − α)^k without pow's precision cliff at large k: exp(k · ln(1 − α)).
+fn tail_decay(alpha: f32, k: f32) -> f32 {
+    return exp(k * log(1.0 - alpha));
+}
 fn aux_init(z0: vec2<f32>) -> Aux {
     var a: Aux;
     a.sac_sum = 0.0; a.sac_prev = 0.0;
@@ -524,7 +548,11 @@ fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
         // Stripe average: smooth orbit average of a sinusoid of the argument.
         let term = 0.5 + 0.5 * sin(iu.stripe_freq * atan2(zf.y, zf.x));
         (*a).sac_prev = (*a).sac_sum;
-        (*a).sac_sum = (*a).sac_sum + term;
+        if (stripe_tail_on()) {
+            (*a).sac_sum = (*a).sac_sum + (term - (*a).sac_sum) * stripe_tail_alpha();
+        } else {
+            (*a).sac_sum = (*a).sac_sum + term;
+        }
     } else if (method == 2u) {
         // Triangle-inequality average: where |z_{n+1}| sits between ||z_n|^p − |c|| and
         // |z_n|^p + |c|. Needs a valid previous |z|.
@@ -545,8 +573,17 @@ fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
 // Pack the accumulated statistics into the aux target. `frac` is the fractional part
 // of the smooth iteration count (blends the last two averages for a continuous result).
 fn aux_pack(a: Aux, frac: f32, zf: vec2<f32>) -> vec4<f32> {
-    let sac_avg = a.sac_sum / max(a.n, 1.0);
-    let sac_prev = a.sac_prev / max(a.n - 1.0, 1.0);
+    var sac_avg: f32;
+    var sac_prev: f32;
+    if (stripe_tail_on()) {
+        // Bias-corrected EMA: divide by the weight actually accumulated, 1 − (1−α)^n.
+        let alpha = stripe_tail_alpha();
+        sac_avg = a.sac_sum / max(1.0 - tail_decay(alpha, max(a.n, 1.0)), 1.0e-6);
+        sac_prev = a.sac_prev / max(1.0 - tail_decay(alpha, max(a.n - 1.0, 1.0)), 1.0e-6);
+    } else {
+        sac_avg = a.sac_sum / max(a.n, 1.0);
+        sac_prev = a.sac_prev / max(a.n - 1.0, 1.0);
+    }
     let stripe = mix(sac_prev, sac_avg, frac);
     let tn = max(a.n - 1.0, 1.0);
     let tia_avg = a.tia_sum / tn;
@@ -712,13 +749,13 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 z = zn;
                 iter = iter + 1u;
                 zf = vec2<f32>(z.re.x, z.im.x);
-                if (iu.aux_on == 1u) { aux_step(&aux, zf, cmag, power_f); }
+                if ((iu.aux_on & 1u) == 1u) { aux_step(&aux, zf, cmag, power_f); }
                 if (dot(zf, zf) > bail2) { escaped = true; break; }
             }
         }
         if (!escaped) {
             atomicAdd(&counters[CTR_MAXITER], 1u);
-            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), iu.aux_on == 1u);
+            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), (iu.aux_on & 1u) == 1u);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
         if (newton) {
@@ -735,7 +772,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             nrm = slope_normal(zf, vec2<f32>(dz.re.x, dz.im.x));
             de = de_log2(mag2, dz.re.x * dz.re.x + dz.im.x * dz.im.x, 0.0);
         }
-        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), iu.aux_on == 1u);
+        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     } else if (iu.mode == 2u) {
@@ -855,11 +892,20 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     // Fold this node's precomputed aux aggregate over the `span` skipped iterates, so
                     // stripe/TIA/trap coloring stays correct across the skip instead of dropping the
                     // skipped run. `zf` is the actual landing value → prev_abs restores exactly.
-                    if (iu.aux_on == 1u) {
+                    if ((iu.aux_on & 1u) == 1u) {
                         let agg = reference[node + 3u]; // [span, trap_min, ΣTIA, Σstripe]
                         aux.trap = min(aux.trap, agg.y);
                         aux.tia_sum = aux.tia_sum + agg.z;
-                        aux.sac_sum = aux.sac_sum + agg.w;
+                        if (stripe_tail_on()) {
+                            // Exponential tail window across the skipped span: the recurrence with
+                            // the span's mean term `m` in closed form (see `stripe_tail_on`).
+                            let m = agg.w / max(f32(span), 1.0);
+                            let d = tail_decay(stripe_tail_alpha(), f32(span));
+                            aux.sac_prev = aux.sac_sum;
+                            aux.sac_sum = m + (aux.sac_sum - m) * d;
+                        } else {
+                            aux.sac_sum = aux.sac_sum + agg.w;
+                        }
                         aux.n = aux.n + f32(span);
                         aux.prev_abs = length(zf);
                     }
@@ -1025,7 +1071,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             let Znfe = orbit_fe(rn);
             let zfull = fe_add(Znfe, dz);
             zf = fe_lo_f32(zfull);
-            if (iu.aux_on == 1u) { aux_step(&aux, zf, cmag, power_f); }
+            if ((iu.aux_on & 1u) == 1u) { aux_step(&aux, zf, cmag, power_f); }
             let z2 = dot(zf, zf);
             if (iu.glitch_on == 1u) {
                 // |z| < 1e-2·|Z_n| (≡ the old z2 < 1e-4·zr2), in extended range: the f32
@@ -1058,7 +1104,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         ctr_commit(n_rebase, n_ext, n_bla);
         if (!escaped) {
             atomicAdd(&counters[CTR_MAXITER], 1u);
-            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), iu.aux_on == 1u);
+            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), (iu.aux_on & 1u) == 1u);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
         let mag2 = dot(zf, zf);
@@ -1070,7 +1116,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
-        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), iu.aux_on == 1u);
+        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     } else {
@@ -1195,7 +1241,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             let zr_full = df_add(rn.re, dz.re);
             let zi_full = df_add(rn.im, dz.im);
             zf = vec2<f32>(zr_full.x, zi_full.x);
-            if (iu.aux_on == 1u) { aux_step(&aux, zf, cmag, power_f); }
+            if ((iu.aux_on & 1u) == 1u) { aux_step(&aux, zf, cmag, power_f); }
             let z2 = dot(zf, zf);
             if (iu.glitch_on == 1u) {
                 let zr2 = rn.re.x * rn.re.x + rn.im.x * rn.im.x;
@@ -1261,7 +1307,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         ctr_commit(n_rebase, n_ext, n_bla);
         if (!escaped) {
             atomicAdd(&counters[CTR_MAXITER], 1u);
-            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), iu.aux_on == 1u);
+            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), (iu.aux_on & 1u) == 1u);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
         let mag2 = dot(zf, zf);
@@ -1273,7 +1319,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
-        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), iu.aux_on == 1u);
+        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     }

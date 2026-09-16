@@ -150,6 +150,29 @@ impl FractadyneApp {
                                 .logarithmic(true),
                         )
                     });
+                    ui.checkbox(&mut self.coloring.stripe_tail, "Tail only (deep zoom)")
+                        .on_hover_text(
+                            "Average the stripe term over the last N iterations of each orbit \
+                             (an exponential window) instead of the whole orbit. At extreme depth \
+                             every orbit shadows the reference for all but its last few hundred \
+                             iterations, so the full-orbit average is one colour for the whole view; \
+                             the tail keeps the contrast. Orbits shorter than the window are \
+                             unaffected. Also --stripe-tail N for --render.",
+                        );
+                    if self.coloring.stripe_tail {
+                        labelled(ui, "Tail length", |ui| {
+                            ui.add(
+                                egui::Slider::new(&mut self.coloring.stripe_tail_len, 4..=1024)
+                                    .logarithmic(true)
+                                    .suffix(" it"),
+                            )
+                            .on_hover_text(
+                                "Window length in iterations. Short windows (8–32) give the classic \
+                                 bold banding at any depth; longer ones average toward a flat colour \
+                                 again, since the stripe term of a long chaotic orbit averages out.",
+                            )
+                        });
+                    }
                 }
                 if self.coloring.color_method == ColorMethod::OrbitTrap {
                     labelled(ui, "Trap shape", |ui| {

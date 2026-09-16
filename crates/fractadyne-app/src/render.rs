@@ -3126,6 +3126,8 @@ impl FractadyneApp {
             de_phase: self.effects.de_phase,
             color_method: self.coloring.color_method.to_u32(),
             stripe_freq: self.coloring.stripe_freq,
+            stripe_tail: self.coloring.stripe_tail,
+            stripe_tail_len: self.coloring.stripe_tail_len,
             trap_type: self.coloring.trap_type.to_u32(),
             aa_filter: 1,
             interior_col: self.interior_color(),
@@ -5293,6 +5295,8 @@ impl FractadyneApp {
             de_phase: self.effects.de_phase,
             color_method: self.coloring.color_method.to_u32(),
             stripe_freq: self.coloring.stripe_freq,
+            stripe_tail: self.coloring.stripe_tail,
+            stripe_tail_len: self.coloring.stripe_tail_len,
             trap_type: self.coloring.trap_type.to_u32(),
             aa_filter,
             interior_col: self.interior_color(),
@@ -5995,6 +5999,8 @@ impl FractadyneApp {
             julia.hash(&mut h);
             self.coloring.color_method.to_u32().hash(&mut h);
             self.coloring.stripe_freq.to_bits().hash(&mut h);
+            self.coloring.stripe_tail.hash(&mut h);
+            self.coloring.stripe_tail_len.hash(&mut h);
             self.coloring.trap_type.to_u32().hash(&mut h);
             self.render_cfg.series_approx.hash(&mut h);
             self.render_cfg.use_bla.hash(&mut h);

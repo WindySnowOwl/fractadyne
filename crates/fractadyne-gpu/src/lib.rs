@@ -42,7 +42,10 @@ pub(crate) struct IterUniforms {
     pub(crate) color_method: u32, // selected coloring method (drives aux accumulation)
     pub(crate) stripe_freq: f32,  // stripe-average angular frequency
     pub(crate) trap_type: u32,    // orbit-trap shape: 0 point, 1 cross, 2 circle
-    pub(crate) aux_on: u32,       // 1 = accumulate orbit statistics into the aux target
+    // Bitfield: bit 0 = accumulate orbit statistics into the aux target; bit 1 = stripe average
+    // over the TAIL only (an exponential window); bits 2.. = that window's length in iterations.
+    // See `aux_on_word`.
+    pub(crate) aux_on: u32,
     pub(crate) sa_skip: u32,      // series-approximation skip (0 = none): seed δz at this iteration
     pub(crate) glitch_on: u32,    // 1 = flag Pauldelbrot-glitched pixels (multi-reference correction pass)
     pub(crate) sa_a: [f32; 4],    // order-3 series coeffs (complex df32 mantissa): δz ≈ A·δc + B·δc² + C·δc³
@@ -1616,6 +1619,13 @@ pub struct MandelbrotParams {
     /// 4 distance, 5 decomposition. Methods 1/2/3/5 accumulate orbit statistics.
     pub color_method: u32,
     pub stripe_freq: f32,
+    /// Stripe average over the tail only: an exponentially-weighted mean over the last
+    /// `stripe_tail_len` iterations (bias-corrected, so a short orbit reads exactly like the plain
+    /// mean; decayed exactly across BLA-skipped spans) instead of the whole orbit. At extreme depth
+    /// every pixel's orbit shadows the reference for all but its last few hundred iterates, so the
+    /// full-orbit mean is one colour for the whole view; the window keeps the contrast.
+    pub stripe_tail: bool,
+    pub stripe_tail_len: u32,
     pub trap_type: u32,
     /// Color-pass box-filter taps per axis (≥1). >1 anti-aliases an upscaled iteration
     /// texture (set when the work-budget reduced its resolution below the display).
@@ -1649,6 +1659,14 @@ pub struct MandelbrotParams {
     pub accum_present: bool,
     pub accum_commit: bool,
     pub accum_reset: bool,
+}
+
+/// The iterate uniform's `aux_on` word: bit 0 = accumulate orbit statistics, bit 1 = stripe
+/// average over an exponential tail window, bits 2.. = that window's length in iterations
+/// (clamped to `1..=2^20`; the shader reads `aux_on >> 2`). One word, so the uniform layout —
+/// bound by every iterate pipeline — did not have to move.
+pub fn aux_on_word(aux: bool, stripe_tail: bool, stripe_tail_len: u32) -> u32 {
+    (aux as u32) | ((stripe_tail as u32) << 1) | (stripe_tail_len.clamp(1, 1 << 20) << 2)
 }
 
 /// Whether a coloring method needs the per-iteration orbit statistics (aux target).
@@ -1932,7 +1950,11 @@ impl CallbackTrait for MandelbrotParams {
                 color_method: self.color_method,
                 stripe_freq: self.stripe_freq,
                 trap_type: self.trap_type,
-                aux_on: method_needs_aux(self.color_method) as u32,
+                aux_on: aux_on_word(
+                    method_needs_aux(self.color_method),
+                    self.stripe_tail,
+                    self.stripe_tail_len,
+                ),
                 sa_skip: self.sa_skip,
                 glitch_on: 0, // live view never runs glitch detection (single-ref + rebasing)
                 sa_a: self.sa_a,

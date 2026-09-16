@@ -221,6 +221,15 @@ pub struct SessionState {
     /// Stripe-average angular frequency (method = "stripe").
     #[serde(default = "default_stripe_freq")]
     pub stripe_freq: f32,
+    /// Stripe average over the TAIL only (method = "stripe"): an exponentially-weighted window
+    /// over the last `stripe_tail_len` iterations instead of the whole orbit, so a deep view —
+    /// where every orbit shadows the reference for all but its last few hundred iterates — keeps
+    /// its contrast. Off = the classic full-orbit average.
+    #[serde(default)]
+    pub stripe_tail: bool,
+    /// Window length in iterations for `stripe_tail`.
+    #[serde(default = "default_stripe_tail_len")]
+    pub stripe_tail_len: u32,
     /// Orbit-trap shape: "point" | "cross" | "circle" (method = "trap").
     #[serde(default = "default_trap_type")]
     pub trap_type: String,
@@ -477,6 +486,13 @@ fn default_stripe_freq() -> f32 {
     6.0
 }
 
+fn default_stripe_tail_len() -> u32 {
+    // Measured at 4.45e246× (2026-09-16): 16 gives the classic bold banding, 64 a subtler
+    // version, 256+ is visually the full-orbit mean again — the stripe term of a chaotic orbit
+    // averages to 0.5 ± 0.35/√N, so only a SHORT window keeps the last iterates' structure.
+    16
+}
+
 fn default_trap_type() -> String {
     "point".to_string()
 }
@@ -536,6 +552,8 @@ impl Default for SessionState {
             de_anim: false,
             color_method: default_color_method(),
             stripe_freq: default_stripe_freq(),
+            stripe_tail: false,
+            stripe_tail_len: default_stripe_tail_len(),
             trap_type: default_trap_type(),
             minimap: false,
             custom_palette: Vec::new(),

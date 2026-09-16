@@ -937,6 +937,8 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         de_phase: p.de_phase,
         color_method: p.color_method,
         stripe_freq: p.stripe_freq,
+        stripe_tail: p.stripe_tail,
+        stripe_tail_len: p.stripe_tail_len,
         trap_type: p.trap_type,
         aa_filter: p.aa_filter,
         interior_col: p.interior_col,

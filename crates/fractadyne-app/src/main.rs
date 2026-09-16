@@ -4566,6 +4566,10 @@ struct ColoringConfig {
     /// Coloring method (smooth / stripe / triangle-ineq / orbit-trap / distance / decomposition).
     color_method: ColorMethod,
     stripe_freq: f32,
+    /// Stripe average over the tail only — an exponential window over the last `stripe_tail_len`
+    /// iterations instead of the whole orbit; restores stripe contrast at extreme depth. Persisted.
+    stripe_tail: bool,
+    stripe_tail_len: u32,
     trap_type: TrapType,
     /// Auto-normalize the palette cycle to the frame's escape-value range on export (`--normalize`).
     /// At extreme depth the smooth-iter counts are ~1e5–1e6 and a fixed `cycle` aliases a correct
@@ -5833,6 +5837,8 @@ impl FractadyneApp {
                 duotone_hi: s.duotone_hi,
                 color_method: ColorMethod::from_key(&s.color_method),
                 stripe_freq: s.stripe_freq,
+                stripe_tail: s.stripe_tail,
+                stripe_tail_len: s.stripe_tail_len.clamp(4, 1 << 20),
                 trap_type: TrapType::from_key(&s.trap_type),
                 normalize: args.iter().any(|a| a == "--normalize"),
                 normalize_live: s.normalize_live,
@@ -6264,6 +6270,12 @@ impl FractadyneApp {
         {
             self.coloring.stripe_freq = f.clamp(1.0, 24.0);
         }
+        if let Some(n) =
+            val("--stripe-tail").map(|s| arg_parse::<u32>("--stripe-tail", s, "a number of iterations"))
+        {
+            self.coloring.stripe_tail = true;
+            self.coloring.stripe_tail_len = n.clamp(4, 1 << 20);
+        }
         if let Some(t) = val("--trap") {
             let picked = TrapType::from_key(t);
             if picked.key() != t.as_str() {
@@ -6386,6 +6398,8 @@ impl FractadyneApp {
             de_anim: self.effects.de_anim,
             color_method: self.coloring.color_method.key().to_string(),
             stripe_freq: self.coloring.stripe_freq,
+            stripe_tail: self.coloring.stripe_tail,
+            stripe_tail_len: self.coloring.stripe_tail_len,
             trap_type: self.coloring.trap_type.key().to_string(),
             minimap: self.dialogs.minimap,
             custom_palette: self.coloring.custom_palette.clone(),
@@ -9138,6 +9152,25 @@ impl FractadyneApp {
                 use_custom: self.coloring.use_custom_palette,
                 name: self.coloring.gradient_name.clone(),
             });
+            // ⭐**Opening the editor on a preset starts from THAT preset's stops.** With no custom
+            // gradient the editor had nothing to select: the bar showed a preview and no markers,
+            // the ring view showed nothing at all, and every colour control waited for an "Add
+            // stop" that seeded one cyan stop (field report 2026-09-16). Someone who clicked
+            // "Edit gradient…" on Ember wants Ember's stops in front of them. AFTER the baseline,
+            // so Cancel still restores exactly the pre-open state (preset, no custom gradient).
+            if self.editable_gradient().is_none() && self.coloring.custom_palette.is_empty() {
+                self.coloring.custom_palette = self.preset_as_stops(self.coloring.palette_idx);
+                self.coloring.custom_palette_flat = false;
+                self.coloring.custom_segments.clear(); // a stop-setting path, per the rule above
+                self.rebuild_segments_from_palette();
+                if let Some(mut g) = self.editable_gradient() {
+                    g.promote_linear_to_bezier();
+                    self.store_segments(&g);
+                }
+                self.coloring.sel_stop = 0;
+                self.coloring.sel_segment = 0;
+                self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
+            }
         }
         let mut open = self.coloring.palette_editor_open;
         let mut changed = false;
@@ -12299,6 +12332,8 @@ impl FractadyneApp {
         c.offset.to_bits().hash(&mut h);
         c.color_method.to_u32().hash(&mut h);
         c.stripe_freq.to_bits().hash(&mut h);
+        c.stripe_tail.hash(&mut h);
+        c.stripe_tail_len.hash(&mut h);
         c.trap_type.to_u32().hash(&mut h);
         c.normalize_live.hash(&mut h);
         c.log_palette.hash(&mut h);

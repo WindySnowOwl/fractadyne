@@ -258,6 +258,9 @@ pub struct ExportRequest {
     pub de_phase: f32,
     pub color_method: u32,
     pub stripe_freq: f32,
+    /// Stripe average over the tail only — see `MandelbrotParams::stripe_tail`.
+    pub stripe_tail: bool,
+    pub stripe_tail_len: u32,
     pub trap_type: u32,
     pub aa_filter: u32,
     pub interior_col: [f32; 4],
@@ -852,7 +855,11 @@ fn render_export_impl(
                 color_method: req.color_method,
                 stripe_freq: req.stripe_freq,
                 trap_type: req.trap_type,
-                aux_on: method_needs_aux(req.color_method) as u32,
+                aux_on: crate::aux_on_word(
+                    method_needs_aux(req.color_method),
+                    req.stripe_tail,
+                    req.stripe_tail_len,
+                ),
                 sa_skip: req.sa_skip,
                 glitch_on: req.glitch_on,
                 sa_a: req.sa_a,

@@ -12,6 +12,34 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Smoother live zooms at depth: the reference lookahead now runs for interactive zooms too**
+  (beta.107). A hold-Space glide or an autopilot dive is as predictable as a scripted tour — the
+  zoom-speed slider says exactly where the view will be in a second — so the references it is
+  about to need are now built ahead on idle cores and swapped in seamlessly as the dive arrives,
+  the way tours have worked since beta.130. The queue scales with the zoom-speed slider. Measured
+  with the new `--divetest` glide mode at 1e100–1e150×: held (reprojected) frames 7–22% → 0,
+  the longest visible stall 140–240 ms → one frame, and the zoom runs at the full selected speed
+  instead of being throttled by the reference pipeline.
+
+- **Deep-zoom despeckle fixes** (beta.107). The progressive on-settle supersampling shipped
+  earlier on this branch could fold a held, reprojected frame of the *previous* view into its
+  running average after a pan (a faint shifted ghost behind the picture), kept presenting a stale
+  average after a palette or effects change (so glow and lighting seemed to affect only the Julia
+  pane in dual view), and never ran in the ordinary single view at all. It now folds only real,
+  complete frames of the current view, restarts on any colouring change, and runs in both views.
+
+- **Stripe average: "Tail only (deep zoom)"** (beta.107). At extreme depth nearly every iteration
+  of every pixel's orbit is shared with the reference, so the classic full-orbit stripe average is
+  one flat colour across the view. The new option (Coloring ▸ Stripe density ▸ Tail only, with a
+  Tail length slider, or `--stripe-tail N` for `--render`) averages the last N iterations of each
+  orbit instead — an exponential window, 16 by default — restoring the banding. Off by default;
+  orbits shorter than the window read exactly as before.
+
+- **The gradient editor opens with the current preset's stops** (beta.107). Opening it on a
+  preset used to show a preview with nothing to select — no markers, an empty ring view, and
+  colour controls that waited for "Add stop" (which seeded a single cyan stop). It now starts from
+  the preset you were using; Cancel still restores exactly what you had.
+
 - **Security hardening: malformed image files, oversized response files, and untrusted tool/URL
   resolution are now bounded** (beta.106). Opening a crafted or corrupt PNG/EXR — including during
   a gallery scan or an image comparison — can no longer drive a runaway allocation: the decoders
