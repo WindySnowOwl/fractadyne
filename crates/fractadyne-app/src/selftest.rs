@@ -4211,6 +4211,25 @@ impl FractadyneApp {
                 pass: hold_ok,
             });
 
+            // The INTERACTIVE lookahead's queue length follows the zoom-rate slider: enough
+            // `PREFETCH_OCT` slots to cover `PREFETCH_RUNWAY_S` of zoom, floored at the tour's
+            // `PREFETCH_SLOTS`, capped at `PREFETCH_SLOTS_MAX` — a 4× dive must not run its queue
+            // dry in a second, and a 0.25× one must not hold a dozen orbits resident for nothing.
+            let oct = |zr: f64| crate::ZOOM_RATE * zr / std::f64::consts::LN_2;
+            let (s1, s2, s4) = (
+                crate::render::prefetch_slots_for(oct(1.0)),
+                crate::render::prefetch_slots_for(oct(2.0)),
+                crate::render::prefetch_slots_for(oct(4.0)),
+            );
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Script",
+                name: "interactive lookahead queue scales with zoom rate".into(),
+                params: format!("zoom rate 1×/2×/4× · runway {}s", crate::PREFETCH_RUNWAY_S),
+                result: format!("{s1}/{s2}/{s4} slots"),
+                threshold: "6 / 8 / 12",
+                pass: s1 == 6 && s2 == 8 && s4 == 12,
+            });
+
             // Zoom strings past f64's ~1e308 ceiling — the reason `zoom` is a string at all.
             const DEEP: &str = "format_version = 2\n\
                  [[keyframe]]\nt = 0\nre = \"-0.5\"\nim = \"0.0\"\nzoom = \"3.0938e1216\"\n";

@@ -574,6 +574,17 @@ pub(crate) const PREFETCH_OCT: f64 = 0.5;
 /// oversubscribe threads — harmless for compute-bound bursts.
 pub(crate) const PREFETCH_SLOTS: usize = 6;
 
+/// Time runway (seconds) the INTERACTIVE lookahead keeps queued ahead of a glide, so the queue
+/// scales with the user's zoom-rate slider instead of covering a fixed 3 octaves: at 1.0×
+/// (0.67 oct/s) `PREFETCH_SLOTS` already spans ~4.5 s; at 4.0× (2.67 oct/s) the same six slots
+/// last 1.1 s — shorter than a deep build — so the slot count grows toward `PREFETCH_SLOTS_MAX`.
+/// Spacing stays `PREFETCH_OCT` (the lag-safe value above); only the queue LENGTH moves.
+pub(crate) const PREFETCH_RUNWAY_S: f64 = 3.0;
+
+/// Ceiling on the rate-scaled interactive queue. Each held slot keeps a finished reference orbit
+/// resident (megabytes at depth), and `PREFETCH_MAX_INFLIGHT` still bounds the CPU side.
+pub(crate) const PREFETCH_SLOTS_MAX: usize = 12;
+
 /// ⭐How many lookahead builds may be IN FLIGHT at once, as opposed to how many slots the
 /// queue holds. Previously unbounded: the refill loop below spawns until the queue is
 /// full, so whenever the queue drained it started six builds in the same millisecond —

@@ -653,6 +653,17 @@ pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
     args.iter().any(|a| TASK_FLAGS.contains(&a.as_ref()))
 }
 
+/// Whether THIS process was launched for a task (`is_task_invocation` over its own arguments),
+/// read once. The runtime gate behind "off under harnesses" for features that must not perturb a
+/// recorded baseline — the interactive reference lookahead, progressive supersampling.
+pub(crate) fn launched_as_task() -> bool {
+    static TASK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TASK.get_or_init(|| {
+        let argv: Vec<String> = std::env::args().skip(1).collect();
+        is_task_invocation(&argv)
+    })
+}
+
 /// Whether analytic palette anti-aliasing is on (box-filter the palette over each pixel's
 /// footprint). It band-limits palette-phase aliasing, but the footprint is high at the fractal
 /// BOUNDARY at every depth (the dwell packs densely there), so it also softens the crisp boundary
@@ -986,6 +997,9 @@ struct Perf {
     /// Of those, the ones the script-playback LOOKAHEAD spawned — the counter its rate backstop
     /// reads, so a runaway queue stops itself instead of merely being reported.
     prefetch_count: u32,
+    /// Lookahead builds INSTALLED (tour or interactive), cumulative — the number that says the
+    /// lookahead actually served the dive, as opposed to merely spawning (`--divetest` `look`).
+    lookahead_installs: u64,
     /// Latched once per session: a build rate this high is a bug, not a workload (the reactive
     /// path plus a full lookahead queue is single digits per second).
     build_storm_warned: bool,
@@ -1265,6 +1279,13 @@ struct Perf {
     accum_committed: [bool; 2],
     accum_jitter: [[f32; 2]; 2],
     accum_cmd: [AccumCmd; 2],
+    /// The colour-state signature (`accum_color_sig`) the running average was started under, and
+    /// the supersampling factor its samples are rendered at. The average is a COLOUR texture, so
+    /// any change to how a frame is coloured — palette, cycle/offset, method, effects, live
+    /// normalization, AA — makes every folded sample stale: the run restarts. Likewise a sample at
+    /// a different `ss` than sample 0 would fold a differently-filtered image into the mean.
+    accum_sig: [u64; 2],
+    accum_ss: [u32; 2],
     /// `frame_idx` of the last frame that spent its tile: one budget-sized tile per submission, so
     /// two deep views can't pair their dispatches past the watchdog.
     tile_turn: u64,
@@ -1477,6 +1498,7 @@ impl Default for Perf {
             build_count: 0,
             builds_per_s: 0.0,
             prefetch_count: 0,
+            lookahead_installs: 0,
             build_storm_warned: false,
             rate_t0: None,
             recompute_per_s: 0.0,
@@ -1528,6 +1550,8 @@ impl Default for Perf {
             accum_committed: [false, false],
             accum_jitter: [[0.0, 0.0], [0.0, 0.0]],
             accum_cmd: [AccumCmd::default(), AccumCmd::default()],
+            accum_sig: [0, 0],
+            accum_ss: [1, 1],
             chunk_ok: false,
             chunk_fe_ok: false,
             chunk_cursor: [0, 0],
@@ -1697,6 +1721,34 @@ fn radical_inverse(mut i: u32, base: u32) -> f32 {
     }
     r
 }
+
+/// Whether the frame `build_params` just built may be folded into the running average — the rule
+/// `accum_confirm` applies, pure so the test pins it: only a REAL frame (no reprojection, no held or
+/// pinned display), with no settle grid, chunk progression or reference build in flight, at the
+/// supersampling factor sample 0 was taken at. `reproject != 0` on sample 0 is the 2026-09-15
+/// ghost: the held reprojection of the previous view, folded as if it were this one.
+pub(crate) fn accum_fold_clean(
+    reproject: u32,
+    display_hold: bool,
+    hold_copy: bool,
+    tile_pending: bool,
+    chunk_pending: bool,
+    building: bool,
+    count: u32,
+    ss: u32,
+    ss0: u32,
+) -> bool {
+    reproject == 0
+        && !display_hold
+        && !hold_copy
+        && !tile_pending
+        && !chunk_pending
+        && !building
+        && (count == 0 || ss == ss0)
+}
+
+#[cfg(test)]
+mod accum_fold_tests;
 
 /// Sub-pixel jitter for accumulation sample `i` — a 2D Halton (base 2, 3) sequence mapped to
 /// `[-0.5, 0.5]`. Sample 0 is the pixel centre `(0, 0)`, so the first accumulated frame equals
@@ -4917,6 +4969,9 @@ struct FractadyneApp {
     /// `playback_ref_prefetch`). Purely additive — a missed window is dropped and the reactive
     /// rebuild path covers it. Cleared on tour start/end and `invalidate_refs`.
     ref_prefetch: Vec<crate::render::RefPrefetchSlot>,
+    /// True while the INTERACTIVE pump (`interactive_ref_prefetch_with`) owns `ref_prefetch` — a
+    /// glide/autopilot dive is being predicted; the first frame it is not, the queue is dropped.
+    ref_prefetch_interactive: bool,
     /// Dedicated builds (≤2: one ready + one building) for upcoming HOLD keyframes' references
     /// at each hold's own explicit ask and destination precision, started DURING the glide. The
     /// ordinary lookahead deliberately builds with the short motion cap (`LIVE_REF_CAP`), so a
@@ -5862,6 +5917,7 @@ impl FractadyneApp {
             orbit_cache_mb: s.orbit_cache_mb.max(64),
             recompute_rx: [None, None],
             ref_prefetch: Vec::new(),
+            ref_prefetch_interactive: false,
             hold_prefetch: Vec::new(),
             last_state: s,
             dirty_since: None,
@@ -7549,7 +7605,7 @@ impl FractadyneApp {
         // Only the live view may start a tiled settle (the profiling/benchmark callers of
         // `build_params` time single dispatches).
         self.allow_tiled_settle = true;
-        let params = self.build_params(
+        let mut params = self.build_params(
             center_bf,
             center,
             span,
@@ -7565,6 +7621,8 @@ impl FractadyneApp {
             reproject,
         );
         self.allow_tiled_settle = false;
+        // Progressive supersampling: rule on the proposed fold against the frame just built.
+        self.accum_confirm(ctx, view, &mut params);
         // A settle grid (or a chunked iteration progression) in progress needs the next frame
         // promptly — each frame renders one tile / one iteration range.
         if self.perf.tile_pending[view_id as usize] || self.perf.chunk_pending[view_id as usize] {
@@ -12046,6 +12104,12 @@ impl FractadyneApp {
     /// off when `FRACTADYNE_NO_ACCUM` is set.
     pub(crate) fn accumulation_allowed(&self) -> bool {
         std::env::var_os("FRACTADYNE_NO_ACCUM").is_none()
+            // Off under EVERY task invocation, by the process's own flags rather than by listing
+            // harnesses: `--motiontest` / `--autodive` are single-view GUI dives, and once the
+            // single view drove accumulation (2026-09-15) their settled depths would have
+            // accumulated and moved their baselines. `--shot` is the one exception — it exists to
+            // capture the converged, de-speckled result and its gate waits for convergence.
+            && (!launched_as_task() || self.harness.shot.is_some())
             && self.playback.is_none()
             && !self.autopilot.active
             && !self.uitest_active()
@@ -12069,14 +12133,27 @@ impl FractadyneApp {
         busy: bool,
         log2mag: f64,
     ) {
+        // The average is a COLOUR image: a run started under one colouring must not present or
+        // extend under another (field report 2026-09-15: toggling Distance glow in dual view
+        // changed the shallow Julia pane only — the deep Mandelbrot pane sat in the converged
+        // state presenting its stale average, never repainting). Any change restarts the run;
+        // an ANIMATED colouring (glow phase, palette cycling) changes every frame and so simply
+        // keeps accumulation off, which is right — a moving image has no fixed mean.
+        let sig = self.accum_color_sig(view);
+        let stale = self.perf.accum_active[view] && sig != self.perf.accum_sig[view];
         let allowed = self.accumulation_allowed()
             && !interacting
             && !self.tour_playing()
-            && log2mag >= ACCUM_MIN_LOG2;
+            && log2mag >= ACCUM_MIN_LOG2
+            && !stale;
         if !allowed {
             self.perf.accum_active[view] = false;
             self.perf.accum_committed[view] = false;
             self.perf.accum_cmd[view] = AccumCmd::default();
+            self.perf.accum_sig[view] = sig;
+            if stale {
+                self.schedule_repaint(ctx); // show the freshly coloured classic frame, then restart
+            }
             return;
         }
         // `accum_count` = samples FOLDED so far; `accum_committed` = the current sample has been
@@ -12085,9 +12162,14 @@ impl FractadyneApp {
         // re-arm re-iterates over it.
         let mut cmd = AccumCmd { present: true, ..Default::default() };
         if !self.perf.accum_active[view] {
-            // Not yet accumulating. Wait for the ordinary settle to finish; its (complete,
-            // unjittered) frame is sample 0. Present the classic frame until then.
-            if busy {
+            // Not yet accumulating. Wait for the ordinary settle to finish — its grids drained AND
+            // the AA ramp at its target (between ramp stages both pending flags read false for a
+            // frame while the next, sharper stage has not yet dispatched; see the same trap in
+            // `--uitest`'s capture gate) — so sample 0 is the complete, unjittered, full-AA frame.
+            // Present the classic frame until then.
+            let ramp_done =
+                aa_ramp(self.pointer.settle_frame[view], self.render_cfg.aa) >= self.render_cfg.aa.max(1);
+            if busy || !ramp_done {
                 self.perf.accum_cmd[view] = AccumCmd::default();
                 self.schedule_repaint(ctx);
                 return;
@@ -12096,6 +12178,7 @@ impl FractadyneApp {
             self.perf.accum_count[view] = 0;
             self.perf.accum_committed[view] = false;
             self.perf.accum_jitter[view] = [0.0, 0.0];
+            self.perf.accum_sig[view] = sig;
             crate::diag::log_line(
                 "accum",
                 &format!("view {view}: begin (2^{log2mag:.1}, target {})", accum_target()),
@@ -12108,17 +12191,17 @@ impl FractadyneApp {
         } else if busy {
             self.schedule_repaint(ctx); // this sample is still rendering
         } else if !self.perf.accum_committed[view] {
-            // The current sample's (jittered) frame is complete → fold it, WITHOUT re-arming this
-            // frame (so `tex_view` is not overwritten before the fold reads it).
+            // The current sample's (jittered) frame looks complete → PROPOSE folding it, WITHOUT
+            // re-arming this frame (so `tex_view` is not overwritten before the fold reads it).
+            // ⚠Provisional: `busy` is read from the PREVIOUS frame's flags, and `build_params`
+            // may yet start a tile grid / chunk progression, decide to reproject a held frame, or
+            // gate the display behind a pin — none of which is a foldable sample. `accum_confirm`
+            // rules on the frame actually built, and only IT advances the count. Folding on the
+            // pre-build flags alone is what put a faint SHIFTED copy of the previous view into
+            // every later average (field report 2026-09-15, dual view at 3.7e144×): sample 0 was
+            // the held reprojection of the pre-pan frame with the new view's first tiles over it.
             cmd.commit = true;
             cmd.reset = count == 0;
-            let folded = count + 1;
-            self.perf.accum_count[view] = folded;
-            self.perf.accum_committed[view] = true;
-            if folded >= accum_target() {
-                crate::diag::log_line("accum", &format!("view {view}: converged at {folded} samples"));
-            }
-            self.schedule_repaint(ctx); // advance (or reach the terminal state) next frame
         } else {
             // Folded — advance to the next sample: re-arm the settle grid at the next jitter.
             self.perf.accum_committed[view] = false;
@@ -12128,6 +12211,113 @@ impl FractadyneApp {
             self.schedule_repaint(ctx);
         }
         self.perf.accum_cmd[view] = cmd;
+    }
+
+    /// Rule on the fold `drive_accumulation` proposed, now that `build_params` has built THIS
+    /// frame: fold only a real (non-reprojected, non-held, un-pinned) frame with no grid, chunk
+    /// progression or reference build in flight, at the same `ss` as sample 0. Anything else
+    /// withdraws the fold from `params` (the presented average is untouched) and retries next
+    /// frame. Advances the sample count on a confirmed fold.
+    fn accum_confirm(
+        &mut self,
+        ctx: &egui::Context,
+        view: usize,
+        params: &mut fractadyne_gpu::MandelbrotParams,
+    ) {
+        if !params.accum_commit {
+            return;
+        }
+        let count = self.perf.accum_count[view];
+        let clean = accum_fold_clean(
+            params.reproject,
+            params.display_hold,
+            params.hold_copy,
+            self.perf.tile_pending[view],
+            self.perf.chunk_pending[view],
+            self.recompute_rx[view].is_some(),
+            count,
+            params.ss,
+            self.perf.accum_ss[view],
+        );
+        if !clean {
+            params.accum_commit = false;
+            params.accum_reset = false;
+            self.perf.accum_cmd[view].commit = false;
+            self.perf.accum_cmd[view].reset = false;
+            if crate::diag::trace_on("tile") {
+                crate::diag::trace(
+                    "tile",
+                    format!(
+                        "accum v={view}: fold withheld (reproject={} hold={}/{} tile={} chunk={} \
+                         build={} ss={} vs {})",
+                        params.reproject,
+                        params.display_hold,
+                        params.hold_copy,
+                        self.perf.tile_pending[view],
+                        self.perf.chunk_pending[view],
+                        self.recompute_rx[view].is_some(),
+                        params.ss,
+                        self.perf.accum_ss[view]
+                    ),
+                );
+            }
+            self.schedule_repaint(ctx); // the sample is not complete yet — look again next frame
+            return;
+        }
+        if count == 0 {
+            self.perf.accum_ss[view] = params.ss;
+        }
+        let folded = count + 1;
+        self.perf.accum_count[view] = folded;
+        self.perf.accum_committed[view] = true;
+        if folded >= accum_target() {
+            crate::diag::log_line("accum", &format!("view {view}: converged at {folded} samples"));
+        }
+        self.schedule_repaint(ctx); // advance (or reach the terminal state) next frame
+    }
+
+    /// Everything that decides how a frame is COLOURED, hashed: the palette (index, revision,
+    /// custom/duotone/binary state), cycle/offset, method + its parameters, live normalization
+    /// (the setting AND the decided map, which `norm_feed_decision` may change on its own),
+    /// the effects, and the AA level. See `Perf::accum_sig`.
+    fn accum_color_sig(&self, view: usize) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let c = &self.coloring;
+        c.palette_idx.hash(&mut h);
+        c.palette_rev.hash(&mut h);
+        c.use_custom_palette.hash(&mut h);
+        c.custom_palette_flat.hash(&mut h);
+        c.custom_palette.len().hash(&mut h);
+        c.custom_segments.len().hash(&mut h);
+        c.use_duotone.hash(&mut h);
+        c.use_binary.hash(&mut h);
+        for v in c.duotone_lo.iter().chain(c.duotone_hi.iter()) {
+            v.to_bits().hash(&mut h);
+        }
+        c.cycle.to_bits().hash(&mut h);
+        c.offset.to_bits().hash(&mut h);
+        c.color_method.to_u32().hash(&mut h);
+        c.stripe_freq.to_bits().hash(&mut h);
+        c.trap_type.to_u32().hash(&mut h);
+        c.normalize_live.hash(&mut h);
+        c.log_palette.hash(&mut h);
+        let e = &self.effects;
+        e.light.hash(&mut h);
+        e.light_angle.to_bits().hash(&mut h);
+        e.light_height.to_bits().hash(&mut h);
+        e.de.hash(&mut h);
+        e.de_strength.to_bits().hash(&mut h);
+        e.de_width.to_bits().hash(&mut h);
+        e.de_phase.to_bits().hash(&mut h);
+        self.render_cfg.aa.hash(&mut h);
+        if let Some((lo, hi)) = self.perf.norm_range[view] {
+            lo.to_bits().hash(&mut h);
+            hi.to_bits().hash(&mut h);
+        }
+        self.perf.norm_sig[view].hash(&mut h);
+        self.perf.norm_locked[view].hash(&mut h);
+        h.finish()
     }
 
     /// The live-render work budget (`WORK_BUDGET`) scaled by the user's `work_budget_scale`. Higher
@@ -12802,6 +12992,24 @@ impl eframe::App for FractadyneApp {
         // Auto-zoom autopilot — dive toward detail (advance before drawing so this frame
         // reflects the new view).
         self.autopilot_step(ctx, &gpu);
+
+        // Interactive reference LOOKAHEAD: a hold-Space glide or autopilot dive is predictable
+        // from the zoom-rate slider, so build the references it is about to need on idle cores
+        // and install each as the dive arrives — the tour lookahead's queue, fed a closed-form
+        // trajectory instead of a script (render.rs). Before the draw so an arrived slot serves
+        // this frame. Off under task invocations, whose baselines predate it.
+        if render::interactive_prefetch_allowed() {
+            let (space, shift) = ctx.input(|i| (i.key_down(egui::Key::Space), i.modifiers.shift));
+            let space = space && !ctx.wants_keyboard_input();
+            let rate = ZOOM_RATE * self.render_cfg.zoom_rate as f64;
+            let target_v = if space {
+                if shift { -rate } else { rate }
+            } else {
+                0.0
+            };
+            let oracle = self.interactive_glide_oracle(target_v, ctx.pixels_per_point() as f64);
+            self.interactive_ref_prefetch_with(oracle);
+        }
 
         // Palette cycling animation (shifts the color offset over time).
         self.advance_palette_anim(ctx);

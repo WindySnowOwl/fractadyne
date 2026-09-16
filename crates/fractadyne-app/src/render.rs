@@ -222,6 +222,133 @@ pub(crate) fn prefetch_reached(cur_l2: f64, slots: &[(f64, bool)]) -> Option<usi
         .map(|(i, _)| i)
 }
 
+/// Lookahead queue length for an interactive glide at `oct_per_s`: enough slots (at
+/// `PREFETCH_OCT` spacing) to cover `PREFETCH_RUNWAY_S` of zoom, never fewer than the tour's
+/// `PREFETCH_SLOTS`, never more than `PREFETCH_SLOTS_MAX`. Pure, pinned by `--selftest`.
+pub(crate) fn prefetch_slots_for(oct_per_s: f64) -> usize {
+    let wanted = (oct_per_s.max(0.0) * PREFETCH_RUNWAY_S / PREFETCH_OCT).ceil();
+    (wanted as usize).clamp(PREFETCH_SLOTS, PREFETCH_SLOTS_MAX)
+}
+
+/// One point on a predicted camera path, in the shape the lookahead prices a build from — the
+/// subset of a tour `Sampled` the queue actually reads.
+pub(crate) struct TrajSample {
+    pub(crate) l2: f64,
+    pub(crate) cx: fractadyne_core::BigFloat,
+    pub(crate) cy: fractadyne_core::BigFloat,
+    pub(crate) fractal: FractalKind,
+    pub(crate) julia: bool,
+    pub(crate) dual: bool,
+}
+
+/// An interactive continuous zoom, predicted forward in CLOSED FORM. The app's glide integrates
+/// `zoom_vel += (target − zoom_vel)·(1 − e^(−dt/EASE_TAU))` then `zoom_at(anchor, e^(−vel·dt))`
+/// every frame (`ui/central.rs`); that is the exact discretisation of `dv/dt = (T − v)/τ`, whose
+/// integral is `nepers(τ) = T·τ + (v₀ − T)·τₑ·(1 − e^(−τ/τₑ))`. Because the anchor pixel maps to
+/// the SAME complex point every frame, the whole τ-second glide collapses to one
+/// `zoom_at(anchor, e^(−nepers))`: centre(τ) = a + e^(−nepers)·(c − a). The autopilot is the
+/// same shape with no easing (`v₀ = T = rate`) about its eased pivot. Two effects are knowingly
+/// left out, both on the safe side: the pipeline pacer only SLOWS the real dive (targets arrive
+/// later than predicted — a prefetch is early, never late), and a moving cursor moves `a` — the
+/// queue is re-derived from the live anchor every frame and a build whose centre drifted still
+/// installs while within `reuse_drift`, else it is superseded exactly like a tour back-out.
+pub(crate) struct Glide {
+    /// Current log2 magnification and centre.
+    pub(crate) l2: f64,
+    pub(crate) center: (fractadyne_core::BigFloat, fractadyne_core::BigFloat),
+    /// Complex point the zoom keeps fixed (under the cursor / the autopilot pivot).
+    pub(crate) anchor: (fractadyne_core::BigFloat, fractadyne_core::BigFloat),
+    /// Zoom velocity now and the value the easing is heading to, nepers/s (+ = in).
+    pub(crate) v0: f64,
+    pub(crate) target_v: f64,
+    /// Depth past which nothing is predicted (autopilot dive limit; a harness's tour end).
+    pub(crate) horizon_l2: f64,
+    pub(crate) precision: usize,
+    pub(crate) fractal: FractalKind,
+}
+
+impl Glide {
+    /// Nepers of zoom-in accumulated `tau` seconds from now (see the type doc).
+    pub(crate) fn nepers(&self, tau: f64) -> f64 {
+        let t = self.target_v;
+        t * tau + (self.v0 - t) * crate::EASE_TAU * (1.0 - (-tau / crate::EASE_TAU).exp())
+    }
+
+    /// Steady-state zoom speed the slider selects, octaves/s — what sizes the queue.
+    pub(crate) fn oct_per_s(&self) -> f64 {
+        self.target_v.max(self.v0).max(0.0) / std::f64::consts::LN_2
+    }
+}
+
+/// Where the camera will be `tau` seconds from now — the ONE thing the reference lookahead needs,
+/// abstracted over who knows it: a tour script (today's behaviour, byte for byte) or an
+/// interactive glide predicted from the zoom-rate slider (see [`Glide`]).
+pub(crate) enum Trajectory<'a> {
+    Playback { pb: &'a crate::scripting::Playback, e: f64 },
+    Glide(Glide),
+}
+
+impl Trajectory<'_> {
+    /// log2 magnification `tau` seconds ahead. Cheap — the bracket/bisection calls this.
+    pub(crate) fn l2_at(&self, tau: f64) -> f64 {
+        const LN_2: f64 = std::f64::consts::LN_2;
+        match self {
+            // `tau == 0` reads the tour exactly where `playback_ref_prefetch` always did (no clamp).
+            Trajectory::Playback { pb, e } if tau == 0.0 => pb.sample(*e).logmag / LN_2,
+            Trajectory::Playback { pb, e } => pb.sample((e + tau).min(pb.total)).logmag / LN_2,
+            Trajectory::Glide(g) => g.l2 + g.nepers(tau) / LN_2,
+        }
+    }
+
+    /// The full view `tau` seconds ahead (centre at the depth's precision).
+    pub(crate) fn at(&self, tau: f64) -> TrajSample {
+        const LN_2: f64 = std::f64::consts::LN_2;
+        match self {
+            Trajectory::Playback { pb, e } => {
+                let s = pb.sample((e + tau).min(pb.total));
+                TrajSample {
+                    l2: s.logmag / LN_2,
+                    cx: s.cx,
+                    cy: s.cy,
+                    fractal: s.fractal,
+                    julia: s.julia,
+                    dual: s.dual,
+                }
+            }
+            Trajectory::Glide(g) => {
+                let nep = g.nepers(tau);
+                let l2 = g.l2 + nep / LN_2;
+                let p = fractadyne_core::precision_for_octaves(l2.max(0.0).ceil() as u64)
+                    .max(g.precision);
+                let f = (-nep).exp();
+                TrajSample {
+                    l2,
+                    cx: fractadyne_core::lerp_bf(&g.anchor.0, &g.center.0, f, p),
+                    cy: fractadyne_core::lerp_bf(&g.anchor.1, &g.center.1, f, p),
+                    fractal: g.fractal,
+                    julia: false,
+                    dual: false,
+                }
+            }
+        }
+    }
+
+    /// Depth the prediction stops at (`INFINITY` for a tour — its own clamp at `total` applies).
+    pub(crate) fn horizon_l2(&self) -> f64 {
+        match self {
+            Trajectory::Playback { .. } => f64::INFINITY,
+            Trajectory::Glide(g) => g.horizon_l2,
+        }
+    }
+}
+
+/// Whether the INTERACTIVE lookahead may run in this process: never under a task invocation
+/// (`--livetest`, `--motiontest`, `--autodive`, … keep their recorded baselines and the tour
+/// lookahead they already exercise; `--divetest`'s glide mode calls the pump directly). Read once.
+pub(crate) fn interactive_prefetch_allowed() -> bool {
+    !crate::launched_as_task()
+}
+
 /// One script-playback lookahead slot: an in-flight (or finished, held) future-reference build,
 /// tagged with the log2 magnification it targets so the queue spaces targets without duplicates.
 /// See [`FractadyneApp::playback_ref_prefetch`].
@@ -1495,8 +1622,18 @@ impl FractadyneApp {
         if no_prefetch() {
             return;
         }
-        const LN_2: f64 = std::f64::consts::LN_2;
-        let cur_l2 = pb.sample(e).logmag / LN_2;
+        let traj = Trajectory::Playback { pb, e };
+        let cur_l2 = traj.l2_at(0.0);
+        self.lookahead_collect_install(cur_l2);
+        // The upcoming HOLD's full-ask reference (the queue above deliberately builds with the
+        // short motion cap — see `playback_hold_prefetch` for why holds need their own build).
+        self.playback_hold_prefetch(pb, e);
+        self.lookahead_refill(&traj, cur_l2, PREFETCH_SLOTS);
+    }
+
+    /// Lookahead steps (1)+(2): collect finished builds and install the one the dive has arrived
+    /// at. Shared by the tour and interactive pumps — the queue does not care who filled it.
+    fn lookahead_collect_install(&mut self, cur_l2: f64) {
         // 1) Collect finished builds into their slots.
         for slot in &mut self.ref_prefetch {
             if let Some(rx) = slot.rx.take() {
@@ -1540,12 +1677,16 @@ impl FractadyneApp {
                         format!("lookahead install: len={} prec={}", res.orbit_len, res.prec),
                     );
                 }
+                self.perf.lookahead_installs += 1;
                 self.install_recompute(0, res); // seamless swap — no reactive stall
             }
         }
-        // The upcoming HOLD's full-ask reference (the queue above deliberately builds with the
-        // short motion cap — see `playback_hold_prefetch` for why holds need their own build).
-        self.playback_hold_prefetch(pb, e);
+    }
+
+    /// Lookahead step (3): top the queue back up along `traj`, each new slot `PREFETCH_OCT`
+    /// octaves past the deepest queued target, up to `slots` slots — priced exactly as
+    /// `build_params` will price the frame when the dive gets there.
+    fn lookahead_refill(&mut self, traj: &Trajectory, cur_l2: f64, slots: usize) {
         // 3) Top the queue back up (single main view only; a future fractal/julia/dual switch
         //    means a prefetched reference wouldn't match — stop at those segments).
         if self.dual || self.julia_mode {
@@ -1558,7 +1699,7 @@ impl FractadyneApp {
         // the grand tour's back-out chapters: **214 lookahead builds in one second, none installed.**
         // The tour still reaches those depths later; the lookahead re-queues them when it resumes
         // descending, and the reactive path covers everything in between as it always has.
-        if pb.sample((e + DIVE_PROBE_S).min(pb.total)).logmag / LN_2 <= cur_l2 {
+        if traj.l2_at(DIVE_PROBE_S) <= cur_l2 {
             return;
         }
         // Hard backstop on the spawn rate, independent of any reasoning about the queue. Three
@@ -1572,9 +1713,9 @@ impl FractadyneApp {
         // tour was re-timed or a target overshot — it would sit "held" for minutes, wasting its
         // queue position while the reactive path fills the gap (exactly the beta.9 field failure:
         // coarse probe steps on an easing tour built slots +46…+293 octaves ahead).
-        let max_ahead = cur_l2 + PREFETCH_OCT * (PREFETCH_SLOTS as f64 + 1.0) + 1.0;
+        let max_ahead = cur_l2 + PREFETCH_OCT * (slots as f64 + 1.0) + 1.0;
         self.ref_prefetch.retain(|s| s.target_l2 <= max_ahead);
-        while self.ref_prefetch.len() < PREFETCH_SLOTS
+        while self.ref_prefetch.len() < slots
             && self.ref_prefetch.iter().filter(|s| s.rx.is_some()).count() < PREFETCH_MAX_INFLIGHT
         {
             // Next target: PREFETCH_OCT octaves past the deepest queued target (or the current
@@ -1589,7 +1730,7 @@ impl FractadyneApp {
                 .map(|s| s.target_l2)
                 .fold(cur_l2, f64::max);
             let next_l2 = deepest + PREFETCH_OCT;
-            let reaches = |tau: f64| pb.sample((e + tau).min(pb.total)).logmag / LN_2 >= next_l2;
+            let reaches = |tau: f64| traj.l2_at(tau) >= next_l2;
             let (mut lo, mut hi) = (0.0_f64, f64::NAN);
             for tau in [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0] {
                 if reaches(tau) {
@@ -1609,14 +1750,14 @@ impl FractadyneApp {
                     lo = mid;
                 }
             }
-            let s = pb.sample((e + hi).min(pb.total));
-            if s.fractal != self.fractal || s.julia || s.dual {
+            let s = traj.at(hi);
+            if s.fractal != self.fractal || s.julia || s.dual || s.l2 > traj.horizon_l2() {
                 break;
             }
             // Build the FUTURE frame's recompute inputs exactly as `build_params` will when the
             // dive gets there (same precision/iter/caps/BLA dc_max), so the installed result is
             // indistinguishable from a reactive rebuild at that depth.
-            let target_l2 = s.logmag / LN_2;
+            let target_l2 = s.l2;
             let mut vp =
                 fractadyne_core::Viewport::new(self.viewport.width_px, self.viewport.height_px);
             vp.set_center_log2mag(s.cx, s.cy, target_l2);
@@ -1692,6 +1833,84 @@ impl FractadyneApp {
             self.perf.prefetch_count += 1;
             self.ref_prefetch.push(RefPrefetchSlot { rx: Some(rx), ready: None, target_l2 });
         }
+    }
+
+    /// The INTERACTIVE counterpart of `playback_ref_prefetch`: a hold-Space glide or the autopilot
+    /// has no script, but its camera path is closed-form ([`Glide`]), so the same lookahead queue
+    /// can build the references the dive is about to need — sized by the zoom-rate slider
+    /// (`prefetch_slots_for`). Called once per frame from `update()` BEFORE the draw, so an arrived
+    /// slot installs before `build_params` decides whether to rebuild; and by `--divetest`'s glide
+    /// mode. `oracle` is `None` whenever nothing predictable is happening, which also CANCELS: the
+    /// queue is dropped (in-flight workers finish and are discarded) the first frame the guard
+    /// fails — a glide-out coming to rest, a Shift reversal, the autopilot stopping. A running tour
+    /// owns the queue; the interactive pump stands aside while one plays.
+    pub(crate) fn interactive_ref_prefetch_with(&mut self, oracle: Option<Glide>) {
+        let tour_playing = self.playback.is_some();
+        let oracle = if tour_playing || self.dual || self.julia_mode || no_prefetch() {
+            None
+        } else {
+            oracle
+        };
+        let Some(g) = oracle else {
+            if self.ref_prefetch_interactive {
+                self.ref_prefetch_interactive = false;
+                // A tour that started mid-glide owns the queue now (it cleared and refilled it
+                // in `advance_playback_core`, before this pump ran) — drop only OUR queue.
+                if !tour_playing {
+                    self.ref_prefetch.clear();
+                }
+            }
+            return;
+        };
+        self.ref_prefetch_interactive = true;
+        let cur_l2 = self.viewport.log2_magnification();
+        self.lookahead_collect_install(cur_l2);
+        let slots = prefetch_slots_for(g.oct_per_s());
+        self.lookahead_refill(&Trajectory::Glide(g), cur_l2, slots);
+    }
+
+    /// The glide the GUI is performing, if any: the hold-Space zoom about the cursor (`target_v` =
+    /// the velocity the key is easing toward this frame, 0 once released) or the autopilot's
+    /// smooth phase about its eased pivot. `ppp` = egui pixels-per-point (the cursor is in points,
+    /// the viewport in device pixels). `None` = nothing to predict (idle, zooming out, autopilot
+    /// stepping past `AUTOPILOT_SMOOTH_LOG2`).
+    pub(crate) fn interactive_glide_oracle(&self, target_v: f64, ppp: f64) -> Option<Glide> {
+        let rate = crate::ZOOM_RATE * self.render_cfg.zoom_rate as f64;
+        let (w, h) = (self.viewport.width_px, self.viewport.height_px);
+        let (px, py, v0, target_v, horizon_l2) = if self.autopilot.active {
+            if self.autopilot.stepping {
+                return None;
+            }
+            let (tx, ty) = self.autopilot.target;
+            (tx * w, ty * h, rate, rate, self.autopilot.dive_log2)
+        } else {
+            let v0 = self.pointer.zoom_vel;
+            // Zooming IN: the key is held inward, or the glide-out after a release still moves.
+            let diving = target_v > 0.0 || (target_v == 0.0 && v0 > 1e-3);
+            if !diving {
+                return None;
+            }
+            // Same anchor `draw_central` zooms about: the cursor, in panel-local device pixels.
+            let (px, py) = match self.pointer.last_cursor {
+                Some(c) if self.central_rect_px[2] > 0 => (
+                    c.x as f64 * ppp - self.central_rect_px[0] as f64,
+                    c.y as f64 * ppp - self.central_rect_px[1] as f64,
+                ),
+                _ => (w * 0.5, h * 0.5),
+            };
+            (px, py, v0, target_v, f64::INFINITY)
+        };
+        let anchor = self.viewport.pixel_to_complex(px.clamp(0.0, w), py.clamp(0.0, h));
+        Some(Glide {
+            l2: self.viewport.log2_magnification(),
+            center: (self.viewport.center_x.clone(), self.viewport.center_y.clone()),
+            anchor,
+            v0,
+            target_v,
+            horizon_l2,
+            precision: self.viewport.precision,
+            fractal: self.fractal,
+        })
     }
 
     /// Build the NEXT HOLD keyframe's reference at the hold's OWN explicit ask, during the glide.
@@ -7605,6 +7824,8 @@ pub(crate) fn motion_jammed(
 
 #[cfg(test)]
 mod motion_jam;
+#[cfg(test)]
+mod trajectory_tests;
 
 /// One AIMD step of the deep-motion resolution scale, from a REAL re-iterate frame's interval.
 ///

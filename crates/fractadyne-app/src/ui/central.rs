@@ -69,7 +69,7 @@ impl FractadyneApp {
     /// view instead of outrunning it into a stale-reprojection blur — the image stays sharp, the
     /// dive just takes longer. Zoom-out (vel < 0) is never damped (it relieves the lag), and the
     /// damping bottoms out at 10% so input never feels dead. Shallow views sit at lag 0 → untouched.
-    fn paced_zoom_vel(&self) -> f64 {
+    pub(crate) fn paced_zoom_vel(&self) -> f64 {
         let v = self.pointer.zoom_vel;
         if v <= 0.0 {
             return v;
@@ -1113,10 +1113,18 @@ impl FractadyneApp {
                     }
                     None
                 };
+                // Progressive on-settle supersampling (deep-zoom despeckle) — the single-view
+                // counterpart of the call in `nav_and_draw`. ⚠Until 2026-09-15 only the dual-view
+                // path drove it, so the feature never ran in the ordinary single view it was built
+                // for. `busy` = a settle grid / chunk progression / reference build in flight.
+                let accum_busy = self.perf.tile_pending[0]
+                    || self.perf.chunk_pending[0]
+                    || self.recompute_rx[0].is_some();
+                self.drive_accumulation(ctx, 0, interacting, accum_busy, log2mag);
                 // Only the live view may start a tiled settle (the profiling/benchmark callers of
                 // `build_params` time single dispatches).
                 self.allow_tiled_settle = true;
-                let params = self.build_params(
+                let mut params = self.build_params(
                     center_bf,
                     center,
                     span_fe,
@@ -1132,6 +1140,8 @@ impl FractadyneApp {
                     reproject,
                 );
                 self.allow_tiled_settle = false;
+                // Rule on the proposed fold against the frame just built (see `accum_confirm`).
+                self.accum_confirm(ctx, 0, &mut params);
                 // A settle grid (or a chunked iteration progression) in progress needs the next
                 // frame promptly — one tile / one iteration range per frame.
                 if self.perf.tile_pending[0] || self.perf.chunk_pending[0] {

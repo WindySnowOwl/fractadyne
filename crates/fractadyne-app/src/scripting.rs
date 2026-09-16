@@ -2631,6 +2631,11 @@ impl FractadyneApp {
     /// and the tour running out — or a script's settings would silently become the session's.
     pub(crate) fn stop_playback(&mut self) {
         self.playback = None;
+        // A tour's queued lookahead builds are for depths ALONG THE TOUR; nothing pumps them once
+        // it stops (and the interactive pump must not inherit them), so drop them here rather
+        // than hold finished orbits resident until the next `invalidate_refs`.
+        self.ref_prefetch.clear();
+        self.hold_prefetch.clear();
         if let Some(r) = self.playback_restore.take() {
             self.render_cfg.max_iter = r.max_iter;
             self.render_cfg.auto_iter = r.auto_iter;
