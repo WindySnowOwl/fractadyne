@@ -33,9 +33,9 @@ use crate::FractadyneApp;
 /// Corpus location 07 (44 digits) — the same structure-rich deep center the `iter-chunk` selftest
 /// rows render, chosen there because a "deep magnification" over a trivially-escaping reference is
 /// not a deep test. At 2^103.3 ≈ 1.3e31× it is comfortably past the ~1e28× mode-2 floor.
-const CX: &str = "-1.178853950372678747911373866849720956148855";
-const CY: &str = "0.1853420232408490265512092752061929308714979";
-const LOG2_MAG: f64 = 103.3;
+pub(crate) const CX: &str = "-1.178853950372678747911373866849720956148855";
+pub(crate) const CY: &str = "0.1853420232408490265512092752061929308714979";
+pub(crate) const LOG2_MAG: f64 = 103.3;
 /// Explicit ask (auto-iter off). Big enough that a motion frame's budget-bounded pass covers only
 /// a fraction of it (the chunked regime, at any panel size), small enough that the cold bignum
 /// reference build stays in seconds, not minutes.

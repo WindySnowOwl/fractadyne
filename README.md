@@ -195,6 +195,11 @@ fractadyne --profile [--reps N --regions f.toml --out logs/p.json]
                                                     # region → JSON log (see scripts/profile*.ps1)
 fractadyne --bench-matrix [--bless] [--reps N]      # dev: 28-segment path-coverage perf + regression
                                                     # suite vs a blessed baseline (design/bench-matrix.md)
+fractadyne --zoomtest [OCTAVES] [--zoomtest-rate R]  # dev: on-screen update-latency harness — a real
+   [--zoomtest-location F.fdn] [--zoomtest-start-log2 L]  # windowed glide (from 2^L on F's centre; L=0
+                                                    # = the whole descent from 1x), every presented
+                                                    # frame's interval + what it showed -> JSON +
+                                                    # stutter summary (scripts/zoomtest_report.py)
 fractadyne --divetest tour.toml [--out log.json]    # dev: headless live-dive perf harness — real-time
                                                     # tour windows per depth band (fps/hitches/refresh)
 fractadyne @render.args                             # read the whole command line from a response file

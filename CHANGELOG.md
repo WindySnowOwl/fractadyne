@@ -35,6 +35,16 @@ detail is in the git history.
   orbit instead — an exponential window, 16 by default — restoring the banding. Off by default;
   orbits shorter than the window read exactly as before.
 
+- **`--zoomtest`: an on-screen update-latency harness for live zooms** (beta.107). Runs the real
+  window, holds a virtual Space key through the production glide, and records every presented
+  frame's wall interval and what it showed, with a stutter summary (mean / p95 / p99 / max
+  interval, hitch counts, the longest stall and where it happened, real-refresh cadence, held-frame
+  magnification) — the measurement behind "the zoom feels jerky". `--zoomtest-location F.fdn`
+  picks the target and `--zoomtest-start-log2 L` starts the glide at 2^L on that centre (`L=0`:
+  the whole descent from 1×), so a 1× → 1e100 dive to a chosen point is one command.
+  `scripts/zoomtest_report.py` reads the JSON: summary, interval histogram, per-depth-band table
+  (which part of the dive stutters) and the worst frames with context. See DIAGNOSTICS.md.
+
 - **The gradient editor opens with the current preset's stops** (beta.107). Opening it on a
   preset used to show a preview with nothing to select — no markers, an empty ring view, and
   colour controls that waited for "Add stop" (which seeded a single cyan stop). It now starts from

@@ -80,6 +80,7 @@ mod icons;
 mod icons_coverage;
 mod livetest;
 mod motiontest;
+mod zoomtest;
 mod profile;
 mod refcache_persist;
 mod render;
@@ -648,6 +649,7 @@ pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
         "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
         "--render", "--render-tour", "--torture", "--gputest", "--oomtest", "--refdiag",
         "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
+        "--zoomtest",
         "--chunk-sweep", "--deviceloss-repro", "--bench-bignum", "--shot", "--soak", "--pickcheck",
     ];
     args.iter().any(|a| TASK_FLAGS.contains(&a.as_ref()))
@@ -5324,6 +5326,26 @@ impl FractadyneApp {
         } else {
             None
         };
+        // --zoomtest [OCTAVES]: on-screen update-latency harness for live zooms — holds a virtual
+        // Space key through the production glide and records every presented frame's interval.
+        let zoomtest = if args.iter().any(|a| a == "--zoomtest") {
+            let num = |flag: &str, what: &str, default: f64| -> f64 {
+                match val(flag).filter(|s| !s.starts_with('-')) {
+                    None => default,
+                    Some(s) => s.parse::<f64>().unwrap_or_else(|_| {
+                        eprintln!("fractadyne: {flag}: expected {what}, got \"{s}\"");
+                        crate::exit(2)
+                    }),
+                }
+            };
+            let octaves = num("--zoomtest", "a number of octaves", 40.0);
+            let rate = num("--zoomtest-rate", "a zoom rate (0.25..4)", 1.0) as f32;
+            let location = val("--zoomtest-location").map(std::path::PathBuf::from);
+            let start_log2 = val("--zoomtest-start-log2").map(|_| num("--zoomtest-start-log2", "a log2 magnification", 0.0));
+            Some(zoomtest::ZoomTest::new(octaves, rate, location, start_log2))
+        } else {
+            None
+        };
         let juliadive = if args.iter().any(|a| a == "--juliadive") {
             let out =
                 val("--juliadive").filter(|s| !s.starts_with('-')).map(std::path::PathBuf::from);
@@ -5360,6 +5382,7 @@ impl FractadyneApp {
             || dualsettle.is_some()
             || autodive.is_some()
             || motiontest.is_some()
+            || zoomtest.is_some()
             || chunk_sweep.is_some()
             || deviceloss_repro.is_some()
             || play_tour.is_some()
@@ -5405,6 +5428,7 @@ impl FractadyneApp {
                 // harness window from an interactive one, so an unmatched task is simply "harness".
                 if livetest.is_some() { "livetest" }
                 else if motiontest.is_some() { "motiontest" }
+                else if zoomtest.is_some() { "zoomtest" }
                 else if uitest.is_some() { "uitest" }
                 else if juliadive.is_some() { "juliadive" }
                 else if dualsettle.is_some() { "dualsettle" }
@@ -5657,6 +5681,7 @@ impl FractadyneApp {
                 deviceloss_repro,
                 autodive,
                 motiontest,
+                zoomtest,
             },
             dialogs: DialogState {
                 bench_open: false,
@@ -13033,9 +13058,11 @@ impl eframe::App for FractadyneApp {
         // and install each as the dive arrives — the tour lookahead's queue, fed a closed-form
         // trajectory instead of a script (render.rs). Before the draw so an arrived slot serves
         // this frame. Off under task invocations, whose baselines predate it.
-        if render::interactive_prefetch_allowed() {
+        // `--zoomtest` is the one task that must exercise this path: it measures the glide as a
+        // user gets it, lookahead included, and holds the key through `harness_holds_space`.
+        if render::interactive_prefetch_allowed() || self.harness.zoomtest.is_some() {
             let (space, shift) = ctx.input(|i| (i.key_down(egui::Key::Space), i.modifiers.shift));
-            let space = space && !ctx.wants_keyboard_input();
+            let space = (space && !ctx.wants_keyboard_input()) || self.harness_holds_space();
             let rate = ZOOM_RATE * self.render_cfg.zoom_rate as f64;
             let target_v = if space {
                 if shift { -rate } else { rate }

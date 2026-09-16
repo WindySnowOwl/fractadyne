@@ -945,7 +945,8 @@ impl FractadyneApp {
                     ctx.input(|i| (i.key_down(egui::Key::Space), i.modifiers.shift));
                 // Yield while a widget owns the keyboard (typing spaces into a dialog's text
                 // field must not zoom the view underneath) — same gate as the discrete hotkeys.
-                let space = space && !ctx.wants_keyboard_input();
+                // `--zoomtest` holds a virtual key here, so its glide is this exact code path.
+                let space = (space && !ctx.wants_keyboard_input()) || self.harness_holds_space();
                 let rate = ZOOM_RATE * self.render_cfg.zoom_rate as f64;
                 let target_vel = if space {
                     if shift { -rate } else { rate }
