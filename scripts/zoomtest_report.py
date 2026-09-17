@@ -74,7 +74,7 @@ def bands(frames):
     """Per-depth-band cadence: WHERE in a dive the stutter lives (a 1x -> 1e100 dive crosses the
     direct -> df32 -> floatexp hand-overs, and each regime has its own failure shape)."""
     lg = math.log2(10)
-    rows = [f"  {'band (1e)':>10} {'frames':>6} {'secs':>6} {'mean':>6} {'p95':>6} {'max':>7} {'>33':>4} {'>100':>5} {'held%':>5} {'held oct max':>12} {'installs':>8}"]
+    rows = [f"  {'band (1e)':>10} {'frames':>6} {'secs':>6} {'mean':>6} {'p95':>6} {'max':>7} {'>33':>4} {'>100':>5} {'held%':>5} {'held oct max':>12} {'installs':>8} {'res w':>6} {'oct/s':>5}"]
     for i in range(len(BAND_EDGES) - 1):
         lo, hi = BAND_EDGES[i], BAND_EDGES[i + 1]
         sel = [fr for fr in frames if lo <= fr["l2"] / lg < hi]
@@ -84,11 +84,16 @@ def bands(frames):
         held = sum(1 for fr in sel if not fr["real"])
         inst = sel[-1]["orbit_id"] - sel[0]["orbit_id"]
         hi_s = "∞" if hi >= 1e9 else f"{hi:.0f}"
+        # Newer logs carry the dispatched iterate width and the observed zoom speed (the inputs
+        # of the rate-aware refresh sizing); older ones print a dash.
+        res_w = [fr["res_px"][0] for fr in sel if "res_px" in fr]
+        oct_s = [fr["oct_s"] for fr in sel if "oct_s" in fr]
         rows.append(
             f"  {f'{lo:.0f}–{hi_s}':>10} {len(sel):>6} {sum(dts) / 1000:6.1f} {sum(dts) / len(dts):6.1f} "
             f"{dts[int(len(dts) * 0.95)] if len(dts) > 1 else dts[-1]:6.1f} {dts[-1]:7.1f} "
             f"{sum(1 for d in dts if d > 33):>4} {sum(1 for d in dts if d > 100):>5} "
-            f"{100 * held / len(sel):5.0f} {max(fr['gap_oct'] for fr in sel):12.2f} {inst:>8}"
+            f"{100 * held / len(sel):5.0f} {max(fr['gap_oct'] for fr in sel):12.2f} {inst:>8} "
+            f"{(sum(res_w) / len(res_w)) if res_w else float('nan'):6.0f} {(sum(oct_s) / len(oct_s)) if oct_s else float('nan'):5.2f}"
         )
     return "\n".join(rows)
 

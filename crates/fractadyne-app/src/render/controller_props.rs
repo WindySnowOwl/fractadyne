@@ -180,26 +180,51 @@ fn the_boost_seed_reaches_the_reference_length_and_only_ever_raises() {
     // samples. The seed must lift the boost so cap×boost reaches the reference the app already built,
     // instead of leaving pixels capped at the 69k depth slope (the black frame).
     let cap = 69_157.0;
-    let seed = boost_seed_from_reference(256_001, cap);
+    let seed = boost_seed_from_reference(256_001, cap, true);
     assert!((seed - 256_001.0 / cap).abs() < 1e-6, "seed should hit ref/cap, got {seed}");
     assert!((cap * seed).round() as u32 >= 256_000, "cap×seed must reach the reference length");
     // It is a FLOOR: at least 1.0 so it can only raise a climb that is already higher.
-    assert_eq!(boost_seed_from_reference(1, cap), 1.0, "a short reference never lowers the boost");
-    assert_eq!(boost_seed_from_reference(0, cap), 1.0);
+    assert_eq!(boost_seed_from_reference(1, cap, true), 1.0, "a short reference never lowers the boost");
+    assert_eq!(boost_seed_from_reference(0, cap, true), 1.0);
     // Clamped to the same ceiling the climb respects — an enormous reference cannot overshoot it.
     assert_eq!(
-        boost_seed_from_reference(u32::MAX, 256.0),
+        boost_seed_from_reference(u32::MAX, 256.0, true),
         crate::ITER_BOOST_MAX,
         "the seed is bounded by ITER_BOOST_MAX like every other boost value"
     );
     // Where the depth cap already exceeds the reference (very deep, short-escaping reference) there
     // is nothing to seed: the slope is enough and the boost stays at 1.0.
-    assert_eq!(boost_seed_from_reference(50_000, 260_000.0), 1.0);
+    assert_eq!(boost_seed_from_reference(50_000, 260_000.0, true), 1.0);
     // Degenerate zoom caps never panic or seed (zoom_iter_cap floors at 256, so these cannot occur
     // in practice, but the pure function must be total).
-    assert_eq!(boost_seed_from_reference(256_001, 0.0), 1.0);
-    assert_eq!(boost_seed_from_reference(256_001, f64::NAN), 1.0);
-    assert_eq!(boost_seed_from_reference(256_001, -1.0), 1.0);
+    assert_eq!(boost_seed_from_reference(256_001, 0.0, true), 1.0);
+    assert_eq!(boost_seed_from_reference(256_001, f64::NAN, true), 1.0);
+    assert_eq!(boost_seed_from_reference(256_001, -1.0, true), 1.0);
+}
+
+#[test]
+fn only_an_escaped_reference_seeds_the_boost() {
+    use crate::render::boost_seed_from_reference;
+    // ⛔The verified defect (2026-09-17, `--uitest` step 30): the canonical Seahorse landmark at
+    // 1e6×. Its orbit does NOT escape, so the reference stops at the length the app ASKED for —
+    // 1,012,577 — and seeding from that set the budget to 1,004,384 where 5,000 renders a
+    // pixel-identical picture. The two numbers agreeing is the tell: the seed was reading its own
+    // output. A non-escaping orbit's length is the build target, so it is worth nothing here.
+    let shallow_cap = 2000.0 + 19.93 * 256.0; // zoom_iter_cap at 1e6×, ≈ 7,102
+    assert_eq!(
+        boost_seed_from_reference(1_012_577, shallow_cap, false),
+        1.0,
+        "a reference that never escaped must not seed — its length is the ask, not the demand"
+    );
+    // Had it been credible it would have asked for ~143×, i.e. the million-iteration budget that
+    // made the live view grind and show a flat frame. This is the number the guard removes.
+    assert!(boost_seed_from_reference(1_012_577, shallow_cap, true) > 140.0);
+
+    // ⭐And the case the seed exists for is UNTOUCHED, because that orbit ends on its own: the
+    // 6.3e63× spar escapes at 256,753, which genuinely is what pixels there need.
+    let deep_cap = 2000.0 + 211.0 * 256.0; // ≈ 56,016 at 6.3e63×
+    let spar = boost_seed_from_reference(256_753, deep_cap, true);
+    assert!((deep_cap * spar).round() as u32 >= 256_000, "the escaping spar must still seed");
 }
 
 #[test]
@@ -397,6 +422,35 @@ fn a_capped_frame_rate_must_not_ratchet_motion_resolution_to_the_floor() {
     assert_eq!(motion_res_step(0.8, 20.0, floor), 0.8, "17..=24 ms holds");
     // The floor is respected however slow the frame is.
     assert!(motion_res_step(0.31, 5000.0, floor) >= floor);
+}
+
+#[test]
+fn a_measured_refresh_size_replaces_the_model_and_is_never_bounded_by_it() {
+    // ⭐⭐The regression this pins (field report 2026-09-16, "detail is lost in the low zoom
+    // regime"): the moving-refresh resolution was `model.min(measured)`, and a pessimistic model
+    // is then a permanent CEILING. The refresh renders at the capped size, so the measurement
+    // comes back capped, the measured half may raise it only ×1.25, and the model floors it
+    // again on the next frame — a latch at `min_motion_res` that no amount of headroom escapes.
+    // Measured on the 1× → 1e100 dive at 4.0×: the adaptive loop read 1.00 (native fits) at
+    // every depth past 1e8 while the dispatch went out at 438 of 1452 px for the whole dive.
+    let floor = 0.30;
+    let model = 0.30; // what the nominal-rate model says, and it is wrong by 3×
+    let take = |measured: Option<f64>| measured.unwrap_or(model);
+
+    // Nothing measured yet: the model is the opening guess, which is its whole job.
+    assert_eq!(take(None), model);
+
+    // A refresh that measured well is NOT dragged back down to the guess.
+    assert_eq!(take(Some(0.90)), 0.90, "the model must not bound a measurement");
+
+    // And the loop can climb: each pin re-measures from the size it actually ran at, so a
+    // measured value recovers toward native instead of latching at the floor.
+    let mut res: f64 = floor;
+    for _ in 0..8 {
+        // A pin that finished in half its allowance ⇒ sqrt(2) growth, bounded to ×1.25.
+        res = take(Some((res * 1.25_f64).clamp(floor, 1.0)));
+    }
+    assert!(res > 0.99, "a measured refresh must be able to reach native again: {res:.3}");
 }
 
 #[test]

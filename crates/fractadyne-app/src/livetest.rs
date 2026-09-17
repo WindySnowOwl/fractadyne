@@ -344,6 +344,11 @@ impl FractadyneApp {
                     last_real = Some((r.pixels, [r.width, r.height], t_base.elapsed().as_secs_f64()));
                 }
                 gpu_ms = t_gpu.elapsed().as_secs_f64() * 1000.0;
+                // `render_iter` read the frame back, so every dispatch it encoded has completed —
+                // what the GUI learns through its completion callbacks. The harness has no event
+                // loop to arm them, so the pinned-refresh pass gate is retired here or every
+                // glide's pin waits out `PIN_COMPLETION_TIMEOUT_US` per pass and drifts away.
+                self.perf.retire_synchronous_dispatches(0);
                 // Maintain the watchdog step budget the way the GUI's event loop does. Without
                 // this it stays 0, `build_params` falls back to the pessimistic bootstrap, and
                 // every deep frame is shrunk to a fraction of the requested size — the harness
@@ -359,8 +364,10 @@ impl FractadyneApp {
                 if ms > 0.01 && steps > 0 {
                     // Same rule as the app's: only a real timestamp reading may set a per-step
                     // rate. `gpu_ms` is the wall-clock proxy and would latch a pessimistic rate.
+                    // The shared function also feeds the smoothness pacer and prices a pinned
+                    // pass, exactly as `apply_iterate_measurement` does.
                     if ts.captured {
-                        self.perf.record_mode_rate(0, ms, steps);
+                        self.perf.record_gpu_reading(0, ms, steps);
                     }
                     let cur = crate::render::budget_base(
                         self.perf.fe_budget[0],

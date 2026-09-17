@@ -1166,6 +1166,60 @@ struct Perf {
     /// that lost the device. The pessimistic latch costs at most a few ×1.5 climb frames; the
     /// optimistic one costs the device, and the asymmetry is the whole design.
     mode_rate: [[f64; Self::MODE_RATE_SLOTS]; 2],
+    /// SMOOTHNESS-pacing rate per mode: nominal steps per ms as currently measured (an
+    /// asymmetric EMA — a slower reading is adopted at once, a faster one is blended in), as
+    /// opposed to `mode_rate`'s all-time pessimistic minimum. `mode_rate` sizes SAFETY floors and
+    /// opening guesses, where the worst case is the only honest number; this sizes the motion
+    /// and pinned-refresh chunk passes to `MOTION_PASS_MS` (`render::motion_pass_steps`), where
+    /// the CURRENT regime is the honest number and the TDR budget remains the ceiling. GPU
+    /// timestamps only, like `mode_rate` (see `apply_iterate_measurement`).
+    motion_rate: [[f64; Self::MODE_RATE_SLOTS]; 2],
+    /// Observed zoom speed of the main view, octaves per second (EMA of |Δlog2mag| per frame
+    /// interval, jumps excluded). Read by the rate-aware refresh sizing — whatever drives the
+    /// zoom (Space glide at the slider's rate, wheel, autopilot, a tour), the refresh cadence is
+    /// sized from what the view actually does.
+    zoom_oct_s: f64,
+    /// `log2_magnification()` at the previous frame-interval capture, for `zoom_oct_s`.
+    last_l2: f64,
+    /// Iteration step of the last motion / pin chunk pass sized per view — the growth limiter's
+    /// memory (`MOTION_STEP_OPEN`): the next pass may at most double it, a wall-clock cut halves
+    /// it, a mode switch clears it.
+    motion_step_last: [u32; 2],
+    /// Pinned-refresh passes submitted and not yet COMPLETED on the GPU, per view — the pin's
+    /// serialization gate. The frame interval cannot price a pass: the swap chain hides a
+    /// pass's cost for two frames (frames in flight), so a 100 ms pass reads as a 17 ms
+    /// interval, is priced "cheap", doubles, and three of them stack before the acquire finally
+    /// blocks for the whole backlog (traced 2026-09-16: 350–400 ms stalls at the floatexp entry
+    /// at every zoom rate). A pass is priced by its completion callback instead
+    /// (`on_submitted_work_done`, the same signal `full_inflight` uses), and the next pass waits
+    /// for it — at most one pin pass in the queue, ever.
+    pin_inflight: [u32; 2],
+    /// Completion registrations owed for pin passes, drained in `update` on the following frame
+    /// for the same reason as `full_reg_pending`.
+    pin_reg_pending: [u8; 2],
+    /// Fired pin-pass completion callbacks since last drain.
+    pin_done: [std::sync::Arc<std::sync::atomic::AtomicU32>; 2],
+    /// When the last pin pass COMPLETED (`app_micros()`, stored by the callback itself) and when
+    /// it was dispatched — the pass's wall price to sub-frame precision. Observing completion at
+    /// the next `update` quantizes the price to whole frames, and a 30 ms pass then reads as
+    /// "free": the ledger's fast lane quadruples it to 120 ms, the cliff quarters it back, and
+    /// the cycle puts a ~150 ms frame on screen every few pins (measured in the 1e12–1e40 bands
+    /// of a 1.0× dive at native resolution).
+    pin_done_at: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    pin_dispatch_at: [u64; 2],
+    /// The last dispatched pin pass: its nominal steps (the key its GPU timestamp reading is
+    /// paired by — `apply_iterate_measurement` stores the FIRST reading whose steps match), the
+    /// frame it went out, and the paired GPU time (< 0 = not yet). The completion stamp above is
+    /// quantized to the queue's poll cadence (~two frames, measured 33.5 ms for a 1.7 ms pass),
+    /// which cannot price a 20 ms target; the timestamp query brackets the pass itself.
+    pin_pass_steps: [u64; 2],
+    pin_pass_frame: [u64; 2],
+    pin_pass_gpu_ms: [f64; 2],
+    /// Frames the last pinned refresh took from start to adoption (or abandonment), and the
+    /// resolution scale it ran at — the measured input of the refresh-resolution feedback
+    /// (`refresh_res_cap` is a model; this is what actually happened). Zero = no pin yet.
+    pin_frames_last: [u64; 2],
+    pin_res_last: [f64; 2],
     /// Milliseconds of DELIBERATE `fps_cap` sleep at the end of the previous frame.
     ///
     /// ⚠Subtracted from the next frame interval before anything prices cost off it. The interval is
@@ -1288,6 +1342,11 @@ struct Perf {
     /// a different `ss` than sample 0 would fold a differently-filtered image into the mean.
     accum_sig: [u64; 2],
     accum_ss: [u32; 2],
+    /// The view sample 0 of the running average was folded at — (log2 magnification, f64
+    /// centre) — so a later fold at ANOTHER view is caught and logged (always, no trace flag):
+    /// that is the one way a converged average shows a translucent copy of another location,
+    /// and the field report of 2026-09-16 could not be reproduced in the harness.
+    accum_view0: [(f64, f64, f64); 2],
     /// `frame_idx` of the last frame that spent its tile: one budget-sized tile per submission, so
     /// two deep views can't pair their dispatches past the watchdog.
     tile_turn: u64,
@@ -1393,6 +1452,13 @@ struct Perf {
     norm_locked: [bool; 2],
     /// EMA-smoothed MEAN |Δ smooth-iter| between neighbouring escaped pixels, per view.
     norm_grad: [Option<f32>; 2],
+    /// The palette window actually SHOWN, gliding toward `norm_range` (the fed target) a fixed
+    /// fraction per frame. The target moves in steps — one per escape-range reading, every few
+    /// frames — and a step is a visible colour snap: measured on an 8-octave glide, one frame
+    /// moved the window by 109% of its own width. The eye reads that as the colours "bouncing
+    /// around"; gliding turns the same information into a continuous drift. See
+    /// `render::norm_glide_step`.
+    norm_shown: [Option<(f32, f32)>; 2],
     /// This view's frames are currently chunk-governed (`chunk_over`), stamped every
     /// `build_params`. The norm drain keys on THIS, not on the cursor: escape readings lag their
     /// dispatches by 2-3 frames, so a completed walk's LAST band lands with the cursor already at
@@ -1406,6 +1472,12 @@ struct Perf {
     /// where the BLA skips; this measured scale grows toward native while frames stay near vsync and
     /// backs off when they run long. Only deep perturbation motion reads it.
     motion_res: f64,
+    /// Has `motion_res` been stepped on a REAL frame's own interval yet (in the current arithmetic
+    /// mode)? Until it has, an unpinned refresh is sized by the rate model's opening guess; once
+    /// it has, that guess is retired and this measured loop owns the size. A model that keeps
+    /// bounding a measurement after the measurement exists is the bug this flag ends — see the
+    /// `rate_res_cap` block in `render.rs`.
+    motion_res_measured: bool,
 }
 
 impl Perf {
@@ -1450,6 +1522,145 @@ impl Perf {
         }
         let cur = self.mode_rate[v][s];
         self.mode_rate[v][s] = if cur > 0.0 { cur.min(rate) } else { rate };
+    }
+
+    /// The smoothness-pacing rate for this view's CURRENT mode (nominal steps per ms), or 0.0
+    /// when nothing has been measured in it yet — the caller then falls back to the opening
+    /// guess (`bootstrap_steps`), never to the full budget. See `Perf::motion_rate`.
+    pub(crate) fn motion_rate_now(&self, v: usize) -> f64 {
+        let slot = Self::slot(self.budget_mode[v]);
+        let this = slot.map_or(0.0, |s| self.motion_rate[v][s]);
+        if this.is_finite() && this > 0.0 {
+            return this;
+        }
+        // Nothing measured in this mode yet — the frames right after a crossover, where the
+        // first refreshes are sized. The most pessimistic rate seen in any OTHER mode, under
+        // the same margin the safety controller applies to the same gap (`bootstrap_steps`),
+        // beats a constant: measured at the 1e4 hand-over, the constant opening guess floored at
+        // `TDR_MIN_STEPS` sized 7-iteration passes and the pin never completed at 4.0×.
+        let other = self.motion_rate[v]
+            .iter()
+            .enumerate()
+            .filter(|(s, _)| slot != Some(*s))
+            .map(|(_, r)| *r)
+            .filter(|r| r.is_finite() && *r > 0.0)
+            .fold(0.0_f64, |acc, r| if acc == 0.0 { r } else { acc.min(r) });
+        if other > 0.0 {
+            other / crate::tunables::cost().mode_rate_unknown_margin.max(1.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// Fold one priced dispatch into this view's per-mode SMOOTHNESS rate. Asymmetric on
+    /// purpose: a reading slower than the estimate replaces it (the next pass must not be sized
+    /// off a regime that has just got more expensive — entering a minibrot interior, a BLA tree
+    /// that stopped skipping), a faster one is blended in at `MOTION_RATE_GROW` so one lucky
+    /// early-escape pass cannot size the next one at a hundred times the work. The same
+    /// mode-switch straddle rule as `record_mode_rate`.
+    fn record_motion_rate(&mut self, v: usize, ms: f64, steps: u64) {
+        const MOTION_RATE_GROW: f64 = 0.3;
+        let (Some(s), true) = (Self::slot(self.budget_mode[v]), ms > 0.0 && steps > 0) else {
+            return;
+        };
+        let since = self.frame_idx.saturating_sub(self.mode_switch_frame[v]);
+        if self.mode_switch_frame[v] != u64::MAX && since < 3 {
+            return;
+        }
+        let rate = steps as f64 / ms;
+        if !rate.is_finite() || rate <= 0.0 {
+            return;
+        }
+        let cur = self.motion_rate[v][s];
+        // A reading pulls the estimate DOWN at once and pushes it UP at `MOTION_RATE_GROW`.
+        // ⛔NO GATE ON THE WAY UP — two were tried and both deadlocked the same way: "only a
+        // pass ≥ ¼ of the current sizing may grow it" and "only a reading ≥ 1 ms may grow it".
+        // A pessimistic cut sizes the next passes below any such gate, so no pass can ever
+        // qualify again, the pin crawls at its floor and the frozen frame ages 8–13 octaves on
+        // screen. The estimate is a HINT: the pass growth limiter (×2 per pass), the band
+        // licence, the wall-clock cut and the TDR budget are the guards, and a deduped 0.2 ms
+        // reading that inflates the hint is caught by those on the next pass.
+        self.motion_rate[v][s] = if cur <= 0.0 || rate < cur {
+            rate
+        } else {
+            cur + (rate - cur) * MOTION_RATE_GROW
+        };
+    }
+
+    /// Everything a GPU TIMESTAMP reading feeds besides the safety budget: the per-mode
+    /// pessimistic rate, the smoothness rate, and the pinned pass's own price (the first reading
+    /// whose nominal steps are the pass's — a deduped re-dispatch of the same range runs no
+    /// iterate and produces no reading, so the first match is the real pass). ONE function so
+    /// the headless harnesses, which keep their own copy of the controller loop, cannot drift
+    /// from the app on which consumers a reading reaches (see `--livetest`).
+    pub(crate) fn record_gpu_reading(&mut self, v: usize, ms: f64, steps: u64) {
+        self.record_mode_rate(v, ms, steps);
+        self.record_motion_rate(v, ms, steps);
+        if steps > 0 && steps == self.pin_pass_steps[v] && self.pin_pass_gpu_ms[v] < 0.0 {
+            self.pin_pass_gpu_ms[v] = ms;
+        }
+    }
+
+    /// A harness that renders each frame SYNCHRONOUSLY (a readback that waits for the queue)
+    /// has, by the time the frame returns, completed every dispatch the GUI would learn about
+    /// through `on_submitted_work_done`. It has no event loop to arm those callbacks, so it
+    /// retires the pin gate here instead — otherwise pins wait `PIN_COMPLETION_TIMEOUT_US` per
+    /// pass for a completion that never arrives and every glide's pin drifts out before it can
+    /// adopt. The stamp is "now": the pass finished before the readback did.
+    pub(crate) fn retire_synchronous_dispatches(&mut self, v: usize) {
+        self.pin_inflight[v] = 0;
+        self.pin_reg_pending[v] = 0;
+        self.pin_done[v].store(0, std::sync::atomic::Ordering::Relaxed);
+        self.pin_done_at[v].store(app_micros(), std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// WALL-CLOCK CUT for the smoothness pacer, run at every frame-interval capture. The GPU
+    /// timestamp behind `record_motion_rate` lands 2–3 frames after its dispatch; the interval
+    /// that follows a motion / pin pass is available NOW, and a long one is proof the pass was
+    /// over-sized (it includes the present wait, i.e. it errs toward cutting). Any dispatch in
+    /// the last two frames is a candidate (frame latency 1 puts a heavy pass's cost one interval
+    /// late), so the cut can fire on the wrong frame's cost — the conservative direction; the
+    /// estimate recovers at `MOTION_RATE_GROW` per representative reading.
+    fn motion_wall_cut(&mut self, v: usize, dt_ms: f64) {
+        if self.fe_steps_last[v] == 0 || !(dt_ms > 0.0) {
+            return;
+        }
+        if self.frame_idx.saturating_sub(self.fe_dispatch_frame[v]) > 2 {
+            return;
+        }
+        let Some(s) = Self::slot(self.budget_mode[v]) else {
+            return;
+        };
+        let cur = self.motion_rate[v][s];
+        // THE LIFT: a dispatch followed by a frame that fit its present interval proves the
+        // rate was at least steps / interval. It is the deadlock-proof half of this estimator —
+        // however low a cut has pushed the hint, the very next pass that fits a frame restores
+        // at least what it just did, with no reading threshold to fail.
+        if dt_ms <= crate::tunables::MOTION_PASS_MS * 2.0 {
+            let proved = self.fe_steps_last[v] as f64 / dt_ms;
+            if proved.is_finite() && proved > cur {
+                self.motion_rate[v][s] = proved;
+            }
+            return;
+        }
+        let cut_at = crate::tunables::MOTION_PASS_MS * 2.5;
+        if !(dt_ms > cut_at) {
+            return;
+        }
+        // Only a dispatch of at least half the current sizing can be blamed for the interval:
+        // a long frame behind a tiny pass was something else (a reference build on this thread,
+        // a present blocked by an unrelated submission), and pricing the tiny pass at that
+        // interval is the cut that never recovers.
+        if cur > 0.0
+            && (self.fe_steps_last[v] as f64) < 0.5 * cur * crate::tunables::MOTION_PASS_MS
+        {
+            return;
+        }
+        let wall_rate = self.fe_steps_last[v] as f64 / dt_ms;
+        if wall_rate.is_finite() && wall_rate > 0.0 && (cur <= 0.0 || wall_rate < cur) {
+            self.motion_rate[v][s] = wall_rate;
+        }
+        self.motion_step_last[v] = (self.motion_step_last[v] / 2).max(1);
     }
 
     /// The opening guess for this view's CURRENT mode, derived from what has actually been measured
@@ -1543,6 +1754,26 @@ impl Default for Perf {
             budget_mode: [u32::MAX, u32::MAX],
             mode_switch_frame: [u64::MAX, u64::MAX],
             mode_rate: [[0.0; Self::MODE_RATE_SLOTS]; 2],
+            motion_rate: [[0.0; Self::MODE_RATE_SLOTS]; 2],
+            zoom_oct_s: 0.0,
+            last_l2: 0.0,
+            motion_step_last: [0, 0],
+            pin_inflight: [0, 0],
+            pin_reg_pending: [0, 0],
+            pin_frames_last: [0, 0],
+            pin_res_last: [1.0, 1.0],
+            pin_done_at: [
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            ],
+            pin_dispatch_at: [0, 0],
+            pin_pass_steps: [0, 0],
+            pin_pass_frame: [0, 0],
+            pin_pass_gpu_ms: [-1.0, -1.0],
+            pin_done: [
+                std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            ],
             cap_sleep_ms: 0.0,
             bla_suppress_until: [0, 0],
             tile_state: [None, None],
@@ -1554,6 +1785,7 @@ impl Default for Perf {
             accum_cmd: [AccumCmd::default(), AccumCmd::default()],
             accum_sig: [0, 0],
             accum_ss: [1, 1],
+            accum_view0: [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0)],
             chunk_ok: false,
             chunk_fe_ok: false,
             chunk_cursor: [0, 0],
@@ -1616,8 +1848,10 @@ impl Default for Perf {
             norm_sig: [0, 0],
             norm_locked: [false, false],
             norm_grad: [None, None],
+            norm_shown: [None, None],
             chunk_governed: [false, false],
             motion_res: 0.6,
+            motion_res_measured: false,
         }
     }
 }
@@ -1647,6 +1881,15 @@ pub(crate) fn test_banner_on(launched_for_a_task: bool, force_on: bool, force_of
     } else {
         launched_for_a_task
     }
+}
+
+/// Microseconds since the first call — a process-wide monotonic clock that a GPU completion
+/// callback (any thread) and the frame loop can both read, for pricing a pass by its real
+/// completion time (`Perf::pin_done_at`).
+pub(crate) fn app_micros() -> u64 {
+    use std::sync::OnceLock;
+    static START: OnceLock<std::time::Instant> = OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_micros() as u64
 }
 
 pub(crate) fn zoom_iter_cap(octaves: f64) -> u32 {
@@ -12167,7 +12410,7 @@ impl FractadyneApp {
             // single view drove accumulation (2026-09-15) their settled depths would have
             // accumulated and moved their baselines. `--shot` is the one exception — it exists to
             // capture the converged, de-speckled result and its gate waits for convergence.
-            && (!launched_as_task() || self.harness.shot.is_some())
+            && (!launched_as_task() || self.harness.shot.is_some() || self.zoomtest_settling())
             && self.playback.is_none()
             && !self.autopilot.active
             && !self.uitest_active()
@@ -12322,12 +12565,72 @@ impl FractadyneApp {
             self.schedule_repaint(ctx); // the sample is not complete yet — look again next frame
             return;
         }
+        // The tripwire: every fold must be at sample 0's view. Always on — a fold at another
+        // view puts a translucent copy of that view into every later average, and the report of
+        // one (2026-09-16) reached the log with no trace flag set.
+        let vp = if view == 1 { &self.julia_viewport } else { &self.viewport };
+        let (vl2, vc) = (vp.log2_magnification(), vp.center_f64());
         if count == 0 {
             self.perf.accum_ss[view] = params.ss;
+            self.perf.accum_view0[view] = (vl2, vc.0, vc.1);
+        } else {
+            let (l0, x0, y0) = self.perf.accum_view0[view];
+            if vl2 != l0 || vc.0 != x0 || vc.1 != y0 {
+                crate::diag::log_line(
+                    "accum",
+                    &format!(
+                        "⚠FOLD AT ANOTHER VIEW: view {view} sample {} at 2^{vl2:.4} c=({:.12e},{:.12e}) — \
+                         sample 0 was at 2^{l0:.4} c=({x0:.12e},{y0:.12e}); reproject={} hold={}/{} \
+                         tile={} chunk={} build={} frozen_l2={:.4}",
+                        count + 1,
+                        vc.0,
+                        vc.1,
+                        params.reproject,
+                        params.display_hold,
+                        params.hold_copy,
+                        self.perf.tile_pending[view],
+                        self.perf.chunk_pending[view],
+                        self.recompute_rx[view].is_some(),
+                        self.ref_cache[view].frozen_l2,
+                    ),
+                );
+            }
         }
         let folded = count + 1;
         self.perf.accum_count[view] = folded;
         self.perf.accum_committed[view] = true;
+        // The fold's IDENTITY, on the tile trace: which view the folded texture was rendered
+        // at and when. A sample folded at a different view than sample 0 is a ghost in every
+        // later average (field report 2026-09-16: "a transparent overlay of another
+        // location/zoom level" after a zoom) — this line is what proves or clears it.
+        if crate::diag::trace_on("tile") {
+            let vp = if view == 1 { &self.julia_viewport } else { &self.viewport };
+            let c = vp.center_f64();
+            crate::diag::trace(
+                "tile",
+                format!(
+                    "accum v={view}: FOLD #{folded} f={} l2={:.4} c=({:.9e},{:.9e}) res={}x{} ss={} \
+                     jitter=({:.3},{:.3}) dispatch_f={} steps_last={:.2e} prev_real={} \
+                     uv=({:.3},{:.3},{:.3}) frozen_l2={:.4}",
+                    self.perf.frame_idx,
+                    vp.log2_magnification(),
+                    c.0,
+                    c.1,
+                    params.resolution[0],
+                    params.resolution[1],
+                    params.ss,
+                    params.jitter[0],
+                    params.jitter[1],
+                    self.perf.fe_dispatch_frame[view.min(1)],
+                    self.perf.fe_steps_last[view.min(1)] as f64,
+                    self.perf.prev_real[view.min(1)],
+                    params.uv_offset[0],
+                    params.uv_offset[1],
+                    params.uv_scale,
+                    self.ref_cache[view].frozen_l2,
+                ),
+            );
+        }
         if folded >= accum_target() {
             crate::diag::log_line("accum", &format!("view {view}: converged at {folded} samples"));
         }
@@ -12427,7 +12730,7 @@ impl FractadyneApp {
         // historical constant — the honest degradation, since we genuinely cannot measure per-step
         // cost there.
         if src == Self::SRC_GPU_ITERATE {
-            self.perf.record_mode_rate(v, ms, steps);
+            self.perf.record_gpu_reading(v, ms, steps);
         }
         let cur = render::budget_base(self.perf.fe_budget[v], self.perf.bootstrap_steps(v));
         // The arithmetic lives in `render::budget_step` as a pure function so the properties that
@@ -12817,6 +13120,19 @@ impl eframe::App for FractadyneApp {
                         c.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     });
                 }
+                // The pinned-refresh pass gate, same protocol (see `Perf::pin_inflight`). The
+                // callback also stamps WHEN the pass completed, so its price is exact rather
+                // than quantized to the frame the completion is noticed in.
+                let done = self.perf.pin_done[v].swap(0, std::sync::atomic::Ordering::Relaxed);
+                self.perf.pin_inflight[v] = self.perf.pin_inflight[v].saturating_sub(done);
+                for _ in 0..std::mem::take(&mut self.perf.pin_reg_pending[v]) {
+                    let c = self.perf.pin_done[v].clone();
+                    let at = self.perf.pin_done_at[v].clone();
+                    q.on_submitted_work_done(move || {
+                        at.store(app_micros(), std::sync::atomic::Ordering::Relaxed);
+                        c.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    });
+                }
             }
         }
         // Adapter name for the --uitest report header (once is enough; cheap to read each frame).
@@ -13162,6 +13478,23 @@ impl eframe::App for FractadyneApp {
                 - std::mem::take(&mut self.perf.cap_sleep_ms))
                 .max(0.0);
             self.perf.last_dt_ms = dt; // the actual spike, with cap sleep removed
+            // Observed zoom speed, octaves/s, for the rate-aware refresh sizing. A step of two
+            // octaves or more in ONE interval is a jump (a load, a click-zoom, Home, a harness
+            // teleport), not a glide speed: it resets the estimate rather than feeding it.
+            {
+                let l2 = self.viewport.log2_magnification();
+                let d = (l2 - self.perf.last_l2).abs();
+                self.perf.zoom_oct_s = if d >= 2.0 || dt <= 0.0 {
+                    0.0
+                } else {
+                    let inst = d / dt * 1000.0;
+                    self.perf.zoom_oct_s + (inst - self.perf.zoom_oct_s) * 0.3
+                };
+                self.perf.last_l2 = l2;
+            }
+            for v in 0..2 {
+                self.perf.motion_wall_cut(v, dt);
+            }
             // Present-throttle detector: a no-work frame this slow measured the compositor.
             let any_dispatch = self.perf.fe_dispatch_frame[0] == self.perf.frame_idx
                 || self.perf.fe_dispatch_frame[1] == self.perf.frame_idx;

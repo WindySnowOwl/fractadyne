@@ -96,13 +96,19 @@ impl FractadyneApp {
         // typing a space into a dialog's text field (e.g. the script-export note) was zooming
         // the view underneath. Same gate the discrete hotkeys use.
         let (space, shift) = ctx.input(|i| (i.key_down(egui::Key::Space), i.modifiers.shift));
-        let space = space && !ctx.wants_keyboard_input();
+        // `--zoomtest` holds a virtual key here too (the single-view path reads it the same
+        // way), so a dual-view glide is this exact code path: with no pointer, the virtual key
+        // glides the Mandelbrot pane about its centre — a user with the mouse parked over it.
+        let virtual_key = self.harness_holds_space();
+        let space = (space && !ctx.wants_keyboard_input()) || virtual_key;
         let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1);
-        let panel = pointer.and_then(|p| {
-            dual_panel_at(full, self.dual_split, p).map(|is_julia| {
-                (p, if is_julia { right } else { left }, is_julia)
+        let panel = pointer
+            .and_then(|p| {
+                dual_panel_at(full, self.dual_split, p).map(|is_julia| {
+                    (p, if is_julia { right } else { left }, is_julia)
+                })
             })
-        });
+            .or_else(|| virtual_key.then(|| (left.center(), left, false)));
         let rate = ZOOM_RATE * self.render_cfg.zoom_rate as f64;
         let target = if space && panel.is_some() {
             if shift {
@@ -129,6 +135,23 @@ impl FractadyneApp {
                 };
                 vp.set_size(r.width() as f64 * ppp, r.height() as f64 * ppp);
                 vp.zoom_at(l.x as f64 * ppp, l.y as f64 * ppp, factor);
+                // ⭐⭐**THE CODE THAT MOVES THE VIEW IS WHAT MARKS IT MOVING** — the same rule
+                // `minimap_pan`/`minimap_zoom` follow, and for the same reason. `nav_and_draw`
+                // decided this from its own `hovering` (`resp.hover_pos()`, which respects LAYER
+                // OCCLUSION and is per-panel), while the zoom above is applied from RAW pointer
+                // geometry: a tooltip or menu over the canvas — or a harness driving the virtual
+                // key with no pointer at all — zooms the view while the app believes it is
+                // SETTLED. Everything keyed on `interacting` then reads the wrong state, and the
+                // loudest of those is live auto-normalization: a settled frame's escape-range
+                // reading must match the view's signature exactly, which during a zoom it never
+                // does, so EVERY reading is discarded and the palette mapping FREEZES. Measured
+                // on an 8-octave dual-view glide: 177 of 177 readings discarded, 0 folded, the
+                // map stuck at the range it had before the zoom started. That is the 2026-09-17
+                // report in one line — "sometimes doesn't normalize" (the frozen map), "the
+                // colours bounce around" (it snaps when a reading finally lands on settle) and
+                // "a flat colour panel" (a log mapping over an old range collapses the new
+                // view's escape values into one palette entry).
+                self.pointer.settle_t[is_julia as usize] = ctx.input(|i| i.time);
             }
         }
 

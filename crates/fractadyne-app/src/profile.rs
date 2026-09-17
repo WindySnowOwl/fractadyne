@@ -604,6 +604,9 @@ impl crate::FractadyneApp {
                     gpu_ms = if ts.captured { ts.iterate_ms + ts.color_ms } else {
                         ft.elapsed().as_secs_f64() * 1000.0 - build_ms
                     };
+                    // The readback waited for the queue: every dispatch has completed, which the
+                    // GUI learns through callbacks this harness has no event loop to arm.
+                    self.perf.retire_synchronous_dispatches(0);
                 }
                 let frame_ms = build_ms + gpu_ms;
                 // Mirror the GUI's frame-interval capture (stamped at the next frame's start
