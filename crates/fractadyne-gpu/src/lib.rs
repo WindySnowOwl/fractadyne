@@ -516,6 +516,19 @@ struct ViewResources {
     /// Progressive on-settle supersampling accumulator (deep-zoom despeckle). `None` until the
     /// first accumulating frame; dropped when a non-accumulating frame renders.
     accum: Option<AccumState>,
+    /// ⭐⭐**PROVENANCE OF THE PIXELS, not of the view.** The app's ghost guards all ask about the
+    /// FRAME (`accum_fold_clean`: was it reprojected, held, pinned, mid-grid) and its identity
+    /// check asks about the VIEWPORT (`⚠FOLD AT ANOTHER VIEW`). Neither asks where the pixels in
+    /// the texture came from, and a frame can pass every one of those while rendering into a
+    /// texture that still holds an earlier view's content — which is what a user sees as "a
+    /// transparent overlay of another location" (field reports 2026-09-16 and 2026-09-17, the
+    /// second with the viewport tripwire silent through 41 accumulation runs from 2^38 to 2^120).
+    ///
+    /// `content_stamp` is the view this texture's newest writes were made at; `content_foreign`
+    /// says older pixels may still be under them. Together they answer the one question the other
+    /// guards cannot: is every pixel here from the view we are about to average?
+    content_stamp: Option<u64>,
+    content_foreign: bool,
 }
 
 /// Snapshot bind group for present-gated composition (see `MandelbrotParams::hold_copy`).
@@ -914,6 +927,63 @@ pub(crate) fn gather_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroup
     })
 }
 
+/// May a resized iteration texture be SEEDED from the content it already holds, rather than
+/// cleared? Only when that content is this same view at another size.
+///
+/// Seeding exists so a resolution change mid-settle refines in place instead of against black.
+/// Across a VIEW change it instead copies another location into the texture the settle is about to
+/// refine, and the tiles that follow overwrite only what they cover — so whatever they miss stays
+/// on screen and is then folded into the progressive average at full weight as sample 0. Pure so
+/// the test pins it; see [`ViewResources::content_stamp`] for the field report behind it.
+pub(crate) fn seed_allowed(
+    rendered: bool,
+    tiled: bool,
+    content_stamp: Option<u64>,
+    content_foreign: bool,
+    view_stamp: u64,
+) -> bool {
+    rendered && tiled && content_stamp == Some(view_stamp) && !content_foreign
+}
+
+/// The texture's provenance after a frame: which view its newest pixels were drawn at, and whether
+/// anything older may still sit under them.
+///
+/// "Foreign" means pixels from ANOTHER VIEW may remain, not that the frame is unfinished — whether
+/// a tiled settle has finished is the app's question and it already answers it with `tile_pending`.
+/// Keeping the two apart is what lets a deep view accumulate at all: a cleared texture is blank,
+/// not foreign, so the tiles that fill it stay clean and the app folds once its grid drains.
+///
+/// A FULL-frame pass rewrites every pixel, so nothing older survives it. A TILE rewrites only its
+/// rect, so it inherits whatever it did not cover: blank or this same view stays clean, another
+/// view stays foreign. A REPROJECTION is the previous view's pixels warped to fit this one — the
+/// viewport is current, the pixels are not — so it is foreign by construction, which is exactly the
+/// combination the viewport tripwire cannot see.
+pub(crate) fn content_after_frame(
+    prev_stamp: Option<u64>,
+    prev_foreign: bool,
+    view_stamp: u64,
+    whole_frame: bool,
+    reproject: bool,
+) -> (Option<u64>, bool) {
+    if reproject {
+        return (Some(view_stamp), true);
+    }
+    if whole_frame {
+        return (Some(view_stamp), false);
+    }
+    match prev_stamp {
+        // Blank, or more of the same view: the tile exposes nothing that is not ours.
+        None => (Some(view_stamp), prev_foreign),
+        Some(s) if s == view_stamp => (prev_stamp, prev_foreign),
+        // Another view is still under what this tile did not cover.
+        Some(_) => (Some(view_stamp), true),
+    }
+}
+
+#[cfg(test)]
+#[path = "content_stamp_tests.rs"]
+mod content_stamp_tests;
+
 /// Bind-group layout for the progressive-SSAA **accumulate** pass (`fs_accum`): the running-mean
 /// uniform (0), this frame's freshly-shaded colour (1), and the previous running average (2).
 pub(crate) fn accum_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
@@ -1269,6 +1339,8 @@ impl ViewResources {
             last_probe: 0,
             hold: None,
             accum: None,
+            content_stamp: None,
+            content_foreign: false,
         }
     }
 
@@ -1289,6 +1361,9 @@ impl ViewResources {
         self.chunk_state = None; // state textures are size-matched; a resized view restarts
         self.last_chunk = None;
         self.rendered = false; // the new texture is blank until re-iterated
+        // Blank is not foreign: there is nothing under the next writes to bleed through.
+        self.content_stamp = None;
+        self.content_foreign = false;
     }
 
     /// Build (or resize) the progressive-SSAA accumulator at `size` display pixels: a `frame`
@@ -1522,6 +1597,17 @@ pub struct MandelbrotParams {
     /// This frame's live-normalization view signature, handed to the GPU side purely so it can be
     /// handed back with the reading. Opaque here: the app owns what it means.
     pub norm_sig: u64,
+    /// This frame's VIEW identity, used to track which view the pixels in the iteration texture
+    /// were drawn at — see `ViewResources::content_stamp`. Opaque here; the app owns what it means,
+    /// and only equality matters. A texture resize seeds from the old content ONLY when this
+    /// matches what that content was drawn at; across a view change it clears instead, so another
+    /// location's pixels can never survive underneath the new one.
+    pub view_stamp: u64,
+    /// Sink for the view stamp this view's iteration texture is WHOLLY drawn at, or `u64::MAX`
+    /// when older pixels may remain under the newest writes. The app reads it a frame later and
+    /// refuses to start a progressive-supersampling average on anything but a clean match — the
+    /// check that catches a ghost the frame flags and the viewport comparison both miss.
+    pub content_stamp_out: Option<Arc<std::sync::atomic::AtomicU64>>,
     /// Tiled settle: `Some([x, y, w, h])` in BASE pixels renders only that sub-rect of the iteration
     /// texture this frame (scissored, `LoadOp::Load`), leaving the rest intact. The uniforms are
     /// identical to a full-frame render and the fragment coordinates are absolute in the texture, so
@@ -1757,11 +1843,32 @@ impl CallbackTrait for MandelbrotParams {
         // nothing, keep the texture exactly as it is — like a reprojection with no translation.
         let hold = self.tile.is_some_and(|t| t[2] == 0 || t[3] == 0);
         if !reproject && !hold && size != view.size {
-            if self.tile.is_some() && view.rendered {
-                // Entering (or re-entering) a tiled settle at a new texture size: seed the resized
-                // textures from the old content so the refine happens in place, not against black.
+            // ⛔**THE SEED MAY ONLY CARRY THIS VIEW'S OWN PIXELS.** Seeding exists so a resolution
+            // change mid-settle refines in place instead of against black, which is right when the
+            // content is this view at another size. Across a VIEW change it instead copies another
+            // location into the texture the settle is about to refine, and the tiles that follow
+            // only overwrite what they cover — so whatever they miss stays on screen, and is then
+            // folded into the progressive average at full weight as sample 0 and carried through
+            // every later sample. That is the "transparent overlay of another location" report,
+            // and it passes every existing guard: the frame is not a reprojection, not held, not
+            // mid-grid, and its VIEWPORT is the new one, so the fold tripwire stays silent.
+            // The motion-resolution controller changes this size constantly during a dive, so the
+            // window is not rare — one field session flipped its frame pricing 278 times.
+            // Clearing costs one settle pass against black; seeding the wrong view costs an image
+            // that is quietly wrong.
+            let seedable = seed_allowed(
+                view.rendered,
+                self.tile.is_some(),
+                view.content_stamp,
+                view.content_foreign,
+                self.view_stamp,
+            );
+            if seedable {
                 view.seeded_resize(device, encoder, color_bgl, seed_pipeline, size);
+                // Same pixels, resampled: still wholly this view.
             } else {
+                // `resize` clears, which also clears the provenance: blank has nothing to bleed
+                // through. The app sees the cleared stamp through `content_stamp_out` and logs it.
                 view.resize(device, color_bgl, size);
             }
         }
@@ -2159,6 +2266,40 @@ impl CallbackTrait for MandelbrotParams {
             view.last_probe = self.probe_nonce;
             view.last_ss = ss; // remember the ss this texture was built at (for reprojection)
             view.rendered = true; // the texture now holds a real frame (survives orbit swaps)
+            // Provenance of what now sits in the texture. A FULL-frame pass rewrites every pixel,
+            // so the texture becomes wholly this view. A TILE rewrites only its rect, so whatever
+            // it does not cover is still whatever was there — clean if that was already this view,
+            // foreign otherwise. A chunked pass resolves the whole frame, so it counts as full.
+            let (stamp, foreign) = content_after_frame(
+                view.content_stamp,
+                view.content_foreign,
+                self.view_stamp,
+                self.tile.is_none(),
+                false,
+            );
+            view.content_stamp = stamp;
+            view.content_foreign = foreign;
+        }
+        if reproject {
+            let (stamp, foreign) = content_after_frame(
+                view.content_stamp,
+                view.content_foreign,
+                self.view_stamp,
+                false,
+                true,
+            );
+            view.content_stamp = stamp;
+            view.content_foreign = foreign;
+        }
+        // Publish the provenance for the app to read next frame. `u64::MAX` means "do not start an
+        // average on this": either older pixels may remain, or the newest writes were made at a
+        // different view than the one now being asked about.
+        if let Some(sink) = self.content_stamp_out.as_ref() {
+            let clean = !view.content_foreign && view.content_stamp == Some(self.view_stamp);
+            sink.store(
+                if clean { self.view_stamp } else { u64::MAX },
+                std::sync::atomic::Ordering::Relaxed,
+            );
         }
 
         // ---- progressive on-settle supersampling: fold this frame into the running average ----

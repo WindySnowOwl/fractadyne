@@ -5218,6 +5218,7 @@ impl FractadyneApp {
         hold_copy: bool,
         display_hold: bool,
         view_id: u32,
+        pos_sig: u64,
         vi: usize,
         vs: usize,
         vidx: usize,
@@ -5564,12 +5565,22 @@ impl FractadyneApp {
             accum_present: self.perf.accum_cmd[vsub].present,
             accum_commit: self.perf.accum_cmd[vsub].commit,
             accum_reset: self.perf.accum_cmd[vsub].reset,
+            // The view the GPU stamps this frame's pixels with, and where it reports back which
+            // view the texture is WHOLLY drawn at. `pos_sig` is the right identity because it is
+            // the view's exact position as the shader sees it — the offset from the reference,
+            // the exponent and the span — not the f64 centre, which stops telling neighbouring
+            // deep views apart. See `ViewResources::content_stamp`.
+            view_stamp: pos_sig,
+            content_stamp_out: Some(self.perf.content_stamp[vsub].clone()),
         };
         // Record whether THIS frame really re-iterates (vs reprojecting a held frame) — the
         // motion-res controller adapts only on the interval that FOLLOWS a real frame, since
         // reprojection frames are ~free and carry no signal about the iterate cost (adapting on
         // them was the mixed-signal bug that pushed motion res to native between refreshes).
         self.perf.prev_real[vi.min(1)] = params.reproject == 0;
+        // Remember which view we asked the GPU to stamp, so next frame's reading is compared
+        // against the view it actually describes.
+        self.perf.content_stamp_asked[vsub] = pos_sig;
         params
     }
 
@@ -7503,6 +7514,7 @@ impl FractadyneApp {
             hold_copy,
             display_hold,
             view_id,
+            pos_sig,
             vi,
             vs,
             vidx,

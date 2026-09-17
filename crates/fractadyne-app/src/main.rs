@@ -1347,6 +1347,19 @@ struct Perf {
     /// that is the one way a converged average shows a translucent copy of another location,
     /// and the field report of 2026-09-16 could not be reproduced in the harness.
     accum_view0: [(f64, f64, f64); 2],
+    /// What the GPU reports the iteration texture's pixels are WHOLLY drawn at (`u64::MAX` = older
+    /// pixels may remain under the newest writes). ⭐This is the provenance check the other two
+    /// guards cannot make: `accum_fold_clean` rules on the FRAME and `accum_view0` on the
+    /// VIEWPORT, and a texture carried across a view change by a resize passes both while still
+    /// showing the previous location underneath. Written by the paint callback, read a frame
+    /// later — which is in time, because accumulation only ever starts on a settled view.
+    content_stamp: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// The stamp `build_params` last handed the GPU for each view, so the reading above can be
+    /// compared against the view it describes rather than against whatever is current now.
+    content_stamp_asked: [u64; 2],
+    /// One log line per waiting episode, not per frame: a settle can spend many frames with the
+    /// texture not yet wholly its own, and a user's session log is the thing being protected here.
+    content_wait_logged: [bool; 2],
     /// `frame_idx` of the last frame that spent its tile: one budget-sized tile per submission, so
     /// two deep views can't pair their dispatches past the watchdog.
     tile_turn: u64,
@@ -1786,6 +1799,12 @@ impl Default for Perf {
             accum_sig: [0, 0],
             accum_ss: [1, 1],
             accum_view0: [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0)],
+            content_stamp: [
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+            ],
+            content_stamp_asked: [u64::MAX; 2],
+            content_wait_logged: [false, false],
             chunk_ok: false,
             chunk_fe_ok: false,
             chunk_cursor: [0, 0],
@@ -12470,12 +12489,35 @@ impl FractadyneApp {
             // Present the classic frame until then.
             let ramp_done =
                 aa_ramp(self.pointer.settle_frame[view], self.render_cfg.aa) >= self.render_cfg.aa.max(1);
-            if busy || !ramp_done {
+            // ⭐⭐**AND THE PIXELS MUST BE THIS VIEW'S.** Everything above rules on the FRAME and
+            // the tripwire in `accum_confirm` rules on the VIEWPORT; neither can see that the
+            // texture the frame drew into still holds an earlier location underneath, which is
+            // what a resize carried across a view change used to leave there. The GPU stamps the
+            // texture with the view its pixels were drawn at and reports it back here; anything
+            // but a clean match waits rather than making it sample 0, because sample 0 enters the
+            // average at FULL weight and is then carried through every later sample.
+            let asked = self.perf.content_stamp_asked[view];
+            let told = self.perf.content_stamp[view].load(std::sync::atomic::Ordering::Relaxed);
+            let content_clean = told != u64::MAX && told == asked;
+            if busy || !ramp_done || !content_clean {
                 self.perf.accum_cmd[view] = AccumCmd::default();
+                if !busy && ramp_done && !content_clean && !self.perf.content_wait_logged[view] {
+                    // Always on, like the fold tripwire, but once per episode: if a ghost is still
+                    // reaching the screen this is the line that says whether this path caught it.
+                    self.perf.content_wait_logged[view] = true;
+                    crate::diag::log_line(
+                        "accum",
+                        &format!(
+                            "view {view}: waiting — texture is not wholly this view \
+                             (reported {told:#x}, asked {asked:#x})"
+                        ),
+                    );
+                }
                 self.schedule_repaint(ctx);
                 return;
             }
             self.perf.accum_active[view] = true;
+            self.perf.content_wait_logged[view] = false; // arm the next episode's single line
             self.perf.accum_count[view] = 0;
             self.perf.accum_committed[view] = false;
             self.perf.accum_jitter[view] = [0.0, 0.0];

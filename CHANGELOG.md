@@ -100,6 +100,14 @@ detail is in the git history.
   by the harness, and the log now names the sample and both views (`FOLD AT ANOTHER VIEW`) if
   the on-settle average ever folds a frame from a different view.
 
+- **A zoom can no longer leave a faint copy of where you came from** (beta.108). When the render
+  resolution changed as a zoom settled, the new image was seeded from the previous one so it could
+  sharpen in place rather than rebuild from black. Across a change of location that seeded the old
+  view underneath the new one, and whatever the new render did not cover stayed on screen and was
+  averaged into the finished picture. Seeding now happens only within a single location, and the
+  progressive averaging that de-speckles a settled deep view refuses to start until every pixel on
+  screen belongs to the view you are looking at.
+
 - **"Nearest minibrot" now reports the minibrot it actually found** (beta.108). The period it
   named and the centre it jumped to could describe two different minibrots: the solver located the
   right one, then a verification step relabelled it with the period of a neighbour that happened to
