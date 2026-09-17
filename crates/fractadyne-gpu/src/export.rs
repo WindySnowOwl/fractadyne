@@ -597,6 +597,17 @@ impl TileChunker {
                 eprintln!("[fd-export] chunk [{s},{e}) wall={wall:.1}ms");
             }
             *wall_sum_ms += wall;
+            // ⭐**AND INTO THE PROFILER'S ACCUMULATOR.** `wall_sum_ms` reaches
+            // `ExportResult::iterate_ms`, but `timing::capture` — what `--profile`'s `gpu-it`
+            // column and every "Gsteps/s" figure read — only ever saw the TIMESTAMPED
+            // `export.iter_pass`, and on a chunked tile that pass runs the cheap `fs_resolve`,
+            // not the iterate. So the one instrument you would reach for to ask "is the GPU
+            // saturated" reported the settle, not the work: measured 2026-09-17 at 1024² ×
+            // 20,000 iterations, `gpu-it` read **0.14 ms** for a render whose iterate really
+            // costs ~90 ms — off by ~600×, and in the flattering direction. Each chunk is
+            // already fenced (`await_submitted` right above), so its wall IS its GPU time to
+            // well under the 1% the doc comment quotes.
+            crate::timing::accumulate(wall, 0.0);
             max_chunk_ms = max_chunk_ms.max(wall);
             pricer.observe(e - s, wall);
             window = pricer.next(window, wall, max_iter);
