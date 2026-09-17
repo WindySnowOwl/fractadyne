@@ -12481,6 +12481,34 @@ impl FractadyneApp {
         // and the re-arm are on separate frames so the fold reads the completed `tex_view` before a
         // re-arm re-iterates over it.
         let mut cmd = AccumCmd { present: true, ..Default::default() };
+        // ⭐⭐**PROVENANCE IS A PER-FRAME QUESTION, NOT AN OPENING ONE.** Checking it only before
+        // sample 0 left the ghost's last door open: once a run is under way `cmd.present` is true
+        // every frame, so the GPU keeps blitting the running AVERAGE. If the view then changes
+        // without `interacting` being set for a single frame that reaches here, the average of the
+        // OLD view stays on screen under the NEW view's coordinates, and nothing complains —
+        // `accum_confirm`'s viewport tripwire only speaks when a fold is ATTEMPTED, and a fold is
+        // withheld while a grid or a reprojection is in flight, which is exactly when this happens.
+        // Field report 2026-09-17, second round: the opening gate fired 11 times and the tripwire
+        // stayed silent, and the ghosts kept coming. So ask every frame, and when the answer is no,
+        // abandon the run rather than keep presenting it.
+        let asked = self.perf.content_stamp_asked[view];
+        let told = self.perf.content_stamp[view].load(std::sync::atomic::Ordering::Relaxed);
+        let content_clean = told != u64::MAX && told == asked;
+        if self.perf.accum_active[view] && !content_clean {
+            crate::diag::log_line(
+                "accum",
+                &format!(
+                    "view {view}: abandoned at sample {} — the texture stopped being this view \
+                     (reported {told:#x}, asked {asked:#x})",
+                    self.perf.accum_count[view]
+                ),
+            );
+            self.perf.accum_active[view] = false;
+            self.perf.accum_committed[view] = false;
+            self.perf.accum_cmd[view] = AccumCmd::default(); // present the live frame, not the average
+            self.schedule_repaint(ctx);
+            return;
+        }
         if !self.perf.accum_active[view] {
             // Not yet accumulating. Wait for the ordinary settle to finish — its grids drained AND
             // the AA ramp at its target (between ramp stages both pending flags read false for a
@@ -12496,9 +12524,6 @@ impl FractadyneApp {
             // texture with the view its pixels were drawn at and reports it back here; anything
             // but a clean match waits rather than making it sample 0, because sample 0 enters the
             // average at FULL weight and is then carried through every later sample.
-            let asked = self.perf.content_stamp_asked[view];
-            let told = self.perf.content_stamp[view].load(std::sync::atomic::Ordering::Relaxed);
-            let content_clean = told != u64::MAX && told == asked;
             if busy || !ramp_done || !content_clean {
                 self.perf.accum_cmd[view] = AccumCmd::default();
                 if !busy && ramp_done && !content_clean && !self.perf.content_wait_logged[view] {
