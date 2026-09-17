@@ -42,7 +42,7 @@ impl Lane {
 
 /// What a rung actually executes.
 ///
-/// ⚠`External` exists because not every gate is a subcommand: the 20-location Fraktaler-3 corpus
+/// ⚠`External` exists because not every gate is a subcommand: the Fraktaler-3 corpus
 /// check is `validation/corpus/generate_corpus.py --check`. The first draft of that rung guessed
 /// `--crosscheck-f3 --check`, which is a different tool entirely (it compares ONE supplied F3 EXR
 /// against the CPU oracle). A missing interpreter is reported `skip-unsupported`, never a pass and
@@ -413,7 +413,8 @@ pub(crate) const LADDER: &[Rung] = &[
     Rung {
         id: "offline/gate/corpus-f3",
         lane: Lane::Offline,
-        motivation: "Fraktaler-3 cross-implementation oracle, 20 locations to 1.2e1008x — the only \
+        motivation: "Fraktaler-3 cross-implementation oracle, 38 of the corpus's 39 locations to \
+                     6.13e1105x (row 39 is extreme = true and needs --extreme) — the only \
                      independent evidence that deep arithmetic is CORRECT and not merely stable.",
         cmd: Cmd::External("python", &["validation/corpus/generate_corpus.py", "--check"]),
         deadline: Duration::from_secs(40 * MIN),

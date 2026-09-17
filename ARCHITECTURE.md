@@ -25,7 +25,8 @@ A native **Windows** desktop fractal explorer (Rust + `wgpu`/`egui`/`eframe` 0.3
 `fractadyne` (crate `fractadyne-app`).
 
 Deep zoom is bounded by coordinate precision + iteration/compute budget, not a fixed wall:
-renders match **Fraktaler-3** across a 38-location reference corpus up to **~6.1e1105×**
+renders match **Fraktaler-3** across a 39-location reference corpus, the deepest at
+**5.63e18003×** (the 38 non-extreme rows are the routine `--check` gate, to **6.13e1105×**)
 (pixel-exact against F3's raw iteration counts where directly comparable), a bundled tour dives
 live to ~1e838× (and generated dives beyond 1e1200×), and the arbitrary-precision core is
 self-consistency-validated to 1e1000000×.

@@ -15,7 +15,8 @@ A fractal explorer for Windows and Linux in Rust (wgpu + egui/eframe), built for
   direct df32 → df32 perturbation → **floatexp** perturbation (df32 mantissa + i32
   exponent), so the deviation never runs out of `f32` exponent range. Zhuoran rebasing;
   depth is bounded by coordinate precision and the iteration budget, not a fixed wall —
-  renders match **Fraktaler-3** across a 38-location reference corpus up to **~1e1105×**
+  renders match **Fraktaler-3** across a 39-location reference corpus, the deepest at
+  **5.63e18003×** (the 38 non-extreme rows run as the routine gate, to **6.13e1105×**)
   (pixel-exact against F3's raw iteration counts where directly comparable) and are
   self-consistency-validated far deeper (to 1e1000000×); a bundled tour dives to **~1e838×**. **Series
   approximation** (order-3) skips the early iterations of deep Mandelbrot renders by seeding
@@ -119,7 +120,7 @@ locations are shared with the standard build, so you can switch freely. In the a
   On an older system use the standard download — same program, just slower at reference orbits.
 
 The two produce **byte-identical images** — verified across every formula at arithmetic
-widths from 64 bits to 132,000 bits, plus the full 38-location deep-zoom corpus, and CI re-checks
+widths from 64 bits to 132,000 bits, plus the full 39-location deep-zoom corpus, and CI re-checks
 that identity on Linux on every run. It is a separate download because GMP/MPFR are
 **LGPL-3.0-or-later** while Fractadyne is MIT OR Apache-2.0, and keeping them apart leaves the
 standard build free of those terms; on Windows there is a second reason, that MPFR cannot be
