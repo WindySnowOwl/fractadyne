@@ -1066,7 +1066,16 @@ impl FractadyneApp {
                 );
                 self.dialogs.bench_open = true;
             }
-            Screen::Gallery => self.gallery.open = true,
+            Screen::Gallery => {
+                // ⚠**Opening the window is not opening the gallery.** `scan_gallery` runs from the
+                // menu item, the toolbar button and Refresh — every real way in — but not from
+                // setting `open`, so this step screenshotted an empty pane reading "No Fractadyne
+                // images in this folder" even on a machine with a folder full of them. It could
+                // not have caught a regression in the entry list, the thumbnails, the sort or the
+                // metadata filter: the only state it ever rendered was the empty one.
+                self.gallery.open = true;
+                self.scan_gallery();
+            }
             Screen::Goto => {
                 self.goto.open = true;
                 // Show the POLAR entry mode — the newer, busier half of the dialog (mode toggle +
