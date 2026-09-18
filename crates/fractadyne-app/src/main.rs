@@ -7884,7 +7884,33 @@ impl FractadyneApp {
         let mut click_zoom_navigated = false;
         if let Some((px, py, out)) = pending_click_zoom.take() {
             let f = self.render_cfg.click_zoom_factor.max(1.01) as f64;
+            // What the user pointed at, read BEFORE the view moves. The line below compares it to
+            // where the centre ended up, which is the only way to tell a mis-landing from the
+            // thing it is far more often: aim error multiplied by the zoom factor. Recentring puts
+            // the clicked pixel exactly at the centre, so a miss of d pixels becomes d × factor
+            // pixels once the scale shrinks — at 50× a 8-pixel miss lands the target 400 px off,
+            // a third of a panel, from an aim error the eye cannot even see beforehand. Always on:
+            // a click is a rare event, so there is nothing to rate-limit.
+            let aim = vp.pixel_to_complex(px, py);
             vp.recenter_and_zoom(px, py, if out { f } else { 1.0 / f });
+            let prec = vp.precision;
+            let upp_l2 = vp.units_per_pixel.log2();
+            let dx = fractadyne_core::sub_f64(&vp.center_x, &aim.0, prec);
+            let dy = fractadyne_core::sub_f64(&vp.center_y, &aim.1, prec);
+            let dist = (dx * dx + dy * dy).sqrt();
+            let err_px = if dist > 0.0 { (dist.log2() - upp_l2).exp2() } else { 0.0 };
+            let (w, h) = (vp.width_px, vp.height_px);
+            crate::diag::log_line(
+                "view",
+                &format!(
+                    "click-zoom view {}: clicked ({px:.1},{py:.1}) of {w:.0}x{h:.0} px, \
+                     factor {}{f:.0}× — the clicked point landed {err_px:.2} px from centre \
+                     (anything near 0 means the click was exact and what moved is your aim, \
+                     magnified {f:.0}×)",
+                    is_julia as usize,
+                    if out { "1/" } else { "" },
+                ),
+            );
             self.pointer.zoom_vel = 0.0; // cancel any glide so the jump lands clean
             self.pointer.settle_t[is_julia as usize] = ctx.input(|i| i.time);
             click_zoom_navigated = true;
