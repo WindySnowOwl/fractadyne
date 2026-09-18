@@ -161,7 +161,20 @@ impl FractadyneApp {
 
         // Click toggles the Julia pin: freeze `c` at the clicked point (and mark it),
         // or release if the click lands on the existing marker → resume live hover.
-        if resp_l.clicked() {
+        //
+        // ⭐**While click-to-zoom is armed the plain click belongs to the tool**, and pinning moves
+        // to Ctrl+click. Both gestures used to want the same plain click here, which is why the
+        // tool was never wired into this path at all; giving the armed tool priority is the half of
+        // that trade the user notices, since the tool is the one they just switched on. With the
+        // tool off this is exactly the old behaviour, plain click and nothing to learn.
+        // `nav_and_draw` owns the mirror of this rule and the two must agree — if one changes,
+        // change the other, or a click will either do both things or neither.
+        let pin_click = if self.click_zoom {
+            resp_l.clicked() && ctx.input(|i| i.modifiers.command)
+        } else {
+            resp_l.clicked()
+        };
+        if pin_click {
             if let Some(pos) = resp_l.interact_pointer_pos() {
                 let l = pos - left.min;
                 let cc = self
@@ -1144,6 +1157,7 @@ impl FractadyneApp {
                 let accum_busy = self.perf.tile_pending[0]
                     || self.perf.chunk_pending[0]
                     || self.recompute_rx[0].is_some();
+                self.track_view_jump(0, ctx);
                 self.drive_accumulation(ctx, 0, interacting, accum_busy, log2mag);
                 // Only the live view may start a tiled settle (the profiling/benchmark callers of
                 // `build_params` time single dispatches).

@@ -1360,6 +1360,14 @@ struct Perf {
     /// One log line per waiting episode, not per frame: a settle can spend many frames with the
     /// texture not yet wholly its own, and a user's session log is the thing being protected here.
     content_wait_logged: [bool; 2],
+    /// Previous frame's view per panel — magnification, full-precision centre, and the navigation
+    /// epoch it was taken at — for the jump tripwire in `track_view_jump`.
+    view_prev: [Option<(f64, fractadyne_core::BigFloat, fractadyne_core::BigFloat, u64)>; 2],
+    /// Bumped by `record_nav`, i.e. by every DELIBERATE jump, so the tripwire can tell one from a
+    /// move nothing asked for.
+    nav_epoch: u64,
+    /// One jump line per episode rather than per frame.
+    view_jump_logged: [bool; 2],
     /// `frame_idx` of the last frame that spent its tile: one budget-sized tile per submission, so
     /// two deep views can't pair their dispatches past the watchdog.
     tile_turn: u64,
@@ -1805,6 +1813,9 @@ impl Default for Perf {
             ],
             content_stamp_asked: [u64::MAX; 2],
             content_wait_logged: [false, false],
+            view_prev: [None, None],
+            nav_epoch: 0,
+            view_jump_logged: [false, false],
             chunk_ok: false,
             chunk_fe_ok: false,
             chunk_cursor: [0, 0],
@@ -7238,11 +7249,21 @@ impl FractadyneApp {
     /// stays deep-zoom-correct). Records a nav step so each click is Backspace-undoable, and marks
     /// the view interacting so it settles to full quality afterward. `now` = `ctx.input(|i| i.time)`.
     fn click_zoom_at(&mut self, px: f64, py: f64, out: bool, now: f64) {
+        self.click_zoom_at_view(px, py, out, now, false);
+    }
+
+    /// Click-to-zoom on a named panel. `px`/`py` are physical pixels within THAT panel's rect, not
+    /// the window — in dual view the two panels have different origins and different viewports, and
+    /// feeding one panel's pixels to the other's viewport lands somewhere else entirely.
+    fn click_zoom_at_view(&mut self, px: f64, py: f64, out: bool, now: f64, is_julia: bool) {
         let f = self.render_cfg.click_zoom_factor.max(1.01) as f64;
         let factor = if out { f } else { 1.0 / f }; // zoom_at: factor < 1 ⇒ zoom in
-        self.viewport.recenter_and_zoom(px, py, factor);
+        let vp = if is_julia { &mut self.julia_viewport } else { &mut self.viewport };
+        vp.recenter_and_zoom(px, py, factor);
         self.pointer.zoom_vel = 0.0; // cancel any continuous-zoom glide so the jump lands clean
-        self.pointer.settle_t[0] = now;
+        // ⭐The code that moves a view marks it moving — the same rule `draw_dual`'s glide and the
+        // minimap follow. Without it everything keyed on `interacting` reads the wrong state.
+        self.pointer.settle_t[is_julia as usize] = now;
         self.record_nav();
     }
 
@@ -7334,6 +7355,79 @@ impl FractadyneApp {
     fn record_nav(&mut self) {
         let snap = self.snapshot_view();
         self.nav.record(snap);
+        // Every DELIBERATE jump goes through here — click-zoom, box-zoom, a bookmark, Go-to, the
+        // minimap, a minibrot solve. The jump tripwire skips the frame after one, so the thing it
+        // reports is only ever a move the user did not ask for.
+        self.perf.nav_epoch = self.perf.nav_epoch.wrapping_add(1);
+    }
+
+    /// ⭐**The view moved further in one frame than anything driving it could account for.**
+    /// Always on, and rate-limited to one line per episode: the 2026-09-17 field report was "on
+    /// zoom the center seems to sometimes drift or jump", which is not reproducible to order and
+    /// which no existing trace would have caught. A glide is bounded — the timestep is clamped to
+    /// 100 ms and the rate to the zoom-speed slider, so the most one frame can do is about 0.27
+    /// octaves — and every deliberate jump bumps `nav_epoch`. What is left is what we are looking
+    /// for, and this prints its own evidence: how far, in what, and what else was happening.
+    ///
+    /// Depth limit, stated rather than hidden: the centre delta comes back through `sub_f64`, so
+    /// past ~1e300× it underflows to zero and this reports nothing. That is the safe direction —
+    /// silence rather than a false alarm — and the magnification half keeps working at any depth.
+    fn track_view_jump(&mut self, view: usize, ctx: &egui::Context) {
+        // ⛔**Do not enumerate the gestures that may legitimately move the view — invert it.**
+        // The first draft suppressed only `record_nav`, and `minimap_pan` does not call it, so a
+        // minimap drag would have reported itself as a mystery jump every frame. A rule that has
+        // to list every way a user can move a view is a rule that will miss one. While a pointer
+        // button is down the user IS moving it, whichever widget they grabbed, so say nothing.
+        if ctx.input(|i| i.pointer.any_down()) {
+            self.perf.view_jump_logged[view] = false;
+            self.perf.view_prev[view] = None; // resync on release rather than report the whole drag
+            return;
+        }
+        let vp = if view == 1 { &self.julia_viewport } else { &self.viewport };
+        let l2 = vp.log2_magnification();
+        let (cx, cy) = (vp.center_x.clone(), vp.center_y.clone());
+        let upp_l2 = vp.units_per_pixel.log2();
+        let nav = self.perf.nav_epoch;
+        let prev = self.perf.view_prev[view].take();
+        self.perf.view_prev[view] = Some((l2, cx.clone(), cy.clone(), nav));
+        let Some((pl2, pcx, pcy, pnav)) = prev else { return };
+        if pnav != nav {
+            return; // a deliberate navigation landed this frame; it is allowed to jump
+        }
+        // What a glide could have done: the rate slider times the clamped timestep, plus slack.
+        const MAX_GLIDE_OCTAVES: f64 = 0.27;
+        let d_oct = (l2 - pl2).abs();
+        let prec = fractadyne_core::precision_for_octaves(l2.max(0.0).ceil() as u64) + 32;
+        let dx = fractadyne_core::sub_f64(&cx, &pcx, prec);
+        let dy = fractadyne_core::sub_f64(&cy, &pcy, prec);
+        let dist = (dx * dx + dy * dy).sqrt();
+        // Distance in PIXELS of the view it moved in, which is the unit the eye actually judges.
+        let px = if dist > 0.0 { (dist.log2() - upp_l2).exp2() } else { 0.0 };
+        let big_zoom = d_oct > MAX_GLIDE_OCTAVES * 3.0;
+        let big_pan = px.is_finite() && px > 200.0;
+        if !big_zoom && !big_pan {
+            self.perf.view_jump_logged[view] = false; // quiet again: re-arm the next episode's line
+            return;
+        }
+        if self.perf.view_jump_logged[view] {
+            return;
+        }
+        self.perf.view_jump_logged[view] = true;
+        crate::diag::log_line(
+            "view",
+            &format!(
+                "⚠JUMP view {view}: 2^{pl2:.4} → 2^{l2:.4} ({d_oct:.4} octaves) and the centre \
+                 moved {px:.0} px in one frame — reproject={} tile={} chunk={} building={} \
+                 zoom_vel={:.4} interacting_t={:.3} ref_len={}",
+                self.perf.prev_real.get(view.min(1)).map(|r| !r).unwrap_or(false),
+                self.perf.tile_pending[view],
+                self.perf.chunk_pending[view],
+                self.recompute_rx[view].is_some(),
+                self.pointer.zoom_vel,
+                self.pointer.settle_t[view.min(1)],
+                self.ref_cache[view].orbit_len,
+            ),
+        );
     }
 
     /// A stable identity for the Mandelbrot view on screen — fractal family, Julia mode, zoom, and
@@ -7699,6 +7793,39 @@ impl FractadyneApp {
                 self.pointer.zoom_box = Some(ZoomBox { start: p, end: p, is_julia });
             }
         }
+        // Click-to-zoom, on whichever panel the click landed in. ⛔This used to exist ONLY in
+        // `draw_central`, the single-view path, so in dual view the armed tool did nothing at all —
+        // no zoom, not even the magnifier cursor — while its toolbar button and its factor selector
+        // sat there looking live (field report 2026-09-17). A control that is offered and does
+        // nothing is worse than one that is absent.
+        //
+        // ⭐The plain click belongs to the armed tool. On the Mandelbrot panel a plain click
+        // otherwise pins the Julia parameter, so while this tool is on, pinning moves to
+        // Ctrl+click; `draw_dual` owns that half of the rule and the two must agree.
+        let mut click_zoomed = false;
+        if self.click_zoom && !shift {
+            if resp.hovered() && !resp.dragged() {
+                ctx.set_cursor_icon(egui::CursorIcon::ZoomIn);
+            }
+            if (resp.clicked() || resp.secondary_clicked())
+                && self.pointer.zoom_box.is_none()
+                && !ctx.input(|i| i.modifiers.command)
+            {
+                if let Some(p) = resp.interact_pointer_pos() {
+                    let l = p - rect.min;
+                    let now = ctx.input(|i| i.time);
+                    self.click_zoom_at_view(
+                        l.x as f64 * ppp,
+                        l.y as f64 * ppp,
+                        resp.secondary_clicked(),
+                        now,
+                        is_julia,
+                    );
+                    click_zoomed = true;
+                }
+            }
+        }
+        let _ = click_zoomed;
         let mut apply_zoom: Option<(f64, f64, f64)> = None; // (box_cx_px, box_cy_px, factor)
         let mut zoom_boxing = false;
         if self.pointer.zoom_box.as_ref().is_some_and(|z| z.is_julia == is_julia) {
@@ -7841,6 +7968,7 @@ impl FractadyneApp {
         let accum_busy = self.perf.tile_pending[view]
             || self.perf.chunk_pending[view]
             || self.recompute_rx[view].is_some();
+        self.track_view_jump(view, ctx);
         self.drive_accumulation(ctx, view, interacting, accum_busy, log2mag);
         let res = [
             (rect.width() as f64 * ppp) as u32,

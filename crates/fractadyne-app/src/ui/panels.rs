@@ -104,13 +104,16 @@ impl FractadyneApp {
                 .on_hover_text("Speed of hold-Space continuous zoom (1× ≈ 2× per 1.5 s).");
 
                 // Click-to-zoom tool: arm a click to dive into the point by a fixed factor. Off by
-                // default; drag still pans and Shift/right-drag still box-zoom. Single view only.
+                // default; drag still pans and Shift/right-drag still box-zoom. Works in the dual
+                // view too, on whichever panel the click lands in — where it takes the plain click
+                // and Julia pinning moves to Ctrl+click for as long as the tool is armed.
                 ui.checkbox(&mut self.click_zoom, "Click to zoom")
                     .on_hover_text(
                         "When on, a left-click in the view dives in by the factor below \
                          (right-click backs out), recentered on the clicked point. Drag still pans; \
                          Shift+drag / right-drag still box-zoom. Backspace undoes a click. \
-                         Single view only.",
+                         In the dual view it works on either panel, and pinning the Julia c \
+                         moves to Ctrl+click while this is on.",
                     );
                 ui.add_enabled_ui(self.click_zoom, |ui| {
                     ui.horizontal(|ui| {

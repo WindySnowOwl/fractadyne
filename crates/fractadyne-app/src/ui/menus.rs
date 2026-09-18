@@ -977,14 +977,16 @@ impl FractadyneApp {
                 // Click-to-zoom tool (single view): arm left-click = dive into the point,
                 // right-click = back out; drag still pans. Factor set in Settings ▸ Navigation.
                 if ui
-                    .add_enabled(
-                        !self.dual,
-                        egui::SelectableLabel::new(self.click_zoom, crate::icons::CLICK_ZOOM),
-                    )
+                    .add(egui::SelectableLabel::new(self.click_zoom, crate::icons::CLICK_ZOOM))
                     .on_hover_text(format!(
                         "Click-to-zoom ({:.0}×): left-click dives into the point, \
-                         right-click backs out (drag still pans). Factor in Settings ▸ Navigation.",
-                        self.render_cfg.click_zoom_factor
+                         right-click backs out (drag still pans). Factor in Settings ▸ Navigation.{}",
+                        self.render_cfg.click_zoom_factor,
+                        if self.dual {
+                            " Pin the Julia c with Ctrl+click while this is on."
+                        } else {
+                            ""
+                        }
                     ))
                     .clicked()
                 {
