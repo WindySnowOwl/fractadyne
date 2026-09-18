@@ -45,6 +45,35 @@ impl FractadyneApp {
     /// ⚠The gate is `normalize_live || normalize`, not just the live flag: `normalize` is the
     /// EXPORT-side switch (`--normalize`), and someone who launched with it still needs this
     /// checkbox to steer their exports even with the live view un-normalized.
+    /// "Always fit range" — the range-fit half of normalization, drawn identically in the panel and
+    /// the Color menu so the two can never disagree, exactly like [`Self::log_scale_checkbox`].
+    ///
+    /// ⭐**Why this is a separate control and not a looser threshold.** "Normalize deep colors" is a
+    /// Nyquist ALIASING guard (`mean|Δ smooth-iter| × cycle > 0.5`): on a smooth view it declines by
+    /// design, because remapping a view that reads correctly only changes the picture for nothing.
+    /// But people read "normalize" as "fit the palette to what is on screen", and reported it as
+    /// broken when it sat there declining (2026-09-17, 2026-09-18). The threshold is calibrated
+    /// against two regressions in OPPOSITE directions — flat-grey at shallow depth, and "cities at
+    /// night" — so moving it to satisfy the request risks both. Asking the question outright costs
+    /// one checkbox and leaves the guard alone.
+    ///
+    /// ⚠Indented under the line above, because it modifies it rather than standing on its own. Not
+    /// greyed when normalization is off: this checkbox is itself a way to TURN normalization on.
+    pub(crate) fn fit_range_checkbox(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.add_space(ui.spacing().indent * 0.5);
+            ui.checkbox(&mut self.coloring.normalize_fit, "Always fit range")
+                .on_hover_text(
+                    "Remap the palette to the view's measured escape range even when the view does \
+                     not alias — the checkbox above only remaps when a dense field would otherwise \
+                     read as speckle.\n\nUse this when you want the palette to span what is on \
+                     screen rather than to fix noise. It still needs a measurement, so it does \
+                     nothing for the moment or two before the view settles, and nothing at all on \
+                     a view with no escaped pixels.",
+                );
+        });
+    }
+
     pub(crate) fn log_scale_checkbox(&mut self, ui: &mut egui::Ui) {
         let live = self.coloring.normalize_live || self.coloring.normalize;
         // INDENTED, because it is a sub-option of the checkbox above it — the same idiom the
@@ -104,13 +133,18 @@ impl FractadyneApp {
                 .on_hover_text("Speed of hold-Space continuous zoom (1× ≈ 2× per 1.5 s).");
 
                 // Click-to-zoom tool: arm a click to dive into the point by a fixed factor. Off by
-                // default; drag still pans and Shift/right-drag still box-zoom. Single view only.
+                // default; drag still pans and Shift/right-drag still box-zoom. Works in the dual
+                // view too, on whichever panel the click lands in — where it takes the plain click
+                // and Julia pinning moves to Ctrl+click for as long as the tool is armed.
                 ui.checkbox(&mut self.click_zoom, "Click to zoom")
                     .on_hover_text(
                         "When on, a left-click in the view dives in by the factor below \
                          (right-click backs out), recentered on the clicked point. Drag still pans; \
                          Shift+drag / right-drag still box-zoom. Backspace undoes a click. \
-                         Single view only.",
+                         In the dual view it works on either panel, and pinning the Julia c \
+                         moves to Ctrl+click while this is on. Hold Shift to raise a magnifier \
+                         under the cursor showing the view the click would land you in, and click \
+                         while holding it to take that point; Shift+DRAG still box-zooms.",
                     );
                 ui.add_enabled_ui(self.click_zoom, |ui| {
                     ui.horizontal(|ui| {
@@ -122,6 +156,22 @@ impl FractadyneApp {
                                 format!("{f:.0}×"),
                             );
                         }
+                    });
+                    // Snap: the reason the tool is usually hard to aim is that a miss of d pixels
+                    // becomes d × factor pixels once the scale shrinks, so at 50× a click that
+                    // looked perfect is a third of a panel out. Solving for the nucleus takes the
+                    // aim out of it.
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        ui.checkbox(&mut self.click_zoom_snap, "Snap to nearest center")
+                            .on_hover_text(
+                                "After the jump, solve for the nearest minibrot nucleus and \
+                                 settle exactly onto it, so you land on the feature rather than \
+                                 near it. The zoom is not changed — the click chose that. \
+                                 Mandelbrot only. The solve runs in the background: the view \
+                                 jumps at once and corrects itself when the answer arrives, which \
+                                 at extreme depth can take a few seconds.",
+                            );
                     });
                 });
 
@@ -150,6 +200,29 @@ impl FractadyneApp {
                                 .logarithmic(true),
                         )
                     });
+                    ui.checkbox(&mut self.coloring.stripe_tail, "Tail only (deep zoom)")
+                        .on_hover_text(
+                            "Average the stripe term over the last N iterations of each orbit \
+                             (an exponential window) instead of the whole orbit. At extreme depth \
+                             every orbit shadows the reference for all but its last few hundred \
+                             iterations, so the full-orbit average is one colour for the whole view; \
+                             the tail keeps the contrast. Orbits shorter than the window are \
+                             unaffected. Also --stripe-tail N for --render.",
+                        );
+                    if self.coloring.stripe_tail {
+                        labelled(ui, "Tail length", |ui| {
+                            ui.add(
+                                egui::Slider::new(&mut self.coloring.stripe_tail_len, 4..=1024)
+                                    .logarithmic(true)
+                                    .suffix(" it"),
+                            )
+                            .on_hover_text(
+                                "Window length in iterations. Short windows (8–32) give the classic \
+                                 bold banding at any depth; longer ones average toward a flat colour \
+                                 again, since the stripe term of a long chaotic orbit averages out.",
+                            )
+                        });
+                    }
                 }
                 if self.coloring.color_method == ColorMethod::OrbitTrap {
                     labelled(ui, "Trap shape", |ui| {
@@ -284,9 +357,11 @@ impl FractadyneApp {
                          Cycle wraps the palette thousands of times between neighboring pixels — a \
                          correct dense field reads as speckle noise. This remaps the palette to the \
                          view's measured escape range (Cycle then sets how many palette sweeps span \
-                         it). Smooth method only; ordinary views are unaffected. Matches the \
-                         --normalize export option.",
+                         it) WHEN the view actually aliases — a smooth view is left alone, because \
+                         remapping it would change the picture for nothing. Tick 'Always fit range' \
+                         below to remap regardless. Smooth method only; matches --normalize.",
                     );
+                self.fit_range_checkbox(ui);
                 self.log_scale_checkbox(ui);
                 labelled(ui, "Animate", |ui| {
                     egui::ComboBox::from_id_salt("panel_animate")

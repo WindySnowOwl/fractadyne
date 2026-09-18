@@ -1238,6 +1238,10 @@ pub(crate) struct HarnessModes {
     /// in-loop harness that can see what `--livetest`'s settled checkpoints cannot: what a
     /// chunked view ADOPTS as its frozen texture while the camera is moving.
     pub(crate) motiontest: Option<crate::motiontest::MotionTest>,
+    /// CLI `--zoomtest [OCTAVES]`: on-screen update-latency harness for live zooms — the real
+    /// window, a virtual Space key through the production glide, every presented frame's wall
+    /// interval + what it showed, JSON + summary, exit. See `mod zoomtest`.
+    pub(crate) zoomtest: Option<crate::zoomtest::ZoomTest>,
     /// CLI `--divetest FILE`: headless live-dive performance harness (real-time tour windows at
     /// increasing depths through the ACTUAL playback machinery), report + JSON, exit.
     pub(crate) divetest: Option<std::path::PathBuf>,
@@ -1327,6 +1331,12 @@ impl crate::FractadyneApp {
         // input state (zoom_vel / the Home glide), so it runs BEFORE the central draw below.
         if self.harness.motiontest.is_some() && gpu.is_some() {
             self.motiontest_frame(ctx);
+        }
+        // --zoomtest: the on-screen update-latency harness (same in-loop pattern). It holds the
+        // virtual Space key the central draw and the lookahead pump read this frame, and stamps the
+        // interval since the previous update — so it too runs BEFORE the central draw.
+        if self.harness.zoomtest.is_some() && gpu.is_some() {
+            self.zoomtest_frame(ctx);
         }
     }
 

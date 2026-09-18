@@ -240,6 +240,10 @@ pub struct ExportRequest {
     /// Palette-range mapping: 0 = linear (`cycle`/`offset` alone), 1 = log about `norm_lo`.
     pub norm_mode: u32,
     pub norm_lo: f32,
+    /// Analytic palette anti-aliasing (box-filter the palette over the pixel footprint;
+    /// `palette_box` in the shader). `false` = point sample. Set identically to the live path so
+    /// an export matches the view.
+    pub aa_palette: bool,
     /// The baked palette LUT and its fetch mode — see [`crate::RenderParams::lut`].
     /// ⚠Both `ColorU` definitions consume this; an export that kept the old shape would silently
     /// render through a different palette than the live view.
@@ -254,6 +258,9 @@ pub struct ExportRequest {
     pub de_phase: f32,
     pub color_method: u32,
     pub stripe_freq: f32,
+    /// Stripe average over the tail only — see `MandelbrotParams::stripe_tail`.
+    pub stripe_tail: bool,
+    pub stripe_tail_len: u32,
     pub trap_type: u32,
     pub aa_filter: u32,
     pub interior_col: [f32; 4],
@@ -590,6 +597,17 @@ impl TileChunker {
                 eprintln!("[fd-export] chunk [{s},{e}) wall={wall:.1}ms");
             }
             *wall_sum_ms += wall;
+            // ⭐**AND INTO THE PROFILER'S ACCUMULATOR.** `wall_sum_ms` reaches
+            // `ExportResult::iterate_ms`, but `timing::capture` — what `--profile`'s `gpu-it`
+            // column and every "Gsteps/s" figure read — only ever saw the TIMESTAMPED
+            // `export.iter_pass`, and on a chunked tile that pass runs the cheap `fs_resolve`,
+            // not the iterate. So the one instrument you would reach for to ask "is the GPU
+            // saturated" reported the settle, not the work: measured 2026-09-17 at 1024² ×
+            // 20,000 iterations, `gpu-it` read **0.14 ms** for a render whose iterate really
+            // costs ~90 ms — off by ~600×, and in the flattering direction. Each chunk is
+            // already fenced (`await_submitted` right above), so its wall IS its GPU time to
+            // well under the 1% the doc comment quotes.
+            crate::timing::accumulate(wall, 0.0);
             max_chunk_ms = max_chunk_ms.max(wall);
             pricer.observe(e - s, wall);
             window = pricer.next(window, wall, max_iter);
@@ -792,6 +810,8 @@ fn render_export_impl(
         out_res: [w as f32, h as f32],
         norm_mode: req.norm_mode,
         norm_lo: req.norm_lo,
+        aa_palette: req.aa_palette as u32,
+        _pad_aa: [0; 3],
     };
     queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
     let split = |v: f64| -> (f32, f32) {
@@ -846,7 +866,11 @@ fn render_export_impl(
                 color_method: req.color_method,
                 stripe_freq: req.stripe_freq,
                 trap_type: req.trap_type,
-                aux_on: method_needs_aux(req.color_method) as u32,
+                aux_on: crate::aux_on_word(
+                    method_needs_aux(req.color_method),
+                    req.stripe_tail,
+                    req.stripe_tail_len,
+                ),
                 sa_skip: req.sa_skip,
                 glitch_on: req.glitch_on,
                 sa_a: req.sa_a,
@@ -2619,6 +2643,8 @@ pub fn color_iter_buffer(
         out_res: [w as f32, h as f32],
         norm_mode: req.norm_mode,
         norm_lo: req.norm_lo,
+        aa_palette: req.aa_palette as u32,
+        _pad_aa: [0; 3],
     };
     queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
 

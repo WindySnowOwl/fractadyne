@@ -69,7 +69,7 @@ impl FractadyneApp {
     /// view instead of outrunning it into a stale-reprojection blur — the image stays sharp, the
     /// dive just takes longer. Zoom-out (vel < 0) is never damped (it relieves the lag), and the
     /// damping bottoms out at 10% so input never feels dead. Shallow views sit at lag 0 → untouched.
-    fn paced_zoom_vel(&self) -> f64 {
+    pub(crate) fn paced_zoom_vel(&self) -> f64 {
         let v = self.pointer.zoom_vel;
         if v <= 0.0 {
             return v;
@@ -96,13 +96,19 @@ impl FractadyneApp {
         // typing a space into a dialog's text field (e.g. the script-export note) was zooming
         // the view underneath. Same gate the discrete hotkeys use.
         let (space, shift) = ctx.input(|i| (i.key_down(egui::Key::Space), i.modifiers.shift));
-        let space = space && !ctx.wants_keyboard_input();
+        // `--zoomtest` holds a virtual key here too (the single-view path reads it the same
+        // way), so a dual-view glide is this exact code path: with no pointer, the virtual key
+        // glides the Mandelbrot pane about its centre — a user with the mouse parked over it.
+        let virtual_key = self.harness_holds_space();
+        let space = (space && !ctx.wants_keyboard_input()) || virtual_key;
         let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1);
-        let panel = pointer.and_then(|p| {
-            dual_panel_at(full, self.dual_split, p).map(|is_julia| {
-                (p, if is_julia { right } else { left }, is_julia)
+        let panel = pointer
+            .and_then(|p| {
+                dual_panel_at(full, self.dual_split, p).map(|is_julia| {
+                    (p, if is_julia { right } else { left }, is_julia)
+                })
             })
-        });
+            .or_else(|| virtual_key.then(|| (left.center(), left, false)));
         let rate = ZOOM_RATE * self.render_cfg.zoom_rate as f64;
         let target = if space && panel.is_some() {
             if shift {
@@ -129,6 +135,23 @@ impl FractadyneApp {
                 };
                 vp.set_size(r.width() as f64 * ppp, r.height() as f64 * ppp);
                 vp.zoom_at(l.x as f64 * ppp, l.y as f64 * ppp, factor);
+                // ⭐⭐**THE CODE THAT MOVES THE VIEW IS WHAT MARKS IT MOVING** — the same rule
+                // `minimap_pan`/`minimap_zoom` follow, and for the same reason. `nav_and_draw`
+                // decided this from its own `hovering` (`resp.hover_pos()`, which respects LAYER
+                // OCCLUSION and is per-panel), while the zoom above is applied from RAW pointer
+                // geometry: a tooltip or menu over the canvas — or a harness driving the virtual
+                // key with no pointer at all — zooms the view while the app believes it is
+                // SETTLED. Everything keyed on `interacting` then reads the wrong state, and the
+                // loudest of those is live auto-normalization: a settled frame's escape-range
+                // reading must match the view's signature exactly, which during a zoom it never
+                // does, so EVERY reading is discarded and the palette mapping FREEZES. Measured
+                // on an 8-octave dual-view glide: 177 of 177 readings discarded, 0 folded, the
+                // map stuck at the range it had before the zoom started. That is the 2026-09-17
+                // report in one line — "sometimes doesn't normalize" (the frozen map), "the
+                // colours bounce around" (it snaps when a reading finally lands on settle) and
+                // "a flat colour panel" (a log mapping over an old range collapses the new
+                // view's escape values into one palette entry).
+                self.pointer.settle_t[is_julia as usize] = ctx.input(|i| i.time);
             }
         }
 
@@ -138,7 +161,20 @@ impl FractadyneApp {
 
         // Click toggles the Julia pin: freeze `c` at the clicked point (and mark it),
         // or release if the click lands on the existing marker → resume live hover.
-        if resp_l.clicked() {
+        //
+        // ⭐**While click-to-zoom is armed the plain click belongs to the tool**, and pinning moves
+        // to Ctrl+click. Both gestures used to want the same plain click here, which is why the
+        // tool was never wired into this path at all; giving the armed tool priority is the half of
+        // that trade the user notices, since the tool is the one they just switched on. With the
+        // tool off this is exactly the old behaviour, plain click and nothing to learn.
+        // `nav_and_draw` owns the mirror of this rule and the two must agree — if one changes,
+        // change the other, or a click will either do both things or neither.
+        let pin_click = if self.click_zoom {
+            resp_l.clicked() && ctx.input(|i| i.modifiers.command)
+        } else {
+            resp_l.clicked()
+        };
+        if pin_click {
             if let Some(pos) = resp_l.interact_pointer_pos() {
                 let l = pos - left.min;
                 let cc = self
@@ -154,6 +190,30 @@ impl FractadyneApp {
                     self.julia_c = cc;
                     self.pointer.settle_t[1] = ctx.input(|i| i.time); // only the Julia view changed
                     self.ref_cache[1].ref_pt = None; // Julia changed
+                    // ⚠**The Julia parameter is an `f64`, and past ~1e16× the whole panel rounds to
+                    // one.** At c ≈ −0.018 an ulp is ~7e-18, while a 1e60 view spans 3e-60 — forty
+                    // orders of magnitude finer — so every pixel maps to the same double and the
+                    // pin necessarily lands on the view centre. That is arithmetic, not a broken
+                    // handler, but it looked like one at the 2026-09-17 pass ("Ctrl+click at a deep
+                    // zoom set the Julia point at the center — is that expected?"). A limit the user
+                    // can SEE the effect of has to be a limit the app will STATE.
+                    if cc == self.viewport.center_f64() {
+                        crate::diag::log_line(
+                            "view",
+                            &format!(
+                                "julia pin: f64-quantized to the view centre at 2^{:.2} — c=({:.17e},{:.17e})",
+                                self.viewport.log2_magnification(),
+                                cc.0,
+                                cc.1
+                            ),
+                        );
+                        self.set_toast(
+                            "Pinned Julia c — but it is held in double precision, so at this depth \
+                             the whole panel rounds to a single value and the pin lands on the view \
+                             centre. Zoom out to aim it.",
+                            ctx,
+                        );
+                    }
                 }
             }
         }
@@ -460,6 +520,65 @@ impl FractadyneApp {
     /// Draw the discreet "Fd" brand mark in the lower-right of the fractal area (live view). Uses
     /// the header font — F in the light brand text color, d in the amber accent — over a soft dark
     /// halo so it stays legible on any background. Exports rasterize the same mark (`render.rs`).
+    /// The precision reticle: a live magnifier under the cursor while Shift is held with
+    /// click-to-zoom armed, rendered at the magnification the click is about to land at, so it
+    /// previews the result rather than just enlarging what is already on screen.
+    ///
+    /// Drawn on the foreground layer so it sits over the fractal and the minimap both. The image
+    /// carries its own circular alpha (see `update_reticle`), because egui clips to rectangles and
+    /// a round hole cannot come from the painter.
+    pub(crate) fn draw_reticle(&self, ctx: &egui::Context) {
+        let (Some(tex), Some(at)) = (self.reticle_tex.as_ref(), self.reticle_want.as_ref()) else {
+            return;
+        };
+        let p = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("fract_reticle"),
+        ));
+        let ppp = ctx.pixels_per_point();
+        let d = crate::RETICLE_PX as f32 / ppp;
+        let r = d * 0.5;
+        // Offset up-left of the cursor so the hand does not cover the thing it is aiming with,
+        // and flipped near an edge so it never leaves the window.
+        let screen = ctx.screen_rect();
+        let mut c = at.screen + egui::vec2(r + 26.0, -(r + 26.0));
+        if c.x + r > screen.max.x {
+            c.x = at.screen.x - (r + 26.0);
+        }
+        if c.y - r < screen.min.y {
+            c.y = at.screen.y + (r + 26.0);
+        }
+        let accent = crate::theme::ui_accent(ctx);
+        p.circle_filled(c, r + 2.0, egui::Color32::from_black_alpha(160));
+        p.image(
+            tex.id(),
+            egui::Rect::from_center_size(c, egui::vec2(d, d)),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+        p.circle_stroke(c, r, egui::Stroke::new(1.5_f32, accent));
+        // ⭐**The crosshair is NOT painted here** — it is stamped into the reticle image by
+        // `reticle_mark`, where each of its pixels can pick an ink from the fractal underneath it.
+        // Four fixed-colour strokes on this layer were invisible whenever the content happened to
+        // match them (2026-09-17 pass), and no fixed colour or shadow fixes that in general.
+        // A line back to the aim point, so which point is being magnified is never in doubt.
+        p.line_segment([at.screen, c], egui::Stroke::new(1.0_f32, accent.gamma_multiply(0.5)));
+        // ⭐**Mark the aim, and tie it to the hand.** With `RETICLE_AIM_GAIN` damping the aim to a
+        // quarter of the cursor's displacement, these are two different places on screen, and the
+        // click obeys the aim. A magnifier that showed only the bubble would leave the user
+        // believing the cursor was the target — so the aim gets a ring of its own, and a faint
+        // leader runs out to wherever the hand actually is.
+        if at.cursor != at.screen {
+            p.line_segment(
+                [at.screen, at.cursor],
+                egui::Stroke::new(1.0_f32, egui::Color32::from_black_alpha(90)),
+            );
+        }
+        for (w, col) in [(3.0_f32, egui::Color32::from_black_alpha(170)), (1.25, accent)] {
+            p.circle_stroke(at.screen, 4.0, egui::Stroke::new(w, col));
+        }
+    }
+
     pub(crate) fn draw_watermark(&self, ctx: &egui::Context, rect: egui::Rect) {
         let px = (rect.height() * 0.026).clamp(18.0, 34.0); // small (~20–30 px), discreet
         let mark = ctx.fonts(|f| {
@@ -945,7 +1064,8 @@ impl FractadyneApp {
                     ctx.input(|i| (i.key_down(egui::Key::Space), i.modifiers.shift));
                 // Yield while a widget owns the keyboard (typing spaces into a dialog's text
                 // field must not zoom the view underneath) — same gate as the discrete hotkeys.
-                let space = space && !ctx.wants_keyboard_input();
+                // `--zoomtest` holds a virtual key here, so its glide is this exact code path.
+                let space = (space && !ctx.wants_keyboard_input()) || self.harness_holds_space();
                 let rate = ZOOM_RATE * self.render_cfg.zoom_rate as f64;
                 let target_vel = if space {
                     if shift { -rate } else { rate }
@@ -1113,10 +1233,19 @@ impl FractadyneApp {
                     }
                     None
                 };
+                // Progressive on-settle supersampling (deep-zoom despeckle) — the single-view
+                // counterpart of the call in `nav_and_draw`. ⚠Until 2026-09-15 only the dual-view
+                // path drove it, so the feature never ran in the ordinary single view it was built
+                // for. `busy` = a settle grid / chunk progression / reference build in flight.
+                let accum_busy = self.perf.tile_pending[0]
+                    || self.perf.chunk_pending[0]
+                    || self.recompute_rx[0].is_some();
+                self.track_view_jump(0, ctx);
+                self.drive_accumulation(ctx, 0, interacting, accum_busy, log2mag);
                 // Only the live view may start a tiled settle (the profiling/benchmark callers of
                 // `build_params` time single dispatches).
                 self.allow_tiled_settle = true;
-                let params = self.build_params(
+                let mut params = self.build_params(
                     center_bf,
                     center,
                     span_fe,
@@ -1132,6 +1261,8 @@ impl FractadyneApp {
                     reproject,
                 );
                 self.allow_tiled_settle = false;
+                // Rule on the proposed fold against the frame just built (see `accum_confirm`).
+                self.accum_confirm(ctx, 0, &mut params);
                 // A settle grid (or a chunked iteration progression) in progress needs the next
                 // frame promptly — one tile / one iteration range per frame.
                 if self.perf.tile_pending[0] || self.perf.chunk_pending[0] {
@@ -1190,6 +1321,9 @@ impl FractadyneApp {
                 let sp = ui.painter_at(rect);
                 self.draw_recompute_spinner(ctx, &sp, rect, 0, now);
             });
+
+        // ---- precision reticle (Shift with click-to-zoom armed) ----
+        self.draw_reticle(ctx);
 
         // ---- brand watermark (lower-right of the fractal area) ----
         if self.watermark {

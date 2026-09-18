@@ -894,7 +894,19 @@ impl FractadyneApp {
                     busy || now.duration_since(ut.quiet_since) < std::time::Duration::from_millis(350);
                 let ready = now >= ut.settle_until
                     && match &ut.steps[ut.idx].kind {
-                        StepKind::Live(v) => v.expect == RenderMode::Direct || ref_settled,
+                        // ⚠**A SETTLED REFERENCE IS NOT A FINISHED PICTURE.** This waited only on
+                        // `ref_settled`, which says the bignum orbit has stopped changing — it says
+                        // nothing about whether the chunked PIXEL walk has drawn anything yet. At
+                        // 1e6 the walk needs minutes when the budget is wrong (see the adaptive-seed
+                        // bug in TODO.md, found by this very step), so the capture landed on a frame
+                        // where almost nothing had escaped: one flat colour, graded "looks flat",
+                        // red on every build for weeks. The walk's own flags are already in `busy`,
+                        // so a live step now waits for the same quiet period every other step does —
+                        // still bounded by the hard cap, so a genuinely slow view still captures and
+                        // is still graded.
+                        StepKind::Live(v) => {
+                            (v.expect == RenderMode::Direct || ref_settled) && !settling
+                        }
                         _ => !settling,
                     };
                 if ready || now >= ut.hard_until {
@@ -1054,7 +1066,16 @@ impl FractadyneApp {
                 );
                 self.dialogs.bench_open = true;
             }
-            Screen::Gallery => self.gallery.open = true,
+            Screen::Gallery => {
+                // ⚠**Opening the window is not opening the gallery.** `scan_gallery` runs from the
+                // menu item, the toolbar button and Refresh — every real way in — but not from
+                // setting `open`, so this step screenshotted an empty pane reading "No Fractadyne
+                // images in this folder" even on a machine with a folder full of them. It could
+                // not have caught a regression in the entry list, the thumbnails, the sort or the
+                // metadata filter: the only state it ever rendered was the empty one.
+                self.gallery.open = true;
+                self.scan_gallery();
+            }
             Screen::Goto => {
                 self.goto.open = true;
                 // Show the POLAR entry mode — the newer, busier half of the dialog (mode toggle +

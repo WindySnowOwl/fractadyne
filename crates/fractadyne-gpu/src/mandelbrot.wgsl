@@ -414,7 +414,10 @@ struct IterU {
     color_method: u32,     // selected coloring method (drives whether aux is accumulated)
     stripe_freq: f32,      // stripe-average angular frequency
     trap_type: u32,        // 0 = point, 1 = cross, 2 = unit circle
-    aux_on: u32,           // 1 = accumulate orbit statistics into the aux target
+    // Bitfield: bit 0 = accumulate orbit statistics into the aux target; bit 1 = stripe average
+    // over the TAIL only (an exponential window, see `stripe_tail_on`); bits 2.. = that window's
+    // length in iterations. Mirrors `aux_on_word` in lib.rs.
+    aux_on: u32,
     sa_skip: u32,          // series-approximation skip (0 = none): seed δz at this iteration
     glitch_on: u32,        // 1 = flag Pauldelbrot-glitched pixels (multi-reference correction)
     sa_a: vec4<f32>,       // order-3 series coeffs (complex df32 mantissa): δz ≈ A·δc + B·δc² + C·δc³
@@ -498,6 +501,27 @@ struct Aux {
     prev_abs: f32, // |z| of the previous iteration (TIA needs it)
     trap: f32,     // min orbit-trap distance so far
 };
+// ---- stripe average over the TAIL only ------------------------------------------------------
+// At extreme depth every pixel's orbit shadows the reference for all but its last few hundred
+// iterates (δ grows from the pixel spacing to O(1) in ~ln(zoom)/λ steps), and the stripe term is
+// a function of z alone — so the FULL-orbit mean is the same colour for the whole view (2.5e246×,
+// field report 2026-09-16). The tail mode replaces the plain mean with an exponentially-weighted
+// mean over the last `tail_len` iterates: `s += (term − s)·α`, α = 1/tail_len, bias-corrected by
+// `1 − (1−α)^n` so a SHORT orbit reads exactly like the plain mean (no look change on shallow
+// views). Across a BLA-skipped span the same recurrence with the span's constant mean term `m`
+// has the closed form `s = m + (s − m)·(1−α)^span`, which is what the fold applies — the plain
+// mean is recovered as α → 0. `sac_sum` holds the EMA and `sac_prev` the previous one, so the
+// `frac` blend in `aux_pack` works unchanged.
+fn stripe_tail_on() -> bool {
+    return (iu.aux_on & 2u) != 0u && iu.color_method == 1u;
+}
+fn stripe_tail_alpha() -> f32 {
+    return 1.0 / f32(max(iu.aux_on >> 2u, 1u));
+}
+// (1 − α)^k without pow's precision cliff at large k: exp(k · ln(1 − α)).
+fn tail_decay(alpha: f32, k: f32) -> f32 {
+    return exp(k * log(1.0 - alpha));
+}
 fn aux_init(z0: vec2<f32>) -> Aux {
     var a: Aux;
     a.sac_sum = 0.0; a.sac_prev = 0.0;
@@ -524,7 +548,11 @@ fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
         // Stripe average: smooth orbit average of a sinusoid of the argument.
         let term = 0.5 + 0.5 * sin(iu.stripe_freq * atan2(zf.y, zf.x));
         (*a).sac_prev = (*a).sac_sum;
-        (*a).sac_sum = (*a).sac_sum + term;
+        if (stripe_tail_on()) {
+            (*a).sac_sum = (*a).sac_sum + (term - (*a).sac_sum) * stripe_tail_alpha();
+        } else {
+            (*a).sac_sum = (*a).sac_sum + term;
+        }
     } else if (method == 2u) {
         // Triangle-inequality average: where |z_{n+1}| sits between ||z_n|^p − |c|| and
         // |z_n|^p + |c|. Needs a valid previous |z|.
@@ -545,8 +573,17 @@ fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
 // Pack the accumulated statistics into the aux target. `frac` is the fractional part
 // of the smooth iteration count (blends the last two averages for a continuous result).
 fn aux_pack(a: Aux, frac: f32, zf: vec2<f32>) -> vec4<f32> {
-    let sac_avg = a.sac_sum / max(a.n, 1.0);
-    let sac_prev = a.sac_prev / max(a.n - 1.0, 1.0);
+    var sac_avg: f32;
+    var sac_prev: f32;
+    if (stripe_tail_on()) {
+        // Bias-corrected EMA: divide by the weight actually accumulated, 1 − (1−α)^n.
+        let alpha = stripe_tail_alpha();
+        sac_avg = a.sac_sum / max(1.0 - tail_decay(alpha, max(a.n, 1.0)), 1.0e-6);
+        sac_prev = a.sac_prev / max(1.0 - tail_decay(alpha, max(a.n - 1.0, 1.0)), 1.0e-6);
+    } else {
+        sac_avg = a.sac_sum / max(a.n, 1.0);
+        sac_prev = a.sac_prev / max(a.n - 1.0, 1.0);
+    }
     let stripe = mix(sac_prev, sac_avg, frac);
     let tn = max(a.n - 1.0, 1.0);
     let tia_avg = a.tia_sum / tn;
@@ -712,13 +749,13 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 z = zn;
                 iter = iter + 1u;
                 zf = vec2<f32>(z.re.x, z.im.x);
-                if (iu.aux_on == 1u) { aux_step(&aux, zf, cmag, power_f); }
+                if ((iu.aux_on & 1u) == 1u) { aux_step(&aux, zf, cmag, power_f); }
                 if (dot(zf, zf) > bail2) { escaped = true; break; }
             }
         }
         if (!escaped) {
             atomicAdd(&counters[CTR_MAXITER], 1u);
-            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), iu.aux_on == 1u);
+            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), (iu.aux_on & 1u) == 1u);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
         if (newton) {
@@ -735,7 +772,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             nrm = slope_normal(zf, vec2<f32>(dz.re.x, dz.im.x));
             de = de_log2(mag2, dz.re.x * dz.re.x + dz.im.x * dz.im.x, 0.0);
         }
-        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), iu.aux_on == 1u);
+        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     } else if (iu.mode == 2u) {
@@ -855,11 +892,20 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     // Fold this node's precomputed aux aggregate over the `span` skipped iterates, so
                     // stripe/TIA/trap coloring stays correct across the skip instead of dropping the
                     // skipped run. `zf` is the actual landing value → prev_abs restores exactly.
-                    if (iu.aux_on == 1u) {
+                    if ((iu.aux_on & 1u) == 1u) {
                         let agg = reference[node + 3u]; // [span, trap_min, ΣTIA, Σstripe]
                         aux.trap = min(aux.trap, agg.y);
                         aux.tia_sum = aux.tia_sum + agg.z;
-                        aux.sac_sum = aux.sac_sum + agg.w;
+                        if (stripe_tail_on()) {
+                            // Exponential tail window across the skipped span: the recurrence with
+                            // the span's mean term `m` in closed form (see `stripe_tail_on`).
+                            let m = agg.w / max(f32(span), 1.0);
+                            let d = tail_decay(stripe_tail_alpha(), f32(span));
+                            aux.sac_prev = aux.sac_sum;
+                            aux.sac_sum = m + (aux.sac_sum - m) * d;
+                        } else {
+                            aux.sac_sum = aux.sac_sum + agg.w;
+                        }
                         aux.n = aux.n + f32(span);
                         aux.prev_abs = length(zf);
                     }
@@ -1025,7 +1071,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             let Znfe = orbit_fe(rn);
             let zfull = fe_add(Znfe, dz);
             zf = fe_lo_f32(zfull);
-            if (iu.aux_on == 1u) { aux_step(&aux, zf, cmag, power_f); }
+            if ((iu.aux_on & 1u) == 1u) { aux_step(&aux, zf, cmag, power_f); }
             let z2 = dot(zf, zf);
             if (iu.glitch_on == 1u) {
                 // |z| < 1e-2·|Z_n| (≡ the old z2 < 1e-4·zr2), in extended range: the f32
@@ -1058,7 +1104,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         ctr_commit(n_rebase, n_ext, n_bla);
         if (!escaped) {
             atomicAdd(&counters[CTR_MAXITER], 1u);
-            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), iu.aux_on == 1u);
+            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), (iu.aux_on & 1u) == 1u);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
         let mag2 = dot(zf, zf);
@@ -1070,7 +1116,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
-        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), iu.aux_on == 1u);
+        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     } else {
@@ -1195,7 +1241,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             let zr_full = df_add(rn.re, dz.re);
             let zi_full = df_add(rn.im, dz.im);
             zf = vec2<f32>(zr_full.x, zi_full.x);
-            if (iu.aux_on == 1u) { aux_step(&aux, zf, cmag, power_f); }
+            if ((iu.aux_on & 1u) == 1u) { aux_step(&aux, zf, cmag, power_f); }
             let z2 = dot(zf, zf);
             if (iu.glitch_on == 1u) {
                 let zr2 = rn.re.x * rn.re.x + rn.im.x * rn.im.x;
@@ -1261,7 +1307,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         ctr_commit(n_rebase, n_ext, n_bla);
         if (!escaped) {
             atomicAdd(&counters[CTR_MAXITER], 1u);
-            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), iu.aux_on == 1u);
+            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), (iu.aux_on & 1u) == 1u);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
         let mag2 = dot(zf, zf);
@@ -1273,7 +1319,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
-        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), iu.aux_on == 1u);
+        let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     }
@@ -2166,6 +2212,13 @@ struct ColorU {
     // Occupies what used to be `_pad_out`, so the uniform's size and alignment are unchanged.
     norm_mode: u32,
     norm_lo: f32,   // range floor the log is measured from (the frame's minimum escape value)
+    // 1 = analytic palette anti-aliasing (box-filter the palette over each pixel's footprint via
+    // `palette_box`); 0 = point sample. The three pad words restore the 16-byte-multiple size and
+    // mirror `_pad_aa` in the Rust `ColorUniforms` (kept in step, per uniform_layout_tests).
+    aa_palette: u32,
+    _pad_aa0: u32,
+    _pad_aa1: u32,
+    _pad_aa2: u32,
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;
@@ -2230,9 +2283,17 @@ fn palette(t_in: f32) -> vec3<f32> {
     return mix(a, b, f);
 }
 
-// Map one texel (main + aux statistics) to a color, per the selected method.
+// Interior pixels have no palette coordinate; `coord_of` returns this sentinel so callers colour
+// them with `interior_col` and the footprint estimate skips them. Far above any real coordinate
+// (`cycle`·log(escape) + offset), and finite so arithmetic on it stays well-defined.
+const INTERIOR_COORD: f32 = 1.0e30;
+
+// The CONTINUOUS palette coordinate for one texel (before the `fract` wrap), per the selected
+// method, or `INTERIOR_COORD` for an in-set pixel. Split out from `shade` so the color pass can
+// finite-difference it between neighbouring pixels to size the anti-aliasing footprint — and
+// diffing the pre-`fract` value is what keeps that footprint free of wrap discontinuities.
 // `m` = (smooth iter, normal.x, normal.y, DE log2); `a` = (stripe, TIA, trap, decomp).
-fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
+fn coord_of(m: vec4<f32>, a: vec4<f32>) -> f32 {
     var pv: f32;
     var interior: bool = (m.r < 0.0);
     if (cu.color_method == 1u) {
@@ -2250,7 +2311,7 @@ fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
     } else {
         pv = m.r;                                  // smooth iteration count
     }
-    if (interior) { return cu.interior_col.xyz; }
+    if (interior) { return INTERIOR_COORD; }
     // Log range mapping. Escape values crowd towards the high end at depth — most of a deep
     // frame's pixels sit in the last few percent of the range — so a linear map spends nearly the
     // whole palette on a thin shell and flattens everything else. Compressing with log spreads
@@ -2261,7 +2322,56 @@ fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
     if (cu.norm_mode == 1u) {
         pv_mapped = log(max(pv - cu.norm_lo, 0.0) + 1.0);
     }
-    return palette(pv_mapped * cu.cycle + cu.offset);
+    return pv_mapped * cu.cycle + cu.offset;
+}
+
+// Cyclic antiderivative of the palette at texel coordinate `x` (may be < 0 or > n), from the
+// prefix sum appended after the LUT at binding 3 (`psum[i] = lut[n + i]`, `psum[n]` the total).
+// Each entry is a unit-width texel of constant colour, so within a cycle the integral is
+// `psum[floor(r)] + frac(r)·entries[floor(r)]`, plus `total` per whole cycle wrapped.
+fn palette_psum_at(x: f32, n: i32, nf: f32, total: vec3<f32>) -> vec3<f32> {
+    let cycles = floor(x / nf);
+    let r = x - cycles * nf;                       // in [0, n)
+    let i = clamp(i32(floor(r)), 0, n - 1);
+    let f = r - floor(r);
+    return cycles * total + lut[n + i].xyz + f * lut[i].xyz;
+}
+
+// Box-average the palette over a footprint `width` PALETTE CYCLES wide, centred at `coord`.
+// This is the analytic anti-aliasing: `width` is how much of the palette a single pixel spans,
+// so an undersampled pixel gets the mean over what it covers rather than a point sample that
+// aliases into speckle. Continuous in `width` — `width ≤ 1 texel` returns exactly `palette`
+// (so hard `.map` bands stay crisp while resolvable, and there is no seam where the filter turns
+// on), `width ≥ 1 cycle` returns the DC mean; everything between is the exact cyclic box integral.
+// Mirrors `Lut::sample_box` in `fractadyne-color`.
+fn palette_box(coord: f32, width: f32) -> vec3<f32> {
+    let n = i32(cu.lut_len);
+    if (n <= 0) { return vec3<f32>(0.0, 0.0, 0.0); }
+    let nf = f32(n);
+    let w = clamp(width * nf, 0.0, nf);            // footprint in texels
+    if (w <= 1.0) { return palette(coord); }       // sharp fetch (respects lut_smooth)
+    let total = lut[n + n].xyz;                     // psum[n]
+    let c = fract(coord) * nf;
+    let hi = palette_psum_at(c + w * 0.5, n, nf, total);
+    let lo = palette_psum_at(c - w * 0.5, n, nf, total);
+    return (hi - lo) / w;
+}
+
+// Point-sample shade (interior → interior_col). Used by `view_average`; the main color pass uses
+// `shade_aa` so it can band-limit the palette over the pixel footprint.
+fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
+    let coord = coord_of(m, a);
+    if (coord >= INTERIOR_COORD) { return cu.interior_col.xyz; }
+    return palette(coord);
+}
+
+// Band-limited shade: colour one texel with the palette box-averaged over `width` cycles (the
+// output pixel's palette-phase footprint). `width == 0` degenerates to the point sample, so this
+// is a drop-in for `shade` when the anti-aliasing is off (`cu.aa_palette == 0`, width left 0).
+fn shade_aa(m: vec4<f32>, a: vec4<f32>, width: f32) -> vec3<f32> {
+    let coord = coord_of(m, a);
+    if (coord >= INTERIOR_COORD) { return cu.interior_col.xyz; }
+    return palette_box(coord, width);
 }
 
 // Average color of the frozen frame, from a coarse grid over the iteration texture. Used to
@@ -2310,6 +2420,28 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
     let pix = vec2<i32>(uv * vec2<f32>(screen_dim)); // screen pixel index
     let maxc = vec2<i32>(tex_dim) - vec2<i32>(1, 1);
 
+    // Analytic palette anti-aliasing footprint: how much palette PHASE this output pixel spans,
+    // from the CONTINUOUS coord difference to the +1-pixel neighbours (one output pixel = ss
+    // texels). Diffing the pre-`fract` coord (via `coord_of`) avoids wrap discontinuities;
+    // interior neighbours (the INTERIOR_COORD sentinel) are skipped. It is computed ONCE per
+    // output pixel and applied to every tap, so the band-limited colour is the SAME regardless of
+    // `ss` — which is what makes a low-AA live view and a high-AA export agree, and keeps a zoom
+    // free of pops (the footprint grows smoothly with depth). Zero when off ⇒ `shade_aa` is a
+    // point sample identical to the old `shade`.
+    var pal_w = 0.0;
+    if (cu.aa_palette == 1u) {
+        let o0 = clamp(pix * i32(ss), vec2<i32>(0, 0), maxc);
+        let c0 = coord_of(textureLoad(iter_tex, o0, 0), textureLoad(aux_tex, o0, 0));
+        if (c0 < INTERIOR_COORD) {
+            let ox = clamp((pix + vec2<i32>(1, 0)) * i32(ss), vec2<i32>(0, 0), maxc);
+            let oy = clamp((pix + vec2<i32>(0, 1)) * i32(ss), vec2<i32>(0, 0), maxc);
+            let cx = coord_of(textureLoad(iter_tex, ox, 0), textureLoad(aux_tex, ox, 0));
+            let cy = coord_of(textureLoad(iter_tex, oy, 0), textureLoad(aux_tex, oy, 0));
+            if (cx < INTERIOR_COORD) { pal_w = max(pal_w, abs(cx - c0)); }
+            if (cy < INTERIOR_COORD) { pal_w = max(pal_w, abs(cy - c0)); }
+        }
+    }
+
     // Average a `taps×taps` block of iteration samples covering this pixel. With
     // supersampling, taps = ss (true SSAA). When the iteration texture was rendered
     // below display resolution (work-budget at deep zoom on a big window), `aa_filter`
@@ -2329,7 +2461,7 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
             );
             let t = textureLoad(iter_tex, texel, 0);
             let ta = textureLoad(aux_tex, texel, 0);
-            acc = acc + shade(t, ta);
+            acc = acc + shade_aa(t, ta, pal_w);
             nacc = nacc + vec2<f32>(t.g, t.b);
             dacc = dacc + t.a;
             count = count + 1.0;
@@ -2402,6 +2534,45 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
         col = col * (1.0 - e * cu.vig_dim);
     }
     return vec4<f32>(col, 1.0);
+}
+
+// ---------------- progressive on-settle supersampling (accumulate + present) ----------------
+// While the view is settled and idle, the app re-renders it with a sub-pixel JITTER each frame
+// (via `IterUniforms.px_offset`) and folds the shaded colour into a running average, converging to
+// the box-averaged (anti-aliased) image — the spatial supersampling that removes deep-zoom speckle,
+// spread across idle frames so no single dispatch is large. `fs_accum` is the fold; `fs_present`
+// blits the average to the surface. These reuse @group(0) slots the way the iterate and colour
+// passes already do (each pipeline binds only what its entry point reads).
+
+struct AccumU {
+    inv_weight: f32, // 1 / (sample_index + 1): the running-mean step for THIS sample
+    _p0: f32,
+    _p1: f32,
+    _p2: f32,
+};
+@group(0) @binding(0) var<uniform> au: AccumU;
+@group(0) @binding(1) var accum_frame: texture_2d<f32>; // this frame's freshly-shaded colour
+@group(0) @binding(2) var accum_prev: texture_2d<f32>;  // running average so far (ping-pong source)
+
+// Numerically-stable running mean: avg += (sample - avg) / n. At n=1 (inv_weight=1) it returns the
+// sample exactly, so a reset needs no clear — the first sample simply replaces the average.
+@fragment
+fn fs_accum(in: VsOut) -> @location(0) vec4<f32> {
+    let dims = vec2<i32>(textureDimensions(accum_frame));
+    let p = clamp(vec2<i32>(in.uv * vec2<f32>(dims)), vec2<i32>(0, 0), dims - vec2<i32>(1, 1));
+    let cur = textureLoad(accum_frame, p, 0);
+    let prev = textureLoad(accum_prev, p, 0);
+    return prev + (cur - prev) * au.inv_weight;
+}
+
+// Present the accumulated average to the surface. Reuses the `accum_prev` texture slot (binding 2)
+// rather than declaring a second sampled texture at the same slot; the present pipeline's bind
+// group provides only binding 2 (the average to display).
+@fragment
+fn fs_present(in: VsOut) -> @location(0) vec4<f32> {
+    let dims = vec2<i32>(textureDimensions(accum_prev));
+    let p = clamp(vec2<i32>(in.uv * vec2<f32>(dims)), vec2<i32>(0, 0), dims - vec2<i32>(1, 1));
+    return textureLoad(accum_prev, p, 0);
 }
 
 // ---------------- GPU primitive self-test (`--gputest`) ----------------

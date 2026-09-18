@@ -12,6 +12,155 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Live zooms are paced for smoothness at every zoom speed** (beta.108). A moving refresh used
+  to be sized by the GPU-watchdog safety budget (a 400 ms target): after a jump to a deep view or
+  across an arithmetic hand-over, every refresh went out as one 200–450 ms dispatch, and a
+  continuous dive was smooth only by accident of a different controller regime. Refreshes are now
+  pinned walks of GPU passes priced by their own timestamp readings — at most two in flight, each
+  sized from the mode's measured rate and licensed per iteration band, clipped at the band's edge
+  — and the refresh resolution is sized so a refresh completes within half an octave at the zoom
+  speed actually observed (a fast zoom trades sharpness for cadence, a slow one gets its detail
+  back), with the last pin's measured duration as feedback. Reference installs that only
+  re-deliver the orbit already in use are dropped, and an install that extends the same reference
+  point no longer abandons the refresh in flight. Measured with `--zoomtest` on the dev RTX 3080:
+  the whole 1× → 1e100 descent now runs 17.8 ms mean with a 61 ms worst frame at 4.0× (was 246 ms
+  worst, 32 frames over 100 ms; the held frame at the 1e28 hand-over peaks at 23× instead of 53×)
+  and a 45 ms worst frame at 1.0× (was 256 ms, 133 frames over 100 ms); the direct → df32
+  hand-over at 1.0–4.0× 25–26 ms worst (was 57 ms with a 10× stale frame); the "paste a deep
+  location, then zoom" case at 4.0× 38 ms worst with the held frame at 6× (was 215 ms and 21×)
+  and at 1.0× 20 ms mean / 126 ms worst (was 39 ms mean at 26 fps, 445 ms worst). A refresh whose passes
+  price far under their target now grows its per-band licence in proportion and, past the
+  reference's first-wrap storm, carries half of it into the next band — so a high explicit
+  iteration count keeps streaming detail during a fast zoom instead of re-climbing from 256
+  iterations in every band (`--motiontest`, 1M iterations at 1e31×, was a coin flip at 400 ms per
+  pass; now adopts inside the drift window at 20 ms per pass). The headless `--livetest` and
+  `--divetest` loops now retire the passes their synchronous readback completed, so they exercise
+  the same pinned refreshes the window does. `--zoomtest` logs the dispatched resolution, the
+  observed zoom speed and the pin adoptions, and can end a run with a settle tail
+  (`FRACTADYNE_ZOOMTEST_SETTLE`), a wheel-tap pattern (`FRACTADYNE_ZOOMTEST_TAPS`) and a
+  field-report settings profile (`FRACTADYNE_ZOOMTEST_PROFILE`), the dual view included. Design:
+  `design/live-zoom-smoothing.md`.
+
+- **A shallow view no longer runs a hundred times the iterations it needs** (beta.108). The
+  automatic iteration budget gave itself a head start by reading the length of the reference orbit
+  the view had already built, on the reasoning that no pixel can iterate longer than the orbit
+  does. That holds only when the orbit ends by escaping. A reference whose centre never escapes —
+  which is every deep-zoom landmark, since those sit on the boundary — stops at whatever length it
+  was asked for, so its length measured the budget rather than the view, and a large budget built
+  a long reference which justified a large budget. At 1e6 on the canonical Seahorse point the
+  result was 1,004,384 iterations where 5,000 draws the same picture: the view spent minutes of
+  GPU time and showed one flat colour while it worked through it. The budget now takes its head
+  start only from a reference that escaped, and otherwise climbs under the measurement that
+  already owns it. The same view now settles at 18,181 iterations and draws in 1.6 ms instead of
+  14.6 ms of flat brown. Deep views are unaffected: their references escape, and the tour
+  regression suite, which compares the live picture against an offline render at 24 checkpoints,
+  shows no change.
+
+- **"Normalize deep colors" keeps working while you zoom, and changes smoothly** (beta.108). In
+  the dual view the palette mapping froze the moment a zoom started and stayed frozen until the
+  view settled: every escape-range reading taken during the zoom was thrown away. The cause was
+  two different notions of "the view is moving" — the zoom was applied from the raw pointer
+  position while the moving flag came from a per-panel hover test that a tooltip, a menu or a
+  keyboard-driven zoom can turn off — so the app rendered a moving view believing it had settled.
+  A frozen mapping is why the colours could stop normalizing part-way into a zoom, and why a deep
+  view could go to one flat colour: under the log colour scale, a mapping measured at an earlier
+  view collapses the new view's escape values into a single palette entry. The zoom now marks the
+  view moving wherever it is applied, as the overview map already did. Separately, the mapping is
+  fed in steps as readings arrive, and a step repaints the whole picture: one frame could move the
+  palette window by more than its own width, which reads as the colours bouncing around. The
+  shown window now glides toward each new reading, at most a few percent of its width per frame
+  (measured: 109% worst before, 7% after), while a settled view deciding its mapping and the
+  recovery from a mapping measured elsewhere still arrive at once.
+
+- **Zooming keeps its detail wherever the frame can afford it** (beta.108). The rate-aware
+  refresh sizing above shipped as a model that BOUNDED the measured controller instead of seeding
+  it, which made it a latch: a refresh rendered at the capped size, so the measurement came back
+  capped, and the cap re-applied every frame. On the dev RTX 3080 a 1× → 1e100 dive ran the whole
+  way at 30% linear resolution — 9% of the pixels — while the controller that measures frame cost
+  was reading "native fits" and the GPU sat idle at 17.8 ms a frame. The measured size now
+  replaces the model rather than being bounded by it, and the adaptive loop runs for shallow and
+  direct-mode zooms too, where previously nothing measured at all and the model's word was final.
+  A shallow zoom at an ordinary iteration count is back to full resolution and slightly faster
+  than before (18.0 ms a frame); at a deliberately heavy iteration count it now finds the
+  resolution that fits the frame instead of collapsing to the floor (about half the pixels, up
+  from 9%). At the default zoom speed a whole 1× → 1e100 descent now runs at full resolution
+  throughout, 18.0 ms a frame, with no frame over 100 ms (it was 30% linear resolution the whole
+  way, and before the pacing work, 133 frames over 100 ms). At the fastest zoom speed a refresh
+  has half an octave to complete, so it still trades resolution for keeping up. "Prefer detail
+  while zooming" and the motion-resolution floor are unchanged.
+
+- **A settled deep view's progressive render is keyed to the view's exact position** (beta.108).
+  The resumable iteration walk that renders a settled deep view over several frames identified
+  its view by the f64 centre, which stops telling nearby views apart at depth (one value covers
+  the whole neighbourhood past ~1e240×). A small pan there, or a re-picked reference at the same
+  f64 point, let the walk resume its per-pixel state against the moved view, so the previous
+  view's escaped pixels stayed on screen under the new one — a translucent copy of another
+  location. The walk now restarts whenever the view's offset from its reference or its span
+  changes. Reported after a zoom in the dual view on 2026-09-16; that report is not reproduced
+  by the harness, and the log now names the sample and both views (`FOLD AT ANOTHER VIEW`) if
+  the on-settle average ever folds a frame from a different view.
+
+- **A zoom can no longer leave a faint copy of where you came from** (beta.108). When the render
+  resolution changed as a zoom settled, the new image was seeded from the previous one so it could
+  sharpen in place rather than rebuild from black. Across a change of location that seeded the old
+  view underneath the new one, and whatever the new render did not cover stayed on screen and was
+  averaged into the finished picture. Seeding now happens only within a single location, and the
+  progressive averaging that de-speckles a settled deep view refuses to start until every pixel on
+  screen belongs to the view you are looking at.
+
+- **"Nearest minibrot" now reports the minibrot it actually found** (beta.108). The period it
+  named and the centre it jumped to could describe two different minibrots: the solver located the
+  right one, then a verification step relabelled it with the period of a neighbour that happened to
+  lie nearby. The jump then landed far outside the minibrot it promised, in empty space. Which
+  neighbour got picked depended on how far out you were zoomed, so the same location answered
+  differently from different views. In deep Seahorse Valley the answer is now period 998 from every
+  view between 60× and a trillion×, and the centre is accurate far below the minibrot's own width.
+
+- **The profiler's GPU timing now reports the whole render** (beta.108). The `gpu-it` column of
+  `--profile`, and every GPU rate derived from it, timed only the pass that assembles a chunked
+  tile's result, not the pass that does the iterating — so a render whose GPU work took about 90
+  milliseconds was reported as 0.14. Chunked work is now included, which makes the reported figures
+  several hundred times larger and, for the first time, correct. This affects diagnostics only; no
+  rendered output changes.
+
+- **Smoother live zooms at depth: the reference lookahead now runs for interactive zooms too**
+  (beta.107). A hold-Space glide or an autopilot dive is as predictable as a scripted tour — the
+  zoom-speed slider says exactly where the view will be in a second — so the references it is
+  about to need are now built ahead on idle cores and swapped in seamlessly as the dive arrives,
+  the way tours have worked since beta.130. The queue scales with the zoom-speed slider. Measured
+  with the new `--divetest` glide mode at 1e100–1e150×: held (reprojected) frames 7–22% → 0,
+  the longest visible stall 140–240 ms → one frame, and the zoom runs at the full selected speed
+  instead of being throttled by the reference pipeline.
+
+- **Deep-zoom despeckle fixes** (beta.107). The progressive on-settle supersampling shipped
+  earlier on this branch could fold a held, reprojected frame of the *previous* view into its
+  running average after a pan (a faint shifted ghost behind the picture), kept presenting a stale
+  average after a palette or effects change (so glow and lighting seemed to affect only the Julia
+  pane in dual view), and never ran in the ordinary single view at all. It now folds only real,
+  complete frames of the current view, restarts on any colouring change, and runs in both views.
+
+- **Stripe average: "Tail only (deep zoom)"** (beta.107). At extreme depth nearly every iteration
+  of every pixel's orbit is shared with the reference, so the classic full-orbit stripe average is
+  one flat colour across the view. The new option (Coloring ▸ Stripe density ▸ Tail only, with a
+  Tail length slider, or `--stripe-tail N` for `--render`) averages the last N iterations of each
+  orbit instead — an exponential window, 16 by default — restoring the banding. Off by default;
+  orbits shorter than the window read exactly as before.
+
+- **`--zoomtest`: an on-screen update-latency harness for live zooms** (beta.107). Runs the real
+  window, holds a virtual Space key through the production glide, and records every presented
+  frame's wall interval and what it showed, with a stutter summary (mean / p95 / p99 / max
+  interval, hitch counts, the longest stall and where it happened, real-refresh cadence, held-frame
+  magnification) — the measurement behind "the zoom feels jerky". `--zoomtest-location F.fdn`
+  picks the target and `--zoomtest-start-log2 L` starts the glide at 2^L on that centre (`L=0`:
+  the whole descent from 1×), so a 1× → 1e100 dive to a chosen point is one command.
+  `scripts/zoomtest_report.py` reads the JSON: summary, interval histogram, per-depth-band table
+  (which part of the dive stutters) and the worst frames with context. See DIAGNOSTICS.md.
+
+- **The gradient editor opens with the current preset's stops** (beta.107). Opening it on a
+  preset used to show a preview with nothing to select — no markers, an empty ring view, and
+  colour controls that waited for "Add stop" (which seeded a single cyan stop). It now starts from
+  the preset you were using; Cancel still restores exactly what you had.
+
 - **Security hardening: malformed image files, oversized response files, and untrusted tool/URL
   resolution are now bounded** (beta.106). Opening a crafted or corrupt PNG/EXR — including during
   a gallery scan or an image comparison — can no longer drive a runaway allocation: the decoders

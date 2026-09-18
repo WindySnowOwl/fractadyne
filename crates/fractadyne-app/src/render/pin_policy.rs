@@ -19,6 +19,7 @@ fn pin() -> PinnedRefresh {
         ss: 1,
         orbit_id: 7,
         orbit_len: 868,
+        ref_pt: None,
         started_frame: 1_000,
     }
 }
@@ -31,10 +32,35 @@ fn inputs() -> PinInputs {
         pan_spans: 0.0,
         orbit_id: 7,
         orbit_len: 868,
+        same_point: false,
         panel: [960, 540],
         frame_idx: 1_010,
         cursor: 400_000,
     }
+}
+
+#[test]
+fn a_same_point_extension_keeps_the_pin() {
+    // The lookahead re-installs the SAME reference point, longer (or merely with fresh tables),
+    // every ~0.2 s at 4.0×: the stored per-pixel state resumes against an identical prefix.
+    let mut i = inputs();
+    i.same_point = true;
+    i.orbit_id = 8;
+    i.orbit_len = 900;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Continue, "extension");
+    i.orbit_len = 868;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Continue, "same length, new id");
+    // A SHORTER same-point orbit is a collapse / re-pick: its prefix is not the pinned one.
+    i.orbit_len = 800;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Stop(PinStop::Orbit), "shorter");
+    // Any other point is another orbit, however long.
+    i.same_point = false;
+    i.orbit_len = 900;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Stop(PinStop::Orbit), "other point");
+    // And a same-point install never outranks completion or the settle edge.
+    i.same_point = true;
+    i.cursor = 1_000_000;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Adopt);
 }
 
 #[test]

@@ -2206,6 +2206,21 @@ fn reduce_period(
         zy = ny;
         dx = ndx;
         dy = ndy;
+        // ⛔⭐⭐**ONLY A DIVISOR OF `p_est` CAN BE THE TRUE PERIOD.** The reduction exists because
+        // `detect_period` may return an integer MULTIPLE of the true period, and the reason that is
+        // harmless is exactly `Z_m = 0 ⟹ Z_{jm} = 0` — which runs one way only. Scanning every `n`
+        // instead asked a different question ("is any lower-period nucleus within tolerance of this
+        // point"), and near a deep atom the answer is yes: the seahorse seed at 1e6× detected 998
+        // correctly, Newton converged on the 998 nucleus, and this loop then returned **973** — a
+        // real neighbouring minibrot, but not this one. `find_nucleus` handed back one atom's
+        // PERIOD with another atom's CENTRE, so the jump landed ~500,000 atom-widths off target and
+        // `--selftest`'s NR-zoom check went red. Shallower views were worse (39 at 1e1.8×, 468, 858)
+        // because the tolerance is a thousandth of the VIEW span and so loosens as the view widens.
+        // Restricting to divisors makes the test answer the question the reduction is actually for,
+        // and it cannot loosen with the view.
+        if p_est % n != 0 {
+            continue;
+        }
         let d_l2 = log2_abs_c(&dx, &dy);
         if !d_l2.is_finite() {
             continue;

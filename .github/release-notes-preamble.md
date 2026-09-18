@@ -21,7 +21,7 @@ faster** there — more so the deeper you go.
 It is not a general speed-up: it does not raise the frame rate, and it does not change the picture.
 
 - **The images are byte-identical.** Verified, not assumed: the same reference orbits across every
-  fractal formula, at arithmetic widths from 64 bits to 132,000 bits, plus the full 38-location
+  fractal formula, at arithmetic widths from 64 bits to 132,000 bits, plus the full 39-location
   deep-zoom comparison corpus. A difference between the two builds would be a bug worth reporting.
 - **Your settings, session and saved locations are shared.** They live in your user profile, not
   beside the executable, so you can switch between the two builds freely and nothing needs

@@ -513,10 +513,12 @@ impl FractadyneApp {
                         ui.separator();
                         ui.checkbox(&mut self.coloring.normalize_live, "Normalize deep colors")
                             .on_hover_text(
-                                "Remap the palette to the view's measured escape range at extreme \
-                                 depth, so dense fields read as structure instead of speckle. \
-                                 Smooth method only; ordinary views are unaffected.",
+                                "Remap the palette to the view's measured escape range when a dense \
+                                 field would otherwise read as speckle. A view that does not alias \
+                                 is left alone — tick 'Always fit range' to remap regardless. \
+                                 Smooth method only.",
                             );
+                        self.fit_range_checkbox(ui);
                         self.log_scale_checkbox(ui);
                         ui.label(
                             egui::RichText::new(
@@ -977,14 +979,16 @@ impl FractadyneApp {
                 // Click-to-zoom tool (single view): arm left-click = dive into the point,
                 // right-click = back out; drag still pans. Factor set in Settings ▸ Navigation.
                 if ui
-                    .add_enabled(
-                        !self.dual,
-                        egui::SelectableLabel::new(self.click_zoom, crate::icons::CLICK_ZOOM),
-                    )
+                    .add(egui::SelectableLabel::new(self.click_zoom, crate::icons::CLICK_ZOOM))
                     .on_hover_text(format!(
                         "Click-to-zoom ({:.0}×): left-click dives into the point, \
-                         right-click backs out (drag still pans). Factor in Settings ▸ Navigation.",
-                        self.render_cfg.click_zoom_factor
+                         right-click backs out (drag still pans). Factor in Settings ▸ Navigation.{}",
+                        self.render_cfg.click_zoom_factor,
+                        if self.dual {
+                            " Pin the Julia c with Ctrl+click while this is on."
+                        } else {
+                            ""
+                        }
                     ))
                     .clicked()
                 {

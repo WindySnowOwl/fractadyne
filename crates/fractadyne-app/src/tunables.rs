@@ -509,6 +509,98 @@ pub(crate) const REFRESH_MAX_SECS: f64 = 0.15;
 
 pub(crate) const REFRESH_MIN_DRIFT: f64 = 0.02;
 
+/// Target GPU time of ONE motion / pinned-refresh chunk pass, ms (design/live-zoom-smoothing.md
+/// P-A). The frame budget (`TDR_BUDGET_MS`, 400 ms real) is a SAFETY bound; before this constant
+/// existed it also SIZED every motion pass, so a refresh right after a jump or a mode switch was a
+/// single 200–445 ms dispatch (measured 2026-09-16: 1e26 → 1e32 at 1.0× ran 26 fps with 89 frames
+/// over 100 ms, while the same band inside a continuous dive ran 17.7 ms — the continuous dive
+/// only escaped because the motion-jam gate happened to clamp it to bootstrap-size passes). A
+/// pass is now sized from the MEASURED nominal-steps-per-ms of the current mode
+/// (`Perf::motion_rate`) to land near this; the TDR budget stays the ceiling. 10 ms leaves the
+/// colour pass and the present inside a 16.7 ms frame.
+pub(crate) const MOTION_PASS_MS: f64 = 10.0;
+
+/// The most a held frame may MAGNIFY before its refresh lands, octaves — the zoom-rate-aware half
+/// of the refresh sizing. At `zoom_oct_s` octaves per second the refresh has `HELD_MAX_OCT /
+/// zoom_oct_s` seconds, i.e. that many `MOTION_PASS_MS` passes, and the refresh RESOLUTION is
+/// sized so the whole ask fits in them (`refresh_res_cap`): a fast zoom trades sharpness for
+/// cadence, a slow one gets its detail back. 0.5 = a 1.41× held frame, the same figure the
+/// presenter's `REFRESH_OCTAVES` refresh trigger uses, so the two policies agree.
+pub(crate) const HELD_MAX_OCT: f64 = 0.5;
+
+/// The most a held frame may magnify when the view arrived by an instantaneous JUMP, octaves.
+///
+/// ⭐**A held frame stops carrying information long before it stops being a valid transform.** The
+/// reprojection may legitimately magnify the last good frame while a fresh reference builds, and
+/// [`HELD_MAX_OCT`] keeps that small during continuous motion by sizing refreshes to land in time.
+/// A jump has no cadence to size: a 100× click-to-zoom moves the view 6.64 octaves in one frame and
+/// the reference rebuild takes ~158 ms (measured 2026-09-18 at 2^174), so for ~8 frames the display
+/// was the old frame magnified 100× — an 11×11-pixel patch of a 1084-pixel panel, stretched out. A
+/// flat field, and BLACK whenever that patch happened to be dark, which is why the report was
+/// "sometimes the screen goes black" rather than always. 3 octaves keeps ~135 px of real content on
+/// screen, which reads as a blocky version of where you clicked instead of nothing at all.
+///
+/// ⛔**Applies to jumps ONLY** (`zoom_vel == 0`), and that restriction is the whole design. Flooring
+/// the scale during a DIVE was tried and reverted: `uv_off` is `px · scale`, so a scale clamped
+/// above its true value translates the held frame too far, and with the view still moving it
+/// visibly slides frame to frame — the reason the continuous floor sits all the way down at 2^-40.
+/// A jump is static by construction (click-to-zoom zeroes `zoom_vel`), so there is no motion for a
+/// clamped transform to slide against.
+pub(crate) const HELD_JUMP_MAX_OCT: f64 = 3.0;
+
+/// A refresh may take at most this long regardless of zoom rate, seconds — at slow rates the
+/// octave budget alone would allow multi-second pins (0.17 oct/s at the slider's bottom = 3 s),
+/// and a refresh cadence below ~4/s reads as stepping even when nothing is magnified much.
+pub(crate) const REFRESH_TARGET_S: f64 = 0.25;
+
+/// Opening iteration step of a motion / pinned-refresh progression in a mode with no measured
+/// pass yet, and the base of its growth limiter: a pass may at most DOUBLE its predecessor. The
+/// rate estimate lags a dispatch by 2–3 frames, so without the limiter a cheap 256-iteration pass
+/// primed a 5,762-iteration one that cost 257 ms (traced 2026-09-16, floatexp entry at 1e28.4);
+/// doubling meets a cost cliff with at most one ~2× overshoot, which the wall-clock cut
+/// (`Perf::motion_wall_cut`) then halves the next frame. 512 iterations at a native 1.6 Mpx frame
+/// is 8e8 nominal steps — ~4 ms in the dearest regime measured on the dev box.
+pub(crate) const MOTION_STEP_OPEN: u32 = 512;
+
+/// Price target for a PINNED-refresh pass, ms — the pin is priced and serialized by the same
+/// ledger as the settled walk (`chunk_inflight`, `chunk_band_license`, `chunk_step_factor`),
+/// because the nominal-steps rate alone mispriced it twice in one trace: in a fast-escape region
+/// a 256-iteration sliver reads as ~0.2 ms and primes a 7,000-iteration pass that costs 100 ms
+/// (the GPU cost is the longest pixel CHAIN there, not the step sum). The price is the wall time
+/// from the pass's dispatch to its COMPLETION callback (`Perf::pin_inflight`), minus the
+/// `PIN_PASS_FRAMES` intervals of pipeline latency every pass pays even when it is free — so a
+/// pass that finished inside its own frame prices ~0 (×2 fast lane), one extra frame holds
+/// (+25 %), two extra frames drift down, past four is a cliff (÷4) — the ledger's own rules.
+pub(crate) const MOTION_PIN_TARGET_MS: f64 = 20.0;
+
+/// Present intervals between a pin pass's dispatch and the earliest frame its completion can
+/// be observed (submit after `update`, register the callback next frame, observe the frame
+/// after): the latency subtracted from a pass's price, and the cadence a pin can dispatch at —
+/// one pass per this many frames — which the refresh-resolution sizing accounts for.
+pub(crate) const PIN_PASS_FRAMES: u32 = 2;
+
+/// Frames a pin waits for its pass's GPU timestamp reading before pricing it from the completion
+/// stamp instead (readings land 2–3 frames after their dispatch; a sink that never delivers
+/// must not wedge the pin).
+pub(crate) const PIN_PRICE_WAIT_FRAMES: u64 = 5;
+
+/// Pin passes allowed in the GPU queue at once. One (strict serialization, priced before the
+/// next) made a pass every third frame, and at 4.0× a 60k-iteration refresh then took longer
+/// than the 2-octave drift abandon — the held frame aged 12 octaves on screen while the cadence
+/// read perfect. Two pipelines the completion latency away: a pass per frame while passes are
+/// cheap, and the worst stall is two target-sized passes. Pricing pairs the LATEST pass with
+/// its own timestamp reading; the older one goes unpriced (the ledger learns from every other
+/// pass, which is plenty).
+pub(crate) const PIN_INFLIGHT_MAX: u32 = 2;
+
+/// Wall time after which a pin pass still "in flight" is deemed complete, microseconds. The
+/// completion callback is registered in `update`; a headless harness (`--livetest`,
+/// `--divetest`) never runs it, and a lost device never fires it — measured on the grand-tour
+/// livetest: every glide pin stuck at its opening pass, abandoned on drift every ~0.3–1.3 s,
+/// and the wall-shed retreat firing 36 times where the unpaced build fired 6. Ten frames' worth
+/// is far past any pass the pacer would size; the gate reopens on it.
+pub(crate) const PIN_COMPLETION_TIMEOUT_US: u64 = 170_000;
+
 /// Pinned refresh (option C, design/mode2-chunking.md §10-§11): a chunked view's refresh runs its
 /// progression across frames at a PINNED view while the display reprojects the previous complete
 /// frame. Abandon the pin when the LIVE view zooms this many octaves past it — the detail it would
@@ -573,6 +665,17 @@ pub(crate) const PREFETCH_OCT: f64 = 0.5;
 /// build's candidate scoring already fans out across all cores, so concurrent slots briefly
 /// oversubscribe threads — harmless for compute-bound bursts.
 pub(crate) const PREFETCH_SLOTS: usize = 6;
+
+/// Time runway (seconds) the INTERACTIVE lookahead keeps queued ahead of a glide, so the queue
+/// scales with the user's zoom-rate slider instead of covering a fixed 3 octaves: at 1.0×
+/// (0.67 oct/s) `PREFETCH_SLOTS` already spans ~4.5 s; at 4.0× (2.67 oct/s) the same six slots
+/// last 1.1 s — shorter than a deep build — so the slot count grows toward `PREFETCH_SLOTS_MAX`.
+/// Spacing stays `PREFETCH_OCT` (the lag-safe value above); only the queue LENGTH moves.
+pub(crate) const PREFETCH_RUNWAY_S: f64 = 3.0;
+
+/// Ceiling on the rate-scaled interactive queue. Each held slot keeps a finished reference orbit
+/// resident (megabytes at depth), and `PREFETCH_MAX_INFLIGHT` still bounds the CPU side.
+pub(crate) const PREFETCH_SLOTS_MAX: usize = 12;
 
 /// ⭐How many lookahead builds may be IN FLIGHT at once, as opposed to how many slots the
 /// queue holds. Previously unbounded: the refill loop below spawns until the queue is

@@ -80,6 +80,7 @@ mod icons;
 mod icons_coverage;
 mod livetest;
 mod motiontest;
+mod zoomtest;
 mod profile;
 mod refcache_persist;
 mod render;
@@ -648,9 +649,34 @@ pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
         "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
         "--render", "--render-tour", "--torture", "--gputest", "--oomtest", "--refdiag",
         "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
+        "--zoomtest",
         "--chunk-sweep", "--deviceloss-repro", "--bench-bignum", "--shot", "--soak", "--pickcheck",
     ];
     args.iter().any(|a| TASK_FLAGS.contains(&a.as_ref()))
+}
+
+/// Whether THIS process was launched for a task (`is_task_invocation` over its own arguments),
+/// read once. The runtime gate behind "off under harnesses" for features that must not perturb a
+/// recorded baseline — the interactive reference lookahead, progressive supersampling.
+pub(crate) fn launched_as_task() -> bool {
+    static TASK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TASK.get_or_init(|| {
+        let argv: Vec<String> = std::env::args().skip(1).collect();
+        is_task_invocation(&argv)
+    })
+}
+
+/// Whether analytic palette anti-aliasing is on (box-filter the palette over each pixel's
+/// footprint). It band-limits palette-phase aliasing, but the footprint is high at the fractal
+/// BOUNDARY at every depth (the dwell packs densely there), so it also softens the crisp boundary
+/// shell on shallow views — a global look change. OFF by default for that reason; the real
+/// deep-zoom speckle fix is progressive on-settle supersampling (`drive_accumulation`).
+/// `FRACTADYNE_PALETTE_AA=1` (or `on`/`true`) opts in.
+pub(crate) fn palette_aa_enabled() -> bool {
+    matches!(
+        std::env::var("FRACTADYNE_PALETTE_AA").ok().as_deref().map(str::trim),
+        Some("1") | Some("on") | Some("true") | Some("yes")
+    )
 }
 
 #[cfg(test)]
@@ -921,6 +947,20 @@ impl RenderMode {
 /// ⚠**`enabled` is OFF by default and persisted** (`SessionState::perf_panel`) — the real value is
 /// resolved where the app is built, from the session plus `--perf` / `--no-perf`. Toggle it from
 /// View ▸ Performance panel or the toolbar button.
+/// Per-frame progressive-SSAA command the app computes (`drive_accumulation`) and hands the GPU
+/// through `MandelbrotParams`. All-default = accumulation off (classic live frame).
+#[derive(Clone, Copy, Default)]
+struct AccumCmd {
+    /// Sub-pixel jitter of the sampling grid, in fractions of a pixel.
+    jitter: [f32; 2],
+    /// Present the running average (vs this frame's colour).
+    present: bool,
+    /// Fold this (complete, jittered) frame into the average.
+    commit: bool,
+    /// Restart the average before folding (sample 0 / view change).
+    reset: bool,
+}
+
 struct Perf {
     enabled: bool,
     /// Height (px) of the bottom status bar as of the last frame — instrumentation for `--uitest`,
@@ -959,6 +999,9 @@ struct Perf {
     /// Of those, the ones the script-playback LOOKAHEAD spawned — the counter its rate backstop
     /// reads, so a runaway queue stops itself instead of merely being reported.
     prefetch_count: u32,
+    /// Lookahead builds INSTALLED (tour or interactive), cumulative — the number that says the
+    /// lookahead actually served the dive, as opposed to merely spawning (`--divetest` `look`).
+    lookahead_installs: u64,
     /// Latched once per session: a build rate this high is a bug, not a workload (the reactive
     /// path plus a full lookahead queue is single digits per second).
     build_storm_warned: bool,
@@ -1123,6 +1166,60 @@ struct Perf {
     /// that lost the device. The pessimistic latch costs at most a few ×1.5 climb frames; the
     /// optimistic one costs the device, and the asymmetry is the whole design.
     mode_rate: [[f64; Self::MODE_RATE_SLOTS]; 2],
+    /// SMOOTHNESS-pacing rate per mode: nominal steps per ms as currently measured (an
+    /// asymmetric EMA — a slower reading is adopted at once, a faster one is blended in), as
+    /// opposed to `mode_rate`'s all-time pessimistic minimum. `mode_rate` sizes SAFETY floors and
+    /// opening guesses, where the worst case is the only honest number; this sizes the motion
+    /// and pinned-refresh chunk passes to `MOTION_PASS_MS` (`render::motion_pass_steps`), where
+    /// the CURRENT regime is the honest number and the TDR budget remains the ceiling. GPU
+    /// timestamps only, like `mode_rate` (see `apply_iterate_measurement`).
+    motion_rate: [[f64; Self::MODE_RATE_SLOTS]; 2],
+    /// Observed zoom speed of the main view, octaves per second (EMA of |Δlog2mag| per frame
+    /// interval, jumps excluded). Read by the rate-aware refresh sizing — whatever drives the
+    /// zoom (Space glide at the slider's rate, wheel, autopilot, a tour), the refresh cadence is
+    /// sized from what the view actually does.
+    zoom_oct_s: f64,
+    /// `log2_magnification()` at the previous frame-interval capture, for `zoom_oct_s`.
+    last_l2: f64,
+    /// Iteration step of the last motion / pin chunk pass sized per view — the growth limiter's
+    /// memory (`MOTION_STEP_OPEN`): the next pass may at most double it, a wall-clock cut halves
+    /// it, a mode switch clears it.
+    motion_step_last: [u32; 2],
+    /// Pinned-refresh passes submitted and not yet COMPLETED on the GPU, per view — the pin's
+    /// serialization gate. The frame interval cannot price a pass: the swap chain hides a
+    /// pass's cost for two frames (frames in flight), so a 100 ms pass reads as a 17 ms
+    /// interval, is priced "cheap", doubles, and three of them stack before the acquire finally
+    /// blocks for the whole backlog (traced 2026-09-16: 350–400 ms stalls at the floatexp entry
+    /// at every zoom rate). A pass is priced by its completion callback instead
+    /// (`on_submitted_work_done`, the same signal `full_inflight` uses), and the next pass waits
+    /// for it — at most one pin pass in the queue, ever.
+    pin_inflight: [u32; 2],
+    /// Completion registrations owed for pin passes, drained in `update` on the following frame
+    /// for the same reason as `full_reg_pending`.
+    pin_reg_pending: [u8; 2],
+    /// Fired pin-pass completion callbacks since last drain.
+    pin_done: [std::sync::Arc<std::sync::atomic::AtomicU32>; 2],
+    /// When the last pin pass COMPLETED (`app_micros()`, stored by the callback itself) and when
+    /// it was dispatched — the pass's wall price to sub-frame precision. Observing completion at
+    /// the next `update` quantizes the price to whole frames, and a 30 ms pass then reads as
+    /// "free": the ledger's fast lane quadruples it to 120 ms, the cliff quarters it back, and
+    /// the cycle puts a ~150 ms frame on screen every few pins (measured in the 1e12–1e40 bands
+    /// of a 1.0× dive at native resolution).
+    pin_done_at: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    pin_dispatch_at: [u64; 2],
+    /// The last dispatched pin pass: its nominal steps (the key its GPU timestamp reading is
+    /// paired by — `apply_iterate_measurement` stores the FIRST reading whose steps match), the
+    /// frame it went out, and the paired GPU time (< 0 = not yet). The completion stamp above is
+    /// quantized to the queue's poll cadence (~two frames, measured 33.5 ms for a 1.7 ms pass),
+    /// which cannot price a 20 ms target; the timestamp query brackets the pass itself.
+    pin_pass_steps: [u64; 2],
+    pin_pass_frame: [u64; 2],
+    pin_pass_gpu_ms: [f64; 2],
+    /// Frames the last pinned refresh took from start to adoption (or abandonment), and the
+    /// resolution scale it ran at — the measured input of the refresh-resolution feedback
+    /// (`refresh_res_cap` is a model; this is what actually happened). Zero = no pin yet.
+    pin_frames_last: [u64; 2],
+    pin_res_last: [f64; 2],
     /// Milliseconds of DELIBERATE `fps_cap` sleep at the end of the previous frame.
     ///
     /// ⚠Subtracted from the next frame interval before anything prices cost off it. The interval is
@@ -1181,6 +1278,16 @@ struct Perf {
     adopt_complete: [u64; 2],
     chunk_motion_frames: [u64; 2],
     dirty_shown: [u64; 2],
+    /// Frames of "what did we actually present" logging still owed at the START of the current
+    /// glide, per view. Refilled to [`GLIDE_PROBE_FRAMES`] whenever the view is not interacting,
+    /// spent while it is.
+    ///
+    /// ⭐**Bounded by the question it answers.** The 2026-09-17 report is "it goes black when
+    /// pressing space to zoom initially" — a claim about the first fraction of a second of a
+    /// glide, not about a dive in progress. A probe that logged every held frame would write
+    /// thousands of lines through a long dive and bury the very frames being asked about, so this
+    /// one covers exactly the opening of each glide and then goes quiet until the key is released.
+    glide_probe_left: [u32; 2],
     /// A pinned refresh in flight per view (option C, design/mode2-chunking.md §10-§11): the
     /// chunked refresh renders across frames at this captured view while the display keeps
     /// reprojecting the previous complete frozen texture; adopted only on completion.
@@ -1227,6 +1334,50 @@ struct Perf {
     hold_uv: [[f32; 3]; 2],
     /// True while a view's settle grid has tiles left — holds the AA ramp and keeps repaints coming.
     tile_pending: [bool; 2],
+    /// Progressive on-settle supersampling (deep-zoom despeckle): samples folded so far, whether the
+    /// accumulation stage is active for this view, the current sample's sub-pixel jitter, and the
+    /// per-frame command handed to the GPU via `MandelbrotParams`. See `drive_accumulation`.
+    accum_count: [u32; 2],
+    accum_active: [bool; 2],
+    /// The current sample has been folded; the NEXT frame advances (re-arms the grid for the next
+    /// jitter). Split across two frames so the fold reads the completed frame before a re-arm
+    /// re-iterates over `tex_view`.
+    accum_committed: [bool; 2],
+    accum_jitter: [[f32; 2]; 2],
+    accum_cmd: [AccumCmd; 2],
+    /// The colour-state signature (`accum_color_sig`) the running average was started under, and
+    /// the supersampling factor its samples are rendered at. The average is a COLOUR texture, so
+    /// any change to how a frame is coloured — palette, cycle/offset, method, effects, live
+    /// normalization, AA — makes every folded sample stale: the run restarts. Likewise a sample at
+    /// a different `ss` than sample 0 would fold a differently-filtered image into the mean.
+    accum_sig: [u64; 2],
+    accum_ss: [u32; 2],
+    /// The view sample 0 of the running average was folded at — (log2 magnification, f64
+    /// centre) — so a later fold at ANOTHER view is caught and logged (always, no trace flag):
+    /// that is the one way a converged average shows a translucent copy of another location,
+    /// and the field report of 2026-09-16 could not be reproduced in the harness.
+    accum_view0: [(f64, f64, f64); 2],
+    /// What the GPU reports the iteration texture's pixels are WHOLLY drawn at (`u64::MAX` = older
+    /// pixels may remain under the newest writes). ⭐This is the provenance check the other two
+    /// guards cannot make: `accum_fold_clean` rules on the FRAME and `accum_view0` on the
+    /// VIEWPORT, and a texture carried across a view change by a resize passes both while still
+    /// showing the previous location underneath. Written by the paint callback, read a frame
+    /// later — which is in time, because accumulation only ever starts on a settled view.
+    content_stamp: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// The stamp `build_params` last handed the GPU for each view, so the reading above can be
+    /// compared against the view it describes rather than against whatever is current now.
+    content_stamp_asked: [u64; 2],
+    /// One log line per waiting episode, not per frame: a settle can spend many frames with the
+    /// texture not yet wholly its own, and a user's session log is the thing being protected here.
+    content_wait_logged: [bool; 2],
+    /// Previous frame's view per panel — magnification, full-precision centre, and the navigation
+    /// epoch it was taken at — for the jump tripwire in `track_view_jump`.
+    view_prev: [Option<(f64, fractadyne_core::BigFloat, fractadyne_core::BigFloat, u64)>; 2],
+    /// Bumped by `record_nav`, i.e. by every DELIBERATE jump, so the tripwire can tell one from a
+    /// move nothing asked for.
+    nav_epoch: u64,
+    /// One jump line per episode rather than per frame.
+    view_jump_logged: [bool; 2],
     /// `frame_idx` of the last frame that spent its tile: one budget-sized tile per submission, so
     /// two deep views can't pair their dispatches past the watchdog.
     tile_turn: u64,
@@ -1332,6 +1483,13 @@ struct Perf {
     norm_locked: [bool; 2],
     /// EMA-smoothed MEAN |Δ smooth-iter| between neighbouring escaped pixels, per view.
     norm_grad: [Option<f32>; 2],
+    /// The palette window actually SHOWN, gliding toward `norm_range` (the fed target) a fixed
+    /// fraction per frame. The target moves in steps — one per escape-range reading, every few
+    /// frames — and a step is a visible colour snap: measured on an 8-octave glide, one frame
+    /// moved the window by 109% of its own width. The eye reads that as the colours "bouncing
+    /// around"; gliding turns the same information into a continuous drift. See
+    /// `render::norm_glide_step`.
+    norm_shown: [Option<(f32, f32)>; 2],
     /// This view's frames are currently chunk-governed (`chunk_over`), stamped every
     /// `build_params`. The norm drain keys on THIS, not on the cursor: escape readings lag their
     /// dispatches by 2-3 frames, so a completed walk's LAST band lands with the cursor already at
@@ -1345,6 +1503,12 @@ struct Perf {
     /// where the BLA skips; this measured scale grows toward native while frames stay near vsync and
     /// backs off when they run long. Only deep perturbation motion reads it.
     motion_res: f64,
+    /// Has `motion_res` been stepped on a REAL frame's own interval yet (in the current arithmetic
+    /// mode)? Until it has, an unpinned refresh is sized by the rate model's opening guess; once
+    /// it has, that guess is retired and this measured loop owns the size. A model that keeps
+    /// bounding a measurement after the measurement exists is the bug this flag ends — see the
+    /// `rate_res_cap` block in `render.rs`.
+    motion_res_measured: bool,
 }
 
 impl Perf {
@@ -1389,6 +1553,145 @@ impl Perf {
         }
         let cur = self.mode_rate[v][s];
         self.mode_rate[v][s] = if cur > 0.0 { cur.min(rate) } else { rate };
+    }
+
+    /// The smoothness-pacing rate for this view's CURRENT mode (nominal steps per ms), or 0.0
+    /// when nothing has been measured in it yet — the caller then falls back to the opening
+    /// guess (`bootstrap_steps`), never to the full budget. See `Perf::motion_rate`.
+    pub(crate) fn motion_rate_now(&self, v: usize) -> f64 {
+        let slot = Self::slot(self.budget_mode[v]);
+        let this = slot.map_or(0.0, |s| self.motion_rate[v][s]);
+        if this.is_finite() && this > 0.0 {
+            return this;
+        }
+        // Nothing measured in this mode yet — the frames right after a crossover, where the
+        // first refreshes are sized. The most pessimistic rate seen in any OTHER mode, under
+        // the same margin the safety controller applies to the same gap (`bootstrap_steps`),
+        // beats a constant: measured at the 1e4 hand-over, the constant opening guess floored at
+        // `TDR_MIN_STEPS` sized 7-iteration passes and the pin never completed at 4.0×.
+        let other = self.motion_rate[v]
+            .iter()
+            .enumerate()
+            .filter(|(s, _)| slot != Some(*s))
+            .map(|(_, r)| *r)
+            .filter(|r| r.is_finite() && *r > 0.0)
+            .fold(0.0_f64, |acc, r| if acc == 0.0 { r } else { acc.min(r) });
+        if other > 0.0 {
+            other / crate::tunables::cost().mode_rate_unknown_margin.max(1.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// Fold one priced dispatch into this view's per-mode SMOOTHNESS rate. Asymmetric on
+    /// purpose: a reading slower than the estimate replaces it (the next pass must not be sized
+    /// off a regime that has just got more expensive — entering a minibrot interior, a BLA tree
+    /// that stopped skipping), a faster one is blended in at `MOTION_RATE_GROW` so one lucky
+    /// early-escape pass cannot size the next one at a hundred times the work. The same
+    /// mode-switch straddle rule as `record_mode_rate`.
+    fn record_motion_rate(&mut self, v: usize, ms: f64, steps: u64) {
+        const MOTION_RATE_GROW: f64 = 0.3;
+        let (Some(s), true) = (Self::slot(self.budget_mode[v]), ms > 0.0 && steps > 0) else {
+            return;
+        };
+        let since = self.frame_idx.saturating_sub(self.mode_switch_frame[v]);
+        if self.mode_switch_frame[v] != u64::MAX && since < 3 {
+            return;
+        }
+        let rate = steps as f64 / ms;
+        if !rate.is_finite() || rate <= 0.0 {
+            return;
+        }
+        let cur = self.motion_rate[v][s];
+        // A reading pulls the estimate DOWN at once and pushes it UP at `MOTION_RATE_GROW`.
+        // ⛔NO GATE ON THE WAY UP — two were tried and both deadlocked the same way: "only a
+        // pass ≥ ¼ of the current sizing may grow it" and "only a reading ≥ 1 ms may grow it".
+        // A pessimistic cut sizes the next passes below any such gate, so no pass can ever
+        // qualify again, the pin crawls at its floor and the frozen frame ages 8–13 octaves on
+        // screen. The estimate is a HINT: the pass growth limiter (×2 per pass), the band
+        // licence, the wall-clock cut and the TDR budget are the guards, and a deduped 0.2 ms
+        // reading that inflates the hint is caught by those on the next pass.
+        self.motion_rate[v][s] = if cur <= 0.0 || rate < cur {
+            rate
+        } else {
+            cur + (rate - cur) * MOTION_RATE_GROW
+        };
+    }
+
+    /// Everything a GPU TIMESTAMP reading feeds besides the safety budget: the per-mode
+    /// pessimistic rate, the smoothness rate, and the pinned pass's own price (the first reading
+    /// whose nominal steps are the pass's — a deduped re-dispatch of the same range runs no
+    /// iterate and produces no reading, so the first match is the real pass). ONE function so
+    /// the headless harnesses, which keep their own copy of the controller loop, cannot drift
+    /// from the app on which consumers a reading reaches (see `--livetest`).
+    pub(crate) fn record_gpu_reading(&mut self, v: usize, ms: f64, steps: u64) {
+        self.record_mode_rate(v, ms, steps);
+        self.record_motion_rate(v, ms, steps);
+        if steps > 0 && steps == self.pin_pass_steps[v] && self.pin_pass_gpu_ms[v] < 0.0 {
+            self.pin_pass_gpu_ms[v] = ms;
+        }
+    }
+
+    /// A harness that renders each frame SYNCHRONOUSLY (a readback that waits for the queue)
+    /// has, by the time the frame returns, completed every dispatch the GUI would learn about
+    /// through `on_submitted_work_done`. It has no event loop to arm those callbacks, so it
+    /// retires the pin gate here instead — otherwise pins wait `PIN_COMPLETION_TIMEOUT_US` per
+    /// pass for a completion that never arrives and every glide's pin drifts out before it can
+    /// adopt. The stamp is "now": the pass finished before the readback did.
+    pub(crate) fn retire_synchronous_dispatches(&mut self, v: usize) {
+        self.pin_inflight[v] = 0;
+        self.pin_reg_pending[v] = 0;
+        self.pin_done[v].store(0, std::sync::atomic::Ordering::Relaxed);
+        self.pin_done_at[v].store(app_micros(), std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// WALL-CLOCK CUT for the smoothness pacer, run at every frame-interval capture. The GPU
+    /// timestamp behind `record_motion_rate` lands 2–3 frames after its dispatch; the interval
+    /// that follows a motion / pin pass is available NOW, and a long one is proof the pass was
+    /// over-sized (it includes the present wait, i.e. it errs toward cutting). Any dispatch in
+    /// the last two frames is a candidate (frame latency 1 puts a heavy pass's cost one interval
+    /// late), so the cut can fire on the wrong frame's cost — the conservative direction; the
+    /// estimate recovers at `MOTION_RATE_GROW` per representative reading.
+    fn motion_wall_cut(&mut self, v: usize, dt_ms: f64) {
+        if self.fe_steps_last[v] == 0 || !(dt_ms > 0.0) {
+            return;
+        }
+        if self.frame_idx.saturating_sub(self.fe_dispatch_frame[v]) > 2 {
+            return;
+        }
+        let Some(s) = Self::slot(self.budget_mode[v]) else {
+            return;
+        };
+        let cur = self.motion_rate[v][s];
+        // THE LIFT: a dispatch followed by a frame that fit its present interval proves the
+        // rate was at least steps / interval. It is the deadlock-proof half of this estimator —
+        // however low a cut has pushed the hint, the very next pass that fits a frame restores
+        // at least what it just did, with no reading threshold to fail.
+        if dt_ms <= crate::tunables::MOTION_PASS_MS * 2.0 {
+            let proved = self.fe_steps_last[v] as f64 / dt_ms;
+            if proved.is_finite() && proved > cur {
+                self.motion_rate[v][s] = proved;
+            }
+            return;
+        }
+        let cut_at = crate::tunables::MOTION_PASS_MS * 2.5;
+        if !(dt_ms > cut_at) {
+            return;
+        }
+        // Only a dispatch of at least half the current sizing can be blamed for the interval:
+        // a long frame behind a tiny pass was something else (a reference build on this thread,
+        // a present blocked by an unrelated submission), and pricing the tiny pass at that
+        // interval is the cut that never recovers.
+        if cur > 0.0
+            && (self.fe_steps_last[v] as f64) < 0.5 * cur * crate::tunables::MOTION_PASS_MS
+        {
+            return;
+        }
+        let wall_rate = self.fe_steps_last[v] as f64 / dt_ms;
+        if wall_rate.is_finite() && wall_rate > 0.0 && (cur <= 0.0 || wall_rate < cur) {
+            self.motion_rate[v][s] = wall_rate;
+        }
+        self.motion_step_last[v] = (self.motion_step_last[v] / 2).max(1);
     }
 
     /// The opening guess for this view's CURRENT mode, derived from what has actually been measured
@@ -1439,6 +1742,7 @@ impl Default for Perf {
             build_count: 0,
             builds_per_s: 0.0,
             prefetch_count: 0,
+            lookahead_installs: 0,
             build_storm_warned: false,
             rate_t0: None,
             recompute_per_s: 0.0,
@@ -1481,10 +1785,47 @@ impl Default for Perf {
             budget_mode: [u32::MAX, u32::MAX],
             mode_switch_frame: [u64::MAX, u64::MAX],
             mode_rate: [[0.0; Self::MODE_RATE_SLOTS]; 2],
+            motion_rate: [[0.0; Self::MODE_RATE_SLOTS]; 2],
+            zoom_oct_s: 0.0,
+            last_l2: 0.0,
+            motion_step_last: [0, 0],
+            pin_inflight: [0, 0],
+            pin_reg_pending: [0, 0],
+            pin_frames_last: [0, 0],
+            pin_res_last: [1.0, 1.0],
+            pin_done_at: [
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            ],
+            pin_dispatch_at: [0, 0],
+            pin_pass_steps: [0, 0],
+            pin_pass_frame: [0, 0],
+            pin_pass_gpu_ms: [-1.0, -1.0],
+            pin_done: [
+                std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            ],
             cap_sleep_ms: 0.0,
             bla_suppress_until: [0, 0],
             tile_state: [None, None],
             tile_pending: [false, false],
+            accum_count: [0, 0],
+            accum_active: [false, false],
+            accum_committed: [false, false],
+            accum_jitter: [[0.0, 0.0], [0.0, 0.0]],
+            accum_cmd: [AccumCmd::default(), AccumCmd::default()],
+            accum_sig: [0, 0],
+            accum_ss: [1, 1],
+            accum_view0: [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0)],
+            content_stamp: [
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+            ],
+            content_stamp_asked: [u64::MAX; 2],
+            content_wait_logged: [false, false],
+            view_prev: [None, None],
+            nav_epoch: 0,
+            view_jump_logged: [false, false],
             chunk_ok: false,
             chunk_fe_ok: false,
             chunk_cursor: [0, 0],
@@ -1493,6 +1834,7 @@ impl Default for Perf {
             chunk_pending: [false, false],
             adopt_partial: [0, 0],
             adopt_complete: [0, 0],
+            glide_probe_left: [GLIDE_PROBE_FRAMES; 2],
             chunk_motion_frames: [0, 0],
             dirty_shown: [0, 0],
             pin: [None, None],
@@ -1547,8 +1889,10 @@ impl Default for Perf {
             norm_sig: [0, 0],
             norm_locked: [false, false],
             norm_grad: [None, None],
+            norm_shown: [None, None],
             chunk_governed: [false, false],
             motion_res: 0.6,
+            motion_res_measured: false,
         }
     }
 }
@@ -1578,6 +1922,15 @@ pub(crate) fn test_banner_on(launched_for_a_task: bool, force_on: bool, force_of
     } else {
         launched_for_a_task
     }
+}
+
+/// Microseconds since the first call — a process-wide monotonic clock that a GPU completion
+/// callback (any thread) and the frame loop can both read, for pricing a pass by its real
+/// completion time (`Perf::pin_done_at`).
+pub(crate) fn app_micros() -> u64 {
+    use std::sync::OnceLock;
+    static START: OnceLock<std::time::Instant> = OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_micros() as u64
 }
 
 pub(crate) fn zoom_iter_cap(octaves: f64) -> u32 {
@@ -1623,6 +1976,74 @@ mod deep_jump_warning;
 /// blocking on one expensive full-AA frame. `frame` is capped so the shift can't overflow.
 pub(crate) fn aa_ramp(frame: u32, target: u32) -> u32 {
     (1u32 << frame.min(5)).min(target.max(1))
+}
+
+/// Progressive on-settle supersampling (deep-zoom despeckle) tunables.
+/// Only accumulate deeper than `ACCUM_MIN_LOG2` (≈1e10×), where the escape field is undersampled
+/// and speckles.
+pub(crate) const ACCUM_MIN_LOG2: f64 = 33.0;
+
+/// How many sub-pixel samples to fold once the view settles. Each is a full deep re-render, so this
+/// trades convergence quality against how long the view keeps the GPU busy while idle — a real
+/// consideration on hardware prone to sustained-load device loss. Default 24 (a good de-speckle in
+/// ~10–15 s); `FRACTADYNE_ACCUM_TARGET` overrides (clamped 2..=256), or `FRACTADYNE_NO_ACCUM`
+/// disables accumulation entirely.
+pub(crate) fn accum_target() -> u32 {
+    std::env::var("FRACTADYNE_ACCUM_TARGET")
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .map(|n| n.clamp(2, 256))
+        .unwrap_or(24)
+}
+
+/// Van der Corput radical inverse of `i` in `base` (a low-discrepancy value in `[0, 1)`).
+fn radical_inverse(mut i: u32, base: u32) -> f32 {
+    let mut f = 1.0f32;
+    let mut r = 0.0f32;
+    while i > 0 {
+        f /= base as f32;
+        r += f * (i % base) as f32;
+        i /= base;
+    }
+    r
+}
+
+/// Whether the frame `build_params` just built may be folded into the running average — the rule
+/// `accum_confirm` applies, pure so the test pins it: only a REAL frame (no reprojection, no held or
+/// pinned display), with no settle grid, chunk progression or reference build in flight, at the
+/// supersampling factor sample 0 was taken at. `reproject != 0` on sample 0 is the 2026-09-15
+/// ghost: the held reprojection of the previous view, folded as if it were this one.
+pub(crate) fn accum_fold_clean(
+    reproject: u32,
+    display_hold: bool,
+    hold_copy: bool,
+    tile_pending: bool,
+    chunk_pending: bool,
+    building: bool,
+    count: u32,
+    ss: u32,
+    ss0: u32,
+) -> bool {
+    reproject == 0
+        && !display_hold
+        && !hold_copy
+        && !tile_pending
+        && !chunk_pending
+        && !building
+        && (count == 0 || ss == ss0)
+}
+
+#[cfg(test)]
+mod accum_fold_tests;
+
+/// Sub-pixel jitter for accumulation sample `i` — a 2D Halton (base 2, 3) sequence mapped to
+/// `[-0.5, 0.5]`. Sample 0 is the pixel centre `(0, 0)`, so the first accumulated frame equals
+/// today's settled frame exactly (a seamless hand-off from the ordinary settle into accumulation).
+pub(crate) fn accum_jitter_seq(i: u32) -> [f32; 2] {
+    if i == 0 {
+        return [0.0, 0.0];
+    }
+    [radical_inverse(i, 2) - 0.5, radical_inverse(i, 3) - 0.5]
 }
 
 // ================================================================================================
@@ -3442,7 +3863,7 @@ const EASE_TAU: f64 = 0.15; // ease-in/out time constant (seconds)
 /// written inline at the one control that draws them, because checklist step 17 asks a tester to
 /// try each one by name: the row, the buttons and the test that pins their arithmetic all have to
 /// be talking about the same list.
-const CLICK_ZOOM_FACTORS: [f32; 5] = [2.0, 4.0, 10.0, 50.0, 100.0];
+const CLICK_ZOOM_FACTORS: [f32; 6] = [2.0, 4.0, 10.0, 25.0, 50.0, 100.0];
 
 /// The toolbar magnifier buttons' step, as a `zoom_at` factor (< 1 zooms IN). Exact reciprocals,
 /// so in-then-out returns to the magnification you started at rather than drifting a little
@@ -3745,6 +4166,102 @@ impl CenterExpr {
 /// The worker runs only the pure `fractadyne-core` calls; everything that needs `&self` — the
 /// Newton-Raphson zoom target, the label, the navigation — happens on the main thread when the
 /// result arrives.
+/// A nucleus solve started by a snapping click-to-zoom. Deliberately NOT [`FeatureSolve`]: that one
+/// is owned by the Go-to dialog, is abandoned when the dialog closes, and writes its failures into
+/// the dialog's message line. A click has no dialog to report into and must never block, so it gets
+/// its own channel and fails silently — the user keeps the view the click gave them, which is a
+/// perfectly good answer, just not a snapped one.
+/// Diameter of the precision reticle, in physical pixels. Kept modest: it is rendered live at the
+/// post-click magnification, and it has to be cheap enough to follow a moving cursor.
+const RETICLE_PX: u32 = 224;
+
+/// How many frames at the opening of a glide report what was actually presented
+/// ([`Perf::glide_probe_left`]) — about a third of a second at 60 fps, which is the window the
+/// "goes black when pressing space" report is about.
+const GLIDE_PROBE_FRAMES: u32 = 20;
+
+/// How much of the hand's movement the reticle's aim point takes while Shift is held: a quarter, so
+/// aiming is 4× finer than the cursor.
+///
+/// ⛔**The OS pointer speed is not ours to change.** The 2026-09-17 pass asked to "slow mouse
+/// acceleration when the reticle is shown", and the literal reading — `SystemParametersInfo` with
+/// `SPI_SETMOUSESPEED` — is a machine-wide setting belonging to the user's desktop, which an app
+/// must not reach into for its own convenience (and would leave altered if we crashed while it was
+/// held). What actually needs to slow down is the AIM, not the cursor, so the aim is mapped from
+/// the cursor instead: `aim = anchor + (cursor − anchor) × GAIN`, re-anchored each time Shift goes
+/// down. ⭐Absolute rather than accumulated on purpose — an integrating version drifts away from
+/// the hand and can never be walked back, while this one is exactly reversible: return the cursor
+/// to where Shift was pressed and the aim returns with it.
+const RETICLE_AIM_GAIN: f32 = 0.25;
+
+/// What part of the reticle's crosshair a pixel belongs to. `Core` and `Outline` take OPPOSITE
+/// inks, so the mark contrasts with its own edge as well as with the fractal under it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ReticleMark {
+    None,
+    Core,
+    Outline,
+}
+
+/// Classify one reticle pixel, at `(dx, dy)` from the centre in physical pixels, against a reticle
+/// of radius `r`. Four arms that stop short of the centre, plus a ring marking the exact point.
+///
+/// ⭐**The arms stop at `GAP` so the pixel under test is never painted over.** The whole purpose of
+/// the reticle is to show what is at that point; a crosshair that covers it defeats the feature.
+/// The ring is what marks it, which is also why the ring is worth having at all.
+fn reticle_mark(dx: f32, dy: f32, r: f32) -> ReticleMark {
+    const GAP: f32 = 9.0; // arms start here
+    const RING: f32 = 5.0; // radius of the ring around the exact point
+    const CORE: f32 = 1.0; // half-thickness of the mark (≈2 px wide)
+    const EDGE: f32 = 2.2; // half-thickness including the contrast outline
+    let end = (r - 10.0).max(GAP + 4.0); // stop short of the rim stroke
+    let (ax, ay) = (dx.abs(), dy.abs());
+    let d = (dx * dx + dy * dy).sqrt();
+    // An arm runs `along` one axis and is thin `across` the other; `t` widens it in BOTH
+    // directions, so the tips and the gap ends get an outline cap too rather than a bare cut.
+    let arm = |along: f32, across: f32, t: f32| {
+        along >= GAP - t && along <= end + t && across <= t
+    };
+    let hit = |t: f32| arm(ax, ay, t) || arm(ay, ax, t) || (d - RING).abs() <= t;
+    if hit(CORE) {
+        ReticleMark::Core
+    } else if hit(EDGE) {
+        ReticleMark::Outline
+    } else {
+        ReticleMark::None
+    }
+}
+
+#[cfg(test)]
+mod reticle_mark_tests;
+
+/// What the draw phase saw under the cursor, for the update phase to render a reticle from.
+#[derive(Clone)]
+struct ReticleAt {
+    /// Full-precision complex point under the cursor. An f64 centre is useless past ~1e240×, and
+    /// the whole point of this feature is aiming at depth.
+    cx: fractadyne_core::BigFloat,
+    cy: fractadyne_core::BigFloat,
+    /// Magnification to render the reticle AT — the view's, times the click factor, so what the
+    /// reticle shows is literally what the click is about to give you.
+    log2mag: f64,
+    precision: usize,
+    /// The AIM point in egui points — the damped position the click will take, which the bubble is
+    /// placed beside and the connector line runs to.
+    screen: egui::Pos2,
+    /// Where the hand actually is. Kept separately because [`RETICLE_AIM_GAIN`] holds the two
+    /// apart, and a magnifier that does not show the user which of the two it obeys is a trap.
+    cursor: egui::Pos2,
+}
+
+struct SnapSolve {
+    rx: std::sync::mpsc::Receiver<Option<fractadyne_core::Nucleus>>,
+    /// The view the click landed on. If the user has moved since, the answer is stale and is
+    /// dropped rather than yanking them somewhere they have already left.
+    at_sig: u64,
+    started: Instant,
+}
+
 struct FeatureSolve {
     rx: std::sync::mpsc::Receiver<FeatureOutcome>,
     started: Instant,
@@ -3753,6 +4270,17 @@ struct FeatureSolve {
     /// Set when the requested depth is past what the solver can express, so the reply can say so
     /// instead of navigating to a depth the answer is not accurate for.
     depth_capped: Option<f64>,
+    /// The formula the search ran against, so the reply sizes the atom with the same family it was
+    /// found in rather than with whatever is selected when it lands.
+    formula: u32,
+    /// Whether the Go-to dialog is waiting for this answer.
+    ///
+    /// ⛔**A solve with no dialog must not be judged by the dialog's state.** `poll_feature_solve`
+    /// abandons a solve whose dialog has closed — correct for a dialog request, and fatal for the
+    /// `M` key, whose request never opens one: the answer was dropped on arrival, every time, with
+    /// no jump and no message. It also decides where a FAILURE goes, since there is no message line
+    /// to write into when nobody opened the dialog.
+    from_dialog: bool,
 }
 
 /// What a [`FeatureSolve`] worker computed.
@@ -4431,6 +4959,10 @@ struct ColoringConfig {
     /// Coloring method (smooth / stripe / triangle-ineq / orbit-trap / distance / decomposition).
     color_method: ColorMethod,
     stripe_freq: f32,
+    /// Stripe average over the tail only — an exponential window over the last `stripe_tail_len`
+    /// iterations instead of the whole orbit; restores stripe contrast at extreme depth. Persisted.
+    stripe_tail: bool,
+    stripe_tail_len: u32,
     trap_type: TrapType,
     /// Auto-normalize the palette cycle to the frame's escape-value range on export (`--normalize`).
     /// At extreme depth the smooth-iter counts are ~1e5–1e6 and a fixed `cycle` aliases a correct
@@ -4443,6 +4975,11 @@ struct ColoringConfig {
     /// a fixed cycle makes of dense 1e5-scale escape fields. Only active for the Smooth method
     /// and only past a range threshold, so ordinary views keep classic coloring. Persisted.
     normalize_live: bool,
+    /// Fit the palette to the measured escape range REGARDLESS of whether the view aliases — the
+    /// range-fit half of what users mean by "normalize". `normalize_live` above is a Nyquist
+    /// aliasing guard and declines on a smooth view by design; this asks for the remap outright.
+    /// Still needs a valid measured range, so it does nothing until a reading lands. Persisted.
+    normalize_fit: bool,
     /// Log-scaled palette mapping. Applies wherever normalization is active (live or
     /// `--normalize`): escape values crowd towards the high end at depth, so a linear map spends
     /// most of the palette on a thin shell. Persisted.
@@ -4593,6 +5130,18 @@ struct FractadyneApp {
     /// `render_cfg.click_zoom_factor` recentered on the point, right-click backs out. Off by
     /// default; drag still pans and Shift/right-drag still box-zoom (see `click_zoom_at`).
     click_zoom: bool,
+    /// Click-to-zoom: settle onto the nearest minibrot nucleus after the jump. The point of the
+    /// tool is usually to land ON a feature, and a hand cannot aim well enough for that — a miss
+    /// of d pixels leaves the target d × factor pixels off centre once the scale shrinks, so at
+    /// 50× even a perfect-looking click is a third of a panel out. Solving for the nucleus removes
+    /// the aim from the problem entirely.
+    click_zoom_snap: bool,
+    /// The nucleus solve a snapping click started, if one is running. Off the UI thread because
+    /// these are arbitrary-precision Newton solves whose cost grows with depth — see
+    /// [`FeatureSolve`], which exists for the same reason and froze a window for minutes before it
+    /// did. The view jumps immediately and corrects itself when the answer lands, rather than
+    /// making the user wait to find out where they are going.
+    snap_solve: Option<SnapSolve>,
     /// Dual view: if `Some`, the Julia `c` is pinned to this Mandelbrot point (a marker
     /// is drawn there) instead of following the cursor. Click to pin, click it to release.
     julia_pin: Option<(f64, f64)>,
@@ -4808,6 +5357,17 @@ struct FractadyneApp {
     /// rendered for (re-render on change). The enable *toggle* lives in [`DialogState`].
     minimap_tex: Option<egui::TextureHandle>,
     minimap_key: Option<(u32, usize, u32, u32)>,
+    /// Precision reticle (hold Shift with click-to-zoom armed): what the DRAW phase saw under the
+    /// cursor, handed to the UPDATE phase, which is the only place with a GPU device to render
+    /// with. One frame of latency, which a magnifier can afford.
+    reticle_want: Option<ReticleAt>,
+    /// The rendered reticle and the view it was rendered for, so a resting cursor costs nothing.
+    reticle_tex: Option<egui::TextureHandle>,
+    reticle_key: Option<(i64, i64, u64, u32)>,
+    /// Where the cursor was when Shift armed the reticle, and in which panel: the fixed point that
+    /// [`RETICLE_AIM_GAIN`] scales movement around. Cleared on release, so every press re-anchors
+    /// under the hand rather than resuming from a stale offset.
+    reticle_anchor: Option<(bool, egui::Pos2)>,
     /// Static color mapping: palette selection, custom/duotone/binary, cycle/offset, method + params.
     coloring: ColoringConfig,
     /// Performance/diagnostic tracking + overlay.
@@ -4834,6 +5394,9 @@ struct FractadyneApp {
     /// `playback_ref_prefetch`). Purely additive — a missed window is dropped and the reactive
     /// rebuild path covers it. Cleared on tour start/end and `invalidate_refs`.
     ref_prefetch: Vec<crate::render::RefPrefetchSlot>,
+    /// True while the INTERACTIVE pump (`interactive_ref_prefetch_with`) owns `ref_prefetch` — a
+    /// glide/autopilot dive is being predicted; the first frame it is not, the queue is dropped.
+    ref_prefetch_interactive: bool,
     /// Dedicated builds (≤2: one ready + one building) for upcoming HOLD keyframes' references
     /// at each hold's own explicit ask and destination precision, started DURING the glide. The
     /// ordinary lookahead deliberately builds with the short motion cap (`LIVE_REF_CAP`), so a
@@ -5182,6 +5745,26 @@ impl FractadyneApp {
         } else {
             None
         };
+        // --zoomtest [OCTAVES]: on-screen update-latency harness for live zooms — holds a virtual
+        // Space key through the production glide and records every presented frame's interval.
+        let zoomtest = if args.iter().any(|a| a == "--zoomtest") {
+            let num = |flag: &str, what: &str, default: f64| -> f64 {
+                match val(flag).filter(|s| !s.starts_with('-')) {
+                    None => default,
+                    Some(s) => s.parse::<f64>().unwrap_or_else(|_| {
+                        eprintln!("fractadyne: {flag}: expected {what}, got \"{s}\"");
+                        crate::exit(2)
+                    }),
+                }
+            };
+            let octaves = num("--zoomtest", "a number of octaves", 40.0);
+            let rate = num("--zoomtest-rate", "a zoom rate (0.25..4)", 1.0) as f32;
+            let location = val("--zoomtest-location").map(std::path::PathBuf::from);
+            let start_log2 = val("--zoomtest-start-log2").map(|_| num("--zoomtest-start-log2", "a log2 magnification", 0.0));
+            Some(zoomtest::ZoomTest::new(octaves, rate, location, start_log2))
+        } else {
+            None
+        };
         let juliadive = if args.iter().any(|a| a == "--juliadive") {
             let out =
                 val("--juliadive").filter(|s| !s.starts_with('-')).map(std::path::PathBuf::from);
@@ -5218,6 +5801,7 @@ impl FractadyneApp {
             || dualsettle.is_some()
             || autodive.is_some()
             || motiontest.is_some()
+            || zoomtest.is_some()
             || chunk_sweep.is_some()
             || deviceloss_repro.is_some()
             || play_tour.is_some()
@@ -5263,6 +5847,7 @@ impl FractadyneApp {
                 // harness window from an interactive one, so an unmatched task is simply "harness".
                 if livetest.is_some() { "livetest" }
                 else if motiontest.is_some() { "motiontest" }
+                else if zoomtest.is_some() { "zoomtest" }
                 else if uitest.is_some() { "uitest" }
                 else if juliadive.is_some() { "juliadive" }
                 else if dualsettle.is_some() { "dualsettle" }
@@ -5408,6 +5993,8 @@ impl FractadyneApp {
             julia_c: (s.julia_c_re, s.julia_c_im),
             julia_mode: s.julia_mode && fractal.supports_julia(),
             click_zoom: s.click_zoom,
+            click_zoom_snap: s.click_zoom_snap,
+            snap_solve: None,
             julia_pin: None,
             dual: s.dual && fractal.supports_julia(),
             dual_split: s.dual_split.clamp(DUAL_SPLIT_MIN, DUAL_SPLIT_MAX),
@@ -5515,6 +6102,7 @@ impl FractadyneApp {
                 deviceloss_repro,
                 autodive,
                 motiontest,
+                zoomtest,
             },
             dialogs: DialogState {
                 bench_open: false,
@@ -5661,6 +6249,10 @@ impl FractadyneApp {
             pending_state_warning,
             minimap_tex: None,
             minimap_key: None,
+            reticle_want: None,
+            reticle_tex: None,
+            reticle_key: None,
+            reticle_anchor: None,
             coloring: ColoringConfig {
                 palette_idx: s.palette_idx,
                 cycle: s.cycle,
@@ -5695,9 +6287,12 @@ impl FractadyneApp {
                 duotone_hi: s.duotone_hi,
                 color_method: ColorMethod::from_key(&s.color_method),
                 stripe_freq: s.stripe_freq,
+                stripe_tail: s.stripe_tail,
+                stripe_tail_len: s.stripe_tail_len.clamp(4, 1 << 20),
                 trap_type: TrapType::from_key(&s.trap_type),
                 normalize: args.iter().any(|a| a == "--normalize"),
                 normalize_live: s.normalize_live,
+                normalize_fit: s.normalize_fit,
                 log_palette: {
                     let asked = args.iter().any(|a| a == "--log-palette");
                     // ⚠`--log-palette` only chooses HOW the normalized mapping spreads the
@@ -5779,6 +6374,7 @@ impl FractadyneApp {
             orbit_cache_mb: s.orbit_cache_mb.max(64),
             recompute_rx: [None, None],
             ref_prefetch: Vec::new(),
+            ref_prefetch_interactive: false,
             hold_prefetch: Vec::new(),
             last_state: s,
             dirty_since: None,
@@ -6125,6 +6721,12 @@ impl FractadyneApp {
         {
             self.coloring.stripe_freq = f.clamp(1.0, 24.0);
         }
+        if let Some(n) =
+            val("--stripe-tail").map(|s| arg_parse::<u32>("--stripe-tail", s, "a number of iterations"))
+        {
+            self.coloring.stripe_tail = true;
+            self.coloring.stripe_tail_len = n.clamp(4, 1 << 20);
+        }
         if let Some(t) = val("--trap") {
             let picked = TrapType::from_key(t);
             if picked.key() != t.as_str() {
@@ -6201,9 +6803,11 @@ impl FractadyneApp {
             cycle: self.coloring.cycle,
             offset: self.coloring.offset,
             normalize_live: self.coloring.normalize_live,
+            normalize_fit: self.coloring.normalize_fit,
             log_palette: self.coloring.log_palette,
             zoom_rate: self.render_cfg.zoom_rate,
             click_zoom: self.click_zoom,
+            click_zoom_snap: self.click_zoom_snap,
             click_zoom_factor: self.render_cfg.click_zoom_factor,
             autopilot_dive_log2: self.autopilot.dive_log2,
             work_budget_scale: self.render_cfg.work_budget_scale,
@@ -6247,6 +6851,8 @@ impl FractadyneApp {
             de_anim: self.effects.de_anim,
             color_method: self.coloring.color_method.key().to_string(),
             stripe_freq: self.coloring.stripe_freq,
+            stripe_tail: self.coloring.stripe_tail,
+            stripe_tail_len: self.coloring.stripe_tail_len,
             trap_type: self.coloring.trap_type.key().to_string(),
             minimap: self.dialogs.minimap,
             custom_palette: self.coloring.custom_palette.clone(),
@@ -6798,11 +7404,21 @@ impl FractadyneApp {
     /// stays deep-zoom-correct). Records a nav step so each click is Backspace-undoable, and marks
     /// the view interacting so it settles to full quality afterward. `now` = `ctx.input(|i| i.time)`.
     fn click_zoom_at(&mut self, px: f64, py: f64, out: bool, now: f64) {
+        self.click_zoom_at_view(px, py, out, now, false);
+    }
+
+    /// Click-to-zoom on a named panel. `px`/`py` are physical pixels within THAT panel's rect, not
+    /// the window — in dual view the two panels have different origins and different viewports, and
+    /// feeding one panel's pixels to the other's viewport lands somewhere else entirely.
+    fn click_zoom_at_view(&mut self, px: f64, py: f64, out: bool, now: f64, is_julia: bool) {
         let f = self.render_cfg.click_zoom_factor.max(1.01) as f64;
         let factor = if out { f } else { 1.0 / f }; // zoom_at: factor < 1 ⇒ zoom in
-        self.viewport.recenter_and_zoom(px, py, factor);
+        let vp = if is_julia { &mut self.julia_viewport } else { &mut self.viewport };
+        vp.recenter_and_zoom(px, py, factor);
         self.pointer.zoom_vel = 0.0; // cancel any continuous-zoom glide so the jump lands clean
-        self.pointer.settle_t[0] = now;
+        // ⭐The code that moves a view marks it moving — the same rule `draw_dual`'s glide and the
+        // minimap follow. Without it everything keyed on `interacting` reads the wrong state.
+        self.pointer.settle_t[is_julia as usize] = now;
         self.record_nav();
     }
 
@@ -6894,6 +7510,79 @@ impl FractadyneApp {
     fn record_nav(&mut self) {
         let snap = self.snapshot_view();
         self.nav.record(snap);
+        // Every DELIBERATE jump goes through here — click-zoom, box-zoom, a bookmark, Go-to, the
+        // minimap, a minibrot solve. The jump tripwire skips the frame after one, so the thing it
+        // reports is only ever a move the user did not ask for.
+        self.perf.nav_epoch = self.perf.nav_epoch.wrapping_add(1);
+    }
+
+    /// ⭐**The view moved further in one frame than anything driving it could account for.**
+    /// Always on, and rate-limited to one line per episode: the 2026-09-17 field report was "on
+    /// zoom the center seems to sometimes drift or jump", which is not reproducible to order and
+    /// which no existing trace would have caught. A glide is bounded — the timestep is clamped to
+    /// 100 ms and the rate to the zoom-speed slider, so the most one frame can do is about 0.27
+    /// octaves — and every deliberate jump bumps `nav_epoch`. What is left is what we are looking
+    /// for, and this prints its own evidence: how far, in what, and what else was happening.
+    ///
+    /// Depth limit, stated rather than hidden: the centre delta comes back through `sub_f64`, so
+    /// past ~1e300× it underflows to zero and this reports nothing. That is the safe direction —
+    /// silence rather than a false alarm — and the magnification half keeps working at any depth.
+    fn track_view_jump(&mut self, view: usize, ctx: &egui::Context) {
+        // ⛔**Do not enumerate the gestures that may legitimately move the view — invert it.**
+        // The first draft suppressed only `record_nav`, and `minimap_pan` does not call it, so a
+        // minimap drag would have reported itself as a mystery jump every frame. A rule that has
+        // to list every way a user can move a view is a rule that will miss one. While a pointer
+        // button is down the user IS moving it, whichever widget they grabbed, so say nothing.
+        if ctx.input(|i| i.pointer.any_down()) {
+            self.perf.view_jump_logged[view] = false;
+            self.perf.view_prev[view] = None; // resync on release rather than report the whole drag
+            return;
+        }
+        let vp = if view == 1 { &self.julia_viewport } else { &self.viewport };
+        let l2 = vp.log2_magnification();
+        let (cx, cy) = (vp.center_x.clone(), vp.center_y.clone());
+        let upp_l2 = vp.units_per_pixel.log2();
+        let nav = self.perf.nav_epoch;
+        let prev = self.perf.view_prev[view].take();
+        self.perf.view_prev[view] = Some((l2, cx.clone(), cy.clone(), nav));
+        let Some((pl2, pcx, pcy, pnav)) = prev else { return };
+        if pnav != nav {
+            return; // a deliberate navigation landed this frame; it is allowed to jump
+        }
+        // What a glide could have done: the rate slider times the clamped timestep, plus slack.
+        const MAX_GLIDE_OCTAVES: f64 = 0.27;
+        let d_oct = (l2 - pl2).abs();
+        let prec = fractadyne_core::precision_for_octaves(l2.max(0.0).ceil() as u64) + 32;
+        let dx = fractadyne_core::sub_f64(&cx, &pcx, prec);
+        let dy = fractadyne_core::sub_f64(&cy, &pcy, prec);
+        let dist = (dx * dx + dy * dy).sqrt();
+        // Distance in PIXELS of the view it moved in, which is the unit the eye actually judges.
+        let px = if dist > 0.0 { (dist.log2() - upp_l2).exp2() } else { 0.0 };
+        let big_zoom = d_oct > MAX_GLIDE_OCTAVES * 3.0;
+        let big_pan = px.is_finite() && px > 200.0;
+        if !big_zoom && !big_pan {
+            self.perf.view_jump_logged[view] = false; // quiet again: re-arm the next episode's line
+            return;
+        }
+        if self.perf.view_jump_logged[view] {
+            return;
+        }
+        self.perf.view_jump_logged[view] = true;
+        crate::diag::log_line(
+            "view",
+            &format!(
+                "⚠JUMP view {view}: 2^{pl2:.4} → 2^{l2:.4} ({d_oct:.4} octaves) and the centre \
+                 moved {px:.0} px in one frame — reproject={} tile={} chunk={} building={} \
+                 zoom_vel={:.4} interacting_t={:.3} ref_len={}",
+                self.perf.prev_real.get(view.min(1)).map(|r| !r).unwrap_or(false),
+                self.perf.tile_pending[view],
+                self.perf.chunk_pending[view],
+                self.recompute_rx[view].is_some(),
+                self.pointer.zoom_vel,
+                self.pointer.settle_t[view.min(1)],
+                self.ref_cache[view].orbit_len,
+            ),
+        );
     }
 
     /// A stable identity for the Mandelbrot view on screen — fractal family, Julia mode, zoom, and
@@ -7259,6 +7948,84 @@ impl FractadyneApp {
                 self.pointer.zoom_box = Some(ZoomBox { start: p, end: p, is_julia });
             }
         }
+        // Click-to-zoom, on whichever panel the click landed in. ⛔This used to exist ONLY in
+        // `draw_central`, the single-view path, so in dual view the armed tool did nothing at all —
+        // no zoom, not even the magnifier cursor — while its toolbar button and its factor selector
+        // sat there looking live (field report 2026-09-17). A control that is offered and does
+        // nothing is worse than one that is absent.
+        //
+        // ⭐The plain click belongs to the armed tool. On the Mandelbrot panel a plain click
+        // otherwise pins the Julia parameter, so while this tool is on, pinning moves to
+        // Ctrl+click; `draw_dual` owns that half of the rule and the two must agree.
+        // ⛔**DEFERRED, because `recenter_and_zoom` reads the viewport's OWN width and height** to
+        // work out where the centre is, and this runs before `vp.set_size` below. Applying the
+        // click here recentres against whatever size the viewport was left at last frame, and the
+        // clicked point lands off-centre by half the difference — which is most of a panel when
+        // the canvas has just changed shape (a dual-split drag, a side panel expanding, coming
+        // back from single view). That is the 2026-09-17 report, "clicking at the center of spiral
+        // points and the center shifts more than I would expect from my imprecision". The box-zoom
+        // below is deferred past `set_size` for exactly this reason; so is this now.
+        let mut pending_click_zoom: Option<(f64, f64, bool)> = None;
+        if self.click_zoom {
+            if resp.hovered() && !resp.dragged() {
+                ctx.set_cursor_icon(egui::CursorIcon::ZoomIn);
+            }
+            // ⭐Shift now ARMS THE RETICLE rather than standing aside. It still reserves the DRAG
+            // for box-zoom, and `clicked()` never fires on a drag, so the two do not collide: hold
+            // Shift to see where you are pointing, click without moving to take it, or drag to box
+            // a region instead.
+            let armed = shift && resp.hovered() && !resp.dragged() && self.pointer.zoom_box.is_none();
+            // Only THIS panel's anchor is this panel's business: `draw_dual` runs this body once per
+            // panel, so an unconditional reset here would have the un-hovered panel clear the
+            // anchor the hovered one had just set.
+            if !armed && self.reticle_anchor.is_some_and(|(j, _)| j == is_julia) {
+                self.reticle_anchor = None;
+            }
+            // The damped aim point, kept for the click below so that Shift+click takes what the
+            // reticle is SHOWING rather than where the cursor happens to be.
+            let mut aim_at: Option<egui::Pos2> = None;
+            if armed {
+                if let Some(p) = resp.hover_pos() {
+                    let anchor = match self.reticle_anchor {
+                        Some((j, a)) if j == is_julia => a,
+                        _ => {
+                            self.reticle_anchor = Some((is_julia, p));
+                            p
+                        }
+                    };
+                    // Fine aiming: a quarter of the hand's displacement from the anchor, held
+                    // inside the panel so the aim can never be somewhere unrenderable.
+                    let aim = rect.clamp(anchor + (p - anchor) * RETICLE_AIM_GAIN);
+                    aim_at = Some(aim);
+                    let l = aim - rect.min;
+                    let vp = if is_julia { &self.julia_viewport } else { &self.viewport };
+                    let (cx, cy) = vp.pixel_to_complex(l.x as f64 * ppp, l.y as f64 * ppp);
+                    let f = self.render_cfg.click_zoom_factor.max(1.01) as f64;
+                    self.reticle_want = Some(ReticleAt {
+                        cx,
+                        cy,
+                        log2mag: vp.log2_magnification() + f.log2(),
+                        precision: vp.precision,
+                        screen: aim,
+                        cursor: p,
+                    });
+                    ctx.request_repaint();
+                }
+            }
+            if (resp.clicked() || resp.secondary_clicked())
+                && self.pointer.zoom_box.is_none()
+                && !ctx.input(|i| i.modifiers.command)
+            {
+                // ⚠The AIM wins when the reticle is up. Taking `interact_pointer_pos` there would
+                // zoom to a point a few hundred pixels from the one the magnifier just showed —
+                // the aim and the cursor are deliberately no longer the same place.
+                if let Some(p) = aim_at.or_else(|| resp.interact_pointer_pos()) {
+                    let l = p - rect.min;
+                    pending_click_zoom =
+                        Some((l.x as f64 * ppp, l.y as f64 * ppp, resp.secondary_clicked()));
+                }
+            }
+        }
         let mut apply_zoom: Option<(f64, f64, f64)> = None; // (box_cx_px, box_cy_px, factor)
         let mut zoom_boxing = false;
         if self.pointer.zoom_box.as_ref().is_some_and(|z| z.is_julia == is_julia) {
@@ -7309,6 +8076,45 @@ impl FractadyneApp {
         // otherwise every resize step re-renders at full 8× AA and the resize stutters.
         let resized = (nw - vp.width_px).abs() > 0.5 || (nh - vp.height_px).abs() > 0.5;
         vp.set_size(nw, nh);
+        // Now that the viewport agrees with the panel it is drawn in, the clicked pixel means what
+        // the user pointed at. Applied inline rather than through `click_zoom_at_view` because
+        // `vp` holds a mutable borrow of a `self` field until well below here, so a `&mut self`
+        // method cannot be called yet; `self.pointer` is a disjoint field and is fine. Only
+        // `record_nav` has to wait, and it does.
+        let mut click_zoom_navigated = false;
+        if let Some((px, py, out)) = pending_click_zoom.take() {
+            let f = self.render_cfg.click_zoom_factor.max(1.01) as f64;
+            // What the user pointed at, read BEFORE the view moves. The line below compares it to
+            // where the centre ended up, which is the only way to tell a mis-landing from the
+            // thing it is far more often: aim error multiplied by the zoom factor. Recentring puts
+            // the clicked pixel exactly at the centre, so a miss of d pixels becomes d × factor
+            // pixels once the scale shrinks — at 50× a 8-pixel miss lands the target 400 px off,
+            // a third of a panel, from an aim error the eye cannot even see beforehand. Always on:
+            // a click is a rare event, so there is nothing to rate-limit.
+            let aim = vp.pixel_to_complex(px, py);
+            vp.recenter_and_zoom(px, py, if out { f } else { 1.0 / f });
+            let prec = vp.precision;
+            let upp_l2 = vp.units_per_pixel.log2();
+            let dx = fractadyne_core::sub_f64(&vp.center_x, &aim.0, prec);
+            let dy = fractadyne_core::sub_f64(&vp.center_y, &aim.1, prec);
+            let dist = (dx * dx + dy * dy).sqrt();
+            let err_px = if dist > 0.0 { (dist.log2() - upp_l2).exp2() } else { 0.0 };
+            let (w, h) = (vp.width_px, vp.height_px);
+            crate::diag::log_line(
+                "view",
+                &format!(
+                    "click-zoom view {}: clicked ({px:.1},{py:.1}) of {w:.0}x{h:.0} px, \
+                     factor {}{f:.0}× — the clicked point landed {err_px:.2} px from centre \
+                     (anything near 0 means the click was exact and what moved is your aim, \
+                     magnified {f:.0}×)",
+                    is_julia as usize,
+                    if out { "1/" } else { "" },
+                ),
+            );
+            self.pointer.zoom_vel = 0.0; // cancel any glide so the jump lands clean
+            self.pointer.settle_t[is_julia as usize] = ctx.input(|i| i.time);
+            click_zoom_navigated = true;
+        }
         if let Some((bcx, bcy, factor)) = apply_zoom {
             let (w, h) = (vp.width_px, vp.height_px);
             vp.pan_pixels(w * 0.5 - bcx, h * 0.5 - bcy); // box center → screen center
@@ -7394,6 +8200,24 @@ impl FractadyneApp {
             }
             ss
         };
+        // Progressive on-settle supersampling (deep-zoom despeckle): once the ordinary settle
+        // finishes, fold sub-pixel-jittered samples into a running average until it converges (see
+        // `drive_accumulation`). `busy` = a settle grid / chunk progression / reference build is
+        // still in flight, so the current sample is not yet a complete frame.
+        let accum_busy = self.perf.tile_pending[view]
+            || self.perf.chunk_pending[view]
+            || self.recompute_rx[view].is_some();
+        if click_zoom_navigated {
+            self.record_nav(); // deferred past the viewport borrow; see the click-zoom block above
+            // Snap to the nearest nucleus, if asked. Only the Mandelbrot panel: a Julia view has
+            // no minibrot nuclei to solve for, and the solver would be answering a question that
+            // does not apply to it.
+            if self.click_zoom_snap && !is_julia {
+                self.start_snap_solve(ctx);
+            }
+        }
+        self.track_view_jump(view, ctx);
+        self.drive_accumulation(ctx, view, interacting, accum_busy, log2mag);
         let res = [
             (rect.width() as f64 * ppp) as u32,
             (rect.height() as f64 * ppp) as u32,
@@ -7458,7 +8282,7 @@ impl FractadyneApp {
         // Only the live view may start a tiled settle (the profiling/benchmark callers of
         // `build_params` time single dispatches).
         self.allow_tiled_settle = true;
-        let params = self.build_params(
+        let mut params = self.build_params(
             center_bf,
             center,
             span,
@@ -7474,6 +8298,8 @@ impl FractadyneApp {
             reproject,
         );
         self.allow_tiled_settle = false;
+        // Progressive supersampling: rule on the proposed fold against the frame just built.
+        self.accum_confirm(ctx, view, &mut params);
         // A settle grid (or a chunked iteration progression) in progress needs the next frame
         // promptly — each frame renders one tile / one iteration range.
         if self.perf.tile_pending[view_id as usize] || self.perf.chunk_pending[view_id as usize] {
@@ -7503,6 +8329,20 @@ impl FractadyneApp {
 
 impl FractadyneApp {
 
+    /// `M` / Navigate ▸ nearest minibrot: solve for the nucleus near the view centre, then jump to
+    /// it at its own scale. Shares [`poll_feature_solve`]'s apply half with the Go-to dialog.
+    ///
+    /// ⭐**Off the UI thread, and it always says something.** Both halves of that sentence are
+    /// fixes for the 2026-09-17 verification pass, which reported "M causes it to spin, but no
+    /// apparent effect and no error message":
+    ///
+    /// - It used to run [`fractadyne_core::find_nucleus`] **synchronously, right here**, which at
+    ///   depth is the multi-second-to-minutes freeze that [`FeatureSolve`] exists to avoid. That
+    ///   was the "spin".
+    /// - The key was gated on `!self.dual`, so in the DUAL view the press was swallowed whole: no
+    ///   jump, no toast, no log line — nothing to distinguish "declined" from "dead". ⛔**A feature
+    ///   that can decline must say that it declined**, and it must leave a trace in the log, or the
+    ///   next report about it has no evidence to work from (this one arrived with none).
     fn find_minibrot(&mut self, ctx: &egui::Context) {
         let formula = self.fractal.formula_id();
         if !matches!(formula, 0..=3) {
@@ -7512,43 +8352,43 @@ impl FractadyneApp {
             );
             return;
         }
+        if self.julia_mode {
+            self.set_toast(
+                "The minibrot finder searches the Mandelbrot set — switch off Julia mode to use it.",
+                ctx,
+            );
+            return;
+        }
+        if self.feature_solve.is_some() {
+            self.set_toast("Already looking for a feature — one at a time.", ctx);
+            return;
+        }
         let mag_l2 = self.viewport.log2_magnification();
         let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
         let max_period =
             self.viewport.recommended_max_iter(self.render_cfg.max_iter).clamp(1_000, 100_000);
-        match fractadyne_core::find_nucleus(&center, mag_l2, formula, max_period) {
-            Some(n) => {
-                let cur_l2 = self.viewport.log2_magnification();
-                let (cx, cy, target) = self.newton_raphson_target(n.cx, n.cy, n.period, formula);
-                match target.filter(|t| *t > cur_l2) {
-                    Some(t) => {
-                        self.viewport.set_center_log2mag(cx, cy, t);
-                        self.finish_nav_jump();
-                        self.feature_period = Some((n.period, self.view_key()));
-                        self.set_toast(
-                            format!(
-                                "Zoomed to the period-{} minibrot — {}×",
-                                n.period,
-                                fmt_zoom_field(t)
-                            ),
-                            ctx,
-                        );
-                    }
-                    // No size estimate (non-quadratic family), or the view is already deeper
-                    // than the minibrot's own scale — keep the depth, just fix the center.
-                    None => {
-                        self.viewport.set_center_log2mag(cx, cy, cur_l2);
-                        self.finish_nav_jump();
-                        self.feature_period = Some((n.period, self.view_key()));
-                        self.set_toast(
-                            format!("Snapped to period-{} minibrot center", n.period),
-                            ctx,
-                        );
-                    }
-                }
-            }
-            None => self.set_toast("No minibrot center found near the view center.", ctx),
-        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(FeatureOutcome::Nucleus(fractadyne_core::find_nucleus(
+                &center, mag_l2, formula, max_period,
+            )));
+        });
+        self.feature_solve = Some(FeatureSolve {
+            rx,
+            started: Instant::now(),
+            // No depth was asked for: the destination is the minibrot's OWN scale, which only the
+            // reply knows (`newton_raphson_target` sizes the atom once its centre is in hand).
+            zoom_to: None,
+            depth_capped: None,
+            formula,
+            from_dialog: false,
+        });
+        crate::diag::log_line(
+            "view",
+            &format!("minibrot: searching from 2^{mag_l2:.4}, max period {max_period}"),
+        );
+        self.set_toast("Looking for the nearest minibrot…", ctx);
+        self.schedule_repaint(ctx);
     }
 
     /// Size up a located minibrot and refine its center to the precision that depth demands.
@@ -7725,9 +8565,189 @@ impl FractadyneApp {
             started: Instant::now(),
             zoom_to,
             depth_capped,
+            formula: 0, // the dialog is Mandelbrot-only (checked above)
+            from_dialog: true,
         });
         self.goto.msg = None;
         self.schedule_repaint(ctx);
+    }
+
+    /// Render the precision reticle if the draw phase asked for one, reusing the last image while
+    /// the cursor and the view hold still.
+    ///
+    /// ⭐Borrows the LIVE reference orbit rather than building a fresh one. The reticle sits a few
+    /// octaves below a point already on screen, so the resident reference covers it — the same
+    /// reasoning the autopilot's steering probe runs on, and the reason this can follow a cursor
+    /// at 1e29× at all. Building a reference here instead would be seconds per cursor move.
+    fn update_reticle(
+        &mut self,
+        ctx: &egui::Context,
+        gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
+    ) {
+        let Some(at) = self.reticle_want.take() else {
+            self.reticle_tex = None;
+            self.reticle_key = None;
+            return;
+        };
+        let Some((dev, q)) = gpu else { return };
+        // Key on the aim point plus the view and the factor, so a resting cursor re-renders nothing.
+        //
+        // ⭐⭐**The quantum has to be a quantum of the MAGNIFIED image, not of the screen.** Rounding
+        // the aim to a whole screen point looks harmless and is not: the reticle renders at the
+        // view's magnification TIMES the click factor, so at 100× one point of aim is a hundred
+        // points of content, and the preview only refreshed once per 100-point lurch. With the aim
+        // now damped to a quarter of the hand's motion (`RETICLE_AIM_GAIN`) that was one refresh per
+        // ~6 px of hand movement, reported as "a bit jumpy, hard to get on the exact location" —
+        // the aim was smooth all along and its PICTURE was not. Dividing the quantum by the factor
+        // makes one step of the key one pixel of what the user is actually looking at.
+        // (`quantum`, not `q` — `q` is the GPU queue in this scope.)
+        let f = self.render_cfg.click_zoom_factor.max(1.01);
+        let quantum = (ctx.pixels_per_point() * f) as f64;
+        let key = (
+            (at.screen.x as f64 * quantum).round() as i64,
+            (at.screen.y as f64 * quantum).round() as i64,
+            self.snap_view_sig(),
+            self.render_cfg.click_zoom_factor.to_bits(),
+        );
+        if self.reticle_key == Some(key) && self.reticle_tex.is_some() {
+            return;
+        }
+        let mut vp = Viewport::new(RETICLE_PX as f64, RETICLE_PX as f64);
+        vp.precision = at.precision;
+        vp.center_x = at.cx.clone();
+        vp.center_y = at.cy.clone();
+        vp.set_center_log2mag(at.cx, at.cy, at.log2mag);
+        let mut req = self.autopilot_probe_request(&vp, false);
+        req.width = RETICLE_PX;
+        req.height = RETICLE_PX;
+        req.ss = 1;
+        let progress = std::sync::atomic::AtomicU32::new(0);
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let Ok(res) = fractadyne_gpu::render_export(dev, q, &req, &progress, &cancel) else {
+            return;
+        };
+        // Linear RGBA f32 → sRGB u8, and ALPHA ZERO OUTSIDE THE CIRCLE. Doing the mask here rather
+        // than at paint time is what makes the reticle actually round: egui clips to rectangles,
+        // so a circular hole has to come from the image itself.
+        let (w, h) = (res.width as usize, res.height as usize);
+        let (cx, cy) = (w as f32 * 0.5 - 0.5, h as f32 * 0.5 - 0.5);
+        let r = (w.min(h) as f32) * 0.5 - 1.0;
+        let mut px = Vec::with_capacity(w * h * 4);
+        for y in 0..h {
+            for x in 0..w {
+                let i = y * w + x;
+                let mark = reticle_mark(x as f32 - cx, y as f32 - cy, r);
+                let mut rgb = [0u8; 3];
+                for k in 0..3 {
+                    let c = res.pixels[i * 4 + k].clamp(0.0, 1.0);
+                    rgb[k] = (c.powf(1.0 / 2.2) * 255.0 + 0.5) as u8;
+                }
+                // ⭐**The crosshair is stamped INTO the image, keyed to the pixel it covers.** It
+                // used to be four thin accent strokes painted over the top, which is invisible
+                // whenever the fractal happens to be the same colour as the accent — reported at
+                // the 2026-09-17 pass as "add cross hairs" on a reticle that already had them.
+                // A mark that must read on ARBITRARY content cannot carry a fixed colour, and a
+                // drop shadow only moves the problem to dark content. So each mark pixel picks
+                // black or white from what is UNDER it, and the mark's outline takes the other —
+                // maximum contrast everywhere, including the mid-grey where a true photographic
+                // negative washes out (128 inverts to 127).
+                if mark != ReticleMark::None {
+                    let luma = 0.2126 * rgb[0] as f32 + 0.7152 * rgb[1] as f32 + 0.0722 * rgb[2] as f32;
+                    let dark_on_light = luma > 140.0;
+                    let ink = if (mark == ReticleMark::Core) == dark_on_light { 16u8 } else { 239u8 };
+                    rgb = [ink; 3];
+                }
+                px.extend_from_slice(&rgb);
+                // One pixel of feather so the rim is not a staircase.
+                let d = ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt();
+                px.push((((r - d).clamp(0.0, 1.0)) * 255.0 + 0.5) as u8);
+            }
+        }
+        let img = egui::ColorImage::from_rgba_unmultiplied([w, h], &px);
+        self.reticle_tex = Some(ctx.load_texture("fractadyne.reticle", img, egui::TextureOptions::LINEAR));
+        self.reticle_key = Some(key);
+    }
+
+    /// A stable identity for the Mandelbrot view, cheap enough to take on every click: magnification
+    /// plus the f64 centre. Only used to notice that the user has moved since a snap solve started,
+    /// where an f64 centre is plenty — a move small enough for f64 to miss is a move the snap would
+    /// have made anyway.
+    fn snap_view_sig(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.viewport.log2_magnification().to_bits().hash(&mut h);
+        let (cx, cy) = self.viewport.center_f64();
+        cx.to_bits().hash(&mut h);
+        cy.to_bits().hash(&mut h);
+        h.finish()
+    }
+
+    /// Start the nucleus solve behind "snap to nearest center", seeded at the view the click just
+    /// landed on. Never blocks; a solve already running wins (one at a time).
+    fn start_snap_solve(&mut self, ctx: &egui::Context) {
+        if self.snap_solve.is_some() || self.fractal.formula_id() != 0 || self.julia_mode {
+            return; // Mandelbrot-only, like every other nucleus solve in the app
+        }
+        let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
+        let l2 = self.viewport.log2_magnification();
+        let max_period =
+            self.viewport.recommended_max_iter(self.render_cfg.max_iter).clamp(1_000, 100_000);
+        let at_sig = self.snap_view_sig();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(fractadyne_core::find_nucleus(&center, l2, 0, max_period));
+        });
+        self.snap_solve = Some(SnapSolve { rx, at_sig, started: Instant::now() });
+        self.schedule_repaint(ctx);
+    }
+
+    /// Collect a finished snap solve and settle the view onto the nucleus. Called once per frame.
+    ///
+    /// ⭐The zoom is NOT changed — the click already chose the depth, and the snap only decides
+    /// where the centre sits. Re-aiming and re-zooming at once would make a click unpredictable in
+    /// two ways instead of one.
+    fn poll_snap_solve(&mut self, ctx: &egui::Context) {
+        let Some(solve) = &self.snap_solve else { return };
+        self.schedule_repaint(ctx); // keep frames coming while it runs
+        let Ok(outcome) = solve.rx.try_recv() else { return };
+        let solve = self.snap_solve.take().expect("checked above");
+        let ms = solve.started.elapsed().as_secs_f64() * 1000.0;
+        if self.snap_view_sig() != solve.at_sig {
+            crate::diag::log_line("view", &format!("snap: dropped after {ms:.0} ms — the view moved"));
+            return;
+        }
+        let Some(n) = outcome else {
+            crate::diag::log_line("view", &format!("snap: no nucleus found ({ms:.0} ms)"));
+            return;
+        };
+        let moved_px = {
+            let p = self.viewport.precision;
+            let dx = fractadyne_core::sub_f64(&n.cx, &self.viewport.center_x, p);
+            let dy = fractadyne_core::sub_f64(&n.cy, &self.viewport.center_y, p);
+            let d = (dx * dx + dy * dy).sqrt();
+            if d > 0.0 { (d.log2() - self.viewport.units_per_pixel.log2()).exp2() } else { 0.0 }
+        };
+        self.viewport.center_x = n.cx;
+        self.viewport.center_y = n.cy;
+        self.pointer.settle_t[0] = ctx.input(|i| i.time);
+        // ⛔**A snap is a NAVIGATION JUMP and has to finish like one.** This path used to assign the
+        // centre and call `record_nav` alone — the only view-moving code in the app that skipped
+        // `finish_nav_jump`, and so the only one that left the RESIDENT REFERENCE ORBIT describing
+        // the point the view just left. That is not a cosmetic omission: the snap moves the centre
+        // by the aim error TIMES the click factor (measured: 331–1470 px at 100×, i.e. up to a full
+        // panel), which is far past the `drift > 1.5` staleness trigger, so the renderer stopped
+        // painting the new location and instead froze and PANNED the last good frame — the old view
+        // sliding under the new coordinates. Reported at the 2026-09-17 pass as "snap works, but the
+        // center is still offset in the zoomed view", and `too_stale`'s own comment names the other
+        // face of it ("rendering with it is dark/glitchy — the screen goes black while zooming").
+        self.finish_nav_jump();
+        crate::diag::log_line(
+            "view",
+            &format!(
+                "snap: period-{} nucleus, centre moved {moved_px:.0} px ({ms:.0} ms)",
+                n.period
+            ),
+        );
     }
 
     /// Collect a finished feature solve and act on it. Called once per frame from `update`.
@@ -7737,7 +8757,12 @@ impl FractadyneApp {
         // would land minutes later and jump the view out from under whatever the user had moved on
         // to — the dialog only closes itself AFTER a result is applied, so an open dialog is the
         // signal that someone is still waiting for one.
-        if !self.goto.open {
+        //
+        // ⛔**Only for a solve the dialog started.** `M` starts one with no dialog at all, so this
+        // test was true on the very first poll and threw the answer away before anything could look
+        // at it — the 2026-09-17 "M does nothing, no message" report. A guard that reads someone
+        // else's state must first ask whether that state is about it.
+        if solve.from_dialog && !self.goto.open {
             self.feature_solve = None;
             return;
         }
@@ -7755,11 +8780,19 @@ impl FractadyneApp {
         // minibrot-only rather than showing two unlike numbers under one label.
         let mut minibrot_period: Option<u32> = None;
 
+        // Which KIND of answer came back, taken from the outcome itself rather than from
+        // `self.goto.feat_kind`: a keyless `M` solve can finish while the dialog's radio sits on
+        // Misiurewicz, and reading the dialog there would report the wrong failure.
+        let mut outcome_kind = FeatureKind::Minibrot;
+
         let (found, label) = match outcome {
             FeatureOutcome::Nucleus(Some(n)) => {
                 let period = n.period;
                 minibrot_period = Some(period);
-                let (cx, cy, t) = self.newton_raphson_target(n.cx, n.cy, period, 0);
+                // ⚠The formula the search RAN with, not whatever is selected now. `M` accepts the
+                // Multibrot families, and the old hardcoded 0 would have sized a Multibrot atom
+                // with the quadratic estimate if the two ever disagreed.
+                let (cx, cy, t) = self.newton_raphson_target(n.cx, n.cy, period, solve.formula);
                 zoom_to = t.filter(|t| *t > cur_l2);
                 (Some((cx, cy)), format!("period-{period} minibrot"))
             }
@@ -7779,6 +8812,7 @@ impl FractadyneApp {
                 return;
             }
             FeatureOutcome::Misiurewicz { k, p, detected, outcome } => {
+                outcome_kind = FeatureKind::Misiurewicz;
                 if detected {
                     // Show what was found: a silent auto-detect leaves no way to tell a good fit
                     // from a guess. (The "Auto" button beside the boxes clears them again.)
@@ -7825,8 +8859,14 @@ impl FractadyneApp {
                 if let Some(p) = minibrot_period {
                     self.feature_period = Some((p, self.view_key()));
                 }
-                self.goto.open = false;
+                if solve.from_dialog {
+                    self.goto.open = false; // a keyless solve must not close a dialog it never used
+                }
                 let took = solve.started.elapsed().as_secs_f64();
+                crate::diag::log_line(
+                    "view",
+                    &format!("feature: landed on {label} at 2^{l2:.4} ({took:.2} s)"),
+                );
                 // The flat-frame trap, said out loud at the moment it is entered: a fixed
                 // iteration count far below the destination depth's resolving line renders
                 // every pixel unescaped — a long wait for a solid-colour frame, with the
@@ -7868,7 +8908,7 @@ impl FractadyneApp {
                 );
             }
             None => {
-                self.goto.msg = Some(match self.goto.feat_kind {
+                let why = match outcome_kind {
                     FeatureKind::Minibrot => {
                         "No minibrot center found near the view — zoom closer to one.".to_string()
                     }
@@ -7912,7 +8952,16 @@ impl FractadyneApp {
                             "Preperiod and period must both be positive.".to_string()
                         }
                     },
-                });
+                };
+                crate::diag::log_line("view", &format!("feature: no result — {why}"));
+                // ⛔**A failure has to reach whoever asked.** The dialog has a message line; a key
+                // press has only the toast, and writing into `goto.msg` for a dialog nobody opened
+                // is how "M does nothing, no error message" happened.
+                if solve.from_dialog {
+                    self.goto.msg = Some(why);
+                } else {
+                    self.set_toast(why, ctx);
+                }
             }
         }
     }
@@ -8989,6 +10038,25 @@ impl FractadyneApp {
                 use_custom: self.coloring.use_custom_palette,
                 name: self.coloring.gradient_name.clone(),
             });
+            // ⭐**Opening the editor on a preset starts from THAT preset's stops.** With no custom
+            // gradient the editor had nothing to select: the bar showed a preview and no markers,
+            // the ring view showed nothing at all, and every colour control waited for an "Add
+            // stop" that seeded one cyan stop (field report 2026-09-16). Someone who clicked
+            // "Edit gradient…" on Ember wants Ember's stops in front of them. AFTER the baseline,
+            // so Cancel still restores exactly the pre-open state (preset, no custom gradient).
+            if self.editable_gradient().is_none() && self.coloring.custom_palette.is_empty() {
+                self.coloring.custom_palette = self.preset_as_stops(self.coloring.palette_idx);
+                self.coloring.custom_palette_flat = false;
+                self.coloring.custom_segments.clear(); // a stop-setting path, per the rule above
+                self.rebuild_segments_from_palette();
+                if let Some(mut g) = self.editable_gradient() {
+                    g.promote_linear_to_bezier();
+                    self.store_segments(&g);
+                }
+                self.coloring.sel_stop = 0;
+                self.coloring.sel_segment = 0;
+                self.coloring.palette_rev = self.coloring.palette_rev.wrapping_add(1);
+            }
         }
         let mut open = self.coloring.palette_editor_open;
         let mut changed = false;
@@ -11949,6 +13017,339 @@ impl FractadyneApp {
         self.perf.tile_state.get(v).is_some_and(|g| g.is_some())
     }
 
+    /// Whether progressive on-settle supersampling may run at all: off under every harness / task
+    /// (so `--livetest`, `--uitest`, tours, autopilot, headless renders and the corpus stay
+    /// deterministic and unperturbed — the same "off for tasks" stance as the orbit cache), and
+    /// off when `FRACTADYNE_NO_ACCUM` is set.
+    pub(crate) fn accumulation_allowed(&self) -> bool {
+        std::env::var_os("FRACTADYNE_NO_ACCUM").is_none()
+            // Off under EVERY task invocation, by the process's own flags rather than by listing
+            // harnesses: `--motiontest` / `--autodive` are single-view GUI dives, and once the
+            // single view drove accumulation (2026-09-15) their settled depths would have
+            // accumulated and moved their baselines. `--shot` is the one exception — it exists to
+            // capture the converged, de-speckled result and its gate waits for convergence.
+            && (!launched_as_task() || self.harness.shot.is_some() || self.zoomtest_settling())
+            && self.playback.is_none()
+            && !self.autopilot.active
+            && !self.uitest_active()
+            && !self.render_cli.run
+            && self.render_cli.tour.is_none()
+            && !self.selftest.run
+            && !self.profile.run
+    }
+
+    /// Progressive on-settle supersampling state machine (deep-zoom despeckle). Called once per view
+    /// per frame with this view's motion / `busy` state (`busy` = a settle grid, chunk progression or
+    /// reference build is still in flight, so the current sample is not yet a complete frame). It
+    /// advances `accum_*` and stores `accum_cmd[view]`, which `build_params` hands the GPU. The fold
+    /// and the re-arm are split across two frames so the fold reads the completed frame before a
+    /// re-arm re-iterates over it.
+    fn drive_accumulation(
+        &mut self,
+        ctx: &egui::Context,
+        view: usize,
+        interacting: bool,
+        busy: bool,
+        log2mag: f64,
+    ) {
+        // The average is a COLOUR image: a run started under one colouring must not present or
+        // extend under another (field report 2026-09-15: toggling Distance glow in dual view
+        // changed the shallow Julia pane only — the deep Mandelbrot pane sat in the converged
+        // state presenting its stale average, never repainting). Any change restarts the run;
+        // an ANIMATED colouring (glow phase, palette cycling) changes every frame and so simply
+        // keeps accumulation off, which is right — a moving image has no fixed mean.
+        let sig = self.accum_color_sig(view);
+        let stale = self.perf.accum_active[view] && sig != self.perf.accum_sig[view];
+        let allowed = self.accumulation_allowed()
+            && !interacting
+            && !self.tour_playing()
+            && log2mag >= ACCUM_MIN_LOG2
+            && !stale;
+        if !allowed {
+            self.perf.accum_active[view] = false;
+            self.perf.accum_committed[view] = false;
+            self.perf.accum_cmd[view] = AccumCmd::default();
+            self.perf.accum_sig[view] = sig;
+            if stale {
+                self.schedule_repaint(ctx); // show the freshly coloured classic frame, then restart
+            }
+            return;
+        }
+        // `accum_count` = samples FOLDED so far; `accum_committed` = the current sample has been
+        // folded and the next frame should advance (re-arm the grid at the next jitter). The fold
+        // and the re-arm are on separate frames so the fold reads the completed `tex_view` before a
+        // re-arm re-iterates over it.
+        let mut cmd = AccumCmd { present: true, ..Default::default() };
+        // ⭐⭐**PROVENANCE IS A PER-FRAME QUESTION, NOT AN OPENING ONE.** Checking it only before
+        // sample 0 left the ghost's last door open: once a run is under way `cmd.present` is true
+        // every frame, so the GPU keeps blitting the running AVERAGE. If the view then changes
+        // without `interacting` being set for a single frame that reaches here, the average of the
+        // OLD view stays on screen under the NEW view's coordinates, and nothing complains —
+        // `accum_confirm`'s viewport tripwire only speaks when a fold is ATTEMPTED, and a fold is
+        // withheld while a grid or a reprojection is in flight, which is exactly when this happens.
+        // Field report 2026-09-17, second round: the opening gate fired 11 times and the tripwire
+        // stayed silent, and the ghosts kept coming. So ask every frame, and when the answer is no,
+        // abandon the run rather than keep presenting it.
+        let asked = self.perf.content_stamp_asked[view];
+        let told = self.perf.content_stamp[view].load(std::sync::atomic::Ordering::Relaxed);
+        let content_clean = told != u64::MAX && told == asked;
+        if self.perf.accum_active[view] && !content_clean {
+            crate::diag::log_line(
+                "accum",
+                &format!(
+                    "view {view}: abandoned at sample {} — the texture stopped being this view \
+                     (reported {told:#x}, asked {asked:#x})",
+                    self.perf.accum_count[view]
+                ),
+            );
+            self.perf.accum_active[view] = false;
+            self.perf.accum_committed[view] = false;
+            self.perf.accum_cmd[view] = AccumCmd::default(); // present the live frame, not the average
+            self.schedule_repaint(ctx);
+            return;
+        }
+        if !self.perf.accum_active[view] {
+            // Not yet accumulating. Wait for the ordinary settle to finish — its grids drained AND
+            // the AA ramp at its target (between ramp stages both pending flags read false for a
+            // frame while the next, sharper stage has not yet dispatched; see the same trap in
+            // `--uitest`'s capture gate) — so sample 0 is the complete, unjittered, full-AA frame.
+            // Present the classic frame until then.
+            let ramp_done =
+                aa_ramp(self.pointer.settle_frame[view], self.render_cfg.aa) >= self.render_cfg.aa.max(1);
+            // ⭐⭐**AND THE PIXELS MUST BE THIS VIEW'S.** Everything above rules on the FRAME and
+            // the tripwire in `accum_confirm` rules on the VIEWPORT; neither can see that the
+            // texture the frame drew into still holds an earlier location underneath, which is
+            // what a resize carried across a view change used to leave there. The GPU stamps the
+            // texture with the view its pixels were drawn at and reports it back here; anything
+            // but a clean match waits rather than making it sample 0, because sample 0 enters the
+            // average at FULL weight and is then carried through every later sample.
+            if busy || !ramp_done || !content_clean {
+                self.perf.accum_cmd[view] = AccumCmd::default();
+                if !busy && ramp_done && !content_clean && !self.perf.content_wait_logged[view] {
+                    // Always on, like the fold tripwire, but once per episode: if a ghost is still
+                    // reaching the screen this is the line that says whether this path caught it.
+                    self.perf.content_wait_logged[view] = true;
+                    crate::diag::log_line(
+                        "accum",
+                        &format!(
+                            "view {view}: waiting — texture is not wholly this view \
+                             (reported {told:#x}, asked {asked:#x})"
+                        ),
+                    );
+                }
+                self.schedule_repaint(ctx);
+                return;
+            }
+            self.perf.accum_active[view] = true;
+            self.perf.content_wait_logged[view] = false; // arm the next episode's single line
+            self.perf.accum_count[view] = 0;
+            self.perf.accum_committed[view] = false;
+            self.perf.accum_jitter[view] = [0.0, 0.0];
+            self.perf.accum_sig[view] = sig;
+            crate::diag::log_line(
+                "accum",
+                &format!("view {view}: begin (2^{log2mag:.1}, target {})", accum_target()),
+            );
+        }
+        let count = self.perf.accum_count[view];
+        cmd.jitter = self.perf.accum_jitter[view];
+        if count >= accum_target() {
+            // Converged: keep presenting the average, request no repaint → the view quiesces.
+        } else if busy {
+            self.schedule_repaint(ctx); // this sample is still rendering
+        } else if !self.perf.accum_committed[view] {
+            // The current sample's (jittered) frame looks complete → PROPOSE folding it, WITHOUT
+            // re-arming this frame (so `tex_view` is not overwritten before the fold reads it).
+            // ⚠Provisional: `busy` is read from the PREVIOUS frame's flags, and `build_params`
+            // may yet start a tile grid / chunk progression, decide to reproject a held frame, or
+            // gate the display behind a pin — none of which is a foldable sample. `accum_confirm`
+            // rules on the frame actually built, and only IT advances the count. Folding on the
+            // pre-build flags alone is what put a faint SHIFTED copy of the previous view into
+            // every later average (field report 2026-09-15, dual view at 3.7e144×): sample 0 was
+            // the held reprojection of the pre-pan frame with the new view's first tiles over it.
+            cmd.commit = true;
+            cmd.reset = count == 0;
+        } else {
+            // Folded — advance to the next sample: re-arm the settle grid at the next jitter.
+            self.perf.accum_committed[view] = false;
+            self.perf.accum_jitter[view] = accum_jitter_seq(count);
+            self.perf.view_gen[view] = self.perf.frame_idx;
+            cmd.jitter = self.perf.accum_jitter[view];
+            self.schedule_repaint(ctx);
+        }
+        self.perf.accum_cmd[view] = cmd;
+    }
+
+    /// Rule on the fold `drive_accumulation` proposed, now that `build_params` has built THIS
+    /// frame: fold only a real (non-reprojected, non-held, un-pinned) frame with no grid, chunk
+    /// progression or reference build in flight, at the same `ss` as sample 0. Anything else
+    /// withdraws the fold from `params` (the presented average is untouched) and retries next
+    /// frame. Advances the sample count on a confirmed fold.
+    fn accum_confirm(
+        &mut self,
+        ctx: &egui::Context,
+        view: usize,
+        params: &mut fractadyne_gpu::MandelbrotParams,
+    ) {
+        if !params.accum_commit {
+            return;
+        }
+        let count = self.perf.accum_count[view];
+        let clean = accum_fold_clean(
+            params.reproject,
+            params.display_hold,
+            params.hold_copy,
+            self.perf.tile_pending[view],
+            self.perf.chunk_pending[view],
+            self.recompute_rx[view].is_some(),
+            count,
+            params.ss,
+            self.perf.accum_ss[view],
+        );
+        if !clean {
+            params.accum_commit = false;
+            params.accum_reset = false;
+            self.perf.accum_cmd[view].commit = false;
+            self.perf.accum_cmd[view].reset = false;
+            if crate::diag::trace_on("tile") {
+                crate::diag::trace(
+                    "tile",
+                    format!(
+                        "accum v={view}: fold withheld (reproject={} hold={}/{} tile={} chunk={} \
+                         build={} ss={} vs {})",
+                        params.reproject,
+                        params.display_hold,
+                        params.hold_copy,
+                        self.perf.tile_pending[view],
+                        self.perf.chunk_pending[view],
+                        self.recompute_rx[view].is_some(),
+                        params.ss,
+                        self.perf.accum_ss[view]
+                    ),
+                );
+            }
+            self.schedule_repaint(ctx); // the sample is not complete yet — look again next frame
+            return;
+        }
+        // The tripwire: every fold must be at sample 0's view. Always on — a fold at another
+        // view puts a translucent copy of that view into every later average, and the report of
+        // one (2026-09-16) reached the log with no trace flag set.
+        let vp = if view == 1 { &self.julia_viewport } else { &self.viewport };
+        let (vl2, vc) = (vp.log2_magnification(), vp.center_f64());
+        if count == 0 {
+            self.perf.accum_ss[view] = params.ss;
+            self.perf.accum_view0[view] = (vl2, vc.0, vc.1);
+        } else {
+            let (l0, x0, y0) = self.perf.accum_view0[view];
+            if vl2 != l0 || vc.0 != x0 || vc.1 != y0 {
+                crate::diag::log_line(
+                    "accum",
+                    &format!(
+                        "⚠FOLD AT ANOTHER VIEW: view {view} sample {} at 2^{vl2:.4} c=({:.12e},{:.12e}) — \
+                         sample 0 was at 2^{l0:.4} c=({x0:.12e},{y0:.12e}); reproject={} hold={}/{} \
+                         tile={} chunk={} build={} frozen_l2={:.4}",
+                        count + 1,
+                        vc.0,
+                        vc.1,
+                        params.reproject,
+                        params.display_hold,
+                        params.hold_copy,
+                        self.perf.tile_pending[view],
+                        self.perf.chunk_pending[view],
+                        self.recompute_rx[view].is_some(),
+                        self.ref_cache[view].frozen_l2,
+                    ),
+                );
+            }
+        }
+        let folded = count + 1;
+        self.perf.accum_count[view] = folded;
+        self.perf.accum_committed[view] = true;
+        // The fold's IDENTITY, on the tile trace: which view the folded texture was rendered
+        // at and when. A sample folded at a different view than sample 0 is a ghost in every
+        // later average (field report 2026-09-16: "a transparent overlay of another
+        // location/zoom level" after a zoom) — this line is what proves or clears it.
+        if crate::diag::trace_on("tile") {
+            let vp = if view == 1 { &self.julia_viewport } else { &self.viewport };
+            let c = vp.center_f64();
+            crate::diag::trace(
+                "tile",
+                format!(
+                    "accum v={view}: FOLD #{folded} f={} l2={:.4} c=({:.9e},{:.9e}) res={}x{} ss={} \
+                     jitter=({:.3},{:.3}) dispatch_f={} steps_last={:.2e} prev_real={} \
+                     uv=({:.3},{:.3},{:.3}) frozen_l2={:.4}",
+                    self.perf.frame_idx,
+                    vp.log2_magnification(),
+                    c.0,
+                    c.1,
+                    params.resolution[0],
+                    params.resolution[1],
+                    params.ss,
+                    params.jitter[0],
+                    params.jitter[1],
+                    self.perf.fe_dispatch_frame[view.min(1)],
+                    self.perf.fe_steps_last[view.min(1)] as f64,
+                    self.perf.prev_real[view.min(1)],
+                    params.uv_offset[0],
+                    params.uv_offset[1],
+                    params.uv_scale,
+                    self.ref_cache[view].frozen_l2,
+                ),
+            );
+        }
+        if folded >= accum_target() {
+            crate::diag::log_line("accum", &format!("view {view}: converged at {folded} samples"));
+        }
+        self.schedule_repaint(ctx); // advance (or reach the terminal state) next frame
+    }
+
+    /// Everything that decides how a frame is COLOURED, hashed: the palette (index, revision,
+    /// custom/duotone/binary state), cycle/offset, method + its parameters, live normalization
+    /// (the setting AND the decided map, which `norm_feed_decision` may change on its own),
+    /// the effects, and the AA level. See `Perf::accum_sig`.
+    fn accum_color_sig(&self, view: usize) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let c = &self.coloring;
+        c.palette_idx.hash(&mut h);
+        c.palette_rev.hash(&mut h);
+        c.use_custom_palette.hash(&mut h);
+        c.custom_palette_flat.hash(&mut h);
+        c.custom_palette.len().hash(&mut h);
+        c.custom_segments.len().hash(&mut h);
+        c.use_duotone.hash(&mut h);
+        c.use_binary.hash(&mut h);
+        for v in c.duotone_lo.iter().chain(c.duotone_hi.iter()) {
+            v.to_bits().hash(&mut h);
+        }
+        c.cycle.to_bits().hash(&mut h);
+        c.offset.to_bits().hash(&mut h);
+        c.color_method.to_u32().hash(&mut h);
+        c.stripe_freq.to_bits().hash(&mut h);
+        c.stripe_tail.hash(&mut h);
+        c.stripe_tail_len.hash(&mut h);
+        c.trap_type.to_u32().hash(&mut h);
+        c.normalize_live.hash(&mut h);
+        c.normalize_fit.hash(&mut h); // or ticking the box would change no pixel until something else did
+        c.log_palette.hash(&mut h);
+        let e = &self.effects;
+        e.light.hash(&mut h);
+        e.light_angle.to_bits().hash(&mut h);
+        e.light_height.to_bits().hash(&mut h);
+        e.de.hash(&mut h);
+        e.de_strength.to_bits().hash(&mut h);
+        e.de_width.to_bits().hash(&mut h);
+        e.de_phase.to_bits().hash(&mut h);
+        self.render_cfg.aa.hash(&mut h);
+        if let Some((lo, hi)) = self.perf.norm_range[view] {
+            lo.to_bits().hash(&mut h);
+            hi.to_bits().hash(&mut h);
+        }
+        self.perf.norm_sig[view].hash(&mut h);
+        self.perf.norm_locked[view].hash(&mut h);
+        h.finish()
+    }
+
     /// The live-render work budget (`WORK_BUDGET`) scaled by the user's `work_budget_scale`. Higher
     /// lets deep/large frames render at fuller resolution (crisper) before the color pass falls back
     /// to a box-filtered upscale — at the cost of frame-rate and GPU-watchdog margin. Export is
@@ -11996,7 +13397,7 @@ impl FractadyneApp {
         // historical constant — the honest degradation, since we genuinely cannot measure per-step
         // cost there.
         if src == Self::SRC_GPU_ITERATE {
-            self.perf.record_mode_rate(v, ms, steps);
+            self.perf.record_gpu_reading(v, ms, steps);
         }
         let cur = render::budget_base(self.perf.fe_budget[v], self.perf.bootstrap_steps(v));
         // The arithmetic lives in `render::budget_step` as a pure function so the properties that
@@ -12386,6 +13787,19 @@ impl eframe::App for FractadyneApp {
                         c.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     });
                 }
+                // The pinned-refresh pass gate, same protocol (see `Perf::pin_inflight`). The
+                // callback also stamps WHEN the pass completed, so its price is exact rather
+                // than quantized to the frame the completion is noticed in.
+                let done = self.perf.pin_done[v].swap(0, std::sync::atomic::Ordering::Relaxed);
+                self.perf.pin_inflight[v] = self.perf.pin_inflight[v].saturating_sub(done);
+                for _ in 0..std::mem::take(&mut self.perf.pin_reg_pending[v]) {
+                    let c = self.perf.pin_done[v].clone();
+                    let at = self.perf.pin_done_at[v].clone();
+                    q.on_submitted_work_done(move || {
+                        at.store(app_micros(), std::sync::atomic::Ordering::Relaxed);
+                        c.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    });
+                }
             }
         }
         // Adapter name for the --uitest report header (once is enough; cheap to read each frame).
@@ -12519,7 +13933,9 @@ impl eframe::App for FractadyneApp {
             }
         }
         self.update_minimap(ctx, &gpu);
+        self.update_reticle(ctx, &gpu);
         // Collect a finished off-thread feature solve (Go-to ▸ nearest minibrot / Misiurewicz).
+        self.poll_snap_solve(ctx);
         self.poll_feature_solve(ctx);
         self.poll_misiurewicz_explorer(ctx, gpu.as_ref());
 
@@ -12563,8 +13979,10 @@ impl eframe::App for FractadyneApp {
             } else if redo {
                 self.redo_view();
             }
-            // M: find the nearby minibrot center (single view only).
-            if ctx.input(|i| i.key_pressed(egui::Key::M) && !i.modifiers.any()) && !self.dual {
+            // M: find the nearby minibrot center. ⛔**Not gated on the view layout any more.** The
+            // dual view has a Mandelbrot panel and `find_minibrot` works on exactly that viewport,
+            // so `!self.dual` was refusing a request it could serve — and refusing it silently.
+            if ctx.input(|i| i.key_pressed(egui::Key::M) && !i.modifiers.any()) {
                 self.find_minibrot(ctx);
             }
             // A: toggle the auto-zoom autopilot (single view only).
@@ -12621,6 +14039,26 @@ impl eframe::App for FractadyneApp {
         // Auto-zoom autopilot — dive toward detail (advance before drawing so this frame
         // reflects the new view).
         self.autopilot_step(ctx, &gpu);
+
+        // Interactive reference LOOKAHEAD: a hold-Space glide or autopilot dive is predictable
+        // from the zoom-rate slider, so build the references it is about to need on idle cores
+        // and install each as the dive arrives — the tour lookahead's queue, fed a closed-form
+        // trajectory instead of a script (render.rs). Before the draw so an arrived slot serves
+        // this frame. Off under task invocations, whose baselines predate it.
+        // `--zoomtest` is the one task that must exercise this path: it measures the glide as a
+        // user gets it, lookahead included, and holds the key through `harness_holds_space`.
+        if render::interactive_prefetch_allowed() || self.harness.zoomtest.is_some() {
+            let (space, shift) = ctx.input(|i| (i.key_down(egui::Key::Space), i.modifiers.shift));
+            let space = (space && !ctx.wants_keyboard_input()) || self.harness_holds_space();
+            let rate = ZOOM_RATE * self.render_cfg.zoom_rate as f64;
+            let target_v = if space {
+                if shift { -rate } else { rate }
+            } else {
+                0.0
+            };
+            let oracle = self.interactive_glide_oracle(target_v, ctx.pixels_per_point() as f64);
+            self.interactive_ref_prefetch_with(oracle);
+        }
 
         // Palette cycling animation (shifts the color offset over time).
         self.advance_palette_anim(ctx);
@@ -12711,6 +14149,23 @@ impl eframe::App for FractadyneApp {
                 - std::mem::take(&mut self.perf.cap_sleep_ms))
                 .max(0.0);
             self.perf.last_dt_ms = dt; // the actual spike, with cap sleep removed
+            // Observed zoom speed, octaves/s, for the rate-aware refresh sizing. A step of two
+            // octaves or more in ONE interval is a jump (a load, a click-zoom, Home, a harness
+            // teleport), not a glide speed: it resets the estimate rather than feeding it.
+            {
+                let l2 = self.viewport.log2_magnification();
+                let d = (l2 - self.perf.last_l2).abs();
+                self.perf.zoom_oct_s = if d >= 2.0 || dt <= 0.0 {
+                    0.0
+                } else {
+                    let inst = d / dt * 1000.0;
+                    self.perf.zoom_oct_s + (inst - self.perf.zoom_oct_s) * 0.3
+                };
+                self.perf.last_l2 = l2;
+            }
+            for v in 0..2 {
+                self.perf.motion_wall_cut(v, dt);
+            }
             // Present-throttle detector: a no-work frame this slow measured the compositor.
             let any_dispatch = self.perf.fe_dispatch_frame[0] == self.perf.frame_idx
                 || self.perf.fe_dispatch_frame[1] == self.perf.frame_idx;

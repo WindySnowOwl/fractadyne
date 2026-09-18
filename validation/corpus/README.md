@@ -68,7 +68,7 @@ It re-renders each location to a temp file and compares it **pixel-for-pixel** a
 like the `--selftest` goldens), so an unchanged renderer prints `20/20 MATCH`; any `CHANGED` location
 must be eyeballed against its F3 reference (regenerate, then open `catalog.html`) before it is
 re-committed. The check exits non-zero on any change and never modifies the committed renders or
-catalog. It is intentionally **not** part of the fast `--selftest` — a full 20-location re-render takes
+catalog. It is intentionally **not** part of the fast `--selftest` — a full 38-location re-render takes
 minutes (the deep locations dominate), so it is an on-demand gate.
 
 > ### ✅ Fixed 2026-08-14: this gate was RED because the renders were not hermetic
@@ -156,7 +156,7 @@ high enough for the depth (F3's reference otherwise truncates and blanks), and t
 enough digits for the depth *plus* margin** for F3's internal reference rounding, which is coarser
 than Fractadyne's full-precision bignum reference.
 
-Net: clean, arm-for-arm F3 matches at **all 20 locations** — from 1× to **6.13e1105×**, over a
+Net: clean, arm-for-arm F3 matches at **all 38 routine locations** — from 1× to **6.13e1105×**, over a
 thousand orders of magnitude of zoom. The former gap at **07** (1e30×) is now closed: its old shared
 34-digit seahorse center was too coarse for a reproducible match there — F3 rounded it below
 Fractadyne's bignum reference onto different sub-structure — so it was **replaced by a user Fraktaler-3

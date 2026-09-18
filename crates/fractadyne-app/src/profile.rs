@@ -358,6 +358,18 @@ struct DiveFrame {
     real: bool,
     lag: f64,
     orbit_id: u64,
+    /// Magnification the presenter applied to the held frame (`1/uv_scale`; 1.0 on a real frame)
+    /// — how blocky the picture on screen was. ⚠Faithful only where this harness's real frames
+    /// LATCH the frozen bookkeeping (un-pinned frames): a pinned mode-2 refresh defers its latch
+    /// to adoption, a present-path step this harness never runs, so in that regime a held frame
+    /// measures against the window's first latch (read 2^11 at 1e100 on the reactive path,
+    /// 2026-09-15) — a real glide would have adopted along the way.
+    mag: f64,
+    /// Fraction of the SELECTED zoom speed actually delivered this frame (the pacer's throttle:
+    /// `paced_zoom_vel/zoom_vel` on a glide, `1 − paced_hold` on a tour).
+    vel_frac: f64,
+    /// Cumulative lookahead installs (`perf.lookahead_installs`).
+    lookahead: u64,
 }
 
 impl crate::FractadyneApp {
@@ -368,7 +380,14 @@ impl crate::FractadyneApp {
     /// frame really re-iterates, the GPU iterate itself. Frames are vsync-paced (16.7 ms), so
     /// wall-clock dynamics (build races, install cadence, pacing) match the live app; per-window
     /// stats expose exactly what a user would see: fps, hitch counts, real-refresh cadence/cost,
-    /// pacer engagement, reference installs.
+    /// pacer engagement, reference installs, held-frame fraction/magnification, the presented
+    /// interval between real frames, and lookahead installs.
+    ///
+    /// `FRACTADYNE_DIVETEST_GLIDE=<zoom_rate>` swaps the camera driver for an INTERACTIVE glide:
+    /// the hold-Space zoom at that slider setting, about the tour's final centre, through the same
+    /// pacer the GUI applies (`paced_zoom_vel`) and the interactive lookahead
+    /// (`interactive_ref_prefetch_with`) — the tour only supplies the window start views and the
+    /// anchor. `FRACTADYNE_NO_PREFETCH=1` is the A/B baseline in either mode.
     pub(crate) fn run_divetest(
         &mut self,
         device: &eframe::wgpu::Device,
@@ -379,7 +398,19 @@ impl crate::FractadyneApp {
         const WARMUP_SECS: f64 = 6.0;
         const MEASURE_SECS: f64 = 12.0;
         const VSYNC: f64 = 1.0 / 60.0;
+        const LN_2: f64 = std::f64::consts::LN_2;
         let resolution = [1280u32, 720u32];
+        // Glide mode (see the doc above). Set-but-unreadable is an error, not "tour mode".
+        let glide_rate: Option<f64> = match std::env::var("FRACTADYNE_DIVETEST_GLIDE") {
+            Ok(v) => match v.trim().parse::<f64>() {
+                Ok(r) if r > 0.0 && r.is_finite() => Some(r),
+                _ => {
+                    eprintln!("divetest: FRACTADYNE_DIVETEST_GLIDE must be a positive zoom rate (got {v:?})");
+                    crate::exit(2);
+                }
+            },
+            Err(_) => None,
+        };
 
         // Pin a deterministic live-ish config (mirrors the GUI dive DEFAULTS — notably
         // `min_motion_res` 0.30: a session floor of 1.0 forbids the motion-res controller from
@@ -428,15 +459,21 @@ impl crate::FractadyneApp {
         };
 
         println!(
-            "Fractadyne divetest — {} · {} windows ({WARMUP_SECS:.0}s warmup + {MEASURE_SECS:.0}s measured each) · {}×{} vsync-paced",
+            "Fractadyne divetest — {} · {} windows ({WARMUP_SECS:.0}s warmup + {MEASURE_SECS:.0}s measured each) · {}×{} vsync-paced · {}{}",
             tour.display(),
             windows.len(),
             resolution[0],
-            resolution[1]
+            resolution[1],
+            match glide_rate {
+                Some(r) => format!("interactive glide at zoom rate {r:.2}×"),
+                None => "tour camera".to_string(),
+            },
+            if crate::render::no_prefetch() { " · NO PREFETCH (reactive path only)" } else { "" },
         );
         println!(
-            "  {:>6} {:>6} {:>8} {:>8} {:>8} {:>7} {:>8} {:>8} {:>9} {:>8} {:>8}",
-            "depth", "fps", "p50 ms", "p95 ms", "max ms", ">33ms", "real/s", "real p95", "installs", "paced%", "oct/s"
+            "  {:>6} {:>6} {:>8} {:>8} {:>8} {:>7} {:>8} {:>8} {:>9} {:>8} {:>8} {:>6} {:>8} {:>8} {:>7} {:>5} {:>5}  (then build95 / gpu95 ms, motion-res range)",
+            "depth", "fps", "p50 ms", "p95 ms", "max ms", ">33ms", "real/s", "real p95", "installs", "paced%", "oct/s",
+            "hold%", "gap p95", "gap max", "mag max", "vel%", "look"
         );
 
         let t_base = Instant::now();
@@ -449,21 +486,92 @@ impl crate::FractadyneApp {
             let Some(e_start) = time_at(&pb, *d) else { continue };
             // Cold reference state per window, then seed the tour clock at the window start.
             self.invalidate_refs();
-            pb.cur_t = e_start; // seed the clock at the window start (was: shift the origin)
-            pb.started = false;
-            pb.last_now = None;
-            self.playback = Some(pb);
+            // ...and cold PRESENTER state: `invalidate_refs` keeps the frozen-frame bookkeeping
+            // (`frozen_center`/`frozen_l2`), which the GUI relies on across a fractal switch. A
+            // window here TELEPORTS 60+ decades from the previous one, so a held frame would
+            // "reproject" the previous window's texture at the 2^-40 clamp — `mag max` read 1e12
+            // (measured 2026-09-15) for a stall a real glide never shows. Start each window the
+            // way a fresh app starts: nothing frozen, the first hold is a static one.
+            for vc in self.ref_cache.iter_mut() {
+                vc.frozen_center = None;
+                vc.frozen_l2 = 0.0;
+                vc.frozen_at = None;
+                vc.frozen_upp_l2 = 0.0;
+            }
+            let tour_max_l2 = pb.sample(pb.total).logmag / LN_2;
+            // Glide mode: the tour supplies the window's start view and the anchor (its final
+            // centre — the point an interactive dive keeps under the cursor); the camera is then
+            // the GUI's own glide at the selected zoom rate, and there is NO playback, so the
+            // interactive pump owns the lookahead queue exactly as it does in the GUI.
+            let glide = glide_rate.map(|zr| {
+                let s0 = pb.sample(e_start);
+                self.viewport.set_center_log2mag(s0.cx, s0.cy, s0.logmag / LN_2);
+                let end = pb.sample(pb.total);
+                self.render_cfg.zoom_rate = zr as f32;
+                let rate = crate::ZOOM_RATE * zr;
+                self.pointer.zoom_vel = rate;
+                (rate, (end.cx, end.cy))
+            });
+            if glide.is_some() {
+                self.playback = None;
+                self.ref_prefetch.clear();
+                self.hold_prefetch.clear();
+            } else {
+                pb.cur_t = e_start; // seed the clock at the window start (was: shift the origin)
+                pb.started = false;
+                pb.last_now = None;
+                self.playback = Some(pb);
+            }
 
             let mut frames: Vec<DiveFrame> = Vec::with_capacity(2048);
             let w_start = t_base.elapsed().as_secs_f64();
+            // Synthetic clock for the per-second counters the GUI resets in `update()` — which
+            // this harness never runs. Without it, `PREFETCH_BUILDS_PER_S` lookahead spawns pinned
+            // the queue OFF for the rest of the window (at 4.0× that is ~6 s — inside the warmup).
+            let mut rate_t = 0.0_f64;
             loop {
                 let now = t_base.elapsed().as_secs_f64();
                 if now - w_start > WARMUP_SECS + MEASURE_SECS {
                     break;
                 }
-                match self.advance_playback_core(now) {
-                    crate::scripting::PlaybackTick::Playing => {}
-                    _ => break, // tour ended inside the window
+                // The interval the previous frame occupied (what the GUI's `stable_dt` would be).
+                let dt = (self.perf.last_dt_ms / 1000.0).max(VSYNC);
+                let vel_frac;
+                match &glide {
+                    None => {
+                        match self.advance_playback_core(now) {
+                            crate::scripting::PlaybackTick::Playing => {}
+                            _ => break, // tour ended inside the window
+                        }
+                        vel_frac = self.playback.as_ref().map_or(1.0, |pb| 1.0 - pb.paced_hold);
+                    }
+                    Some((rate, (ax, ay))) => {
+                        let oracle = crate::render::Glide {
+                            l2: self.viewport.log2_magnification(),
+                            center: (self.viewport.center_x.clone(), self.viewport.center_y.clone()),
+                            anchor: (ax.clone(), ay.clone()),
+                            v0: *rate,
+                            target_v: *rate,
+                            horizon_l2: tour_max_l2,
+                            precision: self.viewport.precision,
+                            fractal: self.fractal,
+                        };
+                        self.interactive_ref_prefetch_with(Some(oracle));
+                        // The GUI's glide: the pacer-damped velocity about a FIXED complex anchor.
+                        let paced = self.paced_zoom_vel();
+                        vel_frac = paced / rate;
+                        let (px, py) = self.viewport.complex_to_pixel(ax, ay);
+                        self.viewport.zoom_at(px, py, (-paced * dt).exp());
+                        if self.viewport.log2_magnification() >= tour_max_l2 {
+                            break; // past the tour's own depth — the window is over
+                        }
+                    }
+                }
+                rate_t += dt;
+                if rate_t >= 1.0 {
+                    rate_t = 0.0;
+                    self.perf.build_count = 0;
+                    self.perf.prefetch_count = 0;
                 }
                 let ft = Instant::now();
                 // Mirror `draw_central`'s per-frame build exactly (single view, mid-dive).
@@ -482,6 +590,7 @@ impl crate::FractadyneApp {
                     resolution, 0, None,
                 );
                 let real = params.reproject == 0;
+                let mag = if real { 1.0 } else { 1.0 / (params.uv_scale as f64).max(1e-12) };
                 let build_ms = ft.elapsed().as_secs_f64() * 1000.0;
                 let mut gpu_ms = 0.0;
                 if real {
@@ -495,6 +604,9 @@ impl crate::FractadyneApp {
                     gpu_ms = if ts.captured { ts.iterate_ms + ts.color_ms } else {
                         ft.elapsed().as_secs_f64() * 1000.0 - build_ms
                     };
+                    // The readback waited for the queue: every dispatch has completed, which the
+                    // GUI learns through callbacks this harness has no event loop to arm.
+                    self.perf.retire_synchronous_dispatches(0);
                 }
                 let frame_ms = build_ms + gpu_ms;
                 // Mirror the GUI's frame-interval capture (stamped at the next frame's start
@@ -512,6 +624,9 @@ impl crate::FractadyneApp {
                         real,
                         lag: self.ref_cache[0].last_depth_lag,
                         orbit_id: self.ref_cache[0].orbit_id,
+                        mag,
+                        vel_frac,
+                        lookahead: self.perf.lookahead_installs,
                     });
                 }
                 // Vsync pacing: the live app can't run faster than the display.
@@ -521,6 +636,7 @@ impl crate::FractadyneApp {
                 }
             }
             self.playback = None;
+            self.interactive_ref_prefetch_with(None); // drop the glide's queue
             if frames.len() < 30 {
                 println!("  1e{:<4} (window too short — skipped)", *d as u64);
                 continue;
@@ -555,22 +671,52 @@ impl crate::FractadyneApp {
             let (rb95, rg95) = if rb.is_empty() { (0.0, 0.0) } else { (pct(&rb, 0.95), pct(&rg, 0.95)) };
             let res_lo = frames.iter().map(|f| f.motion_res).fold(1.0f64, f64::min);
             let res_hi = frames.iter().map(|f| f.motion_res).fold(0.0f64, f64::max);
+            // Smoothness as SEEN: held frames cost 0 above, so `real p95` misses the stall a viewer
+            // actually watches — the wall interval between one REAL frame and the next, over
+            // which the presenter magnifies the held one (`mag`).
+            let hold_pct = frames.iter().filter(|f| !f.real).count() as f64 / n * 100.0;
+            let mut gaps: Vec<f64> = Vec::new();
+            let (mut acc, mut seen_real) = (0.0_f64, false);
+            for f in &frames {
+                if f.real {
+                    if seen_real {
+                        gaps.push(acc);
+                    }
+                    seen_real = true;
+                    acc = 0.0;
+                }
+                acc += f.frame_ms.max(VSYNC * 1000.0);
+            }
+            gaps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let (gap95, gapmax) =
+                if gaps.is_empty() { (0.0, 0.0) } else { (pct(&gaps, 0.95), *gaps.last().unwrap()) };
+            let mag_max = frames.iter().map(|f| f.mag).fold(1.0f64, f64::max);
+            let vel_pct = frames.iter().map(|f| f.vel_frac).sum::<f64>() / n * 100.0;
+            let look = frames.last().unwrap().lookahead.saturating_sub(frames[0].lookahead);
             println!(
-                "  1e{:<4} {:>6.1} {:>8.1} {:>8.1} {:>8.1} {:>7} {:>8.1} {:>8.1} {:>9} {:>7.0}% {:>8.2}  build95 {:>6.1} gpu95 {:>6.1} res {:.2}-{:.2}",
+                "  1e{:<4} {:>6.1} {:>8.1} {:>8.1} {:>8.1} {:>7} {:>8.1} {:>8.1} {:>9} {:>7.0}% {:>8.2} {:>5.0}% {:>8.0} {:>8.0} {:>7.2} {:>4.0}% {:>5}  build95 {:>6.1} gpu95 {:>6.1} res {:.2}-{:.2}",
                 *d as u64, fps, p50, p95, pmax, hitches, real_per_s, real_p95, installs, paced, oct_s,
+                hold_pct, gap95, gapmax, mag_max, vel_pct, look,
                 rb95, rg95, res_lo, res_hi
             );
             json_rows.push_str(&format!(
                 "{}{{\"depth\":{d},\"fps\":{fps:.2},\"p50\":{p50:.2},\"p95\":{p95:.2},\"max\":{pmax:.2},\
                  \"hitches\":{hitches},\"real_per_s\":{real_per_s:.2},\"real_p95\":{real_p95:.2},\
-                 \"installs\":{installs},\"paced_pct\":{paced:.1},\"oct_s\":{oct_s:.3}}}",
+                 \"installs\":{installs},\"paced_pct\":{paced:.1},\"oct_s\":{oct_s:.3},\
+                 \"hold_pct\":{hold_pct:.1},\"gap_p95\":{gap95:.1},\"gap_max\":{gapmax:.1},\
+                 \"mag_max\":{mag_max:.3},\"vel_pct\":{vel_pct:.1},\"lookahead\":{look}}}",
                 if wi == 0 { "" } else { ",\n" }
             ));
         }
         let json = format!(
-            "{{\n\"tool\": \"fractadyne --divetest\",\n\"version\": {},\n\"tour\": {},\n\"windows\": [\n{json_rows}\n]\n}}\n",
+            "{{\n\"tool\": \"fractadyne --divetest\",\n\"version\": {},\n\"tour\": {},\n\"camera\": {},\n\"prefetch\": {},\n\"windows\": [\n{json_rows}\n]\n}}\n",
             js(&crate::version_string()),
             js(&tour.display().to_string()),
+            match glide_rate {
+                Some(r) => format!("{{\"glide_zoom_rate\": {r}}}"),
+                None => "\"tour\"".to_string(),
+            },
+            !crate::render::no_prefetch(),
         );
         if let Some(dir) = out.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -763,6 +909,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         // path stays on the classic linear map regardless of the session's setting.
         norm_mode: 0,
         norm_lo: 0.0,
+        aa_palette: false,
         glitch_on: 0,
         vignette: p.vignette,
         sa_a: p.sa_a,
@@ -793,6 +940,8 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         de_phase: p.de_phase,
         color_method: p.color_method,
         stripe_freq: p.stripe_freq,
+        stripe_tail: p.stripe_tail,
+        stripe_tail_len: p.stripe_tail_len,
         trap_type: p.trap_type,
         aa_filter: p.aa_filter,
         interior_col: p.interior_col,

@@ -231,6 +231,7 @@ fn a_setting_survives_save_and_reload() {
     let want = SessionState {
         // one of each shape: bool, float, int, string, enum-as-string, Option<String>
         normalize_live: false,
+        normalize_fit: true,
         log_palette: true,
         zoom_rate: 2.75,
         fps_cap: 0.0, // uncapped — the value that a naive Option round trip loses
@@ -257,6 +258,9 @@ fn a_setting_survives_save_and_reload() {
     let (got, status) = load_with_status();
     assert_eq!(status, StateLoad::Ok, "the session we just wrote did not read back cleanly");
     assert!(!got.normalize_live, "normalize_live");
+    // The range-fit switch is the half users reach for after finding the aliasing guard declines;
+    // losing it on reload would put them back where they started, silently.
+    assert!(got.normalize_fit, "normalize_fit");
     assert!(got.log_palette, "log_palette");
     assert_eq!(got.zoom_rate, 2.75, "zoom_rate");
     assert_eq!(got.fps_cap, 0.0, "fps_cap (uncapped)");
@@ -283,6 +287,7 @@ fn a_setting_survives_save_and_reload() {
     assert_ne!(d.color_method, want.color_method);
     assert_ne!(d.aa, want.aa);
     assert_ne!(d.normalize_live, want.normalize_live);
+    assert_ne!(d.normalize_fit, want.normalize_fit);
 }
 
 /// Checklist step 96, "settings live in the user profile, not beside the executable, so two

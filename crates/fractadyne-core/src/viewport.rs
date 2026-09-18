@@ -321,3 +321,7 @@ impl Viewport {
 
 #[cfg(test)]
 mod pan_complex_tests;
+
+#[cfg(test)]
+#[path = "viewport/click_zoom_tests.rs"]
+mod click_zoom_tests;

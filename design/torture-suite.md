@@ -16,7 +16,7 @@ emits a failure artifact good enough to diagnose from — the way that field cra
 | `--selftest` | mixed | 168 checks + 18 goldens | goldens ≤ **1e6** | no — flat | yes (`--selftest-filter`) | pass/fail + `validation/report.md` |
 | `--livetest` grand tour | live | 24 checkpoints | e55–e94 holds | no — fixed tour | no | drift vs blessed JSON, stdout |
 | `--livetest` ultra dive | live | 5 checkpoints | e30–e200 | no | no | same |
-| F3 corpus | offline | 38 locations | e0–**e1105** | no | `--check` | maxΔ per location |
+| F3 corpus | offline | 38 of 39 locations (row 39 is `extreme = true`, skipped unless `--extreme`) | e0–**e1105** | no | `--check` | maxΔ per location |
 | `--bench-matrix` | perf | 28 segments | mixed | no | ? | JSON baseline, exit 2 on drift |
 | `--gputest` | GPU primitives | op sweep | n/a | sweeps inputs | ? | per-op max error |
 | `--uitest` / `--juliadive` | live UI | scripted walk | shallow | no | no | screenshots |

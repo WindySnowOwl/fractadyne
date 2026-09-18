@@ -42,7 +42,10 @@ pub(crate) struct IterUniforms {
     pub(crate) color_method: u32, // selected coloring method (drives aux accumulation)
     pub(crate) stripe_freq: f32,  // stripe-average angular frequency
     pub(crate) trap_type: u32,    // orbit-trap shape: 0 point, 1 cross, 2 circle
-    pub(crate) aux_on: u32,       // 1 = accumulate orbit statistics into the aux target
+    // Bitfield: bit 0 = accumulate orbit statistics into the aux target; bit 1 = stripe average
+    // over the TAIL only (an exponential window); bits 2.. = that window's length in iterations.
+    // See `aux_on_word`.
+    pub(crate) aux_on: u32,
     pub(crate) sa_skip: u32,      // series-approximation skip (0 = none): seed δz at this iteration
     pub(crate) glitch_on: u32,    // 1 = flag Pauldelbrot-glitched pixels (multi-reference correction pass)
     pub(crate) sa_a: [f32; 4],    // order-3 series coeffs (complex df32 mantissa): δz ≈ A·δc + B·δc² + C·δc³
@@ -102,6 +105,22 @@ pub(crate) struct ColorUniforms {
     /// keep the two structs in the same order.
     pub(crate) norm_mode: u32,
     pub(crate) norm_lo: f32,
+    /// 1 = analytic palette anti-aliasing: box-filter the palette over each pixel's footprint
+    /// (`palette_box` in the shader) so a steep escape field at deep zoom stops aliasing into
+    /// speckle. 0 = point sample (the old behaviour), for A/B and golden re-blessing.
+    pub(crate) aa_palette: u32,
+    /// Restores the 16-byte-multiple size a uniform needs (and keeps the struct free of implicit
+    /// padding, which `bytemuck::Pod` forbids). Mirrored by three `_pad_aa*` words in `ColorU`.
+    pub(crate) _pad_aa: [u32; 3],
+}
+
+/// Uniform for the progressive-SSAA accumulate pass (`fs_accum`): the running-mean step
+/// `1/(sample_index+1)`. Padded to 16 bytes for the uniform address space / `bytemuck::Pod`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct AccumU {
+    pub(crate) inv_weight: f32,
+    pub(crate) _pad: [f32; 3],
 }
 
 /// Spotlight vignette parameters (dim outside a soft circle), shared by the live and export paths.
@@ -139,6 +158,9 @@ struct IterKey {
     trap_type: u32,
     sa_skip: u32,
     bla_on: u32,
+    /// Sub-pixel jitter (progressive SSAA): a changed jitter is a new sample and must re-iterate,
+    /// so it participates in the key even though it only shifts `px_offset`.
+    jitter: [f32; 2],
 }
 
 /// GPU-timestamp capture around the LIVE `iterate_pass`, so the app can size deep frames against what
@@ -491,6 +513,22 @@ struct ViewResources {
     /// start, plus the (size, ss) it was built at — the color pass samples it while a composite
     /// builds invisibly in the live buffer. Dropped when a normal (ungated) frame renders.
     hold: Option<HoldState>,
+    /// Progressive on-settle supersampling accumulator (deep-zoom despeckle). `None` until the
+    /// first accumulating frame; dropped when a non-accumulating frame renders.
+    accum: Option<AccumState>,
+    /// ⭐⭐**PROVENANCE OF THE PIXELS, not of the view.** The app's ghost guards all ask about the
+    /// FRAME (`accum_fold_clean`: was it reprojected, held, pinned, mid-grid) and its identity
+    /// check asks about the VIEWPORT (`⚠FOLD AT ANOTHER VIEW`). Neither asks where the pixels in
+    /// the texture came from, and a frame can pass every one of those while rendering into a
+    /// texture that still holds an earlier view's content — which is what a user sees as "a
+    /// transparent overlay of another location" (field reports 2026-09-16 and 2026-09-17, the
+    /// second with the viewport tripwire silent through 41 accumulation runs from 2^38 to 2^120).
+    ///
+    /// `content_stamp` is the view this texture's newest writes were made at; `content_foreign`
+    /// says older pixels may still be under them. Together they answer the one question the other
+    /// guards cannot: is every pixel here from the view we are about to average?
+    content_stamp: Option<u64>,
+    content_foreign: bool,
 }
 
 /// Snapshot bind group for present-gated composition (see `MandelbrotParams::hold_copy`).
@@ -499,6 +537,25 @@ struct HoldState {
     bg: wgpu::BindGroup,
     size: [u32; 2],
     ss: u32,
+}
+
+/// Progressive on-settle supersampling accumulator (see `MandelbrotParams::accum_*`). While the
+/// view is settled, each idle frame re-renders it jittered and folds the shaded colour into a
+/// running average, converging to the anti-aliased (de-speckled) image. `frame` holds this frame's
+/// colour (surface format, the `fs_color` target); `avg[0..2]` ping-pong the running average
+/// (`ITER_FORMAT` for headroom); `latest` is the buffer holding the current average. Lazily built /
+/// resized in `ensure_accum`, dropped when a non-accumulating frame renders.
+struct AccumState {
+    frame: wgpu::TextureView,
+    avg: [wgpu::TextureView; 2],
+    /// `accum_bg[dst]` folds into `avg[dst]`, reading `avg[1 - dst]` at binding 2 + `frame` at 1.
+    accum_bg: [wgpu::BindGroup; 2],
+    /// `present_bg[i]` binds `avg[i]` at binding 2 for the present pass.
+    present_bg: [wgpu::BindGroup; 2],
+    uniform: wgpu::Buffer,
+    size: [u32; 2],
+    count: u32,
+    latest: usize,
 }
 
 /// Ping-pong state for a live chunked progression (see `MandelbrotParams::chunk_range`).
@@ -537,6 +594,14 @@ struct Renderer {
     state_bgl4: wgpu::BindGroupLayout,
     /// 4-byte u32::MAX source for seeding the escape-range MIN counter slot per frame.
     esc_min_seed: wgpu::Buffer,
+    /// Progressive on-settle supersampling: the fold pass (`fs_accum` → `ITER_FORMAT` average) and
+    /// the blit-to-surface pass (`fs_present` → `target_format`), plus their bind-group layouts and
+    /// the surface format needed to (re)build a view's `frame` accumulator texture.
+    accum_pipeline: wgpu::RenderPipeline,
+    present_pipeline: wgpu::RenderPipeline,
+    accum_bgl: wgpu::BindGroupLayout,
+    present_bgl: wgpu::BindGroupLayout,
+    target_format: wgpu::TextureFormat,
     views: std::collections::HashMap<u32, ViewResources>,
 }
 
@@ -552,6 +617,30 @@ pub(crate) fn make_iter_texture(device: &wgpu::Device, size: [u32; 2]) -> wgpu::
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: ITER_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    tex.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+/// A render-attachment + sampleable texture of an arbitrary format (used for the progressive-SSAA
+/// accumulator: the `frame` target is the surface format, the `avg` pair is `ITER_FORMAT`).
+pub(crate) fn make_target_texture(
+    device: &wgpu::Device,
+    size: [u32; 2],
+    format: wgpu::TextureFormat,
+) -> wgpu::TextureView {
+    let tex = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("fractadyne.accum_tex"),
+        size: wgpu::Extent3d {
+            width: size[0].max(1),
+            height: size[1].max(1),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
@@ -646,15 +735,20 @@ pub(crate) fn make_color_bg(
 pub(crate) fn make_lut_buffer(device: &wgpu::Device) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("fractadyne.palette_lut"),
-        size: (fractadyne_color::segment::LUT_SIZE * 16) as u64,
+        // The baked LUT, then its cyclic prefix sum (`LUT_SIZE + 1` entries) appended for the
+        // analytic palette anti-aliasing box filter — see `write_lut`. ~32 KB, still negligible.
+        size: ((fractadyne_color::segment::LUT_SIZE * 2 + 1) * 16) as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     })
 }
 
-/// Upload a baked LUT, truncated to what the buffer holds. Returns `(len, smooth)` for the
-/// uniform, so the count the shader bounds its reads with can never disagree with what was
-/// actually written.
+/// Upload a baked LUT, truncated to what the buffer holds, followed by its cyclic PREFIX SUM
+/// (the running integral, `n + 1` entries, at offset `n`) so the color pass can box-average the
+/// palette over a pixel's footprint (analytic anti-aliasing; `palette_box` in the shader). The
+/// prefix sum is the exact companion to `Lut::sample` — same formula as `Lut::prefix_sum`, kept
+/// inline here to avoid rebuilding a `Lut`. Returns `(len, smooth)` for the uniform, so the count
+/// the shader bounds its reads with can never disagree with what was actually written.
 pub(crate) fn write_lut(
     queue: &wgpu::Queue,
     buf: &wgpu::Buffer,
@@ -664,6 +758,17 @@ pub(crate) fn write_lut(
     let n = entries.len().min(fractadyne_color::segment::LUT_SIZE);
     if n > 0 {
         queue.write_buffer(buf, 0, bytemuck::cast_slice(&entries[..n]));
+        // Cyclic running integral: psum[0]=0, psum[k]=Σ entries[0..k], psum[n]=total.
+        let mut ps: Vec<[f32; 4]> = Vec::with_capacity(n + 1);
+        let mut acc = [0.0f32; 4];
+        ps.push(acc);
+        for e in &entries[..n] {
+            for c in 0..4 {
+                acc[c] += e[c];
+            }
+            ps.push(acc);
+        }
+        queue.write_buffer(buf, (n * 16) as u64, bytemuck::cast_slice(&ps));
     }
     (n as u32, smooth as u32)
 }
@@ -816,6 +921,100 @@ pub(crate) fn gather_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroup
                 ty: wgpu::BufferBindingType::Storage { read_only: true },
                 has_dynamic_offset: false,
                 min_binding_size: None,
+            },
+            count: None,
+        }],
+    })
+}
+
+/// May a resized iteration texture be SEEDED from the content it already holds, rather than
+/// cleared? Only when that content is this same view at another size.
+///
+/// Seeding exists so a resolution change mid-settle refines in place instead of against black.
+/// Across a VIEW change it instead copies another location into the texture the settle is about to
+/// refine, and the tiles that follow overwrite only what they cover — so whatever they miss stays
+/// on screen and is then folded into the progressive average at full weight as sample 0. Pure so
+/// the test pins it; see [`ViewResources::content_stamp`] for the field report behind it.
+pub(crate) fn seed_allowed(
+    rendered: bool,
+    tiled: bool,
+    content_stamp: Option<u64>,
+    content_foreign: bool,
+    view_stamp: u64,
+) -> bool {
+    rendered && tiled && content_stamp == Some(view_stamp) && !content_foreign
+}
+
+/// The texture's provenance after a frame: which view its newest pixels were drawn at, and whether
+/// anything older may still sit under them.
+///
+/// "Foreign" means pixels from ANOTHER VIEW may remain, not that the frame is unfinished — whether
+/// a tiled settle has finished is the app's question and it already answers it with `tile_pending`.
+/// Keeping the two apart is what lets a deep view accumulate at all: a cleared texture is blank,
+/// not foreign, so the tiles that fill it stay clean and the app folds once its grid drains.
+///
+/// A FULL-frame pass rewrites every pixel, so nothing older survives it. A TILE rewrites only its
+/// rect, so it inherits whatever it did not cover: blank or this same view stays clean, another
+/// view stays foreign. A REPROJECTION is the previous view's pixels warped to fit this one — the
+/// viewport is current, the pixels are not — so it is foreign by construction, which is exactly the
+/// combination the viewport tripwire cannot see.
+pub(crate) fn content_after_frame(
+    prev_stamp: Option<u64>,
+    prev_foreign: bool,
+    view_stamp: u64,
+    whole_frame: bool,
+    reproject: bool,
+) -> (Option<u64>, bool) {
+    if reproject {
+        return (Some(view_stamp), true);
+    }
+    if whole_frame {
+        return (Some(view_stamp), false);
+    }
+    match prev_stamp {
+        // Blank, or more of the same view: the tile exposes nothing that is not ours.
+        None => (Some(view_stamp), prev_foreign),
+        Some(s) if s == view_stamp => (prev_stamp, prev_foreign),
+        // Another view is still under what this tile did not cover.
+        Some(_) => (Some(view_stamp), true),
+    }
+}
+
+#[cfg(test)]
+#[path = "content_stamp_tests.rs"]
+mod content_stamp_tests;
+
+/// Bind-group layout for the progressive-SSAA **accumulate** pass (`fs_accum`): the running-mean
+/// uniform (0), this frame's freshly-shaded colour (1), and the previous running average (2).
+pub(crate) fn accum_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let tex_entry = |binding| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    };
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("fractadyne.accum_bgl"),
+        entries: &[uniform_bgl_entry(), tex_entry(1), tex_entry(2)],
+    })
+}
+
+/// Bind-group layout for the **present** pass (`fs_present`): the running-average texture to blit,
+/// at binding 2 — the slot `fs_present` reuses from `fs_accum`'s `accum_prev`.
+pub(crate) fn present_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("fractadyne.present_bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
             },
             count: None,
         }],
@@ -1041,6 +1240,27 @@ impl Renderer {
         });
         queue.write_buffer(&esc_min_seed, 0, &u32::MAX.to_le_bytes());
 
+        // Progressive on-settle supersampling passes.
+        let accum_bgl = accum_bind_group_layout(device);
+        let present_bgl = present_bind_group_layout(device);
+        let accum_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("fractadyne.accum_layout"),
+            bind_group_layouts: &[&accum_bgl],
+            push_constant_ranges: &[],
+        });
+        let present_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("fractadyne.present_layout"),
+            bind_group_layouts: &[&present_bgl],
+            push_constant_ranges: &[],
+        });
+        let accum_pipeline = fullscreen_pipeline(
+            device, &shader, &accum_pl, "fs_accum", &[ITER_FORMAT], "fractadyne.accum_pipeline",
+        );
+        let present_pipeline = fullscreen_pipeline(
+            device, &shader, &present_pl, "fs_present", &[target_format],
+            "fractadyne.present_pipeline",
+        );
+
         Self {
             iter_pipeline,
             color_pipeline,
@@ -1054,6 +1274,11 @@ impl Renderer {
             resolve_fe_pipeline,
             state_bgl4,
             esc_min_seed,
+            accum_pipeline,
+            present_pipeline,
+            accum_bgl,
+            present_bgl,
+            target_format,
             views: std::collections::HashMap::new(),
         }
     }
@@ -1113,6 +1338,9 @@ impl ViewResources {
             last_chunk: None,
             last_probe: 0,
             hold: None,
+            accum: None,
+            content_stamp: None,
+            content_foreign: false,
         }
     }
 
@@ -1133,6 +1361,82 @@ impl ViewResources {
         self.chunk_state = None; // state textures are size-matched; a resized view restarts
         self.last_chunk = None;
         self.rendered = false; // the new texture is blank until re-iterated
+        // Blank is not foreign: there is nothing under the next writes to bleed through.
+        self.content_stamp = None;
+        self.content_foreign = false;
+    }
+
+    /// Build (or resize) the progressive-SSAA accumulator at `size` display pixels: a `frame`
+    /// target (surface format, the colour pass writes here) + a ping-pong `avg` pair
+    /// (`ITER_FORMAT`, the running average) + their bind groups. An existing accumulator of the
+    /// right size is kept, so a running average survives the frames that render each sample.
+    fn ensure_accum(
+        &mut self,
+        device: &wgpu::Device,
+        accum_bgl: &wgpu::BindGroupLayout,
+        present_bgl: &wgpu::BindGroupLayout,
+        format: wgpu::TextureFormat,
+        size: [u32; 2],
+    ) {
+        if self.accum.as_ref().is_some_and(|a| a.size == size) {
+            return;
+        }
+        let frame = make_target_texture(device, size, format);
+        let avg = [
+            make_target_texture(device, size, ITER_FORMAT),
+            make_target_texture(device, size, ITER_FORMAT),
+        ];
+        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("fractadyne.accum_uniform"),
+            size: std::mem::size_of::<AccumU>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let tex = |v| wgpu::BindingResource::TextureView(v);
+        // accum_bg[dst] folds into avg[dst], reading the uniform (0), the frame (1), avg[1-dst] (2).
+        let accum_bg = [
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("fractadyne.accum_bg0"),
+                layout: accum_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: tex(&frame) },
+                    wgpu::BindGroupEntry { binding: 2, resource: tex(&avg[1]) },
+                ],
+            }),
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("fractadyne.accum_bg1"),
+                layout: accum_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: tex(&frame) },
+                    wgpu::BindGroupEntry { binding: 2, resource: tex(&avg[0]) },
+                ],
+            }),
+        ];
+        // present_bg[i] binds avg[i] (2) for the blit-to-surface pass.
+        let present_bg = [
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("fractadyne.present_bg0"),
+                layout: present_bgl,
+                entries: &[wgpu::BindGroupEntry { binding: 2, resource: tex(&avg[0]) }],
+            }),
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("fractadyne.present_bg1"),
+                layout: present_bgl,
+                entries: &[wgpu::BindGroupEntry { binding: 2, resource: tex(&avg[1]) }],
+            }),
+        ];
+        self.accum = Some(AccumState {
+            frame,
+            avg,
+            accum_bg,
+            present_bg,
+            uniform,
+            size,
+            count: 0,
+            latest: 0,
+        });
     }
 
     /// Resize for a tiled settle: like [`resize`](Self::resize), but seed the new textures with a
@@ -1293,6 +1597,17 @@ pub struct MandelbrotParams {
     /// This frame's live-normalization view signature, handed to the GPU side purely so it can be
     /// handed back with the reading. Opaque here: the app owns what it means.
     pub norm_sig: u64,
+    /// This frame's VIEW identity, used to track which view the pixels in the iteration texture
+    /// were drawn at — see `ViewResources::content_stamp`. Opaque here; the app owns what it means,
+    /// and only equality matters. A texture resize seeds from the old content ONLY when this
+    /// matches what that content was drawn at; across a view change it clears instead, so another
+    /// location's pixels can never survive underneath the new one.
+    pub view_stamp: u64,
+    /// Sink for the view stamp this view's iteration texture is WHOLLY drawn at, or `u64::MAX`
+    /// when older pixels may remain under the newest writes. The app reads it a frame later and
+    /// refuses to start a progressive-supersampling average on anything but a clean match — the
+    /// check that catches a ghost the frame flags and the viewport comparison both miss.
+    pub content_stamp_out: Option<Arc<std::sync::atomic::AtomicU64>>,
     /// Tiled settle: `Some([x, y, w, h])` in BASE pixels renders only that sub-rect of the iteration
     /// texture this frame (scissored, `LoadOp::Load`), leaving the rest intact. The uniforms are
     /// identical to a full-frame render and the fragment coordinates are absolute in the texture, so
@@ -1366,6 +1681,10 @@ pub struct MandelbrotParams {
     /// Defaults to 0, so every existing caller keeps the classic affine mapping untouched.
     pub norm_mode: u32,
     pub norm_lo: f32,
+    /// Analytic palette anti-aliasing: box-filter the palette over each pixel's phase footprint
+    /// (`palette_box` in the shader) so a steep escape field at deep zoom stops aliasing into
+    /// speckle. `false` = point sample (the classic behaviour).
+    pub aa_palette: bool,
     /// The baked palette: `LUT_SIZE` display-space RGBA entries, entry `i` holding the gradient at
     /// `(i + 0.5) / len`. Produced by `fractadyne_color::segment::Gradient::bake`, which is the
     /// only thing in the tree that knows what a stop, a blend function or a `.map` band is.
@@ -1386,6 +1705,13 @@ pub struct MandelbrotParams {
     /// 4 distance, 5 decomposition. Methods 1/2/3/5 accumulate orbit statistics.
     pub color_method: u32,
     pub stripe_freq: f32,
+    /// Stripe average over the tail only: an exponentially-weighted mean over the last
+    /// `stripe_tail_len` iterations (bias-corrected, so a short orbit reads exactly like the plain
+    /// mean; decayed exactly across BLA-skipped spans) instead of the whole orbit. At extreme depth
+    /// every pixel's orbit shadows the reference for all but its last few hundred iterates, so the
+    /// full-orbit mean is one colour for the whole view; the window keeps the contrast.
+    pub stripe_tail: bool,
+    pub stripe_tail_len: u32,
     pub trap_type: u32,
     /// Color-pass box-filter taps per axis (≥1). >1 anti-aliases an upscaled iteration
     /// texture (set when the work-budget reduced its resolution below the display).
@@ -1407,6 +1733,26 @@ pub struct MandelbrotParams {
     pub vignette: Vignette,
     /// Which on-screen panel this is (distinct GPU resources per id).
     pub view_id: u32,
+    /// Sub-pixel jitter of the sampling grid, in fractions of a pixel, added to
+    /// `IterUniforms.px_offset`. `[0, 0]` = the classic pixel-centre sample. Used by progressive
+    /// on-settle supersampling to place each accumulated sample at a different sub-pixel position.
+    pub jitter: [f32; 2],
+    /// Progressive-supersampling accumulation (deep-zoom despeckle), all `false` = off / classic
+    /// live behaviour. `accum_present`: display the running AVERAGE (from the accumulator) instead
+    /// of this frame's colour. `accum_commit`: fold this frame's (complete, jittered) colour into
+    /// the average and advance the sample count. `accum_reset`: clear the average + count before
+    /// folding (sample 0, or a view change).
+    pub accum_present: bool,
+    pub accum_commit: bool,
+    pub accum_reset: bool,
+}
+
+/// The iterate uniform's `aux_on` word: bit 0 = accumulate orbit statistics, bit 1 = stripe
+/// average over an exponential tail window, bits 2.. = that window's length in iterations
+/// (clamped to `1..=2^20`; the shader reads `aux_on >> 2`). One word, so the uniform layout —
+/// bound by every iterate pipeline — did not have to move.
+pub fn aux_on_word(aux: bool, stripe_tail: bool, stripe_tail_len: u32) -> u32 {
+    (aux as u32) | ((stripe_tail as u32) << 1) | (stripe_tail_len.clamp(1, 1 << 20) << 2)
 }
 
 /// Whether a coloring method needs the per-iteration orbit statistics (aux target).
@@ -1451,6 +1797,12 @@ impl CallbackTrait for MandelbrotParams {
             (r.chunk_pipeline.as_ref(), r.resolve_pipeline.as_ref(), &r.state_bgl, 3usize)
         };
         let esc_min_seed = &r.esc_min_seed;
+        // Progressive-SSAA passes (disjoint fields, borrowed alongside the per-view resources).
+        let color_pipeline = &r.color_pipeline;
+        let accum_pipeline = &r.accum_pipeline;
+        let accum_bgl = &r.accum_bgl;
+        let present_bgl = &r.present_bgl;
+        let accum_format = r.target_format;
         let view = r.views.get_mut(&self.view_id).unwrap();
 
         // Drain any timestamp readback armed on an earlier frame before this frame may re-arm it.
@@ -1491,11 +1843,32 @@ impl CallbackTrait for MandelbrotParams {
         // nothing, keep the texture exactly as it is — like a reprojection with no translation.
         let hold = self.tile.is_some_and(|t| t[2] == 0 || t[3] == 0);
         if !reproject && !hold && size != view.size {
-            if self.tile.is_some() && view.rendered {
-                // Entering (or re-entering) a tiled settle at a new texture size: seed the resized
-                // textures from the old content so the refine happens in place, not against black.
+            // ⛔**THE SEED MAY ONLY CARRY THIS VIEW'S OWN PIXELS.** Seeding exists so a resolution
+            // change mid-settle refines in place instead of against black, which is right when the
+            // content is this view at another size. Across a VIEW change it instead copies another
+            // location into the texture the settle is about to refine, and the tiles that follow
+            // only overwrite what they cover — so whatever they miss stays on screen, and is then
+            // folded into the progressive average at full weight as sample 0 and carried through
+            // every later sample. That is the "transparent overlay of another location" report,
+            // and it passes every existing guard: the frame is not a reprojection, not held, not
+            // mid-grid, and its VIEWPORT is the new one, so the fold tripwire stays silent.
+            // The motion-resolution controller changes this size constantly during a dive, so the
+            // window is not rare — one field session flipped its frame pricing 278 times.
+            // Clearing costs one settle pass against black; seeding the wrong view costs an image
+            // that is quietly wrong.
+            let seedable = seed_allowed(
+                view.rendered,
+                self.tile.is_some(),
+                view.content_stamp,
+                view.content_foreign,
+                self.view_stamp,
+            );
+            if seedable {
                 view.seeded_resize(device, encoder, color_bgl, seed_pipeline, size);
+                // Same pixels, resampled: still wholly this view.
             } else {
+                // `resize` clears, which also clears the provenance: blank has nothing to bleed
+                // through. The app sees the cleared stamp through `content_stamp_out` and logs it.
                 view.resize(device, color_bgl, size);
             }
         }
@@ -1605,6 +1978,8 @@ impl CallbackTrait for MandelbrotParams {
             },
             norm_mode: self.norm_mode,
             norm_lo: self.norm_lo,
+            aa_palette: self.aa_palette as u32,
+            _pad_aa: [0; 3],
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
 
@@ -1640,6 +2015,7 @@ impl CallbackTrait for MandelbrotParams {
             trap_type: self.trap_type,
             sa_skip: self.sa_skip,
             bla_on: self.bla_on,
+            jitter: self.jitter,
         };
         // Re-render when the key changed (new view/orbit/size) OR when a tiled settle advanced to a
         // new rect under an unchanged key — OR when a chunked progression advanced its iteration
@@ -1667,7 +2043,11 @@ impl CallbackTrait for MandelbrotParams {
                 center: self.center,
                 julia_c: self.julia_c,
                 res: [size[0] as f32, size[1] as f32],
-                px_offset: [0.0, 0.0],
+                // Sub-pixel grid shift for progressive SSAA (0 = classic). `jitter` is in DISPLAY
+                // pixels; `px_offset` is in iteration-texture texels, so scale by `ss` — otherwise a
+                // ±0.5 jitter only moves ±0.5/ss of a display pixel, inside the existing ss×ss box,
+                // and the accumulated samples barely differ (no de-speckle).
+                px_offset: [self.jitter[0] * ss as f32, self.jitter[1] * ss as f32],
                 max_iter: self.max_iter,
                 orbit_len: self.orbit_len,
                 mode: self.mode,
@@ -1677,7 +2057,11 @@ impl CallbackTrait for MandelbrotParams {
                 color_method: self.color_method,
                 stripe_freq: self.stripe_freq,
                 trap_type: self.trap_type,
-                aux_on: method_needs_aux(self.color_method) as u32,
+                aux_on: aux_on_word(
+                    method_needs_aux(self.color_method),
+                    self.stripe_tail,
+                    self.stripe_tail_len,
+                ),
                 sa_skip: self.sa_skip,
                 glitch_on: 0, // live view never runs glitch detection (single-ref + rebasing)
                 sa_a: self.sa_a,
@@ -1882,6 +2266,102 @@ impl CallbackTrait for MandelbrotParams {
             view.last_probe = self.probe_nonce;
             view.last_ss = ss; // remember the ss this texture was built at (for reprojection)
             view.rendered = true; // the texture now holds a real frame (survives orbit swaps)
+            // Provenance of what now sits in the texture. A FULL-frame pass rewrites every pixel,
+            // so the texture becomes wholly this view. A TILE rewrites only its rect, so whatever
+            // it does not cover is still whatever was there — clean if that was already this view,
+            // foreign otherwise. A chunked pass resolves the whole frame, so it counts as full.
+            let (stamp, foreign) = content_after_frame(
+                view.content_stamp,
+                view.content_foreign,
+                self.view_stamp,
+                self.tile.is_none(),
+                false,
+            );
+            view.content_stamp = stamp;
+            view.content_foreign = foreign;
+        }
+        if reproject {
+            let (stamp, foreign) = content_after_frame(
+                view.content_stamp,
+                view.content_foreign,
+                self.view_stamp,
+                false,
+                true,
+            );
+            view.content_stamp = stamp;
+            view.content_foreign = foreign;
+        }
+        // Publish the provenance for the app to read next frame. `u64::MAX` means "do not start an
+        // average on this": either older pixels may remain, or the newest writes were made at a
+        // different view than the one now being asked about.
+        if let Some(sink) = self.content_stamp_out.as_ref() {
+            let clean = !view.content_foreign && view.content_stamp == Some(self.view_stamp);
+            sink.store(
+                if clean { self.view_stamp } else { u64::MAX },
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
+
+        // ---- progressive on-settle supersampling: fold this frame into the running average ----
+        // The app sets `accum_commit` only when the (jittered) frame in `tex_view` is COMPLETE, so
+        // this pays no attention to tiling — it colours the finished frame and folds it. `accum_reset`
+        // (sample 0 / view change) restarts the mean; with `inv_weight = 1` the first sample simply
+        // becomes the average, so no explicit clear is needed.
+        if self.accum_commit {
+            view.ensure_accum(device, accum_bgl, present_bgl, accum_format, base);
+            let (n, src) = {
+                let a = view.accum.as_ref().unwrap();
+                if self.accum_reset { (0u32, 0usize) } else { (a.count, a.latest) }
+            };
+            let dst = 1 - src;
+            let inv = 1.0 / (n as f32 + 1.0);
+            queue.write_buffer(
+                &view.accum.as_ref().unwrap().uniform,
+                0,
+                bytemuck::bytes_of(&AccumU { inv_weight: inv, _pad: [0.0; 3] }),
+            );
+            {
+                let a = view.accum.as_ref().unwrap();
+                let target = |v| wgpu::RenderPassColorAttachment {
+                    view: v,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                };
+                // This frame's colour → the frame target (the live colour pass, offscreen).
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("fractadyne.accum_color"),
+                        color_attachments: &[Some(target(&a.frame))],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_pipeline(color_pipeline);
+                    pass.set_bind_group(0, &view.color_bg, &[]);
+                    pass.draw(0..3, 0..1);
+                }
+                // Fold: avg[dst] = avg[src] + (frame − avg[src]) · inv_weight.
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("fractadyne.accum_fold"),
+                        color_attachments: &[Some(target(&a.avg[dst]))],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_pipeline(accum_pipeline);
+                    pass.set_bind_group(0, &a.accum_bg[dst], &[]);
+                    pass.draw(0..3, 0..1);
+                }
+            }
+            let a = view.accum.as_mut().unwrap();
+            a.count = n + 1;
+            a.latest = dst;
+        } else if !self.accum_present {
+            view.accum = None; // accumulation fully off → release the accumulator's textures
         }
 
         Vec::new()
@@ -1895,6 +2375,17 @@ impl CallbackTrait for MandelbrotParams {
     ) {
         if let Some(r) = resources.get::<Renderer>() {
             if let Some(view) = r.views.get(&self.view_id) {
+                // Progressive on-settle supersampling: present the running AVERAGE instead of a
+                // single frame's colour (see `MandelbrotParams::accum_present`). A plain blit of the
+                // accumulator to the surface.
+                if self.accum_present {
+                    if let Some(a) = &view.accum {
+                        render_pass.set_pipeline(&r.present_pipeline);
+                        render_pass.set_bind_group(0, &a.present_bg[a.latest], &[]);
+                        render_pass.draw(0..3, 0..1);
+                        return;
+                    }
+                }
                 // Present-gate: while a composite builds invisibly in the live G-buffer, the
                 // screen samples the HOLD snapshot instead (see `MandelbrotParams::display_hold`).
                 let bg = match (&view.hold, self.display_hold) {

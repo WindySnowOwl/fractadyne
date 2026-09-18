@@ -15,7 +15,8 @@ A fractal explorer for Windows and Linux in Rust (wgpu + egui/eframe), built for
   direct df32 → df32 perturbation → **floatexp** perturbation (df32 mantissa + i32
   exponent), so the deviation never runs out of `f32` exponent range. Zhuoran rebasing;
   depth is bounded by coordinate precision and the iteration budget, not a fixed wall —
-  renders match **Fraktaler-3** across a 38-location reference corpus up to **~1e1105×**
+  renders match **Fraktaler-3** across a 39-location reference corpus, the deepest at
+  **5.63e18003×** (the 38 non-extreme rows run as the routine gate, to **6.13e1105×**)
   (pixel-exact against F3's raw iteration counts where directly comparable) and are
   self-consistency-validated far deeper (to 1e1000000×); a bundled tour dives to **~1e838×**. **Series
   approximation** (order-3) skips the early iterations of deep Mandelbrot renders by seeding
@@ -119,7 +120,7 @@ locations are shared with the standard build, so you can switch freely. In the a
   On an older system use the standard download — same program, just slower at reference orbits.
 
 The two produce **byte-identical images** — verified across every formula at arithmetic
-widths from 64 bits to 132,000 bits, plus the full 38-location deep-zoom corpus, and CI re-checks
+widths from 64 bits to 132,000 bits, plus the full 39-location deep-zoom corpus, and CI re-checks
 that identity on Linux on every run. It is a separate download because GMP/MPFR are
 **LGPL-3.0-or-later** while Fractadyne is MIT OR Apache-2.0, and keeping them apart leaves the
 standard build free of those terms; on Windows there is a second reason, that MPFR cannot be
@@ -167,7 +168,7 @@ fractadyne --benchmark-std [--res 720p|1080p|4k|5k] [--burnin N] [--out report.t
                                              # comparable across machines; --burnin N repeats it (stability/throttle)
 fractadyne --render --out img.png [--fractal Mandelbrot --center X Y --zoom M \
            --zoom-log2 L --size W|WxH --ss N --iter K --julia --julia-c RE IM --palette I \
-           --method stripe --stripe-freq N --trap point|cross|circle --light --de \
+           --method stripe --stripe-freq N --stripe-tail N --trap point|cross|circle --light --de \
            --show-location]
            # --zoom-log2 L sets magnification 2^L for depths past f64 range (≥ ~1e308×)
 fractadyne --render-tour tour.toml --out frames [--fps N --size WxH --height H --ss N \
@@ -195,6 +196,11 @@ fractadyne --profile [--reps N --regions f.toml --out logs/p.json]
                                                     # region → JSON log (see scripts/profile*.ps1)
 fractadyne --bench-matrix [--bless] [--reps N]      # dev: 28-segment path-coverage perf + regression
                                                     # suite vs a blessed baseline (design/bench-matrix.md)
+fractadyne --zoomtest [OCTAVES] [--zoomtest-rate R]  # dev: on-screen update-latency harness — a real
+   [--zoomtest-location F.fdn] [--zoomtest-start-log2 L]  # windowed glide (from 2^L on F's centre; L=0
+                                                    # = the whole descent from 1x), every presented
+                                                    # frame's interval + what it showed -> JSON +
+                                                    # stutter summary (scripts/zoomtest_report.py)
 fractadyne --divetest tour.toml [--out log.json]    # dev: headless live-dive perf harness — real-time
                                                     # tour windows per depth band (fps/hitches/refresh)
 fractadyne @render.args                             # read the whole command line from a response file

@@ -84,6 +84,19 @@ pub struct SessionState {
     /// Live deep-palette auto-normalization (default on). `serde(default)` keeps older files loadable.
     #[serde(default = "default_true")]
     pub normalize_live: bool,
+    /// Fit the palette to the measured escape range unconditionally, instead of only when the view
+    /// aliases (default off). `serde(default)` = `false` keeps older session files loadable.
+    ///
+    /// ⭐**The companion to `normalize_live`, not a replacement for it.** `normalize_live` is an
+    /// ALIASING guard: it engages on `mean|Δ smooth-iter| × cycle > 0.5` (Nyquist), so on a
+    /// genuinely smooth view it declines by design and the palette is left alone. That is correct
+    /// anti-aliasing and it is NOT what the name promises — users read "normalize" as "fit the
+    /// palette to this view's range", asked for it repeatedly, and got a control that appeared to
+    /// do nothing. Rather than move the calibrated threshold (which has regressed in both
+    /// directions before — flat-grey at shallow depth, and "cities at night"), the range fit is its
+    /// own switch.
+    #[serde(default)]
+    pub normalize_fit: bool,
     /// Continuous-zoom speed multiplier (1.0 = default ~2× per 1.5 s). `serde(default)`
     /// keeps older session files (written before this field) loadable.
     #[serde(default = "default_zoom_rate")]
@@ -96,6 +109,11 @@ pub struct SessionState {
     /// Magnification per click-to-zoom click (2–100×). `serde(default)` seeds older files at 10×.
     #[serde(default = "default_click_zoom_factor")]
     pub click_zoom_factor: f32,
+    /// Click-to-zoom: after the jump, solve for the nearest minibrot nucleus and settle onto it.
+    /// Off by default. The solve is arbitrary-precision and runs off the UI thread, so the view
+    /// jumps immediately and corrects itself when the answer lands.
+    #[serde(default)]
+    pub click_zoom_snap: bool,
     /// Auto-zoom (autopilot) dive limit as log2(magnification); the depth at which the hands-free
     /// dive stops. Default 900 (≈1e271×). Past the smooth regime the autopilot switches to a
     /// stepped dive to reach this depth.
@@ -221,6 +239,15 @@ pub struct SessionState {
     /// Stripe-average angular frequency (method = "stripe").
     #[serde(default = "default_stripe_freq")]
     pub stripe_freq: f32,
+    /// Stripe average over the TAIL only (method = "stripe"): an exponentially-weighted window
+    /// over the last `stripe_tail_len` iterations instead of the whole orbit, so a deep view —
+    /// where every orbit shadows the reference for all but its last few hundred iterates — keeps
+    /// its contrast. Off = the classic full-orbit average.
+    #[serde(default)]
+    pub stripe_tail: bool,
+    /// Window length in iterations for `stripe_tail`.
+    #[serde(default = "default_stripe_tail_len")]
+    pub stripe_tail_len: u32,
     /// Orbit-trap shape: "point" | "cross" | "circle" (method = "trap").
     #[serde(default = "default_trap_type")]
     pub trap_type: String,
@@ -477,6 +504,13 @@ fn default_stripe_freq() -> f32 {
     6.0
 }
 
+fn default_stripe_tail_len() -> u32 {
+    // Measured at 4.45e246× (2026-09-16): 16 gives the classic bold banding, 64 a subtler
+    // version, 256+ is visually the full-orbit mean again — the stripe term of a chaotic orbit
+    // averages to 0.5 ± 0.35/√N, so only a SHORT window keeps the last iterates' structure.
+    16
+}
+
 fn default_trap_type() -> String {
     "point".to_string()
 }
@@ -497,10 +531,12 @@ impl Default for SessionState {
             cycle: 0.27,
             log_palette: false,
             normalize_live: true,
+            normalize_fit: false,
             offset: 0.1,
             zoom_rate: default_zoom_rate(),
             click_zoom: false,
             click_zoom_factor: default_click_zoom_factor(),
+            click_zoom_snap: false,
             autopilot_dive_log2: default_autopilot_dive_log2(),
             work_budget_scale: default_work_budget_scale(),
             min_motion_res: default_min_motion_res(),
@@ -536,6 +572,8 @@ impl Default for SessionState {
             de_anim: false,
             color_method: default_color_method(),
             stripe_freq: default_stripe_freq(),
+            stripe_tail: false,
+            stripe_tail_len: default_stripe_tail_len(),
             trap_type: default_trap_type(),
             minimap: false,
             custom_palette: Vec::new(),

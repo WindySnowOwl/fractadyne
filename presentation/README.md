@@ -6,7 +6,7 @@ A self-contained status + validation package for community feedback.
 > below was **our configuration error**, not an F3 limit — F3's batch mode needs
 > `maximum_reference_iterations` raised (see
 > [`validation/corpus/README.md`](../validation/corpus/README.md)). With it set, **Fractadyne and
-> Fraktaler-3 now match across a 20-location corpus up to ~4.6e1105×**
+> Fraktaler-3 now match across a 39-location corpus, 38 of them routinely gated to 6.13e1105×**
 > (`validation/corpus/`) — far stronger evidence than this package's 1e12× ladder. The documents
 > below are kept as the historical point-in-time package.
 
