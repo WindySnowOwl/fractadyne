@@ -7802,7 +7802,15 @@ impl FractadyneApp {
         // ⭐The plain click belongs to the armed tool. On the Mandelbrot panel a plain click
         // otherwise pins the Julia parameter, so while this tool is on, pinning moves to
         // Ctrl+click; `draw_dual` owns that half of the rule and the two must agree.
-        let mut click_zoomed = false;
+        // ⛔**DEFERRED, because `recenter_and_zoom` reads the viewport's OWN width and height** to
+        // work out where the centre is, and this runs before `vp.set_size` below. Applying the
+        // click here recentres against whatever size the viewport was left at last frame, and the
+        // clicked point lands off-centre by half the difference — which is most of a panel when
+        // the canvas has just changed shape (a dual-split drag, a side panel expanding, coming
+        // back from single view). That is the 2026-09-17 report, "clicking at the center of spiral
+        // points and the center shifts more than I would expect from my imprecision". The box-zoom
+        // below is deferred past `set_size` for exactly this reason; so is this now.
+        let mut pending_click_zoom: Option<(f64, f64, bool)> = None;
         if self.click_zoom && !shift {
             if resp.hovered() && !resp.dragged() {
                 ctx.set_cursor_icon(egui::CursorIcon::ZoomIn);
@@ -7813,19 +7821,11 @@ impl FractadyneApp {
             {
                 if let Some(p) = resp.interact_pointer_pos() {
                     let l = p - rect.min;
-                    let now = ctx.input(|i| i.time);
-                    self.click_zoom_at_view(
-                        l.x as f64 * ppp,
-                        l.y as f64 * ppp,
-                        resp.secondary_clicked(),
-                        now,
-                        is_julia,
-                    );
-                    click_zoomed = true;
+                    pending_click_zoom =
+                        Some((l.x as f64 * ppp, l.y as f64 * ppp, resp.secondary_clicked()));
                 }
             }
         }
-        let _ = click_zoomed;
         let mut apply_zoom: Option<(f64, f64, f64)> = None; // (box_cx_px, box_cy_px, factor)
         let mut zoom_boxing = false;
         if self.pointer.zoom_box.as_ref().is_some_and(|z| z.is_julia == is_julia) {
@@ -7876,6 +7876,19 @@ impl FractadyneApp {
         // otherwise every resize step re-renders at full 8× AA and the resize stutters.
         let resized = (nw - vp.width_px).abs() > 0.5 || (nh - vp.height_px).abs() > 0.5;
         vp.set_size(nw, nh);
+        // Now that the viewport agrees with the panel it is drawn in, the clicked pixel means what
+        // the user pointed at. Applied inline rather than through `click_zoom_at_view` because
+        // `vp` holds a mutable borrow of a `self` field until well below here, so a `&mut self`
+        // method cannot be called yet; `self.pointer` is a disjoint field and is fine. Only
+        // `record_nav` has to wait, and it does.
+        let mut click_zoom_navigated = false;
+        if let Some((px, py, out)) = pending_click_zoom.take() {
+            let f = self.render_cfg.click_zoom_factor.max(1.01) as f64;
+            vp.recenter_and_zoom(px, py, if out { f } else { 1.0 / f });
+            self.pointer.zoom_vel = 0.0; // cancel any glide so the jump lands clean
+            self.pointer.settle_t[is_julia as usize] = ctx.input(|i| i.time);
+            click_zoom_navigated = true;
+        }
         if let Some((bcx, bcy, factor)) = apply_zoom {
             let (w, h) = (vp.width_px, vp.height_px);
             vp.pan_pixels(w * 0.5 - bcx, h * 0.5 - bcy); // box center → screen center
@@ -7968,6 +7981,9 @@ impl FractadyneApp {
         let accum_busy = self.perf.tile_pending[view]
             || self.perf.chunk_pending[view]
             || self.recompute_rx[view].is_some();
+        if click_zoom_navigated {
+            self.record_nav(); // deferred past the viewport borrow; see the click-zoom block above
+        }
         self.track_view_jump(view, ctx);
         self.drive_accumulation(ctx, view, interacting, accum_busy, log2mag);
         let res = [
