@@ -496,6 +496,54 @@ impl FractadyneApp {
     /// Draw the discreet "Fd" brand mark in the lower-right of the fractal area (live view). Uses
     /// the header font — F in the light brand text color, d in the amber accent — over a soft dark
     /// halo so it stays legible on any background. Exports rasterize the same mark (`render.rs`).
+    /// The precision reticle: a live magnifier under the cursor while Shift is held with
+    /// click-to-zoom armed, rendered at the magnification the click is about to land at, so it
+    /// previews the result rather than just enlarging what is already on screen.
+    ///
+    /// Drawn on the foreground layer so it sits over the fractal and the minimap both. The image
+    /// carries its own circular alpha (see `update_reticle`), because egui clips to rectangles and
+    /// a round hole cannot come from the painter.
+    pub(crate) fn draw_reticle(&self, ctx: &egui::Context) {
+        let (Some(tex), Some(at)) = (self.reticle_tex.as_ref(), self.reticle_want.as_ref()) else {
+            return;
+        };
+        let p = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("fract_reticle"),
+        ));
+        let ppp = ctx.pixels_per_point();
+        let d = crate::RETICLE_PX as f32 / ppp;
+        let r = d * 0.5;
+        // Offset up-left of the cursor so the hand does not cover the thing it is aiming with,
+        // and flipped near an edge so it never leaves the window.
+        let screen = ctx.screen_rect();
+        let mut c = at.screen + egui::vec2(r + 26.0, -(r + 26.0));
+        if c.x + r > screen.max.x {
+            c.x = at.screen.x - (r + 26.0);
+        }
+        if c.y - r < screen.min.y {
+            c.y = at.screen.y + (r + 26.0);
+        }
+        let accent = crate::theme::ui_accent(ctx);
+        p.circle_filled(c, r + 2.0, egui::Color32::from_black_alpha(160));
+        p.image(
+            tex.id(),
+            egui::Rect::from_center_size(c, egui::vec2(d, d)),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+        p.circle_stroke(c, r, egui::Stroke::new(1.5_f32, accent));
+        // Crosshair: the exact point a click would take, which is the centre by construction.
+        let k = 7.0;
+        let hair = egui::Stroke::new(1.0_f32, accent);
+        p.line_segment([c - egui::vec2(k, 0.0), c - egui::vec2(3.0, 0.0)], hair);
+        p.line_segment([c + egui::vec2(3.0, 0.0), c + egui::vec2(k, 0.0)], hair);
+        p.line_segment([c - egui::vec2(0.0, k), c - egui::vec2(0.0, 3.0)], hair);
+        p.line_segment([c + egui::vec2(0.0, 3.0), c + egui::vec2(0.0, k)], hair);
+        // A line back to the cursor, so which point is being magnified is never in doubt.
+        p.line_segment([at.screen, c], egui::Stroke::new(1.0_f32, accent.gamma_multiply(0.5)));
+    }
+
     pub(crate) fn draw_watermark(&self, ctx: &egui::Context, rect: egui::Rect) {
         let px = (rect.height() * 0.026).clamp(18.0, 34.0); // small (~20–30 px), discreet
         let mark = ctx.fonts(|f| {
@@ -1238,6 +1286,9 @@ impl FractadyneApp {
                 let sp = ui.painter_at(rect);
                 self.draw_recompute_spinner(ctx, &sp, rect, 0, now);
             });
+
+        // ---- precision reticle (Shift with click-to-zoom armed) ----
+        self.draw_reticle(ctx);
 
         // ---- brand watermark (lower-right of the fractal area) ----
         if self.watermark {

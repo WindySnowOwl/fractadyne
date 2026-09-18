@@ -3852,7 +3852,7 @@ const EASE_TAU: f64 = 0.15; // ease-in/out time constant (seconds)
 /// written inline at the one control that draws them, because checklist step 17 asks a tester to
 /// try each one by name: the row, the buttons and the test that pins their arithmetic all have to
 /// be talking about the same list.
-const CLICK_ZOOM_FACTORS: [f32; 5] = [2.0, 4.0, 10.0, 50.0, 100.0];
+const CLICK_ZOOM_FACTORS: [f32; 6] = [2.0, 4.0, 10.0, 25.0, 50.0, 100.0];
 
 /// The toolbar magnifier buttons' step, as a `zoom_at` factor (< 1 zooms IN). Exact reciprocals,
 /// so in-then-out returns to the magnification you started at rather than drifting a little
@@ -4155,6 +4155,38 @@ impl CenterExpr {
 /// The worker runs only the pure `fractadyne-core` calls; everything that needs `&self` — the
 /// Newton-Raphson zoom target, the label, the navigation — happens on the main thread when the
 /// result arrives.
+/// A nucleus solve started by a snapping click-to-zoom. Deliberately NOT [`FeatureSolve`]: that one
+/// is owned by the Go-to dialog, is abandoned when the dialog closes, and writes its failures into
+/// the dialog's message line. A click has no dialog to report into and must never block, so it gets
+/// its own channel and fails silently — the user keeps the view the click gave them, which is a
+/// perfectly good answer, just not a snapped one.
+/// Diameter of the precision reticle, in physical pixels. Kept modest: it is rendered live at the
+/// post-click magnification, and it has to be cheap enough to follow a moving cursor.
+const RETICLE_PX: u32 = 224;
+
+/// What the draw phase saw under the cursor, for the update phase to render a reticle from.
+#[derive(Clone)]
+struct ReticleAt {
+    /// Full-precision complex point under the cursor. An f64 centre is useless past ~1e240×, and
+    /// the whole point of this feature is aiming at depth.
+    cx: fractadyne_core::BigFloat,
+    cy: fractadyne_core::BigFloat,
+    /// Magnification to render the reticle AT — the view's, times the click factor, so what the
+    /// reticle shows is literally what the click is about to give you.
+    log2mag: f64,
+    precision: usize,
+    /// Where to draw it, in egui points.
+    screen: egui::Pos2,
+}
+
+struct SnapSolve {
+    rx: std::sync::mpsc::Receiver<Option<fractadyne_core::Nucleus>>,
+    /// The view the click landed on. If the user has moved since, the answer is stale and is
+    /// dropped rather than yanking them somewhere they have already left.
+    at_sig: u64,
+    started: Instant,
+}
+
 struct FeatureSolve {
     rx: std::sync::mpsc::Receiver<FeatureOutcome>,
     started: Instant,
@@ -5007,6 +5039,18 @@ struct FractadyneApp {
     /// `render_cfg.click_zoom_factor` recentered on the point, right-click backs out. Off by
     /// default; drag still pans and Shift/right-drag still box-zoom (see `click_zoom_at`).
     click_zoom: bool,
+    /// Click-to-zoom: settle onto the nearest minibrot nucleus after the jump. The point of the
+    /// tool is usually to land ON a feature, and a hand cannot aim well enough for that — a miss
+    /// of d pixels leaves the target d × factor pixels off centre once the scale shrinks, so at
+    /// 50× even a perfect-looking click is a third of a panel out. Solving for the nucleus removes
+    /// the aim from the problem entirely.
+    click_zoom_snap: bool,
+    /// The nucleus solve a snapping click started, if one is running. Off the UI thread because
+    /// these are arbitrary-precision Newton solves whose cost grows with depth — see
+    /// [`FeatureSolve`], which exists for the same reason and froze a window for minutes before it
+    /// did. The view jumps immediately and corrects itself when the answer lands, rather than
+    /// making the user wait to find out where they are going.
+    snap_solve: Option<SnapSolve>,
     /// Dual view: if `Some`, the Julia `c` is pinned to this Mandelbrot point (a marker
     /// is drawn there) instead of following the cursor. Click to pin, click it to release.
     julia_pin: Option<(f64, f64)>,
@@ -5222,6 +5266,13 @@ struct FractadyneApp {
     /// rendered for (re-render on change). The enable *toggle* lives in [`DialogState`].
     minimap_tex: Option<egui::TextureHandle>,
     minimap_key: Option<(u32, usize, u32, u32)>,
+    /// Precision reticle (hold Shift with click-to-zoom armed): what the DRAW phase saw under the
+    /// cursor, handed to the UPDATE phase, which is the only place with a GPU device to render
+    /// with. One frame of latency, which a magnifier can afford.
+    reticle_want: Option<ReticleAt>,
+    /// The rendered reticle and the view it was rendered for, so a resting cursor costs nothing.
+    reticle_tex: Option<egui::TextureHandle>,
+    reticle_key: Option<(i64, i64, u64, u32)>,
     /// Static color mapping: palette selection, custom/duotone/binary, cycle/offset, method + params.
     coloring: ColoringConfig,
     /// Performance/diagnostic tracking + overlay.
@@ -5847,6 +5898,8 @@ impl FractadyneApp {
             julia_c: (s.julia_c_re, s.julia_c_im),
             julia_mode: s.julia_mode && fractal.supports_julia(),
             click_zoom: s.click_zoom,
+            click_zoom_snap: s.click_zoom_snap,
+            snap_solve: None,
             julia_pin: None,
             dual: s.dual && fractal.supports_julia(),
             dual_split: s.dual_split.clamp(DUAL_SPLIT_MIN, DUAL_SPLIT_MAX),
@@ -6101,6 +6154,9 @@ impl FractadyneApp {
             pending_state_warning,
             minimap_tex: None,
             minimap_key: None,
+            reticle_want: None,
+            reticle_tex: None,
+            reticle_key: None,
             coloring: ColoringConfig {
                 palette_idx: s.palette_idx,
                 cycle: s.cycle,
@@ -6653,6 +6709,7 @@ impl FractadyneApp {
             log_palette: self.coloring.log_palette,
             zoom_rate: self.render_cfg.zoom_rate,
             click_zoom: self.click_zoom,
+            click_zoom_snap: self.click_zoom_snap,
             click_zoom_factor: self.render_cfg.click_zoom_factor,
             autopilot_dive_log2: self.autopilot.dive_log2,
             work_budget_scale: self.render_cfg.work_budget_scale,
@@ -7811,9 +7868,29 @@ impl FractadyneApp {
         // points and the center shifts more than I would expect from my imprecision". The box-zoom
         // below is deferred past `set_size` for exactly this reason; so is this now.
         let mut pending_click_zoom: Option<(f64, f64, bool)> = None;
-        if self.click_zoom && !shift {
+        if self.click_zoom {
             if resp.hovered() && !resp.dragged() {
                 ctx.set_cursor_icon(egui::CursorIcon::ZoomIn);
+            }
+            // ⭐Shift now ARMS THE RETICLE rather than standing aside. It still reserves the DRAG
+            // for box-zoom, and `clicked()` never fires on a drag, so the two do not collide: hold
+            // Shift to see where you are pointing, click without moving to take it, or drag to box
+            // a region instead.
+            if shift && resp.hovered() && !resp.dragged() && self.pointer.zoom_box.is_none() {
+                if let Some(p) = resp.hover_pos() {
+                    let l = p - rect.min;
+                    let vp = if is_julia { &self.julia_viewport } else { &self.viewport };
+                    let (cx, cy) = vp.pixel_to_complex(l.x as f64 * ppp, l.y as f64 * ppp);
+                    let f = self.render_cfg.click_zoom_factor.max(1.01) as f64;
+                    self.reticle_want = Some(ReticleAt {
+                        cx,
+                        cy,
+                        log2mag: vp.log2_magnification() + f.log2(),
+                        precision: vp.precision,
+                        screen: p,
+                    });
+                    ctx.request_repaint();
+                }
             }
             if (resp.clicked() || resp.secondary_clicked())
                 && self.pointer.zoom_box.is_none()
@@ -8009,6 +8086,12 @@ impl FractadyneApp {
             || self.recompute_rx[view].is_some();
         if click_zoom_navigated {
             self.record_nav(); // deferred past the viewport borrow; see the click-zoom block above
+            // Snap to the nearest nucleus, if asked. Only the Mandelbrot panel: a Julia view has
+            // no minibrot nuclei to solve for, and the solver would be answering a question that
+            // does not apply to it.
+            if self.click_zoom_snap && !is_julia {
+                self.start_snap_solve(ctx);
+            }
         }
         self.track_view_jump(view, ctx);
         self.drive_accumulation(ctx, view, interacting, accum_busy, log2mag);
@@ -8348,6 +8431,146 @@ impl FractadyneApp {
         });
         self.goto.msg = None;
         self.schedule_repaint(ctx);
+    }
+
+    /// Render the precision reticle if the draw phase asked for one, reusing the last image while
+    /// the cursor and the view hold still.
+    ///
+    /// ⭐Borrows the LIVE reference orbit rather than building a fresh one. The reticle sits a few
+    /// octaves below a point already on screen, so the resident reference covers it — the same
+    /// reasoning the autopilot's steering probe runs on, and the reason this can follow a cursor
+    /// at 1e29× at all. Building a reference here instead would be seconds per cursor move.
+    fn update_reticle(
+        &mut self,
+        ctx: &egui::Context,
+        gpu: &Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
+    ) {
+        let Some(at) = self.reticle_want.take() else {
+            self.reticle_tex = None;
+            self.reticle_key = None;
+            return;
+        };
+        let Some((dev, q)) = gpu else { return };
+        // Key on the cursor rounded to a screen pixel plus the view and the factor: a resting
+        // cursor re-renders nothing, and a cursor that has moved by less than a pixel cannot have
+        // changed the answer.
+        let key = (
+            at.screen.x.round() as i64,
+            at.screen.y.round() as i64,
+            self.snap_view_sig(),
+            self.render_cfg.click_zoom_factor.to_bits(),
+        );
+        if self.reticle_key == Some(key) && self.reticle_tex.is_some() {
+            return;
+        }
+        let mut vp = Viewport::new(RETICLE_PX as f64, RETICLE_PX as f64);
+        vp.precision = at.precision;
+        vp.center_x = at.cx.clone();
+        vp.center_y = at.cy.clone();
+        vp.set_center_log2mag(at.cx, at.cy, at.log2mag);
+        let mut req = self.autopilot_probe_request(&vp, false);
+        req.width = RETICLE_PX;
+        req.height = RETICLE_PX;
+        req.ss = 1;
+        let progress = std::sync::atomic::AtomicU32::new(0);
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let Ok(res) = fractadyne_gpu::render_export(dev, q, &req, &progress, &cancel) else {
+            return;
+        };
+        // Linear RGBA f32 → sRGB u8, and ALPHA ZERO OUTSIDE THE CIRCLE. Doing the mask here rather
+        // than at paint time is what makes the reticle actually round: egui clips to rectangles,
+        // so a circular hole has to come from the image itself.
+        let (w, h) = (res.width as usize, res.height as usize);
+        let (cx, cy) = (w as f32 * 0.5 - 0.5, h as f32 * 0.5 - 0.5);
+        let r = (w.min(h) as f32) * 0.5 - 1.0;
+        let mut px = Vec::with_capacity(w * h * 4);
+        for y in 0..h {
+            for x in 0..w {
+                let i = y * w + x;
+                for k in 0..3 {
+                    let c = res.pixels[i * 4 + k].clamp(0.0, 1.0);
+                    px.push((c.powf(1.0 / 2.2) * 255.0 + 0.5) as u8);
+                }
+                // One pixel of feather so the rim is not a staircase.
+                let d = ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt();
+                px.push((((r - d).clamp(0.0, 1.0)) * 255.0 + 0.5) as u8);
+            }
+        }
+        let img = egui::ColorImage::from_rgba_unmultiplied([w, h], &px);
+        self.reticle_tex = Some(ctx.load_texture("fractadyne.reticle", img, egui::TextureOptions::LINEAR));
+        self.reticle_key = Some(key);
+    }
+
+    /// A stable identity for the Mandelbrot view, cheap enough to take on every click: magnification
+    /// plus the f64 centre. Only used to notice that the user has moved since a snap solve started,
+    /// where an f64 centre is plenty — a move small enough for f64 to miss is a move the snap would
+    /// have made anyway.
+    fn snap_view_sig(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.viewport.log2_magnification().to_bits().hash(&mut h);
+        let (cx, cy) = self.viewport.center_f64();
+        cx.to_bits().hash(&mut h);
+        cy.to_bits().hash(&mut h);
+        h.finish()
+    }
+
+    /// Start the nucleus solve behind "snap to nearest center", seeded at the view the click just
+    /// landed on. Never blocks; a solve already running wins (one at a time).
+    fn start_snap_solve(&mut self, ctx: &egui::Context) {
+        if self.snap_solve.is_some() || self.fractal.formula_id() != 0 || self.julia_mode {
+            return; // Mandelbrot-only, like every other nucleus solve in the app
+        }
+        let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
+        let l2 = self.viewport.log2_magnification();
+        let max_period =
+            self.viewport.recommended_max_iter(self.render_cfg.max_iter).clamp(1_000, 100_000);
+        let at_sig = self.snap_view_sig();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(fractadyne_core::find_nucleus(&center, l2, 0, max_period));
+        });
+        self.snap_solve = Some(SnapSolve { rx, at_sig, started: Instant::now() });
+        self.schedule_repaint(ctx);
+    }
+
+    /// Collect a finished snap solve and settle the view onto the nucleus. Called once per frame.
+    ///
+    /// ⭐The zoom is NOT changed — the click already chose the depth, and the snap only decides
+    /// where the centre sits. Re-aiming and re-zooming at once would make a click unpredictable in
+    /// two ways instead of one.
+    fn poll_snap_solve(&mut self, ctx: &egui::Context) {
+        let Some(solve) = &self.snap_solve else { return };
+        self.schedule_repaint(ctx); // keep frames coming while it runs
+        let Ok(outcome) = solve.rx.try_recv() else { return };
+        let solve = self.snap_solve.take().expect("checked above");
+        let ms = solve.started.elapsed().as_secs_f64() * 1000.0;
+        if self.snap_view_sig() != solve.at_sig {
+            crate::diag::log_line("view", &format!("snap: dropped after {ms:.0} ms — the view moved"));
+            return;
+        }
+        let Some(n) = outcome else {
+            crate::diag::log_line("view", &format!("snap: no nucleus found ({ms:.0} ms)"));
+            return;
+        };
+        let moved_px = {
+            let p = self.viewport.precision;
+            let dx = fractadyne_core::sub_f64(&n.cx, &self.viewport.center_x, p);
+            let dy = fractadyne_core::sub_f64(&n.cy, &self.viewport.center_y, p);
+            let d = (dx * dx + dy * dy).sqrt();
+            if d > 0.0 { (d.log2() - self.viewport.units_per_pixel.log2()).exp2() } else { 0.0 }
+        };
+        self.viewport.center_x = n.cx;
+        self.viewport.center_y = n.cy;
+        self.pointer.settle_t[0] = ctx.input(|i| i.time);
+        self.record_nav();
+        crate::diag::log_line(
+            "view",
+            &format!(
+                "snap: period-{} nucleus, centre moved {moved_px:.0} px ({ms:.0} ms)",
+                n.period
+            ),
+        );
     }
 
     /// Collect a finished feature solve and act on it. Called once per frame from `update`.
@@ -13503,7 +13726,9 @@ impl eframe::App for FractadyneApp {
             }
         }
         self.update_minimap(ctx, &gpu);
+        self.update_reticle(ctx, &gpu);
         // Collect a finished off-thread feature solve (Go-to ▸ nearest minibrot / Misiurewicz).
+        self.poll_snap_solve(ctx);
         self.poll_feature_solve(ctx);
         self.poll_misiurewicz_explorer(ctx, gpu.as_ref());
 

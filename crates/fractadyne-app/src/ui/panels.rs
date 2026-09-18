@@ -113,7 +113,9 @@ impl FractadyneApp {
                          (right-click backs out), recentered on the clicked point. Drag still pans; \
                          Shift+drag / right-drag still box-zoom. Backspace undoes a click. \
                          In the dual view it works on either panel, and pinning the Julia c \
-                         moves to Ctrl+click while this is on.",
+                         moves to Ctrl+click while this is on. Hold Shift to raise a magnifier \
+                         under the cursor showing the view the click would land you in, and click \
+                         while holding it to take that point; Shift+DRAG still box-zooms.",
                     );
                 ui.add_enabled_ui(self.click_zoom, |ui| {
                     ui.horizontal(|ui| {
@@ -125,6 +127,22 @@ impl FractadyneApp {
                                 format!("{f:.0}×"),
                             );
                         }
+                    });
+                    // Snap: the reason the tool is usually hard to aim is that a miss of d pixels
+                    // becomes d × factor pixels once the scale shrinks, so at 50× a click that
+                    // looked perfect is a third of a panel out. Solving for the nucleus takes the
+                    // aim out of it.
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        ui.checkbox(&mut self.click_zoom_snap, "Snap to nearest center")
+                            .on_hover_text(
+                                "After the jump, solve for the nearest minibrot nucleus and \
+                                 settle exactly onto it, so you land on the feature rather than \
+                                 near it. The zoom is not changed — the click chose that. \
+                                 Mandelbrot only. The solve runs in the background: the view \
+                                 jumps at once and corrects itself when the answer arrives, which \
+                                 at extreme depth can take a few seconds.",
+                            );
                     });
                 });
 

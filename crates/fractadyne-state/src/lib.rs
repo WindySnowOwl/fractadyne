@@ -96,6 +96,11 @@ pub struct SessionState {
     /// Magnification per click-to-zoom click (2–100×). `serde(default)` seeds older files at 10×.
     #[serde(default = "default_click_zoom_factor")]
     pub click_zoom_factor: f32,
+    /// Click-to-zoom: after the jump, solve for the nearest minibrot nucleus and settle onto it.
+    /// Off by default. The solve is arbitrary-precision and runs off the UI thread, so the view
+    /// jumps immediately and corrects itself when the answer lands.
+    #[serde(default)]
+    pub click_zoom_snap: bool,
     /// Auto-zoom (autopilot) dive limit as log2(magnification); the depth at which the hands-free
     /// dive stops. Default 900 (≈1e271×). Past the smooth regime the autopilot switches to a
     /// stepped dive to reach this depth.
@@ -517,6 +522,7 @@ impl Default for SessionState {
             zoom_rate: default_zoom_rate(),
             click_zoom: false,
             click_zoom_factor: default_click_zoom_factor(),
+            click_zoom_snap: false,
             autopilot_dive_log2: default_autopilot_dive_log2(),
             work_budget_scale: default_work_budget_scale(),
             min_motion_res: default_min_motion_res(),
