@@ -45,6 +45,35 @@ impl FractadyneApp {
     /// ⚠The gate is `normalize_live || normalize`, not just the live flag: `normalize` is the
     /// EXPORT-side switch (`--normalize`), and someone who launched with it still needs this
     /// checkbox to steer their exports even with the live view un-normalized.
+    /// "Always fit range" — the range-fit half of normalization, drawn identically in the panel and
+    /// the Color menu so the two can never disagree, exactly like [`Self::log_scale_checkbox`].
+    ///
+    /// ⭐**Why this is a separate control and not a looser threshold.** "Normalize deep colors" is a
+    /// Nyquist ALIASING guard (`mean|Δ smooth-iter| × cycle > 0.5`): on a smooth view it declines by
+    /// design, because remapping a view that reads correctly only changes the picture for nothing.
+    /// But people read "normalize" as "fit the palette to what is on screen", and reported it as
+    /// broken when it sat there declining (2026-09-17, 2026-09-18). The threshold is calibrated
+    /// against two regressions in OPPOSITE directions — flat-grey at shallow depth, and "cities at
+    /// night" — so moving it to satisfy the request risks both. Asking the question outright costs
+    /// one checkbox and leaves the guard alone.
+    ///
+    /// ⚠Indented under the line above, because it modifies it rather than standing on its own. Not
+    /// greyed when normalization is off: this checkbox is itself a way to TURN normalization on.
+    pub(crate) fn fit_range_checkbox(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.add_space(ui.spacing().indent * 0.5);
+            ui.checkbox(&mut self.coloring.normalize_fit, "Always fit range")
+                .on_hover_text(
+                    "Remap the palette to the view's measured escape range even when the view does \
+                     not alias — the checkbox above only remaps when a dense field would otherwise \
+                     read as speckle.\n\nUse this when you want the palette to span what is on \
+                     screen rather than to fix noise. It still needs a measurement, so it does \
+                     nothing for the moment or two before the view settles, and nothing at all on \
+                     a view with no escaped pixels.",
+                );
+        });
+    }
+
     pub(crate) fn log_scale_checkbox(&mut self, ui: &mut egui::Ui) {
         let live = self.coloring.normalize_live || self.coloring.normalize;
         // INDENTED, because it is a sub-option of the checkbox above it — the same idiom the
@@ -328,9 +357,11 @@ impl FractadyneApp {
                          Cycle wraps the palette thousands of times between neighboring pixels — a \
                          correct dense field reads as speckle noise. This remaps the palette to the \
                          view's measured escape range (Cycle then sets how many palette sweeps span \
-                         it). Smooth method only; ordinary views are unaffected. Matches the \
-                         --normalize export option.",
+                         it) WHEN the view actually aliases — a smooth view is left alone, because \
+                         remapping it would change the picture for nothing. Tick 'Always fit range' \
+                         below to remap regardless. Smooth method only; matches --normalize.",
                     );
+                self.fit_range_checkbox(ui);
                 self.log_scale_checkbox(ui);
                 labelled(ui, "Animate", |ui| {
                     egui::ComboBox::from_id_salt("panel_animate")

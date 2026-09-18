@@ -528,6 +528,26 @@ pub(crate) const MOTION_PASS_MS: f64 = 10.0;
 /// presenter's `REFRESH_OCTAVES` refresh trigger uses, so the two policies agree.
 pub(crate) const HELD_MAX_OCT: f64 = 0.5;
 
+/// The most a held frame may magnify when the view arrived by an instantaneous JUMP, octaves.
+///
+/// ⭐**A held frame stops carrying information long before it stops being a valid transform.** The
+/// reprojection may legitimately magnify the last good frame while a fresh reference builds, and
+/// [`HELD_MAX_OCT`] keeps that small during continuous motion by sizing refreshes to land in time.
+/// A jump has no cadence to size: a 100× click-to-zoom moves the view 6.64 octaves in one frame and
+/// the reference rebuild takes ~158 ms (measured 2026-09-18 at 2^174), so for ~8 frames the display
+/// was the old frame magnified 100× — an 11×11-pixel patch of a 1084-pixel panel, stretched out. A
+/// flat field, and BLACK whenever that patch happened to be dark, which is why the report was
+/// "sometimes the screen goes black" rather than always. 3 octaves keeps ~135 px of real content on
+/// screen, which reads as a blocky version of where you clicked instead of nothing at all.
+///
+/// ⛔**Applies to jumps ONLY** (`zoom_vel == 0`), and that restriction is the whole design. Flooring
+/// the scale during a DIVE was tried and reverted: `uv_off` is `px · scale`, so a scale clamped
+/// above its true value translates the held frame too far, and with the view still moving it
+/// visibly slides frame to frame — the reason the continuous floor sits all the way down at 2^-40.
+/// A jump is static by construction (click-to-zoom zeroes `zoom_vel`), so there is no motion for a
+/// clamped transform to slide against.
+pub(crate) const HELD_JUMP_MAX_OCT: f64 = 3.0;
+
 /// A refresh may take at most this long regardless of zoom rate, seconds — at slow rates the
 /// octave budget alone would allow multi-second pins (0.17 oct/s at the slider's bottom = 3 s),
 /// and a refresh cadence below ~4/s reads as stepping even when nothing is magnified much.

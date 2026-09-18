@@ -1234,11 +1234,34 @@ impl FractadyneApp {
         let window = self.perf.norm_shown[vi.min(1)].or(self.perf.norm_range[vi.min(1)]);
         match (window, self.perf.norm_grad[vi.min(1)]) {
             (Some((mn, mx)), Some(grad))
-                if self.coloring.normalize_live
+                if (self.coloring.normalize_live || self.coloring.normalize_fit)
                     && self.coloring.color_method == crate::ColorMethod::Smooth
                     // A degenerate range would divide by ~0 below; the gradient decides the rest.
                     && mx - mn > 1.0
-                    && grad * self.coloring.cycle > ALIAS_PHASE_LIMIT =>
+                    // ⭐**Two questions, two controls.** "Fit palette to escape range" asks for the
+                    // remap outright and skips the aliasing test entirely; `normalize_live` is the
+                    // Nyquist guard that decides for itself. Splitting them is what lets the
+                    // threshold below stay at its calibrated value: users kept asking the guard for
+                    // a range fit, and every proposal to satisfy them by lowering it risked the two
+                    // regressions it is calibrated against (flat-grey shallow, "cities at night").
+                    // Both paths still need a MEASURED range — neither invents one.
+                    && (self.coloring.normalize_fit
+                    // ⛔⭐⭐**THE EFFECTIVE CYCLE, NOT THE SLIDER.** `cu.cycle` in the shader is
+                    // palette periods per smooth-iteration (`coord = pv·cycle + offset`), and what
+                    // the app feeds it is `color_cycle()` = `0.004 + slider·0.06`, NOT the slider.
+                    // Multiplying the gradient by the raw slider therefore measured a quantity
+                    // nothing renders — and at the DEFAULT slider position of 0 it is identically
+                    // zero, so "Normalize deep colors" could not engage on any view at any depth
+                    // however badly it aliased, while the palette still advanced 0.004 per
+                    // iteration. Measured at the user's 1e28 view on 2026-09-18: grad 6.33, trace
+                    // reporting `phase/px 0.000 engaged=false` across all 178 readings.
+                    // ⭐The 0.5 threshold is unchanged and needs no recalibration: it is Nyquist in
+                    // THESE units (it never was in the old ones), and both recorded calibration
+                    // points keep their verdicts — the 9.83e27 confetti view at grad 60.56 gives
+                    // 1.22 and still engages, the flat-gray home view at grad 0.18 gives 0.0036 and
+                    // still declines. This is the same slider-vs-effective confusion that produced
+                    // the wrong first fix for the Misiurewicz thumbnails.
+                        || grad * self.color_cycle() > ALIAS_PHASE_LIMIT) =>
             {
                 let sweeps = 0.5 + self.coloring.cycle * 6.0;
                 // ⭐⭐**A HEAVY-TAILED RANGE TAKES THE LOG MAPPING EVEN IF THE USER DID NOT ASK
@@ -4170,8 +4193,25 @@ impl FractadyneApp {
             // smooth. Set by the feed below, consumed by the glide after it.
             let mut norm_snap = false;
             let nr = self.perf.norm_sink[vb].swap(u64::MAX, SeqCst);
+            // ⚠**The two ways to get no normalization are indistinguishable without this.** A drain
+            // that publishes an EMPTY range (the seed `u32::MAX` floor untouched: no escaped pixel
+            // was committed) fails the validity test below and falls out silently, which reads in a
+            // log exactly like never having been armed. The 2026-09-18 soak at 1e51 counted zero
+            // `norm range` AND zero discards, and only this line can say which of the two it was.
+            if nr == u64::MAX {
+                crate::diag::trace("gpu", format!("norm drain: view={vb} nothing published"));
+            }
             if nr != u64::MAX {
                 let (min_b, max_b) = ((nr >> 32) as u32, nr as u32);
+                if min_b == u32::MAX || max_b < min_b {
+                    crate::diag::trace(
+                        "gpu",
+                        format!(
+                            "norm reading EMPTY: view={vb} min_bits={min_b:#010x} max_bits={max_b:#010x} \
+                             — a pass ran and committed no escaped pixel"
+                        ),
+                    );
+                }
                 if min_b != u32::MAX && max_b >= min_b {
                     let (mn, mx) = (f32::from_bits(min_b), f32::from_bits(max_b));
                     if mn.is_finite() && mx.is_finite() && mx >= mn {
@@ -4237,7 +4277,13 @@ impl FractadyneApp {
                                 self.perf.chunk_governed[vb],
                                 self.perf.norm_range[vb],
                                 self.perf.norm_grad[vb],
-                                self.perf.norm_grad[vb].unwrap_or(0.0) * self.coloring.cycle,
+                                // The EFFECTIVE phase per pixel — the same quantity the predicate
+                                // tests. Printing `coloring.cycle` here showed `phase/px 0.000` on
+                                // every reading and read as "no data", which is what sent the
+                                // 2026-09-17 investigation hunting for a missing reading that was
+                                // in fact arriving perfectly well and being correctly declined by
+                                // a predicate computing the wrong statistic.
+                                self.perf.norm_grad[vb].unwrap_or(0.0) * self.color_cycle(),
                                 self.live_norm_cycle_offset(vb).is_some()
                             ),
                         );
@@ -7186,9 +7232,15 @@ impl FractadyneApp {
                         // Allow > 1; the shader maps out-of-[0,1] samples to the frame average, so a
                         // very stale zoom-out just shows a shrinking patch on the average field. Bounds
                         // stay finite for f32 (2^±40, ~40 octaves — unreachable in a real drift).
+                        // ⭐**The floor depends on HOW the view got here.** A 100× click-to-zoom
+                        // moves 6.64 octaves in one frame, and magnifying the held frame by that
+                        // leaves an 11-pixel patch covering the panel — flat, and black if the
+                        // patch was dark (the 2026-09-17 "sometimes goes black" report, caught in
+                        // the act at 2^174 on 2026-09-18). A dive, by contrast, must keep its true
+                        // scale or the held frame slides. `hold_scale_floor` owns that split.
                         let scale = ((self.ref_cache[vi].frozen_l2 - log2mag) as f32)
                             .exp2()
-                            .clamp(9.094_947e-13, 1.099_512e12); // 2^-40 .. 2^40
+                            .clamp(hold_scale_floor(self.pointer.zoom_vel.abs() < 1.0e-9), 1.099_512e12);
                         let px = fractadyne_core::ref_offset_mantissa(&center_bf[0], &fc[0], delta_exp, precision)
                             / span_mantissa.x;
                         let py = fractadyne_core::ref_offset_mantissa(&center_bf[1], &fc[1], delta_exp, precision)
@@ -7198,6 +7250,48 @@ impl FractadyneApp {
                     }
                     None => reproject = Some([0.0, 0.0]), // nothing rendered yet → static hold
                 }
+            }
+            // ---- what did this frame actually PRESENT? (2026-09-17: "goes black on space") ----
+            //
+            // ⛔**There is more than one way for this view to go black, and they need different
+            // fixes**, so the report has to name which one happened rather than be argued about:
+            //   • `held=static` — a hold with NO frozen content behind it. That IS a black frame:
+            //     the display serves a texture nothing has written.
+            //   • `held=reproject` with a large `gap` — the last good frame stretched so far it
+            //     reads as mush rather than black.
+            //   • `real` frames while `drift` is large — painted with an out-of-view reference,
+            //     which `too_stale`'s own comment describes as "dark/glitchy".
+            // The triggers are printed alongside so the cause arrives with the symptom.
+            if interacting && self.perf.glide_probe_left[vi] > 0 {
+                self.perf.glide_probe_left[vi] -= 1;
+                let held = match (reproject.is_some(), self.ref_cache[vi].frozen_center.is_some()) {
+                    (false, _) => "real",
+                    (true, true) => "reproject",
+                    (true, false) => "static(BLACK)",
+                };
+                crate::diag::log_line(
+                    "glide",
+                    &format!(
+                        "v{vi} f{} present={held} at 2^{log2mag:.4} — too_stale={too_stale} \
+                         drift={} reuse_hold={reuse_hold} depth_lag={depth_lag:.2} mode={} \
+                         gap={:.2} oct shown_mag={:.1}x ref={}",
+                        self.perf.frame_idx,
+                        drift.map_or("none".to_string(), |(x, y)| format!("{:.2},{:.2}", x, y)),
+                        mode as u32,
+                        if self.ref_cache[vi].frozen_center.is_some() {
+                            log2mag - self.ref_cache[vi].frozen_l2
+                        } else {
+                            0.0
+                        },
+                        // What the held frame is ACTUALLY magnified by after `hold_scale_floor`.
+                        // `gap` is the raw discrepancy; this is the transform that reached the
+                        // screen, so the two together say whether the clamp bound this frame.
+                        if reproject.is_some() { 1.0 / reproject_scale.max(1.0e-30) } else { 1.0 },
+                        if self.ref_cache[vi].ref_pt.is_some() { "yes" } else { "NONE" },
+                    ),
+                );
+            } else if !interacting {
+                self.perf.glide_probe_left[vi] = crate::GLIDE_PROBE_FRAMES;
             }
             // ---- pinned refresh, commit point (option C, design/mode2-chunking.md §11) ----
             // Runs AFTER the freeze verdict, because a pin may only START on a frame that really
@@ -7294,7 +7388,7 @@ impl FractadyneApp {
                     Some(fc) => {
                         let scale = ((self.ref_cache[vi].frozen_l2 - log2mag) as f32)
                             .exp2()
-                            .clamp(9.094_947e-13, 1.099_512e12); // 2^-40 .. 2^40 (see the freeze)
+                            .clamp(hold_scale_floor(self.pointer.zoom_vel.abs() < 1.0e-9), 1.099_512e12);
                         let px = fractadyne_core::ref_offset_mantissa(
                             &center_bf[0], &fc[0], delta_exp, precision,
                         ) / span_mantissa.x;
@@ -7325,7 +7419,7 @@ impl FractadyneApp {
                         };
                         let scale = ((self.ref_cache[vi].frozen_l2 - l2) as f32)
                             .exp2()
-                            .clamp(9.094_947e-13, 1.099_512e12); // 2^-40 .. 2^40 (see the freeze)
+                            .clamp(hold_scale_floor(self.pointer.zoom_vel.abs() < 1.0e-9), 1.099_512e12);
                         let px =
                             fractadyne_core::ref_offset_mantissa(&cbf[0], &fc[0], de, prec) / smx;
                         let py =
@@ -8126,6 +8220,25 @@ pub(crate) fn norm_glide_step(shown: Option<(f32, f32)>, target: (f32, f32), sna
 
 #[cfg(test)]
 mod norm_glide;
+
+/// Lower bound for the held-frame reprojection scale — how far the last good frame may be MAGNIFIED
+/// while a fresh reference builds. `jumped` means the view arrived discontinuously (no zoom
+/// velocity); see [`crate::tunables::HELD_JUMP_MAX_OCT`] for why the two cases differ.
+///
+/// ⚠**One definition, three callers.** The freeze path and the two `hold_uv` snapshots (the settled
+/// hold gate and the pinned-refresh display gate) all describe the SAME transform; if their floors
+/// disagreed the display would contradict its own bookkeeping, so the policy lives here rather than
+/// being spelled out at each site.
+pub(crate) fn hold_scale_floor(jumped: bool) -> f32 {
+    if jumped {
+        (-crate::tunables::HELD_JUMP_MAX_OCT as f32).exp2()
+    } else {
+        9.094_947e-13 // 2^-40 — f32 has room to spare, and a dive must keep its true scale
+    }
+}
+
+#[cfg(test)]
+mod hold_scale_floor_tests;
 
 pub(crate) fn norm_window_feed(
     acc: Option<(f32, f32)>,

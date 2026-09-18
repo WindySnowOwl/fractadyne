@@ -1278,6 +1278,16 @@ struct Perf {
     adopt_complete: [u64; 2],
     chunk_motion_frames: [u64; 2],
     dirty_shown: [u64; 2],
+    /// Frames of "what did we actually present" logging still owed at the START of the current
+    /// glide, per view. Refilled to [`GLIDE_PROBE_FRAMES`] whenever the view is not interacting,
+    /// spent while it is.
+    ///
+    /// ⭐**Bounded by the question it answers.** The 2026-09-17 report is "it goes black when
+    /// pressing space to zoom initially" — a claim about the first fraction of a second of a
+    /// glide, not about a dive in progress. A probe that logged every held frame would write
+    /// thousands of lines through a long dive and bury the very frames being asked about, so this
+    /// one covers exactly the opening of each glide and then goes quiet until the key is released.
+    glide_probe_left: [u32; 2],
     /// A pinned refresh in flight per view (option C, design/mode2-chunking.md §10-§11): the
     /// chunked refresh renders across frames at this captured view while the display keeps
     /// reprojecting the previous complete frozen texture; adopted only on completion.
@@ -1824,6 +1834,7 @@ impl Default for Perf {
             chunk_pending: [false, false],
             adopt_partial: [0, 0],
             adopt_complete: [0, 0],
+            glide_probe_left: [GLIDE_PROBE_FRAMES; 2],
             chunk_motion_frames: [0, 0],
             dirty_shown: [0, 0],
             pin: [None, None],
@@ -4164,6 +4175,66 @@ impl CenterExpr {
 /// post-click magnification, and it has to be cheap enough to follow a moving cursor.
 const RETICLE_PX: u32 = 224;
 
+/// How many frames at the opening of a glide report what was actually presented
+/// ([`Perf::glide_probe_left`]) — about a third of a second at 60 fps, which is the window the
+/// "goes black when pressing space" report is about.
+const GLIDE_PROBE_FRAMES: u32 = 20;
+
+/// How much of the hand's movement the reticle's aim point takes while Shift is held: a quarter, so
+/// aiming is 4× finer than the cursor.
+///
+/// ⛔**The OS pointer speed is not ours to change.** The 2026-09-17 pass asked to "slow mouse
+/// acceleration when the reticle is shown", and the literal reading — `SystemParametersInfo` with
+/// `SPI_SETMOUSESPEED` — is a machine-wide setting belonging to the user's desktop, which an app
+/// must not reach into for its own convenience (and would leave altered if we crashed while it was
+/// held). What actually needs to slow down is the AIM, not the cursor, so the aim is mapped from
+/// the cursor instead: `aim = anchor + (cursor − anchor) × GAIN`, re-anchored each time Shift goes
+/// down. ⭐Absolute rather than accumulated on purpose — an integrating version drifts away from
+/// the hand and can never be walked back, while this one is exactly reversible: return the cursor
+/// to where Shift was pressed and the aim returns with it.
+const RETICLE_AIM_GAIN: f32 = 0.25;
+
+/// What part of the reticle's crosshair a pixel belongs to. `Core` and `Outline` take OPPOSITE
+/// inks, so the mark contrasts with its own edge as well as with the fractal under it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ReticleMark {
+    None,
+    Core,
+    Outline,
+}
+
+/// Classify one reticle pixel, at `(dx, dy)` from the centre in physical pixels, against a reticle
+/// of radius `r`. Four arms that stop short of the centre, plus a ring marking the exact point.
+///
+/// ⭐**The arms stop at `GAP` so the pixel under test is never painted over.** The whole purpose of
+/// the reticle is to show what is at that point; a crosshair that covers it defeats the feature.
+/// The ring is what marks it, which is also why the ring is worth having at all.
+fn reticle_mark(dx: f32, dy: f32, r: f32) -> ReticleMark {
+    const GAP: f32 = 9.0; // arms start here
+    const RING: f32 = 5.0; // radius of the ring around the exact point
+    const CORE: f32 = 1.0; // half-thickness of the mark (≈2 px wide)
+    const EDGE: f32 = 2.2; // half-thickness including the contrast outline
+    let end = (r - 10.0).max(GAP + 4.0); // stop short of the rim stroke
+    let (ax, ay) = (dx.abs(), dy.abs());
+    let d = (dx * dx + dy * dy).sqrt();
+    // An arm runs `along` one axis and is thin `across` the other; `t` widens it in BOTH
+    // directions, so the tips and the gap ends get an outline cap too rather than a bare cut.
+    let arm = |along: f32, across: f32, t: f32| {
+        along >= GAP - t && along <= end + t && across <= t
+    };
+    let hit = |t: f32| arm(ax, ay, t) || arm(ay, ax, t) || (d - RING).abs() <= t;
+    if hit(CORE) {
+        ReticleMark::Core
+    } else if hit(EDGE) {
+        ReticleMark::Outline
+    } else {
+        ReticleMark::None
+    }
+}
+
+#[cfg(test)]
+mod reticle_mark_tests;
+
 /// What the draw phase saw under the cursor, for the update phase to render a reticle from.
 #[derive(Clone)]
 struct ReticleAt {
@@ -4175,8 +4246,12 @@ struct ReticleAt {
     /// reticle shows is literally what the click is about to give you.
     log2mag: f64,
     precision: usize,
-    /// Where to draw it, in egui points.
+    /// The AIM point in egui points — the damped position the click will take, which the bubble is
+    /// placed beside and the connector line runs to.
     screen: egui::Pos2,
+    /// Where the hand actually is. Kept separately because [`RETICLE_AIM_GAIN`] holds the two
+    /// apart, and a magnifier that does not show the user which of the two it obeys is a trap.
+    cursor: egui::Pos2,
 }
 
 struct SnapSolve {
@@ -4195,6 +4270,17 @@ struct FeatureSolve {
     /// Set when the requested depth is past what the solver can express, so the reply can say so
     /// instead of navigating to a depth the answer is not accurate for.
     depth_capped: Option<f64>,
+    /// The formula the search ran against, so the reply sizes the atom with the same family it was
+    /// found in rather than with whatever is selected when it lands.
+    formula: u32,
+    /// Whether the Go-to dialog is waiting for this answer.
+    ///
+    /// ⛔**A solve with no dialog must not be judged by the dialog's state.** `poll_feature_solve`
+    /// abandons a solve whose dialog has closed — correct for a dialog request, and fatal for the
+    /// `M` key, whose request never opens one: the answer was dropped on arrival, every time, with
+    /// no jump and no message. It also decides where a FAILURE goes, since there is no message line
+    /// to write into when nobody opened the dialog.
+    from_dialog: bool,
 }
 
 /// What a [`FeatureSolve`] worker computed.
@@ -4889,6 +4975,11 @@ struct ColoringConfig {
     /// a fixed cycle makes of dense 1e5-scale escape fields. Only active for the Smooth method
     /// and only past a range threshold, so ordinary views keep classic coloring. Persisted.
     normalize_live: bool,
+    /// Fit the palette to the measured escape range REGARDLESS of whether the view aliases — the
+    /// range-fit half of what users mean by "normalize". `normalize_live` above is a Nyquist
+    /// aliasing guard and declines on a smooth view by design; this asks for the remap outright.
+    /// Still needs a valid measured range, so it does nothing until a reading lands. Persisted.
+    normalize_fit: bool,
     /// Log-scaled palette mapping. Applies wherever normalization is active (live or
     /// `--normalize`): escape values crowd towards the high end at depth, so a linear map spends
     /// most of the palette on a thin shell. Persisted.
@@ -5273,6 +5364,10 @@ struct FractadyneApp {
     /// The rendered reticle and the view it was rendered for, so a resting cursor costs nothing.
     reticle_tex: Option<egui::TextureHandle>,
     reticle_key: Option<(i64, i64, u64, u32)>,
+    /// Where the cursor was when Shift armed the reticle, and in which panel: the fixed point that
+    /// [`RETICLE_AIM_GAIN`] scales movement around. Cleared on release, so every press re-anchors
+    /// under the hand rather than resuming from a stale offset.
+    reticle_anchor: Option<(bool, egui::Pos2)>,
     /// Static color mapping: palette selection, custom/duotone/binary, cycle/offset, method + params.
     coloring: ColoringConfig,
     /// Performance/diagnostic tracking + overlay.
@@ -6157,6 +6252,7 @@ impl FractadyneApp {
             reticle_want: None,
             reticle_tex: None,
             reticle_key: None,
+            reticle_anchor: None,
             coloring: ColoringConfig {
                 palette_idx: s.palette_idx,
                 cycle: s.cycle,
@@ -6196,6 +6292,7 @@ impl FractadyneApp {
                 trap_type: TrapType::from_key(&s.trap_type),
                 normalize: args.iter().any(|a| a == "--normalize"),
                 normalize_live: s.normalize_live,
+                normalize_fit: s.normalize_fit,
                 log_palette: {
                     let asked = args.iter().any(|a| a == "--log-palette");
                     // ⚠`--log-palette` only chooses HOW the normalized mapping spreads the
@@ -6706,6 +6803,7 @@ impl FractadyneApp {
             cycle: self.coloring.cycle,
             offset: self.coloring.offset,
             normalize_live: self.coloring.normalize_live,
+            normalize_fit: self.coloring.normalize_fit,
             log_palette: self.coloring.log_palette,
             zoom_rate: self.render_cfg.zoom_rate,
             click_zoom: self.click_zoom,
@@ -7876,9 +7974,30 @@ impl FractadyneApp {
             // for box-zoom, and `clicked()` never fires on a drag, so the two do not collide: hold
             // Shift to see where you are pointing, click without moving to take it, or drag to box
             // a region instead.
-            if shift && resp.hovered() && !resp.dragged() && self.pointer.zoom_box.is_none() {
+            let armed = shift && resp.hovered() && !resp.dragged() && self.pointer.zoom_box.is_none();
+            // Only THIS panel's anchor is this panel's business: `draw_dual` runs this body once per
+            // panel, so an unconditional reset here would have the un-hovered panel clear the
+            // anchor the hovered one had just set.
+            if !armed && self.reticle_anchor.is_some_and(|(j, _)| j == is_julia) {
+                self.reticle_anchor = None;
+            }
+            // The damped aim point, kept for the click below so that Shift+click takes what the
+            // reticle is SHOWING rather than where the cursor happens to be.
+            let mut aim_at: Option<egui::Pos2> = None;
+            if armed {
                 if let Some(p) = resp.hover_pos() {
-                    let l = p - rect.min;
+                    let anchor = match self.reticle_anchor {
+                        Some((j, a)) if j == is_julia => a,
+                        _ => {
+                            self.reticle_anchor = Some((is_julia, p));
+                            p
+                        }
+                    };
+                    // Fine aiming: a quarter of the hand's displacement from the anchor, held
+                    // inside the panel so the aim can never be somewhere unrenderable.
+                    let aim = rect.clamp(anchor + (p - anchor) * RETICLE_AIM_GAIN);
+                    aim_at = Some(aim);
+                    let l = aim - rect.min;
                     let vp = if is_julia { &self.julia_viewport } else { &self.viewport };
                     let (cx, cy) = vp.pixel_to_complex(l.x as f64 * ppp, l.y as f64 * ppp);
                     let f = self.render_cfg.click_zoom_factor.max(1.01) as f64;
@@ -7887,7 +8006,8 @@ impl FractadyneApp {
                         cy,
                         log2mag: vp.log2_magnification() + f.log2(),
                         precision: vp.precision,
-                        screen: p,
+                        screen: aim,
+                        cursor: p,
                     });
                     ctx.request_repaint();
                 }
@@ -7896,7 +8016,10 @@ impl FractadyneApp {
                 && self.pointer.zoom_box.is_none()
                 && !ctx.input(|i| i.modifiers.command)
             {
-                if let Some(p) = resp.interact_pointer_pos() {
+                // ⚠The AIM wins when the reticle is up. Taking `interact_pointer_pos` there would
+                // zoom to a point a few hundred pixels from the one the magnifier just showed —
+                // the aim and the cursor are deliberately no longer the same place.
+                if let Some(p) = aim_at.or_else(|| resp.interact_pointer_pos()) {
                     let l = p - rect.min;
                     pending_click_zoom =
                         Some((l.x as f64 * ppp, l.y as f64 * ppp, resp.secondary_clicked()));
@@ -8206,6 +8329,20 @@ impl FractadyneApp {
 
 impl FractadyneApp {
 
+    /// `M` / Navigate ▸ nearest minibrot: solve for the nucleus near the view centre, then jump to
+    /// it at its own scale. Shares [`poll_feature_solve`]'s apply half with the Go-to dialog.
+    ///
+    /// ⭐**Off the UI thread, and it always says something.** Both halves of that sentence are
+    /// fixes for the 2026-09-17 verification pass, which reported "M causes it to spin, but no
+    /// apparent effect and no error message":
+    ///
+    /// - It used to run [`fractadyne_core::find_nucleus`] **synchronously, right here**, which at
+    ///   depth is the multi-second-to-minutes freeze that [`FeatureSolve`] exists to avoid. That
+    ///   was the "spin".
+    /// - The key was gated on `!self.dual`, so in the DUAL view the press was swallowed whole: no
+    ///   jump, no toast, no log line — nothing to distinguish "declined" from "dead". ⛔**A feature
+    ///   that can decline must say that it declined**, and it must leave a trace in the log, or the
+    ///   next report about it has no evidence to work from (this one arrived with none).
     fn find_minibrot(&mut self, ctx: &egui::Context) {
         let formula = self.fractal.formula_id();
         if !matches!(formula, 0..=3) {
@@ -8215,43 +8352,43 @@ impl FractadyneApp {
             );
             return;
         }
+        if self.julia_mode {
+            self.set_toast(
+                "The minibrot finder searches the Mandelbrot set — switch off Julia mode to use it.",
+                ctx,
+            );
+            return;
+        }
+        if self.feature_solve.is_some() {
+            self.set_toast("Already looking for a feature — one at a time.", ctx);
+            return;
+        }
         let mag_l2 = self.viewport.log2_magnification();
         let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
         let max_period =
             self.viewport.recommended_max_iter(self.render_cfg.max_iter).clamp(1_000, 100_000);
-        match fractadyne_core::find_nucleus(&center, mag_l2, formula, max_period) {
-            Some(n) => {
-                let cur_l2 = self.viewport.log2_magnification();
-                let (cx, cy, target) = self.newton_raphson_target(n.cx, n.cy, n.period, formula);
-                match target.filter(|t| *t > cur_l2) {
-                    Some(t) => {
-                        self.viewport.set_center_log2mag(cx, cy, t);
-                        self.finish_nav_jump();
-                        self.feature_period = Some((n.period, self.view_key()));
-                        self.set_toast(
-                            format!(
-                                "Zoomed to the period-{} minibrot — {}×",
-                                n.period,
-                                fmt_zoom_field(t)
-                            ),
-                            ctx,
-                        );
-                    }
-                    // No size estimate (non-quadratic family), or the view is already deeper
-                    // than the minibrot's own scale — keep the depth, just fix the center.
-                    None => {
-                        self.viewport.set_center_log2mag(cx, cy, cur_l2);
-                        self.finish_nav_jump();
-                        self.feature_period = Some((n.period, self.view_key()));
-                        self.set_toast(
-                            format!("Snapped to period-{} minibrot center", n.period),
-                            ctx,
-                        );
-                    }
-                }
-            }
-            None => self.set_toast("No minibrot center found near the view center.", ctx),
-        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(FeatureOutcome::Nucleus(fractadyne_core::find_nucleus(
+                &center, mag_l2, formula, max_period,
+            )));
+        });
+        self.feature_solve = Some(FeatureSolve {
+            rx,
+            started: Instant::now(),
+            // No depth was asked for: the destination is the minibrot's OWN scale, which only the
+            // reply knows (`newton_raphson_target` sizes the atom once its centre is in hand).
+            zoom_to: None,
+            depth_capped: None,
+            formula,
+            from_dialog: false,
+        });
+        crate::diag::log_line(
+            "view",
+            &format!("minibrot: searching from 2^{mag_l2:.4}, max period {max_period}"),
+        );
+        self.set_toast("Looking for the nearest minibrot…", ctx);
+        self.schedule_repaint(ctx);
     }
 
     /// Size up a located minibrot and refine its center to the precision that depth demands.
@@ -8428,6 +8565,8 @@ impl FractadyneApp {
             started: Instant::now(),
             zoom_to,
             depth_capped,
+            formula: 0, // the dialog is Mandelbrot-only (checked above)
+            from_dialog: true,
         });
         self.goto.msg = None;
         self.schedule_repaint(ctx);
@@ -8451,12 +8590,22 @@ impl FractadyneApp {
             return;
         };
         let Some((dev, q)) = gpu else { return };
-        // Key on the cursor rounded to a screen pixel plus the view and the factor: a resting
-        // cursor re-renders nothing, and a cursor that has moved by less than a pixel cannot have
-        // changed the answer.
+        // Key on the aim point plus the view and the factor, so a resting cursor re-renders nothing.
+        //
+        // ⭐⭐**The quantum has to be a quantum of the MAGNIFIED image, not of the screen.** Rounding
+        // the aim to a whole screen point looks harmless and is not: the reticle renders at the
+        // view's magnification TIMES the click factor, so at 100× one point of aim is a hundred
+        // points of content, and the preview only refreshed once per 100-point lurch. With the aim
+        // now damped to a quarter of the hand's motion (`RETICLE_AIM_GAIN`) that was one refresh per
+        // ~6 px of hand movement, reported as "a bit jumpy, hard to get on the exact location" —
+        // the aim was smooth all along and its PICTURE was not. Dividing the quantum by the factor
+        // makes one step of the key one pixel of what the user is actually looking at.
+        // (`quantum`, not `q` — `q` is the GPU queue in this scope.)
+        let f = self.render_cfg.click_zoom_factor.max(1.01);
+        let quantum = (ctx.pixels_per_point() * f) as f64;
         let key = (
-            at.screen.x.round() as i64,
-            at.screen.y.round() as i64,
+            (at.screen.x as f64 * quantum).round() as i64,
+            (at.screen.y as f64 * quantum).round() as i64,
             self.snap_view_sig(),
             self.render_cfg.click_zoom_factor.to_bits(),
         );
@@ -8487,10 +8636,28 @@ impl FractadyneApp {
         for y in 0..h {
             for x in 0..w {
                 let i = y * w + x;
+                let mark = reticle_mark(x as f32 - cx, y as f32 - cy, r);
+                let mut rgb = [0u8; 3];
                 for k in 0..3 {
                     let c = res.pixels[i * 4 + k].clamp(0.0, 1.0);
-                    px.push((c.powf(1.0 / 2.2) * 255.0 + 0.5) as u8);
+                    rgb[k] = (c.powf(1.0 / 2.2) * 255.0 + 0.5) as u8;
                 }
+                // ⭐**The crosshair is stamped INTO the image, keyed to the pixel it covers.** It
+                // used to be four thin accent strokes painted over the top, which is invisible
+                // whenever the fractal happens to be the same colour as the accent — reported at
+                // the 2026-09-17 pass as "add cross hairs" on a reticle that already had them.
+                // A mark that must read on ARBITRARY content cannot carry a fixed colour, and a
+                // drop shadow only moves the problem to dark content. So each mark pixel picks
+                // black or white from what is UNDER it, and the mark's outline takes the other —
+                // maximum contrast everywhere, including the mid-grey where a true photographic
+                // negative washes out (128 inverts to 127).
+                if mark != ReticleMark::None {
+                    let luma = 0.2126 * rgb[0] as f32 + 0.7152 * rgb[1] as f32 + 0.0722 * rgb[2] as f32;
+                    let dark_on_light = luma > 140.0;
+                    let ink = if (mark == ReticleMark::Core) == dark_on_light { 16u8 } else { 239u8 };
+                    rgb = [ink; 3];
+                }
+                px.extend_from_slice(&rgb);
                 // One pixel of feather so the rim is not a staircase.
                 let d = ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt();
                 px.push((((r - d).clamp(0.0, 1.0)) * 255.0 + 0.5) as u8);
@@ -8563,7 +8730,17 @@ impl FractadyneApp {
         self.viewport.center_x = n.cx;
         self.viewport.center_y = n.cy;
         self.pointer.settle_t[0] = ctx.input(|i| i.time);
-        self.record_nav();
+        // ⛔**A snap is a NAVIGATION JUMP and has to finish like one.** This path used to assign the
+        // centre and call `record_nav` alone — the only view-moving code in the app that skipped
+        // `finish_nav_jump`, and so the only one that left the RESIDENT REFERENCE ORBIT describing
+        // the point the view just left. That is not a cosmetic omission: the snap moves the centre
+        // by the aim error TIMES the click factor (measured: 331–1470 px at 100×, i.e. up to a full
+        // panel), which is far past the `drift > 1.5` staleness trigger, so the renderer stopped
+        // painting the new location and instead froze and PANNED the last good frame — the old view
+        // sliding under the new coordinates. Reported at the 2026-09-17 pass as "snap works, but the
+        // center is still offset in the zoomed view", and `too_stale`'s own comment names the other
+        // face of it ("rendering with it is dark/glitchy — the screen goes black while zooming").
+        self.finish_nav_jump();
         crate::diag::log_line(
             "view",
             &format!(
@@ -8580,7 +8757,12 @@ impl FractadyneApp {
         // would land minutes later and jump the view out from under whatever the user had moved on
         // to — the dialog only closes itself AFTER a result is applied, so an open dialog is the
         // signal that someone is still waiting for one.
-        if !self.goto.open {
+        //
+        // ⛔**Only for a solve the dialog started.** `M` starts one with no dialog at all, so this
+        // test was true on the very first poll and threw the answer away before anything could look
+        // at it — the 2026-09-17 "M does nothing, no message" report. A guard that reads someone
+        // else's state must first ask whether that state is about it.
+        if solve.from_dialog && !self.goto.open {
             self.feature_solve = None;
             return;
         }
@@ -8598,11 +8780,19 @@ impl FractadyneApp {
         // minibrot-only rather than showing two unlike numbers under one label.
         let mut minibrot_period: Option<u32> = None;
 
+        // Which KIND of answer came back, taken from the outcome itself rather than from
+        // `self.goto.feat_kind`: a keyless `M` solve can finish while the dialog's radio sits on
+        // Misiurewicz, and reading the dialog there would report the wrong failure.
+        let mut outcome_kind = FeatureKind::Minibrot;
+
         let (found, label) = match outcome {
             FeatureOutcome::Nucleus(Some(n)) => {
                 let period = n.period;
                 minibrot_period = Some(period);
-                let (cx, cy, t) = self.newton_raphson_target(n.cx, n.cy, period, 0);
+                // ⚠The formula the search RAN with, not whatever is selected now. `M` accepts the
+                // Multibrot families, and the old hardcoded 0 would have sized a Multibrot atom
+                // with the quadratic estimate if the two ever disagreed.
+                let (cx, cy, t) = self.newton_raphson_target(n.cx, n.cy, period, solve.formula);
                 zoom_to = t.filter(|t| *t > cur_l2);
                 (Some((cx, cy)), format!("period-{period} minibrot"))
             }
@@ -8622,6 +8812,7 @@ impl FractadyneApp {
                 return;
             }
             FeatureOutcome::Misiurewicz { k, p, detected, outcome } => {
+                outcome_kind = FeatureKind::Misiurewicz;
                 if detected {
                     // Show what was found: a silent auto-detect leaves no way to tell a good fit
                     // from a guess. (The "Auto" button beside the boxes clears them again.)
@@ -8668,8 +8859,14 @@ impl FractadyneApp {
                 if let Some(p) = minibrot_period {
                     self.feature_period = Some((p, self.view_key()));
                 }
-                self.goto.open = false;
+                if solve.from_dialog {
+                    self.goto.open = false; // a keyless solve must not close a dialog it never used
+                }
                 let took = solve.started.elapsed().as_secs_f64();
+                crate::diag::log_line(
+                    "view",
+                    &format!("feature: landed on {label} at 2^{l2:.4} ({took:.2} s)"),
+                );
                 // The flat-frame trap, said out loud at the moment it is entered: a fixed
                 // iteration count far below the destination depth's resolving line renders
                 // every pixel unescaped — a long wait for a solid-colour frame, with the
@@ -8711,7 +8908,7 @@ impl FractadyneApp {
                 );
             }
             None => {
-                self.goto.msg = Some(match self.goto.feat_kind {
+                let why = match outcome_kind {
                     FeatureKind::Minibrot => {
                         "No minibrot center found near the view — zoom closer to one.".to_string()
                     }
@@ -8755,7 +8952,16 @@ impl FractadyneApp {
                             "Preperiod and period must both be positive.".to_string()
                         }
                     },
-                });
+                };
+                crate::diag::log_line("view", &format!("feature: no result — {why}"));
+                // ⛔**A failure has to reach whoever asked.** The dialog has a message line; a key
+                // press has only the toast, and writing into `goto.msg` for a dialog nobody opened
+                // is how "M does nothing, no error message" happened.
+                if solve.from_dialog {
+                    self.goto.msg = Some(why);
+                } else {
+                    self.set_toast(why, ctx);
+                }
             }
         }
     }
@@ -13124,6 +13330,7 @@ impl FractadyneApp {
         c.stripe_tail_len.hash(&mut h);
         c.trap_type.to_u32().hash(&mut h);
         c.normalize_live.hash(&mut h);
+        c.normalize_fit.hash(&mut h); // or ticking the box would change no pixel until something else did
         c.log_palette.hash(&mut h);
         let e = &self.effects;
         e.light.hash(&mut h);
@@ -13772,8 +13979,10 @@ impl eframe::App for FractadyneApp {
             } else if redo {
                 self.redo_view();
             }
-            // M: find the nearby minibrot center (single view only).
-            if ctx.input(|i| i.key_pressed(egui::Key::M) && !i.modifiers.any()) && !self.dual {
+            // M: find the nearby minibrot center. ⛔**Not gated on the view layout any more.** The
+            // dual view has a Mandelbrot panel and `find_minibrot` works on exactly that viewport,
+            // so `!self.dual` was refusing a request it could serve — and refusing it silently.
+            if ctx.input(|i| i.key_pressed(egui::Key::M) && !i.modifiers.any()) {
                 self.find_minibrot(ctx);
             }
             // A: toggle the auto-zoom autopilot (single view only).

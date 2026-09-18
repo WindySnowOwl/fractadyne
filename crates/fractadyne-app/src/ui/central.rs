@@ -190,6 +190,30 @@ impl FractadyneApp {
                     self.julia_c = cc;
                     self.pointer.settle_t[1] = ctx.input(|i| i.time); // only the Julia view changed
                     self.ref_cache[1].ref_pt = None; // Julia changed
+                    // ⚠**The Julia parameter is an `f64`, and past ~1e16× the whole panel rounds to
+                    // one.** At c ≈ −0.018 an ulp is ~7e-18, while a 1e60 view spans 3e-60 — forty
+                    // orders of magnitude finer — so every pixel maps to the same double and the
+                    // pin necessarily lands on the view centre. That is arithmetic, not a broken
+                    // handler, but it looked like one at the 2026-09-17 pass ("Ctrl+click at a deep
+                    // zoom set the Julia point at the center — is that expected?"). A limit the user
+                    // can SEE the effect of has to be a limit the app will STATE.
+                    if cc == self.viewport.center_f64() {
+                        crate::diag::log_line(
+                            "view",
+                            &format!(
+                                "julia pin: f64-quantized to the view centre at 2^{:.2} — c=({:.17e},{:.17e})",
+                                self.viewport.log2_magnification(),
+                                cc.0,
+                                cc.1
+                            ),
+                        );
+                        self.set_toast(
+                            "Pinned Julia c — but it is held in double precision, so at this depth \
+                             the whole panel rounds to a single value and the pin lands on the view \
+                             centre. Zoom out to aim it.",
+                            ctx,
+                        );
+                    }
                 }
             }
         }
@@ -533,15 +557,26 @@ impl FractadyneApp {
             egui::Color32::WHITE,
         );
         p.circle_stroke(c, r, egui::Stroke::new(1.5_f32, accent));
-        // Crosshair: the exact point a click would take, which is the centre by construction.
-        let k = 7.0;
-        let hair = egui::Stroke::new(1.0_f32, accent);
-        p.line_segment([c - egui::vec2(k, 0.0), c - egui::vec2(3.0, 0.0)], hair);
-        p.line_segment([c + egui::vec2(3.0, 0.0), c + egui::vec2(k, 0.0)], hair);
-        p.line_segment([c - egui::vec2(0.0, k), c - egui::vec2(0.0, 3.0)], hair);
-        p.line_segment([c + egui::vec2(0.0, 3.0), c + egui::vec2(0.0, k)], hair);
-        // A line back to the cursor, so which point is being magnified is never in doubt.
+        // ⭐**The crosshair is NOT painted here** — it is stamped into the reticle image by
+        // `reticle_mark`, where each of its pixels can pick an ink from the fractal underneath it.
+        // Four fixed-colour strokes on this layer were invisible whenever the content happened to
+        // match them (2026-09-17 pass), and no fixed colour or shadow fixes that in general.
+        // A line back to the aim point, so which point is being magnified is never in doubt.
         p.line_segment([at.screen, c], egui::Stroke::new(1.0_f32, accent.gamma_multiply(0.5)));
+        // ⭐**Mark the aim, and tie it to the hand.** With `RETICLE_AIM_GAIN` damping the aim to a
+        // quarter of the cursor's displacement, these are two different places on screen, and the
+        // click obeys the aim. A magnifier that showed only the bubble would leave the user
+        // believing the cursor was the target — so the aim gets a ring of its own, and a faint
+        // leader runs out to wherever the hand actually is.
+        if at.cursor != at.screen {
+            p.line_segment(
+                [at.screen, at.cursor],
+                egui::Stroke::new(1.0_f32, egui::Color32::from_black_alpha(90)),
+            );
+        }
+        for (w, col) in [(3.0_f32, egui::Color32::from_black_alpha(170)), (1.25, accent)] {
+            p.circle_stroke(at.screen, 4.0, egui::Stroke::new(w, col));
+        }
     }
 
     pub(crate) fn draw_watermark(&self, ctx: &egui::Context, rect: egui::Rect) {

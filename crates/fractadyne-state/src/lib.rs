@@ -84,6 +84,19 @@ pub struct SessionState {
     /// Live deep-palette auto-normalization (default on). `serde(default)` keeps older files loadable.
     #[serde(default = "default_true")]
     pub normalize_live: bool,
+    /// Fit the palette to the measured escape range unconditionally, instead of only when the view
+    /// aliases (default off). `serde(default)` = `false` keeps older session files loadable.
+    ///
+    /// ⭐**The companion to `normalize_live`, not a replacement for it.** `normalize_live` is an
+    /// ALIASING guard: it engages on `mean|Δ smooth-iter| × cycle > 0.5` (Nyquist), so on a
+    /// genuinely smooth view it declines by design and the palette is left alone. That is correct
+    /// anti-aliasing and it is NOT what the name promises — users read "normalize" as "fit the
+    /// palette to this view's range", asked for it repeatedly, and got a control that appeared to
+    /// do nothing. Rather than move the calibrated threshold (which has regressed in both
+    /// directions before — flat-grey at shallow depth, and "cities at night"), the range fit is its
+    /// own switch.
+    #[serde(default)]
+    pub normalize_fit: bool,
     /// Continuous-zoom speed multiplier (1.0 = default ~2× per 1.5 s). `serde(default)`
     /// keeps older session files (written before this field) loadable.
     #[serde(default = "default_zoom_rate")]
@@ -518,6 +531,7 @@ impl Default for SessionState {
             cycle: 0.27,
             log_palette: false,
             normalize_live: true,
+            normalize_fit: false,
             offset: 0.1,
             zoom_rate: default_zoom_rate(),
             click_zoom: false,
