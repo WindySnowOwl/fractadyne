@@ -38,6 +38,16 @@ detail is in the git history.
   locked onto the first step's range, about 6× too narrow, so spirals rendered as busy concentric
   rings. A stopped view now waits for the complete frame before it settles its colours.
 
+- **Big numbers in the Controls panel are grouped** (beta.109). A seven-digit iteration count is
+  easy to misread by a factor of ten, and it is the setting that can stall the app. The Iterations
+  and stripe Tail length sliders now read `10,000,000`, every figure in the Performance section is
+  comma-grouped (`92,151.25 ms`), and the Julia parameter rows are grouped in fives exactly like the
+  status bar's centre. The value boxes still take what they show: commas, spaces and the "it"
+  suffix are ignored when you type a number back in, and `1e6` still means a million.
+
+- **Help's credits no longer link to two sites that have gone offline** (beta.109). The Fractal
+  Wiki and Fractint entries keep their credit; only the dead links are gone.
+
 - **The gallery labels renders deeper than 1e308 correctly** (beta.109). Every image past the range
   of an ordinary floating-point number — 1e500, 1e1008, a 7.46e37000 spiral — was listed as
   "zoom inf×". The depth was never lost: exports store it as text precisely so it survives any
