@@ -711,11 +711,18 @@ pub(crate) fn help_shortcuts(ui: &mut egui::Ui) {
 
 /// A cited entry: bold title, a wrapped description, and a source link.
 fn help_cite(ui: &mut egui::Ui, title: &str, body: &str, link_label: &str, url: &str) {
+    help_cite_unlinked(ui, title, body);
+    ui.hyperlink_to(format!("{link_label} \u{2197}"), url);
+}
+
+/// A citation with no link. For credits whose only web source has gone: the credit still stands,
+/// and a dead link in an acknowledgement reads as neglect. (2026-09-19: two cited sites went
+/// offline and their links were removed.)
+fn help_cite_unlinked(ui: &mut egui::Ui, title: &str, body: &str) {
     ui.add_space(6.0);
     let ink = ui.visuals().strong_text_color();
     ui.label(egui::RichText::new(title).strong().color(ink));
     ui.add(egui::Label::new(body).wrap());
-    ui.hyperlink_to(format!("{link_label} \u{2197}"), url);
 }
 
 pub(crate) fn help_hardware(ui: &mut egui::Ui) {
@@ -817,14 +824,12 @@ pub(crate) fn help_acknowledgments(ui: &mut egui::Ui) {
     );
 
     help_sub(ui, "Deep-zoom algorithms");
-    help_cite(
+    help_cite_unlinked(
         ui,
         "Perturbation & series approximation — K. I. Martin",
         "The reference-orbit + low-precision-delta method (δz → 2Z·δz + δz² + δc) and the order-n \
          series that skips early iterations, introduced in SuperFractalThing and its note \
          “SuperFractalThing Maths” (sft_maths.pdf, 2013).",
-        "Perturbation theory — Fractal Wiki",
-        "https://fractalwiki.org/wiki/Perturbation_theory",
     );
     help_cite(
         ui,
@@ -884,12 +889,10 @@ pub(crate) fn help_acknowledgments(ui: &mut egui::Ui) {
     );
 
     help_sub(ui, "Foundations & tools");
-    help_cite(
+    help_cite_unlinked(
         ui,
         "The Mandelbrot set — Benoit B. Mandelbrot",
         "The object at the heart of it all.",
-        "Fractint — the Stone Soup Group",
-        "https://www.fractint.org/",
     );
     help_p(
         ui,
