@@ -1208,6 +1208,29 @@ impl FractadyneApp {
     /// when building EXPORT requests so a GUI export matches the screen (WYSIWYG); headless CLI
     /// runs never render live frames, so `norm_range` stays `None` there and CLI/corpus renders
     /// keep their explicit `--normalize`-only semantics.
+    /// The share of view `vi`'s sampled pixel pairs whose palette step passes Nyquist at the cycle
+    /// the classic mapping is using right now — the statistic the normalization guard decides on,
+    /// and the one its trace prints. `None` until a step histogram has arrived for the view.
+    ///
+    /// ⛔⭐⭐**Three statistics have been wrong here, and each looked right from its own side:**
+    /// 1. An absolute escape SPAN (`NORM_RANGE_MIN`): shallow views span a hundred sweeps and look
+    ///    perfect; deep dense fields alias on a far narrower span. Aliasing is LOCAL.
+    /// 2. `mean step × SLIDER`: the slider is not what the shader multiplies by — it feeds
+    ///    `color_cycle()` = `0.004 + slider·0.06` — so at the default slider of 0 the product was
+    ///    identically zero and the guard could never engage, anywhere.
+    /// 3. `mean step × color_cycle()`: the right units, and still wrong, because a MEAN is diluted by
+    ///    any smooth region sharing the frame. A 1.08e66 Julia panel — half cream exterior, half dense
+    ///    body — scored 0.494 against a 0.5 limit and was declined while visibly speckling
+    ///    (2026-09-19). The old slider mis-scale (~15×) had been silently compensating for this.
+    ///
+    /// ⭐The fraction does not dilute: a body that aliases is counted as aliasing, whatever else is on
+    /// screen. And because it is read from the stored DISTRIBUTION against the current cycle, moving
+    /// the cycle slider re-decides immediately, without a new render.
+    pub(crate) fn norm_alias_fraction(&self, vi: usize) -> Option<f32> {
+        self.perf.norm_hist[vi.min(1)]
+            .map(|h| alias_fraction(&h, self.color_cycle(), ALIAS_PHASE_LIMIT))
+    }
+
     pub(crate) fn live_norm_cycle_offset(&self, vi: usize) -> Option<NormMap> {
         // ⭐⭐**THE PREDICATE IS AN ALIASING TEST, NOT A SPAN TEST.** It used to be
         // `mx - mn > NORM_RANGE_MIN` with `NORM_RANGE_MIN = 20_000` — an ABSOLUTE escape span,
@@ -1223,45 +1246,24 @@ impl FractadyneApp {
         // span clears 20,000 on a handful of outlier pixels while the visible field needs no
         // normalization at all.
         //
-        // ⭐**0.5 is Nyquist.** A palette that advances more than half a period per pixel cannot be
-        // resolved on screen — past that the banding IS noise, which is precisely when remapping
-        // the range earns its keep.
-        const ALIAS_PHASE_LIMIT: f32 = 0.5;
         // ⭐The SHOWN window, not the fed one: the feed moves in steps (one per reading) and the
         // shown window glides between them (`norm_glide_step`). Before the first reading has
         // glided anywhere there is nothing shown yet, so fall back to the fed value — otherwise
         // the very first settled frame would paint unnormalized and then correct itself.
         let window = self.perf.norm_shown[vi.min(1)].or(self.perf.norm_range[vi.min(1)]);
         match (window, self.perf.norm_grad[vi.min(1)]) {
-            (Some((mn, mx)), Some(grad))
+            (Some((mn, mx)), Some(_))
                 if (self.coloring.normalize_live || self.coloring.normalize_fit)
                     && self.coloring.color_method == crate::ColorMethod::Smooth
-                    // A degenerate range would divide by ~0 below; the gradient decides the rest.
+                    // A degenerate range would divide by ~0 below; the step histogram decides the rest.
                     && mx - mn > 1.0
-                    // ⭐**Two questions, two controls.** "Fit palette to escape range" asks for the
-                    // remap outright and skips the aliasing test entirely; `normalize_live` is the
-                    // Nyquist guard that decides for itself. Splitting them is what lets the
-                    // threshold below stay at its calibrated value: users kept asking the guard for
-                    // a range fit, and every proposal to satisfy them by lowering it risked the two
-                    // regressions it is calibrated against (flat-grey shallow, "cities at night").
-                    // Both paths still need a MEASURED range — neither invents one.
+                    // ⭐**Two questions, two controls.** "Always fit range" asks for the remap
+                    // outright and skips the aliasing test entirely; `normalize_live` is the guard
+                    // that decides for itself. Both still need a MEASURED range — neither invents one.
                     && (self.coloring.normalize_fit
-                    // ⛔⭐⭐**THE EFFECTIVE CYCLE, NOT THE SLIDER.** `cu.cycle` in the shader is
-                    // palette periods per smooth-iteration (`coord = pv·cycle + offset`), and what
-                    // the app feeds it is `color_cycle()` = `0.004 + slider·0.06`, NOT the slider.
-                    // Multiplying the gradient by the raw slider therefore measured a quantity
-                    // nothing renders — and at the DEFAULT slider position of 0 it is identically
-                    // zero, so "Normalize deep colors" could not engage on any view at any depth
-                    // however badly it aliased, while the palette still advanced 0.004 per
-                    // iteration. Measured at the user's 1e28 view on 2026-09-18: grad 6.33, trace
-                    // reporting `phase/px 0.000 engaged=false` across all 178 readings.
-                    // ⭐The 0.5 threshold is unchanged and needs no recalibration: it is Nyquist in
-                    // THESE units (it never was in the old ones), and both recorded calibration
-                    // points keep their verdicts — the 9.83e27 confetti view at grad 60.56 gives
-                    // 1.22 and still engages, the flat-gray home view at grad 0.18 gives 0.0036 and
-                    // still declines. This is the same slider-vs-effective confusion that produced
-                    // the wrong first fix for the Misiurewicz thumbnails.
-                        || grad * self.color_cycle() > ALIAS_PHASE_LIMIT) =>
+                        || self
+                            .norm_alias_fraction(vi)
+                            .is_some_and(|f| f > crate::tunables::ALIAS_FRACTION_LIMIT)) =>
             {
                 let sweeps = 0.5 + self.coloring.cycle * 6.0;
                 // ⭐⭐**A HEAVY-TAILED RANGE TAKES THE LOG MAPPING EVEN IF THE USER DID NOT ASK
@@ -4168,6 +4170,9 @@ impl FractadyneApp {
                 // Clearing (not peeking) so the next frame sees a genuinely fresh one.
                 self.perf.grad_sink[vb].store(0, SeqCst);
                 self.perf.norm_sink[vb].store(u64::MAX, SeqCst);
+                if let Ok(mut h) = self.perf.hist_sink[vb].lock() {
+                    *h = None; // same reading, same verdict: it was measured somewhere else
+                }
                 crate::diag::trace(
                     "req",
                     format!("norm reading discarded: view={vb} measured at a different view (sig {read_sig:016x} != {nsig:016x})"),
@@ -4184,6 +4189,25 @@ impl FractadyneApp {
                         // Motion: same 0.3 EMA as the range, so nothing flickers frame to frame.
                         (NormFeed::Chase, Some(g)) => g + 0.3 * (mean - g),
                         (NormFeed::Hold, Some(g)) => g, // unreachable (gated above)
+                    });
+                }
+            }
+            // The step histogram: fed under exactly the rules the mean just followed — adopted
+            // outright on a settled decision, EMA'd per bucket while moving, left alone on Hold —
+            // so the statistic the guard decides on can never run ahead of, or behind, the range
+            // it decides about.
+            let hist = self.perf.hist_sink[vb].lock().ok().and_then(|mut h| h.take());
+            if let Some(h) = hist.filter(|_| nfeed != NormFeed::Hold) {
+                let total: u64 = h.iter().map(|&c| c as u64).sum();
+                if total > 0 {
+                    let frac: [f32; fractadyne_gpu::GRAD_HIST_BUCKETS] =
+                        std::array::from_fn(|i| h[i] as f32 / total as f32);
+                    self.perf.norm_hist[vb] = Some(match (nfeed, self.perf.norm_hist[vb]) {
+                        (NormFeed::Adopt, _) | (_, None) => frac,
+                        (NormFeed::Chase, Some(old)) => {
+                            std::array::from_fn(|i| old[i] + 0.3 * (frac[i] - old[i]))
+                        }
+                        (NormFeed::Hold, Some(old)) => old, // unreachable (filtered above)
                     });
                 }
             }
@@ -4273,17 +4297,19 @@ impl FractadyneApp {
                         crate::diag::trace(
                             "gpu",
                             format!(
-                                "norm range: frame [{mn:.0},{mx:.0}] {nfeed:?} governed={} ema {:?} grad {:?} phase/px {:.3} engaged={}",
+                                "norm range: view={vb} frame [{mn:.0},{mx:.0}] {nfeed:?} governed={} ema {:?} grad {:?} phase/px {:.3} alias={} engaged={}",
                                 self.perf.chunk_governed[vb],
                                 self.perf.norm_range[vb],
                                 self.perf.norm_grad[vb],
-                                // The EFFECTIVE phase per pixel — the same quantity the predicate
-                                // tests. Printing `coloring.cycle` here showed `phase/px 0.000` on
-                                // every reading and read as "no data", which is what sent the
-                                // 2026-09-17 investigation hunting for a missing reading that was
-                                // in fact arriving perfectly well and being correctly declined by
-                                // a predicate computing the wrong statistic.
+                                // The MEAN phase per pixel, kept for comparison with older logs —
+                                // it no longer decides anything. (Printing it with `coloring.cycle`
+                                // once showed `phase/px 0.000` on every reading and sent a whole
+                                // investigation after a missing reading that was arriving fine.)
                                 self.perf.norm_grad[vb].unwrap_or(0.0) * self.color_cycle(),
+                                // ⭐What the guard ACTUALLY tests, from the same function it calls,
+                                // so the trace can never again print a lookalike statistic.
+                                self.norm_alias_fraction(vb)
+                                    .map_or("none".to_string(), |f| format!("{f:.3}")),
                                 self.live_norm_cycle_offset(vb).is_some()
                             ),
                         );
@@ -5486,6 +5512,7 @@ impl FractadyneApp {
         let maxiter_count = Some(self.perf.maxiter_sink[vs.min(1)].clone());
         let norm_range = Some(self.perf.norm_sink[vs.min(1)].clone());
         let grad_range = Some(self.perf.grad_sink[vs.min(1)].clone());
+        let grad_hist = Some(self.perf.hist_sink[vs.min(1)].clone());
         let work_counters = Some(self.perf.work_sink[vs.min(1)].clone());
         // LIVE palette auto-normalization (see `live_norm_cycle_offset`): when the frame's escaped
         // smooth-iter range is huge, a fixed cycle wraps the palette thousands of times between
@@ -5530,6 +5557,7 @@ impl FractadyneApp {
             maxiter_count,
             norm_range,
             grad_range,
+            grad_hist,
             work_counters,
             norm_sig_out: Some(self.perf.norm_sig_sink[vs.min(1)].clone()),
             norm_sig: self.perf.norm_sig_submit[vs.min(1)],
@@ -8239,6 +8267,54 @@ pub(crate) fn hold_scale_floor(jumped: bool) -> f32 {
 
 #[cfg(test)]
 mod hold_scale_floor_tests;
+
+/// ⭐**0.5 is Nyquist.** A palette step of more than half a period between neighbouring pixels
+/// cannot be resolved on screen — past that the banding IS noise. This is the per-PAIR limit; how
+/// much of the frame must pass it before the guard engages is `tunables::ALIAS_FRACTION_LIMIT`.
+pub(crate) const ALIAS_PHASE_LIMIT: f32 = 0.5;
+
+/// The share of a frame's sampled pixel pairs whose palette step passes Nyquist — the statistic the
+/// live-normalization guard decides on.
+///
+/// `hist` is the frame's step histogram as FRACTIONS of all sampled pairs (bucket 0 = steps under
+/// one iteration, bucket `b ≥ 1` = `[2^(b-1), 2^b)`, the last open-ended; see
+/// `fractadyne_gpu::CTR_GRAD_HIST`). A pair aliases when its step times `cycle` (palette periods per
+/// iteration) exceeds `phase_limit` periods, i.e. when the step exceeds `phase_limit / cycle`. The
+/// bucket that threshold falls in is split LOG-uniformly, which is what a log₂ bucket assumes.
+///
+/// ⭐⭐**Why a fraction and not a mean.** The mean step was diluted by any smooth region in the same
+/// frame: a 1.08e66 Julia panel, half cream exterior and half dense body, measured a mean phase of
+/// 0.494 against a 0.5 limit and was declined while visibly speckling (2026-09-19). A fraction does
+/// not care what the rest of the frame is doing — a body that aliases is counted as aliasing.
+pub(crate) fn alias_fraction(
+    hist: &[f32; fractadyne_gpu::GRAD_HIST_BUCKETS],
+    cycle: f32,
+    phase_limit: f32,
+) -> f32 {
+    let n = fractadyne_gpu::GRAD_HIST_BUCKETS;
+    if !(cycle > 0.0) || !(phase_limit > 0.0) {
+        return 0.0; // no palette advance ⇒ no step can alias (and guards the division)
+    }
+    let step = phase_limit / cycle; // the Nyquist step, in iterations per pixel
+    if !step.is_finite() {
+        return 0.0;
+    }
+    // Which bucket the threshold falls in, and how much of that bucket lies above it.
+    let (b, above_in_b) = if step < 1.0 {
+        // Bucket 0 is [0, 1): linear, since a log split has no bottom to anchor to.
+        (0usize, (1.0 - step).clamp(0.0, 1.0))
+    } else {
+        let lg = step.log2();
+        let b = (1 + lg.floor() as usize).min(n - 1);
+        // Upper edge of bucket b is 2^b; the open last bucket is treated as one more octave wide.
+        let above = (b as f32 - lg).clamp(0.0, 1.0);
+        (b, above)
+    };
+    hist[b] * above_in_b + hist[b + 1..].iter().sum::<f32>()
+}
+
+#[cfg(test)]
+mod alias_fraction_tests;
 
 pub(crate) fn norm_window_feed(
     acc: Option<(f32, f32)>,

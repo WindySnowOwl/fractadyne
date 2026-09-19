@@ -463,6 +463,11 @@ const CTR_ESC_MAX: u32 = 6u;     // max escaped smooth-iter (f32 bits)
 // far narrower span. Range is a global statistic; aliasing is a local one.
 const CTR_GRAD_SUM: u32 = 8u;
 const CTR_GRAD_N: u32 = 9u;
+// First of 12 log2 buckets of the same per-pair step (keep in sync with lib.rs `CTR_GRAD_HIST` /
+// `GRAD_HIST_BUCKETS`): bucket 0 = step < 1, bucket b >= 1 = [2^(b-1), 2^b), bucket 11 open-ended.
+// The mean above hides a dense aliasing region inside a smooth one; the DISTRIBUTION does not, and
+// the app reads it against the palette cycle it is actually using. See lib.rs for the field case.
+const CTR_GRAD_HIST: u32 = 10u;
 
 fn ctr_commit(n_rebase: u32, n_ext: u32, n_bla: u32) {
     if (n_rebase > 0u) { atomicAdd(&counters[CTR_REBASE], n_rebase); }
@@ -2173,6 +2178,15 @@ fn fs_resolve(in: VsOut) -> FragOut {
                 let d = abs(smq.z - sm.z);
                 atomicAdd(&counters[CTR_GRAD_SUM], u32(clamp(d * 16.0, 0.0, 4095.0)));
                 atomicAdd(&counters[CTR_GRAD_N], 1u);
+                // One bucket per sample, the SAME samples as the sum. Unlike the sum this is not
+                // clamped at 255 iterations: the top bucket simply absorbs everything past 2^10,
+                // which is far beyond any Nyquist step the guard can ask about. `clamp` on the
+                // float (not `min` on the u32) keeps an infinite step in range as well.
+                var hb = 0u;
+                if (d >= 1.0) {
+                    hb = 1u + u32(clamp(floor(log2(d)), 0.0, 10.0));
+                }
+                atomicAdd(&counters[CTR_GRAD_HIST + hb], 1u);
             }
         }
     }

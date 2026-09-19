@@ -548,6 +548,34 @@ pub(crate) const HELD_MAX_OCT: f64 = 0.5;
 /// clamped transform to slide against.
 pub(crate) const HELD_JUMP_MAX_OCT: f64 = 3.0;
 
+/// The share of a view's neighbouring pixel pairs that must step past Nyquist (see
+/// `render::ALIAS_PHASE_LIMIT`) before "Normalize deep colors" engages on its own. Read against the
+/// step histogram by `render::alias_fraction`.
+///
+/// ⭐**Measured, not chosen** (2026-09-19, `--zoomtest` settle with `FRACTADYNE_TRACE=gpu`, the
+/// SETTLED reading per panel; files in `local/`):
+///
+/// | view | must | alias fraction |
+/// |---|---|---|
+/// | 1.08e66 dual, **Julia** panel (the report: visibly speckled) | engage | **0.076** |
+/// | 1.08e66 dual, Mandelbrot panel | engage | 0.241 |
+/// | 9.15e9 dual, Julia / Mandelbrot | engage | 0.057 / 0.362 |
+/// | home at 500,000 iterations, cycle 0.27 (the FLAT-GREY regression) | **decline** | **0.017** (max 0.025 over the run) |
+/// | 1e28 at cycle 0 | decline | 0.001 |
+///
+/// 0.04 sits near the log-midpoint of the gap between the worst must-decline reading (0.025) and the
+/// lowest must-engage one (0.057): 1.6× clear of the first, 1.9× clear of the reported panel.
+///
+/// ⛔**The mean it replaces sat 1% from its line on the reported panel** (0.494 vs 0.5), which is
+/// what "sometimes it normalizes, sometimes not" was: a reading wobbling across the threshold from
+/// one render to the next. Keep the margins in the table above; a change that shrinks either of
+/// them has recreated that. ⚠Two recorded calibration views could NOT be re-measured because their
+/// coordinates were never saved — the 9.83e27 "confetti" view (mean step 60.56 at cycle 0.27, so
+/// nearly every pair passes the 24.7-iteration Nyquist step: engages by a wide margin) and the
+/// 19.88× "cities at night" dual view (mean step 4.9, genuinely aliasing by the old reading; UNVERIFIED
+/// under this statistic). Save a `.fdn` with the next report.
+pub(crate) const ALIAS_FRACTION_LIMIT: f32 = 0.04;
+
 /// A refresh may take at most this long regardless of zoom rate, seconds — at slow rates the
 /// octave budget alone would allow multi-second pins (0.17 oct/s at the slider's bottom = 3 s),
 /// and a refresh cadence below ~4/s reads as stepping even when nothing is magnified much.
