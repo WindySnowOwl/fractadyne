@@ -3088,6 +3088,30 @@ pub(crate) fn fmt_zoom_log2(log2mag: f64) -> String {
     }
 }
 
+/// The gallery's label for a view's `zoom=` field, e.g. `1.80637 40853 5e111×` or `1.58e1008×`.
+///
+/// ⛔**The field is TEXT, and past ~1e308 it does not fit a double.** The writer stores it with
+/// [`fmt_zoom_field`], which stays valid at any depth (`1.584047e1008`, `7.456789e37000`), but the
+/// gallery parsed it with `str::parse::<f64>` — which OVERFLOWS TO INFINITY without an error — and
+/// so labelled every render past 1e308 `zoom inf×`. Found on 2026-09-19 composing the published
+/// gallery screenshot: four of the eight entries in the renders folder said `inf×`, while the
+/// status bar showed the same views correctly. The depth was never lost; only the parse was wrong.
+///
+/// ⭐A finite value keeps its EXACT previous label (`fmt_zoom` on the double, digit-grouped) — the
+/// log path is taken only where the old one produced infinity, so no label that was right changes.
+/// Unreadable input gives an empty label, as before.
+pub(crate) fn gallery_zoom_label(field: &str) -> String {
+    match field.trim().parse::<f64>() {
+        Ok(z) if z.is_finite() => format!("{}×", fmt_zoom(z)),
+        _ => parse_zoom_to_log2(field)
+            .map(|l2| format!("{}×", fmt_zoom_log2(l2)))
+            .unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod gallery_zoom_label_tests;
+
 /// Magnification as a plain scientific string (no grouping), parseable by
 /// [`parse_zoom_to_log2`] and valid past f64 range — used to pre-fill the go-to field and to write
 /// the `.fdn` / bookmark `zoom=` field (`magnification()` saturates to `inf` past ~1e308×).
@@ -7334,10 +7358,7 @@ impl FractadyneApp {
     fn scan_gallery(&mut self) {
         self.gallery.entries.clear();
         for (path, m) in scan_gallery_dir(&self.gallery.dir) {
-            let zoom = meta_get(&m, "zoom")
-                .parse::<f64>()
-                .map(|z| format!("{}×", fmt_zoom(z)))
-                .unwrap_or_default();
+            let zoom = gallery_zoom_label(&meta_get(&m, "zoom"));
             self.gallery.entries.push(GalleryEntry {
                 fractal: meta_get(&m, "fractal"),
                 zoom,

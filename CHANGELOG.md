@@ -12,6 +12,13 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The gallery labels renders deeper than 1e308 correctly** (beta.109). Every image past the range
+  of an ordinary floating-point number — 1e500, 1e1008, a 7.46e37000 spiral — was listed as
+  "zoom inf×". The depth was never lost: exports store it as text precisely so it survives any
+  depth, and the status bar and minimap already read it that way; only the gallery pushed it
+  through a number that overflows. Those entries now read like the status bar (`1.58e1008×`), and
+  every label that was already correct is unchanged to the digit.
+
 - **Click to zoom works in the dual view, and gains a 25× step, snap-to-centre and a magnifier**
   (beta.108). In the dual view a click used to do nothing at all; it now zooms the panel you
   clicked (right-click backs out), and Ctrl+click pins the Julia parameter while the tool is on.
