@@ -2182,11 +2182,18 @@ fn fs_resolve(in: VsOut) -> FragOut {
                 // clamped at 255 iterations: the top bucket simply absorbs everything past 2^10,
                 // which is far beyond any Nyquist step the guard can ask about. `clamp` on the
                 // float (not `min` on the u32) keeps an infinite step in range as well.
-                var hb = 0u;
+                //
+                // ⭐**Bucket 0 is never written here.** Steps under one iteration are what every
+                // smooth region produces, so in most frames nearly all samples would land on that
+                // ONE address — a same-address atomic serialised across the whole frame. It carries
+                // nothing CTR_GRAD_N does not already imply, so the readback derives it as
+                // N − Σ(buckets 1..) and the hottest address is simply never touched. (A design
+                // choice, not a measured win: the bench-matrix could not resolve a per-pixel cost
+                // for the histogram either way — see the note on grad_hist_from_slots.)
                 if (d >= 1.0) {
-                    hb = 1u + u32(clamp(floor(log2(d)), 0.0, 10.0));
+                    let hb = 1u + u32(clamp(floor(log2(d)), 0.0, 10.0));
+                    atomicAdd(&counters[CTR_GRAD_HIST + hb], 1u);
                 }
-                atomicAdd(&counters[CTR_GRAD_HIST + hb], 1u);
             }
         }
     }

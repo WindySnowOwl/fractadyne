@@ -428,12 +428,8 @@ impl CounterRead {
                         // The step histogram from the same armed frame, so the one signature
                         // stored above covers it too.
                         if let Some(o) = hist_out {
-                            let mut h: GradHist = [0; GRAD_HIST_BUCKETS];
-                            h.copy_from_slice(
-                                &slots[CTR_GRAD_HIST..CTR_GRAD_HIST + GRAD_HIST_BUCKETS],
-                            );
                             if let Ok(mut g) = o.lock() {
-                                *g = Some(h);
+                                *g = Some(grad_hist_from_slots(&slots));
                             }
                         }
                         // ⭐Rebases and BLA skips, published live. All eight slots have always been
@@ -723,6 +719,31 @@ pub const CTR_GRAD_HIST: usize = 10;
 pub const GRAD_HIST_BUCKETS: usize = 12;
 /// One frame's step histogram, as read back.
 pub type GradHist = [u32; GRAD_HIST_BUCKETS];
+
+/// Rebuild the full step histogram from a counter readback.
+///
+/// ⭐**Bucket 0 (steps under one iteration) is DERIVED, not counted.** The shader skips its atomic
+/// because in any smooth region nearly every sample lands there, making it one hot address
+/// serialised across the whole frame. Every sample that reaches the histogram also increments
+/// `CTR_GRAD_N`, in the same branch, so `N − Σ(buckets 1..)` is exactly the count the atomic would
+/// have produced.
+///
+/// ⚠**This is a design choice, NOT a measured speed-up — do not cite it as one.** It was first
+/// written up as recovering "+4–7 ms on the chunked bench-matrix segments", and the A/B disproved
+/// that: with it the non-histogram segments (tricorn, burning ship…) moved by the same few ms, the
+/// per-pixel term of the bench's fit held at 0.93–0.96× in every run including `main`, and the
+/// fixed per-segment term drifted by ~1 ms between two runs of the SAME build. A single control run
+/// cannot separate a 2 ms effect from that drift.
+pub fn grad_hist_from_slots(slots: &[u32; COUNTER_SLOTS]) -> GradHist {
+    let mut h: GradHist = [0; GRAD_HIST_BUCKETS];
+    h.copy_from_slice(&slots[CTR_GRAD_HIST..CTR_GRAD_HIST + GRAD_HIST_BUCKETS]);
+    let counted: u32 = h[1..].iter().fold(0u32, |a, &c| a.saturating_add(c));
+    h[0] = slots[CTR_GRAD_N].saturating_sub(counted);
+    h
+}
+
+#[cfg(test)]
+mod grad_hist_tests;
 /// Where the live path publishes a [`GradHist`]. A mutex rather than the packed-`AtomicU64` idiom of
 /// the other sinks because twelve counts do not fit one word; it is touched once per readback.
 pub type GradHistSink = Arc<std::sync::Mutex<Option<GradHist>>>;
