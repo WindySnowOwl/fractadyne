@@ -214,7 +214,9 @@ impl FractadyneApp {
                             ui.add(
                                 egui::Slider::new(&mut self.coloring.stripe_tail_len, 4..=1024)
                                     .logarithmic(true)
-                                    .suffix(" it"),
+                                    .suffix(" it")
+                                    .custom_formatter(|n, _| crate::grouped_count(n))
+                                    .custom_parser(crate::parse_grouped_number),
                             )
                             .on_hover_text(
                                 "Window length in iterations. Short windows (8–32) give the classic \
@@ -398,7 +400,11 @@ impl FractadyneApp {
                             &mut self.render_cfg.max_iter,
                             64..=crate::MAX_ITER_LIMIT,
                         )
-                        .logarithmic(true),
+                        .logarithmic(true)
+                        // Comma-grouped (`10,000,000`) — a seven-digit count is easy to misread by
+                        // a factor of ten, which is exactly the setting that can stall the app.
+                        .custom_formatter(|n, _| crate::grouped_count(n))
+                        .custom_parser(crate::parse_grouped_number),
                     )
                 })
                 .on_hover_text(
