@@ -38,8 +38,11 @@ const PROBE_CELLS: f64 = 3136.0;
 /// net of the zoom pushing the goal away — so the approach takes the same time at every zoom-rate
 /// setting. Two stages of 0.35 s settle 95% of a turn in ≈1.7 s.
 const AIM_TAU: f64 = 0.35;
-/// Time constant (s) of the aim drifting to the middle of the screen.
+/// Time constant (s, at the default zoom rate) of the aim drifting to the middle of the screen.
 const CENTER_TAU: f64 = 2.0;
+/// How far off centre (fraction of the screen's short side) the aim may sit before the pan above
+/// touches it at all. Inside this, the dive is a pure zoom and the picture does not slide.
+const CENTER_DEAD: f64 = 0.10;
 /// Time constant (s) of every zoom-speed change: the start, a slow-down for a turn, the resume.
 const SPEED_TAU: f64 = 0.4;
 /// Seconds after a retarget during which only a LOST goal may retarget again.
@@ -557,16 +560,25 @@ pub(crate) fn glide_step(
     let close = 1.0 - (-(1.0 / AIM_TAU + speed) * dt).exp();
     let lead = (lead.0 + (goal.0 - lead.0) * close, lead.1 + (goal.1 - lead.1) * close);
     let aim = (aim.0 + (lead.0 - aim.0) * close, aim.1 + (lead.1 - aim.1) * close);
-    // Zooming about a point keeps it where it is on screen; this slow pan is what brings the
-    // detail being dived into to the middle.
-    //
-    // ⭐The centring is measured in ZOOM, not in seconds: `CENTER_TAU` is the time it takes at the
-    // default rate, scaled so a 4× dive centres four times as fast. Everything else about the dive
-    // already scales with the rate (the aim closes net of the zoom, a look covers a fixed slice of
-    // the view), and a fixed 2 s left the target 3–5% off centre for the whole of a user's 4× dive
-    // — the view sliding sideways at ~0.16 screen heights/s and reversing every few seconds.
-    let c = 1.0 - (-dt * (rate / ZOOM_RATE) / CENTER_TAU).exp();
-    let pan = ((0.5 - aim.0) * c, (0.5 - aim.1) * c);
+    // ⭐⭐**A TARGET NEAR THE MIDDLE IS LEFT ALONE.** Zooming about a point keeps that point where
+    // it is on screen, so the picture only flows outward from it — no sideways motion at all. Any
+    // pan on top of that IS sideways motion, and a user sees it: centring on a fixed two seconds
+    // left a 4× dive's target 3–5% off centre and drifting one way then the other ("sliding"),
+    // and simply centring faster made the slide faster rather than removing it. So the pan has a
+    // DEAD ZONE: inside `CENTER_DEAD` the aim is left exactly where it is and the dive is a pure
+    // zoom; outside, only the excess is eased away (measured in zoom, not seconds, so it behaves
+    // the same at every zoom-rate setting). Detail can sit a little off centre — it cannot wander
+    // to the edge, and it never slides while it is comfortable.
+    let short = aspect.min(1.0);
+    let (ox, oy) = ((0.5 - aim.0) * aspect / short, (0.5 - aim.1) / short);
+    let off = ox.hypot(oy);
+    let pan = if off > CENTER_DEAD {
+        let c = 1.0 - (-dt * (rate / ZOOM_RATE) / CENTER_TAU).exp();
+        let keep = (off - CENTER_DEAD) / off; // ease away only what is past the dead zone
+        ((0.5 - aim.0) * c * keep, (0.5 - aim.1) * c * keep)
+    } else {
+        (0.0, 0.0)
+    };
     GlideStep { aim, lead, speed, factor: (-speed * dt).exp(), pan }
 }
 
@@ -722,7 +734,14 @@ impl AutoDive {
             timeout_s,
             iter,
             t0: std::time::Instant::now(),
-            warmup: 45,
+            // Frames to let the GPU and first reference come up. `FRACTADYNE_AUTODIVE_WARMUP`
+            // lengthens it so a dive can start from a view that has fully settled (and finished
+            // its on-settle supersampling) — the state a user's dive starts from when they look
+            // at a view before pressing A, which a 45-frame warmup does not reproduce.
+            warmup: std::env::var("FRACTADYNE_AUTODIVE_WARMUP")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(45),
             armed: false,
             last_ms: 0.0,
             last_steps: 0,
