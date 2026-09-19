@@ -291,7 +291,8 @@ or internal cross-checks):
 ## Controls
 
 - **Pan** left-drag · **Zoom** wheel (cursor-centered) · **Box-zoom** right-drag or Shift+drag
-- **Continuous zoom** hold Space (in) / Shift+Space (out) · **Click-to-zoom** optional 🎯 tool (left-click dives into the point by a set factor, right-click backs out; drag still pans)
+- **Continuous zoom** hold Space (in) / Shift+Space (out) · **Click-to-zoom** optional 🎯 tool (left-click dives into the point by a set factor, right-click backs out; drag still pans; works in either panel of the dual view, where Ctrl+click pins the Julia parameter). Options: factor 2×–100×, **Snap to nearest center** (settles onto the nearest minibrot nucleus), and hold **Shift** for a magnifier that previews the landing view with 4× finer aim — Shift+click takes its point
+- **Normalize deep colors** remaps the palette when a dense field would read as speckle; **Always fit range** remaps it to the view's escape range regardless
 - **A** auto-zoom (autopilot) · **M** find nearest minibrot · **Ctrl+S** quick-save · **★** bookmark · **🏠** zoom-home · **Backspace** undo view · **Esc** stop / exit fullscreen
 - **Go to a feature** — Navigate → "Go to location…": jump to a well-known point, type a coordinate or an expression (`1/3`, `-0.5 + 0.25*cos(pi/4)`, or polar `offset + r ∠ θ`), or Newton-snap onto an exact **Misiurewicz** (preperiod, period) / **minibrot** center near the view.
 - Menus grouped by intent: **File** (open/export/share/snapshot), **Fractal** (family + Julia), **View** (display + Settings incl. update track), **Color** (method / palette), **Tools** (benchmark / autopilot / play script / script to current view), **Navigate** (go-to / exact points / famous / find / bookmarks), **Help** (help / report an issue / check for updates). Right panel: **Coloring · Effects · Rendering · Navigation · Performance**.

@@ -12,6 +12,54 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Click to zoom works in the dual view, and gains a 25× step, snap-to-centre and a magnifier**
+  (beta.108). In the dual view a click used to do nothing at all; it now zooms the panel you
+  clicked (right-click backs out), and Ctrl+click pins the Julia parameter while the tool is on.
+  The factor row gains **25×** between 10× and 50×. **Snap to nearest center** (Controls ▸
+  Navigate, off by default) solves for the minibrot nucleus nearest the point you clicked and
+  centres on it, off the UI thread — the view jumps at once and settles onto the nucleus when the
+  solve lands, and a stale answer is dropped if you have moved on. Holding **Shift** raises a
+  circular **magnifier** beside the cursor, rendered at the magnification the click is about to
+  land at; while it is up the aim moves at a quarter of your hand's speed for fine placement, a
+  ring marks the exact point, and Shift+click takes it. Its crosshair takes black or white from
+  the fractal beneath each of its pixels, so it stays readable on any colour. Every click logs
+  how far the clicked point landed from the centre: recentring is exact, so at 50× an 8-pixel
+  aim miss moves the target 400 pixels — that is arithmetic, and 25× or the snap are the answer.
+
+- **Nearest minibrot (M) works in the dual view and no longer freezes the window** (beta.108). In
+  the dual view the key was ignored outright — no jump, no message. Elsewhere the solve ran on the
+  UI thread, which at depth is seconds to minutes of an unresponsive window. It now runs in the
+  background like Go-to ▸ Find does, always says whether it found a minibrot, and logs the
+  result.
+
+- **A large click-to-zoom no longer flashes black** (beta.108). A 100× click moves the view 6.6
+  octaves in a single frame, and until the new reference orbit was ready (~160 ms at 1e52×) the
+  display magnified the previous frame by the full 100× — an 11-pixel patch stretched across the
+  panel, which showed as a flat colour, and as black whenever that patch was dark. After a jump
+  the held frame is now magnified at most 8× while the new view builds, so you see a blocky
+  version of where you clicked instead. A continuous zoom is unaffected: capping the scale of a
+  moving frame makes it slide, so the cap applies to jumps only.
+
+- **"Normalize deep colors" engages on views that actually alias, and gains "Always fit
+  range"** (beta.108). The option only remaps the palette when neighbouring pixels step more than
+  half a palette period apart — past that, a dense escape field reads as speckle. Two defects kept
+  it from doing that. It multiplied the step by the Cycle *slider* rather than by the palette
+  speed the slider sets, so at the default Cycle of 0 it could never engage on any view. And it
+  decided from the *average* step across the frame, so a panel that was half smooth background
+  and half dense speckle averaged out to "fine": a 1.08e66 Julia panel measured 0.494 against a
+  limit of 0.5 and was declined while visibly speckling, and because it sat on the line it
+  switched on and off from one render to the next. It now measures what **fraction** of
+  neighbouring pixels alias, from a histogram the renderer already has in hand, and engages when
+  4% of the frame does (that panel: 7.6%; a smooth shallow view at 500,000 iterations: 1.7%).
+  Changing the Cycle re-decides immediately. **Always fit range**, a new option under it, remaps
+  the palette to the view's measured escape range whether or not the view aliases — for when you
+  want the palette to span what is on screen rather than to cure noise.
+
+- **Ctrl+click tells you when the Julia parameter can no longer follow it** (beta.108). The Julia
+  parameter is held in double precision, so past about 1e16× the whole panel rounds to one value
+  and a pin necessarily lands on the view centre. The pin now says so instead of silently
+  choosing the centre.
+
 - **Live zooms are paced for smoothness at every zoom speed** (beta.108). A moving refresh used
   to be sized by the GPU-watchdog safety budget (a 400 ms target): after a jump to a deep view or
   across an arithmetic hand-over, every refresh went out as one 200–450 ms dispatch, and a
