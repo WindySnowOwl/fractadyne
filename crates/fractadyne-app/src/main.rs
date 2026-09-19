@@ -2923,10 +2923,16 @@ pub(crate) fn parse_size(s: &str) -> (Option<u32>, Option<u32>) {
     }
 }
 
-/// Group an integer string with commas every 3 digits (handles a leading `-`).
+/// Group a number string with commas every 3 digits of its INTEGER part (handles a leading `-`):
+/// `257280` → `257,280`, `92151.25` → `92,151.25`. Digits after a `.` are left alone — grouping
+/// those is the coordinate readouts' job, in 5s with spaces (`fmt_coord`).
 fn commas(s: &str) -> String {
     let neg = s.starts_with('-');
-    let digits = s.trim_start_matches('-');
+    let body = s.trim_start_matches('-');
+    let (digits, frac) = match body.split_once('.') {
+        Some((i, f)) => (i, Some(f)),
+        None => (body, None),
+    };
     let len = digits.len();
     let mut out = String::with_capacity(len + len / 3 + 1);
     for (i, c) in digits.chars().enumerate() {
@@ -2935,12 +2941,40 @@ fn commas(s: &str) -> String {
         }
         out.push(c);
     }
+    if let Some(f) = frac {
+        out.push('.');
+        out.push_str(f);
+    }
     if neg {
         format!("-{out}")
     } else {
         out
     }
 }
+
+/// A count as the Controls panel shows it: rounded, comma-grouped (`10,000,000`). For a slider's
+/// value box; [`parse_grouped_number`] is the matching reader.
+pub(crate) fn grouped_count(n: f64) -> String {
+    commas(&format!("{n:.0}"))
+}
+
+/// Read a number typed into a comma-grouped value box. Commas, spaces, underscores and a unit
+/// suffix (`1,024 it`) are ignored, so the value box accepts back exactly what it displays — and
+/// `1e6` still means a million, as it did before the box was grouped.
+///
+/// ⚠Without this, grouping the DISPLAY would break EDITING: egui's default parser is
+/// `str::parse::<f64>`, which rejects `250,000`, so clicking into the box and pressing Enter on
+/// the value it just showed would silently keep the old value.
+pub(crate) fn parse_grouped_number(s: &str) -> Option<f64> {
+    let t: String = s
+        .chars()
+        .filter(|c| c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | 'e' | 'E'))
+        .collect();
+    t.parse::<f64>().ok().filter(|v| v.is_finite())
+}
+
+#[cfg(test)]
+mod number_grouping_tests;
 
 /// Space-group the fractional digits of a scientific-notation string's mantissa (in 5s),
 /// matching the coordinate readout: `3.38050027227e15` → `3.38050 02722 7e15`. The exponent
@@ -12734,13 +12768,17 @@ impl FractadyneApp {
         Self::metric_row(ui, "FPS", line, "Frames presented per second, from the smoothed interval between \
              frames. While a view is settling this reports refinement progress instead - a \
              settling view is not running at the rate a number here would imply.");
-        Self::metric_row(ui, "frame", format!("{:.2} ms", p.frame_ms), "Smoothed wall-clock time between \
+        // ⭐Every number in this section is comma-grouped (`commas` touches only the integer part),
+        // and the Julia parameter below is grouped in fives like the status bar's centre. Values
+        // here swing across orders of magnitude — an idle frame reads tens of thousands of ms, an
+        // orbit millions of samples — and ungrouped digits are where a factor of ten gets misread.
+        Self::metric_row(ui, "frame", format!("{} ms", commas(&format!("{:.2}", p.frame_ms))), "Smoothed wall-clock time between \
              frames - not a sum of the rows below it. It includes waiting to present, so on a \
              settled idle view it reflects the repaint cadence rather than any work.");
-        Self::metric_row(ui, "cpu", format!("{:.2} ms", p.cpu_ms), "Main-thread time inside one update: \
+        Self::metric_row(ui, "cpu", format!("{} ms", commas(&format!("{:.2}", p.cpu_ms))), "Main-thread time inside one update: \
              parameter setup and reference-cache management. This is the row that spikes when \
              a reference rebuilds, and a spike here is the stutter you feel.");
-        Self::metric_row(ui, "gpu/idle", format!("{gpu_idle:.2} ms"), "Frame time minus main-thread CPU \
+        Self::metric_row(ui, "gpu/idle", format!("{} ms", commas(&format!("{gpu_idle:.2}"))), "Frame time minus main-thread CPU \
              time. That is GPU work while the view is rendering, but on a settled view it is \
              mostly idle waiting - the name says both because the panel cannot tell them \
              apart from this subtraction alone.");
@@ -12761,10 +12799,10 @@ impl FractadyneApp {
         Self::metric_row(ui, "mode", mode, "Arithmetic path the last frame rendered with: direct (no \
              reference orbit), df32 perturbation, or floatexp - the extended-range path used \
              past about 1e28x, and the only one on which BLA runs.");
-        Self::metric_row(ui, "eff iter", format!("{}", p.last_eff_iter), "Iterations the last frame \
+        Self::metric_row(ui, "eff iter", commas(&p.last_eff_iter.to_string()), "Iterations the last frame \
              actually used, after depth scaling and any cap applied while moving - not the \
              base setting in Quality, which is only the starting point.");
-        Self::metric_row(ui, "precision", format!("{} bit", p.last_precision), "Mantissa bits the reference \
+        Self::metric_row(ui, "precision", format!("{} bit", commas(&p.last_precision.to_string())), "Mantissa bits the reference \
              orbit is computed at. It grows with depth; 64 bits is the shallow floor, not a \
              limit you are hitting.");
         {
@@ -12778,15 +12816,15 @@ impl FractadyneApp {
             } else {
                 0
             };
-            Self::metric_row(ui, "orbit len", level_value(lvl, format!("{}", p.last_orbit_len)),
+            Self::metric_row(ui, "orbit len", level_value(lvl, commas(&p.last_orbit_len.to_string())),
                 format!(
                     "Reference orbit samples. This GPU holds at most {} — approaching it is the                      practical depth wall: past it the live view cannot resolve deeper locations                      that need a longer orbit.",
-                    if cap == u32::MAX { "(uncapped)".to_string() } else { cap.to_string() }
+                    if cap == u32::MAX { "(uncapped)".to_string() } else { commas(&cap.to_string()) }
                 ),
             );
         }
         if p.last_sa_skip > 0 {
-            Self::metric_row(ui, "SA skip", format!("{}", p.last_sa_skip), "Iterations the series \
+            Self::metric_row(ui, "SA skip", commas(&p.last_sa_skip.to_string()), "Iterations the series \
                  approximation skipped before per-pixel work began. Higher is faster and \
                  changes nothing about the image; the row is absent when it skipped none.");
         }
@@ -12818,7 +12856,7 @@ impl FractadyneApp {
             } else {
                 0
             };
-            Self::metric_row(ui, "iterate", level_value(it_lvl, format!("{:.1} ms (GPU)", p.last_iterate_ms[0])),
+            Self::metric_row(ui, "iterate", level_value(it_lvl, format!("{} ms (GPU)", commas(&format!("{:.1}", p.last_iterate_ms[0])))),
                 format!(
                     "Measured GPU time of the last iterate dispatch. The controller aims at                      {target:.0} ms; sustained readings near {:.0} ms are the band where this                      hardware class has lost the device.",
                     c.tdr_lethal_ms
@@ -12856,7 +12894,14 @@ impl FractadyneApp {
         Self::metric_row(
             ui,
             "rss",
-            level_value(rss_lvl, format!("{} MB (peak {})", p.mem_rss >> 20, p.mem_peak >> 20)),
+            level_value(
+                rss_lvl,
+                format!(
+                    "{} MB (peak {})",
+                    commas(&(p.mem_rss >> 20).to_string()),
+                    commas(&(p.mem_peak >> 20).to_string())
+                ),
+            ),
             "Resident memory of the process, and the highest it has reached this session. \
              Deep reference builds have peaked past 2 GB in the field with nothing else on \
              screen saying so; amber past three quarters of system RAM.",
@@ -12885,7 +12930,7 @@ impl FractadyneApp {
             }
             b
         };
-        Self::metric_row(ui, "gpu est.", format!("{} MB", gpu_est >> 20),
+        Self::metric_row(ui, "gpu est.", format!("{} MB", commas(&(gpu_est >> 20).to_string())),
             "Estimated GPU-resident memory: reference orbits, BLA trees, iteration textures,              the chunk-state ping-pong while a refinement runs, and the present-gate snapshot.              Assembled from known allocation sizes; the driver's true figure is not portably              readable.",
         );
 
@@ -12896,9 +12941,11 @@ impl FractadyneApp {
         if self.dual || self.julia_mode {
             ui.separator();
             let (jr, ji) = self.julia_c;
-            Self::metric_row(ui, "julia c.re", format!("{jr:+.15}"), "Real part of the parameter c the \
+            // Grouped in fives exactly as the status bar's centre and cursor are (`fmt_coord`:
+            // `+0.16318 15194 00248`), so the same number reads the same in both places.
+            Self::metric_row(ui, "julia c.re", fmt_coord(jr), "Real part of the parameter c the \
                  Julia pane is rendering - the point the cursor is over, unless pinned.");
-            Self::metric_row(ui, "julia c.im", format!("{ji:+.15}"), "Imaginary part of the parameter c \
+            Self::metric_row(ui, "julia c.im", fmt_coord(ji), "Imaginary part of the parameter c \
                  the Julia pane is rendering.");
             if self.julia_pin.is_some() {
                 Self::metric_row(ui, "julia c", "pinned", "The parameter is held at a fixed point, so \
@@ -12913,19 +12960,19 @@ impl FractadyneApp {
         }
 
         ui.separator();
-        Self::metric_row(ui, "ref recompute", format!("{:.2} ms", p.recompute_ms), "Duration of the most \
+        Self::metric_row(ui, "ref recompute", format!("{} ms", commas(&format!("{:.2}", p.recompute_ms))), "Duration of the most \
              recent reference-orbit recompute. This is the pause before a deep view starts \
              resolving, and the step the optional accelerated build speeds up.");
-        Self::metric_row(ui, "recompute/s", format!("{:.0}", p.recompute_per_s), "Reference orbits \
+        Self::metric_row(ui, "recompute/s", commas(&format!("{:.0}", p.recompute_per_s)), "Reference orbits \
              INSTALLED per second - ones whose result was actually used. Compare it with the \
              row below: they differ by the work that was thrown away.");
-        Self::metric_row(ui, "ref builds/s", format!("{:.0}", p.builds_per_s), "Reference builds SPAWNED \
+        Self::metric_row(ui, "ref builds/s", commas(&format!("{:.0}", p.builds_per_s)), "Reference builds SPAWNED \
              per second, including ones whose result is discarded - a lookahead slot the dive \
              never reaches, or a refused extension. Those cost full CPU and appear nowhere \
              else: a prefetch spin once ran about 400 builds a second for six minutes while \
              recompute/s read 2. Single digits is normal; a large gap between these two rows \
              means work is being thrown away.");
-        Self::metric_row(ui, "recompute tot", format!("{}", p.recompute_total), "Reference recomputes since \
+        Self::metric_row(ui, "recompute tot", commas(&p.recompute_total.to_string()), "Reference recomputes since \
              launch. Useful as a rate over a known interval; a number climbing while nothing \
              moves is the signal worth chasing.");
     }
