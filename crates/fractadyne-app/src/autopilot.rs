@@ -559,7 +559,13 @@ pub(crate) fn glide_step(
     let aim = (aim.0 + (lead.0 - aim.0) * close, aim.1 + (lead.1 - aim.1) * close);
     // Zooming about a point keeps it where it is on screen; this slow pan is what brings the
     // detail being dived into to the middle.
-    let c = 1.0 - (-dt / CENTER_TAU).exp();
+    //
+    // ⭐The centring is measured in ZOOM, not in seconds: `CENTER_TAU` is the time it takes at the
+    // default rate, scaled so a 4× dive centres four times as fast. Everything else about the dive
+    // already scales with the rate (the aim closes net of the zoom, a look covers a fixed slice of
+    // the view), and a fixed 2 s left the target 3–5% off centre for the whole of a user's 4× dive
+    // — the view sliding sideways at ~0.16 screen heights/s and reversing every few seconds.
+    let c = 1.0 - (-dt * (rate / ZOOM_RATE) / CENTER_TAU).exp();
     let pan = ((0.5 - aim.0) * c, (0.5 - aim.1) * c);
     GlideStep { aim, lead, speed, factor: (-speed * dt).exp(), pan }
 }

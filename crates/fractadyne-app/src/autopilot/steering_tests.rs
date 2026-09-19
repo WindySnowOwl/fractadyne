@@ -300,6 +300,25 @@ fn the_approach_holds_at_the_fastest_zoom_setting() {
 }
 
 #[test]
+fn the_centring_keeps_up_with_the_zoom_speed() {
+    // Centring is measured in zoom, not in seconds. A user's 4× dive left the target 3–5% off
+    // centre for its whole length with a fixed 2 s pan, so the view slid sideways the entire time;
+    // three seconds of 4× zoom is six centring constants and must leave it centred.
+    let mut fast = Cam::new((0.8, 0.3));
+    for _ in 0..180 {
+        fast.frame(4.0 * crate::ZOOM_RATE);
+    }
+    assert!(dist(fast.goal, (0.5, 0.5)) < 0.02, "4× goal {:?}", fast.goal);
+    // The same three seconds at 1× is only 1.5 constants — still on its way in, unchanged from
+    // before. (If this ever centres as fast as the 4× case, the scaling has been lost.)
+    let mut slow = Cam::new((0.8, 0.3));
+    for _ in 0..180 {
+        slow.frame(crate::ZOOM_RATE);
+    }
+    assert!(dist(slow.goal, (0.5, 0.5)) > 0.05, "1× goal {:?}", slow.goal);
+}
+
+#[test]
 fn a_retarget_does_not_jolt_the_camera() {
     let mut c = Cam::new((0.55, 0.45));
     for _ in 0..300 {
