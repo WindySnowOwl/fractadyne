@@ -376,6 +376,7 @@ impl CounterRead {
         out: Option<&Arc<std::sync::atomic::AtomicU64>>,
         norm_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
         grad_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
+        hist_out: Option<&GradHistSink>,
         work_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
         norm_sig_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
     ) {
@@ -423,6 +424,13 @@ impl CounterRead {
                             let packed = ((slots[CTR_GRAD_SUM] as u64) << 32)
                                 | (slots[CTR_GRAD_N] as u64 + 1);
                             o.store(packed, SeqCst);
+                        }
+                        // The step histogram from the same armed frame, so the one signature
+                        // stored above covers it too.
+                        if let Some(o) = hist_out {
+                            if let Ok(mut g) = o.lock() {
+                                *g = Some(grad_hist_from_slots(&slots));
+                            }
                         }
                         // ⭐Rebases and BLA skips, published live. All eight slots have always been
                         // read here and only two were forwarded, so the live path could not see its
@@ -680,7 +688,7 @@ pub(crate) fn make_iter_bg(
 /// atomics per pixel — negligible next to the iteration loop. This is the "did the code
 /// path actually execute?" detector (the F4 dead-NaN-marker lesson): a render that claims
 /// to exercise rebasing/extended samples/BLA must show nonzero counts.
-pub const COUNTER_SLOTS: usize = 10;
+pub const COUNTER_SLOTS: usize = CTR_GRAD_HIST + GRAD_HIST_BUCKETS;
 /// Slot indices (keep in sync with mandelbrot.wgsl's `CTR_*` constants).
 pub const CTR_REBASE: usize = 0; // Zhuoran rebases taken (mode 2)
 pub const CTR_EXT_SAMPLE: usize = 1; // extended-range orbit samples decoded (mode 2)
@@ -691,6 +699,54 @@ pub const CTR_ESC_MIN: usize = 5; // min escaped smooth-iter (f32 bits; seeded 0
 pub const CTR_ESC_MAX: usize = 6; // max escaped smooth-iter (f32 bits)
 pub const CTR_GRAD_SUM: usize = 8; // Σ|Δ smooth-iter| between adjacent escaped pixels, ×16 clamped
 pub const CTR_GRAD_N: usize = 9; // samples in CTR_GRAD_SUM
+/// First of [`GRAD_HIST_BUCKETS`] slots holding a log₂ HISTOGRAM of the same per-pair step
+/// `|Δ smooth-iter|` that `CTR_GRAD_SUM` totals: bucket 0 = steps under one iteration, bucket
+/// `b ≥ 1` = `[2^(b-1), 2^b)`, the last bucket open-ended.
+///
+/// ⭐⭐**Why a histogram when the mean already exists.** Aliasing is LOCAL, and a mean is not. The
+/// live-normalization guard used `mean step × cycle > 0.5`, and a panel that is half smooth exterior
+/// (steps ≈ 0) and half dense body (steps far past Nyquist) has its signal cut in half by the
+/// smooth half — measured 2026-09-19 on a 1.08e66 Julia panel: mean-based `phase/px 0.494` against a
+/// 0.5 threshold, declined, while the body visibly speckled. What decides whether a view reads as
+/// noise is how much of it aliases, so the guard needs the FRACTION of pairs whose step passes
+/// Nyquist — and that depends on the palette cycle, which only the app knows. Hence a histogram:
+/// the shader records the distribution once, and the app reads it against the cycle in force,
+/// including after the cycle slider moves, without waiting for a new render.
+pub const CTR_GRAD_HIST: usize = 10;
+/// Number of log₂ buckets in the step histogram (see [`CTR_GRAD_HIST`]). Covers steps up to 2^10
+/// iterations per pixel with room to spare: the guard's Nyquist step is `0.5 / cycle`, which for the
+/// Smooth method's `0.004 + slider·0.06` spans roughly 8 to 125.
+pub const GRAD_HIST_BUCKETS: usize = 12;
+/// One frame's step histogram, as read back.
+pub type GradHist = [u32; GRAD_HIST_BUCKETS];
+
+/// Rebuild the full step histogram from a counter readback.
+///
+/// ⭐**Bucket 0 (steps under one iteration) is DERIVED, not counted.** The shader skips its atomic
+/// because in any smooth region nearly every sample lands there, making it one hot address
+/// serialised across the whole frame. Every sample that reaches the histogram also increments
+/// `CTR_GRAD_N`, in the same branch, so `N − Σ(buckets 1..)` is exactly the count the atomic would
+/// have produced.
+///
+/// ⚠**This is a design choice, NOT a measured speed-up — do not cite it as one.** It was first
+/// written up as recovering "+4–7 ms on the chunked bench-matrix segments", and the A/B disproved
+/// that: with it the non-histogram segments (tricorn, burning ship…) moved by the same few ms, the
+/// per-pixel term of the bench's fit held at 0.93–0.96× in every run including `main`, and the
+/// fixed per-segment term drifted by ~1 ms between two runs of the SAME build. A single control run
+/// cannot separate a 2 ms effect from that drift.
+pub fn grad_hist_from_slots(slots: &[u32; COUNTER_SLOTS]) -> GradHist {
+    let mut h: GradHist = [0; GRAD_HIST_BUCKETS];
+    h.copy_from_slice(&slots[CTR_GRAD_HIST..CTR_GRAD_HIST + GRAD_HIST_BUCKETS]);
+    let counted: u32 = h[1..].iter().fold(0u32, |a, &c| a.saturating_add(c));
+    h[0] = slots[CTR_GRAD_N].saturating_sub(counted);
+    h
+}
+
+#[cfg(test)]
+mod grad_hist_tests;
+/// Where the live path publishes a [`GradHist`]. A mutex rather than the packed-`AtomicU64` idiom of
+/// the other sinks because twelve counts do not fit one word; it is touched once per readback.
+pub type GradHistSink = Arc<std::sync::Mutex<Option<GradHist>>>;
 
 pub(crate) fn make_counters_buf(device: &wgpu::Device) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
@@ -1587,6 +1643,9 @@ pub struct MandelbrotParams {
     /// Sink for the local escape GRADIENT: `(Σ|Δ smooth-iter|×16) << 32 | (samples + 1)`. Feeds the
     /// live auto-normalization predicate — see `CTR_GRAD_SUM`.
     pub grad_range: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Sink for the log₂ histogram of the same per-pair steps — see [`CTR_GRAD_HIST`]. `None`
+    /// disables capture.
+    pub grad_hist: Option<GradHistSink>,
     /// Live sink for `(rebase + 1) << 32 | (bla_skip + 1)` — see `CounterRead::pump`.
     pub work_counters: Option<Arc<std::sync::atomic::AtomicU64>>,
     /// Sink for the view signature of the frame that submitted the norm/gradient readings, echoed
@@ -1815,6 +1874,7 @@ impl CallbackTrait for MandelbrotParams {
             self.maxiter_count.as_ref(),
             self.norm_range.as_ref(),
             self.grad_range.as_ref(),
+            self.grad_hist.as_ref(),
             self.work_counters.as_ref(),
             self.norm_sig_out.as_ref(),
         );

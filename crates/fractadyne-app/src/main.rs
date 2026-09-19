@@ -1458,6 +1458,9 @@ struct Perf {
     /// auto-normalization predicate keys on this rather than on the escape RANGE: aliasing is a
     /// local property (how far the palette moves between neighbouring pixels), not a global one.
     grad_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// Live sink for the log₂ HISTOGRAM of the same steps (`fractadyne_gpu::CTR_GRAD_HIST`), per
+    /// view. Published from the same armed frame as `grad_sink`, so the same signature covers it.
+    hist_sink: [fractadyne_gpu::GradHistSink; 2],
     /// Live sink for `(rebase + 1) << 32 | (bla_skip + 1)` per view — how effective BLA actually
     /// is on the frames the user is looking at. Until beta.48 only the offline paths could see
     /// this, and a reference whose BLA skips nothing cost ~1 s a frame unnoticed.
@@ -1481,8 +1484,14 @@ struct Perf {
     /// see `norm_feed_decision` (render.rs) for the whole story.
     norm_sig: [u64; 2],
     norm_locked: [bool; 2],
-    /// EMA-smoothed MEAN |Δ smooth-iter| between neighbouring escaped pixels, per view.
+    /// EMA-smoothed MEAN |Δ smooth-iter| between neighbouring escaped pixels, per view. Kept for the
+    /// trace and the harness fields; the guard no longer DECIDES on it (see `norm_hist`).
     norm_grad: [Option<f32>; 2],
+    /// EMA-smoothed step histogram per view, as fractions of the sampled pairs — what the
+    /// live-normalization guard decides on, through `render::alias_fraction`. Held as the
+    /// distribution rather than as a verdict so that moving the cycle slider re-decides at once,
+    /// from the picture already measured.
+    norm_hist: [Option<[f32; fractadyne_gpu::GRAD_HIST_BUCKETS]>; 2],
     /// The palette window actually SHOWN, gliding toward `norm_range` (the fed target) a fixed
     /// fraction per frame. The target moves in steps — one per escape-range reading, every few
     /// frames — and a step is a visible colour snap: measured on an 8-octave glide, one frame
@@ -1876,6 +1885,10 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             ],
+            hist_sink: [
+                std::sync::Arc::new(std::sync::Mutex::new(None)),
+                std::sync::Arc::new(std::sync::Mutex::new(None)),
+            ],
             work_sink: [
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -1889,6 +1902,7 @@ impl Default for Perf {
             norm_sig: [0, 0],
             norm_locked: [false, false],
             norm_grad: [None, None],
+            norm_hist: [None, None],
             norm_shown: [None, None],
             chunk_governed: [false, false],
             motion_res: 0.6,
