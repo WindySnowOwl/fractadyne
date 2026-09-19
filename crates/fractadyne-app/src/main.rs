@@ -12679,7 +12679,17 @@ impl FractadyneApp {
                 if l.rect.width() < col {
                     ui.add_space(col - l.rect.width());
                 }
-                let v = ui.add(egui::Label::new(value.into().monospace()));
+                // ⛔**TRUNCATED, never allowed to widen the panel.** A label in a horizontal row does
+                // not wrap, so its full width becomes the panel's minimum and egui grows the side
+                // panel to fit — shrinking the fractal canvas beside it. These values are LIVE: the
+                // timing row switches to "wall clock (timestamps starved)" the moment a Space zoom
+                // starts from a settled view (no GPU timings arrived while idle), the panel grew
+                // 150 px, the canvas went 1468 → 1318 px mid-zoom, and a resize during motion
+                // clears the view to black until the next real frame lands — the "flash on Space"
+                // (2026-09-19, captured: one fully black frame at the glide start, 3/3 runs on the
+                // pre-change build too). Truncated, the row keeps the panel's width; hovering an
+                // elided value shows all of it.
+                let v = ui.add(egui::Label::new(value.into().monospace()).truncate());
                 l.union(v)
             })
             .inner;

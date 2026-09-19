@@ -42,6 +42,14 @@ detail is in the git history.
   locked onto the first step's range, about 6× too narrow, so spirals rendered as busy concentric
   rings. A stopped view now waits for the complete frame before it settles its colours.
 
+- **Starting a Space zoom no longer flashes the screen black** (beta.109). With the Controls
+  panel's Performance section open, a zoom from a view that had been sitting still switched the
+  timing row to "wall clock (timestamps starved)" in its first moment. The longer text widened the
+  panel, the fractal area shrank by 150 pixels mid-zoom, and resizing it while moving clears the
+  picture until the next frame is computed — one black frame, on every such start. The panel's
+  readouts now shorten to fit (hovering shows the full text) instead of pushing the panel wider.
+  This predates beta.109; captured in 3 of 3 runs before the fix and 0 of 4 after.
+
 - **Big numbers in the Controls panel are grouped** (beta.109). A seven-digit iteration count is
   easy to misread by a factor of ten, and it is the setting that can stall the app. The Iterations
   and stripe Tail length sliders now read `10,000,000`, every figure in the Performance section is
