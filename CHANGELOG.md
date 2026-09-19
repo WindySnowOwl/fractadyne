@@ -27,7 +27,11 @@ detail is in the git history.
   fastest zoom speed: re-centring the target on a grid cell every look let it slide off the edge
   and wander at 4×, so each look now moves it back onto the edge only across the edge, never along
   it. On a user's 4× dive at 1e118 the looks that moved the target more than 2% of the screen fell
-  from 20 in 81 to 2 in 78.
+  from 20 in 81 to 2 in 78. Centring keeps up with the zoom speed too, so the view stops sliding
+  sideways: a 4× dive used to hold its target 3–5% off centre the whole way, drifting one way then
+  the other, because the pan that brings it to the middle ran on a fixed two seconds however fast
+  the dive was. On the same dive the target now sits a median 0.7% off centre instead of 2.8%, and
+  the camera's sideways travel per step is down by two thirds.
 
 - **"Normalize deep colors" no longer makes the palette breathe during a deep zoom, and a view
   that stops keeps the right colours** (beta.109). Deep frames are computed in iteration steps,
