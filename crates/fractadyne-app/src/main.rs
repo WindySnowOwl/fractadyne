@@ -1477,6 +1477,15 @@ struct Perf {
     /// again when the render params are built later in the SAME frame — so the value that travels
     /// to the GPU is the signature of the render it travels with.
     norm_sig_submit: [u64; 2],
+    /// Whether this frame's escape-range reading will describe the whole picture going on screen (an
+    /// unchunked pass, a displayed one-pass motion preview, or the pass that completes a chunked
+    /// walk — not a pinned refresh's or a settled walk's earlier passes), decided where the chunk
+    /// window and the pin are chosen and carried to the GPU with the params like `norm_sig_submit`.
+    norm_complete_submit: [bool; 2],
+    /// Echo sink for that flag, stored with `norm_sig_sink`. ⭐A mid-walk reading's top is only as
+    /// high as the walk has reached, so it may widen the palette window but never narrow it, and it
+    /// may never decide a settled view's mapping — see the drain in render.rs.
+    norm_complete_sink: [std::sync::Arc<std::sync::atomic::AtomicBool>; 2],
     /// EMA-smoothed escaped smooth-iter range per view — the live auto-normalization input.
     norm_range: [Option<(f32, f32)>; 2],
     /// The view signature `norm_range`/`norm_grad` were DECIDED for, and whether that decision
@@ -1898,6 +1907,11 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             ],
             norm_sig_submit: [0; 2],
+            norm_complete_submit: [true; 2],
+            norm_complete_sink: [
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            ],
             norm_range: [None, None],
             norm_sig: [0, 0],
             norm_locked: [false, false],
@@ -4771,10 +4785,19 @@ struct EffectsConfig {
 struct AutopilotState {
     /// Continuously diving toward the detail-richest region.
     active: bool,
-    /// Screen-fraction pivot (0..1) currently zooming about; eased toward `goal` each frame.
-    target: (f64, f64),
-    /// Latest *evaluated* target (every `AUTOPILOT_EVAL_INTERVAL`); the goal `target` chases.
-    goal: (f64, f64),
+    /// Screen-fraction point (0..1) the dive is zooming about; eases onto `goal`. Carried through
+    /// every zoom and pan like `goal`, so it stays on its content.
+    aim: (f64, f64),
+    /// Intermediate point between `goal` and `aim` (two cascaded eases keep the camera's velocity
+    /// continuous through a retarget — see `autopilot::glide_step`). Carried like `aim`.
+    lead: (f64, f64),
+    /// The boundary point being dived toward (screen fraction), carried through every zoom and
+    /// pan so it stays on its CONTENT between evaluations; `None` until the first evaluation.
+    goal: Option<(f64, f64)>,
+    /// Current zoom speed (nepers/s), eased toward the rate the dive wants.
+    speed: f64,
+    /// App-time of the last retarget to a different region (starts the cooldown).
+    retarget_t: f64,
     /// App-time of the last target re-evaluation.
     eval_t: f64,
     /// True during the deep *stepped* dive (past the smooth regime) — see autopilot.rs / render.rs.
@@ -6049,8 +6072,11 @@ impl FractadyneApp {
             home_anim: None,
             autopilot: AutopilotState {
                 active: false,
-                target: (0.5, 0.5),
-                goal: (0.5, 0.5),
+                aim: (0.5, 0.5),
+                lead: (0.5, 0.5),
+                goal: None,
+                speed: 0.0,
+                retarget_t: f64::NEG_INFINITY,
                 eval_t: 0.0,
                 stepping: false,
                 dive_log2: s.autopilot_dive_log2,

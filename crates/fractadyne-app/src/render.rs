@@ -246,8 +246,10 @@ pub(crate) struct TrajSample {
 /// every frame (`ui/central.rs`); that is the exact discretisation of `dv/dt = (T − v)/τ`, whose
 /// integral is `nepers(τ) = T·τ + (v₀ − T)·τₑ·(1 − e^(−τ/τₑ))`. Because the anchor pixel maps to
 /// the SAME complex point every frame, the whole τ-second glide collapses to one
-/// `zoom_at(anchor, e^(−nepers))`: centre(τ) = a + e^(−nepers)·(c − a). The autopilot is the
-/// same shape with no easing (`v₀ = T = rate`) about its eased pivot. Two effects are knowingly
+/// `zoom_at(anchor, e^(−nepers))`: centre(τ) = a + e^(−nepers)·(c − a). The autopilot is
+/// predicted as the same shape about its goal (`v₀` = its current speed, `T = rate`): its slower
+/// ease and turn slow-down reach each depth later than that, and its centring pan only brings the
+/// centre nearer the goal than predicted. Two effects are knowingly
 /// left out, both on the safe side: the pipeline pacer only SLOWS the real dive (targets arrive
 /// later than predicted — a prefetch is early, never late), and a moving cursor moves `a` — the
 /// queue is re-derived from the live anchor every frame and a build whose centre drifted still
@@ -1936,7 +1938,7 @@ impl FractadyneApp {
 
     /// The glide the GUI is performing, if any: the hold-Space zoom about the cursor (`target_v` =
     /// the velocity the key is easing toward this frame, 0 once released) or the autopilot's
-    /// smooth phase about its eased pivot. `ppp` = egui pixels-per-point (the cursor is in points,
+    /// smooth phase about its goal. `ppp` = egui pixels-per-point (the cursor is in points,
     /// the viewport in device pixels). `None` = nothing to predict (idle, zooming out, autopilot
     /// stepping past `AUTOPILOT_SMOOTH_LOG2`).
     pub(crate) fn interactive_glide_oracle(&self, target_v: f64, ppp: f64) -> Option<Glide> {
@@ -1946,8 +1948,12 @@ impl FractadyneApp {
             if self.autopilot.stepping {
                 return None;
             }
-            let (tx, ty) = self.autopilot.target;
-            (tx * w, ty * h, rate, rate, self.autopilot.dive_log2)
+            // Anchor on the GOAL — the fractal point the dive converges on (the aim eases onto it
+            // and the centring pan brings it to the middle), easing from the current speed to the
+            // full rate. The real dive eases more slowly and slows through a turn, so it reaches
+            // each predicted depth LATER: a prefetch that is early is the safe side (see `Glide`).
+            let (tx, ty) = self.autopilot.goal.unwrap_or(self.autopilot.aim);
+            (tx * w, ty * h, self.autopilot.speed, rate, self.autopilot.dive_log2)
         } else {
             let v0 = self.pointer.zoom_vel;
             // Zooming IN: the key is held inward, or the glide-out after a release still moves.
@@ -4158,9 +4164,13 @@ impl FractadyneApp {
             // ⭐The signature that came BACK with the reading now on the sink. A mismatch means it
             // was measured at a different view — see `norm_reading_is_current`.
             let read_sig = self.perf.norm_sig_sink[vb].load(SeqCst);
+            // …and whether that reading covered its frame's whole ask (see `norm_reading_bound`).
+            let read_complete = self.perf.norm_complete_sink[vb].load(SeqCst);
             let reading_current = norm_reading_is_current(read_sig, nsig, interacting);
             let nfeed =
                 norm_feed_decision(nsig, self.perf.norm_sig[vb], self.perf.norm_locked[vb], interacting);
+            // Is the window already fed describing THIS view (or, while moving, its neighbour)?
+            let same_view = interacting || self.perf.norm_sig[vb] == nsig;
             if self.perf.norm_sig[vb] != nsig {
                 self.perf.norm_sig[vb] = nsig;
                 self.perf.norm_locked[vb] = false;
@@ -4281,14 +4291,32 @@ impl FractadyneApp {
                                     }
                                 }
                             }
-                            NormFeed::Adopt => {
+                            NormFeed::Adopt if read_complete => {
                                 self.perf.norm_range[vb] = Some((mn, mx));
                                 self.perf.norm_locked[vb] = true;
                                 norm_snap = true; // a settled view decides its mapping outright
                             }
+                            // ⭐A settled view's walk still in progress may NOT decide the mapping:
+                            // the first pass of a deep walk reported [734,766] for a view whose
+                            // whole range was [734,10238], and it was adopted and then HELD while
+                            // every later reading widened. Take it as the view's range so far — no
+                            // lock, no snap — and let the completing pass decide.
+                            // Widened against the window in force when that window describes this
+                            // picture — the same view, or the one a zoom just came to rest on,
+                            // whose signature can differ by its iteration ask alone — and taken as
+                            // it is after a jump to somewhere else.
+                            NormFeed::Adopt => {
+                                let fed = self.perf.norm_range[vb].filter(|&f| {
+                                    same_view || !norm_glide_is_reacquire(f, (mn, mx))
+                                });
+                                self.perf.norm_range[vb] =
+                                    Some(norm_reading_bound((mn, mx), false, fed));
+                            }
                             NormFeed::Chase => {
+                                let reading =
+                                    norm_reading_bound((mn, mx), read_complete, self.perf.norm_range[vb]);
                                 let (_, ema) =
-                                    norm_window_feed(None, (mn, mx), false, self.perf.norm_range[vb]);
+                                    norm_window_feed(None, reading, false, self.perf.norm_range[vb]);
                                 if let Some(e) = ema {
                                     self.perf.norm_range[vb] = Some(e);
                                 }
@@ -4297,7 +4325,7 @@ impl FractadyneApp {
                         crate::diag::trace(
                             "gpu",
                             format!(
-                                "norm range: view={vb} frame [{mn:.0},{mx:.0}] {nfeed:?} governed={} ema {:?} grad {:?} phase/px {:.3} alias={} engaged={}",
+                                "norm range: view={vb} frame [{mn:.0},{mx:.0}] complete={read_complete} {nfeed:?} governed={} ema {:?} grad {:?} phase/px {:.3} alias={} engaged={}",
                                 self.perf.chunk_governed[vb],
                                 self.perf.norm_range[vb],
                                 self.perf.norm_grad[vb],
@@ -4520,6 +4548,9 @@ impl FractadyneApp {
         // instead of in one watchdog-tripping dispatch.
         let mut chunk_range: Option<[u32; 2]> = None;
         let mut chunk_idx = 0u32;
+        // An unchunked pass iterates every pixel to the ask, so its reading covers the whole frame;
+        // the chunked block below decides for itself.
+        self.perf.norm_complete_submit[vs] = true;
         self.perf.chunk_pending[vs] = false;
         self.perf.chunk_governed[vs] = chunk_over;
         if chunk_over {
@@ -5042,6 +5073,19 @@ impl FractadyneApp {
                 chunk_range = Some([walk_end, walk_end]);
                 chunk_idx = self.perf.chunk_idx[vs];
             }
+            // ⭐Does this pass's escape-range reading describe the picture that will be ON SCREEN?
+            // The resolve commits the range of everything escaped SO FAR, so a pass that stops
+            // short of the walk's end reports a top no higher than the walk has got. That is the
+            // picture when it is what gets displayed — a moving view's one-pass preview, which is
+            // `[0, step]` by design — but not for a pinned refresh (the screen holds the last
+            // complete frame until the walk lands; the pin-start below re-marks its opening pass)
+            // nor for a settled walk, whose partials fill in toward a range they have not reached.
+            // Fed as if whole, a pinned walk's readings made the palette window a SAWTOOTH,
+            // measured 2026-09-19 on a 2e13 autopilot dive: tops of 1,758 → 3,150 → 6,582 →
+            // 10,238 and back to 1,758, about 2.5 times a second, which the EMA and the glide
+            // turned into a rhythmic "breathing" of every colour on screen.
+            self.perf.norm_complete_submit[vs] = (interacting && !pin_frame)
+                || chunk_range.is_none_or(|[_, end]| end >= walk_end);
         }
         // Every mode — this trace is how a frame's cost bound is inspected, and the df32 path is
         // now budgeted and tileable too, so hiding it there would hide the case that crashed.
@@ -5561,6 +5605,8 @@ impl FractadyneApp {
             work_counters,
             norm_sig_out: Some(self.perf.norm_sig_sink[vs.min(1)].clone()),
             norm_sig: self.perf.norm_sig_submit[vs.min(1)],
+            norm_complete: self.perf.norm_complete_submit[vs.min(1)],
+            norm_complete_out: Some(self.perf.norm_complete_sink[vs.min(1)].clone()),
             tile,
             chunk_range,
             chunk_idx,
@@ -7358,6 +7404,10 @@ impl FractadyneApp {
                 // it), and gate the display on the snapshot `hold_copy` takes this same frame,
                 // which still holds the last COMPLETE frame because held frames do not iterate.
                 // The frozen latch below is deferred until adoption.
+                //
+                // Its escape-range reading is therefore NOT the picture on screen: the chunk block
+                // counted this frame as a displayed motion preview, which it stops being here.
+                self.perf.norm_complete_submit[vs] = false;
                 let end = chunk_range.unwrap()[1];
                 self.perf.pin[vsub] = Some(PinnedRefresh {
                     center_bf: center_bf.clone(),
@@ -8339,6 +8389,34 @@ pub(crate) fn norm_window_feed(
 
 #[cfg(test)]
 mod norm_window;
+
+/// The escape range a reading may feed to the palette window.
+///
+/// A reading that describes the whole picture on screen (`complete` — see
+/// `MandelbrotParams::norm_complete`) is taken as it is. A mid-walk one is not a smaller copy of
+/// the frame's range: its FLOOR is exact (the lowest escapes finish in the first pass that escapes
+/// anything) but its TOP is only as high as the walk has reached. Against `fed`, a window measured
+/// at the same picture, it may therefore raise the top and never lower it. With nothing fed for
+/// this picture there is nothing better, and it is taken as it is.
+///
+/// ⭐⭐This is what the "breathing" palette was (2026-09-19, a 2e13 autopilot dive, normalize on):
+/// a moving view's chunked walk restarts at every refresh, so fed as whole-frame ranges its
+/// readings made the window's top a sawtooth — 1,758 → 3,150 → 6,582 → 10,238, then back to
+/// 1,758, about 2.5 times a second — and the EMA and the glide turned the sawtooth into a steady
+/// swell and shrink of every colour on screen.
+pub(crate) fn norm_reading_bound(
+    reading: (f32, f32),
+    complete: bool,
+    fed: Option<(f32, f32)>,
+) -> (f32, f32) {
+    match fed {
+        Some((_, top)) if !complete => (reading.0, reading.1.max(top)),
+        _ => reading,
+    }
+}
+
+#[cfg(test)]
+mod norm_partial;
 
 /// The regional license: how many iterations one settled pass may cover in this cursor BAND.
 /// A priced band licenses ×1.25 growth on its best accepted size; an unpriced band inherits HALF

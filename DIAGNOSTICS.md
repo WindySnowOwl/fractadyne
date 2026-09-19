@@ -19,7 +19,7 @@ dir, logs included.
 
 | Var | Values | Effect |
 |-----|--------|--------|
-| `FRACTADYNE_TRACE` | `1` (all) or `req,ref,gpu,tile,glitch,idle,dpi` | Stderr + log-file tracing by category (below) |
+| `FRACTADYNE_TRACE` | `1` (all) or `req,ref,gpu,tile,glitch,idle,dpi,autopilot` | Stderr + log-file tracing by category (below) |
 | `FRACTADYNE_LOG` | `0` | Disables the log file (stderr unchanged) |
 | `FRACTADYNE_PERF` | `1` | Appends per-render perf records to `logs/perf.jsonl` (regression tracking across builds) — plus, during script playback, one `kind:"live"` record per frame (tour time, depth, frame/cpu ms, pipeline lag) for live-judder analysis |
 | `FRACTADYNE_CONFIG_DIR` | path | Relocates config dir (and therefore `logs/`) |
@@ -36,6 +36,7 @@ dir, logs included.
 | `FRACTADYNE_ZOOMTEST_PROFILE` | `user` | `--zoomtest`: apply the 2026-09-16 field-report settings (prefer detail while zooming, 2× AA, motion-resolution floor 0.83, live normalization, the dual view at split 0.588) so a report under those settings is reproduced under them. With `FRACTADYNE_NO_ACCUM=1` a settle tail captures the quiet single render instead of a converged average |
 | `FRACTADYNE_LIVETEST_SESSION_RES` | `1` | `--livetest`: same, for the live-output harness |
 | `FRACTADYNE_NO_PREFETCH` | `1` | Disable script-playback reference prefetching (both the dive lookahead and the hold prefetch), so a tour is served by the REACTIVE rebuild path alone — the path a GUI user parked at a deep view has, since no script tells the app where the camera is going. ⭐This is what made the e72/e82 reference family measurable: with prefetching on, a hold's verdict is a race between the prefetch install and the checkpoint sample, so the gate flips on any recompile; with it off the same run is deterministic and the defect is in the open (it found a motion-time rebuild TRUNCATING a 1,208,193-sample reference to 256,001 and blacking out the next hold). Start here on any reference-lifecycle bug |
+| `FRACTADYNE_AUTOPILOT_DUMP` | directory | Write every autopilot steering probe there as raw little-endian `f32` (`probe-NNNNN.f32`, `w×h×4`: smooth iteration, normal x/y, distance-estimate log₂ in cells; the dims are the `n=` of the matching `autopilot` trace line). Pairs with `FRACTADYNE_TRACE=autopilot` and `--import-kfr LOC --autodive L --autodive-iter 0 --autodive-home 0` to replay a user's auto-zoom from their view: the 2026-09-19 "zooms into a flat region" report was measured this way (every pick was detail; the pivot averaged picks from opposite corners into the flat gap between them) |
 | `FRACTADYNE_FAKE_VERSION` | semver | Pretend the running build is that version — exercises the "update available" path (CLI + the in-app prompt) while current |
 | `RUST_LOG` | env_logger spec | wgpu/naga internal logging (stderr) |
 
@@ -50,6 +51,7 @@ dir, logs included.
 | `glitch` | multi-reference correction | Per-run summary: references used, residual glitched px, elapsed |
 | `dpi` | every real change of scale factor or window size | Scale factor, logical size and **physical** size, before → after, one line per change (jitter suppressed). For the monitor-drag resize report: a healthy DPI transition HOLDS the logical size and rescales the physical one by exactly the new factor; the defect is the physical size ratcheting up beyond that, and the upstream reports describe the scale factor flipping repeatedly (1.0 ↔ 1.75) as it happens, which shows here as a burst of lines |
 | `idle` | every frame, while the performance overlay is on | Why the app is still drawing: the quiescence verdict and each input to it (animation/playback clock, per-view tiled-settle and chunk-walk pending, reference build in flight, frames since each view last dispatched). ⭐Answers "a settled app is still burning GPU — what is holding it awake?", which no other channel can: the 2026-09-04 climb-probe loop dispatched a real 36.9 ms pass every 3 frames forever while `tile` reported `iterates=false` (true — the iterate KEY was deduped; the probe re-keys by nonce) |
+| `autopilot` | every auto-zoom target evaluation | Depth, the tracked goal before the look (`goal_was`), the aim and zoom speed, the new goal (`pick`), whether it moved to a different region (`retarget`), the probe dims and the full-precision centre — enough to re-render any point of the dive with `--render --center X Y --zoom-log2 L`. A healthy dive shows `goal_was` ≈ `pick` and rare retargets |
 
 Always-on prefixes (not gated): `[fd-start]` session header, `[fd-render]` CLI render
 manifest + failures, `[fd-progress]` CLI render progress (~2 s cadence), `[fd-watch]`

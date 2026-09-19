@@ -220,9 +220,11 @@ pub(crate) fn help_navigation(ui: &mut egui::Ui) {
     help_sub(ui, "Autopilot");
     help_p(
         ui,
-        "Press A (or Tools → \"Auto-zoom (autopilot)\") for a hands-free dive: every fraction of a \
-         second it finds the most detailed region in view and zooms smoothly toward it, re-steering \
-         as new structure appears. Any navigation input — or Esc — stops it.",
+        "Press A (or Tools → \"Auto-zoom (autopilot)\") for a hands-free dive: it picks a point on \
+         the fractal's edge where the detail is densest, preferring the middle of the view, and \
+         glides into it while easing it to the centre of the screen. It keeps that target while it \
+         stays interesting and turns smoothly toward richer structure when some appears. Any \
+         navigation input — or Esc — stops it.",
     );
     help_sub(ui, "History & precise moves");
     help_kv(ui, "Ctrl+Z / Backspace", "Undo the previous view.");
