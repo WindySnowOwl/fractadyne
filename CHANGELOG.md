@@ -23,7 +23,11 @@ detail is in the git history.
   when it starts and slows through a turn. From the same view it reaches the 1e40 dive limit
   with structure through the middle of the screen at every depth, and from the home view,
   Seahorse Valley, a minibrot and an empty-centred view the target moves at most 7% of the
-  screen per step, where it used to jump across the whole of it.
+  screen per step, where it used to jump across the whole of it. It also holds its point at the
+  fastest zoom speed: re-centring the target on a grid cell every look let it slide off the edge
+  and wander at 4×, so each look now moves it back onto the edge only across the edge, never along
+  it. On a user's 4× dive at 1e118 the looks that moved the target more than 2% of the screen fell
+  from 20 in 81 to 2 in 78.
 
 - **"Normalize deep colors" no longer makes the palette breathe during a deep zoom, and a view
   that stops keeps the right colours** (beta.109). Deep frames are computed in iteration steps,

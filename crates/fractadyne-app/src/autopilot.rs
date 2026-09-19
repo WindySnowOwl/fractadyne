@@ -13,8 +13,9 @@
 //!   unbounded detail, so zooming about one never runs out of it;
 //! - it is carried through every zoom and pan (`after_zoom`), so it stays on its content between
 //!   evaluations instead of staying on a SCREEN position the content has moved away from;
-//! - it is kept while it stays on the boundary, refined a cell or two toward richer structure, and
-//!   abandoned only for a region twice as rich (with a cooldown) or when it is lost;
+//! - it is kept on its piece of the edge — each look moves it back onto the edge ACROSS the edge
+//!   only, using the probe's distance estimate and normal, never along it (`project_onto_edge`) —
+//!   and abandoned only for a region twice as rich (with a cooldown) or when it is lost;
 //! - the camera eases: the aim closes on the goal, the aim drifts to the centre of the screen, and
 //!   the zoom speed ramps in and slows through a turn.
 
@@ -272,6 +273,7 @@ impl FractadyneApp {
             h,
             iter: px.chunks_exact(4).take(w * h).map(|t| t[0]).collect(),
             de_log2: px.chunks_exact(4).take(w * h).map(|t| t[3]).collect(),
+            normal: px.chunks_exact(4).take(w * h).map(|t| (t[1], t[2])).collect(),
         })
     }
 }
@@ -284,13 +286,14 @@ const DE_NONE: f32 = 1.0e29;
 /// Radius (cells) of the neighbourhood the detail density is averaged over. Averaging is what
 /// makes the score a smooth field: the old per-cell argmax flipped between clusters every look.
 const DENSITY_R: usize = 3;
-/// How far (cells) an evaluation may refine the goal without it counting as a retarget.
+/// How far (cells) an evaluation may look for the edge again when the goal has drifted off it,
+/// without that counting as a retarget.
 const SNAP_R: usize = 2;
 /// A cell is ON the boundary — a legal goal — at or above this weight.
 const ON_BOUNDARY: f32 = 0.5;
-/// Refinement moves a goal that is still on the boundary only for a nearby cell this much richer,
-/// so a goal that is fine stays exactly where it is.
-const REFINE_GAIN: f64 = 1.25;
+/// The farthest (cells) a cell's distance estimate is trusted to locate the edge: past this the
+/// straight-edge approximation behind [`Probe::project_onto_edge`] is not local any more.
+const EDGE_TRUST: f64 = 2.0;
 /// A region elsewhere must beat the current goal's by this factor to take over.
 const RETARGET_GAIN: f64 = 2.0;
 /// Width of the centre preference, as a fraction of the screen's short side. Tight on purpose: at
@@ -298,12 +301,15 @@ const RETARGET_GAIN: f64 = 2.0;
 const CENTER_SIGMA: f64 = 0.25;
 
 /// The steering probe: a small render of the current view with square cells. Per cell: the smooth
-/// escape count (`< 0` = interior) and the distance estimate as log₂ CELLS (`>= DE_NONE` = none).
+/// escape count (`< 0` = interior), the distance estimate as log₂ CELLS (`>= DE_NONE` = none), and
+/// the unit gradient of the escape potential in COMPLEX orientation (+y = +imaginary; `(0, 0)` =
+/// none) — it points away from the set, so the edge lies along its negative.
 pub(crate) struct Probe {
     pub(crate) w: usize,
     pub(crate) h: usize,
     pub(crate) iter: Vec<f32>,
     pub(crate) de_log2: Vec<f32>,
+    pub(crate) normal: Vec<(f32, f32)>,
 }
 
 /// What an evaluation decided: the goal (screen fraction) and whether it moved to a different
@@ -358,6 +364,41 @@ impl Probe {
             }
         }
         out
+    }
+
+    /// Move the screen-fraction point `g` onto the edge line of cell `(i, j)`: the line through
+    /// the cell's own edge estimate (centre − DE·n) perpendicular to its normal `n`. `None` when
+    /// the cell carries no usable estimate (interior, a family without one, a degenerate normal, or
+    /// an edge farther than [`EDGE_TRUST`]).
+    ///
+    /// ⭐⭐**Across the edge, never along it.** Keeping a goal on the boundary used to mean snapping
+    /// it to the CENTRE of a boundary cell. At the 4× zoom-speed setting the view grows almost an
+    /// octave between looks, so that sub-cell error nearly doubles each time: the goal slid off the
+    /// edge, was snapped to another centre up to two cells away, slid off again — a random walk the
+    /// camera chased across a third of the screen in 3.5 s (a user's 1e118 dive, 2026-09-19). The
+    /// projection removes only the component of the error that takes the goal OFF the edge; its
+    /// place along the edge — which piece of structure the dive is heading into — is left alone.
+    /// Verified on real probe fields: one step along −n (screen y flipped) halves the distance to
+    /// the edge (median 2.0 → 0.9 cells); along +n it lands on the edge 0% of the time.
+    pub(crate) fn project_onto_edge(&self, g: (f64, f64), i: usize, j: usize) -> Option<(f64, f64)> {
+        let k = j * self.w + i;
+        if self.interior(k) || self.de_log2[k] >= DE_NONE {
+            return None;
+        }
+        let d = (self.de_log2[k] as f64).exp2();
+        let (nx, ny) = (self.normal[k].0 as f64, -(self.normal[k].1 as f64)); // screen y is down
+        if !(d <= EDGE_TRUST) || nx.hypot(ny) < 0.5 {
+            return None;
+        }
+        // In cell units, where the cells are square.
+        let (w, h) = (self.w as f64, self.h as f64);
+        let (ex, ey) = (i as f64 + 0.5 - d * nx, j as f64 + 0.5 - d * ny);
+        let (gx, gy) = (g.0 * w, g.1 * h);
+        let off = (gx - ex) * nx + (gy - ey) * ny;
+        if off.abs() > SNAP_R as f64 + 1.0 {
+            return None; // not this cell's edge
+        }
+        Some(((gx - off * nx) / w, (gy - off * ny) / h))
     }
 }
 
@@ -427,7 +468,9 @@ pub(crate) fn choose_goal(
         }
     }
     let (bi, bj, best_score) = best?;
-    let global = Steer { goal: frac(bi, bj), retarget: true };
+    // A new goal goes ON the edge its cell's estimate locates, not at the cell's centre.
+    let on_edge = |i: usize, j: usize| p.project_onto_edge(frac(i, j), i, j).unwrap_or(frac(i, j));
+    let global = Steer { goal: on_edge(bi, bj), retarget: true };
 
     let on_screen = |g: &(f64, f64)| (0.0..1.0).contains(&g.0) && (0.0..1.0).contains(&g.1);
     let Some(g) = current.filter(on_screen) else {
@@ -435,34 +478,36 @@ pub(crate) fn choose_goal(
     };
     let gi = ((g.0 * w as f64) as usize).min(w - 1);
     let gj = ((g.1 * h as f64) as usize).min(h - 1);
-    let here = rich(gj * w + gi);
-    // The richest boundary cell within reach of the goal, lightly preferring the closest.
-    let mut local: Option<(usize, usize, f64)> = None;
-    for j in gj.saturating_sub(SNAP_R)..(gj + SNAP_R + 1).min(h) {
-        for i in gi.saturating_sub(SNAP_R)..(gi + SNAP_R + 1).min(w) {
-            let k = j * w + i;
-            if wt[k] < ON_BOUNDARY {
-                continue;
-            }
-            let d = (i as f64 - gi as f64).hypot(j as f64 - gj as f64) / SNAP_R as f64;
-            let s = rich(k) * (1.0 - 0.15 * d);
-            if local.is_none_or(|b| s > b.2) {
-                local = Some((i, j, s));
+    // The cell whose edge the goal belongs to: its own while that is still on the boundary, else
+    // the NEAREST boundary cell within reach (the richest one was a hill-climb, and at the 4×
+    // zoom-speed setting a hill-climb re-aimed every look is exactly the wandering this prevents).
+    let anchor = if wt[gj * w + gi] >= ON_BOUNDARY {
+        Some((gi, gj))
+    } else {
+        let mut nearest: Option<(usize, usize, f64)> = None;
+        for j in gj.saturating_sub(SNAP_R)..(gj + SNAP_R + 1).min(h) {
+            for i in gi.saturating_sub(SNAP_R)..(gi + SNAP_R + 1).min(w) {
+                if wt[j * w + i] < ON_BOUNDARY {
+                    continue;
+                }
+                let d = (i as f64 - gi as f64).hypot(j as f64 - gj as f64);
+                if nearest.is_none_or(|b| d < b.2) {
+                    nearest = Some((i, j, d));
+                }
             }
         }
-    }
-    let Some((li, lj, _)) = local else {
+        nearest.map(|(i, j, _)| (i, j))
+    };
+    let Some((ai, aj)) = anchor else {
         return Some(global); // lost: the goal drifted off the boundary into flat or interior
     };
-    let near = rich(lj * w + li);
-    // Keep the goal EXACTLY where it is while it is still on the boundary and nothing within reach
-    // is clearly richer — re-quantising it to a cell centre every look would wobble the aim.
-    let refined = if wt[gj * w + gi] >= ON_BOUNDARY && near <= REFINE_GAIN * here {
-        g
-    } else {
-        frac(li, lj)
-    };
-    let kept = near.max(here) * centre_w(refined);
+    // Back onto the edge, moving only across it. Without an estimate (a family with no distance
+    // estimate, or an interior-adjacent cell) the goal stays put on its own cell, or takes the
+    // centre of the nearest boundary cell.
+    let refined = p
+        .project_onto_edge(g, ai, aj)
+        .unwrap_or(if (ai, aj) == (gi, gj) { g } else { frac(ai, aj) });
+    let kept = rich(aj * w + ai) * centre_w(refined);
     if may_retarget && best_score > RETARGET_GAIN * kept {
         return Some(global);
     }

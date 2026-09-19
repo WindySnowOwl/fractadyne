@@ -5,9 +5,36 @@ use super::*;
 
 const NONE: f32 = 1.0e30;
 
-/// A probe where every cell is flat exterior (distance estimate `far` cells) until painted.
+/// Positions are compared in probe cells. The probe stores the distance estimate as an f32 log₂,
+/// so an edge recovered from it is good to about 1e-8 of a cell; this is far below anything seen.
+const CELL_TOL: f64 = 1e-5;
+
+/// A probe where every cell is flat exterior (distance estimate 16 cells, no normal) until painted.
 fn flat(w: usize, h: usize) -> Probe {
-    Probe { w, h, iter: vec![100.0; w * h], de_log2: vec![4.0; w * h] }
+    Probe {
+        w,
+        h,
+        iter: vec![100.0; w * h],
+        de_log2: vec![4.0; w * h],
+        normal: vec![(0.0, 0.0); w * h],
+    }
+}
+
+/// A probe whose only structure is a straight edge, with the distance estimate and normal a real
+/// probe reports on both sides of it: `vertical` = the line x = `at` (cells), else y = `at`.
+/// Normals point away from the edge, in COMPLEX orientation (screen y flipped).
+fn straight_edge(w: usize, h: usize, at: f64, vertical: bool) -> Probe {
+    let mut p = flat(w, h);
+    for j in 0..h {
+        for i in 0..w {
+            let c = if vertical { i as f64 + 0.5 } else { j as f64 + 0.5 };
+            let d = (c - at).abs().max(1.0e-3);
+            let s = (c - at).signum() as f32;
+            p.de_log2[j * w + i] = d.log2() as f32;
+            p.normal[j * w + i] = if vertical { (s, 0.0) } else { (0.0, -s) };
+        }
+    }
+    p
 }
 
 /// Mark cell (i, j) as on the boundary (distance estimate a quarter cell).
@@ -99,12 +126,67 @@ fn a_goal_that_drifted_off_the_boundary_snaps_back_nearby_not_across_the_screen(
 
 #[test]
 fn a_somewhat_better_region_elsewhere_does_not_steal_the_goal() {
+    // The goal sits on a short bare segment (neighbourhood richness 3/49 ≈ 0.061); a small knot off
+    // to the side scores ≈ 0.107 after centring — better, but short of RETARGET_GAIN (2×).
     let mut p = flat(40, 25);
-    knot(&mut p, 20, 12, 1); // the current goal's neighbourhood
-    knot(&mut p, 26, 12, 2); // a richer one nearby, but not RETARGET_GAIN richer after centring
+    for i in 19..=21 {
+        edge(&mut p, i, 12);
+    }
+    knot(&mut p, 27, 12, 1);
     let g = (20.5 / 40.0, 12.5 / 25.0);
     let s = choose_goal(&p, 1.6, Some(g), true).unwrap();
-    assert!(!s.retarget, "{s:?}");
+    assert_eq!(s, Steer { goal: g, retarget: false });
+}
+
+#[test]
+fn a_goal_on_the_boundary_is_not_pulled_toward_richer_cells_beside_it() {
+    // The neighbouring knot cell is 1.4× richer: the old refinement hill-climbed to it every look,
+    // which at 4× zoom speed re-aimed the camera almost every evaluation.
+    let mut p = flat(40, 25);
+    for i in 0..40 {
+        edge(&mut p, i, 12);
+    }
+    knot(&mut p, 23, 9, 2);
+    let g = (20.4 / 40.0, 12.6 / 25.0);
+    let s = choose_goal(&p, 1.6, Some(g), true).unwrap();
+    assert_eq!(s, Steer { goal: g, retarget: false });
+}
+
+#[test]
+fn a_goal_off_the_edge_moves_back_across_it_and_not_along_it() {
+    // Vertical edge at x = 20.3 cells; the goal has slid 0.8 cells right of it.
+    let p = straight_edge(40, 25, 20.3, true);
+    let s = choose_goal(&p, 1.6, Some((21.1 / 40.0, 12.37 / 25.0)), true).unwrap();
+    assert!(!s.retarget);
+    assert!((s.goal.0 * 40.0 - 20.3).abs() < CELL_TOL, "x {}", s.goal.0 * 40.0);
+    assert!((s.goal.1 * 25.0 - 12.37).abs() < CELL_TOL, "the place along the edge must not change");
+    // A horizontal edge exercises the screen/complex y flip: the goal is 0.8 cells below y = 12.3.
+    let p = straight_edge(40, 25, 12.3, false);
+    let s = choose_goal(&p, 1.6, Some((20.37 / 40.0, 13.1 / 25.0)), true).unwrap();
+    assert!((s.goal.1 * 25.0 - 12.3).abs() < CELL_TOL, "y {}", s.goal.1 * 25.0);
+    assert!((s.goal.0 * 40.0 - 20.37).abs() < CELL_TOL, "x {}", s.goal.0 * 40.0);
+}
+
+#[test]
+fn repeated_looks_keep_the_goal_on_its_piece_of_edge() {
+    // What a fast zoom does between looks: the goal's sub-cell error grows and pushes it off the
+    // edge, alternately to either side. Snapping to cell centres turned that into a walk; the
+    // projection must bring it back to the same point every time.
+    let p = straight_edge(40, 25, 20.3, true);
+    let mut g = (20.3 / 40.0, 12.37 / 25.0);
+    for n in 0..30 {
+        let push = if n % 2 == 0 { 0.9 } else { -1.3 };
+        g.0 += push / 40.0;
+        g = choose_goal(&p, 1.6, Some(g), true).unwrap().goal;
+    }
+    assert!((g.0 * 40.0 - 20.3).abs() < CELL_TOL && (g.1 * 25.0 - 12.37).abs() < CELL_TOL, "{g:?}");
+}
+
+#[test]
+fn a_new_goal_is_placed_on_the_edge_not_at_its_cell_centre() {
+    let p = straight_edge(40, 25, 20.3, true);
+    let s = choose_goal(&p, 1.6, None, true).unwrap();
+    assert!((s.goal.0 * 40.0 - 20.3).abs() < CELL_TOL, "x {}", s.goal.0 * 40.0);
 }
 
 #[test]
