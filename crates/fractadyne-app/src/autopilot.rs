@@ -1,5 +1,22 @@
-//! Auto-zoom autopilot: a hands-free dive that re-targets the detail-richest region and
-//! eases the zoom pivot toward it each frame (View menu / A key; Esc or any input stops).
+//! Auto-zoom autopilot: a hands-free dive toward detail (View menu / A key; Esc or any input stops).
+//!
+//! ⭐**The goal is a point IN THE FRACTAL, and it is a point ON THE BOUNDARY.** The first version
+//! re-picked the single highest-scoring cell of its probe every evaluation and eased a screen-space
+//! pivot toward it. Measured from a user's 2.6e19 spiral view (2026-09-19): consecutive picks
+//! jumped a median 0.37 screen heights, 72% of evaluations jumped over a quarter of the screen, and
+//! the pivot — chasing picks that alternated between clusters in opposite corners — settled on
+//! their AVERAGE, which is the flat gap between them. Every pick was detail; the point actually
+//! being zoomed was not, and after 89 s the dive reached 1e37 with no boundary left in view. So:
+//!
+//! - the goal is scored on the shader's distance estimate (boundary DENSITY over a neighbourhood,
+//!   strongly centre-weighted) and must itself be a boundary cell — only boundary points have
+//!   unbounded detail, so zooming about one never runs out of it;
+//! - it is carried through every zoom and pan (`after_zoom`), so it stays on its content between
+//!   evaluations instead of staying on a SCREEN position the content has moved away from;
+//! - it is kept while it stays on the boundary, refined a cell or two toward richer structure, and
+//!   abandoned only for a region twice as rich (with a cooldown) or when it is lost;
+//! - the camera eases: the aim closes on the goal, the aim drifts to the centre of the screen, and
+//!   the zoom speed ramps in and slows through a turn.
 
 use crate::{FractadyneApp, ZOOM_RATE};
 use eframe::egui;
@@ -14,17 +31,29 @@ const AUTOPILOT_EVAL_INTERVAL: f64 = 0.35;
 const AUTOPILOT_SMOOTH_LOG2: f64 = 900.0; // ≈ 1e271×
 /// Stepped-dive magnification jump per re-evaluation, in log₂ (2.0 ⇒ ×4 per step).
 const AUTOPILOT_STEP_LOG2: f64 = 2.0;
-/// Time constant (s) for easing the zoom pivot toward each newly-evaluated target — larger
-/// is smoother but lags the detail more.
-const AUTOPILOT_TARGET_TAU: f64 = 0.5;
+/// Cells in the steering probe (the old 56×56), laid out at the view's aspect so they are square.
+const PROBE_CELLS: f64 = 3136.0;
+/// Time constant (s) of EACH of the two eases that carry the aim onto the goal (see `glide_step`),
+/// net of the zoom pushing the goal away — so the approach takes the same time at every zoom-rate
+/// setting. Two stages of 0.35 s settle 95% of a turn in ≈1.7 s.
+const AIM_TAU: f64 = 0.35;
+/// Time constant (s) of the aim drifting to the middle of the screen.
+const CENTER_TAU: f64 = 2.0;
+/// Time constant (s) of every zoom-speed change: the start, a slow-down for a turn, the resume.
+const SPEED_TAU: f64 = 0.4;
+/// Seconds after a retarget during which only a LOST goal may retarget again.
+const RETARGET_COOLDOWN: f64 = 1.5;
 
 impl FractadyneApp {
     /// Toggle the auto-zoom autopilot (single view only).
     pub(crate) fn toggle_autopilot(&mut self, ctx: &egui::Context) {
         self.autopilot.active = !self.autopilot.active;
         if self.autopilot.active {
-            self.autopilot.target = (0.5, 0.5);
-            self.autopilot.goal = (0.5, 0.5);
+            self.autopilot.aim = (0.5, 0.5);
+            self.autopilot.lead = (0.5, 0.5);
+            self.autopilot.goal = None;
+            self.autopilot.speed = 0.0;
+            self.autopilot.retarget_t = f64::NEG_INFINITY;
             self.autopilot.eval_t = 0.0; // force an evaluation next frame
             self.home_anim = None;
             self.stop_playback();
@@ -36,10 +65,9 @@ impl FractadyneApp {
         }
     }
 
-    /// One frame of the auto-zoom autopilot: continuously zoom toward `autopilot_target`,
-    /// re-evaluating the target every `AUTOPILOT_EVAL_INTERVAL` by rendering a small
-    /// iteration field of the current view and steering to its detail-richest,
-    /// boundary-adjacent region. Stops on manual input, a dead end, or the depth cap.
+    /// One frame of the auto-zoom autopilot: glide into the tracked goal, re-evaluating it every
+    /// `AUTOPILOT_EVAL_INTERVAL` from a small probe render of the view (`choose_goal`). Stops on
+    /// manual input, a dead end (no boundary anywhere in view), or the depth cap.
     pub(crate) fn autopilot_step(
         &mut self,
         ctx: &egui::Context,
@@ -101,17 +129,46 @@ impl FractadyneApp {
         if ready && now - self.autopilot.eval_t > eval_interval {
             self.autopilot.eval_t = now;
             if let Some((dev, q)) = gpu {
-                match self.autopilot_pick_target(dev, q) {
-                    Some((tx, ty)) => {
-                        self.autopilot.goal = (tx, ty);
+                let probe = self.autopilot_probe(dev, q);
+                let aspect = self.viewport.width_px / self.viewport.height_px;
+                let may_retarget = now - self.autopilot.retarget_t > RETARGET_COOLDOWN;
+                let steer = probe.as_ref().and_then(|p| {
+                    choose_goal(p, aspect, self.autopilot.goal, may_retarget)
+                });
+                if crate::diag::trace_on("autopilot") {
+                    crate::diag::trace(
+                        "autopilot",
+                        format!(
+                            "eval t={now:.3} l2={l2:.4} goal_was={:?} aim={:?} speed={:.3} \
+                             pick={:?} retarget={} n={} cx={} cy={}",
+                            self.autopilot.goal,
+                            self.autopilot.aim,
+                            self.autopilot.speed,
+                            steer.map(|s| s.goal),
+                            steer.is_some_and(|s| s.retarget),
+                            probe.as_ref().map_or("-".into(), |p| format!("{}x{}", p.w, p.h)),
+                            fractadyne_core::to_decimal_string(&self.viewport.center_x),
+                            fractadyne_core::to_decimal_string(&self.viewport.center_y),
+                        ),
+                    );
+                }
+                match steer {
+                    Some(s) => {
+                        if s.retarget {
+                            self.autopilot.retarget_t = now;
+                        }
+                        self.autopilot.goal = Some(s.goal);
                         if stepping {
-                            // Stepped dive: snap the pivot to the detail and jump the zoom by a
-                            // fixed factor (2^AUTOPILOT_STEP_LOG2×) toward it.
-                            self.autopilot.target = (tx, ty);
+                            // Stepped dive: snap the aim to the goal, jump the zoom by a fixed
+                            // factor (2^AUTOPILOT_STEP_LOG2×) about it, then bring it halfway to
+                            // the centre — each step is a full re-render, so there is no glide to
+                            // ease through.
+                            self.autopilot.aim = s.goal;
+                            self.autopilot.lead = s.goal;
                             let factor = (-AUTOPILOT_STEP_LOG2 * std::f64::consts::LN_2).exp();
-                            let px = tx * self.viewport.width_px;
-                            let py = ty * self.viewport.height_px;
-                            self.viewport.zoom_at(px, py, factor);
+                            self.autopilot_zoom(s.goal, factor);
+                            let a = self.autopilot.aim;
+                            self.autopilot_pan(((0.5 - a.0) * 0.5, (0.5 - a.1) * 0.5));
                         }
                     }
                     None => {
@@ -126,33 +183,66 @@ impl FractadyneApp {
         }
 
         if !stepping {
-            // Smooth glide: ease the pivot toward the goal (so the pan direction changes smoothly
-            // rather than snapping at each re-evaluation) and zoom in continuously.
-            let follow = 1.0 - (-dt / AUTOPILOT_TARGET_TAU).exp();
-            self.autopilot.target.0 += (self.autopilot.goal.0 - self.autopilot.target.0) * follow;
-            self.autopilot.target.1 += (self.autopilot.goal.1 - self.autopilot.target.1) * follow;
-            let rate = ZOOM_RATE * self.render_cfg.zoom_rate as f64;
-            let factor = (-rate * dt).exp();
-            let px = self.autopilot.target.0 * self.viewport.width_px;
-            let py = self.autopilot.target.1 * self.viewport.height_px;
-            self.viewport.zoom_at(px, py, factor);
+            if let Some(goal) = self.autopilot.goal {
+                self.autopilot_glide(goal, dt);
+            }
         }
         self.pointer.settle_t = [now; 2]; // treat as interaction (AA off, throttled reference refresh)
         self.schedule_repaint(ctx);
     }
 
-    /// Render a small iteration field of the current view and return the screen-fraction
-    /// of the detail-richest, boundary-adjacent region (center-biased for a stable dive).
-    /// `None` when the view holds no boundary detail (dead end → stop).
-    fn autopilot_pick_target(&self, dev: &eframe::wgpu::Device, q: &eframe::wgpu::Queue) -> Option<(f64, f64)> {
-        const N: usize = 56;
+    /// One frame of the smooth dive. Every change is eased, so nothing the camera does is a step:
+    /// the zoom speed ramps toward its target (slower through a big turn), the aim closes on the
+    /// goal, and the aim drifts to the middle of the screen. All three act on points that are
+    /// carried through the motion, so an ease never chases a stale screen position.
+    fn autopilot_glide(&mut self, goal: (f64, f64), dt: f64) {
+        let rate = ZOOM_RATE * self.render_cfg.zoom_rate as f64;
+        let aspect = self.viewport.width_px / self.viewport.height_px;
+        let a = &self.autopilot;
+        let g = glide_step(a.aim, a.lead, goal, a.speed, rate, aspect, dt);
+        self.autopilot.speed = g.speed;
+        self.autopilot.lead = g.lead;
+        self.autopilot.aim = g.aim;
+        self.autopilot_zoom(g.aim, g.factor);
+        self.autopilot_pan(g.pan);
+    }
+
+    /// Zoom about the screen-fraction `pivot`, carrying the tracked points with their content.
+    fn autopilot_zoom(&mut self, pivot: (f64, f64), factor: f64) {
+        let (w, h) = (self.viewport.width_px, self.viewport.height_px);
+        self.viewport.zoom_at(pivot.0 * w, pivot.1 * h, factor);
+        let a = &mut self.autopilot;
+        a.aim = after_zoom(a.aim, pivot, factor);
+        a.lead = after_zoom(a.lead, pivot, factor);
+        a.goal = a.goal.map(|g| after_zoom(g, pivot, factor));
+    }
+
+    /// Move the content by `d` (screen fractions), carrying the tracked points with it.
+    fn autopilot_pan(&mut self, d: (f64, f64)) {
+        let (w, h) = (self.viewport.width_px, self.viewport.height_px);
+        self.viewport.pan_pixels(d.0 * w, d.1 * h);
+        let a = &mut self.autopilot;
+        let shift = |p: (f64, f64)| (p.0 + d.0, p.1 + d.1);
+        a.aim = shift(a.aim);
+        a.lead = shift(a.lead);
+        a.goal = a.goal.map(shift);
+    }
+
+    /// Render the steering probe: a small iteration field of the current view, `PROBE_CELLS` cells
+    /// laid out at the view's aspect. Square cells matter: the shader measures its distance
+    /// estimate in HORIZONTAL steps, so only a square cell makes that estimate read in cells on
+    /// both axes. (The old probe was 56×56 on a 16:10 view.) `None` = the render failed.
+    fn autopilot_probe(&self, dev: &eframe::wgpu::Device, q: &eframe::wgpu::Queue) -> Option<Probe> {
+        let aspect = (self.viewport.width_px / self.viewport.height_px).clamp(0.25, 4.0);
+        let w = (PROBE_CELLS * aspect).sqrt().round().clamp(16.0, 128.0) as usize;
+        let h = (PROBE_CELLS / w as f64).round().clamp(16.0, 128.0) as usize;
         // ⭐Borrows the LIVE view's resident reference instead of building a full-appetite one on
         // this thread. The probe is a HEURISTIC for choosing a pivot: it wants the picture on
         // screen, not export accuracy, and it used to buy that picture with a synchronous bignum
         // reference build per evaluation. See `autopilot_probe_request`.
         let mut req = self.autopilot_probe_request(&self.viewport, self.julia_mode);
-        req.width = N as u32;
-        req.height = N as u32;
+        req.width = w as u32;
+        req.height = h as u32;
         req.ss = 1;
         // The builder above stamped the crash manifest with the PANEL dims before these
         // overrides — in the Radeon autodive triage (crash-1787261212-0) that stamp read as a
@@ -160,48 +250,277 @@ impl FractadyneApp {
         // probe merely SURFACED a loss the inflated budget had already caused. State what this
         // probe actually submits, so the next crash report names the right suspect.
         crate::diag::set_manifest(format!(
-            "PROBE {N}x{N} ss=1 mode={} (autopilot target probe, synchronous)",
+            "PROBE {w}x{h} ss=1 mode={} (autopilot target probe, synchronous)",
             req.mode
         ));
         let px = fractadyne_gpu::render_iter(dev, q, &req).ok()?.pixels;
-        if px.len() < N * N * 4 {
+        if px.len() < w * h * 4 {
             return None;
         }
-        let r = |i: usize, j: usize| px[(j * N + i) * 4] as f64; // smooth iter; < 0 = interior
-        let (cx, cy) = ((N as f64 - 1.0) * 0.5, (N as f64 - 1.0) * 0.5);
-        let maxd = (cx * cx + cy * cy).sqrt();
-        let (mut best, mut best_ij) = (0.0f64, None);
-        for j in 1..N - 1 {
-            for i in 1..N - 1 {
-                let c = r(i, j);
-                if c < 0.0 {
-                    continue; // never target interior cells
-                }
-                let nb = [r(i - 1, j), r(i + 1, j), r(i, j - 1), r(i, j + 1)];
-                let touches_interior = nb.iter().any(|&v| v < 0.0);
-                // Local exterior gradient (finite neighbours only) = escape-time detail.
-                let grad: f64 = nb.iter().filter(|&&v| v >= 0.0).map(|&v| (v - c).abs()).sum();
-                // Boundary cells (adjacent to the set) carry the richest structure.
-                let mut interest = grad + if touches_interior { 50.0 } else { 0.0 };
-                if interest <= 0.0 {
-                    continue;
-                }
-                // Center bias: keep the dive stable and the focus on-screen.
-                let d = (((i as f64 - cx).powi(2) + (j as f64 - cy).powi(2)).sqrt()) / maxd;
-                interest *= 1.0 - 0.6 * d;
-                if interest > best {
-                    best = interest;
-                    best_ij = Some((i, j));
-                }
-            }
+        // Dev hook (DIAGNOSTICS.md): every probe as raw f32, so a reported dive can be replayed and
+        // the chooser judged on the fields it actually saw.
+        if let Ok(dir) = std::env::var("FRACTADYNE_AUTOPILOT_DUMP") {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static SEQ: AtomicU32 = AtomicU32::new(0);
+            let k = SEQ.fetch_add(1, Ordering::Relaxed);
+            let bytes: Vec<u8> = px.iter().flat_map(|v| v.to_le_bytes()).collect();
+            let _ = std::fs::write(format!("{dir}/probe-{k:05}.f32"), bytes);
         }
-        let (bi, bj) = best_ij?;
-        if best < 1.0 {
-            return None; // no real detail (flat exterior / all interior) → dead end
-        }
-        Some(((bi as f64 + 0.5) / N as f64, (bj as f64 + 0.5) / N as f64))
+        // Texels are (smooth_iter, normal.x, normal.y, DE_log2) — see `fractadyne_gpu::render_iter`.
+        Some(Probe {
+            w,
+            h,
+            iter: px.chunks_exact(4).take(w * h).map(|t| t[0]).collect(),
+            de_log2: px.chunks_exact(4).take(w * h).map(|t| t[3]).collect(),
+        })
     }
 }
+
+// ---- Steering: pure functions of the probe, so they can be tested without a GPU. ----
+
+/// Distance-estimate sentinel: at or above this the cell has no estimate (interior, or a family
+/// whose shader tracks no derivative — the iterate pass writes 1e30).
+const DE_NONE: f32 = 1.0e29;
+/// Radius (cells) of the neighbourhood the detail density is averaged over. Averaging is what
+/// makes the score a smooth field: the old per-cell argmax flipped between clusters every look.
+const DENSITY_R: usize = 3;
+/// How far (cells) an evaluation may refine the goal without it counting as a retarget.
+const SNAP_R: usize = 2;
+/// A cell is ON the boundary — a legal goal — at or above this weight.
+const ON_BOUNDARY: f32 = 0.5;
+/// Refinement moves a goal that is still on the boundary only for a nearby cell this much richer,
+/// so a goal that is fine stays exactly where it is.
+const REFINE_GAIN: f64 = 1.25;
+/// A region elsewhere must beat the current goal's by this factor to take over.
+const RETARGET_GAIN: f64 = 2.0;
+/// Width of the centre preference, as a fraction of the screen's short side. Tight on purpose: at
+/// the old probe's 40%-at-the-edge bias, picks sat a median 0.32 screen heights off centre.
+const CENTER_SIGMA: f64 = 0.25;
+
+/// The steering probe: a small render of the current view with square cells. Per cell: the smooth
+/// escape count (`< 0` = interior) and the distance estimate as log₂ CELLS (`>= DE_NONE` = none).
+pub(crate) struct Probe {
+    pub(crate) w: usize,
+    pub(crate) h: usize,
+    pub(crate) iter: Vec<f32>,
+    pub(crate) de_log2: Vec<f32>,
+}
+
+/// What an evaluation decided: the goal (screen fraction) and whether it moved to a different
+/// region rather than refining the one it had.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Steer {
+    pub(crate) goal: (f64, f64),
+    pub(crate) retarget: bool,
+}
+
+impl Probe {
+    fn interior(&self, k: usize) -> bool {
+        self.iter[k] < 0.0
+    }
+
+    fn neighbours(&self, i: usize, j: usize) -> impl Iterator<Item = usize> + '_ {
+        let (w, h) = (self.w, self.h);
+        [(-1isize, 0isize), (1, 0), (0, -1), (0, 1)].into_iter().filter_map(move |(di, dj)| {
+            let (ni, nj) = (i as isize + di, j as isize + dj);
+            (ni >= 0 && nj >= 0 && (ni as usize) < w && (nj as usize) < h)
+                .then(|| nj as usize * w + ni as usize)
+        })
+    }
+
+    /// How surely the set's boundary passes through each cell: 1 = on it, 0 = well clear of it.
+    /// Interior cells are 0 — never a goal.
+    pub(crate) fn boundary_weights(&self) -> Vec<f32> {
+        let mut out = vec![0.0f32; self.w * self.h];
+        for j in 0..self.h {
+            for i in 0..self.w {
+                let k = j * self.w + i;
+                if self.interior(k) {
+                    continue;
+                }
+                out[k] = if self.neighbours(i, j).any(|n| self.interior(n)) {
+                    1.0 // the set's edge runs between this cell and its interior neighbour
+                } else if self.de_log2[k] < DE_NONE {
+                    // Estimate ≤ ½ cell → 1, ≥ 2 cells → 0, log-linear between. Measured on the
+                    // report's probes: flat exterior reads 4–16 cells, structure far below one.
+                    ((1.0 - self.de_log2[k]) * 0.5).clamp(0.0, 1.0)
+                } else {
+                    // No estimate: the escape-count step to a neighbour stands in for it
+                    // (≈1.4 counts per cell puts the boundary about a cell away).
+                    let c = self.iter[k];
+                    let g = self
+                        .neighbours(i, j)
+                        .filter(|&n| !self.interior(n))
+                        .map(|n| (self.iter[n] - c).abs())
+                        .fold(0.0f32, f32::max);
+                    (g - 0.5).clamp(0.0, 1.0)
+                };
+            }
+        }
+        out
+    }
+}
+
+/// Mean of `v` over the `(2r+1)²` window around every cell, clipped at the edges.
+fn box_mean(v: &[f32], w: usize, h: usize, r: usize) -> Vec<f64> {
+    // Summed-area table with a zero row and column in front.
+    let mut sat = vec![0.0f64; (w + 1) * (h + 1)];
+    for j in 0..h {
+        let mut row = 0.0;
+        for i in 0..w {
+            row += v[j * w + i] as f64;
+            sat[(j + 1) * (w + 1) + i + 1] = sat[j * (w + 1) + i + 1] + row;
+        }
+    }
+    let mut out = vec![0.0; w * h];
+    for j in 0..h {
+        for i in 0..w {
+            let (i0, i1) = (i.saturating_sub(r), (i + r + 1).min(w));
+            let (j0, j1) = (j.saturating_sub(r), (j + r + 1).min(h));
+            let s = sat[j1 * (w + 1) + i1] - sat[j0 * (w + 1) + i1] - sat[j1 * (w + 1) + i0]
+                + sat[j0 * (w + 1) + i0];
+            out[j * w + i] = s / ((i1 - i0) * (j1 - j0)) as f64;
+        }
+    }
+    out
+}
+
+/// Choose the goal for the next stretch of the dive.
+///
+/// `aspect` = view width / height. `current` = the goal being tracked (screen fraction, already
+/// carried through every zoom and pan since it was chosen), `None` on the first evaluation.
+/// `may_retarget` = false inside the cooldown after a retarget; a LOST goal (off screen, or no
+/// boundary within reach) retargets regardless. `None` = no boundary anywhere in view: a genuine
+/// dead end.
+pub(crate) fn choose_goal(
+    p: &Probe,
+    aspect: f64,
+    current: Option<(f64, f64)>,
+    may_retarget: bool,
+) -> Option<Steer> {
+    let (w, h) = (p.w, p.h);
+    let wt = p.boundary_weights();
+    let density = box_mean(&wt, w, h, DENSITY_R);
+    let inside: Vec<f32> = p.iter.iter().map(|&s| if s < 0.0 { 1.0 } else { 0.0 }).collect();
+    let inside = box_mean(&inside, w, h, DENSITY_R);
+    // Richness of a cell's neighbourhood: boundary density, discounted where the interior (flat
+    // black) fills it.
+    let rich = |k: usize| density[k] * (1.0 - 0.5 * inside[k]);
+    let frac = |i: usize, j: usize| ((i as f64 + 0.5) / w as f64, (j as f64 + 0.5) / h as f64);
+    let short = aspect.min(1.0);
+    let centre_w = |f: (f64, f64)| {
+        let r = ((f.0 - 0.5) * aspect).hypot(f.1 - 0.5) / short;
+        (-r * r / (2.0 * CENTER_SIGMA * CENTER_SIGMA)).exp()
+    };
+
+    let mut best: Option<(usize, usize, f64)> = None;
+    for j in 0..h {
+        for i in 0..w {
+            let k = j * w + i;
+            if wt[k] < ON_BOUNDARY {
+                continue;
+            }
+            let s = rich(k) * centre_w(frac(i, j));
+            if best.is_none_or(|b| s > b.2) {
+                best = Some((i, j, s));
+            }
+        }
+    }
+    let (bi, bj, best_score) = best?;
+    let global = Steer { goal: frac(bi, bj), retarget: true };
+
+    let on_screen = |g: &(f64, f64)| (0.0..1.0).contains(&g.0) && (0.0..1.0).contains(&g.1);
+    let Some(g) = current.filter(on_screen) else {
+        return Some(global); // the first pick, or the goal left the screen
+    };
+    let gi = ((g.0 * w as f64) as usize).min(w - 1);
+    let gj = ((g.1 * h as f64) as usize).min(h - 1);
+    let here = rich(gj * w + gi);
+    // The richest boundary cell within reach of the goal, lightly preferring the closest.
+    let mut local: Option<(usize, usize, f64)> = None;
+    for j in gj.saturating_sub(SNAP_R)..(gj + SNAP_R + 1).min(h) {
+        for i in gi.saturating_sub(SNAP_R)..(gi + SNAP_R + 1).min(w) {
+            let k = j * w + i;
+            if wt[k] < ON_BOUNDARY {
+                continue;
+            }
+            let d = (i as f64 - gi as f64).hypot(j as f64 - gj as f64) / SNAP_R as f64;
+            let s = rich(k) * (1.0 - 0.15 * d);
+            if local.is_none_or(|b| s > b.2) {
+                local = Some((i, j, s));
+            }
+        }
+    }
+    let Some((li, lj, _)) = local else {
+        return Some(global); // lost: the goal drifted off the boundary into flat or interior
+    };
+    let near = rich(lj * w + li);
+    // Keep the goal EXACTLY where it is while it is still on the boundary and nothing within reach
+    // is clearly richer — re-quantising it to a cell centre every look would wobble the aim.
+    let refined = if wt[gj * w + gi] >= ON_BOUNDARY && near <= REFINE_GAIN * here {
+        g
+    } else {
+        frac(li, lj)
+    };
+    let kept = near.max(here) * centre_w(refined);
+    if may_retarget && best_score > RETARGET_GAIN * kept {
+        return Some(global);
+    }
+    Some(Steer { goal: refined, retarget: false })
+}
+
+/// Where a screen-fraction point lands after `Viewport::zoom_at(pivot, factor)`: the pivot's
+/// content stays put and everything else scales away from it by `1/factor`.
+pub(crate) fn after_zoom(x: (f64, f64), pivot: (f64, f64), factor: f64) -> (f64, f64) {
+    (pivot.0 + (x.0 - pivot.0) / factor, pivot.1 + (x.1 - pivot.1) / factor)
+}
+
+/// One frame of the smooth dive's camera, decided: zoom about the new `aim` by `factor`, then move
+/// the content by `pan` (screen fractions).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct GlideStep {
+    pub(crate) aim: (f64, f64),
+    pub(crate) lead: (f64, f64),
+    pub(crate) speed: f64,
+    pub(crate) factor: f64,
+    pub(crate) pan: (f64, f64),
+}
+
+/// The smooth dive's camera for one frame of `dt` seconds at zoom `rate` (nepers/s).
+///
+/// The aim follows the goal through a `lead` point — two cascaded eases rather than one, because a
+/// single ease answers a goal that moves with an instant jump in the camera's VELOCITY, a visible
+/// jolt at every retarget. Cascaded, the velocity starts from zero and builds; only acceleration
+/// changes abruptly, which the eye does not read as a jerk.
+pub(crate) fn glide_step(
+    aim: (f64, f64),
+    lead: (f64, f64),
+    goal: (f64, f64),
+    speed: f64,
+    rate: f64,
+    aspect: f64,
+    dt: f64,
+) -> GlideStep {
+    // How far the aim still has to turn, in short-side screen units: through a big turn the zoom
+    // eases down to half speed, so the dive visibly steers rather than overshooting.
+    let turn = ((goal.0 - aim.0) * aspect).hypot(goal.1 - aim.1) / aspect.min(1.0);
+    let want = rate * (1.0 - 0.5 * (turn / 0.25).clamp(0.0, 1.0));
+    let speed = speed + (want - speed) * (1.0 - (-dt / SPEED_TAU).exp());
+    // Close each stage. Zooming about the aim scales every distance on screen by e^(speed·dt), so
+    // that is added to the closing rate: the NET approach runs at AIM_TAU per stage at any zoom
+    // rate (the old fixed 0.5 s ease only just outran the zoom at the slider's 4× setting).
+    let close = 1.0 - (-(1.0 / AIM_TAU + speed) * dt).exp();
+    let lead = (lead.0 + (goal.0 - lead.0) * close, lead.1 + (goal.1 - lead.1) * close);
+    let aim = (aim.0 + (lead.0 - aim.0) * close, aim.1 + (lead.1 - aim.1) * close);
+    // Zooming about a point keeps it where it is on screen; this slow pan is what brings the
+    // detail being dived into to the middle.
+    let c = 1.0 - (-dt / CENTER_TAU).exp();
+    let pan = ((0.5 - aim.0) * c, (0.5 - aim.1) * c);
+    GlideStep { aim, lead, speed, factor: (-speed * dt).exp(), pan }
+}
+
+#[cfg(test)]
+mod steering_tests;
 
 /// CLI `--autodive`: drive the autopilot dive from the command line so the frame-cost controller can
 /// be hammered UNPACED, and report whether the dangerous regime was actually reached.

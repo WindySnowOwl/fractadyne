@@ -12,6 +12,19 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Auto-zoom no longer dives into flat, empty regions, and it steers smoothly** (beta.109). From
+  a user's 2.6e19 spiral view the autopilot dived for 89 seconds and stopped at 1e37 on a
+  featureless screen. It re-picked the single most detailed spot about three times a second; the
+  picks jumped a median of a third of the screen, often between opposite corners, and the camera
+  eased toward their average, which is the empty gap between them. It now picks a point on the
+  fractal's edge, the only kind of point that never runs out of detail, where the detail is
+  densest near the middle of the view. It holds that point as the view moves, eases it to the
+  centre of the screen, and changes target only for something twice as rich; the zoom eases in
+  when it starts and slows through a turn. From the same view it reaches the 1e40 dive limit
+  with structure through the middle of the screen at every depth, and from the home view,
+  Seahorse Valley, a minibrot and an empty-centred view the target moves at most 7% of the
+  screen per step, where it used to jump across the whole of it.
+
 - **The gallery labels renders deeper than 1e308 correctly** (beta.109). Every image past the range
   of an ordinary floating-point number — 1e500, 1e1008, a 7.46e37000 spiral — was listed as
   "zoom inf×". The depth was never lost: exports store it as text precisely so it survives any

@@ -246,8 +246,10 @@ pub(crate) struct TrajSample {
 /// every frame (`ui/central.rs`); that is the exact discretisation of `dv/dt = (T − v)/τ`, whose
 /// integral is `nepers(τ) = T·τ + (v₀ − T)·τₑ·(1 − e^(−τ/τₑ))`. Because the anchor pixel maps to
 /// the SAME complex point every frame, the whole τ-second glide collapses to one
-/// `zoom_at(anchor, e^(−nepers))`: centre(τ) = a + e^(−nepers)·(c − a). The autopilot is the
-/// same shape with no easing (`v₀ = T = rate`) about its eased pivot. Two effects are knowingly
+/// `zoom_at(anchor, e^(−nepers))`: centre(τ) = a + e^(−nepers)·(c − a). The autopilot is
+/// predicted as the same shape about its goal (`v₀` = its current speed, `T = rate`): its slower
+/// ease and turn slow-down reach each depth later than that, and its centring pan only brings the
+/// centre nearer the goal than predicted. Two effects are knowingly
 /// left out, both on the safe side: the pipeline pacer only SLOWS the real dive (targets arrive
 /// later than predicted — a prefetch is early, never late), and a moving cursor moves `a` — the
 /// queue is re-derived from the live anchor every frame and a build whose centre drifted still
@@ -1936,7 +1938,7 @@ impl FractadyneApp {
 
     /// The glide the GUI is performing, if any: the hold-Space zoom about the cursor (`target_v` =
     /// the velocity the key is easing toward this frame, 0 once released) or the autopilot's
-    /// smooth phase about its eased pivot. `ppp` = egui pixels-per-point (the cursor is in points,
+    /// smooth phase about its goal. `ppp` = egui pixels-per-point (the cursor is in points,
     /// the viewport in device pixels). `None` = nothing to predict (idle, zooming out, autopilot
     /// stepping past `AUTOPILOT_SMOOTH_LOG2`).
     pub(crate) fn interactive_glide_oracle(&self, target_v: f64, ppp: f64) -> Option<Glide> {
@@ -1946,8 +1948,12 @@ impl FractadyneApp {
             if self.autopilot.stepping {
                 return None;
             }
-            let (tx, ty) = self.autopilot.target;
-            (tx * w, ty * h, rate, rate, self.autopilot.dive_log2)
+            // Anchor on the GOAL — the fractal point the dive converges on (the aim eases onto it
+            // and the centring pan brings it to the middle), easing from the current speed to the
+            // full rate. The real dive eases more slowly and slows through a turn, so it reaches
+            // each predicted depth LATER: a prefetch that is early is the safe side (see `Glide`).
+            let (tx, ty) = self.autopilot.goal.unwrap_or(self.autopilot.aim);
+            (tx * w, ty * h, self.autopilot.speed, rate, self.autopilot.dive_log2)
         } else {
             let v0 = self.pointer.zoom_vel;
             // Zooming IN: the key is held inward, or the glide-out after a release still moves.

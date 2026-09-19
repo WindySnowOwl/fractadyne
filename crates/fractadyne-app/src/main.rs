@@ -4771,10 +4771,19 @@ struct EffectsConfig {
 struct AutopilotState {
     /// Continuously diving toward the detail-richest region.
     active: bool,
-    /// Screen-fraction pivot (0..1) currently zooming about; eased toward `goal` each frame.
-    target: (f64, f64),
-    /// Latest *evaluated* target (every `AUTOPILOT_EVAL_INTERVAL`); the goal `target` chases.
-    goal: (f64, f64),
+    /// Screen-fraction point (0..1) the dive is zooming about; eases onto `goal`. Carried through
+    /// every zoom and pan like `goal`, so it stays on its content.
+    aim: (f64, f64),
+    /// Intermediate point between `goal` and `aim` (two cascaded eases keep the camera's velocity
+    /// continuous through a retarget — see `autopilot::glide_step`). Carried like `aim`.
+    lead: (f64, f64),
+    /// The boundary point being dived toward (screen fraction), carried through every zoom and
+    /// pan so it stays on its CONTENT between evaluations; `None` until the first evaluation.
+    goal: Option<(f64, f64)>,
+    /// Current zoom speed (nepers/s), eased toward the rate the dive wants.
+    speed: f64,
+    /// App-time of the last retarget to a different region (starts the cooldown).
+    retarget_t: f64,
     /// App-time of the last target re-evaluation.
     eval_t: f64,
     /// True during the deep *stepped* dive (past the smooth regime) — see autopilot.rs / render.rs.
@@ -6049,8 +6058,11 @@ impl FractadyneApp {
             home_anim: None,
             autopilot: AutopilotState {
                 active: false,
-                target: (0.5, 0.5),
-                goal: (0.5, 0.5),
+                aim: (0.5, 0.5),
+                lead: (0.5, 0.5),
+                goal: None,
+                speed: 0.0,
+                retarget_t: f64::NEG_INFINITY,
                 eval_t: 0.0,
                 stepping: false,
                 dive_log2: s.autopilot_dive_log2,
