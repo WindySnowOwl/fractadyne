@@ -1477,6 +1477,15 @@ struct Perf {
     /// again when the render params are built later in the SAME frame — so the value that travels
     /// to the GPU is the signature of the render it travels with.
     norm_sig_submit: [u64; 2],
+    /// Whether this frame's escape-range reading will describe the whole picture going on screen (an
+    /// unchunked pass, a displayed one-pass motion preview, or the pass that completes a chunked
+    /// walk — not a pinned refresh's or a settled walk's earlier passes), decided where the chunk
+    /// window and the pin are chosen and carried to the GPU with the params like `norm_sig_submit`.
+    norm_complete_submit: [bool; 2],
+    /// Echo sink for that flag, stored with `norm_sig_sink`. ⭐A mid-walk reading's top is only as
+    /// high as the walk has reached, so it may widen the palette window but never narrow it, and it
+    /// may never decide a settled view's mapping — see the drain in render.rs.
+    norm_complete_sink: [std::sync::Arc<std::sync::atomic::AtomicBool>; 2],
     /// EMA-smoothed escaped smooth-iter range per view — the live auto-normalization input.
     norm_range: [Option<(f32, f32)>; 2],
     /// The view signature `norm_range`/`norm_grad` were DECIDED for, and whether that decision
@@ -1898,6 +1907,11 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             ],
             norm_sig_submit: [0; 2],
+            norm_complete_submit: [true; 2],
+            norm_complete_sink: [
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            ],
             norm_range: [None, None],
             norm_sig: [0, 0],
             norm_locked: [false, false],

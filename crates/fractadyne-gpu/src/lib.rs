@@ -344,6 +344,8 @@ struct CounterRead {
     /// Same idea as `px` and `max_iter` above, and recorded in the same breath at copy time so it
     /// cannot disagree with the counters it accompanies.
     norm_sig: u64,
+    /// The submitting frame's `MandelbrotParams::norm_complete`, recorded with `norm_sig`.
+    norm_complete: bool,
 }
 
 impl CounterRead {
@@ -361,6 +363,7 @@ impl CounterRead {
             px: 0,
             max_iter: 0,
             norm_sig: 0,
+            norm_complete: true,
         }
     }
 
@@ -379,6 +382,7 @@ impl CounterRead {
         hist_out: Option<&GradHistSink>,
         work_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
         norm_sig_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
+        norm_complete_out: Option<&Arc<std::sync::atomic::AtomicBool>>,
     ) {
         use std::sync::atomic::Ordering::SeqCst;
         match self.state {
@@ -416,6 +420,10 @@ impl CounterRead {
                         // armed frame, so one signature covers both.
                         if let Some(o) = norm_sig_out {
                             o.store(self.norm_sig, SeqCst);
+                        }
+                        // Whether that frame's range covered its whole ask — same ordering rule.
+                        if let Some(o) = norm_complete_out {
+                            o.store(self.norm_complete, SeqCst);
                         }
                         // Local escape gradient: (Σ×16) << 32 | sample count. `+1` on the count
                         // biases so "published with no samples" is distinguishable from "never
@@ -1656,6 +1664,16 @@ pub struct MandelbrotParams {
     /// This frame's live-normalization view signature, handed to the GPU side purely so it can be
     /// handed back with the reading. Opaque here: the app owns what it means.
     pub norm_sig: u64,
+    /// Whether this frame's escape-range reading describes the whole picture going on screen: an
+    /// unchunked pass, a displayed one-pass preview, or the pass that completes a chunked walk. A
+    /// chunked frame's resolve commits the range of everything escaped SO FAR, so a mid-walk
+    /// reading's top is only as high as the walk has reached. Handed back with the reading like
+    /// `norm_sig`; the app decides it, because only the app knows where its walk ends and what it
+    /// displays meanwhile.
+    pub norm_complete: bool,
+    /// Sink for the `norm_complete` of the frame that submitted the norm/gradient readings, stored
+    /// before them exactly like `norm_sig_out`. `None` disables it.
+    pub norm_complete_out: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// This frame's VIEW identity, used to track which view the pixels in the iteration texture
     /// were drawn at — see `ViewResources::content_stamp`. Opaque here; the app owns what it means,
     /// and only equality matters. A texture resize seeds from the old content ONLY when this
@@ -1877,6 +1895,7 @@ impl CallbackTrait for MandelbrotParams {
             self.grad_hist.as_ref(),
             self.work_counters.as_ref(),
             self.norm_sig_out.as_ref(),
+            self.norm_complete_out.as_ref(),
         );
 
         // The offscreen iteration texture is (resolution × ss). It must not exceed
@@ -2318,6 +2337,7 @@ impl CallbackTrait for MandelbrotParams {
                 view.counter_read.px = (size[0] as u64) * (size[1] as u64);
                 view.counter_read.max_iter = self.max_iter;
                 view.counter_read.norm_sig = self.norm_sig;
+                view.counter_read.norm_complete = self.norm_complete;
                 view.counter_read.state = TimingState::Recorded;
             }
             view.last_iter_key = Some(key);
