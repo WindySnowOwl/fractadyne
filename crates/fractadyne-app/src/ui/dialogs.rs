@@ -1464,6 +1464,11 @@ impl FractadyneApp {
                         .fill(fill)
                         .stroke(egui::Stroke::new(1.0_f32, accent))
                         .show(ui, |ui| {
+                            // Wrap only for a message that would not fit the window: the default
+                            // wrap width broke "…Misiurewicz point… (36 s; any input stops)" in
+                            // the middle of its parenthesis. Messages that want two lines carry
+                            // their own newline (the autopilot's do), which a label honours.
+                            ui.set_max_width((ctx.screen_rect().width() - 48.0).clamp(240.0, 900.0));
                             ui.label(egui::RichText::new(msg).color(ink));
                         });
                 });
