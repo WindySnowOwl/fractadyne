@@ -189,6 +189,81 @@ fn a_new_goal_is_placed_on_the_edge_not_at_its_cell_centre() {
     assert!((s.goal.0 * 40.0 - 20.3).abs() < CELL_TOL, "x {}", s.goal.0 * 40.0);
 }
 
+/// Set one cell's distance estimate (log₂ cells) directly — how deep the dive could go about it.
+fn at_depth(p: &mut Probe, i: usize, j: usize, de_log2: f32) {
+    p.de_log2[j * p.w + i] = de_log2;
+}
+
+/// Boundary density over the neighbourhood of a cell — the quantity the FIRST rewrite maximised.
+fn density_at(p: &Probe, i: usize, j: usize) -> f64 {
+    box_mean(&p.boundary_weights(), p.w, p.h, DENSITY_R)[j * p.w + i]
+}
+
+#[test]
+fn the_goal_takes_the_deep_edge_over_the_denser_eye_of_the_spiral() {
+    // ⭐The reported failure, as a fixture. A ring of deep edge around a smooth middle. The middle
+    // saturates the boundary WEIGHT at 1.0 — its estimate is half a cell, which on a deep view is
+    // about eleven screen pixels — so it is a perfectly legal goal, it is dead centre, and it has
+    // the higher boundary density, because the density of a ring peaks at the ring's centre.
+    // Maximising density therefore aims at the eye, which is the flat part. But the eye is only two
+    // octaves deep and the ring is nine: the dive must take the ring, where the octaves are.
+    let mut p = flat(40, 25);
+    for j in 0..25 {
+        for i in 0..40 {
+            let r = ((i as f64 - 20.0).hypot(j as f64 - 12.0)) as f32;
+            if (5.0..=6.5).contains(&r) {
+                at_depth(&mut p, i, j, -8.0); // the structure: 9 octaves of descent
+            } else if r <= 3.0 {
+                at_depth(&mut p, i, j, -1.0); // the eye: weight 1.0, but 2 octaves and it is spent
+            }
+        }
+    }
+    assert_eq!(p.boundary_weights()[12 * 40 + 20], 1.0, "fixture: the eye must saturate the weight");
+    // The fixture discriminates only if the eye really is the denser, more central candidate.
+    assert!(
+        density_at(&p, 20, 12) > density_at(&p, 25, 12),
+        "fixture: the eye must out-score the ring on density, or this test proves nothing"
+    );
+    let s = choose_goal(&p, 1.6, None, true).unwrap();
+    let (i, j) = cell(&p, s.goal);
+    let r = (i as f64 - 20.0).hypot(j as f64 - 12.0);
+    assert!((4.0..=7.5).contains(&r), "picked cell ({i},{j}), {r:.1} cells from the eye");
+}
+
+#[test]
+fn an_incredible_distance_estimate_cannot_outbid_a_credible_one() {
+    // Both cells are single specks with identical surroundings, so only depth and centring decide.
+    // The near one reports the deepest estimate the shader is trusted for; the far one reports a
+    // depth no estimate is trusted at (`DE_TRUST_LOG2`), of the kind a pixel that lost its
+    // derivative produces. Floored, they tie on depth and the near one wins on centring; taken at
+    // face value the far one would win by 3:1 and the dive would be steered by a broken pixel.
+    let mut p = flat(40, 25);
+    at_depth(&mut p, 21, 12, DE_TRUST_LOG2); // credible, near the centre
+    at_depth(&mut p, 26, 12, -40.0); // 28 octaves past anything the shader can resolve
+    assert!(off_centre(((26.5) / 40.0, 12.5 / 25.0), 1.6) <= TARGET_MAX_OFF, "fixture: both in bound");
+    let s = choose_goal(&p, 1.6, None, true).unwrap();
+    let (i, _) = cell(&p, s.goal);
+    assert_eq!(i, 21, "steered by the untrustworthy reading (picked column {i})");
+}
+
+#[test]
+fn depth_is_unsaturated_through_the_range_the_dive_lives_in() {
+    // The weight saturates at a half cell and cannot rank anything below it; the depth must.
+    let mut p = flat(6, 1);
+    for (i, de) in [2.0f32, 0.0, -1.0, -4.0, -12.0, -30.0].into_iter().enumerate() {
+        at_depth(&mut p, i, 0, de);
+    }
+    let wt = p.boundary_weights();
+    assert_eq!((wt[2], wt[3], wt[4]), (1.0, 1.0, 1.0), "the weight ties everything below a half cell");
+    let d: Vec<f64> = (0..6).map(|k| p.depth(k, &wt)).collect();
+    assert_eq!(d[0], 0.0, "two cells clear of the edge is no depth at all");
+    assert!(d[1] < d[2] && d[2] < d[3] && d[3] < d[4], "depth must rank where the weight ties: {d:?}");
+    assert_eq!(d[4], d[5], "past the trusted depth every reading counts the same");
+    let mut interior = flat(1, 1);
+    interior.iter[0] = -1.0;
+    assert_eq!(interior.depth(0, &interior.boundary_weights()), 0.0, "interior is never a goal");
+}
+
 /// Distance from the screen centre in short-side units — the measure the target bound uses.
 fn off_centre(g: (f64, f64), aspect: f64) -> f64 {
     ((g.0 - 0.5) * aspect).hypot(g.1 - 0.5) / aspect.min(1.0)
