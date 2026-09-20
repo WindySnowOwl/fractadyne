@@ -119,6 +119,12 @@ pub struct SessionState {
     /// stepped dive to reach this depth.
     #[serde(default = "default_autopilot_dive_log2")]
     pub autopilot_dive_log2: f64,
+    /// What the auto-zoom puts first: `"speed"` (zoom at the set rate; the screen refreshes with
+    /// the first frame proven to hold detail, at adaptive resolution) or `"quality"` (every
+    /// refresh is a fully resolved native-resolution frame, and the zoom is paced so the held
+    /// frame never magnifies far before the next one lands). Unknown values read as `speed`.
+    #[serde(default = "default_autopilot_priority")]
+    pub autopilot_priority: String,
     /// Live-render work-budget multiplier (× the built-in `WORK_BUDGET`). Higher renders the live
     /// deep-zoom view at fuller resolution (crisper) at the cost of frame-rate / GPU-watchdog margin;
     /// does not affect exports. Default 1.0.
@@ -396,6 +402,10 @@ fn default_autopilot_dive_log2() -> f64 {
     900.0 // ≈ 1e271×
 }
 
+fn default_autopilot_priority() -> String {
+    "speed".to_string()
+}
+
 fn default_update_track() -> String {
     "stable".to_string()
 }
@@ -549,6 +559,7 @@ impl Default for SessionState {
             click_zoom_factor: default_click_zoom_factor(),
             click_zoom_snap: false,
             autopilot_dive_log2: default_autopilot_dive_log2(),
+            autopilot_priority: default_autopilot_priority(),
             work_budget_scale: default_work_budget_scale(),
             min_motion_res: default_min_motion_res(),
             prefer_detail: false,

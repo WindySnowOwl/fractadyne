@@ -1278,6 +1278,17 @@ struct Perf {
     adopt_complete: [u64; 2],
     chunk_motion_frames: [u64; 2],
     dirty_shown: [u64; 2],
+    /// Pinned refreshes adopted short of their ask because their PICTURE was done
+    /// (`PinVerdict::AdoptConverged`, the autopilot's Speed priority) — kept apart from
+    /// `adopt_partial`, whose zero is the §9 assertion, and from `adopt_complete`.
+    adopt_converged: [u64; 2],
+    /// Pinned walks that completed with no escaped pixel (`PinStop::Blank`): the frame that was
+    /// NOT put on screen. Counted for the harnesses; the consecutive count lives in `content`.
+    blank_walks_total: [u64; 2],
+    /// What the GPU says about the CONTENT of each view's textures, and the per-view sink it
+    /// arrives through — see `render::ContentTrack`.
+    content: [crate::render::ContentTrack; 2],
+    content_sink: [fractadyne_gpu::ContentSink; 2],
     /// Frames of "what did we actually present" logging still owed at the START of the current
     /// glide, per view. Refilled to [`GLIDE_PROBE_FRAMES`] whenever the view is not interacting,
     /// spent while it is.
@@ -1902,6 +1913,13 @@ impl Default for Perf {
             glide_probe_left: [GLIDE_PROBE_FRAMES; 2],
             chunk_motion_frames: [0, 0],
             dirty_shown: [0, 0],
+            adopt_converged: [0, 0],
+            blank_walks_total: [0, 0],
+            content: [Default::default(), Default::default()],
+            content_sink: [
+                std::sync::Arc::new(std::sync::Mutex::new(None)),
+                std::sync::Arc::new(std::sync::Mutex::new(None)),
+            ],
             pin: [None, None],
             chunk_dirty: [false, false],
             chunk_last_range: [None, None],
@@ -4887,6 +4905,8 @@ struct AutopilotState {
     stepping: bool,
     /// Dive limit as log2(magnification); persisted.
     dive_log2: f64,
+    /// Speed or Quality first (see `autopilot::AutopilotPriority`); persisted.
+    priority: crate::autopilot::AutopilotPriority,
 }
 
 /// Transient pointer / zoom / pan interaction state (not persisted): the in-progress zoom-box and
@@ -5545,6 +5565,10 @@ struct FractadyneApp {
     /// A progressive cold start's coarse preview, parked between arrival and its usefulness probe
     /// (`probe_pending_coarse`) — never installed sight-unseen; see `RecomputeResult::coarse_stage`.
     pending_coarse: [Option<crate::render::RecomputeResult>; 2],
+    /// A finished reference build parked because installing it would abort a young pinned
+    /// refresh (`render::install_recompute`, `PIN_INSTALL_DEFER_FRAMES`); installed the frame the
+    /// pin ends. Counts as "in flight" for the reactive spawn gate.
+    pending_install: [Option<crate::render::RecomputeResult>; 2],
     /// Script-playback reference LOOKAHEAD queue (view 0): a tour knows its future camera path, so
     /// while the current reference serves the view, workers build the ones the dive is ABOUT to
     /// need (slots spaced ~2 octaves apart along the script). Finished results are held until the
@@ -6177,6 +6201,8 @@ impl FractadyneApp {
                 eval_t: 0.0,
                 stepping: false,
                 dive_log2: s.autopilot_dive_log2,
+                priority: crate::autopilot::AutopilotPriority::parse(&s.autopilot_priority)
+                    .unwrap_or_default(),
             },
             anim: AnimationState {
                 show_orbits: s.show_orbits,
@@ -6534,6 +6560,7 @@ impl FractadyneApp {
             update_prompt_open: false,
             ref_cache: [RefCache::default(), RefCache::default()],
             pending_coarse: [None, None],
+            pending_install: [None, None],
             orbit_cache_mb: s.orbit_cache_mb.max(64),
             recompute_rx: [None, None],
             ref_prefetch: Vec::new(),
@@ -6571,6 +6598,14 @@ impl FractadyneApp {
         }
         if args.iter().any(|a| a == "--no-show-zoom-target") {
             app.render_cfg.show_zoom_target = false;
+        }
+        // The autopilot's priority, from the command line as well as the panel, so a harness
+        // dive can be run either way without editing a session file.
+        if let Some(i) = args.iter().position(|a| a == "--autopilot-priority") {
+            match args.get(i + 1).and_then(|v| crate::autopilot::AutopilotPriority::parse(v)) {
+                Some(p) => app.autopilot.priority = p,
+                None => eprintln!("fractadyne: --autopilot-priority expects `speed` or `quality`"),
+            }
         }
         // Sound: `--no-sound` silences the render-finished tone (and `--sound` overrides
         // `FRACTADYNE_NO_SOUND` back on). Parsed before anything can finish a render.
@@ -6987,6 +7022,7 @@ impl FractadyneApp {
             click_zoom_snap: self.click_zoom_snap,
             click_zoom_factor: self.render_cfg.click_zoom_factor,
             autopilot_dive_log2: self.autopilot.dive_log2,
+            autopilot_priority: self.autopilot.priority.as_str().to_string(),
             work_budget_scale: self.render_cfg.work_budget_scale,
             min_motion_res: self.render_cfg.min_motion_res,
             prefer_detail: self.render_cfg.prefer_detail,
@@ -7550,6 +7586,7 @@ impl FractadyneApp {
         self.recompute_rx = [None, None];
         // ...and a parked coarse preview is a result from that same dropped pipeline.
         self.pending_coarse = [None, None];
+        self.pending_install = [None, None];
         // Same for the playback lookahead: a prefetched reference for the old fractal/params
         // must never install after a change.
         self.ref_prefetch.clear();

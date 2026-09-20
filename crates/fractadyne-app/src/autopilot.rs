@@ -54,8 +54,104 @@ const CENTER_DEAD: f64 = 0.10;
 const SPEED_TAU: f64 = 0.4;
 /// Seconds after a retarget during which only a LOST goal may retarget again.
 const RETARGET_COOLDOWN: f64 = 1.5;
+/// Pinned walks that complete with no escaped pixel, in a row, before the dive is called a dead
+/// end: the view has nothing at this iteration count, and diving blind only magnifies the hold.
+const BLANK_WALKS_DEAD_END: u32 = 3;
+
+/// What the dive puts first (Navigate panel ▸ "Auto-zoom priority"; `--autopilot-priority`).
+///
+/// Either way the screen never shows a frame that has not been proven to hold a picture
+/// (design/verified-present.md); the priorities differ in what a refresh must reach before it
+/// replaces the picture, and in whether the zoom waits for it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum AutopilotPriority {
+    /// Zoom at the set rate. A refresh lands as soon as its picture has stopped changing
+    /// (`render::RefreshPolicy::Converged`), at the adaptive motion resolution; between refreshes
+    /// the held frame follows the zoom and softens.
+    #[default]
+    Speed,
+    /// Every refresh is a fully resolved frame at native resolution, and the zoom is paced so
+    /// the held frame never magnifies far before the next one lands (`quality_speed_cap`): a
+    /// slower dive that is crisp at every moment.
+    Quality,
+}
+
+impl AutopilotPriority {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Speed => "speed",
+            Self::Quality => "quality",
+        }
+    }
+
+    pub(crate) fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "speed" => Some(Self::Speed),
+            "quality" => Some(Self::Quality),
+            _ => None,
+        }
+    }
+}
+
+/// The zoom speed (nepers/s) the Quality priority allows, given how long a refresh currently
+/// takes and how far the held frame has already been magnified.
+///
+/// The bound is `HELD_MAX_OCT`: the held frame may not magnify past it before the next resolved
+/// frame lands, so the speed is what covers that many octaves in one refresh period. A frame that
+/// is ALREADY older than the bound slows the zoom further in proportion (the refresh in flight
+/// will land staler than the period predicted), and no period at all — the first refresh of a
+/// dive — leaves the rate alone. Never below `QUALITY_MIN_SPEED_FRAC` of the rate: a governor with
+/// no floor stalls when refreshes stop, and a stalled dive cannot produce the refresh that would
+/// release it.
+pub(crate) fn quality_speed_cap(refresh_period_s: f64, held_age_oct: f64, rate: f64) -> f64 {
+    let held_max = crate::tunables::HELD_MAX_OCT;
+    let base = if refresh_period_s > 0.0 && refresh_period_s.is_finite() {
+        held_max * std::f64::consts::LN_2 / refresh_period_s
+    } else {
+        rate
+    };
+    // (`NaN > x` is false, so a garbage age leaves the pace alone; an infinite one floors it.)
+    let governor = if held_age_oct > held_max { held_max / held_age_oct } else { 1.0 };
+    let floor = rate * crate::tunables::QUALITY_MIN_SPEED_FRAC;
+    (base * governor).clamp(floor.min(rate), rate.max(0.0))
+}
 
 impl FractadyneApp {
+    /// When a pinned refresh may replace the picture on screen — see `render::RefreshPolicy`.
+    pub(crate) fn refresh_policy(&self) -> crate::render::RefreshPolicy {
+        if self.autopilot.active && self.autopilot.priority == AutopilotPriority::Speed {
+            crate::render::RefreshPolicy::Converged
+        } else {
+            crate::render::RefreshPolicy::Full
+        }
+    }
+
+    /// How long (frames) a reference install at another point waits behind a young pinned
+    /// refresh (`PIN_INSTALL_DEFER_FRAMES`). Under the Quality priority the zoom is paced to
+    /// the refreshes, so the reference goes stale slowly and a full-ask walk may take longer
+    /// than half a second: it gets four times the room. Speed, and every manual glide, keep the
+    /// short deferral — at 4× the reference is too stale to paint 0.7 s after its install, and a
+    /// pin that outlives that is discarded by the freeze anyway.
+    pub(crate) fn install_defer_frames(&self) -> u64 {
+        let base = crate::tunables::PIN_INSTALL_DEFER_FRAMES;
+        if self.autopilot.active && self.autopilot.priority == AutopilotPriority::Quality {
+            base * 4
+        } else {
+            base
+        }
+    }
+
+    /// Whether moving refreshes render at NATIVE resolution: the user's "Prefer detail while
+    /// zooming", overridden by the autopilot's priority while it dives (Quality = native, Speed =
+    /// adaptive — "as fast as possible" cannot mean waiting for full-size frames).
+    pub(crate) fn prefer_detail_effective(&self) -> bool {
+        if self.autopilot.active {
+            self.autopilot.priority == AutopilotPriority::Quality
+        } else {
+            self.render_cfg.prefer_detail
+        }
+    }
+
     /// Toggle the auto-zoom autopilot (single view only).
     pub(crate) fn toggle_autopilot(&mut self, ctx: &egui::Context) {
         self.autopilot.active = !self.autopilot.active;
@@ -66,6 +162,12 @@ impl FractadyneApp {
             self.autopilot.speed = 0.0;
             self.autopilot.retarget_t = f64::NEG_INFINITY;
             self.autopilot.eval_t = 0.0; // force an evaluation next frame
+            // The Quality pacer measures the time between refreshes from here; a settled view's
+            // last adoption may be minutes old and would read as a stalled dive.
+            let ct = &mut self.perf.content[0];
+            ct.adopt_at_us = crate::app_micros();
+            ct.refresh_period_s = 0.0;
+            ct.blank_walks = 0;
             self.home_anim = None;
             self.stop_playback();
             self.set_toast("Autopilot on — diving toward detail (any input stops)", ctx);
@@ -114,6 +216,18 @@ impl FractadyneApp {
                 ),
                 ctx,
             );
+            return;
+        }
+        // Refreshes that complete with no escaped pixel: the view has nothing at this iteration
+        // count (the verified-present policy keeps those frames off the screen, so without this
+        // the dive would carry on magnifying the held frame into a flat colour).
+        if self.perf.content[0].blank_walks >= BLANK_WALKS_DEAD_END {
+            self.autopilot.active = false;
+            self.autopilot.stepping = false;
+            self.pointer.zoom_vel = 0.0;
+            let range_hi = self.perf.norm_range[0].map(|(_, hi)| hi as f64);
+            let msg = dead_end_message(l2, self.render_cfg.max_iter, self.render_cfg.auto_iter, range_hi);
+            self.set_toast(msg, ctx);
             return;
         }
         let now = ctx.input(|i| i.time);
@@ -216,8 +330,22 @@ impl FractadyneApp {
     fn autopilot_glide(&mut self, goal: (f64, f64), dt: f64) {
         let rate = ZOOM_RATE * self.render_cfg.zoom_rate as f64;
         let aspect = self.viewport.width_px / self.viewport.height_px;
+        // Quality: pace the zoom to the refreshes actually landing (see `quality_speed_cap`).
+        let speed_cap = match self.autopilot.priority {
+            AutopilotPriority::Speed => f64::INFINITY,
+            AutopilotPriority::Quality => {
+                let period = self.perf.content[0].refresh_period_now(crate::app_micros());
+                let rc = &self.ref_cache[0];
+                let held_age = if rc.frozen_center.is_some() {
+                    (self.viewport.log2_magnification() - rc.frozen_l2).max(0.0)
+                } else {
+                    0.0
+                };
+                quality_speed_cap(period, held_age, rate)
+            }
+        };
         let a = &self.autopilot;
-        let g = glide_step(a.aim, a.lead, goal, a.speed, rate, aspect, dt);
+        let g = glide_step(a.aim, a.lead, goal, a.speed, rate, speed_cap, aspect, dt);
         self.autopilot.speed = g.speed;
         self.autopilot.lead = g.lead;
         self.autopilot.aim = g.aim;
@@ -700,13 +828,16 @@ pub(crate) fn glide_step(
     goal: (f64, f64),
     speed: f64,
     rate: f64,
+    speed_cap: f64,
     aspect: f64,
     dt: f64,
 ) -> GlideStep {
     // How far the aim still has to turn, in short-side screen units: through a big turn the zoom
-    // eases down to half speed, so the dive visibly steers rather than overshooting.
+    // eases down to half speed, so the dive visibly steers rather than overshooting. The cap is
+    // the Quality priority's pace (`quality_speed_cap`; infinite for Speed) — applied to the
+    // WANTED speed, so it is eased into like every other change and never a step.
     let turn = ((goal.0 - aim.0) * aspect).hypot(goal.1 - aim.1) / aspect.min(1.0);
-    let want = rate * (1.0 - 0.5 * (turn / 0.25).clamp(0.0, 1.0));
+    let want = (rate * (1.0 - 0.5 * (turn / 0.25).clamp(0.0, 1.0))).min(speed_cap.max(0.0));
     let speed = speed + (want - speed) * (1.0 - (-dt / SPEED_TAU).exp());
     // Close each stage. Zooming about the aim scales every distance on screen by e^(speed·dt), so
     // that is added to the closing rate: the NET approach runs at AIM_TAU per stage at any zoom
@@ -748,6 +879,8 @@ pub(crate) fn glide_step(
 
 #[cfg(test)]
 mod steering_tests;
+#[cfg(test)]
+mod priority_tests;
 
 /// CLI `--autodive`: drive the autopilot dive from the command line so the frame-cost controller can
 /// be hammered UNPACED, and report whether the dangerous regime was actually reached.

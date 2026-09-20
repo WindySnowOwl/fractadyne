@@ -12,6 +12,34 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The view no longer flashes to black or to a single colour while diving, and the auto-zoom
+  has a Speed / Quality priority** (beta.110). A user's recording of an auto-zoom dive from
+  8e175× at 4× speed had one frame in three as a flat colour — black, or the colour of the
+  previous frame's centre — flashing against the occasional crisp frame. Lined up against the log:
+  a refresh at that depth walks the iteration axis in passes while the screen holds the last
+  complete frame, and two things broke that hold. The snapshot the screen holds was copied *after*
+  the render target had been cleared for a new size, so a refresh that started at a different
+  resolution (the motion-resolution ladder changed it about once a second) held a black frame for
+  its whole walk; and nothing anywhere checked that a frame had any content before showing or
+  holding it. Meanwhile most refreshes never finished — each had to walk the full 155,000-iteration
+  ask where the picture is complete by 4,400, began every band with 12-iteration passes, and was
+  cancelled whenever a reference for a deeper view arrived — so the held frame was magnified 30–80×
+  into one colour before the next one landed. Now the GPU reports how many pixels of each frame
+  have escaped, and a frame reaches the screen, or becomes the held snapshot, only when a reading
+  of its own render shows a picture; the snapshot is taken before any resize; a refresh that
+  finishes with nothing escaped is kept off the screen (three in a row stop the dive with the
+  iteration-count message); a reference arriving while a young refresh is in flight waits for it;
+  a refresh keeps half of what it learned about pass sizes when the reference changes; and a frame
+  that ends up frozen no longer has the work it never ran counted as proof of a fast GPU (that
+  phantom reading lifted the motion budget fifty-fold in one frame and made the motion resolution
+  ladder flip between its ends about once a second, restarting every refresh it touched). The new
+  **Auto-zoom priority** (Navigation panel, Tools menu, `--autopilot-priority`) chooses what the
+  dive puts first: **Speed** zooms at the set rate and refreshes as soon as a frame's picture has
+  stopped changing between passes, at the adaptive motion resolution; **Quality** shows only fully
+  resolved full-resolution frames and paces the zoom to them, so the frame on screen never
+  magnifies past about 1.4× before the next one lands. `FRACTADYNE_TRACE=gpu` now prints each
+  frame's content reading and `tile` prints what each frame showed (live, the held snapshot, or a
+  reprojection) — see DIAGNOSTICS.md.
 - **Auto-zoom no longer dives into flat, empty regions, and it steers smoothly** (beta.109). From
   a user's 2.6e19 spiral view the autopilot dived for 89 seconds and stopped at 1e37 on a
   featureless screen. It re-picked the single most detailed spot about three times a second; the

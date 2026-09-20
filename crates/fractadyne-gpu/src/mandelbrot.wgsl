@@ -455,6 +455,11 @@ const CTR_BLA_SKIP: u32 = 3u;    // BLA multi-step skips taken
 const CTR_MAXITER: u32 = 4u;     // fragments that exhausted max_iter
 const CTR_ESC_MIN: u32 = 5u;     // min escaped smooth-iter (f32 bits; positive floats sort as u32)
 const CTR_ESC_MAX: u32 = 6u;     // max escaped smooth-iter (f32 bits)
+// ESCAPED PIXELS in the frame — the count the app checks before it lets a frame reach the screen
+// or become the held snapshot (a walk that has not reached the view's first escape resolves to
+// one flat interior colour; nothing else on the wire can tell that frame from a finished one).
+// Un-subsampled, like CTR_MAXITER: it is a COUNT against the frame's pixel total.
+const CTR_ESC_COUNT: u32 = 7u;
 // LOCAL GRADIENT of the escape field: Σ|Δ smooth-iter| between horizontally adjacent escaped
 // pixels (×16, clamped), and the number of samples in that sum. Their ratio is the mean step the
 // palette takes from one pixel to the next, which is what decides whether a fixed cycle ALIASES.
@@ -486,6 +491,13 @@ fn esc_range_commit(sm: f32) {
         atomicMin(&counters[CTR_ESC_MIN], b);
         atomicMax(&counters[CTR_ESC_MAX], b);
     }
+}
+
+// One escaped pixel of THIS FRAME (see CTR_ESC_COUNT). Called once per escaped fragment on the
+// single-pass iterate and once per escaped pixel per pass in `fs_resolve` — never at the chunk
+// entry points' settle transition, which would double-count against the resolve.
+fn esc_count_commit() {
+    atomicAdd(&counters[CTR_ESC_COUNT], 1u);
 }
 
 // Two render targets: `main` = (smooth iter, normal.x, normal.y, DE log2);
@@ -766,6 +778,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         if (newton) {
             // Color by convergence speed (iteration count).
             esc_range_commit(f32(iter));
+            esc_count_commit();
             return FragOut(vec4<f32>(f32(iter), 0.0, 0.0, 1.0e30), AUX_NONE);
         }
         let mag2 = dot(zf, zf);
@@ -779,6 +792,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         }
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
+        esc_count_commit();
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     } else if (iu.mode == 2u) {
         // Floatexp perturbation (mode 2): δz/δc carried as floatexp (df32 mantissa +
@@ -1123,6 +1137,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         }
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
+        esc_count_commit();
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     } else {
         // df32 perturbation (mode 0): the fast path for the common deep range. Valid
@@ -1326,6 +1341,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         }
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
+        esc_count_commit();
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     }
 }
@@ -2136,6 +2152,8 @@ fn fs_resolve(in: VsOut) -> FragOut {
         }
         return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), AUX_NONE);
     }
+    // An escaped pixel of the resolved frame, whatever pass settled it (see CTR_ESC_COUNT).
+    esc_count_commit();
     // Both modes store the FULL z (df32) in st_z at escape and the display derivative's mantissa
     // in st_dz; info ch2 = smit, ch3 = the derivative's floatexp exponent (0 for direct, whose
     // derivative is plain df32) — so the shading below is mode-agnostic and matches fs_iterate's.

@@ -75,7 +75,11 @@ A fractal explorer for Windows and Linux in Rust (wgpu + egui/eframe), built for
 - **Auto-zoom (autopilot)** — hands-free dive toward detail (the **A** key or the 🛸 toolbar
   button, which stays highlighted while running), with an adjustable **dive limit** slider
   (Navigation panel, 1e30×–1e5000×); past ~1e271× it switches to a stepped dive to reach extreme
-  depth. **Esc** stops it.
+  depth. **Esc** stops it. An **Auto-zoom priority** switch chooses **Speed** (zoom at the set
+  rate; the screen refreshes as soon as a frame with detail is ready) or **Quality** (only fully
+  resolved frames reach the screen, and the zoom paces itself to them). Either way the view never
+  shows a blank or single-colour frame while diving: a refresh that has not resolved detail yet
+  stays hidden behind the last one that did.
 - **Session & state** — the session auto-saves; **File → Reset application state** (or
   `--reset-state`) wipes the session, bookmarks, and thumbnails after a confirmation. The session
   file is versioned (it warns if written by a newer build), and `FRACTADYNE_CONFIG_DIR` overrides

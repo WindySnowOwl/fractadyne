@@ -429,7 +429,7 @@ impl Cam {
     }
 
     fn frame(&mut self, rate: f64) {
-        let g = glide_step(self.aim, self.lead, self.goal, self.speed, rate, 1.6, DT);
+        let g = glide_step(self.aim, self.lead, self.goal, self.speed, rate, f64::INFINITY, 1.6, DT);
         self.speed = g.speed;
         self.aim = g.aim;
         self.lead = after_zoom(g.lead, g.aim, g.factor);
@@ -462,10 +462,10 @@ fn the_camera_closes_on_the_goal_and_brings_it_in_from_the_edge() {
 fn a_target_near_the_middle_is_left_where_it_is() {
     // Inside the dead zone the dive is a pure zoom: no pan, so nothing slides sideways. This is
     // the "it started sliding down and to the right" report — centring faster made it worse.
-    let g = glide_step((0.54, 0.47), (0.54, 0.47), (0.54, 0.47), crate::ZOOM_RATE, crate::ZOOM_RATE, 1.354, DT);
+    let g = glide_step((0.54, 0.47), (0.54, 0.47), (0.54, 0.47), crate::ZOOM_RATE, crate::ZOOM_RATE, f64::INFINITY, 1.354, DT);
     assert_eq!(g.pan, (0.0, 0.0), "a target 4% off centre must not be panned");
     // Far out, the excess is eased away.
-    let g = glide_step((0.85, 0.5), (0.85, 0.5), (0.85, 0.5), crate::ZOOM_RATE, crate::ZOOM_RATE, 1.354, DT);
+    let g = glide_step((0.85, 0.5), (0.85, 0.5), (0.85, 0.5), crate::ZOOM_RATE, crate::ZOOM_RATE, f64::INFINITY, 1.354, DT);
     assert!(g.pan.0 < 0.0, "a target near the edge must be brought in, got {:?}", g.pan);
 }
 
@@ -477,8 +477,8 @@ fn the_picture_does_not_slide_before_the_zoom_has_started() {
     // scaled by the speed that is actually happening, so it arrives WITH the zoom.
     let rate = 4.0 * crate::ZOOM_RATE;
     let far = (0.85, 0.5); // well outside the dead zone, so centring is active
-    let start = glide_step(far, far, far, 0.0, rate, 1.6, DT); // frame one of the dive
-    let running = glide_step(far, far, far, rate, rate, 1.6, DT); // the same camera, up to speed
+    let start = glide_step(far, far, far, 0.0, rate, f64::INFINITY, 1.6, DT); // frame one of the dive
+    let running = glide_step(far, far, far, rate, rate, f64::INFINITY, 1.6, DT); // the same camera, up to speed
     let pan = |g: &GlideStep| g.pan.0.hypot(g.pan.1);
     assert!(pan(&running) > 0.0, "test premise: a target this far out is centred once running");
     assert!(
@@ -567,7 +567,7 @@ fn the_first_half_second_of_a_dive_barely_slides() {
     let mut slide = 0.0f64;
     for _ in 0..30 {
         // 0.5 s at 60 fps
-        slide += glide_step(c.aim, c.lead, c.goal, c.speed, rate, 1.6, DT).pan.0.abs();
+        slide += glide_step(c.aim, c.lead, c.goal, c.speed, rate, f64::INFINITY, 1.6, DT).pan.0.abs();
         c.frame(rate);
     }
     assert!(slide < 0.015, "the dive slid {:.2}% of the screen before it got going", slide * 100.0);

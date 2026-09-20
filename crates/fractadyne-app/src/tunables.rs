@@ -663,6 +663,40 @@ pub(crate) const PIN_ABANDON_SPANS: f64 = 1.5;
 /// forever would magnify the held frame without limit (the recorded ever-larger-blocks shape).
 pub(crate) const PIN_MAX_FRAMES: u64 = 240;
 
+/// CONTENT VERIFICATION (design/verified-present.md). A frame counts as a picture when at least
+/// this fraction of its pixels have escaped (`render::content_has_detail`). The frame being kept
+/// off the screen has ZERO — a walk short of the view's first escape resolves every pixel to
+/// the interior colour — so this is margin, not a quality bar: 0.1% of a 1456×1102 frame is
+/// 1,600 pixels, a thin filament in an otherwise interior view.
+pub(crate) const CONTENT_MIN_ESCAPED: f64 = 0.001;
+
+/// `RefreshPolicy::Converged`: the later of two readings of one walk must come from a pass at
+/// least this factor further along the iteration axis…
+pub(crate) const CONVERGE_CURSOR_GROWTH: f64 = 1.25;
+/// …and add no more than this fraction of the escaped pixels already seen…
+pub(crate) const CONVERGE_TOLERANCE: f64 = 0.01;
+/// …plus this fraction of the frame, for stragglers (a few pixels escaping late in a large
+/// frame must not hold up a picture that is otherwise done).
+pub(crate) const CONVERGE_TOLERANCE_PX: f64 = 0.0005;
+/// `RefreshPolicy::Converged`, the fast path: a walk that passed the view's last known
+/// escape-range top by this factor has the picture (the readings that fed the top were taken at
+/// neighbouring views; the margin covers the drift between them).
+pub(crate) const RANGE_TOP_MARGIN: f64 = 1.25;
+
+/// A reference install at a DIFFERENT point aborts a pinned refresh (`PinStop::Orbit`: the stored
+/// per-pixel state cannot resume against another orbit). While a pin is younger than this many
+/// frames the install is parked and lands the frame the pin ends. Measured on a user's 2^584
+/// dive at 4×: 26 of 50 pins were aborted by lookahead installs, most of them just short of the
+/// view's escape band, and every restart began a second of blank walking. The lookahead runs
+/// `PREFETCH_RUNWAY_S` ahead, so half a second of parking costs it nothing.
+pub(crate) const PIN_INSTALL_DEFER_FRAMES: u64 = 30;
+
+/// The autopilot's Quality priority paces the zoom so the held frame never magnifies past
+/// `HELD_MAX_OCT` before the next resolved frame lands (`autopilot::quality_speed_cap`). The
+/// pace never drops below this fraction of the zoom-speed setting: a governor with no floor
+/// stalls when refreshes stop, and a stalled dive cannot produce the refresh that would release it.
+pub(crate) const QUALITY_MIN_SPEED_FRAC: f64 = 0.1;
+
 /// PRICE-SERIALIZED WALKING (design/mode2-chunking.md §12; crash-1787183518/-587 and five repro
 /// deaths behind it): the settled chunk walk holds AT MOST ONE unpriced pass in flight. A
 /// dispatched pass accumulates the following frame intervals until a frame comes back quicker

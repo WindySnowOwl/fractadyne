@@ -346,6 +346,10 @@ struct CounterRead {
     norm_sig: u64,
     /// The submitting frame's `MandelbrotParams::norm_complete`, recorded with `norm_sig`.
     norm_complete: bool,
+    /// The submitting frame's `MandelbrotParams::content_tag` and the end of its chunk range —
+    /// stamped at copy time like `norm_sig`, published in the [`ContentReading`].
+    content_tag: u64,
+    content_cursor: u32,
 }
 
 impl CounterRead {
@@ -364,6 +368,8 @@ impl CounterRead {
             max_iter: 0,
             norm_sig: 0,
             norm_complete: true,
+            content_tag: 0,
+            content_cursor: 0,
         }
     }
 
@@ -383,6 +389,7 @@ impl CounterRead {
         work_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
         norm_sig_out: Option<&Arc<std::sync::atomic::AtomicU64>>,
         norm_complete_out: Option<&Arc<std::sync::atomic::AtomicBool>>,
+        content_out: Option<&ContentSink>,
     ) {
         use std::sync::atomic::Ordering::SeqCst;
         match self.state {
@@ -413,6 +420,21 @@ impl CounterRead {
                             let packed = ((slots[CTR_ESC_MIN] as u64) << 32)
                                 | slots[CTR_ESC_MAX] as u64;
                             o.store(packed, SeqCst);
+                        }
+                        // The frame's content, tagged with the render that produced it (the
+                        // app matches the tag against what its live texture holds NOW — the
+                        // reading lands 2-3 frames after its render, like every other one).
+                        if let Some(o) = content_out {
+                            if let Ok(mut g) = o.lock() {
+                                *g = Some(ContentReading {
+                                    tag: self.content_tag,
+                                    cursor: self.content_cursor,
+                                    escaped: slots[CTR_ESC_COUNT],
+                                    px: self.px.min(u32::MAX as u64) as u32,
+                                    esc_min_bits: slots[CTR_ESC_MIN],
+                                    esc_max_bits: slots[CTR_ESC_MAX],
+                                });
+                            }
                         }
                         // ⭐The SUBMITTING frame's signature, stored BEFORE the two readings it
                         // describes so a drain that sees a fresh reading is guaranteed to see the
@@ -705,6 +727,11 @@ pub const CTR_BLA_SKIP: usize = 3; // BLA multi-step skips taken
 pub const CTR_MAXITER: usize = 4; // pixels that exhausted max_iter (interior/undecided)
 pub const CTR_ESC_MIN: usize = 5; // min escaped smooth-iter (f32 bits; seeded 0xFFFFFFFF per frame)
 pub const CTR_ESC_MAX: usize = 6; // max escaped smooth-iter (f32 bits)
+/// Escaped pixels in the frame, un-subsampled (a COUNT against `CounterRead::px`). The app's
+/// content check reads it: a resolved frame whose walk has not reached the view's first escape
+/// is one flat interior colour, and nothing else on the wire distinguishes that frame from a
+/// finished one. Published as a [`ContentReading`] with the frame's tag and cursor.
+pub const CTR_ESC_COUNT: usize = 7;
 pub const CTR_GRAD_SUM: usize = 8; // Σ|Δ smooth-iter| between adjacent escaped pixels, ×16 clamped
 pub const CTR_GRAD_N: usize = 9; // samples in CTR_GRAD_SUM
 /// First of [`GRAD_HIST_BUCKETS`] slots holding a log₂ HISTOGRAM of the same per-pair step
@@ -755,6 +782,29 @@ mod grad_hist_tests;
 /// Where the live path publishes a [`GradHist`]. A mutex rather than the packed-`AtomicU64` idiom of
 /// the other sinks because twelve counts do not fit one word; it is touched once per readback.
 pub type GradHistSink = Arc<std::sync::Mutex<Option<GradHist>>>;
+
+/// One armed frame's CONTENT, as read back: how many of its pixels have escaped, tagged with the
+/// app's [`MandelbrotParams::content_tag`] for the render that produced it and the iteration
+/// cursor that render's pass ended at. The app decides from this whether the texture may be shown
+/// or snapshotted (`escaped == 0` is the flat-colour frame), and whether a chunked walk's picture
+/// has stopped changing between two passes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContentReading {
+    pub tag: u64,
+    /// `chunk_range` end of the armed pass (`max_iter` for a single-pass frame).
+    pub cursor: u32,
+    pub escaped: u32,
+    /// Pixel count of the armed frame (resolution × ss²).
+    pub px: u32,
+    /// The frame's escaped smooth-iter range as f32 bits (`min == u32::MAX` = none), the same
+    /// subsampled reading the palette normalization uses — carried for the trace.
+    pub esc_min_bits: u32,
+    pub esc_max_bits: u32,
+}
+
+/// Where the live path publishes a [`ContentReading`] — the `GradHistSink` idiom, one lock per
+/// readback, `take()`n by the app's drain.
+pub type ContentSink = Arc<std::sync::Mutex<Option<ContentReading>>>;
 
 pub(crate) fn make_counters_buf(device: &wgpu::Device) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
@@ -1674,6 +1724,13 @@ pub struct MandelbrotParams {
     /// Sink for the `norm_complete` of the frame that submitted the norm/gradient readings, stored
     /// before them exactly like `norm_sig_out`. `None` disables it.
     pub norm_complete_out: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Opaque identity of the RENDER this frame's pixels belong to (a pinned refresh's passes all
+    /// carry the pin's tag; any other frame its own). Handed back with the frame's
+    /// [`ContentReading`] so the app can tell which render a reading describes, the way
+    /// `norm_sig` does for the palette readings.
+    pub content_tag: u64,
+    /// Sink for this frame's [`ContentReading`]. `None` disables it.
+    pub content_out: Option<ContentSink>,
     /// This frame's VIEW identity, used to track which view the pixels in the iteration texture
     /// were drawn at — see `ViewResources::content_stamp`. Opaque here; the app owns what it means,
     /// and only equality matters. A texture resize seeds from the old content ONLY when this
@@ -1896,6 +1953,7 @@ impl CallbackTrait for MandelbrotParams {
             self.work_counters.as_ref(),
             self.norm_sig_out.as_ref(),
             self.norm_complete_out.as_ref(),
+            self.content_out.as_ref(),
         );
 
         // The offscreen iteration texture is (resolution × ss). It must not exceed
@@ -1921,6 +1979,48 @@ impl CallbackTrait for MandelbrotParams {
         // A zero-area tile is a "hold" frame (another view owns this frame's tile slot): render
         // nothing, keep the texture exactly as it is — like a reprojection with no translation.
         let hold = self.tile.is_some_and(|t| t[2] == 0 || t[3] == 0);
+        // Present-gating ("prefer detail" stage B): snapshot the current — complete — frame into
+        // the hold pair BEFORE any compose pass lands this frame. A seed-pipeline draw is the
+        // copy (the seeded_resize idiom; at equal size it is 1:1), so no texture-usage changes.
+        // The compose passes below then rebuild the LIVE buffer invisibly while the color pass
+        // serves the hold; when the app drops `display_hold`, the finished frame reveals whole.
+        //
+        // ⛔⭐⭐**BEFORE THE RESIZE, NOT AFTER IT.** This block used to sit below the resize, and a
+        // pinned refresh that starts at a different resolution from the texture — the motion
+        // resolution ladder changes it every second or so on a deep dive — resized the texture
+        // first, which CLEARS it (the content stamp never matches mid-dive, so it cannot seed),
+        // and then snapshotted the cleared texture: a black hold, served for the whole walk.
+        // Lined up frame by frame against a user's recording (2026-09-20, 2^584 at 4×), that was
+        // the black half of "the screen flashes and goes to a flat colour". The snapshot is of
+        // the frame that WAS there, at its own size (`HoldState::size` carries it, and the color
+        // pass fits the hold by its own size), so it does not care what size the live texture is
+        // about to become.
+        if self.hold_copy && view.rendered {
+            let ht = make_iter_texture(device, view.size);
+            let ha = make_iter_texture(device, view.size);
+            {
+                let attach = |v| Some(wgpu::RenderPassColorAttachment {
+                    view: v,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                });
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("fractadyne.hold_copy"),
+                    color_attachments: &[attach(&ht), attach(&ha)],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(seed_pipeline);
+                pass.set_bind_group(0, &view.color_bg, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            let bg = make_color_bg(device, color_bgl, &view.color_uniform, &view.lut_buf, &ht, &ha);
+            view.hold = Some(HoldState { bg, size: view.size, ss: view.last_ss.max(1) });
+        }
         if !reproject && !hold && size != view.size {
             // ⛔**THE SEED MAY ONLY CARRY THIS VIEW'S OWN PIXELS.** Seeding exists so a resolution
             // change mid-settle refines in place instead of against black, which is right when the
@@ -1950,37 +2050,6 @@ impl CallbackTrait for MandelbrotParams {
                 // through. The app sees the cleared stamp through `content_stamp_out` and logs it.
                 view.resize(device, color_bgl, size);
             }
-        }
-        // Present-gating ("prefer detail" stage B): snapshot the current — complete — frame into
-        // the hold pair BEFORE any compose pass lands this frame. A seed-pipeline draw is the
-        // copy (the seeded_resize idiom; at equal size it is 1:1), so no texture-usage changes.
-        // The compose passes below then rebuild the LIVE buffer invisibly while the color pass
-        // serves the hold; when the app drops `display_hold`, the finished frame reveals whole.
-        if self.hold_copy && view.rendered {
-            let ht = make_iter_texture(device, view.size);
-            let ha = make_iter_texture(device, view.size);
-            {
-                let attach = |v| Some(wgpu::RenderPassColorAttachment {
-                    view: v,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                });
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("fractadyne.hold_copy"),
-                    color_attachments: &[attach(&ht), attach(&ha)],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                pass.set_pipeline(seed_pipeline);
-                pass.set_bind_group(0, &view.color_bg, &[]);
-                pass.draw(0..3, 0..1);
-            }
-            let bg = make_color_bg(device, color_bgl, &view.color_uniform, &view.lut_buf, &ht, &ha);
-            view.hold = Some(HoldState { bg, size: view.size, ss: view.last_ss.max(1) });
         }
         // The gate only engages while the app asserts it AND a snapshot exists (a cold start has
         // nothing to hold — composition shows live, the graceful fallback). A frame without the
@@ -2338,6 +2407,9 @@ impl CallbackTrait for MandelbrotParams {
                 view.counter_read.max_iter = self.max_iter;
                 view.counter_read.norm_sig = self.norm_sig;
                 view.counter_read.norm_complete = self.norm_complete;
+                view.counter_read.content_tag = self.content_tag;
+                view.counter_read.content_cursor =
+                    self.chunk_range.map_or(self.max_iter, |[_, e]| e);
                 view.counter_read.state = TimingState::Recorded;
             }
             view.last_iter_key = Some(key);

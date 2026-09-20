@@ -594,6 +594,15 @@ impl FractadyneApp {
                                 self.toggle_autopilot(&ctx);
                                 ui.close_menu();
                             }
+                            ui.horizontal(|ui| {
+                                use crate::autopilot::AutopilotPriority as P;
+                                ui.add_space(12.0);
+                                ui.label("Priority:");
+                                ui.radio_value(&mut self.autopilot.priority, P::Speed, "Speed")
+                                    .on_hover_text("Zoom at the set speed; refresh with the first frame that has detail.");
+                                ui.radio_value(&mut self.autopilot.priority, P::Quality, "Quality")
+                                    .on_hover_text("Fully resolved frames only; the zoom waits for them.");
+                            });
                         });
                         ui.checkbox(&mut self.anim.show_orbits, "Orbit overlay")
                             .on_hover_text(
