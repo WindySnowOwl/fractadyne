@@ -1333,6 +1333,16 @@ impl FractadyneApp {
             }
         }
 
+        // ---- elapsed-time overlay (diagnostic; View ▸ Show timestamp) ----
+        if self.render_cfg.show_timestamp {
+            crate::ui::timestamp_overlay::draw(
+                ctx,
+                central.response.rect,
+                crate::diag::elapsed_s(),
+                self.perf.frame_idx,
+            );
+        }
+
         // ---- guided-tour annotations (captions + coordinate-anchored callouts) ----
         if self.playback.is_some() {
             let caption_rects = self.draw_captions(ctx, central.response.rect);

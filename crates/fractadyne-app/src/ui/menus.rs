@@ -386,6 +386,13 @@ impl FractadyneApp {
                                  marker and the zoom depth. Click it to jump to a region.",
                             );
                         ui.checkbox(&mut self.perf.enabled, "Performance panel");
+                        ui.checkbox(&mut self.render_cfg.show_timestamp, "Show timestamp")
+                            .on_hover_text(
+                                "Draw a large elapsed-time clock over the view. It reads the same \
+                                 \"+12.345s\" the log stamps every line with, so a screen recording \
+                                 of a problem that only shows itself in motion can be lined up \
+                                 against the log frame by frame. Off by default.",
+                            );
                         ui.checkbox(&mut self.watermark, "Show \"Fd\" watermark")
                             .on_hover_text(
                                 "Draw a discreet \"Fd\" brand mark in the lower-right corner of the \

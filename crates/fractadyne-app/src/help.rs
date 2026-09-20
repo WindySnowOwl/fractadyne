@@ -605,6 +605,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--light [--light-angle R]", "Enable 3D relief lighting."),
         Flag("--de", "Enable distance glow."),
         Flag("--watermark / --no-watermark", "Force the \"Fd\" watermark on / off (overrides the saved preference)."),
+        Flag("--show-timestamp / --no-show-timestamp", "Force the elapsed-time overlay on / off (View > Show timestamp; overrides the saved preference). Draws a large clock over the view reading the same \"+12.345s\" the log stamps every line with, plus the frame number, so a screen recording of a problem that only appears in motion can be lined up against the log frame by frame."),
         Flag("--bla / --no-bla", "Force bilinear approximation (BLA) on / off for deep floatexp Mandelbrot."),
         Flag("--glitch / --no-glitch", "Force multi-reference glitch correction on / off for the export (default on)."),
         Flag("--orbit-cache / --no-orbit-cache", "Force the on-disk reference-orbit cache on / off. By default it is ON for an ordinary launch and OFF for every task invocation (--render, --selftest, --bench-matrix, tours, …), because a cached orbit makes a timed run look faster than the code is and a gate must build what it measures. A CLI render of a location you have visited in the app can opt in with --orbit-cache. File > Settings > Reference cache… shows where it is, how big, and clears it."),
