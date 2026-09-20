@@ -1545,11 +1545,12 @@ struct Perf {
     /// frame has none to sell (the user's floor of 0.83 and `prefer_detail`'s native refresh were
     /// between them forbidding the only trade that produces an image: 0.351, i.e. 515×386).
     visible_res: [f64; 2],
-    /// Iterations the last MOTION pass actually walked, per view — the feedback `visible_res` runs
-    /// on. Motion-only on purpose: a PIN pass walks a deliberately small band per dispatch and
-    /// accumulates across many of them, so its step says nothing about whether a moving frame can
-    /// reach an escape on its own.
-    motion_walk_last: [u32; 2],
+    /// Step budget the last MOTION pass was given, per view — what `visible_res_target` sizes
+    /// pixels against. Recorded BEFORE the growth limiter, which bounds how fast the step may
+    /// climb rather than how much work the frame may do. Motion-only: a PIN pass walks a
+    /// deliberately small band per dispatch and accumulates over many of them, so its step says
+    /// nothing about whether a single moving frame can reach an escape on its own.
+    motion_pass_steps_last: [u64; 2],
 }
 
 impl Perf {
@@ -1944,7 +1945,7 @@ impl Default for Perf {
             chunk_governed: [false, false],
             motion_res: 0.6,
             visible_res: [1.0, 1.0],
-            motion_walk_last: [0, 0],
+            motion_pass_steps_last: [0, 0],
             motion_res_measured: false,
         }
     }

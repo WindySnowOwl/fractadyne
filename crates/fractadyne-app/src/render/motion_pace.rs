@@ -113,48 +113,76 @@ fn a_pin_inherits_a_cold_band_only_past_the_first_wrap_storm() {
 }
 
 #[test]
-fn a_moving_frame_shrinks_until_it_can_reach_an_escape() {
-    // The user's 2^800 dive, from their log and the video of it (2026-09-20): pixels escape at
-    // ~4471, a motion pass walked 550, and 36% of the recorded video was one flat colour.
-    const ESCAPE: f64 = 4471.0;
-    let mut res = 1.0;
-    let mut walked = 550u32;
-    let mut steps = 0;
-    // Cost is proportional to pixels, so a pass at scale s walks 550/s² iterations.
-    while walked < ESCAPE as u32 && steps < 50 {
-        res = visible_res_step(res, walked, ESCAPE);
-        walked = (550.0 / (res * res)) as u32;
-        steps += 1;
-    }
-    assert!(steps < 10, "took {steps} passes to find a resolution that shows anything");
-    assert!(walked as f64 >= ESCAPE, "never reached the escape band (walked {walked})");
-    // And it lands near the arithmetic answer: sqrt(550/4471) = 0.351 -> about 515x386.
-    assert!((res - 0.351).abs() < 0.06, "settled at {res:.3}, expected about 0.351");
-    // ⭐Both of the user's settings forbid that scale, which is why this cap sits beneath them.
-    assert!(res < 0.83, "min_motion_res 0.83 would have blocked it");
+fn a_moving_frame_is_sized_so_it_can_reach_an_escape() {
+    // The user's 2^800 dive, from the log and the video of it (2026-09-20): a motion pass carried
+    // ~1.35e9 steps over a 1469x1102 panel (a 833-iteration walk), and pixels there do not escape
+    // until ~4471 — so at native the frame commits NOTHING and paints one flat colour, which is
+    // 36% of what the video recorded.
+    let px = 1469u64 * 1102;
+    let pass = 833 * px; // the budget the frame was actually given
+    let res = visible_res_target(pass, px, 4471.0);
+    assert!(res < 0.50 && res > 0.30, "sized at {res:.3}, expected about 0.43");
+    // At that scale the pass reaches the band — which is the whole point.
+    let walked = pass as f64 / (px as f64 * res * res);
+    assert!(walked >= 4471.0, "still blank: walks {walked:.0} of 4471");
+    // ⭐Both of the user's settings forbid it, which is why this sits beneath them.
+    assert!(res < 0.83, "min_motion_res 0.83 blocks it");
 }
 
 #[test]
-fn the_visible_cap_relaxes_once_frames_are_landing_and_never_guesses() {
-    // Frames committing pixels: ease back toward native, never past it.
-    let mut res = 0.35;
-    for _ in 0..200 {
-        res = visible_res_step(res, 9000, 4471.0);
-    }
-    assert_eq!(res, 1.0);
-    // Recovery is gradual, not a snap back to native (which would blank the very next frame).
-    assert!(visible_res_step(0.35, 9000, 4471.0) < 0.40);
-    // No measured walk, or no measured escape count for this view yet: no opinion, no shrink.
-    assert_eq!(visible_res_step(0.8, 0, 4471.0), 0.8);
-    assert_eq!(visible_res_step(0.8, 550, 0.0), 0.8);
-    assert_eq!(visible_res_step(0.8, 550, f64::NAN), 0.8);
-    assert_eq!(visible_res_step(f64::NAN, 550, 4471.0), visible_res_step(1.0, 550, 4471.0));
-    // Shallow views escape in a handful of iterations — nothing to correct.
-    assert_eq!(visible_res_step(1.0, 550, 40.0), 1.0);
-    // However hopeless, it never asks for a zero-pixel frame.
-    let mut res = 1.0;
+fn the_visible_target_is_absolute_so_it_cannot_wind_up() {
+    // ⛔The bug in the first attempt: a per-pass FEEDBACK step wound down to its floor (146x110
+    // for 1760 frames at 2^800) because `budget_step` may only double per pass, so the cap moved
+    // faster than the step could answer. An absolute target holds still while the step climbs.
+    let px = 1469u64 * 1102;
+    let pass = 833 * px;
+    let first = visible_res_target(pass, px, 4471.0);
     for _ in 0..100 {
-        res = visible_res_step(res, 1, 1.0e9);
+        assert_eq!(visible_res_target(pass, px, 4471.0), first, "the target moved on its own");
     }
-    assert_eq!(res, crate::render::VISIBLE_RES_MIN);
+    assert!(first > crate::render::VISIBLE_RES_MIN, "wound down to the floor");
+}
+
+#[test]
+fn the_visible_target_never_guesses_and_never_asks_for_no_pixels() {
+    let px = 1469u64 * 1102;
+    // Budget already covers native ⇒ no opinion, never a gratuitous shrink.
+    assert_eq!(visible_res_target(u64::MAX, px, 4471.0), 1.0);
+    // Shallow views escape in a handful of iterations — native fits easily.
+    assert_eq!(visible_res_target(833 * px, px, 40.0), 1.0);
+    // Nothing measured yet (a fresh view, or the first frame) must not shrink anything.
+    assert_eq!(visible_res_target(0, px, 4471.0), 1.0);
+    assert_eq!(visible_res_target(833 * px, px, 0.0), 1.0);
+    assert_eq!(visible_res_target(833 * px, px, f64::NAN), 1.0);
+    assert_eq!(visible_res_target(833 * px, 0, 4471.0), 1.0);
+    // However hopeless, it never asks for a zero-pixel frame.
+    assert_eq!(visible_res_target(1, px, 1.0e9), crate::render::VISIBLE_RES_MIN);
+}
+
+#[test]
+fn the_visible_scale_is_held_because_changing_it_restarts_the_walk() {
+    // ⛔The lesson both earlier attempts cost: resolution is part of the walk's signature, so each
+    // change discards the iteration cursor. They re-signed 128-216 times a dive against the
+    // baseline's ONE, and the screen got worse (8% -> 36% blank) even as walks reached further.
+    // Drops are immediate; a target drifting inside a rung must produce NO change at all.
+    let mut held = 1.0;
+    let mut changes = 0;
+    for (i, t) in [0.44, 0.46, 0.43, 0.45, 0.44, 0.47, 0.42, 0.45].into_iter().enumerate() {
+        let now = visible_res_hold(held, t);
+        if now != held {
+            changes += 1;
+        }
+        held = now;
+        assert!(held <= t + 1e-9, "step {i}: held {held} cannot show anything at target {t}");
+    }
+    assert_eq!(changes, 1, "a hovering target re-signed the walk {changes} times");
+    assert_eq!(held, 0.353_553_39, "expected the rung below 0.42");
+    // Sharpening needs the target to clear the held rung by half again — not a nudge.
+    assert_eq!(visible_res_hold(0.5, 0.60), 0.5, "sharpened on a nudge");
+    assert_eq!(visible_res_hold(0.5, 0.80), 0.707_106_78);
+    // A frame that cannot show anything drops at once, with no hysteresis in the way.
+    assert_eq!(visible_res_hold(1.0, 0.20), 0.176_776_70);
+    // Degenerate inputs never move it off native.
+    assert_eq!(visible_res_hold(1.0, f64::NAN), 1.0);
+    assert_eq!(visible_res_hold(f64::NAN, 1.0), 1.0);
 }
