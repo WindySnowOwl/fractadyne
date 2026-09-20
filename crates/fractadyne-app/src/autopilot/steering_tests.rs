@@ -470,6 +470,26 @@ fn a_target_near_the_middle_is_left_where_it_is() {
 }
 
 #[test]
+fn the_picture_does_not_slide_before_the_zoom_has_started() {
+    // ⭐The reported "it starts to pan quickly on zoom". The zoom speed ramps in over `SPEED_TAU`,
+    // so on the first frames of a dive there is barely any zoom — and a pan with no zoom under it
+    // is a pure sideways slide, which is the most visible thing a camera can do. Centring is
+    // scaled by the speed that is actually happening, so it arrives WITH the zoom.
+    let rate = 4.0 * crate::ZOOM_RATE;
+    let far = (0.85, 0.5); // well outside the dead zone, so centring is active
+    let start = glide_step(far, far, far, 0.0, rate, 1.6, DT); // frame one of the dive
+    let running = glide_step(far, far, far, rate, rate, 1.6, DT); // the same camera, up to speed
+    let pan = |g: &GlideStep| g.pan.0.hypot(g.pan.1);
+    assert!(pan(&running) > 0.0, "test premise: a target this far out is centred once running");
+    assert!(
+        pan(&start) < 0.1 * pan(&running),
+        "the dive slides before it zooms: {:.5} of the screen on frame one against {:.5} running",
+        pan(&start),
+        pan(&running)
+    );
+}
+
+#[test]
 fn the_approach_holds_at_the_fastest_zoom_setting() {
     // The zoom-rate slider goes to 4×; the approach is net of the zoom, so it still converges.
     let mut c = Cam::new((0.85, 0.2));
@@ -534,4 +554,21 @@ fn the_zoom_speed_ramps_in_rather_than_starting_at_full_rate() {
         prev = c.speed;
     }
     assert!((c.speed - rate).abs() < 0.01 * rate);
+}
+
+#[test]
+fn the_first_half_second_of_a_dive_barely_slides() {
+    // The user-visible quantity behind "it starts to pan quickly on zoom": how far the picture
+    // travels SIDEWAYS while the zoom speed is still ramping in. The frame-one check above is the
+    // mechanism; this is the amount a person actually sees. Scaling centring by the commanded rate
+    // instead of the real speed put 2.84% of the screen of pure slide into that window.
+    let rate = 4.0 * crate::ZOOM_RATE;
+    let mut c = Cam::new((0.80, 0.30)); // a target well outside the dead zone, so centring is on
+    let mut slide = 0.0f64;
+    for _ in 0..30 {
+        // 0.5 s at 60 fps
+        slide += glide_step(c.aim, c.lead, c.goal, c.speed, rate, 1.6, DT).pan.0.abs();
+        c.frame(rate);
+    }
+    assert!(slide < 0.015, "the dive slid {:.2}% of the screen before it got going", slide * 100.0);
 }

@@ -687,11 +687,21 @@ pub(crate) fn glide_step(
     // zoom; outside, only the excess is eased away (measured in zoom, not seconds, so it behaves
     // the same at every zoom-rate setting). Detail can sit a little off centre — it cannot wander
     // to the edge, and it never slides while it is comfortable.
+    //
+    // ⭐⭐**AND IT IS MEASURED IN THE ZOOM THAT IS HAPPENING, NOT THE ONE THAT WAS ASKED FOR.** The
+    // centring used to scale with `rate` — the zoom-rate SETTING — but the zoom speed ramps in over
+    // `SPEED_TAU`, so at the moment a dive starts there is a full-rate pan with essentially no zoom
+    // underneath it. That is a pure sideways slide, and it is the first thing the user sees: "I
+    // still see it start to panning quickly on zoom" (2026-09-20), after the dead zone had already
+    // fixed the steady-state drift. Scaling by `speed` keeps the original intent exactly — once the
+    // ramp is done `speed` IS `rate` — while making the centring arrive with the zoom instead of
+    // before it. It also eases centring off through a turn, when `speed` is deliberately halved:
+    // the camera should not slide sideways while it is already steering.
     let short = aspect.min(1.0);
     let (ox, oy) = ((0.5 - aim.0) * aspect / short, (0.5 - aim.1) / short);
     let off = ox.hypot(oy);
     let pan = if off > CENTER_DEAD {
-        let c = 1.0 - (-dt * (rate / ZOOM_RATE) / CENTER_TAU).exp();
+        let c = 1.0 - (-dt * (speed / ZOOM_RATE) / CENTER_TAU).exp();
         let keep = (off - CENTER_DEAD) / off; // ease away only what is past the dead zone
         ((0.5 - aim.0) * c * keep, (0.5 - aim.1) * c * keep)
     } else {
