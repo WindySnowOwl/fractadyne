@@ -264,6 +264,56 @@ fn depth_is_unsaturated_through_the_range_the_dive_lives_in() {
     assert_eq!(interior.depth(0, &interior.boundary_weights()), 0.0, "interior is never a goal");
 }
 
+/// A knot of boundary cells all reporting the same distance estimate — same weight and density as
+/// any other knot, so only DEPTH and position tell two of them apart.
+fn knot_at(p: &mut Probe, ci: usize, cj: usize, r: usize, de_log2: f32) {
+    for j in cj - r..=cj + r {
+        for i in ci - r..=ci + r {
+            at_depth(p, i, j, de_log2);
+        }
+    }
+}
+
+#[test]
+fn an_unmeasurably_deep_reading_elsewhere_does_not_steal_a_healthy_goal() {
+    // ⭐⭐The regression this rule exists for. Depth SATURATES at the cap wherever the estimate stops
+    // being trustworthy, and `best` is the maximum over every cell in the frame — so a depth-weighted
+    // `best > 2 x kept` sits pinned at the cap and fires on any dip in the goal's own single reading.
+    // Two equally appealing knots, differing only in depth: the far one reports a depth no estimate
+    // can resolve, the tracked one has ample runway. Nothing about the dive has got worse, so the
+    // goal must be kept exactly.
+    let mut p = flat(40, 25);
+    knot_at(&mut p, 17, 12, 1, -4.0); // the tracked goal: 5 octaves, plenty
+    knot_at(&mut p, 23, 12, 1, -40.0); // 28 octaves past anything the shader can resolve
+    let wt = p.boundary_weights();
+    assert_eq!(wt[12 * 40 + 17], wt[12 * 40 + 23], "fixture: equal weight, so equal density");
+    assert!(
+        p.depth(12 * 40 + 23, &wt) > 2.0 * p.depth(12 * 40 + 17, &wt),
+        "fixture: the far reading must out-DEPTH the goal 2:1, or this test proves nothing"
+    );
+    let g = (17.5 / 40.0, 12.5 / 25.0);
+    let s = choose_goal(&p, 1.6, Some(g), true).unwrap();
+    assert!(!s.retarget, "a saturated reading elsewhere stole the goal: {s:?}");
+    assert_eq!(s.goal, g);
+}
+
+#[test]
+fn a_goal_with_no_runway_left_is_abandoned_even_if_nothing_is_more_appealing() {
+    // The other half of the rule: depth decides a retarget as a THRESHOLD on the goal's own runway.
+    // Here the goal is down to 2.5 octaves — the dive magnifies past that within a couple of looks —
+    // while the alternative is deeper but LESS appealing, so the appeal ratio would never fire.
+    let mut p = flat(40, 25);
+    knot_at(&mut p, 20, 12, 1, -1.5); // the tracked goal: 2.5 octaves, nearly spent
+    knot_at(&mut p, 26, 9, 1, -8.0); // 9 octaves, but further out
+    let wt = p.boundary_weights();
+    assert!(p.depth(12 * 40 + 20, &wt) < RETARGET_MIN_DEPTH, "fixture: the goal must be out of runway");
+    let g = (20.5 / 40.0, 12.5 / 25.0);
+    let s = choose_goal(&p, 1.6, Some(g), true).unwrap();
+    assert!(s.retarget, "a spent goal was kept: {s:?}");
+    let (i, j) = cell(&p, s.goal);
+    assert!((25..=27).contains(&i) && (8..=10).contains(&j), "went to ({i},{j}), not the deep knot");
+}
+
 /// Distance from the screen centre in short-side units — the measure the target bound uses.
 fn off_centre(g: (f64, f64), aspect: f64) -> f64 {
     ((g.0 - 0.5) * aspect).hypot(g.1 - 0.5) / aspect.min(1.0)
