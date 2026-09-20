@@ -1527,6 +1527,29 @@ struct Perf {
     /// bounding a measurement after the measurement exists is the bug this flag ends — see the
     /// `rate_res_cap` block in `render.rs`.
     motion_res_measured: bool,
+    /// Resolution cap that keeps a MOVING frame able to commit a pixel at all, per view.
+    ///
+    /// ⭐⭐**BLANK IS NOT CHEAP, IT IS FREE — so every controller sized by frame TIME reads a blank
+    /// frame as headroom.** `motion_res` grows while frames are quick; a frame whose walk never
+    /// reaches this view's first escape is the quickest frame there is and commits nothing, so the
+    /// AIMD sharpens it and the next one is even less able to finish. Measured on a user's 2^800
+    /// dive (build 3413, 2026-09-20, iterations pinned at 10,000): pixels escape at ~4471, a motion
+    /// pass walked a median of **550**, only **5%** of motion walks reached the band, and 36% of
+    /// the recorded video — 4.8 s of 13.6, in episodes up to 1.9 s — was a canvas of one flat
+    /// colour. The picture reappearing somewhere else after each blank is what was reported as
+    /// panning; a dive that never gains detail cannot read as a zoom.
+    ///
+    /// This is the same shape of feedback as `motion_res`, but on the quantity that decides whether
+    /// there is a picture: iterations actually walked against iterations needed. It is applied
+    /// BENEATH `min_motion_res` and `prefer_detail` on purpose — both buy sharpness, and a blank
+    /// frame has none to sell (the user's floor of 0.83 and `prefer_detail`'s native refresh were
+    /// between them forbidding the only trade that produces an image: 0.351, i.e. 515×386).
+    visible_res: [f64; 2],
+    /// Iterations the last MOTION pass actually walked, per view — the feedback `visible_res` runs
+    /// on. Motion-only on purpose: a PIN pass walks a deliberately small band per dispatch and
+    /// accumulates across many of them, so its step says nothing about whether a moving frame can
+    /// reach an escape on its own.
+    motion_walk_last: [u32; 2],
 }
 
 impl Perf {
@@ -1920,6 +1943,8 @@ impl Default for Perf {
             norm_shown: [None, None],
             chunk_governed: [false, false],
             motion_res: 0.6,
+            visible_res: [1.0, 1.0],
+            motion_walk_last: [0, 0],
             motion_res_measured: false,
         }
     }

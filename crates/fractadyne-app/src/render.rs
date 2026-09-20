@@ -4867,6 +4867,14 @@ impl FractadyneApp {
                 // A restarted walk's escape bands are a different progression's data.
             }
             let cur = self.perf.chunk_cursor[vs];
+            if interacting && !pin_frame {
+                // How far a MOVING frame's walk will actually get. `visible_res` feeds back on it:
+                // if it falls short of the view's first escape the frame commits nothing and paints
+                // one flat colour, and no TIMED controller can notice, because the blank frame is
+                // the cheap one. Pins are excluded — their small per-dispatch band accumulates
+                // across passes, so one pin step says nothing about whether a frame can stand alone.
+                self.perf.motion_walk_last[vs] = cur.saturating_add(budget_step);
+            }
             // ⭐⭐THE SA-SKIP FLOOR. When a reference is SA-seeded, the `start_iter==0` pass places
             // EVERY pixel at `iter = sa_skip` in one dispatch — so iterations [0, sa_skip) are
             // covered for free by that single pass. Marching the cursor from 0 through them in
@@ -6180,6 +6188,30 @@ impl FractadyneApp {
             if is_pert { scale } else { scale.min(budget_res_scale) }
         } else {
             budget_res_scale.min(rate_res_cap)
+        };
+        // ⭐⭐**AND NOTHING ABOVE MAY SIZE A MOVING FRAME SO SMALL IT CANNOT SHOW ANYTHING.** Every
+        // branch above trades resolution against frame TIME, and none of them can tell a frame that
+        // finished from one that committed no pixel — because the blank one is the FASTER of the
+        // two, so they sharpen it. This cap feeds back on iterations WALKED instead, and sits
+        // beneath both `min_motion_res` and `prefer_detail` (see `Perf::visible_res`).
+        let res_scale = if interacting && !pin_frame {
+            let vbi = (view_id as usize).min(1);
+            let first_escape = self.perf.norm_range[vbi].map_or(0.0, |(lo, _)| lo as f64);
+            let before = self.perf.visible_res[vbi];
+            let now = visible_res_step(before, self.perf.motion_walk_last[vbi], first_escape);
+            self.perf.visible_res[vbi] = now;
+            if view_id == 0 && (now - before).abs() > 1.0e-6 && crate::diag::trace_on("gpu") {
+                crate::diag::trace(
+                    "gpu",
+                    format!(
+                        "visible-res f={} {before:.3} -> {now:.3} (walked {} vs first escape {first_escape:.0})",
+                        self.perf.frame_idx, self.perf.motion_walk_last[vbi]
+                    ),
+                );
+            }
+            res_scale.min(now)
+        } else {
+            res_scale
         };
         // REUSE-FIRST ZOOM hold decision (used by BOTH the native-res gate here and the freeze
         // trigger below — they must agree). While interacting, hold + reproject the last good frame
@@ -8075,6 +8107,40 @@ pub(crate) fn refresh_res_cap(
         1.0
     } else {
         (have / want).sqrt().max(floor).min(1.0)
+    }
+}
+
+/// Smallest linear scale [`visible_res_step`] will fall to. Below this the preview is too coarse to
+/// steer by, and a frame that still cannot reach its first escape here is one the hold must cover.
+pub(crate) const VISIBLE_RES_MIN: f64 = 0.10;
+/// How fast the cap relaxes back toward native once frames are landing again (per real motion pass).
+const VISIBLE_RES_RECOVER: f64 = 1.06;
+
+/// One feedback step of the "can this moving frame show anything at all?" cap: `cur` is the scale in
+/// force, `walked` the iterations the last motion pass actually covered at it, and `first_escape`
+/// the count at which this view's first pixel escapes. Shrinks by `sqrt(walked / first_escape)` —
+/// cost is proportional to pixels, so that is exactly the scale at which the next pass reaches the
+/// band — and relaxes gently back toward native once it does.
+///
+/// ⭐⭐**It feeds back on ITERATIONS WALKED, never on frame time.** Every other resolution control
+/// here is timed, and a blank frame is the fastest frame there is: they read it as headroom and
+/// sharpen, which makes the next frame less able to finish. See `Perf::visible_res` for the dive
+/// this was measured on — 550 walked against 4471 needed, 5% of motion frames reaching the band,
+/// and a third of the recorded video a single flat colour.
+pub(crate) fn visible_res_step(cur: f64, walked: u32, first_escape: f64) -> f64 {
+    let cur = if cur.is_finite() { cur.clamp(VISIBLE_RES_MIN, 1.0) } else { 1.0 };
+    // No measured pass, or no measured escape count for this view yet: no opinion. In particular a
+    // view whose range has not been read must never be shrunk on a guess.
+    if walked == 0 || !(first_escape > 0.0) || !first_escape.is_finite() {
+        return cur;
+    }
+    let ratio = walked as f64 / first_escape;
+    if ratio >= 1.0 {
+        // The frame is committing pixels. Ease back toward native and let the other controllers,
+        // which are about sharpness rather than existence, have the last word again.
+        (cur * VISIBLE_RES_RECOVER).min(1.0)
+    } else {
+        (cur * ratio.sqrt()).clamp(VISIBLE_RES_MIN, 1.0)
     }
 }
 

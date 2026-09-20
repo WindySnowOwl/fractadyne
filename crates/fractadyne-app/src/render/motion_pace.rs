@@ -111,3 +111,50 @@ fn a_pin_inherits_a_cold_band_only_past_the_first_wrap_storm() {
     assert_eq!(pin_band_license(&cold, 9, 256, 65_536, 0), 256);
     assert_eq!(pin_band_license(&cold, 0, 256, 0, orbit_len), 256);
 }
+
+#[test]
+fn a_moving_frame_shrinks_until_it_can_reach_an_escape() {
+    // The user's 2^800 dive, from their log and the video of it (2026-09-20): pixels escape at
+    // ~4471, a motion pass walked 550, and 36% of the recorded video was one flat colour.
+    const ESCAPE: f64 = 4471.0;
+    let mut res = 1.0;
+    let mut walked = 550u32;
+    let mut steps = 0;
+    // Cost is proportional to pixels, so a pass at scale s walks 550/s² iterations.
+    while walked < ESCAPE as u32 && steps < 50 {
+        res = visible_res_step(res, walked, ESCAPE);
+        walked = (550.0 / (res * res)) as u32;
+        steps += 1;
+    }
+    assert!(steps < 10, "took {steps} passes to find a resolution that shows anything");
+    assert!(walked as f64 >= ESCAPE, "never reached the escape band (walked {walked})");
+    // And it lands near the arithmetic answer: sqrt(550/4471) = 0.351 -> about 515x386.
+    assert!((res - 0.351).abs() < 0.06, "settled at {res:.3}, expected about 0.351");
+    // ⭐Both of the user's settings forbid that scale, which is why this cap sits beneath them.
+    assert!(res < 0.83, "min_motion_res 0.83 would have blocked it");
+}
+
+#[test]
+fn the_visible_cap_relaxes_once_frames_are_landing_and_never_guesses() {
+    // Frames committing pixels: ease back toward native, never past it.
+    let mut res = 0.35;
+    for _ in 0..200 {
+        res = visible_res_step(res, 9000, 4471.0);
+    }
+    assert_eq!(res, 1.0);
+    // Recovery is gradual, not a snap back to native (which would blank the very next frame).
+    assert!(visible_res_step(0.35, 9000, 4471.0) < 0.40);
+    // No measured walk, or no measured escape count for this view yet: no opinion, no shrink.
+    assert_eq!(visible_res_step(0.8, 0, 4471.0), 0.8);
+    assert_eq!(visible_res_step(0.8, 550, 0.0), 0.8);
+    assert_eq!(visible_res_step(0.8, 550, f64::NAN), 0.8);
+    assert_eq!(visible_res_step(f64::NAN, 550, 4471.0), visible_res_step(1.0, 550, 4471.0));
+    // Shallow views escape in a handful of iterations — nothing to correct.
+    assert_eq!(visible_res_step(1.0, 550, 40.0), 1.0);
+    // However hopeless, it never asks for a zero-pixel frame.
+    let mut res = 1.0;
+    for _ in 0..100 {
+        res = visible_res_step(res, 1, 1.0e9);
+    }
+    assert_eq!(res, crate::render::VISIBLE_RES_MIN);
+}
