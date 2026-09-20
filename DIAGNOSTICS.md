@@ -110,6 +110,7 @@ golden and blessed baseline is the output of exactly one.
 
 | Flag | What |
 |------|------|
+| `--show-timestamp` (also View ▸ Show timestamp) | **Draws a large elapsed-time clock over the live view**, reading the *same* `+12.345s` the log stamps every line with, plus the frame number. For anything that only shows itself in MOTION — a slide, a flash, a blank frame — record the screen, then line the recording up against the log frame by frame instead of guessing which log line the eye caught. Persists in the session; `--no-show-timestamp` forces it off |
 | `--selftest [--out report.md] [--bless]` | The full correctness suite (~170 checks + 18 goldens; it prints its own totals, so this text cannot go stale), streamed live; hermetic (resets config at entry, echoes it); GPU errors are printed, never silently skipped; data files resolve relative to the repo even when run elsewhere. The run's tail is the `bench-matrix` group — deterministic path-signature tripwires (see `--bench-matrix`) |
 | `--selftest-filter <substr>` | Run only matching check groups / goldens (fast iteration on one failure; not a release verdict — groups share state) |
 | `--selftest-list` | Print the group tags usable with `--selftest-filter` |

@@ -133,6 +133,12 @@ pub struct SessionState {
     /// during motion instead of re-iterating coarse). Default off.
     #[serde(default)]
     pub prefer_detail: bool,
+    /// Draw the elapsed-time overlay over the view: a large clock reading the SAME `+12.345s` the
+    /// log stamps every line with, so a screen recording of a live problem can be lined up against
+    /// the log frame by frame. A diagnostic, off by default. `serde(default)` = `false` keeps older
+    /// session files loadable.
+    #[serde(default)]
+    pub show_timestamp: bool,
     /// Supersampling / anti-alias factor (1 = off, 2/3/4/8 = N×N).
     #[serde(default = "default_aa")]
     pub aa: u32,
@@ -541,6 +547,7 @@ impl Default for SessionState {
             work_budget_scale: default_work_budget_scale(),
             min_motion_res: default_min_motion_res(),
             prefer_detail: false,
+            show_timestamp: false,
             aa: default_aa(),
             finish_sound: default_finish_sound(),
             fps_cap: default_fps_cap(), // 60 (0 = uncapped)

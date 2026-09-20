@@ -55,6 +55,24 @@ detail is in the git history.
   changes of mind from 13 to 4 and the camera's movement per look from 2.9% of the screen to 0.4%
   — steadier than before any of this work (0.5%), while keeping the better targets.
 
+- **The auto-zoom no longer slides sideways just as it starts** (beta.109). The dive eases a target
+  that has drifted off centre back toward the middle, and that easing was paced by the zoom *speed
+  setting* rather than by the zoom actually happening. But the zoom speed ramps up over the first
+  half second, so for that half second the picture was being pushed sideways with almost no zoom
+  underneath it — which is the most visible thing a camera can do, and it is the first thing you
+  see. Pacing it by the speed that is really happening means the centring arrives together with the
+  zoom: over the opening half second of a 4× dive the picture now travels 1.0% of the screen
+  sideways instead of 2.8%, and on the very first frame the sideways push is about a twenty-fifth of
+  what it was. It also eases off while the dive is turning toward a new target, which is the other
+  moment the zoom deliberately slows down.
+
+- **New: a large timestamp you can switch on over the view** (beta.109, View ▸ Show timestamp, or
+  `--show-timestamp`). It shows the same `+12.345s` that every line of the log file is stamped with,
+  and the frame number underneath. Anything that only happens while the picture is moving — a
+  sideways slide, a flash, a frame that goes flat — is hard to pin down after the fact, because you
+  cannot tell which line of the log the eye actually caught. Record the screen with this on and the
+  recording lines up against the log frame by frame. Off by default; the choice is remembered.
+
 - **"Normalize deep colors" no longer makes the palette breathe during a deep zoom, and a view
   that stops keeps the right colours** (beta.109). Deep frames are computed in iteration steps,
   and each step reported the range of the pixels finished so far as though it were the whole

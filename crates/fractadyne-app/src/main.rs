@@ -4909,6 +4909,14 @@ struct RenderConfig {
     /// settle composite is still visible as it lands; present-gating (back-buffer swap) is the
     /// follow-up stage.
     prefer_detail: bool,
+    /// Draw the elapsed-time overlay over the view (View ▸ Show timestamp, or `--show-timestamp`).
+    ///
+    /// ⭐It reads the SAME clock the log stamps every line with (`diag::elapsed_s`), which is the
+    /// whole point: a phone video or screen capture of a live problem can be lined up against the
+    /// log to the frame. Asked for by the user 2026-09-20 while chasing a pan that only shows
+    /// itself in motion — "add an option to display a large timestamp on screen and use that when
+    /// doing live testing to help isolate issues". Off by default.
+    show_timestamp: bool,
     /// Supersampling / anti-alias factor (1 = off, 2 = 2×2, 3 = 3×3).
     aa: u32,
     /// Play a sound when a render/export finishes (FRACTINT played a distinct tone; user
@@ -6437,6 +6445,7 @@ impl FractadyneApp {
                 work_budget_scale: s.work_budget_scale.clamp(0.25, 8.0),
                 min_motion_res: s.min_motion_res.clamp(0.30, 1.0),
                 prefer_detail: s.prefer_detail,
+                show_timestamp: s.show_timestamp,
                 finish_sound: s.finish_sound,
                 aa: s.aa,
             },
@@ -6492,6 +6501,14 @@ impl FractadyneApp {
         }
         if args.iter().any(|a| a == "--watermark") {
             app.watermark = true;
+        }
+        // The elapsed-time overlay, from the command line as well as the View menu, so a harness
+        // run can be recorded and lined up against its own log without a human toggling anything.
+        if args.iter().any(|a| a == "--show-timestamp") {
+            app.render_cfg.show_timestamp = true;
+        }
+        if args.iter().any(|a| a == "--no-show-timestamp") {
+            app.render_cfg.show_timestamp = false;
         }
         // Sound: `--no-sound` silences the render-finished tone (and `--sound` overrides
         // `FRACTADYNE_NO_SOUND` back on). Parsed before anything can finish a render.
@@ -6911,6 +6928,7 @@ impl FractadyneApp {
             work_budget_scale: self.render_cfg.work_budget_scale,
             min_motion_res: self.render_cfg.min_motion_res,
             prefer_detail: self.render_cfg.prefer_detail,
+            show_timestamp: self.render_cfg.show_timestamp,
             finish_sound: self.render_cfg.finish_sound,
             aa: self.render_cfg.aa,
             fps_cap: self.fps_cap.unwrap_or(0.0), // None (uncapped) → 0, so it round-trips
