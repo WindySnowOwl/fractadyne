@@ -1343,6 +1343,16 @@ impl FractadyneApp {
             );
         }
 
+        // ---- auto-zoom target (View ▸ Show auto-zoom target): where the dive is heading ----
+        if self.render_cfg.show_zoom_target && self.autopilot.active && !self.dual {
+            crate::ui::autopilot_overlay::draw(
+                ctx,
+                central.response.rect,
+                self.autopilot.aim,
+                self.autopilot.goal,
+            );
+        }
+
         // ---- guided-tour annotations (captions + coordinate-anchored callouts) ----
         if self.playback.is_some() {
             let caption_rects = self.draw_captions(ctx, central.response.rect);

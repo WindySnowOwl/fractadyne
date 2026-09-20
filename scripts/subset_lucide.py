@@ -26,7 +26,7 @@ ICONS = [
     ("ZOOM_IN",     "zoom-in",      "toolbar"),
     ("ZOOM_OUT",    "zoom-out",     "toolbar"),
     ("CLICK_ZOOM",  "crosshair",    "toolbar: click-to-zoom toggle"),
-    ("AUTOPILOT",   "bot",          "toolbar: auto-zoom toggle"),
+    ("AUTOPILOT",   "ship-wheel",   "toolbar: auto-zoom toggle (a helm: the dive steers itself)"),
     ("PALETTE",     "palette",      "toolbar: next palette"),
     ("PERF",        "chart-column", "toolbar: performance panel"),
     ("PLAY",        "play",         "toolbar + tour transport"),

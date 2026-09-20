@@ -139,6 +139,11 @@ pub struct SessionState {
     /// session files loadable.
     #[serde(default)]
     pub show_timestamp: bool,
+    /// While the auto-zoom runs, outline the region of the view it is zooming into and join its
+    /// corners to the corners of the screen, so where the dive is heading can be seen before it
+    /// gets there. Off by default. `serde(default)` = `false` keeps older session files loadable.
+    #[serde(default)]
+    pub show_zoom_target: bool,
     /// Supersampling / anti-alias factor (1 = off, 2/3/4/8 = N×N).
     #[serde(default = "default_aa")]
     pub aa: u32,
@@ -548,6 +553,7 @@ impl Default for SessionState {
             min_motion_res: default_min_motion_res(),
             prefer_detail: false,
             show_timestamp: false,
+            show_zoom_target: false,
             aa: default_aa(),
             finish_sound: default_finish_sound(),
             fps_cap: default_fps_cap(), // 60 (0 = uncapped)

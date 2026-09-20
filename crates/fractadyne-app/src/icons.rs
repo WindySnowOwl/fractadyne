@@ -57,8 +57,8 @@ pub(crate) const ZOOM_OUT: &str = "\u{e1b7}";
 /// Lucide `crosshair` - toolbar: click-to-zoom toggle
 pub(crate) const CLICK_ZOOM: &str = "\u{e0ac}";
 
-/// Lucide `bot` - toolbar: auto-zoom toggle
-pub(crate) const AUTOPILOT: &str = "\u{e1bb}";
+/// Lucide `ship-wheel` - toolbar: auto-zoom toggle (a helm: the dive steers itself)
+pub(crate) const AUTOPILOT: &str = "\u{e502}";
 
 /// Lucide `palette` - toolbar: next palette
 pub(crate) const PALETTE: &str = "\u{e1dd}";

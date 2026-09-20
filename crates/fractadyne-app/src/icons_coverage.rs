@@ -115,6 +115,6 @@ fn the_coverage_check_can_actually_fail() {
     }
     // A Lucide icon: without this, dropping the subset from the build would blank every icon
     // in the UI and the test above would still pass.
-    let bot = crate::icons::AUTOPILOT.chars().next().unwrap() as u32;
-    assert!(have.contains(&bot), "the Lucide subset is missing (U+{bot:04X})");
+    let helm = crate::icons::AUTOPILOT.chars().next().unwrap() as u32;
+    assert!(have.contains(&helm), "the Lucide subset is missing (U+{helm:04X})");
 }
