@@ -603,6 +603,15 @@ impl FractadyneApp {
                                 ui.radio_value(&mut self.autopilot.priority, P::Quality, "Quality")
                                     .on_hover_text("Fully resolved frames only; the zoom waits for them.");
                             });
+                            ui.horizontal(|ui| {
+                                use crate::autopilot::AutopilotTarget as T;
+                                ui.add_space(12.0);
+                                ui.label("Target:");
+                                ui.radio_value(&mut self.autopilot.target, T::Detail, "Detail")
+                                    .on_hover_text("The richest edge in view, re-chosen as the dive goes.");
+                                ui.radio_value(&mut self.autopilot.target, T::Misiurewicz, "Misiurewicz point")
+                                    .on_hover_text("The nearest Misiurewicz point, solved once and dived into exactly (Mandelbrot only).");
+                            });
                         });
                         ui.checkbox(&mut self.anim.show_orbits, "Orbit overlay")
                             .on_hover_text(

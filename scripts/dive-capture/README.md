@@ -27,7 +27,7 @@ pairs** before believing a difference.
 
 | file | what |
 |------|------|
-| `capdive.sh NAME EXE KFR [SEED] [T] [ITER] [PRIORITY]` | runs `--autodive` from a `.kfr` in a wiped scratch config, captures the window for 18 s; `PRIORITY` = `speed` / `quality` (the auto-zoom priority); `FRACTADYNE_BIGNUM` passes through |
+| `capdive.sh NAME EXE KFR [SEED] [T] [ITER] [PRIORITY] [TARGET]` | runs `--autodive` from a `.kfr` in a wiped scratch config, captures the window for 18 s; `PRIORITY` = `speed` / `quality` (the auto-zoom priority), `TARGET` = `detail` / `misiurewicz` (the auto-zoom target); `FRACTADYNE_BIGNUM` passes through |
 | `grab.ps1 -ProcId N -OutDir D -Seconds S -IntervalMs M` | PrintWindow capture of one process's window, DPI-aware, 480 px wide (PS 5.1) |
 | `grab_full.ps1` | the same at native resolution — needed to read an 8 px toolbar glyph |
 | `blankscore.py RUN…` | per run: frames, `SCREEN BLANK` count (canvas-interior stddev < 1), rung changes, empty passes, and a `#`/`.` timeline |
