@@ -39,12 +39,21 @@ detail is in the git history.
   edge as equally good — on a deep view that is nearly half the picture — and then picked whichever
   of those had the most detail around it. The point with the most detail around it is the *centre*
   of the detail, and the centre of a spiral is its empty eye, so the dive kept aiming just beside
-  the structure and magnifying it away. Measured on a reported 1e146 dive, the point the camera was
-  zooming about had only enough structure ahead of it for another 7 magnifications; it now has 10.5,
-  a margin eleven times larger, and the worst case over the whole dive improved from 3 to 4.3. The
-  dive descends just as fast, and the camera actually moves *less*: the largest jump in the point it
-  zooms about fell from 13.5% of the screen to 8.9%, because good targets are now plentiful and
-  close by instead of scarce and scattered.
+  the structure and magnifying it away. Measured on a reported 1e146 dive, the target now has
+  enough structure ahead of it for 12.4 more magnifications where it used to have 8.4, and the
+  worst case over the whole dive improved from 4.9 to 6.9. The dive descends just as fast.
+
+  Choosing the target that way needs care in two places, and getting either wrong is worse than
+  not doing it. The distance estimate the choice rests on is exact for most of its range but turns
+  to nonsense at the very bottom — readings that claim to be 20-odd magnifications deeper than they
+  are, produced by pixels whose arithmetic has broken down — so readings past the point of
+  trustworthiness are all treated alike rather than believed. And the depth of a target is a *count
+  of magnifications*, so asking "is somewhere twice as deep?" is not a sensible question: it made
+  the dive change its mind on nearly half of its looks and swing the camera around every few
+  seconds. Whether to switch targets is now decided on how appealing somewhere else is, plus a
+  straight check on whether the current target has run out of room. On a 1e190 dive that took the
+  changes of mind from 13 to 4 and the camera's movement per look from 2.9% of the screen to 0.4%
+  — steadier than before any of this work (0.5%), while keeping the better targets.
 
 - **"Normalize deep colors" no longer makes the palette breathe during a deep zoom, and a view
   that stops keeps the right colours** (beta.109). Deep frames are computed in iteration steps,
