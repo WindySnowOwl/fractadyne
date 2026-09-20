@@ -19,7 +19,10 @@
 //!   evaluations instead of staying on a SCREEN position the content has moved away from;
 //! - it is kept on its piece of the edge — each look moves it back onto the edge ACROSS the edge
 //!   only, using the probe's distance estimate and normal, never along it (`project_onto_edge`) —
-//!   and abandoned only for a region twice as rich (with a cooldown) or when it is lost;
+//!   and abandoned only for a region twice as APPEALING (with a cooldown), when its own runway
+//!   runs out, or when it is lost. ⭐Depth ranks candidates but must never be the thing compared
+//!   in that ratio: it saturates, and `best` is a maximum over the whole frame, so a depth-weighted
+//!   ratio sits pinned at the cap and retargets on any dip — see the rule in `choose_goal`;
 //! - the camera eases: the aim closes on the goal, the aim drifts to the centre of the screen, and
 //!   the zoom speed ramps in and slows through a turn.
 
@@ -301,8 +304,14 @@ const ON_BOUNDARY: f32 = 0.5;
 /// The farthest (cells) a cell's distance estimate is trusted to locate the edge: past this the
 /// straight-edge approximation behind [`Probe::project_onto_edge`] is not local any more.
 const EDGE_TRUST: f64 = 2.0;
-/// A region elsewhere must beat the current goal's by this factor to take over.
+/// A region elsewhere must beat the current goal's APPEAL by this factor to take over. ⚠Appeal
+/// only — see the retarget rule in [`choose_goal`] for why depth must not be compared this way.
 const RETARGET_GAIN: f64 = 2.0;
+/// Octaves of descent below which a tracked goal is abandoned whatever else is on offer: at about
+/// an octave of zoom per evaluation, a goal with less than this left would be magnified past within
+/// a couple of looks. This is depth's whole job in the retarget decision — a threshold on the
+/// goal's OWN runway, never a comparison against the best reading in the frame.
+const RETARGET_MIN_DEPTH: f64 = 3.0;
 /// Width of the centre preference, as a fraction of the screen's short side. Tight on purpose: at
 /// the old probe's 40%-at-the-edge bias, picks sat a median 0.32 screen heights off centre.
 const CENTER_SIGMA: f64 = 0.25;
@@ -504,11 +513,14 @@ pub(crate) fn choose_goal(
         let r = ((f.0 - 0.5) * aspect).hypot(f.1 - 0.5) / short;
         (-r * r / (2.0 * CENTER_SIGMA * CENTER_SIGMA)).exp()
     };
-    // What a candidate is worth: how far the dive can descend about it ([`Probe::depth`] — the term
-    // that was saturated, and the reason the old score settled in the eye of a spiral), how much
-    // structure surrounds it, and how short the journey to it is. All three are wanted, so they
-    // multiply; depth carries the range (0 to 13), the other two are fractions that discount it.
-    let score = |k: usize, at: (f64, f64)| p.depth(k, &wt) * rich(k) * centre_w(at);
+    // How APPEALING a place is: how much structure surrounds it and how short the journey to it is.
+    // Both are fractions, so this is bounded and changes smoothly — which is what makes it safe to
+    // compare two places by RATIO (see the retarget rule below).
+    let appeal = |k: usize, at: (f64, f64)| rich(k) * centre_w(at);
+    // What a candidate is worth to RANK them against each other: appeal, led by how far the dive
+    // can descend about it ([`Probe::depth`] — the term that was saturated, and the reason the old
+    // score settled in the eye of a spiral).
+    let score = |k: usize, at: (f64, f64)| p.depth(k, &wt) * appeal(k, at);
 
     // ⭐⭐**A NEW TARGET MUST FIT THE BOUNDED REGION AROUND THE CENTRE.** The centre preference only
     // discourages an edge target; it does not forbid one, and a target near the edge is a long pan
@@ -541,7 +553,7 @@ pub(crate) fn choose_goal(
     }
     // A new goal goes ON the edge its cell's estimate locates, not at the cell's centre.
     let on_edge = |i: usize, j: usize| p.project_onto_edge(frac(i, j), i, j).unwrap_or(frac(i, j));
-    let (bi, bj, best_score) = match (best, nearest) {
+    let (bi, bj, _) = match (best, nearest) {
         (Some(b), _) => b,
         // Nothing within the bound: head for the closest structure instead, at its own score.
         (None, Some((i, j, _))) => (i, j, score(j * w + i, frac(i, j))),
@@ -596,8 +608,28 @@ pub(crate) fn choose_goal(
     // on a plain straight edge, to lose the goal to a retarget every other look.
     let ri = ((refined.0 * w as f64) as usize).min(w - 1);
     let rj = ((refined.1 * h as f64) as usize).min(h - 1);
-    let kept = score(rj * w + ri, refined).max(score(aj * w + ai, refined));
-    if may_retarget && best_score > RETARGET_GAIN * kept {
+    let (rk, ak) = (rj * w + ri, aj * w + ai);
+
+    // ⭐⭐**DEPTH RANKS CANDIDATES; IT MUST NOT DECIDE THE RETARGET.** Depth is a count of OCTAVES —
+    // a logarithm — and it saturates at the cap wherever the estimate stops being trustworthy. Put
+    // it in a `best > 2 × kept` ratio and both facts bite at once: `best` is the MAXIMUM over ~900
+    // cells, so it sits pinned at the cap on 100% of looks (measured over a 2^633 dive), while
+    // `kept` is a SINGLE cell's reading that dips as the view grows and the goal drifts off its
+    // edge. The test then stops asking "is anywhere twice as good?" and starts asking "has this
+    // one reading dipped below half the cap?", which fired on 29 of 68 looks and swung the camera
+    // every few seconds — the user's "it keeps zooming somewhere off screen", 2026-09-20.
+    //
+    // So the two questions are asked separately, each in a currency that can answer it:
+    //   • **Is somewhere much more appealing?** A ratio, on the bounded `appeal` terms alone —
+    //     exactly the comparison that held the goal steady before depth existed (2 retargets in 56
+    //     looks on the user's own dive), and single-cell against single-cell, so no extreme value.
+    //   • **Has this goal run out of room?** A THRESHOLD on its own depth, which is what depth is
+    //     for. Below `RETARGET_MIN_DEPTH` octaves the dive would magnify past it within a couple of
+    //     evaluations, so it goes regardless of what is on offer elsewhere.
+    let out_of_runway = p.depth(rk, &wt).max(p.depth(ak, &wt)) < RETARGET_MIN_DEPTH;
+    let kept_appeal = appeal(rk, refined).max(appeal(ak, refined));
+    let best_appeal = appeal(bj * w + bi, on_edge(bi, bj));
+    if may_retarget && (out_of_runway || best_appeal > RETARGET_GAIN * kept_appeal) {
         return Some(global);
     }
     Some(Steer { goal: refined, retarget: false })
