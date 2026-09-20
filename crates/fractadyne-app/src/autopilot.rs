@@ -8,9 +8,13 @@
 //! their AVERAGE, which is the flat gap between them. Every pick was detail; the point actually
 //! being zoomed was not, and after 89 s the dive reached 1e37 with no boundary left in view. So:
 //!
-//! - the goal is scored on the shader's distance estimate (boundary DENSITY over a neighbourhood,
-//!   strongly centre-weighted) and must itself be a boundary cell — only boundary points have
-//!   unbounded detail, so zooming about one never runs out of it;
+//! - the goal is scored on the shader's distance estimate and must itself be a boundary cell —
+//!   only boundary points have unbounded detail, so zooming about one never runs out of it. What
+//!   the score MAXIMISES is how many octaves the dive can descend about the cell ([`Probe::depth`],
+//!   floored at the depth the estimate is trustworthy to); boundary density over a neighbourhood
+//!   and nearness to the centre only discount that. Maximising the DENSITY instead — which is what
+//!   the first rewrite did — aims at the centroid of the structure, and the centroid of a spiral is
+//!   its empty eye;
 //! - it is carried through every zoom and pan (`after_zoom`), so it stays on its content between
 //!   evaluations instead of staying on a SCREEN position the content has moved away from;
 //! - it is kept on its piece of the edge — each look moves it back onto the edge ACROSS the edge
@@ -302,6 +306,17 @@ const RETARGET_GAIN: f64 = 2.0;
 /// Width of the centre preference, as a fraction of the screen's short side. Tight on purpose: at
 /// the old probe's 40%-at-the-edge bias, picks sat a median 0.32 screen heights off centre.
 const CENTER_SIGMA: f64 = 0.25;
+/// The deepest distance estimate the shader is trusted to report, in log₂ cells.
+///
+/// ⚠**The deepest readings are fantasies, and a chooser that maximises depth would chase exactly
+/// them.** Checked against an independent 260-digit distance estimate on the probes of a reported
+/// dive (2026-09-19, 2^486→2^548): the shader's estimate is EXACT — 0.00 octaves of error — for
+/// every reading down to about −12, drifts ~2 octaves by −16, and is **22 to 28 octaves wrong**
+/// below −32 (a cell reporting −35.4 was really at −11.2). The extremes come from pixels whose
+/// perturbation has lost its derivative, and they are the ones a depth-ranking score would pick
+/// first. So every reading is floored here: a cell may be credited with at most 12 octaves of
+/// descent, which is still twelve times what one evaluation interval spends.
+const DE_TRUST_LOG2: f32 = -12.0;
 /// How far from the centre (fraction of the screen's short side) a NEW target may be chosen. A
 /// target beyond this is a long pan at depth, so the search stays inside this region unless there
 /// is no boundary in it at all.
@@ -345,8 +360,33 @@ impl Probe {
         })
     }
 
+    /// How many octaves the view can descend about this cell before the set's nearest point is off
+    /// screen: the UNCLAMPED form of the middle case of [`Probe::boundary_weights`], floored at
+    /// [`DE_TRUST_LOG2`]. Cells with no estimate fall back to their boundary weight (the abs
+    /// families carry no derivative, so depth is not available to rank them by).
+    ///
+    /// ⭐⭐**A SCORE CANNOT RANK WHAT IT SATURATES ON.** `boundary_weights` reaches 1.0 at a HALF
+    /// CELL and stays there — and on a deep view a half cell is ~11 screen pixels, so a median 42%
+    /// of the eligible cells were tied at exactly 1.0 (measured over the 69 probes of a reported
+    /// dive). The chooser maximised a DENSITY of those tied weights, and the maximum of a density
+    /// over a blob is the blob's CENTROID — which, for the spiral that dominates every deep view,
+    /// is the smooth eye. That is the "it zooms into a flat region" report, exactly: the goal had a
+    /// median 4.0 octaves of descent in it (worst 0.8) while a fully credible 12 was available
+    /// inside the bound at every single look. Ranking by depth costs nothing elsewhere — the
+    /// deepest cell is also the DENSER one (0.884 against 0.798 over the same probes).
+    fn depth(&self, k: usize, weights: &[f32]) -> f64 {
+        if self.interior(k) {
+            return 0.0;
+        }
+        if self.de_log2[k] >= DE_NONE {
+            return weights[k] as f64;
+        }
+        (1.0 - self.de_log2[k].max(DE_TRUST_LOG2) as f64).max(0.0)
+    }
+
     /// How surely the set's boundary passes through each cell: 1 = on it, 0 = well clear of it.
-    /// Interior cells are 0 — never a goal.
+    /// Interior cells are 0 — never a goal. This is the QUALIFIER (is this cell a legal goal at
+    /// all); [`Probe::depth`] is what ranks the cells that qualify.
     pub(crate) fn boundary_weights(&self) -> Vec<f32> {
         let mut out = vec![0.0f32; self.w * self.h];
         for j in 0..self.h {
@@ -464,6 +504,11 @@ pub(crate) fn choose_goal(
         let r = ((f.0 - 0.5) * aspect).hypot(f.1 - 0.5) / short;
         (-r * r / (2.0 * CENTER_SIGMA * CENTER_SIGMA)).exp()
     };
+    // What a candidate is worth: how far the dive can descend about it ([`Probe::depth`] — the term
+    // that was saturated, and the reason the old score settled in the eye of a spiral), how much
+    // structure surrounds it, and how short the journey to it is. All three are wanted, so they
+    // multiply; depth carries the range (0 to 13), the other two are fractions that discount it.
+    let score = |k: usize, at: (f64, f64)| p.depth(k, &wt) * rich(k) * centre_w(at);
 
     // ⭐⭐**A NEW TARGET MUST FIT THE BOUNDED REGION AROUND THE CENTRE.** The centre preference only
     // discourages an edge target; it does not forbid one, and a target near the edge is a long pan
@@ -488,7 +533,7 @@ pub(crate) fn choose_goal(
             if d > TARGET_MAX_OFF {
                 continue;
             }
-            let s = rich(k) * centre_w(f);
+            let s = score(k, f);
             if best.is_none_or(|b| s > b.2) {
                 best = Some((i, j, s));
             }
@@ -499,7 +544,7 @@ pub(crate) fn choose_goal(
     let (bi, bj, best_score) = match (best, nearest) {
         (Some(b), _) => b,
         // Nothing within the bound: head for the closest structure instead, at its own score.
-        (None, Some((i, j, _))) => (i, j, rich(j * w + i) * centre_w(frac(i, j))),
+        (None, Some((i, j, _))) => (i, j, score(j * w + i, frac(i, j))),
         (None, None) => return None, // no boundary anywhere in view: a genuine dead end
     };
     let global = Steer { goal: on_edge(bi, bj), retarget: true };
@@ -544,7 +589,14 @@ pub(crate) fn choose_goal(
     let refined = p
         .project_onto_edge(g, ai, aj)
         .unwrap_or(if (ai, aj) == (gi, gj) { g } else { frac(ai, aj) });
-    let kept = rich(aj * w + ai) * centre_w(refined);
+    // ⭐**Score the goal where it IS, not at the cell that located its edge.** The anchor is only
+    // the cell whose estimate the projection used; when the goal had drifted, that is a cell up to
+    // `SNAP_R` OFF the edge, and its own depth is the depth of a point off the edge. Judging the
+    // goal by it under-rates the goal by exactly the amount the projection just recovered — enough,
+    // on a plain straight edge, to lose the goal to a retarget every other look.
+    let ri = ((refined.0 * w as f64) as usize).min(w - 1);
+    let rj = ((refined.1 * h as f64) as usize).min(h - 1);
+    let kept = score(rj * w + ri, refined).max(score(aj * w + ai, refined));
     if may_retarget && best_score > RETARGET_GAIN * kept {
         return Some(global);
     }

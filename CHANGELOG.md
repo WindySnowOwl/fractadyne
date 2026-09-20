@@ -33,7 +33,18 @@ detail is in the git history.
   in, and that easing keeps pace with the zoom speed instead of taking a fixed two seconds however
   fast the dive is. A new target is also required to lie within about a third of the screen from
   the middle, so the dive can never set off on a long journey across the view; if there is nothing
-  in that region it heads for the closest structure outside it rather than the richest.
+  in that region it heads for the closest structure outside it rather than the richest. Finally, it
+  now aims at the part of the view with the most zooming left in it, rather than at the middle of
+  the structure. The old score treated everything within about eleven screen pixels of the fractal's
+  edge as equally good — on a deep view that is nearly half the picture — and then picked whichever
+  of those had the most detail around it. The point with the most detail around it is the *centre*
+  of the detail, and the centre of a spiral is its empty eye, so the dive kept aiming just beside
+  the structure and magnifying it away. Measured on a reported 1e146 dive, the point the camera was
+  zooming about had only enough structure ahead of it for another 7 magnifications; it now has 10.5,
+  a margin eleven times larger, and the worst case over the whole dive improved from 3 to 4.3. The
+  dive descends just as fast, and the camera actually moves *less*: the largest jump in the point it
+  zooms about fell from 13.5% of the screen to 8.9%, because good targets are now plentiful and
+  close by instead of scarce and scattered.
 
 - **"Normalize deep colors" no longer makes the palette breathe during a deep zoom, and a view
   that stops keeps the right colours** (beta.109). Deep frames are computed in iteration steps,
