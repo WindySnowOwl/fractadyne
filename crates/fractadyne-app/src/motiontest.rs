@@ -218,7 +218,9 @@ impl FractadyneApp {
                         mt.frames, motion, self.perf.chunk_ok, self.perf.chunk_fe_ok
                     );
                     eprintln!(
-                        "--motiontest: adopt partial={partial} complete={complete} dirty-shown={dirty}"
+                        "--motiontest: adopt partial={partial} complete={complete} dirty-shown={dirty} \
+                         (session totals: converged={} blank-walks={})",
+                        self.perf.adopt_converged[0], self.perf.blank_walks_total[0]
                     );
                     let mut fails: Vec<String> = Vec::new();
                     if motion < MIN_MOTION_FRAMES {

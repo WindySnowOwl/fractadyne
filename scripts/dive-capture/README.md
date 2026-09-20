@@ -27,15 +27,18 @@ pairs** before believing a difference.
 
 | file | what |
 |------|------|
-| `capdive.sh NAME EXE KFR [SEED] [T] [ITER]` | runs `--autodive` from a `.kfr` in a wiped scratch config, captures the window for 18 s |
+| `capdive.sh NAME EXE KFR [SEED] [T] [ITER] [PRIORITY]` | runs `--autodive` from a `.kfr` in a wiped scratch config, captures the window for 18 s; `PRIORITY` = `speed` / `quality` (the auto-zoom priority); `FRACTADYNE_BIGNUM` passes through |
 | `grab.ps1 -ProcId N -OutDir D -Seconds S -IntervalMs M` | PrintWindow capture of one process's window, DPI-aware, 480 px wide (PS 5.1) |
 | `grab_full.ps1` | the same at native resolution — needed to read an 8 px toolbar glyph |
 | `blankscore.py RUN…` | per run: frames, `SCREEN BLANK` count (canvas-interior stddev < 1), rung changes, empty passes, and a `#`/`.` timeline |
+| `flashscore.py RUN… [--rect X0 X1 Y0 Y1]` | per run: FLASHES (captures whose canvas differs from the previous one by > 60 mean units/channel — a crisp frame giving way to a flat one, or back), flat frames, and a `!`/`F`/`.` timeline. Also runs on frames extracted from a screen recording (`--rect` names the canvas) — the 2026-09-20 recording scored 35% flat, 22 episodes |
 | `motion.py RUN/stderr.txt…` | camera metrics from the `[fd-autopilot]` evals: focus-of-expansion off-centre and aim movement per look |
 | `life.py RUN/stderr.txt` | octaves of runway at the goal and the aim: true distance estimate at 260 digits (mpmath), slow. Assumes a 1467×1102 panel — edit `W,H` |
 | `mkpath.py RUN STEP` | every STEP-th eval as `path.tsv` (centre, l2, aim) for offline `--render` frames along the dive |
 | `dive-2p800.kfr`, `dive-2p633.kfr` | the two reported locations (the 2^633 one does NOT reproduce the blank frames on this box) |
+| `dive-2p584.kfr` | the start view of the 2026-09-20 "flashing / flat colour planes" recording (8.1e175×); with `session-2026-09-20.toml`, auto-iter (`ITER` 0) and `FRACTADYNE_BIGNUM=rug` it is that session |
 | `session-seed.toml` | the reporting user's settings, personal paths removed |
+| `session-2026-09-20.toml` | the same user's settings at the flashing report (base iterations 250,000; the auto-iter ask at 2^584 is ~152k against a picture complete by ~4,400) |
 
 Log fields worth knowing: `norm reading EMPTY` = a pass committed no escaped pixel;
 `norm range: frame [lo,hi]` = the view's escape range (hi at the iteration cap means the count,

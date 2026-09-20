@@ -95,6 +95,11 @@ struct Frame {
     /// Pinned refreshes ADOPTED so far (`perf.adopt_complete[0]`): the count that proves the
     /// held frame is being replaced, not merely re-iterated into a G-buffer nobody sees.
     adopts: u64,
+    /// …adopted short of their ask because the picture had stopped changing
+    /// (`perf.adopt_converged[0]`, the autopilot's Speed priority), and pinned walks that
+    /// completed with no escaped pixel and were kept OFF the screen (`perf.blank_walks_total[0]`).
+    converged: u64,
+    blank: u64,
     /// LIVE AUTO-NORMALIZATION state, for the 2026-09-17 reports ("sometimes doesn't normalize",
     /// "the colours bounce around on zoom", "it may go to a flat colour panel"). The palette
     /// mapping is decided from the escape RANGE and an aliasing predicate on the local GRADIENT,
@@ -412,6 +417,8 @@ impl FractadyneApp {
                         res_px: self.perf.last_res_v[0],
                         oct_s: self.perf.zoom_oct_s,
                         adopts: self.perf.adopt_complete[0],
+                        converged: self.perf.adopt_converged[0],
+                        blank: self.perf.blank_walks_total[0],
                         // The window the colour pass USES (`norm_shown`), not the fed target:
                         // the glide sits between them, and it is the shown one the eye sees.
                         norm_lo: self.perf.norm_shown[0].map_or(f32::NAN, |r| r.0),
@@ -616,6 +623,8 @@ impl FractadyneApp {
         let installs = f.last().unwrap().orbit_id.saturating_sub(f.first().unwrap().orbit_id);
         let look = f.last().unwrap().look.saturating_sub(f.first().unwrap().look);
         let adopts = f.last().unwrap().adopts.saturating_sub(f.first().unwrap().adopts);
+        let converged = f.last().unwrap().converged.saturating_sub(f.first().unwrap().converged);
+        let blank = f.last().unwrap().blank.saturating_sub(f.first().unwrap().blank);
         let paced_pct = f.iter().filter(|r| r.vel_frac < 0.999).count() as f64 / n as f64 * 100.0;
         let hold_pct = f.iter().filter(|r| !r.real).count() as f64 / n as f64 * 100.0;
         let fps = n as f64 / secs.max(1e-9);
@@ -642,7 +651,7 @@ impl FractadyneApp {
             gap_oct_max.exp2()
         );
         eprintln!(
-            "  reference installs {installs} (lookahead {look}) · pinned refreshes adopted {adopts} · depth lag max {lag_max:.2} · pacer throttled {paced_pct:.1}% of frames"
+            "  reference installs {installs} (lookahead {look}) · pinned refreshes adopted {adopts} (+{converged} converged) · blank walks kept off screen {blank} · depth lag max {lag_max:.2} · pacer throttled {paced_pct:.1}% of frames"
         );
 
         let mut rows = String::with_capacity(n * 160);

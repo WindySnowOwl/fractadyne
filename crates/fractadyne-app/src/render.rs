@@ -5,7 +5,7 @@
 
 use crate::{profile, zoom_iter_cap, FractadyneApp, FractalKind, RenderMode, PERT_FE_THRESHOLD};
 use fractadyne_core::Viewport;
-use fractadyne_gpu::{MandelbrotParams, RefOffset};
+use fractadyne_gpu::{ContentReading, MandelbrotParams, RefOffset};
 use std::time::Instant;
 
 // The cost/watchdog constants this file is built around now live in `crate::tunables` (one place,
@@ -1335,7 +1335,59 @@ impl FractadyneApp {
         self.install_recompute(vi, res);
     }
 
+    /// Install a finished reference build — unless it would abort a young pinned refresh, in
+    /// which case it is parked and lands when the pin ends (`flush_deferred_install`). A build at
+    /// the pin's own point only extends it and installs at once (the pin re-keys and continues).
     fn install_recompute(&mut self, vi: usize, res: RecomputeResult) {
+        let vb = vi.min(1);
+        let limit = self.install_defer_frames();
+        let defer = self.perf.pin[vb].as_ref().is_some_and(|pin| {
+            pin.ref_pt.as_ref() != Some(&res.rp)
+                && self.perf.frame_idx.saturating_sub(pin.started_frame) < limit
+        });
+        if defer {
+            if crate::diag::trace_on("ref") {
+                crate::diag::trace(
+                    "ref",
+                    format!(
+                        "install DEFERRED v{vi}: len={} — a pin started at f={} is {} frames old{}",
+                        res.orbit_len,
+                        self.perf.pin[vb].as_ref().map_or(0, |p| p.started_frame),
+                        self.perf.pin[vb]
+                            .as_ref()
+                            .map_or(0, |p| self.perf.frame_idx.saturating_sub(p.started_frame)),
+                        if self.pending_install[vb].is_some() { " (replaces a parked build)" } else { "" },
+                    ),
+                );
+            }
+            self.pending_install[vb] = Some(res);
+            return;
+        }
+        self.install_recompute_now(vi, res);
+    }
+
+    /// Land a parked build once the view's pin has ended or aged past the deferral.
+    pub(crate) fn flush_deferred_install(&mut self, vi: usize) {
+        let vb = vi.min(1);
+        if self.pending_install[vb].is_none() {
+            return;
+        }
+        let limit = self.install_defer_frames();
+        let pin_blocks = self.perf.pin[vb].as_ref().is_some_and(|pin| {
+            self.perf.frame_idx.saturating_sub(pin.started_frame) < limit
+        });
+        if pin_blocks {
+            return;
+        }
+        if let Some(res) = self.pending_install[vb].take() {
+            if crate::diag::trace_on("ref") {
+                crate::diag::trace("ref", format!("deferred install lands v{vi}: len={}", res.orbit_len));
+            }
+            self.install_recompute_now(vi, res);
+        }
+    }
+
+    fn install_recompute_now(&mut self, vi: usize, res: RecomputeResult) {
         // `orbit_len` counts SAMPLES (`iters + 1`): a build capped at exactly `LIVE_REF_CAP`
         // iterations stores `LIVE_REF_CAP + 1` samples and must install normally.
         //
@@ -1555,11 +1607,22 @@ impl FractadyneApp {
         // escaped reference sits at cur ≈ orbit_len, so a new length moves the storm into a band
         // the ledger had priced cheap — measured as one 150 ms pass per move in the 1e12–1e40
         // bands of a 1.0× dive (54 frames over 100 ms where the unpaced build had none).
+        // ⭐…at HALF its licences, not at zero (2026-09-20). Zeroing sent every pin after every
+        // lookahead install (a different point, every ~0.3 s at 4×) back to the floor in every
+        // band, and the floor is sized from the worst rate ever measured in the mode — on a
+        // user's 2^584 dive that was 12-iteration passes through the bands below the view's
+        // first escape at ~4,400 (`pin-price band=1 size=12`), a second of walking before any
+        // pixel could appear, longer than the 2-octave drift window at 4×. A neighbouring orbit
+        // has the same cost structure along its iteration axis to within a band; half the
+        // licence is a priced prior for it, the band clip still stops a pass at the next band's
+        // edge, and the cliff rule still quarters a surprise.
         if self.ref_cache[vi].ref_pt.as_ref() != Some(&res.rp)
             || self.ref_cache[vi].orbit_len != res.orbit_len
         {
             let vb = vi.min(1);
-            self.perf.chunk_bands[vb] = [0; crate::tunables::CHUNK_BANDS];
+            for b in self.perf.chunk_bands[vb].iter_mut() {
+                *b /= 2;
+            }
             self.perf.chunk_pass_dt[vb] = 0.0;
         }
         let vc = &mut self.ref_cache[vi];
@@ -4226,6 +4289,42 @@ impl FractadyneApp {
             // the eye expects; a moving view tracking its own drift (`Chase`) is what must be
             // smooth. Set by the feed below, consumed by the glide after it.
             let mut norm_snap = false;
+            // The frame's CONTENT reading (escaped pixels, tagged with its render): fed to the
+            // view's `ContentTrack`, which the present gate and the pin verdict consult. Its
+            // trace is what says whether the frame that reached the screen had a picture.
+            if let Some(r) = self.perf.content_sink[vb].lock().ok().and_then(|mut g| g.take()) {
+                let ct = &mut self.perf.content[vb];
+                ct.feed(r);
+                if crate::diag::trace_on("gpu") {
+                    let detail = content_has_detail(r.escaped, r.px);
+                    let range = if r.esc_min_bits == u32::MAX {
+                        "none".to_string()
+                    } else {
+                        format!(
+                            "[{:.0},{:.0}]",
+                            f32::from_bits(r.esc_min_bits),
+                            f32::from_bits(r.esc_max_bits)
+                        )
+                    };
+                    crate::diag::trace(
+                        "gpu",
+                        format!(
+                            "content: view={vb} tag={} cursor={} escaped={}/{} ({:.2}%) range={range} \
+                             verdict={} live_tag={} live_ok={} hold_ok={} converged={}",
+                            r.tag,
+                            r.cursor,
+                            r.escaped,
+                            r.px,
+                            100.0 * r.escaped as f64 / r.px.max(1) as f64,
+                            if detail { "detail" } else { "BLANK" },
+                            ct.live_tag,
+                            ct.live_verified(),
+                            ct.hold_verified,
+                            ct.converged_for(r.tag),
+                        ),
+                    );
+                }
+            }
             let nr = self.perf.norm_sink[vb].swap(u64::MAX, SeqCst);
             // ⚠**The two ways to get no normalization are indistinguishable without this.** A drain
             // that publishes an EMPTY range (the seed `u32::MAX` floor untouched: no escaped pixel
@@ -5082,6 +5181,13 @@ impl FractadyneApp {
                 // dead [shader_iter, gpu_iter) range forever.
                 chunk_range = Some([walk_end, walk_end]);
                 chunk_idx = self.perf.chunk_idx[vs];
+                // A finished PIN waits for the reading that proves its picture (`pin_verdict`).
+                // The counter readback arms only when idle, so the completing pass may have gone
+                // out unarmed; re-dispatching the (empty, cheap) tail under a fresh probe nonce
+                // keeps readings coming until one carries the finished cursor.
+                if pin_frame {
+                    self.perf.probe_nonce[vs] = self.perf.probe_nonce[vs].wrapping_add(1);
+                }
             }
             // ⭐Does this pass's escape-range reading describe the picture that will be ON SCREEN?
             // The resolve commits the range of everything escaped SO FAR, so a pass that stops
@@ -5269,11 +5375,19 @@ impl FractadyneApp {
             // (A pin START cannot be seen here — it is decided at the commit point after the
             // freeze verdict, which flips these flags itself.)
             pin_gate = true;
-            let fresh = !self.perf.hold_active[vs];
+            // …and a snapshot may only be taken of a texture KNOWN to hold a picture (see
+            // `ContentTrack`); otherwise the existing snapshot stays, or — with none — the
+            // display shows live, the honest cold-start fallback.
+            let fresh = !self.perf.hold_active[vs] && self.perf.content[vs.min(1)].live_verified();
+            if fresh {
+                self.perf.content[vs.min(1)].hold_verified = true;
+            }
             self.perf.hold_active[vs] = true;
             (fresh, true)
         } else {
             self.perf.hold_active[vs] = false;
+            // The GPU drops the snapshot on a frame without the flag.
+            self.perf.content[vs.min(1)].hold_verified = false;
             (false, false)
         };
         let bootstrap =
@@ -5349,6 +5463,7 @@ impl FractadyneApp {
         vs: usize,
         vidx: usize,
         vsub: usize,
+        pin_frame: bool,
     ) -> MandelbrotParams {
         // Never submit a full-length perturbation iterate without a reference. During the async
         // cold-start (`ref_pt` None) a FRESH view can't reproject the placeholder — there is no
@@ -5604,6 +5719,14 @@ impl FractadyneApp {
         if interacting && self.perf.chunk_dirty[vsub] && !display_hold {
             self.perf.dirty_shown[vsub] = self.perf.dirty_shown[vsub].wrapping_add(1);
         }
+        // The render this frame's pixels belong to: a pinned refresh's passes all carry the
+        // pin's tag (the frame it started on — the pin-START frame is not yet a pin frame but has
+        // just created the pin with this very index), any other frame its own. The content
+        // reading comes back with it (`ContentTrack`).
+        let content_tag = match self.perf.pin[vsub].as_ref() {
+            Some(p) if pin_frame || p.started_frame == self.perf.frame_idx => p.started_frame,
+            _ => self.perf.frame_idx,
+        };
         let params = MandelbrotParams {
             iterate_ms,
             iterate_steps,
@@ -5617,6 +5740,8 @@ impl FractadyneApp {
             norm_sig: self.perf.norm_sig_submit[vs.min(1)],
             norm_complete: self.perf.norm_complete_submit[vs.min(1)],
             norm_complete_out: Some(self.perf.norm_complete_sink[vs.min(1)].clone()),
+            content_tag,
+            content_out: Some(self.perf.content_sink[vs.min(1)].clone()),
             tile,
             chunk_range,
             chunk_idx,
@@ -5708,9 +5833,53 @@ impl FractadyneApp {
         // reprojection frames are ~free and carry no signal about the iterate cost (adapting on
         // them was the mixed-signal bug that pushed motion res to native between refreshes).
         self.perf.prev_real[vi.min(1)] = params.reproject == 0;
+        // ⭐A frame the freeze verdict turned into a reprojection DISPATCHED NOTHING, but the chunk
+        // block had already stamped it as this frame's dispatch (the verdict comes later). Left in
+        // place, the next quick interval "proved" its never-run step count as a rate — measured in
+        // a user's log at 2^600: a frozen native-resolution `[0,28002]` frame lifted the motion
+        // rate ~50× in one frame, the resolution ladder followed (`1.000 -> 0.125 -> 1.000` within
+        // 12 ms, 49 changes in 80 s), and every change restarted a walk. Unstamp it, so the wall
+        // pricing sees no dispatch here, exactly as it does for a pan reprojection.
+        if params.reproject != 0 && self.perf.fe_dispatch_frame[vs] == self.perf.frame_idx {
+            self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx.saturating_sub(8);
+            self.perf.fe_steps_last[vs] = 0;
+        }
         // Remember which view we asked the GPU to stamp, so next frame's reading is compared
         // against the view it actually describes.
         self.perf.content_stamp_asked[vsub] = pos_sig;
+        // …and which RENDER the live texture holds from here on, so the content reading that
+        // comes back can be matched to it. A frame that is complete for its ask by construction
+        // (unchunked, or a walk's completing pass / tail) with a real reference behind it is
+        // verified without waiting; a pin's passes and a placeholder fill are not.
+        if params.reproject == 0 {
+            let ct = &mut self.perf.content[vsub];
+            ct.live_tag = content_tag;
+            ct.live_complete = !pin_frame
+                && self.perf.pin[vsub].as_ref().is_none_or(|p| p.started_frame != self.perf.frame_idx)
+                && chunk_range.is_none_or(|[s, e]| s == e || e >= gpu_iter)
+                && (mode.is_direct() || self.ref_cache[vi].ref_pt.is_some());
+        }
+        if crate::diag::trace_on("tile") {
+            let ct = &self.perf.content[vsub];
+            crate::diag::trace(
+                "tile",
+                format!(
+                    "present f={} v={vs} shows={} tag={content_tag} live_ok={} hold_ok={} \
+                     hold_active={}",
+                    self.perf.frame_idx,
+                    if display_hold {
+                        "hold"
+                    } else if params.reproject != 0 {
+                        "reproject"
+                    } else {
+                        "live"
+                    },
+                    ct.live_verified(),
+                    ct.hold_verified,
+                    self.perf.hold_active[vs],
+                ),
+            );
+        }
         params
     }
 
@@ -5782,6 +5951,16 @@ impl FractadyneApp {
                     0.0 // the verdict stops on `interacting` before this can matter
                 };
                 let rc = &self.ref_cache[vsub];
+                // The pin's render is tagged with the frame it started on (every pass carries
+                // that tag to the GPU), so the content readings that come back can be matched to
+                // it — see `ContentTrack`.
+                let ct = &self.perf.content[vsub];
+                let tag = pin.started_frame;
+                let past_range_top = self.perf.norm_range[vsub].is_some_and(|(_, hi)| {
+                    hi > 0.0
+                        && self.perf.chunk_cursor[vsub] as f64
+                            >= hi as f64 * crate::tunables::RANGE_TOP_MARGIN
+                });
                 pin_verdict(
                     pin,
                     &PinInputs {
@@ -5795,14 +5974,25 @@ impl FractadyneApp {
                         panel: panel_res,
                         frame_idx: self.perf.frame_idx,
                         cursor: self.perf.chunk_cursor[vsub],
+                        policy: self.refresh_policy(),
+                        detail: ct.detail_for(tag),
+                        reading_final: ct.reading_final_for(tag, pin.gpu_iter),
+                        converged: ct.converged_for(tag),
+                        past_range_top,
                     },
                 )
             };
             let (rc_orbit_id, rc_orbit_len) =
                 (self.ref_cache[vsub].orbit_id, self.ref_cache[vsub].orbit_len);
             match verdict {
-                PinVerdict::Adopt => {
+                PinVerdict::Adopt | PinVerdict::AdoptConverged => {
                     let pin = self.perf.pin[vsub].take().unwrap();
+                    let converged = verdict == PinVerdict::AdoptConverged;
+                    if converged {
+                        self.perf.adopt_converged[vsub] =
+                            self.perf.adopt_converged[vsub].wrapping_add(1);
+                    }
+                    self.perf.content[vsub].note_adopt(crate::app_micros());
                     // Feed the refresh-resolution feedback: how long this pin took at its
                     // resolution is the measurement the next refresh is sized from.
                     self.perf.pin_frames_last[vsub] =
@@ -5823,18 +6013,33 @@ impl FractadyneApp {
                     self.perf.adopt_complete[vsub] =
                         self.perf.adopt_complete[vsub].wrapping_add(1);
                     if crate::diag::trace_on("tile") {
+                        let ct = &self.perf.content[vsub];
                         crate::diag::trace(
                             "tile",
                             format!(
-                                "pin-adopt v={vsub} f={} ask={} lag_oct={:.2}",
+                                "pin-adopt v={vsub} f={} ask={} cur={} lag_oct={:.2} mode={} \
+                                 escaped={} period={:.2}s",
                                 self.perf.frame_idx,
                                 pin.gpu_iter,
-                                (live_l2 - pin.log2mag).abs()
+                                self.perf.chunk_cursor[vsub],
+                                (live_l2 - pin.log2mag).abs(),
+                                if converged { "converged" } else { "full" },
+                                ct.last.map_or("-".to_string(), |r| format!(
+                                    "{}/{}",
+                                    r.escaped, r.px
+                                )),
+                                ct.refresh_period_s,
                             ),
                         );
                     }
                 }
                 PinVerdict::Stop(reason) => {
+                    if reason == PinStop::Blank {
+                        self.perf.content[vsub].blank_walks =
+                            self.perf.content[vsub].blank_walks.saturating_add(1);
+                        self.perf.blank_walks_total[vsub] =
+                            self.perf.blank_walks_total[vsub].wrapping_add(1);
+                    }
                     // A pin the view outran (drift / age) is the strongest "too slow at this
                     // resolution" reading there is; other abandons say nothing about cost.
                     if matches!(reason, PinStop::Drift | PinStop::Age) {
@@ -5890,6 +6095,9 @@ impl FractadyneApp {
                 }
             }
         }
+        // A reference build parked behind the pin that just ended lands now, before this frame's
+        // freeze verdict and any new pin, so both see the fresh reference.
+        self.flush_deferred_install(vsub);
         // The live center survives only on pin frames (the hold transform needs it); everything
         // else the transform needs was derived above.
         let live_center_bf = if pin_frame { Some(center_bf.clone()) } else { None };
@@ -6026,7 +6234,7 @@ impl FractadyneApp {
         // slow enough keeps whatever sharpness those controllers earned. Direct mode has no pin
         // (every frame is one dispatch), so it gets a single pass. "Prefer detail while zooming"
         // is the user's explicit choice of native-resolution refreshes and is left alone.
-        let rate_res_cap = if interacting && !pin_frame && !self.render_cfg.prefer_detail {
+        let rate_res_cap = if interacting && !pin_frame && !self.prefer_detail_effective() {
             let vb = (view_id as usize).min(1);
             // Only a frame the chunk path can serve is spread over passes (the pin); an aux
             // colouring, a formula past the chunk shaders' scope or a device without the state
@@ -6133,8 +6341,9 @@ impl FractadyneApp {
             1.0
         } else if !interacting && !self.tour_playing() {
             1.0
-        } else if interacting && self.render_cfg.prefer_detail {
-            // "Prefer detail while zooming": the periodic refresh frames (REFRESH_OCTAVES cadence,
+        } else if interacting && self.prefer_detail_effective() {
+            // "Prefer detail while zooming" (or the autopilot's Quality priority): the periodic
+            // refresh frames (REFRESH_OCTAVES cadence,
             // below) render at NATIVE resolution instead of the AIMD-adapted motion resolution —
             // full-detail frames streamed at their real cost, the hold reprojecting between them.
             // The budget shrink stays as the safety net if a native refresh can't fit one dispatch.
@@ -7239,7 +7448,12 @@ impl FractadyneApp {
                 // view with no reference AND no in-flight job, and if nothing requests a repaint it
                 // would sit stuck. (The `recompute_rx.is_none()` guard still prevents a spawn storm.)
                 let cold = self.ref_cache[vi].ref_pt.is_none();
-                if self.recompute_rx[vi].is_none() && (spawn_ok || cold) {
+                // A build parked behind a pin is as good as in flight: the trigger that asked
+                // for it is still true and would otherwise respawn it every 16 ms.
+                if self.recompute_rx[vi].is_none()
+                    && self.pending_install[vi.min(1)].is_none()
+                    && (spawn_ok || cold)
+                {
                     // Off-thread even for the COLD START (ref_pt is None). It used to run INLINE here,
                     // which froze the UI ("Not Responding") for the full bignum build on every discrete
                     // jump — goto, bookmark load, undo/redo, formula switch, and every deep dual-Julia
@@ -7490,7 +7704,16 @@ impl FractadyneApp {
                 // The display gate engages NOW — the early decision could not see a start.
                 // `hold_active` was cleared there this frame, so the snapshot is fresh by
                 // construction (it must be: this pass is about to compose over the texture).
-                hold_copy = !self.perf.hold_active[vs];
+                // ⭐…and only of a texture KNOWN to hold a picture. The texture here is the last
+                // adopted frame (verified by its own reading) or a complete unchunked one; an
+                // abandoned walk's residue keeps `hold_active` up and the older snapshot with it.
+                // With nothing verified and no snapshot, the display shows this walk live — the
+                // cold-start fallback, and the one case a blank can still reach the screen.
+                let live_ok = self.perf.content[vs.min(1)].live_verified();
+                hold_copy = !self.perf.hold_active[vs] && live_ok;
+                if hold_copy {
+                    self.perf.content[vs.min(1)].hold_verified = true;
+                }
                 self.perf.hold_active[vs] = true;
                 display_hold = true;
                 pin_gate = true;
@@ -7498,8 +7721,13 @@ impl FractadyneApp {
                     crate::diag::trace(
                         "tile",
                         format!(
-                            "pin-start v={vsub} f={} ask={gpu_iter} step0={end} res={}x{} ss={ss}",
-                            self.perf.frame_idx, resolution[0], resolution[1]
+                            "pin-start v={vsub} f={} ask={gpu_iter} step0={end} res={}x{} ss={ss} \
+                             snapshot={} live_ok={live_ok} hold_ok={}",
+                            self.perf.frame_idx,
+                            resolution[0],
+                            resolution[1],
+                            if hold_copy { "fresh" } else { "kept" },
+                            self.perf.content[vs.min(1)].hold_verified,
                         ),
                     );
                 }
@@ -7739,6 +7967,7 @@ impl FractadyneApp {
             vs,
             vidx,
             vsub,
+            pin_frame,
         )
     }
 }
@@ -7955,6 +8184,16 @@ pub(crate) struct PinInputs {
     pub(crate) frame_idx: u64,
     /// The view's chunk cursor (the pin's progress lives in the ordinary cursor slot).
     pub(crate) cursor: u32,
+    /// When the picture may replace the screen (see `RefreshPolicy`).
+    pub(crate) policy: RefreshPolicy,
+    /// Does a reading of THIS pin's render show detail? `None` = none has arrived yet.
+    pub(crate) detail: Option<bool>,
+    /// The latest reading of this pin covers its completing pass (cursor ≥ ask).
+    pub(crate) reading_final: bool,
+    /// The escaped count stopped growing between the last two readings of this pin.
+    pub(crate) converged: bool,
+    /// The walk passed the view's last known escape-range top, with margin.
+    pub(crate) past_range_top: bool,
 }
 
 /// Why a pinned refresh stopped without adopting.
@@ -7975,6 +8214,9 @@ pub(crate) enum PinStop {
     Age,
     /// The caller supplied a pan-reprojection: this frame will not dispatch a pass.
     CallerReproject,
+    /// The walk completed and its own reading says NOT ONE pixel escaped: the picture at this
+    /// ask is a flat interior colour. The hold stays; adopting it would put that colour on screen.
+    Blank,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -7984,8 +8226,142 @@ pub(crate) enum PinVerdict {
     /// abandon reason on purpose: a finished progression adopts even at the settle edge or past
     /// the drift threshold (the work is done; discarding it buys nothing).
     Adopt,
+    /// The walk is short of its ask but the PICTURE is done (`RefreshPolicy::Converged`): its
+    /// escaped count stopped growing between two readings, or it passed the view's known escape
+    /// range — and a reading proves it has detail. Latched exactly like `Adopt`; counted apart.
+    AdoptConverged,
     Continue,
     Stop(PinStop),
+}
+
+/// When a pinned refresh may replace the picture on screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RefreshPolicy {
+    /// Only a walk that reached its full ask — every pixel decided (the autopilot's Quality
+    /// priority, and every manual glide).
+    Full,
+    /// As soon as the walk's picture has stopped changing (the autopilot's Speed priority). At a
+    /// user's 2^584 dive the view's escapes all lie below ~4,400 iterations and the ask is 155k:
+    /// the last 150k only confirm interior pixels, at 35× the cost of the picture.
+    Converged,
+}
+
+/// Does a frame's escaped-pixel reading amount to a picture? The blank frame this guards
+/// against has ZERO escaped pixels (a walk that never reached the view's first escape resolves
+/// every pixel to the interior colour); the threshold above zero is noise margin for a
+/// subsampled/clipped frame, low enough that a single thin filament in an otherwise interior
+/// view still counts as detail.
+pub(crate) fn content_has_detail(escaped: u32, px: u32) -> bool {
+    px > 0 && escaped as f64 >= (px as f64 * CONTENT_MIN_ESCAPED).max(1.0)
+}
+
+/// Has a chunked walk's picture stopped changing between two readings of the SAME render? The
+/// later reading must come from a pass well past the earlier one (`CONVERGE_CURSOR_GROWTH`, and
+/// at least a floor pass further — one more pass at a tiny licence proves nothing) and add no
+/// more than `CONVERGE_TOLERANCE` of the escaped pixels seen so far (plus a per-frame allowance
+/// for the odd straggler). Escapes are monotonic through a walk, so this is a one-sided test.
+pub(crate) fn content_converged(prev: &ContentReading, last: &ContentReading) -> bool {
+    if prev.tag != last.tag || last.cursor <= prev.cursor {
+        return false;
+    }
+    let far_enough = last.cursor as f64
+        >= (prev.cursor as f64 * CONVERGE_CURSOR_GROWTH).max(prev.cursor as f64 + 256.0);
+    let grew = last.escaped as f64 - prev.escaped as f64;
+    let allowed = prev.escaped as f64 * CONVERGE_TOLERANCE + last.px as f64 * CONVERGE_TOLERANCE_PX;
+    far_enough && grew <= allowed
+}
+
+/// What the app knows about the CONTENT of one view's textures — the live iteration G-buffer and
+/// the hold snapshot — from the escaped-pixel readings the GPU sends back.
+///
+/// ⭐⭐**A frame is shown, or snapshotted, only when it is known to carry a picture.** Nothing in
+/// the pipeline used to check: the display served whatever the last dispatch resolved, and the
+/// hold copied whatever the texture held at the moment a pin started. Lined up against a user's
+/// recording (2026-09-20, an autopilot dive from 2^584 at 4×): 35% of the frames were one flat
+/// colour — black where a walk had not reached the view's first escape, a palette colour where
+/// the previous frame's centre had been magnified 30–80× — and the "flashing" was the
+/// alternation between those and the occasional crisp frame. The readings land 2–3 frames after
+/// their render, like every readback, so the verdict is attached to the RENDER (`ContentReading::tag`)
+/// and compared with what the texture holds NOW (`live_tag`), never assumed for the frame in
+/// flight.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ContentTrack {
+    /// Tag of the render whose pixels the LIVE texture holds (stamped at every dispatch).
+    pub(crate) live_tag: u64,
+    /// That render was COMPLETE for its ask by construction (an unchunked frame, or a walk's
+    /// completing pass) with a real reference behind it — verified without waiting for a reading.
+    pub(crate) live_complete: bool,
+    /// The latest reading, whatever render it describes.
+    pub(crate) last: Option<ContentReading>,
+    /// The reading before `last`, if it described the same render (the convergence pair).
+    pub(crate) prev_same: Option<ContentReading>,
+    /// The hold snapshot was taken from a verified live texture.
+    pub(crate) hold_verified: bool,
+    /// Pinned walks that completed blank, in a row (the autopilot's dead-end signal).
+    pub(crate) blank_walks: u32,
+    /// `app_micros()` of the last adoption, and the EMA of the seconds between adoptions — what
+    /// the autopilot's Quality priority paces the zoom against.
+    pub(crate) adopt_at_us: u64,
+    pub(crate) refresh_period_s: f64,
+}
+
+impl ContentTrack {
+    pub(crate) fn feed(&mut self, r: ContentReading) {
+        self.prev_same = self.last.filter(|l| l.tag == r.tag);
+        self.last = Some(r);
+    }
+
+    /// Does the live texture hold a picture — by construction, or by a reading of the very
+    /// render it holds?
+    pub(crate) fn live_verified(&self) -> bool {
+        self.live_complete
+            || self
+                .last
+                .is_some_and(|r| r.tag == self.live_tag && content_has_detail(r.escaped, r.px))
+    }
+
+    /// The reading verdict for the render tagged `tag`: `None` = no reading of it has arrived.
+    /// Escapes only accumulate through a walk, so the latest reading is the most complete one.
+    pub(crate) fn detail_for(&self, tag: u64) -> Option<bool> {
+        self.last.filter(|r| r.tag == tag).map(|r| content_has_detail(r.escaped, r.px))
+    }
+
+    /// The latest reading of `tag` covers a pass that reached `ask`.
+    pub(crate) fn reading_final_for(&self, tag: u64, ask: u32) -> bool {
+        self.last.is_some_and(|r| r.tag == tag && r.cursor >= ask)
+    }
+
+    pub(crate) fn converged_for(&self, tag: u64) -> bool {
+        match (self.prev_same, self.last) {
+            (Some(p), Some(l)) if l.tag == tag => content_converged(&p, &l),
+            _ => false,
+        }
+    }
+
+    /// Record an adoption for the refresh-period estimate (`now_us` = `app_micros()`).
+    pub(crate) fn note_adopt(&mut self, now_us: u64) {
+        if self.adopt_at_us > 0 && now_us > self.adopt_at_us {
+            let s = (now_us - self.adopt_at_us) as f64 / 1.0e6;
+            self.refresh_period_s = if self.refresh_period_s > 0.0 {
+                self.refresh_period_s + 0.3 * (s - self.refresh_period_s)
+            } else {
+                s
+            };
+        }
+        self.adopt_at_us = now_us;
+        self.blank_walks = 0;
+    }
+
+    /// Seconds a refresh is currently taking: the EMA, or the time since the last adoption when
+    /// that is already longer (a governor that only remembers past periods cannot see a stall).
+    pub(crate) fn refresh_period_now(&self, now_us: u64) -> f64 {
+        let since = if self.adopt_at_us > 0 && now_us > self.adopt_at_us {
+            (now_us - self.adopt_at_us) as f64 / 1.0e6
+        } else {
+            0.0
+        };
+        self.refresh_period_s.max(since)
+    }
 }
 
 /// The pin's per-frame decision. Runs at the TOP of `build_params`, before anything reads the
@@ -7993,7 +8369,31 @@ pub(crate) enum PinVerdict {
 /// shadowing the view parameters for the rest of the frame.
 pub(crate) fn pin_verdict(pin: &PinnedRefresh, i: &PinInputs) -> PinVerdict {
     if i.cursor >= pin.gpu_iter {
-        return PinVerdict::Adopt;
+        // ⭐⭐The walk is done, and the ANSWER is in its reading, not in the cursor. A reading
+        // with detail adopts (escapes only accumulate, so any reading of this render that shows
+        // a picture describes the finished texture too); the completing pass's reading with none
+        // is the blank frame this whole mechanism exists to keep off the screen. Until the
+        // reading lands the pin waits — the tail keeps arming readbacks — and nothing short of
+        // the settle edge or the age backstop may take a finished walk away from it: an install
+        // arriving in that window used to discard a second of work three frames from its reveal.
+        match i.detail {
+            Some(true) => return PinVerdict::Adopt,
+            Some(false) if i.reading_final => return PinVerdict::Stop(PinStop::Blank),
+            _ => {}
+        }
+        if !i.interacting {
+            return PinVerdict::Stop(PinStop::Settled);
+        }
+        if i.frame_idx.saturating_sub(pin.started_frame) > crate::tunables::PIN_MAX_FRAMES {
+            return PinVerdict::Stop(PinStop::Age);
+        }
+        return PinVerdict::Continue;
+    }
+    if i.policy == RefreshPolicy::Converged
+        && i.detail == Some(true)
+        && (i.converged || i.past_range_top)
+    {
+        return PinVerdict::AdoptConverged;
     }
     if !i.interacting {
         return PinVerdict::Stop(PinStop::Settled);
@@ -8028,6 +8428,8 @@ pub(crate) fn pin_verdict(pin: &PinnedRefresh, i: &PinInputs) -> PinVerdict {
 
 #[cfg(test)]
 mod pin_policy;
+#[cfg(test)]
+mod content_policy;
 
 /// Wall-clock step factor for a settled chunk pass — the fraction of one dispatch budget the
 /// NEXT pass may spend, derived from what the LAST pass actually cost in wall time.

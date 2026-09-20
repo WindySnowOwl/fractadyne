@@ -36,7 +36,84 @@ fn inputs() -> PinInputs {
         panel: [960, 540],
         frame_idx: 1_010,
         cursor: 400_000,
+        policy: RefreshPolicy::Full,
+        // The historical fixtures predate content verification: a finished walk with a reading
+        // in hand, so the verdicts they pin are unchanged.
+        detail: Some(true),
+        reading_final: true,
+        converged: false,
+        past_range_top: false,
     }
+}
+
+#[test]
+fn a_finished_walk_adopts_on_a_reading_with_detail_and_waits_for_one_without() {
+    let mut i = inputs();
+    i.cursor = 1_000_000;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Adopt);
+    // No reading of this pin yet: the tail keeps arming readbacks; the pin waits.
+    i.detail = None;
+    i.reading_final = false;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Continue);
+    // A blank reading of an EARLIER pass is not the answer either…
+    i.detail = Some(false);
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Continue);
+    // …the completing pass's blank reading is: nothing escaped at this ask.
+    i.reading_final = true;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Stop(PinStop::Blank));
+}
+
+#[test]
+fn nothing_but_the_settle_edge_or_age_takes_a_finished_walk_away_while_it_waits() {
+    let mut i = inputs();
+    i.cursor = 1_000_000;
+    i.detail = None;
+    i.reading_final = false;
+    // An install, a drift past the abandon threshold, a pan, a resize: all wait.
+    i.orbit_id = 99;
+    i.drift_oct = 5.0;
+    i.pan_spans = 3.0;
+    i.panel = [1, 1];
+    i.caller_reproject = true;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Continue);
+    i.interacting = false;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Stop(PinStop::Settled));
+    i.interacting = true;
+    i.frame_idx = 1_000 + crate::tunables::PIN_MAX_FRAMES + 1;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Stop(PinStop::Age));
+}
+
+#[test]
+fn the_converged_policy_adopts_a_picture_that_stopped_changing_and_the_full_policy_does_not() {
+    let mut i = inputs();
+    i.cursor = 6_000; // far short of the 1,000,000 ask
+    i.detail = Some(true);
+    i.converged = true;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Continue, "Full: every pixel decided first");
+    i.policy = RefreshPolicy::Converged;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::AdoptConverged);
+    // The known escape range is the other door in…
+    i.converged = false;
+    i.past_range_top = true;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::AdoptConverged);
+    // …and neither opens without a reading that shows detail.
+    i.detail = Some(false);
+    i.converged = true;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Continue);
+    i.detail = None;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Continue);
+}
+
+#[test]
+fn a_converged_adoption_still_outranks_the_abandons_but_not_a_blank_reading() {
+    let mut i = inputs();
+    i.cursor = 6_000;
+    i.policy = RefreshPolicy::Converged;
+    i.detail = Some(true);
+    i.converged = true;
+    i.drift_oct = 5.0;
+    i.orbit_id = 99;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::AdoptConverged);
 }
 
 #[test]

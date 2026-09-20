@@ -587,6 +587,28 @@ impl FractadyneApp {
                 {
                     self.autopilot.dive_log2 = dive_log10 * std::f64::consts::LOG2_10;
                 }
+                // What the auto-zoom puts first. Either way the screen never shows a frame that
+                // has not been proven to hold a picture (design/verified-present.md).
+                labelled(ui, "Auto-zoom priority", |ui| {
+                    use crate::autopilot::AutopilotPriority as P;
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut self.autopilot.priority, P::Speed, "Speed")
+                            .on_hover_text(
+                                "Zoom at the set speed. The screen refreshes as soon as a frame \
+                                 with detail is ready, at whatever resolution keeps refreshes \
+                                 coming (below the Min motion resolution floor if the zoom \
+                                 outruns the render); between refreshes the last frame follows \
+                                 the zoom and softens.",
+                            );
+                        ui.selectable_value(&mut self.autopilot.priority, P::Quality, "Quality")
+                            .on_hover_text(
+                                "Every refresh is a fully resolved full-resolution frame, and the \
+                                 zoom slows down as needed so the frame on screen never magnifies \
+                                 far before the next one lands. A slower dive that is crisp at \
+                                 every moment.",
+                            );
+                    });
+                });
 
                 // Live-render work budget: detail-vs-speed for the deep-zoom preview.
                 labelled(ui, "Live render budget", |ui| {
