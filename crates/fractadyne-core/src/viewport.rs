@@ -325,3 +325,7 @@ mod pan_complex_tests;
 #[cfg(test)]
 #[path = "viewport/click_zoom_tests.rs"]
 mod click_zoom_tests;
+
+#[cfg(test)]
+#[path = "viewport/precision_guard_tests.rs"]
+mod precision_guard_tests;
