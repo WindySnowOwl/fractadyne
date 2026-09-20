@@ -189,6 +189,50 @@ fn a_new_goal_is_placed_on_the_edge_not_at_its_cell_centre() {
     assert!((s.goal.0 * 40.0 - 20.3).abs() < CELL_TOL, "x {}", s.goal.0 * 40.0);
 }
 
+/// Distance from the screen centre in short-side units — the measure the target bound uses.
+fn off_centre(g: (f64, f64), aspect: f64) -> f64 {
+    ((g.0 - 0.5) * aspect).hypot(g.1 - 0.5) / aspect.min(1.0)
+}
+
+#[test]
+fn a_new_target_stays_inside_the_bounded_region_around_the_centre() {
+    // A dense knot near the edge and a thinner one near the middle: the edge knot would score
+    // higher but is a long pan at depth, so the bounded one is taken.
+    let mut p = flat(40, 25);
+    knot(&mut p, 36, 3, 3); // corner, rich
+    knot(&mut p, 22, 12, 1); // near the middle, thin
+    let s = choose_goal(&p, 1.6, None, true).unwrap();
+    assert!(off_centre(s.goal, 1.6) <= TARGET_MAX_OFF, "picked {:?}", s.goal);
+    let (i, j) = cell(&p, s.goal);
+    assert!((21..=23).contains(&i) && (11..=13).contains(&j), "picked cell ({i},{j})");
+}
+
+#[test]
+fn with_detail_only_outside_the_bound_the_closest_of_it_is_taken() {
+    // The dive must not stop just because everything is off to one side; it heads for the NEAREST
+    // structure (the shortest journey), not the richest corner.
+    let mut p = flat(40, 25);
+    knot(&mut p, 34, 4, 2); // far corner, richer
+    knot(&mut p, 30, 12, 1); // still outside the bound, but closer to the centre
+    let s = choose_goal(&p, 1.6, None, true).unwrap();
+    let (i, j) = cell(&p, s.goal);
+    assert!((29..=31).contains(&i) && (11..=13).contains(&j), "picked cell ({i},{j})");
+}
+
+#[test]
+fn a_target_carried_past_the_bound_is_replaced_even_inside_the_cooldown() {
+    let mut p = flat(40, 25);
+    for j in 0..25 {
+        edge(&mut p, 3, j); // structure where the old goal has drifted to
+    }
+    knot(&mut p, 21, 12, 2); // and structure near the middle
+    let far = (3.5 / 40.0, 12.5 / 25.0);
+    assert!(off_centre(far, 1.6) > TARGET_KEEP_OFF, "test setup: goal must be past the bound");
+    let s = choose_goal(&p, 1.6, Some(far), false).unwrap();
+    assert!(s.retarget);
+    assert!(off_centre(s.goal, 1.6) <= TARGET_MAX_OFF, "replacement {:?} still out of bounds", s.goal);
+}
+
 #[test]
 fn a_goal_that_went_flat_retargets_even_inside_the_cooldown() {
     let mut p = flat(40, 25);
@@ -207,7 +251,7 @@ fn the_cooldown_holds_a_viable_goal_against_a_much_richer_one() {
         edge(&mut p, i, 12);
     }
     knot(&mut p, 24, 10, 3);
-    let g = (5.5 / 40.0, 12.5 / 25.0); // on the line, far from the knot
+    let g = (12.5 / 40.0, 12.5 / 25.0); // on the line, away from the knot but inside the bound
     assert!(choose_goal(&p, 1.6, Some(g), true).unwrap().retarget);
     assert!(!choose_goal(&p, 1.6, Some(g), false).unwrap().retarget);
 }

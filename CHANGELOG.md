@@ -31,7 +31,9 @@ detail is in the git history.
   near the middle of the screen is now left exactly where it is, so the dive is a pure zoom that
   flows outward from that point. Only a target drifting past a tenth of the screen is eased back
   in, and that easing keeps pace with the zoom speed instead of taking a fixed two seconds however
-  fast the dive is.
+  fast the dive is. A new target is also required to lie within about a third of the screen from
+  the middle, so the dive can never set off on a long journey across the view; if there is nothing
+  in that region it heads for the closest structure outside it rather than the richest.
 
 - **"Normalize deep colors" no longer makes the palette breathe during a deep zoom, and a view
   that stops keeps the right colours** (beta.109). Deep frames are computed in iteration steps,
