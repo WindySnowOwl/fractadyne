@@ -572,3 +572,26 @@ fn the_first_half_second_of_a_dive_barely_slides() {
     }
     assert!(slide < 0.015, "the dive slid {:.2}% of the screen before it got going", slide * 100.0);
 }
+
+#[test]
+fn a_dead_end_caused_by_the_iteration_cap_says_so() {
+    // The 2026-09-20 report: a dive at 2^1908 with iterations fixed at 10,000 "lost detail" and
+    // stopped. The escape range read [9998, 9998] — every pixel that escaped did so at the cap —
+    // and the probe, seeing nothing but capped pixels, reported a dead end. "No detail ahead" is
+    // the wrong conclusion for a user to be handed there; the fractal had plenty, the count did not.
+    let l2 = 1908.0;
+    let starved = dead_end_message(l2, 10_000, false, Some(9998.0));
+    assert!(starved.contains("10,000") || starved.contains("10000"), "{starved}");
+    assert!(starved.to_lowercase().contains("iteration"), "{starved}");
+    assert!(starved.to_lowercase().contains("auto"), "must point at the fix: {starved}");
+    // The same range reading with auto-iterations ON is not this failure.
+    let auto = dead_end_message(l2, 10_000, true, Some(9998.0));
+    assert!(!auto.to_lowercase().contains("fixed"), "{auto}");
+    // A shallow dead end with a comfortable range is the plain message.
+    let plain = dead_end_message(20.0, 10_000, false, Some(600.0));
+    assert!(!plain.to_lowercase().contains("iteration"), "{plain}");
+    assert!(plain.contains("stopped"), "{plain}");
+    // The range alone is enough evidence, even where the depth heuristic would not have warned.
+    let capped = dead_end_message(20.0, 10_000, false, Some(9995.0));
+    assert!(capped.to_lowercase().contains("iteration"), "{capped}");
+}
