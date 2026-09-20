@@ -302,6 +302,14 @@ const RETARGET_GAIN: f64 = 2.0;
 /// Width of the centre preference, as a fraction of the screen's short side. Tight on purpose: at
 /// the old probe's 40%-at-the-edge bias, picks sat a median 0.32 screen heights off centre.
 const CENTER_SIGMA: f64 = 0.25;
+/// How far from the centre (fraction of the screen's short side) a NEW target may be chosen. A
+/// target beyond this is a long pan at depth, so the search stays inside this region unless there
+/// is no boundary in it at all.
+const TARGET_MAX_OFF: f64 = 0.35;
+/// How far a target already being tracked may be carried before it is dropped for a fresh one
+/// inside [`TARGET_MAX_OFF`]. The gap between the two is hysteresis: without it a goal resting just
+/// inside the bound would be re-picked every look.
+const TARGET_KEEP_OFF: f64 = 0.45;
 
 /// The steering probe: a small render of the current view with square cells. Per cell: the smooth
 /// escape count (`< 0` = interior), the distance estimate as log₂ CELLS (`>= DE_NONE` = none), and
@@ -457,27 +465,53 @@ pub(crate) fn choose_goal(
         (-r * r / (2.0 * CENTER_SIGMA * CENTER_SIGMA)).exp()
     };
 
+    // ⭐⭐**A NEW TARGET MUST FIT THE BOUNDED REGION AROUND THE CENTRE.** The centre preference only
+    // discourages an edge target; it does not forbid one, and a target near the edge is a long pan
+    // — at depth the camera would travel most of a screen to reach it. Candidates are therefore
+    // limited to `TARGET_MAX_OFF` of the screen's short side from the centre, and only when NOTHING
+    // qualifies does the search widen — and then to the boundary cell CLOSEST to the centre, the
+    // shortest journey to structure, rather than the richest one wherever it happens to be.
+    let off_centre = |f: (f64, f64)| ((f.0 - 0.5) * aspect).hypot(f.1 - 0.5) / short;
     let mut best: Option<(usize, usize, f64)> = None;
+    let mut nearest: Option<(usize, usize, f64)> = None;
     for j in 0..h {
         for i in 0..w {
             let k = j * w + i;
             if wt[k] < ON_BOUNDARY {
                 continue;
             }
-            let s = rich(k) * centre_w(frac(i, j));
+            let f = frac(i, j);
+            let d = off_centre(f);
+            if nearest.is_none_or(|b| d < b.2) {
+                nearest = Some((i, j, d));
+            }
+            if d > TARGET_MAX_OFF {
+                continue;
+            }
+            let s = rich(k) * centre_w(f);
             if best.is_none_or(|b| s > b.2) {
                 best = Some((i, j, s));
             }
         }
     }
-    let (bi, bj, best_score) = best?;
     // A new goal goes ON the edge its cell's estimate locates, not at the cell's centre.
     let on_edge = |i: usize, j: usize| p.project_onto_edge(frac(i, j), i, j).unwrap_or(frac(i, j));
+    let (bi, bj, best_score) = match (best, nearest) {
+        (Some(b), _) => b,
+        // Nothing within the bound: head for the closest structure instead, at its own score.
+        (None, Some((i, j, _))) => (i, j, rich(j * w + i) * centre_w(frac(i, j))),
+        (None, None) => return None, // no boundary anywhere in view: a genuine dead end
+    };
     let global = Steer { goal: on_edge(bi, bj), retarget: true };
 
-    let on_screen = |g: &(f64, f64)| (0.0..1.0).contains(&g.0) && (0.0..1.0).contains(&g.1);
-    let Some(g) = current.filter(on_screen) else {
-        return Some(global); // the first pick, or the goal left the screen
+    // A goal the view has carried past the bound is not kept: the dive re-picks inside it rather
+    // than panning back across the screen. The slack over `TARGET_MAX_OFF` is what stops a goal
+    // sitting just inside the bound from being re-picked every look.
+    let in_bounds = |g: &(f64, f64)| {
+        (0.0..1.0).contains(&g.0) && (0.0..1.0).contains(&g.1) && off_centre(*g) <= TARGET_KEEP_OFF
+    };
+    let Some(g) = current.filter(in_bounds) else {
+        return Some(global); // the first pick, or the goal left the bounded region
     };
     let gi = ((g.0 * w as f64) as usize).min(w - 1);
     let gj = ((g.1 * h as f64) as usize).min(h - 1);
