@@ -393,6 +393,14 @@ impl FractadyneApp {
                                  of a problem that only shows itself in motion can be lined up \
                                  against the log frame by frame. Off by default.",
                             );
+                        ui.checkbox(&mut self.render_cfg.show_zoom_target, "Show auto-zoom target")
+                            .on_hover_text(
+                                "While the auto-zoom runs, outline the region of the view it is \
+                                 zooming into — the part that will fill the screen after a few \
+                                 more magnifications — with lines from its corners to the corners \
+                                 of the screen, and a ring on the point it is steering toward. Off \
+                                 by default.",
+                            );
                         ui.checkbox(&mut self.watermark, "Show \"Fd\" watermark")
                             .on_hover_text(
                                 "Draw a discreet \"Fd\" brand mark in the lower-right corner of the \

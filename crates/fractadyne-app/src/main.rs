@@ -4966,6 +4966,12 @@ struct RenderConfig {
     /// itself in motion — "add an option to display a large timestamp on screen and use that when
     /// doing live testing to help isolate issues". Off by default.
     show_timestamp: bool,
+    /// Outline the region the auto-zoom is heading into while it runs (View ▸ Show auto-zoom
+    /// target, or `--show-zoom-target`): the box that fills the screen after a few more
+    /// magnifications, joined corner to corner with the screen, and a ring on the steering goal.
+    /// Asked for 2026-09-20 once the dive's motion at extreme depth had become hard to read. Off
+    /// by default.
+    show_zoom_target: bool,
     /// Supersampling / anti-alias factor (1 = off, 2 = 2×2, 3 = 3×3).
     aa: u32,
     /// Play a sound when a render/export finishes (FRACTINT played a distinct tone; user
@@ -6495,6 +6501,7 @@ impl FractadyneApp {
                 min_motion_res: s.min_motion_res.clamp(0.30, 1.0),
                 prefer_detail: s.prefer_detail,
                 show_timestamp: s.show_timestamp,
+                show_zoom_target: s.show_zoom_target,
                 finish_sound: s.finish_sound,
                 aa: s.aa,
             },
@@ -6558,6 +6565,12 @@ impl FractadyneApp {
         }
         if args.iter().any(|a| a == "--no-show-timestamp") {
             app.render_cfg.show_timestamp = false;
+        }
+        if args.iter().any(|a| a == "--show-zoom-target") {
+            app.render_cfg.show_zoom_target = true;
+        }
+        if args.iter().any(|a| a == "--no-show-zoom-target") {
+            app.render_cfg.show_zoom_target = false;
         }
         // Sound: `--no-sound` silences the render-finished tone (and `--sound` overrides
         // `FRACTADYNE_NO_SOUND` back on). Parsed before anything can finish a render.
@@ -6978,6 +6991,7 @@ impl FractadyneApp {
             min_motion_res: self.render_cfg.min_motion_res,
             prefer_detail: self.render_cfg.prefer_detail,
             show_timestamp: self.render_cfg.show_timestamp,
+            show_zoom_target: self.render_cfg.show_zoom_target,
             finish_sound: self.render_cfg.finish_sound,
             aa: self.render_cfg.aa,
             fps_cap: self.fps_cap.unwrap_or(0.0), // None (uncapped) → 0, so it round-trips
