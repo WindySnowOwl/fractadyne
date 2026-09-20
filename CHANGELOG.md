@@ -66,6 +66,16 @@ detail is in the git history.
   what it was. It also eases off while the dive is turning toward a new target, which is the other
   moment the zoom deliberately slows down.
 
+- **New: see where the auto-zoom is heading** (beta.109, View ▸ Show auto-zoom target, or
+  `--show-zoom-target`). While the dive runs, the region of the view it is zooming into — the part
+  that will fill the screen after four more magnifications — is outlined, with lines from its
+  corners to the corners of the screen, and the point the steering is easing toward is ringed.
+  While the ring sits outside the box the dive is still turning; the box is where it would land if
+  it stopped turning now. Off by default; the choice is remembered.
+
+- **The auto-zoom button is now a ship's wheel** (beta.109) rather than a robot: a helm is what a
+  dive that steers itself is.
+
 - **New: a large timestamp you can switch on over the view** (beta.109, View ▸ Show timestamp, or
   `--show-timestamp`). It shows the same `+12.345s` that every line of the log file is stamped with,
   and the frame number underneath. Anything that only happens while the picture is moving — a
