@@ -1,0 +1,285 @@
+state_version = 1
+center_x = -0.23653551604670955
+center_y = 0.719047262996819
+center_x_str = "-2.3653551604670957105310675967012996278443650658628685174835426144049859494166888627120982842047110752000279682815449876296036522952311218277812594817742474012723454300957826429584674459014638908752795088458933613e-1"
+center_y_str = "7.190472629968190520254316578027184458859722945056613240596288382940786711105212510221852759701434233398091255169192864682553676335633849756993132273107893337816960699361023812952640838331227064485078846363032215e-1"
+units_per_pixel = 1.2013185689900787
+units_per_pixel_e = -596
+max_iter = 20000
+auto_iter = true
+palette_idx = 0
+cycle = 0.5199999809265137
+offset = 0.800000011920929
+log_palette = true
+normalize_live = true
+normalize_fit = false
+zoom_rate = 4.0
+click_zoom = true
+click_zoom_factor = 100.0
+click_zoom_snap = true
+autopilot_dive_log2 = 900.0
+work_budget_scale = 7.5
+min_motion_res = 0.8299999833106995
+prefer_detail = true
+aa = 2
+finish_sound = true
+fps_cap = 0.0
+orbit_cache_mb = 1024
+export_width = 5120
+export_ss = 4
+export_format = "exr"
+snapshot_mode = "render"
+mpfr_warning_suppressed = true
+mpfr_present_last = true
+welcome_seen = true
+export_dual_mode = "side"
+export_aspect = "16:9"
+share_include_thumb = true
+export_open_after = false
+show_location = false
+palette_anim = "off"
+palette_anim_speed = 0.15000000596046448
+light = false
+light_angle = 4.775988578796387
+light_height = 0.75
+light_anim = true
+de = false
+de_strength = 0.6000000238418579
+de_width = 1.0
+de_anim = false
+color_method = "smooth"
+stripe_freq = 6.0
+stripe_tail = false
+stripe_tail_len = 16
+trap_type = "point"
+minimap = true
+custom_palette = [
+    [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+],
+    [
+    0.15000000596046448,
+    0.44999998807907104,
+    0.019999999552965164,
+    0.019999999552965164,
+],
+    [
+    0.4000000059604645,
+    0.8999999761581421,
+    0.30000001192092896,
+    0.019999999552965164,
+],
+    [
+    0.5,
+    1.0,
+    1.0,
+    1.0,
+],
+    [
+    0.6200000047683716,
+    1.0,
+    0.699999988079071,
+    0.11999999731779099,
+],
+    [
+    0.8199999928474426,
+    1.0,
+    1.0,
+    0.8199999928474426,
+],
+    [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+],
+]
+custom_palette_flat = false
+use_custom_palette = false
+use_duotone = false
+use_binary = false
+duotone_lo = [
+    0.03999999910593033,
+    0.05000000074505806,
+    0.11999999731779099,
+]
+duotone_hi = [
+    0.949999988079071,
+    0.800000011920929,
+    0.44999998807907104,
+]
+right_panel_open = true
+perf_panel = true
+fractal = "Mandelbrot"
+julia_mode = false
+julia_c_re = -0.21900126138009954
+julia_c_im = 0.8120727369337912
+dual = false
+dual_split = 0.5991710424423218
+series_approx = true
+glitch_correct = true
+use_bla = true
+watermark = true
+ui_scale = 1.0
+theme = "dark"
+update_track = "stable"
+update_check_on_launch = false
+show_watermark = true
+crash_prompt_disabled = false
+show_orbits = false
+orbit_normalize = true
+orbit_anim = true
+orbit_anim_speed = 10.0
+
+[[custom_segments]]
+left = 0.0
+mid = 0.07500000298023224
+right = 0.15000000596046448
+left_color = [
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+]
+right_color = [
+    0.44999998807907104,
+    0.019999999552965164,
+    0.019999999552965164,
+    1.0,
+]
+blend = 5
+space = 0
+blend_params = [
+    0.3333333432674408,
+    0.3333333432674408,
+    0.6666666865348816,
+    0.6666666865348816,
+]
+
+[[custom_segments]]
+left = 0.15000000596046448
+mid = 0.2750000059604645
+right = 0.4000000059604645
+left_color = [
+    0.44999998807907104,
+    0.019999999552965164,
+    0.019999999552965164,
+    1.0,
+]
+right_color = [
+    0.8999999761581421,
+    0.30000001192092896,
+    0.019999999552965164,
+    1.0,
+]
+blend = 5
+space = 0
+blend_params = [
+    0.3333333432674408,
+    0.3333333432674408,
+    0.6666666865348816,
+    0.6666666865348816,
+]
+
+[[custom_segments]]
+left = 0.4000000059604645
+mid = 0.44999998807907104
+right = 0.5
+left_color = [
+    0.8999999761581421,
+    0.30000001192092896,
+    0.019999999552965164,
+    1.0,
+]
+right_color = [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+]
+blend = 5
+space = 0
+blend_params = [
+    0.3333333432674408,
+    0.3333333432674408,
+    0.6666666865348816,
+    0.6666666865348816,
+]
+
+[[custom_segments]]
+left = 0.5
+mid = 0.5600000023841858
+right = 0.6200000047683716
+left_color = [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+]
+right_color = [
+    1.0,
+    0.699999988079071,
+    0.11999999731779099,
+    1.0,
+]
+blend = 5
+space = 0
+blend_params = [
+    0.3333333432674408,
+    0.3333333432674408,
+    0.6666666865348816,
+    0.6666666865348816,
+]
+
+[[custom_segments]]
+left = 0.6200000047683716
+mid = 0.7200000286102295
+right = 0.8199999928474426
+left_color = [
+    1.0,
+    0.699999988079071,
+    0.11999999731779099,
+    1.0,
+]
+right_color = [
+    1.0,
+    1.0,
+    0.8199999928474426,
+    1.0,
+]
+blend = 5
+space = 0
+blend_params = [
+    0.3333333432674408,
+    0.3333333432674408,
+    0.6666666865348816,
+    0.6666666865348816,
+]
+
+[[custom_segments]]
+left = 0.8199999928474426
+mid = 0.9099999666213989
+right = 1.0
+left_color = [
+    1.0,
+    1.0,
+    0.8199999928474426,
+    1.0,
+]
+right_color = [
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+]
+blend = 5
+space = 0
+blend_params = [
+    0.3333333432674408,
+    0.3333333432674408,
+    0.6666666865348816,
+    0.6666666865348816,
+]
