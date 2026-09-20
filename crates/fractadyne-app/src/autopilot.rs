@@ -186,7 +186,14 @@ impl FractadyneApp {
                         self.autopilot.active = false;
                         self.autopilot.stepping = false;
                         self.pointer.zoom_vel = 0.0;
-                        self.set_toast("Autopilot: no detail ahead (stopped)", ctx);
+                        let range_hi = self.perf.norm_range[0].map(|(_, hi)| hi as f64);
+                        let msg = dead_end_message(
+                            l2,
+                            self.render_cfg.max_iter,
+                            self.render_cfg.auto_iter,
+                            range_hi,
+                        );
+                        self.set_toast(msg, ctx);
                         return;
                     }
                 }
@@ -633,6 +640,35 @@ pub(crate) fn choose_goal(
         return Some(global);
     }
     Some(Steer { goal: refined, retarget: false })
+}
+
+/// The toast for a dead end — the probe found no boundary anywhere in view — worded for its cause.
+///
+/// ⭐**"No detail ahead" is the wrong conclusion to hand a user whose iteration count ran out.**
+/// A dive at 2^1908 with iterations fixed at 10,000 (2026-09-20) "lost detail" and stopped: its
+/// escape range read `[9998, 9998]` — every pixel that escaped did so at the cap and the rest
+/// never did — so the probe saw nothing but capped pixels and reported a dead end. The fractal had
+/// plenty ahead; the count did not. Two witnesses say which it was: the depth heuristic behind the
+/// deep-jump warning (`deep_jump_iter_shortfall`), and the view's own escape range sitting at the
+/// cap. Either is enough, and only with auto-iterations OFF — with them on, the budget follows the
+/// dive and a dead end is what it says it is.
+pub(crate) fn dead_end_message(l2: f64, max_iter: u32, auto_iter: bool, range_hi: Option<f64>) -> String {
+    let at_cap = !auto_iter
+        && range_hi.is_some_and(|hi| hi.is_finite() && hi >= max_iter as f64 * 0.995);
+    match crate::deep_jump_iter_shortfall(l2, max_iter, auto_iter) {
+        Some((have, typical)) => format!(
+            "Autopilot: nothing left to aim at — iterations are fixed at {} and this depth \
+             typically needs ~{}. Enable auto-iterations or raise the count (stopped)",
+            crate::commas(&have.to_string()),
+            crate::commas(&typical.to_string()),
+        ),
+        None if at_cap => format!(
+            "Autopilot: nothing left to aim at — everything in view runs to the fixed iteration \
+             limit of {}. Enable auto-iterations or raise the count (stopped)",
+            crate::commas(&max_iter.to_string()),
+        ),
+        None => "Autopilot: no detail ahead (stopped)".to_string(),
+    }
 }
 
 /// Where a screen-fraction point lands after `Viewport::zoom_at(pivot, factor)`: the pivot's

@@ -66,6 +66,13 @@ detail is in the git history.
   what it was. It also eases off while the dive is turning toward a new target, which is the other
   moment the zoom deliberately slows down.
 
+- **When the auto-zoom stops because the iteration count ran out, it now says so** (beta.109).
+  With auto-iterations off, a dive deep enough for every pixel to reach the fixed count leaves the
+  autopilot nothing to aim at, and it stopped with "no detail ahead" — the wrong conclusion, since
+  the fractal had plenty and the count did not (a 1e590 dive at a fixed 10,000, whose escape range
+  had collapsed to `[9998, 9998]`). It now reports that iterations are fixed at that count, what the
+  depth typically needs, and that enabling auto-iterations or raising the count is the fix.
+
 - **New: see where the auto-zoom is heading** (beta.109, View ▸ Show auto-zoom target, or
   `--show-zoom-target`). While the dive runs, the region of the view it is zooming into — the part
   that will fill the screen after four more magnifications — is outlined, with lines from its
