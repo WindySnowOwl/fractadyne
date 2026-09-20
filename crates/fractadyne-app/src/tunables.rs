@@ -590,6 +590,23 @@ pub(crate) const REFRESH_TARGET_S: f64 = 0.25;
 /// is 8e8 nominal steps — ~4 ms in the dearest regime measured on the dev box.
 pub(crate) const MOTION_STEP_OPEN: u32 = 512;
 
+/// The most a single reading may cut the motion rate by — a wall-clock interval
+/// (`Perf::motion_wall_cut`) or a GPU timestamp (`Perf::record_motion_rate`) alike.
+///
+/// ⭐⭐**ONE INTERVAL IS NOT A MEASUREMENT OF THE MOTION RATE.** The cut reads the frame interval
+/// after any dispatch of the last two frames, and that comment already concedes it "errs toward
+/// cutting" and "can fire on the wrong frame's cost". At 2^800 (user capture, 2026-09-20) the
+/// dispatch it blamed was a PIN pass — 8×10⁸ steps walked past the BLA-skippable range, at a
+/// per-step cost nothing like the motion frames' — and its interval cut the motion budget
+/// **6–9× in one event** (1.35e9 → 1.5e8). The motion frame after each cut walked ~500
+/// iterations against a view that escapes at ~4700, committed nothing, and painted one flat
+/// colour. A rate that halves is still a cut; a rate that is slashed nine-fold on the evidence of
+/// one interval the pass may not even own is an over-reaction the recovery (`MOTION_RATE_GROW`)
+/// then spends many frames undoing. Repeated slow intervals still ratchet the rate down through
+/// this bound one event at a time, so a genuinely slow regime is still found — just not on one
+/// reading. The TDR ceiling (`tdr_steps`) is untouched: this paces smoothness, not safety.
+pub(crate) const MOTION_CUT_MAX: f64 = 2.0;
+
 /// Price target for a PINNED-refresh pass, ms — the pin is priced and serialized by the same
 /// ledger as the settled walk (`chunk_inflight`, `chunk_band_license`, `chunk_step_factor`),
 /// because the nominal-steps rate alone mispriced it twice in one trace: in a fast-escape region

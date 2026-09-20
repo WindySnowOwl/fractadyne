@@ -1553,6 +1553,23 @@ struct Perf {
     motion_pass_steps_last: [u64; 2],
 }
 
+/// The rate a wall-clock cut may take the motion estimate to from `cur`, given the interval's
+/// own `wall_rate`: the interval's rate, bounded to `cur / MOTION_CUT_MAX` in one event. `None` =
+/// the interval does not say the rate is lower (or says nothing usable), so leave it alone.
+/// Pure, so the bound is pinned by test — see the constant for the 6–9× cuts it exists for.
+pub(crate) fn bounded_motion_cut(cur: f64, wall_rate: f64) -> Option<f64> {
+    if !wall_rate.is_finite() || !(wall_rate > 0.0) {
+        return None;
+    }
+    if !(cur > 0.0) {
+        return Some(wall_rate); // nothing measured yet: the interval is the first measurement
+    }
+    if wall_rate >= cur {
+        return None;
+    }
+    Some(wall_rate.max(cur / crate::tunables::MOTION_CUT_MAX))
+}
+
 impl Perf {
     /// Arithmetic modes are `RenderMode::to_u32()` ∈ {0, 1, 2}; `u32::MAX` means "none yet" and is
     /// simply out of range, so `slot()` rejects it along with anything a future mode adds.
@@ -1653,10 +1670,16 @@ impl Perf {
         // screen. The estimate is a HINT: the pass growth limiter (×2 per pass), the band
         // licence, the wall-clock cut and the TDR budget are the guards, and a deduped 0.2 ms
         // reading that inflates the hint is caught by those on the next pass.
-        self.motion_rate[v][s] = if cur <= 0.0 || rate < cur {
-            rate
-        } else {
-            cur + (rate - cur) * MOTION_RATE_GROW
+        // ⭐The way DOWN is bounded to `MOTION_CUT_MAX` per reading (see that constant): a PIN
+        // pass's timestamp — walked past the BLA-skippable range at a per-step cost nothing like
+        // a motion frame's — landed here and cut the motion budget 9× in one reading at 2^800,
+        // and the next motion frame painted one flat colour. Three such readings still find a
+        // 9× slower regime; one reading no longer does, because one reading from a different
+        // kind of pass is not a measurement of this one.
+        self.motion_rate[v][s] = match bounded_motion_cut(cur, rate) {
+            Some(cut) => cut,
+            None if cur <= 0.0 => rate,
+            None => cur + (rate - cur) * MOTION_RATE_GROW,
         };
     }
 
@@ -1730,8 +1753,8 @@ impl Perf {
             return;
         }
         let wall_rate = self.fe_steps_last[v] as f64 / dt_ms;
-        if wall_rate.is_finite() && wall_rate > 0.0 && (cur <= 0.0 || wall_rate < cur) {
-            self.motion_rate[v][s] = wall_rate;
+        if let Some(rate) = bounded_motion_cut(cur, wall_rate) {
+            self.motion_rate[v][s] = rate;
         }
         self.motion_step_last[v] = (self.motion_step_last[v] / 2).max(1);
     }
