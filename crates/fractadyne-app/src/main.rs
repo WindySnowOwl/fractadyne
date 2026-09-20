@@ -1527,6 +1527,47 @@ struct Perf {
     /// bounding a measurement after the measurement exists is the bug this flag ends — see the
     /// `rate_res_cap` block in `render.rs`.
     motion_res_measured: bool,
+    /// Resolution cap that keeps a MOVING frame able to commit a pixel at all, per view.
+    ///
+    /// ⭐⭐**BLANK IS NOT CHEAP, IT IS FREE — so every controller sized by frame TIME reads a blank
+    /// frame as headroom.** `motion_res` grows while frames are quick; a frame whose walk never
+    /// reaches this view's first escape is the quickest frame there is and commits nothing, so the
+    /// AIMD sharpens it and the next one is even less able to finish. Measured on a user's 2^800
+    /// dive (build 3413, 2026-09-20, iterations pinned at 10,000): pixels escape at ~4471, a motion
+    /// pass walked a median of **550**, only **5%** of motion walks reached the band, and 36% of
+    /// the recorded video — 4.8 s of 13.6, in episodes up to 1.9 s — was a canvas of one flat
+    /// colour. The picture reappearing somewhere else after each blank is what was reported as
+    /// panning; a dive that never gains detail cannot read as a zoom.
+    ///
+    /// This is the same shape of feedback as `motion_res`, but on the quantity that decides whether
+    /// there is a picture: iterations actually walked against iterations needed. It is applied
+    /// BENEATH `min_motion_res` and `prefer_detail` on purpose — both buy sharpness, and a blank
+    /// frame has none to sell (the user's floor of 0.83 and `prefer_detail`'s native refresh were
+    /// between them forbidding the only trade that produces an image: 0.351, i.e. 515×386).
+    visible_res: [f64; 2],
+    /// Step budget the last MOTION pass was given, per view — what `visible_res_target` sizes
+    /// pixels against. Recorded BEFORE the growth limiter, which bounds how fast the step may
+    /// climb rather than how much work the frame may do. Motion-only: a PIN pass walks a
+    /// deliberately small band per dispatch and accumulates over many of them, so its step says
+    /// nothing about whether a single moving frame can reach an escape on its own.
+    motion_pass_steps_last: [u64; 2],
+}
+
+/// The rate a wall-clock cut may take the motion estimate to from `cur`, given the interval's
+/// own `wall_rate`: the interval's rate, bounded to `cur / MOTION_CUT_MAX` in one event. `None` =
+/// the interval does not say the rate is lower (or says nothing usable), so leave it alone.
+/// Pure, so the bound is pinned by test — see the constant for the 6–9× cuts it exists for.
+pub(crate) fn bounded_motion_cut(cur: f64, wall_rate: f64) -> Option<f64> {
+    if !wall_rate.is_finite() || !(wall_rate > 0.0) {
+        return None;
+    }
+    if !(cur > 0.0) {
+        return Some(wall_rate); // nothing measured yet: the interval is the first measurement
+    }
+    if wall_rate >= cur {
+        return None;
+    }
+    Some(wall_rate.max(cur / crate::tunables::MOTION_CUT_MAX))
 }
 
 impl Perf {
@@ -1629,10 +1670,16 @@ impl Perf {
         // screen. The estimate is a HINT: the pass growth limiter (×2 per pass), the band
         // licence, the wall-clock cut and the TDR budget are the guards, and a deduped 0.2 ms
         // reading that inflates the hint is caught by those on the next pass.
-        self.motion_rate[v][s] = if cur <= 0.0 || rate < cur {
-            rate
-        } else {
-            cur + (rate - cur) * MOTION_RATE_GROW
+        // ⭐The way DOWN is bounded to `MOTION_CUT_MAX` per reading (see that constant): a PIN
+        // pass's timestamp — walked past the BLA-skippable range at a per-step cost nothing like
+        // a motion frame's — landed here and cut the motion budget 9× in one reading at 2^800,
+        // and the next motion frame painted one flat colour. Three such readings still find a
+        // 9× slower regime; one reading no longer does, because one reading from a different
+        // kind of pass is not a measurement of this one.
+        self.motion_rate[v][s] = match bounded_motion_cut(cur, rate) {
+            Some(cut) => cut,
+            None if cur <= 0.0 => rate,
+            None => cur + (rate - cur) * MOTION_RATE_GROW,
         };
     }
 
@@ -1706,8 +1753,8 @@ impl Perf {
             return;
         }
         let wall_rate = self.fe_steps_last[v] as f64 / dt_ms;
-        if wall_rate.is_finite() && wall_rate > 0.0 && (cur <= 0.0 || wall_rate < cur) {
-            self.motion_rate[v][s] = wall_rate;
+        if let Some(rate) = bounded_motion_cut(cur, wall_rate) {
+            self.motion_rate[v][s] = rate;
         }
         self.motion_step_last[v] = (self.motion_step_last[v] / 2).max(1);
     }
@@ -1920,6 +1967,8 @@ impl Default for Perf {
             norm_shown: [None, None],
             chunk_governed: [false, false],
             motion_res: 0.6,
+            visible_res: [1.0, 1.0],
+            motion_pass_steps_last: [0, 0],
             motion_res_measured: false,
         }
     }

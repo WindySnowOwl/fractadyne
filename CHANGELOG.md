@@ -73,6 +73,24 @@ detail is in the git history.
   cannot tell which line of the log the eye actually caught. Record the screen with this on and the
   recording lines up against the log frame by frame. Off by default; the choice is remembered.
 
+- **A very deep auto-zoom no longer goes blank while it moves** (beta.109). At extreme depth —
+  around 1e240 in the reported dive — a moving frame was given far too few iterations to reach
+  the point where any pixel of that view escapes, so it committed nothing and painted a single
+  flat colour; a screen recording showed **36% of the dive as a blank canvas**, in stretches of up
+  to two seconds. Because the picture only reappeared after the view had moved on, this read as
+  the camera panning somewhere off screen. Nothing corrected it, because every control that sizes
+  a moving frame judges by how long the frame took — and a frame that draws nothing is the fastest
+  kind. The "Prefer detail" and motion-resolution settings made it worse, by forbidding the one
+  trade that produces a picture: fewer pixels, walked far enough to show something. A moving frame
+  is now sized so it can reach the top of the view's escape range, coarsening to a short fixed
+  ladder of resolutions (down to a quarter of native at that depth) with enough margin to survive
+  the budget swings a refresh pass causes — and that sizing sits beneath both settings, since a
+  blank frame has no sharpness to protect. The rate estimate behind the motion budget also no
+  longer drops more than twofold on one reading, because a single reading from a refresh pass —
+  a different kind of work — was cutting it up to ninefold and blanking the frame after. Measured
+  on the reported dive, three runs each: blank frames on screen fell from **8–14% to 1–7%**, and
+  the resolution changed 7–10 times per dive instead of being re-chosen every few frames.
+
 - **"Normalize deep colors" no longer makes the palette breathe during a deep zoom, and a view
   that stops keeps the right colours** (beta.109). Deep frames are computed in iteration steps,
   and each step reported the range of the pixels finished so far as though it were the whole

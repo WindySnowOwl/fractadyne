@@ -111,3 +111,114 @@ fn a_pin_inherits_a_cold_band_only_past_the_first_wrap_storm() {
     assert_eq!(pin_band_license(&cold, 9, 256, 65_536, 0), 256);
     assert_eq!(pin_band_license(&cold, 0, 256, 0, orbit_len), 256);
 }
+
+/// The user's 2^800 dive, from the log and the video of it (2026-09-20): a 1469×1102 panel, a
+/// motion pass budget of ~1.35e9 steps (an 833-iteration walk at native), and an escape range
+/// topping out near 4900 — so at native the frame commits NOTHING and paints one flat colour,
+/// which is 36% of what the video recorded.
+const PANEL: u64 = 1469 * 1102;
+const PASS: u64 = 833 * PANEL;
+const NEED: f64 = 4900.0;
+
+#[test]
+fn a_moving_frame_is_sized_so_it_can_show_the_picture() {
+    let target = visible_res_target(PASS, PANEL, NEED);
+    let held = visible_res_hold(1.0, target, visible_frame_reaches(PASS, PANEL, 1.0, NEED));
+    assert_eq!(held, 0.25, "picked {held} for a target of {target:.3}");
+    // At that rung the pass reaches the top of the range — with room to spare.
+    assert!(visible_frame_reaches(PASS, PANEL, held, NEED));
+    let walked = PASS as f64 / (PANEL as f64 * held * held);
+    assert!(walked > NEED * 2.0, "walks {walked:.0}: no headroom against a budget cut");
+    // ⭐Both of the user's settings forbid this scale, which is why it sits beneath them.
+    assert!(held < 0.83, "min_motion_res 0.83 would have blocked it");
+}
+
+#[test]
+fn the_rung_holds_through_the_budget_cuts_that_were_flipping_it() {
+    // The 18 s capture at 2^800 saw the pass budget swing 1.35e9 → 5.5e8 (2.45×) whenever a
+    // frame that reached the band cost all of it, and the rung followed every swing: 62 changes,
+    // 11% of frames blank. A rung chosen with headroom survives the cut, and is not abandoned
+    // for a target that has merely got more cautious.
+    let held = 0.25;
+    let cut = (PASS as f64 / 2.45) as u64;
+    assert!(visible_frame_reaches(cut, PANEL, held, NEED), "the frame really is fine after the cut");
+    let target_after_cut = visible_res_target(cut, PANEL, NEED);
+    assert!(target_after_cut < held, "test premise: the cautious target now sits below the rung");
+    assert_eq!(
+        visible_res_hold(held, target_after_cut, visible_frame_reaches(cut, PANEL, held, NEED)),
+        held,
+        "the rung was abandoned on a cut it survives"
+    );
+    // The budget lifting back does not re-sign the walk either: nothing clears the raise margin.
+    assert_eq!(visible_res_hold(held, visible_res_target(PASS, PANEL, NEED), true), held);
+    // But a cut the frame genuinely cannot survive is answered at once.
+    let deep_cut = PASS / 4;
+    assert!(!visible_frame_reaches(deep_cut, PANEL, held, NEED));
+    assert!(visible_res_hold(held, visible_res_target(deep_cut, PANEL, NEED), false) < held);
+}
+
+#[test]
+fn the_visible_scale_is_a_short_sticky_ladder() {
+    // ⛔Resolution is part of the walk's signature: every change discards the iteration cursor.
+    // A target drifting within a rung must produce no change at all; a drop is immediate when the
+    // frame cannot show anything; sharpening needs the target to clear the rung by half again.
+    // Native cannot reach; every rung can. The target wobbles inside the 0.25 rung's band
+    // (a raise needs 0.375), so after the one drop nothing may move.
+    let mut held = 1.0;
+    let mut changes = 0;
+    for t in [0.30, 0.32, 0.28, 0.31, 0.29, 0.34, 0.27, 0.30] {
+        let now = visible_res_hold(held, t, held < 1.0);
+        changes += (now != held) as u32;
+        held = now;
+    }
+    assert_eq!(changes, 1, "a hovering target re-signed the walk {changes} times");
+    assert_eq!(held, 0.25);
+    assert_eq!(visible_res_hold(0.5, 0.60, true), 0.5, "sharpened on a nudge");
+    assert_eq!(visible_res_hold(0.5, 0.80, true), 0.707_106_78);
+    assert_eq!(visible_res_hold(1.0, 0.20, false), 0.176_776_70);
+    assert_eq!(visible_res_hold(1.0, f64::NAN, true), 1.0);
+    assert_eq!(visible_res_hold(f64::NAN, 1.0, true), 1.0);
+}
+
+#[test]
+fn the_visible_target_never_guesses_and_never_asks_for_no_pixels() {
+    // Budget already covers native ⇒ no opinion, never a gratuitous shrink.
+    assert_eq!(visible_res_target(u64::MAX, PANEL, NEED), 1.0);
+    // Shallow views escape in a handful of iterations — native fits easily.
+    assert_eq!(visible_res_target(PASS, PANEL, 40.0), 1.0);
+    // Nothing measured yet (a fresh view, or the first frame) must not shrink anything.
+    assert_eq!(visible_res_target(0, PANEL, NEED), 1.0);
+    assert_eq!(visible_res_target(PASS, PANEL, 0.0), 1.0);
+    assert_eq!(visible_res_target(PASS, PANEL, f64::NAN), 1.0);
+    assert_eq!(visible_res_target(PASS, 0, NEED), 1.0);
+    assert!(visible_frame_reaches(0, PANEL, 0.5, NEED), "nothing measured: nothing to abandon for");
+    // However hopeless, it never asks for a zero-pixel frame.
+    assert_eq!(visible_res_target(1, PANEL, 1.0e9), crate::render::VISIBLE_RES_MIN);
+    // And an absolute target cannot wind up: the same inputs give the same answer, every time.
+    let first = visible_res_target(PASS, PANEL, NEED);
+    assert!((0..100).all(|_| visible_res_target(PASS, PANEL, NEED) == first));
+}
+
+#[test]
+fn one_interval_cannot_slash_the_motion_rate() {
+    // The pin-pass cuts measured at 2^800: 1.35e9 -> 1.5e8 (9x) on the evidence of ONE interval
+    // the motion frame did not own, and the next motion frame painted a flat colour. A cut is
+    // still a cut - it just cannot exceed MOTION_CUT_MAX in one event; repeated slow intervals
+    // still ratchet it down.
+    use crate::bounded_motion_cut;
+    let cur = 1.35e8; // steps/ms
+    assert_eq!(bounded_motion_cut(cur, cur / 9.0), Some(cur / crate::tunables::MOTION_CUT_MAX));
+    let mut r = cur;
+    for _ in 0..3 {
+        r = bounded_motion_cut(r, cur / 9.0).unwrap();
+    }
+    assert!(r <= cur / 8.0, "three slow intervals must still be allowed to find a 9x slower regime");
+    // A mild cut passes through untouched; a faster interval is no cut at all.
+    assert_eq!(bounded_motion_cut(cur, cur * 0.7), Some(cur * 0.7));
+    assert_eq!(bounded_motion_cut(cur, cur * 1.3), None);
+    // Nothing measured yet: the interval IS the first measurement, unbounded.
+    assert_eq!(bounded_motion_cut(0.0, 5.0e7), Some(5.0e7));
+    // Garbage intervals leave the estimate alone.
+    assert_eq!(bounded_motion_cut(cur, f64::NAN), None);
+    assert_eq!(bounded_motion_cut(cur, 0.0), None);
+}

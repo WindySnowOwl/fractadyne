@@ -4867,6 +4867,16 @@ impl FractadyneApp {
                 // A restarted walk's escape bands are a different progression's data.
             }
             let cur = self.perf.chunk_cursor[vs];
+            if interacting && !pin_frame {
+                // The pass budget a MOVING frame was actually given, which is what decides whether
+                // it can walk far enough to commit a pixel at all. Recorded BEFORE the growth
+                // limiter, because the limiter bounds how fast the step may climb, not how much
+                // work the frame is allowed — and `visible_res_target` must size pixels against
+                // the allowance, not against a step still on its way up to it. Pins are excluded:
+                // their small per-dispatch band accumulates across passes, so one pin step says
+                // nothing about whether a single frame can stand on its own.
+                self.perf.motion_pass_steps_last[vs] = pass_steps;
+            }
             // ⭐⭐THE SA-SKIP FLOOR. When a reference is SA-seeded, the `start_iter==0` pass places
             // EVERY pixel at `iter = sa_skip` in one dispatch — so iterations [0, sa_skip) are
             // covered for free by that single pass. Marching the cursor from 0 through them in
@@ -6180,6 +6190,44 @@ impl FractadyneApp {
             if is_pert { scale } else { scale.min(budget_res_scale) }
         } else {
             budget_res_scale.min(rate_res_cap)
+        };
+        // ⭐⭐**AND NOTHING ABOVE MAY SIZE A MOVING FRAME SO SMALL IT CANNOT SHOW ANYTHING.** Every
+        // branch above trades resolution against frame TIME, and none of them can tell a frame that
+        // finished from one that committed no pixel — because the blank one is the FASTER of the
+        // two, so they sharpen it. This cap feeds back on iterations WALKED instead, and sits
+        // beneath both `min_motion_res` and `prefer_detail` (see `Perf::visible_res`).
+        let res_scale = if interacting && !pin_frame {
+            let vbi = (view_id as usize).min(1);
+            // The TOP of the view's escape range, not its first escape: reaching the first escape
+            // commits one pixel, reaching the top commits the picture.
+            let need = self.perf.norm_range[vbi].map_or(0.0, |(_, hi)| hi as f64);
+            let target = visible_res_target(
+                self.perf.motion_pass_steps_last[vbi],
+                (resolution[0] as u64) * (resolution[1] as u64),
+                need,
+            );
+            let reaches = visible_frame_reaches(
+                self.perf.motion_pass_steps_last[vbi],
+                (resolution[0] as u64) * (resolution[1] as u64),
+                self.perf.visible_res[vbi],
+                need,
+            );
+            let held = visible_res_hold(self.perf.visible_res[vbi], target, reaches);
+            if view_id == 0 && held != self.perf.visible_res[vbi] && crate::diag::trace_on("gpu") {
+                crate::diag::trace(
+                    "gpu",
+                    format!(
+                        "visible-res f={} {:.3} -> {held:.3} (target {target:.3}, pass {} steps, need {need:.0})",
+                        self.perf.frame_idx,
+                        self.perf.visible_res[vbi],
+                        self.perf.motion_pass_steps_last[vbi]
+                    ),
+                );
+            }
+            self.perf.visible_res[vbi] = held;
+            res_scale.min(held)
+        } else {
+            res_scale
         };
         // REUSE-FIRST ZOOM hold decision (used by BOTH the native-res gate here and the freeze
         // trigger below — they must agree). While interacting, hold + reproject the last good frame
@@ -8076,6 +8124,103 @@ pub(crate) fn refresh_res_cap(
     } else {
         (have / want).sqrt().max(floor).min(1.0)
     }
+}
+
+/// Smallest linear scale [`visible_res_step`] will fall to. Below this the preview is too coarse to
+/// steer by, and a frame that still cannot reach its first escape here is one the hold must cover.
+pub(crate) const VISIBLE_RES_MIN: f64 = 0.10;
+
+/// Largest linear resolution at which a MOVING frame can still walk far enough for this view's
+/// first pixel to escape: `sqrt(pass_steps / (panel_px · first_escape))`, since a pass covers
+/// `pass_steps / pixels` iterations and cost is proportional to pixels. `1.0` = no opinion.
+///
+/// ⭐⭐**FED BY ITERATIONS, NEVER BY FRAME TIME.** Every other resolution control in this file is
+/// timed, and none can tell a frame that finished from one that committed no pixel — because the
+/// blank one is the FASTER of the two, so they read it as headroom and sharpen, and the next frame
+/// is even less able to finish. See `Perf::visible_res` for the dive this was measured on.
+///
+/// ⚠**Computed ABSOLUTELY, never as a feedback step.** The first version multiplied the scale in
+/// force by `sqrt(walked / first_escape)` every pass. That is a control loop whose actuator has an
+/// unmodelled slew limit — `budget_step` may only double per pass — so the cap ran down faster than
+/// the step could answer and wound up on its floor: measured at 2^800, 146×110 for 1760 consecutive
+/// frames while the step sat at 833. An absolute target cannot wind up. It simply holds the same
+/// value while the step climbs to meet it, which takes about three passes from a standing start.
+/// The scales [`visible_res_hold`] is allowed to pick, each halving the PIXELS of the one above.
+/// A short ladder on purpose — see that function for why the count matters more than the fit.
+const VISIBLE_RES_LADDER: [f64; 7] =
+    [1.0, 0.707_106_78, 0.5, 0.353_553_39, 0.25, 0.176_776_70, 0.125];
+
+/// The scale actually used, given the raw `target` and the one currently `held`: the coarsest rung
+/// of [`VISIBLE_RES_LADDER`] that still meets the target, dropped to immediately and given up only
+/// when the target has cleared the rung above by half again.
+///
+/// ⭐⭐**THE RESOLUTION IS PART OF THE WALK'S SIGNATURE, SO CHANGING IT THROWS THE WALK AWAY.** This
+/// is what defeated the two previous attempts, and it is not visible in any per-pass measurement:
+/// both of them made motion walks reach *further* (1% → 26% of walks reaching an escape) while
+/// making the SCREEN worse (8% → 36% of captured frames blank), because a continuously-varying
+/// target re-signed the walk 128–216 times per dive against the baseline's **one**, and every
+/// re-sign restarts the iteration cursor at zero. A frame that restarts is blank no matter how far
+/// it could have walked. So the ladder is coarse and sticky: few rungs, immediate on the way down
+/// (a blank frame is urgent), reluctant on the way up (hysteresis, so a target hovering near a rung
+/// boundary cannot oscillate). What matters here is the NUMBER OF CHANGES, not the fit.
+pub(crate) fn visible_res_hold(held: f64, target: f64, reaches: bool) -> f64 {
+    let held = if held.is_finite() { held.clamp(VISIBLE_RES_MIN, 1.0) } else { 1.0 };
+    let target = if target.is_finite() { target.clamp(VISIBLE_RES_MIN, 1.0) } else { 1.0 };
+    // The coarsest rung that still meets the target (the ladder descends).
+    let rung = VISIBLE_RES_LADDER
+        .iter()
+        .copied()
+        .find(|&r| r <= target)
+        .unwrap_or(VISIBLE_RES_MIN)
+        .max(VISIBLE_RES_MIN);
+    // ⚠Two different questions, deliberately. `target` carries `VISIBLE_HEADROOM`, so it is
+    // more cautious than the bare "does the frame at the held scale still reach the band?" —
+    // and dropping on the cautious one is what made the rung follow every wobble of the budget.
+    // The frame is abandoned only when it genuinely cannot show anything; the margin is spent
+    // when CHOOSING a rung, not when deciding whether to leave one.
+    if !reaches && rung < held {
+        rung // the frame cannot show anything: drop now
+    } else if target >= (held * 1.5).min(1.0) {
+        rung // comfortably clear of where we are: let it sharpen
+    } else {
+        held // inside the band: hold, and keep the walk's signature stable
+    }
+}
+
+/// Can a moving frame at linear scale `scale` walk to `need_iters` on `pass_steps`? The bare
+/// question, without headroom — the one that decides whether a held rung is ABANDONED.
+pub(crate) fn visible_frame_reaches(pass_steps: u64, panel_px: u64, scale: f64, need_iters: f64) -> bool {
+    if pass_steps == 0 || panel_px == 0 || !(need_iters > 0.0) || !need_iters.is_finite() {
+        return true; // nothing measured: nothing to abandon it for
+    }
+    let scale = if scale.is_finite() { scale.clamp(VISIBLE_RES_MIN, 1.0) } else { 1.0 };
+    pass_steps as f64 >= panel_px as f64 * scale * scale * need_iters
+}
+
+/// Fraction of a motion pass's budget the visible frame is sized to spend.
+///
+/// ⭐⭐**A FRAME SIZED TO EXACTLY ITS BUDGET IS SIZED TO THE EDGE OF A CLIFF.** The pass budget is
+/// the rate model's estimate of what fits `MOTION_PASS_MS`; a frame that costs all of it lands ON
+/// the time target, so ordinary noise puts it over, the rate estimator cuts the budget (measured
+/// 2.45× at worst: 1.35e9 → 5.5e8), and the next frame — sized against the budget before the cut —
+/// walks half as far and is blank. Then the cheap blank frame lifts the budget back and the cycle
+/// repeats: 62 rung changes and 11% blank frames in an 18 s capture at 2^800. Spending 40% instead
+/// means a frame still reaches the band through a 2.45× cut, and — because it runs well inside the
+/// pass time — it never provokes the cut at all, so the budget holds still and so does the rung.
+const VISIBLE_HEADROOM: f64 = 0.4;
+
+pub(crate) fn visible_res_target(pass_steps: u64, panel_px: u64, need_iters: f64) -> f64 {
+    // No measured pass budget, no pixels, or no measured escape range for this view yet: no
+    // opinion. In particular a view whose range has not been read must never shrink on a guess.
+    if pass_steps == 0 || panel_px == 0 || !(need_iters > 0.0) || !need_iters.is_finite() {
+        return 1.0;
+    }
+    let have = pass_steps as f64 * VISIBLE_HEADROOM;
+    let want = panel_px as f64 * need_iters;
+    if have >= want {
+        return 1.0;
+    }
+    (have / want).sqrt().clamp(VISIBLE_RES_MIN, 1.0)
 }
 
 /// The band ledger's growth factor for a PINNED pass priced at `price_ms` against `target_ms`:
