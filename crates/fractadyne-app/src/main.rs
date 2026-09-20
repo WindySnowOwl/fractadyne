@@ -4907,6 +4907,12 @@ struct AutopilotState {
     dive_log2: f64,
     /// Speed or Quality first (see `autopilot::AutopilotPriority`); persisted.
     priority: crate::autopilot::AutopilotPriority,
+    /// Detail or the nearest Misiurewicz point (see `autopilot::AutopilotTarget`); persisted.
+    target: crate::autopilot::AutopilotTarget,
+    /// The Misiurewicz point this dive is locked onto (Misiurewicz target, once solved).
+    misi: Option<crate::autopilot::MisiTarget>,
+    /// The off-thread search for it, while it runs; the dive holds still meanwhile.
+    misi_solve: Option<crate::autopilot::MisiSolve>,
 }
 
 /// Transient pointer / zoom / pan interaction state (not persisted): the in-progress zoom-box and
@@ -6203,6 +6209,10 @@ impl FractadyneApp {
                 dive_log2: s.autopilot_dive_log2,
                 priority: crate::autopilot::AutopilotPriority::parse(&s.autopilot_priority)
                     .unwrap_or_default(),
+                target: crate::autopilot::AutopilotTarget::parse(&s.autopilot_target)
+                    .unwrap_or_default(),
+                misi: None,
+                misi_solve: None,
             },
             anim: AnimationState {
                 show_orbits: s.show_orbits,
@@ -6605,6 +6615,12 @@ impl FractadyneApp {
             match args.get(i + 1).and_then(|v| crate::autopilot::AutopilotPriority::parse(v)) {
                 Some(p) => app.autopilot.priority = p,
                 None => eprintln!("fractadyne: --autopilot-priority expects `speed` or `quality`"),
+            }
+        }
+        if let Some(i) = args.iter().position(|a| a == "--autopilot-target") {
+            match args.get(i + 1).and_then(|v| crate::autopilot::AutopilotTarget::parse(v)) {
+                Some(t) => app.autopilot.target = t,
+                None => eprintln!("fractadyne: --autopilot-target expects `detail` or `misiurewicz`"),
             }
         }
         // Sound: `--no-sound` silences the render-finished tone (and `--sound` overrides
@@ -7023,6 +7039,7 @@ impl FractadyneApp {
             click_zoom_factor: self.render_cfg.click_zoom_factor,
             autopilot_dive_log2: self.autopilot.dive_log2,
             autopilot_priority: self.autopilot.priority.as_str().to_string(),
+            autopilot_target: self.autopilot.target.as_str().to_string(),
             work_budget_scale: self.render_cfg.work_budget_scale,
             min_motion_res: self.render_cfg.min_motion_res,
             prefer_detail: self.render_cfg.prefer_detail,

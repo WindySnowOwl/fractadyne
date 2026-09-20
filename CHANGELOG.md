@@ -12,6 +12,19 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **New: the auto-zoom can dive into a Misiurewicz point** (beta.111, "Auto-zoom target" in the
+  Navigation panel and the Tools menu, `--autopilot-target`). With the target set to Misiurewicz
+  point, starting the auto-zoom first finds the nearest Misiurewicz point to the view and solves
+  it to the dive limit's depth — the view holds still and the toast counts the seconds; a moment
+  at ordinary depths, up to a minute or so past 1e1000× — then dives exactly into it with the
+  chosen priority. The point's screen position is recomputed from its arbitrary-precision
+  coordinate every frame rather than carried along as a screen fraction, so forty octaves in the
+  target is still under the aim to a fraction of a pixel. Around a Misiurewicz point the structure
+  repeats every log₂|λ| octaves forever (the toast says how many, and the twist per repeat), so
+  this dive never runs out of detail. If no such point is found near the view, or the nearest one
+  is off screen, the auto-zoom stops and says so; on a formula other than the Mandelbrot set, or
+  in Julia mode, it dives toward detail instead and says so. The Detail target is the existing
+  behaviour and stays the default.
 - **The view no longer flashes to black or to a single colour while diving, and the auto-zoom
   has a Speed / Quality priority** (beta.110). A user's recording of an auto-zoom dive from
   8e175× at 4× speed had one frame in three as a flat colour — black, or the colour of the

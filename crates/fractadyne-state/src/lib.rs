@@ -125,6 +125,11 @@ pub struct SessionState {
     /// frame never magnifies far before the next one lands). Unknown values read as `speed`.
     #[serde(default = "default_autopilot_priority")]
     pub autopilot_priority: String,
+    /// What the auto-zoom aims at: `"detail"` (the richest edge in view, re-chosen as it goes)
+    /// or `"misiurewicz"` (the nearest Misiurewicz point, solved once and held exactly — the
+    /// structure around it repeats forever). Unknown values read as `detail`.
+    #[serde(default = "default_autopilot_target")]
+    pub autopilot_target: String,
     /// Live-render work-budget multiplier (× the built-in `WORK_BUDGET`). Higher renders the live
     /// deep-zoom view at fuller resolution (crisper) at the cost of frame-rate / GPU-watchdog margin;
     /// does not affect exports. Default 1.0.
@@ -406,6 +411,10 @@ fn default_autopilot_priority() -> String {
     "speed".to_string()
 }
 
+fn default_autopilot_target() -> String {
+    "detail".to_string()
+}
+
 fn default_update_track() -> String {
     "stable".to_string()
 }
@@ -560,6 +569,7 @@ impl Default for SessionState {
             click_zoom_snap: false,
             autopilot_dive_log2: default_autopilot_dive_log2(),
             autopilot_priority: default_autopilot_priority(),
+            autopilot_target: default_autopilot_target(),
             work_budget_scale: default_work_budget_scale(),
             min_motion_res: default_min_motion_res(),
             prefer_detail: false,

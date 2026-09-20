@@ -13,13 +13,15 @@
 #     TIMEOUT_S  how long the dive runs (default 26); capture starts 4 s in and lasts 18 s
 #     ITER       --autodive-iter (default 10000 = the fixed count of the report; 0 = auto-iter)
 #     PRIORITY   speed | quality — the auto-zoom priority (default: whatever the seed saved)
+#     TARGET     detail | misiurewicz — the auto-zoom target (default: whatever the seed saved)
 #   FRACTADYNE_BIGNUM is passed through (the reporting sessions ran `rug`; set it to match).
 HERE="$(cd "$(dirname "$0")" && pwd)"
-NAME=$1; EXE=$2; KFR=$3; SEED=${4:-$HERE/session-seed.toml}; T=${5:-26}; ITER=${6:-10000}; PRIO=$7
-[ -n "$NAME" ] && [ -f "$EXE" ] && [ -f "$KFR" ] || { echo "usage: capdive.sh NAME EXE KFR [SEED_TOML] [TIMEOUT_S] [ITER] [PRIORITY]" >&2; exit 2; }
+NAME=$1; EXE=$2; KFR=$3; SEED=${4:-$HERE/session-seed.toml}; T=${5:-26}; ITER=${6:-10000}; PRIO=$7; TARGET=$8
+[ -n "$NAME" ] && [ -f "$EXE" ] && [ -f "$KFR" ] || { echo "usage: capdive.sh NAME EXE KFR [SEED_TOML] [TIMEOUT_S] [ITER] [PRIORITY] [TARGET]" >&2; exit 2; }
 OUT="$PWD/$NAME"; rm -rf "$OUT"; mkdir -p "$OUT/cfg" "$OUT/frames"
 cp "$SEED" "$OUT/cfg/session.toml"
 PRIO_ARGS=""; [ -n "$PRIO" ] && PRIO_ARGS="--autopilot-priority $PRIO"
+[ -n "$TARGET" ] && PRIO_ARGS="$PRIO_ARGS --autopilot-target $TARGET"
 FRACTADYNE_CONFIG_DIR="$OUT/cfg" FRACTADYNE_NO_SOUND=1 FRACTADYNE_TRACE=autopilot,tile,gpu,ref \
   "$EXE" --import-kfr "$KFR" --show-timestamp --autodive 300 --autodive-iter "$ITER" \
   --autodive-home 0 --autodive-timeout "$T" $PRIO_ARGS > "$OUT/stdout.txt" 2> "$OUT/stderr.txt" &

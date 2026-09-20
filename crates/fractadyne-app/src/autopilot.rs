@@ -93,6 +93,73 @@ impl AutopilotPriority {
     }
 }
 
+/// What the dive aims at (Navigate panel ▸ "Auto-zoom target"; `--autopilot-target`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum AutopilotTarget {
+    /// The detail-richest point of the fractal's edge in view, re-chosen as the dive goes
+    /// (`choose_goal`), steered by the shader's distance estimate.
+    #[default]
+    Detail,
+    /// The nearest Misiurewicz point: detected and solved once, to the dive limit's depth, then
+    /// held EXACTLY — its screen position is recomputed from the arbitrary-precision coordinate
+    /// every frame, never carried as a screen fraction. Around a Misiurewicz point the structure
+    /// repeats every log₂|λ| octaves, so this dive never runs out of detail.
+    Misiurewicz,
+}
+
+impl AutopilotTarget {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Detail => "detail",
+            Self::Misiurewicz => "misiurewicz",
+        }
+    }
+
+    pub(crate) fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "detail" => Some(Self::Detail),
+            "misiurewicz" | "misi" => Some(Self::Misiurewicz),
+            _ => None,
+        }
+    }
+}
+
+/// A Misiurewicz point the dive is locked onto, exact to the depth it was solved for.
+#[derive(Clone, Debug)]
+pub(crate) struct MisiTarget {
+    pub(crate) cx: fractadyne_core::BigFloat,
+    pub(crate) cy: fractadyne_core::BigFloat,
+    pub(crate) preperiod: u32,
+    pub(crate) period: u32,
+    /// `log₂|λ|`: octaves per repeat of the structure, when the multiplier could be computed.
+    pub(crate) repeat_oct: Option<f64>,
+    pub(crate) twist_deg: Option<f64>,
+    /// The depth (log₂ magnification) the coordinate is accurate to.
+    pub(crate) solved_l2: f64,
+}
+
+/// The off-thread detect + solve that produces a [`MisiTarget`] (the same worker shape as the
+/// Go-to dialog's "Find near view": detection at the view's scale, then Newton at the target
+/// depth). The dive holds still until it answers.
+pub(crate) struct MisiSolve {
+    pub(crate) rx: std::sync::mpsc::Receiver<Result<MisiTarget, String>>,
+    pub(crate) started: std::time::Instant,
+    /// When the waiting toast was last refreshed (app time).
+    pub(crate) toast_t: f64,
+}
+
+/// Where a fixed fractal coordinate sits on screen, as the fraction the autopilot steers in.
+/// Exact at any depth (`Viewport::complex_to_pixel` works on the reference-offset mantissa), so a
+/// dive that recomputes its goal from this every frame cannot drift off the point.
+pub(crate) fn goal_of_point(
+    vp: &fractadyne_core::Viewport,
+    cx: &fractadyne_core::BigFloat,
+    cy: &fractadyne_core::BigFloat,
+) -> (f64, f64) {
+    let (px, py) = vp.complex_to_pixel(cx, cy);
+    (px / vp.width_px.max(1.0), py / vp.height_px.max(1.0))
+}
+
 /// The zoom speed (nepers/s) the Quality priority allows, given how long a refresh currently
 /// takes and how far the held frame has already been magnified.
 ///
@@ -162,6 +229,8 @@ impl FractadyneApp {
             self.autopilot.speed = 0.0;
             self.autopilot.retarget_t = f64::NEG_INFINITY;
             self.autopilot.eval_t = 0.0; // force an evaluation next frame
+            self.autopilot.misi = None;
+            self.autopilot.misi_solve = None;
             // The Quality pacer measures the time between refreshes from here; a settled view's
             // last adoption may be minutes old and would read as a stalled dive.
             let ct = &mut self.perf.content[0];
@@ -170,11 +239,164 @@ impl FractadyneApp {
             ct.blank_walks = 0;
             self.home_anim = None;
             self.stop_playback();
-            self.set_toast("Autopilot on — diving toward detail (any input stops)", ctx);
+            if self.autopilot.target == AutopilotTarget::Misiurewicz {
+                self.start_misi_target_solve(ctx);
+            } else {
+                self.set_toast("Autopilot on — diving toward detail (any input stops)", ctx);
+            }
         } else {
             self.pointer.zoom_vel = 0.0;
             self.autopilot.stepping = false;
+            self.autopilot.misi_solve = None;
             self.set_toast("Autopilot off", ctx);
+        }
+    }
+
+    /// Start the off-thread search for the Misiurewicz point nearest the view, solved to the
+    /// dive limit's depth (capped at `MAX_SOLVE_OCTAVES`). The dive holds still until it lands.
+    /// Misiurewicz points are a Mandelbrot-set feature: any other formula, or Julia mode, dives
+    /// toward detail instead and says so.
+    fn start_misi_target_solve(&mut self, ctx: &egui::Context) {
+        if self.fractal.formula_id() != 0 || self.julia_mode {
+            self.set_toast(
+                "Autopilot: a Misiurewicz target needs the Mandelbrot set — diving toward detail instead",
+                ctx,
+            );
+            return;
+        }
+        let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
+        let cur_l2 = self.viewport.log2_magnification();
+        // The detector's own cost budget bounds the critical-orbit walk (see `goto_feature`).
+        let iters = self
+            .viewport
+            .recommended_max_iter(self.render_cfg.max_iter)
+            .clamp(256, 2_000_000);
+        let precision = self.viewport.precision;
+        let span_log2 = self.viewport.units_per_pixel.log2() + self.viewport.width_px.log2();
+        // Solve for the depth the dive will reach, so the coordinate stays exact all the way down
+        // (the solve's precision follows the ask); an octave past the view at the very least.
+        let solve_l2 = self.autopilot.dive_log2.max(cur_l2 + 1.0).min(crate::MAX_SOLVE_OCTAVES);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let found = fractadyne_core::detect_misiurewicz_at_scale(
+                &center[0],
+                &center[1],
+                0,
+                iters,
+                1_024,
+                precision,
+                Some(span_log2),
+            );
+            let msg = match found {
+                None => Err("no Misiurewicz point found near this view (the finder may not \
+                             reach this depth) — try the Detail target"
+                    .to_string()),
+                Some((k, p)) => match fractadyne_core::find_misiurewicz(
+                    &center,
+                    k,
+                    p,
+                    fractadyne_core::SolveScale { log2_seed: cur_l2, log2_target: solve_l2 },
+                    0,
+                ) {
+                    Ok(m) => {
+                        let prec = fractadyne_core::precision_for_octaves(solve_l2.max(0.0).ceil() as u64);
+                        let lam = fractadyne_core::misiurewicz_multiplier(
+                            &m.cx, &m.cy, m.preperiod, m.period, 0, prec,
+                        );
+                        Ok(MisiTarget {
+                            cx: m.cx,
+                            cy: m.cy,
+                            preperiod: m.preperiod,
+                            period: m.period,
+                            repeat_oct: lam.as_ref().map(|l| l.log2_abs),
+                            twist_deg: lam.as_ref().map(|l| l.arg.to_degrees()),
+                            solved_l2: solve_l2,
+                        })
+                    }
+                    Err(fractadyne_core::MisiurewiczMiss::TooFar { log2_view_widths }) => Err(format!(
+                        "the nearest Misiurewicz point ({k},{p}) is ~2^{log2_view_widths:.0} \
+                         screen widths away — move closer to a spiral centre"
+                    )),
+                    Err(fractadyne_core::MisiurewiczMiss::NotPreperiodic { .. })
+                    | Err(fractadyne_core::MisiurewiczMiss::NotConverged) => Err(format!(
+                        "the Misiurewicz point ({k},{p}) near this view did not solve — try the \
+                         Detail target"
+                    )),
+                    Err(fractadyne_core::MisiurewiczMiss::BadRequest) => {
+                        Err("Misiurewicz solve refused (bad pair)".to_string())
+                    }
+                },
+            };
+            let _ = tx.send(msg);
+        });
+        self.autopilot.misi_solve = Some(MisiSolve {
+            rx,
+            started: std::time::Instant::now(),
+            toast_t: f64::NEG_INFINITY,
+        });
+        self.set_toast("Autopilot on — finding the nearest Misiurewicz point…", ctx);
+        crate::diag::log_line(
+            "autopilot",
+            &format!("misiurewicz target: detecting from 2^{cur_l2:.4}, solving to 2^{solve_l2:.1}"),
+        );
+    }
+
+    /// Collect the Misiurewicz solve when it lands; keep the user informed while it runs; stop
+    /// the dive, with the reason, when it fails.
+    fn poll_misi_target(&mut self, ctx: &egui::Context, now: f64) {
+        let Some(solve) = self.autopilot.misi_solve.as_mut() else { return };
+        match solve.rx.try_recv() {
+            Ok(Ok(m)) => {
+                let took = solve.started.elapsed().as_secs_f64();
+                let label = match (m.repeat_oct, m.twist_deg) {
+                    (Some(r), Some(t)) => format!(
+                        "Autopilot: diving into Misiurewicz ({},{}) — structure repeats every \
+                         {r:.2} octaves, twist {t:+.1}° (any input stops)",
+                        m.preperiod, m.period
+                    ),
+                    _ => format!(
+                        "Autopilot: diving into Misiurewicz ({},{}) (any input stops)",
+                        m.preperiod, m.period
+                    ),
+                };
+                crate::diag::log_line(
+                    "autopilot",
+                    &format!(
+                        "misiurewicz target: ({},{}) solved to 2^{:.1} in {took:.2} s, repeat {:?} oct",
+                        m.preperiod, m.period, m.solved_l2, m.repeat_oct
+                    ),
+                );
+                self.autopilot.misi = Some(m);
+                self.autopilot.misi_solve = None;
+                self.autopilot.eval_t = 0.0;
+                self.set_toast(label, ctx);
+            }
+            Ok(Err(why)) => {
+                crate::diag::log_line("autopilot", &format!("misiurewicz target: {why}"));
+                self.autopilot.misi_solve = None;
+                self.autopilot.active = false;
+                self.autopilot.stepping = false;
+                self.pointer.zoom_vel = 0.0;
+                self.set_toast(format!("Autopilot: {why}"), ctx);
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                // A deep detect can take a minute; keep the toast alive with the elapsed time.
+                if now - solve.toast_t > 2.0 {
+                    solve.toast_t = now;
+                    let s = solve.started.elapsed().as_secs_f64();
+                    self.set_toast(
+                        format!("Autopilot: finding the nearest Misiurewicz point… ({s:.0} s; any input stops)"),
+                        ctx,
+                    );
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.autopilot.misi_solve = None;
+                self.autopilot.active = false;
+                self.autopilot.stepping = false;
+                self.pointer.zoom_vel = 0.0;
+                self.set_toast("Autopilot: the Misiurewicz solver stopped unexpectedly", ctx);
+            }
         }
     }
 
@@ -233,6 +455,22 @@ impl FractadyneApp {
         let now = ctx.input(|i| i.time);
         let dt = (ctx.input(|i| i.stable_dt) as f64).clamp(0.0, 0.1);
 
+        // A Misiurewicz target still being solved: hold the view — no zoom, no probe, and no
+        // interaction stamp, so the picture settles while the solver works.
+        if self.autopilot.misi_solve.is_some() {
+            self.poll_misi_target(ctx, now);
+            if self.autopilot.misi_solve.is_some() || !self.autopilot.active {
+                self.schedule_repaint(ctx);
+                return;
+            }
+        }
+        // The goal of a Misiurewicz dive is the point itself, projected exactly every frame.
+        let misi_goal = self
+            .autopilot
+            .misi
+            .as_ref()
+            .map(|m| goal_of_point(&self.viewport, &m.cx, &m.cy));
+
         // Past the smooth regime, animating a continuous glide stalls (each frame takes too long),
         // so switch to a stepped dive: on each re-evaluation, snap to the target and JUMP the zoom.
         let stepping = l2 >= AUTOPILOT_SMOOTH_LOG2;
@@ -251,7 +489,40 @@ impl FractadyneApp {
         // next one computes, instead of jumping onto blanks faster than the deep reference rebuilds.
         let ready = !stepping || (l2 - self.ref_cache[0].frozen_l2) < 1.0;
 
-        if ready && now - self.autopilot.eval_t > eval_interval {
+        if let Some(g) = misi_goal {
+            // Locked on a Misiurewicz point: no probe, no retargets. The goal is the point's
+            // exact screen position this frame; the glide (or the stepped jump) closes on it.
+            self.autopilot.goal = Some(g);
+            if ready && now - self.autopilot.eval_t > eval_interval {
+                self.autopilot.eval_t = now;
+                if crate::diag::trace_on("autopilot") {
+                    let m = self.autopilot.misi.as_ref().unwrap();
+                    crate::diag::trace(
+                        "autopilot",
+                        format!(
+                            "eval t={now:.3} l2={l2:.4} goal_was={:?} aim={:?} speed={:.3} \
+                             pick={:?} retarget=false misi=({},{}) cx={} cy={}",
+                            self.autopilot.goal,
+                            self.autopilot.aim,
+                            self.autopilot.speed,
+                            Some(g),
+                            m.preperiod,
+                            m.period,
+                            fractadyne_core::to_decimal_string(&self.viewport.center_x),
+                            fractadyne_core::to_decimal_string(&self.viewport.center_y),
+                        ),
+                    );
+                }
+                if stepping {
+                    self.autopilot.aim = g;
+                    self.autopilot.lead = g;
+                    let factor = (-AUTOPILOT_STEP_LOG2 * std::f64::consts::LN_2).exp();
+                    self.autopilot_zoom(g, factor);
+                    let a = self.autopilot.aim;
+                    self.autopilot_pan(((0.5 - a.0) * 0.5, (0.5 - a.1) * 0.5));
+                }
+            }
+        } else if ready && now - self.autopilot.eval_t > eval_interval {
             self.autopilot.eval_t = now;
             if let Some((dev, q)) = gpu {
                 let probe = self.autopilot_probe(dev, q);
@@ -881,6 +1152,8 @@ pub(crate) fn glide_step(
 mod steering_tests;
 #[cfg(test)]
 mod priority_tests;
+#[cfg(test)]
+mod target_tests;
 
 /// CLI `--autodive`: drive the autopilot dive from the command line so the frame-cost controller can
 /// be hammered UNPACED, and report whether the dangerous regime was actually reached.

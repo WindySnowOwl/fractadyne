@@ -229,7 +229,12 @@ pub(crate) fn help_navigation(ui: &mut egui::Ui) {
          screen as soon as a frame with detail is ready; Quality shows only fully resolved \
          full-resolution frames and slows the zoom as needed so the picture never magnifies far \
          before the next one lands. Either way the screen never shows a blank or single-colour \
-         frame: a refresh that has not yet resolved any detail stays hidden behind the last one.",
+         frame: a refresh that has not yet resolved any detail stays hidden behind the last one. \
+         \"Auto-zoom target\" chooses what it aims at: Detail (the richest edge in view, re-chosen \
+         as it goes) or Misiurewicz point — it finds the nearest Misiurewicz point, solves it to \
+         the dive limit's depth while holding still, then dives exactly into it; the structure \
+         around such a point repeats every few octaves forever, so that dive never dead-ends \
+         (Mandelbrot set only).",
     );
     help_sub(ui, "History & precise moves");
     help_kv(ui, "Ctrl+Z / Backspace", "Undo the previous view.");
@@ -612,6 +617,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--watermark / --no-watermark", "Force the \"Fd\" watermark on / off (overrides the saved preference)."),
         Flag("--show-zoom-target / --no-show-zoom-target", "Force the auto-zoom target overlay on / off (View > Show auto-zoom target; overrides the saved preference). While the auto-zoom runs, outlines the region of the view it is zooming into with lines from its corners to the corners of the screen, and rings the point it is steering toward."),
         Flag("--autopilot-priority speed|quality", "What the auto-zoom puts first (the \"Auto-zoom priority\" switch in the right panel; overrides the saved preference). speed: zoom at the set rate and refresh the screen as soon as a frame with detail is ready. quality: only fully resolved full-resolution frames reach the screen, and the zoom slows as needed so the picture never magnifies far before the next one lands."),
+        Flag("--autopilot-target detail|misiurewicz", "What the auto-zoom aims at (the \"Auto-zoom target\" switch; overrides the saved preference). detail: the richest edge in view, re-chosen as the dive goes. misiurewicz: the nearest Misiurewicz point, solved to the dive limit's depth first (the dive holds still meanwhile), then dived into exactly — Mandelbrot set only."),
         Flag("--show-timestamp / --no-show-timestamp", "Force the elapsed-time overlay on / off (View > Show timestamp; overrides the saved preference). Draws a large clock over the view reading the same \"+12.345s\" the log stamps every line with, plus the frame number, so a screen recording of a problem that only appears in motion can be lined up against the log frame by frame."),
         Flag("--bla / --no-bla", "Force bilinear approximation (BLA) on / off for deep floatexp Mandelbrot."),
         Flag("--glitch / --no-glitch", "Force multi-reference glitch correction on / off for the export (default on)."),

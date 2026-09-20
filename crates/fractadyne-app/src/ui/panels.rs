@@ -609,6 +609,24 @@ impl FractadyneApp {
                             );
                     });
                 });
+                // What the auto-zoom aims at.
+                labelled(ui, "Auto-zoom target", |ui| {
+                    use crate::autopilot::AutopilotTarget as T;
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut self.autopilot.target, T::Detail, "Detail")
+                            .on_hover_text(
+                                "Dive toward the richest structure on the fractal's edge in view, \
+                                 re-choosing the target as the dive goes.",
+                            );
+                        ui.selectable_value(&mut self.autopilot.target, T::Misiurewicz, "Misiurewicz point")
+                            .on_hover_text(
+                                "Find the nearest Misiurewicz point (a spiral centre whose structure \
+                                 repeats forever) and dive exactly into it. The dive first holds \
+                                 still while the point is solved to the dive limit's depth — a \
+                                 moment at ordinary depths, longer past 1e1000×. Mandelbrot set only.",
+                            );
+                    });
+                });
 
                 // Live-render work budget: detail-vs-speed for the deep-zoom preview.
                 labelled(ui, "Live render budget", |ui| {

@@ -79,7 +79,10 @@ A fractal explorer for Windows and Linux in Rust (wgpu + egui/eframe), built for
   rate; the screen refreshes as soon as a frame with detail is ready) or **Quality** (only fully
   resolved frames reach the screen, and the zoom paces itself to them). Either way the view never
   shows a blank or single-colour frame while diving: a refresh that has not resolved detail yet
-  stays hidden behind the last one that did.
+  stays hidden behind the last one that did. An **Auto-zoom target** switch chooses **Detail**
+  (the richest edge in view, re-chosen as the dive goes) or **Misiurewicz point** (the nearest
+  Misiurewicz point, solved to the dive limit's depth and then dived into exactly — its structure
+  repeats forever, so that dive never dead-ends).
 - **Session & state** — the session auto-saves; **File → Reset application state** (or
   `--reset-state`) wipes the session, bookmarks, and thumbnails after a confirmation. The session
   file is versioned (it warns if written by a newer build), and `FRACTADYNE_CONFIG_DIR` overrides
