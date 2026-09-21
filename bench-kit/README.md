@@ -232,6 +232,31 @@ than papering over it:
   takes Fraktaler-3 62.8 s. The lane now hands over the `.kfr`'s own `Zoom` string verbatim, which
   is the Kalles Fraktaler convention every other lane already uses. If you have older results from
   this kit, the FractalShark column in them is void; the other lanes are unaffected.
+- **One palette across the lanes that can take one (`-SharedPalette <file>`).** Comparing two
+  renderers by image only works while their palettes are comparable, and by default they are not:
+  on the period-148 nucleus, Fractadyne against Imagina scored 0.067 on their own palettes and
+  0.496 on a shared Fractint/Kalles Fraktaler `.map`, which is the difference between a view
+  check that can confirm nothing and one that can. `palettes/bench-shared.map` ships with the
+  kit. **Only Fractadyne and `imagina-cli` can join**: Fraktaler-3 3.1 exposes no colour options
+  in its batch toml or its CLI, and `FractalSharkCli` has none at all, so those two columns stay
+  in their own colours and the report says so. It is off by default, because switching Fractadyne
+  off its preset palette changes every reference image and would break comparison with everything
+  this kit published before. Note that the two still index the map differently, so a shared file
+  makes the images *comparable*, not identical.
+- **A shared palette also removes a harness cost that was being counted as engine time.** Our
+  `imagina-cli` fork coloured every pixel with three `cos()` calls; at 4K that is 25 million
+  cosines, and it measured **1.83 s against 0.93 s** for the same scene with a `.map` lookup,
+  three reps each. Roughly half of every Imagina figure this kit ever produced was our own
+  colouring code. Colouring cost cannot be equalised across renderers we do not control, so the
+  honest statement is that each lane pays whatever its own output path costs, and the two lanes
+  we do control now pay a table lookup.
+- **Mirrored output is its own verdict.** `verify-views.py` also scores each render against the
+  reference flipped and rotated, because nothing else here can see a mirror: interior fraction is
+  exactly flip-invariant, and a large palette difference flattens the image test. This is not
+  hypothetical - our own Imagina fork wrote its PPM rows top-down out of a bottom-up buffer, so
+  every Imagina image in this kit was upside down and the lane passed all ten, since
+  "magnification agrees" is true of a mirror image too. A mirror now fails the check and names
+  the axis.
 - **A time is only meaningful for the work that was asked for, so the lane now checks the view.**
   The structure check asks "is this a picture"; it has never asked "is this the *right* picture",
   and all ten wrong renders passed it — one of them a near-flat field. `tools/verify-views.py`

@@ -80,7 +80,19 @@ param(
     # imagina-cli is built with msys2 mingw and needs that toolchain's DLLs on PATH; without them
     # it exits 0xC0000135 (DLL not found) with no message at all, which reads exactly like a
     # crash. Prepended for this lane only, never for the process. Autodetected when left empty.
-    [string]$ImaginaRuntimeDir = ''
+    [string]$ImaginaRuntimeDir = '',
+    # ONE palette for the lanes that can take one. Comparing two renderers by image only works
+    # while their palettes are comparable, and by default they are not at all: on the period-148
+    # nucleus, Fractadyne against Imagina scored 0.067 on their own palettes and 0.496 on a
+    # shared .map, which is the difference between a view check that can confirm nothing and one
+    # that can. A Fractint / Kalles Fraktaler .map is the portable format Fractadyne already
+    # imports and our imagina-cli fork now does too.
+    # Only those two can join: Fraktaler-3 3.1 exposes no colour options in its batch toml or its
+    # CLI, and FractalSharkCli has none at all (its --color is ANSI console art). Saying that is
+    # better than pretending the column is like-for-like.
+    # OFF by default, because switching Fractadyne off its preset palette changes every reference
+    # image and would silently break comparison with everything this kit published before.
+    [string]$SharedPalette = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -180,6 +192,7 @@ if ($have.fractadyne) {
             # arguments and sat in the GUI event loop until the timeout.
             $argLine = ('--render --out "{0}" --size {5} --center {1} {2} --zoom-log2 {3} --iter {4} --ss 1 --palette 0' -f $png, $kfr['Re'], $kfr['Im'], $zl2, $s.iterations, $Size)
             if ($s.normalize -eq '1') { $argLine += ' --normalize' }
+            if ($SharedPalette) { $argLine += (' --palette-map "{0}"' -f $SharedPalette) }
             $r = Invoke-TimedRender $FractadyneExe $argLine $TimeoutS $kit
             # The app prints "(in 40.8s)" / "(in 2m07s)" / "(in 1h02m)"; the CSV stores plain
             # SECONDS so the summary can compare numbers, not strings.
@@ -515,6 +528,7 @@ if ($have.imaginacli) {
             $png = Join-Path $outDir ('im-' + $s.slug + '.png')
             $argLine = ('--center-x {0} --center-y {1} --precision {2} --zoom {3} --iter {4} --width {5} --height {6} --out "{7}"' -f
                         $kfr['Re'], $kfr['Im'], $prec, $zoom, $s.iterations, $wh[0], $wh[1], $ppm)
+            if ($SharedPalette) { $argLine += (' --palette-map "{0}"' -f $SharedPalette) }
             $r = Invoke-TimedRender $ImaginaCliExe $argLine $TimeoutS $outDir
             $note = 'headless imagina-cli (AGPL fork, built from source); CPU path'
             $status = $r.status
@@ -750,6 +764,7 @@ $meta = @{
     lanes = @(($have.GetEnumerator() | Where-Object Value | ForEach-Object Key))
     fractalshark_algorithm = $FractalSharkAlgo
     fractalshark_shape = $fsShape
+    shared_palette = $SharedPalette
     zoomseq_frames = $ZoomSeqFrames
     zoomseq_amortisation = $zsAmort
     exes = @{
