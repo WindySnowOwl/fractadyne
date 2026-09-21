@@ -68,6 +68,19 @@ evidence. Rebuild or refresh a page at any time with
 `python tools/make-report.py results\<host>-<stamp>`, including for folders written before the
 manifest existed.
 
+**Publishing a report.** `--self-contained` inlines the thumbnails and writes a single
+`report-standalone.html` that travels on its own. Before a report leaves the machine, add
+`--redact-home`: a Windows profile directory is an account name, often a real name, and the
+command lines repeat it hundreds of times — 313 in one page here, 213 in one manifest. Redaction
+leaves the arguments complete and the paths readable. It only covers the HTML the tool generates,
+so run `python tools/redact-home.py <files>` over anything else you publish beside it, and
+`--check` to verify before you push. For a page shared by URL rather than linked, `--noindex`
+adds a robots meta and a no-referrer policy: unlinked is not unindexed once a URL has been
+shared, and a `robots.txt` rule would be worse than nothing because it is world-readable and
+would publish the very path you are trying not to advertise. `--note "<html>"` puts a line under
+the title, which is where a published page says what run it is and links a companion run; a page
+someone reaches by a bare URL has no other context.
+
 This exists because of a specific failure. The FractalShark lane spent its whole life sending a
 zoom the renderer silently truncated, so it benchmarked the wrong view at every depth, and no
 artifact on disk recorded the argument responsible. The numbers were checkable and the thing that

@@ -294,6 +294,20 @@ def main():
     ap.add_argument("--self-contained", action="store_true",
                     help="inline the thumbnails and write report-standalone.html, so the page "
                          "can be sent on its own without the 4K PNGs beside it")
+    ap.add_argument("--note", default="",
+                    help="a short line of HTML shown under the title. For a published report, "
+                         "this is where you say what this run is and link a companion run; a "
+                         "page someone reaches by a bare URL has no other context.")
+    ap.add_argument("--noindex", action="store_true",
+                    help="add a robots noindex/nofollow meta. For an unlisted page shared by "
+                         "URL: unlinked is not the same as unindexed, and a robots.txt rule "
+                         "would publish the very path you are trying not to advertise.")
+    ap.add_argument("--redact-home", action="store_true",
+                    help="replace your user-profile path with a placeholder. Use it for any "
+                         "report that leaves the machine: a Windows profile directory is your "
+                         "ACCOUNT NAME, often your real name, and the command lines repeat it "
+                         "hundreds of times. The paths stay readable and the arguments stay "
+                         "complete.")
     args = ap.parse_args()
     d = os.path.abspath(args.results_dir)
     if not os.path.isdir(d):
@@ -349,6 +363,9 @@ def main():
     title = "Benchmark report - %s" % " - ".join(x for x in (host, stamp) if x) or base
     a("<!doctype html><html><head><meta charset='utf-8'>")
     a("<meta name='viewport' content='width=device-width,initial-scale=1'>")
+    if args.noindex:
+        a("<meta name='robots' content='noindex,nofollow,noarchive'>")
+        a("<meta name='referrer' content='no-referrer'>")
     a("<title>%s</title><style>%s</style></head><body><div class='wrap'>" % (esc(title), CSS))
     a("<h1>%s</h1>" % esc(title))
     # Say only what is known. A subtitle full of question marks tells the reader nothing except
@@ -364,6 +381,10 @@ def main():
         bits.append("no run manifest in this folder, so command lines are unavailable "
                     "and images were matched by filename")
     a("<p class='sub'>%s.</p>" % esc(". ".join(bits)))
+    # Deliberately NOT escaped: this is the author's own HTML, passed on the command line, and
+    # its whole purpose is to carry a link.
+    if args.note:
+        a("<div class='panel'>%s</div>" % args.note)
 
     # ---- findings
     a("<h2>Findings</h2>")
@@ -534,6 +555,32 @@ def main():
     a("</div></body></html>")
 
     doc = "\n".join(H)
+
+    # Redaction is textual and runs LAST, over the finished document, so no section can be
+    # missed by forgetting to route its strings through a helper. Both slash spellings, because
+    # a path can arrive either way depending on which tool printed it.
+    if args.redact_home:
+        home = os.path.expanduser("~")
+        subs = [(home, "C:\\Users\\<user>"),
+                (home.replace("\\", "/"), "C:/Users/<user>")]
+        hits = 0
+        for old, new in subs:
+            if not old:
+                continue
+            hits += doc.count(old)
+            doc = doc.replace(old, new)
+            # Case matters on paths that different tools capitalised differently.
+            if old.lower() != old:
+                hits += doc.count(old.lower())
+                doc = doc.replace(old.lower(), new)
+        leak = os.path.basename(home)
+        remaining = doc.lower().count(leak.lower()) if leak else 0
+        print("redacted %d occurrence(s) of the home path" % hits)
+        if remaining:
+            # Say so rather than let the author assume it is clean. A redaction you cannot
+            # verify is worse than none, because it buys confidence it has not earned.
+            print("WARNING: %r still appears %d time(s) - check before publishing"
+                  % (leak, remaining))
 
     # A single file someone can attach to an email. The full-size PNGs are hundreds of megabytes
     # and will not travel with it, so the thumbnails become data URIs and the links that would
