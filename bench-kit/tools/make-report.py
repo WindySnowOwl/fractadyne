@@ -291,6 +291,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("results_dir")
     ap.add_argument("--no-thumbs", action="store_true")
+    ap.add_argument("--self-contained", action="store_true",
+                    help="inline the thumbnails and write report-standalone.html, so the page "
+                         "can be sent on its own without the 4K PNGs beside it")
     args = ap.parse_args()
     d = os.path.abspath(args.results_dir)
     if not os.path.isdir(d):
@@ -396,8 +399,9 @@ def main():
 
     # ---- per scene: images + the commands that made them
     a("<h2>Per scene: what was run, and what came out</h2>")
-    a("<p class='sub'>Click any image for the full-resolution render. The command line under "
-      "each is the one that produced that file.</p>")
+    a("<p class='sub'>%sThe command line under each is the one that produced that file.</p>"
+      % ("" if args.self_contained
+         else "Click any image for the full-resolution render. "))
     for s in scenes:
         a("<h3>%s</h3>" % esc(s))
         a("<div class='cards'>")
@@ -529,9 +533,36 @@ def main():
 
     a("</div></body></html>")
 
+    doc = "\n".join(H)
+
+    # A single file someone can attach to an email. The full-size PNGs are hundreds of megabytes
+    # and will not travel with it, so the thumbnails become data URIs and the links that would
+    # 404 are stripped: a page that offers a dead link is worse than one that offers none.
+    if args.self_contained:
+        import base64
+        import re as _re
+
+        def inline(m):
+            rel = m.group(1)
+            p = os.path.join(d, rel.replace("/", os.sep))
+            if not os.path.exists(p):
+                return m.group(0)
+            with open(p, "rb") as fh:
+                b = base64.b64encode(fh.read()).decode("ascii")
+            kind = "jpeg" if rel.lower().endswith((".jpg", ".jpeg")) else "png"
+            return "src='data:image/%s;base64,%s'" % (kind, b)
+
+        doc = _re.sub(r"src='([^']+\.(?:jpg|jpeg|png))'", inline, doc, flags=_re.I)
+        doc = _re.sub(r"<a href='[^']+\.(?:png|jpg|jpeg)'>(.*?)</a>", r"\1", doc, flags=_re.I | _re.S)
+        out = os.path.join(d, "report-standalone.html")
+        with open(out, "w", encoding="utf-8") as fh:
+            fh.write(doc)
+        print("standalone report: %s (%.1f MB)" % (out, os.path.getsize(out) / 1e6))
+        return 0
+
     out = os.path.join(d, "report.html")
     with open(out, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(H))
+        fh.write(doc)
     if not HAVE_PIL and not args.no_thumbs:
         print("Pillow not installed: full-size images linked instead of thumbnailed.")
     print("report: %s" % out)
