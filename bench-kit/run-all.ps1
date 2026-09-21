@@ -49,14 +49,15 @@ param(
     # and -- through 0.542 -- 4.2e275), not by depth. Do NOT use AutoSelect: it picks a non-HDR GPU
     # algorithm that goes flat at deep zoom, and there is no "Auto" either (0.543 rejects
     # `--render-algorithm Auto` as an unknown name, despite its own error text suggesting one).
-    # ⭐0.543 RENDERS ALL FOUR OF THEM (measured 2026-09-21 on an RTX 3080), so that DNF list is
-    # stale for 0.543+: 4.2e275 gives 1683 colours at modal 0.053, and the spar and both nuclei
-    # give real dendrite structure. ⚠The latter three come out in a very low-contrast palette -
+    # NOTE: 0.543 RENDERS ALL FOUR OF THEM (measured 2026-09-21 on an RTX 3080), so that DNF list
+    # is stale for 0.543+: 4.2e275 gives 1683 colours at modal 0.053, and the spar and both nuclei
+    # give real dendrite structure. WARNING: the latter three come out in a very low-contrast
+    # palette -
     # luminance stddev ~1.1 of 255 - so they sit close to the structure guard's margin while being
     # entirely correct pictures. Check the image before believing a DNF-blank on those three; the
     # guard's job is "is this a picture", and it has never claimed to judge "is this the RIGHT
     # picture", which only a cross-renderer comparison can say.
-    # ⚠Pick an algorithm that can represent the depth: Gpu1x32PerturbedLAv2 exits 1 with
+    # WARNING: pick an algorithm that can represent the depth: Gpu1x32PerturbedLAv2 exits 1 with
     # "cannot represent this viewport's pixel spacing" past f32 spacing, and the lane turns that
     # into DNF-algo-too-narrow rather than letting it look like a fast frame.
     #
@@ -231,6 +232,11 @@ if ($have.fraktaler3) {
 }
 
 # ---- lane: FractalShark (automated, via FractalSharkCli) ----
+# Declared before the lane, not inside it: the summary states which shape produced the numbers,
+# and under Set-StrictMode reading a variable the lane never defined is an ERROR, not an empty
+# string. A skipped lane must not be able to take the whole report down with it.
+$fsShape = ''
+$fsStartup = ''
 # From 0.541 the GPU lane WORKS on this box (see README "FractalShark, honestly"): the release adds
 # sm_75 code that JITs onto sm_86, so a GPU algorithm now renders real pictures. The default here is
 # a GPU HDR algorithm for that reason. Through 0.54 every GPU algorithm returned a BLANK image
@@ -255,8 +261,11 @@ if ($have.fractalsharkcli) {
             $useServer = $false
         } else {
             Write-Host ('  ready in ' + $srv.startup_s + ' s')
+            $fsStartup = [string]$srv.startup_s
         }
     }
+    $fsShape = $(if ($useServer) { 'server-amortized (--server/--connect, startup paid once)' }
+                 else { 'one process per frame (startup folded into every frame)' })
     Write-Host ('FractalShark: automated via ' + (Split-Path $FractalSharkCliExe -Leaf) +
                 ', algorithm ' + $FractalSharkAlgo +
                 $(if ($useServer) { ' (server-amortized)' } else { ' (process per frame)' }))
@@ -268,10 +277,29 @@ if ($have.fractalsharkcli) {
         foreach ($s in $sceneRows) {
             $kfr = Read-Kfr (Join-Path $kit ('scenes\' + $s.slug + '.kfr'))
             # The magnification is a STRING, never a number: 10^1105.79 is +inf in double and the
-            # corpus goes there. FractalSharkCli accepts a fractional exponent (verified), and its
-            # zoom convention is Kalles Fraktaler's - the same one we and Fraktaler-3 use. That was
-            # CALIBRATED against a known scene here, not assumed; a 4/3 alternative scored far worse.
-            $zoom = '1e' + $s.mag_log10
+            # corpus goes there. Its zoom convention is Kalles Fraktaler's - the same one we and
+            # Fraktaler-3 use - so the .kfr's own Zoom field is handed over VERBATIM.
+            #
+            # It used to send '1e' + mag_log10, and the comment here claimed a fractional exponent
+            # was "verified". It is ACCEPTED, and then SILENTLY TRUNCATED. Measured on 0.543,
+            # 2026-09-21: `--zoom 1e6.1249387366083` and `--zoom 1e6` produce BYTE-IDENTICAL PNGs,
+            # while the correct `--zoom 1.333333E6` produces a different and correct one. Exit 0,
+            # a real picture, a plausible time -- and the wrong view, under-zoomed by up to 10x.
+            # Interior-area calibration against the Fractadyne render of scene 03: 1.333333E6 gives
+            # 0.411 against our 0.427, and 1E6 gives 0.251.
+            #
+            # That is why it was fast. An under-zoomed frame is a CHEAPER frame, so the error
+            # flattered FractalShark at every depth, and it flattered it MORE the deeper the scene
+            # (where the truncated fraction is worth the most magnification). Every FractalShark
+            # number this kit published before 2026-09-21 is from the wrong view and must not be
+            # compared with anything.
+            #
+            # LESSON, because the structure guard did not save us: a mantissa is not decoration.
+            # The guard asks "is this a picture" and all ten scenes passed it while being the wrong
+            # picture -- one of them a near-flat field. Only a comparison against another
+            # renderer's image of the SAME scene catches this class, which is why this lane now
+            # ships tools/verify-views.py.
+            $zoom = $kfr['Zoom']
             # WARNING: the output name may not be the one you pass. FractalSharkCli strips the
             # final extension and re-appends .png only when what remains has no dot, so
             # "fs-21-m43-spar-1e27.7.png" lands as "fs-21-m43-spar-1e27.7" with no extension - and
@@ -287,25 +315,55 @@ if ($have.fractalsharkcli) {
             $r = Invoke-TimedRender $FractalSharkCliExe $argLine $TimeoutS $outDir
             $note = $(if ($useServer) { 'server-amortized' } else { 'process per frame' }) +
                     $(if ($FractalSharkAlgo -like 'Gpu*') { '; GPU path (CUDA)' } else { '; CPU path' })
-            # NEVER read the reported "Frame time": the client prints one even for a render it
-            # REFUSED. Measured on 0.543 -- "error: ... cannot represent this viewport's pixel
-            # spacing" followed by "Frame time: 17.1 ms", and no image written. Anything scraping
-            # that text records a fast frame that never happened. The exit code is honest in both
-            # modes (1 for that refusal, 2 for bad arguments), so judge on it and on the image.
+            # The reported "Frame time" is worth HAVING - it is FractalShark's own render cost,
+            # and the gap between it and our wall is the pipe plus the PNG encode, which is the
+            # one number that says whether the CLI transport is in the way. But it is NEVER
+            # allowed to decide anything: the client prints one even for a render it REFUSED.
+            # Measured on 0.543 -- "error: ... cannot represent this viewport's pixel spacing"
+            # followed by "Frame time: 17.1 ms", and no image written. So parse it here, carry it
+            # alongside, and stamp it into the CSV only for a row that survives BOTH the exit code
+            # and the structure guard. Status is judged on the exit code and the image, never text.
+            $fsReported = ''
+            if ($r.stdout -match 'Frame time:\s*([0-9.]+)\s*ms') {
+                $fsReported = [string][math]::Round([double]$Matches[1] / 1000.0, 3)
+            }
             if ($r.status -eq 'ok' -and ($r.stdout + $r.stderr) -match 'cannot represent') {
                 $r.status = 'DNF-algo-too-narrow'
                 $note += '; ' + $FractalSharkAlgo + ' cannot represent this depth - needs an HDR algorithm'
             }
-            $pending += @{ scene = $s.slug; rep = $rep; png = $png; r = $r; note = $note }
+            $pending += @{ scene = $s.slug; rep = $rep; png = $png; r = $r; note = $note; reported = $fsReported }
         }
     }
     if ($useServer) {
         Write-Host 'FractalShark: shutting the server down - this is what flushes the PNGs'
         Stop-SharkServer $FractalSharkCliExe $endpoint $srv
     }
+    # IS IT THE RIGHT PICTURE? The structure guard below only ever asked "is it A picture", and on
+    # 2026-09-21 all ten scenes passed it while being renders of the wrong place, because the CLI
+    # truncated the fractional exponent in the zoom it was handed. An under-zoomed frame is a
+    # cheaper frame, so the error arrived disguised as a 20-50x speed win. Nothing in the lane
+    # could have caught it: only comparing against another renderer's image of the SAME scene can.
+    # Needs the fractadyne lane for its reference renders; without it the check says so and the
+    # numbers stay unverified rather than quietly passing.
+    $viewOk = @{}
+    $viewChecked = $false
+    $vv = Join-Path $kit 'tools\verify-views.py'
+    if ($PythonExe -and (Test-Path $vv) -and $have.fractadyne) {
+        $vjson = Join-Path $outDir 'fs-view-check.json'
+        Write-Host 'FractalShark: checking the renders are the scenes that were ASKED for'
+        & $PythonExe $vv $outDir --prefix fs --json $vjson --quiet 2>&1 | ForEach-Object { '  ' + $_ }
+        if (Test-Path $vjson) {
+            $viewChecked = $true
+            $vd = Get-Content $vjson -Raw | ConvertFrom-Json
+            foreach ($p in $vd.PSObject.Properties) { $viewOk[$p.Name] = [bool]$p.Value.same_view }
+        }
+    } else {
+        Write-Host 'FractalShark: view check SKIPPED (needs Python and the fractadyne lane) - times unverified.'
+    }
     foreach ($q in $pending) {
         $status = $q.r.status
         $note = $q.note
+        $reported = $q.reported
         if ($status -eq 'ok') {
             if (-not (Test-Path $q.png)) {
                 $status = 'DNF-no-output'
@@ -315,7 +373,22 @@ if ($have.fractalsharkcli) {
                 $note = 'exit 0 but the image is uniform - a time here would be meaningless'
             }
         }
-        Write-Result $csv 'fractalshark' $q.scene $q.rep $status $q.r.wall_s '' $note
+        # A picture of the WRONG PLACE is not a slow or a fast result, it is a VOID one, so this
+        # overrides an otherwise-clean row. The check runs on rep 1's image; every rep renders the
+        # same view by construction, and their outputs are byte-identical in practice.
+        if ($status -eq 'ok' -and $viewChecked -and $viewOk.ContainsKey($q.scene) -and -not $viewOk[$q.scene]) {
+            $status = 'DNF-not-the-scene'
+            $note = 'exit 0 and a structured image, but it does not depict this scene - wrong view, or the right view rendered as noise; see fs-view-check.json and LOOK at the PNG'
+        } elseif ($status -eq 'ok' -and -not $viewChecked) {
+            $note += '; view NOT verified'
+        }
+        # A self-reported time only survives on a row that EARNED it. On any DNF it is dropped,
+        # because the whole trap is that a refusal still prints one.
+        if ($status -ne 'ok') { $reported = '' }
+        elseif ($reported -and $q.r.wall_s) {
+            $note += ('; render ' + $reported + 's of ' + $q.r.wall_s + 's wall (rest is pipe + PNG encode)')
+        }
+        Write-Result $csv 'fractalshark' $q.scene $q.rep $status $q.r.wall_s $reported $note
     }
 }
 
@@ -398,9 +471,16 @@ if ($have.zoomseq) {
 # ---- summary: fastest run per renderer x scene, ratio vs fractadyne where possible ----
 $rows = Import-Csv $csv
 $md = @('# Benchmark summary - ' + $env:COMPUTERNAME + ' - ' + $stamp, '',
-        'Fastest run per renderer and scene. `wall_s` compares the two automated lanes end-to-end;',
+        'Fastest run per renderer and scene. `wall_s` compares the AUTOMATED lanes end-to-end;',
         '`reported_s` is each renderer''s own figure (see README for why they are never mixed).', '',
-        '| Scene | fractadyne wall | fraktaler3 wall | fd reported | imagina reported | fractalshark reported |',
+        'FractalShark is a wall column, not a reported one. It had one only while the lane was',
+        'OPERATOR-ASSISTED and a human transcribed the figure off the GUI; the CLI lane writes',
+        'wall_s and leaves reported_s empty, so printing `reported` here rendered every automated',
+        'FractalShark result as a BLANK CELL while the numbers sat in results.csv. A summary that',
+        'silently drops a lane it ran is worse than one that admits it skipped it.',
+        'In server mode that wall is the CLIENT call - the amortized per-frame cost, with CUDA and',
+        'process startup paid once for the whole run rather than folded into every frame.', '',
+        '| Scene | fractadyne wall | fraktaler3 wall | fractalshark wall | fd reported | imagina reported |',
         '|---|---|---|---|---|---|')
 foreach ($s in $sceneRows) {
     $cell = @{}
@@ -415,9 +495,17 @@ foreach ($s in $sceneRows) {
             $cell[$ren] = @{ wall = $(if ($st) { $st.status } else { '-' }); rep = $(if ($st) { $st.status } else { '-' }) }
         }
     }
-    $md += ('| {0} | {1} | {2} | {3} | {4} | {5} |' -f $s.slug, $cell.fractadyne.wall, $cell.fraktaler3.wall, $cell.fractadyne.rep, $cell.imagina.rep, $cell.fractalshark.rep)
+    $md += ('| {0} | {1} | {2} | {3} | {4} | {5} |' -f $s.slug, $cell.fractadyne.wall, $cell.fraktaler3.wall, $cell.fractalshark.wall, $cell.fractadyne.rep, $cell.imagina.rep)
 }
 $md += ''
+# WHICH SHAPE produced the FractalShark column is not a footnote: a server number and a
+# process-per-frame number differ by more than a second on this box and are not comparable.
+# A table that does not say which one it holds invites exactly that comparison.
+if ($fsShape) {
+    $md += ('FractalShark lane: ' + $FractalSharkAlgo + ', ' + $fsShape +
+            $(if ($fsStartup) { '; server ready in ' + $fsStartup + ' s' } else { '' }) + '.')
+    $md += ''
+}
 if ($zsRows.Count) {
     $md += ''
     $md += '## Zoom sequence - amortisation'
