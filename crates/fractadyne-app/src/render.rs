@@ -9408,6 +9408,40 @@ pub(crate) fn motion_jam_counts(dispatch_steps: u64, learned_budget: u64) -> boo
     dispatch_steps as f64 >= learned_budget as f64 * 0.7
 }
 
+/// Consecutive wall-slow frames with no slow reading before the budget-blind tripwire fires.
+///
+/// Eight is about a second of a dive in this regime and well short of the three-or-four fatal
+/// frames both recorded device losses took from first warning sign to the end, so the warning
+/// lands while there is still something to read. Low enough to catch the episode, high enough
+/// that an ordinary hitch — a reference install, an alt-tab, one expensive settle — does not
+/// trip it.
+pub(crate) const BUDGET_BLIND_FRAMES: u32 = 8;
+
+/// ⭐⭐**IS THE FRAME BUDGET STEERING BLIND?** True when the wall clock has called this many
+/// frames in a row slow while the budget controller has been handed no slow reading at all.
+///
+/// The two measure different things ON PURPOSE — a GPU timestamp brackets the dispatch, the wall
+/// interval contains the queue, the present and the compositor — and the difference is normally
+/// what you want: pricing the budget by the wall would hand it to vsync. But when they diverge
+/// for a sustained run, the controller is not merely reading a different number, it is reading a
+/// number that cannot see the danger: on the 2026-09-21 RX 6800 XT loss the wall showed twenty
+/// frames from 200 ms to 1027 ms while the always-on lethal-band line never fired even once,
+/// because every reading the controller received described a short pass sitting in a long queue.
+/// The budget stayed at 1.515e11 throughout, and since `chunk_over` compares against that budget,
+/// the frame was never chunked either — the guard that bounds such a dispatch was switched off by
+/// the same blindness.
+///
+/// ⚠This reports; it does not act. What to DO about the divergence is a live design question
+/// (price the budget by the wall in this state, force chunking, or cap the ask), and shipping a
+/// reaction inferred from one field log — on hardware the dev box cannot reproduce — is how a
+/// controller acquires a rule nobody can explain later. First make it observable.
+pub(crate) fn budget_blind(slow_wall_frames: u32, slow_readings: u32, warned: bool) -> bool {
+    !warned && slow_readings == 0 && slow_wall_frames >= BUDGET_BLIND_FRAMES
+}
+
+#[cfg(test)]
+mod budget_blind_tests;
+
 /// The motion-jam gate: clamp this frame's allowance to the bootstrap? Pure so the rules are
 /// pinned by test — motion only (settled paths serialize themselves), never on a reproject frame
 /// (nothing dispatches), never offscreen (exports have their own wall-priced cap).

@@ -1281,6 +1281,19 @@ struct Perf {
     /// Pinned refreshes adopted short of their ask because their PICTURE was done
     /// (`PinVerdict::AdoptConverged`, the autopilot's Speed priority) — kept apart from
     /// `adopt_partial`, whose zero is the §9 assertion, and from `adopt_complete`.
+    /// THE BUDGET-BLIND TRIPWIRE's state (see `render::budget_blind`). `blind_slow_frames`
+    /// counts consecutive frames the WALL says were slow; `blind_slow_readings` counts readings
+    /// the budget controller judged slow in that same run; `blind_warned` fires the warning once
+    /// per episode. All three reset when the budget actually moves.
+    ///
+    /// ⭐⭐**The two can disagree, and when they do the controller is steering blind.** A GPU
+    /// timestamp measures the dispatch, not the queue it is sitting in: on the 2026-09-21 RX
+    /// 6800 XT device loss the wall showed twenty frames of 200–1027 ms while every reading the
+    /// controller received was short enough to discard, so the budget never moved and the frame
+    /// was never chunked. Nothing in the app noticed the divergence; this pair is what notices.
+    blind_slow_frames: u32,
+    blind_slow_readings: u32,
+    blind_warned: bool,
     adopt_converged: [u64; 2],
     /// Pinned walks that completed with no escaped pixel (`PinStop::Blank`): the frame that was
     /// NOT put on screen. Counted for the harnesses; the consecutive count lives in `content`.
@@ -1913,6 +1926,9 @@ impl Default for Perf {
             glide_probe_left: [GLIDE_PROBE_FRAMES; 2],
             chunk_motion_frames: [0, 0],
             dirty_shown: [0, 0],
+            blind_slow_frames: 0,
+            blind_slow_readings: 0,
+            blind_warned: false,
             adopt_converged: [0, 0],
             blank_walks_total: [0, 0],
             content: [Default::default(), Default::default()],
@@ -13656,8 +13672,18 @@ impl FractadyneApp {
         // The arithmetic lives in `render::budget_step` as a pure function so the properties that
         // matter — a slow reading always shrinks, growth is bounded, the clamps hold — are pinned
         // by tests rather than by re-reading this block.
+        // A reading the controller judges SLOW is the one that can shrink the budget. Counting
+        // them is how the tripwire below tells "the budget is right" from "the budget is blind".
+        if ms > crate::tunables::cost().tdr_budget_ms {
+            self.perf.blind_slow_readings = self.perf.blind_slow_readings.saturating_add(1);
+        }
         let Some((next, ok)) = render::budget_step(cur, steps, ms, !self.render_cfg.auto_iter)
         else {
+            diag::budget_note(format!(
+                "v{v} {src}={ms:.1}ms steps={:.3e} budget={cur:.3e} DISCARDED (under 0.7x budget \
+                 and not slow)",
+                steps as f64
+            ));
             if diag::trace_on("gpu") {
                 diag::trace(
                     "gpu",
@@ -13718,6 +13744,19 @@ impl FractadyneApp {
             );
         }
         let moved = next != self.perf.fe_budget[v];
+        diag::budget_note(format!(
+            "v{v} {src}={ms:.1}ms steps={:.3e} budget={cur:.3e} -> {:.3e}{} ok={ok}",
+            steps as f64,
+            next as f64,
+            if moved { "" } else { " (unchanged)" },
+        ));
+        if moved {
+            // The budget reacted, so whatever run of slow frames was accumulating has an
+            // explanation. Start the tripwire's count again from here.
+            self.perf.blind_slow_frames = 0;
+            self.perf.blind_slow_readings = 0;
+            self.perf.blind_warned = false;
+        }
         self.perf.fe_budget[v] = next;
         moved
     }
@@ -14663,6 +14702,51 @@ impl eframe::App for FractadyneApp {
         }
         let body_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
         self.perf.cpu_ms = ema(self.perf.cpu_ms, body_ms);
+        // ⭐⭐THE BUDGET-BLIND TRIPWIRE (see `render::budget_blind`). Count what the WALL says
+        // about this frame, against what the budget controller was told about it. A frame only
+        // counts as wall-slow if we ASKED for a repaint: without one, eframe falls back to its
+        // ~1 Hz tick and the interval measures idling, not cost — the same discriminator the
+        // slow-frame line below relies on, and the one that produced two wrong diagnoses when it
+        // was missing.
+        {
+            let target = crate::tunables::cost().tdr_budget_ms;
+            let busy = ctx.has_requested_repaint();
+            if busy && self.perf.last_dt_ms > target {
+                self.perf.blind_slow_frames = self.perf.blind_slow_frames.saturating_add(1);
+            } else if self.perf.last_dt_ms < target * 0.5 {
+                // Comfortably quick again: the episode is over, and the next one gets its own
+                // warning. Hysteresis on purpose — resetting at the target would let a run
+                // oscillating either side of it re-arm the warning every few frames.
+                self.perf.blind_slow_frames = 0;
+                self.perf.blind_slow_readings = 0;
+                self.perf.blind_warned = false;
+            }
+            if render::budget_blind(
+                self.perf.blind_slow_frames,
+                self.perf.blind_slow_readings,
+                self.perf.blind_warned,
+            ) {
+                self.perf.blind_warned = true;
+                let msg = format!(
+                    "⚠FRAME BUDGET IS BLIND: {} frames in a row over {target:.0}ms by the wall \
+                     (worst {:.0}ms) and NOT ONE reading the budget controller judged slow — \
+                     budget still {:.3e}, last reading {:.1}ms for {:.3e} steps, mode={} \
+                     rebase={} bla_skip={}. The dispatch is sitting in a queue the timestamp \
+                     cannot see; the budget cannot shrink and `chunk_over` compares against it, \
+                     so the frame will not be chunked either.",
+                    self.perf.blind_slow_frames,
+                    self.perf.last_dt_ms,
+                    self.perf.fe_budget[0] as f64,
+                    self.perf.last_iterate_ms[0],
+                    self.perf.fe_steps_last[0] as f64,
+                    self.perf.last_mode,
+                    self.live_work_counters(0).0,
+                    self.live_work_counters(0).1,
+                );
+                diag::log_line("render", &msg);
+                diag::budget_note(format!("BLIND: {} wall-slow frames, 0 slow readings", self.perf.blind_slow_frames));
+            }
+        }
         // ⭐SLOW-FRAME ATTRIBUTION. A long frame interval has two very different causes and the
         // interval alone cannot tell them apart: time spent INSIDE `update` (CPU work — reference
         // installs, UI, a blocking wait we own) versus time spent OUTSIDE it (eframe's acquire /
