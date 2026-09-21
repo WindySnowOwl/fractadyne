@@ -176,6 +176,20 @@ if ($have.fractadyne) {
                 }
             }
             Write-Result $csv 'fractadyne' $s.slug $rep $r.status $r.wall_s $reported ''
+            Add-RunRecord @{
+                renderer = 'fractadyne'; scene = $s.slug; rep = $rep
+                exe = $FractadyneExe; args = $argLine; cwd = $kit
+                # The lane derives zoom-log2 from the scene's mag_log10 rather than passing the
+                # .kfr's Zoom: it is the same magnification in the units this CLI takes.
+                source = ('scenes\' + $s.slug + '.kfr')
+                inputs = @{ center_re = $kfr['Re']; center_im = $kfr['Im']
+                            kfr_zoom = $kfr['Zoom']; zoom_log2 = $zl2
+                            iterations = $s.iterations; size = $Size
+                            samples_per_pixel = 1; palette = 0
+                            normalize = ($s.normalize -eq '1') }
+                output = ('fd-' + $s.slug + '.png')
+                status = $r.status; wall_s = $r.wall_s; reported_s = $reported; note = ''
+            }
         }
     }
     Remove-Item Env:FRACTADYNE_CONFIG_DIR -ErrorAction SilentlyContinue
@@ -196,10 +210,22 @@ if ($have.fraktaler3) {
         # the path as an INPUT file and silently writes nothing - the first real kit run
         # benchmarked F3 on built-in defaults that way.
         Write-Host 'Fraktaler-3: generating + benchmarking tuning wisdom (once)...'
-        $w = Invoke-TimedRender $Fraktaler3Exe ('-w "' + $wisdom + '" -W') 300 $outDir
+        $wArgs = '-w "' + $wisdom + '" -W'
+        $w = Invoke-TimedRender $Fraktaler3Exe $wArgs 300 $outDir
         Write-Host ('  wisdom init: ' + $w.status + ' in ' + $w.wall_s + 's')
-        $w = Invoke-TimedRender $Fraktaler3Exe ('-w "' + $wisdom + '" -B') 1800 $outDir
+        Add-RunRecord @{ renderer = 'fraktaler3'; scene = '(tuning) wisdom init'; rep = 0
+                         exe = $Fraktaler3Exe; args = $wArgs; cwd = $outDir; source = ''
+                         inputs = @{}; output = 'f3-wisdom.toml'
+                         status = $w.status; wall_s = $w.wall_s; reported_s = ''
+                         note = 'one-off hardware tuning, not a benchmark row' }
+        $bArgs = '-w "' + $wisdom + '" -B'
+        $w = Invoke-TimedRender $Fraktaler3Exe $bArgs 1800 $outDir
         Write-Host ('  wisdom benchmark: ' + $w.status + ' in ' + $w.wall_s + 's')
+        Add-RunRecord @{ renderer = 'fraktaler3'; scene = '(tuning) wisdom benchmark'; rep = 0
+                         exe = $Fraktaler3Exe; args = $bArgs; cwd = $outDir; source = ''
+                         inputs = @{}; output = 'f3-wisdom.toml'
+                         status = $w.status; wall_s = $w.wall_s; reported_s = ''
+                         note = 'one-off number-type benchmark, not a benchmark row' }
     } else {
         Write-Host ('Fraktaler-3: reusing tuning wisdom ' + $wisdom)
     }
@@ -227,6 +253,19 @@ if ($have.fraktaler3) {
             $argLine = ('-w "{0}" -b "{1}"' -f $wisdom, $toml)
             $r = Invoke-TimedRender $Fraktaler3Exe $argLine $TimeoutS $outDir
             Write-Result $csv 'fraktaler3' $s.slug $rep $r.status $r.wall_s '' ''
+            # Fraktaler-3 takes its whole view from the .toml, not from flags, so the argument
+            # line alone does not say what was rendered. The rewritten toml IS the input and is
+            # kept beside the results; the report inlines it.
+            Add-RunRecord @{
+                renderer = 'fraktaler3'; scene = $s.slug; rep = $rep
+                exe = $Fraktaler3Exe; args = $argLine; cwd = $outDir
+                source = ($s.slug + '.bench.f3.toml')
+                inputs = @{ size = $Size; subframes = 1; wisdom = 'f3-wisdom.toml'
+                            iterations = $s.iterations
+                            note = 'view comes from the .toml; width/height/subframes rewritten per run' }
+                output = ($s.slug + '-f3.png')
+                status = $r.status; wall_s = $r.wall_s; reported_s = ''; note = ''
+            }
         }
     }
 }
@@ -331,7 +370,13 @@ if ($have.fractalsharkcli) {
                 $r.status = 'DNF-algo-too-narrow'
                 $note += '; ' + $FractalSharkAlgo + ' cannot represent this depth - needs an HDR algorithm'
             }
-            $pending += @{ scene = $s.slug; rep = $rep; png = $png; r = $r; note = $note; reported = $fsReported }
+            $pending += @{ scene = $s.slug; rep = $rep; png = $png; r = $r; note = $note
+                           reported = $fsReported; args = $argLine
+                           inputs = @{ center_re = $kfr['Re']; center_im = $kfr['Im']
+                                       zoom = $zoom; iterations = $s.iterations; size = $Size
+                                       antialiasing = 1; algorithm = $FractalSharkAlgo
+                                       mode = $(if ($useServer) { 'client against a live server' }
+                                                else { 'one process per frame' }) } }
         }
     }
     if ($useServer) {
@@ -389,6 +434,23 @@ if ($have.fractalsharkcli) {
             $note += ('; render ' + $reported + 's of ' + $q.r.wall_s + 's wall (rest is pipe + PNG encode)')
         }
         Write-Result $csv 'fractalshark' $q.scene $q.rep $status $q.r.wall_s $reported $note
+        Add-RunRecord @{
+            renderer = 'fractalshark'; scene = $q.scene; rep = $q.rep
+            exe = $FractalSharkCliExe; args = $q.args; cwd = $outDir
+            source = ('scenes\' + $q.scene + '.kfr')
+            inputs = $q.inputs
+            output = (Split-Path $q.png -Leaf)
+            status = $status; wall_s = $q.r.wall_s; reported_s = $reported; note = $note
+        }
+    }
+    if ($useServer) {
+        Add-RunRecord @{ renderer = 'fractalshark'; scene = '(server) startup'; rep = 0
+                         exe = $FractalSharkCliExe
+                         args = ('--server --endpoint {0} --width {1} --height {2}' -f $endpoint, $wh[0], $wh[1])
+                         cwd = $outDir; source = ''; inputs = @{ endpoint = $endpoint }
+                         output = ('fs-server-' + $endpoint + '.log')
+                         status = 'ok'; wall_s = $fsStartup; reported_s = ''
+                         note = 'paid ONCE for the whole lane; the per-scene rows are client calls' }
     }
 }
 
@@ -445,6 +507,13 @@ if ($have.zoomseq) {
     $env:FRACTADYNE_CONFIG_DIR = $zsCfg
     $env:FRACTADYNE_NO_SOUND = '1'
     & $PythonExe $zsArgs
+    Add-RunRecord @{ renderer = '(lane) zoomseq'; scene = ('zoomseq-' + $ZoomSeqFrames + 'f'); rep = 0
+                     exe = $PythonExe; args = ($zsArgs -join ' '); cwd = $kit; source = ''
+                     inputs = @{ frames = $ZoomSeqFrames; size = $Size
+                                 ladder = '21-m43-spar-1e27.7 Misiurewicz lambda-ladder'
+                                 note = 'drives fractadyne --render-tour and N F3 invocations; see zoomseq\results.csv' }
+                     output = 'zoomseq'; status = 'ok'; wall_s = ''; reported_s = ''
+                     note = 'the sequence lane runs its own sub-harness' }
     Remove-Item Env:FRACTADYNE_CONFIG_DIR -ErrorAction SilentlyContinue
     Remove-Item Env:FRACTADYNE_NO_SOUND -ErrorAction SilentlyContinue
     # Re-emit its rows so a run still has ONE results.csv, and derive the ratio for the summary.
@@ -535,5 +604,43 @@ if ($zsRows.Count) {
 $md += ''
 $md += 'Send this folder (or its zip) to feedback@fractadyne.org or attach it to a GitHub issue.'
 $md | Out-File -FilePath (Join-Path $outDir 'summary.md') -Encoding ascii
+
+# ---- run manifest + HTML report -----------------------------------------------------------
+# The manifest is written ALWAYS, because it is the primary record: exactly what was executed,
+# with the arguments and the parsed inputs, per render. The HTML is a rendering of it and of the
+# images beside it, and is allowed to be skipped - a missing Python must cost you the pretty
+# report, never the evidence.
+$meta = @{
+    host = $env:COMPUTERNAME; stamp = $stamp
+    started = (Get-Date).ToString('s')
+    size = $Size; reps = $Reps; timeout_s = $TimeoutS
+    scenes = @($sceneRows.slug)
+    lanes = @(($have.GetEnumerator() | Where-Object Value | ForEach-Object Key))
+    fractalshark_algorithm = $FractalSharkAlgo
+    fractalshark_shape = $fsShape
+    zoomseq_frames = $ZoomSeqFrames
+    zoomseq_amortisation = $zsAmort
+    exes = @{
+        fractadyne   = (Get-ExeStamp $FractadyneExe)
+        fraktaler3   = (Get-ExeStamp $Fraktaler3Exe)
+        fractalshark = (Get-ExeStamp $FractalSharkCliExe)
+        imagina      = (Get-ExeStamp $ImaginaExe)
+    }
+}
+$manifest = Join-Path $outDir 'run-manifest.json'
+Save-RunManifest $manifest $meta
+Write-Host ''
+Write-Host ('Run manifest: ' + $manifest)
+
+$mk = Join-Path $kit 'tools\make-report.py'
+if ($PythonExe -and (Test-Path $mk)) {
+    Write-Host 'Building the HTML report...'
+    & $PythonExe $mk $outDir 2>&1 | ForEach-Object { '  ' + $_ }
+} else {
+    Write-Host 'HTML report SKIPPED (needs Python 3 with Pillow). run-manifest.json still written.'
+}
+
 Write-Host ''
 Write-Host ('Done. Results: ' + $outDir)
+$rep = Join-Path $outDir 'report.html'
+if (Test-Path $rep) { Write-Host ('Report:  ' + $rep) }

@@ -23,6 +23,15 @@ try {
                    'bench-latest.ps1', 'bench-latest.sh', 'zoom-seq.py') {
         Copy-Item (Join-Path $kit $f) $stage
     }
+    # Same reasoning, one directory down. run-all.ps1 invokes BOTH of these by path on every run:
+    # verify-views.py is the gate that decides whether a FractalShark row is a time or a
+    # DNF-not-the-scene, and make-report.py builds the page the README tells the reader to open
+    # first. Omitted, a distributed kit silently downgrades to "view NOT verified" with no report,
+    # which is precisely the state that let a wrong-view benchmark run for months.
+    New-Item -ItemType Directory -Force (Join-Path $stage 'tools') | Out-Null
+    foreach ($t in 'verify-views.py', 'make-report.py') {
+        Copy-Item (Join-Path $kit ('tools\' + $t)) (Join-Path $stage 'tools')
+    }
     New-Item -ItemType Directory -Force (Join-Path $stage 'scenes') | Out-Null
     foreach ($s in $scenes) {
         foreach ($ext in '.kfr', '.f3.toml', '.fdn') {
