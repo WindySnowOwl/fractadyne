@@ -29,7 +29,7 @@ try {
     # first. Omitted, a distributed kit silently downgrades to "view NOT verified" with no report,
     # which is precisely the state that let a wrong-view benchmark run for months.
     New-Item -ItemType Directory -Force (Join-Path $stage 'tools') | Out-Null
-    foreach ($t in 'verify-views.py', 'make-report.py') {
+    foreach ($t in 'verify-views.py', 'make-report.py', 'redact-home.py') {
         Copy-Item (Join-Path $kit ('tools\' + $t)) (Join-Path $stage 'tools')
     }
     New-Item -ItemType Directory -Force (Join-Path $stage 'scenes') | Out-Null
