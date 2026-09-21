@@ -12,6 +12,28 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A crash report now says what the frame-budget controller was being told, and the app warns
+  when that stops matching reality** (beta.112). A Radeon RX 6800 XT lost the GPU while zooming at
+  1.76e6×, in a view whose reference orbit escaped after 655 iterations while the iteration count
+  asked for 4,627: every pixel ran seven times past the end of the reference and had to restart
+  against it, tens of millions of times per frame. The frames climbed from 200 ms to over a second
+  across half a minute, and the size limit the app uses to keep a frame inside the graphics
+  driver's watchdog never moved, because every measurement it received described a short piece of
+  work sitting in a long queue. Nothing recorded that, so the log could not distinguish "the
+  controller ignored a warning" from "the controller was never warned". Two changes: every budget
+  decision, taken or discarded, is now kept in a small ring and written into the crash report; and
+  when the wall clock calls eight frames in a row slow while the controller has been handed no
+  slow measurement at all, the app says so in the log, once per episode, with the numbers that
+  show the divergence. Neither changes how anything renders. The cause of that device loss is not
+  fixed yet; this is what makes the next one diagnosable.
+- **The escaped-pixel counter added in beta.110 is now sampled rather than counted at every
+  pixel** (beta.112). It incremented a single counter once per escaped pixel, which on a
+  full-screen view where nearly everything escapes is millions of updates to one place, competing
+  with each other. It now samples one pixel in sixteen, like the neighbouring measurement, and
+  scales the result back up. Measured on the development machine the old form cost nothing at all,
+  so this is not a speed fix and did not cause the device loss above; it is removing a pattern the
+  renderer avoids everywhere else. Output is identical to the pixel.
+
 - **New: the auto-zoom can dive into a Misiurewicz point** (beta.111, "Auto-zoom target" in the
   Navigation panel and the Tools menu, `--autopilot-target`). With the target set to Misiurewicz
   point, starting the auto-zoom first finds the nearest Misiurewicz point to the view and solves

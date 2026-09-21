@@ -45,6 +45,21 @@ static LOG_FILE: Mutex<Option<PathBuf>> = Mutex::new(None);
 static BREADCRUMB: Mutex<String> = Mutex::new(String::new());
 /// Last render manifest ([`set_manifest`]) — the request a crash was working on.
 static MANIFEST: Mutex<String> = Mutex::new(String::new());
+/// The last few frame-budget DECISIONS, for the crash report ([`budget_note`]).
+///
+/// ⭐⭐**A device loss is decided by what the budget controller was told, and until 2026-09-21 a
+/// crash report could not say.** The RX 6800 XT loss of that date ran twenty frames of 200–1027 ms
+/// with the learned budget frozen at 1.515e11, and the always-on lethal-band line never fired —
+/// so the controller was never handed a slow reading at all. Which of "no reading arrived" and
+/// "a reading arrived saying the pass was fast" was true could not be told from the log, because
+/// the readings are only traced under `FRACTADYNE_TRACE=gpu` and nobody runs a fourteen-minute
+/// session with tracing on waiting for a crash that may not come. This ring is always on, costs
+/// one short string per accepted or discarded reading, and is dumped into the report.
+static BUDGET_LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// How many budget decisions the ring keeps. Enough to cover the seconds before a loss (both
+/// recorded losses show three or four fatal frames after the first warning sign) without turning
+/// the report into a log file.
+const BUDGET_LOG_CAP: usize = 24;
 /// Liveness stamp (ms since START), fed by `update()`, breadcrumbs, and progress pumps.
 static ALIVE_MS: AtomicU64 = AtomicU64::new(0);
 /// True once the watchdog thread is running (so tests/multiple inits don't double-spawn).
@@ -514,6 +529,32 @@ pub(crate) fn set_manifest(msg: String) {
     }
 }
 
+/// Record one frame-budget decision for the crash report (see [`BUDGET_LOG`]). Cheap and
+/// always on: a handful of these per second, bounded to [`BUDGET_LOG_CAP`].
+///
+/// ⚠Note what a caller must put in the line: the SOURCE of the reading, the measured ms, the
+/// dispatch's nominal steps, the budget it was judged against, and the verdict. The verdict alone
+/// is not enough — "discarded" and "accepted, no change" look identical afterwards, and telling
+/// them apart is the whole question.
+pub(crate) fn budget_note(line: String) {
+    if let Ok(mut v) = BUDGET_LOG.lock() {
+        if v.len() == BUDGET_LOG_CAP {
+            v.remove(0);
+        }
+        v.push(format!("{:8.3}s {line}", elapsed_s()));
+    }
+}
+
+/// The recorded decisions, oldest first, for the crash report. `None` when nothing was recorded
+/// (a crash before any frame priced) so the report can say that rather than print an empty block.
+pub(crate) fn budget_history() -> Option<String> {
+    let v = BUDGET_LOG.lock().ok()?;
+    if v.is_empty() {
+        return None;
+    }
+    Some(v.iter().map(|l| format!("          {l}")).collect::<Vec<_>>().join("\n"))
+}
+
 /// Compose and persist a crash report (the durable artifact — written even if stderr is
 /// broken). A process-wide counter in the name prevents two reports in the same wall-clock
 /// second (realistic on a device loss: the uncaptured-error callback reports on one thread
@@ -553,9 +594,13 @@ pub(crate) fn device_loss_hint(msg: &str) -> &'static str {
     }
 }
 
-fn write_crash_report_at(msg: &str, loc: &str) {
+/// Build the crash report text. Separate from writing it so a test can assert the report actually
+/// CARRIES what a reader is told to look for — the budget section exists because a field device
+/// loss could not be diagnosed without it, and a section that silently stopped being emitted would
+/// be discovered at the worst possible moment, namely the next device loss.
+fn compose_crash_report(msg: &str, loc: &str) -> String {
     let gpu_hint = device_loss_hint(msg);
-    let report = format!(
+    format!(
         "fractadyne crash report\n\
          version : {}\n\
          time    : {}\n\
@@ -568,7 +613,7 @@ fn write_crash_report_at(msg: &str, loc: &str) {
          tunables: {}\n\
          bignum  : {}\n\
          thread  : {}\n\
-         {}\n\
+         {}{}\n\
          backtrace (debug symbols are disabled in this build; addresses only):\n{}\n",
         crate::sysinfo::version_string(),
         crate::sysinfo::now_utc_string(),
@@ -585,9 +630,20 @@ fn write_crash_report_at(msg: &str, loc: &str) {
         // any other report, and `none` is itself informative (nothing had iterated yet).
         fractadyne_core::backend_status_line(),
         std::thread::current().name().unwrap_or("<unnamed>"),
+        // The frame-budget decisions leading up to this, oldest first. On a device loss this is
+        // the section to read first: it says whether the controller was handed a slow reading and
+        // ignored it, or was never handed one at all.
+        budget_history().map_or_else(
+            || "budget  : no frame-budget decision was recorded before the crash\n".to_string(),
+            |h| format!("budget  : the last frame-budget decisions (oldest first)\n{h}\n"),
+        ),
         gpu_hint,
         std::backtrace::Backtrace::force_capture(),
-    );
+    )
+}
+
+fn write_crash_report_at(msg: &str, loc: &str) {
+    let report = compose_crash_report(msg, loc);
     if let Some(Some(dir)) = LOG_DIR.get() {
         let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         let n = CRASH_SEQ.fetch_add(1, Ordering::Relaxed);
@@ -868,5 +924,64 @@ impl Drop for ProgressPump {
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod budget_log_tests {
+    use super::*;
+
+    /// The ring must keep the MOST RECENT decisions and stay bounded: a crash report that
+    /// carried the first 24 decisions of a fourteen-minute session would describe the healthy
+    /// start and say nothing about the seconds that killed it.
+    #[test]
+    fn the_ring_keeps_the_last_decisions_and_is_bounded() {
+        // Serialised against the other test in this module through the mutex itself.
+        if let Ok(mut v) = BUDGET_LOG.lock() {
+            v.clear();
+        }
+        for i in 0..(BUDGET_LOG_CAP + 10) {
+            budget_note(format!("decision {i}"));
+        }
+        let h = budget_history().expect("recorded decisions");
+        assert_eq!(h.lines().count(), BUDGET_LOG_CAP);
+        assert!(h.contains(&format!("decision {}", BUDGET_LOG_CAP + 9)), "keeps the newest");
+        assert!(!h.contains("decision 0 "), "drops the oldest:\n{h}");
+        if let Ok(mut v) = BUDGET_LOG.lock() {
+            v.clear();
+        }
+    }
+
+    /// The report must actually carry the budget section, and it must say WHICH of the two
+    /// situations held. A device loss where the controller was handed a slow reading and chose to
+    /// keep the budget is a different bug from one where it was handed nothing at all, and the
+    /// 2026-09-21 RX 6800 XT loss could not be told apart without this.
+    #[test]
+    fn the_crash_report_carries_the_budget_decisions() {
+        if let Ok(mut v) = BUDGET_LOG.lock() {
+            v.clear();
+        }
+        let empty = compose_crash_report("wgpu device lost (Unknown)", "<device-lost handler>");
+        assert!(empty.contains("budget  : no frame-budget decision was recorded"), "{empty}");
+
+        budget_note("v0 gpu_iterate=12.0ms steps=4.017e10 budget=1.515e11 DISCARDED".into());
+        let filled = compose_crash_report("wgpu device lost (Unknown)", "<device-lost handler>");
+        assert!(filled.contains("budget  : the last frame-budget decisions"), "{filled}");
+        assert!(filled.contains("DISCARDED"), "the decision itself must survive:
+{filled}");
+        assert!(filled.contains("budget=1.515e11"), "and what it was judged against");
+        if let Ok(mut v) = BUDGET_LOG.lock() {
+            v.clear();
+        }
+    }
+
+    /// Nothing recorded must read as "nothing recorded", not as an empty section a reader could
+    /// mistake for "the controller made no decisions because it was never asked".
+    #[test]
+    fn an_empty_ring_reports_nothing_rather_than_an_empty_block() {
+        if let Ok(mut v) = BUDGET_LOG.lock() {
+            v.clear();
+        }
+        assert!(budget_history().is_none());
     }
 }
