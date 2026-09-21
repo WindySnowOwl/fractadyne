@@ -49,14 +49,15 @@ param(
     # and -- through 0.542 -- 4.2e275), not by depth. Do NOT use AutoSelect: it picks a non-HDR GPU
     # algorithm that goes flat at deep zoom, and there is no "Auto" either (0.543 rejects
     # `--render-algorithm Auto` as an unknown name, despite its own error text suggesting one).
-    # ⭐0.543 RENDERS ALL FOUR OF THEM (measured 2026-09-21 on an RTX 3080), so that DNF list is
-    # stale for 0.543+: 4.2e275 gives 1683 colours at modal 0.053, and the spar and both nuclei
-    # give real dendrite structure. ⚠The latter three come out in a very low-contrast palette -
+    # NOTE: 0.543 RENDERS ALL FOUR OF THEM (measured 2026-09-21 on an RTX 3080), so that DNF list
+    # is stale for 0.543+: 4.2e275 gives 1683 colours at modal 0.053, and the spar and both nuclei
+    # give real dendrite structure. WARNING: the latter three come out in a very low-contrast
+    # palette -
     # luminance stddev ~1.1 of 255 - so they sit close to the structure guard's margin while being
     # entirely correct pictures. Check the image before believing a DNF-blank on those three; the
     # guard's job is "is this a picture", and it has never claimed to judge "is this the RIGHT
     # picture", which only a cross-renderer comparison can say.
-    # ⚠Pick an algorithm that can represent the depth: Gpu1x32PerturbedLAv2 exits 1 with
+    # WARNING: pick an algorithm that can represent the depth: Gpu1x32PerturbedLAv2 exits 1 with
     # "cannot represent this viewport's pixel spacing" past f32 spacing, and the lane turns that
     # into DNF-algo-too-narrow rather than letting it look like a fast frame.
     #
