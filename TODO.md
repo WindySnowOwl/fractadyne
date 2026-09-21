@@ -8472,6 +8472,23 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
 
 ### Testing & verification
 
+- [ ] 🟡**FractalShark 0.543 adds a CLI client/server — update the bench-kit harness and
+  re-run the matrix with it (author reply, 2026-09-20).** The FractalShark developer responded to
+  our timing writeup and shipped 0.543 specifically to answer it: a server pays the initialization
+  cost once, then a client runs against it, so **per-frame cost is visible instead of being buried
+  in per-invocation overhead** — which is exactly the overhead our measurements were dominated by.
+  His words: "I won't claim this is a well-optimized implementation, but it gets rid of the main
+  source of overhead you were seeing."
+  Release: https://github.com/mattsaccount364/FractalShark/releases/tag/0.543
+  Usage example: https://github.com/mattsaccount364/FractalShark/blob/main/tools/run_cli_server_example.ps1
+  ⭐Why this matters for the kit: FractalShark was the one OPERATOR-ASSISTED lane (GUI-driven,
+  no headless render), so it could not be wall-timed on the same footing as Fractadyne and F3.
+  A CLI server makes it automatable, and the two timing columns (wall vs self-reported) can finally
+  carry it without a manual step. ⚠Still NVIDIA/CUDA-only, so it stays N/A on the AMD box.
+  Plan for the NEXT bench round: teach `bench-kit/bench-lib.ps1` to start the server, run the
+  client per scene, and shut it down; re-run the matrix; keep the old numbers beside the new ones
+  so the overhead removal is visible rather than silently improving his lane.
+
 - [ ] 🟡**Relative-performance benchmark kit — F3 + Imagina + FractalShark, public (user,
   2026-08-21, expanding the 08-10 F3-only ask).** ⭐KIT SKELETON BUILT 2026-08-21: `bench-kit/`
   (README with the fairness protocol, `scenes.csv`, `bench-lib.ps1`, `run-all.ps1`,

@@ -429,7 +429,18 @@ impl CounterRead {
                                 *g = Some(ContentReading {
                                     tag: self.content_tag,
                                     cursor: self.content_cursor,
-                                    escaped: slots[CTR_ESC_COUNT],
+                                    // Counted on a 4x4 grid (see the shader's
+                                    // `esc_count_commit`); scaled back to a whole-frame
+                                    // estimate so the app's threshold stays in frame terms.
+                                    // Saturating, so a full frame of escapes cannot wrap, and
+                                    // CLAMPED AT `px`: the grid is an estimator, so a frame
+                                    // whose sampled texels escape a little more densely than
+                                    // average scales past the frame (measured 100.32% on a
+                                    // fully-escaped view), and a reader seeing "escaped >
+                                    // pixels" would reasonably conclude the counter is broken.
+                                    escaped: slots[CTR_ESC_COUNT]
+                                        .saturating_mul(ESC_COUNT_SUBSAMPLE)
+                                        .min(self.px.min(u32::MAX as u64) as u32),
                                     px: self.px.min(u32::MAX as u64) as u32,
                                     esc_min_bits: slots[CTR_ESC_MIN],
                                     esc_max_bits: slots[CTR_ESC_MAX],
@@ -727,11 +738,20 @@ pub const CTR_BLA_SKIP: usize = 3; // BLA multi-step skips taken
 pub const CTR_MAXITER: usize = 4; // pixels that exhausted max_iter (interior/undecided)
 pub const CTR_ESC_MIN: usize = 5; // min escaped smooth-iter (f32 bits; seeded 0xFFFFFFFF per frame)
 pub const CTR_ESC_MAX: usize = 6; // max escaped smooth-iter (f32 bits)
-/// Escaped pixels in the frame, un-subsampled (a COUNT against `CounterRead::px`). The app's
-/// content check reads it: a resolved frame whose walk has not reached the view's first escape
-/// is one flat interior colour, and nothing else on the wire distinguishes that frame from a
-/// finished one. Published as a [`ContentReading`] with the frame's tag and cursor.
+/// Escaped pixels in the frame, sampled on a 4x4 grid and scaled back up by
+/// [`ESC_COUNT_SUBSAMPLE`] when published. The app's content check reads it: a resolved frame
+/// whose walk has not reached the view's first escape is one flat interior colour, and nothing
+/// else on the wire distinguishes that frame from a finished one. Published as a
+/// [`ContentReading`] with the frame's tag and cursor.
+///
+/// ⚠**Subsampled for the same reason `CTR_ESC_MIN`/`MAX` are** — see the shader's
+/// `esc_count_commit`. An un-subsampled version of this counter is one atomic address taking an
+/// increment from every escaped fragment, which on an exterior-heavy frame is the whole frame
+/// serialised on one address.
 pub const CTR_ESC_COUNT: usize = 7;
+/// The 4x4 grid `esc_count_commit` samples on; keep in sync with the shader's
+/// `CTR_ESC_SUBSAMPLE`. The published count is the raw tally times this.
+pub const ESC_COUNT_SUBSAMPLE: u32 = 16;
 pub const CTR_GRAD_SUM: usize = 8; // Σ|Δ smooth-iter| between adjacent escaped pixels, ×16 clamped
 pub const CTR_GRAD_N: usize = 9; // samples in CTR_GRAD_SUM
 /// First of [`GRAD_HIST_BUCKETS`] slots holding a log₂ HISTOGRAM of the same per-pair step

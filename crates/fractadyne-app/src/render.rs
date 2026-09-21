@@ -8251,6 +8251,12 @@ pub(crate) enum RefreshPolicy {
 /// every pixel to the interior colour); the threshold above zero is noise margin for a
 /// subsampled/clipped frame, low enough that a single thin filament in an otherwise interior
 /// view still counts as detail.
+///
+/// ⚠`escaped` arrives SAMPLED on a 4×4 grid and scaled back up by
+/// `fractadyne_gpu::ESC_COUNT_SUBSAMPLE`, so its resolution is 16 pixels, not one. Both questions
+/// asked here survive that: an empty frame has nothing on the grid either, and the 0.1% floor on
+/// a 1676×1295 ss=2 frame is 8,680 pixels, of which ~542 land on the grid. A frame carrying fewer
+/// than 16 escaped pixels in total now reads as blank, which is the correct answer for a picture.
 pub(crate) fn content_has_detail(escaped: u32, px: u32) -> bool {
     px > 0 && escaped as f64 >= (px as f64 * CONTENT_MIN_ESCAPED).max(1.0)
 }
