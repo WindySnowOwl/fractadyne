@@ -50,6 +50,29 @@ Every run writes `results/<host>-<timestamp>/` with `sysinfo.txt`, `results.csv`
 an `apps-manifest.txt` stamping each renderer's version and binary hash — so a result says exactly
 what produced it and can be reproduced or challenged.
 
+**Start with `report.html`.** Every run also writes a single self-contained page that puts the
+three things a reader needs in one place, per scene: the image each renderer produced, the exact
+command line and inputs that produced it, and the time. It opens with findings computed from the
+data rather than asserted — fastest per scene, the largest margin, every DNF with its reason, the
+run-to-run spread so you know what counts as noise on that machine, and the view-check verdict —
+then the results table, then the per-scene cards, then every image the run made, then every
+command it executed in order including one-off setup such as Fraktaler-3's hardware tuning and
+the FractalShark server.
+
+Underneath it is `run-manifest.json`, which is the primary record and is **always** written: per
+render the executable, the full argument line, the working directory, the parsed inputs, the
+output file and the outcome, plus sha256 and size for every binary involved. The HTML is a
+rendering of that file and needs Python with Pillow; if either is missing the page is skipped and
+the manifest is not, because a missing dependency should cost you the readable view and never the
+evidence. Rebuild or refresh a page at any time with
+`python tools/make-report.py results\<host>-<stamp>`, including for folders written before the
+manifest existed.
+
+This exists because of a specific failure. The FractalShark lane spent its whole life sending a
+zoom the renderer silently truncated, so it benchmarked the wrong view at every depth, and no
+artifact on disk recorded the argument responsible. The numbers were checkable and the thing that
+made them wrong was not.
+
 Note on scene files: the distributed kit zip already contains the ten scenes in all three formats.
 From a **git clone** they are generated, not committed (only the four cutoff-crossing `.kfr` are) —
 run `powershell -File package.ps1` once to stage `scenes/` before `run-all.ps1`. The cutoff-crossing
@@ -157,7 +180,8 @@ benchmark that doesn't say which latest it measured is not reproducible.
      "FractalShark, honestly" for what it can and cannot render headlessly.
 2. `powershell -ExecutionPolicy Bypass -File run-all.ps1` (add `-Reps 2` for repeats; skip
    lanes with `-Skip imagina,fractalshark`).
-3. Results land in `results\<hostname>-<timestamp>\`: `sysinfo.txt`, `results.csv`,
+3. Results land in `results\<hostname>-<timestamp>\`: open **`report.html`** first; beside it are
+   `run-manifest.json`, `sysinfo.txt`, `results.csv`,
    `summary.md`, and `zoomseq\` when the sequence lane ran. Send the whole folder (or its zip) to feedback@fractadyne.org, or attach it
    to a GitHub issue on WindySnowOwl/fractadyne.
 
