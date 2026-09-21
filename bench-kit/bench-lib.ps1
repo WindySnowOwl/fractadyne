@@ -54,6 +54,73 @@ function Invoke-TimedRender($exe, $argLine, $timeoutS, $cwd) {
     }
 }
 
+# ---------------------------------------------------------------------------------------------
+# FractalShark 0.543 client/server lane.
+#
+# WHY IT EXISTS. FractalShark's author added --server/--connect in 0.543 in answer to this kit's
+# timing writeup: the server pays CUDA + process initialization ONCE, so what a client call costs
+# is close to the frame itself. Measured here on an RTX 3080, scene 03 at 1.33e6, three reps:
+# one process per frame 1776 ms median, client against a live server 399 ms median. About 1.4 s
+# per frame of the old number was startup, not rendering -- which is most of it at shallow depth
+# and would have swamped any comparison this kit published.
+#
+# THREE PROTOCOL FACTS, each of which silently corrupts a result if ignored. All measured, not
+# assumed (tools/fs-server-probe.sh reproduces them):
+#
+#  1. PNG ENCODING IS ASYNCHRONOUS. The client returns as soon as the frame is computed; the
+#     image reaches disk later, and --shutdown is what flushes it. A lane that checks the file
+#     straight after the render finds nothing and scores a DNF for a frame that rendered
+#     perfectly. Hence: render everything, shut the server down, THEN validate.
+#  2. AN ERROR STILL PRINTS "Frame time". Ask for an algorithm that cannot represent the
+#     viewport's pixel spacing and the client prints `error: ... cannot represent ...` AND
+#     `Frame time: 17.1 ms`, writing no image. Anything scraping the reported time records a
+#     fast frame that never happened. The EXIT CODE is honest (1 here, 2 for bad arguments, in
+#     both single-shot and connect modes), so gate on that and on the image, never on the text.
+#  3. THE ALGORITHM MUST MATCH THE DEPTH. Gpu1x32PerturbedLAv2 fails past f32 pixel spacing;
+#     GpuHDRx32PerturbedLAv2 renders 4.2e275 correctly. There is NO "Auto" despite the error
+#     message suggesting one -- `--render-algorithm Auto` is rejected as an unknown name.
+#
+# Starts the server and waits for it to say it is listening, rather than sleeping a guess: a
+# fixed sleep either wastes seconds per run or races on a slow CUDA init.
+function Start-SharkServer($cli, $endpoint, $w, $h, $logDir) {
+    $log = Join-Path $logDir ('fs-server-' + $endpoint + '.log')
+    if (Test-Path $log) { Remove-Item -Force $log }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $cli
+    $psi.Arguments = ('--server --endpoint {0} --width {1} --height {2}' -f $endpoint, $w, $h)
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $p = [System.Diagnostics.Process]::Start($psi)
+    # Drain both pipes to a file: a server whose stdout buffer fills stops serving.
+    $so = $p.StandardOutput.ReadToEndAsync()
+    $se = $p.StandardError.ReadToEndAsync()
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $ready = $false
+    while ($sw.Elapsed.TotalSeconds -lt 90) {
+        if ($p.HasExited) { break }
+        # ReadToEndAsync only completes at exit, so probe the pipe by connecting instead.
+        Start-Sleep -Milliseconds 500
+        $probe = & $cli --connect --endpoint $endpoint --list-render-algorithms 2>&1
+        if ($LASTEXITCODE -eq 0) { $ready = $true; break }
+    }
+    $sw.Stop()
+    @{ ok = $ready; proc = $p; stdout = $so; stderr = $se; log = $log
+       startup_s = [math]::Round($sw.Elapsed.TotalSeconds, 1) }
+}
+
+# Shut the server down and WAIT for it, because that is what flushes the pending PNG writes.
+function Stop-SharkServer($cli, $endpoint, $srv) {
+    & $cli --connect --endpoint $endpoint --shutdown 2>&1 | Out-Null
+    if ($srv -and $srv.proc) {
+        if (-not $srv.proc.WaitForExit(120000)) { try { $srv.proc.Kill() } catch {} }
+        try {
+            $text = $srv.stdout.Result + "`n" + $srv.stderr.Result
+            $text | Out-File -FilePath $srv.log -Encoding ascii
+        } catch {}
+    }
+}
+
 # Append one row to results.csv (schema: renderer,scene,rep,status,wall_s,reported_s,note).
 function Write-Result($csvPath, $renderer, $scene, $rep, $status, $wallS, $reportedS, $note) {
     if (-not (Test-Path $csvPath)) {
