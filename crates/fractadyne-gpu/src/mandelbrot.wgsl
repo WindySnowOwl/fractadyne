@@ -496,8 +496,34 @@ fn esc_range_commit(sm: f32) {
 // One escaped pixel of THIS FRAME (see CTR_ESC_COUNT). Called once per escaped fragment on the
 // single-pass iterate and once per escaped pixel per pass in `fs_resolve` — never at the chunk
 // entry points' settle transition, which would double-count against the resolve.
-fn esc_count_commit() {
-    atomicAdd(&counters[CTR_ESC_COUNT], 1u);
+//
+// ⭐**SUBSAMPLED, ON THE SAME 4×4 GRID AS `esc_range_commit`** — the first version was not, which
+// is the shape this file warns about twice: `esc_range_commit` is subsampled because "two atomics
+// on two slots from ~1.6M threads is real contention", and the gradient histogram skips its
+// bucket 0 because "nearly all samples would land on that ONE address — a same-address atomic
+// serialised across the whole frame". Un-subsampled, this counter is exactly that: one address
+// taking an increment from every escaped fragment, 8.68 MILLION of them on a 1676×1295 ss=2
+// exterior-heavy frame.
+//
+// ⚠⚠**BUT IT WAS MEASURED, AND IT IS NOT EXPENSIVE — do not cite this as a performance fix.** It
+// was suspected after a device loss on an RX 6800 XT (2026-09-21, a rebase storm at 1.76e6× where
+// full-frame dispatches already ran 200–1000 ms). Interleaved A/B on the dev RTX 3080 at that
+// exact view and sample count, 5 reps, medians: **5685 ms vs 5685 ms wall, max_dispatch 60 vs
+// 59.5 ms** — a difference of 0, inside a run-to-run spread of ±150 ms. The GPU aggregates
+// same-address atomics well enough that the un-subsampled form cost nothing here. It is
+// subsampled anyway because the sample costs the consumer nothing (see below) and the pattern is
+// one this file already refuses elsewhere; the device loss has a different cause.
+// Output is unaffected either way: pixel-identical over all 8,681,680 pixels.
+//
+// ⭐The consumer does not lose anything. `render::content_has_detail` asks two questions — is this
+// frame EMPTY, and does it clear a 0.1% floor — and both survive a 1/16 sample: a frame with no
+// escaped pixel has none on the grid either, and 0.1% of 8.68M is 8,680 pixels, ~542 of which land
+// on the grid. The app scales by `CTR_ESC_SUBSAMPLE` to recover a whole-frame estimate.
+const CTR_ESC_SUBSAMPLE: u32 = 16u; // the 4x4 grid below; keep in sync with lib.rs
+fn esc_count_commit(p: vec2<i32>) {
+    if ((p.x & 3) == 0 && (p.y & 3) == 0) {
+        atomicAdd(&counters[CTR_ESC_COUNT], 1u);
+    }
 }
 
 // Two render targets: `main` = (smooth iter, normal.x, normal.y, DE log2);
@@ -778,7 +804,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         if (newton) {
             // Color by convergence speed (iteration count).
             esc_range_commit(f32(iter));
-            esc_count_commit();
+            esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
             return FragOut(vec4<f32>(f32(iter), 0.0, 0.0, 1.0e30), AUX_NONE);
         }
         let mag2 = dot(zf, zf);
@@ -792,7 +818,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         }
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
-        esc_count_commit();
+        esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     } else if (iu.mode == 2u) {
         // Floatexp perturbation (mode 2): δz/δc carried as floatexp (df32 mantissa +
@@ -1137,7 +1163,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         }
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
-        esc_count_commit();
+        esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     } else {
         // df32 perturbation (mode 0): the fast path for the common deep range. Valid
@@ -1341,7 +1367,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         }
         let aux_out = select(AUX_NONE, aux_pack(aux, fract(smit), zf), (iu.aux_on & 1u) == 1u);
         esc_range_commit(smit);
-        esc_count_commit();
+        esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     }
 }
@@ -2153,7 +2179,8 @@ fn fs_resolve(in: VsOut) -> FragOut {
         return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), AUX_NONE);
     }
     // An escaped pixel of the resolved frame, whatever pass settled it (see CTR_ESC_COUNT).
-    esc_count_commit();
+    // Same 4×4 grid as the escape-range commit below, and the same `p`.
+    esc_count_commit(p);
     // Both modes store the FULL z (df32) in st_z at escape and the display derivative's mantissa
     // in st_dz; info ch2 = smit, ch3 = the derivative's floatexp exponent (0 for direct, whose
     // derivative is plain df32) — so the shading below is mode-agnostic and matches fs_iterate's.
