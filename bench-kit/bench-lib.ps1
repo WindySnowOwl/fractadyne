@@ -24,6 +24,39 @@ function Read-Scenes($kitRoot) {
     Import-Csv (Join-Path $kitRoot 'scenes.csv')
 }
 
+# ---- run manifest: what was actually EXECUTED, per render -------------------------------------
+# results.csv answers "how long did it take". It has never answered "what exactly did you run",
+# and that is the question a reader needs in order to reproduce or challenge a number. The gap is
+# not theoretical: on 2026-09-21 the FractalShark lane spent its whole life sending a zoom the
+# renderer silently truncated, and nothing written to disk recorded the argument that did it.
+# Every automated render now files the exe, the full argument line, the working directory, the
+# parsed inputs and the output it produced.
+$script:RunLog = New-Object System.Collections.ArrayList
+
+function Add-RunRecord($rec) { [void]$script:RunLog.Add($rec) }
+
+function Get-RunLog { , $script:RunLog }
+
+# ConvertTo-Json defaults to -Depth 2 in 5.1, which silently renders nested hashtables as the
+# literal string "System.Collections.Hashtable". The inputs live one level down, so this must be
+# explicit or the manifest is worthless in exactly the field that matters.
+function Save-RunManifest($path, $meta) {
+    $doc = @{ meta = $meta; runs = @($script:RunLog) }
+    $doc | ConvertTo-Json -Depth 8 | Out-File -FilePath $path -Encoding ascii
+}
+
+# sha256 + size, for the appendix that says which binary produced these numbers. Never throws:
+# a missing or locked exe must not take a whole run's report down at the last step.
+function Get-ExeStamp($path) {
+    if (-not $path -or -not (Test-Path $path)) { return $null }
+    try {
+        $fi = Get-Item $path
+        @{ path = $fi.FullName; bytes = $fi.Length
+           sha256 = (Get-FileHash $path -Algorithm SHA256).Hash
+           modified = $fi.LastWriteTime.ToString('s') }
+    } catch { @{ path = $path; bytes = $null; sha256 = $null; modified = $null } }
+}
+
 # Run one external render attempt and time it. Returns a result object; never throws.
 # The timeout is a DNF, not an error - a renderer that cannot finish is a data point.
 # $argLine, never $args: $args is the automatic variable, and binding a parameter over it is
