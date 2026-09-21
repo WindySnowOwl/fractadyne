@@ -232,17 +232,34 @@ than papering over it:
   takes Fraktaler-3 62.8 s. The lane now hands over the `.kfr`'s own `Zoom` string verbatim, which
   is the Kalles Fraktaler convention every other lane already uses. If you have older results from
   this kit, the FractalShark column in them is void; the other lanes are unaffected.
-- **One palette across the lanes that can take one (`-SharedPalette <file>`).** Comparing two
-  renderers by image only works while their palettes are comparable, and by default they are not:
-  on the period-148 nucleus, Fractadyne against Imagina scored 0.067 on their own palettes and
-  0.496 on a shared Fractint/Kalles Fraktaler `.map`, which is the difference between a view
-  check that can confirm nothing and one that can. `palettes/bench-shared.map` ships with the
-  kit. **Only Fractadyne and `imagina-cli` can join**: Fraktaler-3 3.1 exposes no colour options
-  in its batch toml or its CLI, and `FractalSharkCli` has none at all, so those two columns stay
-  in their own colours and the report says so. It is off by default, because switching Fractadyne
-  off its preset palette changes every reference image and would break comparison with everything
-  this kit published before. Note that the two still index the map differently, so a shared file
-  makes the images *comparable*, not identical.
+- **Imagina renders in Fractadyne's own palette (`-ImaginaPaletteMap`, on by default).**
+  Comparing two renderers by image only works while their palettes are comparable, and by default
+  they are not at all. Rather than move both onto a neutral palette, the lane moves only the one
+  we control: Fractadyne renders exactly as it ships, so every reference image and historical
+  number stays comparable, and `imagina-cli` is calibrated to meet it.
+  `palettes/ember.map` is Fractadyne's built-in **Ember** (its default preset) baked to 1024
+  entries the way its own gradient baker does. **Position matters as much as colour**: Fractadyne
+  maps `position = smooth_iteration * cycle + offset` and wraps, at `cycle = 0.0202` and
+  `offset = 0.1` by default, while Imagina's smooth value advances at twice that rate, so the
+  matching cycle is exactly half — `0.0101` at offset `0`. That factor of two came out of a
+  two-dimensional sweep over two scenes at opposite ends of the corpus, both peaking at the same
+  point, so it is a convention difference rather than a per-scene fudge.
+  Measured on the period-148 nucleus, correlation against the Fractadyne render:
+
+  | palette | RGB correlation |
+  |---|---|
+  | each renderer's own | 0.067 |
+  | a neutral shared `.map` | 0.496 |
+  | Ember, matched cycle and offset | **0.949** |
+
+  `-SharedPalette <file>` is the other option: it puts *both* Fractadyne and Imagina on one file.
+  It is off by default, because switching Fractadyne off its preset changes every reference image.
+  Either way **only those two lanes can join** — Fraktaler-3 3.1 exposes no colour options in its
+  batch toml or its CLI, and `FractalSharkCli` has none at all — so those two keep their own
+  colours and the report says so rather than implying the column is like-for-like.
+  What remains after matching is the finer detail Fractadyne resolves through its analytic
+  palette anti-aliasing, which Imagina point-samples; the shallow scene sits at 0.76 for that
+  reason.
 - **A shared palette also removes a harness cost that was being counted as engine time.** Our
   `imagina-cli` fork coloured every pixel with three `cos()` calls; at 4K that is 25 million
   cosines, and it measured **1.83 s against 0.93 s** for the same scene with a `.map` lookup,

@@ -92,7 +92,26 @@ param(
     # better than pretending the column is like-for-like.
     # OFF by default, because switching Fractadyne off its preset palette changes every reference
     # image and would silently break comparison with everything this kit published before.
-    [string]$SharedPalette = ''
+    [string]$SharedPalette = '',
+    # MATCH IMAGINA TO FRACTADYNE'S OWN PALETTE instead of moving both onto a neutral one. This is
+    # the better default: Fractadyne keeps rendering exactly as it ships, so every reference image
+    # and every historical number stays comparable, and only the lane we control is adjusted to
+    # meet it.
+    #
+    # palettes/ember.map is Fractadyne's built-in "Ember" (PRESETS[0], its default) baked to 1024
+    # entries the way Gradient::bake does - texel centres, linear between stops.
+    #
+    # The POSITION mapping matters as much as the colours, and is why a neutral shared map only
+    # reached 0.496. Fractadyne maps position = smooth_iteration * cycle + offset, wrapped, with
+    # cycle = 0.004 + 0.27*0.06 = 0.0202 and offset = 0.1 at its defaults. Imagina's smooth value
+    # advances at twice that rate, so the matching cycle is EXACTLY HALF, 0.0101, at offset 0.
+    # That factor of two was fitted over a 2-D sweep on two scenes at opposite ends of the corpus
+    # and is a clean convention difference rather than a per-scene fudge; both scenes peak there.
+    # Measured on the period-148 nucleus: 0.067 with each renderer's own palette, 0.496 on a
+    # neutral shared map, 0.949 here.
+    [string]$ImaginaPaletteMap = '',
+    [double]$ImaginaPaletteCycle = 0.0101,
+    [double]$ImaginaPaletteOffset = 0.0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -121,6 +140,11 @@ if (-not $FractalSharkCliExe -and $FractalSharkExe) {
 }
 $have += @{ fractalsharkcli = ($FractalSharkCliExe -and (Test-Path $FractalSharkCliExe)) }
 $have += @{ imaginacli = ($ImaginaCliExe -and (Test-Path $ImaginaCliExe)) }
+# Default Imagina to Fractadyne's own Ember palette, calibrated. Off only if the file is gone.
+if ($have.imaginacli -and -not $ImaginaPaletteMap) {
+    $cand = Join-Path $kit 'palettes\ember.map'
+    if (Test-Path $cand) { $ImaginaPaletteMap = $cand }
+}
 if ($have.imaginacli -and -not $ImaginaRuntimeDir) {
     foreach ($cand in 'C:\msys64\mingw64\bin', 'C:\msys64\clang64\bin') {
         if (Test-Path $cand) { $ImaginaRuntimeDir = $cand; break }
@@ -528,7 +552,12 @@ if ($have.imaginacli) {
             $png = Join-Path $outDir ('im-' + $s.slug + '.png')
             $argLine = ('--center-x {0} --center-y {1} --precision {2} --zoom {3} --iter {4} --width {5} --height {6} --out "{7}"' -f
                         $kfr['Re'], $kfr['Im'], $prec, $zoom, $s.iterations, $wh[0], $wh[1], $ppm)
-            if ($SharedPalette) { $argLine += (' --palette-map "{0}"' -f $SharedPalette) }
+            if ($SharedPalette) {
+                $argLine += (' --palette-map "{0}"' -f $SharedPalette)
+            } elseif ($ImaginaPaletteMap) {
+                $argLine += (' --palette-map "{0}" --palette-cycle {1} --palette-offset {2} --palette-smooth' -f
+                             $ImaginaPaletteMap, $ImaginaPaletteCycle, $ImaginaPaletteOffset)
+            }
             $r = Invoke-TimedRender $ImaginaCliExe $argLine $TimeoutS $outDir
             $note = 'headless imagina-cli (AGPL fork, built from source); CPU path'
             $status = $r.status
@@ -765,6 +794,7 @@ $meta = @{
     fractalshark_algorithm = $FractalSharkAlgo
     fractalshark_shape = $fsShape
     shared_palette = $SharedPalette
+    imagina_palette = @{ map = $ImaginaPaletteMap; cycle = $ImaginaPaletteCycle; offset = $ImaginaPaletteOffset }
     zoomseq_frames = $ZoomSeqFrames
     zoomseq_amortisation = $zsAmort
     exes = @{
