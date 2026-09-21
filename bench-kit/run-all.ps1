@@ -72,7 +72,15 @@ param(
     # process startup are paid once for a whole run instead of once per frame. The kit uses it by
     # default because that is the honest per-frame cost. Set this switch to go back to a process
     # per frame, which is what every number this kit published before 0.543 carries.
-    [switch]$NoFractalSharkServer
+    [switch]$NoFractalSharkServer,
+    # Imagina ships a Win32/OpenGL GUI only, which is why its lane was operator-assisted and in
+    # practice never ran. imagina-cli is a small headless fork of it (AGPL, its own repo, built
+    # from source - see README "Imagina"); point at it and the lane automates like the others.
+    [string]$ImaginaCliExe = '',
+    # imagina-cli is built with msys2 mingw and needs that toolchain's DLLs on PATH; without them
+    # it exits 0xC0000135 (DLL not found) with no message at all, which reads exactly like a
+    # crash. Prepended for this lane only, never for the process. Autodetected when left empty.
+    [string]$ImaginaRuntimeDir = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -100,6 +108,12 @@ if (-not $FractalSharkCliExe -and $FractalSharkExe) {
     if (Test-Path $cand) { $FractalSharkCliExe = $cand }
 }
 $have += @{ fractalsharkcli = ($FractalSharkCliExe -and (Test-Path $FractalSharkCliExe)) }
+$have += @{ imaginacli = ($ImaginaCliExe -and (Test-Path $ImaginaCliExe)) }
+if ($have.imaginacli -and -not $ImaginaRuntimeDir) {
+    foreach ($cand in 'C:\msys64\mingw64\bin', 'C:\msys64\clang64\bin') {
+        if (Test-Path $cand) { $ImaginaRuntimeDir = $cand; break }
+    }
+}
 # The sequence lane needs Python and at least one automated renderer to compare against.
 if (-not $PythonExe) {
     $py = Get-Command python -ErrorAction SilentlyContinue
@@ -124,6 +138,9 @@ if ($have.fractalshark) {
 # The automated CLI lane supersedes the assisted one when it is available: transcription is for
 # renderers with no headless mode, and this one has had a headless mode all along.
 if ($have.fractalsharkcli) { $have.fractalshark = $false; $fsNa = $false }
+# Same rule for Imagina: transcription is for renderers with no headless mode, and this one now
+# has one. The assisted lane only runs when the CLI is absent.
+if ($have.imaginacli) { $have.imagina = $false }
 
 # ---- results folder ----
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -276,6 +293,9 @@ if ($have.fraktaler3) {
 # string. A skipped lane must not be able to take the whole report down with it.
 $fsShape = ''
 $fsStartup = ''
+# Both automated third-party lanes ask the view question, so the tool path is script-level. Under
+# StrictMode a variable defined inside a lane that did not run is an ERROR for the lane that did.
+$vv = Join-Path $kit 'tools\verify-views.py'
 # From 0.541 the GPU lane WORKS on this box (see README "FractalShark, honestly"): the release adds
 # sm_75 code that JITs onto sm_86, so a GPU algorithm now renders real pictures. The default here is
 # a GPU HDR algorithm for that reason. Through 0.54 every GPU algorithm returned a BLANK image
@@ -393,7 +413,6 @@ if ($have.fractalsharkcli) {
     $viewOk = @{}
     $viewConfirmed = @{}
     $viewChecked = $false
-    $vv = Join-Path $kit 'tools\verify-views.py'
     if ($PythonExe -and (Test-Path $vv) -and $have.fractadyne) {
         $vjson = Join-Path $outDir 'fs-view-check.json'
         Write-Host 'FractalShark: checking the renders are the scenes that were ASKED for'
@@ -464,6 +483,75 @@ if ($have.fractalsharkcli) {
                          output = ('fs-server-' + $endpoint + '.log')
                          status = 'ok'; wall_s = $fsStartup; reported_s = ''
                          note = 'paid ONCE for the whole lane; the per-scene rows are client calls' }
+    }
+}
+
+# ---- lane: Imagina (automated, via the headless imagina-cli fork) ----
+if ($have.imaginacli) {
+    $wh = $Size -split 'x'
+    $savedPath = $env:PATH
+    if ($ImaginaRuntimeDir -and (Test-Path $ImaginaRuntimeDir)) {
+        $env:PATH = $ImaginaRuntimeDir + ';' + $env:PATH
+        Write-Host ('Imagina: automated via imagina-cli (runtime ' + $ImaginaRuntimeDir + ')')
+    } else {
+        Write-Host 'Imagina: automated via imagina-cli (no runtime dir set - may fail to launch)'
+    }
+    $p2p = Join-Path $kit 'tools\ppm-to-png.py'
+    foreach ($rep in 1..$Reps) {
+        foreach ($s in $sceneRows) {
+            $kfr = Read-Kfr (Join-Path $kit ('scenes\' + $s.slug + '.kfr'))
+            # ZOOM IS THE .kfr STRING, lowercased. imagina-cli parses it with mpf_set_str, which
+            # takes a mantissa and an INTEGER exponent ("5.071075e27") and does NOT accept the
+            # fractional-exponent spelling; it also wants a lowercase 'e'. This is the same class
+            # of trap that had the FractalShark lane rendering the wrong view for months, so the
+            # scene file's own field is handed over rather than anything recomputed.
+            $zoom = ($kfr['Zoom'] -replace 'E', 'e')
+            # Working precision from the centre's own digit count: the corpus carries centres to
+            # the precision the location needs, so that count IS the requirement. +96 bits of
+            # headroom, floor of 128.
+            $digits = ($kfr['Re'] -replace '[^0-9]', '').Length
+            $prec = [Math]::Max(128, [int]($digits * 3.3219) + 96)
+            $ppm = Join-Path $outDir ('im-' + $s.slug + '.ppm')
+            $png = Join-Path $outDir ('im-' + $s.slug + '.png')
+            $argLine = ('--center-x {0} --center-y {1} --precision {2} --zoom {3} --iter {4} --width {5} --height {6} --out "{7}"' -f
+                        $kfr['Re'], $kfr['Im'], $prec, $zoom, $s.iterations, $wh[0], $wh[1], $ppm)
+            $r = Invoke-TimedRender $ImaginaCliExe $argLine $TimeoutS $outDir
+            $note = 'headless imagina-cli (AGPL fork, built from source); CPU path'
+            $status = $r.status
+            if ($status -eq 'ok') {
+                # PPM is a fine image and unreadable to the structure guard and to a browser, so
+                # it is converted once here rather than taught to every later stage.
+                if ($PythonExe -and (Test-Path $p2p)) {
+                    & $PythonExe $p2p $ppm $png 2>&1 | Out-Null
+                }
+                if (-not (Test-Path $png)) {
+                    $status = 'DNF-no-output'
+                    $note = 'exit 0 but no PNG - check that Pillow is installed for the PPM conversion'
+                } elseif (-not (Test-RenderHasStructure $png)) {
+                    $status = 'DNF-blank'
+                    $note = 'exit 0 but the image is uniform - a time here would be meaningless'
+                }
+            }
+            Write-Result $csv 'imagina' $s.slug $rep $status $r.wall_s '' $note
+            Add-RunRecord @{
+                renderer = 'imagina'; scene = $s.slug; rep = $rep
+                exe = $ImaginaCliExe; args = $argLine; cwd = $outDir
+                source = ('scenes\' + $s.slug + '.kfr')
+                inputs = @{ center_re = $kfr['Re']; center_im = $kfr['Im']; zoom = $zoom
+                            precision_bits = $prec; iterations = $s.iterations; size = $Size
+                            runtime_dir = $ImaginaRuntimeDir }
+                output = ('im-' + $s.slug + '.png')
+                status = $status; wall_s = $r.wall_s; reported_s = ''; note = $note
+            }
+        }
+    }
+    $env:PATH = $savedPath
+    # Same question asked of this lane as of FractalShark's, and answered with the same two-tier
+    # verdict: only a magnification disagreement voids a time.
+    if ($PythonExe -and (Test-Path $vv) -and $have.fractadyne) {
+        Write-Host 'Imagina: checking the renders are the scenes that were ASKED for'
+        & $PythonExe $vv $outDir --prefix im --json (Join-Path $outDir 'im-view-check.json') --quiet 2>&1 |
+            ForEach-Object { '  ' + $_ }
     }
 }
 
@@ -573,7 +661,9 @@ $md = @(('# Benchmark summary - ' + $env:COMPUTERNAME + ' - ' + $stamp), '',
         'it puts 1e1105 above 1e27.7 - and a benchmark whose whole axis is magnification should',
         'not be read in an order that hides it. Execution order is unchanged and stays in the',
         'manifest; only the presentation is sorted.', '',
-        '| Scene | Magnification | fractadyne wall | fraktaler3 wall | fractalshark wall | fd reported | imagina reported |',
+        'Imagina is a wall column too now that imagina-cli automates it; it was a transcribed',
+        'figure only while a human had to read it off the GUI.', '',
+        '| Scene | Magnification | fractadyne wall | fraktaler3 wall | fractalshark wall | imagina wall | fd reported |',
         '|---|---|---|---|---|---|---|')
 # Slug is the tiebreak, not decoration: the corpus has two scenes at exactly 5.1e27, PowerShell's
 # sort is not stable for equal keys, and two runs over the same data swapping rows makes a diff
@@ -597,7 +687,7 @@ foreach ($s in ($sceneRows | Sort-Object @{ e = { [double]$_.mag_log10 } }, @{ e
             $cell[$ren] = @{ wall = $(if ($st) { $st.status } else { '-' }); rep = $(if ($st) { $st.status } else { '-' }) }
         }
     }
-    $md += ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} |' -f $s.slug, $magStr, $cell.fractadyne.wall, $cell.fraktaler3.wall, $cell.fractalshark.wall, $cell.fractadyne.rep, $cell.imagina.rep)
+    $md += ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} |' -f $s.slug, $magStr, $cell.fractadyne.wall, $cell.fraktaler3.wall, $cell.fractalshark.wall, $cell.imagina.wall, $cell.fractadyne.rep)
 }
 $md += ''
 # WHICH SHAPE produced the FractalShark column is not a footnote: a server number and a

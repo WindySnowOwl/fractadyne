@@ -100,7 +100,7 @@ def make_thumb(src, outdir, name):
 
 # ---------------------------------------------------------------- findings
 
-def derive_findings(scenes, rows_by, view, meta, zs_rows):
+def derive_findings(scenes, rows_by, views, meta, zs_rows):
     """Say what the run actually shows, computed rather than asserted.
 
     Only things the data supports. No adjectives that a number does not earn.
@@ -161,16 +161,36 @@ def derive_findings(scenes, rows_by, view, meta, zs_rows):
                     "(%s on %s, %.1f to %.1f). Treat smaller differences as noise."
                     % (med, len(spreads), d, ren, sc, lo, hi)))
 
-    if view:
-        bad = [k for k, v in view.items() if not v.get("same_view")]
-        if bad:
-            out.append(("View check FAILED",
-                        "%d of %d FractalShark renders do not depict the scene asked for: %s. "
-                        "A time for the wrong picture is void, not slow."
-                        % (len(bad), len(view), ", ".join(sorted(bad)))))
-        else:
-            out.append(("View check", "all %d FractalShark renders depict the right scene "
-                                      "(checked against the Fractadyne render)" % len(view)))
+    # WORDING IS THE WHOLE POINT HERE. These states are not degrees of the same thing, and
+    # reporting them as one is how this report came to say another project's renderer had failed
+    # when it had not. A wrong MAGNIFICATION is a defect and voids a time. An unconfirmed
+    # COMPARISON is a limit of the comparison and says nothing about the renderer at all, so it
+    # is phrased as something we could not do, not something they got wrong.
+    for ren, vv in sorted(views.items()):
+        if not vv:
+            continue
+        name = {"fractalshark": "FractalShark", "imagina": "Imagina"}.get(ren, ren)
+        wrong = [k for k, v in vv.items() if not v.get("magnification_ok", True)]
+        unconf = [k for k, v in vv.items()
+                  if v.get("magnification_ok", True) and not v.get("same_view")]
+        if wrong:
+            out.append(("%s: WRONG VIEW" % name,
+                        "%d of %d renders are at a different magnification than the scene asks "
+                        "for: %s. A time for the wrong picture is void, not slow."
+                        % (len(wrong), len(vv), ", ".join(sorted(wrong)))))
+        if unconf:
+            agree = len(vv) - len(wrong)
+            out.append(("%s: view" % name,
+                        "magnification agrees with our own render on %d of %d scenes. %d could "
+                        "not be confirmed by image (%s) - that is a limit of comparing two "
+                        "renderers by picture, almost always a palette difference, and NOT a "
+                        "fault in the renderer. The times stand."
+                        % (agree, len(vv), len(unconf),
+                           ", ".join(sorted(unconf)) if len(unconf) < len(vv) else "all of them")))
+        if not wrong and not unconf:
+            out.append(("%s: view" % name,
+                        "all %d renders depict the right scene (checked against the Fractadyne "
+                        "render)" % len(vv)))
 
     if meta.get("fractalshark_shape"):
         out.append(("FractalShark mode", meta["fractalshark_shape"]))
@@ -524,6 +544,10 @@ def main():
                     help="add a robots noindex/nofollow meta. For an unlisted page shared by "
                          "URL: unlinked is not the same as unindexed, and a robots.txt rule "
                          "would publish the very path you are trying not to advertise.")
+    ap.add_argument("--strip-prefix", action="append", default=[], metavar="DIR",
+                    help="cut this directory prefix off any path in the page, leaving the rest "
+                         "relative, so a published report reads 'bench-kit\\apps\\...' instead "
+                         "of exposing the whole tree above the checkout. Repeatable.")
     ap.add_argument("--redact-home", action="store_true",
                     help="replace your user-profile path with a placeholder. Use it for any "
                          "report that leaves the machine: a Windows profile directory is your "
@@ -540,7 +564,11 @@ def main():
     meta = manifest.get("meta", {}) or {}
     runs = manifest.get("runs", []) or []
     rows = load_csv(os.path.join(d, "results.csv"))
-    view = load_json(os.path.join(d, "fs-view-check.json"), {}) or {}
+    # One view-check file per automated third-party lane. `view` stays the FractalShark one so
+    # the findings read as before; `views` is what the per-scene badges use.
+    views = {"fractalshark": load_json(os.path.join(d, "fs-view-check.json"), {}) or {},
+             "imagina": load_json(os.path.join(d, "im-view-check.json"), {}) or {}}
+    view = views["fractalshark"]
     sysinfo = load_text(os.path.join(d, "sysinfo.txt"))
     zs_rows = load_csv(os.path.join(d, "zoomseq", "results.csv"))
 
@@ -623,7 +651,7 @@ def main():
 
     # ---- findings
     a("<h2>Findings</h2>")
-    findings = derive_findings(scenes, rows_by, view, meta, zs_rows)
+    findings = derive_findings(scenes, rows_by, views, meta, zs_rows)
     if findings:
         a("<div class='panel'><dl class='find'>")
         for k, v in findings:
@@ -641,14 +669,13 @@ def main():
          else "In the order the run executed them: the magnification was not recorded for every "
               "scene in this folder, and a partly sorted table is harder to trust than an "
               "unsorted one."))
+    live = [ren for ren in renderers if any((ren, s) in rows_by for s in scenes)]
     a("<table><tr><th>Scene</th>")
     if sorted_by_depth:
         a("<th class='nw'>Magnification</th>")
-    for ren in renderers:
-        if any((ren, s) in rows_by for s in scenes):
-            a("<th>%s</th>" % esc(label[ren]))
+    for ren in live:
+        a("<th>%s</th>" % esc(label[ren]))
     a("</tr>")
-    live = [ren for ren in renderers if any((ren, s) in rows_by for s in scenes)]
     for s in scenes:
         a("<tr><td>%s</td>" % esc(s))
         if sorted_by_depth:
@@ -712,13 +739,22 @@ def main():
             st = status_of(rows_by, ren, s)
             right = ("%.1f s" % t) if t is not None else ("<span class='dnf'>%s</span>" % esc(st))
             a("<div class='cap'><b>%s</b><span>%s</span></div>" % (esc(label[ren]), right))
-            if ren == "fractalshark" and s in view:
-                v = view[s]
+            if s in views.get(ren, {}):
+                v = views[ren][s]
                 ok = v.get("same_view")
+                mag_ok = v.get("magnification_ok", True)
+                if ok:
+                    word, cls = "depicts this scene", "kv"
+                elif mag_ok:
+                    # Say what is actually known: the magnification agrees and the pictures do
+                    # not match. Not "does not depict this scene" - that is a different, much
+                    # stronger claim, and it was wrong the one time this report made it.
+                    word, cls = ("right magnification; could not confirm by image "
+                                 "(usually a palette difference, not a fault)"), "kv"
+                else:
+                    word, cls = "a DIFFERENT magnification than this scene asks for", "note"
                 a("<div class='%s'>view check: %s (edge r %.3f, best wrong %.3f)</div>"
-                  % ("kv" if ok else "note",
-                     "depicts this scene" if ok else "DOES NOT depict this scene",
-                     v.get("edge_r", 0.0), v.get("best_wrong_r", 0.0)))
+                  % (cls, word, v.get("edge_r", 0.0), v.get("best_wrong_r", 0.0)))
             note = rec.get("note")
             if note:
                 a("<div class='note'>%s</div>" % esc(note))
@@ -825,6 +861,18 @@ def main():
     a("</div></body></html>")
 
     doc = "\n".join(H)
+
+    # Prefix stripping first, then the home path: cutting the checkout root turns an absolute
+    # path into the relative one a reader actually needs, and whatever is left that still sits
+    # under the profile directory is caught by the pass below. Longest prefix first so a nested
+    # root goes before its parent.
+    for pref in sorted(args.strip_prefix, key=len, reverse=True):
+        p = pref.rstrip("\\/")
+        n = 0
+        for old in (p + "\\", p.replace("\\", "/") + "/", p.replace("\\", "\\\\") + "\\\\"):
+            n += doc.count(old)
+            doc = doc.replace(old, "")
+        print("stripped %d occurrence(s) of the prefix %s" % (n, p))
 
     # Redaction is textual and runs LAST, over the finished document, so no section can be
     # missed by forgetting to route its strings through a helper. Both slash spellings, because

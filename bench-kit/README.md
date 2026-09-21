@@ -6,7 +6,7 @@ A reproducible head-to-head of deep-zoom Mandelbrot renderers on **your** hardwa
 |---|---|---|---|
 | **Fractadyne** | automated | GPU (wgpu: Vulkan/DX12/Metal/GL) | the app this kit ships with |
 | **Fraktaler-3** | automated | CPU (OpenMP, BLA + rebasing) | binary + source included (AGPL-3.0) |
-| **Imagina** | assisted, or automated via a headless build | CPU (MipLA) | upstream is GUI-only; a small headless `imagina-cli` fork enables an automated lane - see "Imagina" below |
+| **Imagina** | automated (`-ImaginaCliExe`) | CPU (MipLA) | upstream is GUI-only; a small headless `imagina-cli` fork enables the automated lane - see "Imagina" below |
 | **FractalShark** | automated (GPU, 0.541+) | GPU (CUDA) | GPU lane works from 0.541 (adds sm_75; runs on RTX 20/30/40/50); earlier releases were CPU-only here - see below |
 
 Ten single-frame scenes from Fractadyne's cross-validated corpus (each verified pixel-for-pixel
@@ -149,10 +149,12 @@ across 1e28, a deep field across 1e308). Two harnesses consume them:
   - `wall_s` — process start to exit, measured by the script. Only meaningful for the two
     automated lanes; it includes reference building and encode for both, so it is the honest
     end-to-end comparison between them.
-  - `reported_s` — the renderer's own render-time figure (Fractadyne prints one; Imagina and
-    FractalShark display one that you transcribe). Self-reported figures exclude different
-    amounts of startup/encode per renderer: compare them across ALL lanes, but treat small
-    differences as noise. Never mix the two columns.
+  - `reported_s` — the renderer's own render-time figure. Fractadyne prints one, and FractalShark's
+    client prints one that the lane records only for a row that already passed the exit code and
+    the structure guard (a *refused* render prints one too). Self-reported figures exclude
+    different amounts of startup and encode per renderer: compare them across ALL lanes, but treat
+    small differences as noise. Never mix the two columns. With `imagina-cli` automated, all four
+    renderers now have a `wall_s`, which is the column to compare.
 - Run everything at least twice if you can (`-Reps 2`); the summary uses the fastest run
   (cold-start effects, driver shader caches, and OS file cache all favor later runs — the
   fastest run is the closest to "the renderer's actual speed on this machine").
@@ -186,7 +188,8 @@ benchmark that doesn't say which latest it measured is not reproducible.
    - Fractadyne: place `fractadyne.exe` in `bin\` (or pass `-FractadyneExe <path>`).
    - Fraktaler-3: included in `fraktaler3\` (with its source, per AGPL-3.0).
    - Imagina: download from https://github.com/5E-324/Imagina/releases (AGPL-3.0),
-     pass `-ImaginaExe <path>`.
+     pass `-ImaginaCliExe <path>` for the automated headless lane (see "Imagina"), or
+     `-ImaginaExe <path>` to fall back to the assisted GUI lane.
    - FractalShark: download from https://github.com/mattsaccount364/FractalShark/releases
      (GPL-3.0), pass `-FractalSharkExe <path>`. The lane finds `FractalSharkCli.exe` beside
      it and runs automatically (`-FractalSharkCliExe <path>` to point elsewhere); see
@@ -285,16 +288,25 @@ Upstream Imagina ships a GUI only — no headless render mode — so it has two 
 
 - **Automated (`imagina-cli`)** — a small headless fork of Imagina drives the engine directly
   (`SetLocation` → render loop → read the pixel buffer → PPM), with no GUI, no GL context, and no
-  libpng. It renders the whole corpus (1e6 through 4.6e1105) and `crossing-bench.py` uses it via
-  `--imagina-cli <exe>`. Because it is a derivative of Imagina it is **AGPL-3.0**, kept in a separate
-  repo and never linked into Fractadyne. Building it needs msys2 mingw-clang and GMP; the changes
-  from upstream are a headless entry point, an MPIR→GMP switch, and a Windows LLP64 fix to
-  `FloatExp`'s `mpf` exponent read. Ask us for the fork, or reproduce it from upstream with those
+  libpng. It renders the whole corpus (1e6 through 4.6e1105). **`run-all.ps1` now drives it too**:
+  pass `-ImaginaCliExe <exe>` and the lane automates like the others, which supersedes the assisted
+  lane whenever the CLI is present. Because it is a derivative of Imagina it is **AGPL-3.0**, kept
+  in a separate repo and never linked into Fractadyne. Building it needs msys2 mingw-clang and GMP;
+  the changes from upstream are a headless entry point, an MPIR→GMP switch, and a Windows LLP64 fix
+  to `FloatExp`'s `mpf` exponent read. Ask us for the fork, or reproduce it from upstream with those
   notes.
-- **Assisted (the GUI)** — with no headless build, `run-all.ps1`'s Imagina lane launches the app per
-  scene and prompts you for the render time it displays. That is transcription, not automation — type
-  what the app shows, don't estimate. It imports `.kfr` (format drift happens; record DNF and say why
-  if a scene won't load).
+  Two things the lane has to get right, both of which have bitten this kit before:
+  **it needs the msys2 toolchain DLLs on `PATH`** or it exits `0xC0000135` with no message at all,
+  which reads exactly like a crash (`-ImaginaRuntimeDir`, autodetected from `C:\msys64`); and
+  **the zoom is the `.kfr` `Zoom` string with a lowercase `e`**, because `mpf_set_str` takes a
+  mantissa with an *integer* exponent and silently will not take the fractional-exponent spelling
+  — the same class of trap that had the FractalShark lane rendering the wrong view for months.
+  Output is PPM, converted once via `tools/ppm-to-png.py` so the structure guard and the report do
+  not each need a second format.
+- **Assisted (the GUI)** — used only when no `imagina-cli` is supplied. `run-all.ps1` launches the
+  app per scene and prompts you for the render time it displays. That is transcription, not
+  automation — type what the app shows, don't estimate. It imports `.kfr` (format drift happens;
+  record DNF and say why if a scene won't load).
 
 ## Licenses
 
