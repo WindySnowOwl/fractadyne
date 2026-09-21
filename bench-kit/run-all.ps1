@@ -296,16 +296,23 @@ if ($have.fractalsharkcli) {
             $r = Invoke-TimedRender $FractalSharkCliExe $argLine $TimeoutS $outDir
             $note = $(if ($useServer) { 'server-amortized' } else { 'process per frame' }) +
                     $(if ($FractalSharkAlgo -like 'Gpu*') { '; GPU path (CUDA)' } else { '; CPU path' })
-            # NEVER read the reported "Frame time": the client prints one even for a render it
-            # REFUSED. Measured on 0.543 -- "error: ... cannot represent this viewport's pixel
-            # spacing" followed by "Frame time: 17.1 ms", and no image written. Anything scraping
-            # that text records a fast frame that never happened. The exit code is honest in both
-            # modes (1 for that refusal, 2 for bad arguments), so judge on it and on the image.
+            # The reported "Frame time" is worth HAVING - it is FractalShark's own render cost,
+            # and the gap between it and our wall is the pipe plus the PNG encode, which is the
+            # one number that says whether the CLI transport is in the way. But it is NEVER
+            # allowed to decide anything: the client prints one even for a render it REFUSED.
+            # Measured on 0.543 -- "error: ... cannot represent this viewport's pixel spacing"
+            # followed by "Frame time: 17.1 ms", and no image written. So parse it here, carry it
+            # alongside, and stamp it into the CSV only for a row that survives BOTH the exit code
+            # and the structure guard. Status is judged on the exit code and the image, never text.
+            $fsReported = ''
+            if ($r.stdout -match 'Frame time:\s*([0-9.]+)\s*ms') {
+                $fsReported = [string][math]::Round([double]$Matches[1] / 1000.0, 3)
+            }
             if ($r.status -eq 'ok' -and ($r.stdout + $r.stderr) -match 'cannot represent') {
                 $r.status = 'DNF-algo-too-narrow'
                 $note += '; ' + $FractalSharkAlgo + ' cannot represent this depth - needs an HDR algorithm'
             }
-            $pending += @{ scene = $s.slug; rep = $rep; png = $png; r = $r; note = $note }
+            $pending += @{ scene = $s.slug; rep = $rep; png = $png; r = $r; note = $note; reported = $fsReported }
         }
     }
     if ($useServer) {
@@ -315,6 +322,7 @@ if ($have.fractalsharkcli) {
     foreach ($q in $pending) {
         $status = $q.r.status
         $note = $q.note
+        $reported = $q.reported
         if ($status -eq 'ok') {
             if (-not (Test-Path $q.png)) {
                 $status = 'DNF-no-output'
@@ -324,7 +332,13 @@ if ($have.fractalsharkcli) {
                 $note = 'exit 0 but the image is uniform - a time here would be meaningless'
             }
         }
-        Write-Result $csv 'fractalshark' $q.scene $q.rep $status $q.r.wall_s '' $note
+        # A self-reported time only survives on a row that EARNED it. On any DNF it is dropped,
+        # because the whole trap is that a refusal still prints one.
+        if ($status -ne 'ok') { $reported = '' }
+        elseif ($reported -and $q.r.wall_s) {
+            $note += ('; render ' + $reported + 's of ' + $q.r.wall_s + 's wall (rest is pipe + PNG encode)')
+        }
+        Write-Result $csv 'fractalshark' $q.scene $q.rep $status $q.r.wall_s $reported $note
     }
 }
 
