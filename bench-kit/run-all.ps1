@@ -232,6 +232,11 @@ if ($have.fraktaler3) {
 }
 
 # ---- lane: FractalShark (automated, via FractalSharkCli) ----
+# Declared before the lane, not inside it: the summary states which shape produced the numbers,
+# and under Set-StrictMode reading a variable the lane never defined is an ERROR, not an empty
+# string. A skipped lane must not be able to take the whole report down with it.
+$fsShape = ''
+$fsStartup = ''
 # From 0.541 the GPU lane WORKS on this box (see README "FractalShark, honestly"): the release adds
 # sm_75 code that JITs onto sm_86, so a GPU algorithm now renders real pictures. The default here is
 # a GPU HDR algorithm for that reason. Through 0.54 every GPU algorithm returned a BLANK image
@@ -256,8 +261,11 @@ if ($have.fractalsharkcli) {
             $useServer = $false
         } else {
             Write-Host ('  ready in ' + $srv.startup_s + ' s')
+            $fsStartup = [string]$srv.startup_s
         }
     }
+    $fsShape = $(if ($useServer) { 'server-amortized (--server/--connect, startup paid once)' }
+                 else { 'one process per frame (startup folded into every frame)' })
     Write-Host ('FractalShark: automated via ' + (Split-Path $FractalSharkCliExe -Leaf) +
                 ', algorithm ' + $FractalSharkAlgo +
                 $(if ($useServer) { ' (server-amortized)' } else { ' (process per frame)' }))
@@ -399,9 +407,16 @@ if ($have.zoomseq) {
 # ---- summary: fastest run per renderer x scene, ratio vs fractadyne where possible ----
 $rows = Import-Csv $csv
 $md = @('# Benchmark summary - ' + $env:COMPUTERNAME + ' - ' + $stamp, '',
-        'Fastest run per renderer and scene. `wall_s` compares the two automated lanes end-to-end;',
+        'Fastest run per renderer and scene. `wall_s` compares the AUTOMATED lanes end-to-end;',
         '`reported_s` is each renderer''s own figure (see README for why they are never mixed).', '',
-        '| Scene | fractadyne wall | fraktaler3 wall | fd reported | imagina reported | fractalshark reported |',
+        'FractalShark is a wall column, not a reported one. It had one only while the lane was',
+        'OPERATOR-ASSISTED and a human transcribed the figure off the GUI; the CLI lane writes',
+        'wall_s and leaves reported_s empty, so printing `reported` here rendered every automated',
+        'FractalShark result as a BLANK CELL while the numbers sat in results.csv. A summary that',
+        'silently drops a lane it ran is worse than one that admits it skipped it.',
+        'In server mode that wall is the CLIENT call - the amortized per-frame cost, with CUDA and',
+        'process startup paid once for the whole run rather than folded into every frame.', '',
+        '| Scene | fractadyne wall | fraktaler3 wall | fractalshark wall | fd reported | imagina reported |',
         '|---|---|---|---|---|---|')
 foreach ($s in $sceneRows) {
     $cell = @{}
@@ -416,9 +431,17 @@ foreach ($s in $sceneRows) {
             $cell[$ren] = @{ wall = $(if ($st) { $st.status } else { '-' }); rep = $(if ($st) { $st.status } else { '-' }) }
         }
     }
-    $md += ('| {0} | {1} | {2} | {3} | {4} | {5} |' -f $s.slug, $cell.fractadyne.wall, $cell.fraktaler3.wall, $cell.fractadyne.rep, $cell.imagina.rep, $cell.fractalshark.rep)
+    $md += ('| {0} | {1} | {2} | {3} | {4} | {5} |' -f $s.slug, $cell.fractadyne.wall, $cell.fraktaler3.wall, $cell.fractalshark.wall, $cell.fractadyne.rep, $cell.imagina.rep)
 }
 $md += ''
+# WHICH SHAPE produced the FractalShark column is not a footnote: a server number and a
+# process-per-frame number differ by more than a second on this box and are not comparable.
+# A table that does not say which one it holds invites exactly that comparison.
+if ($fsShape) {
+    $md += ('FractalShark lane: ' + $FractalSharkAlgo + ', ' + $fsShape +
+            $(if ($fsStartup) { '; server ready in ' + $fsStartup + ' s' } else { '' }) + '.')
+    $md += ''
+}
 if ($zsRows.Count) {
     $md += ''
     $md += '## Zoom sequence - amortisation'
