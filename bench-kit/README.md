@@ -232,24 +232,35 @@ than papering over it:
 - **A time is only meaningful for the work that was asked for, so the lane now checks the view.**
   The structure check asks "is this a picture"; it has never asked "is this the *right* picture",
   and all ten wrong renders passed it — one of them a near-flat field. `tools/verify-views.py`
-  compares each render against the Fractadyne render of the same scene on two palette-independent
-  signals: interior (never-escaped) fraction, which moves fast with magnification, and
-  gradient-magnitude correlation, which survives the palette inversion that defeats a plain
-  grayscale correlation. Each scene is also scored against every other scene as a control. A
-  mismatch is recorded as `DNF-wrong-view`, and where the check cannot run (no Python, or the
-  Fractadyne lane skipped) the rows say `view NOT verified` rather than passing quietly. Run it by
-  hand with `python tools/verify-views.py results\<host>-<stamp>`.
+  compares each render against the Fractadyne render of the same scene on two signals: interior
+  (never-escaped) fraction, which moves fast with magnification, and gradient-magnitude
+  correlation, which survives the palette inversion that defeats a plain grayscale correlation.
+  Each scene is also scored against every other scene as a control.
+  **The two signals carry different authority, and the difference matters.** Interior fraction
+  tracks magnification and no palette choice can move it, because whether a pixel escaped is not
+  a colouring decision; when it disagrees, the render is of somewhere else and the row becomes
+  `DNF-not-the-scene`. Edge correlation compares *pictures*, and two renderers can draw the same
+  iteration field so differently that it collapses — see the 1.6e148 note below — so on its own
+  it only downgrades a row to `view UNCONFIRMED`, keeping the time. Treating that as a failure
+  once made this kit state that another project's renderer was broken when it was not. Where the
+  check cannot run (no Python, or the Fractadyne lane skipped) rows say `view NOT verified`
+  rather than passing quietly. Run it by hand with
+  `python tools/verify-views.py results\<host>-<stamp>`.
 - **`GpuHDRx32PerturbedLAv2` renders almost the whole corpus on 0.543; what it misses, it misses by
   location, not depth.** Re-measured at 4K on 2026-09-21 with the corrected zoom and the view
-  check: **nine of the ten scenes render the right picture**, from 1e6 through the extreme
+  check: **all ten scenes render the right picture**, from 1e6 through the extreme
   4.6e1105 — including the Misiurewicz spar, both period nuclei and 4.2e275, all four of which
   older notes here recorded as `DNF-blank`. **That older list is superseded**; it was written
   against 0.54x, and the four are no longer blank.
-  The one remaining failure is `14-deep-1.2e148`, and it is not blankness and not a wrong view:
-  FractalShark returns **noise** where the dendrite belongs, identically at 800k and 8M iterations
-  and under both `GpuHDRx32PerturbedLAv2` and `GpuHDRx64PerturbedLAv2`, so it is not iteration
-  starvation either. Note that **noise sails through a structure check** — many distinct colours,
-  no dominant one — which is why the view check exists.
+  **All ten render.** `14-deep-1.2e148` was briefly recorded here as returning noise; that was
+  wrong, and the correction is worth keeping because it is a trap anyone comparing two renderers
+  will hit. Downsampled, that frame looks like salt-and-pepper static where the dendrite belongs.
+  At 1:1 it is smooth, continuous iteration banding: FractalShark advances its palette once per
+  iteration, the scene caps at 800,000 iterations, and where the field moves fastest adjacent
+  pixels land on different colours, so the bands alias into apparent static the moment anything
+  resamples them — while our render of that same scene is the one we apply `--normalize` to,
+  mapping the identical field onto one slow gradient. Same view, two images with nothing visually
+  in common, and no CLI option on either side to bring the palettes closer.
   Its CPU algorithms (e.g. `Cpu64PerturbedBLAV2HDR`) still go blank past ~1e27, so for depth use a
   GPU algorithm.
 - Because of that, **no FractalShark row records a time without a picture**: every render is checked

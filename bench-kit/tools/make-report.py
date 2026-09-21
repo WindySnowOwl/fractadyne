@@ -26,7 +26,9 @@ import argparse
 import csv
 import html
 import json
+import math
 import os
+import re
 import sys
 from collections import defaultdict
 
@@ -180,6 +182,224 @@ def derive_findings(scenes, rows_by, view, meta, zs_rows):
     return out
 
 
+def parse_zoom_log10(z):
+    """log10 of a zoom string, computed TEXTUALLY.
+
+    The corpus reaches 6.1e1105, which is +inf in a double, so the mantissa and the exponent are
+    never multiplied back together. Accepts the Kalles Fraktaler spelling the scenes use
+    ("1.333333E6") and the bare-exponent one ("1e6.12").
+    """
+    if z is None:
+        return None
+    s = str(z).strip()
+    m = re.match(r"^([0-9]*\.?[0-9]+)[eE]\+?(-?[0-9]*\.?[0-9]+)$", s)
+    if m:
+        try:
+            return math.log10(float(m.group(1))) + float(m.group(2))
+        except ValueError:
+            return None
+    try:
+        return math.log10(float(s))
+    except (ValueError, OverflowError):
+        return None
+
+
+def scene_magnitudes(meta, runs_by, scenes):
+    """log10 magnification per scene, from the manifest where possible.
+
+    Preference order matters. meta['scene_mag'] is authoritative because run-all.ps1 takes it
+    straight from scenes.csv. Falling back to a run record's own inputs keeps older folders
+    sortable. The SLUG is never parsed: it leads with a scene id, not a magnitude, which is the
+    very reason filename order is wrong here.
+    """
+    sm = meta.get("scene_mag") or {}
+    out = {}
+    for s in scenes:
+        if s in sm:
+            try:
+                out[s] = float(sm[s])
+                continue
+            except (TypeError, ValueError):
+                pass
+        val = None
+        for ren in ("fractadyne", "fractalshark", "fraktaler3"):
+            for rec in runs_by.get((ren, s), []):
+                inp = rec.get("inputs") or {}
+                if not isinstance(inp, dict):
+                    continue
+                if inp.get("zoom_log2") not in (None, ""):
+                    try:
+                        val = float(inp["zoom_log2"]) * math.log10(2.0)
+                    except (TypeError, ValueError):
+                        val = None
+                if val is None:
+                    val = parse_zoom_log10(inp.get("kfr_zoom") or inp.get("zoom"))
+                if val is not None:
+                    break
+            if val is not None:
+                break
+        if val is not None:
+            out[s] = val
+    return out
+
+
+def fmt_mag(l10):
+    """'1.3e6' from a log10. Textual for the same overflow reason as parse_zoom_log10."""
+    if l10 is None:
+        return ""
+    e = math.floor(l10)
+    m = 10.0 ** (l10 - e)
+    if m >= 9.995:
+        m, e = m / 10.0, e + 1
+    return "%.1fe%d" % (m, int(e))
+
+
+# One colour per lane, reused by the chart and its legend.
+LANE_COLOR = {"fractadyne": "#79b8ff", "fraktaler3": "#e3b341",
+              "fractalshark": "#5fd08a", "imagina": "#d48bff"}
+
+
+def nice_log_ticks(lo, hi, want=6):
+    """Tick positions on a log10 axis, at 1/2/5 x 10^n, covering [lo, hi]."""
+    if hi <= lo:
+        hi = lo + 1.0
+    ticks = []
+    e = math.floor(lo)
+    while e <= math.ceil(hi):
+        for m in (1, 2, 5):
+            v = math.log10(m) + e
+            if lo - 1e-9 <= v <= hi + 1e-9:
+                ticks.append((v, m, e))
+        e += 1
+    # Thin out until the axis is readable rather than a picket fence.
+    while len(ticks) > want * 2:
+        ticks = [t for i, t in enumerate(ticks) if i % 2 == 0]
+    return ticks
+
+
+def svg_time_vs_depth(scenes, mags, rows_by, live, label):
+    """Render time against magnification, both axes log.
+
+    WHY THE X AXIS IS LOG TWICE. Magnification spans 1.3e6 to 6.1e1105, so a log scale on it
+    plots the EXPONENT, 6 to 1105. Drawn linearly that is still a bad chart: this corpus samples
+    1e6 to 1e77 densely and then jumps, so SEVEN OF TEN scenes pile into the first tenth of the
+    width as an unreadable knot while two straight segments stretch across 800 orders of
+    magnitude nobody measured - a line implying a trend through empty space. Spacing the axis by
+    the order of magnitude OF THE EXPONENT separates every scene, keeps it strictly monotonic in
+    zoom, and makes no claim about the gaps. Neither axis's slope is a rate, and it never was.
+
+    Time is log for the ordinary reason: it spans 0.9 s to 65 s, and linearly one 65 s point
+    flattens everything under five seconds onto the baseline, which is most of the data.
+
+    A DNF BREAKS THE LINE rather than being drawn as a large time or interpolated across. A
+    renderer that did not produce the picture has no time, and joining the points either side
+    would draw a segment that never happened.
+    """
+    def xof(mag_log10):
+        """Axis position: the order of magnitude of the exponent. See the docstring."""
+        return math.log10(mag_log10) if mag_log10 and mag_log10 > 0 else None
+
+    # Per renderer, a list of SEGMENTS: runs of consecutive scenes it completed. Splitting here
+    # rather than drawing one path is what actually makes a DNF a gap. Building a single path
+    # from the surviving points silently joins across the hole, which draws a segment spanning a
+    # scene the renderer failed and reads as if it had simply been quick there.
+    pts = {}
+    for ren in live:
+        segs, cur = [], []
+        for s in sorted(scenes, key=lambda z: (mags.get(z, 0.0), z)):
+            t, m = best_time(rows_by, ren, s), mags.get(s)
+            x = xof(m) if m is not None else None
+            if t and t > 0 and x is not None:
+                cur.append((x, t, s, m))
+            elif cur:
+                segs.append(cur)
+                cur = []
+        if cur:
+            segs.append(cur)
+        if segs:
+            pts[ren] = segs
+    if not pts:
+        return ""
+
+    xs = [p[0] for segs in pts.values() for seg in segs for p in seg]
+    ys = [p[1] for segs in pts.values() for seg in segs for p in seg]
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = math.log10(min(ys)), math.log10(max(ys))
+    # A little headroom so markers are not clipped by the frame.
+    pad = (x1 - x0) * 0.04 or 1.0
+    x0, x1 = x0 - pad, x1 + pad
+    y0, y1 = y0 - 0.12, y1 + 0.12
+
+    W, H = 1100, 440
+    L, R, T, B = 76, 20, 18, 52
+    pw, ph = W - L - R, H - T - B
+
+    def px(v):
+        return L + (v - x0) / (x1 - x0) * pw
+
+    def py(v):
+        return T + ph - (math.log10(v) - y0) / (y1 - y0) * ph
+
+    o = ["<svg viewBox='0 0 %d %d' class='chart' role='img' "
+         "aria-label='render time against magnification'>" % (W, H)]
+    o.append("<rect x='0' y='0' width='%d' height='%d' fill='#0f1115'/>" % (W, H))
+
+    # y grid: decades, plus 2 and 5 within each
+    for v, m, e in nice_log_ticks(y0, y1, want=5):
+        y = py(10.0 ** v)
+        o.append("<line x1='%d' y1='%.1f' x2='%d' y2='%.1f' stroke='#2c313b' "
+                 "stroke-width='1'/>" % (L, y, W - R, y))
+        lbl = ("%g" % (m * 10 ** e)) + " s"
+        o.append("<text x='%d' y='%.1f' fill='#9aa3b2' font-size='12' "
+                 "text-anchor='end'>%s</text>" % (L - 8, y + 4, lbl))
+
+    # x grid: magnifications at 1/2/5 x 10^n of the EXPONENT - 1e10, 1e20, 1e50, 1e100 ...
+    # Labelled with the magnification itself so the axis reads as zoom, not as an exponent.
+    for cand in (5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000):
+        v = math.log10(cand)
+        if not (x0 <= v <= x1):
+            continue
+        x = px(v)
+        o.append("<line x1='%.1f' y1='%d' x2='%.1f' y2='%d' stroke='#2c313b' "
+                 "stroke-width='1'/>" % (x, T, x, T + ph))
+        o.append("<text x='%.1f' y='%d' fill='#9aa3b2' font-size='12' "
+                 "text-anchor='middle'>1e%d</text>" % (x, H - B + 20, cand))
+
+    o.append("<rect x='%d' y='%d' width='%d' height='%d' fill='none' stroke='#3a4150'/>"
+             % (L, T, pw, ph))
+    o.append("<text x='%.1f' y='%d' fill='#9aa3b2' font-size='13' text-anchor='middle'>"
+             "magnification (log scale)</text>" % (L + pw / 2.0, H - 8))
+    o.append("<text x='16' y='%.1f' fill='#9aa3b2' font-size='13' text-anchor='middle' "
+             "transform='rotate(-90 16 %.1f)'>wall-clock seconds (log scale)</text>"
+             % (T + ph / 2.0, T + ph / 2.0))
+
+    for ren, segs in pts.items():
+        c = LANE_COLOR.get(ren, "#cccccc")
+        for seg in segs:
+            if len(seg) > 1:
+                d = " ".join(("%s%.1f,%.1f" % ("M" if i == 0 else "L", px(x), py(t)))
+                             for i, (x, t, _s, _m) in enumerate(seg))
+                o.append("<path d='%s' fill='none' stroke='%s' stroke-width='2' "
+                         "stroke-linejoin='round'/>" % (d, c))
+        for x, t, s, m in [p for seg in segs for p in seg]:
+            o.append("<circle cx='%.1f' cy='%.1f' r='3.5' fill='%s'><title>%s &#183; %s "
+                     "&#183; %s&#215; &#183; %.1f s</title></circle>"
+                     % (px(x), py(t), c, esc(label.get(ren, ren)), esc(s), esc(fmt_mag(m)), t))
+
+    # Legend, inside the plot so it survives being cropped into a screenshot.
+    lx, ly = L + 14, T + 16
+    for ren in pts:
+        c = LANE_COLOR.get(ren, "#cccccc")
+        o.append("<line x1='%d' y1='%d' x2='%d' y2='%d' stroke='%s' stroke-width='2'/>"
+                 % (lx, ly, lx + 22, ly, c))
+        o.append("<circle cx='%d' cy='%d' r='3.5' fill='%s'/>" % (lx + 11, ly, c))
+        o.append("<text x='%d' y='%d' fill='#e7e9ee' font-size='13'>%s</text>"
+                 % (lx + 30, ly + 4, esc(label.get(ren, ren))))
+        ly += 19
+    o.append("</svg>")
+    return "".join(o)
+
+
 def guess_output(d, renderer, scene):
     """Find a render on disk when no manifest record names one.
 
@@ -256,6 +476,8 @@ details{margin:8px 0} summary{cursor:pointer;color:var(--link);font-size:13px}
 .note{color:var(--warn);font-size:13px;margin:4px 0}
 .missing{color:var(--dim);font-style:italic;padding:28px 10px;text-align:center;
          border:1px dashed var(--line);border-radius:4px}
+.chart{width:100%;height:auto;border:1px solid var(--line);border-radius:8px;margin:6px 0 14px;
+       background:#0f1115}
 """
 
 
@@ -343,6 +565,19 @@ def main():
     for rec in runs:
         runs_by[(rec.get("renderer"), rec.get("scene"))].append(rec)
 
+    # SORT BY DEPTH, not by filename. scenes.csv is ordered by scene id, so the default order
+    # puts 1e1105 above 1e27.7, and a benchmark whose entire axis is magnification should not be
+    # read in an order that hides it. Only sort when the magnification is known for EVERY scene:
+    # a partially sorted table is harder to trust than an unsorted one, because the reader cannot
+    # tell which rows were placed and which were left. Execution order is untouched and still
+    # shown, in order, by the command table at the bottom.
+    mags = scene_magnitudes(meta, runs_by, scenes)
+    sorted_by_depth = len(mags) == len(scenes) and len(scenes) > 0
+    if sorted_by_depth:
+        # Slug is the tiebreak: two scenes sit at exactly 5.1e27, and an unstable order would
+        # make a diff between two reports of the same data look like a change.
+        scenes = sorted(scenes, key=lambda s: (mags[s], s))
+
     thumbs = os.path.join(d, "thumbs")
     renderers = ["fractadyne", "fraktaler3", "fractalshark", "imagina"]
     label = {"fractadyne": "Fractadyne", "fraktaler3": "Fraktaler-3",
@@ -398,7 +633,17 @@ def main():
       "repeats. A DNF is a result, not a gap: it never competes for 'fastest'.</p>")
 
     # ---- results table
-    a("<h2>Results</h2><table><tr><th>Scene</th>")
+    a("<h2>Results</h2>")
+    a("<p class='sub'>%s</p>"
+      % ("Shallowest first. The scene numbers are ids, not magnitudes, so filename order would "
+         "put 1e1105 above 1e27.7."
+         if sorted_by_depth
+         else "In the order the run executed them: the magnification was not recorded for every "
+              "scene in this folder, and a partly sorted table is harder to trust than an "
+              "unsorted one."))
+    a("<table><tr><th>Scene</th>")
+    if sorted_by_depth:
+        a("<th class='nw'>Magnification</th>")
     for ren in renderers:
         if any((ren, s) in rows_by for s in scenes):
             a("<th>%s</th>" % esc(label[ren]))
@@ -406,6 +651,8 @@ def main():
     live = [ren for ren in renderers if any((ren, s) in rows_by for s in scenes)]
     for s in scenes:
         a("<tr><td>%s</td>" % esc(s))
+        if sorted_by_depth:
+            a("<td class='n dim'>%s</td>" % esc(fmt_mag(mags.get(s))))
         times = {ren: best_time(rows_by, ren, s) for ren in live}
         fastest = min((t for t in times.values() if t is not None), default=None)
         for ren in live:
@@ -418,13 +665,34 @@ def main():
         a("</tr>")
     a("</table>")
 
+    # ---- chart: the shape of the table above
+    if sorted_by_depth:
+        svg = svg_time_vs_depth(scenes, mags, rows_by, live, label)
+        if svg:
+            a("<h2>Render time against magnification</h2>")
+            a("<p class='sub'>Both axes are logarithmic, and the magnification axis is spaced by "
+              "the order of magnitude of its own exponent. It has to be: the corpus samples 1e6 "
+              "to 1e77 densely and then jumps to 1e1105, so plotting the exponent linearly piles "
+              "seven of the ten scenes into the first tenth of the width and stretches two "
+              "straight segments across 800 orders of magnitude nobody measured. Read the "
+              "ordering and the crossovers, not the slopes, which are not rates on either axis. "
+              "A gap in a line is a scene that renderer did not complete, and the points are not "
+              "joined across it, because a renderer that produced no picture has no time. Hover "
+              "a point for its scene, magnification and figure.</p>")
+            a(svg)
+
     # ---- per scene: images + the commands that made them
     a("<h2>Per scene: what was run, and what came out</h2>")
+    if sorted_by_depth:
+        a("<p class='sub'>Shallowest first, matching the table above.</p>")
     a("<p class='sub'>%sThe command line under each is the one that produced that file.</p>"
       % ("" if args.self_contained
          else "Click any image for the full-resolution render. "))
     for s in scenes:
-        a("<h3>%s</h3>" % esc(s))
+        a("<h3>%s%s</h3>"
+          % (esc(s),
+             (" <span class='dim'>&nbsp;%s&times;</span>" % esc(fmt_mag(mags.get(s))))
+             if sorted_by_depth else ""))
         a("<div class='cards'>")
         for ren in live:
             recs = runs_by.get((ren, s), [])
@@ -510,9 +778,11 @@ def main():
 
     # ---- every command executed
     a("<h2>Every command this run executed</h2>")
-    a("<p class='sub'>In order, including one-off setup such as Fraktaler-3's hardware tuning and "
-      "the FractalShark server. This is the record that lets someone else reproduce or challenge "
-      "a number.</p>")
+    a("<p class='sub'>In EXECUTION order, which is not the depth order used above: the scenes ran "
+      "as scenes.csv lists them, and changing that would change the measurement rather than just "
+      "its presentation. Includes one-off setup such as Fraktaler-3's hardware tuning and the "
+      "FractalShark server. This is the record that lets someone else reproduce or challenge a "
+      "number.</p>")
     a("<table class='cmds'><colgroup><col style='width:9%'><col style='width:15%'>"
       "<col style='width:5%'><col style='width:11%'><col style='width:7%'>"
       "<col style='width:53%'></colgroup>"
