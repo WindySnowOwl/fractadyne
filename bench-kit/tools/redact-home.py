@@ -38,11 +38,32 @@ def variants(home):
     return out
 
 
+def prefix_variants(prefix):
+    """Every spelling of a directory prefix to cut away, longest form first.
+
+    Stripping the checkout's own root turns an absolute path into the relative one a reader
+    actually needs - `bench-kit\\apps\\...` rather than someone's whole directory tree. The
+    trailing separator goes with it so the result does not start with a stray slash.
+    """
+    p = prefix.rstrip("\\/")
+    out = []
+    for sep in ("\\", "/"):
+        base = p.replace("\\", sep).replace("/", sep)
+        out.append((base + sep, ""))
+    out.append((p.replace("\\", "\\\\") + "\\\\", ""))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("files", nargs="+")
     ap.add_argument("--check", action="store_true", help="report only; do not modify")
     ap.add_argument("--home", default=None, help="override the profile path to strip")
+    ap.add_argument("--strip-prefix", action="append", default=[], metavar="DIR",
+                    help="cut this directory prefix off any path, leaving the rest relative. "
+                         "Repeatable; longest match wins. Use it for the checkout root so "
+                         "published paths read 'bench-kit\\apps\\...' instead of exposing the "
+                         "whole directory tree above it.")
     args = ap.parse_args()
 
     home = args.home or os.path.expanduser("~")
@@ -51,7 +72,12 @@ def main():
         sys.stderr.write("redact-home: could not determine the profile directory\n")
         return 2
 
-    subs = variants(home)
+    # Longest prefix first, so a nested root is cut before its parent and never leaves a
+    # half-stripped path behind.
+    subs = []
+    for p in sorted(args.strip_prefix, key=len, reverse=True):
+        subs.extend(prefix_variants(p))
+    subs.extend(variants(home))
     dirty = 0
     for path in args.files:
         if not os.path.isfile(path):
