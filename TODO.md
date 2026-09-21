@@ -8499,8 +8499,41 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   by-LOCATION DNF list is stale for 0.543+. ⚠The spar and the nuclei come out in a very
   low-contrast palette (luminance sd ~1.1 of 255) - real dendrite structure, but close to the
   structure guard's margin, so LOOK at the image before believing a DNF-blank on those.
-  ▶ STILL TO DO: re-run the full matrix with the new lane and publish the old and new numbers
-  side by side, so the overhead removal is visible rather than silently improving his lane.
+  ✅MATRIX RE-RUN DONE 2026-09-21 (4K, 1 spp, 2 reps, both shapes) — and it found something much
+  worse than an overhead question. ⛔⛔**THE LANE HAD BEEN RENDERING THE WRONG VIEW ALL ALONG**:
+  it sent `--zoom 1e<mag_log10>`, and FractalSharkCli ACCEPTS a fractional exponent and SILENTLY
+  TRUNCATES it — `1e6.1249387366083` is byte-identical to `1e6`. Every FractalShark number this
+  kit ever published was under-zoomed by up to 10x. ⭐⭐It did not look like a bug because an
+  under-zoomed frame is a CHEAPER frame: it presented as FractalShark being 20-50x faster than
+  both other renderers, including **0.3 s for a 1e1105 frame that takes F3 62.8 s**. Fixed by
+  handing over the `.kfr` `Zoom` string verbatim (`f95f318`); `tools/crossing-bench.py` and
+  `fs-server-probe.sh` were never affected (explicit box / kfr Zoom respectively).
+  ⛔**The structure guard could not catch it and never claimed to** — it asks "is this A picture",
+  not "is this the RIGHT picture", and all ten wrong renders passed. New gate
+  `tools/verify-views.py` compares each render against our own of the same scene on two
+  palette-independent signals (interior fraction; gradient-MAGNITUDE correlation, because a plain
+  grayscale correlation is defeated by a palette INVERSION alone — it scored a perfect structural
+  match at −0.26), with every scene scored against every other as a control. RED 10/10 on the bad
+  run, GREEN 9/10 after the fix.
+  ⭐CORRECTED 4K RESULTS (fastest of 2, wall s — fd / F3 / FS-server): 1.3e6 2.8/8.6/**1.1**;
+  3.9e12 **2.5**/6.0/3.8; 8.9e43 **2.9**/6.0/3.4; 5.5e275 **6.1**/13.9/9.0;
+  **6.1e1105 26.5/61.9/6.7**; spar **2.0**/3.6/2.7; nuclei 2.1/3.7/**0.9** and 2.2/3.7/**1.2**;
+  1.5e77 3.3/9.8/**1.2**. ⭐⭐**The deepest scene is the real result**: FS is ~4x us and ~9x F3 at
+  6.1e1105, the one place the gap is far outside the noise — consistent with their GPU reference
+  orbit, which is exactly the primitive the offload assessment below wants.
+  ⭐SERVER vs PROCESS-PER-FRAME (same session, correct zoom): it wins big on CHEAP frames
+  (1.3e6 5.8→1.1, 1.5e77 4.6→1.2, nuclei 2.4→0.9/1.2) and **does NOT help on heavy ones** —
+  6.1e1105 goes 4.2→**6.7**, consistently and well outside the rep spread. Unexplained; possibly
+  20 renders sharing one process accumulating state. Reported to the author as measured, not
+  diagnosed.
+  ⛔**`14-deep-1.2e148` renders as NOISE** (salt-and-pepper where the dendrite belongs) —
+  identical at 800k and 8M iterations and under both HDRx32 and HDRx64, so NOT iteration
+  starvation, and location-specific rather than a depth limit (5.5e275 and 6.1e1105 are fine).
+  ⭐⭐**NOISE PASSES A STRUCTURE GUARD TRIVIALLY** — many colours, no dominant one. Second hole
+  found in that guard the same day; it was only ever designed to catch a FLAT frame.
+  Artifacts: `D:\share\Fractadyne\bench\2026-09-21\` (both full runs zipped, plus an 0.85 MB
+  evidence pack). Report for the author drafted at
+  `local/messages/fractalshark-bench-results-2026-09-21.md` — ⛔NOT SENT, the user's to send.
 
 - [ ] 🟡**Ask FractalShark's author for a reference-orbit endpoint (assessment done, message
   drafted, NOT SENT).** Reasoning: `design/fractalshark-integration.md`. ONE primitive is worth
