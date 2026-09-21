@@ -68,6 +68,14 @@ EDGE_MARGIN = 0.10
 # is exactly where a wrong zoom lands; in the truncated-exponent run no scene reached even 0.28.
 EDGE_DECISIVE = 0.50
 EDGE_DECISIVE_MARGIN = 0.15
+# A mirrored reference has to beat the upright one by this much before the render is
+# called mirrored; near-zero correlations on both sides must not flip a coin.
+ORIENT_MARGIN = 0.20
+# The control-margin route to 'decisive'. Verified against both datasets: no render from
+# the truncated-zoom run reaches it, and the correct-but-dark scene 17 does.
+EDGE_CONTROL_MIN = 0.20
+EDGE_CONTROL_FACTOR = 4.0
+EDGE_CONTROL_FLOOR = 0.05
 
 
 def load(path):
@@ -87,6 +95,27 @@ def edge_feature(rgb):
     e -= e.mean()
     n = np.linalg.norm(e)
     return e / n if n else e
+
+
+def orientation_features(rgb):
+    """Edge features for the reference and its three mirror/rotation variants.
+
+    A MIRRORED render is invisible to everything else here. Interior fraction is exactly
+    flip-invariant, so the magnification test cannot see it; and if the two palettes differ
+    enough that edge correlation is near zero anyway, the image test will not see it either.
+
+    It is also not hypothetical. Our headless Imagina fork wrote its PPM rows top-down out of a
+    buffer that is stored bottom-up, so every Imagina image in this kit was upside down, and the
+    lane passed all ten because 'magnification agrees' was true of a mirror image too. Checking
+    the flips costs three more correlations and names the fault outright.
+    """
+    a = np.asarray(Image.fromarray(rgb.astype(np.uint8)))
+    return {
+        "as-is": edge_feature(rgb),
+        "flipped top-to-bottom": edge_feature(a[::-1, :, :].astype(np.float64)),
+        "flipped left-to-right": edge_feature(a[:, ::-1, :].astype(np.float64)),
+        "rotated 180": edge_feature(a[::-1, ::-1, :].astype(np.float64)),
+    }
 
 
 def main():
@@ -132,6 +161,7 @@ def main():
     R = {s: load(p) for s, p in refs.items()}
     Rint = {s: interior_fraction(v) for s, v in R.items()}
     Redge = {s: edge_feature(v) for s, v in R.items()}
+    Rorient = {s: orientation_features(v) for s, v in R.items()}
 
     print("%-28s %9s %9s %7s %8s %9s  %s"
           % ("scene", "ref int", "test int", "d_int", "edge r", "best wrong", "verdict"))
@@ -139,6 +169,7 @@ def main():
 
     failures = []
     unconfirmed = []
+    mirrors = []
     verdicts = {}
     for slug in sorted(tests):
         t = load(tests[slug])
@@ -149,7 +180,14 @@ def main():
             (float(np.dot(Redge[o], te)), o) for o in R if o != slug
         ) if len(R) > 1 else (0.0, "-")
 
-        decisive = er >= EDGE_DECISIVE and er >= wrong_r + EDGE_DECISIVE_MARGIN
+        # Decisive either by absolute strength, OR by beating the control by a wide factor.
+        # The second clause is what stops the interior test vetoing a correct render whose
+        # absolute correlation is modest because the palettes differ. Scene 17 is the case:
+        # FractalShark draws the same dendrite on a near-black background, so 16.7% of its frame
+        # reads as "interior" against our 0%, and on a shared palette its edge score fell to
+        # 0.339 - under the absolute bar, but nineteen times the best WRONG scene. A score that
+        # far above the control identifies the scene whatever its absolute value.
+        decisive = (er >= EDGE_DECISIVE and er >= wrong_r + EDGE_DECISIVE_MARGIN) or                    (er >= EDGE_CONTROL_MIN and er >= EDGE_CONTROL_FACTOR * max(wrong_r, EDGE_CONTROL_FLOOR))
         ok = decisive or (abs(dint) <= INTERIOR_TOL
                           and er >= EDGE_MIN
                           and er >= wrong_r + EDGE_MARGIN)
@@ -172,13 +210,30 @@ def main():
         # So a low correlation with a MATCHING interior is "could not confirm", not "wrong", and
         # it must not delete a time or accuse anyone.
         mag_ok = abs(dint) <= INTERIOR_TOL or decisive
-        if not ok and not mag_ok:
+
+        # ORIENTATION. If a mirrored or rotated reference matches decisively better than the
+        # reference as it stands, the render is the right view drawn the wrong way up. That is a
+        # defect, it is precise, and it is worth stating outright rather than leaving as an
+        # unexplained low correlation.
+        orient, orient_r = "as-is", er
+        for name, feat in Rorient[slug].items():
+            r = float(np.dot(feat, te))
+            if r > orient_r + ORIENT_MARGIN:
+                orient, orient_r = name, r
+        mirrored = orient != "as-is" and orient_r >= EDGE_MIN
+        if mirrored:
+            ok = False
+        if mirrored:
+            mirrors.append((slug, orient, orient_r))
+        elif not ok and not mag_ok:
             failures.append((slug, dint, er, wrong_r, wrong_s))
         elif not ok:
             unconfirmed.append((slug, dint, er))
         verdicts[slug] = {
             "same_view": bool(ok),
             "magnification_ok": bool(mag_ok),
+            "orientation": orient,
+            "orientation_r": round(orient_r, 3),
             "ref_interior": round(Rint[slug], 4),
             "test_interior": round(ti, 4),
             "d_interior": round(dint, 4),
@@ -189,7 +244,9 @@ def main():
         print("%-28s %9.4f %9.4f %+7.4f %8.3f %9.3f  %s"
               % (slug, Rint[slug], ti, dint, er, wrong_r,
                  "same scene" if ok
-                 else ("unconfirmed (palette?)" if mag_ok else "** NOT THE SCENE **")))
+                 else ("** %s **" % orient.upper() if mirrored
+                       else ("unconfirmed (palette?)" if mag_ok
+                             else "** NOT THE SCENE **"))))
 
     if args.json:
         import json
@@ -197,6 +254,21 @@ def main():
             json.dump(verdicts, fh, indent=1, sort_keys=True)
 
     print()
+    if mirrors:
+        print("%d of %d renders are MIRRORED or ROTATED relative to the reference:" % (len(mirrors), len(tests)))
+        for slug, orient, r in mirrors:
+            print("  %-28s matches the reference %s (r %.3f)" % (slug, orient, r))
+        if not args.quiet:
+            print()
+            print("The right view, drawn the wrong way up. Nothing else here can see this:")
+            print("interior fraction is exactly flip-invariant, and a large palette difference")
+            print("flattens the image test. Check the row order where the pixel buffer is")
+            print("serialised - a bottom-up buffer written into a top-down format does this.")
+        print()
+        # A mirror is a DEFECT, not an ambiguity: the view is identifiable and it is wrong.
+        # Unlike an unmatched palette, there is something specific to go and fix.
+        return 1
+
     if unconfirmed:
         print("%d of %d could not be CONFIRMED, but their magnification agrees: %s."
               % (len(unconfirmed), len(tests), ", ".join(u[0] for u in unconfirmed)))
