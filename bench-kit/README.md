@@ -181,10 +181,38 @@ than papering over it:
   / OpenGL context creation FAILED, no rendering will occur" on stderr, but on 0.541 the GPU output
   reaches the PNG regardless — the blank-headless-GPU symptom is gone. (Through 0.54 that path, on
   top of the missing kernels, is why headless GPU renders came back blank.)
-- **`GpuHDRx32PerturbedLAv2` renders most of the corpus; it DNFs on a few by location, not depth.**
-  On this box it renders the scenes from 1e6 through the extreme 4.6e1105 (structure-checked). It
-  comes back flat — `DNF-blank` — on the two period nuclei, the Misiurewicz spar, and one very deep
-  field at 4.2e275, while 4.6e1105 succeeds; so the weakness is specific locations, not raw depth.
+- **The zoom it is given is not always the zoom it renders, and this invalidated every
+  FractalShark number this kit published before 2026-09-21.** The lane used to send
+  `--zoom 1e<mag_log10>`, e.g. `1e6.1249387366083`. `FractalSharkCli` accepts that and **silently
+  truncates the fractional exponent**: on 0.543 that render is byte-identical to `--zoom 1e6`,
+  while the correct `--zoom 1.333333E6` produces a different and correct image. Every scene came
+  out under-zoomed by up to 10x, exited 0, and passed the structure check as a real picture of the
+  wrong place. **An under-zoomed frame is a cheaper frame**, so the fault presented as FractalShark
+  being 20-50x faster than both other renderers at 4K, including 0.3 s for a 1e1105 frame that
+  takes Fraktaler-3 62.8 s. The lane now hands over the `.kfr`'s own `Zoom` string verbatim, which
+  is the Kalles Fraktaler convention every other lane already uses. If you have older results from
+  this kit, the FractalShark column in them is void; the other lanes are unaffected.
+- **A time is only meaningful for the work that was asked for, so the lane now checks the view.**
+  The structure check asks "is this a picture"; it has never asked "is this the *right* picture",
+  and all ten wrong renders passed it — one of them a near-flat field. `tools/verify-views.py`
+  compares each render against the Fractadyne render of the same scene on two palette-independent
+  signals: interior (never-escaped) fraction, which moves fast with magnification, and
+  gradient-magnitude correlation, which survives the palette inversion that defeats a plain
+  grayscale correlation. Each scene is also scored against every other scene as a control. A
+  mismatch is recorded as `DNF-wrong-view`, and where the check cannot run (no Python, or the
+  Fractadyne lane skipped) the rows say `view NOT verified` rather than passing quietly. Run it by
+  hand with `python tools/verify-views.py results\<host>-<stamp>`.
+- **`GpuHDRx32PerturbedLAv2` renders almost the whole corpus on 0.543; what it misses, it misses by
+  location, not depth.** Re-measured at 4K on 2026-09-21 with the corrected zoom and the view
+  check: **nine of the ten scenes render the right picture**, from 1e6 through the extreme
+  4.6e1105 — including the Misiurewicz spar, both period nuclei and 4.2e275, all four of which
+  older notes here recorded as `DNF-blank`. **That older list is superseded**; it was written
+  against 0.54x, and the four are no longer blank.
+  The one remaining failure is `14-deep-1.2e148`, and it is not blankness and not a wrong view:
+  FractalShark returns **noise** where the dendrite belongs, identically at 800k and 8M iterations
+  and under both `GpuHDRx32PerturbedLAv2` and `GpuHDRx64PerturbedLAv2`, so it is not iteration
+  starvation either. Note that **noise sails through a structure check** — many distinct colours,
+  no dominant one — which is why the view check exists.
   Its CPU algorithms (e.g. `Cpu64PerturbedBLAV2HDR`) still go blank past ~1e27, so for depth use a
   GPU algorithm.
 - Because of that, **no FractalShark row records a time without a picture**: every render is checked

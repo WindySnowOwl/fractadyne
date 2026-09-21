@@ -377,8 +377,8 @@ if ($have.fractalsharkcli) {
         # overrides an otherwise-clean row. The check runs on rep 1's image; every rep renders the
         # same view by construction, and their outputs are byte-identical in practice.
         if ($status -eq 'ok' -and $viewChecked -and $viewOk.ContainsKey($q.scene) -and -not $viewOk[$q.scene]) {
-            $status = 'DNF-wrong-view'
-            $note = 'rendered a real picture of a DIFFERENT view than the scene asks for - see fs-view-check.json'
+            $status = 'DNF-not-the-scene'
+            $note = 'exit 0 and a structured image, but it does not depict this scene - wrong view, or the right view rendered as noise; see fs-view-check.json and LOOK at the PNG'
         } elseif ($status -eq 'ok' -and -not $viewChecked) {
             $note += '; view NOT verified'
         }

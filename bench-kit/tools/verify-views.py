@@ -60,6 +60,14 @@ INTERIOR_SUM = 40
 INTERIOR_TOL = 0.06
 EDGE_MIN = 0.35
 EDGE_MARGIN = 0.10
+# A DECISIVE edge match settles it on its own, and the interior test is not allowed to veto it.
+# Scene 17 is why: FractalShark draws the same dendrite on a near-black background, so 16.7% of
+# its frame reads as "interior" where ours reads 0%, and the interior test called a correct render
+# wrong. Edge correlation there was 0.779 against 0.028 for the best wrong scene - not a close
+# call. Interior fraction earns its place on the scenes where edge correlation is ambiguous, which
+# is exactly where a wrong zoom lands; in the truncated-exponent run no scene reached even 0.28.
+EDGE_DECISIVE = 0.50
+EDGE_DECISIVE_MARGIN = 0.15
 
 
 def load(path):
@@ -140,9 +148,10 @@ def main():
             (float(np.dot(Redge[o], te)), o) for o in R if o != slug
         ) if len(R) > 1 else (0.0, "-")
 
-        ok = (abs(dint) <= INTERIOR_TOL
-              and er >= EDGE_MIN
-              and er >= wrong_r + EDGE_MARGIN)
+        decisive = er >= EDGE_DECISIVE and er >= wrong_r + EDGE_DECISIVE_MARGIN
+        ok = decisive or (abs(dint) <= INTERIOR_TOL
+                          and er >= EDGE_MIN
+                          and er >= wrong_r + EDGE_MARGIN)
         if not ok:
             failures.append((slug, dint, er, wrong_r, wrong_s))
         verdicts[slug] = {
@@ -156,7 +165,7 @@ def main():
         }
         print("%-28s %9.4f %9.4f %+7.4f %8.3f %9.3f  %s"
               % (slug, Rint[slug], ti, dint, er, wrong_r,
-                 "same view" if ok else "** DIFFERENT VIEW **"))
+                 "same scene" if ok else "** NOT THE SCENE **"))
 
     if args.json:
         import json
@@ -165,16 +174,24 @@ def main():
 
     print()
     if failures:
-        print("%d of %d renders are NOT the scene they were asked for." % (len(failures), len(tests)))
+        print("%d of %d renders do NOT depict the scene they were asked for." % (len(failures), len(tests)))
         if not args.quiet:
             print()
-            print("A time for the wrong view is not a slow or fast result, it is a VOID one.")
-            print("Check the zoom and centre actually reaching the renderer before reading any")
-            print("number from this run. A truncated mantissa under-zooms, and an under-zoomed")
-            print("frame is cheaper, so this failure mode always looks like good news.")
+            print("Two different faults land here, and the image tells them apart:")
+            print("  WRONG VIEW    - a clean picture of somewhere else. Check the zoom and centre")
+            print("                  actually reaching the renderer. A truncated mantissa")
+            print("                  under-zooms, and an under-zoomed frame is CHEAPER, so this")
+            print("                  one always arrives looking like good news.")
+            print("  FAILED RENDER - the right view, not resolved: speckle or noise where the")
+            print("                  structure belongs. Note that NOISE PASSES a structure guard")
+            print("                  easily - many colours, no dominant one - so nothing else in")
+            print("                  the lane will object to it.")
+            print()
+            print("Either way the time is not a slow or a fast result, it is a VOID one. Look at")
+            print("the image before deciding which fault you have.")
         return 1
 
-    print("All %d renders agree with the Fractadyne view of the same scene." % len(tests))
+    print("All %d renders depict the same scene as the Fractadyne reference." % len(tests))
     return 0
 
 
