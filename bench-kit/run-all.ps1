@@ -277,10 +277,29 @@ if ($have.fractalsharkcli) {
         foreach ($s in $sceneRows) {
             $kfr = Read-Kfr (Join-Path $kit ('scenes\' + $s.slug + '.kfr'))
             # The magnification is a STRING, never a number: 10^1105.79 is +inf in double and the
-            # corpus goes there. FractalSharkCli accepts a fractional exponent (verified), and its
-            # zoom convention is Kalles Fraktaler's - the same one we and Fraktaler-3 use. That was
-            # CALIBRATED against a known scene here, not assumed; a 4/3 alternative scored far worse.
-            $zoom = '1e' + $s.mag_log10
+            # corpus goes there. Its zoom convention is Kalles Fraktaler's - the same one we and
+            # Fraktaler-3 use - so the .kfr's own Zoom field is handed over VERBATIM.
+            #
+            # It used to send '1e' + mag_log10, and the comment here claimed a fractional exponent
+            # was "verified". It is ACCEPTED, and then SILENTLY TRUNCATED. Measured on 0.543,
+            # 2026-09-21: `--zoom 1e6.1249387366083` and `--zoom 1e6` produce BYTE-IDENTICAL PNGs,
+            # while the correct `--zoom 1.333333E6` produces a different and correct one. Exit 0,
+            # a real picture, a plausible time -- and the wrong view, under-zoomed by up to 10x.
+            # Interior-area calibration against the Fractadyne render of scene 03: 1.333333E6 gives
+            # 0.411 against our 0.427, and 1E6 gives 0.251.
+            #
+            # That is why it was fast. An under-zoomed frame is a CHEAPER frame, so the error
+            # flattered FractalShark at every depth, and it flattered it MORE the deeper the scene
+            # (where the truncated fraction is worth the most magnification). Every FractalShark
+            # number this kit published before 2026-09-21 is from the wrong view and must not be
+            # compared with anything.
+            #
+            # LESSON, because the structure guard did not save us: a mantissa is not decoration.
+            # The guard asks "is this a picture" and all ten scenes passed it while being the wrong
+            # picture -- one of them a near-flat field. Only a comparison against another
+            # renderer's image of the SAME scene catches this class, which is why this lane now
+            # ships tools/verify-views.py.
+            $zoom = $kfr['Zoom']
             # WARNING: the output name may not be the one you pass. FractalSharkCli strips the
             # final extension and re-appends .png only when what remains has no dot, so
             # "fs-21-m43-spar-1e27.7.png" lands as "fs-21-m43-spar-1e27.7" with no extension - and
@@ -319,6 +338,28 @@ if ($have.fractalsharkcli) {
         Write-Host 'FractalShark: shutting the server down - this is what flushes the PNGs'
         Stop-SharkServer $FractalSharkCliExe $endpoint $srv
     }
+    # IS IT THE RIGHT PICTURE? The structure guard below only ever asked "is it A picture", and on
+    # 2026-09-21 all ten scenes passed it while being renders of the wrong place, because the CLI
+    # truncated the fractional exponent in the zoom it was handed. An under-zoomed frame is a
+    # cheaper frame, so the error arrived disguised as a 20-50x speed win. Nothing in the lane
+    # could have caught it: only comparing against another renderer's image of the SAME scene can.
+    # Needs the fractadyne lane for its reference renders; without it the check says so and the
+    # numbers stay unverified rather than quietly passing.
+    $viewOk = @{}
+    $viewChecked = $false
+    $vv = Join-Path $kit 'tools\verify-views.py'
+    if ($PythonExe -and (Test-Path $vv) -and $have.fractadyne) {
+        $vjson = Join-Path $outDir 'fs-view-check.json'
+        Write-Host 'FractalShark: checking the renders are the scenes that were ASKED for'
+        & $PythonExe $vv $outDir --prefix fs --json $vjson --quiet 2>&1 | ForEach-Object { '  ' + $_ }
+        if (Test-Path $vjson) {
+            $viewChecked = $true
+            $vd = Get-Content $vjson -Raw | ConvertFrom-Json
+            foreach ($p in $vd.PSObject.Properties) { $viewOk[$p.Name] = [bool]$p.Value.same_view }
+        }
+    } else {
+        Write-Host 'FractalShark: view check SKIPPED (needs Python and the fractadyne lane) - times unverified.'
+    }
     foreach ($q in $pending) {
         $status = $q.r.status
         $note = $q.note
@@ -331,6 +372,15 @@ if ($have.fractalsharkcli) {
                 $status = 'DNF-blank'
                 $note = 'exit 0 but the image is uniform - a time here would be meaningless'
             }
+        }
+        # A picture of the WRONG PLACE is not a slow or a fast result, it is a VOID one, so this
+        # overrides an otherwise-clean row. The check runs on rep 1's image; every rep renders the
+        # same view by construction, and their outputs are byte-identical in practice.
+        if ($status -eq 'ok' -and $viewChecked -and $viewOk.ContainsKey($q.scene) -and -not $viewOk[$q.scene]) {
+            $status = 'DNF-wrong-view'
+            $note = 'rendered a real picture of a DIFFERENT view than the scene asks for - see fs-view-check.json'
+        } elseif ($status -eq 'ok' -and -not $viewChecked) {
+            $note += '; view NOT verified'
         }
         # A self-reported time only survives on a row that EARNED it. On any DNF it is dropped,
         # because the whole trap is that a refusal still prints one.
