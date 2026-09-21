@@ -138,6 +138,7 @@ def main():
     print("-" * 96)
 
     failures = []
+    unconfirmed = []
     verdicts = {}
     for slug in sorted(tests):
         t = load(tests[slug])
@@ -152,10 +153,32 @@ def main():
         ok = decisive or (abs(dint) <= INTERIOR_TOL
                           and er >= EDGE_MIN
                           and er >= wrong_r + EDGE_MARGIN)
-        if not ok:
+        # TWO DIFFERENT VERDICTS, because the two signals answer different questions and only one
+        # of them is palette-proof.
+        #
+        # Interior fraction tracks MAGNIFICATION. A wrong zoom moves it hard - scene 03 went
+        # 0.427 to 0.251 on a single truncated mantissa - and no palette choice moves it at all,
+        # because "did this pixel escape" is not a colouring decision. When it disagrees, the
+        # renderer is looking somewhere else and the time is void.
+        #
+        # Edge correlation compares PICTURES, and two renderers can draw the same iteration field
+        # so differently that it collapses. FractalShark cycles its palette once per iteration
+        # and has no CLI option to slow it; at 1.6e148 with 800k iterations the bands alias into
+        # what looks like static when downsampled, while our own render of that scene is the one
+        # we apply --normalize to, mapping the same field onto a single slow gradient. Same view,
+        # opposite images, correlation -0.222. I called that a failed render and said so in a
+        # report; it was neither a failure nor theirs.
+        #
+        # So a low correlation with a MATCHING interior is "could not confirm", not "wrong", and
+        # it must not delete a time or accuse anyone.
+        mag_ok = abs(dint) <= INTERIOR_TOL or decisive
+        if not ok and not mag_ok:
             failures.append((slug, dint, er, wrong_r, wrong_s))
+        elif not ok:
+            unconfirmed.append((slug, dint, er))
         verdicts[slug] = {
             "same_view": bool(ok),
+            "magnification_ok": bool(mag_ok),
             "ref_interior": round(Rint[slug], 4),
             "test_interior": round(ti, 4),
             "d_interior": round(dint, 4),
@@ -165,7 +188,8 @@ def main():
         }
         print("%-28s %9.4f %9.4f %+7.4f %8.3f %9.3f  %s"
               % (slug, Rint[slug], ti, dint, er, wrong_r,
-                 "same scene" if ok else "** NOT THE SCENE **"))
+                 "same scene" if ok
+                 else ("unconfirmed (palette?)" if mag_ok else "** NOT THE SCENE **")))
 
     if args.json:
         import json
@@ -173,23 +197,34 @@ def main():
             json.dump(verdicts, fh, indent=1, sort_keys=True)
 
     print()
+    if unconfirmed:
+        print("%d of %d could not be CONFIRMED, but their magnification agrees: %s."
+              % (len(unconfirmed), len(tests), ", ".join(u[0] for u in unconfirmed)))
+        if not args.quiet:
+            print("  Usually a palette difference, not a wrong view. Two renderers can draw the")
+            print("  same iteration field so differently that the correlation collapses: a")
+            print("  palette cycling once per iteration aliases into static when downsampled,")
+            print("  while a normalised one maps the same field onto a single slow gradient.")
+            print("  The time stands. Look at the image at 1:1 before concluding anything, and")
+            print("  do not call it a failure of the other renderer on this evidence.")
+        print()
+
     if failures:
-        print("%d of %d renders do NOT depict the scene they were asked for." % (len(failures), len(tests)))
+        print("%d of %d renders do NOT depict the scene they were asked for: %s."
+              % (len(failures), len(tests), ", ".join(f[0] for f in failures)))
         if not args.quiet:
             print()
-            print("Two different faults land here, and the image tells them apart:")
-            print("  WRONG VIEW    - a clean picture of somewhere else. Check the zoom and centre")
-            print("                  actually reaching the renderer. A truncated mantissa")
-            print("                  under-zooms, and an under-zoomed frame is CHEAPER, so this")
-            print("                  one always arrives looking like good news.")
-            print("  FAILED RENDER - the right view, not resolved: speckle or noise where the")
-            print("                  structure belongs. Note that NOISE PASSES a structure guard")
-            print("                  easily - many colours, no dominant one - so nothing else in")
-            print("                  the lane will object to it.")
-            print()
-            print("Either way the time is not a slow or a fast result, it is a VOID one. Look at")
-            print("the image before deciding which fault you have.")
+            print("These are the ones whose INTERIOR FRACTION disagrees, which tracks")
+            print("magnification and which no palette choice can move. Check the zoom and centre")
+            print("actually reaching the renderer. A truncated mantissa under-zooms, and an")
+            print("under-zoomed frame is CHEAPER, so this always arrives looking like good news.")
+            print("A time for the wrong view is not slow or fast, it is VOID.")
         return 1
+
+    if unconfirmed:
+        print("No render contradicts its scene; %d could not be positively confirmed."
+              % len(unconfirmed))
+        return 0
 
     print("All %d renders depict the same scene as the Fractadyne reference." % len(tests))
     return 0

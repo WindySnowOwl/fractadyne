@@ -391,6 +391,7 @@ if ($have.fractalsharkcli) {
     # Needs the fractadyne lane for its reference renders; without it the check says so and the
     # numbers stay unverified rather than quietly passing.
     $viewOk = @{}
+    $viewConfirmed = @{}
     $viewChecked = $false
     $vv = Join-Path $kit 'tools\verify-views.py'
     if ($PythonExe -and (Test-Path $vv) -and $have.fractadyne) {
@@ -400,7 +401,12 @@ if ($have.fractalsharkcli) {
         if (Test-Path $vjson) {
             $viewChecked = $true
             $vd = Get-Content $vjson -Raw | ConvertFrom-Json
-            foreach ($p in $vd.PSObject.Properties) { $viewOk[$p.Name] = [bool]$p.Value.same_view }
+            foreach ($p in $vd.PSObject.Properties) {
+                # magnification_ok is the verdict that can VOID a time. same_view is the stronger
+                # claim and is only used to decide whether to annotate the row.
+                $viewOk[$p.Name] = [bool]$p.Value.magnification_ok
+                $viewConfirmed[$p.Name] = [bool]$p.Value.same_view
+            }
         }
     } else {
         Write-Host 'FractalShark: view check SKIPPED (needs Python and the fractadyne lane) - times unverified.'
@@ -418,12 +424,19 @@ if ($have.fractalsharkcli) {
                 $note = 'exit 0 but the image is uniform - a time here would be meaningless'
             }
         }
-        # A picture of the WRONG PLACE is not a slow or a fast result, it is a VOID one, so this
-        # overrides an otherwise-clean row. The check runs on rep 1's image; every rep renders the
-        # same view by construction, and their outputs are byte-identical in practice.
+        # A picture of the WRONG PLACE is not a slow or a fast result, it is a VOID one. But only
+        # the INTERIOR FRACTION can say that: it tracks magnification and no palette choice moves
+        # it. A collapsed edge correlation on its own means "could not confirm", because two
+        # renderers can draw the same field unrecognisably differently - FractalShark cycles its
+        # palette once per iteration with no CLI option to slow it, and at 1.6e148 that aliases
+        # into apparent static against our --normalize render of the same scene. Treating that as
+        # a DNF made this lane publish a claim that another project's renderer was broken. It was
+        # not. Do not let a colouring difference delete a measurement or accuse anyone.
         if ($status -eq 'ok' -and $viewChecked -and $viewOk.ContainsKey($q.scene) -and -not $viewOk[$q.scene]) {
             $status = 'DNF-not-the-scene'
-            $note = 'exit 0 and a structured image, but it does not depict this scene - wrong view, or the right view rendered as noise; see fs-view-check.json and LOOK at the PNG'
+            $note = 'exit 0 and a structured image, but its interior fraction says this is a different magnification; see fs-view-check.json and LOOK at the PNG'
+        } elseif ($status -eq 'ok' -and $viewChecked -and $viewConfirmed.ContainsKey($q.scene) -and -not $viewConfirmed[$q.scene]) {
+            $note += '; view UNCONFIRMED (magnification agrees; the images differ, usually a palette difference - compare at 1:1 before concluding)'
         } elseif ($status -eq 'ok' -and -not $viewChecked) {
             $note += '; view NOT verified'
         }
@@ -539,7 +552,14 @@ if ($have.zoomseq) {
 
 # ---- summary: fastest run per renderer x scene, ratio vs fractadyne where possible ----
 $rows = Import-Csv $csv
-$md = @('# Benchmark summary - ' + $env:COMPUTERNAME + ' - ' + $stamp, '',
+# PARENTHESES REQUIRED. In PowerShell the comma operator binds TIGHTER than `+`, so
+#   @('a' + $x, '', 'b')
+# parses as @('a' + @($x, '', 'b')) - the rest of the literal is absorbed into an array, coerced
+# to a string and concatenated onto the first element with $OFS spaces. Every summary.md this kit
+# ever wrote had its title, its whole explanation, the table header AND the separator row welded
+# into line 1, which is why the markdown table never rendered as a table: a header glued to a
+# paragraph is just a paragraph. Only the `$md +=` rows below were ever real lines.
+$md = @(('# Benchmark summary - ' + $env:COMPUTERNAME + ' - ' + $stamp), '',
         'Fastest run per renderer and scene. `wall_s` compares the AUTOMATED lanes end-to-end;',
         '`reported_s` is each renderer''s own figure (see README for why they are never mixed).', '',
         'FractalShark is a wall column, not a reported one. It had one only while the lane was',
@@ -549,9 +569,22 @@ $md = @('# Benchmark summary - ' + $env:COMPUTERNAME + ' - ' + $stamp, '',
         'silently drops a lane it ran is worse than one that admits it skipped it.',
         'In server mode that wall is the CLIENT call - the amortized per-frame cost, with CUDA and',
         'process startup paid once for the whole run rather than folded into every frame.', '',
-        '| Scene | fractadyne wall | fraktaler3 wall | fractalshark wall | fd reported | imagina reported |',
-        '|---|---|---|---|---|---|')
-foreach ($s in $sceneRows) {
+        'Rows run SHALLOWEST FIRST. scenes.csv is ordered by scene id, which is not depth order -',
+        'it puts 1e1105 above 1e27.7 - and a benchmark whose whole axis is magnification should',
+        'not be read in an order that hides it. Execution order is unchanged and stays in the',
+        'manifest; only the presentation is sorted.', '',
+        '| Scene | Magnification | fractadyne wall | fraktaler3 wall | fractalshark wall | fd reported | imagina reported |',
+        '|---|---|---|---|---|---|---|')
+# Slug is the tiebreak, not decoration: the corpus has two scenes at exactly 5.1e27, PowerShell's
+# sort is not stable for equal keys, and two runs over the same data swapping rows makes a diff
+# between reports look like a change when nothing changed.
+foreach ($s in ($sceneRows | Sort-Object @{ e = { [double]$_.mag_log10 } }, @{ e = { $_.slug } })) {
+    # 10^1105.79 overflows a double, so the mantissa and the exponent are split textually and
+    # never multiplied back together.
+    $e = [math]::Floor([double]$s.mag_log10)
+    $mant = [math]::Pow(10, [double]$s.mag_log10 - $e)
+    if ($mant -ge 9.995) { $mant = $mant / 10; $e = $e + 1 }
+    $magStr = ('{0:N1}e{1}' -f $mant, [int]$e)
     $cell = @{}
     foreach ($ren in 'fractadyne', 'fraktaler3', 'imagina', 'fractalshark') {
         $best = $rows | Where-Object { $_.renderer -eq $ren -and $_.scene -eq $s.slug -and $_.status -eq 'ok' } |
@@ -564,7 +597,7 @@ foreach ($s in $sceneRows) {
             $cell[$ren] = @{ wall = $(if ($st) { $st.status } else { '-' }); rep = $(if ($st) { $st.status } else { '-' }) }
         }
     }
-    $md += ('| {0} | {1} | {2} | {3} | {4} | {5} |' -f $s.slug, $cell.fractadyne.wall, $cell.fraktaler3.wall, $cell.fractalshark.wall, $cell.fractadyne.rep, $cell.imagina.rep)
+    $md += ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} |' -f $s.slug, $magStr, $cell.fractadyne.wall, $cell.fraktaler3.wall, $cell.fractalshark.wall, $cell.fractadyne.rep, $cell.imagina.rep)
 }
 $md += ''
 # WHICH SHAPE produced the FractalShark column is not a footnote: a server number and a
@@ -615,6 +648,15 @@ $meta = @{
     started = (Get-Date).ToString('s')
     size = $Size; reps = $Reps; timeout_s = $TimeoutS
     scenes = @($sceneRows.slug)
+    # The sort key for every presentation of these results. Scenes are EXECUTED in scenes.csv
+    # order, which is neither alphabetical nor by depth, and their slugs order 1e1105 before
+    # 1e27.7 because the leading number is an id, not a magnitude. Shipping the magnification
+    # here means a report never has to guess it out of a filename.
+    scene_mag = $(
+        $m = @{}
+        foreach ($s in $sceneRows) { $m[$s.slug] = [double]$s.mag_log10 }
+        $m
+    )
     lanes = @(($have.GetEnumerator() | Where-Object Value | ForEach-Object Key))
     fractalshark_algorithm = $FractalSharkAlgo
     fractalshark_shape = $fsShape
