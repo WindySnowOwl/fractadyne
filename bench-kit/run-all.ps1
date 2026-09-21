@@ -46,8 +46,19 @@ param(
     # 2026-09-12 (10/10 fat binaries load, GpuHDRx32PerturbedLAv2 renders 1e6 through 4.6e1105).
     # A leftover "OpenGL context creation FAILED" warning still prints but no longer blanks output.
     # GpuHDRx32PerturbedLAv2 spans the whole corpus; it DNFs by LOCATION (the two nuclei, the spar,
-    # and 4.2e275), not by depth. Do NOT use AutoSelect: it picks a non-HDR GPU algorithm that goes
-    # flat at deep zoom.
+    # and -- through 0.542 -- 4.2e275), not by depth. Do NOT use AutoSelect: it picks a non-HDR GPU
+    # algorithm that goes flat at deep zoom, and there is no "Auto" either (0.543 rejects
+    # `--render-algorithm Auto` as an unknown name, despite its own error text suggesting one).
+    # ⭐0.543 RENDERS ALL FOUR OF THEM (measured 2026-09-21 on an RTX 3080), so that DNF list is
+    # stale for 0.543+: 4.2e275 gives 1683 colours at modal 0.053, and the spar and both nuclei
+    # give real dendrite structure. ⚠The latter three come out in a very low-contrast palette -
+    # luminance stddev ~1.1 of 255 - so they sit close to the structure guard's margin while being
+    # entirely correct pictures. Check the image before believing a DNF-blank on those three; the
+    # guard's job is "is this a picture", and it has never claimed to judge "is this the RIGHT
+    # picture", which only a cross-renderer comparison can say.
+    # ⚠Pick an algorithm that can represent the depth: Gpu1x32PerturbedLAv2 exits 1 with
+    # "cannot represent this viewport's pixel spacing" past f32 spacing, and the lane turns that
+    # into DNF-algo-too-narrow rather than letting it look like a fast frame.
     #
     # THROUGH 0.54, every GPU algorithm returned an EMPTY image on this box for two independent
     # reasons: the release binaries carried CUDA code for sm_89 + sm_120 only (RTX 40/50; see
@@ -55,7 +66,12 @@ param(
     # consumer needs a window it never creates. If you must benchmark such an old build, switch to a
     # CPU algorithm (e.g. Cpu64PerturbedBLAV2HDR) - correct at shallow/mid depth, blank past ~1e27.
     # Either way the structure guard stands: a flat frame is DNF-blank, never a TIME without an IMAGE.
-    [string]$FractalSharkAlgo = 'GpuHDRx32PerturbedLAv2'
+    [string]$FractalSharkAlgo = 'GpuHDRx32PerturbedLAv2',
+    # FractalShark 0.543 added a CLI server (--server / --connect / --shutdown) so CUDA and
+    # process startup are paid once for a whole run instead of once per frame. The kit uses it by
+    # default because that is the honest per-frame cost. Set this switch to go back to a process
+    # per frame, which is what every number this kit published before 0.543 carries.
+    [switch]$NoFractalSharkServer
 )
 
 $ErrorActionPreference = 'Stop'
@@ -221,8 +237,33 @@ if ($have.fraktaler3) {
 # headlessly (no sm_86 kernel + an OpenGL-consumer bug), which is why this lane STILL checks that a
 # render is actually a PICTURE before it records a TIME - a flat frame is DNF-blank, never a number.
 if ($have.fractalsharkcli) {
-    Write-Host ('FractalShark: automated via ' + (Split-Path $FractalSharkCliExe -Leaf) + ', algorithm ' + $FractalSharkAlgo)
     $wh = $Size -split 'x'
+    # 0.543 added --server/--connect so CUDA + process startup is paid ONCE rather than per frame.
+    # Measured here on an RTX 3080, scene 03 at 1.33e6, three reps: 1776 ms median with a process
+    # per frame, 399 ms median through a server. About 1.4 s of every old number was startup --
+    # most of a shallow frame, and a bias that grew as the frame got cheaper.
+    # -NoFractalSharkServer restores the old shape, which is the only way to compare against the
+    # numbers this kit published before 0.543.
+    $useServer = -not $NoFractalSharkServer
+    $endpoint = 'FractalSharkCli-benchkit-' + $PID
+    $srv = $null
+    if ($useServer) {
+        Write-Host ('FractalShark: starting the CLI server (endpoint ' + $endpoint + ')')
+        $srv = Start-SharkServer $FractalSharkCliExe $endpoint $wh[0] $wh[1] $outDir
+        if (-not $srv.ok) {
+            Write-Host '  server did not come up - falling back to one process per frame.'
+            $useServer = $false
+        } else {
+            Write-Host ('  ready in ' + $srv.startup_s + ' s')
+        }
+    }
+    Write-Host ('FractalShark: automated via ' + (Split-Path $FractalSharkCliExe -Leaf) +
+                ', algorithm ' + $FractalSharkAlgo +
+                $(if ($useServer) { ' (server-amortized)' } else { ' (process per frame)' }))
+    # PNG encoding is ASYNCHRONOUS and only flushed by --shutdown, so a render cannot be validated
+    # where it is timed: checking the file straight after the client returns finds nothing and
+    # scores a DNF for a frame that rendered perfectly. Collect, flush, then judge.
+    $pending = @()
     foreach ($rep in 1..$Reps) {
         foreach ($s in $sceneRows) {
             $kfr = Read-Kfr (Join-Path $kit ('scenes\' + $s.slug + '.kfr'))
@@ -235,27 +276,46 @@ if ($have.fractalsharkcli) {
             # final extension and re-appends .png only when what remains has no dot, so
             # "fs-21-m43-spar-1e27.7.png" lands as "fs-21-m43-spar-1e27.7" with no extension - and
             # three of our slugs contain dots. Hand it a dot-free stem; let it add the extension.
-            $stem = Join-Path $outDir ('fs-' + ($s.slug -replace '\.', 'p'))
+            # The rep is in the name because a server run keeps every frame for the flush.
+            $stem = Join-Path $outDir ('fs-' + ($s.slug -replace '\.', 'p') + '-r' + $rep)
             $png = $stem + '.png'
             # SAMPLING PARITY, restated rather than inherited: one sample per pixel, like every
             # other lane. This is the field that was silently 4x for Fraktaler-3 in every run this
             # kit ever published.
-            $argLine = ('--render-algorithm {0} --center-x {1} --center-y {2} --zoom {3} --iterations {4} --width {5} --height {6} --antialiasing 1 --out "{7}" --quiet' -f `
-                        $FractalSharkAlgo, $kfr['Re'], $kfr['Im'], $zoom, $s.iterations, $wh[0], $wh[1], $stem)
+            $renderArgs = ('--render-algorithm {0} --center-x {1} --center-y {2} --zoom {3} --iterations {4} --width {5} --height {6} --antialiasing 1 --out "{7}" --quiet' -f $FractalSharkAlgo, $kfr['Re'], $kfr['Im'], $zoom, $s.iterations, $wh[0], $wh[1], $stem)
+            $argLine = if ($useServer) { ('--connect --endpoint {0} ' -f $endpoint) + $renderArgs } else { $renderArgs }
             $r = Invoke-TimedRender $FractalSharkCliExe $argLine $TimeoutS $outDir
-            $note = if ($FractalSharkAlgo -like 'Gpu*') { 'GPU path (CUDA); needs FractalShark 0.541+ on RTX 20/30' } else { 'CPU path' }
-            $status = $r.status
-            if ($status -eq 'ok') {
-                if (-not (Test-Path $png)) {
-                    $status = 'DNF-no-output'
-                    $note = 'exit 0 but no PNG at the expected path'
-                } elseif (-not (Test-RenderHasStructure $png)) {
-                    $status = 'DNF-blank'
-                    $note = 'exit 0 but the image is uniform - a time here would be meaningless'
-                }
+            $note = $(if ($useServer) { 'server-amortized' } else { 'process per frame' }) +
+                    $(if ($FractalSharkAlgo -like 'Gpu*') { '; GPU path (CUDA)' } else { '; CPU path' })
+            # NEVER read the reported "Frame time": the client prints one even for a render it
+            # REFUSED. Measured on 0.543 -- "error: ... cannot represent this viewport's pixel
+            # spacing" followed by "Frame time: 17.1 ms", and no image written. Anything scraping
+            # that text records a fast frame that never happened. The exit code is honest in both
+            # modes (1 for that refusal, 2 for bad arguments), so judge on it and on the image.
+            if ($r.status -eq 'ok' -and ($r.stdout + $r.stderr) -match 'cannot represent') {
+                $r.status = 'DNF-algo-too-narrow'
+                $note += '; ' + $FractalSharkAlgo + ' cannot represent this depth - needs an HDR algorithm'
             }
-            Write-Result $csv 'fractalshark' $s.slug $rep $status $r.wall_s '' $note
+            $pending += @{ scene = $s.slug; rep = $rep; png = $png; r = $r; note = $note }
         }
+    }
+    if ($useServer) {
+        Write-Host 'FractalShark: shutting the server down - this is what flushes the PNGs'
+        Stop-SharkServer $FractalSharkCliExe $endpoint $srv
+    }
+    foreach ($q in $pending) {
+        $status = $q.r.status
+        $note = $q.note
+        if ($status -eq 'ok') {
+            if (-not (Test-Path $q.png)) {
+                $status = 'DNF-no-output'
+                $note = 'exit 0 but no PNG at the expected path, even after the shutdown flush'
+            } elseif (-not (Test-RenderHasStructure $q.png)) {
+                $status = 'DNF-blank'
+                $note = 'exit 0 but the image is uniform - a time here would be meaningless'
+            }
+        }
+        Write-Result $csv 'fractalshark' $q.scene $q.rep $status $q.r.wall_s '' $note
     }
 }
 

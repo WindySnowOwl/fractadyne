@@ -8485,9 +8485,40 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   no headless render), so it could not be wall-timed on the same footing as Fractadyne and F3.
   A CLI server makes it automatable, and the two timing columns (wall vs self-reported) can finally
   carry it without a manual step. ⚠Still NVIDIA/CUDA-only, so it stays N/A on the AMD box.
-  Plan for the NEXT bench round: teach `bench-kit/bench-lib.ps1` to start the server, run the
-  client per scene, and shut it down; re-run the matrix; keep the old numbers beside the new ones
-  so the overhead removal is visible rather than silently improving his lane.
+  ✅DONE 2026-09-21: `Start-SharkServer`/`Stop-SharkServer` in `bench-lib.ps1`, the lane in
+  `run-all.ps1` rewired to `--connect` with deferred validation, `-NoFractalSharkServer` to get
+  the old shape back, and `tools/fs-server-probe.sh` to re-measure the protocol on any box.
+  MEASURED here (RTX 3080, scene 03, 3 reps): **1776 ms median per frame with a process per
+  frame, 399 ms through a server** — ~1.4 s of every previously published FractalShark number
+  was startup. ⚠Three protocol traps, all measured, all encoded in the lane: PNG encoding is
+  ASYNCHRONOUS and only `--shutdown` flushes it (so validation moved AFTER the shutdown); a
+  REFUSED render still prints `Frame time:` (never scrape the text — the exit code is honest in
+  both modes, 1 for a refusal and 2 for bad arguments); and there is no `Auto` algorithm despite
+  the error text suggesting one. ⭐Also found: **0.543 renders ALL FOUR previously-DNF
+  locations** with GpuHDRx32PerturbedLAv2 (4.2e275, the m43 spar, and both nuclei), so that
+  by-LOCATION DNF list is stale for 0.543+. ⚠The spar and the nuclei come out in a very
+  low-contrast palette (luminance sd ~1.1 of 255) - real dendrite structure, but close to the
+  structure guard's margin, so LOOK at the image before believing a DNF-blank on those.
+  ▶ STILL TO DO: re-run the full matrix with the new lane and publish the old and new numbers
+  side by side, so the overhead removal is visible rather than silently improving his lane.
+
+- [ ] 🟡**Ask FractalShark's author for a reference-orbit endpoint (assessment done, message
+  drafted, NOT SENT).** Reasoning: `design/fractalshark-integration.md`. ONE primitive is worth
+  offloading — the high-precision reference orbit, which they compute ON THE GPU at a claimed
+  ~10× over multithreaded CPU. It is our dominant deep cost (`--benchmark-std`: **88% of CPU
+  time in floatexp frames is the reference build**; `--bench-bignum` at 8256 bits: 7.79 µs/iter
+  on MPFR, so a 1e4000 orbit is seconds and a 1e20000 one is minutes), it is a pure function of
+  its inputs, and it is coarse-grained enough that IPC latency is irrelevant.
+  ⭐⭐**The process boundary is what makes it possible at all**: they are GPL-3 and we are
+  MIT/Apache-2.0, so we may talk to the 0.543 pipe but never link — the same reasoning that makes
+  us link GMP/MPFR dynamically.
+  ⚠Ceilings, stated so nobody rediscovers them: CUDA/NVIDIA only (does nothing on the Radeon
+  box); it could NEVER feed the goldens or the corpus, because our two bignum backends are
+  BYTE-IDENTICAL and a third-party orbit would not be; and the win only appears past ~1e1000.
+  ⭐Recommendation: **ASK, DO NOT BUILD**, and if he is interested use it first in the BENCH KIT
+  (orbit build head to head) rather than in the renderer, so the speedup is measured on our
+  hardware instead of claimed on an RTX 4090. Draft: `local/messages/fractalshark-orbit-ask.md`
+  (⚠local/ is gitignored and not backed up by a push).
 
 - [ ] 🟡**Relative-performance benchmark kit — F3 + Imagina + FractalShark, public (user,
   2026-08-21, expanding the 08-10 F3-only ask).** ⭐KIT SKELETON BUILT 2026-08-21: `bench-kit/`
