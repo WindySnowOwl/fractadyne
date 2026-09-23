@@ -878,15 +878,25 @@ pub(crate) fn start_watchdog() {
         .spawn(|| {
             const STALL_S: u64 = 10;
             const REWARN_S: u64 = 30;
-            let mut last_warn_ms: u64 = 0;
+            // ⚠`None` until the first warning. It used to start at 0 — i.e. "warned at process
+            // start" — so the re-warn spacing suppressed EVERY hang in a process's first 30 s:
+            // found when `--recordtest` wedged its UI thread for 13 s at +6 s and the watchdog
+            // said nothing at all.
+            let mut last_warn_ms: Option<u64> = None;
             loop {
                 std::thread::sleep(Duration::from_secs(2));
                 let Some(t) = START.get() else { continue };
                 let now_ms = t.elapsed().as_millis() as u64;
                 let alive_ms = ALIVE_MS.load(Ordering::Relaxed);
                 let stale_s = now_ms.saturating_sub(alive_ms) / 1000;
-                if stale_s >= STALL_S && now_ms.saturating_sub(last_warn_ms) >= REWARN_S * 1000 {
-                    last_warn_ms = now_ms;
+                if stale_s >= STALL_S
+                    && last_warn_ms.is_none_or(|w| now_ms.saturating_sub(w) >= REWARN_S * 1000)
+                {
+                    last_warn_ms = Some(now_ms);
+                    // Into the frame record too, from THIS thread: the record's only other writer
+                    // is the UI thread, which is the one that has stopped. A wedge becomes a row
+                    // with a length instead of a gap somebody has to notice.
+                    frame_record::record_stall(now_ms.saturating_sub(alive_ms));
                     log_line(
                         "watch",
                         &format!(

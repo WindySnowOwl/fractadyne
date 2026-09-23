@@ -126,9 +126,12 @@ def fnv1a(b):
 
 
 def read_jsonl(path, sch, strict=True):
-    """(header dict, records, problems). Strict: an unknown or a missing key is a problem."""
-    header, recs, problems = {}, [], []
+    """(header dict, records, problems). Strict: an unknown or a missing key is a problem.
+    `frames.jsonl` also carries one `"kind":"summary"` row a second; those are checked against
+    the schema's `summary_keys` and returned in `header["summaries"]`."""
+    header, recs, problems, summaries = {}, [], [], []
     want = set(sch["names"])
+    want_summary = set(sch.get("summary_keys", []))
     with open(path, encoding="utf-8") as f:
         for i, line in enumerate(f, 1):
             line = line.strip()
@@ -145,6 +148,13 @@ def read_jsonl(path, sch, strict=True):
                 header = dict(o.get("header") or {})
                 header.setdefault("session", o.get("session"))
                 continue
+            if o.get("kind") == "summary":
+                if strict and set(o) != want_summary:
+                    problems.append(f"line {i}: summary row keys differ: unknown {sorted(set(o) - want_summary)[:5]}"
+                                    f" missing {sorted(want_summary - set(o))[:5]}")
+                    continue
+                summaries.append(o)
+                continue
             keys = set(o)
             if strict and keys != want:
                 extra, missing = sorted(keys - want), sorted(want - keys)
@@ -152,6 +162,7 @@ def read_jsonl(path, sch, strict=True):
                 continue
             recs.append(o)
     recs.sort(key=lambda r: r.get("seq", 0))
+    header["summaries"] = summaries
     return header, recs, problems
 
 
@@ -261,8 +272,18 @@ def summarize(path, view=0, target_ms=400.0, out=sys.stdout):
             p(f"  {k:22} {header[k]}")
     for pr in problems:
         p(f"  PROBLEM: {pr}")
-    recs = [r for r in recs_all if r["view"] == view]
-    p(f"  records                {len(recs_all)} ({len(recs)} for view {view})")
+    # Frame rows only: a STALL row is the watchdog's, carries the LAST recorded frame's index, and
+    # would read as a duplicate frame in any per-view count.
+    recs = [r for r in recs_all if r["view"] == view and r["kind"] == 1]
+    stalls = [r for r in recs_all if r["kind"] == 2]
+    p(f"  records                {len(recs_all)} ({len(recs)} frames of view {view}, {len(stalls)} watchdog stall rows)")
+    for s in stalls:
+        p(f"  STALL                  {s['stall_ms'] / 1000:.1f}s with nothing recorded after frame {s['frame']}"
+          f" (at +{s['t_ms'] / 1000:.1f}s)")
+    if header.get("summaries"):
+        sm = header["summaries"]
+        p(f"  summary rows           {len(sm)} covering {sum(s['frames'] for s in sm)} view-0 frames;"
+          f" events written {sum(s['events'] for s in sm)}, dropped by the rate limit {sum(s['events_dropped'] for s in sm)}")
     if len(recs) < MIN_FRAMES:
         p(f"VACUOUS: {len(recs)} records for view {view}, fewer than {MIN_FRAMES} - no verdict")
         return 2
@@ -334,7 +355,7 @@ def _arm(paths, sch, view):
     out = []
     for p in paths:
         _, recs, _ = load_any(p, sch)
-        out.append([r for r in recs if r["view"] == view])
+        out.append([r for r in recs if r["view"] == view and r["kind"] == 1])
     return out
 
 
@@ -386,7 +407,7 @@ def _synthetic(kind, target=400.0):
     recs = []
     for i in range(40):
         r = dict(base)
-        r.update(seq=i, frame=100 + i, t_ms=1000 * i, plan_calls=1, present=1, res_w=100, res_h=100, ss=1,
+        r.update(seq=i, kind=1, frame=100 + i, t_ms=1000 * i, plan_calls=1, present=1, res_w=100, res_h=100, ss=1,
                  last_dt_ms=16.0, repaint_requested=True, fe_budget=int(1.5e11), dispatched=True,
                  nominal_steps=4_000_000_000, frames_since_reading=0)
         recs.append(r)
