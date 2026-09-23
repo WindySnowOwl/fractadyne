@@ -14,6 +14,11 @@
 # cross-GPU comparison. (The F3 corpus check inherits the developer's live session and its
 # baselines drifted into meaninglessness because of it; do not repeat that here.)
 #
+# LOCAL BY DESIGN: the battery runs under ${TMPDIR:-/tmp}/fractadyne-validate/ and the finished
+# bundle is copied to --out at the end. Every step logs into the bundle's config folder and the
+# app writes frames.bin on the UI thread every frame, so a bundle built ON a share measures the
+# share (the RX 6800 XT's beta.113 recordtest failed on exactly that). See gpu-validate.ps1.
+#
 # Steps that open a window are wrapped in xvfb-run when no DISPLAY is present, so this works over
 # a plain SSH session. --gputest needs no display at all.
 #
@@ -41,7 +46,7 @@ while [ $# -gt 0 ]; do
     --out)     shift; OUT="${1:?--out needs a path}" ;;
     --bin)     shift; BIN="${1:?--bin needs a path}" ;;
     --build-id) shift; BUILD_ID="${1:?--build-id needs a path to BUILD-ID.txt}" ;;
-    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
   shift
@@ -63,13 +68,22 @@ if [ -z "$OUT" ]; then
   if [ -d /mnt/vger/Fractadyne ]; then OUT=/mnt/vger/Fractadyne; else OUT="$HOME"; fi
 fi
 STAMP="$(date +%Y%m%d-%H%M%S)"
-DIR="$OUT/validate-$LABEL-$STAMP"
+NAME="validate-$LABEL-$STAMP"
+# Built locally, delivered at the end (LOCAL BY DESIGN, above).
+WORK="${TMPDIR:-/tmp}/fractadyne-validate"
+DIR="$WORK/$NAME"
+FINAL="$OUT/$NAME"
 CFG="$DIR/config"
 mkdir -p "$CFG" "$DIR/crash"
+WORK_NOTE="this machine's disk"
+case "$(stat -f -c %T "$DIR" 2>/dev/null)" in
+  nfs*|cifs|smb*|fuse.sshfs|9p) WORK_NOTE="WARNING: this is a network filesystem - timings will measure it" ;;
+esac
 
 say "Fractadyne hardware validation"
 echo "  binary : $BIN"
-echo "  bundle : $DIR"
+echo "  runs in: $DIR ($WORK_NOTE)"
+echo "  bundle : $FINAL (copied there when the battery is done)"
 [ -n "$BACKEND" ] && echo "  backend: $BACKEND (pinned)"
 echo
 
@@ -144,7 +158,7 @@ build_id_step() {
   local cands=()
   [ -n "$BUILD_ID" ] && cands+=("$BUILD_ID")
   cands+=("$HERE/BUILD-ID.txt" "$HERE/../BUILD-ID.txt" "$HERE/../../BUILD-ID.txt")
-  [ -n "$tag" ] && cands+=("/mnt/vger/Fractadyne/builds/$tag/BUILD-ID.txt")
+  [ -n "$tag" ] && cands+=("$OUT/builds/$tag/BUILD-ID.txt" "/mnt/vger/Fractadyne/builds/$tag/BUILD-ID.txt")
   for c in "${cands[@]}"; do [ -f "$c" ] && { id="$c"; break; }; done
   out="binary  : $BIN"$'\n'"version : $APP_VERSION"$'\n'
   if [ -z "$id" ]; then
@@ -214,6 +228,7 @@ fi
 {
   echo "Fractadyne hardware validation - $LABEL"
   echo "$STAMP"
+  echo "ran in $DIR ($WORK_NOTE)"
   echo
   printf '%-14s %6s %8s  %s\n' "Step" "Exit" "Time" "File"
   printf '%s' "$SUMMARY_ROWS"
@@ -255,11 +270,23 @@ EOF
 tar -czf "$DIR.tar.gz" -C "$(dirname "$DIR")" "$(basename "$DIR")" 2>/dev/null || \
   echo "  (tar failed; send the folder itself)"
 
+# --- deliver: copy the finished bundle (and its tarball) to --out ----------------------------------
+# The local copy is removed only once the copy has succeeded; otherwise it stays, and says where.
+BUNDLE="$DIR"
+if [ "$(mkdir -p "$OUT" 2>/dev/null; cd "$OUT" 2>/dev/null && pwd -P)" != "$(cd "$WORK" && pwd -P)" ]; then
+  if cp -r "$DIR" "$OUT/" && { [ ! -f "$DIR.tar.gz" ] || cp "$DIR.tar.gz" "$OUT/"; }; then
+    rm -rf "$DIR" "$DIR.tar.gz"
+    BUNDLE="$FINAL"
+  else
+    echo "  (copy to $OUT failed - the bundle is still at $DIR)"
+  fi
+fi
+
 echo
 say "Summary"
 printf '%-14s %6s %8s\n' "Step" "Exit" "Time"
 printf '%s' "$SUMMARY_ROWS" | awk '{printf "%-14s %6s %8s\n", $1, $2, $3}'
-echo "bundle : $DIR"
-[ -f "$DIR.tar.gz" ] && echo "tar    : $DIR.tar.gz"
+echo "bundle : $BUNDLE"
+[ -f "$BUNDLE.tar.gz" ] && echo "tar    : $BUNDLE.tar.gz"
 echo
 say "Read summary.txt first - it explains which failures are expected off the reference card."

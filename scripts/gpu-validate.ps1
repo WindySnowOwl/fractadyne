@@ -17,6 +17,12 @@
 # the hard way: the F3 corpus check inherits the developer's live session, and its baselines
 # drifted into meaninglessness because of it.)
 #
+# LOCAL BY DESIGN: the battery runs in a folder on this machine's own disk (%TEMP%) and the
+# finished bundle is copied to -Out at the end. Every step logs into the bundle's config folder,
+# and the app writes its frame record (frames.bin) on the UI thread every frame - so a bundle
+# built ON a network share measures the share. The RX 6800 XT's beta.113 run did exactly that:
+# its recordtest read a network round trip as the frame record's cost and failed.
+#
 # NOTE: kept deliberately ASCII-only. Windows PowerShell 5.1 reads .ps1 files as ANSI unless they
 # carry a UTF-8 BOM, so any em-dash or curly quote in here becomes a parse error on a stranger's
 # machine. Do not "improve" the punctuation.
@@ -37,7 +43,8 @@
 #   frames/              each step's frame record (<step>.frames.bin, <step>.frames.jsonl) -
 #                        read with scripts/framelog.py summarize
 #   crash/               any crash reports produced during the run, with their -frames.jsonl
-#   ...and a .zip of the whole thing.
+#   ...and a .zip of the whole thing. Both are built under %TEMP%\fractadyne-validate\ and then
+#   copied to -Out (left there, and said so, if the copy fails).
 
 [CmdletBinding()]
 param(
@@ -47,7 +54,8 @@ param(
     [switch]$Quick,
     # Force one wgpu backend (vulkan | dx12 | gl). Default: whatever the app picks.
     [string]$Backend = "",
-    # Where to write the bundle. Default: the share if mounted, else beside this script.
+    # Where to deliver the bundle when it is done. Default: the share if reachable, else beside
+    # this script. The battery itself always runs on this machine's disk (see LOCAL BY DESIGN).
     [string]$Out = "",
     # The BUILD-ID.txt to check the binary against (step 00). Default: searched for beside this
     # script and in the share's builds\<tag>\ folder.
@@ -76,14 +84,28 @@ if (-not $Out) {
     $Out = if (Test-Path $share) { $share } else { $root }
 }
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$dir = Join-Path $Out "validate-$Label-$stamp"
+$name = "validate-$Label-$stamp"
+# Built locally, delivered at the end (LOCAL BY DESIGN, above).
+$work = Join-Path ([IO.Path]::GetTempPath()) "fractadyne-validate"
+$dir = Join-Path $work $name
+# [IO.Path]::Combine, not Join-Path: Join-Path refuses a drive this machine does not have.
+$final = [IO.Path]::Combine($Out, $name)
 $cfg = Join-Path $dir "config"
 New-Item -ItemType Directory -Force -Path $cfg | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $dir "crash") | Out-Null
 
+# A share, by name (\\host\...) or by a mapped drive letter.
+function Test-NetworkPath([string]$p) {
+    if ($p.StartsWith("\\") -or $p.StartsWith("//")) { return $true }
+    try { return ([IO.DriveInfo]::new([IO.Path]::GetPathRoot($p))).DriveType -eq [IO.DriveType]::Network }
+    catch { return $false }
+}
+$workNote = if (Test-NetworkPath $dir) { "WARNING: this is a network location - timings will measure it" } else { "this machine's disk" }
+
 Write-Host "Fractadyne hardware validation" -ForegroundColor Cyan
 Write-Host "  binary : $exe"
-Write-Host "  bundle : $dir"
+Write-Host "  runs in: $dir ($workNote)"
+Write-Host "  bundle : $final (copied there when the battery is done)"
 if ($Backend) { Write-Host "  backend: $Backend (pinned)" }
 Write-Host ""
 
@@ -188,18 +210,23 @@ $candidates = @()
 if ($BuildId) { $candidates += $BuildId }
 $candidates += (Join-Path $root "BUILD-ID.txt"), (Join-Path $root "..\BUILD-ID.txt"), (Join-Path $root "..\..\BUILD-ID.txt")
 if ($tag) {
-    foreach ($s in @("\\vger\share\Fractadyne", "D:\share\Fractadyne")) {
-        $candidates += Join-Path (Join-Path (Join-Path $s "builds") $tag) "BUILD-ID.txt"
+    # [IO.Path]::Combine, not Join-Path: Join-Path fails on a drive this machine does not have
+    # ("Cannot find drive. A drive with the name 'D' does not exist." - the RX 6800 XT box, beta.113),
+    # and every candidate is only ever tested with Test-Path below.
+    foreach ($s in @($Out, "\\vger\share\Fractadyne", "D:\share\Fractadyne")) {
+        $candidates += [IO.Path]::Combine($s, "builds", $tag, "BUILD-ID.txt")
     }
 }
-$idPath = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+$candidates = $candidates | Select-Object -Unique
+$idPath = $candidates | Where-Object { Test-Path -LiteralPath $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
 $idCode = 2
 if (-not $idPath) {
     $idOut += "verdict : CANNOT VERIFY - no BUILD-ID.txt found. Searched:"
     $idOut += ($candidates | ForEach-Object { "            $_" })
 }
 else {
-    $idOut += "against : $((Resolve-Path $idPath).Path)"
+    # .ProviderPath, not .Path: on a share .Path reads "Microsoft.PowerShell.Core\FileSystem::\\host\...".
+    $idOut += "against : $((Resolve-Path -LiteralPath $idPath).ProviderPath)"
     $id = Get-Content $idPath
     $commit = ($id | Where-Object { $_ -match '^commit: ' } | Select-Object -First 1) -replace '^commit: ', ''
     $ver = $appVersion -replace '^fractadyne ', ''
@@ -271,7 +298,7 @@ if (Test-Path (Join-Path $dir "app.log")) {
 
 # --- summary -------------------------------------------------------------------------------------
 $sum = Join-Path $dir "summary.txt"
-$head = @("Fractadyne hardware validation - $Label", "$stamp", "")
+$head = @("Fractadyne hardware validation - $Label", "$stamp", "ran in $dir ($workNote)", "")
 $head | Out-File $sum -Encoding utf8
 ($results | Format-Table Step, Exit, Seconds, File -AutoSize | Out-String).TrimEnd() |
 Out-File $sum -Encoding utf8 -Append
@@ -324,10 +351,27 @@ catch {
     $zip = $null
 }
 
+# --- deliver: copy the finished bundle (and its zip) to -Out ---------------------------------------
+# The local copy is removed only once the copy has succeeded; otherwise it stays, and says where.
+$bundle = $dir
+if ([IO.Path]::GetFullPath($Out).TrimEnd('\') -ne [IO.Path]::GetFullPath($work).TrimEnd('\')) {
+    try {
+        New-Item -ItemType Directory -Force -Path $Out -ErrorAction Stop | Out-Null
+        Copy-Item -LiteralPath $dir -Destination $Out -Recurse -Force -ErrorAction Stop
+        if ($zip) { Copy-Item -LiteralPath $zip -Destination $Out -Force -ErrorAction Stop }
+        Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+        if ($zip) { Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue; $zip = "$final.zip" }
+        $bundle = $final
+    }
+    catch {
+        Write-Host "  (copy to $Out failed: $_ - the bundle is still at $dir)" -ForegroundColor DarkYellow
+    }
+}
+
 Write-Host ""
 Write-Host "Summary" -ForegroundColor Cyan
 $results | Format-Table Step, Exit, Seconds -AutoSize
-Write-Host "bundle : $dir"
+Write-Host "bundle : $bundle"
 if ($zip) { Write-Host "zip    : $zip" }
 Write-Host ""
 Write-Host "Read summary.txt first - it explains which failures are expected off the reference card." -ForegroundColor Cyan

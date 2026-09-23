@@ -2465,3 +2465,21 @@ it concerns.
 - The documentation half is a static scan of the source (`every_log_category_is_documented`), which
   covers categories a given run never exercises; the design's version checked only prefixes present
   in one run's log.
+
+**beta.114 — `frames.jsonl` off the UI thread; the battery runs on local disk** (branch
+`fix/record-cost-and-local-battery`).
+
+- The RX 6800 XT's beta.113 battery failed `--recordtest` on cost alone (p99 706/878 µs, limit 83):
+  its logs were on `\\vger\share`, because `gpu-validate` built the bundle, config and logs
+  included, in `-Out`. The record attributed the cost to itself: `rec_us` is the previous emit's
+  cost, and all 68 emits above 300 µs followed a `frames.jsonl` flush (summary 1/s, severe event),
+  at ~650 µs each, while no other frame went above 172 µs. A dev-box A/B, interleaved on the same exe,
+  reproduced it (local p99 62–65 µs PASS, `\\vger\share` 98 µs FAIL, 2/2 each).
+- §6.4's sinks are now split by what they must survive: `frames.bin` stays synchronous on the
+  recording thread (an abort must find the slot on disk), and `frames.jsonl` moves to a writer
+  thread fed by a bounded queue (4,096 rows, `try_send`, drops counted and logged once). The row is
+  still DECIDED on the recording thread (the summary accumulator and rate limits), and the event row is
+  formatted on the writer. Clean exit and the panic hook wait ≤ 500/250 ms for the queue.
+- `--recordtest` prints where its logs are. With the logs on a network share, a cost over the limit is
+  VACUOUS rather than a failure, because it measures the share. A cost within the limit there is still a pass.
+- The battery builds its bundle under the system temp folder and copies it to `-Out` at the end.

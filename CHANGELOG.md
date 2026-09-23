@@ -12,6 +12,27 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The frame record no longer costs a frame anything when the logs are on a slow disk**
+  (beta.114). The once-a-second summary file, `logs/frames.jsonl`, was written on the thread that
+  draws the picture. On a Radeon RX 6800 XT whose logs were on a network share, each of those
+  writes waited on the network for about two thirds of a millisecond, and the new record check
+  failed on cost (p99 0.71 ms against a limit of 0.08 ms). The record showed where the cost was:
+  every slow write came right after one of those saves, and no other frame went above 0.17 ms.
+  That file is now written by a thread of its own. `logs/frames.bin`, the copy that survives the
+  app being killed, is still written with each frame. Nothing about rendering changes. Rows now
+  reach the disk sooner than before, and quitting the app, or a crash, waits briefly for the
+  last few. `--recordtest` now also prints where the logs are. If they are on a network share and
+  the cost is over the limit, it reports VACUOUS instead of FAIL, because it has measured the
+  share rather than the record.
+- **The hardware test battery runs on the machine's own disk, and no longer errors on a machine
+  without a D: drive** (beta.114). `scripts/gpu-validate.ps1` and `gpu-validate.sh` used to build
+  their results folder, including the app's logs, directly in the output location, which for the
+  Radeon machine was a network share. They now run under the system temp folder and copy the
+  finished folder and its zip to the output location at the end. If that copy fails, they say
+  where the local copy is. On a machine without a `D:` drive the Windows script used to print two
+  red `Join-Path` errors while looking for `BUILD-ID.txt`; it now doesn't, and it also looks in
+  the output location. The path it reports is now a plain `\\host\share\…` path instead of
+  `Microsoft.PowerShell.Core\FileSystem::\\host\…`.
 - **The app now keeps a record of every frame it draws, and a crash report carries it** (beta.113).
   Each frame, for each view, the app writes down what it was asked to draw, which reference it
   used, what it expected the frame to cost and what it actually dispatched, what reached the
