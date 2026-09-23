@@ -32,6 +32,7 @@
 #   04-bench-matrix.txt  22-segment perf + determinism vs the blessed baseline
 #   05-livetest.txt      live-vs-offline truth at every tour hold       (skipped by -Quick)
 #   uitest-*/            25-step UI + live-render screenshot bundle     (skipped by -Quick)
+#   07-recordtest.txt    the per-frame record's own gate (~20 s)
 #   app.log              the app's own log across all steps
 #   frames/              each step's frame record (<step>.frames.bin, <step>.frames.jsonl) -
 #                        read with scripts/framelog.py summarize
@@ -243,6 +244,11 @@ if (-not $Quick) {
 else {
     Write-Host "-> skipping livetest + uitest (-Quick)" -ForegroundColor DarkGray
 }
+# ~20 s, so it runs even under -Quick. It is the one step that proves the frame record works on
+# THIS card and filesystem - including that it survives a process abort - which is what makes the
+# next field failure diagnosable.
+Invoke-Step "recordtest" "07-recordtest.txt" @("--recordtest") `
+    "the per-frame record: every frame recorded, survives an abort, watchdog + blind tripwire fire"
 
 # --- harvest the app's own evidence -------------------------------------------------------------
 $log = Join-Path $cfg "logs\fractadyne.log"
@@ -298,6 +304,9 @@ livetest     Self-contained: compares the live view against an offline render on
              its pass/fail is meaningful here. "drift" lines compare against an RTX 3080 baseline
              and can be ignored on other hardware; FAIL lines cannot.
 uitest       Screenshots for eyeballing. The deep floatexp band is WARN-not-FAIL by design.
+recordtest   Must pass everywhere: 0 pass, 1 fail, 2 VACUOUS (nothing exercised - not a pass). The
+             per-frame record is what diagnoses the next crash, so a failure here matters even if
+             every other step is green. The frames/ folder holds each step's own record.
 
 Send back the whole folder (or the .zip beside it).
 "@ | Out-File $sum -Encoding utf8 -Append

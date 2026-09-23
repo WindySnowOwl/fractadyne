@@ -197,6 +197,10 @@ if [ "$QUICK" -eq 0 ]; then
 else
   echo -e "\033[2m-> skipping livetest + uitest (--quick)\033[0m"
 fi
+# ~20 s, so it runs even under --quick - see gpu-validate.ps1.
+step "recordtest" "07-recordtest.txt" \
+  "the per-frame record: every frame recorded, survives an abort, watchdog + blind tripwire fire" \
+  $XVFB "$BIN" --recordtest
 
 # --- harvest the app's own evidence --------------------------------------------------------------
 [ -f "$CFG/logs/fractadyne.log" ] && cp "$CFG/logs/fractadyne.log" "$DIR/app.log"
@@ -241,6 +245,8 @@ livetest     Self-contained: live view vs an offline render on THIS machine, so 
              meaningful here. "drift" lines compare against an RTX 3080 baseline and can be
              ignored on other hardware; FAIL lines cannot.
 uitest       Screenshots for eyeballing. The deep floatexp band is WARN-not-FAIL by design.
+recordtest   Must pass everywhere: 0 pass, 1 fail, 2 VACUOUS (nothing exercised - not a pass). The
+             per-frame record is what diagnoses the next crash. frames/ holds each step's record.
 
 Send back the whole folder (or the .tar.gz beside it).
 EOF
