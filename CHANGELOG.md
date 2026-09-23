@@ -42,6 +42,14 @@ detail is in the git history.
   has the home folder replaced by `~`, in any spelling it appears in. A new, on-by-default option adds the frame
   record: the last minute of the once-a-second summaries and the last 40 frames, which says far
   more about a slow or failing session than the log's last few seconds did.
+- **The warning that the frame-size controller is steering blind now fires when it matters most,
+  and names the right panel** (beta.113). The previous release added a log warning for frames the
+  clock calls slow while the controller hears nothing slow about them. It stood down whenever the
+  controller changed its frame-size budget — including when it RAISED it, which is exactly what a
+  controller being told "fast" while the frames get slower does. It now stands down only when the
+  budget is cut. In the two-panel view it also used to count every panel together and print the
+  first panel's numbers; each panel now has its own count and its own warning, and the slow-frame
+  line reports both panels.
 - **The log stays readable in a long session** (beta.113). It now rolls over into
   `fractadyne.log.1` to `.3` whenever it passes about 5 MB, rather than only at startup — one
   long session had written 20 MB into a single file. The line announcing that progressive

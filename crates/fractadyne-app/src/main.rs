@@ -1283,19 +1283,24 @@ struct Perf {
     /// Pinned refreshes adopted short of their ask because their PICTURE was done
     /// (`PinVerdict::AdoptConverged`, the autopilot's Speed priority) — kept apart from
     /// `adopt_partial`, whose zero is the §9 assertion, and from `adopt_complete`.
-    /// THE BUDGET-BLIND TRIPWIRE's state (see `render::budget_blind`). `blind_slow_frames`
-    /// counts consecutive frames the WALL says were slow; `blind_slow_readings` counts readings
-    /// the budget controller judged slow in that same run; `blind_warned` fires the warning once
-    /// per episode. All three reset when the budget actually moves.
+    /// THE BUDGET-BLIND TRIPWIRE's state, PER VIEW (see `render::budget_blind`).
+    /// `blind_slow_frames` counts consecutive frames the WALL says were slow; `blind_slow_readings`
+    /// counts readings the budget controller judged slow for that view in that same run;
+    /// `blind_warned` fires the warning once per episode. A view's three reset when its budget
+    /// SHRINKS (`render::blind_reset_on` — growth used to reset them too, finding U15), and all
+    /// views' when the wall is comfortably quick again.
+    ///
+    /// ⚠Per view since beta.113: they were window-wide while the warning printed view 0's state,
+    /// so in dual view one panel's healthy reading silenced the other panel's warning.
     ///
     /// ⭐⭐**The two can disagree, and when they do the controller is steering blind.** A GPU
     /// timestamp measures the dispatch, not the queue it is sitting in: on the 2026-09-21 RX
     /// 6800 XT device loss the wall showed twenty frames of 200–1027 ms while every reading the
     /// controller received was short enough to discard, so the budget never moved and the frame
     /// was never chunked. Nothing in the app noticed the divergence; this pair is what notices.
-    blind_slow_frames: u32,
-    blind_slow_readings: u32,
-    blind_warned: bool,
+    blind_slow_frames: [u32; 2],
+    blind_slow_readings: [u32; 2],
+    blind_warned: [bool; 2],
     adopt_converged: [u64; 2],
     /// Pinned walks that completed with no escaped pixel (`PinStop::Blank`): the frame that was
     /// NOT put on screen. Counted for the harnesses; the consecutive count lives in `content`.
@@ -1939,9 +1944,9 @@ impl Default for Perf {
             glide_probe_left: [GLIDE_PROBE_FRAMES; 2],
             chunk_motion_frames: [0, 0],
             dirty_shown: [0, 0],
-            blind_slow_frames: 0,
-            blind_slow_readings: 0,
-            blind_warned: false,
+            blind_slow_frames: [0, 0],
+            blind_slow_readings: [0, 0],
+            blind_warned: [false, false],
             adopt_converged: [0, 0],
             blank_walks_total: [0, 0],
             content: [Default::default(), Default::default()],
@@ -13741,8 +13746,7 @@ impl FractadyneApp {
     ///
     /// One row per frame for view 0 ALWAYS, and for view 1 in dual view — a view not built this
     /// frame still gets its row, with `plan_calls == 0`, so "record count == frame count" is a
-    /// check that can be made. The blind-tripwire counters are window-wide in the app, and are
-    /// recorded as such on both rows rather than attributed to either view.
+    /// check that can be made. The blind-tripwire counters are per view (finding U15).
     fn emit_frame_records(&mut self, ctx: &egui::Context, body_ms: f64) {
         let t0 = Instant::now();
         let (wheel, zoom, drag, primary_down, primary_pressed, pointer, space, keys) =
@@ -13805,9 +13809,9 @@ impl FractadyneApp {
             r.frames_since_reading = p.frame_idx.saturating_sub(p.ts_reading_frame[v]);
             r.frames_since_dispatch = p.frame_idx.saturating_sub(p.fe_dispatch_frame[v]);
             r.last_iterate_ms = p.last_iterate_ms[v];
-            r.blind_slow_frames = p.blind_slow_frames;
-            r.blind_slow_readings = p.blind_slow_readings;
-            r.blind_warned = p.blind_warned;
+            r.blind_slow_frames = p.blind_slow_frames[v];
+            r.blind_slow_readings = p.blind_slow_readings[v];
+            r.blind_warned = p.blind_warned[v];
             if let Some((lo, hi)) = p.norm_range[v] {
                 (r.norm_set, r.norm_lo, r.norm_hi) = (true, lo, hi);
             }
@@ -13871,7 +13875,8 @@ impl FractadyneApp {
         // A reading the controller judges SLOW is the one that can shrink the budget. Counting
         // them is how the tripwire below tells "the budget is right" from "the budget is blind".
         if ms > crate::tunables::cost().tdr_budget_ms {
-            self.perf.blind_slow_readings = self.perf.blind_slow_readings.saturating_add(1);
+            let vb = v.min(1);
+            self.perf.blind_slow_readings[vb] = self.perf.blind_slow_readings[vb].saturating_add(1);
         }
         let Some((next, ok)) = render::budget_step(cur, steps, ms, !self.render_cfg.auto_iter)
         else {
@@ -13959,12 +13964,14 @@ impl FractadyneApp {
             let v8 = if moved { verdict::MOVED } else { verdict::UNCHANGED };
             self.note_reading(v, src, ms, steps, cur, next, v8, ok, refused);
         }
-        if moved {
-            // The budget reacted, so whatever run of slow frames was accumulating has an
-            // explanation. Start the tripwire's count again from here.
-            self.perf.blind_slow_frames = 0;
-            self.perf.blind_slow_readings = 0;
-            self.perf.blind_warned = false;
+        if render::blind_reset_on(cur, next) {
+            // The budget SHRANK — the controller reacted to the slowness — so this view's run of
+            // slow frames has an explanation. Start its tripwire count again. ⚠Not on growth: see
+            // `render::blind_reset_on` (finding U15).
+            let vb = v.min(1);
+            self.perf.blind_slow_frames[vb] = 0;
+            self.perf.blind_slow_readings[vb] = 0;
+            self.perf.blind_warned[vb] = false;
         }
         self.perf.fe_budget[v] = next;
         moved
@@ -14949,40 +14956,52 @@ impl eframe::App for FractadyneApp {
         {
             let target = crate::tunables::cost().tdr_budget_ms;
             let busy = ctx.has_requested_repaint();
+            // PER VIEW (finding U15): the wall interval is the window's, so a slow frame counts
+            // for every live view; but each view's warning is judged against ITS OWN readings and
+            // reports ITS OWN state — one panel's healthy reading must not silence the other's.
+            let views = if self.dual { 2 } else { 1 };
             if busy && self.perf.last_dt_ms > target {
-                self.perf.blind_slow_frames = self.perf.blind_slow_frames.saturating_add(1);
+                for v in 0..views {
+                    self.perf.blind_slow_frames[v] = self.perf.blind_slow_frames[v].saturating_add(1);
+                }
             } else if self.perf.last_dt_ms < target * 0.5 {
                 // Comfortably quick again: the episode is over, and the next one gets its own
                 // warning. Hysteresis on purpose — resetting at the target would let a run
                 // oscillating either side of it re-arm the warning every few frames.
-                self.perf.blind_slow_frames = 0;
-                self.perf.blind_slow_readings = 0;
-                self.perf.blind_warned = false;
+                self.perf.blind_slow_frames = [0, 0];
+                self.perf.blind_slow_readings = [0, 0];
+                self.perf.blind_warned = [false, false];
             }
-            if render::budget_blind(
-                self.perf.blind_slow_frames,
-                self.perf.blind_slow_readings,
-                self.perf.blind_warned,
-            ) {
-                self.perf.blind_warned = true;
+            for v in 0..views {
+                if !render::budget_blind(
+                    self.perf.blind_slow_frames[v],
+                    self.perf.blind_slow_readings[v],
+                    self.perf.blind_warned[v],
+                ) {
+                    continue;
+                }
+                self.perf.blind_warned[v] = true;
+                let (rebase, bla_skip) = self.live_work_counters(v);
                 let msg = format!(
-                    "⚠FRAME BUDGET IS BLIND: {} frames in a row over {target:.0}ms by the wall \
-                     (worst {:.0}ms) and NOT ONE reading the budget controller judged slow — \
-                     budget still {:.3e}, last reading {:.1}ms for {:.3e} steps, mode={} \
-                     rebase={} bla_skip={}. The dispatch is sitting in a queue the timestamp \
-                     cannot see; the budget cannot shrink and `chunk_over` compares against it, \
-                     so the frame will not be chunked either.",
-                    self.perf.blind_slow_frames,
+                    "⚠FRAME BUDGET IS BLIND: view={v} {} frames in a row over {target:.0}ms by the \
+                     wall (worst {:.0}ms) and NOT ONE reading the budget controller judged slow for \
+                     this view — budget still {:.3e}, last reading {:.1}ms for {:.3e} steps, mode={} \
+                     rebase={rebase} bla_skip={bla_skip}. The dispatch is sitting in a queue the \
+                     timestamp cannot see; the budget cannot shrink and `chunk_over` compares \
+                     against it, so the frame will not be chunked either.",
+                    self.perf.blind_slow_frames[v],
                     self.perf.last_dt_ms,
-                    self.perf.fe_budget[0] as f64,
-                    self.perf.last_iterate_ms[0],
-                    self.perf.fe_steps_last[0] as f64,
-                    self.perf.last_mode,
-                    self.live_work_counters(0).0,
-                    self.live_work_counters(0).1,
+                    self.perf.fe_budget[v] as f64,
+                    self.perf.last_iterate_ms[v],
+                    self.perf.fe_steps_last[v] as f64,
+                    // This frame's plan — `?` if the view was not built this frame (0 is a mode).
+                    if self.perf.rec[v].plan_calls > 0 { self.perf.rec[v].mode.to_string() } else { "?".into() },
                 );
                 diag::log_line("render", &msg);
-                diag::budget_note(format!("BLIND: {} wall-slow frames, 0 slow readings", self.perf.blind_slow_frames));
+                diag::budget_note(format!(
+                    "BLIND v{v}: {} wall-slow frames, 0 slow readings",
+                    self.perf.blind_slow_frames[v]
+                ));
             }
         }
         // ⭐SLOW-FRAME ATTRIBUTION. A long frame interval has two very different causes and the
@@ -15004,12 +15023,26 @@ impl eframe::App for FractadyneApp {
         if body_ms > 200.0 || self.perf.last_dt_ms > 200.0 || instrumented {
             let outside = self.perf.last_dt_ms - self.perf.prev_body_ms;
             let rebase_bla = self.live_work_counters(0);
+            // In dual view, the second panel's state too — it used to be view 0's alone, and the
+            // 2026-09-18 lethal-band grind was dual view (finding U15).
+            let v1 = if self.dual {
+                let (rb, bs) = self.live_work_counters(1);
+                format!(
+                    " | view 1: steps={:.3e} budget={:.3e} rebase={rb} bla_skip={bs} ref_len={} partial={}",
+                    self.perf.fe_steps_last[1] as f64,
+                    self.perf.fe_budget[1] as f64,
+                    self.ref_cache[1].orbit_len,
+                    self.ref_cache[1].partial,
+                )
+            } else {
+                String::new()
+            };
             diag::log_line(
                 "render",
                 &format!(
                     "slow frame {}: dt={:.0}ms = body {:.0}ms + outside(acquire/present/idle) \
                      {:.0}ms repaint_requested={} — mode={} steps={:.3e} budget={:.3e} \
-                     rebase={} bla_skip={} ref_len={} partial={}",
+                     rebase={} bla_skip={} ref_len={} partial={}{v1}",
                     self.perf.frame_idx,
                     self.perf.last_dt_ms,
                     self.perf.prev_body_ms,

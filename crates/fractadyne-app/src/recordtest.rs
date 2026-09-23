@@ -23,6 +23,8 @@
 //!     disordered;
 //!   * **heartbeat** — the harness wedges its own UI thread for [`WEDGE`] and the watchdog thread
 //!     writes no STALL row of at least 10 s naming the last frame recorded;
+//!   * **blind tripwire** — [`BLIND_FRAMES`] frames made slow on the wall while the GPU work stays
+//!     short do not trip `⚠FRAME BUDGET IS BLIND` for view 0, in the log and in the record;
 //!   * **frames.jsonl** — no header for this session, a row with the wrong keys, fewer summary
 //!     rows than elapsed seconds, summaries counting frames that were never recorded, or no event
 //!     row at all (the wedge guarantees a slow frame and a stall);
@@ -55,6 +57,12 @@ const JUMP_TO: f64 = 13.5;
 /// (which checks every 2 s and warns past 10 s) to write its STALL row. The heartbeat is the one
 /// writer that is not the UI thread, and it is gated here by making the UI thread actually stop.
 const WEDGE: Duration = Duration::from_secs(13);
+/// The budget-blind shape in miniature, a quarter of the way through: this many consecutive frames
+/// made slow on the WALL (a sleep past the 400 ms target, with a repaint asked for) while the GPU
+/// work itself stays short, so no reading the controller judges slow can arrive. The tripwire must
+/// fire for view 0 — the live wiring the pure `budget_blind` tests cannot see (finding U15).
+const BLIND_FRAMES: u64 = 10;
+const BLIND_SLEEP: Duration = Duration::from_millis(450);
 
 pub(crate) struct RecordTest {
     frames: u64,
@@ -64,6 +72,7 @@ pub(crate) struct RecordTest {
     seen: u64,
     jumped_at: Option<u64>,
     wedged_at: Option<u64>,
+    blind_from: Option<u64>,
     child: Option<(Child, PathBuf)>,
     crashes_at_start: Vec<String>,
     started: Instant,
@@ -78,6 +87,7 @@ impl RecordTest {
             seen: 0,
             jumped_at: None,
             wedged_at: None,
+            blind_from: None,
             child: None,
             crashes_at_start: crate::diag::crash_report_names(),
             started: Instant::now(),
@@ -148,6 +158,12 @@ impl crate::FractadyneApp {
             }
         }
 
+        if t.abort_after.is_none() && t.seen >= t.frames / 4 {
+            let from = *t.blind_from.get_or_insert(this_frame);
+            if this_frame < from + BLIND_FRAMES {
+                std::thread::sleep(BLIND_SLEEP);
+            }
+        }
         if t.jumped_at.is_none() && t.seen >= t.frames / 2 {
             self.uitest_set_live(ctx, JUMP_TO);
             t.jumped_at = Some(this_frame);
@@ -305,6 +321,34 @@ impl crate::FractadyneApp {
                         s.stall_ms,
                         s.frame
                     ));
+                }
+            }
+        }
+
+        // ---- blind tripwire: the slow-wall phase must have tripped it, for view 0, in the log AND
+        // the record — the wiring (repaint discriminator, reset rule, per-view attribution) that
+        // the pure predicate's tests cannot see.
+        match t.blind_from {
+            None => fails.push("the blind phase never ran".into()),
+            Some(b) => {
+                let warned = v0.iter().find(|r| r.frame >= b && r.blind_warned);
+                let peak = v0.iter().filter(|r| r.frame >= b).map(|r| r.blind_slow_frames).max().unwrap_or(0);
+                let logged = crate::diag::logs_dir()
+                    .and_then(|d| std::fs::read_to_string(d.join("fractadyne.log")).ok())
+                    .is_some_and(|l| l.contains("⚠FRAME BUDGET IS BLIND: view=0"));
+                match (warned, logged) {
+                    (Some(w), true) => notes.push(format!(
+                        "blind tripwire: {BLIND_FRAMES} wall-slow frames from frame {b}; fired at frame {} \
+                         (count peaked at {peak}), logged for view 0",
+                        w.frame
+                    )),
+                    (w, l) => fails.push(format!(
+                        "{BLIND_FRAMES} wall-slow frames from frame {b} with fast GPU work: the tripwire \
+                         {} in the record and {} in the log (count peaked at {peak}, threshold {})",
+                        if w.is_some() { "fired" } else { "did NOT fire" },
+                        if l { "fired" } else { "did NOT fire" },
+                        crate::render::BUDGET_BLIND_FRAMES
+                    )),
                 }
             }
         }

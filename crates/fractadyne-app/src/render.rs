@@ -9516,6 +9516,18 @@ pub(crate) fn budget_blind(slow_wall_frames: u32, slow_readings: u32, warned: bo
     !warned && slow_readings == 0 && slow_wall_frames >= BUDGET_BLIND_FRAMES
 }
 
+/// Does a budget decision EXPLAIN a run of slow frames, so the tripwire may start counting again?
+///
+/// ⭐⭐**Only a DECREASE does.** The tripwire used to restart on any budget that MOVED — growth
+/// included (finding U15). A budget climbing on every short reading while the wall climbs toward a
+/// second is the runaway this instrument exists for, and resetting on each of those readings kept
+/// its count below [`BUDGET_BLIND_FRAMES`] forever: the one always-on warning for the class was
+/// least sensitive exactly where the budget was running away. A shrink is the controller reacting
+/// to the slowness; growth is the controller being told the opposite of what the wall says.
+pub(crate) fn blind_reset_on(cur: u64, next: u64) -> bool {
+    next < cur
+}
+
 #[cfg(test)]
 mod budget_blind_tests;
 
