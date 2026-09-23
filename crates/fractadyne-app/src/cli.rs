@@ -128,6 +128,12 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         print!("{}", crate::scripting::tour_schema_markdown());
         return true;
     }
+    // Print the frame record's encoding (JSON) and exit — used to (re)generate
+    // validation/frame-schema.json, which scripts/framelog.py reads.
+    if args.iter().any(|a| a == "--dump-frame-schema") {
+        print!("{}", crate::diag::frame_record::schema_json());
+        return true;
+    }
     // Check GitHub for a newer release, print the result, and exit (validates the in-app update
     // check headlessly; handy for automation). Optional track: `--check-updates beta` or
     // `--check-updates=beta`; with none named it follows the build's own track — beta for a
@@ -1214,6 +1220,9 @@ pub(crate) struct HarnessModes {
     pub(crate) uitest_central_w: Option<f32>,
     pub(crate) uitest_panel_w: Option<f32>,
     pub(crate) soak: Option<crate::soak::Soak>,
+    /// `--recordtest [FRAMES]`: the frame record's own gate — does it record every frame, fill
+    /// every required field, and survive an abort? See `mod recordtest`.
+    pub(crate) recordtest: Option<crate::recordtest::RecordTest>,
     /// `--shot`: regenerate the published screenshot from a saved location, then exit.
     pub(crate) shot: Option<crate::shot::Shot>,
     /// CLI `--juliadive [DIR]`: dev harness — dual view, continuous in-app Julia zoom to ~1400×
@@ -1285,6 +1294,10 @@ impl crate::FractadyneApp {
         // --soak: sit at a deep view and assert the app keeps producing frames.
         if self.harness.soak.is_some() && gpu.is_some() {
             self.soak_frame(ctx);
+        }
+        // --recordtest: drive live frames, then audit the frame record against its own count.
+        if self.harness.recordtest.is_some() && gpu.is_some() {
+            self.recordtest_frame(ctx);
         }
         // --dualsettle: dev harness for the dual-view Julia SETTLE path (same in-loop pattern).
         if self.harness.dualsettle.is_some() && gpu.is_some() {

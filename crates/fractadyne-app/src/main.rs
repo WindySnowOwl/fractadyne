@@ -96,6 +96,7 @@ mod tunables;
 mod ui;
 mod shot;
 mod soak;
+mod recordtest;
 mod uitest;
 
 // ⭐The tunables live in ONE module now (a user requirement — see `tunables.rs`), and are
@@ -651,6 +652,7 @@ pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
         "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
         "--zoomtest",
         "--chunk-sweep", "--deviceloss-repro", "--bench-bignum", "--shot", "--soak", "--pickcheck",
+        "--recordtest",
     ];
     args.iter().any(|a| TASK_FLAGS.contains(&a.as_ref()))
 }
@@ -1575,6 +1577,11 @@ struct Perf {
     /// deliberately small band per dispatch and accumulates over many of them, so its step says
     /// nothing about whether a single moving frame can reach an escape on its own.
     motion_pass_steps_last: [u64; 2],
+    /// THIS FRAME'S RECORD per view, filled IN PLACE by the code that decides each value — the
+    /// plan by `bp_finish_params`, the reading by `apply_iterate_measurement`, the counters by the
+    /// content drain — then completed and emitted once at the end of `update` and reset. See
+    /// `diag::frame_record` for why nothing in it is recomputed at the emit.
+    rec: [diag::frame_record::FrameRecord; 2],
 }
 
 /// The rate a wall-clock cut may take the motion estimate to from `cur`, given the interval's
@@ -2004,6 +2011,7 @@ impl Default for Perf {
             visible_res: [1.0, 1.0],
             motion_pass_steps_last: [0, 0],
             motion_res_measured: false,
+            rec: [Default::default(), Default::default()],
         }
     }
 }
@@ -5914,6 +5922,19 @@ impl FractadyneApp {
         } else {
             None
         };
+        // --recordtest [FRAMES]: the frame record's own gate. An unreadable FRAMES is fatal, never
+        // a silent default (the `.parse().ok()` lesson).
+        let recordtest = if args.iter().any(|a| a == "--recordtest") {
+            let frames = val("--recordtest")
+                .filter(|s| !s.starts_with('-'))
+                .map(|s| arg_parse::<u64>("--recordtest", &s, "frames"))
+                .unwrap_or(recordtest::DEFAULT_FRAMES);
+            let abort_after = val("--recordtest-abort-after")
+                .map(|s| arg_parse::<u64>("--recordtest-abort-after", &s, "frames"));
+            Some(recordtest::RecordTest::new(frames, abort_after))
+        } else {
+            None
+        };
         let autodive = if args.iter().any(|a| a == "--autodive") {
             let target = val("--autodive")
                 .and_then(|v| v.parse::<f64>().ok())
@@ -5998,6 +6019,7 @@ impl FractadyneApp {
         // wait for a clean state is the hang this predicate exists to prevent. The question to ask
         // of a new flag is "did the user ask for a specific outcome?", not "is it headless?".
         let launched_for_a_task = livetest.is_some()
+            || recordtest.is_some()
             || shot.is_some()
             || divetest.is_some()
             || uitest.is_some()
@@ -6058,6 +6080,7 @@ impl FractadyneApp {
                 else if autodive.is_some() { "autodive" }
                 else if divetest.is_some() { "divetest" }
                 else if chunk_sweep.is_some() { "chunk-sweep" }
+                else if recordtest.is_some() { "recordtest" }
                 else if play_tour.is_some() { "play-tour" }
                 else if reusetest { "reusetest" }
                 else if resizetest { "resizetest" }
@@ -6309,6 +6332,7 @@ impl FractadyneApp {
                 uitest_central_w: None,
                 uitest_panel_w: None,
                 soak,
+                recordtest,
                 juliadive,
                 dualsettle,
                 chunk_sweep,
@@ -13637,6 +13661,130 @@ impl FractadyneApp {
     /// uses a different tag, and the difference is load-bearing for `record_mode_rate` — see there.
     const SRC_GPU_ITERATE: &'static str = "gpu_iterate";
 
+    /// Put a judged reading into this frame's record for view `v` — the typed twin of the
+    /// `budget_note` line written beside it (which stays one release as the adapter, design
+    /// §5.10 M0). Several readings in one frame keep the last and count all of them.
+    #[allow(clippy::too_many_arguments)]
+    fn note_reading(
+        &mut self,
+        v: usize,
+        src: &str,
+        ms: f64,
+        steps: u64,
+        before: u64,
+        after: u64,
+        verdict: u8,
+        ok: bool,
+        refused: u8,
+    ) {
+        use diag::frame_record::read_src;
+        let lethal = ms >= crate::tunables::cost().tdr_lethal_ms;
+        let r = &mut self.perf.rec[v.min(1)];
+        r.read_n = r.read_n.saturating_add(1);
+        r.read_src = if src == Self::SRC_GPU_ITERATE { read_src::GPU } else { read_src::WALL };
+        r.read_ms = ms;
+        r.read_steps = steps;
+        r.read_budget_before = before;
+        r.read_budget_after = after;
+        r.read_verdict = verdict;
+        r.read_ok = ok;
+        r.read_lethal = lethal;
+        r.refusal = refused;
+    }
+
+    /// THE FRAME RECORD'S EMIT (`diag::frame_record`, design W1): complete each view's record with
+    /// the end-of-frame state, hand it to the sinks, and reset it for the next frame.
+    ///
+    /// One row per frame for view 0 ALWAYS, and for view 1 in dual view — a view not built this
+    /// frame still gets its row, with `plan_calls == 0`, so "record count == frame count" is a
+    /// check that can be made. The blind-tripwire counters are window-wide in the app, and are
+    /// recorded as such on both rows rather than attributed to either view.
+    fn emit_frame_records(&mut self, ctx: &egui::Context, body_ms: f64) {
+        let (wheel, zoom, drag, primary_down, primary_pressed, pointer, space, keys) =
+            ctx.input(|i| {
+                let down = i.pointer.primary_down();
+                (
+                    i.smooth_scroll_delta.y,
+                    i.zoom_delta(),
+                    if down { i.pointer.delta() } else { egui::Vec2::ZERO },
+                    down,
+                    i.pointer.primary_pressed(),
+                    i.pointer.hover_pos(),
+                    i.key_down(egui::Key::Space),
+                    i.events
+                        .iter()
+                        .filter(|e| matches!(e, egui::Event::Key { pressed: true, .. }))
+                        .count(),
+                )
+            });
+        let repaint = ctx.has_requested_repaint();
+        let t_ms = (diag::elapsed_s() * 1000.0) as u64;
+        for v in 0..if self.dual { 2 } else { 1 } {
+            let p = &self.perf;
+            let mut r = p.rec[v];
+            r.frame = p.frame_idx;
+            r.t_ms = t_ms;
+            r.view = v as u8;
+            r.dual = self.dual;
+            r.max_iter = self.render_cfg.max_iter;
+            r.auto_iter = self.render_cfg.auto_iter;
+            r.boost = p.iter_boost[v];
+            r.capped_frac = p.capped_frac[v].unwrap_or(-1.0);
+            r.iter_exhausted = p.iter_exhausted[v];
+            r.budget_maxed = p.budget_maxed[v];
+            r.building = self.recompute_rx[v].is_some();
+            r.fe_budget = p.fe_budget[v];
+            r.budget_ok = p.fe_budget_ok[v];
+            r.bootstrap = p.bootstrap_steps(v);
+            r.mode_rate = p.worst_rate_steps_per_ms(v).unwrap_or(0.0);
+            r.motion_rate = p.motion_rate_now(v);
+            r.wall_fallback = p.wall_fallback;
+            r.full_inflight = p.full_inflight[v];
+            r.pin_inflight = p.pin_inflight[v];
+            r.present_throttle = p.present_throttle;
+            r.visible_res = p.visible_res[v];
+            r.motion_res = p.motion_res;
+            r.chunk_cursor = p.chunk_cursor[v];
+            r.chunk_governed = p.chunk_governed[v];
+            r.tile_pending = p.tile_pending[v];
+            r.pin_active = p.pin[v].is_some();
+            r.hold_verified = p.content[v].hold_verified;
+            r.blank_walks = p.content[v].blank_walks;
+            r.accum_count = p.accum_count[v];
+            r.last_dt_ms = p.last_dt_ms;
+            r.body_ms = body_ms;
+            r.cap_sleep_ms = p.cap_sleep_ms;
+            r.repaint_requested = repaint;
+            r.ts_supported = p.ts_supported;
+            r.frames_since_reading = p.frame_idx.saturating_sub(p.ts_reading_frame[v]);
+            r.frames_since_dispatch = p.frame_idx.saturating_sub(p.fe_dispatch_frame[v]);
+            r.last_iterate_ms = p.last_iterate_ms[v];
+            r.blind_slow_frames = p.blind_slow_frames;
+            r.blind_slow_readings = p.blind_slow_readings;
+            r.blind_warned = p.blind_warned;
+            if let Some((lo, hi)) = p.norm_range[v] {
+                (r.norm_set, r.norm_lo, r.norm_hi) = (true, lo, hi);
+            }
+            if let Some((lo, hi)) = p.norm_shown[v] {
+                (r.norm_shown_set, r.norm_shown_lo, r.norm_shown_hi) = (true, lo, hi);
+            }
+            r.norm_locked = p.norm_locked[v];
+            r.in_wheel = wheel;
+            r.in_zoom = zoom;
+            r.in_drag_dx = drag.x;
+            r.in_drag_dy = drag.y;
+            r.in_primary_down = primary_down;
+            r.in_primary_pressed = primary_pressed;
+            (r.in_pointer_x, r.in_pointer_y) = pointer.map_or((-1.0, -1.0), |q| (q.x, q.y));
+            r.in_space = space;
+            r.in_keys = keys.min(u8::MAX as usize) as u8;
+            r.autopilot = self.autopilot.active;
+            r.zoom_oct_s = p.zoom_oct_s;
+            diag::frame_record::record(r);
+        }
+        self.perf.rec = Default::default();
+    }
+
     /// Fold one measured iterate cost into a view's frame budget. Shared by BOTH measurement
     /// sources — the GPU timestamp readback and the wall-clock fallback — because the arithmetic
     /// must not differ between them: a fallback that walks the budget by different rules is a
@@ -13684,6 +13832,7 @@ impl FractadyneApp {
                  and not slow)",
                 steps as f64
             ));
+            self.note_reading(v, src, ms, steps, cur, cur, diag::frame_record::verdict::DISCARDED, false, 0);
             if diag::trace_on("gpu") {
                 diag::trace(
                     "gpu",
@@ -13698,6 +13847,9 @@ impl FractadyneApp {
         // Refuse to bank growth measured while this view's reference is being REBUILT — the frame
         // was priced against an orbit that is about to be replaced. See `budget_after_build_gate`.
         let building = self.recompute_rx[v].is_some();
+        // What the reading asked for BEFORE the gate — the only way to record a refusal as a
+        // refusal rather than as a reading that happened to ask for nothing.
+        let asked = next;
         let (next, ok) = render::budget_after_build_gate(cur, next, ok, building);
         if building && next == cur {
             diag::trace(
@@ -13750,6 +13902,15 @@ impl FractadyneApp {
             next as f64,
             if moved { "" } else { " (unchanged)" },
         ));
+        {
+            use diag::frame_record::{refusal, verdict};
+            // The REASON growth was refused, recorded rather than left to be inferred from an
+            // "(unchanged)" line — the refusal itself was trace-gated, i.e. absent in the field.
+            // Exactly `budget_after_build_gate`'s refusal condition.
+            let refused = if building && asked > cur { refusal::BUILDING } else { 0 };
+            let v8 = if moved { verdict::MOVED } else { verdict::UNCHANGED };
+            self.note_reading(v, src, ms, steps, cur, next, v8, ok, refused);
+        }
         if moved {
             // The budget reacted, so whatever run of slow frames was accumulating has an
             // explanation. Start the tripwire's count again from here.
@@ -14133,6 +14294,35 @@ impl eframe::App for FractadyneApp {
                         self.attach_bytes_per_sample.0,
                         self.attach_bytes_per_sample.1
                     ),
+                );
+                // The frame record's session header: WHICH code produced the records that
+                // follow. The adapter line above is the one fact that decides which paths run
+                // (no 48/64 attach bytes = no chunked path at all), and a replay scored against
+                // the wrong path is scored against nothing.
+                let sz = ctx.screen_rect().size();
+                diag::frame_record::set_header(
+                    serde_json::json!({
+                        "session": format!("{:016x}", diag::frame_record::session_id()),
+                        "version": crate::sysinfo::version_string(),
+                        "adapter": self.gpu_name,
+                        "backend": self.gpu_backend,
+                        "timestamp_query": self.perf.ts_supported,
+                        "attach_bytes_granted": self.attach_bytes_per_sample.0,
+                        "attach_bytes_available": self.attach_bytes_per_sample.1,
+                        "chunk_ok": self.perf.chunk_ok,
+                        "chunk_fe_ok": self.perf.chunk_fe_ok,
+                        "tunables": crate::tunables::status_line(),
+                        "bignum": fractadyne_core::built_in_backends(),
+                        "window": [sz.x, sz.y],
+                        "max_iter": self.render_cfg.max_iter,
+                        "auto_iter": self.render_cfg.auto_iter,
+                        "zoom_rate": self.render_cfg.zoom_rate,
+                        "work_budget_scale": self.render_cfg.work_budget_scale,
+                        "min_motion_res": self.render_cfg.min_motion_res,
+                        "prefer_detail": self.render_cfg.prefer_detail,
+                        "dual": self.dual,
+                    })
+                    .to_string(),
                 );
             }
         }
@@ -14796,6 +14986,7 @@ impl eframe::App for FractadyneApp {
                 ),
             );
         }
+        self.emit_frame_records(ctx, body_ms);
         self.perf.prev_body_ms = body_ms;
 
         // Navigation history: record a location each time the single view settles after

@@ -4293,6 +4293,21 @@ impl FractadyneApp {
             // view's `ContentTrack`, which the present gate and the pin verdict consult. Its
             // trace is what says whether the frame that reached the screen had a picture.
             if let Some(r) = self.perf.content_sink[vb].lock().ok().and_then(|mut g| g.take()) {
+                // Into the frame record, ONLY here where a reading arrives, and stamped with the
+                // render it describes (`r.tag`). The work counters come from the same readback of
+                // the same armed frame (one `CounterRead::pump`, which runs in `prepare`, i.e.
+                // never while `update` is running), so they are that render's too.
+                {
+                    let (rebase, bla_skip) = self.live_work_counters(vb);
+                    let rec = &mut self.perf.rec[vb];
+                    rec.ctr_new = true;
+                    rec.ctr_tag = r.tag;
+                    rec.ctr_cursor = r.cursor;
+                    rec.ctr_escaped = r.escaped;
+                    rec.ctr_px = r.px;
+                    rec.ctr_rebase = rebase;
+                    rec.ctr_bla_skip = bla_skip;
+                }
                 let ct = &mut self.perf.content[vb];
                 ct.feed(r);
                 if crate::diag::trace_on("gpu") {
@@ -5530,23 +5545,25 @@ impl FractadyneApp {
         // the other silent multiplier: the e100 crash was a pass running an empty tree at 0.04
         // Gsteps/s beside a 174 Gsteps/s pass in the SAME frame.
         let sa_skip_eff = usable_sa_skip(sa.skip, shader_iter);
+        // A chunked frame's real dispatch is its RANGE, not the full-frame nominal — the
+        // same honesty rule the fe_steps stamp follows. The 985x735 "steps=1.810e11 vs
+        // budget=6.000e10" manifest in crash-1787275348-0 read as a frame that ignored its
+        // budget; it was a budget-sized chunk pass wearing the whole frame's price tag.
+        // The first pass runs start_iter=0 through the SA skip, but the shader seeds at
+        // `sa_skip_eff` and iterates only past it — so the real range is [max(s, sa_skip_eff),
+        // e). Pricing the free [0, sa_skip) prefix would restore the very over-count this stamp
+        // exists to avoid, in a second place (a frame that did 256 iters reading as 256k).
+        // Computed once, here, for both the LIVE manifest and the frame record, so the two
+        // cannot state different costs for one dispatch.
+        let steps = match chunk_range {
+            Some([s, e]) => spx
+                .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul(u64::from(e.saturating_sub(s.max(sa_skip_eff))).max(1)),
+            None => spx
+                .saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul(shader_iter.max(1) as u64),
+        };
         if !will_reproject {
-            // A chunked frame's real dispatch is its RANGE, not the full-frame nominal — the
-            // same honesty rule the fe_steps stamp follows. The 985x735 "steps=1.810e11 vs
-            // budget=6.000e10" manifest in crash-1787275348-0 read as a frame that ignored its
-            // budget; it was a budget-sized chunk pass wearing the whole frame's price tag.
-            // The first pass runs start_iter=0 through the SA skip, but the shader seeds at
-            // `sa_skip_eff` and iterates only past it — so the real range is [max(s, sa_skip_eff),
-            // e). Pricing the free [0, sa_skip) prefix would restore the very over-count this stamp
-            // exists to avoid, in a second place (a frame that did 256 iters reading as 256k).
-            let steps = match chunk_range {
-                Some([s, e]) => spx
-                    .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                    .saturating_mul(u64::from(e.saturating_sub(s.max(sa_skip_eff))).max(1)),
-                None => spx
-                    .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                    .saturating_mul(shader_iter.max(1) as u64),
-            };
             let chunk_note = match chunk_range {
                 Some([s, e]) => format!(" chunk=[{s},{e})"),
                 None => String::new(),
@@ -5879,6 +5896,55 @@ impl FractadyneApp {
                     self.perf.hold_active[vs],
                 ),
             );
+        }
+        // THE FRAME RECORD'S PLAN HALF (diag::frame_record), written from the values this
+        // function just handed the GPU — never re-derived later. A second call in the same frame
+        // (tiled settles can) overwrites the first; `plan_calls` says how many there were.
+        {
+            use crate::diag::frame_record::present;
+            let rc = &self.ref_cache[vi];
+            let r = &mut self.perf.rec[vsub];
+            r.plan_calls = r.plan_calls.saturating_add(1);
+            r.mode = mode.to_u32().min(u8::MAX as u32) as u8;
+            r.res_w = resolution[0];
+            r.res_h = resolution[1];
+            r.ss = ss.min(u8::MAX as u32) as u8;
+            r.iter = shader_iter;
+            r.gpu_iter = gpu_iter;
+            r.eff_iter = eff_iter;
+            r.has_ref = rc.ref_pt.is_some();
+            r.orbit_id = rc.orbit_id;
+            r.ref_len = rc.orbit_len;
+            r.ref_partial = rc.partial;
+            r.ref_prec = rc.orbit_prec.min(u32::MAX as usize) as u32;
+            r.sa_skip = sa_skip_eff;
+            r.sa_skip_raw = sa.skip;
+            r.bla_on = bla_on != 0;
+            r.tdr_steps = tdr_steps;
+            r.steps = steps;
+            r.nominal_steps = nominal_steps;
+            r.chunked = chunk_range.is_some();
+            [r.chunk_lo, r.chunk_hi] = chunk_range.unwrap_or([0, 0]);
+            r.tiled = tile.is_some();
+            [r.tile_w, r.tile_h] = tile.map_or([0, 0], |t| [t[2], t[3]]);
+            // After the freeze verdict's unstamp above, so a frozen frame reads as no dispatch.
+            r.dispatched = self.perf.fe_dispatch_frame[vs] == self.perf.frame_idx;
+            r.key_changed = key_changed;
+            r.interacting = interacting;
+            r.pin_frame = pin_frame;
+            r.hold_copy = hold_copy;
+            r.display_hold = display_hold;
+            r.present = if display_hold {
+                present::HOLD
+            } else if params.reproject != 0 {
+                present::REPROJECT
+            } else {
+                present::LIVE
+            };
+            r.content_tag = content_tag;
+            r.live_complete = self.perf.content[vsub].live_complete;
+            r.norm_complete = self.perf.norm_complete_submit[vsub];
+            r.accum_present = self.perf.accum_cmd[vsub].present;
         }
         params
     }
