@@ -58,7 +58,8 @@ $LocalLog = Join-Path $Home_ "agent.log"
 $cfgPath = Join-Path $Home_ "config.json"
 $cfg = $null
 if (Test-Path $cfgPath) { $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json }
-if (-not $Share) { $Share = if ($cfg -and $cfg.share) { [string]$cfg.share } else { "\\vger\share\Fractadyne" } }
+if (-not $Share) { $Share = if ($cfg -and $cfg.share) { [string]$cfg.share } else { [string]$env:FRACTADYNE_SHARE } }
+if (-not $Share) { Write-Host "no share configured: run field-agent-setup.ps1, or pass -Share"; exit 1 }
 if ($IdleMinutes -lt 0) { $IdleMinutes = if ($cfg -and ($cfg.PSObject.Properties.Name -contains "idle_minutes")) { [int]$cfg.idle_minutes } else { 5 } }
 $Field = Join-Path $Share "field"
 $ReqDir = Join-Path $Field "requests"

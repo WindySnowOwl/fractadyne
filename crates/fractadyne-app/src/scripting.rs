@@ -4039,7 +4039,7 @@ pub(crate) const STD_ZOOM_LOG10: f64 = 32.0;
 /// at the boundary.
 pub(crate) const STD_ZOOM_LOG10_ULTRA: f64 = 48.0;
 
-/// The dive centre for every preset: corpus location `35-vger-dive-1p47e77`, a field
+/// The dive centre for every preset: corpus location `35-field-dive-1p47e77`, a field
 /// location from a real dive rather than a synthetic point. 116 digits against a 1e48
 /// endpoint - about 29 decades of margin, so the deepest frames land on structure instead
 /// of precision noise. This REPLACED the 33-digit Seahorse Valley point the shallow presets
@@ -4081,7 +4081,7 @@ impl BenchDepth {
     /// supports, so a future deeper preset must be able to bring its own.
     pub(crate) fn center(self) -> (&'static str, &'static str, &'static str) {
         match self {
-            BenchDepth::Standard | BenchDepth::Ultra => (STD_CX, STD_CY, "VGER field dive"),
+            BenchDepth::Standard | BenchDepth::Ultra => (STD_CX, STD_CY, "field dive"),
         }
     }
 

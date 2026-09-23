@@ -41,7 +41,7 @@ Report privately instead, so a fix can ship before details are public:
 1. **Preferred:** use GitHub's private vulnerability reporting —
    the **"Report a vulnerability"** button under the repository's
    **Security** tab (Security → Advisories).
-2. **Alternatively:** email **pub@rithea.com** with `[fractadyne security]` in
+2. **Alternatively:** email **feedback@fractadyne.org** with `[fractadyne security]` in
    the subject.
 
 Please include:

@@ -558,7 +558,7 @@ impl crate::FractadyneApp {
         //
         // ⚠**Where the logs are is part of the measurement.** `frames.bin` is written on the UI
         // thread every frame, so on a network share each write pays the share. The RX 6800 XT's
-        // beta.113 battery ran with its logs on `\\vger\share` and failed here at 4.2% — a round
+        // beta.113 battery ran with its logs on a network share and failed here at 4.2% — a round
         // trip per `frames.jsonl` flush (that file now has its own thread). A cost within the limit
         // on a share is a pass (a local disk is cheaper); an excess there cannot say what a user's
         // local disk costs, so it is VACUOUS, not a failure.

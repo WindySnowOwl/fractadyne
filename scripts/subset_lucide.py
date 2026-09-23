@@ -7,7 +7,7 @@ also where the name -> codepoint mapping is checked against Lucide's own manifes
 import io, json, os, subprocess, sys
 
 TMP = os.path.join(os.environ["TEMP"], "lucide")
-REPO = r"c:\Users\rhong\Documents\Claude\Code\FractEx"
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # this script is in <repo>/scripts
 ASSETS = os.path.join(REPO, r"crates\fractadyne-app\assets\fonts")
 
 # (RUST_CONST, lucide-name, what it replaces / where it is used)

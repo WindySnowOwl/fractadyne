@@ -80,8 +80,9 @@ if (-not $exe) { throw "fractadyne.exe not found next to this script or in ..\ta
 
 # --- bundle location --------------------------------------------------------------------------
 if (-not $Out) {
-    $share = "\\vger\share\Fractadyne"
-    $Out = if (Test-Path $share) { $share } else { $root }
+    # The team share, when FRACTADYNE_SHARE names one this machine can reach; else beside this script.
+    $share = $env:FRACTADYNE_SHARE
+    $Out = if ($share -and (Test-Path -LiteralPath $share)) { $share } else { $root }
 }
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $name = "validate-$Label-$stamp"
@@ -213,7 +214,7 @@ if ($tag) {
     # [IO.Path]::Combine, not Join-Path: Join-Path fails on a drive this machine does not have
     # ("Cannot find drive. A drive with the name 'D' does not exist." - the RX 6800 XT box, beta.113),
     # and every candidate is only ever tested with Test-Path below.
-    foreach ($s in @($Out, "\\vger\share\Fractadyne", "D:\share\Fractadyne")) {
+    foreach ($s in @($Out, $env:FRACTADYNE_SHARE, "D:\share\Fractadyne") | Where-Object { $_ }) {
         $candidates += [IO.Path]::Combine($s, "builds", $tag, "BUILD-ID.txt")
     }
 }

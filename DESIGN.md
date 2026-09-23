@@ -1,7 +1,7 @@
 # Fractadyne — Design Document (original intent)
 
 **Status:** Original design intent (2026-06-25) — **historical; not maintained as the code evolved.**
-**Author:** rhong (with Claude Code)
+**Author:** the Fractadyne maintainer (with Claude Code)
 **Name:** *Fractadyne* — *fract* (fractal) + *-dyne* (Gk *dýnamis*, "power/force"); i.e. a high-performance fractal engine. The on-disk working directory is still `FractEx/` from the project's original title.
 
 > ## ⚠️ This is the *original design intent*, not the current architecture

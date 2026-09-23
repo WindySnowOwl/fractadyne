@@ -12,8 +12,8 @@ fn the_flag_wins_over_the_variable() {
 
 #[test]
 fn the_variable_applies_when_the_flag_is_absent() {
-    let (d, src) = log_dir_override(&s(&["exe", "--selftest"]), Some("//vger/share/logs"));
-    assert_eq!(d, Some(PathBuf::from("//vger/share/logs")));
+    let (d, src) = log_dir_override(&s(&["exe", "--selftest"]), Some("//fileserver/share/logs"));
+    assert_eq!(d, Some(PathBuf::from("//fileserver/share/logs")));
     assert_eq!(src, "FRACTADYNE_LOG_DIR");
     assert_eq!(log_dir_override(&s(&["exe"]), Some("")).0, None); // empty var = unset
 }

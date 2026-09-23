@@ -12,7 +12,7 @@
   password per transfer.
 
 .PARAMETER From
-  The Linux box as user@host (e.g. rhong@fractrig or rhong@192.168.1.50). Required.
+  The Linux box as user@host (e.g. user@linuxbox or user@192.0.2.10). Required.
 
 .PARAMETER Latest
   Pull only the newest run folder (asks the rig which one). Default pulls every run present.
@@ -30,10 +30,10 @@
   Path to a private key file, passed to scp/ssh as -i.
 
 .EXAMPLE
-  .\scripts\pull-linux-reports.ps1 -From rhong@fractrig -Latest
+  .\scripts\pull-linux-reports.ps1 -From user@linuxbox -Latest
 
 .EXAMPLE
-  .\scripts\pull-linux-reports.ps1 -From rhong@192.168.1.50 -Port 2222
+  .\scripts\pull-linux-reports.ps1 -From user@192.0.2.10 -Port 2222
 #>
 [CmdletBinding()]
 param(

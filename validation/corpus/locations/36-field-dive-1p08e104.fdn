@@ -1,6 +1,6 @@
 app=Fractadyne
 format_version=1
-notes=Fractadyne reference corpus 36: VGER field dive 1.08e104x (matches Fraktaler-3; see catalog.html)
+notes=Fractadyne reference corpus 36: field dive 1.08e104x (matches Fraktaler-3; see catalog.html)
 fractal=Mandelbrot
 julia=0
 julia_c_re=-7.43643000000000054e-1

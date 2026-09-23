@@ -41,11 +41,11 @@ Date: 2026-09-01 - machine: RTX 3080 / 3950X, idle - geometry 1280x720, Fractady
 | 31 | nucleus-p3-rabbit | 1e1.3 | 3000 | 1.1 | 1.1 | 3.0 | 1.02 | 2.72 | 2.67 | identical |
 | 32 | nucleus-p4 | 1e1.8 | 4000 | 1.1 | 1.1 | 3.8 | 1.00 | 3.48 | 3.47 | identical |
 | 33 | nucleus-p5 | 1e3.0 | 5000 | 1.1 | 1.1 | 4.4 | 1.02 | 4.03 | 3.96 | identical |
-| 34 | vger-dive-2p06e28 | 1e28.0 | 300000 | 1.7 | 1.9 | 6.4 | 1.09 | 3.74 | 3.42 | identical |
-| 35 | vger-dive-1p47e77 | 1e77.2 | 300000 | 2.2 | 2.0 | 6.0 | 0.90 | 2.69 | 2.99 | identical |
-| 36 | vger-dive-1p08e104 | 1e104.0 | 300000 | 3.0 | 2.7 | 6.7 | 0.90 | 2.22 | 2.45 | identical |
-| 37 | vger-dive-3p11e114 | 1e114.5 | 300000 | 3.4 | 3.0 | 6.3 | 0.87 | 1.83 | 2.09 | identical |
-| 38 | vger-dive-2p87e140 | 1e140.5 | 300000 | 2.5 | 2.1 | 5.9 | 0.84 | 2.36 | 2.80 | identical |
+| 34 | field-dive-2p06e28 | 1e28.0 | 300000 | 1.7 | 1.9 | 6.4 | 1.09 | 3.74 | 3.42 | identical |
+| 35 | field-dive-1p47e77 | 1e77.2 | 300000 | 2.2 | 2.0 | 6.0 | 0.90 | 2.69 | 2.99 | identical |
+| 36 | field-dive-1p08e104 | 1e104.0 | 300000 | 3.0 | 2.7 | 6.7 | 0.90 | 2.22 | 2.45 | identical |
+| 37 | field-dive-3p11e114 | 1e114.5 | 300000 | 3.4 | 3.0 | 6.3 | 0.87 | 1.83 | 2.09 | identical |
+| 38 | field-dive-2p87e140 | 1e140.5 | 300000 | 2.5 | 2.1 | 5.9 | 0.84 | 2.36 | 2.80 | identical |
 
 - **direct (df32 in-shader)** (n=8): mpfr/astro 1.01, f3/astro 2.21, f3/mpfr 2.19
 - **perturbation, df32 delta (mode 0) + SA** (n=9): mpfr/astro 1.03, f3/astro 2.49, f3/mpfr 2.41

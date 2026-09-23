@@ -612,7 +612,7 @@ def main():
              "fractalshark": "FractalShark", "imagina": "Imagina"}
 
     # Folders written before the manifest existed still carry host and timestamp in their NAME
-    # ("VGER-20260921-123041"). Recovering them there beats printing "?" at the reader.
+    # ("HOST-20260921-123041"). Recovering them there beats printing "?" at the reader.
     base = os.path.basename(d.rstrip("\\/"))
     host, stamp = meta.get("host"), meta.get("stamp")
     if not host or not stamp:

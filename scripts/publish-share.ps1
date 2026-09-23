@@ -50,8 +50,8 @@ if (-not $Tag) {
     $Tag = "v" + $line.Matches[0].Groups[1].Value
 }
 if (-not $Share) {
-    foreach ($c in @("D:\share\Fractadyne", "\\vger\share\Fractadyne")) {
-        if (Test-Path $c) { $Share = $c; break }
+    foreach ($c in @("D:\share\Fractadyne", $env:FRACTADYNE_SHARE) | Where-Object { $_ }) {
+        if (Test-Path -LiteralPath $c) { $Share = $c; break }
     }
 }
 if (-not $Share) { throw "no share found; pass -Share" }

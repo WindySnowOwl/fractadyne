@@ -24,7 +24,7 @@ against Fraktaler-3), spanning 1e6× to 4.6e1105× magnification, plus a **zoom 
 | 21-m43-spar-1e27.7 | 5.1e27 | 30,000 | Misiurewicz spar |
 | 23-nucleus-p145-1e27.7 | 5.1e27 | 30,000 | period-145 nucleus (setup-dominated) |
 | 24-nucleus-p148-1e28.2 | 1.8e28 | 30,000 | period-148 nucleus |
-| 35-vger-dive-1p47e77 | 1.5e77 | 300,000 | dense field, normalized |
+| 35-field-dive-1p47e77 | 1.5e77 | 300,000 | dense field, normalized |
 
 Every scene ships in three formats with the **same** center, magnification and iteration cap:
 `.kfr` (Kalles Fraktaler text format — Imagina and FractalShark import it), `.f3.toml`
