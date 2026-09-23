@@ -314,3 +314,82 @@ fn the_companion_jsonl_is_a_header_then_one_parseable_record_per_line() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn writer_dir(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("fd-jsonl-writer-{tag}-{}", session_id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// `frames.jsonl` is written by its own thread. Through the real loop: the previous session's file
+/// is rotated, not overwritten; the new one opens with this session's header; an event row is the
+/// whole record and a summary row is written verbatim, in the order sent; and a flush is answered
+/// only once everything sent before it is in the file — what `--recordtest` and a clean exit rely on.
+#[test]
+fn the_jsonl_writer_thread_rotates_opens_with_the_header_and_answers_a_flush_after_the_rows() {
+    let dir = writer_dir("loop");
+    let path = dir.join("frames.jsonl");
+    std::fs::write(&path, "previous session\n").unwrap();
+    let (tx, rx) = std::sync::mpsc::sync_channel(JSONL_QUEUE);
+    let w = JsonlWriter::new(path.clone());
+    let t = std::thread::spawn(move || run_jsonl_writer(w, rx));
+
+    tx.send(JsonlMsg::Event(Box::new(every_field_distinct()))).unwrap();
+    tx.send(JsonlMsg::Summary("{\"kind\":\"summary\",\"frames\":7}".into())).unwrap();
+    let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
+    tx.send(JsonlMsg::Flush(ack_tx)).unwrap();
+    ack_rx.recv_timeout(Duration::from_secs(5)).expect("the writer answers a flush");
+
+    // Read BEFORE the writer exits: the flush, not the thread's end, is what put the rows there.
+    let text = std::fs::read_to_string(&path).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 3, "header, event, summary:\n{text}");
+    let h: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(h["kind"], "header");
+    assert_eq!(h["session"].as_u64(), Some(session_id()));
+    let e: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+    assert_eq!(e.as_object().unwrap().len(), FrameRecord::FIELDS.len(), "an event row is the whole record");
+    assert_eq!(lines[2], "{\"kind\":\"summary\",\"frames\":7}");
+    assert_eq!(
+        std::fs::read_to_string(numbered(&path, 1)).unwrap(),
+        "previous session\n",
+        "the previous session's file is kept as .1"
+    );
+
+    drop(tx);
+    t.join().expect("the writer ends when its queue closes");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Past [`ROTATE_BYTES`] the writer rotates at the next summary: a long session keeps its head in
+/// `.1` and carries on in a fresh file that again opens with the header.
+#[test]
+fn the_jsonl_writer_rotates_a_full_file_at_a_summary_and_reopens_with_the_header() {
+    let dir = writer_dir("rotate");
+    let path = dir.join("frames.jsonl");
+    let mut w = JsonlWriter::new(path.clone());
+    w.handle(JsonlMsg::Summary("{\"n\":1}".into()));
+    w.bytes = ROTATE_BYTES + 1;
+    w.handle(JsonlMsg::Summary("{\"n\":2}".into()));
+    w.handle(JsonlMsg::Summary("{\"n\":3}".into()));
+    w.flush();
+
+    let head = std::fs::read_to_string(numbered(&path, 1)).unwrap();
+    let head: Vec<&str> = head.lines().collect();
+    assert_eq!(head.len(), 3, "the full file keeps its header and both rows: {head:?}");
+    assert_eq!(head[2], "{\"n\":2}", "the row that crossed the limit is written BEFORE the rotation");
+    let now = std::fs::read_to_string(&path).unwrap();
+    let now: Vec<&str> = now.lines().collect();
+    assert_eq!(now.len(), 2, "{now:?}");
+    assert!(now[0].contains("\"kind\":\"header\""), "the new file opens with the header: {now:?}");
+    assert_eq!(now[1], "{\"n\":3}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn numbered_log_names_append_the_slot() {
+    let base = Path::new("logs").join("frames.jsonl");
+    assert_eq!(numbered(&base, 0), base);
+    assert_eq!(numbered(&base, 3), Path::new("logs").join("frames.jsonl.3"));
+}

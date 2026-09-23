@@ -19,7 +19,9 @@
 //! deaths the panic hook never sees (`0xc0000409`, `0xc0000005`): the page stays in the OS cache,
 //! so a process abort leaves the tail intact, and the next launch folds it into its unclean-exit
 //! report. A hard power-off still loses it. (3) The crash report's `frames:` section and a
-//! companion `crash-*-frames.jsonl` holding the whole ring.
+//! companion `crash-*-frames.jsonl` holding the whole ring. (4) `<logs>/frames.jsonl`, the
+//! long-horizon log — written by its OWN thread (see [`JsonlMsg`]); only `frames.bin` is written
+//! on the recording thread, because only it has to survive an abort.
 //!
 //! ⚠**A slot is keyed on the record's sequence number, not on its frame index.** The design text
 //! keys it `(frame × 2 + view) % RING_LEN`, which hands a single view only the even slots — half
@@ -43,7 +45,10 @@
 
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 /// Bumped whenever a field is added, removed, retyped or reordered. Every record and every file
 /// header carries it, and a reader must refuse a schema it does not know rather than guess.
@@ -584,8 +589,9 @@ fn write_slot(f: &mut std::fs::File, index: usize, slot: &[u8; SLOT_BYTES]) -> s
 
 /// Record one frame of one view: stamp its schema and sequence number, keep it in the ring, write
 /// its slot to `frames.bin`, and hand it to `frames.jsonl`. Cheap by construction — no allocation
-/// after the first call, uncontended locks, one positional 512-byte write into the page cache —
-/// and MEASURED: every record carries the previous emit's cost (`rec_us`).
+/// on an ordinary frame after the first call, uncontended locks, one positional 512-byte write
+/// into the page cache, and no `frames.jsonl` I/O at all (that is [`JsonlMsg`]'s thread) — and
+/// MEASURED: every record carries the previous emit's cost (`rec_us`).
 pub(crate) fn record(r: FrameRecord) {
     record_inner(r, true);
 }
@@ -704,13 +710,12 @@ struct Summary {
 /// Summary rows kept in memory for the issue report: one minute.
 const RECENT_SUMMARIES: usize = 60;
 
+/// The recording thread's half of `frames.jsonl`: what goes in each row, and when. The FILE is the
+/// writer thread's ([`JsonlWriter`]).
 #[derive(Default)]
 struct Jsonl {
-    /// `None` = not opened yet; `Some(Err)` = unavailable, not retried every frame.
-    file: Option<Result<std::io::BufWriter<std::fs::File>, ()>>,
     /// The last [`RECENT_SUMMARIES`] summary rows, newest last.
     recent: std::collections::VecDeque<String>,
-    bytes: u64,
     sec_start_ms: Option<u64>,
     acc: Summary,
     severe_this_s: u32,
@@ -719,9 +724,7 @@ struct Jsonl {
 }
 
 static JSONL: Mutex<Jsonl> = Mutex::new(Jsonl {
-    file: None,
     recent: std::collections::VecDeque::new(),
-    bytes: 0,
     sec_start_ms: None,
     acc: Summary {
         frames: 0,
@@ -746,14 +749,175 @@ static JSONL: Mutex<Jsonl> = Mutex::new(Jsonl {
     last_mode: [None; 2],
 });
 
-/// Push buffered `frames.jsonl` rows to the OS (routine events are buffered; severe ones and
-/// summaries are flushed as written). For a reader in the same process — `--recordtest`.
-pub(crate) fn flush_jsonl() {
-    if let Ok(mut j) = JSONL.lock() {
-        if let Some(Ok(f)) = j.file.as_mut() {
+/// What the recording thread hands the `frames.jsonl` writer.
+///
+/// ⭐⭐**Why the file has its own thread.** The RX 6800 XT's beta.113 battery ran with its logs on a
+/// network share, and its `--recordtest` failed on cost: p99 706 µs against a limit of 83. The
+/// record attributed it to itself — `rec_us` is the previous emit's cost, and every one of the 68
+/// emits over 300 µs followed a `frames.jsonl` flush (one a second for the summary, one per severe
+/// event), at ~650 µs each: a LAN round trip, paid on the UI thread. `frames.bin` has to be written
+/// where the frame is (an abort must find it on disk); this file does not, since `frames.bin` holds
+/// every record anyway. So the row is decided here and the I/O is done there — including
+/// formatting an event row, which is most of its cost on a local disk.
+enum JsonlMsg {
+    /// A full row for an event frame (formatted by the writer).
+    Event(Box<FrameRecord>),
+    /// A summary row, already composed (the issue report keeps a copy).
+    Summary(String),
+    /// Answer once everything sent before this is written and flushed.
+    Flush(SyncSender<()>),
+}
+
+/// Rows the writer may fall behind by before the recording thread drops them: about three minutes
+/// of the worst case (20 severe + 2 routine events + 1 summary a second). BOUNDED, so a writer stuck
+/// on an unreachable share costs a counted loss rather than memory without limit — and never a
+/// blocked frame.
+const JSONL_QUEUE: usize = 4096;
+
+/// The writer's queue. `None` inside: no logs directory, or the thread could not start — the same
+/// "unavailable, not retried every frame" the file itself used to carry.
+static JSONL_TX: OnceLock<Option<SyncSender<JsonlMsg>>> = OnceLock::new();
+/// Rows dropped because the writer was [`JSONL_QUEUE`] behind.
+static JSONL_DROPPED: AtomicU64 = AtomicU64::new(0);
+
+fn jsonl_tx() -> Option<&'static SyncSender<JsonlMsg>> {
+    JSONL_TX
+        .get_or_init(|| {
+            let path = jsonl_path(0)?;
+            let (tx, rx) = std::sync::mpsc::sync_channel(JSONL_QUEUE);
+            std::thread::Builder::new()
+                .name("fd-frames-jsonl".into())
+                .spawn(move || run_jsonl_writer(JsonlWriter::new(path), rx))
+                .ok()?;
+            Some(tx)
+        })
+        .as_ref()
+}
+
+/// Queue a row. Never blocks: a row the writer cannot take is dropped, counted, and said so once
+/// in the log.
+fn send_jsonl(m: JsonlMsg) -> bool {
+    let Some(tx) = jsonl_tx() else { return false };
+    match tx.try_send(m) {
+        Ok(()) => true,
+        Err(e) => {
+            if JSONL_DROPPED.fetch_add(1, Ordering::Relaxed) == 0 {
+                let why = match e {
+                    std::sync::mpsc::TrySendError::Full(_) => "is falling behind (a slow or unreachable disk?)",
+                    std::sync::mpsc::TrySendError::Disconnected(_) => "writer thread has stopped",
+                };
+                super::log_line(
+                    "frames",
+                    &format!(
+                        "frames.jsonl {why} — dropping its rows; frames.bin and the in-memory record are unaffected"
+                    ),
+                );
+            }
+            false
+        }
+    }
+}
+
+/// The writer thread: write what arrives, then — once the queue is momentarily empty — hand the
+/// batch to the OS. Off the recording thread a flush per batch costs nothing, and every row reaches
+/// the OS within one batch (the routine rows used to wait in a buffer until the next second).
+fn run_jsonl_writer(mut w: JsonlWriter, rx: Receiver<JsonlMsg>) {
+    while let Ok(m) = rx.recv() {
+        w.handle(m);
+        while let Ok(m) = rx.try_recv() {
+            w.handle(m);
+        }
+        w.flush();
+    }
+}
+
+/// The file itself, owned by the writer thread.
+struct JsonlWriter {
+    path: PathBuf,
+    /// `None` = not opened yet; `Some(Err)` = unavailable, not retried for every row.
+    file: Option<Result<std::io::BufWriter<std::fs::File>, ()>>,
+    bytes: u64,
+}
+
+impl JsonlWriter {
+    fn new(path: PathBuf) -> Self {
+        Self { path, file: None, bytes: 0 }
+    }
+
+    fn open(&mut self) {
+        // A previous session's log is kept, not overwritten: rotate it out of the way.
+        if self.path.exists() {
+            rotate(&self.path);
+        }
+        self.file = Some(std::fs::File::create(&self.path).map(std::io::BufWriter::new).map_err(|_| ()));
+        self.bytes = 0;
+        let header = format!(
+            "{{\"kind\":\"header\",\"schema\":{SCHEMA},\"session\":{},\"header\":{}}}",
+            session_id(),
+            header_json()
+        );
+        self.line(&header);
+    }
+
+    fn line(&mut self, s: &str) {
+        if let Some(Ok(f)) = self.file.as_mut() {
+            if writeln!(f, "{s}").is_ok() {
+                self.bytes += s.len() as u64 + 1;
+            }
+        }
+    }
+
+    fn flush(&mut self) {
+        if let Some(Ok(f)) = self.file.as_mut() {
             let _ = f.flush();
         }
     }
+
+    fn handle(&mut self, m: JsonlMsg) {
+        if self.file.is_none() {
+            self.open();
+        }
+        match m {
+            JsonlMsg::Event(r) => self.line(&r.to_json()),
+            JsonlMsg::Summary(row) => {
+                self.line(&row);
+                if self.bytes > ROTATE_BYTES {
+                    // Mid-run, at a second boundary: a long session must not overwrite its own
+                    // head (the single-slot, startup-only rotation of fractadyne.log does exactly
+                    // that). Closed before the rename.
+                    self.flush();
+                    self.file = None;
+                    self.open();
+                }
+            }
+            JsonlMsg::Flush(ack) => {
+                self.flush();
+                let _ = ack.send(());
+            }
+        }
+    }
+}
+
+/// Wait up to `limit` for every `frames.jsonl` row queued so far to reach the OS. For a reader in
+/// the same process (`--recordtest`), a clean shutdown and the panic hook. `false` if there is no
+/// writer, its queue is full, or it did not answer in time.
+pub(crate) fn flush_jsonl_within(limit: Duration) -> bool {
+    let Some(tx) = JSONL_TX.get().and_then(Option::as_ref) else { return false };
+    let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
+    if tx.try_send(JsonlMsg::Flush(ack_tx)).is_err() {
+        return false;
+    }
+    ack_rx.recv_timeout(limit).is_ok()
+}
+
+/// [`flush_jsonl_within`] with room for a slow disk.
+pub(crate) fn flush_jsonl() -> bool {
+    flush_jsonl_within(Duration::from_secs(5))
+}
+
+/// Rows `frames.jsonl` lost because its writer fell behind (see [`JSONL_QUEUE`]).
+pub(crate) fn jsonl_dropped() -> u64 {
+    JSONL_DROPPED.load(Ordering::Relaxed)
 }
 
 /// `frames.jsonl`'s path, for a reader in the same process.
@@ -785,52 +949,29 @@ pub(crate) fn event_reason(r: &FrameRecord, prev_mode: Option<u8>) -> Option<(bo
 }
 
 fn jsonl_path(n: u32) -> Option<PathBuf> {
-    super::logs_dir().map(|d| d.join(if n == 0 { "frames.jsonl".to_string() } else { format!("frames.jsonl.{n}") }))
+    super::logs_dir().map(|d| numbered(&d.join("frames.jsonl"), n))
 }
 
-/// Shift `frames.jsonl` → `.1` → … → `.3`, dropping the oldest.
-fn rotate() {
+/// `base` for 0, else `base.n`.
+fn numbered(base: &Path, n: u32) -> PathBuf {
+    if n == 0 {
+        return base.to_path_buf();
+    }
+    let mut s = base.as_os_str().to_owned();
+    s.push(format!(".{n}"));
+    PathBuf::from(s)
+}
+
+/// Shift `base` → `.1` → … → `.3`, dropping the oldest.
+fn rotate(base: &Path) {
     for n in (1..ROTATE_SLOTS).rev() {
-        if let (Some(from), Some(to)) = (jsonl_path(n - 1), jsonl_path(n)) {
-            let _ = std::fs::rename(from, to);
-        }
+        let _ = std::fs::rename(numbered(base, n - 1), numbered(base, n));
     }
 }
 
 impl Jsonl {
-    fn open(&mut self) {
-        let opened = (|| {
-            let p = jsonl_path(0)?;
-            // A previous session's log is kept, not overwritten: rotate it out of the way.
-            if p.exists() {
-                rotate();
-            }
-            let f = std::fs::File::create(&p).ok()?;
-            Some(std::io::BufWriter::new(f))
-        })();
-        self.file = Some(opened.ok_or(()));
-        self.bytes = 0;
-        let header = format!(
-            "{{\"kind\":\"header\",\"schema\":{SCHEMA},\"session\":{},\"header\":{}}}",
-            session_id(),
-            header_json()
-        );
-        self.line(&header);
-    }
-
-    fn line(&mut self, s: &str) {
-        if let Some(Ok(f)) = self.file.as_mut() {
-            if writeln!(f, "{s}").is_ok() {
-                self.bytes += s.len() as u64 + 1;
-            }
-        }
-    }
-
     fn take(&mut self, r: &FrameRecord) {
-        if self.file.is_none() {
-            self.open();
-        }
-        if !matches!(self.file, Some(Ok(_))) {
+        if jsonl_tx().is_none() {
             return;
         }
         // Second boundary: write the summary for the second that just ended.
@@ -877,14 +1018,12 @@ impl Jsonl {
             };
             if *count < cap {
                 *count += 1;
-                self.acc.events += 1;
-                let row = r.to_json();
-                self.line(&row);
-                // Events are the rows a death is most likely to follow: get them to the OS now.
-                if severe {
-                    if let Some(Ok(f)) = self.file.as_mut() {
-                        let _ = f.flush();
-                    }
+                // Events are the rows a death is most likely to follow; the writer hands each
+                // batch to the OS as soon as it has written it.
+                if send_jsonl(JsonlMsg::Event(Box::new(*r))) {
+                    self.acc.events += 1;
+                } else {
+                    self.acc.events_dropped += 1;
                 }
             } else {
                 self.acc.events_dropped += 1;
@@ -925,10 +1064,7 @@ impl Jsonl {
             l.ref_len,
             l.blind_slow_frames,
         );
-        self.line(&row);
-        if let Some(Ok(f)) = self.file.as_mut() {
-            let _ = f.flush();
-        }
+        send_jsonl(JsonlMsg::Summary(row.clone()));
         if self.recent.len() == RECENT_SUMMARIES {
             self.recent.pop_front();
         }
@@ -936,16 +1072,6 @@ impl Jsonl {
         self.sec_start_ms = Some(now_ms);
         self.severe_this_s = 0;
         self.routine_this_s = 0;
-        if self.bytes > ROTATE_BYTES {
-            // Mid-run: a long session must not overwrite its own head (the single-slot,
-            // startup-only rotation of fractadyne.log does exactly that).
-            if let Some(Ok(f)) = self.file.as_mut() {
-                let _ = f.flush();
-            }
-            self.file = None;
-            rotate();
-            self.open();
-        }
     }
 }
 

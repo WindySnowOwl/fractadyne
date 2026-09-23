@@ -27,8 +27,10 @@
 //!     short do not trip `⚠FRAME BUDGET IS BLIND` for view 0, in the log and in the record;
 //!   * **frames.jsonl** — no header for this session, a row with the wrong keys, fewer summary
 //!     rows than elapsed seconds, summaries counting frames that were never recorded, or no event
-//!     row at all (the wedge guarantees a slow frame and a stall);
-//!   * **cost** — the record's p99 per-frame cost exceeds 0.5% of a 60 Hz frame;
+//!     row at all (the wedge guarantees a slow frame and a stall); its writer thread not answering
+//!     a flush, or dropping a row;
+//!   * **cost** — the record's p99 per-frame cost exceeds 0.5% of a 60 Hz frame (with the logs on
+//!     a network share an excess is VACUOUS instead: that measures the share, not the record);
 //!   * **log budget** — any log category ran above 10 lines/s over a 5 s window (design W10);
 //!   * a crash report appears during the run.
 //!
@@ -354,7 +356,16 @@ impl crate::FractadyneApp {
         }
 
         // ---- frames.jsonl: header for this session; every row exactly its keys; summaries add up.
-        frame_record::flush_jsonl();
+        // Written by its own thread, so first wait for it to land everything queued so far.
+        if !frame_record::flush_jsonl() {
+            fails.push("the frames.jsonl writer did not answer a flush within 5 s".into());
+        }
+        if frame_record::jsonl_dropped() > 0 {
+            fails.push(format!(
+                "frames.jsonl dropped {} row(s): its writer thread fell a whole queue behind",
+                frame_record::jsonl_dropped()
+            ));
+        }
         match frame_record::jsonl_file().map(|p| std::fs::read_to_string(&p).map_err(|e| (p, e))) {
             None => fails.push("no frames.jsonl path (logging off?)".into()),
             Some(Err((p, e))) => fails.push(format!("{} unreadable: {e}", p.display())),
@@ -544,7 +555,24 @@ impl crate::FractadyneApp {
         // the absolute cost was 16 µs. The share of the run's own median is still printed. And the
         // p99, not the median, is what is held to the limit. The FIRST emit — which creates the
         // 2 MB `frames.bin` and allocates the ring, once per session — is reported on its own.
+        //
+        // ⚠**Where the logs are is part of the measurement.** `frames.bin` is written on the UI
+        // thread every frame, so on a network share each write pays the share. The RX 6800 XT's
+        // beta.113 battery ran with its logs on `\\vger\share` and failed here at 4.2% — a round
+        // trip per `frames.jsonl` flush (that file now has its own thread). A cost within the limit
+        // on a share is a pass (a local disk is cheaper); an excess there cannot say what a user's
+        // local disk costs, so it is VACUOUS, not a failure.
         const REFERENCE_FRAME_MS: f64 = 1000.0 / 60.0;
+        let logs = crate::diag::logs_dir();
+        let logs_remote = logs.as_deref().is_some_and(crate::diag::is_network_path);
+        let mut cost_unjudged: Option<String> = None;
+        if let Some(d) = &logs {
+            notes.push(format!(
+                "logs: {} ({})",
+                crate::diag::redact_home(&d.display().to_string()),
+                if logs_remote { "a NETWORK share" } else { "local" }
+            ));
+        }
         let by_seq = |s: u64| recs.iter().find(|r| r.seq == s).map(|r| r.rec_us);
         let first_emit = by_seq(1);
         let mut cost: Vec<f32> = recs.iter().filter(|r| r.seq >= 2).map(|r| r.rec_us).filter(|u| *u > 0.0).collect();
@@ -566,7 +594,15 @@ impl crate::FractadyneApp {
                 first_emit.unwrap_or(0.0)
             ));
             if share > 0.005 {
-                fails.push(format!("the record's p99 costs {:.2}% of a 60 Hz frame (limit 0.5%)", share * 100.0));
+                let why = format!("the record's p99 costs {:.2}% of a 60 Hz frame (limit 0.5%)", share * 100.0);
+                if logs_remote {
+                    cost_unjudged = Some(format!(
+                        "{why}, but the logs are on a network share, so that is the share's cost — \
+                         rerun with FRACTADYNE_CONFIG_DIR on a local disk"
+                    ));
+                } else {
+                    fails.push(why);
+                }
             }
         }
 
@@ -596,6 +632,7 @@ impl crate::FractadyneApp {
         if !crate::tunables::is_stock() {
             vacuous.push(format!("tunables overridden ({})", crate::tunables::status_line()));
         }
+        vacuous.extend(cost_unjudged);
 
         eprintln!(
             "\n=== --recordtest: {} frames in {:.1}s — {} records held, view 0: {} dispatching, {} not live; \

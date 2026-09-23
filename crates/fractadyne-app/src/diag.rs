@@ -521,6 +521,55 @@ pub(crate) fn logs_dir() -> Option<PathBuf> {
     LOG_DIR.get().and_then(|o| o.clone())
 }
 
+/// Is `p` on a network share? Best effort: `false` when it cannot tell.
+///
+/// ⭐Where the logs live is part of what a cost measurement measures: `frames.bin` is written on the
+/// UI thread every frame, and the RX 6800 XT's beta.113 battery, run with its logs on
+/// `\\vger\share`, read the share's round trip as the frame record's cost.
+pub(crate) fn is_network_path(p: &std::path::Path) -> bool {
+    #[cfg(windows)]
+    {
+        let s = p.to_string_lossy();
+        let s = s.replace('/', "\\");
+        if let Some(rest) = s.strip_prefix(r"\\?\") {
+            // A verbatim path: `\\?\UNC\host\share` is a share, `\\?\C:\` is a drive.
+            return rest.get(..4).is_some_and(|u| u.eq_ignore_ascii_case("UNC\\")) || drive_is_remote(rest);
+        }
+        s.starts_with(r"\\") || drive_is_remote(&s)
+    }
+    #[cfg(not(windows))]
+    {
+        // The filesystem type of the longest mount point containing `p`.
+        let Ok(p) = p.canonicalize() else { return false };
+        let Ok(mounts) = std::fs::read_to_string("/proc/self/mounts") else { return false };
+        mounts
+            .lines()
+            .filter_map(|l| {
+                let mut f = l.split_whitespace();
+                let (_, at, fstype) = (f.next()?, f.next()?, f.next()?);
+                p.starts_with(at).then_some((at.len(), fstype))
+            })
+            .max_by_key(|(n, _)| *n)
+            .is_some_and(|(_, t)| matches!(t, "nfs" | "nfs4" | "cifs" | "smb3" | "smbfs" | "9p" | "fuse.sshfs"))
+    }
+}
+
+/// `C:…` on a drive Windows calls remote (a mapped share).
+#[cfg(windows)]
+fn drive_is_remote(s: &str) -> bool {
+    const DRIVE_REMOTE: u32 = 4;
+    unsafe extern "system" {
+        fn GetDriveTypeW(root: *const u16) -> u32;
+    }
+    let b = s.as_bytes();
+    if b.len() < 2 || b[1] != b':' || !b[0].is_ascii_alphabetic() {
+        return false;
+    }
+    let root = [b[0] as u16, b':' as u16, b'\\' as u16, 0];
+    // SAFETY: a NUL-terminated wide string that outlives the call.
+    unsafe { GetDriveTypeW(root.as_ptr()) == DRIVE_REMOTE }
+}
+
 /// The tail of the current log file (up to `max_bytes`, trimmed to a line boundary), for issue
 /// reports. `None` if logging is off or the file can't be read.
 pub(crate) fn recent_log(max_bytes: usize) -> Option<String> {
@@ -844,6 +893,9 @@ pub(crate) fn end_session() {
     if let Some(p) = marker_path() {
         let _ = std::fs::remove_file(p);
     }
+    // `frames.jsonl` is written by its own thread, which `process::exit` does not wait for: give
+    // the rows already queued a moment to land. Bounded — a dead share must not hang a quit.
+    frame_record::flush_jsonl_within(std::time::Duration::from_millis(500));
 }
 
 /// If the previous GUI session left its marker behind, it never shut down cleanly. Report it,
@@ -983,6 +1035,8 @@ fn install_panic_hook() {
             .unwrap_or_else(|| "<unknown>".into());
         // Write the crash FILE first — see `write_crash_report_at`.
         write_crash_report_at(&msg, &loc);
+        // Then let the `frames.jsonl` writer catch up (bounded: the panic may be ON that thread).
+        frame_record::flush_jsonl_within(std::time::Duration::from_millis(250));
         // Then the log line (non-panicking stderr; also teed to the log file).
         log_line("panic", &format!("{msg} at {loc} — activity: {}", current_breadcrumb()));
         default(info);
@@ -1201,6 +1255,33 @@ mod redact_tests {
         assert_eq!(redact_path("/home/bob/.config", "/home/bob/"), "~/.config", "trailing separator");
         // Non-ASCII account names survive the ASCII-only case folding without breaking a char.
         assert_eq!(redact_path(r"C:\Users\José\f", r"C:\Users\José"), r"~\f");
+    }
+}
+
+#[cfg(test)]
+mod network_path_tests {
+    use super::is_network_path;
+    use std::path::Path;
+
+    /// The shapes a share takes on Windows, and the local ones it must not be confused with.
+    #[cfg(windows)]
+    #[test]
+    fn a_unc_path_is_a_share_and_the_temp_dir_is_not() {
+        assert!(is_network_path(Path::new(r"\\vger\share\Fractadyne\config\logs")));
+        assert!(is_network_path(Path::new("//vger/share/x")));
+        assert!(is_network_path(Path::new(r"\\?\UNC\vger\share\x")));
+        let tmp = std::env::temp_dir();
+        assert!(!is_network_path(&tmp), "{} read as a share", tmp.display());
+        let verbatim = std::path::PathBuf::from(format!(r"\\?\{}", tmp.display()));
+        assert!(!is_network_path(&verbatim), "a verbatim LOCAL path is not a share: {}", verbatim.display());
+        assert!(!is_network_path(Path::new("relative\\logs")));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn the_temp_dir_is_not_a_share() {
+        assert!(!is_network_path(&std::env::temp_dir()));
+        assert!(!is_network_path(Path::new("/definitely/not/a/path")));
     }
 }
 
