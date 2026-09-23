@@ -102,6 +102,22 @@ A crash report prints the last 40 rows under `frames  :` and writes all of them 
 `validation/frame-schema.json` (`--dump-frame-schema` regenerates it; a test fails if it is stale),
 and `--recordtest` is the gate that proves the record is being written.
 
+**Reading it: `scripts/framelog.py`** (standard library only).
+
+- `summarize <frames.bin | crash-…-frames.jsonl>` — which build and adapter produced it, then
+  the scorecard (intervals, what was presented, readings by verdict, the budget's range, counter
+  readings, frames in the escaped-reference shape, the record's own cost) and every **slow
+  episode** with what the budget controller was told during it, labelled with which of the five
+  candidate mechanisms of the 2026-09-21 stall it fits: (a) no reading arrived, (b) readings
+  priced the wrong dispatch, (c) the timed bracket missed the work, (d) the time went where no
+  iterate is timed (slow frames that dispatched nothing), (e) slow readings did not move the budget.
+- `compare --a A1 A2 A3 --b B1 B2 B3` — before/after, three runs per arm minimum (VACUOUS
+  otherwise); each metric against its own run-to-run range, with arm A split against itself as the
+  control. A metric the control "separates" is noise on that run and its verdict carries a `?`.
+- `schema-check <file>` — strict: an unknown or a missing key is a failure, never a skipped field.
+- `decode <frames.bin> [-o out.jsonl]`, and `selftest`, which feeds the mechanism labelling one
+  synthetic episode per mechanism plus a healthy control and fails on any mislabel.
+
 ### The `bignum` line in a crash report
 
 Crash reports and `--selftest` name the arbitrary-precision backend that produced the run, and
