@@ -430,17 +430,18 @@ Ordered by how fast a stranger hits them.
     show the view composited off-centre — capture artefact (endemic DWM), the session/viewport is
     correct; don't chase it from screenshots alone.
 12. ✅**DONE 2026-08-15 — support mailbox live, confirmed by the user before switching.**
-    `REPORT_EMAIL` is now `feedback@fractadyne.org` (was `fractadyne@rithea.com`), which is the
+    `REPORT_EMAIL` is now `feedback@fractadyne.org` (was a personal address), which is the
     only place the address appears in the app — the Help -> Report an issue flow keeps GitHub
     Issues primary and uses it for the mailto / "Compose in Gmail" fallback. ⚠The *website* half is
     deliberately NOT in this repo (user's instruction): `fractadyne.org` is hosted separately on
     Plesk/IIS, and its source lives in its own repository. Add a link to it from Help/About and the
     README once it is actually serving the site rather than the Plesk default page — a link to a
-    parking page is the same mistake as a dead support address. SECURITY.md still routes security
-    reports to `pub@rithea.com` on purpose (a private channel, not the public feedback mailbox).
+    parking page is the same mistake as a dead support address. SECURITY.md routed security
+    reports to a personal address until 2026-09-23; they now go to `feedback@fractadyne.org` (or
+    GitHub's private vulnerability reporting).
     Original: **Support website + email (user, 2026-08-09): `fractadyne.org` / `feedback@fractadyne.org`.**
     Update the in-app issue reporting (`ISSUES_URL` flow keeps GitHub Issues primary; the mailto /
-    "Compose in Gmail" fallback currently points at `fractadyne@rithea.com` → change to
+    "Compose in Gmail" fallback currently points at a personal address → change to
     `feedback@fractadyne.org`), the Help/About text, README, and the release-notes footer. Do this
     once the site/mailbox actually exist — a dead support address is worse than none.
 13. **Pre-announce code hygiene review (user, 2026-08-09) — DONE 2026-08-10 (beta.56).**
@@ -8575,7 +8576,7 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   [string[]]$Scenes type-constraining the case-insensitive $scenes slot (rows→strings),
   `-File` comma-list non-splitting, reported-time unit suffixes breaking the summary sort.
   ✅①first real run DONE 2026-08-21 — but the FIRST TWO RUNS ARE VOID and the corrected pair is
-  `local/bench-results/VGER-20260821-192250` + `-185405` (see that folder's README). Two defects
+  `local/bench-results/HOST-20260821-192250` + `-185405` (see that folder's README). Two defects
   the benchmark itself exposed, both fixed: **(a)** scene 10's fractadyne render was BLANK (the
   >1e308× mode regression, below) — the "144× faster than F3" I published was an empty frame;
   **(b)** the kit gave F3 1280×720 while every other lane rendered 1920×1080, because the
@@ -8592,7 +8593,7 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   `subframes = 4`. That is Fraktaler-3's antialiasing sample count, set in the corpus to pair
   with the corpus's own `--ss 2` — and the benchmark renders `--ss 1`. **So F3 has been doing
   FOUR samples per pixel against our ONE in every number this kit has ever produced**, the 4K
-  set from `results/VGER-20260822-163941/` included. Fixed 2026-08-22 the same way, in all
+  set from `results/HOST-20260822-163941/` included. Fixed 2026-08-22 the same way, in all
   three places that write an F3 config (`run-all.ps1`, `zoom-seq.py`, `package.ps1`).
   ⭐**LESSON, now twice: a correctness FIXTURE is not a benchmark INPUT.** Every field it
   carries has to be restated by the harness; whatever is merely inherited is a silent handicap
@@ -8601,7 +8602,7 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   ✅**RE-MEASURED 2026-08-23** — see the table below; the old one is superseded, not merely suspect.
 
   ⭐⭐**THREE-WAY 4K TABLE, ALL AUTOMATED LANES IN ONE RUN (2026-08-23,
-  `results/VGER-20260823-180838/`)** — 3840×2160, one sample/px, 2 reps, fastest per scene:
+  `results/HOST-20260823-180838/`)** — 3840×2160, one sample/px, 2 reps, fastest per scene:
 
   | scene | fd | F3 | FractalShark | fd vs F3 |
   |---|---|---|---|---|
@@ -8614,7 +8615,7 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   | 21-m43-spar-1e27.7 | 3.0 s | 3.9 s | DNF-blank | fd 1.30× |
   | 23-nucleus-p145-1e27.7 | 3.1 s | 3.9 s | DNF-blank | fd 1.26× |
   | 24-nucleus-p148-1e28.2 | 3.4 s | 3.9 s | DNF-blank | fd 1.15× |
-  | 35-vger-dive-1p47e77 | 4.8 s | 10.7 s | DNF-blank | fd 2.23× |
+  | 35-field-dive-1p47e77 | 4.8 s | 10.7 s | DNF-blank | fd 2.23× |
 
   ⭐**FractalShark renders 2 of 10 scenes headlessly**, and only on its CPU path: **4.8× and 5.7×
   slower than us, 2.1× and 2.9× slower than F3**. ⚠**That is NOT a statement about FractalShark** —
@@ -8629,9 +8630,9 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   the tightest in the table). So the honest headline is: **we lead 8 of 10, scene 14 is a coin
   flip, and F3 owns the extreme by ~2.2×** — the one location past 1e308×, pure floatexp mode 2.
 
-  ⭐⭐**THE HONEST 4K TABLE — CONFIRMED AT 2 REPS (2026-08-23, `results/VGER-20260823-133843/`).**
+  ⭐⭐**THE HONEST 4K TABLE — CONFIRMED AT 2 REPS (2026-08-23, `results/HOST-20260823-133843/`).**
   3840×2160, ONE sample per pixel both lanes, F3 wisdom-benchmarked, **2 reps, fastest run per
-  renderer×scene** as the protocol requires. The 1-rep table (`VGER-20260823-113347`) reached the
+  renderer×scene** as the protocol requires. The 1-rep table (`HOST-20260823-113347`) reached the
   same conclusions; both are kept.
 
   | scene | fd best | F3 best | faster | fd reps |
@@ -8645,7 +8646,7 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
   | 21-m43-spar-1e27.7 | 3.1 s | 4.0 s | fd 1.29× | 3.1 / 3.3 |
   | 23-nucleus-p145-1e27.7 | 3.2 s | 3.8 s | fd 1.19× | 3.2 / 3.4 |
   | 24-nucleus-p148-1e28.2 | 3.3 s | 3.9 s | fd 1.18× | 3.3 / 3.8 |
-  | 35-vger-dive-1p47e77 | 4.8 s | 11.1 s | fd 2.31× | 4.8 / 5.1 |
+  | 35-field-dive-1p47e77 | 4.8 s | 11.1 s | fd 2.31× | 4.8 / 5.1 |
 
   ⛔⭐⭐**"fractadyne owns deep and extreme" IS FALSE ONCE THE SAMPLING IS FAIR — now at 2 reps.**
   That claim came from a table where F3 rendered 4 samples per pixel to our 1. With parity, **F3
@@ -8728,7 +8729,7 @@ item 4 reuses item 1's engine, item 3 is self-contained, item 5 is an architectu
 ` on the LAST field of every row. `normalize` IS the last field, so it read as
      `"1
 "`, which is not `"1"`, so the flag was dropped for exactly the three scenes that need
-     it (**14-deep-1.2e148, 17-deep-4.2e275, 35-vger-dive-1p47e77**) — a different picture AND a
+     it (**14-deep-1.2e148, 17-deep-4.2e275, 35-field-dive-1p47e77**) — a different picture AND a
      different time, on Linux only, reported as success. Demonstrated on the real file: the old
      reader yields **0** `--normalize` scenes, the fixed one yields **3**. ⭐`kfr_field()` already
      stripped `

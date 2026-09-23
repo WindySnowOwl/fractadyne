@@ -47,7 +47,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-if (-not $Share) { $Share = if (Test-Path "D:\share\Fractadyne") { "D:\share\Fractadyne" } else { "\\vger\share\Fractadyne" } }
+if (-not $Share) { $Share = if (Test-Path "D:\share\Fractadyne") { "D:\share\Fractadyne" } else { [string]$env:FRACTADYNE_SHARE } }
+if (-not $Share) { throw "no share: pass -Share, or set FRACTADYNE_SHARE" }
 $Field = Join-Path $Share "field"
 $ReqDir = Join-Path $Field "requests"
 $ResDir = Join-Path $Field "results"

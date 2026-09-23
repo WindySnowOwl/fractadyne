@@ -309,8 +309,8 @@ iterations = 5000
 note = "Period-5 nucleus, Newton-refined. Completes the shallow period ladder."
 
 [[location]]
-slug = "34-vger-dive-2p06e28"
-title = "VGER field dive 2.06e28x"
+slug = "34-field-dive-2p06e28"
+title = "field dive 2.06e28x"
 center_x = "3.563477460130438221459313496407281589129097577081654084279e-1"
 center_y = "6.551721978595704786747352603201706324799987133877257833762e-1"
 mag_log10 = 28.024348
@@ -318,8 +318,8 @@ iterations = 300000
 note = "FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-15). One centre progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Centre carries 58 digits against 28.024348 decades of depth. This one sits 5.8% above PERT_FE_THRESHOLD (1e28), i.e. essentially ON our df32->floatexp boundary, which makes it the real-dive counterpart to the synthetic boundary pair at locations 21/22. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighbouring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline."
 
 [[location]]
-slug = "35-vger-dive-1p47e77"
-title = "VGER field dive 1.47e77x"
+slug = "35-field-dive-1p47e77"
+title = "field dive 1.47e77x"
 center_x = "3.5634774601304382214593134944855658665333542382319826904819524052878394297711653798870071071230880055625454711405583e-1"
 center_y = "6.5517219785957047867473526044384060240158237433104919183695119307267363068091251654291035030800580107809850539974573e-1"
 mag_log10 = 77.167101
@@ -327,8 +327,8 @@ iterations = 300000
 note = "FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-22). One centre progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Centre carries 116 digits against 77.167101 decades of depth. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighbouring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline."
 
 [[location]]
-slug = "36-vger-dive-1p08e104"
-title = "VGER field dive 1.08e104x"
+slug = "36-field-dive-1p08e104"
+title = "field dive 1.08e104x"
 center_x = "3.56347746013043822145931349448556586653335423823198269048195240528783942977116561938702036938961180671145001922408870110665454418522876e-1"
 center_y = "6.55172197859570478674735260443840602401582374331049191836951193072673630680912015999416665912371947818955962449966676423886514895763942e-1"
 mag_log10 = 104.033211
@@ -336,8 +336,8 @@ iterations = 300000
 note = "FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-22). One centre progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Centre carries 135 digits against 104.033211 decades of depth. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighbouring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline."
 
 [[location]]
-slug = "37-vger-dive-3p11e114"
-title = "VGER field dive 3.11e114x"
+slug = "37-field-dive-3p11e114"
+title = "field dive 3.11e114x"
 center_x = "3.56347746013043822145931349448556586653335423823198269048195240528783942977116561938702036938961180671147174823504254235327620350125415e-1"
 center_y = "6.55172197859570478674735260443840602401582374331049191836951193072673630680912015999416665912371947818956192898010241991894396558897805e-1"
 mag_log10 = 114.492336
@@ -345,8 +345,8 @@ iterations = 300000
 note = "FIELD LOCATION from the user's own dive (shared bookmarks, saved 2026-08-22). One centre progressively refined across five depths - locations 34-38 are the SAME point, so together they are a real zoom sequence rather than five unrelated views, which is what the reference-reuse and tour work needs. All five are mode 2 for us. Centre carries 135 digits against 114.492336 decades of depth. WARNING: the iteration count here is PROVISIONAL - the bookmark stored auto_iter with a 10,000,000 ceiling, and 300,000 was chosen by analogy with neighbouring corpus entries rather than by measuring escape times. Check for clipped interiors before trusting this as a baseline."
 
 [[location]]
-slug = "38-vger-dive-2p87e140"
-title = "VGER field dive 2.87e140x"
+slug = "38-field-dive-2p87e140"
+title = "field dive 2.87e140x"
 center_x = "3.56347746013043822145931349448556586653335423823198269048195240528783942977116561938702036938961180671147174823504308415066636902511050205828455506574950826961702160014187469e-1"
 center_y = "6.55172197859570478674735260443840602401582374331049191836951193072673630680912015999416665912371947818956192898010214682820273096699440691041832465141338913686318349078826342e-1"
 mag_log10 = 140.457649

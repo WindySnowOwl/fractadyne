@@ -22,8 +22,8 @@
 # Options:
 #   --selftest         run `--selftest` (under xvfb if headless) and capture its output.
 #   --uitest           run the scripted UI + live-render walk (screenshots + checks) into uitest/.
-#   --out DIR          staging base directory. Default: /mnt/vger/Fractadyne/reports when the
-#                      \\vger\share mount is present (dev box reads it directly, no scp), else
+#   --out DIR          staging base directory. Default: $FRACTADYNE_SHARE/reports when that
+#                      variable names a mounted share (dev box reads it directly, no scp), else
 #                      ~/fractadyne-reports (then scp-pull).
 #   --config DIR       app config dir to harvest (default: $FRACTADYNE_CONFIG_DIR, else
 #                      ${XDG_CONFIG_HOME:-~/.config}/fractadyne).
@@ -35,10 +35,10 @@ set -euo pipefail
 
 NOTE=""
 # Default staging base is resolved AFTER arg parsing (see below) so an explicit --out wins. When
-# the Windows share //vger/share is mounted at /mnt/vger, its Fractadyne folder is the natural
-# home — reports land at \\vger\share\Fractadyne\reports\<ts>\ and the Windows box reads them
-# directly, no scp. Off the share, fall back to a home-dir folder (then scp-pull).
-SHARE_BASE="/mnt/vger/Fractadyne/reports"
+# FRACTADYNE_SHARE names the mounted Windows share's Fractadyne folder, that is the natural home —
+# reports land in its reports\<ts>\ and the Windows box reads them directly, no scp. Off the
+# share, fall back to a home-dir folder (then scp-pull).
+SHARE_BASE="${FRACTADYNE_SHARE:-}/reports"
 OUT_BASE=""   # empty ⇒ auto-detect
 CONFIG_DIR="${FRACTADYNE_CONFIG_DIR:-${XDG_CONFIG_HOME:-${HOME}/.config}/fractadyne}"
 REPO_DIR="${HOME}/fractadyne"
@@ -67,7 +67,7 @@ done
 # Resolve the default staging base if --out wasn't given: the mounted share when present (so the
 # Windows box sees the report with no transfer), else a home-dir folder for the scp-pull path.
 if [ -z "$OUT_BASE" ]; then
-  if [ -d "/mnt/vger/Fractadyne" ]; then
+  if [ -n "${FRACTADYNE_SHARE:-}" ] && [ -d "$FRACTADYNE_SHARE" ]; then
     OUT_BASE="$SHARE_BASE"
   else
     OUT_BASE="${HOME}/fractadyne-reports"
@@ -200,12 +200,12 @@ fi
 say "Done. Bundle ready at: ${RUN}"
 echo
 case "${RUN}" in
-  /mnt/vger/*)
+  "${FRACTADYNE_SHARE:-/nonexistent-share}"/*)
     # Landed on the mounted Windows share — the dev box already sees it, no transfer needed.
-    win_sub="${RUN#/mnt/vger/}"                       # path under the share root
+    win_sub="${RUN#"${FRACTADYNE_SHARE}"/}"           # path under the share's Fractadyne folder
     win_sub="${win_sub//\//\\}"                       # forward slashes → backslashes
-    echo "On the share — the Windows box can read it directly at:"
-    echo "    \\\\vger\\share\\${win_sub}"
+    echo "On the share — the Windows box can read it directly, in the share's Fractadyne folder at:"
+    echo "    ${win_sub}"
     ;;
   *)
     echo "Not on the share. Pull it to the Windows box with (run there):"

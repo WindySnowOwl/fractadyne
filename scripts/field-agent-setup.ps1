@@ -1,7 +1,7 @@
 # field-agent-setup.ps1 - install, pause, resume or remove the Fractadyne field agent on a test
 # machine. Run it ON the test machine, as the user who is normally logged on there:
 #
-#   pwsh -ExecutionPolicy Bypass -File \\vger\share\Fractadyne\field\setup\field-agent-setup.ps1
+#   pwsh -ExecutionPolicy Bypass -File \\<host>\share\Fractadyne\field\setup\field-agent-setup.ps1 -Share \\<host>\share\Fractadyne
 #   ...\field-agent-setup.ps1 -Disable      # pause: no job starts until -Enable
 #   ...\field-agent-setup.ps1 -Enable
 #   ...\field-agent-setup.ps1 -Status
@@ -21,8 +21,9 @@
 
 [CmdletBinding()]
 param(
-    # The Fractadyne share root the agent polls.
-    [string]$Share = "\\vger\share\Fractadyne",
+    # The Fractadyne share root the agent polls. Default: $env:FRACTADYNE_SHARE, else the share
+    # this script is being run from (...\Fractadyne\field\setup\ -> ...\Fractadyne).
+    [string]$Share = "",
     # Minutes without keyboard or mouse input before a job may start. 0 = do not wait.
     [int]$IdleMinutes = 5,
     [switch]$Disable,
@@ -35,6 +36,15 @@ $ErrorActionPreference = "Stop"
 $TaskName = "Fractadyne field agent"
 $Dest = Join-Path $env:LOCALAPPDATA "Fractadyne-field"
 $User = "$env:USERDOMAIN\$env:USERNAME"
+if (-not $Share) { $Share = $env:FRACTADYNE_SHARE }
+if (-not $Share) {
+    # Run from the share itself (<share>\field\setup\), which is how the README says to run it.
+    $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+    if ((Split-Path -Leaf $here) -eq "setup" -and (Split-Path -Leaf (Split-Path -Parent $here)) -eq "field") {
+        $Share = Split-Path -Parent (Split-Path -Parent $here)
+    }
+}
+if (-not $Share) { throw "no share: pass -Share \\<host>\share\Fractadyne, or set FRACTADYNE_SHARE" }
 
 function Show-Status {
     $t = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue

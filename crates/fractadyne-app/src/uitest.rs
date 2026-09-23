@@ -304,7 +304,7 @@ const LIVE_CY: &str = "0.131825904205311970493132056385139";
 
 impl UiTest {
     /// Build the harness. `out_base` is an optional base directory (`--uitest DIR`); otherwise the
-    /// mounted \\vger\share is preferred, else `logs/`. A timestamped run folder is created under it.
+    /// `$FRACTADYNE_SHARE/uitest` is preferred, else `logs/`. A timestamped run folder is created under it.
     pub(crate) fn new(out_base: Option<PathBuf>) -> Self {
         let secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -633,14 +633,12 @@ impl FractadyneApp {
     }
 }
 
-/// Default staging base: the mounted Windows share when present (the dev box reads it directly),
-/// else the repo/cwd `logs/` dir.
+/// Default staging base: `$FRACTADYNE_SHARE/uitest` when that variable names a directory (a
+/// mounted file share the dev box reads directly), else the repo/cwd `logs/` dir.
 fn default_out_base() -> PathBuf {
-    let share = PathBuf::from("/mnt/vger/Fractadyne/uitest");
-    if PathBuf::from("/mnt/vger/Fractadyne").is_dir() {
-        share
-    } else {
-        PathBuf::from("logs")
+    match std::env::var_os("FRACTADYNE_SHARE").map(PathBuf::from) {
+        Some(share) if share.is_dir() => share.join("uitest"),
+        _ => PathBuf::from("logs"),
     }
 }
 

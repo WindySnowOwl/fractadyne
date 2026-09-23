@@ -65,7 +65,8 @@ fi
 
 # --- bundle location ---------------------------------------------------------------------------
 if [ -z "$OUT" ]; then
-  if [ -d /mnt/vger/Fractadyne ]; then OUT=/mnt/vger/Fractadyne; else OUT="$HOME"; fi
+  # The team share when FRACTADYNE_SHARE names a mounted directory; else the home directory.
+  if [ -n "${FRACTADYNE_SHARE:-}" ] && [ -d "$FRACTADYNE_SHARE" ]; then OUT="$FRACTADYNE_SHARE"; else OUT="$HOME"; fi
 fi
 STAMP="$(date +%Y%m%d-%H%M%S)"
 NAME="validate-$LABEL-$STAMP"
@@ -158,7 +159,8 @@ build_id_step() {
   local cands=()
   [ -n "$BUILD_ID" ] && cands+=("$BUILD_ID")
   cands+=("$HERE/BUILD-ID.txt" "$HERE/../BUILD-ID.txt" "$HERE/../../BUILD-ID.txt")
-  [ -n "$tag" ] && cands+=("$OUT/builds/$tag/BUILD-ID.txt" "/mnt/vger/Fractadyne/builds/$tag/BUILD-ID.txt")
+  [ -n "$tag" ] && cands+=("$OUT/builds/$tag/BUILD-ID.txt")
+  [ -n "$tag" ] && [ -n "${FRACTADYNE_SHARE:-}" ] && cands+=("$FRACTADYNE_SHARE/builds/$tag/BUILD-ID.txt")
   for c in "${cands[@]}"; do [ -f "$c" ] && { id="$c"; break; }; done
   out="binary  : $BIN"$'\n'"version : $APP_VERSION"$'\n'
   if [ -z "$id" ]; then

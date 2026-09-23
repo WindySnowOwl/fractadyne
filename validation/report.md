@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.41-beta.70 (build 2897)
-- **Generated:** 2026-09-08 00:52:08 UTC (unix 1788828728)
+- **Version:** 0.2.41-beta.116 (build 3530, g2026187-dirty)
+- **Generated:** 2026-09-23 14:14:56 UTC (unix 1790172896)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -24,9 +24,11 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | IterChunk | chunked render is bit-identical | mode2 corpus07 1.3e30×, 21k iter, 7 passes | mode 2 — 0 texels differ (max Δ 0.000e0), bla_skip 124, rebase 187097 | 0 texels differ (mode 2: and BLA engaged) | ✅ PASS |
 | IterChunk | chunked render is bit-identical | mode2 nucleus 1.3e30× (interior), 21k iter, 7 passes | mode 2 — 0 texels differ (max Δ 0.000e0), bla_skip 12325890, rebase 361830 | 0 texels differ (mode 2: and BLA engaged) | ✅ PASS |
 | IterChunk | chunked render is bit-identical | mode2 97-sample ref (orbit wraps), 21k iter, chunk 2600 | mode 2 — 0 texels differ (max Δ 0.000e0), bla_skip 0, rebase 1790800 | 0 texels differ (mode 2: and BLA engaged) | ✅ PASS |
-| IterChunk | tiled chunked export is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, colored | 0 texels differ; max dispatch 5ms vs control 6ms | 0 texels differ | ✅ PASS |
+| IterChunk | tiled chunked export is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, colored | 0 texels differ; max dispatch 5ms vs control 5ms | 0 texels differ | ✅ PASS |
 | IterChunk | tiled chunked iter buffer is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, raw | 0 texels differ | 0 texels differ | ✅ PASS |
-| RefReuse | a reused reference renders the same as a fresh pick | corpus07 1e30x, 200k iter, extend vs fresh pick | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 175ms fresh vs 169ms extend | reuse engaged AND 0 texels differ | ✅ PASS |
+| RefReuse | a reused reference renders the same as a fresh pick | corpus07 1e30x, 200k iter, extend vs fresh pick | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 176ms fresh vs 171ms extend | reuse engaged AND 0 texels differ | ✅ PASS |
+| OrbitCache | an orbit from the disk cache renders the same as a fresh pick | corpus07 1e30x, 200k iter; written, found, loaded, extended; then unaided | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 187ms fresh vs 180ms extend; unaided, the worker served len=200001 from disk in 81ms (1 entries, 3.1 MB) | found AND reuse engaged AND 0 texels differ AND the unaided worker hit | ✅ PASS |
+| View format | a thumbnail borrows the live reference, never builds one | 1e30x, 128x96, ss=2; refused with none resident, then borrowed | refused in 0.4ms; borrowed and rendered 128x96 in 120ms; 53.6 KB of base64 | None when nothing is resident; a real 128x96 when it is | ✅ PASS |
 | Framing | an export CONTAINS the window view at any aspect | window 1200x900 (aspect 1.333), 6 aspects | 6 aspects (3 wider, 2 narrower than the window): contained, tight, isotropic; window = identity | no axis shrinks; binding axis exact; isotropic; BOTH branches tried | ✅ PASS |
 | Framing | a wider canvas contains the narrower one — direct f64 (1e2x) | 160px vs 240px at h=128, 2000 iter, 20480 texels compared | 160px inside 240px at h=128: identical over 20480 texels | 0 texels differ | ✅ PASS |
 | Framing | a wider canvas contains the narrower one — perturbation (1e30x) | 160px vs 240px at h=128, 60000 iter, 20480 texels compared | 160px inside 240px at h=128: identical over 20480 texels | <= 64 texels differ (measured glitch noise; a misframing differs in 10,000s) | ✅ PASS |
@@ -102,9 +104,9 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Live budget | tunables are stock (no --set overrides) | the suite's thresholds, goldens and baselines all assume the defaults | stock | stock | ✅ PASS |
 | Live budget | one bignum backend produced this run | goldens and baselines are the output of a single arithmetic backend | astro-float | exactly one | ✅ PASS |
 | Live budget | tile allowance does NOT bind settled resolution | 1920×1102 panel, 4000000 iter @1.3e30×, converged budget 1.666e10 | settled width 1920/1920 (100% of panel) | ≥90% of panel width | ✅ PASS |
-| Live budget | a completed tiled settle REVEALS (present gate drops) | 1920×1102 panel, 4000000 iter @1.3e30×, prefer detail on | gate engaged=true, still holding after 498 frames=false | engages, then drops once the grid completes | ✅ PASS |
-| Live budget | a growing chunk band license never outgrows one dispatch budget | 1920×1102 panel, 4000000 iter @1.3e30×, converged budget 1.666e10,                          24 settled frames, chunk_fe_ok forced | 24/24 frames chunk-governed, license grew to 4096                          iters, worst pass 8.666e9 steps (0.52× budget) | governed, ladder moved past the 256 floor, every pass ≤ one budget | ✅ PASS |
-| Live budget | a settled chunked pass stays inside ONE dispatch budget | 1920×1102 panel, 4000000 iter @1.3e30×, allowance up, budget 1.666e10 CLIMBING | chunk pass = 1.083e9 nominal (0.07× budget) | chunked, and ≤ 1× the single-dispatch budget | ✅ PASS |
+| Live budget | a completed tiled settle REVEALS (present gate drops) | 1920×1102 panel, 4000000 iter @1.3e30×, prefer detail on | gate engaged=true, still holding after 491 frames=false | engages, then drops once the grid completes | ✅ PASS |
+| Live budget | a growing chunk band license never outgrows one dispatch budget | 1920×1102 panel, 4000000 iter @1.3e30×, converged budget 1.666e10,                          24 settled frames, chunk_fe_ok forced | 24/24 frames chunk-governed, license grew to 7873                          iters, worst pass 1.666e10 steps (1.00× budget) | governed, ladder moved past the 256 floor, every pass ≤ one budget | ✅ PASS |
+| Live budget | a settled chunked pass stays inside ONE dispatch budget | 1920×1102 panel, 4000000 iter @1.3e30×, allowance up, budget 1.666e10 CLIMBING | chunk pass = 4.333e9 nominal (0.26× budget) | chunked, and ≤ 1× the single-dispatch budget | ✅ PASS |
 | Live budget | explicit iteration count honoured verbatim | auto off, 10,000,000 iterations, direct mode @10× | params.max_iter = 10000000 | == 10,000,000 | ✅ PASS |
 | Iter-budget | probe reach resolves a starved spar | 3.3e61× three-spar, cap 54315 → reach 848671 | flat 100.0% at cap → 0.2% at reach | >99% flat at cap, <10% at reach | ✅ PASS |
 | NR-zoom | atom size vs exactly-known components | period 1, 2 + home-view identity | all exact | exact to 1e-9 | ✅ PASS |
@@ -117,10 +119,13 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Coords | malformed coordinates rejected | 8 inputs | all rejected | all rejected | ✅ PASS |
 | Coords | expression functions & constants | 5 identities, 5 refusals, 264-bit floor | identities exact, all refused | Δ<1e-50, all refused | ✅ PASS |
 | Coords | deep decimal round-trip intact | 4096-bit coordinate | 4100 bits agree | ≥4000 bits | ✅ PASS |
+| Curated | deep minibrot menu entries re-solve to their period | 1 nucleus entries | all exact | period matches, solve within one atom width | ✅ PASS |
+| Curated | Misiurewicz menu entries re-derive their (k,p) | 5 points | all match | detected (preperiod,period) == name | ✅ PASS |
 | Script | shipped tours resolve | 6 scripts | all resolve, 2242s of tour | all resolve | ✅ PASS |
 | Script | absolute times + geometric iteration ramp | hold 0–2s, glide 2–6s to 1e12× | hold@2s=1e0.0, mid@4s=1e6.000, end=1e12.0, iter mid=31623 end=1000000 | still 1× at 2s, 1e6× at 4s, 31623 iters at 4s | ✅ PASS |
 | Script | export size presets round-trip through the aspect model | 18 presets | all reproduce their stated height | every preset resolves to an aspect key that regenerates its height | ✅ PASS |
 | Script | lookahead holds slots the dive hasn't reached | queue at +0.5/+1.0/+1.5(building)/+2.0 octaves | at 100.0 → None, at 100.5 → Some(0), at 102.0 → Some(3) | none held-back, then slot 0, then deepest ready (slot 3) | ✅ PASS |
+| Script | interactive lookahead queue scales with zoom rate | zoom rate 1×/2×/4× · runway 3s | 6/8/12 slots | 6 / 8 / 12 | ✅ PASS |
 | Script | deep zoom string survives f64 range | zoom = "3.0938e1216" | log10 mag = 1216.4905 | 1216.4904 ± 1e-3 | ✅ PASS |
 | Script | malformed scripts rejected | 11 scripts | all rejected | all rejected | ✅ PASS |
 | Script | playback pacing | pace = settled / default | settled parsed=true, default adaptive=true | settled honored, default adaptive | ✅ PASS |
@@ -130,8 +135,12 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | Script | shallow keyframe keeps deep-neighbour precision | rational centre on a 1e8× keyframe, tour reaches 1e94× | centre drift 8.46e-117 | < 1e-110 (the 1e94× view span is ~1e-95) | ✅ PASS |
 | Script | segment lookup | grand-tour chapters | gauntlet 132–331s of 331s, prefix→landmarks, #1→whole-set | id / prefix / index resolve, unknown errors | ✅ PASS |
 | View format | metadata round-trips a deep view | serialize → scramble → load | iter 1234 aa 3 upp_log2 -120.000 cx -0.743643887037151 | clean load; fractal/iter/aa/zoom/center preserved | ✅ PASS |
+| View format | coordinate expression round-trips | center_re_expr=1/3 → save → scramble → load | has key true, kept true, |c−1/3| 1.56e-97 | key written; expression kept; centre re-derived (|c−1/3| < 1e-30) | ✅ PASS |
+| View format | expression re-derived at view precision + offset | deep view, 10-digit center_re, exact expr; anchor + 1e-40 offset | |c−1/3| 1.35e-174; |c−(1/3+1e-40)| 2.52e-97 | re-derived deep (< 1e-40) and offset applied (< 1e-60) | ✅ PASS |
+| View format | live zoom re-derives on-point, holds off-point | on-point deep zoom, then pan; refresh_center_expr() | grew true, |c−1/3| 1.35e-174, held-off-point true | re-derived deep on-point (< 1e-40); unchanged + kept off-point | ✅ PASS |
+| View format | exact bulb-root expressions land on the cardioid | 7 EXPRESSION_POI entries; |2z| at each | worst ||μ|−1| 3.33e-16; all kept as expressions true | on the boundary (< 1e-9) and every point preserved as an expression | ✅ PASS |
 | View format | newer format_version flagged | format_version=999 | saved by a newer Fractadyne (format v999); some settings may not apply — consider updating | newer == Some(999) | ✅ PASS |
-| View format | hostile fields clamped + reported | upp_log2=-1e30, max_iter=4e9, aa=9999, cycle=inf, bogus_field | iter 10000000 aa 16 upp_log2 -3.40e7; clamped [zoom depth, max_iter, cycle, offset, anti-aliasing]; unknown [bogus_field] | clamped & finite; report lists clamped + unknown | ✅ PASS |
+| View format | hostile fields clamped + reported | upp_log2=-1e30, max_iter=4e9, aa=9999, cycle=inf, bogus_field | iter 10000000 aa 16 upp_log2 -3.40e7; clamped [zoom depth, max_iter, cycle, offset, anti-aliasing]; unknown [bogus_field (line 10)] | clamped & finite; report lists clamped + unknown | ✅ PASS |
 | View format | custom gradient round-trips in the view | 2 segments: off-centre mid, Bézier blend, HSV space, alpha | 2 segments back, custom true, 3 derived stops | every field bit-identical; custom palette re-selected | ✅ PASS |
 | View format | every emitted key is a known key | 22 keys written | all known | writer ⊆ KNOWN_VIEW_KEYS | ✅ PASS |
 | View format | preset views carry no embedded gradient | use_custom_palette = false | absent | no palette_custom key | ✅ PASS |
@@ -196,7 +205,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | bench-matrix | fractal-phoenix | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 | bench-matrix | fractal-newton | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 
-**181/181 checks passed.**
+**190/190 checks passed.**
 
 ## Coverage & scope
 
@@ -235,8 +244,9 @@ Stored in `validation/golden`. Compared against; current renders written to `cur
 | multibrot3-1e6 | 1 | 0.000 | `951a53e34bb52d59` | ✅ match | `fractadyne --render --out multibrot3-1e6.png --fractal "Multibrot 3" --center 2.19533102209775940218788168856401426185991366731348781648e-1 7.317770073659198278104833118192370226116695264984596408352e-1 --zoom 1000000 --size 1920 --iter 3000 --ss 1 --method smooth --palette 0 --no-watermark` |
 | multibrot4-1e6 | 1 | 0.000 | `4b41babc2c1caaf9` | ✅ match | `fractadyne --render --out multibrot4-1e6.png --fractal "Multibrot 4" --center 2.28757960884408080137002307307431367850187620104115769219e-1 7.625265362813602953424916065993043372187655480595946595141e-1 --zoom 1000000 --size 1920 --iter 3000 --ss 1 --method smooth --palette 0 --no-watermark` |
 | multibrot5-1e6 | 1 | 0.000 | `435ce34fecae4197` | ✅ match | `fractadyne --render --out multibrot5-1e6.png --fractal "Multibrot 5" --center 2.320768669674853369085651557338865001525750889159483426277e-1 7.735895565582844849904484291320284693154748744446630197764e-1 --zoom 1000000 --size 1920 --iter 3000 --ss 1 --method smooth --palette 0 --no-watermark` |
+| seahorse-998 | 0 | 0.000 | `e7ef9dbe54dea1cc` | ✅ match | `fractadyne --render --out seahorse-998.png --fractal "Mandelbrot" --center -0.7436438870371588707780645434936425750476099623212550602141 0.1318259042053122928210973548747672652629885996790429749374 --zoom 1597000000000000 --size 1920 --iter 25000 --ss 1 --method smooth --palette 1 --no-watermark` |
 
-**18/18 golden images within tolerance.**
+**19/19 golden images within tolerance.**
 
 ## Summary
 

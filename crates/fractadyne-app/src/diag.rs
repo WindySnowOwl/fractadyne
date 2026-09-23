@@ -498,8 +498,8 @@ pub(crate) fn redact_path(s: &str, home: &str) -> String {
             if i < last {
                 continue;
             }
-            // The match must END where the path component ends: a home of `C:\Users\rho` is not
-            // inside `C:\Users\rhong`.
+            // The match must END where the path component ends: a home of `C:\Users\rob` is not
+            // inside `C:\Users\robin`.
             let end = i + needle.len();
             let next = out[end..].chars().next();
             if next.is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.')) {
@@ -524,8 +524,8 @@ pub(crate) fn logs_dir() -> Option<PathBuf> {
 /// Is `p` on a network share? Best effort: `false` when it cannot tell.
 ///
 /// ⭐Where the logs live is part of what a cost measurement measures: `frames.bin` is written on the
-/// UI thread every frame, and the RX 6800 XT's beta.113 battery, run with its logs on
-/// `\\vger\share`, read the share's round trip as the frame record's cost.
+/// UI thread every frame, and the RX 6800 XT's beta.113 battery, run with its logs on a
+/// network share, read the share's round trip as the frame record's cost.
 pub(crate) fn is_network_path(p: &std::path::Path) -> bool {
     #[cfg(windows)]
     {
@@ -1249,8 +1249,8 @@ mod redact_tests {
 
     #[test]
     fn it_does_not_match_inside_a_longer_name_or_redact_a_trivial_home() {
-        assert_eq!(redact_path(r"C:\Users\rhong\x", r"C:\Users\rho"), r"C:\Users\rhong\x");
-        assert_eq!(redact_path(r"C:\Users\rho\x", r"C:\Users\rho"), r"~\x");
+        assert_eq!(redact_path(r"C:\Users\robin\x", r"C:\Users\rob"), r"C:\Users\robin\x");
+        assert_eq!(redact_path(r"C:\Users\rob\x", r"C:\Users\rob"), r"~\x");
         assert_eq!(redact_path(r"C:\a C:\b", r"C:\"), r"C:\a C:\b", "a 3-char home is left alone");
         assert_eq!(redact_path("/home/bob/.config", "/home/bob/"), "~/.config", "trailing separator");
         // Non-ASCII account names survive the ASCII-only case folding without breaking a char.
@@ -1267,9 +1267,9 @@ mod network_path_tests {
     #[cfg(windows)]
     #[test]
     fn a_unc_path_is_a_share_and_the_temp_dir_is_not() {
-        assert!(is_network_path(Path::new(r"\\vger\share\Fractadyne\config\logs")));
-        assert!(is_network_path(Path::new("//vger/share/x")));
-        assert!(is_network_path(Path::new(r"\\?\UNC\vger\share\x")));
+        assert!(is_network_path(Path::new(r"\\fileserver\share\Fractadyne\config\logs")));
+        assert!(is_network_path(Path::new("//fileserver/share/x")));
+        assert!(is_network_path(Path::new(r"\\?\UNC\fileserver\share\x")));
         let tmp = std::env::temp_dir();
         assert!(!is_network_path(&tmp), "{} read as a share", tmp.display());
         let verbatim = std::path::PathBuf::from(format!(r"\\?\{}", tmp.display()));

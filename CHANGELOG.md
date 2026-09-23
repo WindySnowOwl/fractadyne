@@ -12,6 +12,14 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The validation scripts no longer assume a particular file server** (beta.116). `gpu-validate`
+  (Windows and Linux), `publish-share.ps1`, the field-agent scripts and `--uitest` used to have one
+  developer machine's share path built in. They now use the file share named by a new
+  environment variable, `FRACTADYNE_SHARE` (see DIAGNOSTICS.md). With it unset, a validation
+  bundle stays beside the script. The field agent's setup finds its share from where it is run.
+  Security reports can now be emailed to `feedback@fractadyne.org` (GitHub's private reporting is
+  still preferred). Five reference-corpus locations (34–38), previously named after a
+  developer's machine, are now `NN-field-dive-*`; their contents and pictures are unchanged.
 - **A test switch that puts the live view into the conditions of the Radeon GPU loss, on purpose**
   (beta.115, for testing only; off unless set). Every GPU loss on the RX 6800 XT happened with a
   short reference orbit that had already escaped, against a much larger iteration count: on

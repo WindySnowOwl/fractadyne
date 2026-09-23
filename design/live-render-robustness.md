@@ -2470,11 +2470,11 @@ it concerns.
 `fix/record-cost-and-local-battery`).
 
 - The RX 6800 XT's beta.113 battery failed `--recordtest` on cost alone (p99 706/878 µs, limit 83):
-  its logs were on `\\vger\share`, because `gpu-validate` built the bundle, config and logs
+  its logs were on a network share, because `gpu-validate` built the bundle, config and logs
   included, in `-Out`. The record attributed the cost to itself: `rec_us` is the previous emit's
   cost, and all 68 emits above 300 µs followed a `frames.jsonl` flush (summary 1/s, severe event),
   at ~650 µs each, while no other frame went above 172 µs. A dev-box A/B, interleaved on the same exe,
-  reproduced it (local p99 62–65 µs PASS, `\\vger\share` 98 µs FAIL, 2/2 each).
+  reproduced it (local p99 62–65 µs PASS, on the share 98 µs FAIL, 2/2 each).
 - §6.4's sinks are now split by what they must survive: `frames.bin` stays synchronous on the
   recording thread (an abort must find the slot on disk), and `frames.jsonl` moves to a writer
   thread fed by a bounded queue (4,096 rows, `try_send`, drops counted and logged once). The row is
