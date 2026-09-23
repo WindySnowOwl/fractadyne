@@ -7,10 +7,26 @@
 /// Semantic version (from Cargo) + an auto-incrementing per-build counter (build.rs).
 pub(crate) const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub(crate) const BUILD_SEQ: &str = env!("FRACT_BUILD");
+/// The commit this binary was built from (build.rs): a short sha, optionally `-dirty` (a tracked
+/// source differed from it) or `-archive` (built from a source tarball, cleanliness unverified), or
+/// the literal `unknown`.
+pub(crate) const BUILD_GIT: &str = env!("FRACT_GIT");
 
-/// Display string, e.g. `0.1.0 (build 42)`.
+/// Display string, e.g. `0.2.41-beta.113 (build 3501, g1a2b3c4)`. The commit field is what makes a
+/// field artefact attributable: the build counter alone cannot tell two machines' builds apart, and
+/// a validation run once measured the previous binary without anyone being able to tell.
 pub(crate) fn version_string() -> String {
-    format!("{APP_VERSION} (build {BUILD_SEQ})")
+    format!("{APP_VERSION} (build {BUILD_SEQ}, {})", git_field(BUILD_GIT))
+}
+
+/// `g<sha>[-dirty|-archive]`, or `git unknown` — the `g` prefix is `git describe`'s, so the field
+/// reads as a commit and never as a number.
+fn git_field(git: &str) -> String {
+    if git == "unknown" {
+        "git unknown".to_string()
+    } else {
+        format!("g{git}")
+    }
 }
 
 /// The window title, e.g. `Fractadyne v0.2.40 (build 1901)`. A function rather than an inline

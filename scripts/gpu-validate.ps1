@@ -25,6 +25,7 @@
 #   summary.txt          step | exit code | duration - read this first
 #   system.txt           OS, CPU, RAM, GPU + driver version, app version
 #   adapter.txt          the adapter + capability line the app itself resolved (the B6 ask)
+#   00-build-id.txt      is this binary the one the share published? (vs BUILD-ID.txt)
 #   01-gputest.txt       df32/floatexp primitives vs CPU oracles, swept over every backend
 #   02-selftest.txt      full suite + 17 goldens
 #   03-live-res.txt      --selftest-filter live-res - the settled-resolution invariant
@@ -44,7 +45,10 @@ param(
     # Force one wgpu backend (vulkan | dx12 | gl). Default: whatever the app picks.
     [string]$Backend = "",
     # Where to write the bundle. Default: the share if mounted, else beside this script.
-    [string]$Out = ""
+    [string]$Out = "",
+    # The BUILD-ID.txt to check the binary against (step 00). Default: searched for beside this
+    # script and in the share's builds\<tag>\ folder.
+    [string]$BuildId = ""
 )
 
 # Deliberately NOT "Stop". The app writes its startup banner to stderr, and with Stop in force
@@ -99,7 +103,8 @@ try {
 } catch {
     $lines += "system inventory failed: $_"
 }
-$lines += "App     : " + ((& $exe --version 2>$null | Select-Object -Last 1) -replace '\s+$', '')
+$appVersion = ((& $exe --version 2>$null | Where-Object { $_ -match '^fractadyne ' } | Select-Object -Last 1) -replace '\s+$', '')
+$lines += "App     : " + $appVersion
 if ($Backend) { $lines += "Backend : pinned to $Backend" }
 $lines | Out-File $sys -Encoding utf8
 
@@ -147,6 +152,61 @@ function Invoke-Step {
     Write-Host ("   exit {0} in {1}s" -f $code, $secs) -ForegroundColor $colour
 }
 
+# --- step 00: WHICH binary is this? ------------------------------------------------------------
+# Every result below is only as good as knowing which build produced it: a 2026-08-16 run measured
+# the previous binary and nothing could tell. publish-share.ps1 writes BUILD-ID.txt into the share
+# folder a package came from; this checks the binary under test against it.
+#   exit 0  the binary is one the share published (its --version is an `exe:` line there), or a
+#           build of the published source (g<commit>-archive, the Linux tarball route)
+#   exit 1  BUILD-ID.txt was found and this binary is NOT in it: stale or foreign. Every other
+#           result in this bundle is then unattributed.
+#   exit 2  no BUILD-ID.txt found: cannot verify. Deliberately NOT exit 0 - an unverifiable
+#           identity must not read as a verified one.
+$idFile = Join-Path $dir "00-build-id.txt"
+$idSw = [Diagnostics.Stopwatch]::StartNew()
+$idOut = @("binary  : $exe", "version : $appVersion")
+$tag = if ($appVersion -match '^fractadyne (\S+) ') { "v" + $Matches[1] } else { "" }
+$candidates = @()
+if ($BuildId) { $candidates += $BuildId }
+$candidates += (Join-Path $root "BUILD-ID.txt"), (Join-Path $root "..\BUILD-ID.txt"), (Join-Path $root "..\..\BUILD-ID.txt")
+if ($tag) {
+    foreach ($s in @("\\vger\share\Fractadyne", "D:\share\Fractadyne")) {
+        $candidates += Join-Path (Join-Path (Join-Path $s "builds") $tag) "BUILD-ID.txt"
+    }
+}
+$idPath = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+$idCode = 2
+if (-not $idPath) {
+    $idOut += "verdict : CANNOT VERIFY - no BUILD-ID.txt found. Searched:"
+    $idOut += ($candidates | ForEach-Object { "            $_" })
+}
+else {
+    $idOut += "against : $((Resolve-Path $idPath).Path)"
+    $id = Get-Content $idPath
+    $commit = ($id | Where-Object { $_ -match '^commit: ' } | Select-Object -First 1) -replace '^commit: ', ''
+    $ver = $appVersion -replace '^fractadyne ', ''
+    $hit = $id | Where-Object { $_ -match '^exe: ' -and ($_ -split ' \| ', 2)[1] -eq $ver } | Select-Object -First 1
+    if ($hit) {
+        $idCode = 0
+        $idOut += "verdict : OK - this is the published " + ((($hit -replace '^exe: ', '') -split ' \| ', 2)[0])
+    }
+    elseif ($commit -and $ver -match '\(build \d+, g([0-9a-f]{7,40})-archive\)$' -and $commit.StartsWith($Matches[1])) {
+        $idCode = 0
+        $idOut += "verdict : OK - built from the published source of commit $commit"
+    }
+    else {
+        $idCode = 1
+        $idOut += "verdict : MISMATCH - this binary is not one the share published. Published:"
+        $idOut += ($id | Where-Object { $_ -match '^(tag|commit|exe): ' } | ForEach-Object { "            $_" })
+    }
+}
+$idOut | Out-File $idFile -Encoding utf8
+$idSw.Stop()
+$results += [pscustomobject]@{ Step = "build-id"; Exit = $idCode; Seconds = [math]::Round($idSw.Elapsed.TotalSeconds, 1); File = "00-build-id.txt" }
+$idColour = if ($idCode -eq 0) { "Green" } else { "Red" }
+Write-Host "-> build-id" -ForegroundColor Yellow
+Write-Host ("   {0}" -f (($idOut | Where-Object { $_ -match '^verdict' }) -replace '^verdict : ', '')) -ForegroundColor $idColour
+
 Invoke-Step "gputest" "01-gputest.txt" @("--gputest") `
     "df32/floatexp primitives vs CPU oracles, every backend"
 Invoke-Step "selftest" "02-selftest.txt" @("--selftest") `
@@ -193,6 +253,10 @@ Out-File $sum -Encoding utf8 -Append
 
 How to read this
 ----------------
+build-id     Read this line FIRST. 0 = the binary tested is the one the share published. 1 = it is
+             not (a stale extraction, or a different build): every other result is then about an
+             unknown binary. 2 = no BUILD-ID.txt was found, so nobody can say which build this is -
+             pass -BuildId <path> to the one in the share's builds\<tag>\ folder.
 gputest      A failing two_sum/two_prod means this stack's shader compiler folds the error-free
              transforms, so every extended-precision path silently degrades to plain f32. Known:
              all NVIDIA backends fold them; AMD Vulkan/OpenGL do not; AMD DX12 fails differently

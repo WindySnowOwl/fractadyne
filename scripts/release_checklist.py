@@ -46,7 +46,8 @@ STEPS = [
      "Window opens within a few seconds. No console errors. No crash dialog."),
     ("Launch",
      "Read the title bar.",
-     "Shows 'Fractadyne v<version> (build <n>)' and the version matches the release being tested."),
+     "Shows 'Fractadyne v<version> (build <n>, g<commit>)', the version matches the release being "
+     "tested, and the commit is the tagged one with no '-dirty'."),
     ("Launch",
      "On first run, the welcome / quick-start dialog appears. Read it, then dismiss it.",
      "Dialog is readable, no clipped text, buttons work, and it closes without reappearing."),
@@ -453,8 +454,9 @@ STEPS = [
      "and must never be able to take the app down."),
     ("Linux",
      "Run ./fractadyne --version over SSH with no DISPLAY set.",
-     "Prints 'fractadyne <version> (build N)' and exits cleanly without trying to open a window. "
-     "The version must match the tag being reviewed."),
+     "Prints 'fractadyne <version> (build N, g<commit>)' and exits cleanly without trying to open a "
+     "window. The version must match the tag being reviewed; a build from the source tarball reads "
+     "'g<commit>-archive'."),
     ("Linux",
      "After the session above, check ~/.config/Fractadyne/logs/ for crash-*.txt.",
      "No new crash reports. (If any exist this run FAILS and the file must be attached — the log "
