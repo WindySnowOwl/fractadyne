@@ -12,6 +12,20 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A test switch that puts the live view into the conditions of the Radeon GPU loss, on purpose**
+  (beta.115, for testing only; off unless set). Every GPU loss on the RX 6800 XT happened with a
+  short reference orbit that had already escaped, against a much larger iteration count: on
+  2026-09-21 the reference ended at 655 iterations while the view asked for 4,627. So every pixel
+  kept restarting from the reference start, 25 to 33 million times a frame. A view that picks its
+  own reference doesn't land there on demand. At that same view, the app picked a 37,936-iteration
+  reference instead. Setting `FRACTADYNE_REF_ESCAPE_AT=655` now cuts every reference to that shape.
+  Normally the app treats a sudden short reference as a reason to shrink its frame budget, which
+  would chunk the frame into the safe regime and test nothing, so it skips that step for these
+  cuts. `--soak N --soak-depth session` holds whatever view the session opened at, and its report
+  says whether the conditions were actually entered. A run with the switch set but the conditions
+  never reached exits with code 2 (VACUOUS) rather than passing. A run with the switch set also
+  counts as non-standard everywhere a changed setting does: the self-test fails it, and the
+  frame-record check calls it VACUOUS. Nothing changes when it's not set.
 - **The frame record no longer costs a frame anything when the logs are on a slow disk**
   (beta.114). The once-a-second summary file, `logs/frames.jsonl`, was written on the thread that
   draws the picture. On a Radeon RX 6800 XT whose logs were on a network share, each of those

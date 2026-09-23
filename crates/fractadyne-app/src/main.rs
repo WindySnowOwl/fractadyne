@@ -1808,14 +1808,13 @@ impl Perf {
     /// switch. Zero (the default, and any unparseable value) disables the instrument entirely.
     /// Read once: this is consulted per frame and an env lookup per frame is a silly cost.
     pub(crate) fn bla_drop_frames() -> u32 {
-        use std::sync::OnceLock;
-        static N: OnceLock<u32> = OnceLock::new();
-        *N.get_or_init(|| {
-            std::env::var("FRACTADYNE_BLA_DROP_FRAMES")
-                .ok()
-                .and_then(|s| s.trim().parse().ok())
-                .unwrap_or(0)
-        })
+        crate::tunables::instrument("FRACTADYNE_BLA_DROP_FRAMES")
+    }
+
+    /// `FRACTADYNE_REF_ESCAPE_AT=N`: every installed reference is truncated to N samples and
+    /// marked escaped (see `render::escape_instrument`). Zero, the default, disables it.
+    pub(crate) fn ref_escape_at() -> u32 {
+        crate::tunables::instrument("FRACTADYNE_REF_ESCAPE_AT")
     }
 
     fn bootstrap_steps(&self, v: usize) -> u64 {
@@ -5946,9 +5945,13 @@ impl FractadyneApp {
             let secs = val("--soak")
                 .map(|s| arg_parse::<f64>("--soak", &s, "seconds"))
                 .unwrap_or(300.0);
-            let decades = val("--soak-depth")
-                .map(|s| arg_parse::<f64>("--soak-depth", &s, "decades of magnification"))
-                .unwrap_or(30.0);
+            // `session` = soak the view the session opened at (a staged crash view, say) rather
+            // than jumping to a depth: NaN is that sentinel.
+            let decades = match val("--soak-depth") {
+                Some(s) if s == "session" => f64::NAN,
+                Some(s) => arg_parse::<f64>("--soak-depth", &s, "decades of magnification, or 'session'"),
+                None => 30.0,
+            };
             Some(soak::Soak::new(secs, decades))
         } else {
             None

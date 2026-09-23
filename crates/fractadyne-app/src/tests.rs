@@ -22,6 +22,27 @@ fn install_collapse_trigger() {
     assert!(!install_collapse(0, 90, false));
 }
 
+// FRACTADYNE_REF_ESCAPE_AT (design §6.7): which references the instrument cuts, and whether their
+// series skip survives the cut. It must also be exactly the shape `install_collapse` fires on —
+// which is WHY the install exempts its own truncations from the derate.
+#[test]
+fn escape_instrument_cuts_long_references_and_keeps_only_a_skip_inside_the_cut() {
+    use crate::render::{escape_instrument_plan, install_collapse};
+    // Off (0) or degenerate (1): never touches anything.
+    assert_eq!(escape_instrument_plan(37_936, 9, 0), None);
+    assert_eq!(escape_instrument_plan(37_936, 9, 1), None);
+    // The field shape: a 37,936-sample orbit cut to 655; a 9-iteration skip survives.
+    assert_eq!(escape_instrument_plan(37_936, 9, 655), Some(true));
+    // A skip that would land past the cut is dropped.
+    assert_eq!(escape_instrument_plan(37_936, 700, 655), Some(false));
+    assert_eq!(escape_instrument_plan(37_936, 654, 655), Some(false));
+    // An orbit already ending by N (a genuinely escaped one) is left alone.
+    assert_eq!(escape_instrument_plan(655, 9, 655), None);
+    assert_eq!(escape_instrument_plan(90, 9, 655), None);
+    // The cut IS a collapse by the picker's rule — the derate must be skipped explicitly.
+    assert!(install_collapse(37_936, 655, false));
+}
+
 // Multi-machine sharding correctness: for any (frames, segments), the N ranges must be
 // contiguous, disjoint, and cover [0, F) exactly — a missing or duplicated frame at a shard
 // boundary silently corrupts a video assembled from several machines' output.

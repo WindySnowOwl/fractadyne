@@ -34,6 +34,9 @@ param(
     # and auto_iter become the run's session. -ViewAa overrides the supersampling (default 2).
     [string]$ViewFdn = "",
     [int]$ViewAa = 2,
+    # harness: arm diagnostic instruments, "NAME=N[,NAME=N]" (e.g. FRACTADYNE_REF_ESCAPE_AT=655).
+    # WARNING: these exist to reach regimes that have caused device losses.
+    [string]$Instrument = "",
     [int]$Days = 30,
     [int]$TimeoutMin = 0,
     [string]$Note = "",
@@ -128,6 +131,13 @@ switch ($Action) {
         $req.args = @($Run -split '\s+' | Where-Object { $_ })
         if ($Builds.Count -gt 0) { $req.builds = @($Builds) } else { $req.build = $Build }
         $req.repeat = $Repeat
+        if ($Instrument) {
+            $req.env = [ordered]@{}
+            foreach ($pair in ($Instrument -split ',' | Where-Object { $_ })) {
+                if ($pair -notmatch '^\s*([A-Z_]+)=([0-9]+)\s*$') { throw "bad -Instrument entry '$pair' (NAME=N)" }
+                $req.env[$Matches[1]] = [int]$Matches[2]
+            }
+        }
         if ($ViewFdn) {
             $kv = @{}
             foreach ($l in Get-Content -LiteralPath $ViewFdn) { if ($l -match '^\s*([a-z_0-9]+)\s*=\s*(.*?)\s*$') { $kv[$Matches[1]] = $Matches[2] } }

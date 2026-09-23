@@ -44,7 +44,8 @@ pub(crate) struct Soak {
     next_sample: Instant,
     samples: u32,
     crashes_at_start: Vec<String>,
-    /// log10 magnification of the view being soaked.
+    /// log10 magnification of the view being soaked; NaN = the session's own view
+    /// (`--soak-depth session`).
     decades: f64,
 }
 
@@ -110,14 +111,20 @@ impl crate::FractadyneApp {
         let n = FRAMES.fetch_add(1, Ordering::Relaxed);
         if n == 0 {
             // The view under soak: deep enough to be on the perturbation path with a real
-            // reference orbit, which is the regime the checklist row is about.
-            self.uitest_set_live(ctx, s.decades);
+            // reference orbit, which is the regime the checklist row is about — or, with
+            // `--soak-depth session`, whatever view the session opened at.
+            let at = if s.decades.is_nan() {
+                "the session's view".to_string()
+            } else {
+                self.uitest_set_live(ctx, s.decades);
+                format!("1e{:.0}x", s.decades)
+            };
             eprintln!(
-                "[soak] {:.0}s at 1e{:.0}x — liveness window {}s (watchdog thread), \
-                 growth limit {GROWTH_LIMIT_MB} MB",
+                "[soak] {:.0}s at {at} — liveness window {}s (watchdog thread), growth limit \
+                 {GROWTH_LIMIT_MB} MB; tunables {}",
                 s.duration.as_secs_f64(),
-                s.decades,
-                WINDOW.as_secs()
+                WINDOW.as_secs(),
+                crate::tunables::status_line()
             );
         }
 
@@ -172,6 +179,18 @@ impl crate::FractadyneApp {
             "\n=== --soak complete: {elapsed:.0}s, {frames} frames, {} samples, rss {} -> {} MB ===",
             s.samples, s.rss_first_mb, s.rss_peak_mb
         );
+        // With the escape instrument armed this soak IS W9's escaped-reference rung, and a
+        // survival means nothing unless the regime was entered.
+        let regime = regime_report(&crate::diag::frame_record::snapshot());
+        eprintln!("soak-regime: {}", regime.line);
+        let escape_armed = crate::Perf::ref_escape_at() > 0;
+        if fails.is_empty() && escape_armed && !regime.entered {
+            eprintln!(
+                "soak-liveness: VACUOUS (exit 2) — FRACTADYNE_REF_ESCAPE_AT is armed but the regime was never \
+                 entered, so surviving it proves nothing"
+            );
+            return 2;
+        }
         if fails.is_empty() {
             eprintln!("soak-liveness: PASS (frames advanced in every window, memory held)");
             0
@@ -183,3 +202,58 @@ impl crate::FractadyneApp {
         }
     }
 }
+
+/// W9's regime-reached predicate (design §6.7), read from the frame record rather than from any
+/// timing instrument — the lesson of U8/U16 is that a rung judged by the thing it stresses can pass
+/// without having stressed it.
+pub(crate) struct RegimeReport {
+    /// At least one frame on a short COMPLETE reference (`ref_len` ≤ a quarter of the iteration
+    /// ask) with BLA off, AND a counter reading from such a frame with rebases and no BLA skips.
+    pub(crate) entered: bool,
+    pub(crate) line: String,
+}
+
+pub(crate) fn regime_report(recs: &[crate::diag::frame_record::FrameRecord]) -> RegimeReport {
+    use crate::diag::frame_record::kind;
+    let shaped = |r: &&crate::diag::frame_record::FrameRecord| {
+        r.kind == kind::FRAME
+            && r.has_ref
+            && !r.ref_partial
+            && r.ref_len > 0
+            && r.gpu_iter as u64 >= 4 * r.ref_len as u64
+            && !r.bla_on
+    };
+    let in_shape: Vec<_> = recs.iter().filter(shaped).collect();
+    let storm: Vec<_> = in_shape.iter().filter(|r| r.ctr_new && r.ctr_rebase > 0 && r.ctr_bla_skip == 0).collect();
+    let unchunked = in_shape.iter().filter(|r| r.dispatched && !r.chunked).count();
+    let dispatched = in_shape.iter().filter(|r| r.dispatched).count();
+    let max_rebase = storm.iter().map(|r| r.ctr_rebase).max().unwrap_or(0);
+    let (bmin, bmax) = in_shape
+        .iter()
+        .map(|r| r.fe_budget)
+        .fold((u64::MAX, 0u64), |(lo, hi), b| (lo.min(b), hi.max(b)));
+    let line = if in_shape.is_empty() {
+        "NOT ENTERED — no frame on a short complete reference (ref_len <= ask/4) with BLA off".to_string()
+    } else {
+        let r0 = in_shape[0];
+        format!(
+            "{} {} frame(s) on a short escaped reference (ref_len {} vs ask {}, BLA off); {} counter reading(s) \
+             with rebases and bla_skip=0 (max {} rebases); {} of {} dispatches UN-chunked; budget {:.3e}..{:.3e}",
+            if storm.is_empty() { "SHAPE ONLY:" } else { "ENTERED:" },
+            in_shape.len(),
+            r0.ref_len,
+            r0.gpu_iter,
+            storm.len(),
+            max_rebase,
+            unchunked,
+            dispatched,
+            bmin as f64,
+            bmax as f64
+        )
+    };
+    RegimeReport { entered: !storm.is_empty(), line }
+}
+
+#[cfg(test)]
+#[path = "soak_tests.rs"]
+mod tests;

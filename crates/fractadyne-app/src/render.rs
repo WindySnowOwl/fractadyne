@@ -1387,7 +1387,7 @@ impl FractadyneApp {
         }
     }
 
-    fn install_recompute_now(&mut self, vi: usize, res: RecomputeResult) {
+    fn install_recompute_now(&mut self, vi: usize, mut res: RecomputeResult) {
         // `orbit_len` counts SAMPLES (`iters + 1`): a build capped at exactly `LIVE_REF_CAP`
         // iterations stores `LIVE_REF_CAP + 1` samples and must install normally.
         //
@@ -1468,6 +1468,44 @@ impl FractadyneApp {
         // Any real install supersedes a parked preview — most importantly the FULL stage of the
         // same cold start, which must never lose to its own throwaway forerunner.
         self.pending_coarse[vi.min(1)] = None;
+        // ⭐DIAGNOSTIC INSTRUMENT `FRACTADYNE_REF_ESCAPE_AT=N` (off by default; design §6.7, W9).
+        // Every device loss on the RX 6800 XT ran on a SHORT ESCAPED reference against a much larger
+        // iteration ask — 2026-09-21: `orbit_len=655 partial=false` at `iter=4627`, BLA off, 25–33 M
+        // rebases a frame — and a live view that picks its own reference does not land there on
+        // demand (the chunk sweep at that exact view settled on a 37,936-sample orbit). This makes
+        // every installed reference that shape: truncated to N samples, COMPLETE, no BLA.
+        // Done here — after the stale / coarse checks, BEFORE the no-op check — so a later build of
+        // the same point truncates to the same orbit and is skipped as a no-op instead of
+        // re-installing it on every landing.
+        // ⚠`instrument_truncated` exempts THIS install from the derates below. The collapse derate
+        // exists for a PICKER collapse and would see exactly this shape (short and complete), cap the
+        // budget at the bootstrap and force chunking — the safe regime, the opposite of the field's
+        // frozen 1.515e11 budget with `chunk_over` false. The rung would run, look busy and test
+        // nothing (the design names this as the whole difficulty of the instrument).
+        let mut instrument_truncated = false;
+        let escape_at = crate::Perf::ref_escape_at();
+        if let Some(keep_sa) = escape_instrument_plan(res.orbit_len, res.sa.skip, escape_at) {
+            let from = res.orbit_len;
+            let keep = (escape_at as usize).min(res.orbit.len());
+            res.orbit = std::sync::Arc::new(res.orbit[..keep].to_vec());
+            res.orbit_len = keep as u32;
+            res.partial = false;
+            res.orbit_tail = None;
+            res.bla = std::sync::Arc::new(Vec::new());
+            if !keep_sa {
+                res.sa = fractadyne_core::SeriesSkip::NONE;
+            }
+            instrument_truncated = true;
+            crate::diag::log_line(
+                "instrument",
+                &format!(
+                    "REF_ESCAPE_AT={escape_at}: v{vi} reference {from} → {escape_at} samples, complete, BLA off, \
+                     sa_skip {}; install derate SKIPPED (budget stays {:.3e})",
+                    res.sa.skip,
+                    self.perf.fe_budget[vi.min(1)] as f64
+                ),
+            );
+        }
         // ⭐A NO-OP INSTALL IS DROPPED (design/live-zoom-smoothing.md P-B.1). During a glide the
         // lookahead (and the reactive path alike) keeps landing the orbit that is ALREADY
         // installed — same point, same length, same tables (`reuse-extend … ⚠DID NOT GROW`,
@@ -1567,7 +1605,8 @@ impl FractadyneApp {
             // `install_collapse` — a scripted glide can't reproduce the interactive wheel-jump
             // that trips it, so the unit checks are its regression net.)
             let big_collapse = install_collapse(old.orbit_len, res.orbit_len, res.partial);
-            if clamp_lifted || (big_jump && !growth_only) || big_collapse {
+            // An instrument truncation derates nothing (see `instrument_truncated` above).
+            if !instrument_truncated && (clamp_lifted || (big_jump && !growth_only) || big_collapse) {
                 let cur = self.perf.fe_budget[vb];
                 // A collapse invalidates the measured cost model WHOLESALE (the beta.47 precedent:
                 // "mode switch ⇒ budget unmeasured"), so it caps at the bootstrap opening guess,
@@ -9364,6 +9403,16 @@ pub(crate) fn budget_base(fe_budget: u64, bootstrap: u64) -> u64 {
 /// the interactive wheel-jump that trips it has no scripted repro.
 pub(crate) fn install_collapse(old_len: u32, new_len: u32, new_partial: bool) -> bool {
     old_len > 0 && !new_partial && (new_len as u64) * 3 < (old_len as u64) * 2
+}
+
+/// What the `FRACTADYNE_REF_ESCAPE_AT=n` instrument does to a reference of `orbit_len` samples
+/// whose series skip is `sa_skip`: `None` = leave it (instrument off, or the orbit already ends by
+/// `n`); `Some(keep_sa)` = truncate to `n` samples, mark it complete, drop its BLA, and keep the
+/// series skip only if it still lands inside the shortened orbit.
+pub(crate) fn escape_instrument_plan(orbit_len: u32, sa_skip: u32, n: u32) -> Option<bool> {
+    // `then`, not `then_some`: the argument of `then_some` is evaluated even when the condition is
+    // false, and `n - 1` underflows for n = 0 — the instrument's OFF state, i.e. every frame.
+    (n >= 2 && orbit_len > n).then(|| sa_skip < n - 1)
 }
 
 /// A dispatch prices the budget only if it is REPRESENTATIVE of it — at least this fraction of
