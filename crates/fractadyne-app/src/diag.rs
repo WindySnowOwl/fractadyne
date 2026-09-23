@@ -392,6 +392,61 @@ mod device_loss_hint_tests;
 /// The always-on per-frame record (design/live-render-robustness.md W1).
 pub(crate) mod frame_record;
 
+/// Replace the user's home directory with `~` everywhere in `s` — for anything that leaves the
+/// machine (the issue report). Issues are public, and on every desktop OS the home path contains
+/// the account name.
+pub(crate) fn redact_home(s: &str) -> String {
+    match directories::BaseDirs::new() {
+        Some(b) => redact_path(s, &b.home_dir().to_string_lossy()),
+        None => s.to_string(),
+    }
+}
+
+/// [`redact_home`] with the home path given — pure, so it is pinned by test. Matches the path with
+/// either separator and with JSON-escaped backslashes, ASCII-case-insensitively (Windows paths are
+/// case-insensitive and logs are not consistent about it). A path shorter than four characters is
+/// left alone: a home of `/` or `C:\` would redact half the report.
+pub(crate) fn redact_path(s: &str, home: &str) -> String {
+    let home = home.trim_end_matches(['\\', '/']);
+    if home.len() < 4 {
+        return s.to_string();
+    }
+    let mut variants = vec![
+        home.to_string(),
+        home.replace('\\', "/"),
+        home.replace('/', "\\"),
+        home.replace('/', "\\").replace('\\', "\\\\"),
+    ];
+    // Longest first, so the JSON-escaped form is not half-replaced by the plain one.
+    variants.sort_by_key(|v| std::cmp::Reverse(v.len()));
+    variants.dedup();
+    let mut out = s.to_string();
+    for v in &variants {
+        let needle = v.to_ascii_lowercase();
+        let mut result = String::with_capacity(out.len());
+        let hay = out.to_ascii_lowercase(); // byte-for-byte the same length as `out`
+        let mut last = 0;
+        for (i, _) in hay.match_indices(&needle) {
+            if i < last {
+                continue;
+            }
+            // The match must END where the path component ends: a home of `C:\Users\rho` is not
+            // inside `C:\Users\rhong`.
+            let end = i + needle.len();
+            let next = out[end..].chars().next();
+            if next.is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.')) {
+                continue;
+            }
+            result.push_str(&out[last..i]);
+            result.push('~');
+            last = end;
+        }
+        result.push_str(&out[last..]);
+        out = result;
+    }
+    out
+}
+
 /// The resolved logs directory (`<config>/logs`), or `None` if file logging is off/unavailable.
 /// Used by the issue reporter to pull the log + crash reports.
 pub(crate) fn logs_dir() -> Option<PathBuf> {
@@ -974,6 +1029,36 @@ impl Drop for ProgressPump {
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod redact_tests {
+    use super::redact_path;
+
+    #[test]
+    fn the_home_path_is_redacted_in_every_spelling_it_appears_in() {
+        let home = r"C:\Users\alice";
+        let text = "logs directed to C:\\Users\\alice\\AppData\\x (--log-dir)\n\
+                    config c:/users/ALICE/config.toml\n\
+                    json {\"p\":\"C:\\\\Users\\\\alice\\\\f.fdn\"}\n\
+                    bare C:\\Users\\alice";
+        let out = redact_path(text, home);
+        assert!(!out.to_ascii_lowercase().contains("alice"), "{out}");
+        assert!(out.contains(r"logs directed to ~\AppData\x"), "{out}");
+        assert!(out.contains("config ~/config.toml"), "{out}");
+        assert!(out.contains(r#"{"p":"~\\f.fdn"}"#), "{out}");
+        assert!(out.ends_with("bare ~"), "{out}");
+    }
+
+    #[test]
+    fn it_does_not_match_inside_a_longer_name_or_redact_a_trivial_home() {
+        assert_eq!(redact_path(r"C:\Users\rhong\x", r"C:\Users\rho"), r"C:\Users\rhong\x");
+        assert_eq!(redact_path(r"C:\Users\rho\x", r"C:\Users\rho"), r"~\x");
+        assert_eq!(redact_path(r"C:\a C:\b", r"C:\"), r"C:\a C:\b", "a 3-char home is left alone");
+        assert_eq!(redact_path("/home/bob/.config", "/home/bob/"), "~/.config", "trailing separator");
+        // Non-ASCII account names survive the ASCII-only case folding without breaking a char.
+        assert_eq!(redact_path(r"C:\Users\José\f", r"C:\Users\José"), r"~\f");
     }
 }
 

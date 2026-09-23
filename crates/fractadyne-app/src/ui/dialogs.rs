@@ -876,6 +876,7 @@ impl FractadyneApp {
                 ui.checkbox(&mut self.report.include_sysinfo, "System info (version, OS, CPU, GPU, VRAM)");
                 ui.checkbox(&mut self.report.include_location, "Current location (.fdn)");
                 ui.checkbox(&mut self.report.include_log, "Recent log");
+                ui.checkbox(&mut self.report.include_frames, "Frame record (the last minute, and the last 40 frames)");
                 ui.add_enabled_ui(has_crash, |ui| {
                     ui.checkbox(
                         &mut self.report.include_crash,

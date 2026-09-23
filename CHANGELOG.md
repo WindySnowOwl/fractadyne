@@ -33,6 +33,15 @@ detail is in the git history.
   measurement, a stall — so a long session's history survives even when nothing crashed. And when
   the app stops responding altogether, the background watchdog now writes that into the record
   itself, with how long nothing happened.
+- **An issue report no longer contains your user name, and now carries the frame record**
+  (beta.113). Help ▸ Report an issue attaches the tail of the log, and the lines the app writes as
+  it starts name its settings folder, which sits under your home directory — whose path contains
+  your account name on every desktop system. When those lines fell inside the attached tail — a
+  short session, or a report sent just after a crash and relaunch, which is when most reports are
+  sent — a report pasted into a public GitHub issue published it. Every section of the report now
+  has the home folder replaced by `~`, in any spelling it appears in. A new, on-by-default option adds the frame
+  record: the last minute of the once-a-second summaries and the last 40 frames, which says far
+  more about a slow or failing session than the log's last few seconds did.
 - **A freeze in the first thirty seconds after launch is now reported** (beta.113). The watchdog
   that writes "possible hang" to the log treated the moment the app started as if it had just
   warned, and waits thirty seconds between warnings — so a hang early in a session was never

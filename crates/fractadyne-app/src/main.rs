@@ -5237,6 +5237,9 @@ struct ReportState {
     include_sysinfo: bool,
     include_location: bool,
     include_log: bool,
+    /// Include the frame record: the session header, the last minute of per-second summaries,
+    /// and the last 40 frames. The log tail's 48 KB was about 12 s of a failing session.
+    include_frames: bool,
     include_crash: bool,
     /// Include the newest `crash-view-*.fdn` — the exact location a crash happened at. Its own
     /// artifact because the crash report omits the coordinates and a device-loss relaunch reopens at
@@ -5261,6 +5264,7 @@ impl Default for ReportState {
             include_sysinfo: true,
             include_location: true,
             include_log: true,
+            include_frames: true,
             include_crash: true,
             include_crash_view: true,
             include_test: false,
@@ -9535,6 +9539,12 @@ impl FractadyneApp {
                 s.push_str("\n\n");
             }
         }
+        if self.report.include_frames {
+            if let Some(block) = crate::diag::frame_record::report_section() {
+                s.push_str(&block);
+                s.push('\n');
+            }
+        }
         if self.report.include_log {
             if let Some(log) = crate::diag::recent_log(48 * 1024) {
                 s.push_str("== Recent log (tail) ==\n");
@@ -9542,7 +9552,11 @@ impl FractadyneApp {
                 s.push('\n');
             }
         }
-        s
+        // ⚠Issues are PUBLIC and the home directory's path is the account name. Every section is
+        // redacted — the log tail names paths under it (logs dir, share, config), and so can a
+        // crash report. The session id, version, commit, adapter and tunables are kept: they are
+        // what makes a report attributable, and none of them names the user.
+        crate::diag::redact_home(&s)
     }
 }
 
