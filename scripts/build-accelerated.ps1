@@ -179,6 +179,14 @@ foreach ($imp in @("libmpfr.dll.a", "libgmp.dll.a")) {
 # `use-system-libs` is the LGPL section 4(d)(1) shape. See the header.
 Step "Building (GNU toolchain, MPFR backend, dynamically linked, MPFR/GMP delay-loaded)"
 $cargoBinU = ((Join-Path $env:USERPROFILE ".cargo\bin") -replace '\\', '/') -replace '^([A-Za-z]):', '/$1'
+# The build runs in an MSYS2 login shell whose PATH does not include Git for Windows, so build.rs
+# could not find git and stamped the package `git unknown` (build 3513). Hand it the git THIS
+# shell resolves, by the FRACTADYNE_GIT override build.rs honours. An environment variable, not a
+# PATH edit inside $cmd: Git lives under "Program Files", and a path with a space inside that
+# quoted string is exactly what Windows PowerShell's native-argument passing mangles.
+$gitCmd = Get-Command git -ErrorAction SilentlyContinue
+if ($gitCmd) { $env:FRACTADYNE_GIT = $gitCmd.Source }
+else { Write-Host "  WARNING: git not found - the package will be stamped 'git unknown' and publish-share will refuse it" -ForegroundColor Yellow }
 $cmd = "export PATH=`"`$PATH:$cargoBinU`"; cd '$rootU' && cargo +stable-$TRIPLE build --release " +
        "--target $TRIPLE --bin fractadyne --features fractadyne-core/rug --features gmp-mpfr-sys/use-system-libs"
 $swapped = @()
@@ -381,6 +389,13 @@ if (-not $SkipVerify) {
                   "0xC0000135 means a DLL is missing from the package - add it to `$RUNTIME_DLLS.`n$ver")
         }
         Write-Host "  starts with no MSYS2 on PATH"
+        # ...and names the commit it was built from. A package that cannot is refused by
+        # publish-share.ps1 anyway; failing HERE says why at the moment it happened.
+        if ($ver -notmatch '\(build \d+, g[0-9a-f]{7,40}(-dirty|-archive)?\)') {
+            Fail ("the packaged binary does not name its commit (build.rs could not run git - see " +
+                  "FRACTADYNE_GIT above):`n$ver")
+        }
+        Write-Host ("  names its commit: " + (($ver -split "`n" | Where-Object { $_ -match '^fractadyne ' } | Select-Object -Last 1).Trim()))
 
         # ...and it must actually iterate in MPFR. --bench-bignum reports the backend that produced
         # its numbers, taken from what ran rather than from a flag, and exits non-zero if the

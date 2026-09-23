@@ -74,6 +74,7 @@ fn main() {
         rerun(&root.join(w));
     }
     rerun(&root.join(ARCHIVE_STAMP));
+    println!("cargo:rerun-if-env-changed=FRACTADYNE_GIT");
 
     let git = match git_identity(&root) {
         Some((ident, watch)) => {
@@ -101,7 +102,7 @@ fn main() {
 /// inside some other repository (a home directory kept under git, say) would otherwise be stamped
 /// with THAT repository's commit — a confident wrong answer, which is worse than `unknown`.
 fn git_identity(root: &Path) -> Option<(String, Vec<PathBuf>)> {
-    let out = Command::new("git")
+    let out = git()
         .arg("-C")
         .arg(root)
         .args([
@@ -132,7 +133,7 @@ fn git_identity(root: &Path) -> Option<(String, Vec<PathBuf>)> {
     // `--no-optional-locks`: a plain `git status` may refresh and REWRITE the index as a side
     // effect, which is exactly the kind of write a build script must not cause. Untracked files are
     // excluded (the `git describe --dirty` meaning): logs and scratch output are not sources.
-    let status = Command::new("git")
+    let status = git()
         .arg("-C")
         .arg(root)
         .args([
@@ -161,6 +162,14 @@ fn git_identity(root: &Path) -> Option<(String, Vec<PathBuf>)> {
         common.join("packed-refs"),
     ];
     Some((ident, watch))
+}
+
+/// `git`, or the executable `FRACTADYNE_GIT` names — the app's own `FRACTADYNE_<NAME>` override
+/// convention. ⚠Needed by `scripts/build-accelerated.ps1`, which compiles inside an MSYS2 login
+/// shell whose PATH does not include Git for Windows: there `git` was not found and the MPFR
+/// package the maintainer runs day to day was stamped `git unknown` (build 3513).
+fn git() -> Command {
+    Command::new(env::var_os("FRACTADYNE_GIT").unwrap_or_else(|| "git".into()))
 }
 
 /// The tarball case: `BUILD-COMMIT.txt` at the root, line 2 the short sha.
