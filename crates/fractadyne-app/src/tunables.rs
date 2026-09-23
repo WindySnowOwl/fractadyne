@@ -120,16 +120,53 @@ pub(crate) fn cost() -> &'static Cost {
 /// than omitted on purpose: a crash report that says nothing about tunables cannot be told apart
 /// from one written by a build that did not have this mechanism.
 pub(crate) fn status_line() -> String {
-    match APPLIED.get() {
-        Some(v) if !v.is_empty() => format!("{} OVERRIDE(S) — {}", v.len(), v.join(", ")),
-        _ => "stock".to_string(),
+    let mut parts = Vec::new();
+    if let Some(v) = APPLIED.get().filter(|v| !v.is_empty()) {
+        parts.push(format!("{} OVERRIDE(S) — {}", v.len(), v.join(", ")));
+    }
+    for (name, value) in instruments() {
+        parts.push(format!("INSTRUMENT {name}={value}"));
+    }
+    if parts.is_empty() {
+        "stock".to_string()
+    } else {
+        parts.join("; ")
     }
 }
 
 /// Are the tunables stock? The gates assert this: a self-test or benchmark run under an override
-/// has measured a build nobody ships.
+/// has measured a build nobody ships. So has one with a diagnostic INSTRUMENT armed.
 pub(crate) fn is_stock() -> bool {
-    APPLIED.get().is_none_or(|v| v.is_empty())
+    APPLIED.get().is_none_or(|v| v.is_empty()) && instruments().is_empty()
+}
+
+/// The diagnostic instruments, each armed by an environment variable (design §6.7). Every one
+/// deliberately perturbs the live path to put it in a regime that has killed devices, so a run
+/// with one armed has — like an override — measured a build nobody ships, and says so in
+/// [`status_line`] (hence in the frame record's header, the self-test and `--recordtest`).
+pub(crate) const INSTRUMENTS: &[&str] = &["FRACTADYNE_REF_ESCAPE_AT", "FRACTADYNE_BLA_DROP_FRAMES"];
+
+/// The armed instruments and their values: set, parseable and non-zero. Read once — they are
+/// consulted per frame.
+pub(crate) fn instruments() -> &'static [(&'static str, u32)] {
+    static ARMED: OnceLock<Vec<(&'static str, u32)>> = OnceLock::new();
+    ARMED.get_or_init(|| {
+        INSTRUMENTS
+            .iter()
+            .filter_map(|name| {
+                std::env::var(name)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u32>().ok())
+                    .filter(|v| *v > 0)
+                    .map(|v| (*name, v))
+            })
+            .collect()
+    })
+}
+
+/// One instrument's value, 0 when it is not armed.
+pub(crate) fn instrument(name: &str) -> u32 {
+    instruments().iter().find(|(n, _)| *n == name).map_or(0, |(_, v)| *v)
 }
 
 /// Apply `NAME=VALUE` pairs collected from `--set`. Call ONCE, before anything renders.

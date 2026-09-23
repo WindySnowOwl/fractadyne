@@ -47,7 +47,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 3   # 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update
+$AgentVersion = 4   # 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -247,11 +247,12 @@ $Allowed = @{
     "--recordtest" = @("?int"); "--zoomtest" = @("?num"); "--zoomtest-rate" = @("num"); "--zoomtest-start-log2" = @("num")
     "--zoomtest-location" = @("pkgfile"); "--motiontest" = @(); "--gputest" = @(); "--selftest" = @()
     "--selftest-filter" = @("word"); "--bench-matrix" = @(); "--livetest" = @("pkgfile"); "--size" = @("size")
-    "--chunk-sweep" = @("?int"); "--soak" = @("int"); "--soak-depth" = @("num"); "--center" = @("num", "num")
+    "--chunk-sweep" = @("?int"); "--soak" = @("int"); "--soak-depth" = @("depth"); "--center" = @("num", "num")
     "--zoom" = @("num"); "--zoom-log2" = @("num"); "--iter" = @("int"); "--set" = @("assign")
 }
 $ValuePattern = @{
     "int" = '^[0-9]{1,9}$'; "num" = '^[-+0-9.eE]{1,400}$'; "word" = '^[A-Za-z0-9_.-]{1,64}$'
+    "depth" = '^(session|[-+0-9.eE]{1,20})$'
     "size" = '^[0-9]{2,5}x[0-9]{2,5}$'; "assign" = '^[A-Za-z0-9_]{1,64}=[-+0-9.eE]{1,32}$'
     "pkgfile" = '^(tours|validation|benchmarks)/[A-Za-z0-9_./-]{1,160}\.(toml|fdn|kfr)$'
 }
@@ -371,9 +372,28 @@ function New-ViewSession($r) {
     return $tmpl
 }
 
+# The diagnostic INSTRUMENTS a request may arm (DIAGNOSTICS.md, "Environment variables"): each puts
+# the live path in a regime that has killed devices, on purpose. Integer values only; nothing else
+# from a request ever reaches the environment.
+$InstrumentEnv = @("FRACTADYNE_REF_ESCAPE_AT", "FRACTADYNE_BLA_DROP_FRAMES")
+
+function Get-RequestEnv($r) {
+    $e = Get-Field $r "env" $null
+    $out = [ordered]@{}
+    if ($null -eq $e) { return $out }
+    foreach ($p in $e.PSObject.Properties) {
+        if ($InstrumentEnv -notcontains $p.Name) { Stop-Refused "env $($p.Name) is not an allowed instrument ($($InstrumentEnv -join ', '))" }
+        if ([string]$p.Value -notmatch '^[0-9]{1,9}$') { Stop-Refused "env $($p.Name) must be a whole number" }
+        $out[$p.Name] = [string]$p.Value
+    }
+    return $out
+}
+
 function Invoke-Harness($r, [string]$dir, $status) {
     $package = [string](Get-Field $r "package" "standard")
     $session = New-ViewSession $r
+    $instr = Get-RequestEnv $r
+    $status.env = $instr
     $builds = @(Get-Field $r "builds" @())
     if ($builds.Count -eq 0) { $builds = @([string](Get-Field $r "build" "latest")) }
     if ($builds.Count -gt 4) { Stop-Refused "at most 4 builds per request" }
@@ -401,6 +421,8 @@ function Invoke-Harness($r, [string]$dir, $status) {
             Write-JsonFile (Join-Path $dir "status.json") $status
             $env:FRACTADYNE_CONFIG_DIR = $cfgDir
             $env:FRACTADYNE_NO_SOUND = "1"
+            foreach ($k in $InstrumentEnv) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
+            foreach ($k in $instr.Keys) { Set-Item "Env:$k" $instr[$k] }
             $idle0 = [FdField]::IdleSeconds()
             $screens = @(Get-Screens)
             $res = Invoke-Bounded -File $exe -Arguments @($resolved | ForEach-Object { Format-Arg $_ }) -Cwd $local -Out (Join-Path $local "stdout.txt") -Err (Join-Path $local "stderr.txt") -TimeoutMin $timeout
@@ -408,6 +430,7 @@ function Invoke-Harness($r, [string]$dir, $status) {
             # KVM switch that sends input of its own) every run would read as "used".
             $touched = if ($IdleMinutes -gt 0 -and $idle0 -ge 0) { [FdField]::IdleSeconds() -lt $res.seconds } else { $null }
             Remove-Item Env:FRACTADYNE_CONFIG_DIR -ErrorAction SilentlyContinue
+            foreach ($k in $InstrumentEnv) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
             # Deliver: the output, and the logs (fractadyne.log, frames.bin/.jsonl, any crash report).
             $to = Join-Path $dir $name
             New-Item -ItemType Directory -Force -Path $to | Out-Null
