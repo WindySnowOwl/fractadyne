@@ -18,7 +18,7 @@
 # a plain SSH session. --gputest needs no display at all.
 #
 # Produces  validate-<label>-<timestamp>/  with summary.txt, system.txt, adapter.txt,
-# 01-gputest.txt .. 06-uitest.txt, app.log and crash/ - plus a .tar.gz beside it.
+# 00-build-id.txt, 01-gputest.txt .. 06-uitest.txt, app.log and crash/ - plus a .tar.gz beside it.
 
 set -uo pipefail   # NOT -e: a failing step is data; the battery must continue.
 
@@ -27,6 +27,8 @@ QUICK=0
 BACKEND=""
 OUT=""
 BIN=""
+BUILD_ID=""
+HERE="$(cd "$(dirname "$0")" && pwd)"
 
 die() { echo "error: $*" >&2; exit 1; }
 say() { echo -e "\033[1;36m==>\033[0m $*"; }
@@ -38,6 +40,7 @@ while [ $# -gt 0 ]; do
     --backend) shift; BACKEND="${1:?--backend needs vulkan|gl}" ;;
     --out)     shift; OUT="${1:?--out needs a path}" ;;
     --bin)     shift; BIN="${1:?--bin needs a path}" ;;
+    --build-id) shift; BUILD_ID="${1:?--build-id needs a path to BUILD-ID.txt}" ;;
     -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
@@ -80,6 +83,7 @@ if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
 fi
 
 # --- system inventory --------------------------------------------------------------------------
+APP_VERSION="$("$BIN" --version 2>/dev/null | grep '^fractadyne ' | tail -1)"
 {
   echo "Fractadyne validation bundle - $LABEL - $STAMP"
   echo
@@ -96,7 +100,7 @@ fi
   if command -v vulkaninfo >/dev/null 2>&1; then
     echo "Vulkan  : $(vulkaninfo --summary 2>/dev/null | grep -E 'deviceName|driverInfo' | head -4 | tr '\n' ' ')"
   fi
-  echo "App     : $("$BIN" --version 2>/dev/null | tail -1)"
+  echo "App     : $APP_VERSION"
   [ -n "$BACKEND" ] && echo "Backend : pinned to $BACKEND"
 } > "$DIR/system.txt" 2>&1
 
@@ -116,6 +120,48 @@ step() {
   else echo -e "   \033[1;31mexit $code in ${secs}s\033[0m"; fi
   SUMMARY_ROWS="${SUMMARY_ROWS}$(printf '%-14s %6s %8s  %s\n' "$name" "$code" "${secs}s" "$file")"$'\n'
 }
+
+# --- step 00: WHICH binary is this? ----------------------------------------------------------------
+# The mirror of gpu-validate.ps1 step 00 (see there for the why). 0 = the share published this binary,
+# or it is a build of the published source (g<commit>-archive - the tarball route this box uses);
+# 1 = BUILD-ID.txt found and this binary is not in it; 2 = no BUILD-ID.txt, cannot verify - NOT a pass.
+build_id_step() {
+  local t0 t1 ver tag="" id="" c commit code=2 hit="" out
+  local re_tag='^fractadyne ([^ ]+) ' re_arch='\(build [0-9]+, g([0-9a-f]{7,40})-archive\)$'
+  t0=$(date +%s)
+  ver="${APP_VERSION#fractadyne }"
+  [[ "$APP_VERSION" =~ $re_tag ]] && tag="v${BASH_REMATCH[1]}"
+  local cands=()
+  [ -n "$BUILD_ID" ] && cands+=("$BUILD_ID")
+  cands+=("$HERE/BUILD-ID.txt" "$HERE/../BUILD-ID.txt" "$HERE/../../BUILD-ID.txt")
+  [ -n "$tag" ] && cands+=("/mnt/vger/Fractadyne/builds/$tag/BUILD-ID.txt")
+  for c in "${cands[@]}"; do [ -f "$c" ] && { id="$c"; break; }; done
+  out="binary  : $BIN"$'\n'"version : $APP_VERSION"$'\n'
+  if [ -z "$id" ]; then
+    out+="verdict : CANNOT VERIFY - no BUILD-ID.txt found. Searched:"$'\n'
+    for c in "${cands[@]}"; do out+="            $c"$'\n'; done
+  else
+    out+="against : $id"$'\n'
+    # BUILD-ID.txt is written on Windows (CRLF): strip the CR before comparing.
+    commit="$(tr -d '\r' < "$id" | sed -n 's/^commit: //p' | head -1)"
+    hit="$(tr -d '\r' < "$id" | grep '^exe: ' | awk -F ' \\| ' -v v="$ver" '$2 == v { sub(/^exe: /, "", $1); print $1; exit }')"
+    if [ -n "$hit" ]; then
+      code=0; out+="verdict : OK - this is the published $hit"$'\n'
+    elif [ -n "$commit" ] && [[ "$ver" =~ $re_arch ]] && [[ "$commit" == "${BASH_REMATCH[1]}"* ]]; then
+      code=0; out+="verdict : OK - built from the published source of commit $commit"$'\n'
+    else
+      code=1; out+="verdict : MISMATCH - this binary is not one the share published. Published:"$'\n'
+      out+="$(tr -d '\r' < "$id" | grep -E '^(tag|commit|exe): ' | sed 's/^/            /')"$'\n'
+    fi
+  fi
+  printf '%s' "$out" > "$DIR/00-build-id.txt"
+  t1=$(date +%s)
+  echo -e "\033[1;33m-> build-id\033[0m"
+  if [ "$code" -eq 0 ]; then echo -e "   \033[1;32m$(grep '^verdict' "$DIR/00-build-id.txt" | sed 's/^verdict : //')\033[0m"
+  else echo -e "   \033[1;31m$(grep '^verdict' "$DIR/00-build-id.txt" | sed 's/^verdict : //')\033[0m"; fi
+  SUMMARY_ROWS="${SUMMARY_ROWS}$(printf '%-14s %6s %8s  %s\n' "build-id" "$code" "$((t1 - t0))s" "00-build-id.txt")"$'\n'
+}
+build_id_step
 
 # --gputest is headless: no display, no xvfb, works over bare SSH.
 step "gputest" "01-gputest.txt" \
@@ -160,6 +206,10 @@ fi
 
 How to read this
 ----------------
+build-id     Read this line FIRST. 0 = the binary tested is the one the share published, or a build
+             of its published source. 1 = it is not: every other result is about an unknown binary.
+             2 = no BUILD-ID.txt was found, so nobody can say which build this is - pass
+             --build-id <path> to the one in the share's builds/<tag>/ folder.
 gputest      A failing two_sum/two_prod means this stack's shader compiler folds the error-free
              transforms, so every extended-precision path silently degrades to plain f32. Known:
              all NVIDIA backends fold them; AMD Vulkan/OpenGL do not; AMD DX12 fails differently

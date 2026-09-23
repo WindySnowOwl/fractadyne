@@ -12,6 +12,17 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Every build now names the commit it was built from** (beta.113). The title bar, Help ▸ About,
+  `--version`, crash reports and exported image metadata read `0.2.41-beta.113 (build 3501,
+  g1a2b3c4)`, and a build made from modified sources says `g1a2b3c4-dirty`. Until now two builds
+  of the same version could only be told apart by their build counter, which differs between
+  machines, so a report from another computer could not be traced to the code that produced it —
+  and a validation run once measured the previous build without anyone being able to tell.
+  Building from the published source bundle (the Linux route) reads `g1a2b3c4-archive`. The
+  script that publishes test builds now refuses a binary that was not built from the current
+  commit, or was built from modified sources, and writes a `BUILD-ID.txt` beside the packages; the
+  hardware validation battery checks the binary under test against it first and says plainly when
+  it cannot. Nothing about rendering changes.
 - **A crash report now says what the frame-budget controller was being told, and the app warns
   when that stops matching reality** (beta.112). A Radeon RX 6800 XT lost the GPU while zooming at
   1.76e6×, in a view whose reference orbit escaped after 655 iterations while the iteration count

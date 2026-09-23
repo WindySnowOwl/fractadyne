@@ -591,7 +591,7 @@ fn gallery_scan_and_load() {
 
 // ---------------------------------------------------------------- launch (steps 2, 3)
 
-/// Checklist step 2, "the title bar shows Fractadyne v<version> (build <n>) and the version
+/// Checklist step 2, "the title bar shows Fractadyne v<version> (build <n>, g<commit>) and the version
 /// matches the release being tested". The second clause is the one a machine can hold: the
 /// title must carry the CRATE's version, so a release built from a tree whose Cargo.toml was
 /// never bumped cannot present itself as the version on the tin.
@@ -604,16 +604,47 @@ fn title_string_matches_version() {
         "the title {t:?} does not carry the crate version {}",
         env!("CARGO_PKG_VERSION")
     );
-    // `(build N)` with a real number: the build counter is what distinguishes two binaries of
-    // the same version, and it is the first thing an issue report is read for.
-    let build = t
+    // `(build N, g<sha>)` with a real number: the build counter is what distinguishes two
+    // binaries of the same version, and it is the first thing an issue report is read for.
+    let (build, git) = t
         .rsplit_once("(build ")
         .and_then(|(_, r)| r.strip_suffix(')'))
-        .expect("title has no (build N) suffix");
+        .and_then(|r| r.split_once(", "))
+        .expect("title has no (build N, <commit>) suffix");
     assert!(
         !build.is_empty() && build.chars().all(|c| c.is_ascii_digit()),
         "build counter is {build:?}"
     );
+    // The commit field's PRESENCE AND SHAPE, and no further. It must not fail on `-dirty`: this
+    // is an ordinary unit test, run on dirty trees by construction during development. The
+    // refusal of a dirty build lives where a dirty build is genuinely wrong — publish-share.ps1.
+    assert!(git_field_well_formed(git), "commit field is {git:?}");
+}
+
+/// `g<7-40 hex>` with an optional `-dirty` / `-archive`, or `git unknown`.
+fn git_field_well_formed(git: &str) -> bool {
+    if git == "git unknown" {
+        return true;
+    }
+    let Some(rest) = git.strip_prefix('g') else {
+        return false;
+    };
+    let sha = rest
+        .strip_suffix("-dirty")
+        .or_else(|| rest.strip_suffix("-archive"))
+        .unwrap_or(rest);
+    (7..=40).contains(&sha.len()) && sha.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// The shape check must be able to go red — a check that accepts everything is not one.
+#[test]
+fn git_field_shape_rejects_malformed() {
+    for ok in ["g4e86e0e", "g4e86e0e0a-dirty", "g4e86e0e-archive", "git unknown"] {
+        assert!(git_field_well_formed(ok), "{ok:?} should be accepted");
+    }
+    for bad in ["", "4e86e0e", "g", "g4e86", "gXYZ1234", "g4e86e0e-wip", "unknown", "g4e86e0e-dirty-dirty"] {
+        assert!(!git_field_well_formed(bad), "{bad:?} should be rejected");
+    }
 }
 
 /// Checklist step 3, "the welcome dialog appears on first run and closes without reappearing".

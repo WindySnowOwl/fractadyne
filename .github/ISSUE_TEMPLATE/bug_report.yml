@@ -12,7 +12,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: From Help → About or the title bar (e.g. `v0.1.11 (build 1234)`).
+      description: From Help → About or the title bar — all of it, e.g. `v0.2.41-beta.113 (build 3501, g1a2b3c4)`. The last part names the exact build.
       placeholder: v0.1.11
     validations:
       required: true
