@@ -43,7 +43,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 1
+$AgentVersion = 2   # 2: screens in the heartbeat and each run; "used during run" only with the idle wait on
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -117,6 +117,18 @@ function Format-Arg([string]$a) { if ($a -match '\s') { return "`"$a`"" } return
 
 function Test-Locked { [bool](Get-Process -Name LogonUI -ErrorAction SilentlyContinue) }
 
+# The screens this session has, as Windows reports them (logical pixels). Behind a KVM switch that
+# does not emulate the monitor, switching away can leave the session with no real display - and a
+# test then renders to a desktop no one sees, with timings that are not a user's.
+function Get-Screens {
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        return @([System.Windows.Forms.Screen]::AllScreens | ForEach-Object {
+                "{0} {1}x{2}{3}" -f $_.DeviceName, $_.Bounds.Width, $_.Bounds.Height, $(if ($_.Primary) { " primary" } else { "" }) })
+    }
+    catch { return @("unknown: $($_.Exception.Message)") }
+}
+
 function Write-Heartbeat([string]$state, [string]$detail, [string]$current = "") {
     try {
         if (-not (Test-Path $AgentDir)) { New-Item -ItemType Directory -Force -Path $AgentDir | Out-Null }
@@ -134,6 +146,7 @@ function Write-Heartbeat([string]$state, [string]$detail, [string]$current = "")
                 idle_seconds  = [math]::Round([FdField]::IdleSeconds())
                 idle_required = $IdleMinutes * 60
                 locked        = (Test-Locked)
+                screens       = @(Get-Screens)
             })
     }
     catch { Write-Log "heartbeat failed: $_" }
@@ -307,6 +320,7 @@ function Invoke-Battery($r, [string]$dir, $status) {
     $bundle = Get-ChildItem -LiteralPath $dir -Directory -Filter "validate-*" -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $bundle) { throw "the battery produced no bundle in $dir (see battery-console.txt)" }
     $status.bundle = $bundle.Name
+    $status.screens = @(Get-Screens)
     $steps = [ordered]@{}
     foreach ($l in @(Get-Content -LiteralPath (Join-Path $bundle.FullName "summary.txt") -ErrorAction SilentlyContinue)) {
         if ($l -match '^(build-id|gputest|selftest|live-res|bench-matrix|livetest|uitest|recordtest)\s+(-?[0-9]+)\s') { $steps[$Matches[1]] = [int]$Matches[2] }
@@ -344,8 +358,11 @@ function Invoke-Harness($r, [string]$dir, $status) {
             $env:FRACTADYNE_CONFIG_DIR = $cfgDir
             $env:FRACTADYNE_NO_SOUND = "1"
             $idle0 = [FdField]::IdleSeconds()
+            $screens = @(Get-Screens)
             $res = Invoke-Bounded -File $exe -Arguments @($resolved | ForEach-Object { Format-Arg $_ }) -Cwd $local -Out (Join-Path $local "stdout.txt") -Err (Join-Path $local "stderr.txt") -TimeoutMin $timeout
-            $touched = ([FdField]::IdleSeconds() -lt $res.seconds) -and ($idle0 -ge 0)
+            # Only meaningful when the idle wait is on: with it off (-IdleMinutes 0, e.g. behind a
+            # KVM switch that sends input of its own) every run would read as "used".
+            $touched = if ($IdleMinutes -gt 0 -and $idle0 -ge 0) { [FdField]::IdleSeconds() -lt $res.seconds } else { $null }
             Remove-Item Env:FRACTADYNE_CONFIG_DIR -ErrorAction SilentlyContinue
             # Deliver: the output, and the logs (fractadyne.log, frames.bin/.jsonl, any crash report).
             $to = Join-Path $dir $name
@@ -357,7 +374,7 @@ function Invoke-Harness($r, [string]$dir, $status) {
             foreach ($logs in @((Join-Path $cfgDir "logs"), (Join-Path $local "logs"))) {
                 if (Test-Path $logs) { Copy-Item -Path (Join-Path $logs "*") -Destination $to -Recurse -Force -ErrorAction SilentlyContinue }
             }
-            $status.runs += [ordered]@{ run = $name; build = $t; exit = $res.exit; seconds = $res.seconds; timed_out = $res.timed_out; input_during_run = $touched }
+            $status.runs += [ordered]@{ run = $name; build = $t; exit = $res.exit; seconds = $res.seconds; timed_out = $res.timed_out; input_during_run = $touched; screens = $screens }
             Write-JsonFile (Join-Path $dir "status.json") $status
         }
     }

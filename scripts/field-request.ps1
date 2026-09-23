@@ -64,6 +64,7 @@ function Show-Agents {
         $alive = if ($h.state -eq "running") { "running $($h.current)" } elseif ($age -le 3 * $h.poll_seconds) { "alive" } else { "SILENT for $age s" }
         Write-Host ("{0,-12} {1,-22} {2}: {3}  (idle {4}/{5} s, locked {6}, pending {7}, last poll {8} s ago)" -f `
                 $h.computer, $alive, $h.state, $h.detail, $h.idle_seconds, $h.idle_required, $h.locked, $h.pending, $age)
+        if ($h.PSObject.Properties.Name -contains "screens") { Write-Host ("{0,-12} screens: {1}" -f "", ((@($h.screens)) -join "; ")) }
     }
 }
 
