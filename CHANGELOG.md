@@ -42,6 +42,15 @@ detail is in the git history.
   has the home folder replaced by `~`, in any spelling it appears in. A new, on-by-default option adds the frame
   record: the last minute of the once-a-second summaries and the last 40 frames, which says far
   more about a slow or failing session than the log's last few seconds did.
+- **The log stays readable in a long session** (beta.113). It now rolls over into
+  `fractadyne.log.1` to `.3` whenever it passes about 5 MB, rather than only at startup — one
+  long session had written 20 MB into a single file. The line announcing that progressive
+  supersampling has started prints at most once every five seconds per view: it once made up
+  about two thirds of a crashing session's log, repeating 31 times a second, and buried the lines
+  that mattered (every restart is still counted, in the frame record). The report written about a
+  session that ended without shutting down now quotes that session's last lines even when the log
+  had been rolled over — it used to quote the new, empty file. Reference-building threads now have
+  names in the log.
 - **A freeze in the first thirty seconds after launch is now reported** (beta.113). The watchdog
   that writes "possible hang" to the log treated the moment the app started as if it had just
   warned, and waits thirty seconds between warnings — so a hang early in a session was never

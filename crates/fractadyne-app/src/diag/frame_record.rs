@@ -337,6 +337,10 @@ frame_record! {
     blank_walks: u32,
     accum_count: u32,
     accum_present: bool,
+    /// Progressive-supersampling runs BEGUN this frame for this view. The log line that marks a
+    /// begin is rate-limited (it once made up ~65% of a crashing session's log, restarting ~31
+    /// times a second); this count is not, so a flapping run stays visible in the record.
+    accum_begins: u8,
 
     // ---- the signals
     /// The interval that ENDED at this frame's start, and this frame's own `update` body. The

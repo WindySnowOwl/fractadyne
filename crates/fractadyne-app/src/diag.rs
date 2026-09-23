@@ -60,6 +60,17 @@ static BUDGET_LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// recorded losses show three or four fatal frames after the first warning sign) without turning
 /// the report into a log file.
 const BUDGET_LOG_CAP: usize = 24;
+/// `fractadyne.log` rotates past this size into `.1` … `.3` — checked WHILE RUNNING as well as at
+/// startup. The single-slot, startup-only rotation let one long session write 20 MB into one file
+/// (measured on the development machine's own log), and overwrite its own head the next launch.
+const LOG_ROTATE_BYTES: u64 = 5_000_000;
+const LOG_SLOTS: u32 = 4;
+/// Bytes appended since the log's size was last checked — checked every ~256 KB, not every line.
+static LOG_SINCE_CHECK: AtomicU64 = AtomicU64::new(0);
+/// This startup rotated the previous session's log into `.1`, so that is where the unclean-exit
+/// report must look for the dead session's last lines. ⚠It used to read the NEW, empty file: a
+/// dead session with a log past 5 MB was reported with no last lines at all.
+static ROTATED_AT_START: AtomicBool = AtomicBool::new(false);
 /// Liveness stamp (ms since START), fed by `update()`, breadcrumbs, and progress pumps.
 static ALIVE_MS: AtomicU64 = AtomicU64::new(0);
 /// True once the watchdog thread is running (so tests/multiple inits don't double-spawn).
@@ -197,9 +208,10 @@ pub(crate) fn init(args: &[String]) {
     let _ = LOG_DIR.set(dir.clone());
     if let Some(dir) = dir {
         let path = dir.join("fractadyne.log");
-        // Single-slot rotation: past ~5 MB the old log becomes fractadyne.log.1.
-        if std::fs::metadata(&path).map(|m| m.len() > 5_000_000).unwrap_or(false) {
-            let _ = std::fs::rename(&path, dir.join("fractadyne.log.1"));
+        // Past ~5 MB the old log shifts into .1 (and .1 → .2 → .3).
+        if std::fs::metadata(&path).map(|m| m.len() > LOG_ROTATE_BYTES).unwrap_or(false) {
+            rotate_log(&dir);
+            ROTATED_AT_START.store(true, Ordering::Relaxed);
         }
         *LOG_FILE.lock().unwrap() = Some(path);
         for n in &start_notes {
@@ -233,6 +245,19 @@ pub(crate) fn init(args: &[String]) {
     // `FractadyneApp::new` starts it for every update()-driven mode (GUI and CLI renders).
 }
 
+/// Shift `fractadyne.log` → `.1` → `.2` → `.3`, dropping the oldest. (`rename` replaces an
+/// existing target on every platform std supports, Windows included.)
+fn rotate_log(dir: &std::path::Path) {
+    for n in (1..LOG_SLOTS).rev() {
+        let from = if n == 1 {
+            dir.join("fractadyne.log")
+        } else {
+            dir.join(format!("fractadyne.log.{}", n - 1))
+        };
+        let _ = std::fs::rename(from, dir.join(format!("fractadyne.log.{n}")));
+    }
+}
+
 /// Append one line to the log file (no-op when file logging is off). Never panics.
 fn file_line(text: &str) {
     let guard = match LOG_FILE.lock() {
@@ -243,7 +268,50 @@ fn file_line(text: &str) {
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
             let _ = writeln!(f, "{} {}", stamp(), text);
         }
+        // Mid-run rotation, under the same lock as every write, so no line lands in a file being
+        // renamed. The next write reopens `fractadyne.log` fresh.
+        let since = LOG_SINCE_CHECK.fetch_add(text.len() as u64 + 16, Ordering::Relaxed);
+        if since > 256 * 1024 {
+            LOG_SINCE_CHECK.store(0, Ordering::Relaxed);
+            if std::fs::metadata(path).map(|m| m.len() > LOG_ROTATE_BYTES).unwrap_or(false) {
+                if let Some(dir) = path.parent() {
+                    rotate_log(dir);
+                }
+            }
+        }
     }
+}
+
+/// Rate-limits one always-on log line that marks a TRANSITION of a predicate that can flap: the
+/// first occurrence prints, repeats within `gap_ms` are held back and counted, and the next line
+/// that prints says how many were. A flapping predicate must stay VISIBLE — the count says so, and
+/// the frame record counts every transition — but it must not drown the log: `[fd-accum] begin`
+/// once made up ~65% of a crashing session's 1.06 MB, restarting ~31 times a second.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct LineLimiter {
+    last_ms: Option<u64>,
+    held: u32,
+}
+
+impl LineLimiter {
+    /// `Some(held_back_since_last_print)` when this occurrence should print; `None` when held.
+    pub(crate) fn admit(&mut self, now_ms: u64, gap_ms: u64) -> Option<u32> {
+        match self.last_ms {
+            Some(t) if now_ms.saturating_sub(t) < gap_ms => {
+                self.held = self.held.saturating_add(1);
+                None
+            }
+            _ => {
+                self.last_ms = Some(now_ms);
+                Some(std::mem::take(&mut self.held))
+            }
+        }
+    }
+}
+
+/// Milliseconds since process start, for [`LineLimiter`].
+pub(crate) fn elapsed_ms() -> u64 {
+    (elapsed_s() * 1000.0) as u64
 }
 
 /// A diagnostic event: stderr + log file. `cat` becomes the `[fd-cat]` prefix.
@@ -798,11 +866,13 @@ fn report_unclean_previous_session() {
     let Some(p) = marker_path() else { return };
     let Ok(prev) = std::fs::read_to_string(&p) else { return };
     let _ = std::fs::remove_file(&p);
+    // The dead session's log: rotated into `.1` if this startup rotated it (see ROTATED_AT_START).
+    let dead_log = if ROTATED_AT_START.load(Ordering::Relaxed) { "fractadyne.log.1" } else { "fractadyne.log" };
     let tail = LOG_DIR
         .get()
         .cloned()
         .flatten()
-        .map(|d| d.join("fractadyne.log"))
+        .map(|d| d.join(dead_log))
         .and_then(|f| std::fs::read_to_string(f).ok())
         .map(|s| {
             // Last six lines in CHRONOLOGICAL order — `rev().take()` alone reads newest-first,
@@ -1029,6 +1099,78 @@ impl Drop for ProgressPump {
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod log_hygiene_tests {
+    use super::LineLimiter;
+
+    /// A flapping transition prints once per gap, and the next line that prints carries the count.
+    #[test]
+    fn a_rate_limited_line_prints_once_per_gap_and_counts_what_it_held() {
+        let mut l = LineLimiter::default();
+        assert_eq!(l.admit(0, 5000), Some(0), "the first occurrence always prints");
+        for t in (32..4999).step_by(32) {
+            assert_eq!(l.admit(t, 5000), None, "held at {t} ms");
+        }
+        let held = (32..4999).step_by(32).count() as u32;
+        assert_eq!(l.admit(5000, 5000), Some(held), "and the next one says how many");
+        assert_eq!(l.admit(5001, 5000), None);
+        assert_eq!(l.admit(12_000, 5000), Some(1));
+    }
+
+    /// Every category the app logs under must appear as `[fd-<cat>]` in DIAGNOSTICS.md's prefix
+    /// table — a documentation check that can genuinely go red (design W10). The source is scanned
+    /// for `log_line("…"`, `diag::trace("…"` and `trace_on("…"` with a literal category, ignoring
+    /// comment lines (a doc example) and the test-only files.
+    #[test]
+    fn every_log_category_is_documented() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let docs = std::fs::read_to_string(root.join("../../DIAGNOSTICS.md")).expect("DIAGNOSTICS.md");
+        let mut files = Vec::new();
+        let mut stack = vec![root.join("src")];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    let name = p.file_name().unwrap().to_string_lossy().into_owned();
+                    let test_only = name.ends_with("_tests.rs")
+                        || ["console.rs", "device_loss_hint.rs", "log_dir.rs"].contains(&name.as_str())
+                            && p.parent().is_some_and(|q| q.ends_with("diag"));
+                    if !test_only {
+                        files.push(p);
+                    }
+                }
+            }
+        }
+        let mut cats = std::collections::BTreeSet::new();
+        for f in &files {
+            let text: String = std::fs::read_to_string(f)
+                .unwrap()
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            for call in ["log_line(", "diag::trace(", "trace_on("] {
+                for (i, _) in text.match_indices(call) {
+                    let rest = text[i + call.len()..].trim_start();
+                    if let Some(lit) = rest.strip_prefix('"') {
+                        if let Some(end) = lit.find('"') {
+                            let cat = &lit[..end];
+                            if !cat.is_empty() && cat.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+                                cats.insert(cat.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(cats.len() >= 20, "the scan found only {} categories — it has stopped seeing the calls: {cats:?}", cats.len());
+        let missing: Vec<_> = cats.iter().filter(|c| !docs.contains(&format!("[fd-{c}]"))).collect();
+        assert!(missing.is_empty(), "logged but not in DIAGNOSTICS.md's prefix table: {missing:?}");
     }
 }
 

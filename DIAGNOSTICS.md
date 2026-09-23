@@ -7,7 +7,7 @@ in [design/diagnostics.md](design/diagnostics.md).
 
 | File | What | When |
 |------|------|------|
-| `<config>/logs/fractadyne.log` | Every `[fd-*]` diagnostic line, timestamped `[+12.345s]`; session header with version/args | Always (disable: `FRACTADYNE_LOG=0`); rotates to `.log.1` past ~5 MB |
+| `<config>/logs/fractadyne.log` | Every `[fd-*]` diagnostic line, timestamped `[+12.345s]`; session header with version/args | Always (disable: `FRACTADYNE_LOG=0`); past ~5 MB rotates into `.log.1`–`.log.3`, checked while running (beta.113) as well as at startup |
 | `<config>/logs/crash-<unix>.txt` | Panic message, backtrace, current activity, last render manifest, version | On any panic (including wgpu uncaptured errors, which log then panic). The manifest covers **both** paths: `req`-style for export/offline frames and a `LIVE …` line for on-screen frames stating resolution, ss, iterations, boost, nominal steps vs the watchdog budget, tiling, orbit length/partial and settled-ness — a live device loss used to record an EMPTY manifest, which made that crash class diagnosable only by inference |
 | `<config>/logs/perf.jsonl` | One JSON record per export render: size/ss/mode/iterations, pure-GPU iterate+color ms, nominal Gsteps/s, event counters | Only with `FRACTADYNE_PERF=1` |
 | `<config>/logs/frames.bin` | **The frame record**: the last 4,096 frames, one fixed 512-byte slot each (see below). Written in place with no flush, so it survives a process abort that the panic hook never sees | Always, from the first live frame (beta.113). Truncated at the start of each session, after the previous one's has been read |
@@ -56,10 +56,35 @@ dir, logs included.
 | `idle` | every frame, while the performance overlay is on | Why the app is still drawing: the quiescence verdict and each input to it (animation/playback clock, per-view tiled-settle and chunk-walk pending, reference build in flight, frames since each view last dispatched). ⭐Answers "a settled app is still burning GPU — what is holding it awake?", which no other channel can: the 2026-09-04 climb-probe loop dispatched a real 36.9 ms pass every 3 frames forever while `tile` reported `iterates=false` (true — the iterate KEY was deduped; the probe re-keys by nonce) |
 | `autopilot` | every auto-zoom target evaluation | Depth, the tracked goal before the look (`goal_was`), the aim and zoom speed, the new goal (`pick`), whether it moved to a different region (`retarget`), the probe dims and the full-precision centre — enough to re-render any point of the dive with `--render --center X Y --zoom-log2 L`. A healthy dive shows `goal_was` ≈ `pick` and rare retargets |
 
-Always-on prefixes (not gated): `[fd-start]` session header, `[fd-render]` CLI render
-manifest + failures, `[fd-progress]` CLI render progress (~2 s cadence), `[fd-watch]`
-possible-hang warnings, `[fd-wgpu]` device errors/loss, `[fd-panic]` crash reports,
-`[fd-perf]` per-export GPU times + counters, `[selftest …ms]` streamed check results.
+### Every log-line prefix
+
+A test (`every_log_category_is_documented`) scans the source for each category the app logs under
+and fails if one is missing from this table.
+
+| Prefix | Gated? | What it says |
+|--------|--------|--------------|
+| `[fd-start]` | always | Session header: version (with commit), arguments, bignum backends compiled in, which session loaded, where logs were directed |
+| `[fd-render]` | always | CLI render manifest and failures; on the live path the always-on alarms — `slow frame N` (with body vs time outside it), `⚠LETHAL-BAND FRAME`, `⚠IN-FLIGHT PASS IN THE LETHAL BAND`, `⚠FRAME BUDGET IS BLIND`, `motion jam` |
+| `[fd-wgpu]` | always | The adapter + capability line (`TIMESTAMP_QUERY`, attach bytes granted), device errors and device loss |
+| `[fd-panic]` | always | A panic, and where its crash report was written |
+| `[fd-oom]` | always | An allocation failure (the report is written from an 8 MB reserve) |
+| `[fd-unclean]` | always | The previous session ended without a clean shutdown — with its last log lines and, from beta.113, how much of its frame record survived |
+| `[fd-exit]` | always | A console-initiated shutdown (Ctrl+C, the console window closed) — recorded as NOT a crash |
+| `[fd-watch]` | always | `possible hang` — nothing stamped liveness for 10 s — with the last activity; also written into the frame record as a STALL row |
+| `[fd-accum]` | always | Progressive supersampling: `begin`, `waiting`, `abandoned`, `converged`, `⚠FOLD AT ANOTHER VIEW`. `begin` and `abandoned` print at most once per 5 s per view and say how many were held back; every begin is counted in the frame record (`accum_begins`) |
+| `[fd-glide]` | always, bounded | What was presented on each of the first 20 frames of every glide (`present=real\|reproject\|static(BLACK)` …) |
+| `[fd-view]` | always | `⚠JUMP view` — the view moved without a deliberate jump |
+| `[fd-cache]` | always | The on-disk orbit cache: size at startup, evictions, clears |
+| `[fd-export]` | always | Tour export writes that waited on a slow destination |
+| `[fd-console]` | always | Console output switched on or off from the Diagnostics window |
+| `[fd-perf]` | always | Per-export GPU iterate/colour ms and event counters |
+| `[fd-progress]` | always (CLI) | CLI render progress, ~2 s cadence (`[progress]` in the log file) |
+| `[fd-autodive]` `[fd-motiontest]` `[fd-zoomtest]` | harness | Each harness's own progress and verdict lines |
+| `[fd-req]` `[fd-ref]` `[fd-gpu]` `[fd-tile]` `[fd-glitch]` `[fd-idle]` `[fd-dpi]` `[fd-autopilot]` `[fd-refwaste]` | `FRACTADYNE_TRACE` | The trace categories in the table above; `refwaste` accounts every reference build's CPU cost as `USED` / `SUPERSEDED` / `DROPPED` |
+| `[crumb]` | always, file only | Breadcrumbs — phase transitions — tagged with the writing thread's name (reference builds run on `fd-ref-live`, `fd-ref-lookahead`, `fd-ref-hold`, `fd-ref-export`) |
+
+`[selftest …ms]` lines stream `--selftest` check results. `fractadyne.log` rotates past ~5 MB
+into `.1`–`.3`, checked while running as well as at startup.
 
 ### GPU event counters
 
