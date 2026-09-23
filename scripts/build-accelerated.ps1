@@ -182,8 +182,9 @@ $cargoBinU = ((Join-Path $env:USERPROFILE ".cargo\bin") -replace '\\', '/') -rep
 # The build runs in an MSYS2 login shell whose PATH does not include Git for Windows, so build.rs
 # could not find git and stamped the package `git unknown` (build 3513). Hand it the git THIS
 # shell resolves, by the FRACTADYNE_GIT override build.rs honours. An environment variable, not a
-# PATH edit inside $cmd: Git lives under "Program Files", and a path with a space inside that
-# quoted string is exactly what Windows PowerShell's native-argument passing mangles.
+# PATH edit inside $cmd: Git lives under "Program Files", and a path with a space nested inside
+# that already-quoted bash command string depends on how each PowerShell version escapes native
+# arguments (7.3 changed it). An environment variable crosses into MSYS2 untouched.
 $gitCmd = Get-Command git -ErrorAction SilentlyContinue
 if ($gitCmd) { $env:FRACTADYNE_GIT = $gitCmd.Source }
 else { Write-Host "  WARNING: git not found - the package will be stamped 'git unknown' and publish-share will refuse it" -ForegroundColor Yellow }
