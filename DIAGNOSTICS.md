@@ -285,6 +285,38 @@ FAILs are meaningful even on unfamiliar hardware while its "drift" lines are not
 `adapter.txt` records what the app itself resolved — adapter, backend, `TIMESTAMP_QUERY` — which
 is the "record adapter and resolved tunables per card" half of B6.
 
+- **Local.** The battery runs under `%TEMP%\fractadyne-validate\` (`${TMPDIR:-/tmp}` on Linux) and
+  copies the finished bundle to `-Out` at the end (beta.114). Every step logs into the bundle, and
+  `frames.bin` is written on the UI thread each frame, so a bundle built on a network share
+  measures the share.
+
+### Running it from the dev box (the field agent)
+
+A test machine can run the battery, and a few harnesses, on request, with no one at it and no
+inbound connection. The only channel is the share it already reads builds from.
+
+- **On the test machine, once:** `pwsh -ExecutionPolicy Bypass -File
+  \\vger\share\Fractadyne\field\setup\field-agent-setup.ps1`. That installs `field-agent.ps1` into
+  `%LOCALAPPDATA%\Fractadyne-field\` plus a scheduled task that starts it, hidden, in the user's
+  own session at logon. `-Disable` / `-Enable` / `-Status` / `-Uninstall` manage it.
+- **From the dev box:** `scripts\field-request.ps1` files a request in `<share>\field\requests\`
+  and, with `-Wait`, watches `<share>\field\results\<id>\status.json`. With no arguments it shows
+  each agent's heartbeat (`<share>\field\agent\<COMPUTER>.json`), the queue, and recent results.
+
+It runs **only published packages**: a zip in `builds\<tag>\` whose sha256 matches `BUILD-ID.txt`,
+copied and extracted locally. Three actions:
+- `battery` — `gpu-validate.ps1`, `-Quick` optional.
+- `harness` — `fractadyne.exe` with an allow-listed mode such as `--recordtest`, `--zoomtest`,
+  `--motiontest`, `--chunk-sweep`, `--selftest`, `--livetest` or `--soak`; optionally several
+  builds interleaved A,B,A,B for an A/B.
+- `events` — the event log's display-driver events, LiveKernelEvent (GPU reset) reports and
+  Fractadyne crash reports.
+
+Anything else is `rejected`, with the reason. Deliberately absent: `--deviceloss-repro`,
+`--autodive`, and anything that writes outside its own run folder. A job starts only when the
+machine is unlocked, idle for 5 minutes, and Fractadyne is closed. Each harness run records
+whether anyone used the machine during it.
+
 ## Canonical extreme-zoom diagnostic location
 
 The Mandelbrot **real-axis tip** (`c = -2` exactly) at **~1e21000×** (`units_per_pixel_e = -69770`,
