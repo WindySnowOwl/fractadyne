@@ -10,6 +10,8 @@ in [design/diagnostics.md](design/diagnostics.md).
 | `<config>/logs/fractadyne.log` | Every `[fd-*]` diagnostic line, timestamped `[+12.345s]`; session header with version/args | Always (disable: `FRACTADYNE_LOG=0`); rotates to `.log.1` past ~5 MB |
 | `<config>/logs/crash-<unix>.txt` | Panic message, backtrace, current activity, last render manifest, version | On any panic (including wgpu uncaptured errors, which log then panic). The manifest covers **both** paths: `req`-style for export/offline frames and a `LIVE …` line for on-screen frames stating resolution, ss, iterations, boost, nominal steps vs the watchdog budget, tiling, orbit length/partial and settled-ness — a live device loss used to record an EMPTY manifest, which made that crash class diagnosable only by inference |
 | `<config>/logs/perf.jsonl` | One JSON record per export render: size/ss/mode/iterations, pure-GPU iterate+color ms, nominal Gsteps/s, event counters | Only with `FRACTADYNE_PERF=1` |
+| `<config>/logs/frames.bin` | **The frame record**: the last 4,096 frames, one fixed 512-byte slot each (see below). Written in place with no flush, so it survives a process abort that the panic hook never sees | Always, from the first live frame (beta.113). Truncated at the start of each session, after the previous one's has been read |
+| `<config>/logs/crash-<unix>-<n>-frames.jsonl` | Every frame record the crashing process held, as JSON Lines — a header line, then one record per line | Beside every crash report that had frames to write, including the report for a previous session that died without one |
 
 `<config>` is the session directory (`%APPDATA%\Fractadyne\Fractadyne\config` on Windows;
 override with `FRACTADYNE_CONFIG_DIR`). **Note:** `--reset-state` deletes the whole config
@@ -78,6 +80,44 @@ runs, the way the selftest "counters" group does — otherwise a genuinely SA-do
 and a dead code path both read near-zero. With SA/BLA off, zero on a path a deep render must
 exercise means dead code (exactly how the v0.2.6 NaN-marker regression would have shown).
 
+### The frame record (`frames.bin`, the crash report's `frames:` section)
+
+One structured row per frame per view, always on — no trace flag. Each row carries the frame
+index (the same number the slow-frame line, `[fd-glide] fN`, the chunk/pin traces and the
+`--show-timestamp` overlay show), what was asked (iterations, boost, auto-iter), the reference
+(length, partial, SA skip, BLA), the price (learned budget, the budget the plan was sized against,
+the dispatch's steps, the per-mode rates), what was dispatched and presented (resolution, ss,
+chunk range, tile, live/reproject/hold), the frame interval and body time, the GPU reading the
+budget controller judged that frame and its verdict (`DISCARDED`/moved/unchanged, and why growth
+was refused), the palette-normalization window, and the user's input. It holds **4,096 frames** —
+about a minute at 60 fps, and 14–68 minutes at the 1–5 fps of a failing session — where the
+`budget :` decision ring beside it holds 24 decisions.
+
+⚠**The GPU work counters (`ctr_rebase`, `ctr_bla_skip`, escaped pixels) appear only on the frame a
+reading ARRIVED, tagged with the render they describe (`ctr_tag`).** A readback lands 2–3 frames
+late; reading them as a per-frame value would pin one frame's rebase count on a dozen others.
+
+A crash report prints the last 40 rows under `frames  :` and writes all of them to the
+`-frames.jsonl` beside it. `session :` in the report joins the three files. The encoding is
+`validation/frame-schema.json` (`--dump-frame-schema` regenerates it; a test fails if it is stale),
+and `--recordtest` is the gate that proves the record is being written.
+
+**Reading it: `scripts/framelog.py`** (standard library only).
+
+- `summarize <frames.bin | crash-…-frames.jsonl>` — which build and adapter produced it, then
+  the scorecard (intervals, what was presented, readings by verdict, the budget's range, counter
+  readings, frames in the escaped-reference shape, the record's own cost) and every **slow
+  episode** with what the budget controller was told during it, labelled with which of the five
+  candidate mechanisms of the 2026-09-21 stall it fits: (a) no reading arrived, (b) readings
+  priced the wrong dispatch, (c) the timed bracket missed the work, (d) the time went where no
+  iterate is timed (slow frames that dispatched nothing), (e) slow readings did not move the budget.
+- `compare --a A1 A2 A3 --b B1 B2 B3` — before/after, three runs per arm minimum (VACUOUS
+  otherwise); each metric against its own run-to-run range, with arm A split against itself as the
+  control. A metric the control "separates" is noise on that run and its verdict carries a `?`.
+- `schema-check <file>` — strict: an unknown or a missing key is a failure, never a skipped field.
+- `decode <frames.bin> [-o out.jsonl]`, and `selftest`, which feeds the mechanism labelling one
+  synthetic episode per mechanism plus a healthy control and fails on any mislabel.
+
 ### The `bignum` line in a crash report
 
 Crash reports and `--selftest` name the arbitrary-precision backend that produced the run, and
@@ -92,7 +132,9 @@ golden and blessed baseline is the output of exactly one.
 - **App window "Not Responding" / closed by itself** → open `logs/fractadyne.log`. A crash
   leaves `[fd-panic]` + a `crash-*.txt`; a hang leaves `[fd-watch] possible hang: <activity>`
   every 30 s naming the wedged phase. Nothing at all = killed externally (driver TDR, OOM
-  killer, user).
+  killer, user) — or an abort the panic hook cannot see (`0xc0000409`, `0xc0000005`): the NEXT
+  launch then writes an `[fd-unclean]` report which, from beta.113, carries the dead session's
+  own frame record recovered from `frames.bin` (`its frame record survived: … N records`).
 - **CLI render slow vs hung** → the `[fd-progress]` line updates every ~2 s while tiles
   finish; a frozen percentage + `[fd-watch]` lines = hung. `--render` now exits non-zero on
   failure (it used to exit 0 unconditionally).
@@ -117,6 +159,8 @@ golden and blessed baseline is the output of exactly one.
 | `--show-zoom-target` (also View ▸ Show auto-zoom target) | While the auto-zoom runs, outlines the region it is zooming into (what fills the screen after 4× more magnification, about the current aim) with lines to the screen corners, and rings the steering goal. Pair it with `--show-timestamp` when a dive "goes somewhere odd": the box says where the camera is going, the ring says where the steering wants it, and the clock lines the recording up against the `[fd-autopilot]` evals. Persists in the session; `--no-show-zoom-target` forces it off |
 | `--selftest [--out report.md] [--bless]` | The full correctness suite (~170 checks + 18 goldens; it prints its own totals, so this text cannot go stale), streamed live; hermetic (resets config at entry, echoes it); GPU errors are printed, never silently skipped; data files resolve relative to the repo even when run elsewhere. The run's tail is the `bench-matrix` group — deterministic path-signature tripwires (see `--bench-matrix`) |
 | `--selftest-filter <substr>` | Run only matching check groups / goldens (fast iteration on one failure; not a release verdict — groups share state) |
+| `--recordtest [FRAMES]` | **Is the frame record being written?** Drives FRAMES live frames (default 240) at 1e12× with a jump to 1e13.5× halfway, then checks, against its own count: every frame has exactly one view-0 record, no required field is left unset, `frames.bin` read back is exactly the in-memory ring, and a child process that records 60 frames and then `abort()`s (`0xc0000409`) leaves all 60 in its `frames.bin`, untorn. Exit 0 pass / 1 fail / **2 VACUOUS** — no dispatch, judged reading or counter reading was exercised, or `--set` was in force. ~10 s; run with a wiped `FRACTADYNE_CONFIG_DIR` |
+| `--dump-frame-schema` | Print the frame record's encoding (fields, types, slot layout) as JSON — regenerates `validation/frame-schema.json` (in bash; PowerShell `>` writes UTF-16) |
 | `--selftest-list` | Print the group tags usable with `--selftest-filter` |
 | `--profile [--regions file.toml] [--reps N]` | Per-region reference/SA/BLA build ms + pure-GPU pass ms (TIMESTAMP_QUERY); includes a corpus-14-class `deep-interior-1e148` region (dip orbit, 800k iters — the export-throughput-gap regime) |
 | `--bench-bignum [--iters N]` | Reference-orbit cost per arbitrary-precision backend, at precisions from 64 to 8256 bits. **CPU only - no GPU**, so it runs on a CI box. On a build with more than one backend it times each over the SAME work in one process and **asserts the orbits are byte-identical** (exit 1 if not): a speed ratio between backends that computed different orbits is meaningless. Marks any row whose test orbit escaped as INVALID rather than reporting the meaninglessly fast number that produces. `--iters` scales the counts (fatal if unreadable, never a silent default) |

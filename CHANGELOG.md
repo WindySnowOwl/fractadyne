@@ -12,6 +12,22 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The app now keeps a record of every frame it draws, and a crash report carries it** (beta.113).
+  Each frame, for each view, the app writes down what it was asked to draw, which reference it
+  used, what it expected the frame to cost and what it actually dispatched, what reached the
+  screen, how long the frame took, what the graphics card reported back and what the frame-size
+  controller did with that, the colour-range window, and what the mouse and keyboard were doing.
+  The last 4,096 frames are kept — about a minute at full speed, and a quarter of an hour or more
+  at the one-to-five frames a second of a session that is about to fail. The record the previous
+  release added held 24 decisions, which at the moment of the 2026-09-21 device loss was about a
+  second and a half of a half-minute slowdown. A crash report now prints the last 40 frames and
+  saves all of them beside it as `crash-…-frames.jsonl`. The record is also kept in a small file,
+  `logs/frames.bin`, written in a way that survives the app being terminated outright; when the
+  app is killed in a way that leaves no crash report at all, the next launch now recovers that
+  file into the report it writes about the previous session. Nothing about rendering changes. A
+  new check, `--recordtest`, proves it works: it drives the live view, then confirms every frame
+  was recorded exactly once with nothing left blank, that the file matches what the app held, and
+  that a second copy of the app which records sixty frames and then aborts leaves all sixty behind.
 - **Every build now names the commit it was built from** (beta.113). The title bar, Help ▸ About,
   `--version`, crash reports and exported image metadata read `0.2.41-beta.113 (build 3501,
   g1a2b3c4)`, and a build made from modified sources says `g1a2b3c4-dirty`. Until now two builds

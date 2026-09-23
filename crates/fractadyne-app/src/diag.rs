@@ -389,6 +389,9 @@ mod console_tests;
 #[path = "diag/device_loss_hint.rs"]
 mod device_loss_hint_tests;
 
+/// The always-on per-frame record (design/live-render-robustness.md W1).
+pub(crate) mod frame_record;
+
 /// The resolved logs directory (`<config>/logs`), or `None` if file logging is off/unavailable.
 /// Used by the issue reporter to pull the log + crash reports.
 pub(crate) fn logs_dir() -> Option<PathBuf> {
@@ -598,11 +601,15 @@ pub(crate) fn device_loss_hint(msg: &str) -> &'static str {
 /// CARRIES what a reader is told to look for — the budget section exists because a field device
 /// loss could not be diagnosed without it, and a section that silently stopped being emitted would
 /// be discovered at the worst possible moment, namely the next device loss.
-fn compose_crash_report(msg: &str, loc: &str) -> String {
+///
+/// `frames` is the pre-rendered `frames:` section ([`frame_record::crash_section`]): the live
+/// ring's for a crash in this process, the recovered `frames.bin`'s for a previous session's.
+fn compose_crash_report(msg: &str, loc: &str, frames: &str) -> String {
     let gpu_hint = device_loss_hint(msg);
     format!(
         "fractadyne crash report\n\
          version : {}\n\
+         session : {:016x}\n\
          time    : {}\n\
          uptime  : {:.1}s\n\
          panic   : {msg}\n\
@@ -613,9 +620,10 @@ fn compose_crash_report(msg: &str, loc: &str) -> String {
          tunables: {}\n\
          bignum  : {}\n\
          thread  : {}\n\
-         {}{}\n\
+         {}{frames}{}\n\
          backtrace (debug symbols are disabled in this build; addresses only):\n{}\n",
         crate::sysinfo::version_string(),
+        frame_record::session_id(),
         crate::sysinfo::now_utc_string(),
         elapsed_s(),
         memory_line(),
@@ -643,10 +651,28 @@ fn compose_crash_report(msg: &str, loc: &str) -> String {
 }
 
 fn write_crash_report_at(msg: &str, loc: &str) {
-    let report = compose_crash_report(msg, loc);
-    if let Some(Some(dir)) = LOG_DIR.get() {
-        let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        let n = CRASH_SEQ.fetch_add(1, Ordering::Relaxed);
+    write_crash_report_frames(msg, loc, None);
+}
+
+/// Write a crash report whose `frames:` section comes from `recovered` — a previous session's
+/// `frames.bin` as `(its header, its records)` — or, when `None`, from this process's live ring.
+/// Either way the WHOLE set goes to a companion `crash-<stamp>-frames.jsonl` beside the report
+/// (the report itself prints only the last few): that file is the one that can cover an entire
+/// slow episode, where the 24-entry decision ring above held about 1.4 s of a 33 s one.
+fn write_crash_report_frames(msg: &str, loc: &str, recovered: Option<(String, Vec<frame_record::FrameRecord>)>) {
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let n = CRASH_SEQ.fetch_add(1, Ordering::Relaxed);
+    let (header, records) = recovered.unwrap_or_else(|| (frame_record::header(), frame_record::snapshot()));
+    let dir = LOG_DIR.get().cloned().flatten();
+    let companion = match &dir {
+        Some(dir) if !records.is_empty() => {
+            let name = format!("crash-{secs}-{n}-frames.jsonl");
+            frame_record::write_jsonl(&dir.join(&name), &header, &records).ok().map(|_| name)
+        }
+        _ => None,
+    };
+    let report = compose_crash_report(msg, loc, &frame_record::crash_section(&records, companion.as_deref()));
+    if let Some(dir) = dir {
         let path = dir.join(format!("crash-{secs}-{n}.txt"));
         if std::fs::write(&path, &report).is_ok() {
             let _ = writeln!(std::io::stderr(), "[fd-panic] crash report written: {}", path.display());
@@ -731,14 +757,28 @@ fn report_unclean_previous_session() {
             last.join("\n  ")
         })
         .unwrap_or_default();
+    // ⭐The dead session's own frame record, if its `frames.bin` survived. This is the death class
+    // that file exists for: a `__fastfail` or an access violation never reaches the panic hook, so
+    // until now all that was left of the session was the six log lines above. Read HERE, before
+    // this session records a frame and truncates the file.
+    let recovered = frame_record::previous_session_frames();
+    let frames_note = match &recovered {
+        Some(b) => format!(
+            " | its frame record survived: session {:016x}, {} records{}",
+            b.session,
+            b.records.len(),
+            if b.torn > 0 { format!(", {} torn slot(s) — the last write was interrupted", b.torn) } else { String::new() }
+        ),
+        None => " | no frame record survived".to_string(),
+    };
     let msg = format!(
         "previous session ended without a clean shutdown (no panic, no crash report) — \
-         {} | last log lines:\n  {}",
+         {}{frames_note} | last log lines:\n  {}",
         prev.lines().collect::<Vec<_>>().join(", "),
         tail
     );
     log_line("unclean", &msg);
-    write_crash_report_at(&msg, "<previous session>");
+    write_crash_report_frames(&msg, "<previous session>", recovered.map(|b| (b.header, b.records)));
     PREV_UNCLEAN.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
@@ -931,12 +971,18 @@ impl Drop for ProgressPump {
 mod budget_log_tests {
     use super::*;
 
+    /// Held for the WHOLE of each test that touches the global ring. ⚠The ring's own mutex does
+    /// not serialise them — it is released between calls — and two of these tests raced: one
+    /// clearing the ring and asserting it empty while the other filled it (seen as "decision 10…25"
+    /// inside an "empty" report once the test mix changed the scheduling).
+    static SERIAL: Mutex<()> = Mutex::new(());
+
     /// The ring must keep the MOST RECENT decisions and stay bounded: a crash report that
     /// carried the first 24 decisions of a fourteen-minute session would describe the healthy
     /// start and say nothing about the seconds that killed it.
     #[test]
     fn the_ring_keeps_the_last_decisions_and_is_bounded() {
-        // Serialised against the other test in this module through the mutex itself.
+        let _g = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
         if let Ok(mut v) = BUDGET_LOG.lock() {
             v.clear();
         }
@@ -958,14 +1004,15 @@ mod budget_log_tests {
     /// 2026-09-21 RX 6800 XT loss could not be told apart without this.
     #[test]
     fn the_crash_report_carries_the_budget_decisions() {
+        let _g = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
         if let Ok(mut v) = BUDGET_LOG.lock() {
             v.clear();
         }
-        let empty = compose_crash_report("wgpu device lost (Unknown)", "<device-lost handler>");
+        let empty = compose_crash_report("wgpu device lost (Unknown)", "<device-lost handler>", "");
         assert!(empty.contains("budget  : no frame-budget decision was recorded"), "{empty}");
 
         budget_note("v0 gpu_iterate=12.0ms steps=4.017e10 budget=1.515e11 DISCARDED".into());
-        let filled = compose_crash_report("wgpu device lost (Unknown)", "<device-lost handler>");
+        let filled = compose_crash_report("wgpu device lost (Unknown)", "<device-lost handler>", "");
         assert!(filled.contains("budget  : the last frame-budget decisions"), "{filled}");
         assert!(filled.contains("DISCARDED"), "the decision itself must survive:
 {filled}");
@@ -975,10 +1022,27 @@ mod budget_log_tests {
         }
     }
 
+    /// The report must carry the `frames:` section it is handed, and name the session — the id is
+    /// what joins a report to its `frames.bin` and its companion `-frames.jsonl`.
+    #[test]
+    fn the_crash_report_carries_the_frames_section_and_the_session() {
+        let section = frame_record::crash_section(&[], None);
+        let r = compose_crash_report("wgpu device lost (Unknown)", "<device-lost handler>", &section);
+        assert!(r.contains("frames  : no frame was recorded before the crash"), "{r}");
+        assert!(
+            r.contains(&format!("session : {:016x}", frame_record::session_id())),
+            "the session id joins the report to its frame files:\n{r}"
+        );
+        // The section sits after the budget block and before the backtrace.
+        let (b, f, t) = (r.find("budget  :").unwrap(), r.find("frames  :").unwrap(), r.find("backtrace").unwrap());
+        assert!(b < f && f < t, "{r}");
+    }
+
     /// Nothing recorded must read as "nothing recorded", not as an empty section a reader could
     /// mistake for "the controller made no decisions because it was never asked".
     #[test]
     fn an_empty_ring_reports_nothing_rather_than_an_empty_block() {
+        let _g = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
         if let Ok(mut v) = BUDGET_LOG.lock() {
             v.clear();
         }
