@@ -4,7 +4,7 @@
   "slot_header_bytes": 32,
   "header_bytes": 4096,
   "ring_len": 4096,
-  "payload_bytes": 430,
+  "payload_bytes": 434,
   "slot_magic": "FDFR",
   "file_magic": "FDFH",
   "fields": [
@@ -121,6 +121,7 @@
     ["in_space", "bool"],
     ["in_keys", "u8"],
     ["autopilot", "bool"],
-    ["zoom_oct_s", "f64"]
+    ["zoom_oct_s", "f64"],
+    ["rec_us", "f32"]
   ]
 }

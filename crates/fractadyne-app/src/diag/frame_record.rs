@@ -382,6 +382,12 @@ frame_record! {
     in_keys: u8,
     autopilot: bool,
     zoom_oct_s: f64,
+
+    // ---- the instrument's own cost
+    /// Wall time the PREVIOUS frame's emit took (both views, field fill + ring + `frames.bin`),
+    /// in microseconds. The record's overhead is a claim to be measured, and this is the
+    /// measurement — in every run, including the field, where a slow disk would show here first.
+    rec_us: f32,
 }
 
 /// The record must fit its slot with room to grow; a field added past that is a compile error,

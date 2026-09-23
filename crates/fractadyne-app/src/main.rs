@@ -1582,6 +1582,8 @@ struct Perf {
     /// content drain — then completed and emitted once at the end of `update` and reset. See
     /// `diag::frame_record` for why nothing in it is recomputed at the emit.
     rec: [diag::frame_record::FrameRecord; 2],
+    /// Wall time of the last `emit_frame_records`, µs — carried into the NEXT frame's record.
+    rec_us: f32,
 }
 
 /// The rate a wall-clock cut may take the motion estimate to from `cur`, given the interval's
@@ -2012,6 +2014,7 @@ impl Default for Perf {
             motion_pass_steps_last: [0, 0],
             motion_res_measured: false,
             rec: [Default::default(), Default::default()],
+            rec_us: 0.0,
         }
     }
 }
@@ -13700,6 +13703,7 @@ impl FractadyneApp {
     /// check that can be made. The blind-tripwire counters are window-wide in the app, and are
     /// recorded as such on both rows rather than attributed to either view.
     fn emit_frame_records(&mut self, ctx: &egui::Context, body_ms: f64) {
+        let t0 = Instant::now();
         let (wheel, zoom, drag, primary_down, primary_pressed, pointer, space, keys) =
             ctx.input(|i| {
                 let down = i.pointer.primary_down();
@@ -13780,9 +13784,11 @@ impl FractadyneApp {
             r.in_keys = keys.min(u8::MAX as usize) as u8;
             r.autopilot = self.autopilot.active;
             r.zoom_oct_s = p.zoom_oct_s;
+            r.rec_us = p.rec_us;
             diag::frame_record::record(r);
         }
         self.perf.rec = Default::default();
+        self.perf.rec_us = t0.elapsed().as_secs_f32() * 1e6;
     }
 
     /// Fold one measured iterate cost into a view's frame budget. Shared by BOTH measurement
