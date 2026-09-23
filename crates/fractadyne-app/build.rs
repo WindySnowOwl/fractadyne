@@ -89,19 +89,24 @@ fn main() {
 
 /// `(identity, files to watch)` from the work tree, or `None` outside one (or without git).
 ///
-/// One `rev-parse` gives the git dir, the common dir and the short sha. The files watched are the
-/// ones a commit, checkout, reset or stash actually rewrites: `HEAD` (checkout; a detached HEAD
-/// holds the sha itself), `refs/heads` as a DIRECTORY (on a branch, a commit rewrites the branch's
-/// loose ref, not `HEAD` — and after `git pack-refs` the loose file may not exist yet, so watching
-/// the file itself would miss its re-creation), and `packed-refs`. `.git/index` is deliberately NOT
-/// watched: `git add` rewrites it without changing what this check reports, and every rerun
-/// recompiles this crate.
+/// One `rev-parse` gives the top level, the git dir, the common dir and the short sha. The files
+/// watched are the ones a commit, checkout, reset or stash actually rewrites: `HEAD` (checkout; a
+/// detached HEAD holds the sha itself), `refs/heads` as a DIRECTORY (on a branch, a commit rewrites
+/// the branch's loose ref, not `HEAD` — and after `git pack-refs` the loose file may not exist yet,
+/// so watching the file itself would miss its re-creation), and `packed-refs`. `.git/index` is
+/// deliberately NOT watched: `git add` rewrites it without changing what this check reports, and
+/// every rerun recompiles this crate.
+///
+/// ⚠The top level must BE this workspace. `git -C` walks upward, so a source tarball unpacked
+/// inside some other repository (a home directory kept under git, say) would otherwise be stamped
+/// with THAT repository's commit — a confident wrong answer, which is worse than `unknown`.
 fn git_identity(root: &Path) -> Option<(String, Vec<PathBuf>)> {
     let out = Command::new("git")
         .arg("-C")
         .arg(root)
         .args([
             "rev-parse",
+            "--show-toplevel",
             "--git-dir",
             "--git-common-dir",
             "--short",
@@ -114,6 +119,10 @@ fn git_identity(root: &Path) -> Option<(String, Vec<PathBuf>)> {
     }
     let text = String::from_utf8_lossy(&out.stdout);
     let mut lines = text.lines().map(str::trim);
+    let top = fs::canonicalize(lines.next()?).ok()?;
+    if top != fs::canonicalize(root).ok()? {
+        return None;
+    }
     let git_dir = abs(root, lines.next()?);
     let common = abs(root, lines.next()?);
     let sha = lines.next()?;
