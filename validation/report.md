@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.2.41-beta.116 (build 3530, g2026187-dirty)
-- **Generated:** 2026-09-23 14:14:56 UTC (unix 1790172896)
+- **Version:** 0.2.41-beta.116 (build 3531, gd310937)
+- **Generated:** 2026-09-23 14:18:11 UTC (unix 1790173091)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -24,11 +24,11 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | IterChunk | chunked render is bit-identical | mode2 corpus07 1.3e30×, 21k iter, 7 passes | mode 2 — 0 texels differ (max Δ 0.000e0), bla_skip 124, rebase 187097 | 0 texels differ (mode 2: and BLA engaged) | ✅ PASS |
 | IterChunk | chunked render is bit-identical | mode2 nucleus 1.3e30× (interior), 21k iter, 7 passes | mode 2 — 0 texels differ (max Δ 0.000e0), bla_skip 12325890, rebase 361830 | 0 texels differ (mode 2: and BLA engaged) | ✅ PASS |
 | IterChunk | chunked render is bit-identical | mode2 97-sample ref (orbit wraps), 21k iter, chunk 2600 | mode 2 — 0 texels differ (max Δ 0.000e0), bla_skip 0, rebase 1790800 | 0 texels differ (mode 2: and BLA engaged) | ✅ PASS |
-| IterChunk | tiled chunked export is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, colored | 0 texels differ; max dispatch 5ms vs control 5ms | 0 texels differ | ✅ PASS |
+| IterChunk | tiled chunked export is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, colored | 0 texels differ; max dispatch 5ms vs control 6ms | 0 texels differ | ✅ PASS |
 | IterChunk | tiled chunked iter buffer is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, raw | 0 texels differ | 0 texels differ | ✅ PASS |
-| RefReuse | a reused reference renders the same as a fresh pick | corpus07 1e30x, 200k iter, extend vs fresh pick | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 176ms fresh vs 171ms extend | reuse engaged AND 0 texels differ | ✅ PASS |
-| OrbitCache | an orbit from the disk cache renders the same as a fresh pick | corpus07 1e30x, 200k iter; written, found, loaded, extended; then unaided | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 187ms fresh vs 180ms extend; unaided, the worker served len=200001 from disk in 81ms (1 entries, 3.1 MB) | found AND reuse engaged AND 0 texels differ AND the unaided worker hit | ✅ PASS |
-| View format | a thumbnail borrows the live reference, never builds one | 1e30x, 128x96, ss=2; refused with none resident, then borrowed | refused in 0.4ms; borrowed and rendered 128x96 in 120ms; 53.6 KB of base64 | None when nothing is resident; a real 128x96 when it is | ✅ PASS |
+| RefReuse | a reused reference renders the same as a fresh pick | corpus07 1e30x, 200k iter, extend vs fresh pick | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 175ms fresh vs 157ms extend | reuse engaged AND 0 texels differ | ✅ PASS |
+| OrbitCache | an orbit from the disk cache renders the same as a fresh pick | corpus07 1e30x, 200k iter; written, found, loaded, extended; then unaided | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 176ms fresh vs 163ms extend; unaided, the worker served len=200001 from disk in 73ms (1 entries, 3.1 MB) | found AND reuse engaged AND 0 texels differ AND the unaided worker hit | ✅ PASS |
+| View format | a thumbnail borrows the live reference, never builds one | 1e30x, 128x96, ss=2; refused with none resident, then borrowed | refused in 0.3ms; borrowed and rendered 128x96 in 120ms; 53.6 KB of base64 | None when nothing is resident; a real 128x96 when it is | ✅ PASS |
 | Framing | an export CONTAINS the window view at any aspect | window 1200x900 (aspect 1.333), 6 aspects | 6 aspects (3 wider, 2 narrower than the window): contained, tight, isotropic; window = identity | no axis shrinks; binding axis exact; isotropic; BOTH branches tried | ✅ PASS |
 | Framing | a wider canvas contains the narrower one — direct f64 (1e2x) | 160px vs 240px at h=128, 2000 iter, 20480 texels compared | 160px inside 240px at h=128: identical over 20480 texels | 0 texels differ | ✅ PASS |
 | Framing | a wider canvas contains the narrower one — perturbation (1e30x) | 160px vs 240px at h=128, 60000 iter, 20480 texels compared | 160px inside 240px at h=128: identical over 20480 texels | <= 64 texels differ (measured glitch noise; a misframing differs in 10,000s) | ✅ PASS |
