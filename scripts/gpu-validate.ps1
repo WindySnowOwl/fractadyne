@@ -33,7 +33,9 @@
 #   05-livetest.txt      live-vs-offline truth at every tour hold       (skipped by -Quick)
 #   uitest-*/            25-step UI + live-render screenshot bundle     (skipped by -Quick)
 #   app.log              the app's own log across all steps
-#   crash/               any crash reports produced during the run
+#   frames/              each step's frame record (<step>.frames.bin, <step>.frames.jsonl) -
+#                        read with scripts/framelog.py summarize
+#   crash/               any crash reports produced during the run, with their -frames.jsonl
 #   ...and a .zip of the whole thing.
 
 [CmdletBinding()]
@@ -121,6 +123,7 @@ function Invoke-Step {
     $path = Join-Path $dir $File
     $errPath = "$path.err"
     $sw = [Diagnostics.Stopwatch]::StartNew()
+    $stepStart = Get-Date
     $code = 0
     # Start-Process with file redirection, NOT `& $exe ... 2>&1 | Out-File`. Piping a native
     # command's stderr through PowerShell wraps every line in an ErrorRecord, so the captured log
@@ -145,6 +148,20 @@ function Invoke-Step {
         Get-Content $errPath -Encoding utf8 | Out-File $path -Encoding utf8 -Append
     }
     Remove-Item $errPath -ErrorAction SilentlyContinue
+    # The step's own frame record. Harvested NOW, per step: every launch truncates frames.bin and
+    # rotates frames.jsonl, so collecting once at the end would keep only the last step's. Only a
+    # file WRITTEN during this step is taken - a step that records no frames (--gputest) would
+    # otherwise hand in the previous step's under its own name. (Not deleted beforehand: the next
+    # launch's unclean-exit report reads the previous frames.bin.)
+    $frames = Join-Path $dir "frames"
+    New-Item -ItemType Directory -Force -Path $frames | Out-Null
+    $base = [IO.Path]::GetFileNameWithoutExtension($File)
+    foreach ($f in @("frames.bin", "frames.jsonl")) {
+        $src = Join-Path (Join-Path $cfg "logs") $f
+        if ((Test-Path $src) -and ((Get-Item $src).LastWriteTime -ge $stepStart)) {
+            Copy-Item $src (Join-Path $frames "$base.$f") -Force
+        }
+    }
     $sw.Stop()
     $secs = [math]::Round($sw.Elapsed.TotalSeconds, 1)
     $script:results += [pscustomobject]@{ Step = $Name; Exit = $code; Seconds = $secs; File = $File }
@@ -231,6 +248,10 @@ else {
 $log = Join-Path $cfg "logs\fractadyne.log"
 if (Test-Path $log) { Copy-Item $log (Join-Path $dir "app.log") -Force }
 Get-ChildItem (Join-Path $cfg "logs") -Filter "crash-*.txt" -ErrorAction SilentlyContinue |
+Copy-Item -Destination (Join-Path $dir "crash") -Force
+# ...and each crash's whole frame record (crash-<stamp>-frames.jsonl), and the view it died at.
+Get-ChildItem (Join-Path $cfg "logs") -Filter "crash-*" -ErrorAction SilentlyContinue |
+Where-Object { $_.Name -like "*-frames.jsonl" -or $_.Name -like "crash-view-*.fdn" } |
 Copy-Item -Destination (Join-Path $dir "crash") -Force
 
 # The adapter + capability line the app resolved for ITSELF - the "record adapter and resolved

@@ -697,10 +697,15 @@ struct Summary {
     last: FrameRecord,
 }
 
+/// Summary rows kept in memory for the issue report: one minute.
+const RECENT_SUMMARIES: usize = 60;
+
 #[derive(Default)]
 struct Jsonl {
     /// `None` = not opened yet; `Some(Err)` = unavailable, not retried every frame.
     file: Option<Result<std::io::BufWriter<std::fs::File>, ()>>,
+    /// The last [`RECENT_SUMMARIES`] summary rows, newest last.
+    recent: std::collections::VecDeque<String>,
     bytes: u64,
     sec_start_ms: Option<u64>,
     acc: Summary,
@@ -711,6 +716,7 @@ struct Jsonl {
 
 static JSONL: Mutex<Jsonl> = Mutex::new(Jsonl {
     file: None,
+    recent: std::collections::VecDeque::new(),
     bytes: 0,
     sec_start_ms: None,
     acc: Summary {
@@ -919,6 +925,10 @@ impl Jsonl {
         if let Some(Ok(f)) = self.file.as_mut() {
             let _ = f.flush();
         }
+        if self.recent.len() == RECENT_SUMMARIES {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(row);
         self.sec_start_ms = Some(now_ms);
         self.severe_this_s = 0;
         self.routine_this_s = 0;
@@ -1142,6 +1152,29 @@ pub(crate) fn crash_section(records: &[FrameRecord], companion: Option<&str>) ->
 /// The header JSON, for callers composing a companion file.
 pub(crate) fn header() -> String {
     header_json()
+}
+
+/// The issue report's "Frame record" section: the session header, the last minute of summary rows
+/// and the last [`CRASH_INLINE`] frames. `None` when nothing has been recorded. The caller redacts
+/// the whole report; nothing here names the user, but a future field might.
+pub(crate) fn report_section() -> Option<String> {
+    let recs = snapshot();
+    if recs.is_empty() {
+        return None;
+    }
+    let mut s = format!("== Frame record (session {:016x}) ==\nheader: {}\n", session_id(), header_json());
+    if let Ok(j) = JSONL.lock() {
+        if !j.recent.is_empty() {
+            s.push_str(&format!("the last {} per-second summaries (oldest first):\n", j.recent.len()));
+            for row in &j.recent {
+                s.push_str("  ");
+                s.push_str(row);
+                s.push('\n');
+            }
+        }
+    }
+    s.push_str(&crash_section(&recs, None));
+    Some(s)
 }
 
 /// The encoding as data, for readers in other languages: `--dump-frame-schema` prints it, the

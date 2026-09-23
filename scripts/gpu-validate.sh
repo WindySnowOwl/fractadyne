@@ -112,8 +112,18 @@ step() {
   [ -n "$why" ] && echo -e "   \033[2m$why\033[0m"
   local t0 t1 code
   t0=$(date +%s)
+  touch "$DIR/.stepstamp"
   "$@" > "$DIR/$file" 2>&1
   code=$?
+  # The step's own frame record, harvested per step: every launch truncates frames.bin and
+  # rotates frames.jsonl, so collecting once at the end would keep only the last step's. Only a
+  # file written during THIS step (newer than the stamp) - see gpu-validate.ps1.
+  mkdir -p "$DIR/frames"
+  for f in frames.bin frames.jsonl; do
+    if [ -f "$CFG/logs/$f" ] && [ "$CFG/logs/$f" -nt "$DIR/.stepstamp" ]; then
+      cp "$CFG/logs/$f" "$DIR/frames/${file%.*}.$f"
+    fi
+  done
   t1=$(date +%s)
   local secs=$((t1 - t0))
   if [ "$code" -eq 0 ]; then echo -e "   \033[1;32mexit $code in ${secs}s\033[0m"
@@ -191,6 +201,7 @@ fi
 # --- harvest the app's own evidence --------------------------------------------------------------
 [ -f "$CFG/logs/fractadyne.log" ] && cp "$CFG/logs/fractadyne.log" "$DIR/app.log"
 cp "$CFG"/logs/crash-*.txt "$DIR/crash/" 2>/dev/null || true
+cp "$CFG"/logs/crash-*-frames.jsonl "$CFG"/logs/crash-view-*.fdn "$DIR/crash/" 2>/dev/null || true
 if [ -f "$DIR/app.log" ]; then
   grep -E 'adapter:|capability:|TIMESTAMP_QUERY' "$DIR/app.log" | sort -u > "$DIR/adapter.txt" || true
 fi
