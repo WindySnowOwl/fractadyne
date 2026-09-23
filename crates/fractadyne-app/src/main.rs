@@ -1584,6 +1584,10 @@ struct Perf {
     rec: [diag::frame_record::FrameRecord; 2],
     /// Wall time of the last `emit_frame_records`, µs — carried into the NEXT frame's record.
     rec_us: f32,
+    /// Rate limits for the accumulation's `begin` / `abandoned` lines, per view (see
+    /// `diag::LineLimiter`; every begin is still counted in the frame record).
+    accum_begin_line: [diag::LineLimiter; 2],
+    accum_abandon_line: [diag::LineLimiter; 2],
 }
 
 /// The rate a wall-clock cut may take the motion estimate to from `cur`, given the interval's
@@ -2015,6 +2019,8 @@ impl Default for Perf {
             motion_res_measured: false,
             rec: [Default::default(), Default::default()],
             rec_us: 0.0,
+            accum_begin_line: Default::default(),
+            accum_abandon_line: Default::default(),
         }
     }
 }
@@ -2104,6 +2110,19 @@ pub(crate) fn aa_ramp(frame: u32, target: u32) -> u32 {
 /// Only accumulate deeper than `ACCUM_MIN_LOG2` (≈1e10×), where the escape field is undersampled
 /// and speckles.
 pub(crate) const ACCUM_MIN_LOG2: f64 = 33.0;
+
+/// The accumulation's `begin` / `abandoned` log lines print at most once per this many ms per
+/// view (`diag::LineLimiter`). Every begin is still counted, in the frame record's `accum_begins`.
+const ACCUM_LINE_GAP_MS: u64 = 5000;
+
+/// ` — N more held back …` for a rate-limited line that follows held-back repeats; empty otherwise.
+fn held_note(held: u32) -> String {
+    if held == 0 {
+        String::new()
+    } else {
+        format!(" — and {held} more since the last line like this (rate-limited; the run keeps restarting)")
+    }
+}
 
 /// How many sub-pixel samples to fold once the view settles. Each is a full deep re-render, so this
 /// trades convergence quality against how long the view keeps the GPU busy while idle — a real
@@ -13404,14 +13423,17 @@ impl FractadyneApp {
         let told = self.perf.content_stamp[view].load(std::sync::atomic::Ordering::Relaxed);
         let content_clean = told != u64::MAX && told == asked;
         if self.perf.accum_active[view] && !content_clean {
-            crate::diag::log_line(
-                "accum",
-                &format!(
-                    "view {view}: abandoned at sample {} — the texture stopped being this view \
-                     (reported {told:#x}, asked {asked:#x})",
-                    self.perf.accum_count[view]
-                ),
-            );
+            if let Some(held) = self.perf.accum_abandon_line[view].admit(diag::elapsed_ms(), ACCUM_LINE_GAP_MS) {
+                crate::diag::log_line(
+                    "accum",
+                    &format!(
+                        "view {view}: abandoned at sample {} — the texture stopped being this view \
+                         (reported {told:#x}, asked {asked:#x}){}",
+                        self.perf.accum_count[view],
+                        held_note(held)
+                    ),
+                );
+            }
             self.perf.accum_active[view] = false;
             self.perf.accum_committed[view] = false;
             self.perf.accum_cmd[view] = AccumCmd::default(); // present the live frame, not the average
@@ -13456,10 +13478,15 @@ impl FractadyneApp {
             self.perf.accum_committed[view] = false;
             self.perf.accum_jitter[view] = [0.0, 0.0];
             self.perf.accum_sig[view] = sig;
-            crate::diag::log_line(
-                "accum",
-                &format!("view {view}: begin (2^{log2mag:.1}, target {})", accum_target()),
-            );
+            // Every begin counts in the record; the LINE is rate-limited (it was ~65% of a crashing
+            // session's log). A run that keeps restarting shows as a count on the next line.
+            self.perf.rec[view].accum_begins = self.perf.rec[view].accum_begins.saturating_add(1);
+            if let Some(held) = self.perf.accum_begin_line[view].admit(diag::elapsed_ms(), ACCUM_LINE_GAP_MS) {
+                crate::diag::log_line(
+                    "accum",
+                    &format!("view {view}: begin (2^{log2mag:.1}, target {}){}", accum_target(), held_note(held)),
+                );
+            }
         }
         let count = self.perf.accum_count[view];
         cmd.jitter = self.perf.accum_jitter[view];

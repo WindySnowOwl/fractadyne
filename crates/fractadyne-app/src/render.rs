@@ -1951,7 +1951,7 @@ impl FractadyneApp {
                 spawn_orbit_id: self.ref_cache[0].orbit_id,
             };
             let (tx, rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || {
+            spawn_named("fd-ref-lookahead", move || {
                 let origin = inputs.origin;
                 let res = recompute_worker(inputs);
                 let cost = res.ref_ms + res.series_ms + res.bla_ms;
@@ -2236,7 +2236,7 @@ impl FractadyneApp {
             );
         }
         let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
+        spawn_named("fd-ref-hold", move || {
             let origin = inputs.origin;
             let res = recompute_worker(inputs);
             let cost = res.ref_ms + res.series_ms + res.bla_ms;
@@ -3010,7 +3010,7 @@ impl FractadyneApp {
         // bounded, self-terminating, not a leak. NOTE for a future `fractadyne-render` extraction:
         // this raw `Receiver` + the `pub` `ExportPrep.rx` should be wrapped behind a method API
         // before crossing a crate boundary.
-        std::thread::spawn(move || {
+        spawn_named("fd-ref-export", move || {
             let origin = inputs.origin;
             let res = recompute_worker(inputs);
             let cost = res.ref_ms + res.series_ms + res.bla_ms;
@@ -7560,7 +7560,7 @@ impl FractadyneApp {
                             ),
                         );
                     }
-                    std::thread::spawn(move || {
+                    spawn_named("fd-ref-live", move || {
                         recompute_worker_staged(inputs, tx, progressive);
                     });
                     self.perf.build_count += 1;
@@ -9077,6 +9077,17 @@ pub(crate) fn norm_map_is_log(mn: f32, mx: f32, log_palette: bool) -> bool {
 
 #[cfg(test)]
 mod norm_map_choice;
+
+/// `std::thread::spawn` with a NAME. Every `[crumb]` line and every crash report names the thread
+/// that wrote it, and the reference-build workers were unnamed — so the watchdog's last-activity
+/// line read `reference built [live]: … [?]`, and a breadcrumb could not be told from one written
+/// on another thread. Same failure behaviour as `thread::spawn` (it panics if the OS refuses).
+pub(crate) fn spawn_named<F: FnOnce() + Send + 'static>(name: &str, f: F) {
+    std::thread::Builder::new()
+        .name(name.to_string())
+        .spawn(f)
+        .expect("failed to spawn thread");
+}
 
 pub(crate) fn usable_sa_skip(skip: u32, max_iter: u32) -> u32 {
     if skip >= max_iter { 0 } else { skip }

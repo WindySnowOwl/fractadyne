@@ -4,7 +4,7 @@
   "slot_header_bytes": 32,
   "header_bytes": 4096,
   "ring_len": 4096,
-  "payload_bytes": 439,
+  "payload_bytes": 440,
   "slot_magic": "FDFR",
   "file_magic": "FDFH",
   "fields": [
@@ -76,6 +76,7 @@
     ["blank_walks", "u32"],
     ["accum_count", "u32"],
     ["accum_present", "bool"],
+    ["accum_begins", "u8"],
     ["last_dt_ms", "f64"],
     ["body_ms", "f64"],
     ["cap_sleep_ms", "f64"],

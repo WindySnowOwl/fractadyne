@@ -2416,3 +2416,52 @@ same incident seen from both vantage points.
 | CL-169 · MEM-40 | **open, issue #2, upstream** / 2026-08 | dragging the window between differently-scaled monitors multiplies its size every crossing | upstream | three field crash reports | `TRACE=dpi` logs scale and size on every change |
 | MEM-71 | standing | a single bad reference pick is pinned for ~32 s and kills the device | reference lifecycle | measured on the grand tour; reproduced 3-in-4 | live `bla_skip` counters only |
 | MEM-77 | 2026-09-21 (bench kit) | the structure guard passed ten wrong-view renders and one of pure noise, then failed a correct render as noise | vacuous gate | the independent check, then re-examination at native resolution | `verify-views.py`, verified RED 10/10 and GREEN 9/10 |
+
+## Appendix D — implementation log
+
+Where the build departed from this document, and why. Each departure is also recorded at the code
+it concerns.
+
+**beta.113 — §6.1 build identity** (merged `f49ff69`).
+
+- `build.rs` lists Cargo's default watch set explicitly: emitting *any* `rerun-if-changed` switches
+  off the default "any file in the package", which would have frozen the build counter. The watched
+  set and the dirty check's pathspec are one list. It watches `refs/heads` as a directory (a commit
+  rewrites the branch ref, not `HEAD`) and not `.git/index` (`git add` would force a rebuild), and
+  runs `git --no-optional-locks status` so the check cannot rewrite the index it depends on.
+- The identity is used only when git's top level is this workspace: a source tarball unpacked
+  inside another repository was stamped with *that* repository's commit, as clean (measured).
+- The tarball carries `BUILD-COMMIT.txt`, so the Linux build reads `g<sha>-archive` rather than
+  `unknown`.
+
+**beta.113 — W1 `FrameRecord`** (merged `e5bc3a5`, `019678f`).
+
+- `frames.bin` slots are keyed on a record sequence number, not `(frame × 2 + view) % 4096`, which
+  gave a single view only the even slots — half the coverage §6.4 promises.
+- The gate is `--recordtest`, not `--selftest record`: `--selftest` renders offline inside one
+  `update()` and never drives a live frame.
+- The overhead criterion is measured by an in-process timer carried in every record (`rec_us`), not
+  a whole-frame ABABAB interleave: the cost is tens of microseconds and an A/B's noise floor is
+  milliseconds. It is judged as the p99 against a 60 Hz frame; the harness's own frames run
+  uncapped at ~1.1 ms, against which the first version went red at 2.3% on a 16 µs cost. Measured
+  on the RTX 3080: p99 36–46 µs, 0.22–0.28% of a 60 Hz frame.
+- `frames.jsonl` writes a full row only for rare events (slow, lethal, stall — up to 20/s; budget
+  moved, refusal, mode switch — up to 2/s) plus one compact summary per second. §6.4's trigger list
+  includes `present != Real`, which fires on every frame of a dive (~120 KB/s) against the < 5 MB
+  per 14-minute criterion. Measured: ~13 KB for an 18 s run.
+- Two pre-existing watchdog defects found by the gate: `last_warn_ms` started at 0, so no hang in a
+  process's first 30 s was ever reported; and the unclean-exit report read the log's NEW file after
+  a startup rotation, quoting nothing of the dead session.
+- A Rust reader of the JSON must not use `serde_json`'s default float parser (best-effort; 22 of 200
+  f64s off by one ULP, measured). This matters for W5's replay.
+- The issue report keeps the log tail beside the new frame-record section rather than replacing it,
+  and the whole report is home-path-redacted.
+
+**beta.113 — W10 log hygiene** (branch `feat/log-hygiene`).
+
+- `--selftest log-budget` is folded into `--recordtest` (the same reason as above). The accumulation
+  flood cannot occur there — accumulation is off under harnesses — so the rate limiter is pinned by
+  a unit test, and the harness guards against any category exceeding 10 lines/s over 5 s.
+- The documentation half is a static scan of the source (`every_log_category_is_documented`), which
+  covers categories a given run never exercises; the design's version checked only prefixes present
+  in one run's log.

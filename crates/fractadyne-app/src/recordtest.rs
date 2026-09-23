@@ -27,6 +27,7 @@
 //!     rows than elapsed seconds, summaries counting frames that were never recorded, or no event
 //!     row at all (the wedge guarantees a slow frame and a stall);
 //!   * **cost** — the record's p99 per-frame cost exceeds 0.5% of a 60 Hz frame;
+//!   * **log budget** — any log category ran above 10 lines/s over a 5 s window (design W10);
 //!   * a crash report appears during the run.
 //!
 //! VACUOUS (exit 2 — never 0, and never the same as a failure): the run recorded no dispatch, no
@@ -377,6 +378,62 @@ impl crate::FractadyneApp {
                     fails.push("frames.jsonl carries no event row, though the wedge made a slow frame and a stall".into());
                 }
             }
+        }
+
+        // ---- log budget (design W10): no category may flood the log. `[fd-accum] begin` once ran
+        // at ~31 lines/s and made up ~65% of a crashing session's log, burying everything else.
+        // (Accumulation is off under harnesses, so that particular flood is pinned by the
+        // `LineLimiter` unit test; this guards against the next one.)
+        const LOG_RATE_LIMIT: f64 = 10.0; // lines per second, over any 5 s window
+        if let Some(text) = crate::diag::logs_dir().and_then(|d| std::fs::read_to_string(d.join("fractadyne.log")).ok()) {
+            let lines: Vec<&str> = text.lines().collect();
+            // This session only: from its own start banner.
+            let from = lines
+                .iter()
+                .rposition(|l| l.contains("[fd-start]") && l.contains("args:") && l.contains("--recordtest"))
+                .unwrap_or(0);
+            let mut per: std::collections::BTreeMap<&str, Vec<f64>> = Default::default();
+            for l in &lines[from..] {
+                let Some((secs, tail)) = l.strip_prefix("[+").and_then(|r| r.split_once("s] ")) else { continue };
+                let Ok(t) = secs.trim().parse::<f64>() else { continue };
+                let cat = if let Some(c) = tail.strip_prefix("[fd-") {
+                    c.split(']').next()
+                } else if tail.starts_with("[crumb]") {
+                    Some("crumb")
+                } else {
+                    None
+                };
+                if let Some(c) = cat {
+                    per.entry(c).or_default().push(t);
+                }
+            }
+            let mut worst: Option<(&str, f64)> = None;
+            for (cat, ts) in &per {
+                // Densest 5 s window (the stamps are in order).
+                let mut j = 0;
+                let mut best = 0usize;
+                for i in 0..ts.len() {
+                    while ts[i] - ts[j] > 5.0 {
+                        j += 1;
+                    }
+                    best = best.max(i - j + 1);
+                }
+                let rate = best as f64 / 5.0;
+                if worst.is_none_or(|(_, r)| rate > r) {
+                    worst = Some((cat, rate));
+                }
+                if rate > LOG_RATE_LIMIT {
+                    fails.push(format!("[fd-{cat}] ran at {rate:.1} lines/s over 5 s (limit {LOG_RATE_LIMIT})"));
+                }
+            }
+            if let Some((cat, rate)) = worst {
+                notes.push(format!(
+                    "log budget: {} categories this session, densest [{cat}] at {rate:.1} lines/s over 5 s (limit {LOG_RATE_LIMIT})",
+                    per.len()
+                ));
+            }
+        } else {
+            fails.push("this session's fractadyne.log could not be read".into());
         }
 
         // ---- abort: the child's frames.bin after a process abort.
