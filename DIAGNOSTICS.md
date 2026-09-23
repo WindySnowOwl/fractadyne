@@ -312,6 +312,13 @@ copied and extracted locally. Three actions:
 - `events` — the event log's display-driver events, LiveKernelEvent (GPU reset) reports and
   Fractadyne crash reports.
 
+A harness request can carry a **view** (`-ViewFdn some.fdn`), which becomes the run's session: a
+windowed harness renders the SESSION's view, and `--center`/`--zoom` are read only by the headless
+modes. The session is the committed corpus template (`validation/corpus/session-template.toml`,
+published beside the agent) with the view keys pinned. A run whose log lacks `session: … loaded` is
+failed, not reported. From agent v3, a newer `field-agent.ps1` in `<share>\field\setup\` replaces
+the running one between jobs.
+
 Anything else is `rejected`, with the reason. Deliberately absent: `--deviceloss-repro`,
 `--autodive`, and anything that writes outside its own run folder. A job starts only when the
 machine is unlocked, idle for 5 minutes, and Fractadyne is closed. Each harness run records

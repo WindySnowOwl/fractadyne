@@ -10,7 +10,8 @@
 # WHAT IT WILL RUN - and nothing else:
 #   battery   gpu-validate.ps1 from a PUBLISHED package
 #   harness   fractadyne.exe from a PUBLISHED package, with flags from a fixed allow-list
-#             (see $Allowed below); optionally several builds, interleaved A,B,A,B for an A/B
+#             (see $Allowed below); optionally several builds, interleaved A,B,A,B for an A/B;
+#             optionally at a given VIEW (staged as the run's session - see New-ViewSession)
 #   events    read-only: the Windows event log's display-driver resets and crash reports
 # A "published package" is a zip in <share>\builds\<tag>\ whose sha256 matches that folder's
 # BUILD-ID.txt. It is copied to this machine, checked, extracted under %LOCALAPPDATA%, and run from
@@ -29,6 +30,9 @@
 # It never kills a process it did not start. A job that overruns its timeout has ITS process tree
 # stopped, by process id.
 #
+# UPDATES itself (v3+): a higher $AgentVersion in <share>\field\setup\field-agent.ps1 is copied over
+# this file between jobs, and the scheduled task restarts it (see Test-SelfUpdate).
+#
 # ASCII-only on purpose: Windows PowerShell 5.1 reads a BOM-less .ps1 as ANSI.
 
 [CmdletBinding()]
@@ -43,7 +47,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 2   # 2: screens in the heartbeat and each run; "used during run" only with the idle wait on
+$AgentVersion = 3   # 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -329,8 +333,47 @@ function Invoke-Battery($r, [string]$dir, $status) {
     $status.detail = (@($steps.Keys) | ForEach-Object { "$_ $($steps[$_])" }) -join ", "
 }
 
+# A harness that opens a window renders the SESSION's view: --center/--zoom are read only by the
+# headless modes. So a request's "view" becomes a session.toml in the run's fresh config dir, built
+# from the committed corpus template (published beside this agent as session-template.toml, so it
+# follows the app's schema without a new agent) with only the view keys pinned. Returns $null when
+# the request has no view.
+function New-ViewSession($r) {
+    $v = Get-Field $r "view" $null
+    if ($null -eq $v) { return $null }
+    $num = '^-?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+    $re = [string](Get-Field $v "center_re" ""); $im = [string](Get-Field $v "center_im" "")
+    if ($re -notmatch $num -or $re.Length -gt 400 -or $im -notmatch $num -or $im.Length -gt 400) { Stop-Refused "view.center_re/center_im must be plain decimals" }
+    $log2 = 0.0
+    if (-not [double]::TryParse([string](Get-Field $v "upp_log2" ""), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$log2) -or $log2 -lt -1000000 -or $log2 -gt 10) {
+        Stop-Refused "view.upp_log2 must be a number (log2 of the complex units per pixel, as in a .fdn)"
+    }
+    $maxIter = [long](Get-Field $v "max_iter" 1000)
+    if ($maxIter -lt 1 -or $maxIter -gt 100000000) { Stop-Refused "view.max_iter must be 1..100000000" }
+    $auto = [bool](Get-Field $v "auto_iter" $true)
+    $aa = [int](Get-Field $v "aa" 2)
+    if ($aa -lt 1 -or $aa -gt 4) { Stop-Refused "view.aa must be 1..4" }
+    $tmplPath = Join-Path (Join-Path $Field "setup") "session-template.toml"
+    if (-not (Test-Path -LiteralPath $tmplPath)) { throw "no session template at $tmplPath" }
+    $tmpl = Get-Content -LiteralPath $tmplPath -Raw
+    $e2 = [math]::Floor($log2)
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    $pins = [ordered]@{
+        center_x = ([double]::Parse($re, $inv)).ToString("R", $inv); center_y = ([double]::Parse($im, $inv)).ToString("R", $inv)
+        center_x_str = "`"$re`""; center_y_str = "`"$im`""
+        units_per_pixel = ([math]::Pow(2.0, $log2 - $e2)).ToString("R", $inv); units_per_pixel_e = "$e2"
+        max_iter = "$maxIter"; auto_iter = $(if ($auto) { "true" } else { "false" }); aa = "$aa"
+    }
+    foreach ($k in $pins.Keys) {
+        if ($tmpl -notmatch "(?m)^$k = ") { throw "the session template has no '$k' key - it no longer matches the app" }
+        $tmpl = [regex]::Replace($tmpl, "(?m)^$k = .*$", "$k = $($pins[$k])")
+    }
+    return $tmpl
+}
+
 function Invoke-Harness($r, [string]$dir, $status) {
     $package = [string](Get-Field $r "package" "standard")
+    $session = New-ViewSession $r
     $builds = @(Get-Field $r "builds" @())
     if ($builds.Count -eq 0) { $builds = @([string](Get-Field $r "build" "latest")) }
     if ($builds.Count -gt 4) { Stop-Refused "at most 4 builds per request" }
@@ -351,6 +394,7 @@ function Invoke-Harness($r, [string]$dir, $status) {
             $local = Join-Path (Join-Path $Work $status.id) $name
             $cfgDir = Join-Path $local "config"
             New-Item -ItemType Directory -Force -Path $cfgDir | Out-Null
+            if ($session) { [IO.File]::WriteAllText((Join-Path $cfgDir "session.toml"), $session, $Utf8) }
             $exe = Join-Path $roots[$t] "fractadyne.exe"
             $resolved = Resolve-HarnessArgs $argv $roots[$t]
             $status.detail = "$name of $($repeat * $tags.Count): fractadyne $($argv -join ' ')"
@@ -374,7 +418,14 @@ function Invoke-Harness($r, [string]$dir, $status) {
             foreach ($logs in @((Join-Path $cfgDir "logs"), (Join-Path $local "logs"))) {
                 if (Test-Path $logs) { Copy-Item -Path (Join-Path $logs "*") -Destination $to -Recurse -Force -ErrorAction SilentlyContinue }
             }
-            $status.runs += [ordered]@{ run = $name; build = $t; exit = $res.exit; seconds = $res.seconds; timed_out = $res.timed_out; input_during_run = $touched; screens = $screens }
+            # A staged view the app did not LOAD (it falls back to defaults on a file it cannot
+            # parse) means the run measured the wrong view - say so, do not pass it off.
+            $sessionLoaded = $null
+            if ($session) {
+                $sessionLoaded = [bool](Select-String -Path (Join-Path $to "fractadyne.log") -Pattern 'session: .* loaded' -Quiet -ErrorAction SilentlyContinue)
+            }
+            $status.runs += [ordered]@{ run = $name; build = $t; exit = $res.exit; seconds = $res.seconds; timed_out = $res.timed_out; input_during_run = $touched; screens = $screens; view_loaded = $sessionLoaded }
+            if ($session -and -not $sessionLoaded) { Write-JsonFile (Join-Path $dir "status.json") $status; throw "$name did not load the staged view (no 'session: ... loaded' in its log) - its result is for the wrong view" }
             Write-JsonFile (Join-Path $dir "status.json") $status
         }
     }
@@ -462,9 +513,29 @@ function Invoke-Events($r, [string]$dir, $status) {
     $status.detail = "$($drv.Count) driver event(s), $($lke.Count) LiveKernelEvent report(s), $($app.Count) Fractadyne crash report(s), $dumpNote"
 }
 
+# --- self-update ----------------------------------------------------------------------------------------
+# A newer agent published in <share>\field\setup\ replaces this one: copied over it, then this process
+# exits and the scheduled task's 5-minute trigger starts the new one. This widens nothing: whoever can
+# write the share can already publish a "build" this agent will run. Only ever between jobs.
+function Test-SelfUpdate {
+    $src = Join-Path (Join-Path $Field "setup") "field-agent.ps1"
+    $self = Join-Path $Home_ "field-agent.ps1"
+    if (-not (Test-Path -LiteralPath $src) -or -not (Test-Path -LiteralPath $self)) { return }
+    $m = Select-String -LiteralPath $src -Pattern '^\$AgentVersion = ([0-9]+)' | Select-Object -First 1
+    if (-not $m) { return }
+    $v = [int]$m.Matches[0].Groups[1].Value
+    if ($v -le $AgentVersion) { return }
+    Copy-Item -LiteralPath $src -Destination $self -Force
+    Write-Log "updated v$AgentVersion -> v$v from the share; exiting for the task to restart it"
+    Write-Heartbeat "updating" "v$AgentVersion -> v$v; the task restarts it within 5 minutes"
+    $mutex.ReleaseMutex()
+    exit 0
+}
+
 # --- one poll -----------------------------------------------------------------------------------------
 function Invoke-Poll {
     if (-not (Test-Path -LiteralPath $Share)) { Write-Log "share $Share not reachable"; return }
+    if (-not $Once) { Test-SelfUpdate }
     foreach ($d in @($ReqDir, $ResDir, $AgentDir)) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force -Path $d | Out-Null } }
     $pending = @(Get-ChildItem -LiteralPath $ReqDir -Filter "*.json" -ErrorAction SilentlyContinue | Sort-Object Name)
     if ((Test-Path (Join-Path $Field "PAUSE")) -or (Test-Path (Join-Path $Home_ "PAUSE"))) { Write-Heartbeat "paused" "a PAUSE file is present"; return }
