@@ -2483,3 +2483,20 @@ it concerns.
 - `--recordtest` prints where its logs are. With the logs on a network share, a cost over the limit is
   VACUOUS rather than a failure, because it measures the share. A cost within the limit there is still a pass.
 - The battery builds its bundle under the system temp folder and copies it to `-Out` at the end.
+
+**Evidence, 2026-09-23 — §8 prerequisite 2, `--chunk-sweep` on the RX 6800 XT** (run through the
+field agent at `crash-view-1789960937-0.fdn`, staged as the session; 3 runs per card, beta.114;
+results in `<share>\field\results\`, the comparison in `devbox-rtx3080-chunk-sweeps-20260923\`).
+
+- **The per-pass constant term is card-dependent, and large on the Radeon:** eight 256-iteration
+  passes at 160×90 cost 17.7–19.2 ms there (~2.3 ms/pass) against 3.0–3.2 ms on the RTX 3080
+  (~0.4 ms/pass). A price proportional to steps under-prices every small pass on that card by about
+  2 ms. That is §5.2's term, now measured on both cards.
+- Full-size work is ~2.2× the 3080's (8 passes at 1280×735: 88–90 vs 40–44 ms). Cost grows 1.42–1.45×
+  per window doubling (3080: 1.29–1.30×), and scales as area^0.36–0.39 (3080: area^0.59–0.62). So on
+  the Radeon, shrinking the window or the pixel count buys less.
+- No ≥8× cliff within a band on either card (the 256-window spread is 3.4–3.6× and 2.8–3.1×).
+- ⚠**Not the fatal regime.** The live view settled on a still-growing 37,9xx-iteration reference (the
+  sweep's own "NOT SETTLED" warning), not the field session's ESCAPED 655. Prerequisites 1 and 3 still
+  need W9's regime instrument (`REF_ESCAPE_AT`) to put the Radeon in the escaped-reference storm on
+  purpose.
