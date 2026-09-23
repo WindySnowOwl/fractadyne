@@ -21,6 +21,12 @@
 //!   * **abort** — a child process that records and then `abort()`s (`0xc0000409` on Windows, the
 //!     death class the panic hook never sees) leaves a `frames.bin` that is short, torn, or
 //!     disordered;
+//!   * **heartbeat** — the harness wedges its own UI thread for [`WEDGE`] and the watchdog thread
+//!     writes no STALL row of at least 10 s naming the last frame recorded;
+//!   * **frames.jsonl** — no header for this session, a row with the wrong keys, fewer summary
+//!     rows than elapsed seconds, summaries counting frames that were never recorded, or no event
+//!     row at all (the wedge guarantees a slow frame and a stall);
+//!   * **cost** — the record's p99 per-frame cost exceeds 0.5% of a 60 Hz frame;
 //!   * a crash report appears during the run.
 //!
 //! VACUOUS (exit 2 — never 0, and never the same as a failure): the run recorded no dispatch, no
@@ -31,7 +37,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::diag::frame_record::{self, present, read_src, verdict, FrameRecord};
+use crate::diag::frame_record::{self, kind, present, read_src, verdict, FrameRecord};
 
 /// Frames driven when no count is given: enough for a reference to build, the budget to take
 /// readings, and a jump to land and settle.
@@ -44,6 +50,10 @@ const CHILD_TIMEOUT: Duration = Duration::from_secs(180);
 /// built and readings flow — and the jump taken halfway through.
 const DEPTH: f64 = 12.0;
 const JUMP_TO: f64 = 13.5;
+/// A deliberate wedge of the UI thread, three quarters through: long enough for the watchdog
+/// (which checks every 2 s and warns past 10 s) to write its STALL row. The heartbeat is the one
+/// writer that is not the UI thread, and it is gated here by making the UI thread actually stop.
+const WEDGE: Duration = Duration::from_secs(13);
 
 pub(crate) struct RecordTest {
     frames: u64,
@@ -52,6 +62,7 @@ pub(crate) struct RecordTest {
     start_frame: Option<u64>,
     seen: u64,
     jumped_at: Option<u64>,
+    wedged_at: Option<u64>,
     child: Option<(Child, PathBuf)>,
     crashes_at_start: Vec<String>,
     started: Instant,
@@ -65,6 +76,7 @@ impl RecordTest {
             start_frame: None,
             seen: 0,
             jumped_at: None,
+            wedged_at: None,
             child: None,
             crashes_at_start: crate::diag::crash_report_names(),
             started: Instant::now(),
@@ -139,6 +151,11 @@ impl crate::FractadyneApp {
             self.uitest_set_live(ctx, JUMP_TO);
             t.jumped_at = Some(this_frame);
         }
+        if t.abort_after.is_none() && t.wedged_at.is_none() && t.seen >= t.frames * 3 / 4 {
+            t.wedged_at = Some(this_frame);
+            eprintln!("[recordtest] wedging the UI thread for {}s at frame {this_frame} (the watchdog must record it)", WEDGE.as_secs());
+            std::thread::sleep(WEDGE);
+        }
 
         if t.seen >= t.frames && t.abort_after.is_none() {
             let code = self.recordtest_finish(&mut t, this_frame);
@@ -161,7 +178,10 @@ impl crate::FractadyneApp {
         if recs.windows(2).any(|w| w[1].seq != w[0].seq + 1) {
             fails.push("the ring's sequence numbers are not contiguous".into());
         }
-        let v0: Vec<&FrameRecord> = recs.iter().filter(|r| r.view == 0 && r.frame >= f0 && r.frame < f1).collect();
+        let v0: Vec<&FrameRecord> = recs
+            .iter()
+            .filter(|r| r.kind == kind::FRAME && r.view == 0 && r.frame >= f0 && r.frame < f1)
+            .collect();
         let expected = f1.saturating_sub(f0);
         let mut frames: Vec<u64> = v0.iter().map(|r| r.frame).collect();
         frames.sort_unstable();
@@ -185,8 +205,14 @@ impl crate::FractadyneApp {
             if r.schema != frame_record::SCHEMA {
                 bad.push("schema");
             }
-            if r.view == 0 && r.frame >= f0 && r.frame < f1 && r.plan_calls == 0 {
+            if !matches!(r.kind, kind::FRAME | kind::STALL) {
+                bad.push("kind unset");
+            }
+            if r.kind == kind::FRAME && r.view == 0 && r.frame >= f0 && r.frame < f1 && r.plan_calls == 0 {
                 bad.push("plan_calls=0 on a driven frame (view 0 not built)");
+            }
+            if r.kind == kind::STALL && r.stall_ms == 0 {
+                bad.push("a stall row with no duration");
             }
             if r.plan_calls > 0 {
                 if !matches!(r.present, present::LIVE | present::REPROJECT | present::HOLD) {
@@ -252,6 +278,105 @@ impl crate::FractadyneApp {
                     }
                 }
             },
+        }
+
+        // ---- heartbeat: the deliberate wedge must have produced a STALL row from the watchdog.
+        let stalls: Vec<&FrameRecord> = recs.iter().filter(|r| r.kind == kind::STALL).collect();
+        match (t.wedged_at, stalls.iter().max_by_key(|r| r.stall_ms)) {
+            (None, _) => fails.push("the wedge never ran, so the heartbeat was not tested".into()),
+            (Some(w), None) => fails.push(format!(
+                "the UI thread was wedged {}s at frame {w} and the watchdog wrote no stall row",
+                WEDGE.as_secs()
+            )),
+            (Some(w), Some(s)) => {
+                if s.stall_ms < 10_000 {
+                    fails.push(format!("the longest stall row says {} ms for a {}s wedge", s.stall_ms, WEDGE.as_secs()));
+                } else if s.frame + 1 != w {
+                    fails.push(format!(
+                        "the stall row names frame {} as the last recorded, but the wedge began before frame {w}'s emit",
+                        s.frame
+                    ));
+                } else {
+                    notes.push(format!(
+                        "heartbeat: {} stall row(s) for the {}s wedge, longest {} ms, naming frame {} as the last recorded",
+                        stalls.len(),
+                        WEDGE.as_secs(),
+                        s.stall_ms,
+                        s.frame
+                    ));
+                }
+            }
+        }
+
+        // ---- frames.jsonl: header for this session; every row exactly its keys; summaries add up.
+        frame_record::flush_jsonl();
+        match frame_record::jsonl_file().map(|p| std::fs::read_to_string(&p).map_err(|e| (p, e))) {
+            None => fails.push("no frames.jsonl path (logging off?)".into()),
+            Some(Err((p, e))) => fails.push(format!("{} unreadable: {e}", p.display())),
+            Some(Ok(text)) => {
+                let frame_keys: std::collections::BTreeSet<&str> = FrameRecord::FIELDS.iter().map(|(n, _)| *n).collect();
+                let sum_keys: std::collections::BTreeSet<&str> = frame_record::SUMMARY_KEYS.iter().copied().collect();
+                let (mut header_ok, mut events, mut summaries, mut summed, mut bad_rows) = (false, 0u64, 0u64, 0u64, 0u64);
+                let mut last_summary_t: Option<u64> = None;
+                for (i, line) in text.lines().enumerate() {
+                    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                        bad_rows += 1;
+                        continue;
+                    };
+                    let Some(o) = v.as_object() else {
+                        bad_rows += 1;
+                        continue;
+                    };
+                    let keys: std::collections::BTreeSet<&str> = o.keys().map(String::as_str).collect();
+                    match o.get("kind") {
+                        Some(k) if k == "header" => {
+                            header_ok = i == 0 && o.get("session").and_then(|s| s.as_u64()) == Some(frame_record::session_id());
+                        }
+                        Some(k) if k == "summary" => {
+                            summaries += 1;
+                            summed += o.get("frames").and_then(|f| f.as_u64()).unwrap_or(0);
+                            last_summary_t = o.get("t_ms").and_then(|t| t.as_u64());
+                            bad_rows += (keys != sum_keys) as u64;
+                        }
+                        _ => {
+                            events += 1;
+                            bad_rows += (keys != frame_keys) as u64;
+                        }
+                    }
+                }
+                if !header_ok {
+                    fails.push("frames.jsonl does not open with this session's header".into());
+                }
+                if bad_rows > 0 {
+                    fails.push(format!("frames.jsonl has {bad_rows} row(s) that do not parse or carry the wrong keys"));
+                }
+                // A summary is written when a record arrives past its second's end, and covers
+                // every record before that one — so a 13 s gap is ONE summary, not thirteen. The
+                // exact invariant: the summaries' view-0 frames are the view-0 frames recorded
+                // before the last summary's timestamp.
+                let whole_session = recs.first().map(|r| r.seq) == Some(0);
+                match last_summary_t {
+                    None => fails.push("frames.jsonl has no summary row".into()),
+                    Some(_) if !whole_session => {
+                        notes.push("the ring no longer holds the whole session; summary totals not cross-checked".into())
+                    }
+                    Some(tl) => {
+                        let before = recs.iter().filter(|r| r.kind == kind::FRAME && r.view == 0 && r.t_ms < tl).count() as u64;
+                        if summed != before {
+                            fails.push(format!(
+                                "frames.jsonl summaries count {summed} view-0 frames; {before} were recorded before the last summary"
+                            ));
+                        }
+                    }
+                }
+                notes.push(format!(
+                    "frames.jsonl: {} bytes, {summaries} summary rows covering {summed} frames, {events} event rows",
+                    text.len()
+                ));
+                if events == 0 {
+                    fails.push("frames.jsonl carries no event row, though the wedge made a slow frame and a stall".into());
+                }
+            }
         }
 
         // ---- abort: the child's frames.bin after a process abort.

@@ -246,6 +246,37 @@ fn the_crash_section_says_nothing_recorded_or_names_the_frames() {
     assert!(s.contains("ctr[tag 1045]: rebase=33000000"), "counters carry their render:\n{s}");
 }
 
+/// What `frames.jsonl` writes a full row for. Severe events are the ones a death follows; routine
+/// ones are rate-limited; ordinary motion is NOT an event (it would write a row per frame of every
+/// dive). A slow interval with no repaint asked for is eframe's idle tick, not a slow frame.
+#[test]
+fn event_rows_are_the_rare_frames_not_ordinary_motion() {
+    let f = FrameRecord { kind: kind::FRAME, plan_calls: 1, present: present::REPROJECT, mode: 0, ..Default::default() };
+    assert_eq!(event_reason(&f, Some(0)), None, "a reprojected (moving) frame is ordinary");
+    let stall = FrameRecord { kind: kind::STALL, stall_ms: 12_000, ..Default::default() };
+    assert_eq!(event_reason(&stall, None), Some((true, "stall")));
+    let lethal = FrameRecord { read_n: 1, read_lethal: true, ..f };
+    assert_eq!(event_reason(&lethal, Some(0)), Some((true, "lethal")));
+    let slow = FrameRecord { last_dt_ms: 250.0, repaint_requested: true, ..f };
+    assert_eq!(event_reason(&slow, Some(0)), Some((true, "slow")));
+    let idle_tick = FrameRecord { last_dt_ms: 1017.0, repaint_requested: false, ..f };
+    assert_eq!(event_reason(&idle_tick, Some(0)), None, "eframe's 1 Hz idle tick is not a slow frame");
+    let refused = FrameRecord { read_n: 1, refusal: refusal::BUILDING, ..f };
+    assert_eq!(event_reason(&refused, Some(0)), Some((false, "refused")));
+    let moved = FrameRecord { read_n: 1, read_verdict: verdict::MOVED, ..f };
+    assert_eq!(event_reason(&moved, Some(0)), Some((false, "budget-moved")));
+    let discarded = FrameRecord { read_n: 1, read_verdict: verdict::DISCARDED, ..f };
+    assert_eq!(event_reason(&discarded, Some(0)), None, "a discard is counted in the summary, not written");
+    let switched = FrameRecord { mode: 2, ..f };
+    assert_eq!(event_reason(&switched, Some(0)), Some((false, "mode-switch")));
+    assert_eq!(event_reason(&switched, None), None, "the first mode seen is not a switch");
+}
+
+#[test]
+fn the_zero_record_is_the_default_record() {
+    assert_eq!(FrameRecord::ZERO, FrameRecord::default());
+}
+
 /// The committed schema file IS the encoding. A field change that does not regenerate it fails
 /// here, before `framelog.py` can misread a real capture. Regenerate with
 /// `fractadyne --dump-frame-schema > validation/frame-schema.json` (in bash — PowerShell `>` writes

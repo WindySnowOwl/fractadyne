@@ -28,6 +28,15 @@ detail is in the git history.
   new check, `--recordtest`, proves it works: it drives the live view, then confirms every frame
   was recorded exactly once with nothing left blank, that the file matches what the app held, and
   that a second copy of the app which records sixty frames and then aborts leaves all sixty behind.
+  A longer-running log, `logs/frames.jsonl`, keeps one summary line per second for the whole
+  session and the full record of every frame that mattered — a slow frame, a dangerous
+  measurement, a stall — so a long session's history survives even when nothing crashed. And when
+  the app stops responding altogether, the background watchdog now writes that into the record
+  itself, with how long nothing happened.
+- **A freeze in the first thirty seconds after launch is now reported** (beta.113). The watchdog
+  that writes "possible hang" to the log treated the moment the app started as if it had just
+  warned, and waits thirty seconds between warnings — so a hang early in a session was never
+  logged at all.
 - **Every build now names the commit it was built from** (beta.113). The title bar, Help ▸ About,
   `--version`, crash reports and exported image metadata read `0.2.41-beta.113 (build 3501,
   g1a2b3c4)`, and a build made from modified sources says `g1a2b3c4-dirty`. Until now two builds

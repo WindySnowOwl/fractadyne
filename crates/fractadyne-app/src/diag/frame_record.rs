@@ -65,6 +65,16 @@ const FILE_MAGIC: [u8; 4] = *b"FDFH";
 /// The records the crash report prints inline; the full ring goes to the companion file.
 const CRASH_INLINE: usize = 40;
 
+/// What a row IS. `0` = unset.
+pub(crate) mod kind {
+    /// One frame of one view, written by the UI thread at the end of `update`.
+    pub(crate) const FRAME: u8 = 1;
+    /// Written by the WATCHDOG thread when the UI thread has recorded nothing for
+    /// `stall_ms`. The record's only other writer is the thread a wedge stops, so without this
+    /// a wedge is a silence a reader has to notice; with it, a positive row with a length (the
+    /// design's P19: a judge must not run on the thread it judges).
+    pub(crate) const STALL: u8 = 2;
+}
 /// What the frame put on screen for this view. `0` = unset (the view was not built this frame).
 pub(crate) mod present {
     pub(crate) const LIVE: u8 = 1;
@@ -97,6 +107,8 @@ pub(crate) mod refusal {
 pub(crate) trait Field: Copy {
     const TYPE: &'static str;
     const SIZE: usize;
+    /// The type's zero, for the `const` [`FrameRecord::ZERO`] a `static` can be built from.
+    const ZERO: Self;
     fn put(self, b: &mut [u8], at: &mut usize);
     fn get(b: &[u8], at: &mut usize) -> Option<Self>;
     fn json(self, s: &mut String);
@@ -107,6 +119,7 @@ macro_rules! int_field {
         impl Field for $t {
             const TYPE: &'static str = $name;
             const SIZE: usize = std::mem::size_of::<$t>();
+            const ZERO: Self = 0;
             fn put(self, b: &mut [u8], at: &mut usize) {
                 b[*at..*at + Self::SIZE].copy_from_slice(&self.to_le_bytes());
                 *at += Self::SIZE;
@@ -133,6 +146,7 @@ macro_rules! float_field {
         impl Field for $t {
             const TYPE: &'static str = $name;
             const SIZE: usize = std::mem::size_of::<$t>();
+            const ZERO: Self = 0.0;
             fn put(self, b: &mut [u8], at: &mut usize) {
                 self.to_bits().put(b, at);
             }
@@ -158,6 +172,7 @@ float_field!(f64, u64, "f64");
 impl Field for bool {
     const TYPE: &'static str = "bool";
     const SIZE: usize = 1;
+    const ZERO: Self = false;
     fn put(self, b: &mut [u8], at: &mut usize) {
         (self as u8).put(b, at);
     }
@@ -190,6 +205,8 @@ macro_rules! frame_record {
                 &[ $( (stringify!($name), <$ty as Field>::TYPE), )* ];
             /// Encoded payload size in bytes.
             pub(crate) const PAYLOAD_BYTES: usize = 0 $( + <$ty as Field>::SIZE )*;
+            /// Every field zero — `Default`, but usable in a `static`.
+            pub(crate) const ZERO: Self = Self { $( $name: <$ty as Field>::ZERO, )* };
 
             fn put_payload(&self, b: &mut [u8], at: &mut usize) {
                 $( self.$name.put(b, at); )*
@@ -224,6 +241,8 @@ frame_record! {
     // ---- identity: the join key nothing had before
     /// Always [`SCHEMA`]; stamped by [`record`].
     schema: u16,
+    /// [`kind`]: a frame, or a watchdog stall row.
+    kind: u8,
     /// Record sequence number within the session (both views share it); stamped by [`record`].
     seq: u64,
     /// The app's `frame_idx` — the same number the slow-frame line, `[fd-glide] fN`, the chunk and
@@ -236,6 +255,9 @@ frame_record! {
     /// `build_params` calls for this view this frame. 0 = the view was not built this frame, and
     /// every plan field below is then unset.
     plan_calls: u8,
+    /// On a [`kind::STALL`] row: how long the UI thread had recorded nothing (its `frame` is the
+    /// last frame that WAS recorded). 0 on a frame row.
+    stall_ms: u32,
 
     // ---- the ask
     /// The session's iteration setting (the ceiling auto-iter scales under).
@@ -556,13 +578,57 @@ fn write_slot(f: &mut std::fs::File, index: usize, slot: &[u8; SLOT_BYTES]) -> s
     }
 }
 
-/// Record one frame of one view: stamp its schema and sequence number, keep it in the ring, and
-/// write its slot to `frames.bin`. Cheap by construction — no allocation after the first call, one
-/// uncontended lock, one positional 512-byte write into the page cache — but that is a claim to be
-/// MEASURED, interleaved, before it ships (design §6.4).
-pub(crate) fn record(mut r: FrameRecord) {
-    let Ok(mut ring) = RING.lock() else { return };
+/// Record one frame of one view: stamp its schema and sequence number, keep it in the ring, write
+/// its slot to `frames.bin`, and hand it to `frames.jsonl`. Cheap by construction — no allocation
+/// after the first call, uncontended locks, one positional 512-byte write into the page cache —
+/// and MEASURED: every record carries the previous emit's cost (`rec_us`).
+pub(crate) fn record(r: FrameRecord) {
+    record_inner(r, true);
+}
+
+/// The watchdog's STALL row: the UI thread has recorded nothing for `stall_ms`. Never blocks — the
+/// thread being judged may be the one holding a lock, and a watchdog that wedges behind the wedge
+/// it is reporting is no watchdog. Skipped (and said so, by its absence) if the locks stay busy.
+pub(crate) fn record_stall(stall_ms: u64) {
+    let r = FrameRecord {
+        kind: kind::STALL,
+        stall_ms: stall_ms.min(u32::MAX as u64) as u32,
+        t_ms: (super::elapsed_s() * 1000.0) as u64,
+        ..Default::default()
+    };
+    record_inner(r, false);
+}
+
+/// `lock()` or, for the watchdog, a bounded `try_lock`.
+fn acquire<T>(m: &Mutex<T>, blocking: bool) -> Option<std::sync::MutexGuard<'_, T>> {
+    if blocking {
+        return Some(m.lock().unwrap_or_else(|p| p.into_inner()));
+    }
+    for _ in 0..50 {
+        match m.try_lock() {
+            Ok(g) => return Some(g),
+            Err(std::sync::TryLockError::Poisoned(p)) => return Some(p.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => std::thread::sleep(std::time::Duration::from_millis(1)),
+        }
+    }
+    None
+}
+
+fn record_inner(mut r: FrameRecord, blocking: bool) {
+    let Some(mut ring) = acquire(&RING, blocking) else { return };
     r.schema = SCHEMA;
+    if r.kind == kind::STALL {
+        // The last frame that WAS recorded — what the stall is measured from.
+        let n = ring.next;
+        r.frame = if n == 0 || ring.buf.is_empty() {
+            0
+        } else {
+            (0..n.min(RING_LEN as u64))
+                .map(|k| ring.buf[((n - 1 - k) % RING_LEN as u64) as usize])
+                .find(|x| x.kind == kind::FRAME)
+                .map_or(0, |x| x.frame)
+        };
+    }
     r.seq = ring.next;
     ring.next += 1;
     if ring.buf.is_empty() {
@@ -572,12 +638,300 @@ pub(crate) fn record(mut r: FrameRecord) {
     ring.buf[idx] = r;
     drop(ring);
 
-    let Ok(mut g) = BIN.lock() else { return };
-    if g.is_none() {
-        *g = Some(bin_path().ok_or(()).and_then(|p| open_bin(&p).map_err(|_| ())));
+    if let Some(mut g) = acquire(&BIN, blocking) {
+        if g.is_none() {
+            *g = Some(bin_path().ok_or(()).and_then(|p| open_bin(&p).map_err(|_| ())));
+        }
+        if let Some(Ok(f)) = g.as_mut() {
+            let _ = write_slot(f, idx, &encode_slot(&r, session_id()));
+        }
     }
-    if let Some(Ok(f)) = g.as_mut() {
-        let _ = write_slot(f, idx, &encode_slot(&r, session_id()));
+    if let Some(mut j) = acquire(&JSONL, blocking) {
+        j.take(&r);
+    }
+}
+
+// ------------------------------------------------------------------------------------------------
+// frames.jsonl: the long-horizon log.
+
+/// Full rows are written only for EVENTS, and a compact summary row once a second. Whatever the
+/// design text lists, a trigger that fires on ordinary motion ("the frame was not presented live")
+/// would write a 2 KB row per frame of every dive — ~120 KB/s — against an exit criterion of under
+/// 5 MB for a fourteen-minute session. So the SEVERE events (a slow frame, a lethal reading, a
+/// watchdog stall) are always written, up to [`SEVERE_PER_S`]; the ROUTINE ones (the budget moved,
+/// a growth refusal, a mode switch) at most [`ROUTINE_PER_S`] a second; and the summary row carries
+/// the counts of everything, so a rate-limited event is still COUNTED.
+const SEVERE_PER_S: u32 = 20;
+const ROUTINE_PER_S: u32 = 2;
+/// A frame the wall calls slow for the event log (the slow-frame log line's threshold).
+const SLOW_MS: f64 = 200.0;
+/// Rotation: past this size `frames.jsonl` shifts to `.1` … `.3`, checked while running.
+const ROTATE_BYTES: u64 = 32 << 20;
+const ROTATE_SLOTS: u32 = 4;
+
+/// The summary row's keys, in order — also published in `validation/frame-schema.json` so the
+/// reader checks them as strictly as the frame rows.
+pub(crate) const SUMMARY_KEYS: &[&str] = &[
+    "kind", "t_ms", "frame", "frames", "dt_mean", "dt_max", "slow", "dispatched", "live",
+    "reproject", "hold", "readings", "discarded", "moved", "lethal", "refused", "events",
+    "events_dropped", "stalls", "rec_us_max", "budget", "mode", "iter", "ref_len", "blind",
+];
+
+#[derive(Default)]
+struct Summary {
+    frames: u64,
+    dt_sum: f64,
+    dt_max: f64,
+    slow: u64,
+    dispatched: u64,
+    present: [u64; 4],
+    readings: u64,
+    discarded: u64,
+    moved: u64,
+    lethal: u64,
+    refused: u64,
+    events: u64,
+    events_dropped: u64,
+    stalls: u64,
+    rec_us_max: f32,
+    last: FrameRecord,
+}
+
+#[derive(Default)]
+struct Jsonl {
+    /// `None` = not opened yet; `Some(Err)` = unavailable, not retried every frame.
+    file: Option<Result<std::io::BufWriter<std::fs::File>, ()>>,
+    bytes: u64,
+    sec_start_ms: Option<u64>,
+    acc: Summary,
+    severe_this_s: u32,
+    routine_this_s: u32,
+    last_mode: [Option<u8>; 2],
+}
+
+static JSONL: Mutex<Jsonl> = Mutex::new(Jsonl {
+    file: None,
+    bytes: 0,
+    sec_start_ms: None,
+    acc: Summary {
+        frames: 0,
+        dt_sum: 0.0,
+        dt_max: 0.0,
+        slow: 0,
+        dispatched: 0,
+        present: [0; 4],
+        readings: 0,
+        discarded: 0,
+        moved: 0,
+        lethal: 0,
+        refused: 0,
+        events: 0,
+        events_dropped: 0,
+        stalls: 0,
+        rec_us_max: 0.0,
+        last: FrameRecord::ZERO,
+    },
+    severe_this_s: 0,
+    routine_this_s: 0,
+    last_mode: [None; 2],
+});
+
+/// Push buffered `frames.jsonl` rows to the OS (routine events are buffered; severe ones and
+/// summaries are flushed as written). For a reader in the same process — `--recordtest`.
+pub(crate) fn flush_jsonl() {
+    if let Ok(mut j) = JSONL.lock() {
+        if let Some(Ok(f)) = j.file.as_mut() {
+            let _ = f.flush();
+        }
+    }
+}
+
+/// `frames.jsonl`'s path, for a reader in the same process.
+pub(crate) fn jsonl_file() -> Option<PathBuf> {
+    jsonl_path(0)
+}
+
+/// Why a row is an event, if it is one. `(severe, reason)`.
+pub(crate) fn event_reason(r: &FrameRecord, prev_mode: Option<u8>) -> Option<(bool, &'static str)> {
+    if r.kind == kind::STALL {
+        return Some((true, "stall"));
+    }
+    if r.read_n > 0 && r.read_lethal {
+        return Some((true, "lethal"));
+    }
+    if r.repaint_requested && r.last_dt_ms > SLOW_MS {
+        return Some((true, "slow"));
+    }
+    if r.refusal != 0 {
+        return Some((false, "refused"));
+    }
+    if r.read_n > 0 && r.read_verdict == verdict::MOVED {
+        return Some((false, "budget-moved"));
+    }
+    if r.plan_calls > 0 && prev_mode.is_some_and(|m| m != r.mode) {
+        return Some((false, "mode-switch"));
+    }
+    None
+}
+
+fn jsonl_path(n: u32) -> Option<PathBuf> {
+    super::logs_dir().map(|d| d.join(if n == 0 { "frames.jsonl".to_string() } else { format!("frames.jsonl.{n}") }))
+}
+
+/// Shift `frames.jsonl` → `.1` → … → `.3`, dropping the oldest.
+fn rotate() {
+    for n in (1..ROTATE_SLOTS).rev() {
+        if let (Some(from), Some(to)) = (jsonl_path(n - 1), jsonl_path(n)) {
+            let _ = std::fs::rename(from, to);
+        }
+    }
+}
+
+impl Jsonl {
+    fn open(&mut self) {
+        let opened = (|| {
+            let p = jsonl_path(0)?;
+            // A previous session's log is kept, not overwritten: rotate it out of the way.
+            if p.exists() {
+                rotate();
+            }
+            let f = std::fs::File::create(&p).ok()?;
+            Some(std::io::BufWriter::new(f))
+        })();
+        self.file = Some(opened.ok_or(()));
+        self.bytes = 0;
+        let header = format!(
+            "{{\"kind\":\"header\",\"schema\":{SCHEMA},\"session\":{},\"header\":{}}}",
+            session_id(),
+            header_json()
+        );
+        self.line(&header);
+    }
+
+    fn line(&mut self, s: &str) {
+        if let Some(Ok(f)) = self.file.as_mut() {
+            if writeln!(f, "{s}").is_ok() {
+                self.bytes += s.len() as u64 + 1;
+            }
+        }
+    }
+
+    fn take(&mut self, r: &FrameRecord) {
+        if self.file.is_none() {
+            self.open();
+        }
+        if !matches!(self.file, Some(Ok(_))) {
+            return;
+        }
+        // Second boundary: write the summary for the second that just ended.
+        let start = *self.sec_start_ms.get_or_insert(r.t_ms);
+        if r.t_ms >= start + 1000 {
+            self.flush_summary(r.t_ms);
+        }
+        // Accumulate.
+        let v = (r.view as usize).min(1);
+        let prev_mode = self.last_mode[v];
+        let a = &mut self.acc;
+        if r.kind == kind::STALL {
+            a.stalls += 1;
+        } else {
+            if r.view == 0 {
+                a.frames += 1;
+                a.dt_sum += r.last_dt_ms;
+                a.dt_max = a.dt_max.max(r.last_dt_ms);
+                if r.repaint_requested && r.last_dt_ms > SLOW_MS {
+                    a.slow += 1;
+                }
+                a.last = *r;
+            }
+            a.dispatched += r.dispatched as u64;
+            a.present[(r.present as usize).min(3)] += 1;
+            if r.read_n > 0 {
+                a.readings += 1;
+                a.discarded += (r.read_verdict == verdict::DISCARDED) as u64;
+                a.moved += (r.read_verdict == verdict::MOVED) as u64;
+                a.lethal += r.read_lethal as u64;
+            }
+            a.refused += (r.refusal != 0) as u64;
+            a.rec_us_max = a.rec_us_max.max(r.rec_us);
+            if r.plan_calls > 0 {
+                self.last_mode[v] = Some(r.mode);
+            }
+        }
+        // The event row, rate-limited by class.
+        if let Some((severe, _why)) = event_reason(r, prev_mode) {
+            let (count, cap) = if severe {
+                (&mut self.severe_this_s, SEVERE_PER_S)
+            } else {
+                (&mut self.routine_this_s, ROUTINE_PER_S)
+            };
+            if *count < cap {
+                *count += 1;
+                self.acc.events += 1;
+                let row = r.to_json();
+                self.line(&row);
+                // Events are the rows a death is most likely to follow: get them to the OS now.
+                if severe {
+                    if let Some(Ok(f)) = self.file.as_mut() {
+                        let _ = f.flush();
+                    }
+                }
+            } else {
+                self.acc.events_dropped += 1;
+            }
+        }
+    }
+
+    fn flush_summary(&mut self, now_ms: u64) {
+        let a = std::mem::take(&mut self.acc);
+        let l = &a.last;
+        let row = format!(
+            "{{\"kind\":\"summary\",\"t_ms\":{},\"frame\":{},\"frames\":{},\"dt_mean\":{},\"dt_max\":{},\
+             \"slow\":{},\"dispatched\":{},\"live\":{},\"reproject\":{},\"hold\":{},\"readings\":{},\
+             \"discarded\":{},\"moved\":{},\"lethal\":{},\"refused\":{},\"events\":{},\"events_dropped\":{},\
+             \"stalls\":{},\"rec_us_max\":{},\"budget\":{},\"mode\":{},\"iter\":{},\"ref_len\":{},\"blind\":{}}}",
+            now_ms,
+            l.frame,
+            a.frames,
+            if a.frames > 0 { a.dt_sum / a.frames as f64 } else { 0.0 },
+            a.dt_max,
+            a.slow,
+            a.dispatched,
+            a.present[present::LIVE as usize],
+            a.present[present::REPROJECT as usize],
+            a.present[present::HOLD as usize],
+            a.readings,
+            a.discarded,
+            a.moved,
+            a.lethal,
+            a.refused,
+            a.events,
+            a.events_dropped,
+            a.stalls,
+            a.rec_us_max,
+            l.fe_budget,
+            l.mode,
+            l.iter,
+            l.ref_len,
+            l.blind_slow_frames,
+        );
+        self.line(&row);
+        if let Some(Ok(f)) = self.file.as_mut() {
+            let _ = f.flush();
+        }
+        self.sec_start_ms = Some(now_ms);
+        self.severe_this_s = 0;
+        self.routine_this_s = 0;
+        if self.bytes > ROTATE_BYTES {
+            // Mid-run: a long session must not overwrite its own head (the single-slot,
+            // startup-only rotation of fractadyne.log does exactly that).
+            if let Some(Ok(f)) = self.file.as_mut() {
+                let _ = f.flush();
+            }
+            self.file = None;
+            rotate();
+            self.open();
+        }
     }
 }
 
@@ -802,9 +1156,11 @@ pub(crate) fn schema_json() -> String {
     format!(
         "{{\n  \"schema\": {SCHEMA},\n  \"slot_bytes\": {SLOT_BYTES},\n  \"slot_header_bytes\": {SLOT_HEADER},\n  \
          \"header_bytes\": {HEADER_BYTES},\n  \"ring_len\": {RING_LEN},\n  \"payload_bytes\": {},\n  \
-         \"slot_magic\": \"FDFR\",\n  \"file_magic\": \"FDFH\",\n  \"fields\": [\n{}\n  ]\n}}\n",
+         \"slot_magic\": \"FDFR\",\n  \"file_magic\": \"FDFH\",\n  \"fields\": [\n{}\n  ],\n  \
+         \"summary_keys\": [{}]\n}}\n",
         FrameRecord::PAYLOAD_BYTES,
-        fields.join(",\n")
+        fields.join(",\n"),
+        SUMMARY_KEYS.iter().map(|k| format!("\"{k}\"")).collect::<Vec<_>>().join(", ")
     )
 }
 

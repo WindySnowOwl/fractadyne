@@ -13726,6 +13726,7 @@ impl FractadyneApp {
         for v in 0..if self.dual { 2 } else { 1 } {
             let p = &self.perf;
             let mut r = p.rec[v];
+            r.kind = diag::frame_record::kind::FRAME;
             r.frame = p.frame_idx;
             r.t_ms = t_ms;
             r.view = v as u8;

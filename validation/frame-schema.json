@@ -4,17 +4,19 @@
   "slot_header_bytes": 32,
   "header_bytes": 4096,
   "ring_len": 4096,
-  "payload_bytes": 434,
+  "payload_bytes": 439,
   "slot_magic": "FDFR",
   "file_magic": "FDFH",
   "fields": [
     ["schema", "u16"],
+    ["kind", "u8"],
     ["seq", "u64"],
     ["frame", "u64"],
     ["t_ms", "u64"],
     ["view", "u8"],
     ["dual", "bool"],
     ["plan_calls", "u8"],
+    ["stall_ms", "u32"],
     ["max_iter", "u32"],
     ["auto_iter", "bool"],
     ["iter", "u32"],
@@ -123,5 +125,6 @@
     ["autopilot", "bool"],
     ["zoom_oct_s", "f64"],
     ["rec_us", "f32"]
-  ]
+  ],
+  "summary_keys": ["kind", "t_ms", "frame", "frames", "dt_mean", "dt_max", "slow", "dispatched", "live", "reproject", "hold", "readings", "discarded", "moved", "lethal", "refused", "events", "events_dropped", "stalls", "rec_us_max", "budget", "mode", "iter", "ref_len", "blind"]
 }
