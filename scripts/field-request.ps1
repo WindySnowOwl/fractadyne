@@ -8,6 +8,9 @@
 #   .\scripts\field-request.ps1 -Action harness -Run "--recordtest" -Wait
 #   .\scripts\field-request.ps1 -Action harness -Run "--zoomtest 40 --zoomtest-rate 4.0" `
 #       -Builds v0.2.41-beta.113,v0.2.41-beta.114 -Repeat 3 -Wait    # A,B,A,B,A,B
+#   .\scripts\field-request.ps1 -Action harness -Run "--chunk-sweep" -ViewFdn crash-view-1.fdn -Wait
+#                                                                 # at a view (windowed harnesses read the
+#                                                                 # SESSION's view, not --center/--zoom)
 #   .\scripts\field-request.ps1 -Action events -Days 30 -Wait     # display-driver resets, crash reports
 #   .\scripts\field-request.ps1 -Cancel <id>                      # withdraw a request not yet started
 #
@@ -27,6 +30,10 @@ param(
     # harness: the fractadyne flags, as one string ("--zoomtest 40 --zoomtest-rate 4.0").
     [string]$Run = "",
     [int]$Repeat = 1,
+    # harness: run at this view - a .fdn (e.g. a crash-view-*.fdn); its centre, upp_log2, max_iter
+    # and auto_iter become the run's session. -ViewAa overrides the supersampling (default 2).
+    [string]$ViewFdn = "",
+    [int]$ViewAa = 2,
     [int]$Days = 30,
     [int]$TimeoutMin = 0,
     [string]$Note = "",
@@ -121,6 +128,14 @@ switch ($Action) {
         $req.args = @($Run -split '\s+' | Where-Object { $_ })
         if ($Builds.Count -gt 0) { $req.builds = @($Builds) } else { $req.build = $Build }
         $req.repeat = $Repeat
+        if ($ViewFdn) {
+            $kv = @{}
+            foreach ($l in Get-Content -LiteralPath $ViewFdn) { if ($l -match '^\s*([a-z_0-9]+)\s*=\s*(.*?)\s*$') { $kv[$Matches[1]] = $Matches[2] } }
+            foreach ($k in "center_re", "center_im", "upp_log2") { if (-not $kv.ContainsKey($k)) { throw "$ViewFdn has no $k" } }
+            $req.view = [ordered]@{ center_re = $kv.center_re; center_im = $kv.center_im; upp_log2 = $kv.upp_log2
+                max_iter = $(if ($kv.max_iter) { [long]$kv.max_iter } else { 1000 }); auto_iter = ($kv.auto_iter -eq "1" -or $kv.auto_iter -eq "true"); aa = $ViewAa
+                from = (Split-Path -Leaf $ViewFdn) }
+        }
     }
     "events" { $req.days = $Days }
 }
