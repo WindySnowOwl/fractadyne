@@ -5,7 +5,7 @@ A reproducible head-to-head of deep-zoom Mandelbrot renderers on **your** hardwa
 | Renderer | Lane | Engine | Notes |
 |---|---|---|---|
 | **Fractadyne** | automated | GPU (wgpu: Vulkan/DX12/Metal/GL) | the app this kit ships with |
-| **Fraktaler-3** | automated | CPU (OpenMP, BLA + rebasing) | binary + source included (AGPL-3.0) |
+| **Fraktaler-3** | automated | GPU (OpenCL), plus the CPU unless `-F3GpuOnly` (BLA + rebasing) | binary + source included (AGPL-3.0) |
 | **Imagina** | automated (`-ImaginaCliExe`) | CPU (MipLA) | upstream is GUI-only; a small headless `imagina-cli` fork enables the automated lane - see "Imagina" below |
 | **FractalShark** | automated (GPU, 0.541+) | GPU (CUDA) | GPU lane works from 0.541 (adds sm_75; runs on RTX 20/30/40/50); earlier releases were CPU-only here - see below |
 
@@ -116,6 +116,18 @@ which is the mode that owns its reference prefetch.
 its "sequence" is N processes and its amortisation is 1.0 *by construction*. That is a property
 of the command-line interface, not of its engine — F3 has zoom-sequence and exponential-map
 machinery this lane cannot reach. Do not quote it as an engine ceiling.
+
+**Fraktaler-3's devices and tiles are set by YOU, and its defaults are conservative.** Its wisdom
+(generated once per machine with `-W`, then benchmarked with `-B`) enables every device it finds,
+the CPU included, and F3 spreads tiles across all of them — so a CPU tile can still be running long
+after the GPU has finished. Pass **`-F3GpuOnly`** when the wisdom is created to disable the CPU
+(platform -1), as F3's author does. Measured 2026-09-24 on the RTX 3080, alternating old and new
+wisdom in one session: the 6.1e1105 scene went from 68.0 s to 12.9 s, the rest up to 26% faster.
+**`-F3Tile WxH`** sets `opencl.tile_width`/`tile_height`; left empty, F3 uses 128x128, which its
+manual calls conservative. Pick a size that divides the frame exactly (960x540 at 3840x2160) and
+that stays under the OS GPU watchdog — a tile that overruns it resets the display driver, which on
+the machine you are sitting at is a device loss. Every F3 call passes `-P`, so the lane neither
+reads nor rewrites your own F3 persistence file.
 
 ## The cutoff-crossing lane
 

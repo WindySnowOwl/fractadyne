@@ -38,6 +38,16 @@ param(
     # the same hardware again. It now persists beside the kit and is COPIED into each run folder
     # for provenance. Point -F3Wisdom at a file to reuse or share one.
     [string]$F3Wisdom = '',
+    # Fraktaler-3's OpenCL tile size, "WxH" (opencl.tile_width / opencl.tile_height). Empty keeps
+    # F3's default 128x128, which its own manual calls conservative (one of its examples: 3 min at
+    # 128x128, 1 min 34 s at 960x1080). Pick a size that divides the frame EXACTLY - the manual
+    # warns that edge fragments cut parallelism, and 2160 is not a multiple of 128 - and that
+    # stays under the OS GPU watchdog: 960x540 at 3840x2160 is the developer's own setting.
+    [string]$F3Tile = '',
+    # Generate the wisdom with the CPU disabled, GPU devices only. F3 spreads tiles over every
+    # enabled device, and a CPU tile can still be running long after the GPU has finished its own;
+    # the developer disables the CPU entirely. Applies only when the wisdom file is being created.
+    [switch]$F3GpuOnly,
     # FractalShark ships a headless renderer, FractalSharkCli.exe, beside the GUI. Point at it to
     # automate the lane; left empty it is looked for next to -FractalSharkExe.
     [string]$FractalSharkCliExe = '',
@@ -195,6 +205,21 @@ if ($sceneFilter.Count) {
     $sceneRows = @($sceneRows | Where-Object { $sceneFilter -contains $_.slug -or $sceneFilter -contains $_.id })
     if (-not $sceneRows.Count) { Write-Host 'ERROR: -Scenes matched nothing in scenes.csv'; exit 1 }
 }
+# Every scene's three files must exist BEFORE anything runs. A missing one used to fail inside a
+# lane (Get-Content on the .f3.toml) and the loop moved on: no row in results.csv, only red text
+# in a console nobody keeps. That is how scene 35 vanished from a whole run on 2026-09-24, after
+# scenes.csv was renamed (35-field-dive) and the local scenes\ copies were not.
+$missing = @(foreach ($s in $sceneRows) {
+    foreach ($ext in '.kfr', '.f3.toml', '.fdn') {
+        $p = Join-Path $kit ('scenes\' + $s.slug + $ext)
+        if (-not (Test-Path $p)) { $p }
+    }
+})
+if ($missing.Count) {
+    Write-Host ('ERROR: scene files missing (copy them from validation\corpus\locations, as package.ps1 does):')
+    $missing | ForEach-Object { Write-Host ('  ' + $_) }
+    exit 1
+}
 Write-Host ''
 Write-Host ('Lanes: ' + (($have.GetEnumerator() | Where-Object Value | ForEach-Object Key) -join ', '))
 Write-Host ('Scenes: ' + ($sceneRows.slug -join ', '))
@@ -264,7 +289,11 @@ if ($have.fraktaler3) {
         # the path as an INPUT file and silently writes nothing - the first real kit run
         # benchmarked F3 on built-in defaults that way.
         Write-Host 'Fraktaler-3: generating + benchmarking tuning wisdom (once)...'
-        $wArgs = '-w "' + $wisdom + '" -W'
+        # -P everywhere: without it F3 loads and rewrites the user's persistence file
+        # (%APPDATA%\uk.co.mathr\fraktaler-3\persistence.f3.toml) and merges the PREVIOUS scene's
+        # state under this one. Checked 2026-09-24 that the scene files overrode every persisted
+        # key, but a benchmark must not depend on that, nor touch the user's own F3 state.
+        $wArgs = '-P -w "' + $wisdom + '" -W'
         $w = Invoke-TimedRender $Fraktaler3Exe $wArgs 300 $outDir
         Write-Host ('  wisdom init: ' + $w.status + ' in ' + $w.wall_s + 's')
         Add-RunRecord @{ renderer = 'fraktaler3'; scene = '(tuning) wisdom init'; rep = 0
@@ -272,7 +301,23 @@ if ($have.fraktaler3) {
                          inputs = @{}; output = 'f3-wisdom.toml'
                          status = $w.status; wall_s = $w.wall_s; reported_s = ''
                          note = 'one-off hardware tuning, not a benchmark row' }
-        $bArgs = '-w "' + $wisdom + '" -B'
+        # CPU devices are platform -1. Disabled BEFORE the benchmark so -B measures only what
+        # will render, and checked AFTER it so a benchmark that re-enabled one cannot slip by.
+        $cpuOff = {
+            $blocks = [System.Collections.Generic.List[System.Collections.Generic.List[string]]]::new()
+            foreach ($line in (Get-Content $wisdom)) {
+                if ($line -match '^\s*\[' -or $blocks.Count -eq 0) { $blocks.Add([System.Collections.Generic.List[string]]::new()) }
+                $blocks[$blocks.Count - 1].Add($line)
+            }
+            $out = foreach ($b in $blocks) {
+                if ($b | Where-Object { $_ -match '^\s*platform\s*=\s*-1\s*$' }) {
+                    $b | ForEach-Object { $_ -replace '^(\s*enabled\s*=\s*)true\s*$', '${1}false' }
+                } else { $b }
+            }
+            Set-Content -Path $wisdom -Value $out -Encoding ASCII
+        }
+        if ($F3GpuOnly) { & $cpuOff; Write-Host '  wisdom: CPU devices (platform -1) disabled - GPU only' }
+        $bArgs = '-P -w "' + $wisdom + '" -B'
         $w = Invoke-TimedRender $Fraktaler3Exe $bArgs 1800 $outDir
         Write-Host ('  wisdom benchmark: ' + $w.status + ' in ' + $w.wall_s + 's')
         Add-RunRecord @{ renderer = 'fraktaler3'; scene = '(tuning) wisdom benchmark'; rep = 0
@@ -280,6 +325,20 @@ if ($have.fraktaler3) {
                          inputs = @{}; output = 'f3-wisdom.toml'
                          status = $w.status; wall_s = $w.wall_s; reported_s = ''
                          note = 'one-off number-type benchmark, not a benchmark row' }
+        if ($F3GpuOnly) {
+            & $cpuOff
+            $lines = Get-Content $wisdom
+            $still = 0
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match '^\s*platform\s*=\s*-1\s*$') {
+                    # walk back to this block's header and look for an enabled = true inside it
+                    for ($j = $i; $j -ge 0 -and $lines[$j] -notmatch '^\s*\['; $j--) {
+                        if ($lines[$j] -match '^\s*enabled\s*=\s*true\s*$') { $still++ }
+                    }
+                }
+            }
+            if ($still -gt 0) { throw "F3GpuOnly: $still CPU device entr(ies) still enabled in $wisdom" }
+        }
     } else {
         Write-Host ('Fraktaler-3: reusing tuning wisdom ' + $wisdom)
     }
@@ -303,8 +362,15 @@ if ($have.fraktaler3) {
                 -replace '^\s*width\s*=.*',  ('width = '  + $wh[0]) `
                 -replace '^\s*height\s*=.*', ('height = ' + $wh[1]) `
                 -replace '^\s*subframes\s*=.*', 'subframes = 1'
+            if ($F3Tile) {
+                $t = $F3Tile -split 'x'
+                if ($t.Count -ne 2 -or -not ($t[0] -match '^\d+$') -or -not ($t[1] -match '^\d+$')) {
+                    throw "-F3Tile must be WxH, e.g. 960x540 (got '$F3Tile')"
+                }
+                $tomlTxt = @($tomlTxt) + @('[opencl]', ('tile_width = ' + $t[0]), ('tile_height = ' + $t[1]))
+            }
             Set-Content -Path $toml -Value $tomlTxt -Encoding ASCII
-            $argLine = ('-w "{0}" -b "{1}"' -f $wisdom, $toml)
+            $argLine = ('-P -w "{0}" -b "{1}"' -f $wisdom, $toml)
             $r = Invoke-TimedRender $Fraktaler3Exe $argLine $TimeoutS $outDir
             Write-Result $csv 'fraktaler3' $s.slug $rep $r.status $r.wall_s '' ''
             # Fraktaler-3 takes its whole view from the .toml, not from flags, so the argument
@@ -316,6 +382,7 @@ if ($have.fraktaler3) {
                 source = ($s.slug + '.bench.f3.toml')
                 inputs = @{ size = $Size; subframes = 1; wisdom = 'f3-wisdom.toml'
                             iterations = $s.iterations
+                            tile = $(if ($F3Tile) { $F3Tile } else { '128x128 (F3 default)' })
                             note = 'view comes from the .toml; width/height/subframes rewritten per run' }
                 output = ($s.slug + '-f3.png')
                 status = $r.status; wall_s = $r.wall_s; reported_s = ''; note = ''
