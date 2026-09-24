@@ -12,6 +12,18 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A diagnostic for the RX 6800 XT's Linux self-test failures** (beta.117, for testing:
+  `--selftest --selftest-filter fe-df32-probe`, never part of a plain `--selftest`). Under Linux
+  (Mesa RADV) the RX 6800 XT fails two self-test checks that render one view with each of the two
+  deep-zoom arithmetic paths, df32 and floatexp, and compare them: 6.4% of pixels differ by more
+  than 2 iterations at 1e10×, and 4.4% at 9.3e27×, against none on the RTX 3080 and 0.5% on the
+  same card under Windows. Those checks can say the two paths disagree, not which one is wrong.
+  The probe renders the same two views both ways, and at up to 160 of the pixels where they
+  differ it asks the independent arbitrary-precision CPU calculation which path it agrees with. A
+  40-pixel control where the paths agree proves the comparison itself lines up. On the RTX 3080
+  nothing differs and the control matches 40 of 40 for both paths; against a floatexp render
+  deliberately corrupted on half the frame, it blamed floatexp alone. Nothing about rendering
+  changes.
 - **The validation scripts no longer assume a particular file server** (beta.116). `gpu-validate`
   (Windows and Linux), `publish-share.ps1`, the field-agent scripts and `--uitest` used to have one
   developer machine's share path built in. They now use the file share named by a new
