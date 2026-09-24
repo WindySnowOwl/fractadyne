@@ -1099,6 +1099,23 @@ pub(crate) fn snapshot() -> Vec<FrameRecord> {
     Vec::new()
 }
 
+/// The records with `seq >= from`, oldest first, the `seq` to ask for next time, and how many of
+/// the requested records the ring had already overwritten. For a harness that must judge a WHOLE
+/// run: a verdict read from [`snapshot`] at the end sees only the last [`RING_LEN`] records, and
+/// W9's escaped-reference rung lost its storm that way (frames 12–19 of an 8,220-frame soak on the
+/// RX 6800 XT, 2026-09-23, reported "never entered"). Blocking lock: harness-only, UI thread.
+pub(crate) fn since(from: u64) -> (Vec<FrameRecord>, u64, u64) {
+    let g = RING.lock().unwrap_or_else(|p| p.into_inner());
+    let next = g.next;
+    if g.buf.is_empty() || next <= from {
+        return (Vec::new(), next.max(from), 0);
+    }
+    let oldest = next.saturating_sub(RING_LEN as u64);
+    let start = from.max(oldest);
+    let recs = (start..next).map(|s| g.buf[(s % RING_LEN as u64) as usize]).collect();
+    (recs, next, start - from)
+}
+
 fn ordered(buf: &[FrameRecord], next: u64) -> Vec<FrameRecord> {
     if buf.is_empty() || next == 0 {
         return Vec::new();

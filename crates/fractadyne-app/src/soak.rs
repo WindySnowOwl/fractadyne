@@ -47,6 +47,9 @@ pub(crate) struct Soak {
     /// log10 magnification of the view being soaked; NaN = the session's own view
     /// (`--soak-depth session`).
     decades: f64,
+    /// W9's regime predicate over every record of the run, and the next record `seq` to fold.
+    regime: RegimeAcc,
+    regime_next: u64,
 }
 
 impl Soak {
@@ -63,6 +66,8 @@ impl Soak {
             samples: 0,
             crashes_at_start: crate::diag::crash_report_names(),
             decades,
+            regime: RegimeAcc::default(),
+            regime_next: 0,
         }
     }
 }
@@ -128,6 +133,15 @@ impl crate::FractadyneApp {
             );
         }
 
+        // Fold every record since the last frame: one or two a frame, so the ring (4,096) can
+        // only get ahead of this if a single frame took thousands of records, which it cannot.
+        let (recs, next, lost) = crate::diag::frame_record::since(s.regime_next);
+        for r in &recs {
+            s.regime.add(r);
+        }
+        s.regime_next = next;
+        s.regime.lost += lost;
+
         let now = Instant::now();
         if now >= s.next_sample {
             let rss = crate::sysinfo::process_memory().0 / (1024 * 1024);
@@ -181,8 +195,12 @@ impl crate::FractadyneApp {
         );
         // With the escape instrument armed this soak IS W9's escaped-reference rung, and a
         // survival means nothing unless the regime was entered.
-        let regime = regime_report(&crate::diag::frame_record::snapshot());
+        let regime = s.regime.report();
         eprintln!("soak-regime: {}", regime.line);
+        eprintln!(
+            "soak-regime-coverage: {} record(s) read over the whole run, {} lost to the ring",
+            s.regime.folded, s.regime.lost
+        );
         let escape_armed = crate::Perf::ref_escape_at() > 0;
         if fails.is_empty() && escape_armed && !regime.entered {
             eprintln!(
@@ -213,45 +231,96 @@ pub(crate) struct RegimeReport {
     pub(crate) line: String,
 }
 
-pub(crate) fn regime_report(recs: &[crate::diag::frame_record::FrameRecord]) -> RegimeReport {
-    use crate::diag::frame_record::kind;
-    let shaped = |r: &&crate::diag::frame_record::FrameRecord| {
-        r.kind == kind::FRAME
+/// The predicate's running totals, folded one record at a time so the verdict covers the WHOLE run.
+/// ⛔It used to be read from `frame_record::snapshot()` at the end — the last `RING_LEN` (4,096)
+/// records — and the rung's storm comes in its first seconds: on the RX 6800 XT (2026-09-23) frames
+/// 12–19 ran on the 655-sample reference at 248M rebases a frame, and 8,200 frames later the verdict
+/// said "SHAPE ONLY … VACUOUS". A check that runs at the END cannot see what rotated out of its window.
+#[derive(Default)]
+pub(crate) struct RegimeAcc {
+    in_shape: u64,
+    storm: u64,
+    unchunked: u64,
+    dispatched: u64,
+    max_rebase: u64,
+    /// `(min, max)` of `fe_budget` over the frames in shape.
+    budget: Option<(u64, u64)>,
+    /// `(ref_len, gpu_iter)` of the first frame in shape.
+    first_shape: Option<(u32, u32)>,
+    /// `(frame, t_ms)` of the first storm reading.
+    first_storm: Option<(u64, u64)>,
+    /// Records read, and records the ring overwrote before they could be — a verdict must not
+    /// claim to have seen those.
+    pub(crate) folded: u64,
+    pub(crate) lost: u64,
+}
+
+impl RegimeAcc {
+    pub(crate) fn add(&mut self, r: &crate::diag::frame_record::FrameRecord) {
+        use crate::diag::frame_record::kind;
+        self.folded += 1;
+        let shaped = r.kind == kind::FRAME
             && r.has_ref
             && !r.ref_partial
             && r.ref_len > 0
             && r.gpu_iter as u64 >= 4 * r.ref_len as u64
-            && !r.bla_on
-    };
-    let in_shape: Vec<_> = recs.iter().filter(shaped).collect();
-    let storm: Vec<_> = in_shape.iter().filter(|r| r.ctr_new && r.ctr_rebase > 0 && r.ctr_bla_skip == 0).collect();
-    let unchunked = in_shape.iter().filter(|r| r.dispatched && !r.chunked).count();
-    let dispatched = in_shape.iter().filter(|r| r.dispatched).count();
-    let max_rebase = storm.iter().map(|r| r.ctr_rebase).max().unwrap_or(0);
-    let (bmin, bmax) = in_shape
-        .iter()
-        .map(|r| r.fe_budget)
-        .fold((u64::MAX, 0u64), |(lo, hi), b| (lo.min(b), hi.max(b)));
-    let line = if in_shape.is_empty() {
-        "NOT ENTERED — no frame on a short complete reference (ref_len <= ask/4) with BLA off".to_string()
-    } else {
-        let r0 = in_shape[0];
-        format!(
-            "{} {} frame(s) on a short escaped reference (ref_len {} vs ask {}, BLA off); {} counter reading(s) \
-             with rebases and bla_skip=0 (max {} rebases); {} of {} dispatches UN-chunked; budget {:.3e}..{:.3e}",
-            if storm.is_empty() { "SHAPE ONLY:" } else { "ENTERED:" },
-            in_shape.len(),
-            r0.ref_len,
-            r0.gpu_iter,
-            storm.len(),
-            max_rebase,
-            unchunked,
-            dispatched,
-            bmin as f64,
-            bmax as f64
-        )
-    };
-    RegimeReport { entered: !storm.is_empty(), line }
+            && !r.bla_on;
+        if !shaped {
+            return;
+        }
+        self.in_shape += 1;
+        self.first_shape.get_or_insert((r.ref_len, r.gpu_iter));
+        if r.ctr_new && r.ctr_rebase > 0 && r.ctr_bla_skip == 0 {
+            self.storm += 1;
+            self.max_rebase = self.max_rebase.max(r.ctr_rebase);
+            self.first_storm.get_or_insert((r.frame, r.t_ms));
+        }
+        if r.dispatched {
+            self.dispatched += 1;
+            if !r.chunked {
+                self.unchunked += 1;
+            }
+        }
+        let (lo, hi) = self.budget.unwrap_or((u64::MAX, 0));
+        self.budget = Some((lo.min(r.fe_budget), hi.max(r.fe_budget)));
+    }
+
+    pub(crate) fn report(&self) -> RegimeReport {
+        let mut line = match self.first_shape {
+            None => "NOT ENTERED — no frame on a short complete reference (ref_len <= ask/4) with BLA off".to_string(),
+            Some((ref_len, ask)) => {
+                let (bmin, bmax) = self.budget.unwrap_or((0, 0));
+                format!(
+                    "{} {} frame(s) on a short escaped reference (ref_len {ref_len} vs ask {ask}, BLA off); {} \
+                     counter reading(s) with rebases and bla_skip=0 (max {} rebases); {} of {} dispatches \
+                     UN-chunked; budget {:.3e}..{:.3e}",
+                    if self.storm == 0 { "SHAPE ONLY:" } else { "ENTERED:" },
+                    self.in_shape,
+                    self.storm,
+                    self.max_rebase,
+                    self.unchunked,
+                    self.dispatched,
+                    bmin as f64,
+                    bmax as f64
+                )
+            }
+        };
+        if let Some((frame, t_ms)) = self.first_storm {
+            line.push_str(&format!("; first storm reading at frame {frame} (+{:.1}s)", t_ms as f64 / 1000.0));
+        }
+        if self.lost > 0 {
+            line.push_str(&format!("; ⚠{} record(s) overwritten before they were read", self.lost));
+        }
+        RegimeReport { entered: self.storm > 0, line }
+    }
+}
+
+pub(crate) fn regime_report(recs: &[crate::diag::frame_record::FrameRecord]) -> RegimeReport {
+    let mut acc = RegimeAcc::default();
+    for r in recs {
+        acc.add(r);
+    }
+    acc.report()
 }
 
 #[cfg(test)]

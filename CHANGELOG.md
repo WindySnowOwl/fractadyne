@@ -12,6 +12,16 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The Radeon crash-conditions test now judges the whole run, not its last 4,096 frames**
+  (beta.118, for testing). With `FRACTADYNE_REF_ESCAPE_AT` armed, `--soak … --soak-depth session`
+  decides whether the run reached the conditions of the RX 6800 XT's GPU loss, and it used to
+  decide from the frame record's in-memory ring at the end of the run, which holds only the last
+  4,096 frames. Those conditions arrive in the first seconds: on the RX 6800 XT (2026-09-23)
+  frames 12–19 ran on the cut-short reference at 248 million rebases a frame, and 8,200 frames
+  later the verdict said "SHAPE ONLY … VACUOUS" — reported as never having got there. The verdict
+  now folds in every frame as it happens, names the frame of the first storm reading, prints how
+  many records it read, and names any the ring overwrote before they could be read (a 90-second
+  soak on the RTX 3080: 5,066 read, none lost). Nothing about rendering changes.
 - **A diagnostic for the RX 6800 XT's Linux self-test failures** (beta.117, for testing:
   `--selftest --selftest-filter fe-df32-probe`, never part of a plain `--selftest`). Under Linux
   (Mesa RADV) the RX 6800 XT fails two self-test checks that render one view with each of the two
