@@ -327,10 +327,16 @@ impl FractadyneApp {
         ];
         /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` above so a bare
         /// `--selftest` never pays for them — each costs minutes, not milliseconds.
-        const OPT_IN_GROUPS: &[(&str, &str)] = &[(
-            "deep-location",
-            "the deepest tracked location (9.98e60205×) — ~9 HOURS: a ~200,000-bit orbit to a 2,000,000 ask",
-        )];
+        const OPT_IN_GROUPS: &[(&str, &str)] = &[
+            (
+                "deep-location",
+                "the deepest tracked location (9.98e60205×) — ~9 HOURS: a ~200,000-bit orbit to a 2,000,000 ask",
+            ),
+            (
+                "fe-df32-probe",
+                "diagnostic: where df32 and floatexp disagree, which one a bignum oracle sides with (~1 min)",
+            ),
+        ];
         if self.selftest.list {
             println!("selftest groups (use with --selftest-filter <substr>):");
             for g in GROUPS {
@@ -362,6 +368,10 @@ impl FractadyneApp {
         const SX: &str = "-0.743643887037151";
         const SY: &str = "0.131825904205330";
         const N: u32 = 220;
+        // Validation corpus location 07 (43 digits): structure-rich at 9.3e27×, where it escapes
+        // on every pixel. Used by the df32-ceiling checks and the fe-df32-probe; see (C) below.
+        const CRX: &str = "-1.178853950372678747911373866849720956148855";
+        const CRY: &str = "0.1853420232408490265512092752061929308714979";
 
         // Read back the raw iteration texture (smooth_iter, normal.x, normal.y, DE) — far
         // more sensitive than comparing final colors. GPU errors are printed, not swallowed
@@ -1335,6 +1345,164 @@ impl FractadyneApp {
             });
         }
 
+        // ---- fe-df32-probe (OPT-IN, diagnostic) ----
+        // Checks (B) and (C2) below can say that df32 (mode 0) and floatexp (mode 2) DISAGREE on a
+        // view; they cannot say which one is wrong. This renders the same two views both ways and
+        // asks the independent bignum oracle about the pixels where the paths differ by more than
+        // 2 iterations (the pixels those checks count), plus a control sample where they agree.
+        // Written for the RX 6800 XT under Linux/Mesa RADV, where beta.116 measured 6.4% of pixels
+        // differing at 1e10× and 4.4% at 9.3e27× (RTX 3080: 0; the same card under Windows: 0.5%).
+        // ⚠On a card where the paths agree exactly (the RTX 3080) there is nothing to arbitrate:
+        // the "where they differ" rows sample nothing and say so, and only the control, which
+        // proves the oracle and the pixel-to-coordinate mapping line up, carries a verdict.
+        if opt_in("fe-df32-probe") {
+            const DIFF_SAMPLES: usize = 160;
+            const CTRL_SAMPLES: usize = 40;
+            let nn = N as usize;
+            let views: [(&str, &str, &str, f64); 2] = [
+                ("seahorse 1e10× (check B)", SX, SY, 1.0e10),
+                ("corpus loc 07 9.3e27× (check C2)", CRX, CRY, 7.0e27), // 3/4-scaled, see `make`
+            ];
+            for (label, cx_s, cy_s, mag) in views {
+                let mut a = make(self, cx_s, cy_s, mag);
+                a.mode = 0;
+                let mut b = a.clone();
+                b.mode = 2;
+                let (Some(aa), Some(bb)) = (render(&a), render(&b)) else {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Probe",
+                        name: format!("fe-df32-probe: {label}"),
+                        params: "render mode 0 and mode 2".into(),
+                        result: "render failed".into(),
+                        threshold: "both render",
+                        pass: false,
+                    });
+                    continue;
+                };
+                let dw = |px: &[f32], i: usize, j: usize| px[(j * nn + i) * 4];
+                // The `oracle` closure's ill-conditioning test, applied to EITHER render: a
+                // 4-neighbour flips interior/exterior or jumps by more than 2 iterations.
+                let steep = |i: usize, j: usize| -> bool {
+                    [aa.as_slice(), bb.as_slice()].iter().any(|&px| {
+                        let g = dw(px, i, j);
+                        [(1isize, 0isize), (-1, 0), (0, 1), (0, -1)].iter().any(|&(di, dj)| {
+                            let (ni, nj) = (i as isize + di, j as isize + dj);
+                            if ni < 0 || nj < 0 || ni as usize >= nn || nj as usize >= nn {
+                                return false;
+                            }
+                            let gn = dw(px, ni as usize, nj as usize);
+                            (g < 0.0) != (gn < 0.0) || (g >= 0.0 && gn >= 0.0 && (g - gn).abs() > 2.0)
+                        })
+                    })
+                };
+                // Differ = what (B)/(C2) count (>2 iterations, or interior against escaped).
+                // Agree = both interior, or within half an iteration.
+                let (mut differ, mut agree) = (Vec::new(), Vec::new());
+                for j in 0..nn {
+                    for i in 0..nn {
+                        let (ga, gb) = (dw(&aa, i, j), dw(&bb, i, j));
+                        let both_out = ga >= 0.0 && gb >= 0.0;
+                        if (ga < 0.0) != (gb < 0.0) || (both_out && (ga - gb).abs() > 2.0) {
+                            differ.push((i, j));
+                        } else if !both_out || (ga - gb).abs() < 0.5 {
+                            agree.push((i, j));
+                        }
+                    }
+                }
+                // Evenly spread over the frame, not the first k in scan order.
+                let spread = |v: &[(usize, usize)], k: usize| -> Vec<(usize, usize)> {
+                    if v.len() <= k {
+                        v.to_vec()
+                    } else {
+                        (0..k).map(|t| v[t * v.len() / k]).collect()
+                    }
+                };
+                // Same pixel-to-coordinate mapping, bailout and tolerance as `oracle`, with the
+                // renders' own iteration cap. One oracle evaluation per pixel serves both paths.
+                let prec = fractadyne_core::precision_for_magnification(mag);
+                let cx = fractadyne_core::parse_bf(cx_s).unwrap();
+                let cy = fractadyne_core::parse_bf(cy_s).unwrap();
+                let step = (3.0 / mag) / N as f64;
+                let half = N as f64 / 2.0;
+                let max = a.max_iter;
+                let truth = |i: usize, j: usize| {
+                    let cre = fractadyne_core::add_f64(&cx, ((i as f64 + 0.5) - half) * step, prec);
+                    let cim = fractadyne_core::add_f64(&cy, (half - (j as f64 + 0.5)) * step, prec);
+                    fractadyne_core::naive_dwell_bf(&cre, &cim, max, 65536.0, prec)
+                };
+                let hit = |g: f32, t: Option<(u32, f32)>| match (g >= 0.0, t) {
+                    (false, None) => true,
+                    (true, Some((_, s))) => (g - s).abs() < 0.75,
+                    _ => false,
+                };
+                // [smooth, steep] × [df32 only, floatexp only, both, neither] right.
+                let mut d = [[0u32; 4]; 2];
+                for (i, j) in spread(&differ, DIFF_SAMPLES) {
+                    let t = truth(i, j);
+                    let k = match (hit(dw(&aa, i, j), t), hit(dw(&bb, i, j), t)) {
+                        (true, false) => 0,
+                        (false, true) => 1,
+                        (true, true) => 2,
+                        (false, false) => 3,
+                    };
+                    d[steep(i, j) as usize][k] += 1;
+                }
+                // Control on smooth pixels only: a steep pixel is ill-conditioned for any renderer.
+                let (mut cn, mut c0, mut c2) = (0u32, 0u32, 0u32);
+                for (i, j) in spread(&agree, CTRL_SAMPLES * 4)
+                    .into_iter()
+                    .filter(|&(i, j)| !steep(i, j))
+                    .take(CTRL_SAMPLES)
+                {
+                    let t = truth(i, j);
+                    cn += 1;
+                    c0 += hit(dw(&aa, i, j), t) as u32;
+                    c2 += hit(dw(&bb, i, j), t) as u32;
+                }
+                let [sm, st] = d;
+                let (sn, tn) = (sm.iter().sum::<u32>(), st.iter().sum::<u32>());
+                let pct = differ.len() as f64 * 100.0 / (nn * nn) as f64;
+                eprintln!(
+                    "[fe-df32-probe] {label}: {} of {} px differ ({pct:.2}%), {max} iter. Right where \
+                     they differ (smooth | steep): df32 only {}|{}, floatexp only {}|{}, both {}|{}, \
+                     neither {}|{}",
+                    differ.len(),
+                    nn * nn,
+                    sm[0],
+                    st[0],
+                    sm[1],
+                    st[1],
+                    sm[2],
+                    st[2],
+                    sm[3],
+                    st[3],
+                );
+                for (path, only) in [("df32 (mode 0)", 0usize), ("floatexp (mode 2)", 1usize)] {
+                    let (rs, rt) = (sm[only] + sm[2], st[only] + st[2]);
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Probe",
+                        name: format!("fe-df32-probe: {path} vs bignum where the paths differ — {label}"),
+                        params: format!(
+                            "{} of {} px differ ({pct:.2}%); sampled {sn} smooth + {tn} steep",
+                            differ.len(),
+                            nn * nn
+                        ),
+                        result: format!("oracle agrees on {rs}/{sn} smooth, {rt}/{tn} steep"),
+                        threshold: "≥90% of smooth samples (none sampled: nothing to arbitrate)",
+                        pass: sn == 0 || rs as f64 >= 0.9 * sn as f64,
+                    });
+                }
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Probe",
+                    name: format!("fe-df32-probe: control, both paths vs bignum where they agree — {label}"),
+                    params: format!("{cn} smooth samples"),
+                    result: format!("df32 {c0}/{cn}, floatexp {c2}/{cn}"),
+                    threshold: "≥90% each: the oracle and the pixel mapping line up",
+                    pass: cn > 0 && c0 as f64 >= 0.9 * cn as f64 && c2 as f64 >= 0.9 * cn as f64,
+                });
+            }
+        }
+
         // ---- numeric & render-path checks (local closures borrow self immutably) ----
         if want("numeric") {
             // (A) df32 perturbation vs an independent CPU f64 dwell @2e4× (f64 exact here).
@@ -1411,9 +1579,8 @@ impl FractadyneApp {
             // and a dwell comparison on that view has no pixels to average (n = 0). The crossover
             // three entries added below therefore use a structure-rich center — validation corpus location
             // 07, 43 digits, which at the same depth escapes on every pixel (maxiter = 0) and
-            // takes ~986k rebases, so the oracle checks real dwell values.
-            const CRX: &str = "-1.178853950372678747911373866849720956148855";
-            const CRY: &str = "0.1853420232408490265512092752061929308714979";
+            // takes ~986k rebases, so the oracle checks real dwell values (CRX/CRY, defined with
+            // SX/SY at the top).
             let battery: &[(&str, &str, &str, f64)] = &[
                 ("1e6x", SX, SY, 1.0e6),
                 ("1e12x", SX, SY, 1.0e12),
