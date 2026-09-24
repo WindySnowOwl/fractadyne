@@ -117,9 +117,13 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          if ($tag -eq "main" -or [string]::IsNullOrWhiteSpace($tag)) {
+          # Named as the Linux jobs name a manual build: the tag input when given, "/" made "-".
+          if ("${{ github.ref_type }}" -ne "tag" -and -not [string]::IsNullOrWhiteSpace("${{ github.event.inputs.tag }}")) {
             $tag = "${{ github.event.inputs.tag }}"
+          } elseif ($tag -eq "main") {
+            $tag = ""
           }
+          $tag = $tag -replace '/', '-'
           if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "dev" }
           $dir = "fractadyne-$tag-windows-x64"
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -202,9 +206,15 @@ jobs:
       - name: Package
         run: |
           tag="${{ github.ref_name }}"
-          if [ "$tag" = "main" ] || [ -z "$tag" ]; then
+          # A manual (workflow_dispatch) build takes its name from the tag input when one is
+          # given, and a "/" becomes "-": a branch such as diag/foo otherwise made the package a
+          # subfolder, and the artifact upload found nothing to upload (2026-09-24).
+          if [ "${{ github.ref_type }}" != "tag" ] && [ -n "${{ github.event.inputs.tag }}" ]; then
             tag="${{ github.event.inputs.tag }}"
+          elif [ "$tag" = "main" ]; then
+            tag=""
           fi
+          tag="${tag//\//-}"
           [ -z "$tag" ] && tag="dev"
           dir="fractadyne-$tag-linux-x64"
           mkdir -p "$dir/tours" "$dir/scripts" "$dir/validation/golden" "$dir/benchmarks"
@@ -291,7 +301,13 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          if ($tag -eq "main" -or [string]::IsNullOrWhiteSpace($tag)) { $tag = "${{ github.event.inputs.tag }}" }
+          # Named as the Linux jobs name a manual build: the tag input when given, "/" made "-".
+          if ("${{ github.ref_type }}" -ne "tag" -and -not [string]::IsNullOrWhiteSpace("${{ github.event.inputs.tag }}")) {
+            $tag = "${{ github.event.inputs.tag }}"
+          } elseif ($tag -eq "main") {
+            $tag = ""
+          }
+          $tag = $tag -replace '/', '-'
           if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "dev" }
           # The in-app "Faster deep zoom" link builds its URL from the RUNNING version:
           #   fractadyne-v<cargo version>-windows-x64-accelerated.zip
@@ -382,9 +398,15 @@ jobs:
       - name: Build and package
         run: |
           tag="${{ github.ref_name }}"
-          if [ "$tag" = "main" ] || [ -z "$tag" ]; then
+          # A manual (workflow_dispatch) build takes its name from the tag input when one is
+          # given, and a "/" becomes "-": a branch such as diag/foo otherwise made the package a
+          # subfolder, and the artifact upload found nothing to upload (2026-09-24).
+          if [ "${{ github.ref_type }}" != "tag" ] && [ -n "${{ github.event.inputs.tag }}" ]; then
             tag="${{ github.event.inputs.tag }}"
+          elif [ "$tag" = "main" ]; then
+            tag=""
           fi
+          tag="${tag//\//-}"
           [ -z "$tag" ] && tag="dev"
           # The in-app "Faster deep zoom" link builds its URL from the RUNNING version, so a git
           # tag that diverges from the Cargo version 404s for every user of this release. The app
