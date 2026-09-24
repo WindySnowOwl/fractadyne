@@ -33,7 +33,7 @@
 #   adapter.txt          the adapter + capability line the app itself resolved (the B6 ask)
 #   00-build-id.txt      is this binary the one the share published? (vs BUILD-ID.txt)
 #   01-gputest.txt       df32/floatexp primitives vs CPU oracles, swept over every backend
-#   02-selftest.txt      full suite + 17 goldens
+#   02-selftest.txt      full suite + 19 goldens
 #   03-live-res.txt      --selftest-filter live-res - the settled-resolution invariant
 #   04-bench-matrix.txt  22-segment perf + determinism vs the blessed baseline
 #   05-livetest.txt      live-vs-offline truth at every tour hold       (skipped by -Quick)
@@ -256,7 +256,7 @@ Write-Host ("   {0}" -f (($idOut | Where-Object { $_ -match '^verdict' }) -repla
 Invoke-Step "gputest" "01-gputest.txt" @("--gputest") `
     "df32/floatexp primitives vs CPU oracles, every backend"
 Invoke-Step "selftest" "02-selftest.txt" @("--selftest") `
-    "full suite + 17 goldens (goldens blessed on an RTX 3080; deltas elsewhere are expected)"
+    "full suite + 19 goldens (goldens blessed on an RTX 3080; deltas elsewhere are expected)"
 Invoke-Step "live-res" "03-live-res.txt" @("--selftest", "--selftest-filter", "live-res") `
     "settled-resolution invariant - the B6 core, never yet run on hardware truly lacking TIMESTAMP_QUERY"
 Invoke-Step "bench-matrix" "04-bench-matrix.txt" @("--bench-matrix") `
@@ -313,13 +313,15 @@ build-id     Read this line FIRST. 0 = the binary tested is the one the share pu
              unknown binary. 2 = no BUILD-ID.txt was found, so nobody can say which build this is -
              pass -BuildId <path> to the one in the share's builds\<tag>\ folder.
 gputest      A failing two_sum/two_prod means this stack's shader compiler folds the error-free
-             transforms, so every extended-precision path silently degrades to plain f32. Known:
-             all NVIDIA backends fold them; AMD Vulkan/OpenGL do not; AMD DX12 fails differently
-             (fma not fused).
-selftest     Should now pass on any card. The 17 goldens were blessed on an RTX 3080 and are
-             compared with a wider, measured tolerance on other hardware; the path-signature
-             checks likewise report cross-GPU differences rather than failing them. So a FAILURE
-             here is a real signal - it is no longer expected noise. (If your build predates
+             transforms, so every extended-precision path silently degrades to plain f32. Every
+             stack tested so far fails here: all NVIDIA backends, and the RX 6800 XT on every
+             backend under both Windows and Linux (Mesa). Exit 1 is expected; the file is the data.
+selftest     The 19 goldens were blessed on an RTX 3080 and are compared with a wider, measured
+             tolerance on other hardware; the path-signature checks likewise report cross-GPU
+             differences rather than failing them. So a FAILURE here is a real signal. Known, under
+             investigation: the RX 6800 XT fails two checks, and which two depends on the system -
+             "a wider canvas contains the narrower one" under Windows, "floatexp vs df32" under
+             Linux (Mesa RADV). Any other failure is new. (If your build predates
              beta.94 you will instead see "goldens 0/17" and a dozen DRIFT lines, all of which
              were expected cross-vendor differences rather than defects.)
 live-res     Must pass everywhere. This is the invariant that a GPU without TIMESTAMP_QUERY still
