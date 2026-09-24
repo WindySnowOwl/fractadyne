@@ -1477,8 +1477,13 @@ impl FractadyneApp {
                     sm[3],
                     st[3],
                 );
+                // ⚠With no smooth samples there is NO verdict, and the row must not read as one.
+                // On the RX 6800 XT under Linux every differing pixel sampled was steep, and a bare
+                // "PASS 0/0 smooth" hid the actual finding: the oracle sided with NEITHER path at
+                // ~90% of them. The row stays a pass (nothing was judged) but says so first.
                 for (path, only) in [("df32 (mode 0)", 0usize), ("floatexp (mode 2)", 1usize)] {
                     let (rs, rt) = (sm[only] + sm[2], st[only] + st[2]);
+                    let judged = if sn == 0 { "NOT JUDGED (no smooth samples): " } else { "" };
                     push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Probe",
                         name: format!("fe-df32-probe: {path} vs bignum where the paths differ — {label}"),
@@ -1487,7 +1492,7 @@ impl FractadyneApp {
                             differ.len(),
                             nn * nn
                         ),
-                        result: format!("oracle agrees on {rs}/{sn} smooth, {rt}/{tn} steep"),
+                        result: format!("{judged}oracle agrees on {rs}/{sn} smooth, {rt}/{tn} steep"),
                         threshold: "≥90% of smooth samples (none sampled: nothing to arbitrate)",
                         pass: sn == 0 || rs as f64 >= 0.9 * sn as f64,
                     });
