@@ -2581,3 +2581,10 @@ printed for every run so the control is scored on the same number.
   design's 7%, which was set when the pre-fix build scored 8–14% here and the fixed one 1–7%. The
   mid-dive episode count separates the two cleanly here and is REPORTED; gating on it would be a
   bound calibrated in today's mild regime (P12), so it waits for the Radeon arm's numbers.
+- **The Radeon arm (2026-09-26, PLUTO, beta.121 `-Quick` through the field agent):** the screen step
+  captured three dives, 0% blank / 0 episodes / 0 flashes / 0 stale in all three — the RX 6800 XT is
+  not harsher at this fixture. With the fixed build at 0 episodes in twelve runs on both cards, the
+  user chose to GATE on the episode count: a median of one or more mid-dive blank episodes is RED.
+  The gate now goes red on `112a088^1` (exit 1) and green on every fixed set. The cost is stated in
+  the scorer: the pre-fix median sits exactly at one, and a harsher regime than any measured could
+  fail a good build.

@@ -19,7 +19,9 @@ detail is in the git history.
   automatic dives at the reported depth and captures the window; `scripts/dive-capture/screengate.py`
   scores each run for blank frames, near-flat frames, flashes (the picture switching to a flat panel
   and back) and a frozen picture while the view is moving, and fails when the median of the three
-  runs passes a limit or the runs disagree too much. It never passes on a run it cannot judge — too
+  runs passes a limit or the runs disagree too much. It fails on the build from before the blank-frame
+  fix, which goes blank mid-dive at least once in each run, and passes the fixed build in twelve runs
+  on the RTX 3080 and the RX 6800 XT. It never passes on a run it cannot judge — too
   few runs or captures, a view that did not move, or an unexpected arithmetic library. A `--selftest`
   proves every limit can trip. The battery can run on the RX 6800 XT box; the scoring runs on the
   developer's machine. The release checklist gains the step, marked outstanding until the checklist

@@ -9,7 +9,8 @@ a viewer sees, the median of the three held to a bound, and an exit code.
     python scripts/dive-capture/screengate.py RUN1 RUN2 RUN3 [--bignum astro-float] [--json out.json]
     python scripts/dive-capture/screengate.py --selftest     # every criterion seen to fire
 
-  blank   a capture whose canvas is one colour (interior grey stddev < 1) — the 2026-09-20 report
+  blank   a capture whose canvas is one colour (interior grey stddev < 1) — the 2026-09-20 report;
+          also counted as EPISODES, separate stretches of blank captures after the dive's start
   flat    a capture whose canvas is >97% within 8 units of its median colour (a near-flat panel)
   flash   an EPISODE: the canvas switching into a flat capture or out of one — what the eye reads as
           a flash. ⚠Not "a big frame-to-frame difference": at the 2^800 fixture an ordinary zoom step
@@ -21,8 +22,9 @@ a viewer sees, the median of the three held to a bound, and an exit code.
           anything: a run whose median capture-to-capture difference is under MOVING_DIFF is VACUOUS.
 
 Verdict (exit code): 0 PASS · 1 RED — median blank or flat above 7% (the measured post-112a088 band
-is 1–7%; single runs vary 8–14%, hence three), median flash episodes above 3, a median-run stale
-streak of 3 or more, or a blank spread across the runs wider than 10 points · 2 VACUOUS — fewer than
+is 1–7%; single runs vary 8–14%, hence three), a median of ONE or more mid-dive blank episodes,
+median flash episodes above 3, a median-run stale streak of 3 or more, or a blank spread across the
+runs wider than 10 points · 2 VACUOUS — fewer than
 three runs, a run with fewer than MIN_CAPTURES captures, a run that did not move, or a run whose log
 does not name the declared bignum backend (copying fractadyne.exe out of the accelerated package
 drops the MPFR DLLs and once scored 3% blank against the user's 35%).
@@ -30,12 +32,14 @@ drops the MPFR DLLs and once scored 3% blank against the user's 35%).
 Calibration (RTX 3080, 2026-09-26, dive-2p800.kfr + session-seed.toml, 10,000 iterations, the
 startup captures before the first picture excluded; interleaved against the build before the
 blank-frame fix, 112a088^1):
-    fixed (beta.120, 6 runs)   blank 0% in 0 episodes, flat 0%, flash 0, stale 0 — every run
-    pre-fix (3 runs)           blank 4.7 / 2.9 / 1.0% in 3 / 1 / 1 episodes, flash 6 / 2 / 2
-⚠So on this box today the gate does NOT go red on the pre-fix build: it is measurably worse, but
-under the design's 7%. That bound was set when the pre-fix build scored 8-14% here and the fixed one
-1-7%; the regime is milder now, and the user's live sessions were milder still than theirs (35%).
-The gate catches a severe regression; the episode count (reported, not gated) separates this one.
+    fixed (beta.120/121)       blank 0% in 0 episodes, flat 0%, flash 0, stale 0 — every run: 9 on
+                               the RTX 3080, 3 on the RX 6800 XT (the gpu-validate screen step)
+    pre-fix (3 runs, 3080)     blank 4.7 / 2.9 / 1.0% in 3 / 1 / 1 episodes, flash 6 / 2 / 2
+The design's 7% alone did NOT catch the pre-fix build: it was set when that build scored 8–14% here
+and the fixed one 1–7%, and the regime is milder now (replays here are milder still than the user's
+live sessions, 35%). The episode bound does, with a thin margin — the pre-fix median sits exactly at
+one — and at the risk of failing a good build in a harsher regime than any measured; both are the
+price of a gate that can go red on the regression it exists for (the user's call, 2026-09-26).
 """
 import argparse, glob, json, os, re, statistics, sys
 
@@ -44,6 +48,7 @@ from PIL import Image
 
 BLANK_MAX_PCT = 7.0
 FLAT_MAX_PCT = 7.0
+EPISODES_MAX = 0       # one mid-dive blank episode in the median run is RED
 FLASH_MAX = 3
 STALE_MAX = 2          # a streak of 3 identical captures (~0.5 s) is RED
 SPREAD_MAX_PCT = 10.0
@@ -113,10 +118,8 @@ def score(run):
         blank_pct=100.0 * sum(blank) / n,
         flat_pct=100.0 * sum(flat) / n,
         flash=sum(1 for a, b in zip(flat, flat[1:]) if a != b),
-        # Separate stretches of blank captures mid-dive. REPORTED, not gated: on the RTX 3080 on
-        # 2026-09-26 it separated the pre-112a088 build (3, 1, 1) from the fixed one (0 in six
-        # runs), but the fixed build scored 1-7% blank in the conditions it was fixed under, so a
-        # bound of one episode is calibrated in today's mild regime (P12).
+        # Separate stretches of blank captures mid-dive: what separated the pre-112a088 build
+        # (3, 1, 1) from the fixed one (0 in twelve runs, both cards) when the 7% bound could not.
         episodes=len(re.findall(r"#+", timeline[start:])),
         stale=best,
         moving=bool(diffs) and statistics.median(diffs) >= MOVING_DIFF,
@@ -159,6 +162,11 @@ def selftest():
         # name: (three runs' frame kinds, expected code)
         "control": ([healthy] * 3, 0),
         "blank": ([["move"] * 70 + ["blank"] * 10] * 3, 1),
+        # One mid-dive blank stretch: 2.5% blank and 2 flashes, under those bounds - only the
+        # episode bound can make this RED, which is the pre-fix build's shape.
+        "one episode": ([["move"] * 40 + ["blank"] * 2 + ["move"] * 38] * 3, 1),
+        # Blank captures before the dive's first picture are its start, not an episode.
+        "startup only": ([["blank"] * 3 + ["move"] * 77] * 3, 0),
         "flash": ([["move", "move", "blank"] * 27] * 3, 1),
         "stale": ([["move"] * 40 + ["same"] * 5 + ["move"] * 35] * 3, 1),
         "spread": ([healthy, healthy, ["move"] * 68 + ["blank"] * 12], 1),
@@ -240,14 +248,17 @@ def main():
             red.append(f"median blank {verdict['blank_pct']:.1f}% > {BLANK_MAX_PCT}%")
         if verdict["flat_pct"] > FLAT_MAX_PCT:
             red.append(f"median flat {verdict['flat_pct']:.1f}% > {FLAT_MAX_PCT}%")
+        if verdict["episodes"] > EPISODES_MAX:
+            red.append(f"median mid-dive blank episodes {verdict['episodes']} > {EPISODES_MAX} (the picture went blank while "
+                       f"diving; the build before the 2026-09-20 fix scored 3 / 1 / 1, the fixed one 0 in twelve runs)")
         if verdict["flash"] > FLASH_MAX:
             red.append(f"median flash episodes {verdict['flash']} > {FLASH_MAX}")
         if verdict["stale"] > STALE_MAX:
             red.append(f"median stale streak {verdict['stale']} captures > {STALE_MAX} (a frozen picture while the view moved)")
         if spread > SPREAD_MAX_PCT:
             red.append(f"blank spread {spread:.1f} points across the runs > {SPREAD_MAX_PCT} (the measurement itself is unstable)")
-        print(f"\nmedian of {len(scored)}: blank {verdict['blank_pct']:.1f}% in {verdict['episodes']} episode(s) (reported, "
-              f"not gated) · flat {verdict['flat_pct']:.1f}% · flash {verdict['flash']} · stale streak {verdict['stale']} · "
+        print(f"\nmedian of {len(scored)}: blank {verdict['blank_pct']:.1f}% in {verdict['episodes']} episode(s) · "
+              f"flat {verdict['flat_pct']:.1f}% · flash {verdict['flash']} · stale streak {verdict['stale']} · "
               f"blank spread {spread:.1f} points")
 
     # A set that fails the richness test gets no verdict (§6.6.2): VACUOUS outranks RED, and both

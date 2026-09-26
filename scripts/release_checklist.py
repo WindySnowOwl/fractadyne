@@ -640,8 +640,9 @@ STEPS = [
      "Run the SCREEN gate on this machine AND on the RX 6800 XT: scripts\\gpu-validate.ps1 (its "
      "step 08 captures three autopilot dives at 2^800 into screen\\run1-3), then "
      "python scripts\\dive-capture\\screengate.py screen\\run1 screen\\run2 screen\\run3.",
-     "screengate: PASS - median blank and flat at most 7%, at most 3 flash episodes, no frozen "
-     "picture while the view moved, and the three runs within 10 points of each other. RED or "
+     "screengate: PASS - median blank and flat at most 7%, no mid-dive blank episode, at most 3 "
+     "flash episodes, no frozen picture while the view moved, and the three runs within 10 points "
+     "of each other. RED or "
      "VACUOUS is not a pass: every per-pass metric once said the blank-frame fix worked while the "
      "screen got worse."),
     ("Sign-off",
