@@ -47,7 +47,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 4   # 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session
+$AgentVersion = 5   # 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung)
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -246,16 +246,19 @@ function Get-Package([string]$tag, [string]$package) {
 $Modes = @("--recordtest", "--zoomtest", "--motiontest", "--gputest", "--selftest", "--bench-matrix", "--livetest", "--chunk-sweep", "--soak")
 $Allowed = @{
     "--recordtest" = @("?int"); "--zoomtest" = @("?num"); "--zoomtest-rate" = @("num"); "--zoomtest-start-log2" = @("num")
-    "--zoomtest-location" = @("pkgfile"); "--motiontest" = @(); "--gputest" = @(); "--selftest" = @()
+    "--zoomtest-location" = @("loc"); "--zoomtest-taps" = @("taps"); "--zoomtest-hold" = @("num"); "--motiontest" = @(); "--gputest" = @(); "--selftest" = @()
     "--selftest-filter" = @("word"); "--bench-matrix" = @(); "--livetest" = @("pkgfile"); "--size" = @("size")
     "--chunk-sweep" = @("?int"); "--soak" = @("int"); "--soak-depth" = @("depth"); "--center" = @("num", "num")
-    "--zoom" = @("num"); "--zoom-log2" = @("num"); "--iter" = @("int"); "--set" = @("assign")
+    "--zoom" = @("num"); "--zoom-log2" = @("num"); "--iter" = @("int"); "--set" = @("assign"); "--window" = @("size")
 }
 $ValuePattern = @{
     "int" = '^[0-9]{1,9}$'; "num" = '^[-+0-9.eE]{1,400}$'; "word" = '^[A-Za-z0-9_.-]{1,64}$'
     "depth" = '^(session|[-+0-9.eE]{1,20})$'
     "size" = '^[0-9]{2,5}x[0-9]{2,5}$'; "assign" = '^[A-Za-z0-9_]{1,64}=[-+0-9.eE]{1,32}$'
     "pkgfile" = '^(tours|validation|benchmarks)/[A-Za-z0-9_./-]{1,160}\.(toml|fdn|kfr)$'
+    # a package file, or "session" (the view the request staged)
+    "loc" = '^(session|(tours|validation|benchmarks)/[A-Za-z0-9_./-]{1,160}\.(toml|fdn|kfr))$'
+    "taps" = '^[0-9]{1,3},[0-9.]{1,8},[0-9.]{1,8}$'
 }
 
 # Validate and resolve a harness argument list. Package files become absolute paths.
@@ -271,12 +274,13 @@ function Resolve-HarnessArgs([string[]]$argv, [string]$pkgRoot) {
         foreach ($kind in $Allowed[$flag]) {
             $opt = $kind.StartsWith("?"); $k = $kind.TrimStart("?")
             $v = if ($i -lt $argv.Count) { $argv[$i] } else { $null }
-            if ($null -eq $v -or $v -notmatch $ValuePattern[$k] -or ($k -eq "pkgfile" -and $v -match '\.\.')) {
+            $isFile = $k -eq "pkgfile" -or ($k -eq "loc" -and $v -ne "session")
+            if ($null -eq $v -or $v -notmatch $ValuePattern[$k] -or ($isFile -and $v -match '\.\.')) {
                 if ($opt) { continue }
                 Stop-Refused "$flag needs a $k value, got '$v'"
             }
             $i++
-            if ($k -eq "pkgfile") {
+            if ($isFile) {
                 $abs = Join-Path $pkgRoot ($v -replace '/', '\')
                 if (-not (Test-Path -LiteralPath $abs)) { Stop-Refused "$v is not in the package" }
                 $v = $abs

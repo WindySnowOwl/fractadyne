@@ -257,6 +257,26 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
 
+    // `--window WxH`: the window's starting inner size in logical POINTS (the `[fd-dpi]` line's
+    // `pt` column; physical pixels are that times the display scale). For a harness that has to
+    // reproduce a field window: the 2026-09-21 RX 6800 XT loss rendered 1676x1295 px, and
+    // the render size is what a dispatch costs. A value it cannot use is an error, not the default.
+    let window_pt = match args.iter().position(|a| a == "--window") {
+        None => [1280.0, 800.0],
+        Some(i) => {
+            let v = args.get(i + 1).map(String::as_str).unwrap_or("");
+            match parse_size(v) {
+                (Some(w), Some(h)) if (640..=16384).contains(&w) && (400..=16384).contains(&h) => {
+                    [w as f32, h as f32]
+                }
+                _ => {
+                    eprintln!("fractadyne: --window: expected WIDTHxHEIGHT in points, at least 640x400, got \"{v}\"");
+                    crate::exit(2);
+                }
+            }
+        }
+    };
+
     let native_options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         // Bound frames-in-flight to 1 so a slow deep-zoom frame can't accumulate a growing present
@@ -366,7 +386,7 @@ fn main() -> eframe::Result<()> {
         },
         viewport: {
             let mut vp = egui::ViewportBuilder::default()
-                .with_inner_size([1280.0, 800.0])
+                .with_inner_size(window_pt)
                 .with_title(window_title())
                 .with_icon(brand_icon());
             // `--deviceloss-repro` is a non-interactive measurement harness (it builds a reference
@@ -6016,11 +6036,25 @@ impl FractadyneApp {
                     }),
                 }
             };
-            let octaves = num("--zoomtest", "a number of octaves", 40.0);
+            // None = not given: 40, or with a `session` start, the distance to the session's depth.
+            let octaves = val("--zoomtest")
+                .filter(|s| !s.starts_with('-'))
+                .map(|_| num("--zoomtest", "a number of octaves", 40.0));
+            let hold_s = num("--zoomtest-hold", "a number of seconds", 0.0);
             let rate = num("--zoomtest-rate", "a zoom rate (0.25..4)", 1.0) as f32;
-            let location = val("--zoomtest-location").map(std::path::PathBuf::from);
+            let location = match val("--zoomtest-location").map(String::as_str) {
+                None => zoomtest::StartView::Corpus,
+                Some("session") => zoomtest::StartView::Session,
+                Some(p) => zoomtest::StartView::File(std::path::PathBuf::from(p)),
+            };
             let start_log2 = val("--zoomtest-start-log2").map(|_| num("--zoomtest-start-log2", "a log2 magnification", 0.0));
-            Some(zoomtest::ZoomTest::new(octaves, rate, location, start_log2))
+            let taps = val("--zoomtest-taps").map(|s| {
+                zoomtest::parse_taps(s).unwrap_or_else(|| {
+                    eprintln!("fractadyne: --zoomtest-taps: expected N,OCTAVES,PAUSE_S (e.g. 30,0.25,1.0), got \"{s}\"");
+                    crate::exit(2)
+                })
+            });
+            Some(zoomtest::ZoomTest::new(octaves, rate, location, start_log2, taps, hold_s))
         } else {
             None
         };

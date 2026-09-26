@@ -517,4 +517,12 @@ def main(argv):
 
 
 if __name__ == "__main__":
+    # The session header carries non-ASCII (a tunable override reads "400000000 → 151500000000"),
+    # and Windows encodes a redirected stdout as cp1252, where that is a UnicodeEncodeError half-way
+    # through the header — every run with an override crashed `summarize` (2026-09-25).
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     sys.exit(main(sys.argv))

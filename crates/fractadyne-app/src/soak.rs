@@ -197,6 +197,7 @@ impl crate::FractadyneApp {
         // survival means nothing unless the regime was entered.
         let regime = s.regime.report();
         eprintln!("soak-regime: {}", regime.line);
+        eprintln!("soak-stall: {}", s.regime.stall_line());
         eprintln!(
             "soak-regime-coverage: {} record(s) read over the whole run, {} lost to the ring",
             s.regime.folded, s.regime.lost
@@ -253,12 +254,117 @@ pub(crate) struct RegimeAcc {
     /// claim to have seen those.
     pub(crate) folded: u64,
     pub(crate) lost: u64,
+    /// Per view: the budget stall being tracked, and the longest one closed so far.
+    stall_open: [Option<Stall>; 2],
+    stall_best: [Option<Stall>; 2],
+}
+
+/// A frame the wall clock called slow while the app had asked for a repaint — the slow-frame
+/// line's own test (`main.rs`, `last_dt_ms > 200`), so the two can be read against each other.
+const STALL_SLOW_MS: f64 = 200.0;
+/// Slow frames further apart than this belong to separate episodes. The 2026-09-21 field episode
+/// had gaps of up to 6.9 s between its slow frames (825.9 → 832.8 s) and was one episode.
+const STALL_GAP_MS: u64 = 10_000;
+
+/// A run of slow frames across which the frame budget (`tdr_steps`, the value that decides whether
+/// a dispatch is chunked) never came down. ⭐This is the 2026-09-21 RX 6800 XT signature — 20 slow
+/// frames over 32.8 s at 1.515e11 steps, then the device was lost — and the one thing the still
+/// escaped-reference rung never produced: on 2026-09-23/25 its budget came down at the first
+/// reading, every run, with the instrument armed or not.
+#[derive(Clone, Copy, Debug, Default)]
+struct Stall {
+    first_frame: u64,
+    first_t_ms: u64,
+    last_t_ms: u64,
+    slow: u32,
+    /// The budget at the most recent slow frame (an episode extends while it does not fall).
+    budget: u64,
+    /// GPU timing readings that arrived between the first and the last slow frame.
+    readings: u32,
+    /// …and those that arrived since the last slow frame, credited if the episode extends.
+    pending: u32,
+}
+
+impl Stall {
+    fn beats(&self, other: &Option<Stall>) -> bool {
+        other.is_none_or(|o| {
+            (self.slow, self.last_t_ms - self.first_t_ms) > (o.slow, o.last_t_ms - o.first_t_ms)
+        })
+    }
 }
 
 impl RegimeAcc {
+    fn track_stall(&mut self, r: &crate::diag::frame_record::FrameRecord) {
+        use crate::diag::frame_record::kind;
+        if r.kind != kind::FRAME {
+            return;
+        }
+        let v = (r.view as usize).min(1);
+        let slow = r.last_dt_ms > STALL_SLOW_MS && r.repaint_requested;
+        if let Some(open) = self.stall_open[v].as_mut() {
+            if r.read_n > 0 {
+                open.pending += 1;
+            }
+            if slow && r.t_ms <= open.last_t_ms + STALL_GAP_MS && r.tdr_steps >= open.budget {
+                open.slow += 1;
+                open.last_t_ms = r.t_ms;
+                open.budget = r.tdr_steps;
+                open.readings += open.pending;
+                open.pending = 0;
+                return;
+            }
+        }
+        if !slow {
+            return;
+        }
+        // A slow frame that does not extend the open episode (the budget came down, or it is too
+        // far from the last one) closes it and opens the next.
+        if let Some(done) = self.stall_open[v].take() {
+            if done.beats(&self.stall_best[v]) {
+                self.stall_best[v] = Some(done);
+            }
+        }
+        self.stall_open[v] = Some(Stall {
+            first_frame: r.frame,
+            first_t_ms: r.t_ms,
+            last_t_ms: r.t_ms,
+            slow: 1,
+            budget: r.tdr_steps,
+            ..Default::default()
+        });
+    }
+
+    /// The longest budget stall of the run, over both views. One line, printed for EVERY run,
+    /// armed or not, so the control is scored on the same number as the arm.
+    pub(crate) fn stall_line(&self) -> String {
+        let mut best: Option<(usize, Stall)> = None;
+        for v in 0..2 {
+            for s in [self.stall_best[v], self.stall_open[v]].into_iter().flatten() {
+                if s.beats(&best.map(|b| b.1)) {
+                    best = Some((v, s));
+                }
+            }
+        }
+        let field = "(field loss 2026-09-21: 20 over 32.8 s at 1.515e11)";
+        match best {
+            None => format!("no slow frame (> {STALL_SLOW_MS:.0} ms with a repaint requested) {field}"),
+            Some((v, s)) => format!(
+                "longest run with the budget never coming down: {} slow frame(s) over {:.1} s from frame {} \
+                 (+{:.1}s) at {:.3e} steps, view {v}, {} GPU timing reading(s) inside it {field}",
+                s.slow,
+                (s.last_t_ms - s.first_t_ms) as f64 / 1000.0,
+                s.first_frame,
+                s.first_t_ms as f64 / 1000.0,
+                s.budget as f64,
+                s.readings
+            ),
+        }
+    }
+
     pub(crate) fn add(&mut self, r: &crate::diag::frame_record::FrameRecord) {
         use crate::diag::frame_record::kind;
         self.folded += 1;
+        self.track_stall(r);
         let shaped = r.kind == kind::FRAME
             && r.has_ref
             && !r.ref_partial
@@ -315,6 +421,8 @@ impl RegimeAcc {
     }
 }
 
+/// The predicate over a slice — the tests' entry point; the harnesses fold as they go.
+#[cfg(test)]
 pub(crate) fn regime_report(recs: &[crate::diag::frame_record::FrameRecord]) -> RegimeReport {
     let mut acc = RegimeAcc::default();
     for r in recs {
