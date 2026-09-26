@@ -12,6 +12,24 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A zooming version of the Radeon crash-conditions test** (beta.119, for testing). The still
+  test at the RX 6800 XT's crash view reached the conditions it was built for (2026-09-25:
+  "ENTERED", 248 million rebases a frame), but its control run, without the instrument, was
+  indistinguishable from it over two pairs of runs — the same slow frames, the same step counts,
+  the same GPU timings — and in all four the frame budget came down at the first timing reading.
+  The field loss's signature is the opposite: the budget never moved through 20 slow frames over
+  33 seconds while the user zoomed in taps. So `--zoomtest` can now start from the session's view
+  (`--zoomtest-location session`, the staged crash view; with a start depth it zooms back in until
+  it arrives at that view's own depth), zoom in taps (`--zoomtest-taps N,OCTAVES,PAUSE`, which the
+  field agent can request, unlike the older environment variable) and rest where it ended before
+  reporting (`--zoomtest-hold S` — the field card was lost about 20 seconds after the last tap), a
+  new `--window WxH` sets the starting window size so a run can match the reported one, and both
+  `--zoomtest` and `--soak` now print the longest run of slow frames across which the frame budget
+  never came down, with the field loss's figures beside it for comparison. `--zoomtest` also prints
+  the same escaped-reference verdict as the still test and exits 2 when the instrument is armed
+  and the conditions were never reached. The field agent (version 5) accepts the new options.
+  `framelog.py summarize` no longer crashes on a redirected Windows console when a run had a
+  tunable override. Nothing about rendering changes.
 - **The Radeon crash-conditions test now judges the whole run, not its last 4,096 frames**
   (beta.118, for testing). With `FRACTADYNE_REF_ESCAPE_AT` armed, `--soak … --soak-depth session`
   decides whether the run reached the conditions of the RX 6800 XT's GPU loss, and it used to
