@@ -2500,3 +2500,60 @@ results in `<share>\field\results\`, the comparison in `devbox-rtx3080-chunk-swe
   sweep's own "NOT SETTLED" warning), not the field session's ESCAPED 655. Prerequisites 1 and 3 still
   need W9's regime instrument (`REF_ESCAPE_AT`) to put the Radeon in the escaped-reference storm on
   purpose.
+
+**Evidence, 2026-09-25/26 — W9's rungs on the RX 6800 XT reach the regime, not the failure.**
+
+- The still rung (`--soak … --soak-depth session`, crash view, `TDR_BOOTSTRAP_STEPS` seeded to the
+  field's 1.515e11) ENTERED on beta.118 — 248M rebases a reading, 6 of 30 dispatches un-chunked — and
+  its CONTROL, with no instrument, was indistinguishable from it over two pairs (b115, b118): the same
+  8–9 slow frames, step counts equal to four figures, GPU readings 23.1 vs 23.9 ms and 296 vs 296 ms.
+  The slow frames are the seeded budget's, not the escaped reference's; in all four runs the budget
+  came down at the first reading. So §8 prerequisite 3 is met in the letter (the rung reaches the
+  regime on stock logic) and not in the spirit (the rung cannot express the variable under test).
+- The motion rung (beta.119: `--zoomtest --zoomtest-location session --zoomtest-start-log2 13.3
+  --zoomtest-taps 40,0.08,1.0 --zoomtest-hold 60 --zoomtest-rate 4.0 --window 1676x1360`, the field
+  session's taps, render size and 20-second settle) arrived at 2^20.75 on both arms; escaped arm
+  ENTERED (390 storm readings, max 9.1M rebases); both 0 un-chunked, no slow frame. The budget held
+  1.5–3.5e8 through the taps and 5.9e9 at rest — the field's LEARNED 1.515e11 (reached in 27 s after
+  a mode switch, and 3e11, the ceiling, earlier that session) never appeared. The differences left:
+  the field's iteration ask (4,627 vs 27,904), its history (from 2^221 in floatexp at 1.65e11, out to
+  2^11.5 and back), and its window (side panel, 1.5× scale). Prerequisite 1 remains unmet.
+- **Disposition (the user's call, 2026-09-26): §8's designed failure mode.** The pricing reaction
+  waits; the verifiability work ships.
+
+**beta.119 — the motion rung** (branch `feat/w9-motion-rung`): `--zoomtest-location session`, which
+with a start depth ends on arriving at the staged view's own scale (read before the first layout, so
+the layout's 0.4–0.8-octave shift moves both ends together — a tap count could not promise it, and
+the pacer shortens taps on a slow card); `--zoomtest-taps` (the env var a field request could not
+set); `--zoomtest-hold`; `--window WxH` in points; and the budget-stall line (`soak-stall:`,
+`zoomtest-stall:`) — the longest run of slow frames across which `tdr_steps` never came down,
+printed for every run so the control is scored on the same number.
+
+**beta.120 — `--logcheck`** (branch `feat/logcheck`; §6.5, W8's bridge).
+
+- The rules are compiled in (`include_str!` of `validation/logcheck-rules.toml`), so the check at a
+  task's exit needs nothing on disk and a binary is never judged by another commit's rules;
+  `--logcheck-rules FILE` reads another. Read strictly (`deny_unknown_fields`, every mode name
+  checked against the task list, one bound per rule, a mode bound of the same kind); ten ways a file
+  can be wrong are each pinned by a test to fail to load.
+- **A rate is the worst minute, not the session average.** The field session's 58 timing flips in
+  ~35 s average 4 a minute over its 860 s — under any bound that would pass a healthy run.
+- **"Verify a harness actually ran" is generic, from two choke points.** `main` logs `[fd-harness]
+  begin <mode> pid <pid> — tunables: <status>` for every task before anything can fail (the only
+  record of an instrument armed from the environment), and `crate::exit` logs `[fd-exit] <mode> exit
+  <code>`; tasks that returned normally (headless modes, a closed window) and `--torture` were routed
+  through `crate::exit` to write it. Out of process, a task session with a begin line and no exit
+  line is NO VERDICT (exit 3); in process the check finds its own session by pid, since `--torture`'s
+  rungs can share the log. Per-harness verdict tokens (`[[harness]] require`) cover only the
+  harnesses whose verdict now reaches the log — `--soak`, `--zoomtest`, `--recordtest` via
+  `diag::verdict` — the rest are judged on `[fd-exit]` alone until theirs do.
+- **Pre-existing reds are bounded and printed, not normalised** (§7.8's risk). The first run over
+  239 sessions on the share found: `--livetest` logs 8–12 in-flight-lethal and 5–9 `possible hang`
+  lines on BOTH cards on every build since beta.111 (the tour plays inside one `update()`); `--uitest`
+  flips GPU timing 21 times a minute on both cards. Each is a `known = true` mode bound with its
+  reason: the run passes, and the verdict says `KNOWN` every time. The design's red-check holds —
+  `--set TDR_LETHAL_MS=1` sheds far past the livetest bound.
+- The rule tokens are checked against the source by a test (§6.5's first caution), which asserts a
+  made-up token and category fail it too.
+- Not yet: `fieldcheck.py`, `gpu-validate`'s aggregate exit, the other harnesses' verdict lines,
+  and the `planned:`/`run:` checklist rows.

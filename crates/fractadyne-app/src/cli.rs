@@ -121,7 +121,12 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
     // launches each rung as a child process precisely so that a rung which loses the device or
     // wedges cannot take the runner down with it.
     if args.iter().any(|a| a == "--torture") {
-        std::process::exit(crate::torture::run(args));
+        crate::exit(crate::torture::run(args));
+    }
+    // `--logcheck [LOG]`: hold a log (default: this app's own) to validation/logcheck-rules.toml.
+    // Headless and deviceless, so it can judge the log a killed or wedged run left behind.
+    if args.iter().any(|a| a == "--logcheck") {
+        crate::exit(crate::logcheck::run_cli(args));
     }
     // Print the tour-script schema reference (Markdown) and exit — used to (re)generate TOURS.md.
     if args.iter().any(|a| a == "--dump-tour-schema") {
