@@ -649,18 +649,18 @@ impl crate::FractadyneApp {
         }
         if !fails.is_empty() {
             for f in &fails {
-                eprintln!("recordtest: FAIL — {f}");
+                crate::diag::verdict(&format!("recordtest: FAIL — {f}"));
             }
-            eprintln!("recordtest: FAIL");
+            crate::diag::verdict("recordtest: FAIL");
             1
         } else if !vacuous.is_empty() {
             for v in &vacuous {
-                eprintln!("recordtest: VACUOUS — {v}");
+                crate::diag::verdict(&format!("recordtest: VACUOUS — {v}"));
             }
-            eprintln!("recordtest: VACUOUS (exit 2) — this run cannot vouch for the record of the shipped build (see above)");
+            crate::diag::verdict("recordtest: VACUOUS (exit 2) — this run cannot vouch for the record of the shipped build (see above)");
             2
         } else {
-            eprintln!("recordtest: PASS — every driven frame recorded once, every required field set, frames.bin exact, and it survived an abort");
+            crate::diag::verdict("recordtest: PASS — every driven frame recorded once, every required field set, frames.bin exact, and it survived an abort");
             0
         }
     }

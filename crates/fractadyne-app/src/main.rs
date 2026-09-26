@@ -81,6 +81,7 @@ mod icons_coverage;
 mod livetest;
 mod motiontest;
 mod zoomtest;
+mod logcheck;
 mod profile;
 mod refcache_persist;
 mod render;
@@ -253,7 +254,18 @@ fn main() -> eframe::Result<()> {
         std::hint::black_box(&v);
         crate::exit(0);
     }
+    // A task run says what it is and what it runs under, in the log, before anything can fail: the
+    // line `--logcheck` needs to tell a harness that never started, or never reached its verdict
+    // (no `[fd-exit]`), from one that passed — and the only record of an INSTRUMENT, which arms
+    // from the environment and prints nothing at startup on its own.
+    if let Some(mode) = task_mode() {
+        logcheck::harness_begin(mode, &tunables::status_line());
+    }
     if cli::run_headless(&args) {
+        // A headless task that returns rather than exiting still owes its `[fd-exit]` line.
+        if task_mode().is_some() {
+            crate::exit(0);
+        }
         return Ok(());
     }
 
@@ -424,6 +436,14 @@ fn main() -> eframe::Result<()> {
         native_options,
         Box::new(move |cc| Ok(Box::new(FractadyneApp::new(cc, &args)))),
     );
+    // A windowed task that ended by closing its window (`--chunk-sweep` does) still owes its
+    // `[fd-exit]` line and its log check.
+    if task_mode().is_some() {
+        if let Err(e) = &r {
+            eprintln!("fractadyne: {e}");
+        }
+        crate::exit(if r.is_ok() { 0 } else { 1 });
+    }
     diag::end_session();
     r
 }
@@ -433,6 +453,9 @@ fn main() -> eframe::Result<()> {
 /// by a deliberate quit would be reported as a crash on the next launch. One choke point is the
 /// only way to be sure none was missed.
 pub(crate) fn exit(code: i32) -> ! {
+    // A task logs its exit code and holds its own log to `validation/logcheck-rules.toml`; a rule
+    // it broke turns a 0 into a 1 (`logcheck::at_exit`).
+    let code = logcheck::at_exit(code);
     diag::end_session();
     std::process::exit(code)
 }
@@ -664,17 +687,42 @@ mod arg_files;
 /// extra flag here only ever means "do not relaunch", which is the safe direction. ⚠Add new harness
 /// and offline-job flags here.
 pub(crate) fn is_task_invocation<S: AsRef<str>>(args: &[S]) -> bool {
-    const TASK_FLAGS: &[&str] = &[
-        "--selftest", "--livetest", "--divetest", "--uitest", "--juliadive", "--dualsettle",
-        "--play-tour",
-        "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
-        "--render", "--render-tour", "--torture", "--gputest", "--oomtest", "--refdiag",
-        "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
-        "--zoomtest",
-        "--chunk-sweep", "--deviceloss-repro", "--bench-bignum", "--shot", "--soak", "--pickcheck",
-        "--recordtest",
-    ];
     args.iter().any(|a| TASK_FLAGS.contains(&a.as_ref()))
+}
+
+/// Every harness and offline-job flag (see [`is_task_invocation`]). ⚠Add new ones here.
+const TASK_FLAGS: &[&str] = &[
+    "--selftest", "--livetest", "--divetest", "--uitest", "--juliadive", "--dualsettle",
+    "--play-tour",
+    "--bench-matrix", "--benchmark", "--profile", "--reusetest", "--resizetest", "--frametest",
+    "--render", "--render-tour", "--torture", "--gputest", "--oomtest", "--refdiag",
+    "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
+    "--zoomtest",
+    "--chunk-sweep", "--deviceloss-repro", "--bench-bignum", "--shot", "--soak", "--pickcheck",
+    "--recordtest",
+];
+
+/// The task a command line runs, by name (`soak` for `--soak …`): the first task flag in it. The
+/// one definition `--logcheck` keys its per-harness bounds on, whether it reads this process's own
+/// arguments at exit or a log's `args:` line.
+pub(crate) fn task_mode_of<S: AsRef<str>>(args: &[S]) -> Option<&'static str> {
+    args.iter()
+        .find_map(|a| TASK_FLAGS.iter().find(|f| **f == a.as_ref()))
+        .map(|f| &f[2..])
+}
+
+/// Every name [`task_mode_of`] can return.
+pub(crate) fn task_mode_names() -> impl Iterator<Item = &'static str> {
+    TASK_FLAGS.iter().map(|f| &f[2..])
+}
+
+/// [`task_mode_of`] over this process's own arguments, read once.
+pub(crate) fn task_mode() -> Option<&'static str> {
+    static MODE: std::sync::OnceLock<Option<&'static str>> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| {
+        let argv: Vec<String> = std::env::args().skip(1).collect();
+        task_mode_of(&argv)
+    })
 }
 
 /// Whether THIS process was launched for a task (`is_task_invocation` over its own arguments),

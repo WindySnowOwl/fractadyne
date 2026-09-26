@@ -1,0 +1,118 @@
+# The rules `fractadyne --logcheck` holds one session's log to (design/live-render-robustness.md
+# section 6.5, W8). Compiled into the binary, so the check every harness runs at its exit and a
+# `--logcheck` over a log a killed run left behind apply the rules of the commit the binary was
+# built from.
+#
+# READ STRICTLY. An unknown key, an unknown rule or mode name, a malformed bound, or a rule with no
+# bound or two, is a LOAD ERROR, never a skipped rule: a typo that quietly disarmed a gate would be
+# the silent-default family reproduced inside the gate layer.
+#
+# Each rule counts the lines of ONE session that contain `token` (and `also`, when given):
+#   max = N           at most N such lines in the session
+#   max_per_min = R   at most R in any one minute of it (a BURST fails; an average would hide it:
+#                     the 2026-09-21 field session's 58 timing flips in ~35 s average 4 a minute)
+# `mode.<harness>` replaces the bound for runs of that harness (`gui` = no harness), with its `why`:
+#   known = true      the replacement is a PRE-EXISTING, filed failure, not a design allowance.
+#                     The run passes, but whenever the default bound would have failed it the
+#                     verdict prints KNOWN with the reason. Delete the line when the cause is fixed.
+# `instrument_ok = true`: when a diagnostic instrument is armed (FRACTADYNE_REF_ESCAPE_AT, ...) the
+# run is a declared rung whose purpose is to reach this, so the rule reports and does not fail.
+#
+# The bounds were set from 239 sessions on the share (2026-09-26): gpu-validate bundles from both
+# cards, the dev-reference bundles of beta.111-114, field-agent runs and the 2026-09-21 field loss.
+
+schema = 1
+
+[[rule]]
+name = "budget-blind"
+token = "FRAME BUDGET IS BLIND"
+max = 0
+why = "the frame budget stopped seeing the slow frames it prices (U15's tripwire)"
+mode.recordtest = { max = 1, why = "its blind phase trips the tripwire on purpose, once" }
+
+[[rule]]
+name = "lethal-band-frame"
+token = "LETHAL-BAND FRAME"
+max = 0
+instrument_ok = true
+why = "a GPU pass measured inside the band where the driver's watchdog resets the device"
+mode.autodive = { max = 100000, why = "the device-loss hammer: reaching the band is its job, surviving it is its verdict" }
+
+[[rule]]
+name = "lethal-band-in-flight"
+token = "IN-FLIGHT PASS IN THE LETHAL BAND"
+max = 0
+instrument_ok = true
+why = "a pass still in flight past the lethal band, with no drain"
+mode.autodive = { max = 100000, why = "the device-loss hammer" }
+mode.livetest = { max = 15, known = true, why = "livetest plays each tour segment inside one update(), so a pass's time accumulates with no drain between frames: 8-12 lines a run on BOTH cards since beta.111, a harness artefact (filed with '--livetest records zero frames'). A TDR_LETHAL_MS=1 run sheds far more, and still fails" }
+
+[[rule]]
+name = "timing-starved"
+token = "no GPU iterate timing after"
+max_per_min = 6.0
+why = "GPU timing readings stopped arriving and the frame budget fell back to the wall clock (harness runs outside uitest: at most 5 in a minute; the 2026-09-21 field loss: 58 in about 35 s)"
+mode.uitest = { max_per_min = 30.0, known = true, why = "21 a minute in every uitest run on both cards since beta.111; not investigated" }
+
+[[rule]]
+name = "motion-jam"
+token = "motion jam:"
+max_per_min = 2.0
+why = "full-size motion dispatches went out unpriced"
+mode.autodive = { max_per_min = 20.0, why = "the hammer drives motion at depth without a break; up to 8.4 a minute seen" }
+
+[[rule]]
+name = "fold-at-another-view"
+token = "FOLD AT ANOTHER VIEW"
+max = 0
+why = "the supersampling average folded a sample rendered at a different view (the ghost)"
+
+[[rule]]
+name = "reference-build-storm"
+token = "reference-build storm:"
+max = 0
+why = "reference builds restarting faster than they can finish"
+
+[[rule]]
+name = "possible-hang"
+token = "possible hang"
+max = 0
+why = "the watchdog saw no liveness stamp for its window: a wedged or starved frame loop"
+mode.recordtest = { max = 2, why = "its heartbeat phase wedges the UI thread for 13 s on purpose" }
+mode.livetest = { max = 12, known = true, why = "livetest plays each tour segment inside one update(), starving the watchdog: 5-9 lines a run on both cards (filed: '--livetest records zero frames')" }
+mode.render = { max = 5, known = true, why = "a long headless render holds the main thread (3 lines in one 121 s --render)" }
+
+[[rule]]
+name = "accumulation-restarts"
+token = "[fd-accum] view"
+also = ": begin ("
+max_per_min = 20.0
+why = "supersampling runs restarting over and over (the 2026-09-21 field session logged about 720 a minute)"
+
+[[rule]]
+name = "panic"
+token = "[fd-panic]"
+max = 0
+why = "a panic; a crash report was written"
+
+[[rule]]
+name = "device-lost"
+token = "DEVICE LOST"
+max = 0
+why = "the GPU device was lost"
+
+# Harnesses whose verdict reaches the LOG, so a run that stopped before its verdict is told apart
+# from one that passed. Every other harness is judged on its `[fd-exit]` line alone, until its
+# verdict is logged too.
+
+[[harness]]
+mode = "soak"
+require = ["[fd-verdict] soak-liveness:", "[fd-verdict] soak-regime:", "[fd-verdict] soak-stall:"]
+
+[[harness]]
+mode = "zoomtest"
+require = ["[fd-verdict] zoomtest-regime:", "[fd-verdict] zoomtest-stall:"]
+
+[[harness]]
+mode = "recordtest"
+require = ["[fd-verdict] recordtest:"]

@@ -12,6 +12,23 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Every test harness now checks its own log before it exits** (beta.120, for testing). The live
+  view writes warnings to its log when something goes wrong: the frame budget has gone blind, a GPU
+  pass has run into the time band where the graphics driver resets the device, GPU timing has
+  stopped arriving. Until now nothing read them, so a test could pass with its log saying the budget
+  had gone blind. A new file, `validation/logcheck-rules.toml`, says how many of each warning a run
+  may log, and every harness run checks its own log against it as it exits: a broken rule turns a
+  passing exit code into a failure. The same check runs on its own as `--logcheck [LOG]` over a log
+  a killed or frozen run left behind. There a run that never reached its end is reported as NO
+  VERDICT (exit code 3) instead of looking like any other log, because every harness now logs a line
+  when it starts and its exit code when it ends. Conditions that are known and not yet fixed are
+  allowed within a stated bound and printed as KNOWN on every run, not quietly passed: the
+  `--livetest` hang and lethal-band lines, which come from the way it plays its tour, and the
+  `--uitest` GPU-timing gaps. The rules were set from 239 recorded sessions; against the log of the
+  RX 6800 XT's 2026-09-21 GPU loss the check fails on four counts. A limit per minute is judged on
+  the worst minute, not the session average, which would have hidden that loss's 58 timing gaps in
+  35 seconds. `--soak`, `--zoomtest` and `--recordtest` also write their verdicts to the log, and
+  the check requires them. Nothing about rendering changes.
 - **A zooming version of the Radeon crash-conditions test** (beta.119, for testing). The still
   test at the RX 6800 XT's crash view reached the conditions it was built for (2026-09-25:
   "ENTERED", 248 million rebases a frame), but its control run, without the instrument, was

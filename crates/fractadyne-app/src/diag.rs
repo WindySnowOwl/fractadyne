@@ -321,6 +321,19 @@ pub(crate) fn elapsed_ms() -> u64 {
 /// runs inside the panic hook, where an `eprintln!` that panics on EPIPE would trigger a
 /// double-panic abort and lose the crash report entirely (the exact automation scenario D1
 /// targets).
+/// The log file this process writes, once `init` has chosen it.
+pub(crate) fn log_path() -> Option<PathBuf> {
+    LOG_FILE.lock().ok().and_then(|g| g.clone())
+}
+
+/// A harness's verdict line: to stderr, where its operator reads it, and to the log as
+/// `[fd-verdict] <line>`, where `--logcheck` requires it (`validation/logcheck-rules.toml`
+/// `[[harness]]`) — a verdict only on stderr cannot tell a run that stopped from one that passed.
+pub(crate) fn verdict(line: &str) {
+    eprintln!("{line}");
+    file_line(&format!("[fd-verdict] {line}"));
+}
+
 pub(crate) fn log_line(cat: &str, msg: &str) {
     // ⭐**The FILE always gets the line; only the console is gated.** That is what makes quiet-by-
     // default safe: Help ▸ recent log, the crash report's tail and a bug reporter's attachment are

@@ -90,10 +90,10 @@ fn spawn_watchdog(duration: Duration) {
                     "\n=== --soak FAILED after {:.0}s ===",
                     started.elapsed().as_secs_f64()
                 );
-                eprintln!(
+                crate::diag::verdict(&format!(
                     "soak-liveness: FAIL — no frame drawn in {}s (frame counter stuck at {now})",
                     WINDOW.as_secs()
-                );
+                ));
                 // Not `crate::exit`: that path wants the UI thread, which is the thread that has
                 // stopped responding. Leave the unclean-exit marker armed — the session really
                 // did die, and the next launch should say so.
@@ -196,26 +196,26 @@ impl crate::FractadyneApp {
         // With the escape instrument armed this soak IS W9's escaped-reference rung, and a
         // survival means nothing unless the regime was entered.
         let regime = s.regime.report();
-        eprintln!("soak-regime: {}", regime.line);
-        eprintln!("soak-stall: {}", s.regime.stall_line());
+        crate::diag::verdict(&format!("soak-regime: {}", regime.line));
+        crate::diag::verdict(&format!("soak-stall: {}", s.regime.stall_line()));
         eprintln!(
             "soak-regime-coverage: {} record(s) read over the whole run, {} lost to the ring",
             s.regime.folded, s.regime.lost
         );
         let escape_armed = crate::Perf::ref_escape_at() > 0;
         if fails.is_empty() && escape_armed && !regime.entered {
-            eprintln!(
+            crate::diag::verdict(
                 "soak-liveness: VACUOUS (exit 2) — FRACTADYNE_REF_ESCAPE_AT is armed but the regime was never \
-                 entered, so surviving it proves nothing"
+                 entered, so surviving it proves nothing",
             );
             return 2;
         }
         if fails.is_empty() {
-            eprintln!("soak-liveness: PASS (frames advanced in every window, memory held)");
+            crate::diag::verdict("soak-liveness: PASS (frames advanced in every window, memory held)");
             0
         } else {
             for f in &fails {
-                eprintln!("soak-liveness: FAIL — {f}");
+                crate::diag::verdict(&format!("soak-liveness: FAIL — {f}"));
             }
             1
         }

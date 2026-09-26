@@ -704,7 +704,8 @@ impl FractadyneApp {
         crate::exit(2);
     }
 
-    /// W9's two verdict lines and the coverage line, to stderr and the log. Returns whether the
+    /// W9's two verdict lines and the coverage line, to stderr and the log as `[fd-verdict]` (which
+    /// `--logcheck` requires of every finished zoomtest). Returns whether the
     /// escaped-reference regime was entered.
     fn zoomtest_regime_lines(zt: &ZoomTest) -> bool {
         let regime = zt.regime.report();
@@ -717,8 +718,7 @@ impl FractadyneApp {
             ),
         ];
         for l in &lines {
-            eprintln!("{l}");
-            crate::diag::log_line("zoomtest", l);
+            crate::diag::verdict(l);
         }
         regime.entered
     }

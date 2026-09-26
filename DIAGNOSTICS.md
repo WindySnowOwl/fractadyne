@@ -72,7 +72,10 @@ and fails if one is missing from this table.
 | `[fd-panic]` | always | A panic, and where its crash report was written |
 | `[fd-oom]` | always | An allocation failure (the report is written from an 8 MB reserve) |
 | `[fd-unclean]` | always | The previous session ended without a clean shutdown — with its last log lines and, from beta.113, how much of its frame record survived |
-| `[fd-exit]` | always | A console-initiated shutdown (Ctrl+C, the console window closed) — recorded as NOT a crash |
+| `[fd-exit]` | always | A console-initiated shutdown (Ctrl+C, the console window closed) — recorded as NOT a crash; and, for a harness or offline job, `<harness> exit <code>` as it ends (from beta.120). A harness session without that line never reached its end — `--logcheck` calls it NO VERDICT |
+| `[fd-harness]` | harness | `begin <harness> pid <pid> — tunables: <stock \| overrides \| INSTRUMENT …>`, first thing: what the run is, and the only record of an instrument armed from the environment |
+| `[fd-verdict]` | harness | A harness's verdict line, also printed to stderr (`soak-liveness:`, `soak-regime:`, `soak-stall:`, `zoomtest-regime:`, `zoomtest-stall:`, `recordtest:`); `validation/logcheck-rules.toml` `[[harness]]` requires them |
+| `[fd-logcheck]` | harness | The run's own log held to `validation/logcheck-rules.toml` as it exits: `PASS`, `FAIL`, with any `KNOWN` pre-existing conditions counted (see `--logcheck`) |
 | `[fd-watch]` | always | `possible hang` — nothing stamped liveness for 10 s — with the last activity; also written into the frame record as a STALL row |
 | `[fd-instrument]` | only with an instrument armed | What a diagnostic instrument did, e.g. `REF_ESCAPE_AT=655: v0 reference 37936 → 655 samples, complete, BLA off … install derate SKIPPED` |
 | `[fd-frames]` | always, once | `frames.jsonl is falling behind` — its writer thread fell 4,096 rows behind (a slow or unreachable disk) — or `writer thread has stopped`; either way rows are being dropped. `frames.bin` and the in-memory record are unaffected |
