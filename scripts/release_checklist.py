@@ -636,6 +636,14 @@ STEPS = [
      "It asks first (Cancel first, the red Delete second). After Delete the usage reads 0 orbits, "
      "the folder is empty, and the next visit to the deep location rebuilds its reference (slow "
      "again) - clearing cost time, not data."),
+    ("Screen",
+     "Run the SCREEN gate on this machine AND on the RX 6800 XT: scripts\\gpu-validate.ps1 (its "
+     "step 08 captures three autopilot dives at 2^800 into screen\\run1-3), then "
+     "python scripts\\dive-capture\\screengate.py screen\\run1 screen\\run2 screen\\run3.",
+     "screengate: PASS - median blank and flat at most 7%, at most 3 flash episodes, no frozen "
+     "picture while the view moved, and the three runs within 10 points of each other. RED or "
+     "VACUOUS is not a pass: every per-pass metric once said the blank-frame fix worked while the "
+     "screen got worse."),
     ("Sign-off",
      "Review every FAIL and BLOCKED row above with the release decision in mind.",
      "Either all rows PASS, or each non-PASS has an agreed decision (fix before release / accept "
@@ -812,6 +820,7 @@ ENFORCERS = [
     ("Reference cache", "uitest:reference-cache"),
     ("Reference cache", "partial:test:eviction_drops_the_cheapest_orbit_not_the_oldest"),
     ("Reference cache", "partial:test:clear_removes_every_entry_and_stray_temp_files"),
+    ("Screen", "planned:run:screengate.py over gpu-validate's screen step (needs the run: class)"),
     ("Sign-off", "process"),
 ]
 

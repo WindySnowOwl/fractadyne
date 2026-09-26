@@ -23,11 +23,41 @@ python scripts/dive-capture/blankscore.py before       # % of captured frames th
 Single runs vary (the baseline scored 8%, 13% and 14% on three runs): **compare at least three
 pairs** before believing a difference.
 
+## The screen gate
+
+`screengate.py` turns three such runs into a verdict (design/live-render-robustness.md §7.6):
+
+```sh
+powershell -File scripts/dive-capture/capdive.ps1 -Out run1 -Exe C:\path\fd-test.exe   # x3, or:
+scripts/gpu-validate.ps1 -Label ...        # its step 08 captures screen\run1-3 into the bundle
+python scripts/dive-capture/screengate.py run1 run2 run3      # 0 PASS, 1 RED, 2 VACUOUS
+python scripts/dive-capture/screengate.py --selftest          # every criterion seen to fire
+```
+
+It scores **blank** (canvas stddev < 1), **flat** (>97% within 8 of the median colour), **flash**
+EPISODES (the canvas switching into or out of a flat capture) and **stale** (a streak of identical
+captures while the view moved; a whole run whose screen never changed while the autopilot's log
+shows the view travelling is FROZEN, and RED), takes the median of three, and holds it to 7% / 7% /
+3 / 2 with a blank spread of at most 10 points. ⚠`flashscore.py`'s FLASH_DIFF of 60 is kept for
+recordings but is NOT the gate's flash: at 2^800 an ordinary zoom step between captures differs by
+35–75 units, so it counted 26–43% of healthy transitions. VACUOUS (never a pass): fewer than three
+runs, a run under 60 captures, a view that did not move, or a log naming another bignum backend
+than the fixture declares (`--bignum`, default astro-float).
+
+`capdive.ps1` is `capdive.sh` for a machine with no sh — the Radeon box and the battery. Both
+capture at ~170 ms per frame (PrintWindow at 480 px). Captures before the dive's first picture are
+its start, counted apart. ⚠On the RTX 3080 on 2026-09-26 the gate did NOT go red on the build before
+the blank-frame fix (median 2.9% blank against the fixed build's 0%): it catches a severe
+regression. The mid-dive blank-episode count it prints (pre-fix 3/1/1, fixed 0 in six runs)
+separates that one here, and is reported rather than gated until the Radeon arm has been measured.
+
 ## Files
 
 | file | what |
 |------|------|
 | `capdive.sh NAME EXE KFR [SEED] [T] [ITER] [PRIORITY] [TARGET]` | runs `--autodive` from a `.kfr` in a wiped scratch config, captures the window for 18 s; `PRIORITY` = `speed` / `quality` (the auto-zoom priority), `TARGET` = `detail` / `misiurewicz` (the auto-zoom target); `FRACTADYNE_BIGNUM` passes through |
+| `capdive.ps1 -Out D -Exe E [-Kfr K] [-Seed S] [-TimeoutS T] [-Iter I]` | `capdive.sh` in PowerShell (defaults: `dive-2p800.kfr`, `session-seed.toml`, 26 s, 10,000 iterations); writes `exit.txt` too |
+| `screengate.py RUN… [--bignum B] [--json F]` / `--selftest` | the screen gate: blank / flat / flash / stale, median of three, exit 0/1/2 (above) |
 | `grab.ps1 -ProcId N -OutDir D -Seconds S -IntervalMs M` | PrintWindow capture of one process's window, DPI-aware, 480 px wide (PS 5.1) |
 | `grab_full.ps1` | the same at native resolution — needed to read an 8 px toolbar glyph |
 | `blankscore.py RUN…` | per run: frames, `SCREEN BLANK` count (canvas-interior stddev < 1), rung changes, empty passes, and a `#`/`.` timeline |

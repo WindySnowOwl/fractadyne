@@ -47,7 +47,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 5   # 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung)
+$AgentVersion = 6   # 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -333,7 +333,7 @@ function Invoke-Battery($r, [string]$dir, $status) {
     $status.screens = @(Get-Screens)
     $steps = [ordered]@{}
     foreach ($l in @(Get-Content -LiteralPath (Join-Path $bundle.FullName "summary.txt") -ErrorAction SilentlyContinue)) {
-        if ($l -match '^(build-id|gputest|selftest|live-res|bench-matrix|livetest|uitest|recordtest)\s+(-?[0-9]+)\s') { $steps[$Matches[1]] = [int]$Matches[2] }
+        if ($l -match '^(build-id|gputest|selftest|live-res|bench-matrix|livetest|uitest|recordtest|screen)\s+(-?[0-9]+)\s') { $steps[$Matches[1]] = [int]$Matches[2] }
     }
     $status.steps = $steps
     $status.detail = (@($steps.Keys) | ForEach-Object { "$_ $($steps[$_])" }) -join ", "

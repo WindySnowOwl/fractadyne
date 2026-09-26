@@ -2557,3 +2557,27 @@ printed for every run so the control is scored on the same number.
   made-up token and category fail it too.
 - Not yet: `fieldcheck.py`, `gpu-validate`'s aggregate exit, the other harnesses' verdict lines,
   and the `planned:`/`run:` checklist rows.
+
+**beta.121 — the screen gate** (branch `feat/screen-gate`; §7.6 gate 2).
+
+- `scripts/dive-capture/screengate.py` scores three `capdive` runs at `dive-2p800.kfr` (blank, flat,
+  flash, stale; median of three; exit 0 / 1 RED / 2 VACUOUS) with a `--selftest` that trips every
+  criterion on synthetic captures beside a control that must pass. `capdive.ps1` is `capdive.sh` for
+  a box with no sh; `gpu-validate` step 08 captures three runs into the bundle (the scoring needs
+  Python and PIL, so it runs on the dev box); the release checklist gains step 143, `planned:` until
+  a `run:` class exists — the first non-zero OUTSTANDING.
+- **Deviation: `stale` is not read from the record.** The record carries no view position or scale
+  (§6.3 promised "view span"; W1 did not ship it), and captures cannot be aligned to log times (the
+  timestamp overlay changes every frame). So `stale` = a streak of identical captures in a run whose
+  canvas is moving; a run whose canvas never changed while the autopilot's `eval … l2=` lines show
+  the view travelling is FROZEN (RED), and one whose log shows no travel is VACUOUS.
+- **Deviation: `flash` is an episode, not a difference.** `flashscore.py`'s FLASH_DIFF of 60 counted
+  26–43% of healthy transitions at 2^800, where an ordinary zoom step differs by 35–75 units; the
+  gate counts the canvas switching into or out of a flat capture.
+- Captures before the dive's first picture are its start, not motion frames; excluded and counted.
+- ⛔**The gate does not go red on the pre-fix build on this box today.** Interleaved against
+  `112a088^1` (three pairs): fixed 0% blank / 0 episodes / 0 flashes in every run (six with the
+  baseline); pre-fix 4.7 / 2.9 / 1.0% in 3 / 1 / 1 episodes, flash 6 / 2 / 2 — worse, and under the
+  design's 7%, which was set when the pre-fix build scored 8–14% here and the fixed one 1–7%. The
+  mid-dive episode count separates the two cleanly here and is REPORTED; gating on it would be a
+  bound calibrated in today's mild regime (P12), so it waits for the Radeon arm's numbers.

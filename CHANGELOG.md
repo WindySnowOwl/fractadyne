@@ -12,6 +12,18 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A test that judges what the screen shows during a deep dive** (beta.121, for testing). The
+  2026-09-20 fix for blank frames while zooming was proved by capturing the live window: every
+  measurement in the log said the change was working while the screen got worse. That capture is
+  now a test. The validation battery (`scripts\gpu-validate.ps1`) gains a step that runs three
+  automatic dives at the reported depth and captures the window; `scripts/dive-capture/screengate.py`
+  scores each run for blank frames, near-flat frames, flashes (the picture switching to a flat panel
+  and back) and a frozen picture while the view is moving, and fails when the median of the three
+  runs passes a limit or the runs disagree too much. It never passes on a run it cannot judge — too
+  few runs or captures, a view that did not move, or an unexpected arithmetic library. A `--selftest`
+  proves every limit can trip. The battery can run on the RX 6800 XT box; the scoring runs on the
+  developer's machine. The release checklist gains the step, marked outstanding until the checklist
+  can require a recorded result. Nothing about rendering changes.
 - **Every test harness now checks its own log before it exits** (beta.120, for testing). The live
   view writes warnings to its log when something goes wrong: the frame budget has gone blind, a GPU
   pass has run into the time band where the graphics driver resets the device, GPU timing has
