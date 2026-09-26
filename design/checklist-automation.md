@@ -282,11 +282,17 @@ fast at real depth, and that the controls tell the truth.
 | 141 | B | `eviction_drops_the_cheapest_orbit_not_the_oldest` — the budget change evicts at once and takes the cheapest, never the dearest. ⚠Partial: the drag gesture is human. |
 | 142 | B | `clear_removes_every_entry_and_stray_temp_files` — the store empties. ⚠Partial: that it ASKED first is the inline confirm, seen only by eye. |
 
-### Sign-off (143)
+### Screen (143)
 
 | # | class | enforcer |
 |---|---|---|
-| 143 | P | Not a behaviour. `checklist_coverage.py` can assert every row carries a verdict and no row is blank, which is the mechanical half. |
+| 143 | A | `scripts/dive-capture/screengate.py` over `gpu-validate`'s step 08 (three `capdive.ps1` dives at `dive-2p800.kfr`): blank / flat / flash / stale, median of three, exit 0 PASS, 1 RED, 2 VACUOUS; `--selftest` proves each criterion fires (design/live-render-robustness.md §7.6). PLANNED until the checklist has a `run:` class that requires a recorded exit code from this release's binary — a script that exists is not a gate that ran. |
+
+### Sign-off (144)
+
+| # | class | enforcer |
+|---|---|---|
+| 144 | P | Not a behaviour. `checklist_coverage.py` can assert every row carries a verdict and no row is blank, which is the mechanical half. |
 
 ---
 

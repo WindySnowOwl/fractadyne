@@ -161,6 +161,11 @@ if (-not $SkipWindows) {
     # The validation battery itself, so a tester can run it from the extracted zip.
     Copy-Item (Join-Path $root "scripts\gpu-validate.ps1"), (Join-Path $root "scripts\gpu-validate.sh") `
               -Destination (Join-Path $stage "scripts")
+    # ...and its screen step: the capture script, the fixture it dives, and the scorer.
+    New-Item -ItemType Directory -Force -Path (Join-Path $stage "scripts\dive-capture") | Out-Null
+    Copy-Item (Join-Path $root "scripts\dive-capture\capdive.ps1"), (Join-Path $root "scripts\dive-capture\grab.ps1"), `
+              (Join-Path $root "scripts\dive-capture\dive-2p800.kfr"), (Join-Path $root "scripts\dive-capture\session-seed.toml"), `
+              (Join-Path $root "scripts\dive-capture\screengate.py") -Destination (Join-Path $stage "scripts\dive-capture")
     # Validation data so --selftest / --bench-matrix work from the extracted install.
     New-Item -ItemType Directory -Force -Path (Join-Path $stage "validation\golden") | Out-Null
     Copy-Item (Join-Path $root "validation\golden\*.png") -Destination (Join-Path $stage "validation\golden")

@@ -39,6 +39,7 @@
 #   05-livetest.txt      live-vs-offline truth at every tour hold       (skipped by -Quick)
 #   uitest-*/            25-step UI + live-render screenshot bundle     (skipped by -Quick)
 #   07-recordtest.txt    the per-frame record's own gate (~20 s)
+#   08-screen.txt        three autopilot dives captured off the screen, in screen\run1-3 (~100 s)
 #   app.log              the app's own log across all steps
 #   frames/              each step's frame record (<step>.frames.bin, <step>.frames.jsonl) -
 #                        read with scripts/framelog.py summarize
@@ -278,6 +279,37 @@ else {
 Invoke-Step "recordtest" "07-recordtest.txt" @("--recordtest") `
     "the per-frame record: every frame recorded, survives an abort, watchdog + blind tripwire fire"
 
+# --- step 08: the SCREEN - three live dives at the reported regime, captured ---------------------
+# (design/live-render-robustness.md 7.6, W6's screen gate). Every per-pass metric in the log once
+# said the blank-motion-frame fix worked while the screen got worse; only the window shows it. This
+# step CAPTURES (PrintWindow by pid, no input sent); scripts\dive-capture\screengate.py SCORES the
+# three runs - blank, flat, flash, stale, median of three - on a machine with Python and PIL, since
+# this one may have neither. Exit 0 = three runs captured enough to score, 2 = not.
+$capdive = Join-Path $root "dive-capture\capdive.ps1"
+if (Test-Path $capdive) {
+    Write-Host "-> screen" -ForegroundColor Yellow
+    Write-Host "   three autopilot dives at 2^800, window captured; scored later by screengate.py (~100 s)" -ForegroundColor DarkGray
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $screen = Join-Path $dir "screen"
+    New-Item -ItemType Directory -Force -Path $screen | Out-Null
+    $log = Join-Path $dir "08-screen.txt"
+    $captured = 0
+    foreach ($i in 1..3) {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $capdive -Out (Join-Path $screen "run$i") -Exe $exe *>> $log
+        $n = @(Get-ChildItem (Join-Path $screen "run$i\frames") -Filter "*.jpg" -ErrorAction SilentlyContinue).Count
+        if ($n -ge 60) { $captured++ }
+    }
+    $code = if ($captured -eq 3) { 0 } else { 2 }
+    "captured runs: $captured of 3 (60+ captures each). Score them: python scripts\dive-capture\screengate.py screen\run1 screen\run2 screen\run3" |
+        Out-File $log -Encoding utf8 -Append
+    $secs = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+    $results += [pscustomobject]@{ Step = "screen"; Exit = $code; Seconds = $secs; File = "08-screen.txt" }
+    Write-Host ("   exit {0} in {1}s" -f $code, $secs) -ForegroundColor $(if ($code -eq 0) { "Green" } else { "Red" })
+}
+else {
+    Write-Host "-> skipping screen (no dive-capture\capdive.ps1 beside this script)" -ForegroundColor DarkGray
+}
+
 # --- harvest the app's own evidence -------------------------------------------------------------
 $log = Join-Path $cfg "logs\fractadyne.log"
 if (Test-Path $log) { Copy-Item $log (Join-Path $dir "app.log") -Force }
@@ -337,6 +369,8 @@ uitest       Screenshots for eyeballing. The deep floatexp band is WARN-not-FAIL
 recordtest   Must pass everywhere: 0 pass, 1 fail, 2 VACUOUS (nothing exercised - not a pass). The
              per-frame record is what diagnoses the next crash, so a failure here matters even if
              every other step is green. The frames/ folder holds each step's own record.
+screen       Captures only: 0 = three dives captured, 2 = not. The verdict is screengate.py's
+             (blank / flat / flash / stale, median of three), run on the developer's machine.
 
 Send back the whole folder (or the .zip beside it).
 "@ | Out-File $sum -Encoding utf8 -Append
