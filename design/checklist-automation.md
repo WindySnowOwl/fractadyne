@@ -286,7 +286,7 @@ fast at real depth, and that the controls tell the truth.
 
 | # | class | enforcer |
 |---|---|---|
-| 143 | A | `scripts/dive-capture/screengate.py` over `gpu-validate`'s step 08 (three `capdive.ps1` dives at `dive-2p800.kfr`): blank / flat / flash / stale, median of three, exit 0 PASS, 1 RED, 2 VACUOUS; `--selftest` proves each criterion fires (design/live-render-robustness.md §7.6). PLANNED until the checklist has a `run:` class that requires a recorded exit code from this release's binary — a script that exists is not a gate that ran. |
+| 143 | A | `scripts/dive-capture/screengate.py` over `gpu-validate`'s step 08 (three `capdive.ps1` dives at `dive-2p800.kfr`): blank (and mid-dive blank episodes) / flat / flash / stale, median of three, exit 0 PASS, 1 RED, 2 VACUOUS — red on the build before the 2026-09-20 blank-frame fix, green on the fixed one in twelve runs on two cards; `--selftest` proves each criterion fires (design/live-render-robustness.md §7.6). PLANNED until the checklist has a `run:` class that requires a recorded exit code from this release's binary — a script that exists is not a gate that ran. |
 
 ### Sign-off (144)
 

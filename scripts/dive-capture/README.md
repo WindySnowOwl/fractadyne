@@ -37,8 +37,9 @@ python scripts/dive-capture/screengate.py --selftest          # every criterion 
 It scores **blank** (canvas stddev < 1), **flat** (>97% within 8 of the median colour), **flash**
 EPISODES (the canvas switching into or out of a flat capture) and **stale** (a streak of identical
 captures while the view moved; a whole run whose screen never changed while the autopilot's log
-shows the view travelling is FROZEN, and RED), takes the median of three, and holds it to 7% / 7% /
-3 / 2 with a blank spread of at most 10 points. ⚠`flashscore.py`'s FLASH_DIFF of 60 is kept for
+shows the view travelling is FROZEN, and RED), takes the median of three, and holds it to 7% blank,
+no mid-dive blank episode, 7% flat, 3 flashes and a stale streak of 2, with a blank spread of at
+most 10 points. ⚠`flashscore.py`'s FLASH_DIFF of 60 is kept for
 recordings but is NOT the gate's flash: at 2^800 an ordinary zoom step between captures differs by
 35–75 units, so it counted 26–43% of healthy transitions. VACUOUS (never a pass): fewer than three
 runs, a run under 60 captures, a view that did not move, or a log naming another bignum backend
@@ -46,10 +47,10 @@ than the fixture declares (`--bignum`, default astro-float).
 
 `capdive.ps1` is `capdive.sh` for a machine with no sh — the Radeon box and the battery. Both
 capture at ~170 ms per frame (PrintWindow at 480 px). Captures before the dive's first picture are
-its start, counted apart. ⚠On the RTX 3080 on 2026-09-26 the gate did NOT go red on the build before
-the blank-frame fix (median 2.9% blank against the fixed build's 0%): it catches a severe
-regression. The mid-dive blank-episode count it prints (pre-fix 3/1/1, fixed 0 in six runs)
-separates that one here, and is reported rather than gated until the Radeon arm has been measured.
+its start, counted apart. ⚠The 7% alone did NOT go red on the build before the blank-frame fix
+(RTX 3080, 2026-09-26: median 2.9% against the fixed build's 0%). The episode bound does: pre-fix
+3 / 1 / 1 mid-dive blank episodes, the fixed build 0 in twelve runs on both cards (the RX 6800 XT
+through the battery). The margin is thin — the pre-fix median sits exactly at one.
 
 ## Files
 
