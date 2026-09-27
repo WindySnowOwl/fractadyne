@@ -1140,6 +1140,11 @@ struct Perf {
     /// undersized. Measured at an explicit 10,000,000 iterations: five readings, then the budget
     /// froze at 9.0e8 and the view sat at 34x27 forever.
     iterate_steps: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// The diagnostic pass clock's readings per view (instrument `FRACTADYNE_PASS_CLOCK`; see
+    /// `fractadyne_gpu::PassClock`), drained and logged once a frame.
+    pass_clock_sink: [fractadyne_gpu::PassClockSink; 2],
+    /// GPU ns at which the last logged pass-clock pass of each view ended — the next line's gap.
+    pass_clock_prev_t1: [f64; 2],
     /// Nominal steps of the last frame that actually re-iterated — the cost that `iterate_ms` prices.
     fe_steps_last: [u64; 2],
     /// Last measured live iterate GPU ms per view — a copy of the swapped `iterate_ms`
@@ -1950,6 +1955,8 @@ impl Default for Perf {
             fe_budget: [0, 0],
             iterate_ms: [Default::default(), Default::default()],
             iterate_steps: [Default::default(), Default::default()],
+            pass_clock_sink: [Default::default(), Default::default()],
+            pass_clock_prev_t1: [0.0, 0.0],
             fe_steps_last: [0, 0],
             last_iterate_ms: [0.0, 0.0],
             fe_budget_ok: [false, false],
@@ -13944,6 +13951,46 @@ impl FractadyneApp {
         self.perf.rec_us = t0.elapsed().as_secs_f32() * 1e6;
     }
 
+    /// Log every pass the diagnostic pass clock timed since last frame (instrument
+    /// `FRACTADYNE_PASS_CLOCK`), one `[fd-passclock]` line each, in GPU order. `gap` is this pass's
+    /// start minus the previous logged pass's end on the same view: NEGATIVE means it began before
+    /// that one had finished. Observation only — nothing here feeds a decision.
+    fn drain_pass_clock(&mut self) {
+        for v in 0..2 {
+            let mut got = match self.perf.pass_clock_sink[v].lock() {
+                Ok(mut g) if !g.is_empty() => std::mem::take(&mut *g),
+                _ => continue,
+            };
+            got.sort_by(|a, b| a.t0.total_cmp(&b.t0));
+            for r in got {
+                let range = match r.chunk {
+                    Some([lo, hi]) => format!("chunk [{lo},{hi})"),
+                    None if r.tiled => "tile".to_string(),
+                    None => "full".to_string(),
+                };
+                let prev = self.perf.pass_clock_prev_t1[v];
+                let gap = if prev > 0.0 { format!("{:+.3}", (r.t0 - prev) / 1e6) } else { "-".into() };
+                let resolve = if r.r1 > r.r0 && r.r0 > 0.0 {
+                    format!(" resolve {:.3} ms (gap {:+.3})", (r.r1 - r.r0) / 1e6, (r.r0 - r.t1) / 1e6)
+                } else {
+                    String::new()
+                };
+                diag::log_line(
+                    "passclock",
+                    &format!(
+                        "v{v} f{} {range} steps={:.3e} gpu {:.3} ms gap {gap} ms{resolve}{} t0={:.3} ms",
+                        r.frame,
+                        r.steps as f64,
+                        (r.t1 - r.t0) / 1e6,
+                        if r.priced { " PRICED" } else { "" },
+                        r.t0 / 1e6,
+                    ),
+                );
+                self.perf.pass_clock_prev_t1[v] = r.t1.max(r.r1);
+            }
+        }
+    }
+
     /// Fold one measured iterate cost into a view's frame budget. Shared by BOTH measurement
     /// sources — the GPU timestamp readback and the wall-clock fallback — because the arithmetic
     /// must not differ between them: a fallback that walks the budget by different rules is a
@@ -14520,6 +14567,7 @@ impl eframe::App for FractadyneApp {
             }
         }
 
+        self.drain_pass_clock();
         // Re-size the floatexp frame budget from the LIVE iterate's measured GPU time, published by the
         // paint callback a couple of frames after the pass it describes. Walk the budget toward the
         // size that measures near TDR_BUDGET_MS by the observed time RATIO — no cost model, because at

@@ -2588,3 +2588,30 @@ printed for every run so the control is scored on the same number.
   The gate now goes red on `112a088^1` (exit 1) and green on every fixed set. The cost is stated in
   the scorer: the pre-fix median sits exactly at one, and a harsher regime than any measured could
   fail a good build.
+
+**beta.126: the pass clock** (branch `feat/reading-pool`).
+
+- **What prompted it.** `READING_POOL` (beta.125) was checked against the escaped-reference storm
+  on PLUTO: the tap rung at the 4,627 crash view with `REF_ESCAPE_AT=655`, three interleaved pairs.
+  The regime was ENTERED in all six runs, with no lethal-band line, no stall, no loss and logcheck
+  PASS. The budget stayed bounded: 1.48e10 at most with the pool on and 1.48e9 off, against the
+  field's 1.515e11. But the pool arm's first SETTLE after the dive ran 84–119 ms frames, one to
+  three per run (off: at most 43 ms), and no reading priced them. The time came back on the walk's
+  EMPTY TAIL pass, `[4627,4627)`, whose nominal steps are `px × 1` (the `.max(1)`), so the 0.7×
+  rule discarded 110–116 ms of GPU time as a tiny pass. The off arm has the same reading at 16 ms.
+  It scales with the untimed storm chunk before it, and late chunks look 3.5–12× costlier per
+  nominal step than early ones, which are what the budget is priced from. That is §2's
+  "budget never shrank" shape. It is not established that it is that loss.
+- **Why the reading alone can't say which pass it measured.** `IterTiming` is one-in-flight, so it
+  brackets about one pass in three. wgpu writes the begin-of-pass timestamp at BOTTOM_OF_PIPE, which
+  should wait for earlier work, so "the tail's timer caught the previous chunk draining" is not the
+  obvious reading either. The shader gives the tail no work: every pixel is settled or at `stop`.
+- **The instrument.** `FRACTADYNE_PASS_CLOCK=1` gives each view a ring of eight timestamp slots,
+  brackets EVERY iterate pass and the chunked resolve pass, and logs one `[fd-passclock]` line per
+  pass. Each line carries the frame, range, nominal steps, GPU ms, resolve ms and the gap since the
+  previous pass's end. When the pricer is armed on a pass, its reading is COPIED from the clock's
+  ticks for that pass, so the budget is fed identically. It changes no decision, but is non-stock
+  like every instrument. The field agent (v7) allows it.
+- **First look (RTX 3080, the same rung):** 1,307 passes timed, 665 of them the pricer's. The passes
+  lie end to end (gaps +0.3 to +0.5 ms, none negative). An empty tail costs 0.7–1.2 ms, as the
+  shader predicts. Chunks of 7.955e9 nominal steps ran 52–63 ms.

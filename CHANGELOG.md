@@ -12,6 +12,14 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A diagnostic that times every GPU pass** (beta.126, for testing; off unless set). With the
+  pool from beta.125 on, the RX 6800 XT's first settle after a deep zoom produced frames of up to
+  119 ms, and the frame budget never saw them. Their time was reported by the last, empty pass of
+  the settle, which does no work of its own, so the budget ignored it as too small to count. The
+  budget's own timer measures about one pass in three, so it cannot say which pass the time belonged
+  to. `FRACTADYNE_PASS_CLOCK=1` times every pass and logs each with its iteration range, its GPU
+  time and the gap since the previous pass ended (`[fd-passclock]`). It changes nothing the app
+  decides.
 - **An experiment to let the frame budget keep learning while you zoom** (beta.125, for testing;
   off unless set). The new record fields showed why moving frames stayed coarse on the RX 6800 XT:
   while the view moves, the GPU work goes out as small passes, and the rule that learns the frame

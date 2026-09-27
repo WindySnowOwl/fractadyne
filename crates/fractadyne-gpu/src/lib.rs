@@ -311,6 +311,174 @@ impl IterTiming {
     }
 }
 
+/// One live pass timed by the diagnostic PASS CLOCK (see [`PassClock`]).
+///
+/// Times are absolute GPU nanoseconds (timestamp ticks × the queue's period) on this queue's
+/// clock, so consecutive readings can be laid end to end: a pass whose `t0` falls before the
+/// previous pass's `t1` began before that one finished.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PassClockReading {
+    /// [`MandelbrotParams::pass_frame`] of the frame that recorded the pass.
+    pub frame: u64,
+    /// The iteration range of a chunked pass (`None` = a whole-frame or tile iterate).
+    pub chunk: Option<[u32; 2]>,
+    /// A scissored settle tile rather than the whole frame.
+    pub tiled: bool,
+    /// The pass's nominal step count ([`MandelbrotParams::nominal_steps`]).
+    pub steps: u64,
+    /// The pricer's own timer was armed on this pass, so the app's budget saw THIS reading.
+    pub priced: bool,
+    /// Iterate pass begin / end, GPU ns.
+    pub t0: f64,
+    pub t1: f64,
+    /// The chunked frame's resolve pass begin / end, GPU ns (both 0 on an unchunked frame).
+    pub r0: f64,
+    pub r1: f64,
+}
+
+/// Where the pass clock publishes finished readings; the app drains it (see
+/// [`MandelbrotParams::pass_clock`]).
+pub type PassClockSink = Arc<std::sync::Mutex<Vec<PassClockReading>>>;
+
+/// Passes the clock can have in flight per view. A reading lands 2-3 frames after its pass, and
+/// a chunked walk records one pass per frame, so eight keeps every pass timed with room to spare;
+/// a pass that finds no free slot is simply not timed (counted in [`PassClock::missed`]).
+const PASS_CLOCK_RING: usize = 8;
+
+struct PassClockSlot {
+    /// Four ticks: iterate begin/end, resolve begin/end (QUERY_RESOLVE | COPY_SRC).
+    resolve: wgpu::Buffer,
+    /// MAP_READ staging copy of `resolve`.
+    read: wgpu::Buffer,
+    state: TimingState,
+    status: Arc<std::sync::atomic::AtomicU8>,
+    /// How many of the four ticks this pass wrote (2 = iterate only, 4 = iterate + resolve).
+    ticks: u32,
+    meta: PassClockReading,
+}
+
+/// ⭐DIAGNOSTIC INSTRUMENT (`FRACTADYNE_PASS_CLOCK=1`): GPU timestamps on EVERY live iterate pass.
+///
+/// [`IterTiming`] is one-in-flight by design — the budget wants a clean reading, not a stream —
+/// so it brackets roughly one pass in three and says nothing about the others. The 2026-09-27
+/// storm check on the RX 6800 XT found a reading of 110-116 ms paired with a chunked walk's EMPTY
+/// tail pass (`[4627,4627)`, which iterates nothing), after an untimed storm chunk: which pass
+/// the time belonged to is exactly what one-in-flight cannot say. This clock times all of them
+/// and lays them end to end.
+///
+/// It changes no decision. When the pricer's timer is armed on a pass, the pricer's reading is
+/// copied from this clock's ticks for that same pass, so the budget sees what it would have seen.
+struct PassClock {
+    qs: wgpu::QuerySet,
+    slots: Vec<PassClockSlot>,
+    next: usize,
+    /// Passes recorded with every slot still in flight (not timed).
+    missed: u64,
+}
+
+impl PassClock {
+    fn new(device: &wgpu::Device) -> Option<Self> {
+        if !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+            return None;
+        }
+        let buf = |label, usage| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: 32,
+                usage,
+                mapped_at_creation: false,
+            })
+        };
+        let slots = (0..PASS_CLOCK_RING)
+            .map(|_| PassClockSlot {
+                resolve: buf(
+                    "fractadyne.pass_clock.resolve",
+                    wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                ),
+                read: buf(
+                    "fractadyne.pass_clock.read",
+                    wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                ),
+                state: TimingState::Idle,
+                status: Arc::new(std::sync::atomic::AtomicU8::new(MAP_PENDING)),
+                ticks: 0,
+                meta: PassClockReading::default(),
+            })
+            .collect();
+        Some(Self {
+            qs: device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("fractadyne.pass_clock"),
+                ty: wgpu::QueryType::Timestamp,
+                count: (4 * PASS_CLOCK_RING) as u32,
+            }),
+            slots,
+            next: 0,
+            missed: 0,
+        })
+    }
+
+    /// The slot the next pass may use, or `None` (and a miss) when it is still in flight.
+    fn take(&mut self) -> Option<usize> {
+        let k = self.next;
+        if self.slots[k].state == TimingState::Idle {
+            self.next = (k + 1) % PASS_CLOCK_RING;
+            Some(k)
+        } else {
+            self.missed += 1;
+            None
+        }
+    }
+
+    /// Advance every slot's readback — the same three-state machine as [`IterTiming::pump`],
+    /// once per slot — and publish each finished pass into `out`.
+    fn pump(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, out: Option<&PassClockSink>) {
+        use std::sync::atomic::Ordering::SeqCst;
+        let period = queue.get_timestamp_period() as f64;
+        let mut polled = false;
+        for s in self.slots.iter_mut() {
+            match s.state {
+                TimingState::Recorded => {
+                    s.status.store(MAP_PENDING, SeqCst);
+                    let status = s.status.clone();
+                    s.read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                        status.store(if r.is_ok() { MAP_OK } else { MAP_ERR }, SeqCst);
+                    });
+                    s.state = TimingState::Mapping;
+                }
+                TimingState::Mapping => {
+                    if !polled {
+                        let _ = device.poll(wgpu::Maintain::Poll);
+                        polled = true;
+                    }
+                    match s.status.load(SeqCst) {
+                        MAP_OK => {
+                            {
+                                let data = s.read.slice(..).get_mapped_range();
+                                let t: [u64; 4] = bytemuck::pod_read_unaligned(&data[..32]);
+                                let mut m = s.meta;
+                                m.t0 = t[0] as f64 * period;
+                                m.t1 = t[1] as f64 * period;
+                                if s.ticks == 4 {
+                                    m.r0 = t[2] as f64 * period;
+                                    m.r1 = t[3] as f64 * period;
+                                }
+                                if let Some(Ok(mut v)) = out.map(|o| o.lock()) {
+                                    v.push(m);
+                                }
+                            }
+                            s.read.unmap();
+                            s.state = TimingState::Idle;
+                        }
+                        MAP_ERR => s.state = TimingState::Idle,
+                        _ => {}
+                    }
+                }
+                TimingState::Idle => {}
+            }
+        }
+    }
+}
+
 /// Async readback of the LIVE iterate pass's event counters — feeds the app's adaptive
 /// iteration budget (the `maxiter` slot says how many pixels exhausted the budget, i.e. how
 /// starved the live view is). Mirrors [`IterTiming`]'s three-state machine exactly: armed by
@@ -521,6 +689,9 @@ impl CounterRead {
 struct ViewResources {
     /// GPU timing for the live iterate pass; `None` when the device lacks `TIMESTAMP_QUERY`.
     timing: Option<IterTiming>,
+    /// The diagnostic pass clock, created on the first frame that asks for it
+    /// ([`MandelbrotParams::pass_clock`]); `None` otherwise, or without `TIMESTAMP_QUERY`.
+    pass_clock: Option<PassClock>,
     /// The tile rect rendered last (base px), alongside `last_iter_key`: a tiled settle re-renders
     /// when the RECT advances even though the key (view/orbit/size) is unchanged.
     last_tile: Option<[u32; 4]>,
@@ -1477,6 +1648,7 @@ impl ViewResources {
 
         Self {
             timing: IterTiming::new(device),
+            pass_clock: None,
             counter_read: CounterRead::new(device),
             last_tile: None,
             iter_uniform,
@@ -1735,6 +1907,12 @@ pub struct MandelbrotParams {
     /// This dispatch's nominal cost (`px x ss^2 x iterations`; for a tile, the TILE's px). Handed
     /// to `IterTiming` when the pass is timed and handed back with the measurement.
     pub nominal_steps: u64,
+    /// The diagnostic pass clock's sink (instrument `FRACTADYNE_PASS_CLOCK`, see [`PassClock`]):
+    /// `Some` times every live iterate pass and publishes each here. `None` (the default) never
+    /// creates the clock.
+    pub pass_clock: Option<PassClockSink>,
+    /// The app's frame index, echoed back on each pass-clock reading.
+    pub pass_frame: u64,
     /// Sink for the live iterate pass's MAXITER FRACTION (capped pixels / iterated pixels, as
     /// `f64::to_bits`), published a couple of frames after a FULL-frame iterate. The app drains
     /// with `swap(u64::MAX)` (`u64::MAX` = no fresh reading). Feeds the adaptive iteration
@@ -1988,6 +2166,12 @@ impl CallbackTrait for MandelbrotParams {
         // Drain any timestamp readback armed on an earlier frame before this frame may re-arm it.
         if let Some(t) = view.timing.as_mut() {
             t.pump(device, queue, self.iterate_ms.as_ref(), self.iterate_steps.as_ref());
+        }
+        if self.pass_clock.is_some() && view.pass_clock.is_none() {
+            view.pass_clock = PassClock::new(device);
+        }
+        if let Some(c) = view.pass_clock.as_mut() {
+            c.pump(device, queue, self.pass_clock.as_ref());
         }
         // Same for the event-counter readback (adaptive iteration budget + live-normalize feedback).
         view.counter_read.pump(
@@ -2293,6 +2477,13 @@ impl CallbackTrait for MandelbrotParams {
                 .timing
                 .as_ref()
                 .is_some_and(|t| t.state == TimingState::Idle);
+            // The diagnostic pass clock, when asked for, brackets EVERY pass (its own ring); an
+            // armed pricer then takes its reading from the clock's ticks for this same pass.
+            let clock_k = if self.pass_clock.is_some() {
+                view.pass_clock.as_mut().and_then(PassClock::take)
+            } else {
+                None
+            };
             // Arm the event-counter readback for FULL-frame iterates only (a scissored settle tile
             // covers part of the frame, so its counts aren't a frame fraction) when the app wants
             // it and nothing is in flight. Zero the counters so this pass's tallies stand alone;
@@ -2358,11 +2549,18 @@ impl CallbackTrait for MandelbrotParams {
                         },
                     });
                     // Timestamps bracket the CHUNK pass — the cost the budget controller adapts.
-                    let ts_writes = arm_ts.then(|| wgpu::RenderPassTimestampWrites {
-                        query_set: &view.timing.as_ref().unwrap().qs,
-                        beginning_of_pass_write_index: Some(0),
-                        end_of_pass_write_index: Some(1),
-                    });
+                    let ts_writes = match clock_k {
+                        Some(k) => Some(wgpu::RenderPassTimestampWrites {
+                            query_set: &view.pass_clock.as_ref().unwrap().qs,
+                            beginning_of_pass_write_index: Some(4 * k as u32),
+                            end_of_pass_write_index: Some(4 * k as u32 + 1),
+                        }),
+                        None => arm_ts.then(|| wgpu::RenderPassTimestampWrites {
+                            query_set: &view.timing.as_ref().unwrap().qs,
+                            beginning_of_pass_write_index: Some(0),
+                            end_of_pass_write_index: Some(1),
+                        }),
+                    };
                     let attachments: Vec<_> =
                         st.tex[write].iter().map(|v| attach(v)).collect();
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2390,7 +2588,11 @@ impl CallbackTrait for MandelbrotParams {
                         label: Some("fractadyne.resolve_pass"),
                         color_attachments: &[attach(&view.tex_view), attach(&view.aux_view)],
                         depth_stencil_attachment: None,
-                        timestamp_writes: None,
+                        timestamp_writes: clock_k.map(|k| wgpu::RenderPassTimestampWrites {
+                            query_set: &view.pass_clock.as_ref().unwrap().qs,
+                            beginning_of_pass_write_index: Some(4 * k as u32 + 2),
+                            end_of_pass_write_index: Some(4 * k as u32 + 3),
+                        }),
                         occlusion_query_set: None,
                     });
                     pass.set_pipeline(resolve_pipeline.unwrap());
@@ -2415,11 +2617,18 @@ impl CallbackTrait for MandelbrotParams {
                     resolve_target: None,
                     ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
                 });
-                let ts_writes = arm_ts.then(|| wgpu::RenderPassTimestampWrites {
-                    query_set: &view.timing.as_ref().unwrap().qs,
-                    beginning_of_pass_write_index: Some(0),
-                    end_of_pass_write_index: Some(1),
-                });
+                let ts_writes = match clock_k {
+                    Some(k) => Some(wgpu::RenderPassTimestampWrites {
+                        query_set: &view.pass_clock.as_ref().unwrap().qs,
+                        beginning_of_pass_write_index: Some(4 * k as u32),
+                        end_of_pass_write_index: Some(4 * k as u32 + 1),
+                    }),
+                    None => arm_ts.then(|| wgpu::RenderPassTimestampWrites {
+                        query_set: &view.timing.as_ref().unwrap().qs,
+                        beginning_of_pass_write_index: Some(0),
+                        end_of_pass_write_index: Some(1),
+                    }),
+                };
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("fractadyne.iterate_pass"),
                     color_attachments: &[attach(&view.tex_view), attach(&view.aux_view)],
@@ -2434,7 +2643,31 @@ impl CallbackTrait for MandelbrotParams {
                 pass.set_bind_group(0, &view.iter_bg, &[]);
                 pass.draw(0..3, 0..1);
             }
-            if arm_ts {
+            if let Some(k) = clock_k {
+                let PassClock { qs, slots, .. } = view.pass_clock.as_mut().unwrap();
+                let s = &mut slots[k];
+                s.ticks = if chunk.is_some() { 4 } else { 2 };
+                let base = 4 * k as u32;
+                encoder.resolve_query_set(qs, base..base + s.ticks, &s.resolve, 0);
+                encoder.copy_buffer_to_buffer(&s.resolve, 0, &s.read, 0, 32);
+                s.meta = PassClockReading {
+                    frame: self.pass_frame,
+                    chunk,
+                    tiled: chunk.is_none() && tile_px.is_some(),
+                    steps: self.nominal_steps,
+                    priced: arm_ts,
+                    ..Default::default()
+                };
+                s.state = TimingState::Recorded;
+                if arm_ts {
+                    // The pricer's reading is this pass's iterate ticks, exactly as if it had
+                    // bracketed the pass itself.
+                    let t = view.timing.as_mut().unwrap();
+                    encoder.copy_buffer_to_buffer(&s.resolve, 0, &t.read, 0, 16);
+                    t.steps = self.nominal_steps;
+                    t.state = TimingState::Recorded;
+                }
+            } else if arm_ts {
                 let t = view.timing.as_mut().unwrap();
                 encoder.resolve_query_set(&t.qs, 0..2, &t.resolve, 0);
                 encoder.copy_buffer_to_buffer(&t.resolve, 0, &t.read, 0, 16);

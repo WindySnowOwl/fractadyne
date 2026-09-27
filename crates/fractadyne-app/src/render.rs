@@ -5813,6 +5813,9 @@ impl FractadyneApp {
             iterate_ms,
             iterate_steps,
             nominal_steps,
+            pass_clock: (crate::tunables::instrument("FRACTADYNE_PASS_CLOCK") > 0)
+                .then(|| self.perf.pass_clock_sink[vs.min(1)].clone()),
+            pass_frame: self.perf.frame_idx,
             maxiter_count,
             norm_range,
             grad_range,

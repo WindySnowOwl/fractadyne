@@ -153,7 +153,8 @@ pub(crate) fn is_stock() -> bool {
 /// deliberately perturbs the live path to put it in a regime that has killed devices, so a run
 /// with one armed has — like an override — measured a build nobody ships, and says so in
 /// [`status_line`] (hence in the frame record's header, the self-test and `--recordtest`).
-pub(crate) const INSTRUMENTS: &[&str] = &["FRACTADYNE_REF_ESCAPE_AT", "FRACTADYNE_BLA_DROP_FRAMES"];
+pub(crate) const INSTRUMENTS: &[&str] =
+    &["FRACTADYNE_REF_ESCAPE_AT", "FRACTADYNE_BLA_DROP_FRAMES", "FRACTADYNE_PASS_CLOCK"];
 
 /// The armed instruments and their values: set, parseable and non-zero. Read once — they are
 /// consulted per frame.
