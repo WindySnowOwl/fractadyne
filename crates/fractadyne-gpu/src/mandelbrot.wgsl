@@ -473,6 +473,17 @@ const CTR_GRAD_N: u32 = 9u;
 // The mean above hides a dense aliasing region inside a smooth one; the DISTRIBUTION does not, and
 // the app reads it against the palette cycle it is actually using. See lib.rs for the field case.
 const CTR_GRAD_HIST: u32 = 10u;
+// First of 24 log2 buckets of the escaped pixels' smooth-iteration count (keep in sync with lib.rs
+// `CTR_ESC_HIST` / `ESC_HIST_BUCKETS`): bucket b = [2^b, 2^(b+1)), bucket 0 also takes < 1, bucket
+// 23 open-ended. The app sizes a moving frame to how far MOST of the picture escapes, not its
+// slowest pixel (lib.rs has the field case). Written only by `fs_resolve`, on the 4x4 grid.
+const CTR_ESC_HIST: u32 = 22u;
+fn esc_hist_commit(sm: f32) {
+    if (sm >= 0.0) {
+        let b = u32(clamp(floor(log2(max(sm, 1.0))), 0.0, 23.0));
+        atomicAdd(&counters[CTR_ESC_HIST + b], 1u);
+    }
+}
 
 fn ctr_commit(n_rebase: u32, n_ext: u32, n_bla: u32) {
     if (n_rebase > 0u) { atomicAdd(&counters[CTR_REBASE], n_rebase); }
@@ -2209,6 +2220,7 @@ fn fs_resolve(in: VsOut) -> FragOut {
     // the sibling "flat gray at shallow zoom" defect is outliers stretching the range.
     if ((p.x & 3) == 0 && (p.y & 3) == 0) {
         esc_range_commit(sm.z);
+        esc_hist_commit(sm.z);
         // Local gradient against the RIGHT neighbour, same subsample. Bounds-checked rather than
         // relying on out-of-range textureLoad returning zero: a zeroed meta decodes to a status
         // that is not ST_ESCAPED today, but that is a coincidence to depend on.

@@ -79,6 +79,8 @@ pub(crate) struct Cost {
     pub tdr_tiles_ceil: u64,
     /// Per-pass fixed GPU cost, ms (`PASS_FIXED_MS_DEFAULT`; 0 = off).
     pub pass_fixed_ms: f64,
+    /// Fraction of the picture a moving frame is sized to reach (`MOTION_NEED_QUANTILE_DEFAULT`).
+    pub motion_need_quantile: f64,
     /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
     /// second override channel because duplicating the machinery for a single value would be worse.
     /// See the note above on what earns a place in this set.
@@ -105,6 +107,7 @@ impl Default for Cost {
             tdr_max_tiles: TDR_MAX_TILES_DEFAULT,
             tdr_tiles_ceil: TDR_TILES_CEIL_DEFAULT,
             pass_fixed_ms: PASS_FIXED_MS_DEFAULT,
+            motion_need_quantile: MOTION_NEED_QUANTILE_DEFAULT,
             bla_eps: BLA_EPS,
         }
     }
@@ -244,12 +247,27 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
             "TDR_TILES_CEIL" => { let p = c.tdr_tiles_ceil; c.tdr_tiles_ceil = u()?; p.to_string() }
             "PASS_FIXED_MS" => {
                 let p = c.pass_fixed_ms;
-                let v = f()?;
+                // The one tunable where 0 is a real value — "off", the proportional price — since
+                // the default is on and an A/B needs its control.
+                let v = raw
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|v| v.is_finite() && *v >= 0.0)
+                    .ok_or_else(|| format!("--set PASS_FIXED_MS: '{raw}' is not a non-negative number"))?;
                 // At or above the pass target there is no variable time left to size a pass in.
                 if v >= MOTION_PASS_MS {
                     return Err(format!("--set PASS_FIXED_MS={v}: must be below MOTION_PASS_MS ({MOTION_PASS_MS} ms)"));
                 }
                 c.pass_fixed_ms = v;
+                p.to_string()
+            }
+            "MOTION_NEED_QUANTILE" => {
+                let p = c.motion_need_quantile;
+                let v = f()?;
+                if v > 1.0 {
+                    return Err(format!("--set MOTION_NEED_QUANTILE={v}: a fraction, at most 1 (1 = the whole picture)"));
+                }
+                c.motion_need_quantile = v;
                 p.to_string()
             }
             _ => return Err(format!("--set {key}: not an overridable tunable ({})", OVERRIDABLE)),
@@ -281,7 +299,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     TDR_LATENCY_ACCEPT_MS, TDR_GROW_MAX, TDR_SHRINK_MAX, TDR_LETHAL_MS, TDR_BOOTSTRAP_STEPS, \
     TDR_BOOTSTRAP_MS, MOTION_UNPRICED_MAX, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
-    EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS";
+    EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE";
 
 #[cfg(test)]
 mod override_tests;
@@ -585,9 +603,27 @@ pub(crate) const MOTION_PASS_MS: f64 = 10.0;
 /// and a pass is sized to `MOTION_PASS_MS` less it (`motion_pass_steps_fixed`). Both are bounded:
 /// at most three quarters of a reading, or of the target, is ever attributed to the fixed part, so a
 /// value set too high can at most quadruple the rate — the [0.25×, 4×] clamp §5.2 specifies.
-/// Must be below `MOTION_PASS_MS`. §5.2 wants this as a per-adapter CALIBRATION, not an override;
-/// this is the measured first step (an override so its A/B is one flag), not the destination.
-pub(crate) const PASS_FIXED_MS_DEFAULT: f64 = 0.0;
+/// Must be below `MOTION_PASS_MS`; `--set PASS_FIXED_MS=0` turns it off (the A/B's control).
+///
+/// ⭐The default 0.2 ms is the RTX 3080's measured fixed cost and the CONSERVATIVE end: on the
+/// RTX 3080 (three interleaved pairs at 2^800, 2026-09-26) it doubled the pixels of a moving frame
+/// (visible scale 0.18 → 0.25) with frame time, >33 ms frames and the screen gate unchanged, and
+/// on the RX 6800 XT, whose fixed cost is ~1 ms, even 1.0 ms changed nothing but the learned rate
+/// (2.2×) — so 0.2 under-corrects there and harms nothing. §5.2 wants the per-adapter value from a
+/// CALIBRATION file written by `--chunk-sweep`; until then this one value serves every card.
+pub(crate) const PASS_FIXED_MS_DEFAULT: f64 = 0.2;
+
+/// How much of the picture a MOVING frame is sized to show, as the fraction of the view's escaped
+/// pixels its one-pass walk must reach (`render::motion_need`). 1.0 = all of it — the top of the
+/// escape range, the shipped behaviour. Below 1, the iteration by which that fraction had escaped
+/// on the view's last complete walk (`Perf::esc_hist`), never above the top.
+///
+/// ⭐WHY. Deep, a few stragglers put the top of the range far above where nearly all of the picture
+/// has escaped, and sizing to the top leaves a slow card on the ladder's floor (the RX 6800 XT at
+/// ~10k iterations, 2026-09-26: the fixed-cost price raised its motion rate 2.2× and the frame
+/// stayed at 0.10). ⚠The pixels past the quantile are unfinished in the moving frame — the
+/// blank-frame lesson is why this is a measured setting, not a default: the screen gate decides.
+pub(crate) const MOTION_NEED_QUANTILE_DEFAULT: f64 = 1.0;
 
 /// The most a held frame may MAGNIFY before its refresh lands, octaves — the zoom-rate-aware half
 /// of the refresh sizing. At `zoom_oct_s` octaves per second the refresh has `HELD_MAX_OCT /

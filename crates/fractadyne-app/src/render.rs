@@ -4347,6 +4347,32 @@ impl FractadyneApp {
                     rec.ctr_rebase = rebase;
                     rec.ctr_bla_skip = bla_skip;
                 }
+                // The escape distribution of a COMPLETE walk only (see `Perf::esc_hist`): the
+                // cursor reached the ask the view was last planned at, and the histogram is not
+                // the all-zero of a single-pass frame (which never runs `fs_resolve`).
+                if r.esc_hist.iter().any(|&c| c > 0)
+                    && self.perf.rec[vb].gpu_iter > 0
+                    && r.cursor >= self.perf.rec[vb].gpu_iter
+                {
+                    // How far below the range's top most of the picture escapes: the quantity
+                    // `MOTION_NEED_QUANTILE` trades on. Traced when the stored walk changes.
+                    if crate::diag::trace_on("gpu") && self.perf.esc_hist[vb] != Some(r.esc_hist) {
+                        let q = |p: f64| escape_quantile(&r.esc_hist, p).unwrap_or(0.0);
+                        let top = if r.esc_max_bits == u32::MAX { 0.0 } else { f32::from_bits(r.esc_max_bits) as f64 };
+                        crate::diag::trace(
+                            "gpu",
+                            format!(
+                                "esc-hist v{vb}: p50 {:.0} p90 {:.0} p99 {:.0} top {top:.0} (cursor {}, {} samples)",
+                                q(0.5),
+                                q(0.9),
+                                q(0.99),
+                                r.cursor,
+                                r.esc_hist.iter().map(|&c| c as u64).sum::<u64>()
+                            ),
+                        );
+                    }
+                    self.perf.esc_hist[vb] = Some(r.esc_hist);
+                }
                 let ct = &mut self.perf.content[vb];
                 ct.feed(r);
                 if crate::diag::trace_on("gpu") {
@@ -6514,7 +6540,12 @@ impl FractadyneApp {
             let vbi = (view_id as usize).min(1);
             // The TOP of the view's escape range, not its first escape: reaching the first escape
             // commits one pixel, reaching the top commits the picture.
-            let need = self.perf.norm_range[vbi].map_or(0.0, |(_, hi)| hi as f64);
+            // With `MOTION_NEED_QUANTILE` below 1, how far MOST of it escapes (`motion_need`).
+            let need = motion_need(
+                self.perf.norm_range[vbi].map_or(0.0, |(_, hi)| hi as f64),
+                self.perf.esc_hist[vbi].as_ref().map(|h| &h[..]),
+                crate::tunables::cost().motion_need_quantile,
+            );
             let target = visible_res_target(
                 self.perf.motion_pass_steps_last[vbi],
                 (resolution[0] as u64) * (resolution[1] as u64),
@@ -8610,6 +8641,45 @@ pub(crate) fn motion_pass_steps_fixed(
         fallback_steps
     };
     steps.min(tdr_steps).max(1)
+}
+
+/// The smooth-iteration count by which fraction `q` of a view's escaped pixels had escaped, from
+/// its log₂ escape histogram (`fractadyne_gpu::CTR_ESC_HIST`: bucket `b` = `[2^b, 2^(b+1))`),
+/// interpolated log-linearly inside the bucket it falls in. `None` for an empty histogram or a `q`
+/// outside `(0, 1]`.
+pub(crate) fn escape_quantile(hist: &[u32], q: f64) -> Option<f64> {
+    if !(q > 0.0 && q <= 1.0) {
+        return None;
+    }
+    let total: u64 = hist.iter().map(|&c| c as u64).sum();
+    if total == 0 {
+        return None;
+    }
+    let want = q * total as f64;
+    let mut cum = 0.0;
+    for (b, &c) in hist.iter().enumerate() {
+        let next = cum + c as f64;
+        if c > 0 && next >= want {
+            let frac = ((want - cum) / c as f64).clamp(0.0, 1.0);
+            return Some((b as f64 + frac).exp2());
+        }
+        cum = next;
+    }
+    Some((hist.len() as f64).exp2())
+}
+
+/// How far a moving frame's one-pass walk must reach: `hi`, the top of the view's escape range —
+/// or, with `q` (`MOTION_NEED_QUANTILE`) below 1 and a histogram in hand, the iteration by which
+/// that fraction of the view's last complete walk had escaped, never above `hi`. `q` >= 1, no
+/// histogram, or no range: `hi`, exactly the shipped sizing.
+pub(crate) fn motion_need(hi: f64, hist: Option<&[u32]>, q: f64) -> f64 {
+    if !(q < 1.0) || !(hi > 0.0) {
+        return hi;
+    }
+    match hist.and_then(|h| escape_quantile(h, q)) {
+        Some(x) => x.min(hi),
+        None => hi,
+    }
 }
 
 /// The part of a pass's `ms` that scales with its steps: `ms` less the per-pass fixed cost, never

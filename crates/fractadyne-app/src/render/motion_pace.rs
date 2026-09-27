@@ -4,8 +4,13 @@ const DT60: f64 = 1.0 / 60.0;
 
 #[test]
 fn a_pass_is_sized_from_the_measured_rate_to_the_target() {
-    // 1e8 nominal steps/ms at a 10 ms target = 1e9 steps — not the 4e10 TDR budget.
-    assert_eq!(motion_pass_steps(1.0e8, 10.0, 4.0e10 as u64, 4.0e8 as u64), 1.0e9 as u64);
+    // 1e8 nominal steps/ms at a 10 ms target = 1e9 steps — not the 4e10 TDR budget. (With no fixed
+    // term; the shipped default sets 0.2 ms of every pass aside, leaving 9.8 ms of steps.)
+    assert_eq!(motion_pass_steps_fixed(1.0e8, 10.0, 0.0, 4.0e10 as u64, 4.0e8 as u64), 1.0e9 as u64);
+    assert_eq!(
+        motion_pass_steps(1.0e8, 10.0, 4.0e10 as u64, 4.0e8 as u64),
+        (1.0e8 * (10.0 - crate::tunables::PASS_FIXED_MS_DEFAULT)) as u64
+    );
     // The TDR budget stays the ceiling: a fast regime cannot size a dispatch past it.
     assert_eq!(motion_pass_steps(1.0e12, 10.0, 4.0e10 as u64, 4.0e8 as u64), 4.0e10 as u64);
 }
@@ -264,4 +269,37 @@ fn a_fixed_term_set_too_high_is_bounded() {
     assert_eq!(p, 2.5e8 as u64);
     // ...and the TDR budget is still the ceiling.
     assert_eq!(motion_pass_steps_fixed(1.0e12, 10.0, 1.0, 4.0e10 as u64, 1), 4.0e10 as u64);
+}
+
+/// The quantile of a log2 escape histogram: bucket b spans [2^b, 2^(b+1)), log-linear inside it.
+#[test]
+fn an_escape_quantile_reads_the_log2_histogram() {
+    let mut h = [0u32; 24];
+    h[10] = 90; // 90 samples in [1024, 2048)
+    h[13] = 10; // 10 stragglers in [8192, 16384)
+    // 90% of the picture has escaped by the top of bucket 10.
+    assert!((escape_quantile(&h, 0.9).unwrap() - 2048.0).abs() < 1e-9);
+    // Half of bucket 10's samples: halfway through it in log2, i.e. 2^10.5.
+    assert!((escape_quantile(&h, 0.45).unwrap() - 2f64.powf(10.5)).abs() < 1e-6);
+    // The whole picture reaches the top of the stragglers' bucket.
+    assert!((escape_quantile(&h, 1.0).unwrap() - 16384.0).abs() < 1e-9);
+    assert_eq!(escape_quantile(&[0u32; 24], 0.9), None);
+    assert_eq!(escape_quantile(&h, 0.0), None);
+    assert_eq!(escape_quantile(&h, 1.5), None);
+}
+
+/// `MOTION_NEED_QUANTILE` at 1 (the default), no histogram or no range: the top of the range,
+/// exactly the shipped sizing. Below 1: the quantile, never above the top.
+#[test]
+fn a_moving_frame_needs_the_top_unless_asked_for_less() {
+    let mut h = [0u32; 24];
+    h[10] = 90;
+    h[13] = 10;
+    let hi = 12_651.0;
+    assert_eq!(motion_need(hi, Some(&h), 1.0), hi);
+    assert_eq!(motion_need(hi, None, 0.9), hi);
+    assert_eq!(motion_need(0.0, Some(&h), 0.9), 0.0);
+    assert!((motion_need(hi, Some(&h), 0.9) - 2048.0).abs() < 1e-9);
+    // A quantile above the measured top is capped at the top.
+    assert_eq!(motion_need(1500.0, Some(&h), 0.9), 1500.0);
 }
