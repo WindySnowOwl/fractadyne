@@ -2615,3 +2615,27 @@ printed for every run so the control is scored on the same number.
 - **First look (RTX 3080, the same rung):** 1,307 passes timed, 665 of them the pricer's. The passes
   lie end to end (gaps +0.3 to +0.5 ms, none negative). An empty tail costs 0.7–1.2 ms, as the
   shader predicts. Chunks of 7.955e9 nominal steps ran 52–63 ms.
+
+**beta.127: calibration markers, and the Radeon's clock** (same branch).
+
+- ⛔**Retraction.** The 116 ms was not hidden storm work, and "late chunks cost 3.5–12× per step" was
+  an artifact. On PLUTO, with every pass timed (six runs), the EMPTY tail pass reads 2.75–33.6 ms,
+  where the 3080 reads 0.7 ms. Passes doing very different amounts of work read the same ~31–33 ms.
+- **The markers.** An empty render pass is now recorded just before and just after each timed pass.
+  On both cards they read 0.000 ms and sit 6–15 µs from the pass, so the brackets themselves are
+  faithful: the extra time is inside the pass.
+- ⭐⭐**The Radeon's GPU timeline does not track its CPU timeline.** Each pass's GPU start time was
+  compared with the CPU time of the frame that recorded it. On the 3080 the two agree to 0.3% over
+  36 s, and no step between consecutive passes exceeds 27 ms. PLUTO (six runs) shows:
+  - one forward jump of ~179,700 s (~50 h) per run, early on;
+  - a step of about 2.16 s at about frame 140 in every run, with nothing in flight and the CPU's
+    frames regular;
+  - 63–153 steps of ±150–550 ms per run, forward and backward roughly cancelling (+17.3 s / −17.2 s),
+    almost all while moving.
+- The pool-off clock run had 124 such steps and no frame over 55 ms, so they are not real GPU
+  delays. On this card a single timestamp reading is therefore not a reliable measure of its pass,
+  and it can be wrong in EITHER direction. The Radeon's frame budget is priced from these readings;
+  a too-short reading is the budget-grows direction. That this contributed to the 09-21 loss is a
+  hypothesis, not a finding.
+- ⚠**The instrument perturbs.** 2 of 6 clock-on runs (both pool-on) had a 470–559 ms frame; 0 of 6
+  without the clock did (max 56.6 ms). Frame times from clock-on runs are not evidence.
