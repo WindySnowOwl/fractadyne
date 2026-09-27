@@ -93,6 +93,7 @@ mod sysinfo;
 mod theme;
 mod torture;
 mod tone;
+mod timing_witness;
 mod tunables;
 mod ui;
 mod shot;
@@ -1140,6 +1141,19 @@ struct Perf {
     /// undersized. Measured at an explicit 10,000,000 iterations: five readings, then the budget
     /// froze at 9.0e8 and the view sat at 34x27 forever.
     iterate_steps: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// The diagnostic pass clock's readings per view (instrument `FRACTADYNE_PASS_CLOCK`; see
+    /// `fractadyne_gpu::PassClock`), drained and logged once a frame.
+    pass_clock_sink: [fractadyne_gpu::PassClockSink; 2],
+    /// GPU ns at which the last logged pass-clock pass of each view ended — the next line's gap.
+    pass_clock_prev_t1: [f64; 2],
+    /// Frame index of the pass `iterate_ms` timed, published by the GPU in the same breath.
+    iterate_frame: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// `app_micros` when that pass's timer was armed, published with it (0 = none).
+    iterate_armed: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// Every GPU reading held against its frame's CPU-side completion window (see
+    /// `timing_witness`); the verdict for the reading being judged rides here into the record.
+    witness: timing_witness::Witness,
+    witness_pending: [Option<timing_witness::Verdict>; 2],
     /// Nominal steps of the last frame that actually re-iterated — the cost that `iterate_ms` prices.
     fe_steps_last: [u64; 2],
     /// Last measured live iterate GPU ms per view — a copy of the swapped `iterate_ms`
@@ -1610,6 +1624,9 @@ struct Perf {
     /// for, and `res_scale` before the ladder's rung was applied. Zero when the frame was not sized
     /// as a moving frame. For the frame record (`vis_need`, `vis_target`, `vis_pre_scale`).
     vis_sizing: [[f64; 3]; 2],
+    /// Discarded budget readings pooled per view until representative (`READING_POOL`,
+    /// `render::pool_step`).
+    reading_pool: [render::ReadingPool; 2],
     /// The palette window actually SHOWN, gliding toward `norm_range` (the fed target) a fixed
     /// fraction per frame. The target moves in steps — one per escape-range reading, every few
     /// frames — and a step is a visible colour snap: measured on an 8-octave glide, one frame
@@ -1947,6 +1964,12 @@ impl Default for Perf {
             fe_budget: [0, 0],
             iterate_ms: [Default::default(), Default::default()],
             iterate_steps: [Default::default(), Default::default()],
+            pass_clock_sink: [Default::default(), Default::default()],
+            pass_clock_prev_t1: [0.0, 0.0],
+            iterate_frame: [Default::default(), Default::default()],
+            iterate_armed: [Default::default(), Default::default()],
+            witness: Default::default(),
+            witness_pending: [None, None],
             fe_steps_last: [0, 0],
             last_iterate_ms: [0.0, 0.0],
             fe_budget_ok: [false, false],
@@ -2097,6 +2120,7 @@ impl Default for Perf {
             norm_hist: [None, None],
             esc_hist: [None, None],
             vis_sizing: [[0.0; 3]; 2],
+            reading_pool: [render::ReadingPool::default(); 2],
             norm_shown: [None, None],
             chunk_governed: [false, false],
             motion_res: 0.6,
@@ -7789,6 +7813,7 @@ impl FractadyneApp {
         self.perf.iter_exhausted = [false, false];
         self.perf.norm_range = [None, None];
         self.perf.esc_hist = [None, None];
+        self.perf.reading_pool = [render::ReadingPool::default(); 2];
         self.perf.norm_sig = [0, 0];
         self.perf.norm_locked = [false, false];
     }
@@ -13839,6 +13864,9 @@ impl FractadyneApp {
         r.read_ok = ok;
         r.read_lethal = lethal;
         r.refusal = refused;
+        let w = self.perf.witness_pending[v.min(1)].filter(|_| src == Self::SRC_GPU_ITERATE);
+        r.read_window_ms = w.map_or(0.0, |w| w.window_ms);
+        r.read_queue_empty = w.is_some_and(|w| w.queue_empty);
     }
 
     /// THE FRAME RECORD'S EMIT (`diag::frame_record`, design W1): complete each view's record with
@@ -13939,6 +13967,56 @@ impl FractadyneApp {
         self.perf.rec_us = t0.elapsed().as_secs_f32() * 1e6;
     }
 
+    /// Log every pass the diagnostic pass clock timed since last frame (instrument
+    /// `FRACTADYNE_PASS_CLOCK`), one `[fd-passclock]` line each, in GPU order. `gap` is this pass's
+    /// start minus the previous logged pass's end on the same view: NEGATIVE means it began before
+    /// that one had finished. Observation only — nothing here feeds a decision.
+    fn drain_pass_clock(&mut self) {
+        for v in 0..2 {
+            let mut got = match self.perf.pass_clock_sink[v].lock() {
+                Ok(mut g) if !g.is_empty() => std::mem::take(&mut *g),
+                _ => continue,
+            };
+            got.sort_by(|a, b| a.t0.total_cmp(&b.t0));
+            for r in got {
+                let range = match r.chunk {
+                    Some([lo, hi]) => format!("chunk [{lo},{hi})"),
+                    None if r.tiled => "tile".to_string(),
+                    None => "full".to_string(),
+                };
+                let prev = self.perf.pass_clock_prev_t1[v];
+                let gap = if prev > 0.0 { format!("{:+.3}", (r.t0 - prev) / 1e6) } else { "-".into() };
+                let resolve = if r.r1 > r.r0 && r.r0 > 0.0 {
+                    format!(" resolve {:.3} ms (gap {:+.3})", (r.r1 - r.r0) / 1e6, (r.r0 - r.t1) / 1e6)
+                } else {
+                    String::new()
+                };
+                // The calibration markers: empty passes either side, each ~0 on a faithful clock.
+                let last = r.t1.max(r.r1);
+                let markers = format!(
+                    " | pre {:.3} (to iter {:+.3}) post {:.3} (after {:+.3}){}",
+                    (r.m1 - r.m0) / 1e6,
+                    (r.t0 - r.m1) / 1e6,
+                    (r.p1 - r.p0) / 1e6,
+                    (r.p0 - last) / 1e6,
+                    if r.missed > 0 { format!(" missed {}", r.missed) } else { String::new() },
+                );
+                diag::log_line(
+                    "passclock",
+                    &format!(
+                        "v{v} f{} {range} steps={:.3e} gpu {:.3} ms gap {gap} ms{resolve}{}{markers} t0={:.3} ms",
+                        r.frame,
+                        r.steps as f64,
+                        (r.t1 - r.t0) / 1e6,
+                        if r.priced { " PRICED" } else { "" },
+                        r.t0 / 1e6,
+                    ),
+                );
+                self.perf.pass_clock_prev_t1[v] = r.p1.max(last);
+            }
+        }
+    }
+
     /// Fold one measured iterate cost into a view's frame budget. Shared by BOTH measurement
     /// sources — the GPU timestamp readback and the wall-clock fallback — because the arithmetic
     /// must not differ between them: a fallback that walks the budget by different rules is a
@@ -13948,6 +14026,27 @@ impl FractadyneApp {
     /// `ms` is how long the dispatch of `steps` nominal steps took. Returns whether the budget
     /// moved. The caller owns the pairing: `steps` must be the count that `ms` actually priced.
     fn apply_iterate_measurement(&mut self, v: usize, ms: f64, steps: u64, src: &str) -> bool {
+        // THE TIMING WITNESS GUARD (beta.129; `timing_witness`). A GPU reading LONGER than the
+        // CPU-side window its pass ran inside did not happen. On the RX 6800 XT, 2 of 1,505 budget
+        // readings were, both a walk's empty tail. It prices nothing: not the budget, not the
+        // pool, and not the mode rate below, which latches its minimum for the session.
+        let witness = self.perf.witness_pending[v.min(1)].filter(|_| src == Self::SRC_GPU_ITERATE);
+        if let Some(w) = witness.filter(|w| w.impossible(ms)) {
+            let cur = render::budget_base(self.perf.fe_budget[v], self.perf.bootstrap_steps(v));
+            diag::budget_note(format!(
+                "v{v} {src}={ms:.1}ms steps={:.3e} budget={cur:.3e} IMPOSSIBLE (longer than its \
+                 {:.1} ms window) - not priced",
+                steps as f64, w.window_ms
+            ));
+            self.note_reading(v, src, ms, steps, cur, cur, diag::frame_record::verdict::IMPOSSIBLE, false, 0);
+            return false;
+        }
+        // …and one that leaves far more of an EMPTY queue's window unexplained than either tested
+        // card ever did (RX 6800 XT max 58 ms, RTX 3080 48 ms, over ~2,500 readings) may be too
+        // SHORT — the direction that grows a budget past what the GPU can do. It may shrink the
+        // budget, never grow it, directly or through the pool. None has been observed; insurance.
+        let short = witness
+            .is_some_and(|w| w.queue_empty && w.window_ms - ms > timing_witness::SHORT_SLACK_MS);
         // Zero means "nothing measured yet in this mode" — that is the one case the opening guess
         // is for. ⚠It used to be `.max(TDR_BOOTSTRAP_STEPS)`, which re-raised the budget to the
         // guess before EVERY step, so a converged-low budget was hoisted back up on each reading
@@ -13980,8 +14079,39 @@ impl FractadyneApp {
             let vb = v.min(1);
             self.perf.blind_slow_readings[vb] = self.perf.blind_slow_readings[vb].saturating_add(1);
         }
-        let Some((next, ok)) = render::budget_step(cur, steps, ms, !self.render_cfg.auto_iter)
-        else {
+        let explicit = !self.render_cfg.auto_iter;
+        let direct = render::budget_step(cur, steps, ms, explicit);
+        // `READING_POOL`: a reading the rule discards joins the view's pool, and a pool that has
+        // become representative is priced as one reading (see `render::ReadingPool` — while the
+        // view moves, every reading is a discarded one). A reading priced directly supersedes it.
+        let vb = v.min(1);
+        let mut pooled = None;
+        if direct.is_some() {
+            self.perf.reading_pool[vb] = render::ReadingPool::default();
+        } else if crate::tunables::cost().reading_pool == 1 && src == Self::SRC_GPU_ITERATE && !short {
+            if let Some((ps, pms, pn)) = render::pool_step(
+                &mut self.perf.reading_pool[vb],
+                steps,
+                ms,
+                cur,
+                self.perf.frame_idx,
+                self.perf.mode_switch_frame[v],
+            ) {
+                pooled = render::budget_step(cur, ps, pms, explicit);
+                diag::budget_note(format!(
+                    "v{v} POOLED {pn} discarded readings: steps={:.3e} ms={pms:.1} budget={cur:.3e}{}",
+                    ps as f64,
+                    if pooled.is_some() { "" } else { " (still not priceable)" }
+                ));
+                if diag::trace_on("gpu") {
+                    diag::trace(
+                        "gpu",
+                        format!("view={v} pooled {pn} readings: steps={:.3e} ms={pms:.1}", ps as f64),
+                    );
+                }
+            }
+        }
+        let Some((next, ok)) = direct.or(pooled) else {
             diag::budget_note(format!(
                 "v{v} {src}={ms:.1}ms steps={:.3e} budget={cur:.3e} DISCARDED (under 0.7x budget \
                  and not slow)",
@@ -14005,6 +14135,7 @@ impl FractadyneApp {
         // What the reading asked for BEFORE the gate — the only way to record a refusal as a
         // refusal rather than as a reading that happened to ask for nothing.
         let asked = next;
+        let next = if short { next.min(cur) } else { next };
         let (next, ok) = render::budget_after_build_gate(cur, next, ok, building);
         if building && next == cur {
             diag::trace(
@@ -14062,7 +14193,13 @@ impl FractadyneApp {
             // The REASON growth was refused, recorded rather than left to be inferred from an
             // "(unchanged)" line — the refusal itself was trace-gated, i.e. absent in the field.
             // Exactly `budget_after_build_gate`'s refusal condition.
-            let refused = if building && asked > cur { refusal::BUILDING } else { 0 };
+            let refused = if short && asked > cur {
+                refusal::SHORT
+            } else if building && asked > cur {
+                refusal::BUILDING
+            } else {
+                0
+            };
             let v8 = if moved { verdict::MOVED } else { verdict::UNCHANGED };
             self.note_reading(v, src, ms, steps, cur, next, v8, ok, refused);
         }
@@ -14411,6 +14548,9 @@ impl eframe::App for FractadyneApp {
                     });
                 }
             }
+            // The timing witness: the previous frame's work (`frame_idx` is not yet advanced) has
+            // been submitted — stamp when it completes.
+            self.perf.witness.arm_done(q, self.perf.frame_idx, app_micros);
         }
         // Adapter name for the --uitest report header (once is enough; cheap to read each frame).
         let gpu_name = frame.wgpu_render_state().map(|rs| rs.adapter.get_info().name);
@@ -14484,6 +14624,7 @@ impl eframe::App for FractadyneApp {
             }
         }
 
+        self.drain_pass_clock();
         // Re-size the floatexp frame budget from the LIVE iterate's measured GPU time, published by the
         // paint callback a couple of frames after the pass it describes. Walk the budget toward the
         // size that measures near TDR_BUDGET_MS by the observed time RATIO — no cost model, because at
@@ -14567,9 +14708,20 @@ impl eframe::App for FractadyneApp {
                 0 => self.perf.fe_steps_last[v],
                 n => n,
             };
+            // The timing witness (measure only): the reading against its pass's CPU-side window.
+            let frame = self.perf.iterate_frame[v].swap(0, std::sync::atomic::Ordering::SeqCst);
+            let armed = self.perf.iterate_armed[v].swap(0, std::sync::atomic::Ordering::SeqCst);
+            let verdict = self.perf.witness.judge(frame, armed);
+            if let Some(w) = verdict {
+                if let Some(line) = self.perf.witness.tally(ms, &w, app_micros()) {
+                    diag::log_line("wgpu", &line);
+                }
+            }
+            self.perf.witness_pending[v] = verdict;
             if self.apply_iterate_measurement(v, ms, steps, Self::SRC_GPU_ITERATE) {
                 ctx.request_repaint();
             }
+            self.perf.witness_pending[v] = None;
         }
         self.update_minimap(ctx, &gpu);
         self.update_reticle(ctx, &gpu);

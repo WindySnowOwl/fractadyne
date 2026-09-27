@@ -12,6 +12,53 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Sharper zooming on slower cards, with the frame budget guarded against bad GPU timings**
+  (beta.129, for testing). The reading pool from beta.125 is now on by default: while you zoom,
+  the frame budget keeps learning from the GPU timings it used to ignore. On the RX 6800 XT moving
+  frames went from the lowest resolution step to 2.5 times the resolution in each direction. The
+  cost is a little over 1% of moving frames taking more than 33 ms (up from under 0.5%). It was
+  held back until two checks passed. First, the crash test that cuts the reference short, as in
+  the 2026-09-21 crash, ran 9 times on the RX 6800 XT with the budget staying at least 10 times
+  below the crash level and no crash. Second, the beta.128 check: none of about 2,500 timings on
+  either card was too short, the direction that could let the budget grow past what the card
+  can do. The only impossible timings, 2 of 1,505 on the RX 6800 XT, came from the empty final
+  pass of a finished render. That pass is no longer timed, a timing proven impossible is now
+  ignored, and one that looks too short may lower the budget but never raise it.
+  Also fixed: a self-test check of the About panel failed about half the time, depending on the
+  order the tests ran in.
+- **Every GPU timing the frame budget uses is now checked against the CPU's clock** (beta.128,
+  for testing; it changes nothing the app decides yet). On the RX 6800 XT the GPU's own clock was
+  found to drift by up to half a second against the CPU's, many times a run, so a single timing
+  can be too long or too short, and the frame budget is priced from those timings. Each timing is
+  now compared with the time the CPU saw pass between arming the GPU timer and the GPU reporting
+  that frame's work finished. A timing longer than that is impossible, and one far shorter while
+  the GPU had nothing else queued is suspect. The log reports the count every 30 seconds, and
+  every timing's check is kept in the per-frame record (schema 3; `scripts/framelog.py` still
+  reads schema 2). On the RTX 3080 none of 477 timings was impossible.
+- **The pass timer checks its own clock** (beta.127, for testing). On the RX 6800 XT, beta.126's
+  per-pass timings did not add up: a pass with nothing to do read 3–24 ms, where the RTX 3080 reads
+  under 1 ms, and two consecutive frames' passes read 200–340 ms apart though the app never had
+  more than three frames in flight. `FRACTADYNE_PASS_CLOCK=1` now also times an empty pass just
+  before each timed pass and another just after it. On an accurate clock both read zero and sit
+  flush against the pass, as they do on the RTX 3080; time that shows up in them is time the clock
+  assigns to a pass that did no work.
+- **A diagnostic that times every GPU pass** (beta.126, for testing; off unless set). With the
+  pool from beta.125 on, the RX 6800 XT's first settle after a deep zoom produced frames of up to
+  119 ms, and the frame budget never saw them. Their time was reported by the last, empty pass of
+  the settle, which does no work of its own, so the budget ignored it as too small to count. The
+  budget's own timer measures about one pass in three, so it cannot say which pass the time belonged
+  to. `FRACTADYNE_PASS_CLOCK=1` times every pass and logs each with its iteration range, its GPU
+  time and the gap since the previous pass ended (`[fd-passclock]`). It changes nothing the app
+  decides.
+- **An experiment to let the frame budget keep learning while you zoom** (beta.125, for testing;
+  off unless set). The new record fields showed why moving frames stayed coarse on the RX 6800 XT:
+  while the view moves, the GPU work goes out as small passes, and the rule that learns the frame
+  budget ignores any timing from a pass under 70% of the budget. So every timing taken while zooming
+  was ignored (339 of 339 in one run), the budget stayed where it was when zooming began, and it
+  capped every moving frame. With `--set READING_POOL=1` those timings are added together until they
+  add up to 70% of the budget, and the budget is updated from the total. The same rule may also
+  explain the 2026-09-21 crash, where the budget stayed high through 20 slow frames while zooming;
+  this setting cannot correct that direction, which needs a separate wall-clock check.
 - **The per-frame record now shows how each moving frame was sized** (beta.124, for testing). While
   zooming, a frame's resolution comes from the GPU pass it gets, how far its iterations must reach,
   the resolution step that allows, and a separate cap. None of these were recorded, so on the RX

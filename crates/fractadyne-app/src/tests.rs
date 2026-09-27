@@ -1000,18 +1000,33 @@ fn snapshot_writes_a_file() {
 /// arithmetic that has actually run and what the build contains".
 #[test]
 fn about_names_the_running_backend() {
+    // ⚠The two halves are different questions. The build's CONTENTS are compile-time; what has
+    // RUN is stamped by orbits finishing — a line that named a backend nothing had run would be
+    // reading configuration, the failure the observation mask exists to prevent. The mask is
+    // PROCESS-WIDE and other tests in this binary build orbits concurrently, so "no orbit here,
+    // so it must say none" held only when this test won the race (it failed ~half of full runs,
+    // 2026-09-27). The invariant that holds in any process: the line names exactly what has run.
+    // The mask only gains bits, so bracket the line between two reads of it.
+    let before = fractadyne_core::observed_backends();
     let line = crate::help::about_arithmetic_line();
+    let after = fractadyne_core::observed_backends();
     assert!(line.starts_with("Deep-zoom arithmetic: "), "{line:?}");
     assert!(line.contains("this build contains: "), "{line:?}");
     // The carrier is in every build, accelerated or not.
     assert!(line.contains("astro-float"), "{line:?}");
-    // ⚠The two halves are different questions. The build's CONTENTS are compile-time; what
-    // has RUN is stamped by orbits finishing, so in a unit test (no orbit) it must honestly
-    // say none — a line that named a backend here would be reading configuration, which is
-    // exactly the failure the observation mask exists to prevent.
+    let ran = line["Deep-zoom arithmetic: ".len()..].split(" (this build contains").next().unwrap_or_default();
+    let named: Vec<&str> = if ran.starts_with("none") {
+        vec![]
+    } else {
+        ran.trim_start_matches("MIXED — ").split(" + ").collect()
+    };
     assert!(
-        line.contains("none (no reference orbit built yet)") || line.contains("MIXED"),
-        "the About line claims a backend that never ran: {line:?}"
+        named.iter().all(|n| after.contains(n)),
+        "the About line claims a backend that never ran: {line:?} (observed {after:?})"
+    );
+    assert!(
+        before.iter().all(|b| named.contains(b)),
+        "the About line hides a backend that has run: {line:?} (observed {before:?})"
     );
     // Which build this is, asked of the RUNTIME rather than of a cargo feature: `rug` is a
     // feature of the core crate, so a `cfg` here would be a guess about someone else's build

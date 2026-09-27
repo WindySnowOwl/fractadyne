@@ -47,7 +47,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 6   # 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status
+$AgentVersion = 7   # 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -377,10 +377,10 @@ function New-ViewSession($r) {
     return $tmpl
 }
 
-# The diagnostic INSTRUMENTS a request may arm (DIAGNOSTICS.md, "Environment variables"): each puts
-# the live path in a regime that has killed devices, on purpose. Integer values only; nothing else
-# from a request ever reaches the environment.
-$InstrumentEnv = @("FRACTADYNE_REF_ESCAPE_AT", "FRACTADYNE_BLA_DROP_FRAMES")
+# The diagnostic INSTRUMENTS a request may arm (DIAGNOSTICS.md, "Environment variables"): the first
+# two put the live path in a regime that has killed devices, on purpose; PASS_CLOCK only observes
+# (v7). Integer values only; nothing else from a request ever reaches the environment.
+$InstrumentEnv = @("FRACTADYNE_REF_ESCAPE_AT", "FRACTADYNE_BLA_DROP_FRAMES", "FRACTADYNE_PASS_CLOCK")
 
 function Get-RequestEnv($r) {
     $e = Get-Field $r "env" $null

@@ -2588,3 +2588,81 @@ printed for every run so the control is scored on the same number.
   The gate now goes red on `112a088^1` (exit 1) and green on every fixed set. The cost is stated in
   the scorer: the pre-fix median sits exactly at one, and a harsher regime than any measured could
   fail a good build.
+
+**beta.126: the pass clock** (branch `feat/reading-pool`).
+
+- **What prompted it.** `READING_POOL` (beta.125) was checked against the escaped-reference storm
+  on PLUTO: the tap rung at the 4,627 crash view with `REF_ESCAPE_AT=655`, three interleaved pairs.
+  The regime was ENTERED in all six runs, with no lethal-band line, no stall, no loss and logcheck
+  PASS. The budget stayed bounded: 1.48e10 at most with the pool on and 1.48e9 off, against the
+  field's 1.515e11. But the pool arm's first SETTLE after the dive ran 84–119 ms frames, one to
+  three per run (off: at most 43 ms), and no reading priced them. The time came back on the walk's
+  EMPTY TAIL pass, `[4627,4627)`, whose nominal steps are `px × 1` (the `.max(1)`), so the 0.7×
+  rule discarded 110–116 ms of GPU time as a tiny pass. The off arm has the same reading at 16 ms.
+  It scales with the untimed storm chunk before it, and late chunks look 3.5–12× costlier per
+  nominal step than early ones, which are what the budget is priced from. That is §2's
+  "budget never shrank" shape. It is not established that it is that loss.
+- **Why the reading alone can't say which pass it measured.** `IterTiming` is one-in-flight, so it
+  brackets about one pass in three. wgpu writes the begin-of-pass timestamp at BOTTOM_OF_PIPE, which
+  should wait for earlier work, so "the tail's timer caught the previous chunk draining" is not the
+  obvious reading either. The shader gives the tail no work: every pixel is settled or at `stop`.
+- **The instrument.** `FRACTADYNE_PASS_CLOCK=1` gives each view a ring of eight timestamp slots,
+  brackets EVERY iterate pass and the chunked resolve pass, and logs one `[fd-passclock]` line per
+  pass. Each line carries the frame, range, nominal steps, GPU ms, resolve ms and the gap since the
+  previous pass's end. When the pricer is armed on a pass, its reading is COPIED from the clock's
+  ticks for that pass, so the budget is fed identically. It changes no decision, but is non-stock
+  like every instrument. The field agent (v7) allows it.
+- **First look (RTX 3080, the same rung):** 1,307 passes timed, 665 of them the pricer's. The passes
+  lie end to end (gaps +0.3 to +0.5 ms, none negative). An empty tail costs 0.7–1.2 ms, as the
+  shader predicts. Chunks of 7.955e9 nominal steps ran 52–63 ms.
+
+**beta.127: calibration markers, and the Radeon's clock** (same branch).
+
+- ⛔**Retraction.** The 116 ms was not hidden storm work, and "late chunks cost 3.5–12× per step" was
+  an artifact. On PLUTO, with every pass timed (six runs), the EMPTY tail pass reads 2.75–33.6 ms,
+  where the 3080 reads 0.7 ms. Passes doing very different amounts of work read the same ~31–33 ms.
+- **The markers.** An empty render pass is now recorded just before and just after each timed pass.
+  On both cards they read 0.000 ms and sit 6–15 µs from the pass, so the brackets themselves are
+  faithful: the extra time is inside the pass.
+- ⭐⭐**The Radeon's GPU timeline does not track its CPU timeline.** Each pass's GPU start time was
+  compared with the CPU time of the frame that recorded it. On the 3080 the two agree to 0.3% over
+  36 s, and no step between consecutive passes exceeds 27 ms. PLUTO (six runs) shows:
+  - one forward jump of ~179,700 s (~50 h) per run, early on;
+  - a step of about 2.16 s at about frame 140 in every run, with nothing in flight and the CPU's
+    frames regular;
+  - 63–153 steps of ±150–550 ms per run, forward and backward roughly cancelling (+17.3 s / −17.2 s),
+    almost all while moving.
+- The pool-off clock run had 124 such steps and no frame over 55 ms, so they are not real GPU
+  delays. On this card a single timestamp reading is therefore not a reliable measure of its pass,
+  and it can be wrong in EITHER direction. The Radeon's frame budget is priced from these readings;
+  a too-short reading is the budget-grows direction. That this contributed to the 09-21 loss is a
+  hypothesis, not a finding.
+- ⚠**The instrument perturbs.** 2 of 6 clock-on runs (both pool-on) had a 470–559 ms frame; 0 of 6
+  without the clock did (max 56.6 ms). Frame times from clock-on runs are not evidence.
+
+**beta.128: the timing witness, and a second retraction.** (Same branch; `timing_witness.rs`,
+record schema 3.)
+
+- Each reading the budget prices is held against a sound CPU-side window. The window opens when
+  the GPU side ARMS the timer (in `prepare`, after one poll, before submit) and closes at the
+  frame's `on_submitted_work_done` callback, so it is an upper bound. With the previous frame done
+  before the arming (an empty queue), window minus reading is overhead, mostly callback latency.
+- **Pass clock off, tap rung, about 2,500 readings.**
+
+  | | readings | too short | impossible | window minus reading, p50 | max |
+  |---|---|---|---|---|---|
+  | RTX 3080 | ~1,000 | 0 | 0 | 13–17 ms | 48 ms |
+  | RX 6800 XT | 1,505 | 0 | 2 | 17.5–17.9 ms | 58 ms |
+
+  Both impossible readings on the RX 6800 XT were a walk's EMPTY TAIL: 42.6 ms inside an 18.9 ms
+  window, and 118.8 ms inside 104 ms.
+- ⛔**Retraction.** "The Radeon's GPU timeline does not track its CPU timeline" (beta.127, above) was
+  a PASS-CLOCK artifact, compounded by comparing each pass's GPU start with its frame's START time.
+  The budget's own readings on that card are sound. The only bad one is the empty tail, which
+  reads long (the safe direction), and the 0.7× rule was already discarding it.
+- **beta.129 guards:**
+  - an empty tail is never timed;
+  - an IMPOSSIBLE reading prices nothing: not the budget, not the pool, not the latched mode rate;
+  - a reading from an empty queue that leaves more than 100 ms of its window unexplained may
+    shrink the budget but not grow it, and stays out of the pool (SHORT; none observed).
+- `READING_POOL` is on by default from beta.129, its two gates passed.

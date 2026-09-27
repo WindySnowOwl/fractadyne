@@ -1,10 +1,10 @@
 {
-  "schema": 3,
+  "schema": 2,
   "slot_bytes": 640,
   "slot_header_bytes": 32,
   "header_bytes": 4096,
   "ring_len": 4096,
-  "payload_bytes": 481,
+  "payload_bytes": 472,
   "slot_magic": "FDFR",
   "file_magic": "FDFH",
   "fields": [
@@ -117,8 +117,6 @@
     ["read_ok", "bool"],
     ["read_lethal", "bool"],
     ["refusal", "u8"],
-    ["read_window_ms", "f64"],
-    ["read_queue_empty", "bool"],
     ["in_wheel", "f32"],
     ["in_zoom", "f32"],
     ["in_drag_dx", "f32"],

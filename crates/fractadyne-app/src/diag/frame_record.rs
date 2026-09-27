@@ -52,7 +52,7 @@ use std::time::Duration;
 
 /// Bumped whenever a field is added, removed, retyped or reordered. Every record and every file
 /// header carries it, and a reader must refuse a schema it does not know rather than guess.
-pub(crate) const SCHEMA: u16 = 2;
+pub(crate) const SCHEMA: u16 = 3;
 /// Records the in-memory ring (and `frames.bin`) holds. At the 1–5 fps of the failing cadence
 /// that is 14–68 minutes of one view — the ring lengthens in TIME exactly as the app slows down,
 /// the opposite of the 24-entry decision ring it supersedes.
@@ -98,12 +98,18 @@ pub(crate) mod verdict {
     pub(crate) const DISCARDED: u8 = 1;
     pub(crate) const MOVED: u8 = 2;
     pub(crate) const UNCHANGED: u8 = 3;
+    /// Longer than the CPU-side window its pass ran inside (`timing_witness`): it did not happen,
+    /// and prices nothing (beta.129).
+    pub(crate) const IMPOSSIBLE: u8 = 4;
 }
 /// Why a reading that asked for growth did not get it. `0` = no refusal. A REASON, recorded
 /// rather than inferred from an "(unchanged)" line: the refusal used to be visible only under
 /// `FRACTADYNE_TRACE=gpu`, i.e. never in the field.
 pub(crate) mod refusal {
     pub(crate) const BUILDING: u8 = 1;
+    /// The timing witness judged the reading possibly too SHORT (an empty queue's window left far
+    /// more unexplained than any tested card): it may shrink the budget, never grow it (beta.129).
+    pub(crate) const SHORT: u8 = 2;
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -408,6 +414,13 @@ frame_record! {
     read_lethal: bool,
     /// [`refusal`]
     refusal: u8,
+    /// Schema 3 — the TIMING WITNESS for a GPU reading (`timing_witness`): ms from the arming of
+    /// the pass's timer to its frame's completion callback, an upper bound on the pass's GPU time
+    /// (0 = not witnessed: a wall reading, or the completion not yet seen).
+    read_window_ms: f64,
+    /// The previous frame's work had completed before the timer was armed, so the window is this
+    /// frame's own GPU work plus callback latency.
+    read_queue_empty: bool,
 
     // ---- the user's input this frame (window-wide; the same on both views' records)
     in_wheel: f32,
