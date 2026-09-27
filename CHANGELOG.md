@@ -12,6 +12,15 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **An experiment to let the frame budget keep learning while you zoom** (beta.125, for testing;
+  off unless set). The new record fields showed why moving frames stayed coarse on the RX 6800 XT:
+  while the view moves, the GPU work goes out as small passes, and the rule that learns the frame
+  budget ignores any timing from a pass under 70% of the budget. So every timing taken while zooming
+  was ignored (339 of 339 in one run), the budget stayed where it was when zooming began, and it
+  capped every moving frame. With `--set READING_POOL=1` those timings are added together until they
+  add up to 70% of the budget, and the budget is updated from the total. The same rule may also
+  explain the 2026-09-21 crash, where the budget stayed high through 20 slow frames while zooming;
+  this setting cannot correct that direction, which needs a separate wall-clock check.
 - **The per-frame record now shows how each moving frame was sized** (beta.124, for testing). While
   zooming, a frame's resolution comes from the GPU pass it gets, how far its iterations must reach,
   the resolution step that allows, and a separate cap. None of these were recorded, so on the RX

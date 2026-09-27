@@ -44,3 +44,52 @@ fn an_undersized_but_slow_dispatch_is_still_read() {
     assert!(!probe_would_price(1_000, 900_000_000));
     assert!(budget_step(900_000_000, 1_000, 5_000.0, false).is_some());
 }
+
+/// The RX 6800 XT's tap-zoom (2026-09-27): a 4.56e7 budget and moving-frame passes of 1.2e6-2.2e7
+/// steps, each discarded alone. Pooled, they reach 0.7x the budget and price as one reading - which
+/// `budget_step` then accepts - and the pool empties.
+#[test]
+fn discarded_readings_pool_until_representative() {
+    use super::{budget_step, pool_step, ReadingPool};
+    let cur = 45_600_000u64;
+    let passes = [(1_930_000u64, 0.15), (5_600_000, 0.24), (22_400_000, 0.31), (4_530_000, 1.10)];
+    for (s, ms) in passes {
+        assert!(budget_step(cur, s, ms, false).is_none(), "each alone is discarded");
+    }
+    let mut pool = ReadingPool::default();
+    let mut emitted = None;
+    for (i, (s, ms)) in passes.iter().cycle().take(12).enumerate() {
+        if let Some(out) = pool_step(&mut pool, *s, *ms, cur, 100 + i as u64, u64::MAX) {
+            emitted = Some(out);
+            break;
+        }
+    }
+    let (steps, ms, n) = emitted.expect("the pool becomes representative");
+    assert!(steps as f64 >= 0.7 * cur as f64, "{steps}");
+    assert!(n >= 2, "{n}");
+    assert_eq!(pool, ReadingPool::default(), "emptied once priced");
+    assert!(budget_step(cur, steps, ms, false).is_some(), "the pooled reading is priceable");
+}
+
+/// A pool never mixes regimes: one older than POOL_MAX_FRAMES, or begun before the view's last
+/// mode switch, starts over with the new reading.
+#[test]
+fn a_stale_or_pre_switch_pool_starts_over() {
+    use super::{pool_step, ReadingPool, POOL_MAX_FRAMES};
+    let cur = 1_000_000_000u64;
+    let mut pool = ReadingPool::default();
+    assert!(pool_step(&mut pool, 10_000_000, 1.0, cur, 100, u64::MAX).is_none());
+    assert_eq!(pool.n, 1);
+    // Too old: restarts with only the new reading.
+    assert!(pool_step(&mut pool, 10_000_000, 1.0, cur, 100 + POOL_MAX_FRAMES + 1, u64::MAX).is_none());
+    assert_eq!((pool.n, pool.steps, pool.since_frame), (1, 10_000_000, 100 + POOL_MAX_FRAMES + 1));
+    // A mode switch after the pool began: restarts too.
+    let mut pool = ReadingPool { steps: 5_000_000, ms: 0.5, n: 3, since_frame: 200 };
+    assert!(pool_step(&mut pool, 1_000_000, 0.1, cur, 210, 205).is_none());
+    assert_eq!((pool.n, pool.since_frame), (1, 210));
+    // A garbage reading is not pooled.
+    let before = pool;
+    assert!(pool_step(&mut pool, 1_000, f64::NAN, cur, 211, 205).is_none());
+    assert!(pool_step(&mut pool, 0, 1.0, cur, 211, 205).is_none());
+    assert_eq!(pool, before);
+}

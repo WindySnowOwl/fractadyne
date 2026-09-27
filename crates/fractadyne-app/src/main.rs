@@ -1610,6 +1610,9 @@ struct Perf {
     /// for, and `res_scale` before the ladder's rung was applied. Zero when the frame was not sized
     /// as a moving frame. For the frame record (`vis_need`, `vis_target`, `vis_pre_scale`).
     vis_sizing: [[f64; 3]; 2],
+    /// Discarded budget readings pooled per view until representative (`READING_POOL`,
+    /// `render::pool_step`).
+    reading_pool: [render::ReadingPool; 2],
     /// The palette window actually SHOWN, gliding toward `norm_range` (the fed target) a fixed
     /// fraction per frame. The target moves in steps — one per escape-range reading, every few
     /// frames — and a step is a visible colour snap: measured on an 8-octave glide, one frame
@@ -2097,6 +2100,7 @@ impl Default for Perf {
             norm_hist: [None, None],
             esc_hist: [None, None],
             vis_sizing: [[0.0; 3]; 2],
+            reading_pool: [render::ReadingPool::default(); 2],
             norm_shown: [None, None],
             chunk_governed: [false, false],
             motion_res: 0.6,
@@ -7789,6 +7793,7 @@ impl FractadyneApp {
         self.perf.iter_exhausted = [false, false];
         self.perf.norm_range = [None, None];
         self.perf.esc_hist = [None, None];
+        self.perf.reading_pool = [render::ReadingPool::default(); 2];
         self.perf.norm_sig = [0, 0];
         self.perf.norm_locked = [false, false];
     }
@@ -13980,8 +13985,39 @@ impl FractadyneApp {
             let vb = v.min(1);
             self.perf.blind_slow_readings[vb] = self.perf.blind_slow_readings[vb].saturating_add(1);
         }
-        let Some((next, ok)) = render::budget_step(cur, steps, ms, !self.render_cfg.auto_iter)
-        else {
+        let explicit = !self.render_cfg.auto_iter;
+        let direct = render::budget_step(cur, steps, ms, explicit);
+        // `READING_POOL`: a reading the rule discards joins the view's pool, and a pool that has
+        // become representative is priced as one reading (see `render::ReadingPool` — while the
+        // view moves, every reading is a discarded one). A reading priced directly supersedes it.
+        let vb = v.min(1);
+        let mut pooled = None;
+        if direct.is_some() {
+            self.perf.reading_pool[vb] = render::ReadingPool::default();
+        } else if crate::tunables::cost().reading_pool == 1 && src == Self::SRC_GPU_ITERATE {
+            if let Some((ps, pms, pn)) = render::pool_step(
+                &mut self.perf.reading_pool[vb],
+                steps,
+                ms,
+                cur,
+                self.perf.frame_idx,
+                self.perf.mode_switch_frame[v],
+            ) {
+                pooled = render::budget_step(cur, ps, pms, explicit);
+                diag::budget_note(format!(
+                    "v{v} POOLED {pn} discarded readings: steps={:.3e} ms={pms:.1} budget={cur:.3e}{}",
+                    ps as f64,
+                    if pooled.is_some() { "" } else { " (still not priceable)" }
+                ));
+                if diag::trace_on("gpu") {
+                    diag::trace(
+                        "gpu",
+                        format!("view={v} pooled {pn} readings: steps={:.3e} ms={pms:.1}", ps as f64),
+                    );
+                }
+            }
+        }
+        let Some((next, ok)) = direct.or(pooled) else {
             diag::budget_note(format!(
                 "v{v} {src}={ms:.1}ms steps={:.3e} budget={cur:.3e} DISCARDED (under 0.7x budget \
                  and not slow)",

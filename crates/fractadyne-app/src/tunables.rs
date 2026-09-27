@@ -81,6 +81,8 @@ pub(crate) struct Cost {
     pub pass_fixed_ms: f64,
     /// Fraction of the picture a moving frame is sized to reach (`MOTION_NEED_QUANTILE_DEFAULT`).
     pub motion_need_quantile: f64,
+    /// Pool discarded budget readings (`READING_POOL_DEFAULT`; 0 = off, 1 = on).
+    pub reading_pool: u64,
     /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
     /// second override channel because duplicating the machinery for a single value would be worse.
     /// See the note above on what earns a place in this set.
@@ -108,6 +110,7 @@ impl Default for Cost {
             tdr_tiles_ceil: TDR_TILES_CEIL_DEFAULT,
             pass_fixed_ms: PASS_FIXED_MS_DEFAULT,
             motion_need_quantile: MOTION_NEED_QUANTILE_DEFAULT,
+            reading_pool: READING_POOL_DEFAULT,
             bla_eps: BLA_EPS,
         }
     }
@@ -261,6 +264,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 c.pass_fixed_ms = v;
                 p.to_string()
             }
+            "READING_POOL" => {
+                let p = c.reading_pool;
+                c.reading_pool = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set READING_POOL: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "MOTION_NEED_QUANTILE" => {
                 let p = c.motion_need_quantile;
                 let v = f()?;
@@ -299,7 +311,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     TDR_LATENCY_ACCEPT_MS, TDR_GROW_MAX, TDR_SHRINK_MAX, TDR_LETHAL_MS, TDR_BOOTSTRAP_STEPS, \
     TDR_BOOTSTRAP_MS, MOTION_UNPRICED_MAX, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
-    EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE";
+    EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL";
 
 #[cfg(test)]
 mod override_tests;
@@ -624,6 +636,12 @@ pub(crate) const PASS_FIXED_MS_DEFAULT: f64 = 0.2;
 /// stayed at 0.10). ⚠The pixels past the quantile are unfinished in the moving frame — the
 /// blank-frame lesson is why this is a measured setting, not a default: the screen gate decides.
 pub(crate) const MOTION_NEED_QUANTILE_DEFAULT: f64 = 1.0;
+
+/// 1 = pool the GPU readings the frame-budget rule would discard until together they are
+/// representative, and price the budget on the pool (`render::pool_step`); 0 = off, the shipped
+/// behaviour. Off until measured: it is the first change here that moves the frame BUDGET — the
+/// safety controller — rather than a motion pass inside it.
+pub(crate) const READING_POOL_DEFAULT: u64 = 0;
 
 /// The most a held frame may MAGNIFY before its refresh lands, octaves — the zoom-rate-aware half
 /// of the refresh sizing. At `zoom_oct_s` octaves per second the refresh has `HELD_MAX_OCT /

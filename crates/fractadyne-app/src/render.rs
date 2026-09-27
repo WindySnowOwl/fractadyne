@@ -9551,6 +9551,70 @@ pub(crate) fn probe_would_price(steps: u64, cur: u64) -> bool {
 #[cfg(test)]
 mod probe_price_tests;
 
+/// GPU readings [`budget_step`] would discard (under [`PRICE_REPRESENTATIVE_FRAC`] of the budget,
+/// and not slow), pooled per view until together they are representative (`READING_POOL`).
+///
+/// ⭐⭐**WHY: WHILE THE VIEW MOVES, THE FRAME BUDGET CANNOT LEARN.** A moving frame's work goes out as
+/// several SMALL chunk passes, and every one of them is under 0.7× the budget, so every reading is
+/// discarded — measured on the RX 6800 XT (2026-09-27, schema-2 record): 339 of 339 and 307 of 312
+/// readings while tap-zooming, against half used while still. The budget froze at 4.56e7 for 26 s
+/// of taps after a mode switch had reset it, capped every motion pass (87–88% of moving frames), and
+/// held the moving picture on the lowest resolution rung; it rose to 1.17e9 the moment motion
+/// stopped. Pooled, those readings ARE representative: their steps together reach the bar a single
+/// reading must, and their combined rate `Σsteps / Σms` is what the budget is priced on.
+///
+/// ⚠Pessimistic by construction: every small pass carries its fixed cost (`PASS_FIXED_MS`), so the
+/// pooled rate is lower than the true per-step rate and the budget grows more slowly than it could,
+/// never faster. It goes through [`budget_step`] like any reading — the reference-build gate, the
+/// lethal retreat and the target all apply. It cannot unfreeze a budget stuck HIGH (the 2026-09-21
+/// field shape): small passes would need thousands of readings to reach 0.7× of 1.5e11; that is the
+/// wall-clock backstop's job, not this.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct ReadingPool {
+    pub(crate) steps: u64,
+    pub(crate) ms: f64,
+    pub(crate) n: u32,
+    /// The frame of the pool's first reading: a pool older than [`POOL_MAX_FRAMES`], or begun
+    /// before the view's last mode switch, mixes regimes and is dropped.
+    pub(crate) since_frame: u64,
+}
+
+/// A pool older than this (≈2 s at 60 Hz) is dropped rather than priced: its readings describe
+/// views the zoom has left.
+pub(crate) const POOL_MAX_FRAMES: u64 = 120;
+
+/// Add one discarded reading to `pool`; `Some((Σsteps, Σms, n))` — and an emptied pool — once the
+/// pooled steps reach [`PRICE_REPRESENTATIVE_FRAC`] of `cur`. A pool begun before `switch_frame`
+/// (the view's last mode switch) or older than [`POOL_MAX_FRAMES`] starts over with this reading.
+pub(crate) fn pool_step(
+    pool: &mut ReadingPool,
+    steps: u64,
+    ms: f64,
+    cur: u64,
+    frame: u64,
+    switch_frame: u64,
+) -> Option<(u64, f64, u32)> {
+    if !(ms > 0.0) || !ms.is_finite() || steps == 0 {
+        return None;
+    }
+    let stale = pool.n > 0
+        && (frame.saturating_sub(pool.since_frame) > POOL_MAX_FRAMES
+            || (switch_frame != u64::MAX && pool.since_frame < switch_frame));
+    if pool.n == 0 || stale {
+        *pool = ReadingPool { since_frame: frame, ..Default::default() };
+    }
+    pool.steps = pool.steps.saturating_add(steps);
+    pool.ms += ms;
+    pool.n += 1;
+    if probe_would_price(pool.steps, cur) {
+        let out = (pool.steps, pool.ms, pool.n);
+        *pool = ReadingPool::default();
+        Some(out)
+    } else {
+        None
+    }
+}
+
 pub(crate) fn budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> Option<(u64, bool)> {
     // Two regimes, one arithmetic. Since 2026-08-16 both converge on the SAME real target (400 ms);
     // `explicit` still differs in carrying a hard nominal ceiling, because skip effectiveness is
