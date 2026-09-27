@@ -12,6 +12,16 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The safety stop now acts on the first dangerous frame, and the diagnostics survive a machine
+  hang** (beta.132, for testing). On the RX 6800 XT, the crash test from beta.130, run with the
+  old behaviour, hung the whole machine. The frame budget stayed at the crash level, no GPU timing
+  came back, and there were frames of 1.0 s and 1.4 s. After zooming, frames of 0.6 s and then
+  2.0 s followed, and the machine hung. It never produced the eight slow frames in a row that the
+  beta.131 stop waited for. A single frame of 0.9 s or longer with no slow GPU timing now triggers
+  it at once. In that test it would have acted at the 1.0 s frame, before any of the later frames
+  were sized. The same hang also wiped the log and the per-frame record: only the part already
+  written to disk survived, and the rest came back as zeros. Both are now forced to disk on every
+  slow frame, the frames that come before a hang.
 - **A safety stop for a frame budget the GPU timings cannot correct** (beta.131, for testing).
   Since beta.112 the app has warned when frames are slow by the clock (eight in a row over 400 ms)
   while none of the GPU timings it prices the budget from looks slow. That was the pattern before

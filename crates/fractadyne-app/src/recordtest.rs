@@ -391,6 +391,31 @@ impl crate::FractadyneApp {
                 }
             }
         }
+        // ---- the LETHAL-BAND trigger (beta.132): the wedge is ONE frame far past TDR_LETHAL_MS with
+        // a repaint asked for, so the tripwire must latch on it ALONE — within the frame or two its
+        // interval lands in — and the dead-man engage a second time. On PLUTO the card hung after
+        // two slow frames; a trigger that needs eight is no trigger there.
+        if let Some(wf) = t.wedged_at.filter(|_| crate::tunables::cost().dead_man == 1) {
+            let log = crate::diag::logs_dir()
+                .and_then(|d| std::fs::read_to_string(d.join("fractadyne.log")).ok())
+                .unwrap_or_default();
+            let fired = v0.iter().find(|r| r.frame > wf && r.frame <= wf + 3 && r.blind_warned);
+            let engaged = log.matches("DEAD-MAN: view=0").count();
+            match fired {
+                Some(r) if engaged >= 2 => notes.push(format!(
+                    "lethal-band trigger: the {}s wedge at frame {wf} latched the tripwire at frame {} \
+                     (one frame, not eight); dead-man engaged {engaged}x this run",
+                    WEDGE.as_secs(),
+                    r.frame
+                )),
+                _ => fails.push(format!(
+                    "lethal-band trigger: the {}s wedge at frame {wf} {} the tripwire within 3 frames; \
+                     dead-man engaged {engaged}x (want 2: the blind phase and the wedge)",
+                    WEDGE.as_secs(),
+                    if fired.is_some() { "latched" } else { "did NOT latch" }
+                )),
+            }
+        }
 
         // ---- frames.jsonl: header for this session; every row exactly its keys; summaries add up.
         // Written by its own thread, so first wait for it to land everything queued so far.

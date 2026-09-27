@@ -69,6 +69,22 @@ fn a_budget_growing_while_the_wall_slows_now_trips_the_warning() {
 }
 
 #[test]
+fn one_lethal_band_frame_latches_at_once_but_only_when_blind_busy_and_not_yet_warned() {
+    let lethal = crate::tunables::cost().tdr_lethal_ms;
+    // PLUTO 2026-09-27: 1,013 ms with no slow reading — the frame that should have latched.
+    assert!(budget_blind_lethal(lethal + 113.0, true, 0, false));
+    assert!(budget_blind_lethal(lethal, true, 0, false), "the band is inclusive, as budget_step's is");
+    // Under the band: the 8-frame rule's business, not this one's (640 ms did not warrant it alone).
+    assert!(!budget_blind_lethal(lethal - 1.0, true, 0, false));
+    // No repaint requested: eframe's ~1 Hz idle tick, not cost.
+    assert!(!budget_blind_lethal(1017.0, false, 0, false));
+    // A slow reading means the controller heard it and will shrink the budget itself.
+    assert!(!budget_blind_lethal(2017.0, true, 1, false));
+    // Already latched: one warning (and one derate) per episode.
+    assert!(!budget_blind_lethal(2017.0, true, 0, true));
+}
+
+#[test]
 fn the_dead_man_drops_a_high_budget_to_the_bootstrap_and_leaves_a_low_one_alone() {
     // The 2026-09-21 shape: a budget learned at 1.515e11 at a view whose frames it no longer fits.
     assert_eq!(dead_man_budget(151_500_000_000, 400_000_000), 400_000_000);

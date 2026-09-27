@@ -2703,3 +2703,27 @@ record schema 3.)
   trap (at most 5 over 100 ms). The PLUTO before/after (one `DEAD_MAN=0 READING_POOL=0` arm, three
   default arms, §8's proof standard) is the user's to run. Prerequisite 1, a field record of a whole
   episode, is still owed.
+
+**The PLUTO BEFORE arm (2026-09-27, user-authorized; `…130257-yw6c`): the Radeon hung outright.**
+
+Stock-old logic (`DEAD_MAN=0 READING_POOL=0`), `SEED_BUDGET=151500`, `REF_ESCAPE_AT=655`, the crash
+view, tap rung. From the console, the only record that survived:
+
+- **At the start:** un-chunked 4.08e10-step whole-frame dispatches of 315, 1,013 and 1,393 ms. The
+  budget stayed at 1.515e11 and NO GPU timing came back ("no GPU iterate timing after 30 frames").
+  This was starvation, not discarding, so the pool had nothing to work with.
+- **Eleven taps:** the budget stayed at 1.515e11.
+- **At the settle:** 640 ms, then 2,017 ms, and then the machine hung. The agent never regained
+  control; the user rebooted.
+- **The 8-frame dead-man could not have fired:** the longest run over 400 ms was 2. The three AFTER
+  arms were paused (a `PAUSE` file) before PLUTO came back.
+- ⛔**The record did not survive a MACHINE hang:** `frames.bin`, `frames.jsonl` and `fractadyne.log`
+  came back as zeros. The page cache survives a process crash, not this. The console (`stderr`) did
+  survive. Field agent v9 recovers an orphaned job's run folder to the share.
+
+**beta.132:** one frame at or past `TDR_LETHAL_MS` with no slow reading latches the tripwire at
+once (`budget_blind_lethal`); here it would have fired at the 1,013 ms frame. Every slow frame now
+forces the log and both record files to disk (`diag::sync_to_disk`). `--recordtest`'s 13 s wedge
+proves the single-frame latch (frame 180 → 181; dead-man engaged twice). The honest limit stands:
+the trigger acts after the first lethal frame, so a FIRST dispatch past the watchdog is still only
+§5.1's fixed per-adapter ceiling's to prevent.

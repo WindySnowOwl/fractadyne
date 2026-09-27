@@ -245,7 +245,8 @@ they are representative, then priced as one. While the view moves every timing i
 without it the budget cannot learn during a zoom. A timing the timing witness proves impossible never
 joins the pool, and neither does one it judges possibly too short — and `DEAD_MAN` (default 1 from
 beta.131; `0` = report only): when the budget-blind tripwire fires (eight frames over `TDR_BUDGET_MS`
-by the wall while no GPU timing looked slow), the view's frame budget drops to its bootstrap, which
+by the wall while no GPU timing looked slow, or from beta.132 ONE frame at or past `TDR_LETHAL_MS`),
+the view's frame budget drops to its bootstrap, which
 bounds every dispatch path at once, and may not grow until a frame comes in under half
 `TDR_BUDGET_MS`. Logged as `DEAD-MAN: view=… budget X → Y` and `DEAD-MAN cleared`.
 

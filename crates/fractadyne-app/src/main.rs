@@ -15252,8 +15252,14 @@ impl eframe::App for FractadyneApp {
                 self.perf.blind_warned = [false, false];
             }
             for v in 0..views {
+                // Eight slow frames, or ONE in the lethal band (see `render::budget_blind_lethal`).
                 if !render::budget_blind(
                     self.perf.blind_slow_frames[v],
+                    self.perf.blind_slow_readings[v],
+                    self.perf.blind_warned[v],
+                ) && !render::budget_blind_lethal(
+                    self.perf.last_dt_ms,
+                    busy,
                     self.perf.blind_slow_readings[v],
                     self.perf.blind_warned[v],
                 ) {
@@ -15366,6 +15372,14 @@ impl eframe::App for FractadyneApp {
                     self.ref_cache[0].partial,
                 ),
             );
+            // FORCE the log and the frame record to disk. A slow frame is the prelude a hard hang
+            // leaves behind, and the OS cache does not survive one: on PLUTO (2026-09-27, the
+            // dead-man BEFORE arm) the machine hung after a 2,017 ms frame, and `fractadyne.log`,
+            // `frames.bin` and `frames.jsonl` all came back as zeros — the artefacts built to
+            // explain exactly that failure. Slow frames are ≥200 ms apart, so this is bounded.
+            if body_ms > 200.0 || self.perf.last_dt_ms > 200.0 {
+                diag::sync_to_disk();
+            }
         }
         self.emit_frame_records(ctx, body_ms);
         self.perf.prev_body_ms = body_ms;

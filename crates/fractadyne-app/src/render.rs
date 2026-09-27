@@ -9764,6 +9764,19 @@ pub(crate) fn budget_blind(slow_wall_frames: u32, slow_readings: u32, warned: bo
     !warned && slow_readings == 0 && slow_wall_frames >= BUDGET_BLIND_FRAMES
 }
 
+/// ⭐⭐THE LETHAL-BAND TRIGGER (beta.132): ONE frame at or past `TDR_LETHAL_MS` by the wall, with a
+/// repaint requested and no slow reading, latches the tripwire at once — [`budget_blind`]'s eight
+/// frames are far too slow for the card that fails. Measured on PLUTO (2026-09-27, the dead-man
+/// BEFORE arm, a learned 1.515e11 at the crash view): whole-frame dispatches of 315, 1,013 and
+/// 1,393 ms at the start, and 640 then 2,017 ms at the settle — the machine hung on the fifth. The
+/// longest run over 400 ms was 2, so the 8-frame trigger never fired; this one would have at the
+/// 1,013 ms frame, derating the budget before any of the later dispatches were sized. The cost of a
+/// false trigger is a derate (a few coarse frames while the budget re-climbs); of a missed one, the
+/// machine.
+pub(crate) fn budget_blind_lethal(dt_ms: f64, busy: bool, slow_readings: u32, warned: bool) -> bool {
+    !warned && busy && slow_readings == 0 && dt_ms >= crate::tunables::cost().tdr_lethal_ms
+}
+
 /// ⭐⭐THE WALL-CLOCK DEAD-MAN's budget (design §5.1, §8): when [`budget_blind`] latches, the view's
 /// budget drops to its bootstrap — the opening guess a view uses before anything is measured,
 /// itself capped at `TDR_BOOTSTRAP_STEPS` — and may not grow again until the latch clears.
