@@ -14141,7 +14141,9 @@ impl FractadyneApp {
         // What the reading asked for BEFORE the gate — the only way to record a refusal as a
         // refusal rather than as a reading that happened to ask for nothing.
         let asked = next;
-        let next = if short { next.min(cur) } else { next };
+        // The wall-clock dead-man is latched: the budget may fall, not climb, until a quick frame.
+        let blind = crate::tunables::cost().dead_man == 1 && self.perf.blind_warned[v.min(1)];
+        let next = if short || blind { next.min(cur) } else { next };
         let (next, ok) = render::budget_after_build_gate(cur, next, ok, building);
         if building && next == cur {
             diag::trace(
@@ -14201,6 +14203,8 @@ impl FractadyneApp {
             // Exactly `budget_after_build_gate`'s refusal condition.
             let refused = if short && asked > cur {
                 refusal::SHORT
+            } else if blind && asked > cur {
+                refusal::BLIND
             } else if building && asked > cur {
                 refusal::BUILDING
             } else {
@@ -15228,6 +15232,21 @@ impl eframe::App for FractadyneApp {
                 // Comfortably quick again: the episode is over, and the next one gets its own
                 // warning. Hysteresis on purpose — resetting at the target would let a run
                 // oscillating either side of it re-arm the warning every few frames.
+                if crate::tunables::cost().dead_man == 1 {
+                    for v in 0..views {
+                        if self.perf.blind_warned[v] {
+                            diag::log_line(
+                                "render",
+                                &format!(
+                                    "DEAD-MAN cleared: view={v} frame {:.0}ms (under {:.0}ms) — budget {:.3e} may grow again",
+                                    self.perf.last_dt_ms,
+                                    target * 0.5,
+                                    self.perf.fe_budget[v] as f64
+                                ),
+                            );
+                        }
+                    }
+                }
                 self.perf.blind_slow_frames = [0, 0];
                 self.perf.blind_slow_readings = [0, 0];
                 self.perf.blind_warned = [false, false];
@@ -15262,6 +15281,27 @@ impl eframe::App for FractadyneApp {
                     "BLIND v{v}: {} wall-slow frames, 0 slow readings",
                     self.perf.blind_slow_frames[v]
                 ));
+                // ⭐⭐THE WALL-CLOCK DEAD-MAN (`DEAD_MAN`, design §5.1/§8): the budget drops to the
+                // bootstrap, which bounds every dispatch path at once, and growth is refused until
+                // the latch clears (`apply_iterate_measurement`). A pool of readings priced against
+                // the old budget describes nothing now, so it goes too.
+                if crate::tunables::cost().dead_man == 1 {
+                    let cur = self.perf.fe_budget[v];
+                    let next = render::dead_man_budget(cur, self.perf.bootstrap_steps(v));
+                    self.perf.fe_budget[v] = next;
+                    self.perf.fe_budget_ok[v] = false;
+                    self.perf.reading_pool[v] = render::ReadingPool::default();
+                    diag::log_line(
+                        "render",
+                        &format!(
+                            "DEAD-MAN: view={v} budget {:.3e} → {:.3e} (bootstrap); growth refused until a \
+                             frame under {:.0}ms",
+                            cur as f64,
+                            next as f64,
+                            target * 0.5
+                        ),
+                    );
+                }
             }
         }
         // ⭐SLOW-FRAME ATTRIBUTION. A long frame interval has two very different causes and the

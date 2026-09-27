@@ -352,6 +352,43 @@ impl crate::FractadyneApp {
                         crate::render::BUDGET_BLIND_FRAMES
                     )),
                 }
+                // ---- the WALL-CLOCK DEAD-MAN (beta.131, `DEAD_MAN`): the same latch now ACTS. The
+                // budget must drop to the bootstrap, no reading may grow it while latched, and the
+                // latch must clear once frames are quick again — engaged, bounded, and released.
+                if let Some(w) = warned.filter(|_| crate::tunables::cost().dead_man == 1) {
+                    let log = crate::diag::logs_dir()
+                        .and_then(|d| std::fs::read_to_string(d.join("fractadyne.log")).ok())
+                        .unwrap_or_default();
+                    let cap = crate::tunables::cost().tdr_bootstrap_steps;
+                    let before = v0.iter().rev().find(|r| r.frame < w.frame).map_or(0, |r| r.fe_budget);
+                    let after = v0
+                        .iter()
+                        .filter(|r| r.frame >= w.frame && r.frame <= w.frame + 2)
+                        .map(|r| r.fe_budget)
+                        .min()
+                        .unwrap_or(u64::MAX);
+                    let grew = v0
+                        .iter()
+                        .filter(|r| r.frame > w.frame && r.blind_warned && r.read_n > 0)
+                        .filter(|r| r.read_budget_after > r.read_budget_before)
+                        .count();
+                    let released = v0.iter().any(|r| r.frame > w.frame && !r.blind_warned);
+                    let engaged = log.contains("DEAD-MAN: view=0");
+                    let cleared = log.contains("DEAD-MAN cleared: view=0");
+                    if engaged && after <= cap && grew == 0 && released && cleared {
+                        notes.push(format!(
+                            "dead-man: engaged at frame {}, budget {before:.3e} -> {after:.3e} (bootstrap cap \
+                             {cap:.1e}), no growth while latched, cleared once frames were quick",
+                            w.frame
+                        ));
+                    } else {
+                        fails.push(format!(
+                            "dead-man: engaged {engaged} (log), budget {before:.3e} -> {after:.3e} against the \
+                             bootstrap cap {cap:.1e}, {grew} reading(s) grew it while latched, released {released} \
+                             (record) / {cleared} (log)"
+                        ));
+                    }
+                }
             }
         }
 

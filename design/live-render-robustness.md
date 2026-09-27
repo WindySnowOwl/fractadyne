@@ -2666,3 +2666,40 @@ record schema 3.)
   - a reading from an empty queue that leaves more than 100 ms of its window unexplained may
     shrink the budget but not grow it, and stays out of the pool (SHORT; none observed).
 - `READING_POOL` is on by default from beta.129, its two gates passed.
+
+**beta.130: `FRACTADYNE_SEED_BUDGET`, and §8 prerequisite 3 in substance** (branch
+`feat/seed-budget`).
+
+- Every earlier high-budget rung was vacuous. `TDR_BOOTSTRAP_STEPS` seeds only the UNMEASURED guess,
+  and the first priced reading replaced it (measured: 1.52e11 → 4.66e9). The still rung's "the budget
+  came down at the first reading" (2026-09-25) was this, together with its 27,904 ask.
+- The instrument installs a budget AS IF LEARNED on the session's first frame. At the crash view with
+  the explicit 4,627 ask (no mode switch), a whole frame is 1e10–4e10 nominal: under 0.7× of 1.515e11,
+  and on the Radeon under the 400 ms slow mark. So the rule discards every reading.
+- **RTX 3080, tap rung at PLUTO's pixel count:** pool off, 105 of 105 readings DISCARDED and the budget
+  at 1.515e11 for the whole run, the field's trap reproduced on stock logic; pool on, it came down to
+  6.7e9.
+- But both arms dispatched un-chunked whole frames at the settle, 376–421 ms on the 3080, ~0.8–0.9 s
+  projected on the Radeon. The pool fixes a STUCK budget, not the first dispatches of a stale one.
+- The PLUTO arm was not run: the session's permission check refused a deliberately device-loss-shaped
+  workload on the Radeon. It is the user's to run.
+
+**beta.131: the wall-clock dead-man** (same branch; `DEAD_MAN`, default on).
+
+- When `budget_blind` latches (8 wall-slow frames over `TDR_BUDGET_MS`, no slow reading), the view's
+  budget drops to its bootstrap (≤ `TDR_BOOTSTRAP_STEPS`) and growth is refused (refusal `BLIND`)
+  until the latch clears on a frame under half `TDR_BUDGET_MS`, the clear condition §5.1 states.
+- ⚠**Deviation from §5.1's letter.** The spec forces `chunk_over` and floors the dispatch WHILE
+  latched. Instead the budget is derated. Every dispatch path sizes from `tdr_steps`, so the derate
+  bounds chunking, the shrink and the tiles at once without touching the chunk decision's
+  pin/tile/motion logic. And a latch that only bounds while latched hands the stale budget straight
+  back on the first quick frame, re-arming the same eight slow frames each cycle.
+- **Prerequisite 4 (zero engagement on healthy runs):** across 29 PLUTO logs from 2026-09-27 (storm,
+  witness and pass-clock runs, a full battery) and the dev-box battery plus local runs, the tripwire
+  fired only in `--recordtest`'s injected phase.
+- **Proof on the 3080 (`--recordtest`, extended):** it engaged at frame 68, 3.038e9 → 4.0e8, with no
+  growth while latched, and cleared 0.48 s later on a 3 ms frame. Self-test 190/190, 552 unit tests.
+- **Not yet shown:** the dead-man saving the Radeon. The 3080 never produces 8 slow frames in the
+  trap (at most 5 over 100 ms). The PLUTO before/after (one `DEAD_MAN=0 READING_POOL=0` arm, three
+  default arms, §8's proof standard) is the user's to run. Prerequisite 1, a field record of a whole
+  episode, is still owed.

@@ -110,6 +110,9 @@ pub(crate) mod refusal {
     /// The timing witness judged the reading possibly too SHORT (an empty queue's window left far
     /// more unexplained than any tested card): it may shrink the budget, never grow it (beta.129).
     pub(crate) const SHORT: u8 = 2;
+    /// The wall-clock dead-man is latched (the budget-blind tripwire fired and no frame since has
+    /// been quick): growth waits for the latch to clear (beta.131, `DEAD_MAN`).
+    pub(crate) const BLIND: u8 = 3;
 }
 
 // ------------------------------------------------------------------------------------------------

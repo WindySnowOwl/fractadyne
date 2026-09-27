@@ -69,7 +69,7 @@ and fails if one is missing from this table.
 | Prefix | Gated? | What it says |
 |--------|--------|--------------|
 | `[fd-start]` | always | Session header: version (with commit), arguments, bignum backends compiled in, which session loaded, where logs were directed |
-| `[fd-render]` | always | CLI render manifest and failures; on the live path the always-on alarms — `slow frame N` (with body vs time outside it), `⚠LETHAL-BAND FRAME`, `⚠IN-FLIGHT PASS IN THE LETHAL BAND`, `⚠FRAME BUDGET IS BLIND`, `motion jam` |
+| `[fd-render]` | always | CLI render manifest and failures; on the live path the always-on alarms — `slow frame N` (with body vs time outside it), `⚠LETHAL-BAND FRAME`, `⚠IN-FLIGHT PASS IN THE LETHAL BAND`, `⚠FRAME BUDGET IS BLIND` (from beta.131 followed by `DEAD-MAN: … budget X → Y`, and later `DEAD-MAN cleared`, see `DEAD_MAN`), `motion jam` |
 | `[fd-wgpu]` | always | The adapter + capability line (`TIMESTAMP_QUERY`, attach bytes granted), device errors and device loss; from beta.128 a `timing witness:` line every 30 s of GPU readings: how many of the frame budget's timestamp readings were held against their pass's CPU-side window (timer armed to the frame's completion callback, an upper bound), how many were IMPOSSIBLE (longer than it), and how much of the window a reading left unexplained when the queue was empty (RTX 3080: 13–17 ms at the median, callback latency). Per reading in the frame record (schema 3: `read_window_ms`, `read_queue_empty`) |
 | `[fd-panic]` | always | A panic, and where its crash report was written |
 | `[fd-oom]` | always | An allocation failure (the report is written from an 8 MB reserve) |
@@ -243,7 +243,11 @@ the stragglers show unfinished until the view settles — and `READING_POOL` (de
 `0` = off): GPU timings the frame budget would discard as too small to count are added together until
 they are representative, then priced as one. While the view moves every timing is a small one, so
 without it the budget cannot learn during a zoom. A timing the timing witness proves impossible never
-joins the pool, and neither does one it judges possibly too short.
+joins the pool, and neither does one it judges possibly too short — and `DEAD_MAN` (default 1 from
+beta.131; `0` = report only): when the budget-blind tripwire fires (eight frames over `TDR_BUDGET_MS`
+by the wall while no GPU timing looked slow), the view's frame budget drops to its bootstrap, which
+bounds every dispatch path at once, and may not grow until a frame comes in under half
+`TDR_BUDGET_MS`. Logged as `DEAD-MAN: view=… budget X → Y` and `DEAD-MAN cleared`.
 
 - **Not a configuration surface.** The defaults are the only tested path: the self-test, the
   goldens, `--bench-matrix` and `--livetest` all assume them. `--selftest` carries a check that

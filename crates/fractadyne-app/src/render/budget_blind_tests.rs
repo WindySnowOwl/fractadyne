@@ -67,3 +67,13 @@ fn a_budget_growing_while_the_wall_slows_now_trips_the_warning() {
     assert!(!run(old_rule), "the old rule never warned — the bug, pinned");
     assert!(run(blind_reset_on), "the new rule warns during the runaway");
 }
+
+#[test]
+fn the_dead_man_drops_a_high_budget_to_the_bootstrap_and_leaves_a_low_one_alone() {
+    // The 2026-09-21 shape: a budget learned at 1.515e11 at a view whose frames it no longer fits.
+    assert_eq!(dead_man_budget(151_500_000_000, 400_000_000), 400_000_000);
+    // Already under the bootstrap: nothing to take away (the dead-man never RAISES a budget).
+    assert_eq!(dead_man_budget(50_000_000, 400_000_000), 50_000_000);
+    // Unmeasured stays unmeasured: its dispatches already size from the bootstrap.
+    assert_eq!(dead_man_budget(0, 400_000_000), 0);
+}

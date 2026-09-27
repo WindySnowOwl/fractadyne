@@ -12,6 +12,15 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A safety stop for a frame budget the GPU timings cannot correct** (beta.131, for testing).
+  Since beta.112 the app has warned when frames are slow by the clock (eight in a row over 400 ms)
+  while none of the GPU timings it prices the budget from looks slow. That was the pattern before
+  the 2026-09-21 crash, and the warning only reported it. Now it acts: the budget drops to the
+  small starting value the app uses before anything is measured, which limits every kind of GPU
+  pass at once, and it may not grow until a frame takes under 200 ms. It doesn't depend on knowing
+  why the timings missed the slowness. It hasn't fired once in about 45 normal test runs across
+  both cards; the self-test's check that deliberately causes the pattern now also checks that
+  this stop engages and releases. `--set DEAD_MAN=0` turns it back into a warning only.
 - **A test setup that recreates the 2026-09-21 crash conditions** (beta.130, for testing). In that
   crash the frame budget had been learned very high elsewhere and carried to a view where every
   frame's GPU work was well under it. So the rule that learns the budget ignored every timing, and

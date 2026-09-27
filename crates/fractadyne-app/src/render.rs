@@ -9755,12 +9755,30 @@ pub(crate) const BUDGET_BLIND_FRAMES: u32 = 8;
 /// the frame was never chunked either — the guard that bounds such a dispatch was switched off by
 /// the same blindness.
 ///
-/// ⚠This reports; it does not act. What to DO about the divergence is a live design question
-/// (price the budget by the wall in this state, force chunking, or cap the ask), and shipping a
-/// reaction inferred from one field log — on hardware the dev box cannot reproduce — is how a
-/// controller acquires a rule nobody can explain later. First make it observable.
+/// ⭐From beta.131 it ACTS (`DEAD_MAN`, default on; see [`dead_man_budget`]). It reported only
+/// until the reaction's §8 prerequisites were in hand: the field trap reproduced on stock logic
+/// (`FRACTADYNE_SEED_BUDGET`, 2026-09-27: every reading discarded, budget 1.515e11 the whole run)
+/// and zero natural fires across ~45 healthy runs on both cards (the two in the batteries were
+/// `--recordtest`'s injected phase). The first field record of a whole episode is still owed.
 pub(crate) fn budget_blind(slow_wall_frames: u32, slow_readings: u32, warned: bool) -> bool {
     !warned && slow_readings == 0 && slow_wall_frames >= BUDGET_BLIND_FRAMES
+}
+
+/// ⭐⭐THE WALL-CLOCK DEAD-MAN's budget (design §5.1, §8): when [`budget_blind`] latches, the view's
+/// budget drops to its bootstrap — the opening guess a view uses before anything is measured,
+/// itself capped at `TDR_BOOTSTRAP_STEPS` — and may not grow again until the latch clears.
+///
+/// Every dispatch path sizes from this one number (`tdr_steps`: the chunk step, `chunk_over`'s
+/// comparison, the resolution shrink, the tile count), so lowering it bounds all of them without a
+/// new actuator — the 2026-09-21 failure was a budget that "switched off" chunking by being too
+/// large. It adopts no theory of why the readings were blind; the wall is its only witness. A
+/// budget already at or under the bootstrap, or unmeasured (0), is left alone.
+pub(crate) fn dead_man_budget(cur: u64, bootstrap: u64) -> u64 {
+    if cur == 0 {
+        0
+    } else {
+        cur.min(bootstrap)
+    }
 }
 
 /// Does a budget decision EXPLAIN a run of slow frames, so the tripwire may start counting again?
