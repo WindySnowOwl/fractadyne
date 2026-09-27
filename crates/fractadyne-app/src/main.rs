@@ -1914,6 +1914,12 @@ impl Perf {
         crate::tunables::instrument("FRACTADYNE_REF_ESCAPE_AT")
     }
 
+    /// `FRACTADYNE_SEED_BUDGET=N`: the session's first frame installs a frame budget of N million
+    /// steps as if it had been learned (see the call site in `render`). Zero, the default, disables it.
+    pub(crate) fn seed_budget() -> u32 {
+        crate::tunables::instrument("FRACTADYNE_SEED_BUDGET")
+    }
+
     fn bootstrap_steps(&self, v: usize) -> u64 {
         let this = Self::slot(self.budget_mode[v]).map_or(0.0, |s| self.mode_rate[v][s]);
         let other = self.mode_rate[v]

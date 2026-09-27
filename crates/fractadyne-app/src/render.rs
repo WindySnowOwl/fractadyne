@@ -6792,6 +6792,27 @@ impl FractadyneApp {
                         ),
                     );
                 }
+                // ⭐DIAGNOSTIC INSTRUMENT `FRACTADYNE_SEED_BUDGET=N` (MILLIONS of steps; off by
+                // default; W9). The 2026-09-21 budget was LEARNED high (1.515e11) somewhere cheap
+                // and carried to the crash view, where every whole-frame render is under 0.7× of it
+                // and under the slow mark — so, the hypothesis goes, every reading was discarded and
+                // the budget could not come down through 20 slow frames. `TDR_BOOTSTRAP_STEPS` cannot
+                // recreate that: it seeds only the UNMEASURED guess, which the first reading replaces
+                // (measured, 2026-09-27: 1.52e11 → 4.66e9 at the first priced reading). This
+                // installs a budget AS IF LEARNED, once, on the session's first frame.
+                let seed = crate::Perf::seed_budget();
+                if prev == u32::MAX && seed > 0 {
+                    self.perf.fe_budget[vidx] = seed as u64 * 1_000_000;
+                    self.perf.fe_budget_ok[vidx] = true;
+                    crate::diag::log_line(
+                        "instrument",
+                        &format!(
+                            "SEED_BUDGET={seed}: v{vidx} budget 0 → {:.3e} steps in mode {m}, as if \
+                             LEARNED (converged)",
+                            self.perf.fe_budget[vidx] as f64
+                        ),
+                    );
+                }
             }
         }
         // A reproject frame re-samples the frozen texture, so it must land on the SAME resolution as

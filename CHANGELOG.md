@@ -12,6 +12,14 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A test setup that recreates the 2026-09-21 crash conditions** (beta.130, for testing). In that
+  crash the frame budget had been learned very high elsewhere and carried to a view where every
+  frame's GPU work was well under it. So the rule that learns the budget ignored every timing, and
+  the budget never came down. No test could start from a learned budget. The existing setting
+  `TDR_BOOTSTRAP_STEPS` only sets the first guess, which the first timing replaces.
+  `FRACTADYNE_SEED_BUDGET` (in millions of steps) now installs a budget as if learned. On the RTX
+  3080 at the crash view it reproduces the trap: all 105 timings ignored, the budget unchanged for
+  the whole run. With the beta.129 reading pool on, the budget came down.
 - **Sharper zooming on slower cards, with the frame budget guarded against bad GPU timings**
   (beta.129, for testing). The reading pool from beta.125 is now on by default: while you zoom,
   the frame budget keeps learning from the GPU timings it used to ignore. On the RX 6800 XT moving
