@@ -334,6 +334,16 @@ pub struct PassClockReading {
     /// The chunked frame's resolve pass begin / end, GPU ns (both 0 on an unchunked frame).
     pub r0: f64,
     pub r1: f64,
+    /// CALIBRATION: an EMPTY render pass (no draw) recorded immediately before the iterate pass,
+    /// and another immediately after the last pass (the resolve, or the iterate when unchunked).
+    /// Each does no work, so on a faithful clock its interval is ~0 and it abuts its neighbour;
+    /// milliseconds here are time the clock charges to a pass that did not spend it.
+    pub m0: f64,
+    pub m1: f64,
+    pub p0: f64,
+    pub p1: f64,
+    /// Passes the clock had to leave untimed so far (ring full), cumulative.
+    pub missed: u64,
 }
 
 /// Where the pass clock publishes finished readings; the app drains it (see
@@ -345,14 +355,18 @@ pub type PassClockSink = Arc<std::sync::Mutex<Vec<PassClockReading>>>;
 /// a pass that finds no free slot is simply not timed (counted in [`PassClock::missed`]).
 const PASS_CLOCK_RING: usize = 8;
 
+/// Timestamp queries per slot: iterate begin/end (0, 1 — FIRST, so the pricer's 16-byte copy is
+/// exactly the iterate), pre-marker (2, 3), post-marker (4, 5), resolve (6, 7; chunked only).
+const PASS_CLOCK_Q: u32 = 8;
+
 struct PassClockSlot {
-    /// Four ticks: iterate begin/end, resolve begin/end (QUERY_RESOLVE | COPY_SRC).
+    /// The slot's ticks, in query order (QUERY_RESOLVE | COPY_SRC).
     resolve: wgpu::Buffer,
     /// MAP_READ staging copy of `resolve`.
     read: wgpu::Buffer,
     state: TimingState,
     status: Arc<std::sync::atomic::AtomicU8>,
-    /// How many of the four ticks this pass wrote (2 = iterate only, 4 = iterate + resolve).
+    /// How many ticks this pass wrote (6 unchunked, 8 with a resolve pass).
     ticks: u32,
     meta: PassClockReading,
 }
@@ -374,6 +388,8 @@ struct PassClock {
     next: usize,
     /// Passes recorded with every slot still in flight (not timed).
     missed: u64,
+    /// 1×1 target for the empty calibration marker passes (a render pass needs an attachment).
+    marker: wgpu::TextureView,
 }
 
 impl PassClock {
@@ -384,11 +400,23 @@ impl PassClock {
         let buf = |label, usage| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
-                size: 32,
+                size: 8 * PASS_CLOCK_Q as u64,
                 usage,
                 mapped_at_creation: false,
             })
         };
+        let marker = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("fractadyne.pass_clock.marker"),
+                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            })
+            .create_view(&wgpu::TextureViewDescriptor::default());
         let slots = (0..PASS_CLOCK_RING)
             .map(|_| PassClockSlot {
                 resolve: buf(
@@ -409,12 +437,32 @@ impl PassClock {
             qs: device.create_query_set(&wgpu::QuerySetDescriptor {
                 label: Some("fractadyne.pass_clock"),
                 ty: wgpu::QueryType::Timestamp,
-                count: (4 * PASS_CLOCK_RING) as u32,
+                count: PASS_CLOCK_Q * PASS_CLOCK_RING as u32,
             }),
             slots,
             next: 0,
             missed: 0,
+            marker,
         })
+    }
+
+    /// An empty render pass bracketed by queries `first`, `first + 1` — the calibration marker.
+    fn marker_pass(&self, encoder: &mut wgpu::CommandEncoder, first: u32) {
+        let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("fractadyne.pass_clock.marker"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &self.marker,
+                resolve_target: None,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: Some(wgpu::RenderPassTimestampWrites {
+                query_set: &self.qs,
+                beginning_of_pass_write_index: Some(first),
+                end_of_pass_write_index: Some(first + 1),
+            }),
+            occlusion_query_set: None,
+        });
     }
 
     /// The slot the next pass may use, or `None` (and a miss) when it is still in flight.
@@ -454,13 +502,16 @@ impl PassClock {
                         MAP_OK => {
                             {
                                 let data = s.read.slice(..).get_mapped_range();
-                                let t: [u64; 4] = bytemuck::pod_read_unaligned(&data[..32]);
+                                let t: [u64; PASS_CLOCK_Q as usize] = bytemuck::pod_read_unaligned(
+                                    &data[..8 * PASS_CLOCK_Q as usize],
+                                );
+                                let ns = |i: usize| t[i] as f64 * period;
                                 let mut m = s.meta;
-                                m.t0 = t[0] as f64 * period;
-                                m.t1 = t[1] as f64 * period;
-                                if s.ticks == 4 {
-                                    m.r0 = t[2] as f64 * period;
-                                    m.r1 = t[3] as f64 * period;
+                                (m.t0, m.t1) = (ns(0), ns(1));
+                                (m.m0, m.m1) = (ns(2), ns(3));
+                                (m.p0, m.p1) = (ns(4), ns(5));
+                                if s.ticks == 8 {
+                                    (m.r0, m.r1) = (ns(6), ns(7));
                                 }
                                 if let Some(Ok(mut v)) = out.map(|o| o.lock()) {
                                     v.push(m);
@@ -2512,6 +2563,9 @@ impl CallbackTrait for MandelbrotParams {
                 let h = t[3].saturating_mul(ss).min(size[1] - y);
                 [x, y, w, h]
             });
+            if let Some(k) = clock_k {
+                view.pass_clock.as_ref().unwrap().marker_pass(encoder, PASS_CLOCK_Q * k as u32 + 2);
+            }
             if let Some([_, _]) = chunk {
                 // -------- chunked resumable iterate (iteration-range tiling) --------
                 // One bounded pass over [start_iter, end_iter) into the ping-pong state, then a
@@ -2552,8 +2606,8 @@ impl CallbackTrait for MandelbrotParams {
                     let ts_writes = match clock_k {
                         Some(k) => Some(wgpu::RenderPassTimestampWrites {
                             query_set: &view.pass_clock.as_ref().unwrap().qs,
-                            beginning_of_pass_write_index: Some(4 * k as u32),
-                            end_of_pass_write_index: Some(4 * k as u32 + 1),
+                            beginning_of_pass_write_index: Some(PASS_CLOCK_Q * k as u32),
+                            end_of_pass_write_index: Some(PASS_CLOCK_Q * k as u32 + 1),
                         }),
                         None => arm_ts.then(|| wgpu::RenderPassTimestampWrites {
                             query_set: &view.timing.as_ref().unwrap().qs,
@@ -2590,8 +2644,8 @@ impl CallbackTrait for MandelbrotParams {
                         depth_stencil_attachment: None,
                         timestamp_writes: clock_k.map(|k| wgpu::RenderPassTimestampWrites {
                             query_set: &view.pass_clock.as_ref().unwrap().qs,
-                            beginning_of_pass_write_index: Some(4 * k as u32 + 2),
-                            end_of_pass_write_index: Some(4 * k as u32 + 3),
+                            beginning_of_pass_write_index: Some(PASS_CLOCK_Q * k as u32 + 6),
+                            end_of_pass_write_index: Some(PASS_CLOCK_Q * k as u32 + 7),
                         }),
                         occlusion_query_set: None,
                     });
@@ -2620,8 +2674,8 @@ impl CallbackTrait for MandelbrotParams {
                 let ts_writes = match clock_k {
                     Some(k) => Some(wgpu::RenderPassTimestampWrites {
                         query_set: &view.pass_clock.as_ref().unwrap().qs,
-                        beginning_of_pass_write_index: Some(4 * k as u32),
-                        end_of_pass_write_index: Some(4 * k as u32 + 1),
+                        beginning_of_pass_write_index: Some(PASS_CLOCK_Q * k as u32),
+                        end_of_pass_write_index: Some(PASS_CLOCK_Q * k as u32 + 1),
                     }),
                     None => arm_ts.then(|| wgpu::RenderPassTimestampWrites {
                         query_set: &view.timing.as_ref().unwrap().qs,
@@ -2644,14 +2698,17 @@ impl CallbackTrait for MandelbrotParams {
                 pass.draw(0..3, 0..1);
             }
             if let Some(k) = clock_k {
-                let PassClock { qs, slots, .. } = view.pass_clock.as_mut().unwrap();
+                view.pass_clock.as_ref().unwrap().marker_pass(encoder, PASS_CLOCK_Q * k as u32 + 4);
+                let PassClock { qs, slots, missed, .. } = view.pass_clock.as_mut().unwrap();
+                let missed = *missed;
                 let s = &mut slots[k];
-                s.ticks = if chunk.is_some() { 4 } else { 2 };
-                let base = 4 * k as u32;
+                s.ticks = if chunk.is_some() { 8 } else { 6 };
+                let base = PASS_CLOCK_Q * k as u32;
                 encoder.resolve_query_set(qs, base..base + s.ticks, &s.resolve, 0);
-                encoder.copy_buffer_to_buffer(&s.resolve, 0, &s.read, 0, 32);
+                encoder.copy_buffer_to_buffer(&s.resolve, 0, &s.read, 0, 8 * PASS_CLOCK_Q as u64);
                 s.meta = PassClockReading {
                     frame: self.pass_frame,
+                    missed,
                     chunk,
                     tiled: chunk.is_none() && tile_px.is_some(),
                     steps: self.nominal_steps,

@@ -12,6 +12,13 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The pass timer checks its own clock** (beta.127, for testing). On the RX 6800 XT, beta.126's
+  per-pass timings did not add up: a pass with nothing to do read 3–24 ms, where the RTX 3080 reads
+  under 1 ms, and two consecutive frames' passes read 200–340 ms apart though the app never had
+  more than three frames in flight. `FRACTADYNE_PASS_CLOCK=1` now also times an empty pass just
+  before each timed pass and another just after it. On an accurate clock both read zero and sit
+  flush against the pass, as they do on the RTX 3080; time that shows up in them is time the clock
+  assigns to a pass that did no work.
 - **A diagnostic that times every GPU pass** (beta.126, for testing; off unless set). With the
   pool from beta.125 on, the RX 6800 XT's first settle after a deep zoom produced frames of up to
   119 ms, and the frame budget never saw them. Their time was reported by the last, empty pass of

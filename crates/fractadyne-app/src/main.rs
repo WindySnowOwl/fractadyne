@@ -13975,10 +13975,20 @@ impl FractadyneApp {
                 } else {
                     String::new()
                 };
+                // The calibration markers: empty passes either side, each ~0 on a faithful clock.
+                let last = r.t1.max(r.r1);
+                let markers = format!(
+                    " | pre {:.3} (to iter {:+.3}) post {:.3} (after {:+.3}){}",
+                    (r.m1 - r.m0) / 1e6,
+                    (r.t0 - r.m1) / 1e6,
+                    (r.p1 - r.p0) / 1e6,
+                    (r.p0 - last) / 1e6,
+                    if r.missed > 0 { format!(" missed {}", r.missed) } else { String::new() },
+                );
                 diag::log_line(
                     "passclock",
                     &format!(
-                        "v{v} f{} {range} steps={:.3e} gpu {:.3} ms gap {gap} ms{resolve}{} t0={:.3} ms",
+                        "v{v} f{} {range} steps={:.3e} gpu {:.3} ms gap {gap} ms{resolve}{}{markers} t0={:.3} ms",
                         r.frame,
                         r.steps as f64,
                         (r.t1 - r.t0) / 1e6,
@@ -13986,7 +13996,7 @@ impl FractadyneApp {
                         r.t0 / 1e6,
                     ),
                 );
-                self.perf.pass_clock_prev_t1[v] = r.t1.max(r.r1);
+                self.perf.pass_clock_prev_t1[v] = r.p1.max(last);
             }
         }
     }
