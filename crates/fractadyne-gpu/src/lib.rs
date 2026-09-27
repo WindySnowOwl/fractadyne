@@ -187,6 +187,12 @@ struct IterTiming {
     /// tile than the one the timing measured. Every reading was then priced against the wrong
     /// (usually smaller, clamped-edge) tile and discarded as undersized, which froze the budget.
     steps: u64,
+    /// [`MandelbrotParams::pass_frame`] of the frame that recorded the timed pass, published with
+    /// the reading so the app can hold it against that frame's CPU-side completion window.
+    frame: u64,
+    /// The app's clock (µs) when the timer was armed — after one poll, before the frame's submit —
+    /// published with the reading: the start of the app's CPU-side window for this pass (0 = none).
+    armed_us: u64,
     state: TimingState,
     /// `map_async` outcome for the in-flight readback, written by the callback thread:
     /// [`MAP_PENDING`] / [`MAP_OK`] / [`MAP_ERR`]. Distinguishing error from pending is what lets a
@@ -240,6 +246,8 @@ impl IterTiming {
                 wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             ),
             steps: 0,
+            frame: 0,
+            armed_us: 0,
             state: TimingState::Idle,
             status: Arc::new(std::sync::atomic::AtomicU8::new(MAP_PENDING)),
             fails: 0,
@@ -254,6 +262,8 @@ impl IterTiming {
         queue: &wgpu::Queue,
         out: Option<&Arc<std::sync::atomic::AtomicU64>>,
         out_steps: Option<&Arc<std::sync::atomic::AtomicU64>>,
+        out_frame: Option<&Arc<std::sync::atomic::AtomicU64>>,
+        out_armed: Option<&Arc<std::sync::atomic::AtomicU64>>,
     ) {
         use std::sync::atomic::Ordering::SeqCst;
         match self.state {
@@ -282,6 +292,12 @@ impl IterTiming {
                             if let Some(o) = out_steps {
                                 o.store(self.steps, SeqCst);
                             }
+                            if let Some(o) = out_frame {
+                                o.store(self.frame, SeqCst);
+                            }
+                            if let Some(o) = out_armed {
+                                o.store(self.armed_us, SeqCst);
+                            }
                             if let Some(o) = out {
                                 o.store((ns / 1.0e6).to_bits(), SeqCst);
                             }
@@ -309,6 +325,16 @@ impl IterTiming {
             TimingState::Idle => {}
         }
     }
+}
+
+/// The timing witness's arming stamp: poll once, so a completion callback for work that has
+/// already finished runs (and stamps its time) before this moment, then read the app's clock.
+/// Called only on the frames the pricer's timer arms (about one in three); 0 without a clock.
+fn witness_stamp(device: &wgpu::Device, now_us: Option<fn() -> u64>) -> u64 {
+    now_us.map_or(0, |now| {
+        let _ = device.poll(wgpu::Maintain::Poll);
+        now()
+    })
 }
 
 /// One live pass timed by the diagnostic PASS CLOCK (see [`PassClock`]).
@@ -1955,6 +1981,13 @@ pub struct MandelbrotParams {
     /// Sink for the NOMINAL STEP COUNT of the pass `iterate_ms` timed, published in the same
     /// breath so the app never has to guess which dispatch a late reading belongs to.
     pub iterate_steps: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Sink for the [`MandelbrotParams::pass_frame`] of the pass `iterate_ms` timed, published
+    /// with it: the app holds each reading against that frame's CPU-side completion window.
+    pub iterate_frame: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Sink for the app-clock µs at which that pass's timer was armed (see `IterTiming::armed_us`).
+    pub iterate_armed_us: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// The app's clock (µs), for the timing witness. `None` = no witness stamp and no extra poll.
+    pub now_us: Option<fn() -> u64>,
     /// This dispatch's nominal cost (`px x ss^2 x iterations`; for a tile, the TILE's px). Handed
     /// to `IterTiming` when the pass is timed and handed back with the measurement.
     pub nominal_steps: u64,
@@ -2216,7 +2249,14 @@ impl CallbackTrait for MandelbrotParams {
 
         // Drain any timestamp readback armed on an earlier frame before this frame may re-arm it.
         if let Some(t) = view.timing.as_mut() {
-            t.pump(device, queue, self.iterate_ms.as_ref(), self.iterate_steps.as_ref());
+            t.pump(
+                device,
+                queue,
+                self.iterate_ms.as_ref(),
+                self.iterate_steps.as_ref(),
+                self.iterate_frame.as_ref(),
+                self.iterate_armed_us.as_ref(),
+            );
         }
         if self.pass_clock.is_some() && view.pass_clock.is_none() {
             view.pass_clock = PassClock::new(device);
@@ -2722,6 +2762,8 @@ impl CallbackTrait for MandelbrotParams {
                     let t = view.timing.as_mut().unwrap();
                     encoder.copy_buffer_to_buffer(&s.resolve, 0, &t.read, 0, 16);
                     t.steps = self.nominal_steps;
+                    t.frame = self.pass_frame;
+                    t.armed_us = witness_stamp(device, self.now_us);
                     t.state = TimingState::Recorded;
                 }
             } else if arm_ts {
@@ -2729,6 +2771,8 @@ impl CallbackTrait for MandelbrotParams {
                 encoder.resolve_query_set(&t.qs, 0..2, &t.resolve, 0);
                 encoder.copy_buffer_to_buffer(&t.resolve, 0, &t.read, 0, 16);
                 t.steps = self.nominal_steps; // pair the cost with the time it took
+                t.frame = self.pass_frame;
+                t.armed_us = witness_stamp(device, self.now_us);
                 t.state = TimingState::Recorded;
             }
             if arm_ctr {

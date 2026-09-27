@@ -12,6 +12,15 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Every GPU timing the frame budget uses is now checked against the CPU's clock** (beta.128,
+  for testing; it changes nothing the app decides yet). On the RX 6800 XT the GPU's own clock was
+  found to drift by up to half a second against the CPU's, many times a run, so a single timing
+  can be too long or too short, and the frame budget is priced from those timings. Each timing is
+  now compared with the time the CPU saw pass between arming the GPU timer and the GPU reporting
+  that frame's work finished. A timing longer than that is impossible, and one far shorter while
+  the GPU had nothing else queued is suspect. The log reports the count every 30 seconds, and
+  every timing's check is kept in the per-frame record (schema 3; `scripts/framelog.py` still
+  reads schema 2). On the RTX 3080 none of 477 timings was impossible.
 - **The pass timer checks its own clock** (beta.127, for testing). On the RX 6800 XT, beta.126's
   per-pass timings did not add up: a pass with nothing to do read 3–24 ms, where the RTX 3080 reads
   under 1 ms, and two consecutive frames' passes read 200–340 ms apart though the app never had

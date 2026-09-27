@@ -69,7 +69,7 @@ and fails if one is missing from this table.
 |--------|--------|--------------|
 | `[fd-start]` | always | Session header: version (with commit), arguments, bignum backends compiled in, which session loaded, where logs were directed |
 | `[fd-render]` | always | CLI render manifest and failures; on the live path the always-on alarms — `slow frame N` (with body vs time outside it), `⚠LETHAL-BAND FRAME`, `⚠IN-FLIGHT PASS IN THE LETHAL BAND`, `⚠FRAME BUDGET IS BLIND`, `motion jam` |
-| `[fd-wgpu]` | always | The adapter + capability line (`TIMESTAMP_QUERY`, attach bytes granted), device errors and device loss |
+| `[fd-wgpu]` | always | The adapter + capability line (`TIMESTAMP_QUERY`, attach bytes granted), device errors and device loss; from beta.128 a `timing witness:` line every 30 s of GPU readings: how many of the frame budget's timestamp readings were held against their pass's CPU-side window (timer armed to the frame's completion callback, an upper bound), how many were IMPOSSIBLE (longer than it), and how much of the window a reading left unexplained when the queue was empty (RTX 3080: 13–17 ms at the median, callback latency). Per reading in the frame record (schema 3: `read_window_ms`, `read_queue_empty`) |
 | `[fd-panic]` | always | A panic, and where its crash report was written |
 | `[fd-oom]` | always | An allocation failure (the report is written from an 8 MB reserve) |
 | `[fd-unclean]` | always | The previous session ended without a clean shutdown — with its last log lines and, from beta.113, how much of its frame record survived |

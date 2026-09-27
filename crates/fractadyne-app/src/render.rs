@@ -5758,6 +5758,8 @@ impl FractadyneApp {
         // were then gated on `is_fe` to match. Every mode measures now.
         let iterate_ms = Some(self.perf.iterate_ms[vs].clone());
         let iterate_steps = Some(self.perf.iterate_steps[vs].clone());
+        let iterate_frame = Some(self.perf.iterate_frame[vs].clone());
+        let iterate_armed_us = Some(self.perf.iterate_armed[vs].clone());
         // The GPU self-arms the maxiter-fraction readback on full-frame iterates and computes the
         // fraction itself (count and pixel denominator always from the same frame).
         let maxiter_count = Some(self.perf.maxiter_sink[vs.min(1)].clone());
@@ -5812,6 +5814,9 @@ impl FractadyneApp {
         let params = MandelbrotParams {
             iterate_ms,
             iterate_steps,
+            iterate_frame,
+            iterate_armed_us,
+            now_us: Some(crate::app_micros),
             nominal_steps,
             pass_clock: (crate::tunables::instrument("FRACTADYNE_PASS_CLOCK") > 0)
                 .then(|| self.perf.pass_clock_sink[vs.min(1)].clone()),

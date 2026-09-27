@@ -93,6 +93,7 @@ mod sysinfo;
 mod theme;
 mod torture;
 mod tone;
+mod timing_witness;
 mod tunables;
 mod ui;
 mod shot;
@@ -1145,6 +1146,14 @@ struct Perf {
     pass_clock_sink: [fractadyne_gpu::PassClockSink; 2],
     /// GPU ns at which the last logged pass-clock pass of each view ended — the next line's gap.
     pass_clock_prev_t1: [f64; 2],
+    /// Frame index of the pass `iterate_ms` timed, published by the GPU in the same breath.
+    iterate_frame: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// `app_micros` when that pass's timer was armed, published with it (0 = none).
+    iterate_armed: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// Every GPU reading held against its frame's CPU-side completion window (see
+    /// `timing_witness`); the verdict for the reading being judged rides here into the record.
+    witness: timing_witness::Witness,
+    witness_pending: [Option<timing_witness::Verdict>; 2],
     /// Nominal steps of the last frame that actually re-iterated — the cost that `iterate_ms` prices.
     fe_steps_last: [u64; 2],
     /// Last measured live iterate GPU ms per view — a copy of the swapped `iterate_ms`
@@ -1957,6 +1966,10 @@ impl Default for Perf {
             iterate_steps: [Default::default(), Default::default()],
             pass_clock_sink: [Default::default(), Default::default()],
             pass_clock_prev_t1: [0.0, 0.0],
+            iterate_frame: [Default::default(), Default::default()],
+            iterate_armed: [Default::default(), Default::default()],
+            witness: Default::default(),
+            witness_pending: [None, None],
             fe_steps_last: [0, 0],
             last_iterate_ms: [0.0, 0.0],
             fe_budget_ok: [false, false],
@@ -13851,6 +13864,9 @@ impl FractadyneApp {
         r.read_ok = ok;
         r.read_lethal = lethal;
         r.refusal = refused;
+        let w = self.perf.witness_pending[v.min(1)].filter(|_| src == Self::SRC_GPU_ITERATE);
+        r.read_window_ms = w.map_or(0.0, |w| w.window_ms);
+        r.read_queue_empty = w.is_some_and(|w| w.queue_empty);
     }
 
     /// THE FRAME RECORD'S EMIT (`diag::frame_record`, design W1): complete each view's record with
@@ -14504,6 +14520,9 @@ impl eframe::App for FractadyneApp {
                     });
                 }
             }
+            // The timing witness: the previous frame's work (`frame_idx` is not yet advanced) has
+            // been submitted — stamp when it completes.
+            self.perf.witness.arm_done(q, self.perf.frame_idx, app_micros);
         }
         // Adapter name for the --uitest report header (once is enough; cheap to read each frame).
         let gpu_name = frame.wgpu_render_state().map(|rs| rs.adapter.get_info().name);
@@ -14661,9 +14680,20 @@ impl eframe::App for FractadyneApp {
                 0 => self.perf.fe_steps_last[v],
                 n => n,
             };
+            // The timing witness (measure only): the reading against its pass's CPU-side window.
+            let frame = self.perf.iterate_frame[v].swap(0, std::sync::atomic::Ordering::SeqCst);
+            let armed = self.perf.iterate_armed[v].swap(0, std::sync::atomic::Ordering::SeqCst);
+            let verdict = self.perf.witness.judge(frame, armed);
+            if let Some(w) = verdict {
+                if let Some(line) = self.perf.witness.tally(ms, &w, app_micros()) {
+                    diag::log_line("wgpu", &line);
+                }
+            }
+            self.perf.witness_pending[v] = verdict;
             if self.apply_iterate_measurement(v, ms, steps, Self::SRC_GPU_ITERATE) {
                 ctx.request_repaint();
             }
+            self.perf.witness_pending[v] = None;
         }
         self.update_minimap(ctx, &gpu);
         self.update_reticle(ctx, &gpu);
