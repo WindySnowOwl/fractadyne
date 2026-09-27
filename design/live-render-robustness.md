@@ -2639,3 +2639,30 @@ printed for every run so the control is scored on the same number.
   hypothesis, not a finding.
 - ⚠**The instrument perturbs.** 2 of 6 clock-on runs (both pool-on) had a 470–559 ms frame; 0 of 6
   without the clock did (max 56.6 ms). Frame times from clock-on runs are not evidence.
+
+**beta.128: the timing witness, and a second retraction.** (Same branch; `timing_witness.rs`,
+record schema 3.)
+
+- Each reading the budget prices is held against a sound CPU-side window. The window opens when
+  the GPU side ARMS the timer (in `prepare`, after one poll, before submit) and closes at the
+  frame's `on_submitted_work_done` callback, so it is an upper bound. With the previous frame done
+  before the arming (an empty queue), window minus reading is overhead, mostly callback latency.
+- **Pass clock off, tap rung, about 2,500 readings.**
+
+  | | readings | too short | impossible | window minus reading, p50 | max |
+  |---|---|---|---|---|---|
+  | RTX 3080 | ~1,000 | 0 | 0 | 13–17 ms | 48 ms |
+  | RX 6800 XT | 1,505 | 0 | 2 | 17.5–17.9 ms | 58 ms |
+
+  Both impossible readings on the RX 6800 XT were a walk's EMPTY TAIL: 42.6 ms inside an 18.9 ms
+  window, and 118.8 ms inside 104 ms.
+- ⛔**Retraction.** "The Radeon's GPU timeline does not track its CPU timeline" (beta.127, above) was
+  a PASS-CLOCK artifact, compounded by comparing each pass's GPU start with its frame's START time.
+  The budget's own readings on that card are sound. The only bad one is the empty tail, which
+  reads long (the safe direction), and the 0.7× rule was already discarding it.
+- **beta.129 guards:**
+  - an empty tail is never timed;
+  - an IMPOSSIBLE reading prices nothing: not the budget, not the pool, not the latched mode rate;
+  - a reading from an empty queue that leaves more than 100 ms of its window unexplained may
+    shrink the budget but not grow it, and stays out of the pool (SHORT; none observed).
+- `READING_POOL` is on by default from beta.129, its two gates passed.
