@@ -2564,10 +2564,15 @@ impl CallbackTrait for MandelbrotParams {
             // Bracket the iterate with GPU timestamps when nothing is already in flight. This is the
             // only measurement of the deep iterate that isn't contaminated by vsync, repaint
             // scheduling, pipeline setup, or the offscreen path's different cost profile.
+            // …except a chunked walk's EMPTY tail (`[end, end)`), which iterates nothing: it has no
+            // cost to measure, and on the RX 6800 XT its timestamps were the only readings the
+            // app's timing witness proved impossible (2 of 1,505, 2026-09-27: 42.6 ms inside an
+            // 18.9 ms window, 118.8 inside 104). Leaving it unarmed frees the timer for real work.
             let arm_ts = view
                 .timing
                 .as_ref()
-                .is_some_and(|t| t.state == TimingState::Idle);
+                .is_some_and(|t| t.state == TimingState::Idle)
+                && !matches!(chunk, Some([s, e]) if s >= e);
             // The diagnostic pass clock, when asked for, brackets EVERY pass (its own ring); an
             // armed pricer then takes its reading from the clock's ticks for this same pass.
             let clock_k = if self.pass_clock.is_some() {

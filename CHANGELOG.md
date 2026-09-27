@@ -12,6 +12,20 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Sharper zooming on slower cards, with the frame budget guarded against bad GPU timings**
+  (beta.129, for testing). The reading pool from beta.125 is now on by default: while you zoom,
+  the frame budget keeps learning from the GPU timings it used to ignore. On the RX 6800 XT moving
+  frames went from the lowest resolution step to 2.5 times the resolution in each direction. The
+  cost is a little over 1% of moving frames taking more than 33 ms (up from under 0.5%). It was
+  held back until two checks passed. First, the crash test that cuts the reference short, as in
+  the 2026-09-21 crash, ran 9 times on the RX 6800 XT with the budget staying at least 10 times
+  below the crash level and no crash. Second, the beta.128 check: none of about 2,500 timings on
+  either card was too short, the direction that could let the budget grow past what the card
+  can do. The only impossible timings, 2 of 1,505 on the RX 6800 XT, came from the empty final
+  pass of a finished render. That pass is no longer timed, a timing proven impossible is now
+  ignored, and one that looks too short may lower the budget but never raise it.
+  Also fixed: a self-test check of the About panel failed about half the time, depending on the
+  order the tests ran in.
 - **Every GPU timing the frame budget uses is now checked against the CPU's clock** (beta.128,
   for testing; it changes nothing the app decides yet). On the RX 6800 XT the GPU's own clock was
   found to drift by up to half a second against the CPU's, many times a run, so a single timing

@@ -13,7 +13,11 @@
 //! is impossible. Just before arming, the GPU side polls once, so the previous frame's completion
 //! is stamped if it has happened: when it precedes the arming, the queue was empty and the window
 //! is this frame's own GPU work plus callback latency — a reading far SHORTER than it is suspect.
-//! This module only measures; what the budget does with a verdict is decided from measurements.
+//!
+//! Measured (beta.128, ~2,500 readings on both cards): no reading was too short; 2 of 1,505 on the
+//! RX 6800 XT were impossible, both a walk's empty tail. So from beta.129 the budget refuses an
+//! impossible reading outright, a suspect-short one may only shrink it, and the GPU side no longer
+//! times an empty tail (`apply_iterate_measurement`; `fractadyne-gpu`'s `arm_ts`).
 
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::Arc;
@@ -24,6 +28,12 @@ pub(crate) const RING: usize = 64;
 /// A reading longer than its window by more than this is IMPOSSIBLE (timestamp granularity and the
 /// microsecond stamps).
 pub(crate) const IMPOSSIBLE_TOLERANCE_MS: f64 = 0.5;
+
+/// An empty-queue reading that leaves more of its window than this unexplained may be too SHORT.
+/// Measured on the tap rung (2026-09-27, ~2,500 readings): the window exceeds a truthful reading by
+/// 13–18 ms at the median (callback latency, about a frame) and never by more than 58 ms (RX 6800 XT)
+/// or 48 ms (RTX 3080). A false positive only withholds one growth step.
+pub(crate) const SHORT_SLACK_MS: f64 = 100.0;
 
 /// How often the running tally is logged.
 const SUMMARY_EVERY_US: u64 = 30_000_000;

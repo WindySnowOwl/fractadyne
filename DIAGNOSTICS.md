@@ -238,7 +238,11 @@ quarters of a reading or of the 10 ms pass target is treated as fixed — and `M
 (default 1): the fraction of the picture a moving frame is sized to reach. At 1 its walk must reach
 the view's slowest escaping pixel; below 1 (e.g. 0.9), only the iteration by which that fraction of
 the last complete walk had escaped, so deep views with a few stragglers get larger moving frames and
-the stragglers show unfinished until the view settles.
+the stragglers show unfinished until the view settles — and `READING_POOL` (default 1 from beta.129;
+`0` = off): GPU timings the frame budget would discard as too small to count are added together until
+they are representative, then priced as one. While the view moves every timing is a small one, so
+without it the budget cannot learn during a zoom. A timing the timing witness proves impossible never
+joins the pool, and neither does one it judges possibly too short.
 
 - **Not a configuration surface.** The defaults are the only tested path: the self-test, the
   goldens, `--bench-matrix` and `--livetest` all assume them. `--selftest` carries a check that

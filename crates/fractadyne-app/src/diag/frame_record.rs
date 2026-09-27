@@ -98,12 +98,18 @@ pub(crate) mod verdict {
     pub(crate) const DISCARDED: u8 = 1;
     pub(crate) const MOVED: u8 = 2;
     pub(crate) const UNCHANGED: u8 = 3;
+    /// Longer than the CPU-side window its pass ran inside (`timing_witness`): it did not happen,
+    /// and prices nothing (beta.129).
+    pub(crate) const IMPOSSIBLE: u8 = 4;
 }
 /// Why a reading that asked for growth did not get it. `0` = no refusal. A REASON, recorded
 /// rather than inferred from an "(unchanged)" line: the refusal used to be visible only under
 /// `FRACTADYNE_TRACE=gpu`, i.e. never in the field.
 pub(crate) mod refusal {
     pub(crate) const BUILDING: u8 = 1;
+    /// The timing witness judged the reading possibly too SHORT (an empty queue's window left far
+    /// more unexplained than any tested card): it may shrink the budget, never grow it (beta.129).
+    pub(crate) const SHORT: u8 = 2;
 }
 
 // ------------------------------------------------------------------------------------------------

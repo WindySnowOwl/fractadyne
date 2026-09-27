@@ -639,10 +639,13 @@ pub(crate) const PASS_FIXED_MS_DEFAULT: f64 = 0.2;
 pub(crate) const MOTION_NEED_QUANTILE_DEFAULT: f64 = 1.0;
 
 /// 1 = pool the GPU readings the frame-budget rule would discard until together they are
-/// representative, and price the budget on the pool (`render::pool_step`); 0 = off, the shipped
-/// behaviour. Off until measured: it is the first change here that moves the frame BUDGET — the
-/// safety controller — rather than a motion pass inside it.
-pub(crate) const READING_POOL_DEFAULT: u64 = 0;
+/// representative, and price the budget on the pool (`render::pool_step`); 0 = off, the behaviour
+/// before beta.129. ON from beta.129: it is the first change here that moves the frame BUDGET — the
+/// safety controller — rather than a motion pass inside it, so it waited for (1) the escaped-
+/// reference storm on the RX 6800 XT (9 runs, budget at most 1.48e10, 10× under the 2026-09-21
+/// loss, no lethal or stall line) and (2) the timing witness: no budget reading on either card
+/// was too short, and the impossible ones are now refused (`timing_witness`).
+pub(crate) const READING_POOL_DEFAULT: u64 = 1;
 
 /// The most a held frame may MAGNIFY before its refresh lands, octaves — the zoom-rate-aware half
 /// of the refresh sizing. At `zoom_oct_s` octaves per second the refresh has `HELD_MAX_OCT /

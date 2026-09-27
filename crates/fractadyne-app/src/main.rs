@@ -14026,6 +14026,27 @@ impl FractadyneApp {
     /// `ms` is how long the dispatch of `steps` nominal steps took. Returns whether the budget
     /// moved. The caller owns the pairing: `steps` must be the count that `ms` actually priced.
     fn apply_iterate_measurement(&mut self, v: usize, ms: f64, steps: u64, src: &str) -> bool {
+        // THE TIMING WITNESS GUARD (beta.129; `timing_witness`). A GPU reading LONGER than the
+        // CPU-side window its pass ran inside did not happen. On the RX 6800 XT, 2 of 1,505 budget
+        // readings were, both a walk's empty tail. It prices nothing: not the budget, not the
+        // pool, and not the mode rate below, which latches its minimum for the session.
+        let witness = self.perf.witness_pending[v.min(1)].filter(|_| src == Self::SRC_GPU_ITERATE);
+        if let Some(w) = witness.filter(|w| w.impossible(ms)) {
+            let cur = render::budget_base(self.perf.fe_budget[v], self.perf.bootstrap_steps(v));
+            diag::budget_note(format!(
+                "v{v} {src}={ms:.1}ms steps={:.3e} budget={cur:.3e} IMPOSSIBLE (longer than its \
+                 {:.1} ms window) - not priced",
+                steps as f64, w.window_ms
+            ));
+            self.note_reading(v, src, ms, steps, cur, cur, diag::frame_record::verdict::IMPOSSIBLE, false, 0);
+            return false;
+        }
+        // …and one that leaves far more of an EMPTY queue's window unexplained than either tested
+        // card ever did (RX 6800 XT max 58 ms, RTX 3080 48 ms, over ~2,500 readings) may be too
+        // SHORT — the direction that grows a budget past what the GPU can do. It may shrink the
+        // budget, never grow it, directly or through the pool. None has been observed; insurance.
+        let short = witness
+            .is_some_and(|w| w.queue_empty && w.window_ms - ms > timing_witness::SHORT_SLACK_MS);
         // Zero means "nothing measured yet in this mode" — that is the one case the opening guess
         // is for. ⚠It used to be `.max(TDR_BOOTSTRAP_STEPS)`, which re-raised the budget to the
         // guess before EVERY step, so a converged-low budget was hoisted back up on each reading
@@ -14067,7 +14088,7 @@ impl FractadyneApp {
         let mut pooled = None;
         if direct.is_some() {
             self.perf.reading_pool[vb] = render::ReadingPool::default();
-        } else if crate::tunables::cost().reading_pool == 1 && src == Self::SRC_GPU_ITERATE {
+        } else if crate::tunables::cost().reading_pool == 1 && src == Self::SRC_GPU_ITERATE && !short {
             if let Some((ps, pms, pn)) = render::pool_step(
                 &mut self.perf.reading_pool[vb],
                 steps,
@@ -14114,6 +14135,7 @@ impl FractadyneApp {
         // What the reading asked for BEFORE the gate — the only way to record a refusal as a
         // refusal rather than as a reading that happened to ask for nothing.
         let asked = next;
+        let next = if short { next.min(cur) } else { next };
         let (next, ok) = render::budget_after_build_gate(cur, next, ok, building);
         if building && next == cur {
             diag::trace(
@@ -14171,7 +14193,13 @@ impl FractadyneApp {
             // The REASON growth was refused, recorded rather than left to be inferred from an
             // "(unchanged)" line — the refusal itself was trace-gated, i.e. absent in the field.
             // Exactly `budget_after_build_gate`'s refusal condition.
-            let refused = if building && asked > cur { refusal::BUILDING } else { 0 };
+            let refused = if short && asked > cur {
+                refusal::SHORT
+            } else if building && asked > cur {
+                refusal::BUILDING
+            } else {
+                0
+            };
             let v8 = if moved { verdict::MOVED } else { verdict::UNCHANGED };
             self.note_reading(v, src, ms, steps, cur, next, v8, ok, refused);
         }
