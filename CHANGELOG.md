@@ -12,6 +12,12 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The per-frame record now shows how each moving frame was sized** (beta.124, for testing). While
+  zooming, a frame's resolution comes from the GPU pass it gets, how far its iterations must reach,
+  the resolution step that allows, and a separate cap. None of these were recorded, so on the RX
+  6800 XT, where moving frames sat on the lowest step whatever was changed, nothing showed which one
+  held them there. Four fields now record them for every frame (record schema 2; its file slots grow
+  from 512 to 640 bytes). `scripts/framelog.py` still reads schema-1 files from older builds.
 - **Sharper pictures while zooming, on by default; and an experiment for slow cards** (beta.123,
   for testing). The per-pass fixed cost from beta.122 (`PASS_FIXED_MS`) is now on by default at
   0.2 ms, the RTX 3080's measured value: moving frames there get twice the pixels, with frame time

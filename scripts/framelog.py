@@ -55,6 +55,19 @@ VERDICT = {0: "-", 1: "DISCARDED", 2: "moved", 3: "unchanged"}
 MIN_FRAMES = 30
 
 
+def schema_for(version, current):
+    """The schema a file declares: the current one, or a kept older one
+    (`validation/frame-schema-v<N>.json`, saved when the schema was bumped), so a field log from an
+    older build still decodes. Anything else is refused rather than guessed at."""
+    if version == current["schema"]:
+        return current
+    older = os.path.join(HERE, "..", "validation", f"frame-schema-v{version}.json")
+    if not os.path.exists(older):
+        raise SystemExit(f"schema {version}: this reader knows {current['schema']} and has no "
+                         f"validation/frame-schema-v{version}.json - refusing to guess")
+    return load_schema(older)
+
+
 def load_schema(path=SCHEMA_PATH):
     with open(path, encoding="utf-8") as f:
         s = json.load(f)
@@ -85,8 +98,7 @@ def read_bin(path, sch):
     if len(data) < hb or data[:4] != sch["file_magic"].encode():
         raise SystemExit(f"{path}: not a frames.bin (bad magic)")
     schema = struct.unpack_from("<H", data, 4)[0]
-    if schema != sch["schema"]:
-        raise SystemExit(f"{path}: schema {schema}, this reader knows {sch['schema']} - refusing to guess")
+    sch = schema_for(schema, sch)
     session = struct.unpack_from("<Q", data, 8)[0]
     hlen = struct.unpack_from("<I", data, 16)[0]
     try:
@@ -144,7 +156,13 @@ def read_jsonl(path, sch, strict=True):
                 continue
             if o.get("kind") == "header":
                 if o.get("schema") != sch["schema"]:
-                    problems.append(f"line {i}: schema {o.get('schema')}, reader knows {sch['schema']}")
+                    # An older build's file: check it against the schema it was written in.
+                    try:
+                        sch = schema_for(o.get("schema"), sch)
+                        want = set(sch["names"])
+                        want_summary = set(sch.get("summary_keys", []))
+                    except SystemExit:
+                        problems.append(f"line {i}: schema {o.get('schema')}, reader knows {sch['schema']}")
                 header = dict(o.get("header") or {})
                 header.setdefault("session", o.get("session"))
                 continue

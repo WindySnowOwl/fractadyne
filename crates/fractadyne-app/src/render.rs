@@ -6570,8 +6570,12 @@ impl FractadyneApp {
                 );
             }
             self.perf.visible_res[vbi] = held;
+            // Into the frame record: what sized this moving frame, and which of the two caps bound
+            // it — `res_scale` (the AIMD / rate / budget caps above) or the ladder's `held`.
+            self.perf.vis_sizing[vbi] = [need, target, res_scale];
             res_scale.min(held)
         } else {
+            self.perf.vis_sizing[(view_id as usize).min(1)] = [0.0; 3];
             res_scale
         };
         // REUSE-FIRST ZOOM hold decision (used by BOTH the native-res gate here and the freeze
