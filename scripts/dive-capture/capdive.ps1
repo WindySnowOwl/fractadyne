@@ -4,7 +4,7 @@
 # what was ON SCREEN can be scored by screengate.py - see README.md.
 #
 #   powershell -File capdive.ps1 -Out RUNDIR -Exe fractadyne.exe [-Kfr dive-2p800.kfr]
-#       [-Seed session-seed.toml] [-TimeoutS 26] [-Iter 10000]
+#       [-Seed session-seed.toml] [-TimeoutS 26] [-Iter 10000] [-Set NAME=VALUE,...]
 #
 # RUNDIR is wiped first and gets: cfg\ (the scratch config and its logs), frames\ (the captures,
 # f<ms since capture start>.jpg), stdout.txt, stderr.txt and exit.txt (the app's exit code).
@@ -18,7 +18,10 @@ param(
     [string]$Kfr = "",
     [string]$Seed = "",
     [int]$TimeoutS = 26,
-    [int]$Iter = 10000
+    [int]$Iter = 10000,
+    # Tunable overrides for an A/B, each NAME=VALUE, passed as --set NAME=VALUE (the run is then
+    # non-stock, and says so in its log).
+    [string[]]$Set = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,18 +39,21 @@ New-Item -ItemType Directory -Force -Path $cfg, $frames | Out-Null
 Copy-Item -LiteralPath $Seed -Destination (Join-Path $cfg "session.toml")
 
 # The child inherits these; put back whatever was there after.
+# NOTE: PowerShell variable names ignore case - a table named "$set" here WAS the -Set parameter,
+# and every run passed "--set System.Collections.Hashtable" (the app refused it, exit 2).
 $saved = @{}
-$set = @{ FRACTADYNE_CONFIG_DIR = $cfg; FRACTADYNE_NO_SOUND = "1"; FRACTADYNE_TRACE = "autopilot,tile,gpu,ref" }
-foreach ($k in $set.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $set[$k]) }
+$childEnv = @{ FRACTADYNE_CONFIG_DIR = $cfg; FRACTADYNE_NO_SOUND = "1"; FRACTADYNE_TRACE = "autopilot,tile,gpu,ref" }
+foreach ($k in $childEnv.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $childEnv[$k]) }
 try {
     $argv = @("--import-kfr", "`"$Kfr`"", "--show-timestamp", "--autodive", "300", "--autodive-iter", "$Iter",
         "--autodive-home", "0", "--autodive-timeout", "$TimeoutS")
+    foreach ($kv in $Set) { $argv += @("--set", $kv) }
     $p = Start-Process -FilePath $Exe -ArgumentList $argv -PassThru -WorkingDirectory $Out `
         -RedirectStandardOutput (Join-Path $Out "stdout.txt") -RedirectStandardError (Join-Path $Out "stderr.txt")
     $null = $p.Handle   # Windows PowerShell 5.1 loses ExitCode unless the handle is taken now
 }
 finally {
-    foreach ($k in $set.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
+    foreach ($k in $childEnv.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
 }
 
 Start-Sleep -Seconds 4

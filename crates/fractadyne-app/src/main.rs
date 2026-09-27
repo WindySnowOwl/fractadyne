@@ -1767,7 +1767,9 @@ impl Perf {
         if self.mode_switch_frame[v] != u64::MAX && since < 3 {
             return;
         }
-        let rate = steps as f64 / ms;
+        // The rate of the VARIABLE part of the pass: with `PASS_FIXED_MS` set, a small pass's fixed
+        // cost no longer reads as dear steps (`motion_pass_steps` spends the same split). 0 = off.
+        let rate = steps as f64 / render::variable_pass_ms(ms, crate::tunables::cost().pass_fixed_ms);
         if !rate.is_finite() || rate <= 0.0 {
             return;
         }

@@ -12,6 +12,18 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **An experimental setting for sharper pictures while zooming on cards with a high per-pass
+  cost** (beta.122, for testing; off unless set). While you zoom, each moving frame is sized to
+  finish within one short GPU pass, so it never shows up blank. The size is worked out from how
+  fast earlier passes ran, as if every step cost the same. But part of each pass's time is a fixed
+  cost that does not depend on its size, and on the RX 6800 XT that is about 1 ms of a 1.14 ms small
+  pass. Counting that as work made steps look about seven times more expensive than they are, so
+  moving frames were sized far too small (278×197 pixels at a 2788×1974 window, reported as "zooming
+  goes to low detail"). `--set PASS_FIXED_MS=<ms>` separates the fixed part: a pass's speed is taken
+  over the rest of its time, and the next pass is sized to the time left after the fixed part. It is
+  bounded so a value set too high can at most quadruple a pass. On the RTX 3080 (0.2 ms) it doubled
+  the pixels of moving frames with no change in frame time and no blank frames (three runs each).
+  Off by default until it is measured on the RX 6800 XT. `capdive.ps1` gains `-Set` to pass it.
 - **A test that judges what the screen shows during a deep dive** (beta.121, for testing). The
   2026-09-20 fix for blank frames while zooming was proved by capturing the live window: every
   measurement in the log said the change was working while the screen got worse. That capture is

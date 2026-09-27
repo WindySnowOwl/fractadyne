@@ -228,7 +228,11 @@ fractadyne --set TDR_EXPLICIT_BUDGET_MS=200 --set TDR_MAX_TILES=64 --play tours/
 
 `TDR_BUDGET_MS`, `TDR_EXPLICIT_BUDGET_MS`, `TDR_LATENCY_ACCEPT_MS`, `TDR_GROW_MAX`,
 `TDR_SHRINK_MAX`, `TDR_BOOTSTRAP_STEPS`, `TDR_MIN_STEPS`, `TDR_STEPS_CEIL`, `EXPLICIT_STEPS_CEIL`,
-`EXPLICIT_DISPATCH_CAP`, `TDR_MAX_TILES`, `TDR_TILES_CEIL`.
+`EXPLICIT_DISPATCH_CAP`, `TDR_MAX_TILES`, `TDR_TILES_CEIL`, and `PASS_FIXED_MS` — the per-pass
+fixed GPU cost in ms (0 = off, the shipped default). With it set, a moving frame's pass is priced
+as a fixed part plus a per-step part instead of per step alone, so a card whose small passes are
+mostly fixed cost (the RX 6800 XT: ~1 ms of a 1.14 ms pass) gets larger, sharper motion frames.
+Bounded: at most three quarters of a reading or of the 10 ms pass target is treated as fixed.
 
 - **Not a configuration surface.** The defaults are the only tested path: the self-test, the
   goldens, `--bench-matrix` and `--livetest` all assume them. `--selftest` carries a check that
