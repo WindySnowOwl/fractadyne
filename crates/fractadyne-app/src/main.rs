@@ -1605,6 +1605,11 @@ struct Perf {
     /// against. Only complete walks: a moving preview walks `[0, step]` and would report only the
     /// escapes it reached, which is exactly the bias to keep out of a quantile. Held while moving.
     esc_hist: [Option<fractadyne_gpu::EscHist>; 2],
+    /// A moving frame's sizing this frame, per view: `[need, ladder target, pre-ladder scale]` —
+    /// how far its walk had to reach (`render::motion_need`), the scale `visible_res_target` asked
+    /// for, and `res_scale` before the ladder's rung was applied. Zero when the frame was not sized
+    /// as a moving frame. For the frame record (`vis_need`, `vis_target`, `vis_pre_scale`).
+    vis_sizing: [[f64; 3]; 2],
     /// The palette window actually SHOWN, gliding toward `norm_range` (the fed target) a fixed
     /// fraction per frame. The target moves in steps — one per escape-range reading, every few
     /// frames — and a step is a visible colour snap: measured on an 8-octave glide, one frame
@@ -2091,6 +2096,7 @@ impl Default for Perf {
             norm_grad: [None, None],
             norm_hist: [None, None],
             esc_hist: [None, None],
+            vis_sizing: [[0.0; 3]; 2],
             norm_shown: [None, None],
             chunk_governed: [false, false],
             motion_res: 0.6,
@@ -13888,6 +13894,8 @@ impl FractadyneApp {
             r.present_throttle = p.present_throttle;
             r.visible_res = p.visible_res[v];
             r.motion_res = p.motion_res;
+            r.vis_pass = p.motion_pass_steps_last[v];
+            [r.vis_need, r.vis_target, r.vis_pre_scale] = p.vis_sizing[v];
             r.chunk_cursor = p.chunk_cursor[v];
             r.chunk_governed = p.chunk_governed[v];
             r.tile_pending = p.tile_pending[v];

@@ -52,14 +52,15 @@ use std::time::Duration;
 
 /// Bumped whenever a field is added, removed, retyped or reordered. Every record and every file
 /// header carries it, and a reader must refuse a schema it does not know rather than guess.
-pub(crate) const SCHEMA: u16 = 1;
+pub(crate) const SCHEMA: u16 = 2;
 /// Records the in-memory ring (and `frames.bin`) holds. At the 1–5 fps of the failing cadence
 /// that is 14–68 minutes of one view — the ring lengthens in TIME exactly as the app slows down,
 /// the opposite of the 24-entry decision ring it supersedes.
 pub(crate) const RING_LEN: usize = 4096;
 /// One `frames.bin` slot. Deliberately larger than a record, so adding a field does not re-key an
-/// existing file.
-pub(crate) const SLOT_BYTES: usize = 512;
+/// existing file. 640 from schema 2: its moving-frame sizing fields left 8 bytes of 512, under the
+/// 32 the headroom test keeps (the file grows from 2.1 to 2.6 MB).
+pub(crate) const SLOT_BYTES: usize = 640;
 /// `frames.bin` starts with this many bytes of header (magic, schema, session, then the session's
 /// header JSON), followed by `RING_LEN` slots.
 pub(crate) const HEADER_BYTES: usize = 4096;
@@ -316,6 +317,14 @@ frame_record! {
     ss: u8,
     visible_res: f64,
     motion_res: f64,
+    /// A moving frame's sizing (schema 2): the motion pass it was sized against, how far its walk
+    /// had to reach (`render::motion_need`), the scale `visible_res_target` asked for, and the scale
+    /// the other caps allowed before the ladder's rung (`res_scale`). The dispatched scale is the
+    /// smaller of that and `visible_res`, so these say which one bound it. 0 when not sized moving.
+    vis_pass: u64,
+    vis_need: f64,
+    vis_target: f64,
+    vis_pre_scale: f64,
     chunked: bool,
     chunk_lo: u32,
     chunk_hi: u32,
