@@ -12,6 +12,19 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Sharper pictures while zooming, on by default; and an experiment for slow cards** (beta.123,
+  for testing). The per-pass fixed cost from beta.122 (`PASS_FIXED_MS`) is now on by default at
+  0.2 ms, the RTX 3080's measured value: moving frames there get twice the pixels, with frame time
+  and the screen test unchanged (full validation battery passed). On the RX 6800 XT, whose fixed
+  cost is about 1 ms, it raises the learned speed but does not yet lift the picture a step, so a
+  second experiment, off unless set: `--set MOTION_NEED_QUANTILE=0.9` sizes a moving frame to show
+  90% of the picture instead of waiting for its slowest pixel. Near the RX 6800 XT's crash view the
+  first pixels escape after ~200 iterations and the last after 4,000–12,000, so the last few percent
+  set the size; at the 2^800 test location on the RTX 3080 all pixels escape within 4,415–4,717
+  iterations and it changes nothing. To know where 90% lies, the GPU now counts escaped pixels in
+  24 iteration bands per frame (on the same 1-in-16 sample as its other counters; renders are
+  unchanged: self-test 190/190, goldens 19/19, benchmark matrix no drift). It uses the last
+  completed picture, so it takes effect after a pause, not during a continuous dive.
 - **An experimental setting for sharper pictures while zooming on cards with a high per-pass
   cost** (beta.122, for testing; off unless set). While you zoom, each moving frame is sized to
   finish within one short GPU pass, so it never shows up blank. The size is worked out from how

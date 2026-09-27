@@ -444,6 +444,11 @@ impl CounterRead {
                                     px: self.px.min(u32::MAX as u64) as u32,
                                     esc_min_bits: slots[CTR_ESC_MIN],
                                     esc_max_bits: slots[CTR_ESC_MAX],
+                                    esc_hist: {
+                                        let mut h: EscHist = [0; ESC_HIST_BUCKETS];
+                                        h.copy_from_slice(&slots[CTR_ESC_HIST..CTR_ESC_HIST + ESC_HIST_BUCKETS]);
+                                        h
+                                    },
                                 });
                             }
                         }
@@ -729,7 +734,7 @@ pub(crate) fn make_iter_bg(
 /// atomics per pixel — negligible next to the iteration loop. This is the "did the code
 /// path actually execute?" detector (the F4 dead-NaN-marker lesson): a render that claims
 /// to exercise rebasing/extended samples/BLA must show nonzero counts.
-pub const COUNTER_SLOTS: usize = CTR_GRAD_HIST + GRAD_HIST_BUCKETS;
+pub const COUNTER_SLOTS: usize = CTR_ESC_HIST + ESC_HIST_BUCKETS;
 /// Slot indices (keep in sync with mandelbrot.wgsl's `CTR_*` constants).
 pub const CTR_REBASE: usize = 0; // Zhuoran rebases taken (mode 2)
 pub const CTR_EXT_SAMPLE: usize = 1; // extended-range orbit samples decoded (mode 2)
@@ -774,6 +779,24 @@ pub const CTR_GRAD_HIST: usize = 10;
 pub const GRAD_HIST_BUCKETS: usize = 12;
 /// One frame's step histogram, as read back.
 pub type GradHist = [u32; GRAD_HIST_BUCKETS];
+
+/// First of [`ESC_HIST_BUCKETS`] slots holding a log₂ HISTOGRAM of the escaped pixels' smooth
+/// iteration counts, on the same 4x4 grid as `CTR_ESC_COUNT` (written only by `fs_resolve`, i.e.
+/// chunked frames): bucket `b` = `[2^b, 2^(b+1))`, bucket 0 also taking anything under one
+/// iteration, the last bucket open-ended.
+///
+/// ⭐**Why.** A moving frame is sized so a single pass walks the view's escape range to its TOP
+/// (`norm_range.hi`) — the slowest pixel of the picture. Deep, a few stragglers set that top far
+/// above where nearly all of the picture has escaped, and on a slow card that sizes the frame at
+/// the ladder's floor (the RX 6800 XT, 2026-09-26: 278×197 while zooming). The distribution lets
+/// the sizing ask how far the walk must go for MOST of the picture (`MOTION_NEED_QUANTILE`).
+/// Same contention class as `CTR_ESC_COUNT`: the same samples, spread over up to 24 addresses
+/// instead of one.
+pub const CTR_ESC_HIST: usize = CTR_GRAD_HIST + GRAD_HIST_BUCKETS;
+/// Number of log₂ buckets in the escape histogram: up to 2^24 (16.7M) iterations.
+pub const ESC_HIST_BUCKETS: usize = 24;
+/// One frame's escape histogram, as read back.
+pub type EscHist = [u32; ESC_HIST_BUCKETS];
 
 /// Rebuild the full step histogram from a counter readback.
 ///
@@ -820,6 +843,9 @@ pub struct ContentReading {
     /// subsampled reading the palette normalization uses — carried for the trace.
     pub esc_min_bits: u32,
     pub esc_max_bits: u32,
+    /// The escaped pixels' log₂ iteration histogram from the same readback ([`CTR_ESC_HIST`]);
+    /// all zero for a single-pass frame, which never runs `fs_resolve`.
+    pub esc_hist: EscHist,
 }
 
 /// Where the live path publishes a [`ContentReading`] — the `GradHistSink` idiom, one lock per

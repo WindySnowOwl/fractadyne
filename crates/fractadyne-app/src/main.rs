@@ -1600,6 +1600,11 @@ struct Perf {
     /// distribution rather than as a verdict so that moving the cycle slider re-decides at once,
     /// from the picture already measured.
     norm_hist: [Option<[f32; fractadyne_gpu::GRAD_HIST_BUCKETS]>; 2],
+    /// The escaped pixels' log₂ iteration histogram of this view's last COMPLETE walk (a reading
+    /// whose cursor reached the ask) — the distribution `MOTION_NEED_QUANTILE` sizes a moving frame
+    /// against. Only complete walks: a moving preview walks `[0, step]` and would report only the
+    /// escapes it reached, which is exactly the bias to keep out of a quantile. Held while moving.
+    esc_hist: [Option<fractadyne_gpu::EscHist>; 2],
     /// The palette window actually SHOWN, gliding toward `norm_range` (the fed target) a fixed
     /// fraction per frame. The target moves in steps — one per escape-range reading, every few
     /// frames — and a step is a visible colour snap: measured on an 8-octave glide, one frame
@@ -2085,6 +2090,7 @@ impl Default for Perf {
             norm_locked: [false, false],
             norm_grad: [None, None],
             norm_hist: [None, None],
+            esc_hist: [None, None],
             norm_shown: [None, None],
             chunk_governed: [false, false],
             motion_res: 0.6,
@@ -7776,6 +7782,7 @@ impl FractadyneApp {
         self.perf.capped_frac = [None, None];
         self.perf.iter_exhausted = [false, false];
         self.perf.norm_range = [None, None];
+        self.perf.esc_hist = [None, None];
         self.perf.norm_sig = [0, 0];
         self.perf.norm_locked = [false, false];
     }
