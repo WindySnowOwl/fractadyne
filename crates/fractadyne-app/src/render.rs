@@ -8583,12 +8583,43 @@ pub(crate) fn motion_pass_steps(
     tdr_steps: u64,
     fallback_steps: u64,
 ) -> u64 {
+    motion_pass_steps_fixed(
+        rate_steps_per_ms,
+        target_ms,
+        crate::tunables::cost().pass_fixed_ms,
+        tdr_steps,
+        fallback_steps,
+    )
+}
+
+/// [`motion_pass_steps`] with the per-pass fixed cost explicit (`PASS_FIXED_MS`): the rate is of
+/// the VARIABLE part of a pass (`variable_pass_ms`), so only `target_ms` less the fixed part is
+/// there to spend on steps. `fixed_ms` 0 is exactly the proportional sizing. Bounded as the rate is:
+/// at most three quarters of the target is ever set aside, so a fixed term set too high cannot
+/// shrink the pass to nothing, and cannot grow it past the 4× the rate clamp allows.
+pub(crate) fn motion_pass_steps_fixed(
+    rate_steps_per_ms: f64,
+    target_ms: f64,
+    fixed_ms: f64,
+    tdr_steps: u64,
+    fallback_steps: u64,
+) -> u64 {
     let steps = if rate_steps_per_ms.is_finite() && rate_steps_per_ms > 0.0 && target_ms > 0.0 {
-        (rate_steps_per_ms * target_ms).clamp(1.0, u64::MAX as f64) as u64
+        (rate_steps_per_ms * variable_pass_ms(target_ms, fixed_ms)).clamp(1.0, u64::MAX as f64) as u64
     } else {
         fallback_steps
     };
     steps.min(tdr_steps).max(1)
+}
+
+/// The part of a pass's `ms` that scales with its steps: `ms` less the per-pass fixed cost, never
+/// less than a quarter of `ms` (§5.2's clamp: a fixed term can at most quadruple a rate). A
+/// non-positive or non-finite `fixed_ms` is no fixed term.
+pub(crate) fn variable_pass_ms(ms: f64, fixed_ms: f64) -> f64 {
+    if !(fixed_ms > 0.0) || !fixed_ms.is_finite() {
+        return ms;
+    }
+    (ms - fixed_ms).max(ms * 0.25)
 }
 
 /// How many `MOTION_PASS_MS` passes a refresh may take: the held frame must not magnify past

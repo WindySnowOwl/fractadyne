@@ -222,3 +222,46 @@ fn one_interval_cannot_slash_the_motion_rate() {
     assert_eq!(bounded_motion_cut(cur, f64::NAN), None);
     assert_eq!(bounded_motion_cut(cur, 0.0), None);
 }
+
+/// `PASS_FIXED_MS` 0 is exactly the proportional sizing the app shipped with.
+#[test]
+fn no_fixed_term_is_the_proportional_sizing() {
+    for rate in [1.0e5, 1.4e7, 1.0e8] {
+        assert_eq!(
+            motion_pass_steps_fixed(rate, 10.0, 0.0, 4.0e10 as u64, 4.0e8 as u64),
+            (rate * 10.0) as u64
+        );
+    }
+    assert_eq!(variable_pass_ms(1.14, 0.0), 1.14);
+    assert_eq!(variable_pass_ms(1.14, -1.0), 1.14);
+    assert_eq!(variable_pass_ms(1.14, f64::NAN), 1.14);
+}
+
+/// The RX 6800 XT case (2026-09-26): a 1.6e7-step pass in 1.14 ms with ~1 ms of it fixed. Priced
+/// proportionally that is 1.4e7 steps/ms and a 10 ms pass of 1.4e8 steps. Unclamped, the variable
+/// rate would be ~1.1e8 (8x); 88% of that reading is fixed, so the 4x clamp binds, and 9 ms at the
+/// clamped rate is a pass about 3.6x larger.
+#[test]
+fn a_fixed_term_sizes_the_pass_from_the_variable_rate() {
+    let (steps, ms, fixed) = (1.6e7, 1.14, 1.0);
+    let proportional = steps / ms;
+    let variable = steps / variable_pass_ms(ms, fixed);
+    assert!((variable / proportional - 4.0).abs() < 1e-9, "clamped at 4x: {}", variable / proportional);
+    let before = motion_pass_steps_fixed(proportional, 10.0, 0.0, u64::MAX, 1);
+    let after = motion_pass_steps_fixed(variable, 10.0, fixed, u64::MAX, 1);
+    assert!(after as f64 / before as f64 > 3.0, "{before} -> {after}");
+    // A pass with less of its time fixed is not clamped: 3 ms with 1 ms fixed is a 1.5x rate.
+    assert!((variable_pass_ms(3.0, 1.0) - 2.0).abs() < 1e-12);
+}
+
+/// Set too high, the fixed term can at most quadruple a rate and quarter a pass target: a value
+/// that swallowed the whole reading must not size an unbounded pass, nor a zero one.
+#[test]
+fn a_fixed_term_set_too_high_is_bounded() {
+    assert_eq!(variable_pass_ms(1.0, 5.0), 0.25);
+    assert_eq!(variable_pass_ms(10.0, 9.9), 2.5);
+    let p = motion_pass_steps_fixed(1.0e8, 10.0, 9.9, u64::MAX, 1);
+    assert_eq!(p, 2.5e8 as u64);
+    // ...and the TDR budget is still the ceiling.
+    assert_eq!(motion_pass_steps_fixed(1.0e12, 10.0, 1.0, 4.0e10 as u64, 1), 4.0e10 as u64);
+}

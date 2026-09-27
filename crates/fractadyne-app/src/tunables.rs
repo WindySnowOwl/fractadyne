@@ -77,6 +77,8 @@ pub(crate) struct Cost {
     pub explicit_dispatch_cap: u64,
     pub tdr_max_tiles: u64,
     pub tdr_tiles_ceil: u64,
+    /// Per-pass fixed GPU cost, ms (`PASS_FIXED_MS_DEFAULT`; 0 = off).
+    pub pass_fixed_ms: f64,
     /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
     /// second override channel because duplicating the machinery for a single value would be worse.
     /// See the note above on what earns a place in this set.
@@ -102,6 +104,7 @@ impl Default for Cost {
             explicit_dispatch_cap: EXPLICIT_DISPATCH_CAP_DEFAULT,
             tdr_max_tiles: TDR_MAX_TILES_DEFAULT,
             tdr_tiles_ceil: TDR_TILES_CEIL_DEFAULT,
+            pass_fixed_ms: PASS_FIXED_MS_DEFAULT,
             bla_eps: BLA_EPS,
         }
     }
@@ -239,6 +242,16 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
             }
             "TDR_MAX_TILES" => { let p = c.tdr_max_tiles; c.tdr_max_tiles = u()?; p.to_string() }
             "TDR_TILES_CEIL" => { let p = c.tdr_tiles_ceil; c.tdr_tiles_ceil = u()?; p.to_string() }
+            "PASS_FIXED_MS" => {
+                let p = c.pass_fixed_ms;
+                let v = f()?;
+                // At or above the pass target there is no variable time left to size a pass in.
+                if v >= MOTION_PASS_MS {
+                    return Err(format!("--set PASS_FIXED_MS={v}: must be below MOTION_PASS_MS ({MOTION_PASS_MS} ms)"));
+                }
+                c.pass_fixed_ms = v;
+                p.to_string()
+            }
             _ => return Err(format!("--set {key}: not an overridable tunable ({})", OVERRIDABLE)),
         };
         applied.push(format!("{key} {was} → {raw}"));
@@ -268,7 +281,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     TDR_LATENCY_ACCEPT_MS, TDR_GROW_MAX, TDR_SHRINK_MAX, TDR_LETHAL_MS, TDR_BOOTSTRAP_STEPS, \
     TDR_BOOTSTRAP_MS, MOTION_UNPRICED_MAX, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
-    EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS";
+    EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS";
 
 #[cfg(test)]
 mod override_tests;
@@ -556,6 +569,25 @@ pub(crate) const REFRESH_MIN_DRIFT: f64 = 0.02;
 /// (`Perf::motion_rate`) to land near this; the TDR budget stays the ceiling. 10 ms leaves the
 /// colour pass and the present inside a 16.7 ms frame.
 pub(crate) const MOTION_PASS_MS: f64 = 10.0;
+
+/// The part of every GPU pass's time that does NOT scale with its steps, ms — clearing and storing
+/// the chunk-state attachments and the resolve (design/live-render-robustness.md §5.2). 0 = off, the
+/// shipped behaviour: a motion pass's price is proportional to its steps.
+///
+/// ⭐WHY IT MATTERS ON SOME CARDS. The motion rate is learned from readings of mostly SMALL passes.
+/// On the RX 6800 XT (2026-09-26, 594 readings at the 2026-09-21 crash view) a pass of 1.6e7 steps
+/// took a median 1.14 ms while large passes cost 7.8 ms per billion steps — about 1 ms of every
+/// small pass is fixed. Priced proportionally, that makes steps look ~7× dearer than they are, so
+/// each 10 ms motion pass is sized at a fraction of what fits, and the moving frame drops to the
+/// lowest resolution rung (278×197 at a 2788×1974 window; "zooming goes to low detail").
+///
+/// With it set, a reading's rate is taken over its time LESS the fixed part (`variable_pass_ms`),
+/// and a pass is sized to `MOTION_PASS_MS` less it (`motion_pass_steps_fixed`). Both are bounded:
+/// at most three quarters of a reading, or of the target, is ever attributed to the fixed part, so a
+/// value set too high can at most quadruple the rate — the [0.25×, 4×] clamp §5.2 specifies.
+/// Must be below `MOTION_PASS_MS`. §5.2 wants this as a per-adapter CALIBRATION, not an override;
+/// this is the measured first step (an override so its A/B is one flag), not the destination.
+pub(crate) const PASS_FIXED_MS_DEFAULT: f64 = 0.0;
 
 /// The most a held frame may MAGNIFY before its refresh lands, octaves — the zoom-rate-aware half
 /// of the refresh sizing. At `zoom_oct_s` octaves per second the refresh has `HELD_MAX_OCT /
