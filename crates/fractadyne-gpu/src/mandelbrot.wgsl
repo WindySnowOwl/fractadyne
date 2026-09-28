@@ -491,6 +491,30 @@ fn ctr_commit(n_rebase: u32, n_ext: u32, n_bla: u32) {
     if (n_bla > 0u) { atomicAdd(&counters[CTR_BLA_SKIP], n_bla); }
 }
 
+// STEP ACCOUNTING (keep in sync with lib.rs `CTR_STEP_*`): on a fixed 1-in-64 pixel grid, the
+// loop trips a perturbation fragment EXECUTED against the iterations it ADVANCED. `CTR_BLA_SKIP`
+// counts skips taken, not work done, so nothing else here can say how many iterations one executed
+// step delivers — the number a comparison with another renderer's skip scheme needs. The sums are
+// two-word (lo, hi): a 4K frame's sampled iterations pass 2^32. Pixel output is untouched.
+const CTR_STEP_PX: u32 = 46u;   // sampled fragments that ran a perturbation loop
+const CTR_STEP_EXEC: u32 = 47u; // lo/hi: loop trips (BLA skips + full steps)
+const CTR_STEP_ITER: u32 = 49u; // lo/hi: iterations advanced
+const CTR_STEP_FULL: u32 = 51u; // lo/hi: full (one-iteration) steps
+const CTR_STEP_BIG: u32 = 53u;  // lo/hi: mode-2 full steps taken with |δz| >= 2^-100
+fn add_u64(slot: u32, v: u32) {
+    if (v == 0u) { return; }
+    let old = atomicAdd(&counters[slot], v);
+    if (old + v < old) { atomicAdd(&counters[slot + 1u], 1u); } // carry (u32 add wraps)
+}
+fn step_commit(gx: f32, gy: f32, n_exec: u32, n_full: u32, n_big: u32, n_iter: u32) {
+    if ((u32(gx) & 7u) != 0u || (u32(gy) & 7u) != 0u) { return; }
+    atomicAdd(&counters[CTR_STEP_PX], 1u);
+    add_u64(CTR_STEP_EXEC, n_exec);
+    add_u64(CTR_STEP_ITER, n_iter);
+    add_u64(CTR_STEP_FULL, n_full);
+    add_u64(CTR_STEP_BIG, n_big);
+}
+
 // Track the frame's escaped smooth-iteration RANGE (min/max) — positive IEEE f32s compare
 // identically as unsigned ints, so plain u32 atomics work on the bit patterns. Feeds the app's
 // live palette auto-normalization (a dense deep field spans huge escape ranges that alias a
@@ -688,6 +712,9 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
     var n_rebase: u32 = 0u;
     var n_ext: u32 = 0u;
     var n_bla: u32 = 0u;
+    // Step accounting (`step_commit`): full steps, and mode-2 full steps whose δz df32 could hold.
+    var n_full: u32 = 0u;
+    var n_big: u32 = 0u;
 
     if (iu.mode == 1u) {
         // Direct df32 (no reference). Glitch-free; used while depth is within df32's
@@ -984,6 +1011,8 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 }
                 if (applied) { continue; }
             }
+            n_full = n_full + 1u;
+            if (dz.e > -100) { n_big = n_big + 1u; }
             let r = reference[ref_n];
             let Z = orbit_cdf(r); // reference Z_n (df32; an extended dip reads (0,0) here)
 
@@ -1138,6 +1167,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 if (sf_lt(fe_abs_sf(zfull), ztol)) {
                     atomicAdd(&counters[CTR_GLITCH], 1u);
                     ctr_commit(n_rebase, n_ext, n_bla);
+                    step_commit(gx, gy, n_bla + n_full, n_full, n_big, iter);
                     return FragOut(GLITCH_SENTINEL, AUX_NONE);
                 }
             }
@@ -1158,6 +1188,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             }
         }
         ctr_commit(n_rebase, n_ext, n_bla);
+        step_commit(gx, gy, n_bla + n_full, n_full, n_big, iter);
         if (!escaped) {
             atomicAdd(&counters[CTR_MAXITER], 1u);
             let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), (iu.aux_on & 1u) == 1u);
@@ -1222,6 +1253,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         }
         loop {
             if (iter >= iu.max_iter) { break; }
+            n_full = n_full + 1u; // mode 0 has no skip: every trip is one full step
             // orbit_cdf: an extended-range dip sample (NaN-marked) reads as (0,0) here —
             // mode 0's plain df32 math cannot carry it, matching pre-encoding behavior.
             let z = orbit_cdf(reference[ref_n]);
@@ -1305,6 +1337,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 if (z2 < GLITCH_TOL2 * zr2) {
                     atomicAdd(&counters[CTR_GLITCH], 1u);
                     ctr_commit(n_rebase, n_ext, n_bla);
+                    step_commit(gx, gy, n_bla + n_full, n_full, n_big, iter);
                     return FragOut(GLITCH_SENTINEL, AUX_NONE);
                 }
             }
@@ -1362,6 +1395,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             }
         }
         ctr_commit(n_rebase, n_ext, n_bla);
+        step_commit(gx, gy, n_bla + n_full, n_full, n_big, iter);
         if (!escaped) {
             atomicAdd(&counters[CTR_MAXITER], 1u);
             let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), (iu.aux_on & 1u) == 1u);
@@ -1658,6 +1692,9 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             iter = iu.sa_skip;
             ref_n = iu.sa_skip;
         }
+        // Step accounting: this pass's own advance (a first pass counts its SA seed as advanced).
+        let iter0 = select(0u, iter, iu.start_iter > 0u);
+        var n_full: u32 = 0u;
         var power_f = 2.0;
         if (iu.formula == 1u) { power_f = 3.0; }
         else if (iu.formula == 2u) { power_f = 4.0; }
@@ -1670,6 +1707,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
         var n_rebase: u32 = 0u;
         loop {
             if (iter >= stop) { break; }
+            n_full = n_full + 1u;
             let z = orbit_cdf(reference[ref_n]);
             // Derivative update using the CURRENT full z (before the δ advances).
             let zfn = vec2<f32>(z.re.x + dz.re.x, z.im.x + dz.im.x);
@@ -1744,6 +1782,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             }
         }
         ctr_commit(n_rebase, 0u, 0u);
+        step_commit(gx, gy, n_full, n_full, 0u, iter - iter0);
         if (glitched) {
             // Settled as unreliable: the stored δz/derivative/ref_n are inert (the resolve reads
             // only the status), and every later chunk passes this through untouched.
@@ -1941,6 +1980,10 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
     var z_full: Fe = fe_zero(); // full z = Z_{n+1} + δz, kept for the escape store
     var escaped = false;
     var glitched = false;
+    // Step accounting: this pass's own advance (a first pass counts its SA seed as advanced).
+    let iter0 = select(0u, iter, iu.start_iter > 0u);
+    var n_full: u32 = 0u;
+    var n_big: u32 = 0u;
     loop {
         if (iter >= stop) { break; }
         // BLA: skip 2^l reference steps at once while |δz| is within the merged validity radius;
@@ -1998,6 +2041,8 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
             }
             if (applied) { continue; }
         }
+        n_full = n_full + 1u;
+        if (dz.e > -100) { n_big = n_big + 1u; }
         let r = reference[ref_n];
         let Z = orbit_cdf(r); // reference Z_n (df32; an extended dip reads (0,0) here)
 
@@ -2091,6 +2136,7 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
         }
     }
     ctr_commit(n_rebase, n_ext, n_bla);
+    step_commit(gx, gy, n_bla + n_full, n_full, n_big, iter - iter0);
     if (glitched) {
         // Settled as unreliable — stored δz/derivative/ref_n are inert (the resolve reads only
         // the status), and every later chunk passes this through untouched.

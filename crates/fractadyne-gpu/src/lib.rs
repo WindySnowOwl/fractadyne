@@ -982,7 +982,7 @@ pub(crate) fn make_iter_bg(
 /// atomics per pixel — negligible next to the iteration loop. This is the "did the code
 /// path actually execute?" detector (the F4 dead-NaN-marker lesson): a render that claims
 /// to exercise rebasing/extended samples/BLA must show nonzero counts.
-pub const COUNTER_SLOTS: usize = CTR_ESC_HIST + ESC_HIST_BUCKETS;
+pub const COUNTER_SLOTS: usize = CTR_STEP_BIG + 2;
 /// Slot indices (keep in sync with mandelbrot.wgsl's `CTR_*` constants).
 pub const CTR_REBASE: usize = 0; // Zhuoran rebases taken (mode 2)
 pub const CTR_EXT_SAMPLE: usize = 1; // extended-range orbit samples decoded (mode 2)
@@ -1045,6 +1045,59 @@ pub const CTR_ESC_HIST: usize = CTR_GRAD_HIST + GRAD_HIST_BUCKETS;
 pub const ESC_HIST_BUCKETS: usize = 24;
 /// One frame's escape histogram, as read back.
 pub type EscHist = [u32; ESC_HIST_BUCKETS];
+
+/// ⭐STEP ACCOUNTING, on a fixed 1-in-64 pixel grid (the shader's `step_commit`): how many loop
+/// trips the perturbation loops EXECUTED against how many iterations they ADVANCED. `CTR_BLA_SKIP`
+/// counts skips taken, not work done, so without these nothing says how many iterations one
+/// executed step delivers — the number a comparison with another renderer's skip scheme needs
+/// (local plan, 2026-09-27: Imagina delivers 100–750 per step at the deep corpus scenes). The four
+/// sums are two-word `(lo, hi)`: a 4K frame's sampled iterations pass 2^32. Read with [`StepStats`].
+pub const CTR_STEP_PX: usize = CTR_ESC_HIST + ESC_HIST_BUCKETS; // sampled fragments that ran a loop
+pub const CTR_STEP_EXEC: usize = CTR_STEP_PX + 1; // lo/hi: loop trips (BLA skips + full steps)
+pub const CTR_STEP_ITER: usize = CTR_STEP_EXEC + 2; // lo/hi: iterations advanced
+pub const CTR_STEP_FULL: usize = CTR_STEP_ITER + 2; // lo/hi: full (one-iteration) steps
+/// lo/hi: mode-2 full steps taken with |δz| ≥ 2^-100 — where df32 could have held δz, i.e. the
+/// share of floatexp work a floatexp→df32 tail phase would make cheaper.
+pub const CTR_STEP_BIG: usize = CTR_STEP_FULL + 2;
+
+/// A counter readback's step accounting (see [`CTR_STEP_PX`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct StepStats {
+    pub sampled_px: u64,
+    pub executed: u64,
+    pub iterations: u64,
+    pub full: u64,
+    pub big: u64,
+}
+
+impl StepStats {
+    pub fn from_slots(s: &[u32; COUNTER_SLOTS]) -> Self {
+        let w = |i: usize| (s[i + 1] as u64) << 32 | s[i] as u64;
+        StepStats {
+            sampled_px: s[CTR_STEP_PX] as u64,
+            executed: w(CTR_STEP_EXEC),
+            iterations: w(CTR_STEP_ITER),
+            full: w(CTR_STEP_FULL),
+            big: w(CTR_STEP_BIG),
+        }
+    }
+    /// The same from u64 totals SUMMED over tiles or passes (the export path's `counters`): each
+    /// half of a pair was summed on its own, so a pair is `hi·2³² + lo` with `lo` already wide.
+    pub fn from_u64_slots(s: &[u64; COUNTER_SLOTS]) -> Self {
+        let w = |i: usize| (s[i + 1] << 32).wrapping_add(s[i]);
+        StepStats {
+            sampled_px: s[CTR_STEP_PX],
+            executed: w(CTR_STEP_EXEC),
+            iterations: w(CTR_STEP_ITER),
+            full: w(CTR_STEP_FULL),
+            big: w(CTR_STEP_BIG),
+        }
+    }
+    /// Iterations advanced per executed loop trip (0 when nothing executed).
+    pub fn iters_per_step(&self) -> f64 {
+        if self.executed == 0 { 0.0 } else { self.iterations as f64 / self.executed as f64 }
+    }
+}
 
 /// Rebuild the full step histogram from a counter readback.
 ///

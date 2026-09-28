@@ -12,6 +12,17 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Diagnostics: how much work each iteration costs** (beta.137, for testing). A command-line
+  render's `perf` log line now also reports, from one pixel in 64:
+  - the loop steps the GPU actually executed, against the iterations they delivered;
+  - how many were ordinary single steps rather than skips;
+  - in the deepest arithmetic mode, how many of those single steps worked on values ordinary
+    precision could have held.
+
+  Until now the only counter was the number of skips taken, which says nothing about how much
+  work was saved. At the 4.2e275 benchmark scene each executed step delivers 53 iterations, and
+  every single step there could have used the cheaper arithmetic. This is the measurement the
+  next performance work is planned from.
 - **Fixed: a command-line render longer than about a second reported failure although it
   succeeded** (beta.136). Since beta.132, the safety stop for dangerous GPU frames counted the time
   a `--render` or `--render-tour` spent rendering as one dangerous frame. It then logged a warning

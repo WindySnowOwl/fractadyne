@@ -1398,12 +1398,17 @@ impl FractadyneApp {
             0.0
         };
         let c = &r.counters;
+        // Step accounting (1-in-64 pixel grid): executed loop trips against iterations advanced,
+        // and the share of full floatexp steps whose δz df32 could have held.
+        let st = fractadyne_gpu::StepStats::from_u64_slots(c);
+        let big_pct = if st.full > 0 { 100.0 * st.big as f64 / st.full as f64 } else { 0.0 };
         crate::diag::log_line(
             "perf",
             &format!(
                 "{kind}: {}x{} ss={} mode={} iter={} gpu_iterate={:.1}ms gpu_color={:.1}ms \
                  max_dispatch={:.0}ms ~{gsps:.2} Gsteps/s (nominal) | counters: rebase={} ext={} \
-                 glitch={} bla_skip={} maxiter={}",
+                 glitch={} bla_skip={} maxiter={} | steps (1/64 px): px={} executed={} \
+                 iterations={} = {:.1} per step, full={} of which |δz|>=2^-100 {big_pct:.1}%",
                 r.width,
                 r.height,
                 r.ss,
@@ -1417,13 +1422,19 @@ impl FractadyneApp {
                 c[fractadyne_gpu::CTR_GLITCH],
                 c[fractadyne_gpu::CTR_BLA_SKIP],
                 c[fractadyne_gpu::CTR_MAXITER],
+                st.sampled_px,
+                st.executed,
+                st.iterations,
+                st.iters_per_step(),
+                st.full,
             ),
         );
         crate::diag::perf_jsonl(&format!(
             "\"kind\":\"{kind}\",\"w\":{},\"h\":{},\"ss\":{},\"mode\":{},\"iter\":{},\
              \"gpu_iterate_ms\":{:.3},\"gpu_color_ms\":{:.3},\"max_dispatch_ms\":{:.1},\
              \"gsteps_nominal\":{gsps:.3},\
-             \"ctr_rebase\":{},\"ctr_ext\":{},\"ctr_glitch\":{},\"ctr_bla\":{},\"ctr_maxiter\":{}",
+             \"ctr_rebase\":{},\"ctr_ext\":{},\"ctr_glitch\":{},\"ctr_bla\":{},\"ctr_maxiter\":{},\
+             \"step_px\":{},\"step_executed\":{},\"step_iterations\":{},\"step_full\":{},\"step_big\":{}",
             r.width,
             r.height,
             r.ss,
@@ -1437,6 +1448,11 @@ impl FractadyneApp {
             c[fractadyne_gpu::CTR_GLITCH],
             c[fractadyne_gpu::CTR_BLA_SKIP],
             c[fractadyne_gpu::CTR_MAXITER],
+            st.sampled_px,
+            st.executed,
+            st.iterations,
+            st.full,
+            st.big,
         ));
     }
 
