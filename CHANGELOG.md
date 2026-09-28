@@ -36,7 +36,11 @@ detail is in the git history.
     graphics program itself changed, and at 4.2e275 that moves 3 pixels of 8.3 million compared
     with beta.149. The standard build now matches the accelerated (MPFR) build exactly at all ten
     scenes; before, those same 3 pixels differed between them.
-  - Not yet tested on an AMD card.
+  - **On an AMD RX 6800 XT** (the same four scenes at the same sample count, two runs each):
+    graphics card time 4.4 s instead of 6.9 s at 1.2e148, 2.2 s instead of 3.1 s at 4.2e275,
+    0.73 s instead of 0.82 s at 1.47e77, 0.58 s instead of 0.69 s at 4.6e1105. Its longest single
+    submission was 176 ms, and 63 ms in the BLA-off worst case. The event counts (rebases, BLA
+    skips and the rest) were identical with the new and old tiling.
 
 - **Render timing is now reported for every export, and the benchmark kit shows where each
   render's time goes** (beta.149).
