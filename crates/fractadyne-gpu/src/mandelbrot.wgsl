@@ -341,6 +341,43 @@ fn sf_lt(a: Sf, b: Sf) -> bool {
     return sf_add(a, sf_neg(b)).m.x < 0.0;
 }
 
+// ⭐⭐THE df32 TAIL PHASE of the mode-2 loops (beta.141). Floatexp exists only for a δz too small
+// for df32's f32 exponent (~1e-38). Once |δz| has grown past 2^-60, a full step can run in plain
+// df32 — about 383 lane-instructions against floatexp's 955 per iteration (RTX 3080, TODO.md).
+// The step counters (beta.137) found 84–100% of mode-2 full steps had |δz| >= 2^-100 at every deep
+// corpus scene, and full steps were 33–99% of all executed steps.
+// ⭐MEMORYLESS: a step runs in df32 exactly when |δz| >= 2^-60, whatever the previous step did, so
+// a chunked walk cannot depend on where a frame split. Every conversion between the two forms is
+// an exact power-of-two scaling at those magnitudes. BLA still works in floatexp: the δz is handed
+// back before each attempt, so skip decisions are unchanged. Mandelbrot only (the scope the corpus
+// measured), and never while glitch detection runs, so correction passes stay bit-identical.
+const TAIL_DF32_MIN: f32 = 8.673617379884035e-19; // 2^-60
+const TAIL_DF32_MIN_E: i32 = -60;
+// δc below 2^-120 is dropped in the tail: against |δz| >= 2^-60 it is under 2^-60 relative, below
+// df32 precision, and f32 could not hold it anyway.
+const TAIL_DC_MIN_E: i32 = -120;
+fn tail_df32_ok() -> bool {
+    return iu.tail_on == 1u && iu.formula == 0u && iu.glitch_on == 0u;
+}
+fn tail_dc(dc: Fe) -> Cdf {
+    if (dc.e < TAIL_DC_MIN_E) {
+        return cset(vec2<f32>(0.0, 0.0), vec2<f32>(0.0, 0.0));
+    }
+    return fe_to_cdf(dc);
+}
+fn df_max_abs(z: Cdf) -> f32 {
+    return max(abs(z.re.x), abs(z.im.x));
+}
+// Zhuoran's rebase test |z| < |δz| in df32, on the hi limbs — the same Euclidean comparison
+// `fe_abs_sf`/`sf_lt` make in floatexp. Lifted by 2^64 when δz is small so neither square flushes
+// (an overflow to +inf on the z side only ever answers "no rebase", which is then correct).
+fn tail_rebase(zf: vec2<f32>, dzf: vec2<f32>) -> bool {
+    let lift = select(1.0, 1.8446744073709552e19, max(abs(dzf.x), abs(dzf.y)) < 1.0e-9);
+    let a = zf * lift;
+    let b = dzf * lift;
+    return dot(a, a) < dot(b, b);
+}
+
 // Slope normal for distance-estimate lighting: direction of u = z / (dz/dc).
 // Only the *direction* matters (the magnitude is normalized away), so any positive
 // real scale on the derivative — e.g. a floatexp exponent — cancels and we can pass
@@ -436,6 +473,12 @@ struct IterU {
     // the live view included.
     gather_w: u32,         // width in texels of the tiny gather texture
     gather_n: u32,         // how many of its texels carry a real coordinate
+    // 1 = the mode-2 df32 tail phase is enabled (TAIL_DF32_MIN; `TAIL_DF32` tunable). A whole
+    // 16-byte row with its padding, mirrored by `IterUniforms::tail` in lib.rs.
+    tail_on: u32,
+    tail_pad0: u32,
+    tail_pad1: u32,
+    tail_pad2: u32,
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo). When BLA is on,
@@ -500,7 +543,7 @@ const CTR_STEP_PX: u32 = 46u;   // sampled fragments that ran a perturbation loo
 const CTR_STEP_EXEC: u32 = 47u; // lo/hi: loop trips (BLA skips + full steps)
 const CTR_STEP_ITER: u32 = 49u; // lo/hi: iterations advanced
 const CTR_STEP_FULL: u32 = 51u; // lo/hi: full (one-iteration) steps
-const CTR_STEP_BIG: u32 = 53u;  // lo/hi: mode-2 full steps taken with |δz| >= 2^-100
+const CTR_STEP_BIG: u32 = 53u;  // lo/hi: mode-2 full steps taken in the df32 tail phase (TAIL_DF32_MIN)
 fn add_u64(slot: u32, v: u32) {
     if (v == 0u) { return; }
     let old = atomicAdd(&counters[slot], v);
@@ -925,8 +968,17 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             iter = iu.sa_skip;
             ref_n = iu.sa_skip;
         }
+        // The df32 tail phase (TAIL_DF32_MIN): while `d_now`, δz lives in `dzd` and `dz` is stale.
+        var dzd = cset(vec2<f32>(0.0, 0.0), vec2<f32>(0.0, 0.0));
+        var d_now = false;
         loop {
             if (iter >= iu.max_iter) { break; }
+            // BLA works in floatexp: hand a df32 δz back first (exact at |δz| >= 2^-60), so every
+            // skip decision is the one the all-floatexp loop would make.
+            if (d_now && bla_levels > 0u) {
+                dz = fe_from_cdf(dzd);
+                d_now = false;
+            }
             // BLA: skip 2^l reference steps at once while |δz| is within the merged validity
             // radius; revert to a lower level (ultimately a full step) on escape overshoot.
             // δz stays small in the BLA regime, so rebasing never triggers here.
@@ -1012,9 +1064,42 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 if (applied) { continue; }
             }
             n_full = n_full + 1u;
-            if (dz.e > -100) { n_big = n_big + 1u; }
             let r = reference[ref_n];
             let Z = orbit_cdf(r); // reference Z_n (df32; an extended dip reads (0,0) here)
+
+            // ⭐THE df32 TAIL PHASE (see TAIL_DF32_MIN). Mirrored exactly in fs_iterate_chunk_fe.
+            if (tail_df32_ok() && select(dz.e >= TAIL_DF32_MIN_E, df_max_abs(dzd) >= TAIL_DF32_MIN, d_now)) {
+                if (!d_now) {
+                    dzd = fe_to_cdf(dz);
+                    d_now = true;
+                }
+                n_big = n_big + 1u;
+                // The derivative stays in floatexp, as mode 0's does; same operands as below.
+                let zfn = vec2<f32>(Z.re.x + dzd.re.x, Z.im.x + dzd.im.x);
+                let fp = deriv_factor(0u, zfn);
+                D = fe_mul_c(D, fp.x, fp.y);
+                if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
+                // δz' = 2Z·δz + δz² + δc. An extended dip (|Z| < 1e-36) reads 0 here, and then
+                // 2Z·δz is under 2^-58 of δz² — below df32 precision.
+                dzd = c_add(c_add(c_two(c_mul(Z, dzd)), c_sqr(dzd)), tail_dc(dc));
+                ref_n = ref_n + 1u;
+                iter = iter + 1u;
+                // Z_{n+1} + δz: an extended dip reads 0, under 2^-60 of δz.
+                let zfull_d = c_add(orbit_cdf(reference[ref_n]), dzd);
+                zf = vec2<f32>(zfull_d.re.x, zfull_d.im.x);
+                if ((iu.aux_on & 1u) == 1u) { aux_step(&aux, zf, cmag, power_f); }
+                if (dot(zf, zf) > bail2) { escaped = true; break; }
+                if (tail_rebase(zf, vec2<f32>(dzd.re.x, dzd.im.x)) || ref_n + 1u >= iu.orbit_len) {
+                    n_rebase = n_rebase + 1u;
+                    dzd = c_sub(zfull_d, orbit_cdf(reference[0]));
+                    ref_n = 0u;
+                }
+                continue;
+            }
+            if (d_now) {
+                dz = fe_from_cdf(dzd);
+                d_now = false;
+            }
 
             // Derivative update D ← f'(z_n)·D (+1 Mandelbrot) using full z_n = Z_n + δz_n.
             if (iu.formula <= 3u) {
@@ -1984,8 +2069,17 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
     let iter0 = select(0u, iter, iu.start_iter > 0u);
     var n_full: u32 = 0u;
     var n_big: u32 = 0u;
+    // The df32 tail phase (TAIL_DF32_MIN): while `d_now`, δz lives in `dzd` and `dz` is stale. A
+    // pass always stores δz as floatexp (below), and the phase is a function of |δz| alone, so a
+    // resumed pass re-enters it exactly where an unsplit walk would still be in it.
+    var dzd = cset(vec2<f32>(0.0, 0.0), vec2<f32>(0.0, 0.0));
+    var d_now = false;
     loop {
         if (iter >= stop) { break; }
+        if (d_now && bla_levels > 0u) {
+            dz = fe_from_cdf(dzd);
+            d_now = false;
+        }
         // BLA: skip 2^l reference steps at once while |δz| is within the merged validity radius;
         // revert to a lower level (ultimately a full step) on escape overshoot. Verbatim from
         // fs_iterate's mode-2 branch minus the aux aggregate (aux is out of scope here).
@@ -2042,9 +2136,42 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
             if (applied) { continue; }
         }
         n_full = n_full + 1u;
-        if (dz.e > -100) { n_big = n_big + 1u; }
         let r = reference[ref_n];
         let Z = orbit_cdf(r); // reference Z_n (df32; an extended dip reads (0,0) here)
+
+        // ⭐THE df32 TAIL PHASE — verbatim from fs_iterate's mode-2 branch (TAIL_DF32_MIN).
+        if (tail_df32_ok() && select(dz.e >= TAIL_DF32_MIN_E, df_max_abs(dzd) >= TAIL_DF32_MIN, d_now)) {
+            if (!d_now) {
+                dzd = fe_to_cdf(dz);
+                d_now = true;
+            }
+            n_big = n_big + 1u;
+            let zfn = vec2<f32>(Z.re.x + dzd.re.x, Z.im.x + dzd.im.x);
+            let fp = deriv_factor(0u, zfn);
+            D = fe_mul_c(D, fp.x, fp.y);
+            if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
+            dzd = c_add(c_add(c_two(c_mul(Z, dzd)), c_sqr(dzd)), tail_dc(dc));
+            ref_n = ref_n + 1u;
+            iter = iter + 1u;
+            let zfull_d = c_add(orbit_cdf(reference[ref_n]), dzd);
+            zf = vec2<f32>(zfull_d.re.x, zfull_d.im.x);
+            if (dot(zf, zf) > bail2) {
+                // The escape store reads `z_full`: exact round trip, |z| > 256.
+                z_full = fe_from_cdf(zfull_d);
+                escaped = true;
+                break;
+            }
+            if (tail_rebase(zf, vec2<f32>(dzd.re.x, dzd.im.x)) || ref_n + 1u >= iu.orbit_len) {
+                n_rebase = n_rebase + 1u;
+                dzd = c_sub(zfull_d, orbit_cdf(reference[0]));
+                ref_n = 0u;
+            }
+            continue;
+        }
+        if (d_now) {
+            dz = fe_from_cdf(dzd);
+            d_now = false;
+        }
 
         // Derivative update D <- f'(z_n)*D (+1 Mandelbrot) using the full z_n = Z_n + δz_n,
         // BEFORE the δ advances — the same order as the single-pass loop.
@@ -2137,6 +2264,10 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
     }
     ctr_commit(n_rebase, n_ext, n_bla);
     step_commit(gx, gy, n_bla + n_full, n_full, n_big, iter - iter0);
+    // A pass that stops inside the tail phase stores δz as floatexp, like every other pass.
+    if (d_now) {
+        dz = fe_from_cdf(dzd);
+    }
     if (glitched) {
         // Settled as unreliable — stored δz/derivative/ref_n are inert (the resolve reads only
         // the status), and every later chunk passes this through untouched.

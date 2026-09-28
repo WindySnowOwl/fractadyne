@@ -24,11 +24,36 @@ use crate::render::CorrectionBudget;
 
 /// Differing pixels examined (and the same number of controls) when no count is given.
 pub(crate) const DEFAULT_SAMPLES: usize = 24;
+
+/// Which two renders the audit compares.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AuditKind {
+    /// `--glitch-audit`: plain (`glitch_on = 0`) against glitch-corrected.
+    Correction,
+    /// `--tail-audit`: the all-floatexp mode-2 loop (`TAIL_DF32=0`) against the df32 tail phase.
+    Tail,
+}
+
+impl AuditKind {
+    /// Column labels for the first and second render.
+    fn labels(self) -> (&'static str, &'static str) {
+        match self {
+            AuditKind::Correction => ("uncorrected", "corrected"),
+            AuditKind::Tail => ("floatexp", "df32 tail"),
+        }
+    }
+}
 /// The oracle stencil's offset in pixels: well above the GPU's ~1e-4 px sampling error, well
 /// below the pixel.
 const STENCIL_PX: f64 = 1.0e-3;
-/// Two smooth iteration counts agree within this (the GPU's is f32 from a ~f32 |z|).
-const MATCH_TOL: f32 = 0.05;
+/// Two smooth iteration counts agree within half an iteration. The smooth FRACTION varies
+/// continuously with the exact sample point, which the GPU holds to ~1e-4 px, and it is stored as
+/// f32 (one ulp is 0.03 at 300,000 iterations). So at a deep view a correct render's fraction
+/// differs from the oracle's by tenths of an iteration even where both escape on the same step.
+/// Measured 2026-09-28 at 1.2e148: up to 0.375 at control pixels where two renders agree bit for
+/// bit. A wrong pixel is off by whole iterations, or interior. (0.05 until then, which fitted only
+/// shallow counts and failed that view's controls.)
+const MATCH_TOL: f32 = 0.5;
 
 /// One pixel's value: escaped at a smooth iteration count, or interior (never escaped).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -130,6 +155,7 @@ impl crate::FractadyneApp {
         device: &eframe::wgpu::Device,
         queue: &eframe::wgpu::Queue,
         samples: usize,
+        kind: AuditKind,
     ) -> Result<String, crate::error::AppError> {
         use crate::error::AppError;
         let req = match self.build_export_job() {
@@ -142,7 +168,8 @@ impl crate::FractadyneApp {
         }
         let (w, h) = (req.width as usize, req.height as usize);
         println!(
-            "Fractadyne glitch audit — {}\n  {}x{} px, mode {}, iter {}",
+            "Fractadyne audit ({:?}) — {}\n  {}x{} px, mode {}, iter {}",
+            kind,
             crate::version_string(),
             w,
             h,
@@ -151,45 +178,60 @@ impl crate::FractadyneApp {
         );
 
         // The two raw iteration buffers.
-        let t0 = std::time::Instant::now();
+        let (la, lb) = kind.labels();
         let mut plain_req = req.clone();
         plain_req.ss = 1;
         plain_req.glitch_on = 0;
-        let plain = fractadyne_gpu::render_iter_tiled(
-            device,
-            queue,
-            &plain_req,
-            crate::tunables::CORRECT_WORK_BUDGET,
-            None,
-            None,
-            None,
-        )?;
-        let plain_s = t0.elapsed().as_secs_f64();
-        let t1 = std::time::Instant::now();
-        let corrected = self
-            .render_corrected_iter(
-                device,
-                queue,
-                &self.viewport,
-                self.julia_mode,
-                req.width,
-                req.height,
-                64,
-                Some(&req),
-                CorrectionBudget::standard(),
-            )
-            .ok_or_else(|| AppError::Message("glitch correction declined this view".into()))?;
-        let corrected_s = t1.elapsed().as_secs_f64();
-        println!(
-            "  uncorrected {plain_s:.1} s · corrected {corrected_s:.1} s ({} references, {} still glitched)",
-            corrected.refs_used, corrected.residual
-        );
+        let plain = |dev: &eframe::wgpu::Device, q: &eframe::wgpu::Queue| {
+            fractadyne_gpu::render_iter_tiled(dev, q, &plain_req, crate::tunables::CORRECT_WORK_BUDGET, None, None, None)
+        };
+        let t0 = std::time::Instant::now();
+        let (first, second) = match kind {
+            AuditKind::Correction => {
+                let a = plain(device, queue)?.pixels;
+                let first_s = t0.elapsed().as_secs_f64();
+                let t1 = std::time::Instant::now();
+                let corrected = self
+                    .render_corrected_iter(
+                        device,
+                        queue,
+                        &self.viewport,
+                        self.julia_mode,
+                        req.width,
+                        req.height,
+                        64,
+                        Some(&req),
+                        CorrectionBudget::standard(),
+                    )
+                    .ok_or_else(|| AppError::Message("glitch correction declined this view".into()))?;
+                println!(
+                    "  {la} {first_s:.1} s · {lb} {:.1} s ({} references, {} still glitched)",
+                    t1.elapsed().as_secs_f64(),
+                    corrected.refs_used,
+                    corrected.residual
+                );
+                (a, corrected.pixels)
+            }
+            AuditKind::Tail => {
+                // The same plain render with the phase off, then on; the run's own setting is
+                // restored after, whatever it was.
+                fractadyne_gpu::set_tail_df32(false);
+                let a = plain(device, queue);
+                let first_s = t0.elapsed().as_secs_f64();
+                fractadyne_gpu::set_tail_df32(true);
+                let t1 = std::time::Instant::now();
+                let b = plain(device, queue);
+                fractadyne_gpu::set_tail_df32(crate::tunables::cost().tail_df32 == 1);
+                println!("  {la} {first_s:.1} s · {lb} {:.1} s", t1.elapsed().as_secs_f64());
+                (a?.pixels, b?.pixels)
+            }
+        };
 
         // Which pixels differ (bit for bit), and the pools to sample from.
         let mut differ = Vec::new();
         let mut agree = Vec::new();
         for i in 0..w * h {
-            let (a, b) = (plain.pixels[4 * i], corrected.pixels[4 * i]);
+            let (a, b) = (first[4 * i], second[4 * i]);
             if a.to_bits() != b.to_bits() {
                 differ.push(i);
             } else if a >= 0.0 {
@@ -203,7 +245,7 @@ impl crate::FractadyneApp {
             100.0 * differ.len() as f64 / (w * h) as f64
         );
         if differ.is_empty() {
-            return Ok("glitch audit: VACUOUS — correction changed no pixel at this view".into());
+            return Ok(format!("audit: VACUOUS — {la} and {lb} agree bit for bit at every pixel of this view"));
         }
         let mut picked: Vec<Sample> = Vec::new();
         for (pool, control) in [(&differ, false), (&agree, true)] {
@@ -211,8 +253,8 @@ impl crate::FractadyneApp {
                 picked.push(Sample {
                     index: i,
                     control,
-                    uncorrected: Value::from_channel(plain.pixels[4 * i]),
-                    corrected: Value::from_channel(corrected.pixels[4 * i]),
+                    uncorrected: Value::from_channel(first[4 * i]),
+                    corrected: Value::from_channel(second[4 * i]),
                 });
             }
         }
@@ -274,19 +316,24 @@ impl crate::FractadyneApp {
         // The table and the tallies.
         use std::collections::HashMap;
         let mut tally: [HashMap<Verdict, usize>; 2] = [HashMap::new(), HashMap::new()];
-        println!("\n  kind     pixel (x,y)     uncorrected    corrected       oracle         verdict");
+        println!("\n  kind     pixel (x,y)     {la:<14} {lb:<14} oracle         verdict");
         for (smp, &(oracle, st)) in picked.iter().zip(&results) {
             let v = verdict(oracle, st, smp.uncorrected, smp.corrected);
             *tally[smp.control as usize].entry(v).or_default() += 1;
+            // `Verdict` is named for the correction audit: the second render is `CorrectedRight`.
+            let named = match v {
+                Verdict::CorrectedRight => format!("{lb} right"),
+                Verdict::UncorrectedRight => format!("{la} right"),
+                other => format!("{other:?}"),
+            };
             println!(
-                "  {:<8} ({:>5},{:>5})   {:<14} {:<14} {:<14} {:?}",
+                "  {:<8} ({:>5},{:>5})   {:<14} {:<14} {:<14} {named}",
                 if smp.control { "control" } else { "differs" },
                 smp.index % w,
                 smp.index / w,
                 smp.uncorrected.to_string(),
                 smp.corrected.to_string(),
                 oracle.to_string(),
-                v
             );
         }
         let get = |t: &HashMap<Verdict, usize>, v: Verdict| t.get(&v).copied().unwrap_or(0);
@@ -300,12 +347,12 @@ impl crate::FractadyneApp {
         // ⚠The control decides whether anything below means something.
         if controls_scored == 0 || (controls_ok as f64) < 0.9 * controls_scored as f64 {
             return Err(AppError::Message(format!(
-                "glitch audit: INVALID — the oracle agrees with both renders at only {controls_ok} of \
+                "audit: INVALID — the oracle agrees with both renders at only {controls_ok} of \
                  {controls_scored} control pixels, so the pixel→c mapping or the oracle is wrong; no verdict"
             )));
         }
         Ok(format!(
-            "glitch audit: of {} differing pixels sampled — corrected right {}, uncorrected right {}, \
+            "audit: of {} differing pixels sampled — {lb} right {}, {la} right {}, \
              neither {}, both {}, sensitive {}",
             d.values().sum::<usize>(),
             get(d, Verdict::CorrectedRight),

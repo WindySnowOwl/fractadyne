@@ -12,6 +12,15 @@ fn a_verdict_names_the_render_the_oracle_agrees_with() {
 }
 
 #[test]
+fn tenths_of_an_iteration_agree_and_a_whole_iteration_does_not() {
+    // The 1.2e148 controls: renders agreeing bit for bit sat up to 0.375 from the oracle.
+    assert!(Value::Escaped(319_927.781).agrees(Value::Escaped(319_927.406)));
+    // A pixel escaping one step later is a different answer.
+    assert!(!Value::Escaped(300_000.0).agrees(Value::Escaped(300_001.2)));
+    assert!(!Value::Escaped(300_000.0).agrees(Value::Interior));
+}
+
+#[test]
 fn an_unstable_oracle_is_never_scored() {
     // Whatever the renders say, a pixel whose true answer changes within the stencil is not evidence.
     assert_eq!(

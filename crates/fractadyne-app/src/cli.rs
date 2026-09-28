@@ -1198,9 +1198,11 @@ pub(crate) struct RenderCli {
     pub(crate) done: bool,
     /// `--render-iter`: write the raw iteration texture as EXR instead of a colored image.
     pub(crate) iter_mode: bool,
-    /// `--glitch-audit [N]`: instead of writing an image, check N of the pixels glitch correction
-    /// changes (and N controls) against the arbitrary-precision oracle (`glitchaudit`).
+    /// `--glitch-audit [N]` / `--tail-audit [N]`: instead of writing an image, check N of the pixels
+    /// where two renders differ (and N controls) against the arbitrary-precision oracle
+    /// (`glitchaudit`); `audit_kind` says which two.
     pub(crate) audit: Option<usize>,
+    pub(crate) audit_kind: crate::glitchaudit::AuditKind,
     /// CLI `--render-tour FILE`: render a keyframe tour to a PNG frame sequence, then quit.
     pub(crate) tour: Option<std::path::PathBuf>,
     pub(crate) tour_done: bool,
@@ -1562,7 +1564,7 @@ impl crate::FractadyneApp {
                 }
                 let t0 = std::time::Instant::now();
                 let result = if let Some(n) = self.render_cli.audit {
-                    self.run_glitch_audit(dev, q, n)
+                    self.run_glitch_audit(dev, q, n, self.render_cli.audit_kind)
                 } else if self.render_cli.iter_mode {
                     let out = self
                         .render_cli.out

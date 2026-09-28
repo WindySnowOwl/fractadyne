@@ -12,6 +12,21 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Faster deep Mandelbrot rendering: cheaper arithmetic once it is safe** (beta.141, for
+  testing).
+  - **The change:** past 1e28× each pixel's step is computed in an extended-range number format
+    that is about 2.5× costlier than the ordinary one, because the pixel's offset from the
+    reference is too small for ordinary precision. That stays true only early in a pixel's orbit.
+    A step now switches to the ordinary format once the offset has grown past 2^-60, and back if
+    it shrinks.
+  - **How much:** at the 4.2e275 benchmark scene the GPU part of a 4K render takes 1.39 s
+    instead of 2.68 s. The median of three interleaved pairs, same build, gives 1.93×.
+  - **Where it doesn't help yet:** 4.6e1105 (1.04×) and 1.2e148 (1.08×) spend their GPU time
+    elsewhere.
+  - **Pictures:** identical to the pixel at 4.2e275, 4.6e1105 and 6.6e43. At 1.2e148, 0.14% of
+    pixels differ by fractions of an iteration, and checking them against an exact calculation
+    (`--tail-audit`) found no wrong escape.
+  - **Scope:** Mandelbrot only. `--set TAIL_DF32=0` turns it off for comparison.
 - **Faster, and no black specks: exports of Mandelbrot and Multibrot views skip glitch
   correction** (beta.140).
   - **Why:** glitch correction re-renders pixels it suspects are wrong, using extra reference

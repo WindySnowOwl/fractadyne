@@ -1399,7 +1399,7 @@ impl FractadyneApp {
         };
         let c = &r.counters;
         // Step accounting (1-in-64 pixel grid): executed loop trips against iterations advanced,
-        // and the share of full floatexp steps whose δz df32 could have held.
+        // and the share of full mode-2 steps taken in the df32 tail phase.
         let st = fractadyne_gpu::StepStats::from_u64_slots(c);
         let big_pct = if st.full > 0 { 100.0 * st.big as f64 / st.full as f64 } else { 0.0 };
         crate::diag::log_line(
@@ -1408,7 +1408,7 @@ impl FractadyneApp {
                 "{kind}: {}x{} ss={} mode={} iter={} gpu_iterate={:.1}ms gpu_color={:.1}ms \
                  max_dispatch={:.0}ms ~{gsps:.2} Gsteps/s (nominal) | counters: rebase={} ext={} \
                  glitch={} bla_skip={} maxiter={} | steps (1/64 px): px={} executed={} \
-                 iterations={} = {:.1} per step, full={} of which |δz|>=2^-100 {big_pct:.1}%",
+                 iterations={} = {:.1} per step, full={} of which in df32 {big_pct:.1}%",
                 r.width,
                 r.height,
                 r.ss,

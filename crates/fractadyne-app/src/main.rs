@@ -243,6 +243,8 @@ fn main() -> eframe::Result<()> {
                 tunables::status_line()
             );
         }
+        // The GPU crate's process-wide copy of the df32 tail-phase switch (`TAIL_DF32`).
+        fractadyne_gpu::set_tail_df32(tunables::cost().tail_df32 == 1);
     }
     // `--oomtest`: force a real allocation failure, to prove the OOM path actually writes a crash
     // report. It cannot be verified any other way — an out-of-memory abort skips the panic hook,
@@ -5929,12 +5931,21 @@ impl FractadyneApp {
         let render_iter_mode = args.iter().any(|a| a == "--render-iter");
         // `--glitch-audit [N]`: an optional count. ABSENT (no value, or the next token is a flag)
         // takes the default; PRESENT but unreadable is an error, never a silent default.
-        let glitch_audit = args.iter().position(|a| a == "--glitch-audit").map(|i| {
-            match args.get(i + 1).filter(|s| !s.starts_with('-')) {
+        let audit_count = |flag: &str| {
+            args.iter().position(|a| a == flag).map(|i| match args.get(i + 1).filter(|s| !s.starts_with('-')) {
                 None => crate::glitchaudit::DEFAULT_SAMPLES,
-                Some(s) => crate::arg_parse::<usize>("--glitch-audit", s, "a whole number of pixels").max(1),
+                Some(s) => crate::arg_parse::<usize>(flag, s, "a whole number of pixels").max(1),
+            })
+        };
+        let (glitch_audit, audit_kind) = match (audit_count("--glitch-audit"), audit_count("--tail-audit")) {
+            (Some(_), Some(_)) => {
+                eprintln!("fractadyne: --glitch-audit and --tail-audit compare different renders; pass one");
+                crate::exit(2)
             }
-        });
+            (Some(n), None) => (Some(n), crate::glitchaudit::AuditKind::Correction),
+            (None, Some(n)) => (Some(n), crate::glitchaudit::AuditKind::Tail),
+            (None, None) => (None, crate::glitchaudit::AuditKind::Correction),
+        };
         let auto_render = args.iter().any(|a| a == "--render") || render_iter_mode || glitch_audit.is_some();
         let selftest = args.iter().any(|a| a == "--selftest" || a == "--selftest-list");
         let profile = args.iter().any(|a| a == "--profile");
@@ -6495,6 +6506,7 @@ impl FractadyneApp {
                 done: false,
                 iter_mode: render_iter_mode,
                 audit: glitch_audit,
+                audit_kind,
                 tour: render_tour,
                 tour_done: false,
                 tour_cfg: tour_cli,

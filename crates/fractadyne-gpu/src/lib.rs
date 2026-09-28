@@ -68,6 +68,25 @@ pub(crate) struct IterUniforms {
     /// take them without moving a single existing field — this one struct is bound by every iterate
     /// pipeline in the app, the live view included.
     pub(crate) gather: [u32; 2],
+    /// `[tail_on, pad, pad, pad]`: 1 = the mode-2 df32 TAIL PHASE is enabled (`TAIL_DF32_MIN` in
+    /// the shader). A whole 16-byte row, so Rust's `#[repr(C)]` size keeps matching WGSL's. See
+    /// [`tail_word`].
+    pub(crate) tail: [u32; 4],
+}
+
+/// The mode-2 df32 tail phase switch (`TAIL_DF32`, a `--set` tunable in the app; on by default).
+/// Process-wide rather than threaded through every request: it is a comparison switch, the same
+/// for every dispatch of a run.
+static TAIL_DF32: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Set the df32 tail phase on or off for every dispatch that follows.
+pub fn set_tail_df32(on: bool) {
+    TAIL_DF32.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The uniform row carrying the tail-phase switch.
+pub(crate) fn tail_word() -> [u32; 4] {
+    [TAIL_DF32.load(std::sync::atomic::Ordering::Relaxed) as u32, 0, 0, 0]
 }
 
 #[repr(C)]
@@ -1056,8 +1075,9 @@ pub const CTR_STEP_PX: usize = CTR_ESC_HIST + ESC_HIST_BUCKETS; // sampled fragm
 pub const CTR_STEP_EXEC: usize = CTR_STEP_PX + 1; // lo/hi: loop trips (BLA skips + full steps)
 pub const CTR_STEP_ITER: usize = CTR_STEP_EXEC + 2; // lo/hi: iterations advanced
 pub const CTR_STEP_FULL: usize = CTR_STEP_ITER + 2; // lo/hi: full (one-iteration) steps
-/// lo/hi: mode-2 full steps taken with |δz| ≥ 2^-100 — where df32 could have held δz, i.e. the
-/// share of floatexp work a floatexp→df32 tail phase would make cheaper.
+/// lo/hi: mode-2 full steps taken in the df32 TAIL PHASE (`TAIL_DF32_MIN` in the shader,
+/// beta.141) — the share of mode-2 work no longer paying floatexp's cost. (beta.137–140 counted
+/// full steps with |δz| ≥ 2^-100 here, the measurement that justified the phase.)
 pub const CTR_STEP_BIG: usize = CTR_STEP_FULL + 2;
 
 /// A counter readback's step accounting (see [`CTR_STEP_PX`]).
@@ -2596,6 +2616,7 @@ impl CallbackTrait for MandelbrotParams {
                 start_iter: 0,
                 end_iter: 0,
                 gather: [0; 2],
+                tail: tail_word(),
             };
             // Effective chunk: requested AND the resumable pipelines exist (the device granted the
             // 48-byte color-attachment limit). A device that couldn't grant it clamps THIS dispatch

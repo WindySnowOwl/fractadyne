@@ -260,7 +260,12 @@ conservative default. Direct and df32-perturbation dispatches only (floatexp's B
 nominal steps unrepresentative). The adapter line is followed by `dispatch ceiling (calibrated for
 …)`, and a view logs `dispatch ceiling BINDS on v0: learned X → Y` when the ceiling starts to limit
 its budget and `dispatch ceiling released` when it stops. The value itself is NOT overridable: a
-per-card number as an override would make every gate on that card non-stock.
+per-card number as an override would make every gate on that card non-stock. — and `TAIL_DF32`
+(default 1 from beta.141; `0` = off, for a before/after measurement): a deep (floatexp) Mandelbrot
+step whose offset from the reference has grown past 2^-60 runs in ordinary df32 arithmetic instead
+of floatexp, and back if it shrinks. The share of steps taken that way is the `in df32` figure on a
+CLI render's `perf` line, and `--tail-audit` checks the pixels the phase changes against the
+arbitrary-precision oracle.
 
 - **Not a configuration surface.** The defaults are the only tested path: the self-test, the
   goldens, `--bench-matrix` and `--livetest` all assume them. `--selftest` carries a check that
