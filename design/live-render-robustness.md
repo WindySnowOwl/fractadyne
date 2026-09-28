@@ -605,6 +605,30 @@ suppressions remain, so the min() can reduce the budget and the frame still will
 a *worse* intermediate than either end and must not be left as a release boundary. B4 and B5 ship
 together or not at all.
 
+**Status (beta.135, 2026-09-27): the fixed `ceiling` ships alone, ahead of the rest of B4.** It is
+applied once, where the live path computes `tdr_steps` (`render.rs`), which every live dispatch path
+sizes from; the `Admission` token, `wall_budget` and the offscreen entry points are NOT done, so the
+"un-bypassable" claim above does not yet hold. Module `calibration.rs`; data
+`validation/calibration/ceilings.toml`. Three things the measurement changed from the plan above:
+
+- **Not seeded from `--chunk-sweep` at a storm.** The worst per-step cost is an ALL-INTERIOR view
+  (every pixel walks every step): RTX 3080 df32 2.76e-8 ms/step there against 2.07e-8 in the storm.
+  The calibration views are `validation/calibration/interior-*.fdn`.
+- **Per formula, not only per adapter.** Multibrot 5 costs 1.77× Mandelbrot per step in direct mode
+  and 1.48× in df32 perturbation; a Mandelbrot-sized ceiling would have let it run ~0.7 s. Factors
+  below 1 are clamped to 1.
+- **`px × ss² × window` is not what the hardware fails on below the occupancy knee** (~262k px on
+  the RTX 3080): there a dispatch costs its window, not its area. The ceiling scales by
+  `min(1, px / knee)`, which bounds `max(px, knee) × window`.
+
+And one finding outside this section's scope. On the RX 6800 XT a live GPU reading's time fits the
+PREVIOUS reading's step count better than its own (log scatter 0.57 against 1.15 at the df32
+calibration view; the RTX 3080: 0.04 own, 1.06 previous). The GPU crate captures the step count with
+the pass the timestamps bracket, so the fault is in the timestamps, not the bookkeeping. That card is
+calibrated from the chunk sweep's wall clock for that reason. `budget_confident`'s pairing test above
+compares a reading's recorded steps against the plan's, and would NOT catch this: the recorded steps
+are right; the time is not.
+
 ### 5.2 A chunk-pass price with a constant term
 
 **Replaces.** `render.rs:5165-5174`, which prices a pass as a pure function of the iteration window,

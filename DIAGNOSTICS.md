@@ -69,8 +69,8 @@ and fails if one is missing from this table.
 | Prefix | Gated? | What it says |
 |--------|--------|--------------|
 | `[fd-start]` | always | Session header: version (with commit), arguments, bignum backends compiled in, which session loaded, where logs were directed |
-| `[fd-render]` | always | CLI render manifest and failures; on the live path the always-on alarms — `slow frame N` (with body vs time outside it), `⚠LETHAL-BAND FRAME`, `⚠IN-FLIGHT PASS IN THE LETHAL BAND`, `⚠FRAME BUDGET IS BLIND` (from beta.131 followed by `DEAD-MAN: … budget X → Y`, and later `DEAD-MAN cleared`, see `DEAD_MAN`), `motion jam` |
-| `[fd-wgpu]` | always | The adapter + capability line (`TIMESTAMP_QUERY`, attach bytes granted), device errors and device loss; from beta.128 a `timing witness:` line every 30 s of GPU readings: how many of the frame budget's timestamp readings were held against their pass's CPU-side window (timer armed to the frame's completion callback, an upper bound), how many were IMPOSSIBLE (longer than it), and how much of the window a reading left unexplained when the queue was empty (RTX 3080: 13–17 ms at the median, callback latency). Per reading in the frame record (schema 3: `read_window_ms`, `read_queue_empty`) |
+| `[fd-render]` | always | CLI render manifest and failures; on the live path the always-on alarms — `slow frame N` (with body vs time outside it), `⚠LETHAL-BAND FRAME`, `⚠IN-FLIGHT PASS IN THE LETHAL BAND`, `⚠FRAME BUDGET IS BLIND` (from beta.131 followed by `DEAD-MAN: … budget X → Y`, and later `DEAD-MAN cleared`, see `DEAD_MAN`), `motion jam`, and from beta.135 `dispatch ceiling BINDS` / `released` (see `DISPATCH_CEILING`) |
+| `[fd-wgpu]` | always | The adapter + capability line (`TIMESTAMP_QUERY`, attach bytes granted), from beta.135 followed by the `dispatch ceiling (…)` this adapter resolved to (see `DISPATCH_CEILING`), device errors and device loss; from beta.128 a `timing witness:` line every 30 s of GPU readings: how many of the frame budget's timestamp readings were held against their pass's CPU-side window (timer armed to the frame's completion callback, an upper bound), how many were IMPOSSIBLE (longer than it), and how much of the window a reading left unexplained when the queue was empty (RTX 3080: 13–17 ms at the median, callback latency). Per reading in the frame record (schema 3: `read_window_ms`, `read_queue_empty`) |
 | `[fd-panic]` | always | A panic, and where its crash report was written |
 | `[fd-oom]` | always | An allocation failure (the report is written from an 8 MB reserve) |
 | `[fd-unclean]` | always | The previous session ended without a clean shutdown — with its last log lines and, from beta.113, how much of its frame record survived |
@@ -248,7 +248,17 @@ beta.131; `0` = report only): when the budget-blind tripwire fires (eight frames
 by the wall while no GPU timing looked slow, or from beta.132 ONE frame at or past `TDR_LETHAL_MS`),
 the view's frame budget drops to its bootstrap, which
 bounds every dispatch path at once, and may not grow until a frame comes in under half
-`TDR_BUDGET_MS`. Logged as `DEAD-MAN: view=… budget X → Y` and `DEAD-MAN cleared`.
+`TDR_BUDGET_MS`. Logged as `DEAD-MAN: view=… budget X → Y` and `DEAD-MAN cleared` — and
+`DISPATCH_CEILING` (default 1 from beta.135; `0` = off, for a before/after measurement only): a
+fixed per-adapter cap on one dispatch's nominal steps that nothing learned can raise, sized so a
+ceiling-sized dispatch at the adapter's worst MEASURED per-step cost takes ~400 ms. The costs, the
+per-formula factors and each card's occupancy knee live in `validation/calibration/ceilings.toml`,
+which also says how to calibrate a new card; an adapter without an entry gets the table's
+conservative default. Direct and df32-perturbation dispatches only (floatexp's BLA makes its
+nominal steps unrepresentative). The adapter line is followed by `dispatch ceiling (calibrated for
+…)`, and a view logs `dispatch ceiling BINDS on v0: learned X → Y` when the ceiling starts to limit
+its budget and `dispatch ceiling released` when it stops. The value itself is NOT overridable: a
+per-card number as an override would make every gate on that card non-stock.
 
 - **Not a configuration surface.** The defaults are the only tested path: the self-test, the
   goldens, `--bench-matrix` and `--livetest` all assume them. `--selftest` carries a check that

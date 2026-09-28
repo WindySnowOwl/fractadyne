@@ -93,6 +93,7 @@ mod sysinfo;
 mod theme;
 mod torture;
 mod tone;
+mod calibration;
 mod timing_witness;
 mod tunables;
 mod ui;
@@ -1510,6 +1511,9 @@ struct Perf {
     /// magnify/shrink bugs). Since the budget is now adaptive, reproject frames reuse the stored value
     /// rather than recomputing from a moving one.
     frozen_budget: [u64; 2],
+    /// Whether the per-adapter dispatch ceiling (`calibration`) bound this view's last dispatch
+    /// budget — kept only so the log records each change rather than every frame.
+    ceiling_bound: [bool; 2],
     /// Iterate-key `(ss, resolution, orbit_id)` submitted last frame per view — change detection
     /// for probe arming (a probe is only valid on a frame that actually re-iterates).
     aa_last_key: [(u32, [u32; 2], u64); 2],
@@ -2076,6 +2080,7 @@ impl Default for Perf {
             fe_iter_frame: [0, 0],
             view_gen: [0, 0],
             frozen_budget: [0, 0],
+            ceiling_bound: [false, false],
             last_dt_ms: 0.0,
             present_throttle: 0,
             prev_real: [false, false],
@@ -14601,6 +14606,25 @@ impl eframe::App for FractadyneApp {
                         self.perf.ts_supported,
                         self.attach_bytes_per_sample.0,
                         self.attach_bytes_per_sample.1
+                    ),
+                );
+                // The per-adapter DISPATCH CEILING (`calibration`), resolved once by adapter name.
+                let cal = calibration::init(&self.gpu_name);
+                let at = |cost: f64| {
+                    calibration::ceiling(cost, 1.0, cal.knee_px, u64::MAX)
+                        .map_or("none".to_string(), |c| format!("{:.2e}", c as f64))
+                };
+                diag::log_line(
+                    "wgpu",
+                    &format!(
+                        "dispatch ceiling ({}): Mandelbrot df32-perturbation {}, direct {} nominal steps \
+                         at {:.0} ms, less per formula factor and below {} px{}",
+                        cal.source,
+                        at(cal.costs.df32_pert),
+                        at(cal.costs.direct),
+                        calibration::TARGET_MS,
+                        cal.knee_px,
+                        if crate::tunables::cost().dispatch_ceiling == 1 { "" } else { " — OFF (DISPATCH_CEILING=0)" }
                     ),
                 );
                 // The frame record's session header: WHICH code produced the records that
