@@ -114,6 +114,12 @@ struct Frame {
     /// completed with no escaped pixel and were kept OFF the screen (`perf.blank_walks_total[0]`).
     converged: u64,
     blank: u64,
+    /// The display served the HOLD SNAPSHOT (`perf.hold_active[0]`, the present gate's own state)
+    /// rather than the live texture. `real` and `gap_oct` cannot see this: `real` counts
+    /// re-iterates (a held frame's pass still runs underneath), and `gap_oct` reads the frozen
+    /// bookkeeping, which no direct-mode frame writes — the 2026-09-27 report held the snapshot for
+    /// every moving frame of a direct-mode glide while both read "held 0%, 0.00 oct".
+    snap: bool,
     /// LIVE AUTO-NORMALIZATION state, for the 2026-09-17 reports ("sometimes doesn't normalize",
     /// "the colours bounce around on zoom", "it may go to a flat colour panel"). The palette
     /// mapping is decided from the escape RANGE and an aliasing predicate on the local GRADIENT,
@@ -206,9 +212,22 @@ pub(crate) struct ZoomTest {
     octaves_given: bool,
     /// `--zoomtest-hold S` (see `Phase::Hold`).
     hold_s: f64,
+    /// `--zoomtest-then-log2 L`: when the first glide arrives, JUMP to 2^L on the same centre while
+    /// it is still moving, then glide again from there; only that second leg is reported. The
+    /// 2026-09-27 report ("pressing space to zoom goes to a solid color", 179× direct mode) came
+    /// after zooming OUT in jumps from a perturbation depth: a pin abandoned by such a jump left
+    /// `chunk_dirty` set, and in direct mode nothing ever cleared it. A single glide from a fresh
+    /// session cannot reach that state; this sequence can.
+    then_log2: Option<f64>,
 }
 
 impl ZoomTest {
+    /// `--zoomtest-then-log2` (see `ZoomTest::then_log2`).
+    pub(crate) fn with_then(mut self, then_log2: Option<f64>) -> Self {
+        self.then_log2 = then_log2;
+        self
+    }
+
     pub(crate) fn new(
         octaves: Option<f64>,
         rate: f32,
@@ -244,6 +263,7 @@ impl ZoomTest {
             octaves: octaves.unwrap_or(40.0).max(1.0),
             octaves_given: octaves.is_some(),
             hold_s: hold_s.clamp(0.0, 600.0),
+            then_log2: None,
             rate: rate.clamp(0.25, 4.0),
             location,
             start_log2,
@@ -519,6 +539,7 @@ impl FractadyneApp {
                         adopts: self.perf.adopt_complete[0],
                         converged: self.perf.adopt_converged[0],
                         blank: self.perf.blank_walks_total[0],
+                        snap: self.perf.hold_active[0],
                         // The window the colour pass USES (`norm_shown`), not the fed target:
                         // the glide sits between them, and it is the shown one the eye sees.
                         norm_lo: self.perf.norm_shown[0].map_or(f32::NAN, |r| r.0),
@@ -583,11 +604,38 @@ impl FractadyneApp {
                             zt.pause_until = Some(now + std::time::Duration::from_secs_f64(pause));
                         }
                     }
+                } else if (arrived || in_phase > GLIDE_MAX_S)
+                    && zt.then_log2.is_some()
+                    && self.perf.pin[0].is_none()
+                    && in_phase <= GLIDE_MAX_S
+                {
+                    // Keep the key down until a pinned refresh is IN FLIGHT: the state under test
+                    // is a pin the jump abandons (it leaves `chunk_dirty` set). Jumping between
+                    // pins reproduced it once in two runs; waiting for one makes it every run.
                 } else if arrived || in_phase > GLIDE_MAX_S {
                     zt.driving = false; // the virtual key comes up THIS frame; the glide eases out
-                    match after {
-                        Some(p) => advance(&mut zt, p),
-                        None => self.zoomtest_report(zt), // exits
+                    if let Some(l2_then) = zt.then_log2.take() {
+                        // The second leg: JUMP while still moving — the view lands at 2^l2_then on
+                        // the same centre mid-glide, as a user's zoom-out step does — then rest and
+                        // glide again. Only the second leg's frames are reported.
+                        let (cx, cy) = (self.viewport.center_x.clone(), self.viewport.center_y.clone());
+                        crate::diag::log_line(
+                            "zoomtest",
+                            &format!(
+                                "second leg: jump from 2^{l2:.2} to 2^{l2_then:.2} while moving (zoom_vel {:.3}, pin in flight: {})",
+                                self.pointer.zoom_vel,
+                                self.perf.pin[0].is_some()
+                            ),
+                        );
+                        self.viewport.set_center_log2mag(cx, cy, l2_then);
+                        zt.records.clear();
+                        zt.last_frame = None;
+                        advance(&mut zt, Phase::Quiet);
+                    } else {
+                        match after {
+                            Some(p) => advance(&mut zt, p),
+                            None => self.zoomtest_report(zt), // exits
+                        }
                     }
                 }
             }
@@ -774,6 +822,24 @@ impl FractadyneApp {
         let blank = f.last().unwrap().blank.saturating_sub(f.first().unwrap().blank);
         let paced_pct = f.iter().filter(|r| r.vel_frac < 0.999).count() as f64 / n as f64 * 100.0;
         let hold_pct = f.iter().filter(|r| !r.real).count() as f64 / n as f64 * 100.0;
+        // The snapshot hold (see `Frame::snap`): its share, and its longest unbroken run — how long
+        // the eye watched a picture that was not the view, magnifying.
+        let snap_pct = f.iter().filter(|r| r.snap).count() as f64 / n as f64 * 100.0;
+        let (mut snap_run, mut snap_best, mut snap_t0, mut snap_best_s) = (0usize, 0usize, 0.0, 0.0);
+        for r in f.iter() {
+            if r.snap {
+                if snap_run == 0 {
+                    snap_t0 = r.t;
+                }
+                snap_run += 1;
+                if snap_run > snap_best {
+                    snap_best = snap_run;
+                    snap_best_s = r.t - snap_t0;
+                }
+            } else {
+                snap_run = 0;
+            }
+        }
         let fps = n as f64 / secs.max(1e-9);
         let oct_s = oct / secs.max(1e-9);
 
@@ -796,6 +862,9 @@ impl FractadyneApp {
             "  real refreshes {reals} ({:.1}/s), held frames {hold_pct:.0}% · real interval ms: mean {gap_mean:.0}  p95 {gap_p95:.0}  max {gap_max:.0} · held frame max {gap_oct_max:.2} oct ({:.2}x)",
             reals as f64 / secs.max(1e-9),
             gap_oct_max.exp2()
+        );
+        eprintln!(
+            "  snapshot served {snap_pct:.0}% of frames · longest run {snap_best} frames ({snap_best_s:.2} s)"
         );
         eprintln!(
             "  reference installs {installs} (lookahead {look}) · pinned refreshes adopted {adopts} (+{converged} converged) · blank walks kept off screen {blank} · depth lag max {lag_max:.2} · pacer throttled {paced_pct:.1}% of frames"

@@ -6146,7 +6146,8 @@ impl FractadyneApp {
                     crate::exit(2)
                 })
             });
-            Some(zoomtest::ZoomTest::new(octaves, rate, location, start_log2, taps, hold_s))
+            let then_log2 = val("--zoomtest-then-log2").map(|_| num("--zoomtest-then-log2", "a log2 magnification", 0.0));
+            Some(zoomtest::ZoomTest::new(octaves, rate, location, start_log2, taps, hold_s).with_then(then_log2))
         } else {
             None
         };
