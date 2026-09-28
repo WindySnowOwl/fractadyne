@@ -12,6 +12,23 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Faster command-line renders: the reference calculation starts before the window opens**
+  (beta.147).
+  - **The change:** a `--render` spent its first ~0.7 s creating the window and graphics device,
+    and only then started calculating the reference orbit. That calculation needs only the CPU,
+    so it now starts first and runs while the window and device come up. The render uses it only
+    if it was calculated from exactly the settings the render asks for. Otherwise it calculates
+    one as before and says so in the log.
+  - **How much**, on 4K renders (median of three interleaved runs, same build, with the new
+    `EARLY_REF` setting on and off):
+    - 4.6e1105: 2.5 s instead of 3.3 s. In the accelerated (MPFR) build, 1.8 s instead of 2.2 s.
+    - 1.2e148: 11.7 s instead of 12.7 s.
+    - 1.47e77: 2.5 s instead of 3.0 s.
+    - 4.2e275: 4.2 s instead of 4.5 s.
+    - Shallow views are unchanged. Their reference takes less time than the window does.
+  - **Pictures:** identical to the pixel at all ten benchmark scenes.
+  - **Under the hood:** the app's settings are now loaded before the window is created, and the
+    graphics device is attached afterwards. This applies to every launch, not only `--render`.
 - **The accelerated (MPFR) build's series approximation is also split across two threads**
   (beta.146), as the standard build's is since beta.145. At 4.6e1105 a 4K render in the
   accelerated build takes 2.2 s instead of 2.5 s, and the preparation before rendering 0.51 s

@@ -745,6 +745,119 @@ fn same_point(a: &[fractadyne_core::BigFloat; 2], b: &[fractadyne_core::BigFloat
     eq(&a[0], &b[0]) && eq(&a[1], &b[1])
 }
 
+/// A `--render`'s reference build, started by `main` before the window and GPU device exist
+/// ([`FractadyneApp::start_early_cli_reference`]), with a second copy of the inputs it was
+/// started from (built by the same call) for [`take_early_reference`]'s exact-match test.
+struct EarlyRef {
+    inputs: RecomputeInputs,
+    handle: std::thread::JoinHandle<RecomputeResult>,
+    started: Instant,
+}
+
+static EARLY_REF: std::sync::Mutex<Option<EarlyRef>> = std::sync::Mutex::new(None);
+
+/// The early `--render` reference, if one was started and it was started from exactly
+/// `inputs`: then it is the build `recompute_worker(inputs)` would make now, and this waits for
+/// it. One-shot. Anything else — no early build, a differing input, or a device orbit-length
+/// cap that binds (the early build ran before the device reported it, with `orbit_len_cap()`
+/// still unbounded) — returns `None` and the caller builds as always; a discard is logged with
+/// the field that differed, since a silent miss would just look like a slower render.
+fn take_early_reference(inputs: &RecomputeInputs) -> Option<RecomputeResult> {
+    let early = EARLY_REF.lock().ok()?.take()?;
+    let why = early_inputs_differ(&early.inputs, inputs).or_else(|| {
+        (build_cap(inputs.gpu_iter, inputs) != inputs.gpu_iter.min(inputs.orbit_len_cap))
+            .then_some("orbit-length cap (the device's binds)")
+    });
+    if let Some(what) = why {
+        crate::diag::log_line(
+            "ref",
+            &format!("early reference DISCARDED — its {what} differs from the export's; building fresh"),
+        );
+        return None; // the early thread is left to finish on its own
+    }
+    let asked = early.started.elapsed().as_secs_f64() * 1000.0;
+    let t = Instant::now();
+    let res = early.handle.join().ok()?;
+    crate::diag::log_line(
+        "ref",
+        &format!(
+            "early reference USED — started {asked:.0} ms before the export asked for it, which then waited {:.0} ms",
+            t.elapsed().as_secs_f64() * 1000.0
+        ),
+    );
+    Some(res)
+}
+
+/// The first input that differs between two reference requests, by name; `None` = the same
+/// request (every field `recompute_worker` reads, and neither carries a reuse).
+fn early_inputs_differ(a: &RecomputeInputs, b: &RecomputeInputs) -> Option<&'static str> {
+    let fields: [(&'static str, bool); 15] = [
+        ("centre", !same_point(&a.center_bf, &b.center_bf)),
+        ("span", a.span != b.span),
+        ("span mantissa", a.span_mantissa != b.span_mantissa),
+        ("delta exponent", a.delta_exp != b.delta_exp),
+        ("iteration budget", a.gpu_iter != b.gpu_iter),
+        ("orbit-length cap", a.orbit_len_cap != b.orbit_len_cap),
+        ("precision", a.precision != b.precision),
+        ("Julia flag", a.julia != b.julia),
+        ("formula", a.formula != b.formula),
+        ("Julia c", a.julia_c.0.to_bits() != b.julia_c.0.to_bits() || a.julia_c.1.to_bits() != b.julia_c.1.to_bits()),
+        ("series approximation flag", a.do_sa != b.do_sa),
+        ("BLA radius", a.bla_dc_max != b.bla_dc_max),
+        ("stripe frequency", a.stripe_freq.to_bits() != b.stripe_freq.to_bits()),
+        ("trap type", a.trap_type != b.trap_type),
+        ("reuse", a.reuse.is_some() || b.reuse.is_some()),
+    ];
+    fields.iter().find(|(_, d)| *d).map(|(what, _)| *what)
+}
+
+impl FractadyneApp {
+    /// The reference inputs a fresh single-view export of `vp` builds from — the prefix of
+    /// `build_export_request`, which uses this too, so the two cannot drift. `None` for a
+    /// direct-mode view (no reference).
+    fn export_fresh_reference_inputs(&self, vp: &Viewport, julia: bool) -> Option<RecomputeInputs> {
+        let eff_iter = self.export_eff_iter(vp, julia);
+        let mode = RenderMode::select(self.fractal.supports_perturbation(), julia, vp.magnification());
+        if mode.is_direct() {
+            return None;
+        }
+        let scale = vp.gpu_scale();
+        Some(self.export_reference_inputs(vp, julia, mode, eff_iter, vp.precision, scale.span_mantissa, scale.delta_exp))
+    }
+
+    /// ⭐Start a plain single-view `--render`'s reference build NOW, on its own thread — `main`
+    /// calls this right after [`FractadyneApp::new_state`], before eframe creates the window and
+    /// GPU device, which takes ~0.7 s the build would otherwise wait out. The export takes the
+    /// result only if its own inputs match these exactly (`take_early_reference`), so a render
+    /// that differs in any way just builds as before. Tours, dual views, iteration EXRs and
+    /// glitch audits are left alone.
+    pub(crate) fn start_early_cli_reference(&self) {
+        let rc = &self.render_cli;
+        if crate::tunables::cost().early_ref != 1
+            || !rc.run
+            || rc.iter_mode
+            || rc.audit.is_some()
+            || rc.tour.is_some()
+            || self.dual
+        {
+            return;
+        }
+        let (vp, julia) = (&self.viewport, self.julia_mode);
+        let (Some(inputs), Some(copy)) =
+            (self.export_fresh_reference_inputs(vp, julia), self.export_fresh_reference_inputs(vp, julia))
+        else {
+            return;
+        };
+        let spawned = std::thread::Builder::new()
+            .name("early-reference".into())
+            .spawn(move || recompute_worker(inputs));
+        if let (Ok(handle), Ok(mut slot)) = (spawned, EARLY_REF.lock()) {
+            *slot = Some(EarlyRef { inputs: copy, handle, started: Instant::now() });
+            crate::diag::log_line("ref", "early reference build started before the window and GPU (--render)");
+        }
+    }
+}
+
 /// The identity of the orbit `inp` would build: formula, Julia c, and the backend a fresh build
 /// would run in. (An EXTENDED orbit keeps the backend of its tail; `offer_to_orbit_cache`
 /// substitutes that.)
@@ -3455,8 +3568,12 @@ impl FractadyneApp {
                         RefSource::Precomputed(r) if precomputed_matches(&r, eff_iter, precision) => *r,
                         RefSource::ProbeOnly(r) => *r,
                         _ => {
-                            let inputs = self.export_reference_inputs(vp, julia, mode, eff_iter, precision, scale.span_mantissa, delta_exp);
-                            recompute_worker(inputs)
+                            let inputs = self
+                                .export_fresh_reference_inputs(vp, julia)
+                                .expect("a perturbation view has reference inputs");
+                            // A `--render` may have started exactly this build before the window
+                            // existed (`start_early_cli_reference`).
+                            take_early_reference(&inputs).unwrap_or_else(|| recompute_worker(inputs))
                         }
                     };
                     self.prof.set(profile::ProfSetup {
