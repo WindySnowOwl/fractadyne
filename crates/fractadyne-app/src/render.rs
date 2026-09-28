@@ -6792,6 +6792,27 @@ impl FractadyneApp {
                         ),
                     );
                 }
+                // ⭐DIAGNOSTIC INSTRUMENT `FRACTADYNE_SEED_BUDGET=N` (MILLIONS of steps; off by
+                // default; W9). The 2026-09-21 budget was LEARNED high (1.515e11) somewhere cheap
+                // and carried to the crash view, where every whole-frame render is under 0.7× of it
+                // and under the slow mark — so, the hypothesis goes, every reading was discarded and
+                // the budget could not come down through 20 slow frames. `TDR_BOOTSTRAP_STEPS` cannot
+                // recreate that: it seeds only the UNMEASURED guess, which the first reading replaces
+                // (measured, 2026-09-27: 1.52e11 → 4.66e9 at the first priced reading). This
+                // installs a budget AS IF LEARNED, once, on the session's first frame.
+                let seed = crate::Perf::seed_budget();
+                if prev == u32::MAX && seed > 0 {
+                    self.perf.fe_budget[vidx] = seed as u64 * 1_000_000;
+                    self.perf.fe_budget_ok[vidx] = true;
+                    crate::diag::log_line(
+                        "instrument",
+                        &format!(
+                            "SEED_BUDGET={seed}: v{vidx} budget 0 → {:.3e} steps in mode {m}, as if \
+                             LEARNED (converged)",
+                            self.perf.fe_budget[vidx] as f64
+                        ),
+                    );
+                }
             }
         }
         // A reproject frame re-samples the frozen texture, so it must land on the SAME resolution as
@@ -9734,12 +9755,43 @@ pub(crate) const BUDGET_BLIND_FRAMES: u32 = 8;
 /// the frame was never chunked either — the guard that bounds such a dispatch was switched off by
 /// the same blindness.
 ///
-/// ⚠This reports; it does not act. What to DO about the divergence is a live design question
-/// (price the budget by the wall in this state, force chunking, or cap the ask), and shipping a
-/// reaction inferred from one field log — on hardware the dev box cannot reproduce — is how a
-/// controller acquires a rule nobody can explain later. First make it observable.
+/// ⭐From beta.131 it ACTS (`DEAD_MAN`, default on; see [`dead_man_budget`]). It reported only
+/// until the reaction's §8 prerequisites were in hand: the field trap reproduced on stock logic
+/// (`FRACTADYNE_SEED_BUDGET`, 2026-09-27: every reading discarded, budget 1.515e11 the whole run)
+/// and zero natural fires across ~45 healthy runs on both cards (the two in the batteries were
+/// `--recordtest`'s injected phase). The first field record of a whole episode is still owed.
 pub(crate) fn budget_blind(slow_wall_frames: u32, slow_readings: u32, warned: bool) -> bool {
     !warned && slow_readings == 0 && slow_wall_frames >= BUDGET_BLIND_FRAMES
+}
+
+/// ⭐⭐THE LETHAL-BAND TRIGGER (beta.132): ONE frame at or past `TDR_LETHAL_MS` by the wall, with a
+/// repaint requested and no slow reading, latches the tripwire at once — [`budget_blind`]'s eight
+/// frames are far too slow for the card that fails. Measured on PLUTO (2026-09-27, the dead-man
+/// BEFORE arm, a learned 1.515e11 at the crash view): whole-frame dispatches of 315, 1,013 and
+/// 1,393 ms at the start, and 640 then 2,017 ms at the settle — the machine hung on the fifth. The
+/// longest run over 400 ms was 2, so the 8-frame trigger never fired; this one would have at the
+/// 1,013 ms frame, derating the budget before any of the later dispatches were sized. The cost of a
+/// false trigger is a derate (a few coarse frames while the budget re-climbs); of a missed one, the
+/// machine.
+pub(crate) fn budget_blind_lethal(dt_ms: f64, busy: bool, slow_readings: u32, warned: bool) -> bool {
+    !warned && busy && slow_readings == 0 && dt_ms >= crate::tunables::cost().tdr_lethal_ms
+}
+
+/// ⭐⭐THE WALL-CLOCK DEAD-MAN's budget (design §5.1, §8): when [`budget_blind`] latches, the view's
+/// budget drops to its bootstrap — the opening guess a view uses before anything is measured,
+/// itself capped at `TDR_BOOTSTRAP_STEPS` — and may not grow again until the latch clears.
+///
+/// Every dispatch path sizes from this one number (`tdr_steps`: the chunk step, `chunk_over`'s
+/// comparison, the resolution shrink, the tile count), so lowering it bounds all of them without a
+/// new actuator — the 2026-09-21 failure was a budget that "switched off" chunking by being too
+/// large. It adopts no theory of why the readings were blind; the wall is its only witness. A
+/// budget already at or under the bootstrap, or unmeasured (0), is left alone.
+pub(crate) fn dead_man_budget(cur: u64, bootstrap: u64) -> u64 {
+    if cur == 0 {
+        0
+    } else {
+        cur.min(bootstrap)
+    }
 }
 
 /// Does a budget decision EXPLAIN a run of slow frames, so the tripwire may start counting again?

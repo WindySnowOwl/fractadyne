@@ -352,6 +352,68 @@ impl crate::FractadyneApp {
                         crate::render::BUDGET_BLIND_FRAMES
                     )),
                 }
+                // ---- the WALL-CLOCK DEAD-MAN (beta.131, `DEAD_MAN`): the same latch now ACTS. The
+                // budget must drop to the bootstrap, no reading may grow it while latched, and the
+                // latch must clear once frames are quick again — engaged, bounded, and released.
+                if let Some(w) = warned.filter(|_| crate::tunables::cost().dead_man == 1) {
+                    let log = crate::diag::logs_dir()
+                        .and_then(|d| std::fs::read_to_string(d.join("fractadyne.log")).ok())
+                        .unwrap_or_default();
+                    let cap = crate::tunables::cost().tdr_bootstrap_steps;
+                    let before = v0.iter().rev().find(|r| r.frame < w.frame).map_or(0, |r| r.fe_budget);
+                    let after = v0
+                        .iter()
+                        .filter(|r| r.frame >= w.frame && r.frame <= w.frame + 2)
+                        .map(|r| r.fe_budget)
+                        .min()
+                        .unwrap_or(u64::MAX);
+                    let grew = v0
+                        .iter()
+                        .filter(|r| r.frame > w.frame && r.blind_warned && r.read_n > 0)
+                        .filter(|r| r.read_budget_after > r.read_budget_before)
+                        .count();
+                    let released = v0.iter().any(|r| r.frame > w.frame && !r.blind_warned);
+                    let engaged = log.contains("DEAD-MAN: view=0");
+                    let cleared = log.contains("DEAD-MAN cleared: view=0");
+                    if engaged && after <= cap && grew == 0 && released && cleared {
+                        notes.push(format!(
+                            "dead-man: engaged at frame {}, budget {before:.3e} -> {after:.3e} (bootstrap cap \
+                             {cap:.1e}), no growth while latched, cleared once frames were quick",
+                            w.frame
+                        ));
+                    } else {
+                        fails.push(format!(
+                            "dead-man: engaged {engaged} (log), budget {before:.3e} -> {after:.3e} against the \
+                             bootstrap cap {cap:.1e}, {grew} reading(s) grew it while latched, released {released} \
+                             (record) / {cleared} (log)"
+                        ));
+                    }
+                }
+            }
+        }
+        // ---- the LETHAL-BAND trigger (beta.132): the wedge is ONE frame far past TDR_LETHAL_MS with
+        // a repaint asked for, so the tripwire must latch on it ALONE — within the frame or two its
+        // interval lands in — and the dead-man engage a second time. On PLUTO the card hung after
+        // two slow frames; a trigger that needs eight is no trigger there.
+        if let Some(wf) = t.wedged_at.filter(|_| crate::tunables::cost().dead_man == 1) {
+            let log = crate::diag::logs_dir()
+                .and_then(|d| std::fs::read_to_string(d.join("fractadyne.log")).ok())
+                .unwrap_or_default();
+            let fired = v0.iter().find(|r| r.frame > wf && r.frame <= wf + 3 && r.blind_warned);
+            let engaged = log.matches("DEAD-MAN: view=0").count();
+            match fired {
+                Some(r) if engaged >= 2 => notes.push(format!(
+                    "lethal-band trigger: the {}s wedge at frame {wf} latched the tripwire at frame {} \
+                     (one frame, not eight); dead-man engaged {engaged}x this run",
+                    WEDGE.as_secs(),
+                    r.frame
+                )),
+                _ => fails.push(format!(
+                    "lethal-band trigger: the {}s wedge at frame {wf} {} the tripwire within 3 frames; \
+                     dead-man engaged {engaged}x (want 2: the blind phase and the wedge)",
+                    WEDGE.as_secs(),
+                    if fired.is_some() { "latched" } else { "did NOT latch" }
+                )),
             }
         }
 

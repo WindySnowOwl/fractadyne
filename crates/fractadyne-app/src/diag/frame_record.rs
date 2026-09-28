@@ -110,6 +110,9 @@ pub(crate) mod refusal {
     /// The timing witness judged the reading possibly too SHORT (an empty queue's window left far
     /// more unexplained than any tested card): it may shrink the budget, never grow it (beta.129).
     pub(crate) const SHORT: u8 = 2;
+    /// The wall-clock dead-man is latched (the budget-blind tripwire fired and no frame since has
+    /// been quick): growth waits for the latch to clear (beta.131, `DEAD_MAN`).
+    pub(crate) const BLIND: u8 = 3;
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -588,6 +591,22 @@ fn open_bin(path: &Path) -> std::io::Result<std::fs::File> {
     f.set_len((HEADER_BYTES + RING_LEN * SLOT_BYTES) as u64)?;
     write_file_header(&mut f)?;
     Ok(f)
+}
+
+/// Flush `frames.bin` and `frames.jsonl` to the disk (see `diag::sync_to_disk`). The ring is written
+/// in place with no fsync by design — cheap every frame — and survives a PROCESS crash through the
+/// OS cache, but not a MACHINE hang; this is called on slow frames, the prelude to one.
+pub(crate) fn sync_to_disk() {
+    if let Ok(g) = BIN.lock() {
+        if let Some(Ok(f)) = g.as_ref() {
+            let _ = f.sync_data();
+        }
+    }
+    if let Some(p) = jsonl_file() {
+        if let Ok(f) = std::fs::OpenOptions::new().append(true).open(&p) {
+            let _ = f.sync_data();
+        }
+    }
 }
 
 fn write_slot(f: &mut std::fs::File, index: usize, slot: &[u8; SLOT_BYTES]) -> std::io::Result<()> {

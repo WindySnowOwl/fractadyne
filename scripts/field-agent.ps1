@@ -47,7 +47,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 7   # 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument
+$AgentVersion = 9   # 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -380,7 +380,7 @@ function New-ViewSession($r) {
 # The diagnostic INSTRUMENTS a request may arm (DIAGNOSTICS.md, "Environment variables"): the first
 # two put the live path in a regime that has killed devices, on purpose; PASS_CLOCK only observes
 # (v7). Integer values only; nothing else from a request ever reaches the environment.
-$InstrumentEnv = @("FRACTADYNE_REF_ESCAPE_AT", "FRACTADYNE_BLA_DROP_FRAMES", "FRACTADYNE_PASS_CLOCK")
+$InstrumentEnv = @("FRACTADYNE_REF_ESCAPE_AT", "FRACTADYNE_BLA_DROP_FRAMES", "FRACTADYNE_PASS_CLOCK", "FRACTADYNE_SEED_BUDGET")
 
 function Get-RequestEnv($r) {
     $e = Get-Field $r "env" $null
@@ -560,11 +560,46 @@ function Test-SelfUpdate {
     exit 0
 }
 
+# --- orphan recovery (v9) -------------------------------------------------------------------------------
+# A job this agent claimed but never finished - the machine hung or restarted mid-run, which a
+# device-loss run can do to the whole box (2026-09-27, the dead-man BEFORE arm) - leaves its claim in
+# requests\ and its run folder in work\, and nothing ever finishes it. The app's log and frames.bin
+# survive a crash by design, so copy what the run left to the share and close the job as failed.
+# Only this process can hold the agent mutex, and jobs run inside the poll, so at poll time any claim
+# with this computer's name is an orphan. Recovery runs no program, so it runs even while PAUSED.
+function Invoke-OrphanRecovery {
+    $suffix = ".claimed-$Computer"
+    foreach ($c in @(Get-ChildItem -LiteralPath $ReqDir -Filter "*$suffix" -ErrorAction SilentlyContinue)) {
+        $id = $c.Name.Substring(0, $c.Name.Length - $suffix.Length)
+        if ($id -notmatch '^[0-9]{8}-[0-9]{6}-[a-z0-9]{4}$') { continue }
+        $dir = Join-Path $ResDir $id
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        $src = Join-Path $Work $id
+        $n = 0
+        if (Test-Path -LiteralPath $src) {
+            Get-ChildItem -LiteralPath $src | Copy-Item -Destination $dir -Recurse -Force -ErrorAction SilentlyContinue
+            $n = @(Get-ChildItem -LiteralPath $src -Recurse -File -ErrorAction SilentlyContinue).Count
+        }
+        $status = $null
+        try { $status = Get-Content -LiteralPath (Join-Path $dir "status.json") -Raw -ErrorAction Stop | ConvertFrom-Json } catch { }
+        if (-not $status) { $status = [pscustomobject]@{ id = $id; agent = $Computer } }
+        $status | Add-Member -NotePropertyName state -NotePropertyValue "failed" -Force
+        $status | Add-Member -NotePropertyName detail -NotePropertyValue ("interrupted: the agent restarted while this job ran (the machine hung or rebooted?); recovered $n file(s) from its run folder") -Force
+        $status | Add-Member -NotePropertyName finished_utc -NotePropertyValue (Get-UtcStamp) -Force
+        $status | Add-Member -NotePropertyName recovered_by -NotePropertyValue $AgentVersion -Force
+        Write-JsonFile (Join-Path $dir "status.json") $status
+        Remove-Item -LiteralPath $c.FullName -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $src -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Log "job $id recovered after an interruption: $n file(s) copied to the share"
+    }
+}
+
 # --- one poll -----------------------------------------------------------------------------------------
 function Invoke-Poll {
     if (-not (Test-Path -LiteralPath $Share)) { Write-Log "share $Share not reachable"; return }
     if (-not $Once) { Test-SelfUpdate }
     foreach ($d in @($ReqDir, $ResDir, $AgentDir)) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force -Path $d | Out-Null } }
+    Invoke-OrphanRecovery
     $pending = @(Get-ChildItem -LiteralPath $ReqDir -Filter "*.json" -ErrorAction SilentlyContinue | Sort-Object Name)
     if ((Test-Path (Join-Path $Field "PAUSE")) -or (Test-Path (Join-Path $Home_ "PAUSE"))) { Write-Heartbeat "paused" "a PAUSE file is present"; return }
     if ($pending.Count -eq 0) { Write-Heartbeat "idle" "no requests"; return }

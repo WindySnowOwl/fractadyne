@@ -83,6 +83,8 @@ pub(crate) struct Cost {
     pub motion_need_quantile: f64,
     /// Pool discarded budget readings (`READING_POOL_DEFAULT`; 0 = off, 1 = on).
     pub reading_pool: u64,
+    /// The wall-clock dead-man (`DEAD_MAN_DEFAULT`; 0 = off, 1 = on).
+    pub dead_man: u64,
     /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
     /// second override channel because duplicating the machinery for a single value would be worse.
     /// See the note above on what earns a place in this set.
@@ -111,6 +113,7 @@ impl Default for Cost {
             pass_fixed_ms: PASS_FIXED_MS_DEFAULT,
             motion_need_quantile: MOTION_NEED_QUANTILE_DEFAULT,
             reading_pool: READING_POOL_DEFAULT,
+            dead_man: DEAD_MAN_DEFAULT,
             bla_eps: BLA_EPS,
         }
     }
@@ -153,8 +156,12 @@ pub(crate) fn is_stock() -> bool {
 /// deliberately perturbs the live path to put it in a regime that has killed devices, so a run
 /// with one armed has — like an override — measured a build nobody ships, and says so in
 /// [`status_line`] (hence in the frame record's header, the self-test and `--recordtest`).
-pub(crate) const INSTRUMENTS: &[&str] =
-    &["FRACTADYNE_REF_ESCAPE_AT", "FRACTADYNE_BLA_DROP_FRAMES", "FRACTADYNE_PASS_CLOCK"];
+pub(crate) const INSTRUMENTS: &[&str] = &[
+    "FRACTADYNE_REF_ESCAPE_AT",
+    "FRACTADYNE_BLA_DROP_FRAMES",
+    "FRACTADYNE_PASS_CLOCK",
+    "FRACTADYNE_SEED_BUDGET",
+];
 
 /// The armed instruments and their values: set, parseable and non-zero. Read once — they are
 /// consulted per frame.
@@ -274,6 +281,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "DEAD_MAN" => {
+                let p = c.dead_man;
+                c.dead_man = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set DEAD_MAN: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "MOTION_NEED_QUANTILE" => {
                 let p = c.motion_need_quantile;
                 let v = f()?;
@@ -312,7 +328,8 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     TDR_LATENCY_ACCEPT_MS, TDR_GROW_MAX, TDR_SHRINK_MAX, TDR_LETHAL_MS, TDR_BOOTSTRAP_STEPS, \
     TDR_BOOTSTRAP_MS, MOTION_UNPRICED_MAX, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
-    EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL";
+    EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL, \
+    DEAD_MAN";
 
 #[cfg(test)]
 mod override_tests;
@@ -646,6 +663,17 @@ pub(crate) const MOTION_NEED_QUANTILE_DEFAULT: f64 = 1.0;
 /// loss, no lethal or stall line) and (2) the timing witness: no budget reading on either card
 /// was too short, and the impossible ones are now refused (`timing_witness`).
 pub(crate) const READING_POOL_DEFAULT: u64 = 1;
+
+/// 1 = the WALL-CLOCK DEAD-MAN (design §5.1, §8): when the budget-blind tripwire latches — eight
+/// wall-slow frames with no reading the controller judged slow — the view's budget is derated to
+/// its bootstrap, so every dispatch path (chunk passes, the shrink, the tiles) sizes from a bound
+/// the hardware has not refuted, and budget GROWTH is refused until the latch clears on a frame
+/// under half `TDR_BUDGET_MS`. 0 = report only, the behaviour before beta.131. It needs no theory of
+/// why the controller is blind: that is its point (the 2026-09-21 cost may sit outside every timed
+/// pass). ⚠The derate on engaging is a deviation from §5.1's letter, which only bounded dispatches
+/// WHILE latched: the latch clears on the first fast frame, and a budget left stale then re-arms
+/// the same eight slow frames — each cycle a fresh chance at the lethal band.
+pub(crate) const DEAD_MAN_DEFAULT: u64 = 1;
 
 /// The most a held frame may MAGNIFY before its refresh lands, octaves — the zoom-rate-aware half
 /// of the refresh sizing. At `zoom_oct_s` octaves per second the refresh has `HELD_MAX_OCT /

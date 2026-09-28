@@ -258,6 +258,20 @@ fn rotate_log(dir: &std::path::Path) {
     }
 }
 
+/// Flush the log file and the frame record's files to the DISK, not just the OS cache — for the
+/// moments before a possible machine hang (called on every slow frame). A process crash leaves the
+/// OS cache to write them; a machine hang does not, and on 2026-09-27 PLUTO's log, `frames.bin` and
+/// `frames.jsonl` came back as zeros after one. Never panics; errors are ignored (best effort).
+pub(crate) fn sync_to_disk() {
+    let path = LOG_FILE.lock().ok().and_then(|g| g.clone());
+    if let Some(p) = path {
+        if let Ok(f) = std::fs::OpenOptions::new().append(true).open(&p) {
+            let _ = f.sync_data();
+        }
+    }
+    frame_record::sync_to_disk();
+}
+
 /// Append one line to the log file (no-op when file logging is off). Never panics.
 fn file_line(text: &str) {
     let guard = match LOG_FILE.lock() {

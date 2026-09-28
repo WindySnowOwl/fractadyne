@@ -12,6 +12,40 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The safety stop passed the crash test on the RX 6800 XT** (beta.133, for testing). With the old
+  behaviour, the crash test hung the whole machine. With beta.132's safety stop, all three runs
+  survived. The stop fired on the first frame of about one second, the frame budget dropped from
+  the crash level to its starting value, and after one more slow frame already queued on the GPU,
+  every run stayed smooth to the end: no frame over 0.2 s through the zoom and the minute-long
+  rest. The log check no longer marks such a run as failed when the crash-recreating setting is on,
+  since the warning it counted is what that test is for.
+- **The safety stop now acts on the first dangerous frame, and the diagnostics survive a machine
+  hang** (beta.132, for testing). On the RX 6800 XT, the crash test from beta.130, run with the
+  old behaviour, hung the whole machine. The frame budget stayed at the crash level, no GPU timing
+  came back, and there were frames of 1.0 s and 1.4 s. After zooming, frames of 0.6 s and then
+  2.0 s followed, and the machine hung. It never produced the eight slow frames in a row that the
+  beta.131 stop waited for. A single frame of 0.9 s or longer with no slow GPU timing now triggers
+  it at once. In that test it would have acted at the 1.0 s frame, before any of the later frames
+  were sized. The same hang also wiped the log and the per-frame record: only the part already
+  written to disk survived, and the rest came back as zeros. Both are now forced to disk on every
+  slow frame, the frames that come before a hang.
+- **A safety stop for a frame budget the GPU timings cannot correct** (beta.131, for testing).
+  Since beta.112 the app has warned when frames are slow by the clock (eight in a row over 400 ms)
+  while none of the GPU timings it prices the budget from looks slow. That was the pattern before
+  the 2026-09-21 crash, and the warning only reported it. Now it acts: the budget drops to the
+  small starting value the app uses before anything is measured, which limits every kind of GPU
+  pass at once, and it may not grow until a frame takes under 200 ms. It doesn't depend on knowing
+  why the timings missed the slowness. It hasn't fired once in about 45 normal test runs across
+  both cards; the self-test's check that deliberately causes the pattern now also checks that
+  this stop engages and releases. `--set DEAD_MAN=0` turns it back into a warning only.
+- **A test setup that recreates the 2026-09-21 crash conditions** (beta.130, for testing). In that
+  crash the frame budget had been learned very high elsewhere and carried to a view where every
+  frame's GPU work was well under it. So the rule that learns the budget ignored every timing, and
+  the budget never came down. No test could start from a learned budget. The existing setting
+  `TDR_BOOTSTRAP_STEPS` only sets the first guess, which the first timing replaces.
+  `FRACTADYNE_SEED_BUDGET` (in millions of steps) now installs a budget as if learned. On the RTX
+  3080 at the crash view it reproduces the trap: all 105 timings ignored, the budget unchanged for
+  the whole run. With the beta.129 reading pool on, the budget came down.
 - **Sharper zooming on slower cards, with the frame budget guarded against bad GPU timings**
   (beta.129, for testing). The reading pool from beta.125 is now on by default: while you zoom,
   the frame budget keeps learning from the GPU timings it used to ignore. On the RX 6800 XT moving
