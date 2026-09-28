@@ -100,6 +100,14 @@ pub(crate) fn stable(answers: &[Option<(u32, f32)>]) -> bool {
     }
 }
 
+/// The export policy this audit produced (`FractadyneApp::correction_wanted` has the evidence):
+/// glitch correction runs when the user's `setting` asks for it, EXCEPT for the holomorphic
+/// families (formula ids 0–3: Mandelbrot, Multibrot 3–5) outside Julia mode, where it repaired
+/// nothing and blackened what it gave up on.
+pub(crate) fn correction_applies(setting: bool, formula_id: u32, julia: bool) -> bool {
+    setting && (julia || formula_id > 3)
+}
+
 /// `count` indices spread evenly over `pool` (all of it when it is smaller).
 pub(crate) fn spread(pool: &[usize], count: usize) -> Vec<usize> {
     if pool.len() <= count {
@@ -128,6 +136,10 @@ impl crate::FractadyneApp {
             crate::ExportJob::Single(r) => r,
             _ => return Err(AppError::Message("--glitch-audit needs a single view (not dual)".into())),
         };
+        if self.julia_mode {
+            // The oracles iterate Mandelbrot mode (z₀ = 0, c = the pixel).
+            return Err(AppError::Message("--glitch-audit covers Mandelbrot-mode views, not Julia".into()));
+        }
         let (w, h) = (req.width as usize, req.height as usize);
         println!(
             "Fractadyne glitch audit — {}\n  {}x{} px, mode {}, iter {}",
@@ -212,11 +224,17 @@ impl crate::FractadyneApp {
         let step_y = fractadyne_core::FloatExp::new(req.span_mantissa.y / h as f64, req.delta_exp);
         let (cx0, cy0) = (&self.viewport.center_x, &self.viewport.center_y);
         let max_iter = req.max_iter;
+        let formula = req.formula;
         let oracle_at = |i: usize, dx: f64, dy: f64| {
             let (x, y) = ((i % w) as f64, (i / w) as f64);
             let cx = fractadyne_core::add_floatexp(cx0, step_x.mul_f64(x + 0.5 + dx - w as f64 * 0.5), p);
             let cy = fractadyne_core::add_floatexp(cy0, step_y.mul_f64(h as f64 * 0.5 - (y + 0.5 + dy)), p);
-            fractadyne_core::naive_dwell_bf(&cx, &cy, max_iter, 256.0 * 256.0, p)
+            // Mandelbrot keeps the plain z²+c oracle; every other family iterates its own formula.
+            if formula == 0 {
+                fractadyne_core::naive_dwell_bf(&cx, &cy, max_iter, 256.0 * 256.0, p)
+            } else {
+                fractadyne_core::formula_dwell(&cx, &cy, formula, max_iter, 256.0 * 256.0, p)
+            }
         };
         let t2 = std::time::Instant::now();
         let threads = std::thread::available_parallelism().map_or(4, |n| n.get());

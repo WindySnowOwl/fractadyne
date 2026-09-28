@@ -2100,7 +2100,10 @@ impl FractadyneApp {
                     .on_hover_text(
                         "Multi-reference correction of perturbation glitches. Automatically \
                          skipped for very deep (floatexp) single-view exports so the reference \
-                         build + render run off-thread and the app stays responsive.",
+                         build + render run off-thread and the app stays responsive. Never used \
+                         for Mandelbrot or Multibrot views (outside Julia mode): checked against \
+                         an exact calculation, it fixed nothing there and cost up to 5x the \
+                         export time.",
                     );
                 if self.viewport.magnification() >= PERT_FE_THRESHOLD {
                     ui.label(

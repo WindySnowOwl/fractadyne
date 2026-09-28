@@ -2081,6 +2081,39 @@ pub fn naive_dwell_bf(
     None
 }
 
+/// [`naive_dwell_bf`] for every formula the reference builder iterates (Mandelbrot mode:
+/// `Z₀ = 0`, `c` = the point). It is the point's OWN orbit in arbitrary precision
+/// ([`reference_orbit`]), scanned for the first sample past `bailout2` — no perturbation, no
+/// rebasing, no BLA, so it can judge a perturbation render of any family. The smooth count takes
+/// the formula's degree as its log base, as the shader's `power_f` does (Multibrot 3/4/5 = 3/4/5,
+/// every other family 2).
+pub fn formula_dwell(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max: u32,
+    bailout2: f64,
+    p: usize,
+) -> Option<(u32, f32)> {
+    let zero = bf(0.0, p);
+    let (orbit, len) = reference_orbit(&zero, &zero, cx, cy, formula, max, p);
+    let power: f64 = match formula {
+        1 => 3.0,
+        2 => 4.0,
+        3 => 5.0,
+        _ => 2.0,
+    };
+    for (n, s) in orbit.iter().enumerate().take(len as usize).skip(1) {
+        let (x, y) = sample_xy(s);
+        let m2 = x * x + y * y;
+        if m2 > bailout2 {
+            let nu = (m2.ln() * 0.5 / std::f64::consts::LN_2).ln() / power.ln();
+            return Some((n as u32, n as f32 + 1.0 - nu as f32));
+        }
+    }
+    None
+}
+
 // ---------------- period / minibrot-nucleus finder --------------------------------
 // "Zoom to center": from a view center, snap to the exact center (nucleus) of the
 // nearby minibrot and report its period. Mandelbrot/Multibrot only (holomorphic, so

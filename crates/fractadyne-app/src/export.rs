@@ -1371,7 +1371,7 @@ impl FractadyneApp {
                 return Ok(res);
             }
         }
-        if self.render_cfg.glitch_correct {
+        if self.correction_wanted(julia) {
             let budget = crate::render::CorrectionBudget::standard();
             if let Some(res) = self.render_export_corrected(device, queue, vp, julia, req.width, req.height, Some(req), budget) {
                 return Ok(res);
@@ -1588,6 +1588,39 @@ impl FractadyneApp {
     }
 
 
+    /// Whether an export glitch-corrects a view: the user's setting, EXCEPT for the holomorphic
+    /// families in Mandelbrot mode (Mandelbrot, Multibrot 3–5), where it never runs.
+    ///
+    /// ⭐Measured, not assumed (`--glitch-audit`, 2026-09-28). The audit checks the pixels
+    /// correction changes against the arbitrary-precision oracle, with a control set that has to
+    /// agree first. Across four Mandelbrot corpus scenes and Multibrot 3 at 1e6×, 120 changed
+    /// pixels:
+    /// - correction repaired **none**;
+    /// - it made **15** worse — pixels it left flagged after its 64-reference cap, painted as
+    ///   interior;
+    /// - the rest were unchanged in effect, or chaotic within ±0.001 px (neither render right).
+    ///
+    /// With Zhuoran rebasing, the Pauldelbrot flags on these families are false positives. The
+    /// loop cost up to 5× the render (4.6e1105: 76 s against 15.6 s). The live view never ran it.
+    ///
+    /// Julia views and the non-holomorphic families keep the setting: the Burning Ship audit was
+    /// inconclusive (nothing flagged at 1e5×; the deep views tried were noise, where no pixel can
+    /// be judged).
+    pub(crate) fn correction_wanted(&self, julia: bool) -> bool {
+        crate::glitchaudit::correction_applies(self.render_cfg.glitch_correct, self.fractal.formula_id(), julia)
+    }
+
+    /// [`Self::correction_wanted`] for a whole job: the synchronous corrected path is all-or-nothing, so
+    /// a dual job corrects only when both of its views would.
+    fn job_wants_correction(&self, job: &ExportJob) -> bool {
+        match job {
+            ExportJob::Single(_) => self.correction_wanted(self.julia_mode),
+            ExportJob::SideBySide(..) | ExportJob::Separate(..) => {
+                self.correction_wanted(false) && self.correction_wanted(true)
+            }
+        }
+    }
+
     /// Fully render + write a glitch-corrected export synchronously (main thread), for every job
     /// layout. `Some(status)` = handled (success message, or a write-error message); `None` = a view
     /// can't be corrected (aux coloring / oversized), so the caller falls back to the plain threaded
@@ -1723,7 +1756,7 @@ impl FractadyneApp {
         // path for aux coloring methods or views past the ~32 MP / single-texture correction limit.
         // Never for a heavy export (see above): a direct-mode view has no reference to prepare, so
         // it lands here, and the synchronous path would freeze the UI for the whole render.
-        if self.render_cfg.glitch_correct && !heavy {
+        if !heavy && self.job_wants_correction(&job) {
             let t0 = std::time::Instant::now();
             let done = self.export_corrected_sync(&device, &queue, &path, &job, hud.as_ref());
             // Synchronous offscreen work on the UI thread, whether or not it produced the image

@@ -1,5 +1,25 @@
 use super::*;
 
+/// `formula_dwell` must be the same oracle as `naive_dwell_bf` where both apply (Mandelbrot): the
+/// same escape iteration, and the same smooth count to float precision — escaped and interior.
+#[test]
+fn formula_dwell_agrees_with_the_plain_mandelbrot_oracle() {
+    let p = 128;
+    for (x, y) in [(-0.75, 0.1), (0.3, 0.5), (-1.25, 0.02), (-0.1, 0.1), (0.2501, 0.0), (-2.1, 0.0)] {
+        let (cx, cy) = (BigFloat::from_f64(x, p), BigFloat::from_f64(y, p));
+        let a = naive_dwell_bf(&cx, &cy, 5000, 65536.0, p);
+        let b = formula_dwell(&cx, &cy, 0, 5000, 65536.0, p);
+        match (a, b) {
+            (None, None) => {}
+            (Some((na, sa)), Some((nb, sb))) => {
+                assert_eq!(na, nb, "escape iteration at ({x}, {y})");
+                assert!((sa - sb).abs() < 1e-3, "smooth count at ({x}, {y}): {sa} vs {sb}");
+            }
+            _ => panic!("({x}, {y}): one oracle escaped and the other did not: {a:?} vs {b:?}"),
+        }
+    }
+}
+
 // Utility (run: `cargo test -p fractadyne-core dump_deep_boundary_coords -- --ignored
 // --nocapture`): bisect a deep boundary point for each perturbation family — the deep-golden
 // coords hard-coded in selftest.rs. A point accurate to ~1e-39 sits on the boundary at every

@@ -3588,8 +3588,54 @@ impl FractadyneApp {
                 }
             }
         }
-        // Residual glitches after the final pass (0 = fully corrected).
-        let residual = (0..w * h).filter(|&i| merged[i * 4] < -1.5).count();
+        // Residual glitches after the final pass (0 = fully corrected). `residual` keeps meaning
+        // "pixels correction could not resolve" — the selftest's convergence checks assert it
+        // reaches 0 — even though they are now filled below instead of left as sentinels.
+        let leftover: Vec<usize> = (0..w * h).filter(|&i| merged[i * 4] < -1.5).collect();
+        let residual = leftover.len();
+        // ⭐THE RESIDUAL WAS PAINTED BLACK. A pixel still flagged when the loop stopped (its
+        // reference cap or work box) kept the -2 sentinel, and the colour pass renders anything
+        // negative as INTERIOR. `--glitch-audit` (2026-09-28) checked the pixels correction changes
+        // against the arbitrary-precision oracle. EVERY one it made worse was one of these: 15 of
+        // 120 sampled, with 312–2,892 such pixels per scene. The plain render of the same pixel
+        // agreed with the oracle. So they get the base reference's plain value: the base pass with
+        // flagging off, which is exactly what `--no-glitch` computes.
+        if !leftover.is_empty() {
+            let mut r = req.clone();
+            r.glitch_on = 0;
+            let coords: Vec<[u32; 2]> = leftover.iter().map(|&i| [(i % w) as u32, (i / w) as u32]).collect();
+            let plain: Option<Vec<f32>> = if fractadyne_gpu::gather_dispatch_safe(r.max_iter) {
+                let gp = gather.get_or_insert_with(|| fractadyne_gpu::GatherPass::new(device));
+                gp.run(device, queue, &r, &coords, CORRECT_WORK_BUDGET, None).ok().map(|g| {
+                    for (c, v) in counters.iter_mut().zip(g.counters) {
+                        *c += v;
+                    }
+                    max_dispatch_ms = max_dispatch_ms.max(g.max_dispatch_ms);
+                    g.pixels
+                })
+            } else {
+                let mut roi = vec![false; w * h];
+                for &i in &leftover {
+                    roi[i] = true;
+                }
+                fractadyne_gpu::render_iter_tiled(device, queue, &r, CORRECT_WORK_BUDGET, None, Some(&roi), Some(&iter_scaffold))
+                    .ok()
+                    .map(|p| {
+                        for (c, v) in counters.iter_mut().zip(p.counters) {
+                            *c += v;
+                        }
+                        iterate_ms += p.iterate_ms;
+                        max_dispatch_ms = max_dispatch_ms.max(p.max_dispatch_ms);
+                        leftover.iter().flat_map(|&i| p.pixels[i * 4..i * 4 + 4].to_vec()).collect()
+                    })
+            };
+            // A device error here keeps the sentinels, exactly as before this pass existed.
+            if let Some(px) = plain {
+                for (k, &i) in leftover.iter().enumerate() {
+                    merged[i * 4..i * 4 + 4].copy_from_slice(&px[k * 4..k * 4 + 4]);
+                }
+            }
+        }
         if crate::diag::trace_on("glitch") {
             crate::diag::trace(
                 "glitch",

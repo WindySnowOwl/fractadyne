@@ -12,6 +12,21 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Faster, and no black specks: exports of Mandelbrot and Multibrot views skip glitch
+  correction** (beta.140).
+  - **Why:** glitch correction re-renders pixels it suspects are wrong, using extra reference
+    orbits. `--glitch-audit` (beta.139) checked the pixels it changed against an exact
+    calculation, on four Mandelbrot benchmark scenes and a Multibrot 3 view (120 pixels). It
+    fixed none of them. It made 15 worse: pixels it gave up on after its limit of references,
+    which it painted black.
+  - **Result:** a 4K render at 4.6e1105 now takes 18 s instead of 76 s, with an image identical
+    to `--no-glitch`.
+  - **Other families:** Burning Ship-type families and Julia views keep the setting, because the
+    check there was inconclusive.
+  - **Black-pixel fix:** where correction still runs, the pixels it gives up on keep their plain
+    value instead of being painted black. At the check's spar scene that removed all 10 pixels it
+    had made worse.
+  - **The setting's text:** the export setting's description says where correction applies.
 - **Diagnostics: `--glitch-audit` checks what glitch correction actually changes** (beta.139,
   for testing).
   - **What it does:** at the view a `--render` would draw, it renders the image with and
