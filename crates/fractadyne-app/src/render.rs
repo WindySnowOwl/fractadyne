@@ -4214,6 +4214,11 @@ impl FractadyneApp {
         res.ss = ss;
         res.iterate_ms = iter.iterate_ms;
         res.counters = iter.counters;
+        // Same as the corrected path: the iterate pass is where a submission runs long, so the
+        // reported peak is the max of the two, not the colorer's 0.0 alone.
+        res.max_dispatch_ms = res.max_dispatch_ms.max(iter.max_dispatch_ms);
+        res.tiles_total = iter.tiles_total;
+        res.tiles_chunked = iter.tiles_chunked;
         Some((res, (clo, chi)))
     }
 }

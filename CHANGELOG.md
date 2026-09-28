@@ -12,6 +12,29 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Render timing is now reported for every export, and the benchmark kit shows where each
+  render's time goes** (beta.149).
+  - **GPU time on normalized and glitch-corrected exports.** The log's `[fd-perf]` line gave
+    `gpu_iterate=0.0ms` for any export that normalizes its colours or corrects glitches. Those
+    paths never measured their GPU passes, and three of the benchmark's deep scenes (1.47e77,
+    1.2e148, 4.2e275) are normalized. They now measure them the way the plain export already
+    did. At 4K on an RTX 3080: 1.47e77 spends 0.74 s iterating on the GPU, 4.2e275 2.5 s,
+    1.2e148 7.8 s. The line's peak-dispatch figure on the normalized path was the colour pass's
+    0 ms; it is now the iterate pass's.
+  - **File write time.** A `--render` now logs how long encoding and writing the image took, and
+    its size: `file-write: png 3840x2160 13092929 bytes in 196.3ms`. A 4K PNG takes 0.13–0.20 s.
+  - **Benchmark kit.** The Fractadyne lane keeps every render's log and turns it into a table:
+    - startup;
+    - the wait for the reference orbit, and that orbit's pick, orbit, series and BLA times;
+    - GPU iterate and colour time;
+    - other host work (readback, normalization);
+    - PNG write, exit, and the time outside the log (process launch and teardown);
+    - step counts: steps executed, iterations per step, df32 share, rebases.
+
+    With more than one rep, the summary and report give each scene's fastest, median and slowest
+    time and their spread, not only the fastest.
+  - **Pictures:** unchanged. Only timing queries and log lines were added.
+
 - **Fixed: the Linux packages and the accelerated Windows package could not be built**
   (beta.148). Beta.147 was not released because of this. The app does exactly what beta.147
   does.

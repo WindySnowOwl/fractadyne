@@ -88,7 +88,7 @@ and fails if one is missing from this table.
 | `[fd-cache]` | always | The on-disk orbit cache: size at startup, evictions, clears |
 | `[fd-export]` | always | Tour export writes that waited on a slow destination |
 | `[fd-console]` | always | Console output switched on or off from the Diagnostics window |
-| `[fd-perf]` | always | Per-export GPU iterate/colour ms and event counters |
+| `[fd-perf]` | always | Per-export GPU iterate/colour ms and event counters (every export path since beta.149, the normalized and glitch-corrected ones included); `file-write:` the CLI render's PNG/EXR encode + write ms and bytes |
 | `[fd-progress]` | always (CLI) | CLI render progress, ~2 s cadence (`[progress]` in the log file) |
 | `[fd-autodive]` `[fd-motiontest]` `[fd-zoomtest]` | harness | Each harness's own progress and verdict lines |
 | `[fd-req]` `[fd-ref]` `[fd-gpu]` `[fd-tile]` `[fd-glitch]` `[fd-idle]` `[fd-dpi]` `[fd-autopilot]` `[fd-refwaste]` | `FRACTADYNE_TRACE` | The trace categories in the table above; `refwaste` accounts every reference build's CPU cost as `USED` / `SUPERSEDED` / `DROPPED` |

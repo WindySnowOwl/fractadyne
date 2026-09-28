@@ -1516,11 +1516,26 @@ impl FractadyneApp {
         let meta = self.view_metadata();
         let fmt = self.export.format;
         let write = |p: &std::path::Path, w: u32, h: u32, mut px: Vec<f32>| {
+            let t = std::time::Instant::now();
             self.apply_watermark(&mut px, w, h);
-            match fmt {
+            let r = match fmt {
                 ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(&meta)),
                 ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(&meta)),
-            }
+            };
+            // The file phase, on its own line so a benchmark can split it from the GPU phases:
+            // a 4K PNG's encode is a CPU cost every renderer pays, and the one the `[fd-perf]
+            // cli-render` line cannot see.
+            crate::diag::log_line(
+                "perf",
+                &format!(
+                    "file-write: {} {w}x{h} {} bytes in {:.1}ms (encode+write){}",
+                    if matches!(fmt, ExportFormat::Png) { "png" } else { "exr" },
+                    std::fs::metadata(p).map_or(0, |m| m.len()),
+                    t.elapsed().as_secs_f64() * 1000.0,
+                    if r.is_err() { " FAILED" } else { "" },
+                ),
+            );
+            r
         };
         // Each view is glitch-corrected when enabled + applicable (single and both dual panels).
         let view = |vp: &fractadyne_core::Viewport, julia: bool, req: &fractadyne_gpu::ExportRequest| {

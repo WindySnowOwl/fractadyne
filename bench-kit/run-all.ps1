@@ -121,7 +121,11 @@ param(
     # neutral shared map, 0.949 here.
     [string]$ImaginaPaletteMap = '',
     [double]$ImaginaPaletteCycle = 0.0101,
-    [double]$ImaginaPaletteOffset = 0.0
+    [double]$ImaginaPaletteOffset = 0.0,
+    # Run the Fractadyne lane WITHOUT FRACTADYNE_TRACE=ref. The trace is what fills the
+    # pick/orbit/SA/BLA columns of fd-phases.csv; everything else there comes from lines the
+    # app logs anyway. Only for checking that the trace costs nothing.
+    [switch]$NoPhaseTrace
 )
 
 $ErrorActionPreference = 'Stop'
@@ -226,8 +230,18 @@ Write-Host ('Scenes: ' + ($sceneRows.slug -join ', '))
 Write-Host ('Reps: ' + $Reps + '   Timeout per render: ' + $TimeoutS + 's')
 
 # ---- lane: Fractadyne (automated; hermetic config so nothing local leaks in) ----
+# Each render's log is KEPT (fd-logs\<scene>-r<rep>.log; the config dir is wiped per render) and
+# parsed into fd-phases.csv: where the wall went, not only how long it was. FRACTADYNE_TRACE=ref
+# adds the reference build's pick/orbit/SA/BLA times. It is a handful of log lines per render;
+# never FRACTADYNE_PASS_CLOCK, which fences every pass and so perturbs what it measures.
+# -NoPhaseTrace drops the trace (the phase table then lacks those four columns).
 if ($have.fractadyne) {
     $cfg = Join-Path $outDir 'fd-config'
+    $fdLogs = Join-Path $outDir 'fd-logs'
+    New-Item -ItemType Directory -Force $fdLogs | Out-Null
+    $fdPhases = Join-Path $outDir 'fd-phases.csv'
+    $prevTrace = $env:FRACTADYNE_TRACE
+    if (-not $NoPhaseTrace) { $env:FRACTADYNE_TRACE = 'ref' }
     foreach ($rep in 1..$Reps) {
         foreach ($s in $sceneRows) {
             if (Test-Path $cfg) { Remove-Item -Recurse -Force $cfg }
@@ -255,6 +269,12 @@ if ($have.fractadyne) {
                 }
             }
             Write-Result $csv 'fractadyne' $s.slug $rep $r.status $r.wall_s $reported ''
+            $logSrc = Join-Path $cfg 'logs\fractadyne.log'
+            $logKept = Join-Path $fdLogs ($s.slug + '-r' + $rep + '.log')
+            if (Test-Path $logSrc) { Copy-Item -Force $logSrc $logKept }
+            $ph = Read-FdPhases $logKept $r.wall_ms
+            $ph.scene = $s.slug; $ph.rep = $rep; $ph.status = $r.status
+            Write-FdPhases $fdPhases $ph
             Add-RunRecord @{
                 renderer = 'fractadyne'; scene = $s.slug; rep = $rep
                 exe = $FractadyneExe; args = $argLine; cwd = $kit
@@ -267,11 +287,13 @@ if ($have.fractadyne) {
                             samples_per_pixel = 1; palette = 0
                             normalize = ($s.normalize -eq '1') }
                 output = ('fd-' + $s.slug + '.png')
+                log = ('fd-logs\' + $s.slug + '-r' + $rep + '.log')
                 status = $r.status; wall_s = $r.wall_s; reported_s = $reported; note = ''
             }
         }
     }
     Remove-Item Env:FRACTADYNE_CONFIG_DIR -ErrorAction SilentlyContinue
+    if ($prevTrace) { $env:FRACTADYNE_TRACE = $prevTrace } else { Remove-Item Env:FRACTADYNE_TRACE -ErrorAction SilentlyContinue }
 }
 
 # Declared out here, not inside the lane: the zoom-sequence lane below reuses the SAME tuning
@@ -806,6 +828,82 @@ $md += ''
 if ($fsShape) {
     $md += ('FractalShark lane: ' + $FractalSharkAlgo + ', ' + $fsShape +
             $(if ($fsStartup) { '; server ready in ' + $fsStartup + ' s' } else { '' }) + '.')
+    $md += ''
+}
+# ---- every rep, not only the fastest ----
+# The table above is the fastest rep, which is the published protocol and stays. On its own it
+# hides how steady that figure is: a 5% "win" means nothing when one renderer's reps spread 20%.
+$inv = [System.Globalization.CultureInfo]::InvariantCulture
+# [string] before comparing: `0 -eq ''` is TRUE in PowerShell, which printed every zero as '-'.
+$fmt = { param($v, $f) if ($null -eq $v -or [string]$v -eq '') { '-' } else { [string]::Format($inv, $f, [double]$v) } }
+$depthOrder = @($sceneRows | Sort-Object @{ e = { [double]$_.mag_log10 } }, @{ e = { $_.slug } })
+$spread = @()
+foreach ($s in $depthOrder) {
+    foreach ($ren in 'fractadyne', 'fraktaler3', 'imagina', 'fractalshark') {
+        $ws = @($rows | Where-Object { $_.renderer -eq $ren -and $_.scene -eq $s.slug -and $_.status -eq 'ok' -and $_.wall_s } |
+            ForEach-Object { [double]$_.wall_s } | Sort-Object)
+        if ($ws.Count -lt 2) { continue }
+        $med = Get-Median $ws
+        $sp = if ($med -gt 0) { 100.0 * ($ws[-1] - $ws[0]) / $med } else { 0.0 }
+        $spread += ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} |' -f $s.slug, $ren, $ws.Count,
+            (& $fmt $ws[0] '{0:F1}'), (& $fmt $med '{0:F2}'), (& $fmt $ws[-1] '{0:F1}'), (& $fmt $sp '{0:F0}%'))
+    }
+}
+if ($spread.Count) {
+    $md += '## Repeat spread (wall seconds, every ok rep)'
+    $md += ''
+    $md += 'Spread = (slowest - fastest) / median. Compare two renderers only by more than their spread.'
+    $md += ''
+    $md += '| Scene | Renderer | Reps | Fastest | Median | Slowest | Spread |'
+    $md += '|---|---|---|---|---|---|---|'
+    $md += $spread
+    $md += ''
+}
+# ---- Fractadyne: where the wall went (fd-phases.csv, parsed from each render's kept log) ----
+$phCsv = Join-Path $outDir 'fd-phases.csv'
+if (Test-Path $phCsv) {
+    $ph = @(Import-Csv $phCsv | Where-Object { $_.status -eq 'ok' })
+    $phMed = { param($slug, $col) Get-Median @($ph | Where-Object { $_.scene -eq $slug } | ForEach-Object { $_.$col }) }
+    $md += '## Fractadyne phases (ms, median over ok reps)'
+    $md += ''
+    $md += 'From each render''s own log (kept in fd-logs\; every rep in fd-phases.csv). startup = process'
+    $md += 'start to the render starting; ref wait = the part of the reference build the render had to'
+    $md += 'wait for (the build starts at launch, BESIDE startup, so its own cost in the last column is'
+    $md += 'mostly hidden, and its parts overlap: the pick runs beside a speculative centre build);'
+    $md += 'host other = render - ref wait - GPU (readback, normalization, tiling);'
+    $md += 'outside = wall - the last log stamp (OS launch, DLL load, teardown). GPU iterate is timestamp'
+    $md += 'queries, or fenced chunk walls on a chunked tile. Phases before b149 lack GPU iterate on the'
+    $md += 'normalized path and the PNG write.'
+    $md += ''
+    $md += '| Scene | Wall | Startup | Ref wait | Render | GPU iterate | GPU color | Host other | PNG write | Exit | Outside | Ref build (pick+orbit+SA+BLA) |'
+    $md += '|---|---|---|---|---|---|---|---|---|---|---|---|'
+    foreach ($s in $depthOrder) {
+        if (-not @($ph | Where-Object { $_.scene -eq $s.slug }).Count) { continue }
+        $build = @('pick_ms', 'orbit_ms', 'sa_ms', 'bla_ms' | ForEach-Object { & $fmt (& $phMed $s.slug $_) '{0:N0}' }) -join '+'
+        $md += ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} | {9} | {10} | {11} |' -f $s.slug,
+            (& $fmt (& $phMed $s.slug 'wall_ms') '{0:N0}'), (& $fmt (& $phMed $s.slug 'startup_ms') '{0:N0}'),
+            (& $fmt (& $phMed $s.slug 'ref_wait_ms') '{0:N0}'), (& $fmt (& $phMed $s.slug 'render_ms') '{0:N0}'),
+            (& $fmt (& $phMed $s.slug 'gpu_iterate_ms') '{0:N0}'), (& $fmt (& $phMed $s.slug 'gpu_color_ms') '{0:N1}'),
+            (& $fmt (& $phMed $s.slug 'cpu_other_ms') '{0:N0}'), (& $fmt (& $phMed $s.slug 'write_ms') '{0:N0}'),
+            (& $fmt (& $phMed $s.slug 'exit_ms') '{0:N0}'), (& $fmt (& $phMed $s.slug 'outside_ms') '{0:N0}'), $build)
+    }
+    $md += ''
+    $md += '## Fractadyne step accounting (1-in-64 pixel grid, from the [fd-perf] line)'
+    $md += ''
+    $md += 'Executed = GPU loop trips; iterations/step > 1 is BLA skipping. df32 = share of full-precision'
+    $md += 'steps taken in the cheaper df32 tail. Rebases and BLA skips are whole-frame shader counters.'
+    $md += ''
+    $md += '| Scene | Mode | Iteration cap | Executed | Iterations/step | df32 | Rebases | BLA skips | Glitched | At max iter | Max dispatch ms |'
+    $md += '|---|---|---|---|---|---|---|---|---|---|---|'
+    foreach ($s in $depthOrder) {
+        if (-not @($ph | Where-Object { $_.scene -eq $s.slug }).Count) { continue }
+        $md += ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} | {9} | {10} |' -f $s.slug,
+            (& $fmt (& $phMed $s.slug 'mode') '{0:F0}'), (& $fmt (& $phMed $s.slug 'iter') '{0:N0}'),
+            (& $fmt (& $phMed $s.slug 'step_executed') '{0:N0}'), (& $fmt (& $phMed $s.slug 'iters_per_step') '{0:F1}'),
+            (& $fmt (& $phMed $s.slug 'df32_pct') '{0:F1}%'), (& $fmt (& $phMed $s.slug 'rebase') '{0:N0}'),
+            (& $fmt (& $phMed $s.slug 'bla_skip') '{0:N0}'), (& $fmt (& $phMed $s.slug 'glitch') '{0:N0}'),
+            (& $fmt (& $phMed $s.slug 'maxiter') '{0:N0}'), (& $fmt (& $phMed $s.slug 'max_dispatch_ms') '{0:N0}'))
+    }
     $md += ''
 }
 if ($zsRows.Count) {
