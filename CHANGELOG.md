@@ -12,6 +12,14 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Fixed: the Linux packages and the accelerated Windows package could not be built**
+  (beta.148). Beta.147 was not released because of this. The app does exactly what beta.147
+  does.
+  - **Linux:** one line of code, added in beta.128, named a graphics library in a way that only
+    compiles on Windows. It now compiles on both.
+  - **Accelerated Windows package:** the build tool that supplies its MPFR libraries (MSYS2)
+    moved the licence file of one bundled library. The packaging step refused to ship the
+    library without its licence, as it should. It now finds the licence in either place.
 - **Faster command-line renders: the reference calculation starts before the window opens**
   (beta.147).
   - **The change:** a `--render` spent its first ~0.7 s creating the window and graphics device,

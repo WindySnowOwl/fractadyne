@@ -126,17 +126,26 @@ foreach ($d in $RUNTIME_DLLS) {
 
 # Licence texts. LGPLv3 section 4(b) REQUIRES shipping the LGPL and the GPL it refers to, so a
 # missing text is a hard failure rather than a warning.
-$licenses = @{
-    "LICENSE-LGPL-3.0.txt"          = Join-Path $SHARE "doc\mpfr\COPYING.LESSER"
-    "LICENSE-GPL-3.0.txt"           = Join-Path $SHARE "doc\mpfr\COPYING"
-    "LICENSE-libgcc-runtime.txt"    = Join-Path $SHARE "licenses\gcc-libs\COPYING.RUNTIME"
-    "LICENSE-libwinpthread.txt"     = Join-Path $SHARE "licenses\libwinpthread\COPYING"
+#
+# Each text is listed by the places MSYS2 installs it, newest packaging first, because packaging
+# moves them: gcc 16.2.0-4 split `gcc-libs` into per-library packages, and libgcc_s_seh-1.dll's
+# runtime-exception licence moved from licenses\gcc-libs\ to licenses\libgcc\ (the release of
+# v0.2.41-beta.147 failed on exactly that, on a fresh runner image). The text is the same file.
+$licenseSources = [ordered]@{
+    "LICENSE-LGPL-3.0.txt"          = @("doc\mpfr\COPYING.LESSER")
+    "LICENSE-GPL-3.0.txt"           = @("doc\mpfr\COPYING")
+    "LICENSE-libgcc-runtime.txt"    = @("licenses\libgcc\COPYING.RUNTIME", "licenses\gcc-libs\COPYING.RUNTIME")
+    "LICENSE-libwinpthread.txt"     = @("licenses\libwinpthread\COPYING", "licenses\winpthreads\COPYING")
 }
 # ALL of them, not just the LGPL pair: there is one entry per shipped DLL, and a conditional
 # copy silently omitted the libgcc terms from a package once already. A missing licence text
 # is a hard failure, never a warning.
-foreach ($k in $licenses.Keys) {
-    if (-not (Test-Path $licenses[$k])) { Fail "$k source missing ($($licenses[$k])). Its library ships in this package, so its licence must too; refusing to package." }
+$licenses = [ordered]@{}
+foreach ($k in $licenseSources.Keys) {
+    $tried = @($licenseSources[$k] | ForEach-Object { Join-Path $SHARE $_ })
+    $found = $tried | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $found) { Fail "$k source missing (looked in: $($tried -join ', ')). Its library ships in this package, so its licence must too; refusing to package." }
+    $licenses[$k] = $found
 }
 $toolchains = (& rustup toolchain list) -join "`n"
 if ($toolchains -notmatch [regex]::Escape($TRIPLE)) { Fail "Rust toolchain stable-$TRIPLE not installed. Run with -Deps." }
