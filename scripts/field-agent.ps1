@@ -47,7 +47,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 9   # 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot
+$AgentVersion = 11   # 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -243,8 +243,16 @@ function Get-Package([string]$tag, [string]$package) {
 # --- the harness allow-list -------------------------------------------------------------------------
 # flag -> the values it takes. "?x" = optional. Values never contain spaces or quotes, and a file is
 # only ever one shipped inside the package.
-$Modes = @("--recordtest", "--zoomtest", "--motiontest", "--gputest", "--selftest", "--bench-matrix", "--livetest", "--chunk-sweep", "--soak")
+$Modes = @("--recordtest", "--zoomtest", "--motiontest", "--gputest", "--selftest", "--bench-matrix", "--livetest", "--chunk-sweep", "--soak", "--tail-audit", "--glitch-audit", "--render")
 $Allowed = @{
+    # The audits render a view (--center/--zoom-log2/--iter/--size) twice and check the pixels that
+    # differ against the arbitrary-precision oracle; they print a verdict and write no file. Send them
+    # WITH --render: that makes the run a `render` task, so it gets the task log lines, the exit-time
+    # log check, and the orbit cache OFF, which a bare audit does not (--render plus an audit counts
+    # as ONE mode). A plain --render (v11) renders the view and logs its `[fd-perf]` line - the step
+    # counters and GPU time - and writes fractadyne_render.png into the run's LOCAL folder (the
+    # working directory); the image is not copied to the share, only the output and the logs.
+    "--tail-audit" = @("?int"); "--glitch-audit" = @("?int"); "--render" = @()
     "--recordtest" = @("?int"); "--zoomtest" = @("?num"); "--zoomtest-rate" = @("num"); "--zoomtest-start-log2" = @("num")
     "--zoomtest-location" = @("loc"); "--zoomtest-taps" = @("taps"); "--zoomtest-hold" = @("num"); "--motiontest" = @(); "--gputest" = @(); "--selftest" = @()
     "--selftest-filter" = @("word"); "--bench-matrix" = @(); "--livetest" = @("pkgfile"); "--size" = @("size")
@@ -252,7 +260,7 @@ $Allowed = @{
     "--zoom" = @("num"); "--zoom-log2" = @("num"); "--iter" = @("int"); "--set" = @("assign"); "--window" = @("size")
 }
 $ValuePattern = @{
-    "int" = '^[0-9]{1,9}$'; "num" = '^[-+0-9.eE]{1,400}$'; "word" = '^[A-Za-z0-9_.-]{1,64}$'
+    "int" = '^[0-9]{1,9}$'; "num" = '^[-+0-9.eE]{1,2000}$'; "word" = '^[A-Za-z0-9_.-]{1,64}$'
     "depth" = '^(session|[-+0-9.eE]{1,20})$'
     "size" = '^[0-9]{2,5}x[0-9]{2,5}$'; "assign" = '^[A-Za-z0-9_]{1,64}=[-+0-9.eE]{1,32}$'
     "pkgfile" = '^(tours|validation|benchmarks)/[A-Za-z0-9_./-]{1,160}\.(toml|fdn|kfr)$'
@@ -288,6 +296,8 @@ function Resolve-HarnessArgs([string[]]$argv, [string]$pkgRoot) {
             $out += $v
         }
     }
+    # An audit is sent WITH --render (see $Allowed): the pair is one mode.
+    if (($out -contains "--render") -and (($out -contains "--tail-audit") -or ($out -contains "--glitch-audit"))) { $modeCount-- }
     if ($modeCount -ne 1) { Stop-Refused "exactly one harness mode is required, one of: $($Modes -join ' ')" }
     return , $out
 }
