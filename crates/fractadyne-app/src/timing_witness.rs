@@ -83,7 +83,9 @@ impl Default for Witness {
 impl Witness {
     /// Register the completion callback for frame `frame`, whose work has been submitted: call on
     /// the FOLLOWING frame's update (eframe submits after `update` returns).
-    pub(crate) fn arm_done(&self, q: &wgpu::Queue, frame: u64, now: fn() -> u64) {
+    // `eframe::wgpu`, never bare `wgpu`: the app crate names `wgpu` directly only on Windows
+    // (Cargo.toml adds it there for the DX12 backend), so a bare path breaks the Linux build.
+    pub(crate) fn arm_done(&self, q: &eframe::wgpu::Queue, frame: u64, now: fn() -> u64) {
         let done = self.done.clone();
         q.on_submitted_work_done(move || {
             let slot = &done[(frame % RING as u64) as usize];
