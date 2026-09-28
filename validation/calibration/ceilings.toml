@@ -1,0 +1,118 @@
+# The per-adapter DISPATCH CEILING's measurements (crates/fractadyne-app/src/calibration.rs).
+#
+# A dispatch may carry at most  TARGET_MS / (ms_per_step × formula factor) × min(1, px / knee_px)
+# nominal steps (px × ss² × iteration window), whatever the learned frame budget says. TARGET_MS is
+# 400. Floatexp has no ceiling (BLA makes its nominal steps unrepresentative; the dead-man is its
+# backstop).
+#
+# HOW A CARD IS CALIBRATED - on that card, stock build, idle machine:
+#
+#   1. df32 perturbation: `--chunk-sweep 4096 --window 1287x835` with
+#      `validation/calibration/interior-df32.fdn` as the session. Take the WORST full window of
+#      2048 iterations on the window axis:  ms / (px × 2048).
+#      The sweep times every submission ALONE by wall clock, so it does not depend on the card's
+#      GPU timestamps (which on the RX 6800 XT do not describe their own dispatch - see below).
+#   2. direct: `--zoomtest 4 --zoomtest-location session --zoomtest-rate 4.0 --zoomtest-hold 12
+#      --window 1287x835` with `validation/calibration/interior-direct.fdn`, then
+#      `python scripts/framelog.py calibrate <logs>/frames.bin`. (The chunk sweep needs a
+#      reference, which direct mode does not have.) Only valid on a card whose live readings pair
+#      with their own dispatch - check with the same tool's df32 run against step 1.
+#   3. The knee: the sweep's area axis. The knee is where cost per pixel stops falling.
+#
+# Both views are ALL-INTERIOR (inside the main cardioid, explicit 100,000 iterations): every pixel
+# walks every step, so nominal == real and nothing escapes early. On the RTX 3080 that costs MORE
+# per step than the escaped-reference storm the ceiling was first planned from (2.76e-8 against
+# 2.07e-8 ms/step): the storm is not the worst case, the interior is.
+
+[default]
+# An adapter with no entry below: twice the slowest card measured (the RX 6800 XT), so a card up
+# to 2x slower than that still lands at the target. A card slower still (an integrated GPU) can
+# exceed it; the learned budget and the dead-man remain its protection.
+df32_pert_ms_per_step = 9.9e-8
+direct_ms_per_step = 1.92e-8
+knee_px = 524288
+
+[[adapter]]
+slug = "nvidia-geforce-rtx-3080"
+# 2026-09-27, beta.134, Vulkan, 1287x835 window (1931x1155 px at 1.5x DPI).
+# df32: max of 7 live GPU-timed readings >= 5e9 steps at the interior view (p50 2.70e-8); the
+#   wall-clock chunk sweep agrees (2.38-2.58e-8 per step over its 1024/2048 windows).
+# direct: max of 8 live GPU-timed readings >= 5e9 steps at the interior view (p50 4.92e-9).
+# knee: the occupancy measurement of 2026-09-17 (deep kernel saturates at ~262,000 px).
+df32_pert_ms_per_step = 2.76e-8
+direct_ms_per_step = 5.35e-9
+knee_px = 262144
+
+[[adapter]]
+slug = "amd-radeon-rx-6800-xt"
+# 2026-09-27, beta.134, Vulkan, field agent (request 20260927-220955-mahc).
+# df32: the wall-clock chunk sweep's worst 2048-iteration window at the interior view,
+#   102.0 ms over 1280x787 px (steady windows 91 ms = 4.41e-8).
+#   ⚠NOT the live GPU readings: on this card a reading's time matches the PREVIOUS reading's step
+#   count better than its own (log scatter 0.57 against 1.15 at this view; on the RTX 3080 its
+#   own count wins, 0.04 against 1.06). Its live readings here span 4.4e-9 to 1.3e-7 per step.
+# direct: DERIVED, not measured - the RTX 3080's direct cost x this card's df32 ratio
+#   (4.95/2.76 = 1.79). Its own live readings' median (8.93e-9, 10 readings >= 2e9 steps) agrees;
+#   their max (2.12e-8) is not used, for the reason above.
+# knee: above the RTX 3080's - at 250,880 px its cost per pixel is still 1.35x the 1M-px cost
+#   (the 3080: 1.16x). 2x the 3080's knee over-covers that point.
+df32_pert_ms_per_step = 4.95e-8
+direct_ms_per_step = 9.6e-9
+knee_px = 524288
+
+# Each formula's cost per step relative to Mandelbrot, per mode: RTX 3080, 2026-09-27, beta.134,
+# all-interior views (0.05+0.05i; Mandelbrot at -0.1+0.1i), max over GPU-timed readings >= 5e9
+# steps on >= 262,144 px. The code clamps a factor below 1 to 1 - a cheaper formula never lifts
+# the ceiling - but the measured value is kept here.
+[[formula]]
+name = "Mandelbrot"
+direct = 1.00
+df32_pert = 1.00
+
+[[formula]]
+name = "Multibrot 3"
+direct = 1.27
+df32_pert = 1.19
+
+[[formula]]
+name = "Multibrot 4"
+direct = 1.54
+df32_pert = 1.33
+
+[[formula]]
+name = "Multibrot 5"
+direct = 1.77
+df32_pert = 1.48
+
+[[formula]]
+name = "Tricorn"
+direct = 0.86
+df32_pert = 0.39
+
+[[formula]]
+name = "Burning Ship"
+direct = 0.81
+df32_pert = 0.49
+
+[[formula]]
+name = "Celtic"
+direct = 0.87
+df32_pert = 0.49
+
+[[formula]]
+name = "Buffalo"
+direct = 0.94
+df32_pert = 0.53
+
+[[formula]]
+# Measured at 10,000 iterations: at 100,000 its settle tiles were all below the knee.
+name = "Phoenix"
+direct = 1.24
+df32_pert = 1.37
+
+[[formula]]
+# Direct only (no perturbation). Measured 0.24 per NOMINAL step at 1,000 iterations: it converges,
+# so its nominal count overstates its work. Clamped to 1 like every factor below it.
+name = "Newton"
+direct = 0.24
+df32_pert = 1.00

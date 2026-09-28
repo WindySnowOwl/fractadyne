@@ -6842,7 +6842,42 @@ impl FractadyneApp {
             self.perf.frozen_budget[vidx]
         } else {
             // Zero until the first probe resolves; the loop in `update` maintains it thereafter.
-            budget_base(self.perf.fe_budget[vidx], self.perf.bootstrap_steps(vidx))
+            let learned = budget_base(self.perf.fe_budget[vidx], self.perf.bootstrap_steps(vidx));
+            // ⭐THE FIXED CEILING (`calibration`, design/live-render-robustness.md §5.1): the one
+            // term here nothing learned can raise. Every other bound in this chain is derived from
+            // readings, and a reading can be stale (a budget learned at 1.515e11 carried to a view
+            // where it cost 1–2 s a frame hung the RX 6800 XT, 2026-09-27) or wrong (that card's
+            // readings match the PREVIOUS dispatch better than their own). The ceiling is sized
+            // from the adapter's worst MEASURED per-step cost for this mode and formula, so a
+            // ceiling-sized dispatch takes ~400 ms there. `resolution` is a LOWER bound on the
+            // dispatch's pixels (ss ≥ 1), so its knee term errs on the safe side.
+            let ceiling = crate::calibration::ceiling_for(
+                RenderMode::select(fractal.supports_perturbation(), julia, magnification),
+                fractal,
+                (resolution[0] as u64) * (resolution[1] as u64),
+            );
+            let capped = crate::calibration::capped(learned, ceiling);
+            let bound = capped < learned;
+            if bound != self.perf.ceiling_bound[vidx] {
+                self.perf.ceiling_bound[vidx] = bound;
+                crate::diag::log_line(
+                    "render",
+                    &if bound {
+                        format!(
+                            "dispatch ceiling BINDS on v{vidx}: learned {:.3e} → {:.3e} nominal steps \
+                             ({}, {}x{} px)",
+                            learned as f64,
+                            capped as f64,
+                            fractal.name(),
+                            resolution[0],
+                            resolution[1]
+                        )
+                    } else {
+                        format!("dispatch ceiling released on v{vidx}: budget {:.3e}", learned as f64)
+                    },
+                );
+            }
+            capped
         };
         // EXPLICIT-count dispatch bound. Three device losses this release cycle share one shape:
         // with auto-iter OFF and a huge explicit count, the ratio controller converges dispatches

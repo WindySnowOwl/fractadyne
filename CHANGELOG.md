@@ -12,6 +12,21 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **A fixed limit on how much work the GPU is given at once** (beta.135, for testing). The frame
+  budget is learned from GPU timings, and a learned budget can be wrong: carried from a cheap view
+  to a costly one, it hung the RX 6800 XT on 2026-09-27. Each card now also has a fixed limit,
+  measured on that card, that nothing learned can raise. It is sized so that the costliest view
+  measured takes about 0.4 s per GPU submission. That view turned out to be one with no escaping
+  pixels at all, which costs more per step than the case the limit was first planned around. The
+  limit is lower for costlier formulas (Multibrot 5 costs 1.8× Mandelbrot per step) and for small
+  pictures, which do not keep the GPU busy. The RTX 3080 and RX 6800 XT have measured values;
+  other cards get a cautious default. On the RTX 3080, with a budget seeded high enough to cause
+  0.57–0.59 s submissions, the limit held every submission to 0.35 s or less, in 2 runs of 2.
+  `--set DISPATCH_CEILING=0` turns it off for comparisons.
+  The measurements also showed that on the RX 6800 XT a GPU timing matches the size of the
+  previous submission better than its own. The frame budget learns from those timings, which may
+  be why that card's budget has behaved oddly. This limit does not depend on them: its value for
+  that card comes from wall-clock timing.
 - **Fixed: zooming could show a frozen, blown-up picture that looked like a solid colour**
   (beta.134). After zooming out from a deep view into the shallow range, where a simpler kind of
   arithmetic is used, every zoom with Space could keep showing the last finished picture for its

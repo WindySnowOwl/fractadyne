@@ -1,0 +1,8 @@
+app=Fractadyne
+fractal=Mandelbrot
+julia=0
+center_re=-0.1
+center_im=0.1
+upp_log2=-32
+max_iter=100000
+auto_iter=0

@@ -85,6 +85,8 @@ pub(crate) struct Cost {
     pub reading_pool: u64,
     /// The wall-clock dead-man (`DEAD_MAN_DEFAULT`; 0 = off, 1 = on).
     pub dead_man: u64,
+    /// The per-adapter dispatch ceiling (`DISPATCH_CEILING_DEFAULT`; 0 = off, 1 = on).
+    pub dispatch_ceiling: u64,
     /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
     /// second override channel because duplicating the machinery for a single value would be worse.
     /// See the note above on what earns a place in this set.
@@ -114,6 +116,7 @@ impl Default for Cost {
             motion_need_quantile: MOTION_NEED_QUANTILE_DEFAULT,
             reading_pool: READING_POOL_DEFAULT,
             dead_man: DEAD_MAN_DEFAULT,
+            dispatch_ceiling: DISPATCH_CEILING_DEFAULT,
             bla_eps: BLA_EPS,
         }
     }
@@ -290,6 +293,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "DISPATCH_CEILING" => {
+                let p = c.dispatch_ceiling;
+                c.dispatch_ceiling = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set DISPATCH_CEILING: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "MOTION_NEED_QUANTILE" => {
                 let p = c.motion_need_quantile;
                 let v = f()?;
@@ -329,7 +341,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     TDR_BOOTSTRAP_MS, MOTION_UNPRICED_MAX, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL, \
-    DEAD_MAN";
+    DEAD_MAN, DISPATCH_CEILING";
 
 #[cfg(test)]
 mod override_tests;
@@ -674,6 +686,15 @@ pub(crate) const READING_POOL_DEFAULT: u64 = 1;
 /// WHILE latched: the latch clears on the first fast frame, and a budget left stale then re-arms
 /// the same eight slow frames — each cycle a fresh chance at the lethal band.
 pub(crate) const DEAD_MAN_DEFAULT: u64 = 1;
+
+/// 1 = the per-adapter DISPATCH CEILING (design §5.1; `calibration`): no live dispatch in direct or
+/// df32-perturbation mode exceeds the nominal steps this adapter's calibration allows, whatever the
+/// learned budget says. It is the one term nothing learned can raise, and it exists for the FIRST
+/// dispatch of a stale budget, which the dead-man (acting on the frame after) cannot bound — on
+/// 2026-09-27 PLUTO hung on a 2.0 s whole-frame dispatch that a 1.515e11 learned budget sized.
+/// 0 = off, for the before/after measurement only; the values themselves are calibration, not
+/// tunables (§5.2).
+pub(crate) const DISPATCH_CEILING_DEFAULT: u64 = 1;
 
 /// The most a held frame may MAGNIFY before its refresh lands, octaves — the zoom-rate-aware half
 /// of the refresh sizing. At `zoom_oct_s` octaves per second the refresh has `HELD_MAX_OCT /

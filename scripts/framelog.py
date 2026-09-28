@@ -5,6 +5,7 @@
     python scripts/framelog.py decode     <frames.bin> [-o out.jsonl]
     python scripts/framelog.py schema-check <file>
     python scripts/framelog.py compare    --a A1 A2 A3 [...] --b B1 B2 B3 [...]
+    python scripts/framelog.py calibrate  <frames.bin ...> [--min-steps N] [--knee PX]
     python scripts/framelog.py selftest
 
 Inputs: `<logs>/frames.bin` (the always-on circular file) or a `crash-*-frames.jsonl` written
@@ -457,6 +458,58 @@ def _synthetic(kind, target=400.0):
     return recs
 
 
+# ---------------------------------------------------------------------------------------------
+# Dispatch-ceiling calibration (crates/fractadyne-app/src/calibration.rs).
+
+# The GPU's occupancy knee on the RTX 3080 (2026-09-17). Below it a dispatch is not saturated and
+# costs more per step, so a reading there is not the SATURATED cost the ceiling is sized from.
+CAL_KNEE_PX = 262144
+CAL_MODES = {0: "df32_pert", 1: "direct", 2: "floatexp"}
+
+
+def calibrate(paths, min_steps=5e9, knee=CAL_KNEE_PX, target_ms=400.0, out=sys.stdout):
+    """Per-step cost of each arithmetic mode from ALL-INTERIOR zoomtests (the calibration views in
+    `validation/calibration/`): every pixel walks every step, so nominal == real and the cost is
+    the card's worst for that mode. Only GPU-timed readings of at least `min_steps` (where the
+    per-dispatch fixed cost is negligible) on at least `knee` pixels count. Prints the
+    `*_ms_per_step` line for `ceilings.toml`, which takes the MAX, not a typical value."""
+    sch = load_schema()
+    bad = 0
+    for path in paths:
+        header, recs, _ = load_any(path, sch)
+        print(f"{path}\n  adapter {header.get('adapter', '?')} · {header.get('version', '?')} · "
+              f"tunables {header.get('tunables', '?')}", file=out)
+        if header.get("tunables", "stock") != "stock":
+            print("  ⚠NOT STOCK: a calibration from an overridden run does not describe the card", file=out)
+        for m in sorted({r["mode"] for r in recs}):
+            mode = [r for r in recs if r["mode"] == m]
+            esc = [r["ctr_escaped"] / r["ctr_px"] for r in mode if r.get("ctr_new") and r.get("ctr_px", 0) > 0]
+            costs = []
+            for r in mode:
+                if not r.get("read_n") or r.get("read_src") != 1 or r.get("read_steps", 0) < min_steps:
+                    continue
+                px = (r["tile_w"] * r["tile_h"] if r["tiled"] else r["res_w"] * r["res_h"]) * r["ss"] ** 2
+                if px >= knee:
+                    costs.append(r["read_ms"] / r["read_steps"])
+            name = CAL_MODES.get(m, f"mode{m}")
+            if not costs:
+                print(f"  mode {m} ({name}): VACUOUS - no GPU reading of >= {min_steps:.0e} steps on "
+                      f">= {knee} px", file=out)
+                bad += 1
+                continue
+            worst = max(costs)
+            escaped = max(esc) if esc else float("nan")
+            print(f"  mode {m} ({name}): {len(costs)} readings, ms/step p50 {statistics.median(costs):.3g} "
+                  f"max {worst:.3g}; escaped fraction max {escaped:.3f}", file=out)
+            if not escaped <= 0.001:
+                print(f"    ⚠NOT ALL-INTERIOR: escaping pixels stop early, so this UNDERSTATES the worst "
+                      f"case", file=out)
+                bad += 1
+            print(f"    {name}_ms_per_step = {worst:.3g}   # ceiling {target_ms / worst:.3g} nominal steps "
+                  f"at {target_ms:.0f} ms", file=out)
+    return 1 if bad else 0
+
+
 def selftest():
     target = 400.0
     # Each synthetic episode must be labelled with its own mechanism AND must not be labelled
@@ -526,6 +579,12 @@ def main(argv):
         view = int(rest[rest.index("--view") + 1]) if "--view" in rest else 0
         target = float(rest[rest.index("--target-ms") + 1]) if "--target-ms" in rest else 400.0
         return summarize(rest[0], view, target)
+    if cmd == "calibrate":
+        min_steps = float(rest[rest.index("--min-steps") + 1]) if "--min-steps" in rest else 5e9
+        knee = int(rest[rest.index("--knee") + 1]) if "--knee" in rest else CAL_KNEE_PX
+        paths = [p for i, p in enumerate(rest)
+                 if not p.startswith("--") and (i == 0 or rest[i - 1] not in ("--min-steps", "--knee"))]
+        return calibrate(paths, min_steps, knee)
     if cmd == "compare":
         a = rest[rest.index("--a") + 1:rest.index("--b")] if "--a" in rest and "--b" in rest else []
         b = rest[rest.index("--b") + 1:] if "--b" in rest else []
