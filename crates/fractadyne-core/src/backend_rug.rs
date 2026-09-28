@@ -635,8 +635,11 @@ pub(crate) fn try_orbit_length_inplace(
 /// and the caller falls through to the astro walk (correct arithmetic for every family —
 /// the fallback costs speed, never bits).
 ///
-/// Mirrored LITERALLY, operation for operation, at the same word-rounded precision with the
+/// Mirrored LITERALLY, operation for operation, at the same word-rounded precisions with the
 /// same truncate-toward-zero rounding:
+///   * the reference `Z` runs at `p`'s width (`ctx`), the coefficients at
+///     `SA_COEFF_BITS`'s (`ctx_c`) — astro's `pc`. A `Z·coefficient` product takes `Z` at full
+///     width in both libraries (exact product, truncated result);
 ///   * `cmul` is `cmul_bf`'s sequence — 4 rounded muls, a rounded sub and a rounded add, in
 ///     the same operand order;
 ///   * the d = 2 recurrence factors are 1 and 2, and astro's `mul_u32_bf` applies those as
@@ -690,32 +693,33 @@ pub(crate) fn try_series_skip_walk(
     }
 
     let ctx = <Float as RefBackend>::ctx_for(p);
-    let one = Float::with_val(ctx, 1u32);
-    let zero = || Float::with_val(ctx, 0u32);
+    let ctx_c = <Float as RefBackend>::ctx_for(p.min(crate::reference::SA_COEFF_BITS));
+    let one = Float::with_val(ctx_c, 1u32);
+    let zero = |w: u32| Float::with_val(w, 0u32);
     let rcx = <Float as RefBackend>::from_carrier(cx, ctx);
     let rcy = <Float as RefBackend>::from_carrier(cy, ctx);
-    let (mut zx, mut zy) = (zero(), zero());
-    let (mut ax, mut ay) = (zero(), zero());
-    let (mut bx, mut by) = (zero(), zero());
-    let (mut cxx, mut cyy) = (zero(), zero());
+    let (mut zx, mut zy) = (zero(ctx), zero(ctx));
+    let (mut ax, mut ay) = (zero(ctx_c), zero(ctx_c));
+    let (mut bx, mut by) = (zero(ctx_c), zero(ctx_c));
+    let (mut cxx, mut cyy) = (zero(ctx_c), zero(ctx_c));
     let mut best: Option<(u32, [Float; 6])> = None;
     for n in 1..=limit {
         // For d = 2: Z^{d-1} = Z itself (astro's `cpow_bf(z, 1)` is an exact clone) and the
         // Z^{d-2} factor is the identity, so the recurrence collapses to the lines below.
-        let (a2x, a2y) = cmul(&ax, &ay, &ax, &ay, ctx); // A²
-        let (abx, aby) = cmul(&ax, &ay, &bx, &by, ctx); // A·B
+        let (a2x, a2y) = cmul(&ax, &ay, &ax, &ay, ctx_c); // A²
+        let (abx, aby) = cmul(&ax, &ay, &bx, &by, ctx_c); // A·B
         // A' = 2·(Z·A) + 1
-        let (t, u) = cmul(&zx, &zy, &ax, &ay, ctx);
-        let na_x = t.fdouble().fadd(&one, ctx);
+        let (t, u) = cmul(&zx, &zy, &ax, &ay, ctx_c);
+        let na_x = t.fdouble().fadd(&one, ctx_c);
         let na_y = u.fdouble();
         // B' = 2·(Z·B) + A²    (C(2,2)·… — the ×1 is the identity in `mul_u32_bf` too)
-        let (t, u) = cmul(&zx, &zy, &bx, &by, ctx);
-        let nb_x = t.fdouble().fadd(&a2x, ctx);
-        let nb_y = u.fdouble().fadd(&a2y, ctx);
+        let (t, u) = cmul(&zx, &zy, &bx, &by, ctx_c);
+        let nb_x = t.fdouble().fadd(&a2x, ctx_c);
+        let nb_y = u.fdouble().fadd(&a2y, ctx_c);
         // C' = 2·(Z·C) + 2·(A·B)    (C(2,3) = 0 — no third term)
-        let (t, u) = cmul(&zx, &zy, &cxx, &cyy, ctx);
-        let nc_x = t.fdouble().fadd(&abx.fdouble(), ctx);
-        let nc_y = u.fdouble().fadd(&aby.fdouble(), ctx);
+        let (t, u) = cmul(&zx, &zy, &cxx, &cyy, ctx_c);
+        let nc_x = t.fdouble().fadd(&abx.fdouble(), ctx_c);
+        let nc_y = u.fdouble().fadd(&aby.fdouble(), ctx_c);
         // Advance the reference through the shared generic step (byte-identical by the
         // orbit matrix), then swap — the same order as the astro loop.
         let (nzx, nzy) = crate::reference::step_gen::<Float>(&zx, &zy, &rcx, &rcy, formula, ctx);
@@ -753,12 +757,12 @@ pub(crate) fn try_series_skip_walk(
         (
             n,
             [
-                k[0].to_carrier(ctx),
-                k[1].to_carrier(ctx),
-                k[2].to_carrier(ctx),
-                k[3].to_carrier(ctx),
-                k[4].to_carrier(ctx),
-                k[5].to_carrier(ctx),
+                k[0].to_carrier(ctx_c),
+                k[1].to_carrier(ctx_c),
+                k[2].to_carrier(ctx_c),
+                k[3].to_carrier(ctx_c),
+                k[4].to_carrier(ctx_c),
+                k[5].to_carrier(ctx_c),
             ],
         )
     }))

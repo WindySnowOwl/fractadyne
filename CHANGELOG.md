@@ -12,6 +12,25 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Faster deep renders: the series approximation no longer runs at full precision**
+  (beta.142).
+  - **The change:** before a deep view renders, Fractadyne computes a reference orbit and three
+    series coefficients that let every pixel skip the orbit's first stretch. The coefficients
+    were computed at the zoom's full working precision (3,738 bits at 4.6e1105), although only
+    their top 53 bits are ever used. They now use 128 bits. The reference orbit keeps full
+    precision.
+  - **How much**, on 4K renders:
+    - 4.6e1105: the coefficients took 9.5 s and now take 2.1 s. The whole render finishes in
+      8.1 s instead of 15.6 s.
+    - The coefficients at 4.2e275: 0.21 s instead of 0.35 s. At 1.47e77: 0.35 s instead of
+      0.41 s.
+    - Views that do not use the series (1.2e148 among the benchmarks) are unchanged.
+  - **Pictures:** identical to the pixel at all four benchmark scenes that use it, with the same
+    number of skipped iterations. A new test holds the result byte for byte equal to the
+    full-precision calculation. It fails when the coefficients are cut to 64 bits, so it can
+    tell.
+  - **Where:** exports and the live view's reference builds, in the standard and the MPFR
+    builds alike.
 - **Faster deep Mandelbrot rendering: cheaper arithmetic once it is safe** (beta.141, for
   testing).
   - **The change:** past 1e28× each pixel's step is computed in an extended-range number format

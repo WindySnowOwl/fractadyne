@@ -573,6 +573,18 @@ fn log2_cmag(re: &BigFloat, im: &BigFloat) -> f64 {
 pub(crate) const SA_EPS_LOG2: f64 = -16.0;
 /// Below this skip the bookkeeping isn't worth it (shared likewise).
 pub(crate) const SA_MIN_SKIP: u32 = 8;
+/// Width (bits) the walk carries the series COEFFICIENTS at; the reference `Z` stays at the
+/// working precision `p` (shared likewise). `Z` needs `p`: it IS the orbit, and an error in it is
+/// a different `c`. The coefficients do not. They leave the walk only through `coeff_to_fe` (the
+/// top 53 bits of each) and `log2_cmag` (the exponent), and each recurrence is linear in the
+/// previous coefficient with `Z` as an input, so a walk carried at 128 bits drifts ~n·2⁻¹²⁸
+/// relative from one carried at `p` — 2⁻¹¹¹ at n = 2¹⁷, far below that 53-bit read. Every
+/// `Z·coefficient` product still takes `Z` at full width (astro-float and MPFR both form the exact
+/// product and truncate only the result), so what shrinks is the other operand. Before this the
+/// coefficients ran at `p`: 9.5 s of a 15.8 s 4K export at 4.6e1105× (p = 3738, 119,153 steps),
+/// ~7× the orbit build itself. `sa_coefficient_width_is_output_neutral` holds the emitted skip
+/// byte-equal to a full-width walk.
+pub(crate) const SA_COEFF_BITS: usize = 128;
 
 /// [`series_skip`] with an explicit backend — the cross-backend identity suite drives both
 /// arms directly (no global selection flips; the same pattern as `reference_orbit_t_in`).
@@ -607,7 +619,7 @@ pub fn series_skip_in(
             }
         }
     }
-    series_skip_astro(cx, cy, log2_max_dc, max_iter, orbit_len, formula, p)
+    series_skip_astro(cx, cy, log2_max_dc, max_iter, orbit_len, formula, p, p.min(SA_COEFF_BITS))
 }
 
 /// The walk's `best` → the emitted [`SeriesSkip`]. One conversion path for both backends:
@@ -644,12 +656,13 @@ pub fn series_skip(
     series_skip_in(crate::backend::selected(), cx, cy, log2_max_dc, max_iter, orbit_len, formula, p)
 }
 
-/// The astro-float coefficient walk — the historical `series_skip` body, VERBATIM (every
-/// blessed render's skip came from these exact operations; the corpus pins it). The MPFR
-/// twin mirrors this loop op-for-op; change one only with the other, and with
+/// The astro-float coefficient walk — the historical `series_skip` body (every blessed render's
+/// skip came from these operations; the corpus pins it), with the coefficients carried at
+/// `pc` bits instead of `p` ([`SA_COEFF_BITS`]; `pc = p` is the historical walk exactly). The
+/// MPFR twin mirrors this loop op-for-op; change one only with the other, and with
 /// `the_sa_walk_is_backend_identical` green.
 #[allow(clippy::too_many_arguments)]
-fn series_skip_astro(
+pub(crate) fn series_skip_astro(
     cx: &BigFloat,
     cy: &BigFloat,
     log2_max_dc: f64,
@@ -657,6 +670,7 @@ fn series_skip_astro(
     orbit_len: u32,
     formula: u32,
     p: usize,
+    pc: usize,
 ) -> SeriesSkip {
     if !log2_max_dc.is_finite() {
         return SeriesSkip::NONE;
@@ -672,58 +686,59 @@ fn series_skip_astro(
         formula::MULTIBROT5 => 5,
         _ => 2,
     };
-    let one = bf(1.0, p);
+    let one = bf(1.0, pc);
     // Recurrence factors — all small exact integers, applied via `mul_u32_bf` (shift-and-add).
     let d_u = deg;
     let c2_u = deg * (deg - 1) / 2; // C(d,2)
     let two_c2_u = deg * (deg - 1); // 2·C(d,2)
     let c3_u = deg * (deg - 1) * (deg - 2) / 6; // C(d,3) (0 for d=2)
     let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
-    let (mut ax, mut ay) = (bf(0.0, p), bf(0.0, p));
-    let (mut bx, mut by) = (bf(0.0, p), bf(0.0, p));
-    let (mut cxx, mut cyy) = (bf(0.0, p), bf(0.0, p));
+    let (mut ax, mut ay) = (bf(0.0, pc), bf(0.0, pc));
+    let (mut bx, mut by) = (bf(0.0, pc), bf(0.0, pc));
+    let (mut cxx, mut cyy) = (bf(0.0, pc), bf(0.0, pc));
     let mut best: Option<(u32, [BigFloat; 6])> = None;
     for n in 1..=limit {
         // Advance the order-3 coefficients for z^d + c, using Z_{n-1} (current z):
         //   A' = d·Z^{d-1}·A + 1
         //   B' = d·Z^{d-1}·B + C(d,2)·Z^{d-2}·A²
         //   C' = d·Z^{d-1}·C + 2·C(d,2)·Z^{d-2}·A·B + C(d,3)·Z^{d-3}·A³
-        let (p1x, p1y) = cpow_bf(&zx, &zy, deg - 1, p); // Z^{d-1}
-        let (a2x, a2y) = cmul_bf(&ax, &ay, &ax, &ay, p); // A²
-        let (abx, aby) = cmul_bf(&ax, &ay, &bx, &by, p); // A·B
+        // Everything below the reference step is coefficient arithmetic, carried at `pc`.
+        let (p1x, p1y) = cpow_bf(&zx, &zy, deg - 1, pc); // Z^{d-1} (Z itself, full width, for d = 2)
+        let (a2x, a2y) = cmul_bf(&ax, &ay, &ax, &ay, pc); // A²
+        let (abx, aby) = cmul_bf(&ax, &ay, &bx, &by, pc); // A·B
         // Z^{d-2} is the identity (= 1) for d = 2 → `None` skips that whole complex multiply.
-        let p2 = (deg >= 3).then(|| cpow_bf(&zx, &zy, deg - 2, p));
+        let p2 = (deg >= 3).then(|| cpow_bf(&zx, &zy, deg - 2, pc));
         let zp2 = |wx: &BigFloat, wy: &BigFloat| match &p2 {
-            Some((p2x, p2y)) => cmul_bf(p2x, p2y, wx, wy, p),
+            Some((p2x, p2y)) => cmul_bf(p2x, p2y, wx, wy, pc),
             None => (wx.clone(), wy.clone()),
         };
         // A' = d·Z^{d-1}·A + 1
-        let (t, u) = cmul_bf(&p1x, &p1y, &ax, &ay, p);
-        let na_x = mul_u32_bf(&t, d_u, p).add(&one, p, RM);
-        let na_y = mul_u32_bf(&u, d_u, p);
+        let (t, u) = cmul_bf(&p1x, &p1y, &ax, &ay, pc);
+        let na_x = mul_u32_bf(&t, d_u, pc).add(&one, pc, RM);
+        let na_y = mul_u32_bf(&u, d_u, pc);
         // B' = d·Z^{d-1}·B + C(d,2)·Z^{d-2}·A²
-        let (t, u) = cmul_bf(&p1x, &p1y, &bx, &by, p);
+        let (t, u) = cmul_bf(&p1x, &p1y, &bx, &by, pc);
         let (v, w) = zp2(&a2x, &a2y);
-        let nb_x = mul_u32_bf(&t, d_u, p).add(&mul_u32_bf(&v, c2_u, p), p, RM);
-        let nb_y = mul_u32_bf(&u, d_u, p).add(&mul_u32_bf(&w, c2_u, p), p, RM);
+        let nb_x = mul_u32_bf(&t, d_u, pc).add(&mul_u32_bf(&v, c2_u, pc), pc, RM);
+        let nb_y = mul_u32_bf(&u, d_u, pc).add(&mul_u32_bf(&w, c2_u, pc), pc, RM);
         // C' = d·Z^{d-1}·C + 2·C(d,2)·Z^{d-2}·A·B + C(d,3)·Z^{d-3}·A³
-        let (t, u) = cmul_bf(&p1x, &p1y, &cxx, &cyy, p);
+        let (t, u) = cmul_bf(&p1x, &p1y, &cxx, &cyy, pc);
         let (v, w) = zp2(&abx, &aby);
-        let mut nc_x = mul_u32_bf(&t, d_u, p).add(&mul_u32_bf(&v, two_c2_u, p), p, RM);
-        let mut nc_y = mul_u32_bf(&u, d_u, p).add(&mul_u32_bf(&w, two_c2_u, p), p, RM);
+        let mut nc_x = mul_u32_bf(&t, d_u, pc).add(&mul_u32_bf(&v, two_c2_u, pc), pc, RM);
+        let mut nc_y = mul_u32_bf(&u, d_u, pc).add(&mul_u32_bf(&w, two_c2_u, pc), pc, RM);
         if deg >= 3 {
-            let (a3x, a3y) = cmul_bf(&a2x, &a2y, &ax, &ay, p); // A³
+            let (a3x, a3y) = cmul_bf(&a2x, &a2y, &ax, &ay, pc); // A³
             // Z^{d-3} is the identity for d = 3.
             let (x3, y3) = if deg >= 4 {
-                let (p3x, p3y) = cpow_bf(&zx, &zy, deg - 3, p);
-                cmul_bf(&p3x, &p3y, &a3x, &a3y, p)
+                let (p3x, p3y) = cpow_bf(&zx, &zy, deg - 3, pc);
+                cmul_bf(&p3x, &p3y, &a3x, &a3y, pc)
             } else {
                 (a3x, a3y)
             };
-            nc_x = nc_x.add(&mul_u32_bf(&x3, c3_u, p), p, RM);
-            nc_y = nc_y.add(&mul_u32_bf(&y3, c3_u, p), p, RM);
+            nc_x = nc_x.add(&mul_u32_bf(&x3, c3_u, pc), pc, RM);
+            nc_y = nc_y.add(&mul_u32_bf(&y3, c3_u, pc), pc, RM);
         }
-        // Advance the reference: Z_n = Z_{n-1}^d + c.
+        // Advance the reference at the working precision: Z_n = Z_{n-1}^d + c.
         let (nzx, nzy) = step_bf(&zx, &zy, cx, cy, formula, p);
         zx = nzx;
         zy = nzy;

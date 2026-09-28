@@ -415,6 +415,64 @@ fn series_skip_matches_exact_multibrot3() {
     assert!(err / mag < 1.0e-3, "z³ series vs exact rel err {:.2e} at skip {}", err / mag, s.skip);
 }
 
+// The series walk carries its coefficients at `SA_COEFF_BITS` while the reference `Z` stays at
+// the working precision. What leaves the walk — the skip, and each coefficient's GPU value — must
+// be BYTE-EQUAL to the historical full-width walk (`pc = p`): that equality is the whole claim of
+// the change. Anti-vacuity: every case really narrows (p > pc), skips were produced, both cut
+// regimes appeared, and some walks ran long (10-step skips say nothing about accumulation).
+// Negative control, run 2026-09-28: the same matrix at 64-bit coefficients diverged in 14 of 32
+// cases (walks of 131 steps among them); at 128 all 32 matched (20 with a skip, 10 cap-bound,
+// the longest validity cut 998 steps).
+#[test]
+fn sa_coefficient_width_is_output_neutral() {
+    let bits4 = |q: &[f32; 4]| [q[0].to_bits(), q[1].to_bits(), q[2].to_bits(), q[3].to_bits()];
+    let points = [
+        ("boundary", "-0.743643887037158704752191506114774", "0.131825904205311970493132056385139"),
+        ("interior", "-0.5", "0.1"),
+        ("misiurewicz", "-0.77568377", "0.13646737"),
+        ("seahorse", "-0.745", "0.113"),
+    ];
+    let (mi, ol) = (4000u32, 4002u32);
+    let (mut cases, mut with_skip, mut cap_bound, mut longest_break) = (0usize, 0usize, 0usize, 0u32);
+    let mut bad: Vec<String> = Vec::new();
+    for f in [formula::MANDELBROT, formula::MULTIBROT3] {
+        for (label, sx, sy) in points {
+            for p in [576usize, 1088] {
+                assert!(p > SA_COEFF_BITS, "a case that does not narrow tests nothing");
+                let cx = parse_bf_prec(sx, p).unwrap();
+                let cy = parse_bf_prec(sy, p).unwrap();
+                for dc in [-40.0f64, -400.0] {
+                    let full = series_skip_astro(&cx, &cy, dc, mi, ol, f, p, p);
+                    let narrow = series_skip_astro(&cx, &cy, dc, mi, ol, f, p, SA_COEFF_BITS);
+                    cases += 1;
+                    let same = full.skip == narrow.skip
+                        && bits4(&full.a) == bits4(&narrow.a) && full.a_exp == narrow.a_exp
+                        && bits4(&full.b) == bits4(&narrow.b) && full.b_exp == narrow.b_exp
+                        && bits4(&full.c) == bits4(&narrow.c) && full.c_exp == narrow.c_exp;
+                    if !same {
+                        bad.push(format!(
+                            "{label} f={f} p={p} dc={dc}: skip {} vs {}",
+                            full.skip, narrow.skip
+                        ));
+                    }
+                    if full.skip > 0 {
+                        with_skip += 1;
+                        if full.skip == mi.min(ol - 2) {
+                            cap_bound += 1;
+                        } else {
+                            longest_break = longest_break.max(full.skip);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{} of {cases} cases diverged:\n{}", bad.len(), bad.join("\n"));
+    assert!(with_skip >= cases / 2, "vacuous: only {with_skip} of {cases} cases produced a skip");
+    assert!(cap_bound >= 2, "vacuous: no walk ran to the cap ({cap_bound})");
+    assert!(longest_break >= 100, "vacuous: the longest validity-cut walk was {longest_break} steps");
+}
+
 // BLA: a tree traversal must reproduce the exact (full-step) perturbation while skipping
 // most iterations. Interior reference (main cardioid) → bounded orbit, |δz| stays tiny.
 #[test]
