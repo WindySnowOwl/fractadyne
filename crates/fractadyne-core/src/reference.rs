@@ -876,12 +876,12 @@ pub(crate) fn series_skip_astro_piped(
     }
 }
 
-/// Walks at least this long run their Z chain on a thread of its own ([`series_skip_astro`]);
-/// shorter ones are not worth a thread.
-const SA_PIPELINE_MIN_STEPS: u32 = 1024;
+/// Walks at least this long run their Z chain on a thread of its own ([`series_skip_astro`] and
+/// its MPFR twin); shorter ones are not worth a thread.
+pub(crate) const SA_PIPELINE_MIN_STEPS: u32 = 1024;
 /// How far the pipelined Z chain may run ahead of the coefficients: bounds the work thrown away
 /// when the walk stops (a validity break, a cancel) to this many reference steps.
-const SA_PIPELINE_DEPTH: usize = 256;
+pub(crate) const SA_PIPELINE_DEPTH: usize = 256;
 
 // ---------------- BLA (bilinear approximation) -----------------------------------
 // Skips iterations *throughout* the orbit (series approximation only skips the start). While

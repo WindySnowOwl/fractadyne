@@ -699,71 +699,108 @@ pub(crate) fn try_series_skip_walk(
     let zero = |w: u32| Float::with_val(w, 0u32);
     let rcx = <Float as RefBackend>::from_carrier(cx, ctx);
     let rcy = <Float as RefBackend>::from_carrier(cy, ctx);
-    let (mut zx, mut zy) = (zero(ctx), zero(ctx));
-    let (mut ax, mut ay) = (zero(ctx_c), zero(ctx_c));
-    let (mut bx, mut by) = (zero(ctx_c), zero(ctx_c));
-    let (mut cxx, mut cyy) = (zero(ctx_c), zero(ctx_c));
     // Astro's per-step copy of Z truncated to the coefficient width (its `set_precision` with
     // `RoundingMode::None` keeps the top `pc` bits of a normalised mantissa = MPFR's RZ).
     let narrow = ctx_c < ctx;
-    let mut best: Option<(u32, [Float; 6])> = None;
-    for n in 1..=limit {
-        if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
-            return Some(None); // = SeriesSkip::NONE, as the astro walk returns when cancelled
-        }
-        let zc = narrow.then(|| {
-            (Float::with_val_round(ctx_c, &zx, RZ).0, Float::with_val_round(ctx_c, &zy, RZ).0)
-        });
-        let (zcx, zcy) = zc.as_ref().map_or((&zx, &zy), |(x, y)| (x, y));
-        // For d = 2: Z^{d-1} = Z itself (astro's `cpow_bf(z, 1)` is an exact clone) and the
-        // Z^{d-2} factor is the identity, so the recurrence collapses to the lines below.
-        let (a2x, a2y) = cmul(&ax, &ay, &ax, &ay, ctx_c); // A²
-        let (abx, aby) = cmul(&ax, &ay, &bx, &by, ctx_c); // A·B
-        // A' = 2·(Z·A) + 1
-        let (t, u) = cmul(zcx, zcy, &ax, &ay, ctx_c);
-        let na_x = t.fdouble().fadd(&one, ctx_c);
-        let na_y = u.fdouble();
-        // B' = 2·(Z·B) + A²    (C(2,2)·… — the ×1 is the identity in `mul_u32_bf` too)
-        let (t, u) = cmul(zcx, zcy, &bx, &by, ctx_c);
-        let nb_x = t.fdouble().fadd(&a2x, ctx_c);
-        let nb_y = u.fdouble().fadd(&a2y, ctx_c);
-        // C' = 2·(Z·C) + 2·(A·B)    (C(2,3) = 0 — no third term)
-        let (t, u) = cmul(zcx, zcy, &cxx, &cyy, ctx_c);
-        let nc_x = t.fdouble().fadd(&abx.fdouble(), ctx_c);
-        let nc_y = u.fdouble().fadd(&aby.fdouble(), ctx_c);
-        // Advance the reference through the shared generic step (byte-identical by the
-        // orbit matrix), then swap — the same order as the astro loop.
-        let (nzx, nzy) = crate::reference::step_gen::<Float>(&zx, &zy, &rcx, &rcy, formula, ctx);
-        zx = nzx;
-        zy = nzy;
-        ax = na_x;
-        ay = na_y;
-        bx = nb_x;
-        by = nb_y;
-        cxx = nc_x;
-        cyy = nc_y;
-        let la = log2_cmag_rug(&ax, &ay);
-        let lc = log2_cmag_rug(&cxx, &cyy);
-        if !la.is_finite() {
-            continue;
-        }
-        let valid = lc + 2.0 * log2_max_dc < la + crate::reference::SA_EPS_LOG2;
-        if n >= crate::reference::SA_MIN_SKIP {
-            if valid {
-                best = Some((
-                    n,
-                    [ax.clone(), ay.clone(), bx.clone(), by.clone(), cxx.clone(), cyy.clone()],
-                ));
-            } else {
-                break; // coefficients only grow ⇒ once invalid, stays invalid
+    // The two chains of `series_skip_astro_piped`, mirrored. One Z-chain step yields the
+    // coefficient-width copy of Z_{n-1}, advances the reference through the shared generic step
+    // (byte-identical by the orbit matrix) and says whether Z_n escaped (truncating f64 view,
+    // like `to_f64`).
+    let z_step = |zx: &mut Float, zy: &mut Float| -> (Float, Float, bool) {
+        let (zcx, zcy) = if narrow {
+            (Float::with_val_round(ctx_c, &*zx, RZ).0, Float::with_val_round(ctx_c, &*zy, RZ).0)
+        } else {
+            (zx.clone(), zy.clone())
+        };
+        let (nzx, nzy) = crate::reference::step_gen::<Float>(zx, zy, &rcx, &rcy, formula, ctx);
+        *zx = nzx;
+        *zy = nzy;
+        let (fx, fy) = (zx.to_f64_trunc(), zy.to_f64_trunc());
+        (zcx, zcy, fx * fx + fy * fy > 1.0e12)
+    };
+    // The coefficient chain. `Err` = cancelled.
+    type Walked = Result<Option<(u32, [Float; 6])>, ()>;
+    let walk = |next: &mut dyn FnMut() -> Option<(Float, Float, bool)>| -> Walked {
+        let (mut ax, mut ay) = (zero(ctx_c), zero(ctx_c));
+        let (mut bx, mut by) = (zero(ctx_c), zero(ctx_c));
+        let (mut cxx, mut cyy) = (zero(ctx_c), zero(ctx_c));
+        let mut best: Option<(u32, [Float; 6])> = None;
+        for n in 1..=limit {
+            if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
+                return Err(());
+            }
+            let Some((zcx, zcy, z_escaped)) = next() else { break };
+            let (zcx, zcy) = (&zcx, &zcy);
+            // For d = 2: Z^{d-1} = Z itself (astro's `cpow_bf(z, 1)` is an exact clone) and the
+            // Z^{d-2} factor is the identity, so the recurrence collapses to the lines below.
+            let (a2x, a2y) = cmul(&ax, &ay, &ax, &ay, ctx_c); // A²
+            let (abx, aby) = cmul(&ax, &ay, &bx, &by, ctx_c); // A·B
+            // A' = 2·(Z·A) + 1
+            let (t, u) = cmul(zcx, zcy, &ax, &ay, ctx_c);
+            let na_x = t.fdouble().fadd(&one, ctx_c);
+            let na_y = u.fdouble();
+            // B' = 2·(Z·B) + A²    (C(2,2)·… — the ×1 is the identity in `mul_u32_bf` too)
+            let (t, u) = cmul(zcx, zcy, &bx, &by, ctx_c);
+            let nb_x = t.fdouble().fadd(&a2x, ctx_c);
+            let nb_y = u.fdouble().fadd(&a2y, ctx_c);
+            // C' = 2·(Z·C) + 2·(A·B)    (C(2,3) = 0 — no third term)
+            let (t, u) = cmul(zcx, zcy, &cxx, &cyy, ctx_c);
+            let nc_x = t.fdouble().fadd(&abx.fdouble(), ctx_c);
+            let nc_y = u.fdouble().fadd(&aby.fdouble(), ctx_c);
+            // (The reference advanced to Z_n in the Z chain.)
+            ax = na_x;
+            ay = na_y;
+            bx = nb_x;
+            by = nb_y;
+            cxx = nc_x;
+            cyy = nc_y;
+            let la = log2_cmag_rug(&ax, &ay);
+            let lc = log2_cmag_rug(&cxx, &cyy);
+            if !la.is_finite() {
+                continue;
+            }
+            let valid = lc + 2.0 * log2_max_dc < la + crate::reference::SA_EPS_LOG2;
+            if n >= crate::reference::SA_MIN_SKIP {
+                if valid {
+                    best = Some((
+                        n,
+                        [ax.clone(), ay.clone(), bx.clone(), by.clone(), cxx.clone(), cyy.clone()],
+                    ));
+                } else {
+                    break; // coefficients only grow ⇒ once invalid, stays invalid
+                }
+            }
+            // Stop if the reference itself escaped.
+            if z_escaped {
+                break;
             }
         }
-        // Stop if the reference itself escaped (truncating f64 view, like `to_f64`).
-        let (fx, fy) = (zx.to_f64_trunc(), zy.to_f64_trunc());
-        if fx * fx + fy * fy > 1.0e12 {
-            break;
-        }
-    }
+        Ok(best)
+    };
+    let (mut zx, mut zy) = (zero(ctx), zero(ctx));
+    // Pipelined by the astro walk's rule, with its constants (see `series_skip_astro_piped`).
+    let best = if narrow && limit >= crate::reference::SA_PIPELINE_MIN_STEPS {
+        std::thread::scope(|s| {
+            let (tx, rx) = std::sync::mpsc::sync_channel(crate::reference::SA_PIPELINE_DEPTH);
+            s.spawn(move || {
+                for _ in 0..limit {
+                    let step = z_step(&mut zx, &mut zy);
+                    let escaped = step.2;
+                    if tx.send(step).is_err() || escaped {
+                        break;
+                    }
+                }
+            });
+            let best = walk(&mut || rx.recv().ok());
+            drop(rx);
+            best
+        })
+    } else {
+        walk(&mut || Some(z_step(&mut zx, &mut zy)))
+    };
+    let Ok(best) = best else {
+        return Some(None); // = SeriesSkip::NONE, as the astro walk returns when cancelled
+    };
     Some(best.map(|(n, k)| {
         (
             n,

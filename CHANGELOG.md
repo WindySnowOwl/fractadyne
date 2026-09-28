@@ -12,6 +12,11 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The accelerated (MPFR) build's series approximation is also split across two threads**
+  (beta.146), as the standard build's is since beta.145. At 4.6e1105 a 4K render in the
+  accelerated build takes 2.2 s instead of 2.5 s, and the preparation before rendering 0.51 s
+  instead of 0.82 s. The picture is identical to the pixel, and identical to the standard
+  build's.
 - **Faster deep renders: more of the preparation runs in parallel, and `--render` exits
   sooner** (beta.145).
   - **Series approximation:** it has two parts. One steps the reference point's orbit at full
