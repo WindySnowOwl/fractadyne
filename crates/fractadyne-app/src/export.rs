@@ -1708,7 +1708,12 @@ impl FractadyneApp {
         // Never for a heavy export (see above): a direct-mode view has no reference to prepare, so
         // it lands here, and the synchronous path would freeze the UI for the whole render.
         if self.render_cfg.glitch_correct && !heavy {
-            if let Some(msg) = self.export_corrected_sync(&device, &queue, &path, &job, hud.as_ref()) {
+            let t0 = std::time::Instant::now();
+            let done = self.export_corrected_sync(&device, &queue, &path, &job, hud.as_ref());
+            // Synchronous offscreen work on the UI thread, whether or not it produced the image
+            // (see `render::tripwire_dt`).
+            self.perf.offscreen_ms += t0.elapsed().as_secs_f64() * 1000.0;
+            if let Some(msg) = done {
                 self.export.status = Some(self.finish_export_status(msg));
                 return;
             }

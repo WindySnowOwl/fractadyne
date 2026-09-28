@@ -1216,6 +1216,11 @@ struct Perf {
     mem_poll: Option<std::time::Instant>,
     /// Duration of the PREVIOUS frame's `update` body (ms) — see the slow-frame attribution log.
     prev_body_ms: f64,
+    /// Time THIS frame spent in a synchronous offscreen render on the UI thread (a CLI render or
+    /// tour, a glitch-corrected export), and the PREVIOUS frame's — which is the one inside the
+    /// interval the tripwire judges. See `render::tripwire_dt`.
+    offscreen_ms: f64,
+    prev_offscreen_ms: f64,
     /// In-flight wall-clock cost probe per view: `(steps, frame it was armed on, max interval
     /// seen since)`. See `wall_clock_budget_tick` — a dispatch's cost lands one to two intervals
     /// after the frame that submitted it, so it cannot be priced in place.
@@ -1999,6 +2004,8 @@ impl Default for Perf {
             mem_total: None,
             mem_poll: None,
             prev_body_ms: 0.0,
+            offscreen_ms: 0.0,
+            prev_offscreen_ms: 0.0,
             wall_probe: [None, None],
             ts_supported: false,
             budget_mode: [u32::MAX, u32::MAX],
@@ -15245,15 +15252,18 @@ impl eframe::App for FractadyneApp {
         {
             let target = crate::tunables::cost().tdr_budget_ms;
             let busy = ctx.has_requested_repaint();
+            // The interval less any synchronous offscreen render inside it: that render is the
+            // app's own blocking work, not a live dispatch (see `render::tripwire_dt`).
+            let dt_ms = render::tripwire_dt(self.perf.last_dt_ms, self.perf.prev_offscreen_ms);
             // PER VIEW (finding U15): the wall interval is the window's, so a slow frame counts
             // for every live view; but each view's warning is judged against ITS OWN readings and
             // reports ITS OWN state — one panel's healthy reading must not silence the other's.
             let views = if self.dual { 2 } else { 1 };
-            if busy && self.perf.last_dt_ms > target {
+            if busy && dt_ms > target {
                 for v in 0..views {
                     self.perf.blind_slow_frames[v] = self.perf.blind_slow_frames[v].saturating_add(1);
                 }
-            } else if self.perf.last_dt_ms < target * 0.5 {
+            } else if dt_ms < target * 0.5 {
                 // Comfortably quick again: the episode is over, and the next one gets its own
                 // warning. Hysteresis on purpose — resetting at the target would let a run
                 // oscillating either side of it re-arm the warning every few frames.
@@ -15264,7 +15274,7 @@ impl eframe::App for FractadyneApp {
                                 "render",
                                 &format!(
                                     "DEAD-MAN cleared: view={v} frame {:.0}ms (under {:.0}ms) — budget {:.3e} may grow again",
-                                    self.perf.last_dt_ms,
+                                    dt_ms,
                                     target * 0.5,
                                     self.perf.fe_budget[v] as f64
                                 ),
@@ -15283,7 +15293,7 @@ impl eframe::App for FractadyneApp {
                     self.perf.blind_slow_readings[v],
                     self.perf.blind_warned[v],
                 ) && !render::budget_blind_lethal(
-                    self.perf.last_dt_ms,
+                    dt_ms,
                     busy,
                     self.perf.blind_slow_readings[v],
                     self.perf.blind_warned[v],
@@ -15300,7 +15310,7 @@ impl eframe::App for FractadyneApp {
                      timestamp cannot see; the budget cannot shrink and `chunk_over` compares \
                      against it, so the frame will not be chunked either.",
                     self.perf.blind_slow_frames[v],
-                    self.perf.last_dt_ms,
+                    dt_ms,
                     self.perf.fe_budget[v] as f64,
                     self.perf.last_iterate_ms[v],
                     self.perf.fe_steps_last[v] as f64,
@@ -15408,6 +15418,8 @@ impl eframe::App for FractadyneApp {
         }
         self.emit_frame_records(ctx, body_ms);
         self.perf.prev_body_ms = body_ms;
+        self.perf.prev_offscreen_ms = self.perf.offscreen_ms;
+        self.perf.offscreen_ms = 0.0;
 
         // Navigation history: record a location each time the single view settles after
         // a pan/zoom gesture (its own dedup avoids repeats). Discrete jumps record

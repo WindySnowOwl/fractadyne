@@ -9831,6 +9831,20 @@ pub(crate) fn budget_blind_lethal(dt_ms: f64, busy: bool, slow_readings: u32, wa
     !warned && busy && slow_readings == 0 && dt_ms >= crate::tunables::cost().tdr_lethal_ms
 }
 
+/// The part of a frame interval the budget-blind tripwire may judge: the wall interval less the
+/// time the frame spent in a SYNCHRONOUS OFFSCREEN render on the UI thread (a CLI `--render`, a
+/// `--render-tour`, a glitch-corrected export). That render is the app's own blocking work, not a
+/// live dispatch the frame budget sized, and nothing the dead-man does can shorten it.
+///
+/// Without this, every CLI render past `TDR_LETHAL_MS` (0.9 s) fired the lethal trigger on the
+/// frame after it and failed its own log check — exit 1 on a render that succeeded (found
+/// 2026-09-27: beta.131 exit 0, beta.134 exit 1 on the same 7.7 s benchmark render; the trigger
+/// arrived in beta.132). Only the offscreen part is discounted: anything else in the frame body
+/// still counts, which is how `--recordtest` injects its blind and wedged frames.
+pub(crate) fn tripwire_dt(last_dt_ms: f64, offscreen_ms: f64) -> f64 {
+    (last_dt_ms - offscreen_ms.max(0.0)).max(0.0)
+}
+
 /// ⭐⭐THE WALL-CLOCK DEAD-MAN's budget (design §5.1, §8): when [`budget_blind`] latches, the view's
 /// budget drops to its bootstrap — the opening guess a view uses before anything is measured,
 /// itself capped at `TDR_BOOTSTRAP_STEPS` — and may not grow again until the latch clears.
