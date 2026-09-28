@@ -436,10 +436,19 @@ fn main() -> eframe::Result<()> {
     // Every deliberate exit goes through `crate::exit`, which disarms it, so a clean shutdown can
     // never be mistaken for a crash.
     diag::begin_gui_session();
+    // ⭐The app's STATE is built before eframe creates the window and GPU device, and the GPU is
+    // attached in eframe's creation callback. The split exists for `--render`: its reference
+    // build is CPU work that needs only the state, so it starts here and runs while the window
+    // and device come up (~0.7 s of a 3.1 s 4K render at 4.6e1105×).
+    let mut app = FractadyneApp::new_state(&args);
+    app.start_early_cli_reference();
     let r = eframe::run_native(
         "Fractadyne",
         native_options,
-        Box::new(move |cc| Ok(Box::new(FractadyneApp::new(cc, &args)))),
+        Box::new(move |cc| {
+            app.attach_gpu(cc);
+            Ok(Box::new(app))
+        }),
     );
     // A windowed task that ended by closing its window (`--chunk-sweep` does) still owes its
     // `[fd-exit]` line and its log check.
@@ -5786,7 +5795,10 @@ struct FractadyneApp {
 
 impl FractadyneApp {
 
-    fn new(cc: &eframe::CreationContext<'_>, args: &[String]) -> Self {
+    /// Attach the window's GPU and egui context to an app built by [`Self::new_state`]: the
+    /// renderer, the device's limits and fault handlers, fonts, theme, and the adapter facts.
+    /// Called from eframe's creation callback, once the window and device exist.
+    fn attach_gpu(&mut self, cc: &eframe::CreationContext<'_>) {
         // A missing wgpu render state means the GPU backend failed to initialize. Report it
         // plainly and exit cleanly rather than surfacing a Rust panic + backtrace to the user.
         let render_state = match cc.wgpu_render_state.as_ref() {
@@ -5912,8 +5924,26 @@ impl FractadyneApp {
         // Vulkan = SPIR-V) built the running pipelines — a `--gputest` verdict or wrong-render
         // report is uninterpretable without it. Kept separate from `gpu_name`, which baseline
         // `same_gpu` comparisons match on verbatim.
-        let gpu_backend = format!("{:?}", render_state.adapter.get_info().backend);
+        self.gpu_backend = format!("{:?}", render_state.adapter.get_info().backend);
+        self.sysinfo = gather_system_info(Some(&gpu_name));
+        self.gpu_name = gpu_name;
+        self.max_texture_dim = render_state.device.limits().max_texture_dimension_2d;
+        // Tell the operator they are watching a harness drive the app, not a person — the title
+        // is the one place visible even when the window is behind others.
+        if let Some(mode) = &self.test_banner {
+            cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
+                "{} — LIVE TEST ({mode})",
+                crate::window_title()
+            )));
+        }
+        apply_theme(&cc.egui_ctx, self.theme);
+    }
 
+    /// The app's STATE: everything except what needs the window's GPU and egui context, which
+    /// [`Self::attach_gpu`] adds. `main` builds it BEFORE eframe creates the window and device, so
+    /// a `--render` can start its reference build while they come up
+    /// ([`Self::start_early_cli_reference`]; window + device creation is ~0.7 s).
+    fn new_state(args: &[String]) -> Self {
         // CLI modes (headless, for automation / debugging):
         //   --benchmark [--out PATH]                    run the built-in benchmark, save, quit
         //   --render --out IMG [view options]           render one image, save, quit
@@ -6283,13 +6313,7 @@ impl FractadyneApp {
             })
         };
         // The window title carries it too, so alt-tab and the taskbar name a test window even when
-        // it is behind others. Sent once here — `cc.egui_ctx` is live in the constructor.
-        if let Some(mode) = &test_banner {
-            cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
-                "{} — LIVE TEST ({mode})",
-                crate::window_title()
-            )));
-        }
+        // it is behind others — sent by `attach_gpu`, once there is a window to title.
 
         // Restore the last session (or defaults). The center comes from the
         // full-precision decimal strings when present (deep-zoom locations survive
@@ -6365,7 +6389,7 @@ impl FractadyneApp {
             _ => None,
         };
         let theme = ThemeMode::from_key(&s.theme);
-        apply_theme(&cc.egui_ctx, theme);
+        // (Applied to the egui context by `attach_gpu`.)
         let mut viewport = Viewport::new(1280.0, 720.0);
         viewport.center_x = fractadyne_core::parse_bf(&s.center_x_str)
             .unwrap_or_else(|| fractadyne_core::BigFloat::from_f64(s.center_x, 64));
@@ -6589,9 +6613,11 @@ impl FractadyneApp {
                     )
                 }),
             },
-            sysinfo: gather_system_info(Some(&gpu_name)),
-            gpu_name,
-            gpu_backend,
+            // The adapter facts (and the VRAM probe that needs the adapter's name) are filled in by
+            // `attach_gpu`; no frame runs before it.
+            sysinfo: SysInfo::default(),
+            gpu_name: String::new(),
+            gpu_backend: String::new(),
             report: ReportState::default(),
             feature_solve: None,
             allow_tiled_settle: false,
@@ -6670,11 +6696,7 @@ impl FractadyneApp {
                      previous location was too demanding to render."
                         .to_string()
                 }),
-            max_texture_dim: cc
-                .wgpu_render_state
-                .as_ref()
-                .map(|rs| rs.device.limits().max_texture_dimension_2d)
-                .unwrap_or(0),
+            max_texture_dim: 0, // the device's, set by `attach_gpu`
             last_window_geom: None,
             dpi_hold: None,
             suppress_autosave: false,

@@ -275,7 +275,14 @@ build's own `orbit_ms` (and `--bench-matrix`'s `ref ms` column) is then clocked 
 phase 1 has every core busy, so it reads 10–45% higher than a sequential build's while the whole
 reference window is shorter: at beta.143 the bench-matrix's 16 builds took 3,942 ms from
 `building reference` to `reference built`, against 4,343 ms with `--set REF_OVERLAP=0`, none of
-them slower. Judge the overlap by that window, not by the build's clock.
+them slower. Judge the overlap by that window, not by the build's clock. — and `EARLY_REF`
+(default 1 from beta.147; `0` = off, for a before/after measurement): a plain single-view
+`--render` starts its reference build in `main`, before eframe creates the window and GPU device
+(~0.7 s), and the export uses it only when its own reference inputs match field for field. The log
+says `early reference USED — started N ms before the export asked for it, which then waited M ms`,
+or `early reference DISCARDED — its <field> differs` (the render then builds as before; a discard
+is a missed speed-up, never a different picture). The window/device creation itself reads ~0.1–
+0.2 s slower while the build competes with it for the CPU; the render as a whole is faster.
 
 - **Not a configuration surface.** The defaults are the only tested path: the self-test, the
   goldens, `--bench-matrix` and `--livetest` all assume them. `--selftest` carries a check that

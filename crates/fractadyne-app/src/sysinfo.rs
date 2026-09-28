@@ -379,7 +379,9 @@ pub(crate) fn gpu_usage() -> Option<(f64, u64, u64)> {
     Some((util, used * 1024 * 1024, total * 1024 * 1024))
 }
 
-/// Host system facts shown in benchmark reports (gathered once at startup).
+/// Host system facts shown in benchmark reports (gathered once at startup, when the GPU is known;
+/// `Default` is the empty value the app holds until then).
+#[derive(Default)]
 pub(crate) struct SysInfo {
     pub(crate) cpu: String,
     pub(crate) logical: usize,

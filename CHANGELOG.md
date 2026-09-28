@@ -12,6 +12,43 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Faster command-line renders: the reference calculation starts before the window opens**
+  (beta.147).
+  - **The change:** a `--render` spent its first ~0.7 s creating the window and graphics device,
+    and only then started calculating the reference orbit. That calculation needs only the CPU,
+    so it now starts first and runs while the window and device come up. The render uses it only
+    if it was calculated from exactly the settings the render asks for. Otherwise it calculates
+    one as before and says so in the log.
+  - **How much**, on 4K renders (median of three interleaved runs, same build, with the new
+    `EARLY_REF` setting on and off):
+    - 4.6e1105: 2.5 s instead of 3.3 s. In the accelerated (MPFR) build, 1.8 s instead of 2.2 s.
+    - 1.2e148: 11.7 s instead of 12.7 s.
+    - 1.47e77: 2.5 s instead of 3.0 s.
+    - 4.2e275: 4.2 s instead of 4.5 s.
+    - Shallow views are unchanged. Their reference takes less time than the window does.
+  - **Pictures:** identical to the pixel at all ten benchmark scenes.
+  - **Under the hood:** the app's settings are now loaded before the window is created, and the
+    graphics device is attached afterwards. This applies to every launch, not only `--render`.
+- **The accelerated (MPFR) build's series approximation is also split across two threads**
+  (beta.146), as the standard build's is since beta.145. At 4.6e1105 a 4K render in the
+  accelerated build takes 2.2 s instead of 2.5 s, and the preparation before rendering 0.51 s
+  instead of 0.82 s. The picture is identical to the pixel, and identical to the standard
+  build's.
+- **Faster deep renders: more of the preparation runs in parallel, and `--render` exits
+  sooner** (beta.145).
+  - **Series approximation:** it has two parts. One steps the reference point's orbit at full
+    precision; the other updates three 128-bit coefficients from each step. They now run on two
+    threads, the first feeding the second, instead of taking turns.
+  - **Reference pick:** the pick first scores all 101 candidate points briefly, then walks the
+    best one to the end, and the view centre is always walked first. The centre's full walk now
+    starts while the brief scoring is still running.
+  - **Command-line render:** `--render` exits as soon as the image is written. Before, it drew
+    two frames of the live view first, and at a deep location those started another reference
+    calculation.
+  - **How much**, on 4K renders: at 4.6e1105 the whole render takes 3.1 s instead of 3.9 s. The
+    preparation before rendering takes 1.44 s instead of 2.04 s. At 4.2e275 it takes 0.39 s
+    instead of 0.45 s, and at 1.47e77 0.62 s instead of 0.65 s.
+  - **Pictures:** identical to the pixel at all five deep benchmark scenes.
 - **Slightly faster series approximation** (beta.144): its coefficient arithmetic now also uses
   a 128-bit copy of the reference point's orbit value instead of the full-precision one. At
   4.6e1105 the preparation before rendering takes 2.04 s instead of 2.20 s. Pictures are

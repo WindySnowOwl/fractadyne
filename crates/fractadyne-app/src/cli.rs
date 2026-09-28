@@ -1596,7 +1596,12 @@ impl crate::FractadyneApp {
                         crate::exit(1);
                     }
                 }
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                // Exit HERE, not through `ViewportCommand::Close`: a close runs the rest of this
+                // frame and one more, and those are LIVE frames — at 4.6e1105× they spawned a
+                // 258k-iteration live reference build the exit then abandoned — before eframe's
+                // teardown (0.2 s at 4K). Nothing on that path matters to a CLI render: autosave
+                // is off for it (the gate at the end of `update`) and so is the orbit cache.
+                crate::exit(0);
             }
         }
 
