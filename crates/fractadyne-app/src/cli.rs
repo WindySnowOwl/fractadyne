@@ -1576,6 +1576,9 @@ impl crate::FractadyneApp {
                     // which would cut a detached tune mid-note.
                     crate::tone::play_finish_sound(true);
                 }
+                // Synchronous offscreen work, not a live dispatch: the tripwire must not read this
+                // frame's interval as a lethal-band GPU frame (`render::tripwire_dt`).
+                self.perf.offscreen_ms += t0.elapsed().as_secs_f64() * 1000.0;
                 match result {
                     Ok(m) => println!("{m}  (in {})", Self::fmt_export_duration(t0.elapsed())),
                     Err(e) => {
@@ -1599,7 +1602,11 @@ impl crate::FractadyneApp {
                         println!("Note: Fd watermark is off (saved preference) — pass --watermark to include it.");
                     }
                     let cfg = self.render_cli.tour_cfg.clone();
-                    match self.render_tour_to_dir(ctx, dev, q, &script, &cfg) {
+                    let t0 = std::time::Instant::now();
+                    let result = self.render_tour_to_dir(ctx, dev, q, &script, &cfg);
+                    // Synchronous offscreen work (see `render::tripwire_dt`).
+                    self.perf.offscreen_ms += t0.elapsed().as_secs_f64() * 1000.0;
+                    match result {
                         Ok(m) => println!("{m}"),
                         Err(e) => {
                             eprintln!("Tour render failed: {e}");

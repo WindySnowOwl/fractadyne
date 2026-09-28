@@ -12,6 +12,14 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Fixed: a command-line render longer than about a second reported failure although it
+  succeeded** (beta.136). Since beta.132, the safety stop for dangerous GPU frames counted the time
+  a `--render` or `--render-tour` spent rendering as one dangerous frame. It then logged a warning
+  and the run's own log check failed, so the process exited with code 1 after writing a correct
+  image. The same false alarm followed a long glitch-corrected export from the GUI, where it only
+  cost a warning and a moment of coarser frames. Time spent in these renders is no longer counted.
+  On the same 4K benchmark render: beta.131 exit 0, beta.134 exit 1, beta.136 exit 0. The record
+  test still shows the safety stop reacting to its injected slow frames and its 13-second freeze.
 - **A fixed limit on how much work the GPU is given at once** (beta.135, for testing). The frame
   budget is learned from GPU timings, and a learned budget can be wrong: carried from a cheap view
   to a costly one, it hung the RX 6800 XT on 2026-09-27. Each card now also has a fixed limit,

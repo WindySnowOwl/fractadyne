@@ -93,3 +93,19 @@ fn the_dead_man_drops_a_high_budget_to_the_bootstrap_and_leaves_a_low_one_alone(
     // Unmeasured stays unmeasured: its dispatches already size from the bootstrap.
     assert_eq!(dead_man_budget(0, 400_000_000), 0);
 }
+
+#[test]
+fn a_synchronous_offscreen_render_is_not_a_lethal_band_frame() {
+    // The CLI render that failed its own log check (2026-09-27, beta.134): a 6,313 ms interval of
+    // which ~6,200 ms was the blocking render itself. What is left is an ordinary frame.
+    let dt = tripwire_dt(6313.0, 6200.0);
+    assert!((dt - 113.0).abs() < 1e-9, "{dt}");
+    assert!(!budget_blind_lethal(dt, true, 0, false));
+    // The same interval with NO offscreen render in it is exactly what the trigger exists for.
+    assert!(budget_blind_lethal(tripwire_dt(6313.0, 0.0), true, 0, false));
+    // `--recordtest`'s injected frames sleep in the body, not in an offscreen render: they count.
+    assert_eq!(tripwire_dt(450.0, 0.0), 450.0);
+    // Never negative, whatever the two clocks say.
+    assert_eq!(tripwire_dt(100.0, 250.0), 0.0);
+    assert_eq!(tripwire_dt(100.0, -5.0), 100.0);
+}
