@@ -1,5 +1,25 @@
 use super::*;
 
+/// `formula_dwell` must be the same oracle as `naive_dwell_bf` where both apply (Mandelbrot): the
+/// same escape iteration, and the same smooth count to float precision — escaped and interior.
+#[test]
+fn formula_dwell_agrees_with_the_plain_mandelbrot_oracle() {
+    let p = 128;
+    for (x, y) in [(-0.75, 0.1), (0.3, 0.5), (-1.25, 0.02), (-0.1, 0.1), (0.2501, 0.0), (-2.1, 0.0)] {
+        let (cx, cy) = (BigFloat::from_f64(x, p), BigFloat::from_f64(y, p));
+        let a = naive_dwell_bf(&cx, &cy, 5000, 65536.0, p);
+        let b = formula_dwell(&cx, &cy, 0, 5000, 65536.0, p);
+        match (a, b) {
+            (None, None) => {}
+            (Some((na, sa)), Some((nb, sb))) => {
+                assert_eq!(na, nb, "escape iteration at ({x}, {y})");
+                assert!((sa - sb).abs() < 1e-3, "smooth count at ({x}, {y}): {sa} vs {sb}");
+            }
+            _ => panic!("({x}, {y}): one oracle escaped and the other did not: {a:?} vs {b:?}"),
+        }
+    }
+}
+
 // Utility (run: `cargo test -p fractadyne-core dump_deep_boundary_coords -- --ignored
 // --nocapture`): bisect a deep boundary point for each perturbation family — the deep-golden
 // coords hard-coded in selftest.rs. A point accurate to ~1e-39 sits on the boundary at every
@@ -393,6 +413,164 @@ fn series_skip_matches_exact_multibrot3() {
     let err = ((series.0 - ex).powi(2) + (series.1 - ey).powi(2)).sqrt();
     let mag = (ex * ex + ey * ey).sqrt().max(1e-300);
     assert!(err / mag < 1.0e-3, "z³ series vs exact rel err {:.2e} at skip {}", err / mag, s.skip);
+}
+
+// The series walk carries its coefficients at `SA_COEFF_BITS` while the reference `Z` stays at
+// the working precision. What leaves the walk — the skip, and each coefficient's GPU value — must
+// be BYTE-EQUAL to the historical full-width walk (`pc = p`): that equality is the whole claim of
+// the change. Anti-vacuity: every case really narrows (p > pc), skips were produced, both cut
+// regimes appeared, and some walks ran long (10-step skips say nothing about accumulation).
+// Negative control, run 2026-09-28: the same matrix at 64-bit coefficients diverged in 14 of 32
+// cases (walks of 131 steps among them); at 128 all 32 matched (20 with a skip, 10 cap-bound,
+// the longest validity cut 998 steps).
+#[test]
+fn sa_coefficient_width_is_output_neutral() {
+    let bits4 = |q: &[f32; 4]| [q[0].to_bits(), q[1].to_bits(), q[2].to_bits(), q[3].to_bits()];
+    let points = [
+        ("boundary", "-0.743643887037158704752191506114774", "0.131825904205311970493132056385139"),
+        ("interior", "-0.5", "0.1"),
+        ("misiurewicz", "-0.77568377", "0.13646737"),
+        ("seahorse", "-0.745", "0.113"),
+    ];
+    let (mi, ol) = (4000u32, 4002u32);
+    let (mut cases, mut with_skip, mut cap_bound, mut longest_break) = (0usize, 0usize, 0usize, 0u32);
+    let mut bad: Vec<String> = Vec::new();
+    for f in [formula::MANDELBROT, formula::MULTIBROT3] {
+        for (label, sx, sy) in points {
+            for p in [576usize, 1088] {
+                assert!(p > SA_COEFF_BITS, "a case that does not narrow tests nothing");
+                let cx = parse_bf_prec(sx, p).unwrap();
+                let cy = parse_bf_prec(sy, p).unwrap();
+                for dc in [-40.0f64, -400.0] {
+                    let full = series_skip_astro(&cx, &cy, dc, mi, ol, f, p, p, None);
+                    let narrow = series_skip_astro(&cx, &cy, dc, mi, ol, f, p, SA_COEFF_BITS, None);
+                    cases += 1;
+                    let same = full.skip == narrow.skip
+                        && bits4(&full.a) == bits4(&narrow.a) && full.a_exp == narrow.a_exp
+                        && bits4(&full.b) == bits4(&narrow.b) && full.b_exp == narrow.b_exp
+                        && bits4(&full.c) == bits4(&narrow.c) && full.c_exp == narrow.c_exp;
+                    if !same {
+                        bad.push(format!(
+                            "{label} f={f} p={p} dc={dc}: skip {} vs {}",
+                            full.skip, narrow.skip
+                        ));
+                    }
+                    if full.skip > 0 {
+                        with_skip += 1;
+                        if full.skip == mi.min(ol - 2) {
+                            cap_bound += 1;
+                        } else {
+                            longest_break = longest_break.max(full.skip);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{} of {cases} cases diverged:\n{}", bad.len(), bad.join("\n"));
+    assert!(with_skip >= cases / 2, "vacuous: only {with_skip} of {cases} cases produced a skip");
+    assert!(cap_bound >= 2, "vacuous: no walk ran to the cap ({cap_bound})");
+    assert!(longest_break >= 100, "vacuous: the longest validity-cut walk was {longest_break} steps");
+}
+
+// The centre rescue may take its score from the app's build of the centre instead of walking it
+// again (`best_reference_diag_rescued` + `scoring_len_from_build`). The pick must come out
+// byte-identical to the plain one — point, score, scoring precision, rescue verdict — whatever
+// the build's cap: past the escape (read off the build), short of it (continued from the tail),
+// and exactly at it. Anti-vacuity: the rescue branch really ran (the oracle was consulted), and
+// the direct comparison below covers a bounded orbit whose continuation runs to `max_iter`.
+#[test]
+fn the_rescue_can_come_from_a_build() {
+    let p = 128;
+    let p2 = p + REF_RESCUE_EXTRA_BITS;
+    // Seahorse valley: every candidate escapes after ~2π/0.0005 ≈ 6,300 iterations — past the
+    // quick scan (4,096), so phase 1 has survivors, and short of `max_iter`, so the winner
+    // escapes early and the centre rescue runs.
+    let center = [bf(-0.75, p), bf(0.0005, p)];
+    let span = [FloatExp::from_f64(1e-9), FloatExp::from_f64(1e-9)];
+    let max_iter = 20_000;
+    let (plain, plain_diag) = best_reference_diag(&center, span, 0, false, [0.0, 0.0], max_iter, p);
+    let zero = bf(0.0, p2);
+    let eq = |a: &BigFloat, b: &BigFloat| a.cmp(b).is_some_and(|o| o == 0);
+    let full = orbit_length_in(crate::backend::selected(), &zero, &zero, &center[0], &center[1], 0, max_iter, p2, None);
+    assert!(full > 4096 && full < max_iter, "the view no longer exercises the rescue ({full})");
+    for cap in [max_iter, full, full - 1, 3000, 1] {
+        let (_, len, tail) = reference_orbit_t(&zero, &zero, &center[0], &center[1], 0, cap, p2);
+        let asked = std::cell::Cell::new(0u32);
+        let rescue = || {
+            asked.set(asked.get() + 1);
+            scoring_len_from_build(len, &tail, &center[0], &center[1], 0, max_iter, p2)
+        };
+        let (got, diag) = best_reference_diag_rescued(&center, span, 0, false, [0.0, 0.0], max_iter, p, &rescue);
+        assert!(asked.get() > 0, "cap {cap}: the rescue never ran — this compared nothing");
+        assert!(eq(&got[0], &plain[0]) && eq(&got[1], &plain[1]), "cap {cap}: a different point");
+        assert_eq!(
+            (diag.winner_len, diag.scoring_prec, diag.rescued, diag.survivors),
+            (plain_diag.winner_len, plain_diag.scoring_prec, plain_diag.rescued, plain_diag.survivors),
+            "cap {cap}"
+        );
+        assert_eq!(rescue(), Some(full), "cap {cap}: the build's score is not the walk's");
+    }
+    // A bounded orbit (main cardioid) never escapes: the build's cap decides everything, and a
+    // short build must be continued to exactly `max_iter`.
+    let (ix, iy) = (bf(-0.1, p2), bf(0.1, p2));
+    for cap in [max_iter, 7000, 1] {
+        let (_, len, tail) = reference_orbit_t(&zero, &zero, &ix, &iy, 0, cap, p2);
+        assert_eq!(
+            scoring_len_from_build(len, &tail, &ix, &iy, 0, max_iter, p2),
+            Some(orbit_length_in(crate::backend::selected(), &zero, &zero, &ix, &iy, 0, max_iter, p2, None)),
+            "bounded orbit, cap {cap}"
+        );
+    }
+}
+
+// `series_skip_holds_for`: a skip walked against an UPPER BOUND on the reference length is the
+// skip for the actual length whenever the rule says so — byte for byte. Both verdicts must occur
+// (and "holds" with a real skip), or the rule was never tested where it can fail.
+#[test]
+fn the_sa_bound_rule_is_exact() {
+    let bits4 = |q: &[f32; 4]| [q[0].to_bits(), q[1].to_bits(), q[2].to_bits(), q[3].to_bits()];
+    let same = |a: &SeriesSkip, b: &SeriesSkip| {
+        a.skip == b.skip
+            && bits4(&a.a) == bits4(&b.a) && a.a_exp == b.a_exp
+            && bits4(&a.b) == bits4(&b.b) && a.b_exp == b.b_exp
+            && bits4(&a.c) == bits4(&b.c) && a.c_exp == b.c_exp
+    };
+    let p = 256;
+    let (mi, bound) = (4000u32, 4002u32);
+    let (mut holds, mut holds_real, mut redo) = (0, 0, 0);
+    for (sx, sy) in [("-0.5", "0.1"), ("-0.77568377", "0.13646737"), ("-0.745", "0.113")] {
+        let cx = parse_bf_prec(sx, p).unwrap();
+        let cy = parse_bf_prec(sy, p).unwrap();
+        for dc in [-40.0f64, -200.0] {
+            let wide = series_skip(&cx, &cy, dc, mi, bound, 0, p);
+            for len in [2u32, 9, 10, 60, 133, 400, 1000, 4002] {
+                if series_skip_holds_for(&wide, len) {
+                    holds += 1;
+                    holds_real += (wide.skip > 0) as u32;
+                    let exact = series_skip(&cx, &cy, dc, mi, len, 0, p);
+                    assert!(same(&wide, &exact), "{sx},{sy} dc={dc} len={len}: rule said reuse, walk differs");
+                } else {
+                    redo += 1;
+                }
+            }
+        }
+    }
+    assert!(holds_real >= 3 && redo >= 3, "vacuous: holds {holds} ({holds_real} real), redo {redo}");
+}
+
+// A cancelled speculative walk stops and reports nothing usable.
+#[test]
+fn a_cancelled_sa_walk_stops() {
+    let p = 256;
+    let (cx, cy) = (bf(-0.5, p), bf(0.1, p));
+    let on = std::sync::atomic::AtomicBool::new(true);
+    let off = std::sync::atomic::AtomicBool::new(false);
+    let b = crate::BackendChoice::Astro;
+    let live = series_skip_in_cancellable(b, &cx, &cy, -40.0, 4000, 4002, 0, p, Some(&off));
+    let dead = series_skip_in_cancellable(b, &cx, &cy, -40.0, 4000, 4002, 0, p, Some(&on));
+    assert!(live.skip > 0, "the control produced no skip, so cancellation proves nothing");
+    assert_eq!(dead.skip, 0);
 }
 
 // BLA: a tree traversal must reproduce the exact (full-step) perturbation while skipping

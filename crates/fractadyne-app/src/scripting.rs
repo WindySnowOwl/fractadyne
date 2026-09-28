@@ -3225,6 +3225,7 @@ impl FractadyneApp {
                     1,
                     crate::render::NormRange::OwnFrame,
                     None,
+                    None,
                     TOUR_WORK_BUDGET,
                 ) {
                     norm_anchors.push((t, range));
@@ -3389,7 +3390,7 @@ impl FractadyneApp {
                     };
                     self.render_export_normalized(
                         device, queue, &self.viewport, self.julia_mode, width, height, ss,
-                        spec, this_ref.take(), TOUR_WORK_BUDGET,
+                        spec, this_ref.take(), None, TOUR_WORK_BUDGET,
                     )
                 } else {
                     None

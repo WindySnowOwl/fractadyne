@@ -566,7 +566,10 @@ impl FractadyneApp {
                         "Multi-reference glitch correction for exported images: detects \
                          perturbation glitches and re-renders those pixels against extra \
                          references until clean. On by default. Exports up to ~32 MP (non-aux \
-                         coloring); larger images and the live view use the plain path.",
+                         coloring); larger images and the live view use the plain path. \
+                         Never used for Mandelbrot or Multibrot views (outside Julia mode): \
+                         checked against an exact calculation, it fixed nothing there and \
+                         cost up to 5x the export time.",
                     );
                 ui.separator();
                 ui.label(egui::RichText::new("Performance tuning").weak().small());

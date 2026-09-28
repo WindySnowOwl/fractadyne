@@ -260,7 +260,22 @@ conservative default. Direct and df32-perturbation dispatches only (floatexp's B
 nominal steps unrepresentative). The adapter line is followed by `dispatch ceiling (calibrated for
 …)`, and a view logs `dispatch ceiling BINDS on v0: learned X → Y` when the ceiling starts to limit
 its budget and `dispatch ceiling released` when it stops. The value itself is NOT overridable: a
-per-card number as an override would make every gate on that card non-stock.
+per-card number as an override would make every gate on that card non-stock. — and `TAIL_DF32`
+(default 1 from beta.141; `0` = off, for a before/after measurement): a deep (floatexp) Mandelbrot
+step whose offset from the reference has grown past 2^-60 runs in ordinary df32 arithmetic instead
+of floatexp, and back if it shrinks. The share of steps taken that way is the `in df32` figure on a
+CLI render's `perf` line, and `--tail-audit` checks the pixels the phase changes against the
+arbitrary-precision oracle. — and `REF_OVERLAP` (default 1 from beta.143; `0` = the sequential
+order, for a before/after measurement): a fresh reference builds the view centre's orbit and
+series skip on their own threads while the pick scores candidates, and the pick's centre rescue
+reads its score from that build instead of walking the centre again. The result is byte-identical
+either way (selftest `ref-overlap`); `FRACTADYNE_TRACE=ref` prints `overlap: centre build USED` or
+`DISCARDED` per build, with `sa=overlap` when the series skip came from the parallel walk. ⚠A
+build's own `orbit_ms` (and `--bench-matrix`'s `ref ms` column) is then clocked while the pick's
+phase 1 has every core busy, so it reads 10–45% higher than a sequential build's while the whole
+reference window is shorter: at beta.143 the bench-matrix's 16 builds took 3,942 ms from
+`building reference` to `reference built`, against 4,343 ms with `--set REF_OVERLAP=0`, none of
+them slower. Judge the overlap by that window, not by the build's clock.
 
 - **Not a configuration surface.** The defaults are the only tested path: the self-test, the
   goldens, `--bench-matrix` and `--livetest` all assume them. `--selftest` carries a check that

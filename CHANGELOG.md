@@ -12,6 +12,112 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Slightly faster series approximation** (beta.144): its coefficient arithmetic now also uses
+  a 128-bit copy of the reference point's orbit value instead of the full-precision one. At
+  4.6e1105 the preparation before rendering takes 2.04 s instead of 2.20 s. Pictures are
+  identical to the pixel at the four benchmark scenes that use the series approximation.
+- **Faster deep renders: the reference orbit's repeated calculations now overlap** (beta.143).
+  - **The change:** before rendering a deep view, Fractadyne picks a reference point, builds its
+    orbit, and computes the series approximation. At a view whose reference escapes early, the
+    pick re-checks the view centre at the build's precision. When the centre is the pick, the
+    same orbit was being calculated up to four times, one after another. Now the centre's
+    orbit build and its series step run on their own threads while the pick scores candidates.
+    The pick's re-check reads its answer from that build instead of repeating it.
+  - **How much**, on 4K renders (median of three interleaved pairs, same build, with the new
+    `REF_OVERLAP` setting on and off):
+    - 4.6e1105, where the centre is the pick: the preparation before rendering takes 2.2 s
+      instead of 6.2 s. The whole render takes 3.9 s instead of 8.1 s.
+    - 1.2e148: 2.7 s instead of 3.2 s. 4.2e275 and 1.47e77: about 0.05 s less. Here
+      another point is picked, so only the re-check is saved.
+  - **Pictures:** identical to the pixel at all five benchmark scenes. A new self-test builds
+    three views both ways and compares the results field by field. It fails if the overlap
+    changes anything, and also if the overlap never actually ran.
+  - **Where:** exports and the live view's fresh reference builds. `--set REF_OVERLAP=0` restores
+    the old order for comparison.
+- **Faster deep renders: the series approximation no longer runs at full precision**
+  (beta.142).
+  - **The change:** before a deep view renders, Fractadyne computes a reference orbit and three
+    series coefficients that let every pixel skip the orbit's first stretch. The coefficients
+    were computed at the zoom's full working precision (3,738 bits at 4.6e1105), although only
+    their top 53 bits are ever used. They now use 128 bits. The reference orbit keeps full
+    precision.
+  - **How much**, on 4K renders:
+    - 4.6e1105: the coefficients took 9.5 s and now take 2.1 s. The whole render finishes in
+      8.1 s instead of 15.6 s.
+    - The coefficients at 4.2e275: 0.21 s instead of 0.35 s. At 1.47e77: 0.35 s instead of
+      0.41 s.
+    - Views that do not use the series (1.2e148 among the benchmarks) are unchanged.
+  - **Pictures:** identical to the pixel at all four benchmark scenes that use it, with the same
+    number of skipped iterations. A new test holds the result byte for byte equal to the
+    full-precision calculation. It fails when the coefficients are cut to 64 bits, so it can
+    tell.
+  - **Where:** exports and the live view's reference builds, in the standard and the MPFR
+    builds alike.
+- **Faster deep Mandelbrot rendering: cheaper arithmetic once it is safe** (beta.141, for
+  testing).
+  - **The change:** past 1e28× each pixel's step is computed in an extended-range number format
+    that is about 2.5× costlier than the ordinary one, because the pixel's offset from the
+    reference is too small for ordinary precision. That stays true only early in a pixel's orbit.
+    A step now switches to the ordinary format once the offset has grown past 2^-60, and back if
+    it shrinks.
+  - **How much:** the rendering step of a 4K image (after the reference orbit is built) is
+    faster. Figures are the median of three interleaved pairs, same build:
+    - 4.2e275: 2.77 s instead of 4.05 s (1.46×).
+    - 4.6e1105: 0.74 s instead of 1.02 s (1.39×).
+    - 1.2e148: 1.09×. Its time goes mostly to the steps that skip many iterations at once, which
+      this does not change.
+    - An earlier version of this entry said 1.93× at 4.2e275 and 1.04× at 4.6e1105. Both
+      measured the wrong span of the log. At 4.6e1105 that span was mostly the preparation
+      before rendering, 13 s of a 15 s render. Most of that was one step of it, which beta.142
+      speeds up.
+  - **Pictures:** identical to the pixel at 4.2e275, 4.6e1105 and 6.6e43. At 1.2e148, 0.14% of
+    pixels differ by fractions of an iteration, and checking them against an exact calculation
+    (`--tail-audit`) found no wrong escape.
+  - **Scope:** Mandelbrot only. `--set TAIL_DF32=0` turns it off for comparison.
+- **Faster, and no black specks: exports of Mandelbrot and Multibrot views skip glitch
+  correction** (beta.140).
+  - **Why:** glitch correction re-renders pixels it suspects are wrong, using extra reference
+    orbits. `--glitch-audit` (beta.139) checked the pixels it changed against an exact
+    calculation, on four Mandelbrot benchmark scenes and a Multibrot 3 view (120 pixels). It
+    fixed none of them. It made 15 worse: pixels it gave up on after its limit of references,
+    which it painted black.
+  - **Result:** a 4K render at 4.6e1105 now takes 18 s instead of 76 s, with an image identical
+    to `--no-glitch`.
+  - **Other families:** Burning Ship-type families and Julia views keep the setting, because the
+    check there was inconclusive.
+  - **Black-pixel fix:** where correction still runs, the pixels it gives up on keep their plain
+    value instead of being painted black. At the check's spar scene that removed all 10 pixels it
+    had made worse.
+  - **The setting's text:** the export setting's description says where correction applies.
+- **Diagnostics: `--glitch-audit` checks what glitch correction actually changes** (beta.139,
+  for testing).
+  - **What it does:** at the view a `--render` would draw, it renders the image with and
+    without glitch correction. It checks a sample of the pixels that differ against a slow but
+    independent arbitrary-precision calculation. It also checks the same number of pixels where
+    the two agree, which must match that calculation or it gives no verdict.
+  - **Results on four benchmark scenes (96 changed pixels):**
+    - Correction repaired none.
+    - It made 14 worse.
+    - The rest were either unchanged in effect or pixels whose true value shifts within a
+      thousandth of a pixel, where neither image can be called right.
+    - The visible damage is pixels correction gives up on, which it paints black.
+  - **What it costs:** up to 5× the render time (4.6e1105: 76 s against 15.6 s without it).
+- **Faster: a render with normalized colours no longer computes its reference twice**
+  (beta.138). A command-line render with normalized colours (`--normalize`) computed the
+  reference orbit for its view, then computed the identical orbit again before rendering. At the
+  4.2e275 benchmark scene that doubled 0.64 s of work. The image is unchanged: 0 differing pixels
+  at two corpus scenes.
+- **Diagnostics: how much work each iteration costs** (beta.137, for testing). A command-line
+  render's `perf` log line now also reports, from one pixel in 64:
+  - the loop steps the GPU actually executed, against the iterations they delivered;
+  - how many were ordinary single steps rather than skips;
+  - in the deepest arithmetic mode, how many of those single steps worked on values ordinary
+    precision could have held.
+
+  Until now the only counter was the number of skips taken, which says nothing about how much
+  work was saved. At the 4.2e275 benchmark scene each executed step delivers 53 iterations, and
+  every single step there could have used the cheaper arithmetic. This is the measurement the
+  next performance work is planned from.
 - **Fixed: a command-line render longer than about a second reported failure although it
   succeeded** (beta.136). Since beta.132, the safety stop for dangerous GPU frames counted the time
   a `--render` or `--render-tour` spent rendering as one dangerous frame. It then logged a warning

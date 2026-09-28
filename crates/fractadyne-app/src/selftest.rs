@@ -321,7 +321,7 @@ impl FractadyneApp {
         const GROUPS: &[&str] = &[
             "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
             "consistency", "counters", "iter-budget", "iter-chunk", "nr-zoom", "coords",
-            "curated-poi", "ref-pick", "ref-reuse", "orbit-cache", "script", "metadata",
+            "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
             "checklist",
         ];
@@ -779,6 +779,75 @@ impl FractadyneApp {
                 result,
                 threshold: "reuse engaged AND 0 texels differ",
                 pass,
+            });
+        }
+
+        // ⭐**The overlapped pick + build equals the sequential one** (render.rs `pick_and_build`):
+        // the centre's build and series walk run beside the pick, and the pick's centre rescue
+        // reads its score off that build. Every fresh reference goes through it — export and live
+        // cold starts alike — so a mismatch here is a wrong picture everywhere. Each view is built
+        // both ways and compared field by field; the overlap must also have ENGAGED somewhere
+        // (centre build used AND the series skip taken from the parallel walk), or the identity
+        // compared the sequential path with itself.
+        if want("ref-overlap") {
+            // (label, centre x, centre y, log2 magnification, max_iter)
+            let views: [(&str, &str, &str, f64, u32); 3] = [
+                (
+                    // The bench 4.6e1105 centre, truncated, at 2^150: the pick is the centre and
+                    // its reference is a short escaper (9,736 of 250k), so SA runs — the view
+                    // that exercises the whole overlap (centre build AND parallel series skip).
+                    "bench-10 centre @2^150 (centre, short escaper)",
+                    "2.88551201093059871274071303800151400053376951368725797081040550949502145160849912266356e-1",
+                    "1.22837636274455449095906129335365068997904564092657092682711609329657475248504117230298e-2",
+                    150.0,
+                    250_000,
+                ),
+                (
+                    "bench 6.6e43 (short escaper)",
+                    "-6.70209187903253724099340233845986400901890228472988919658169553187602139279518e-1",
+                    "4.58060975296945872909213676106313996238241655922637652387687460587764642477807e-1",
+                    145.9911716006,
+                    60_000,
+                ),
+                (
+                    "corpus07 1e30 (survivor)",
+                    "-0.743643887037158704752191506114774",
+                    "0.131825904205311970493132056385139",
+                    30.0 * std::f64::consts::LOG2_10,
+                    200_000,
+                ),
+            ];
+            let mut engaged = false;
+            for (label, x, y, log2mag, iter) in views {
+                let mag = 2f64.powf(log2mag);
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = fractadyne_core::parse_bf(x).unwrap();
+                vp.center_y = fractadyne_core::parse_bf(y).unwrap();
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
+                vp.precision = fractadyne_core::precision_for_magnification(mag);
+                let (pass, result) = match self.selfcheck_ref_overlap(&vp, iter) {
+                    Ok((spec, sa_from, summary)) => {
+                        engaged |= spec == "centre" && sa_from == "overlap";
+                        (true, summary)
+                    }
+                    Err(e) => (false, e),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "RefOverlap",
+                    name: format!("overlapped pick + build is byte-identical: {label}"),
+                    params: format!("{iter} iter, sequential vs overlapped fresh build"),
+                    result,
+                    threshold: "point, orbit, series skip, BLA, precision, tail all identical",
+                    pass,
+                });
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "RefOverlap",
+                name: "the overlap engaged (centre build + parallel series skip used)".into(),
+                params: "across the views above".into(),
+                result: format!("engaged={engaged}"),
+                threshold: "at least one view took both from the overlap",
+                pass: engaged,
             });
         }
 
@@ -5491,7 +5560,7 @@ zoom = \"1e94\"
             // and vacuous. `render_export_normalized` is the mapping the checkbox selects.
             let normed = |app: &Self, dev: &eframe::wgpu::Device, q: &eframe::wgpu::Queue|
              -> Option<Vec<u8>> {
-                app.render_export_normalized(dev, q, &app.viewport, false, cw, ch, 1, crate::render::NormRange::OwnFrame, None, u64::MAX)
+                app.render_export_normalized(dev, q, &app.viewport, false, cw, ch, 1, crate::render::NormRange::OwnFrame, None, None, u64::MAX)
                     .map(|(r, _)| fractadyne_export::to_srgb8_dithered(&r.pixels, r.width))
             };
             // A deep, dense field: the regime where an un-normalized palette aliases into

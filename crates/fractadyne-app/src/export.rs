@@ -1366,12 +1366,12 @@ impl FractadyneApp {
             if let Some((res, _range)) = self
                 // Interactive single export: the standard export tile budget (not the tour's tighter
                 // one — an on-screen export is a one-off, not a many-frame sequence).
-                .render_export_normalized(device, queue, vp, julia, req.width, req.height, req.ss, crate::render::NormRange::OwnFrame, None, 20_000_000_000)
+                .render_export_normalized(device, queue, vp, julia, req.width, req.height, req.ss, crate::render::NormRange::OwnFrame, None, Some(req), 20_000_000_000)
             {
                 return Ok(res);
             }
         }
-        if self.render_cfg.glitch_correct {
+        if self.correction_wanted(julia) {
             let budget = crate::render::CorrectionBudget::standard();
             if let Some(res) = self.render_export_corrected(device, queue, vp, julia, req.width, req.height, Some(req), budget) {
                 return Ok(res);
@@ -1398,12 +1398,17 @@ impl FractadyneApp {
             0.0
         };
         let c = &r.counters;
+        // Step accounting (1-in-64 pixel grid): executed loop trips against iterations advanced,
+        // and the share of full mode-2 steps taken in the df32 tail phase.
+        let st = fractadyne_gpu::StepStats::from_u64_slots(c);
+        let big_pct = if st.full > 0 { 100.0 * st.big as f64 / st.full as f64 } else { 0.0 };
         crate::diag::log_line(
             "perf",
             &format!(
                 "{kind}: {}x{} ss={} mode={} iter={} gpu_iterate={:.1}ms gpu_color={:.1}ms \
                  max_dispatch={:.0}ms ~{gsps:.2} Gsteps/s (nominal) | counters: rebase={} ext={} \
-                 glitch={} bla_skip={} maxiter={}",
+                 glitch={} bla_skip={} maxiter={} | steps (1/64 px): px={} executed={} \
+                 iterations={} = {:.1} per step, full={} of which in df32 {big_pct:.1}%",
                 r.width,
                 r.height,
                 r.ss,
@@ -1417,13 +1422,19 @@ impl FractadyneApp {
                 c[fractadyne_gpu::CTR_GLITCH],
                 c[fractadyne_gpu::CTR_BLA_SKIP],
                 c[fractadyne_gpu::CTR_MAXITER],
+                st.sampled_px,
+                st.executed,
+                st.iterations,
+                st.iters_per_step(),
+                st.full,
             ),
         );
         crate::diag::perf_jsonl(&format!(
             "\"kind\":\"{kind}\",\"w\":{},\"h\":{},\"ss\":{},\"mode\":{},\"iter\":{},\
              \"gpu_iterate_ms\":{:.3},\"gpu_color_ms\":{:.3},\"max_dispatch_ms\":{:.1},\
              \"gsteps_nominal\":{gsps:.3},\
-             \"ctr_rebase\":{},\"ctr_ext\":{},\"ctr_glitch\":{},\"ctr_bla\":{},\"ctr_maxiter\":{}",
+             \"ctr_rebase\":{},\"ctr_ext\":{},\"ctr_glitch\":{},\"ctr_bla\":{},\"ctr_maxiter\":{},\
+             \"step_px\":{},\"step_executed\":{},\"step_iterations\":{},\"step_full\":{},\"step_big\":{}",
             r.width,
             r.height,
             r.ss,
@@ -1437,6 +1448,11 @@ impl FractadyneApp {
             c[fractadyne_gpu::CTR_GLITCH],
             c[fractadyne_gpu::CTR_BLA_SKIP],
             c[fractadyne_gpu::CTR_MAXITER],
+            st.sampled_px,
+            st.executed,
+            st.iterations,
+            st.full,
+            st.big,
         ));
     }
 
@@ -1571,6 +1587,39 @@ impl FractadyneApp {
         Ok(format!("Saved iteration EXR {}×{} → {}", r.width, r.height, path.display()))
     }
 
+
+    /// Whether an export glitch-corrects a view: the user's setting, EXCEPT for the holomorphic
+    /// families in Mandelbrot mode (Mandelbrot, Multibrot 3–5), where it never runs.
+    ///
+    /// ⭐Measured, not assumed (`--glitch-audit`, 2026-09-28). The audit checks the pixels
+    /// correction changes against the arbitrary-precision oracle, with a control set that has to
+    /// agree first. Across four Mandelbrot corpus scenes and Multibrot 3 at 1e6×, 120 changed
+    /// pixels:
+    /// - correction repaired **none**;
+    /// - it made **15** worse — pixels it left flagged after its 64-reference cap, painted as
+    ///   interior;
+    /// - the rest were unchanged in effect, or chaotic within ±0.001 px (neither render right).
+    ///
+    /// With Zhuoran rebasing, the Pauldelbrot flags on these families are false positives. The
+    /// loop cost up to 5× the render (4.6e1105: 76 s against 15.6 s). The live view never ran it.
+    ///
+    /// Julia views and the non-holomorphic families keep the setting: the Burning Ship audit was
+    /// inconclusive (nothing flagged at 1e5×; the deep views tried were noise, where no pixel can
+    /// be judged).
+    pub(crate) fn correction_wanted(&self, julia: bool) -> bool {
+        crate::glitchaudit::correction_applies(self.render_cfg.glitch_correct, self.fractal.formula_id(), julia)
+    }
+
+    /// [`Self::correction_wanted`] for a whole job: the synchronous corrected path is all-or-nothing, so
+    /// a dual job corrects only when both of its views would.
+    fn job_wants_correction(&self, job: &ExportJob) -> bool {
+        match job {
+            ExportJob::Single(_) => self.correction_wanted(self.julia_mode),
+            ExportJob::SideBySide(..) | ExportJob::Separate(..) => {
+                self.correction_wanted(false) && self.correction_wanted(true)
+            }
+        }
+    }
 
     /// Fully render + write a glitch-corrected export synchronously (main thread), for every job
     /// layout. `Some(status)` = handled (success message, or a write-error message); `None` = a view
@@ -1707,7 +1756,7 @@ impl FractadyneApp {
         // path for aux coloring methods or views past the ~32 MP / single-texture correction limit.
         // Never for a heavy export (see above): a direct-mode view has no reference to prepare, so
         // it lands here, and the synchronous path would freeze the UI for the whole render.
-        if self.render_cfg.glitch_correct && !heavy {
+        if !heavy && self.job_wants_correction(&job) {
             let t0 = std::time::Instant::now();
             let done = self.export_corrected_sync(&device, &queue, &path, &job, hud.as_ref());
             // Synchronous offscreen work on the UI thread, whether or not it produced the image

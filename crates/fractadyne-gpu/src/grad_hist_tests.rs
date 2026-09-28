@@ -1,7 +1,8 @@
 //! The step histogram's readback, including the bucket the shader deliberately never writes.
 
 use crate::{
-    grad_hist_from_slots, COUNTER_SLOTS, CTR_ESC_HIST, CTR_GRAD_HIST, CTR_GRAD_N, ESC_HIST_BUCKETS,
+    grad_hist_from_slots, StepStats, COUNTER_SLOTS, CTR_ESC_HIST, CTR_GRAD_HIST, CTR_GRAD_N,
+    CTR_STEP_BIG, CTR_STEP_EXEC, CTR_STEP_FULL, CTR_STEP_ITER, CTR_STEP_PX, ESC_HIST_BUCKETS,
     GRAD_HIST_BUCKETS,
 };
 
@@ -41,10 +42,55 @@ fn an_inconsistent_readback_saturates_instead_of_wrapping() {
 
 #[test]
 fn the_histogram_fits_the_counter_buffer() {
-    // The slot map: the step histogram, then the escape histogram as the tail, nothing overlapping.
+    // The slot map: the step histogram, the escape histogram, then the step accounting's one count
+    // and four two-word sums as the tail, nothing overlapping.
     assert_eq!(CTR_GRAD_HIST + GRAD_HIST_BUCKETS, CTR_ESC_HIST);
-    assert_eq!(CTR_ESC_HIST + ESC_HIST_BUCKETS, COUNTER_SLOTS);
+    assert_eq!(CTR_ESC_HIST + ESC_HIST_BUCKETS, CTR_STEP_PX);
+    assert_eq!(
+        [CTR_STEP_EXEC, CTR_STEP_ITER, CTR_STEP_FULL, CTR_STEP_BIG],
+        [CTR_STEP_PX + 1, CTR_STEP_PX + 3, CTR_STEP_PX + 5, CTR_STEP_PX + 7]
+    );
+    assert_eq!(CTR_STEP_BIG + 2, COUNTER_SLOTS);
     assert!(CTR_GRAD_HIST > CTR_GRAD_N, "the histogram must not overlap the gradient sum/count");
+}
+
+/// The shader's own copy of the step-accounting slots ("keep in sync"): a drift would add into
+/// another counter's slot, silently.
+#[test]
+fn the_shader_agrees_on_the_step_accounting_slots() {
+    let wgsl = include_str!("mandelbrot.wgsl");
+    for (name, v) in [
+        ("CTR_STEP_PX", CTR_STEP_PX),
+        ("CTR_STEP_EXEC", CTR_STEP_EXEC),
+        ("CTR_STEP_ITER", CTR_STEP_ITER),
+        ("CTR_STEP_FULL", CTR_STEP_FULL),
+        ("CTR_STEP_BIG", CTR_STEP_BIG),
+    ] {
+        let decl = format!("const {name}: u32 = {v}u;");
+        assert!(wgsl.contains(&decl), "mandelbrot.wgsl must declare `{decl}`");
+    }
+}
+
+#[test]
+fn step_sums_are_read_as_two_words_with_the_carry() {
+    let mut slots = [0u32; COUNTER_SLOTS];
+    slots[CTR_STEP_PX] = 2025;
+    slots[CTR_STEP_EXEC] = 7;
+    slots[CTR_STEP_ITER] = 5; // lo
+    slots[CTR_STEP_ITER + 1] = 3; // hi: three carries
+    let s = StepStats::from_slots(&slots);
+    assert_eq!(s.sampled_px, 2025);
+    assert_eq!(s.iterations, (3u64 << 32) + 5);
+    assert_eq!(s.executed, 7);
+    // Summed over tiles, each half is summed on its own: a lo total past 2^32 is still right.
+    let mut wide = [0u64; COUNTER_SLOTS];
+    wide[CTR_STEP_ITER] = (1u64 << 32) + 9; // two tiles' lo words, summed
+    wide[CTR_STEP_ITER + 1] = 2; // their carries
+    wide[CTR_STEP_EXEC] = 100;
+    let w = StepStats::from_u64_slots(&wide);
+    assert_eq!(w.iterations, (3u64 << 32) + 9);
+    assert!((w.iters_per_step() - w.iterations as f64 / 100.0).abs() < 1e-6);
+    assert_eq!(StepStats::default().iters_per_step(), 0.0, "nothing executed reads as 0, not NaN");
 }
 
 /// The shader keeps its own copy of the escape histogram's slot and bucket count ("keep in sync"):

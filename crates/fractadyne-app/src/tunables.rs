@@ -87,6 +87,10 @@ pub(crate) struct Cost {
     pub dead_man: u64,
     /// The per-adapter dispatch ceiling (`DISPATCH_CEILING_DEFAULT`; 0 = off, 1 = on).
     pub dispatch_ceiling: u64,
+    /// The mode-2 df32 tail phase (`TAIL_DF32_DEFAULT`; 0 = off, 1 = on).
+    pub tail_df32: u64,
+    /// The overlapped pick + centre build (`REF_OVERLAP_DEFAULT`; 0 = off, 1 = on).
+    pub ref_overlap: u64,
     /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
     /// second override channel because duplicating the machinery for a single value would be worse.
     /// See the note above on what earns a place in this set.
@@ -117,6 +121,8 @@ impl Default for Cost {
             reading_pool: READING_POOL_DEFAULT,
             dead_man: DEAD_MAN_DEFAULT,
             dispatch_ceiling: DISPATCH_CEILING_DEFAULT,
+            tail_df32: TAIL_DF32_DEFAULT,
+            ref_overlap: REF_OVERLAP_DEFAULT,
             bla_eps: BLA_EPS,
         }
     }
@@ -302,6 +308,24 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "TAIL_DF32" => {
+                let p = c.tail_df32;
+                c.tail_df32 = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set TAIL_DF32: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
+            "REF_OVERLAP" => {
+                let p = c.ref_overlap;
+                c.ref_overlap = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set REF_OVERLAP: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "MOTION_NEED_QUANTILE" => {
                 let p = c.motion_need_quantile;
                 let v = f()?;
@@ -341,7 +365,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     TDR_BOOTSTRAP_MS, MOTION_UNPRICED_MAX, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL, \
-    DEAD_MAN, DISPATCH_CEILING";
+    DEAD_MAN, DISPATCH_CEILING, TAIL_DF32, REF_OVERLAP";
 
 #[cfg(test)]
 mod override_tests;
@@ -695,6 +719,18 @@ pub(crate) const DEAD_MAN_DEFAULT: u64 = 1;
 /// 0 = off, for the before/after measurement only; the values themselves are calibration, not
 /// tunables (§5.2).
 pub(crate) const DISPATCH_CEILING_DEFAULT: u64 = 1;
+
+/// 1 = the mode-2 df32 TAIL PHASE (beta.141; `TAIL_DF32_MIN` in mandelbrot.wgsl): a Mandelbrot
+/// full step whose |δz| has grown past 2^-60 runs in df32 instead of floatexp. The step counters
+/// (beta.137) found 84–100% of mode-2 full steps in that range at every deep corpus scene. 0 = the
+/// all-floatexp loop, for the before/after measurement.
+pub(crate) const TAIL_DF32_DEFAULT: u64 = 1;
+
+/// 1 = the OVERLAPPED pick + build (render.rs `pick_and_build`): the view centre's orbit build and
+/// series walk run beside the pick, and the pick's centre rescue reads its score off that build.
+/// Byte-identical to the sequential order (selftest `ref-overlap`); only the wall-clock differs.
+/// 0 = the sequential order, for the before/after measurement.
+pub(crate) const REF_OVERLAP_DEFAULT: u64 = 1;
 
 /// The most a held frame may MAGNIFY before its refresh lands, octaves — the zoom-rate-aware half
 /// of the refresh sizing. At `zoom_oct_s` octaves per second the refresh has `HELD_MAX_OCT /

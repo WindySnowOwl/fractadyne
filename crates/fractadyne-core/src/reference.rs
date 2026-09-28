@@ -573,6 +573,19 @@ fn log2_cmag(re: &BigFloat, im: &BigFloat) -> f64 {
 pub(crate) const SA_EPS_LOG2: f64 = -16.0;
 /// Below this skip the bookkeeping isn't worth it (shared likewise).
 pub(crate) const SA_MIN_SKIP: u32 = 8;
+/// Width (bits) the walk carries the series COEFFICIENTS at; the reference `Z` stays at the
+/// working precision `p` (shared likewise). `Z` needs `p`: it IS the orbit, and an error in it is
+/// a different `c`. The coefficients do not. They leave the walk only through `coeff_to_fe` (the
+/// top 53 bits of each) and `log2_cmag` (the exponent), and each recurrence is linear in the
+/// previous coefficient with `Z` as an input, so a walk carried at 128 bits drifts ~n·2⁻¹²⁸
+/// relative from one carried at `p` — 2⁻¹¹¹ at n = 2¹⁷, far below that 53-bit read. The
+/// `Z·coefficient` products take a copy of `Z` truncated to these bits once per step (beta.144;
+/// until then `Z` at full width, which astro-float and MPFR both multiply exactly before
+/// truncating the result — worth ~0.1 s of the 2.1 s walk at 4.6e1105). Before this the
+/// coefficients ran at `p`: 9.5 s of a 15.8 s 4K export at 4.6e1105× (p = 3738, 119,153 steps),
+/// ~7× the orbit build itself. `sa_coefficient_width_is_output_neutral` holds the emitted skip
+/// byte-equal to a full-width walk.
+pub(crate) const SA_COEFF_BITS: usize = 128;
 
 /// [`series_skip`] with an explicit backend — the cross-backend identity suite drives both
 /// arms directly (no global selection flips; the same pattern as `reference_orbit_t_in`).
@@ -591,6 +604,25 @@ pub fn series_skip_in(
     formula: u32,
     p: usize,
 ) -> SeriesSkip {
+    series_skip_in_cancellable(backend, cx, cy, log2_max_dc, max_iter, orbit_len, formula, p, None)
+}
+
+/// [`series_skip_in`] that stops at the next step once `cancel` is set, returning
+/// [`SeriesSkip::NONE`] — for a walk started speculatively beside the orbit build, which the app
+/// cancels when the build shows the skip will not be used. A cancelled result means nothing; the
+/// caller discards it.
+#[allow(clippy::too_many_arguments)]
+pub fn series_skip_in_cancellable(
+    backend: crate::BackendChoice,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    log2_max_dc: f64,
+    max_iter: u32,
+    orbit_len: u32,
+    formula: u32,
+    p: usize,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> SeriesSkip {
     if !log2_max_dc.is_finite() {
         return SeriesSkip::NONE;
     }
@@ -599,15 +631,25 @@ pub fn series_skip_in(
         #[cfg(feature = "rug")]
         crate::BackendChoice::Rug => {
             let limit = max_iter.min(orbit_len.saturating_sub(2)).min(sa_step_budget(p));
-            if let Some(best) =
-                crate::backend_rug::try_series_skip_walk(cx, cy, log2_max_dc, limit, formula, p)
-            {
+            if let Some(best) = crate::backend_rug::try_series_skip_walk(
+                cx, cy, log2_max_dc, limit, formula, p, cancel,
+            ) {
                 crate::backend::note_observed::<rug::Float>();
                 return series_best_to_skip(best);
             }
         }
     }
-    series_skip_astro(cx, cy, log2_max_dc, max_iter, orbit_len, formula, p)
+    series_skip_astro(cx, cy, log2_max_dc, max_iter, orbit_len, formula, p, p.min(SA_COEFF_BITS), cancel)
+}
+
+/// Whether a skip walked with `orbit_len` = an UPPER BOUND on the reference length is also the
+/// skip [`series_skip`] returns for the actual length `len`, all else equal. Both walks take the
+/// same steps up to the smaller limit and keep the last valid index before the first invalid one,
+/// so a skip within the tighter limit (`len − 2`) is where the tighter walk stops too, with the
+/// same coefficients; a skip past it has to be walked again. This lets the app start the walk
+/// before the orbit build has told it `len` (`the_sa_bound_rule_is_exact`).
+pub fn series_skip_holds_for(s: &SeriesSkip, len: u32) -> bool {
+    s.skip <= len.saturating_sub(2)
 }
 
 /// The walk's `best` → the emitted [`SeriesSkip`]. One conversion path for both backends:
@@ -644,12 +686,13 @@ pub fn series_skip(
     series_skip_in(crate::backend::selected(), cx, cy, log2_max_dc, max_iter, orbit_len, formula, p)
 }
 
-/// The astro-float coefficient walk — the historical `series_skip` body, VERBATIM (every
-/// blessed render's skip came from these exact operations; the corpus pins it). The MPFR
-/// twin mirrors this loop op-for-op; change one only with the other, and with
-/// `the_sa_walk_is_backend_identical` green.
+/// The astro-float coefficient walk — the historical `series_skip` body (every blessed render's
+/// skip came from these operations; the corpus pins it), with the coefficients carried at
+/// `pc` bits instead of `p` ([`SA_COEFF_BITS`]; `pc = p` is the historical walk exactly). The
+/// MPFR twin mirrors this loop op-for-op; change one only with the other, and with
+/// `the_sa_walk_is_backend_identical` green. `cancel`: see [`series_skip_in_cancellable`].
 #[allow(clippy::too_many_arguments)]
-fn series_skip_astro(
+pub(crate) fn series_skip_astro(
     cx: &BigFloat,
     cy: &BigFloat,
     log2_max_dc: f64,
@@ -657,6 +700,8 @@ fn series_skip_astro(
     orbit_len: u32,
     formula: u32,
     p: usize,
+    pc: usize,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> SeriesSkip {
     if !log2_max_dc.is_finite() {
         return SeriesSkip::NONE;
@@ -672,58 +717,75 @@ fn series_skip_astro(
         formula::MULTIBROT5 => 5,
         _ => 2,
     };
-    let one = bf(1.0, p);
+    let one = bf(1.0, pc);
     // Recurrence factors — all small exact integers, applied via `mul_u32_bf` (shift-and-add).
     let d_u = deg;
     let c2_u = deg * (deg - 1) / 2; // C(d,2)
     let two_c2_u = deg * (deg - 1); // 2·C(d,2)
     let c3_u = deg * (deg - 1) * (deg - 2) / 6; // C(d,3) (0 for d=2)
     let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
-    let (mut ax, mut ay) = (bf(0.0, p), bf(0.0, p));
-    let (mut bx, mut by) = (bf(0.0, p), bf(0.0, p));
-    let (mut cxx, mut cyy) = (bf(0.0, p), bf(0.0, p));
+    let (mut ax, mut ay) = (bf(0.0, pc), bf(0.0, pc));
+    let (mut bx, mut by) = (bf(0.0, pc), bf(0.0, pc));
+    let (mut cxx, mut cyy) = (bf(0.0, pc), bf(0.0, pc));
+    // The coefficients also take Z at `pc`: Z itself stays at `p` for the reference step, but a
+    // copy truncated to `pc` once per step turns every Z·coefficient product into a pc×pc one
+    // (at p = 3,738 that was 0.8 s of a 2.1 s walk). `pc = p` keeps the historical walk exactly.
+    let narrow = pc < p;
     let mut best: Option<(u32, [BigFloat; 6])> = None;
     for n in 1..=limit {
+        if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
+            return SeriesSkip::NONE;
+        }
+        let zc = narrow.then(|| {
+            let cut = |v: &BigFloat| {
+                let mut t = v.clone();
+                t.set_precision(pc, RM).expect("pc is a valid precision");
+                t
+            };
+            (cut(&zx), cut(&zy))
+        });
+        let (zcx, zcy) = zc.as_ref().map_or((&zx, &zy), |(x, y)| (x, y));
         // Advance the order-3 coefficients for z^d + c, using Z_{n-1} (current z):
         //   A' = d·Z^{d-1}·A + 1
         //   B' = d·Z^{d-1}·B + C(d,2)·Z^{d-2}·A²
         //   C' = d·Z^{d-1}·C + 2·C(d,2)·Z^{d-2}·A·B + C(d,3)·Z^{d-3}·A³
-        let (p1x, p1y) = cpow_bf(&zx, &zy, deg - 1, p); // Z^{d-1}
-        let (a2x, a2y) = cmul_bf(&ax, &ay, &ax, &ay, p); // A²
-        let (abx, aby) = cmul_bf(&ax, &ay, &bx, &by, p); // A·B
+        // Everything below the reference step is coefficient arithmetic, carried at `pc`.
+        let (p1x, p1y) = cpow_bf(zcx, zcy, deg - 1, pc); // Z^{d-1} (Z itself for d = 2)
+        let (a2x, a2y) = cmul_bf(&ax, &ay, &ax, &ay, pc); // A²
+        let (abx, aby) = cmul_bf(&ax, &ay, &bx, &by, pc); // A·B
         // Z^{d-2} is the identity (= 1) for d = 2 → `None` skips that whole complex multiply.
-        let p2 = (deg >= 3).then(|| cpow_bf(&zx, &zy, deg - 2, p));
+        let p2 = (deg >= 3).then(|| cpow_bf(zcx, zcy, deg - 2, pc));
         let zp2 = |wx: &BigFloat, wy: &BigFloat| match &p2 {
-            Some((p2x, p2y)) => cmul_bf(p2x, p2y, wx, wy, p),
+            Some((p2x, p2y)) => cmul_bf(p2x, p2y, wx, wy, pc),
             None => (wx.clone(), wy.clone()),
         };
         // A' = d·Z^{d-1}·A + 1
-        let (t, u) = cmul_bf(&p1x, &p1y, &ax, &ay, p);
-        let na_x = mul_u32_bf(&t, d_u, p).add(&one, p, RM);
-        let na_y = mul_u32_bf(&u, d_u, p);
+        let (t, u) = cmul_bf(&p1x, &p1y, &ax, &ay, pc);
+        let na_x = mul_u32_bf(&t, d_u, pc).add(&one, pc, RM);
+        let na_y = mul_u32_bf(&u, d_u, pc);
         // B' = d·Z^{d-1}·B + C(d,2)·Z^{d-2}·A²
-        let (t, u) = cmul_bf(&p1x, &p1y, &bx, &by, p);
+        let (t, u) = cmul_bf(&p1x, &p1y, &bx, &by, pc);
         let (v, w) = zp2(&a2x, &a2y);
-        let nb_x = mul_u32_bf(&t, d_u, p).add(&mul_u32_bf(&v, c2_u, p), p, RM);
-        let nb_y = mul_u32_bf(&u, d_u, p).add(&mul_u32_bf(&w, c2_u, p), p, RM);
+        let nb_x = mul_u32_bf(&t, d_u, pc).add(&mul_u32_bf(&v, c2_u, pc), pc, RM);
+        let nb_y = mul_u32_bf(&u, d_u, pc).add(&mul_u32_bf(&w, c2_u, pc), pc, RM);
         // C' = d·Z^{d-1}·C + 2·C(d,2)·Z^{d-2}·A·B + C(d,3)·Z^{d-3}·A³
-        let (t, u) = cmul_bf(&p1x, &p1y, &cxx, &cyy, p);
+        let (t, u) = cmul_bf(&p1x, &p1y, &cxx, &cyy, pc);
         let (v, w) = zp2(&abx, &aby);
-        let mut nc_x = mul_u32_bf(&t, d_u, p).add(&mul_u32_bf(&v, two_c2_u, p), p, RM);
-        let mut nc_y = mul_u32_bf(&u, d_u, p).add(&mul_u32_bf(&w, two_c2_u, p), p, RM);
+        let mut nc_x = mul_u32_bf(&t, d_u, pc).add(&mul_u32_bf(&v, two_c2_u, pc), pc, RM);
+        let mut nc_y = mul_u32_bf(&u, d_u, pc).add(&mul_u32_bf(&w, two_c2_u, pc), pc, RM);
         if deg >= 3 {
-            let (a3x, a3y) = cmul_bf(&a2x, &a2y, &ax, &ay, p); // A³
+            let (a3x, a3y) = cmul_bf(&a2x, &a2y, &ax, &ay, pc); // A³
             // Z^{d-3} is the identity for d = 3.
             let (x3, y3) = if deg >= 4 {
-                let (p3x, p3y) = cpow_bf(&zx, &zy, deg - 3, p);
-                cmul_bf(&p3x, &p3y, &a3x, &a3y, p)
+                let (p3x, p3y) = cpow_bf(zcx, zcy, deg - 3, pc);
+                cmul_bf(&p3x, &p3y, &a3x, &a3y, pc)
             } else {
                 (a3x, a3y)
             };
-            nc_x = nc_x.add(&mul_u32_bf(&x3, c3_u, p), p, RM);
-            nc_y = nc_y.add(&mul_u32_bf(&y3, c3_u, p), p, RM);
+            nc_x = nc_x.add(&mul_u32_bf(&x3, c3_u, pc), pc, RM);
+            nc_y = nc_y.add(&mul_u32_bf(&y3, c3_u, pc), pc, RM);
         }
-        // Advance the reference: Z_n = Z_{n-1}^d + c.
+        // Advance the reference at the working precision: Z_n = Z_{n-1}^d + c.
         let (nzx, nzy) = step_bf(&zx, &zy, cx, cy, formula, p);
         zx = nzx;
         zy = nzy;
@@ -1199,6 +1261,33 @@ fn orbit_length_bf(
     orbit_length_in(crate::backend::selected(), z0x, z0y, cx, cy, formula, max_iter, p, None)
 }
 
+/// The centre rescue's score ([`best_reference_diag_rescued`]) from a finished BUILD of the same
+/// point at the same precision `p` (`reference_orbit_t` → `len` samples and `tail`; `(cx, cy)` =
+/// the `c` both walks iterate with). The two walks take the same step at the same precision and
+/// stop on the same `f64` escape test, and the build's `len − 1` samples past `Z₀` are exactly
+/// the scoring walk's step count. A build that stopped at its cap short of `max_iter` without
+/// escaping is continued from its tail, length-only: the rest of the same walk. `None` for
+/// Phoenix in that case (the continuation would restart its two-term state), and for an empty
+/// build; the pick then walks as before.
+pub fn scoring_len_from_build(
+    len: u32,
+    tail: &OrbitTail,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+) -> Option<u32> {
+    let steps = len.checked_sub(1)?;
+    if tail.escaped || steps >= max_iter {
+        return Some(steps.min(max_iter));
+    }
+    if formula == formula::PHOENIX {
+        return None;
+    }
+    Some(steps + orbit_length_bf(&tail.zx, &tail.zy, cx, cy, formula, max_iter - steps, p))
+}
+
 /// [`orbit_length_bf`] in an **explicitly named** backend, with an optional extended-range
 /// sample sink (the recording the perturbation scorer consumes). Public for the same reason
 /// [`reference_orbit_t_in`] is: a bit-identity test must run both arithmetics in ONE process to
@@ -1515,8 +1604,10 @@ const REF_DEEP_MAX: usize = 16;
 /// Extra scoring precision for the CLIFF RESCUE passes in [`best_reference_diag`]. Matches the
 /// app's `REF_PREC_HEADROOM` (the orbit is built 128 bits above the request), so a rescued score
 /// describes exactly the orbit that will be built — scoring BELOW the build precision is the
-/// blindness this exists to cure.
-const REF_RESCUE_EXTRA_BITS: usize = 128;
+/// blindness this exists to cure. Public so the app can hold its headroom equal to it: the
+/// centre rescue may take its score from the app's build ([`best_reference_diag_rescued`]),
+/// which is only the same walk while the two precisions agree.
+pub const REF_RESCUE_EXTRA_BITS: usize = 128;
 
 /// Why/how a pick was made — the observability half of the reference-lifecycle redesign
 /// (`design/reference-lifecycle.md` L0/L1). Everything here is deterministic.
@@ -1610,14 +1701,39 @@ pub fn best_reference_diag(
     max_iter: u32,
     p: usize,
 ) -> ([BigFloat; 2], RefPickDiag) {
-    best_reference_diag_forced(center, span, formula, julia, julia_c, max_iter, p, None)
+    best_reference_diag_forced(center, span, formula, julia, julia_c, max_iter, p, None, None)
+}
+
+/// [`best_reference_diag`] whose CENTRE RESCUE may take its score from `rescue` instead of
+/// walking the centre itself. The rescue walks the centre at `p + REF_RESCUE_EXTRA_BITS` to
+/// `max_iter` — the same orbit, at the same precision, that the app then builds whenever the
+/// centre is the pick, so the app can build it once, on its own thread, while phases 1–2 run
+/// here, and answer the rescue from that build ([`scoring_len_from_build`]).
+///
+/// ⛔Contract: `rescue()` returns EXACTLY what the rescue walk would — `orbit_length_bf` of the
+/// centre (Julia: `z₀` = centre, `c` = `julia_c`) to `max_iter` at `p + REF_RESCUE_EXTRA_BITS`
+/// — or `None`, and the walk then runs here as before. The pick is then byte-identical to
+/// [`best_reference_diag`]'s (`the_rescue_can_come_from_a_build`).
+#[allow(clippy::too_many_arguments)]
+pub fn best_reference_diag_rescued(
+    center: &[BigFloat; 2],
+    span: [FloatExp; 2],
+    formula: u32,
+    julia: bool,
+    julia_c: [f64; 2],
+    max_iter: u32,
+    p: usize,
+    rescue: &dyn Fn() -> Option<u32>,
+) -> ([BigFloat; 2], RefPickDiag) {
+    best_reference_diag_forced(center, span, formula, julia, julia_c, max_iter, p, None, Some(rescue))
 }
 
 /// [`best_reference_diag`] with the phase-2 engine FORCED (`None` = resolve from the inputs —
 /// the production path). The force threads through the rescue rescans too, so a forced run is
 /// one engine end-to-end; it can override the span auto-gate but never engine eligibility
 /// ([`perturb_scoring_supported`] — forcing `Perturb` on a Julia/Phoenix request still walks).
-/// Exists for [`best_reference_dual`], the acceptance harness's entry point.
+/// Exists for [`best_reference_dual`], the acceptance harness's entry point. `rescue`: see
+/// [`best_reference_diag_rescued`].
 #[allow(clippy::too_many_arguments)]
 fn best_reference_diag_forced(
     center: &[BigFloat; 2],
@@ -1628,6 +1744,7 @@ fn best_reference_diag_forced(
     max_iter: u32,
     p: usize,
     force: Option<RefDeepScore>,
+    rescue: Option<&dyn Fn() -> Option<u32>>,
 ) -> ([BigFloat; 2], RefPickDiag) {
     match pick_pass(center, span, formula, julia, julia_c, max_iter, p, force) {
         PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks }
@@ -1651,14 +1768,16 @@ fn best_reference_diag_forced(
             // view (every point escapes) or a precision cliff between `quick` and `max_iter`.
             // Rescoring the centre at the BUILD precision separates them: only a cliff un-blinds.
             let p2 = p + REF_RESCUE_EXTRA_BITS;
-            let jcx = bf(julia_c[0], p2);
-            let jcy = bf(julia_c[1], p2);
-            let zero = bf(0.0, p2);
-            let centre_len = if julia {
-                orbit_length_bf(&center[0], &center[1], &jcx, &jcy, formula, max_iter, p2)
-            } else {
-                orbit_length_bf(&zero, &zero, &center[0], &center[1], formula, max_iter, p2)
-            };
+            let centre_len = rescue.and_then(|f| f()).unwrap_or_else(|| {
+                let jcx = bf(julia_c[0], p2);
+                let jcy = bf(julia_c[1], p2);
+                let zero = bf(0.0, p2);
+                if julia {
+                    orbit_length_bf(&center[0], &center[1], &jcx, &jcy, formula, max_iter, p2)
+                } else {
+                    orbit_length_bf(&zero, &zero, &center[0], &center[1], formula, max_iter, p2)
+                }
+            });
             if centre_len >= max_iter {
                 (
                     [center[0].clone(), center[1].clone()],
@@ -1699,6 +1818,7 @@ fn best_reference_diag_forced(
             // then a real exterior view and the longest escaper (at truthful scores) stands.
             let p2 = p + REF_RESCUE_EXTRA_BITS;
             match pick_pass(center, span, formula, julia, julia_c, max_iter, p2, force) {
+                // (No centre rescue on this branch, so `rescue` is never consulted here.)
                 PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks } => (
                     point,
                     RefPickDiag {
@@ -1978,12 +2098,12 @@ pub fn best_reference_dual(
     let eq = |a: &BigFloat, b: &BigFloat| a.cmp(b).is_some_and(|o| o == 0);
     let t = std::time::Instant::now();
     let (walk, walk_diag) = best_reference_diag_forced(
-        center, span, formula, julia, julia_c, max_iter, p, Some(RefDeepScore::Walk),
+        center, span, formula, julia, julia_c, max_iter, p, Some(RefDeepScore::Walk), None,
     );
     let walk_secs = t.elapsed().as_secs_f64();
     let t = std::time::Instant::now();
     let (perturb, perturb_diag) = best_reference_diag_forced(
-        center, span, formula, julia, julia_c, max_iter, p, Some(RefDeepScore::Perturb),
+        center, span, formula, julia, julia_c, max_iter, p, Some(RefDeepScore::Perturb), None,
     );
     let perturb_secs = t.elapsed().as_secs_f64();
     let identical = eq(&walk[0], &perturb[0]) && eq(&walk[1], &perturb[1]);
@@ -2044,6 +2164,12 @@ pub fn add_f64(a: &BigFloat, b: f64, p: usize) -> BigFloat {
     a.add(&BigFloat::from_f64(b, p), p, RM)
 }
 
+/// `a + b` with `b` an extended-range [`FloatExp`] — [`add_f64`] for offsets past `f64`'s range
+/// (a pixel offset at 1e1105× is ~1e-1108, which an `f64` flushes to zero).
+pub fn add_floatexp(a: &BigFloat, b: crate::FloatExp, p: usize) -> BigFloat {
+    a.add(&b.to_bf(p), p, RM)
+}
+
 /// Naïve **arbitrary-precision** Mandelbrot dwell — an independent oracle (no perturbation,
 /// no reference orbit) valid at *any* depth, since the center is bignum. Iterates `z → z² + c`
 /// entirely in `astro_float`. Returns `Some((n, smooth))` on escape — `n` is the first
@@ -2070,6 +2196,39 @@ pub fn naive_dwell_bf(
         if m2 > bailout2 {
             let nu = (m2.ln() * 0.5 / std::f64::consts::LN_2).ln() / std::f64::consts::LN_2;
             return Some((iter, iter as f32 + 1.0 - nu as f32));
+        }
+    }
+    None
+}
+
+/// [`naive_dwell_bf`] for every formula the reference builder iterates (Mandelbrot mode:
+/// `Z₀ = 0`, `c` = the point). It is the point's OWN orbit in arbitrary precision
+/// ([`reference_orbit`]), scanned for the first sample past `bailout2` — no perturbation, no
+/// rebasing, no BLA, so it can judge a perturbation render of any family. The smooth count takes
+/// the formula's degree as its log base, as the shader's `power_f` does (Multibrot 3/4/5 = 3/4/5,
+/// every other family 2).
+pub fn formula_dwell(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max: u32,
+    bailout2: f64,
+    p: usize,
+) -> Option<(u32, f32)> {
+    let zero = bf(0.0, p);
+    let (orbit, len) = reference_orbit(&zero, &zero, cx, cy, formula, max, p);
+    let power: f64 = match formula {
+        1 => 3.0,
+        2 => 4.0,
+        3 => 5.0,
+        _ => 2.0,
+    };
+    for (n, s) in orbit.iter().enumerate().take(len as usize).skip(1) {
+        let (x, y) = sample_xy(s);
+        let m2 = x * x + y * y;
+        if m2 > bailout2 {
+            let nu = (m2.ln() * 0.5 / std::f64::consts::LN_2).ln() / power.ln();
+            return Some((n as u32, n as f32 + 1.0 - nu as f32));
         }
     }
     None
