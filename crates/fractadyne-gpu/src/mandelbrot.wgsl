@@ -476,7 +476,10 @@ struct IterU {
     // 1 = the mode-2 df32 tail phase is enabled (TAIL_DF32_MIN; `TAIL_DF32` tunable). A whole
     // 16-byte row with its padding, mirrored by `IterUniforms::tail` in lib.rs.
     tail_on: u32,
-    tail_pad0: u32,
+    // `fs_iterate_chunk_fe` only: stop each pixel after this many EXECUTED steps (BLA skips + full
+    // steps) in this pass; 0 = no cap. The step-bounded export passes (beta.150) set it. A former
+    // padding word of the tail row, so no field moved (see `gather_w` above for why that matters).
+    step_cap: u32,
     tail_pad1: u32,
     tail_pad2: u32,
 };
@@ -544,6 +547,10 @@ const CTR_STEP_EXEC: u32 = 47u; // lo/hi: loop trips (BLA skips + full steps)
 const CTR_STEP_ITER: u32 = 49u; // lo/hi: iterations advanced
 const CTR_STEP_FULL: u32 = 51u; // lo/hi: full (one-iteration) steps
 const CTR_STEP_BIG: u32 = 53u;  // lo/hi: mode-2 full steps taken in the df32 tail phase (TAIL_DF32_MIN)
+// Pixels a step-capped chunk pass (`step_cap` > 0) left still RUNNING. Cleared and read back by the
+// host after every such pass: the tile is done when it reads 0. Counted only under a cap, so the
+// live view's chunk passes pay no atomic for it.
+const CTR_CHUNK_RUNNING: u32 = 55u;
 fn add_u64(slot: u32, v: u32) {
     if (v == 0u) { return; }
     let old = atomicAdd(&counters[slot], v);
@@ -2076,6 +2083,13 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
     var d_now = false;
     loop {
         if (iter >= stop) { break; }
+        // ⭐STEP-BOUNDED PASSES (beta.150): an iteration window bounds a mode-2 pass's NOMINAL work,
+        // and with BLA skipping ~250 iterations a step that says little about its cost. Executed
+        // steps are what a pass pays for, and one step's cost has a ceiling, so capping them bounds
+        // the dispatch whatever the pixel does. A pass may stop between any two steps: the state
+        // below round-trips exactly (the same property that lets a window end anywhere), so where
+        // the passes split never changes a pixel.
+        if (iu.step_cap > 0u && n_bla + n_full >= iu.step_cap) { break; }
         if (d_now && bla_levels > 0u) {
             dz = fe_from_cdf(dzd);
             d_now = false;
@@ -2298,6 +2312,9 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
     }
     if (iter >= iu.max_iter) {
         status = ST_INTERIOR;
+    }
+    if (status == ST_RUNNING && iu.step_cap > 0u) {
+        atomicAdd(&counters[CTR_CHUNK_RUNNING], 1u);
     }
     // Still running: δz mantissa + its exponent in info ch3, derivative mantissa + its exponent
     // in st_exp ch0. FE_ZERO_E (-1e9) round-trips exactly through f32 (1e9 = 1953125 * 2^9, and

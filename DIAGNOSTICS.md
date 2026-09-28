@@ -88,7 +88,7 @@ and fails if one is missing from this table.
 | `[fd-cache]` | always | The on-disk orbit cache: size at startup, evictions, clears |
 | `[fd-export]` | always | Tour export writes that waited on a slow destination |
 | `[fd-console]` | always | Console output switched on or off from the Diagnostics window |
-| `[fd-perf]` | always | Per-export GPU iterate/colour ms and event counters (every export path since beta.149, the normalized and glitch-corrected ones included); `file-write:` the CLI render's PNG/EXR encode + write ms and bytes |
+| `[fd-perf]` | always | Per-export GPU iterate/colour ms and event counters (every export path since beta.149, the normalized and glitch-corrected ones included), `tiles=`/`passes=` (beta.150); `file-write:` the CLI render's PNG/EXR encode + write ms and bytes |
 | `[fd-progress]` | always (CLI) | CLI render progress, ~2 s cadence (`[progress]` in the log file) |
 | `[fd-autodive]` `[fd-motiontest]` `[fd-zoomtest]` | harness | Each harness's own progress and verdict lines |
 | `[fd-req]` `[fd-ref]` `[fd-gpu]` `[fd-tile]` `[fd-glitch]` `[fd-idle]` `[fd-dpi]` `[fd-autopilot]` `[fd-refwaste]` | `FRACTADYNE_TRACE` | The trace categories in the table above; `refwaste` accounts every reference build's CPU cost as `USED` / `SUPERSEDED` / `DROPPED` |
@@ -282,7 +282,17 @@ them slower. Judge the overlap by that window, not by the build's clock. — and
 says `early reference USED — started N ms before the export asked for it, which then waited M ms`,
 or `early reference DISCARDED — its <field> differs` (the render then builds as before; a discard
 is a missed speed-up, never a different picture). The window/device creation itself reads ~0.1–
-0.2 s slower while the build competes with it for the CPU; the render as a whole is faster.
+0.2 s slower while the build competes with it for the CPU; the render as a whole is faster. — and
+`TILE_OCCUPANCY` (default 1 from beta.150; `0` = the old tiles, for a before/after measurement):
+a mode-2 export (plain or normalized) tiles the frame into equal parts of up to 1024 samples a
+side instead of sizing each tile as if every pixel ran every iteration (158 px at 800,000
+iterations), and runs each tile as STEP-BOUNDED passes: every pixel stops after `step_cap`
+executed steps and resumes in the next pass, until none is running. The cap is sized from the
+measured cost per active pixel-step so a pass lands near 200 ms, and never exceeds 6e8
+pixel-steps. The `[fd-perf]` line reports `tiles=` and `passes=`; `FRACTADYNE_TRACE=tile` prints
+one `steps pass N cap=C wall=W running=R` line per pass. Pictures are the same whichever way the
+frame is split (selftest `occupancy tile: step-bounded passes resume bit-identically`). Modes 0/1
+keep their tiles.
 
 - **Not a configuration surface.** The defaults are the only tested path: the self-test, the
   goldens, `--bench-matrix` and `--livetest` all assume them. `--selftest` carries a check that

@@ -1406,9 +1406,9 @@ impl FractadyneApp {
             "perf",
             &format!(
                 "{kind}: {}x{} ss={} mode={} iter={} gpu_iterate={:.1}ms gpu_color={:.1}ms \
-                 max_dispatch={:.0}ms ~{gsps:.2} Gsteps/s (nominal) | counters: rebase={} ext={} \
-                 glitch={} bla_skip={} maxiter={} | steps (1/64 px): px={} executed={} \
-                 iterations={} = {:.1} per step, full={} of which in df32 {big_pct:.1}%",
+                 max_dispatch={:.0}ms tiles={} passes={} ~{gsps:.2} Gsteps/s (nominal) | counters: \
+                 rebase={} ext={} glitch={} bla_skip={} maxiter={} | steps (1/64 px): px={} \
+                 executed={} iterations={} = {:.1} per step, full={} of which in df32 {big_pct:.1}%",
                 r.width,
                 r.height,
                 r.ss,
@@ -1417,6 +1417,8 @@ impl FractadyneApp {
                 r.iterate_ms,
                 r.color_ms,
                 r.max_dispatch_ms,
+                r.tiles_total,
+                r.chunk_passes,
                 c[fractadyne_gpu::CTR_REBASE],
                 c[fractadyne_gpu::CTR_EXT_SAMPLE],
                 c[fractadyne_gpu::CTR_GLITCH],
@@ -1432,7 +1434,7 @@ impl FractadyneApp {
         crate::diag::perf_jsonl(&format!(
             "\"kind\":\"{kind}\",\"w\":{},\"h\":{},\"ss\":{},\"mode\":{},\"iter\":{},\
              \"gpu_iterate_ms\":{:.3},\"gpu_color_ms\":{:.3},\"max_dispatch_ms\":{:.1},\
-             \"gsteps_nominal\":{gsps:.3},\
+             \"tiles\":{},\"passes\":{},\"gsteps_nominal\":{gsps:.3},\
              \"ctr_rebase\":{},\"ctr_ext\":{},\"ctr_glitch\":{},\"ctr_bla\":{},\"ctr_maxiter\":{},\
              \"step_px\":{},\"step_executed\":{},\"step_iterations\":{},\"step_full\":{},\"step_big\":{}",
             r.width,
@@ -1443,6 +1445,8 @@ impl FractadyneApp {
             r.iterate_ms,
             r.color_ms,
             r.max_dispatch_ms,
+            r.tiles_total,
+            r.chunk_passes,
             c[fractadyne_gpu::CTR_REBASE],
             c[fractadyne_gpu::CTR_EXT_SAMPLE],
             c[fractadyne_gpu::CTR_GLITCH],

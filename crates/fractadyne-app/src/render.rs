@@ -3617,6 +3617,7 @@ impl FractadyneApp {
             width,
             height,
             work_budget: None, // default export tile budget; the tour path overrides per frame
+            tile_px_max: None,
             ss: self.export.ss.max(1),
             span_mantissa: scale.span_mantissa,
             center,
@@ -4219,6 +4220,8 @@ impl FractadyneApp {
         res.max_dispatch_ms = res.max_dispatch_ms.max(iter.max_dispatch_ms);
         res.tiles_total = iter.tiles_total;
         res.tiles_chunked = iter.tiles_chunked;
+        res.chunk_passes = iter.chunk_passes;
+        res.max_dispatch_work = iter.max_dispatch_work;
         Some((res, (clo, chi)))
     }
 }

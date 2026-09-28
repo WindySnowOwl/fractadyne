@@ -178,7 +178,7 @@ function Stop-SharkServer($cli, $endpoint, $srv) {
 $script:FdPhaseCols = @('scene', 'rep', 'status', 'wall_ms', 'startup_ms', 'ref_wait_ms',
     'early_ref', 'early_lead_ms', 'ref_builds', 'pick_ms', 'orbit_ms', 'sa_ms', 'bla_ms',
     'overlap', 'render_ms', 'gpu_iterate_ms', 'gpu_color_ms', 'max_dispatch_ms', 'cpu_other_ms',
-    'write_ms', 'file_bytes', 'exit_ms', 'outside_ms', 'mode', 'iter', 'rebase', 'ext', 'glitch',
+    'write_ms', 'file_bytes', 'exit_ms', 'outside_ms', 'mode', 'iter', 'tiles', 'passes', 'rebase', 'ext', 'glitch',
     'bla_skip', 'maxiter', 'step_px', 'step_executed', 'step_iterations', 'iters_per_step',
     'step_full', 'df32_pct', 'logcheck')
 
@@ -210,6 +210,7 @@ function Read-FdPhases($logPath, $wallMs) {
             $keys = @{ mode = 'mode=(\d+)'; iter = ' iter=(\d+)'
                        gpu_iterate_ms = 'gpu_iterate=([0-9.]+)ms'; gpu_color_ms = 'gpu_color=([0-9.]+)ms'
                        max_dispatch_ms = 'max_dispatch=([0-9.]+)ms'; rebase = 'rebase=(\d+)'
+                       tiles = ' tiles=(\d+)'; passes = ' passes=(\d+)'
                        ext = ' ext=(\d+)'; glitch = 'glitch=(\d+)'; bla_skip = 'bla_skip=(\d+)'
                        maxiter = 'maxiter=(\d+)'; step_px = ' px=(\d+)'; step_executed = 'executed=(\d+)'
                        step_iterations = 'iterations=(\d+)'; iters_per_step = '= ([0-9.]+) per step'

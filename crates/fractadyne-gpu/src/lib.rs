@@ -68,9 +68,10 @@ pub(crate) struct IterUniforms {
     /// take them without moving a single existing field — this one struct is bound by every iterate
     /// pipeline in the app, the live view included.
     pub(crate) gather: [u32; 2],
-    /// `[tail_on, pad, pad, pad]`: 1 = the mode-2 df32 TAIL PHASE is enabled (`TAIL_DF32_MIN` in
-    /// the shader). A whole 16-byte row, so Rust's `#[repr(C)]` size keeps matching WGSL's. See
-    /// [`tail_word`].
+    /// `[tail_on, step_cap, pad, pad]`: 1 = the mode-2 df32 TAIL PHASE is enabled (`TAIL_DF32_MIN`
+    /// in the shader); `step_cap` > 0 stops each pixel of a mode-2 chunk pass after that many
+    /// executed steps (the export's step-bounded passes, beta.150; 0 everywhere else). A whole
+    /// 16-byte row, so Rust's `#[repr(C)]` size keeps matching WGSL's. See [`tail_word`].
     pub(crate) tail: [u32; 4],
 }
 
@@ -87,6 +88,19 @@ pub fn set_tail_df32(on: bool) {
 /// The uniform row carrying the tail-phase switch.
 pub(crate) fn tail_word() -> [u32; 4] {
     [TAIL_DF32.load(std::sync::atomic::Ordering::Relaxed) as u32, 0, 0, 0]
+}
+
+/// Occupancy-sized export tiles (`TILE_OCCUPANCY`, a `--set` tunable in the app; on by default).
+/// See `occupancy_tile` in `export.rs`. Process-wide for the same reason as [`set_tail_df32`].
+static TILE_OCCUPANCY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Set occupancy-sized export tiles on or off for every export that follows.
+pub fn set_tile_occupancy(on: bool) {
+    TILE_OCCUPANCY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn tile_occupancy_on() -> bool {
+    TILE_OCCUPANCY.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 #[repr(C)]
@@ -1001,7 +1015,7 @@ pub(crate) fn make_iter_bg(
 /// atomics per pixel — negligible next to the iteration loop. This is the "did the code
 /// path actually execute?" detector (the F4 dead-NaN-marker lesson): a render that claims
 /// to exercise rebasing/extended samples/BLA must show nonzero counts.
-pub const COUNTER_SLOTS: usize = CTR_STEP_BIG + 2;
+pub const COUNTER_SLOTS: usize = CTR_CHUNK_RUNNING + 1;
 /// Slot indices (keep in sync with mandelbrot.wgsl's `CTR_*` constants).
 pub const CTR_REBASE: usize = 0; // Zhuoran rebases taken (mode 2)
 pub const CTR_EXT_SAMPLE: usize = 1; // extended-range orbit samples decoded (mode 2)
@@ -1079,6 +1093,10 @@ pub const CTR_STEP_FULL: usize = CTR_STEP_ITER + 2; // lo/hi: full (one-iteratio
 /// beta.141) — the share of mode-2 work no longer paying floatexp's cost. (beta.137–140 counted
 /// full steps with |δz| ≥ 2^-100 here, the measurement that justified the phase.)
 pub const CTR_STEP_BIG: usize = CTR_STEP_FULL + 2;
+/// Pixels a step-capped mode-2 chunk pass left still running (beta.150; `step_cap` in the shader).
+/// Cleared before and read after every such pass by the export's step-bounded runner, which stops
+/// when it reads 0. Only ever nonzero under a cap.
+pub const CTR_CHUNK_RUNNING: usize = CTR_STEP_BIG + 2;
 
 /// A counter readback's step accounting (see [`CTR_STEP_PX`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

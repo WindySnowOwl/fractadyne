@@ -12,6 +12,32 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Faster deep exports: the graphics card is kept busy** (beta.150).
+  - **The problem:** an export splits the picture into tiles and renders them one after another.
+    Each tile was sized as if every pixel ran every iteration, so at a high iteration count the
+    tiles were tiny: 158 px across at 800,000 iterations, about 25,000 pixels, where the card needs
+    about 250,000 in flight to be busy. Each tile took about 25 ms however few pixels it had, and
+    the card sat mostly idle.
+  - **The change:** deep exports (the floatexp mode) now use tiles up to 1024 px across. What keeps
+    each piece of GPU work short enough for the operating system's watchdog is no longer the tile
+    size but a limit on the steps each pixel may take in one submission. A pixel that needs more
+    carries on in the next one. Each submission is sized from the measured cost of a step to take
+    about 200 ms, and never more than a fixed ceiling. The worst case got shorter, not longer: at
+    1.2e148 with BLA switched off, every step is expensive, and the longest single submission went
+    from 930 ms to 132 ms.
+  - **How much**, 4K on an RTX 3080 (one run each, same build, new tiling against the old with
+    `--set TILE_OCCUPANCY=0`):
+    - 1.2e148: 6.4 s instead of 11.5 s (graphics card time 2.9 s instead of 7.9 s).
+    - 4.2e275: 2.5 s instead of 4.1 s.
+    - 1.47e77: 1.9 s instead of 2.3 s.
+    - 4.6e1105: 2.2 s instead of 2.5 s.
+    - The six shallower scenes: unchanged.
+  - **Pictures:** the new and old tiling give identical pictures at all ten benchmark scenes. The
+    graphics program itself changed, and at 4.2e275 that moves 3 pixels of 8.3 million compared
+    with beta.149. The standard build now matches the accelerated (MPFR) build exactly at all ten
+    scenes; before, those same 3 pixels differed between them.
+  - Not yet tested on an AMD card.
+
 - **Render timing is now reported for every export, and the benchmark kit shows where each
   render's time goes** (beta.149).
   - **GPU time on normalized and glitch-corrected exports.** The log's `[fd-perf]` line gave
