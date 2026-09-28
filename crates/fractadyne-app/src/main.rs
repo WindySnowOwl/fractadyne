@@ -72,6 +72,7 @@ mod export;
 mod bench_matrix;
 mod fractal;
 mod chunksweep;
+mod glitchaudit;
 mod deviceloss_repro;
 mod gputest;
 mod help;
@@ -5926,7 +5927,15 @@ impl FractadyneApp {
         // Standardized (pinned-settings) benchmark: --benchmark-std [--res RES] [--burnin N].
         // --burnin/--res on their own also imply it.
         let render_iter_mode = args.iter().any(|a| a == "--render-iter");
-        let auto_render = args.iter().any(|a| a == "--render") || render_iter_mode;
+        // `--glitch-audit [N]`: an optional count. ABSENT (no value, or the next token is a flag)
+        // takes the default; PRESENT but unreadable is an error, never a silent default.
+        let glitch_audit = args.iter().position(|a| a == "--glitch-audit").map(|i| {
+            match args.get(i + 1).filter(|s| !s.starts_with('-')) {
+                None => crate::glitchaudit::DEFAULT_SAMPLES,
+                Some(s) => crate::arg_parse::<usize>("--glitch-audit", s, "a whole number of pixels").max(1),
+            }
+        });
+        let auto_render = args.iter().any(|a| a == "--render") || render_iter_mode || glitch_audit.is_some();
         let selftest = args.iter().any(|a| a == "--selftest" || a == "--selftest-list");
         let profile = args.iter().any(|a| a == "--profile");
         let bench_matrix = args.iter().any(|a| a == "--bench-matrix");
@@ -6485,6 +6494,7 @@ impl FractadyneApp {
                 out: auto_render_out,
                 done: false,
                 iter_mode: render_iter_mode,
+                audit: glitch_audit,
                 tour: render_tour,
                 tour_done: false,
                 tour_cfg: tour_cli,

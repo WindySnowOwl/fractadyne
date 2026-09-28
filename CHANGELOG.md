@@ -12,6 +12,19 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Diagnostics: `--glitch-audit` checks what glitch correction actually changes** (beta.139,
+  for testing).
+  - **What it does:** at the view a `--render` would draw, it renders the image with and
+    without glitch correction. It checks a sample of the pixels that differ against a slow but
+    independent arbitrary-precision calculation. It also checks the same number of pixels where
+    the two agree, which must match that calculation or it gives no verdict.
+  - **Results on four benchmark scenes (96 changed pixels):**
+    - Correction repaired none.
+    - It made 14 worse.
+    - The rest were either unchanged in effect or pixels whose true value shifts within a
+      thousandth of a pixel, where neither image can be called right.
+    - The visible damage is pixels correction gives up on, which it paints black.
+  - **What it costs:** up to 5× the render time (4.6e1105: 76 s against 15.6 s without it).
 - **Faster: a render with normalized colours no longer computes its reference twice**
   (beta.138). A command-line render with normalized colours (`--normalize`) computed the
   reference orbit for its view, then computed the identical orbit again before rendering. At the

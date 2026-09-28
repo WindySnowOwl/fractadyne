@@ -2044,6 +2044,12 @@ pub fn add_f64(a: &BigFloat, b: f64, p: usize) -> BigFloat {
     a.add(&BigFloat::from_f64(b, p), p, RM)
 }
 
+/// `a + b` with `b` an extended-range [`FloatExp`] — [`add_f64`] for offsets past `f64`'s range
+/// (a pixel offset at 1e1105× is ~1e-1108, which an `f64` flushes to zero).
+pub fn add_floatexp(a: &BigFloat, b: crate::FloatExp, p: usize) -> BigFloat {
+    a.add(&b.to_bf(p), p, RM)
+}
+
 /// Naïve **arbitrary-precision** Mandelbrot dwell — an independent oracle (no perturbation,
 /// no reference orbit) valid at *any* depth, since the center is bignum. Iterates `z → z² + c`
 /// entirely in `astro_float`. Returns `Some((n, smooth))` on escape — `n` is the first

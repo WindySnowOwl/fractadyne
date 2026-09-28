@@ -1198,6 +1198,9 @@ pub(crate) struct RenderCli {
     pub(crate) done: bool,
     /// `--render-iter`: write the raw iteration texture as EXR instead of a colored image.
     pub(crate) iter_mode: bool,
+    /// `--glitch-audit [N]`: instead of writing an image, check N of the pixels glitch correction
+    /// changes (and N controls) against the arbitrary-precision oracle (`glitchaudit`).
+    pub(crate) audit: Option<usize>,
     /// CLI `--render-tour FILE`: render a keyframe tour to a PNG frame sequence, then quit.
     pub(crate) tour: Option<std::path::PathBuf>,
     pub(crate) tour_done: bool,
@@ -1558,7 +1561,9 @@ impl crate::FractadyneApp {
                     println!("Note: Fd watermark is off (saved preference) — pass --watermark to include it.");
                 }
                 let t0 = std::time::Instant::now();
-                let result = if self.render_cli.iter_mode {
+                let result = if let Some(n) = self.render_cli.audit {
+                    self.run_glitch_audit(dev, q, n)
+                } else if self.render_cli.iter_mode {
                     let out = self
                         .render_cli.out
                         .clone()
