@@ -12,6 +12,10 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Slightly faster series approximation** (beta.144): its coefficient arithmetic now also uses
+  a 128-bit copy of the reference point's orbit value instead of the full-precision one. At
+  4.6e1105 the preparation before rendering takes 2.04 s instead of 2.20 s. Pictures are
+  identical to the pixel at the four benchmark scenes that use the series approximation.
 - **Faster deep renders: the reference orbit's repeated calculations now overlap** (beta.143).
   - **The change:** before rendering a deep view, Fractadyne picks a reference point, builds its
     orbit, and computes the series approximation. At a view whose reference escapes early, the

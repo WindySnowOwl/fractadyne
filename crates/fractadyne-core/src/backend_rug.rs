@@ -703,25 +703,32 @@ pub(crate) fn try_series_skip_walk(
     let (mut ax, mut ay) = (zero(ctx_c), zero(ctx_c));
     let (mut bx, mut by) = (zero(ctx_c), zero(ctx_c));
     let (mut cxx, mut cyy) = (zero(ctx_c), zero(ctx_c));
+    // Astro's per-step copy of Z truncated to the coefficient width (its `set_precision` with
+    // `RoundingMode::None` keeps the top `pc` bits of a normalised mantissa = MPFR's RZ).
+    let narrow = ctx_c < ctx;
     let mut best: Option<(u32, [Float; 6])> = None;
     for n in 1..=limit {
         if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
             return Some(None); // = SeriesSkip::NONE, as the astro walk returns when cancelled
         }
+        let zc = narrow.then(|| {
+            (Float::with_val_round(ctx_c, &zx, RZ).0, Float::with_val_round(ctx_c, &zy, RZ).0)
+        });
+        let (zcx, zcy) = zc.as_ref().map_or((&zx, &zy), |(x, y)| (x, y));
         // For d = 2: Z^{d-1} = Z itself (astro's `cpow_bf(z, 1)` is an exact clone) and the
         // Z^{d-2} factor is the identity, so the recurrence collapses to the lines below.
         let (a2x, a2y) = cmul(&ax, &ay, &ax, &ay, ctx_c); // A²
         let (abx, aby) = cmul(&ax, &ay, &bx, &by, ctx_c); // A·B
         // A' = 2·(Z·A) + 1
-        let (t, u) = cmul(&zx, &zy, &ax, &ay, ctx_c);
+        let (t, u) = cmul(zcx, zcy, &ax, &ay, ctx_c);
         let na_x = t.fdouble().fadd(&one, ctx_c);
         let na_y = u.fdouble();
         // B' = 2·(Z·B) + A²    (C(2,2)·… — the ×1 is the identity in `mul_u32_bf` too)
-        let (t, u) = cmul(&zx, &zy, &bx, &by, ctx_c);
+        let (t, u) = cmul(zcx, zcy, &bx, &by, ctx_c);
         let nb_x = t.fdouble().fadd(&a2x, ctx_c);
         let nb_y = u.fdouble().fadd(&a2y, ctx_c);
         // C' = 2·(Z·C) + 2·(A·B)    (C(2,3) = 0 — no third term)
-        let (t, u) = cmul(&zx, &zy, &cxx, &cyy, ctx_c);
+        let (t, u) = cmul(zcx, zcy, &cxx, &cyy, ctx_c);
         let nc_x = t.fdouble().fadd(&abx.fdouble(), ctx_c);
         let nc_y = u.fdouble().fadd(&aby.fdouble(), ctx_c);
         // Advance the reference through the shared generic step (byte-identical by the

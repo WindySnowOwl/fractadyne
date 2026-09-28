@@ -578,9 +578,10 @@ pub(crate) const SA_MIN_SKIP: u32 = 8;
 /// a different `c`. The coefficients do not. They leave the walk only through `coeff_to_fe` (the
 /// top 53 bits of each) and `log2_cmag` (the exponent), and each recurrence is linear in the
 /// previous coefficient with `Z` as an input, so a walk carried at 128 bits drifts ~n·2⁻¹²⁸
-/// relative from one carried at `p` — 2⁻¹¹¹ at n = 2¹⁷, far below that 53-bit read. Every
-/// `Z·coefficient` product still takes `Z` at full width (astro-float and MPFR both form the exact
-/// product and truncate only the result), so what shrinks is the other operand. Before this the
+/// relative from one carried at `p` — 2⁻¹¹¹ at n = 2¹⁷, far below that 53-bit read. The
+/// `Z·coefficient` products take a copy of `Z` truncated to these bits once per step (beta.144;
+/// until then `Z` at full width, which astro-float and MPFR both multiply exactly before
+/// truncating the result — worth ~0.1 s of the 2.1 s walk at 4.6e1105). Before this the
 /// coefficients ran at `p`: 9.5 s of a 15.8 s 4K export at 4.6e1105× (p = 3738, 119,153 steps),
 /// ~7× the orbit build itself. `sa_coefficient_width_is_output_neutral` holds the emitted skip
 /// byte-equal to a full-width walk.
@@ -726,21 +727,34 @@ pub(crate) fn series_skip_astro(
     let (mut ax, mut ay) = (bf(0.0, pc), bf(0.0, pc));
     let (mut bx, mut by) = (bf(0.0, pc), bf(0.0, pc));
     let (mut cxx, mut cyy) = (bf(0.0, pc), bf(0.0, pc));
+    // The coefficients also take Z at `pc`: Z itself stays at `p` for the reference step, but a
+    // copy truncated to `pc` once per step turns every Z·coefficient product into a pc×pc one
+    // (at p = 3,738 that was 0.8 s of a 2.1 s walk). `pc = p` keeps the historical walk exactly.
+    let narrow = pc < p;
     let mut best: Option<(u32, [BigFloat; 6])> = None;
     for n in 1..=limit {
         if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
             return SeriesSkip::NONE;
         }
+        let zc = narrow.then(|| {
+            let cut = |v: &BigFloat| {
+                let mut t = v.clone();
+                t.set_precision(pc, RM).expect("pc is a valid precision");
+                t
+            };
+            (cut(&zx), cut(&zy))
+        });
+        let (zcx, zcy) = zc.as_ref().map_or((&zx, &zy), |(x, y)| (x, y));
         // Advance the order-3 coefficients for z^d + c, using Z_{n-1} (current z):
         //   A' = d·Z^{d-1}·A + 1
         //   B' = d·Z^{d-1}·B + C(d,2)·Z^{d-2}·A²
         //   C' = d·Z^{d-1}·C + 2·C(d,2)·Z^{d-2}·A·B + C(d,3)·Z^{d-3}·A³
         // Everything below the reference step is coefficient arithmetic, carried at `pc`.
-        let (p1x, p1y) = cpow_bf(&zx, &zy, deg - 1, pc); // Z^{d-1} (Z itself, full width, for d = 2)
+        let (p1x, p1y) = cpow_bf(zcx, zcy, deg - 1, pc); // Z^{d-1} (Z itself for d = 2)
         let (a2x, a2y) = cmul_bf(&ax, &ay, &ax, &ay, pc); // A²
         let (abx, aby) = cmul_bf(&ax, &ay, &bx, &by, pc); // A·B
         // Z^{d-2} is the identity (= 1) for d = 2 → `None` skips that whole complex multiply.
-        let p2 = (deg >= 3).then(|| cpow_bf(&zx, &zy, deg - 2, pc));
+        let p2 = (deg >= 3).then(|| cpow_bf(zcx, zcy, deg - 2, pc));
         let zp2 = |wx: &BigFloat, wy: &BigFloat| match &p2 {
             Some((p2x, p2y)) => cmul_bf(p2x, p2y, wx, wy, pc),
             None => (wx.clone(), wy.clone()),
@@ -763,7 +777,7 @@ pub(crate) fn series_skip_astro(
             let (a3x, a3y) = cmul_bf(&a2x, &a2y, &ax, &ay, pc); // A³
             // Z^{d-3} is the identity for d = 3.
             let (x3, y3) = if deg >= 4 {
-                let (p3x, p3y) = cpow_bf(&zx, &zy, deg - 3, pc);
+                let (p3x, p3y) = cpow_bf(zcx, zcy, deg - 3, pc);
                 cmul_bf(&p3x, &p3y, &a3x, &a3y, pc)
             } else {
                 (a3x, a3y)
