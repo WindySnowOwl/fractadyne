@@ -12,6 +12,11 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Faster: a render with normalized colours no longer computes its reference twice**
+  (beta.138). A command-line render with normalized colours (`--normalize`) computed the
+  reference orbit for its view, then computed the identical orbit again before rendering. At the
+  4.2e275 benchmark scene that doubled 0.64 s of work. The image is unchanged: 0 differing pixels
+  at two corpus scenes.
 - **Diagnostics: how much work each iteration costs** (beta.137, for testing). A command-line
   render's `perf` log line now also reports, from one pixel in 64:
   - the loop steps the GPU actually executed, against the iterations they delivered;

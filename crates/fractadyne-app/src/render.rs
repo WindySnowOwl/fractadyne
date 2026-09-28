@@ -3687,6 +3687,7 @@ impl FractadyneApp {
         ss: u32,
         norm: NormRange,
         precomputed: Option<RecomputeResult>,
+        base: Option<&fractadyne_gpu::ExportRequest>,
         work_budget: u64,
     ) -> Option<(fractadyne_gpu::ExportResult, (f32, f32))> {
         const MAX_PX: u64 = 40_000_000; // single-texture color pass (~6K·6K); above → fall back
@@ -3702,7 +3703,18 @@ impl FractadyneApp {
         }
         // Reuse the tour pipeline's precomputed reference when present (the normalized path builds
         // the same reference the normal path would, so the pipeline's cost-hiding still applies).
-        let mut req = self.current_export_request_with_ref(vp, julia, precomputed);
+        //
+        // ⭐Or the CALLER's request, when it has one (`base`): a CLI `--render --normalize` had
+        // already built it, and this built it again — the same orbit twice on the main thread
+        // (2026-09-27, 4.2e275 corpus scene: two identical `building reference [export]` crumbs,
+        // 0.64 s each). The caller's request is also the one carrying the export's aspect FIT
+        // (`build_export_job`'s contain span), which a fresh build here does not apply — though no
+        // case has been measured where that changed the picture (the two corpus scenes checked
+        // came out pixel-identical either way).
+        let mut req = match (base, precomputed) {
+            (Some(b), None) => b.clone(),
+            (_, precomputed) => self.current_export_request_with_ref(vp, julia, precomputed),
+        };
         req.width = iw;
         req.height = ih;
         req.ss = 1;
