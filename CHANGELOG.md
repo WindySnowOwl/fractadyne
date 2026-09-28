@@ -12,6 +12,24 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Faster deep renders: the reference orbit's repeated calculations now overlap** (beta.143).
+  - **The change:** before rendering a deep view, Fractadyne picks a reference point, builds its
+    orbit, and computes the series approximation. At a view whose reference escapes early, the
+    pick re-checks the view centre at the build's precision. When the centre is the pick, the
+    same orbit was being calculated up to four times, one after another. Now the centre's
+    orbit build and its series step run on their own threads while the pick scores candidates.
+    The pick's re-check reads its answer from that build instead of repeating it.
+  - **How much**, on 4K renders (median of three interleaved pairs, same build, with the new
+    `REF_OVERLAP` setting on and off):
+    - 4.6e1105, where the centre is the pick: the preparation before rendering takes 2.2 s
+      instead of 6.2 s. The whole render takes 3.9 s instead of 8.1 s.
+    - 1.2e148: 2.7 s instead of 3.2 s. 4.2e275 and 1.47e77: about 0.05 s less. Here
+      another point is picked, so only the re-check is saved.
+  - **Pictures:** identical to the pixel at all five benchmark scenes. A new self-test builds
+    three views both ways and compares the results field by field. It fails if the overlap
+    changes anything, and also if the overlap never actually ran.
+  - **Where:** exports and the live view's fresh reference builds. `--set REF_OVERLAP=0` restores
+    the old order for comparison.
 - **Faster deep renders: the series approximation no longer runs at full precision**
   (beta.142).
   - **The change:** before a deep view renders, Fractadyne computes a reference orbit and three

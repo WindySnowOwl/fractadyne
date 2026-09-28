@@ -603,6 +603,25 @@ pub fn series_skip_in(
     formula: u32,
     p: usize,
 ) -> SeriesSkip {
+    series_skip_in_cancellable(backend, cx, cy, log2_max_dc, max_iter, orbit_len, formula, p, None)
+}
+
+/// [`series_skip_in`] that stops at the next step once `cancel` is set, returning
+/// [`SeriesSkip::NONE`] — for a walk started speculatively beside the orbit build, which the app
+/// cancels when the build shows the skip will not be used. A cancelled result means nothing; the
+/// caller discards it.
+#[allow(clippy::too_many_arguments)]
+pub fn series_skip_in_cancellable(
+    backend: crate::BackendChoice,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    log2_max_dc: f64,
+    max_iter: u32,
+    orbit_len: u32,
+    formula: u32,
+    p: usize,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> SeriesSkip {
     if !log2_max_dc.is_finite() {
         return SeriesSkip::NONE;
     }
@@ -611,15 +630,25 @@ pub fn series_skip_in(
         #[cfg(feature = "rug")]
         crate::BackendChoice::Rug => {
             let limit = max_iter.min(orbit_len.saturating_sub(2)).min(sa_step_budget(p));
-            if let Some(best) =
-                crate::backend_rug::try_series_skip_walk(cx, cy, log2_max_dc, limit, formula, p)
-            {
+            if let Some(best) = crate::backend_rug::try_series_skip_walk(
+                cx, cy, log2_max_dc, limit, formula, p, cancel,
+            ) {
                 crate::backend::note_observed::<rug::Float>();
                 return series_best_to_skip(best);
             }
         }
     }
-    series_skip_astro(cx, cy, log2_max_dc, max_iter, orbit_len, formula, p, p.min(SA_COEFF_BITS))
+    series_skip_astro(cx, cy, log2_max_dc, max_iter, orbit_len, formula, p, p.min(SA_COEFF_BITS), cancel)
+}
+
+/// Whether a skip walked with `orbit_len` = an UPPER BOUND on the reference length is also the
+/// skip [`series_skip`] returns for the actual length `len`, all else equal. Both walks take the
+/// same steps up to the smaller limit and keep the last valid index before the first invalid one,
+/// so a skip within the tighter limit (`len − 2`) is where the tighter walk stops too, with the
+/// same coefficients; a skip past it has to be walked again. This lets the app start the walk
+/// before the orbit build has told it `len` (`the_sa_bound_rule_is_exact`).
+pub fn series_skip_holds_for(s: &SeriesSkip, len: u32) -> bool {
+    s.skip <= len.saturating_sub(2)
 }
 
 /// The walk's `best` → the emitted [`SeriesSkip`]. One conversion path for both backends:
@@ -660,7 +689,7 @@ pub fn series_skip(
 /// skip came from these operations; the corpus pins it), with the coefficients carried at
 /// `pc` bits instead of `p` ([`SA_COEFF_BITS`]; `pc = p` is the historical walk exactly). The
 /// MPFR twin mirrors this loop op-for-op; change one only with the other, and with
-/// `the_sa_walk_is_backend_identical` green.
+/// `the_sa_walk_is_backend_identical` green. `cancel`: see [`series_skip_in_cancellable`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn series_skip_astro(
     cx: &BigFloat,
@@ -671,6 +700,7 @@ pub(crate) fn series_skip_astro(
     formula: u32,
     p: usize,
     pc: usize,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> SeriesSkip {
     if !log2_max_dc.is_finite() {
         return SeriesSkip::NONE;
@@ -698,6 +728,9 @@ pub(crate) fn series_skip_astro(
     let (mut cxx, mut cyy) = (bf(0.0, pc), bf(0.0, pc));
     let mut best: Option<(u32, [BigFloat; 6])> = None;
     for n in 1..=limit {
+        if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
+            return SeriesSkip::NONE;
+        }
         // Advance the order-3 coefficients for z^d + c, using Z_{n-1} (current z):
         //   A' = d·Z^{d-1}·A + 1
         //   B' = d·Z^{d-1}·B + C(d,2)·Z^{d-2}·A²
@@ -1214,6 +1247,33 @@ fn orbit_length_bf(
     orbit_length_in(crate::backend::selected(), z0x, z0y, cx, cy, formula, max_iter, p, None)
 }
 
+/// The centre rescue's score ([`best_reference_diag_rescued`]) from a finished BUILD of the same
+/// point at the same precision `p` (`reference_orbit_t` → `len` samples and `tail`; `(cx, cy)` =
+/// the `c` both walks iterate with). The two walks take the same step at the same precision and
+/// stop on the same `f64` escape test, and the build's `len − 1` samples past `Z₀` are exactly
+/// the scoring walk's step count. A build that stopped at its cap short of `max_iter` without
+/// escaping is continued from its tail, length-only: the rest of the same walk. `None` for
+/// Phoenix in that case (the continuation would restart its two-term state), and for an empty
+/// build; the pick then walks as before.
+pub fn scoring_len_from_build(
+    len: u32,
+    tail: &OrbitTail,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+) -> Option<u32> {
+    let steps = len.checked_sub(1)?;
+    if tail.escaped || steps >= max_iter {
+        return Some(steps.min(max_iter));
+    }
+    if formula == formula::PHOENIX {
+        return None;
+    }
+    Some(steps + orbit_length_bf(&tail.zx, &tail.zy, cx, cy, formula, max_iter - steps, p))
+}
+
 /// [`orbit_length_bf`] in an **explicitly named** backend, with an optional extended-range
 /// sample sink (the recording the perturbation scorer consumes). Public for the same reason
 /// [`reference_orbit_t_in`] is: a bit-identity test must run both arithmetics in ONE process to
@@ -1530,8 +1590,10 @@ const REF_DEEP_MAX: usize = 16;
 /// Extra scoring precision for the CLIFF RESCUE passes in [`best_reference_diag`]. Matches the
 /// app's `REF_PREC_HEADROOM` (the orbit is built 128 bits above the request), so a rescued score
 /// describes exactly the orbit that will be built — scoring BELOW the build precision is the
-/// blindness this exists to cure.
-const REF_RESCUE_EXTRA_BITS: usize = 128;
+/// blindness this exists to cure. Public so the app can hold its headroom equal to it: the
+/// centre rescue may take its score from the app's build ([`best_reference_diag_rescued`]),
+/// which is only the same walk while the two precisions agree.
+pub const REF_RESCUE_EXTRA_BITS: usize = 128;
 
 /// Why/how a pick was made — the observability half of the reference-lifecycle redesign
 /// (`design/reference-lifecycle.md` L0/L1). Everything here is deterministic.
@@ -1625,14 +1687,39 @@ pub fn best_reference_diag(
     max_iter: u32,
     p: usize,
 ) -> ([BigFloat; 2], RefPickDiag) {
-    best_reference_diag_forced(center, span, formula, julia, julia_c, max_iter, p, None)
+    best_reference_diag_forced(center, span, formula, julia, julia_c, max_iter, p, None, None)
+}
+
+/// [`best_reference_diag`] whose CENTRE RESCUE may take its score from `rescue` instead of
+/// walking the centre itself. The rescue walks the centre at `p + REF_RESCUE_EXTRA_BITS` to
+/// `max_iter` — the same orbit, at the same precision, that the app then builds whenever the
+/// centre is the pick, so the app can build it once, on its own thread, while phases 1–2 run
+/// here, and answer the rescue from that build ([`scoring_len_from_build`]).
+///
+/// ⛔Contract: `rescue()` returns EXACTLY what the rescue walk would — `orbit_length_bf` of the
+/// centre (Julia: `z₀` = centre, `c` = `julia_c`) to `max_iter` at `p + REF_RESCUE_EXTRA_BITS`
+/// — or `None`, and the walk then runs here as before. The pick is then byte-identical to
+/// [`best_reference_diag`]'s (`the_rescue_can_come_from_a_build`).
+#[allow(clippy::too_many_arguments)]
+pub fn best_reference_diag_rescued(
+    center: &[BigFloat; 2],
+    span: [FloatExp; 2],
+    formula: u32,
+    julia: bool,
+    julia_c: [f64; 2],
+    max_iter: u32,
+    p: usize,
+    rescue: &dyn Fn() -> Option<u32>,
+) -> ([BigFloat; 2], RefPickDiag) {
+    best_reference_diag_forced(center, span, formula, julia, julia_c, max_iter, p, None, Some(rescue))
 }
 
 /// [`best_reference_diag`] with the phase-2 engine FORCED (`None` = resolve from the inputs —
 /// the production path). The force threads through the rescue rescans too, so a forced run is
 /// one engine end-to-end; it can override the span auto-gate but never engine eligibility
 /// ([`perturb_scoring_supported`] — forcing `Perturb` on a Julia/Phoenix request still walks).
-/// Exists for [`best_reference_dual`], the acceptance harness's entry point.
+/// Exists for [`best_reference_dual`], the acceptance harness's entry point. `rescue`: see
+/// [`best_reference_diag_rescued`].
 #[allow(clippy::too_many_arguments)]
 fn best_reference_diag_forced(
     center: &[BigFloat; 2],
@@ -1643,6 +1730,7 @@ fn best_reference_diag_forced(
     max_iter: u32,
     p: usize,
     force: Option<RefDeepScore>,
+    rescue: Option<&dyn Fn() -> Option<u32>>,
 ) -> ([BigFloat; 2], RefPickDiag) {
     match pick_pass(center, span, formula, julia, julia_c, max_iter, p, force) {
         PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks }
@@ -1666,14 +1754,16 @@ fn best_reference_diag_forced(
             // view (every point escapes) or a precision cliff between `quick` and `max_iter`.
             // Rescoring the centre at the BUILD precision separates them: only a cliff un-blinds.
             let p2 = p + REF_RESCUE_EXTRA_BITS;
-            let jcx = bf(julia_c[0], p2);
-            let jcy = bf(julia_c[1], p2);
-            let zero = bf(0.0, p2);
-            let centre_len = if julia {
-                orbit_length_bf(&center[0], &center[1], &jcx, &jcy, formula, max_iter, p2)
-            } else {
-                orbit_length_bf(&zero, &zero, &center[0], &center[1], formula, max_iter, p2)
-            };
+            let centre_len = rescue.and_then(|f| f()).unwrap_or_else(|| {
+                let jcx = bf(julia_c[0], p2);
+                let jcy = bf(julia_c[1], p2);
+                let zero = bf(0.0, p2);
+                if julia {
+                    orbit_length_bf(&center[0], &center[1], &jcx, &jcy, formula, max_iter, p2)
+                } else {
+                    orbit_length_bf(&zero, &zero, &center[0], &center[1], formula, max_iter, p2)
+                }
+            });
             if centre_len >= max_iter {
                 (
                     [center[0].clone(), center[1].clone()],
@@ -1714,6 +1804,7 @@ fn best_reference_diag_forced(
             // then a real exterior view and the longest escaper (at truthful scores) stands.
             let p2 = p + REF_RESCUE_EXTRA_BITS;
             match pick_pass(center, span, formula, julia, julia_c, max_iter, p2, force) {
+                // (No centre rescue on this branch, so `rescue` is never consulted here.)
                 PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks } => (
                     point,
                     RefPickDiag {
@@ -1993,12 +2084,12 @@ pub fn best_reference_dual(
     let eq = |a: &BigFloat, b: &BigFloat| a.cmp(b).is_some_and(|o| o == 0);
     let t = std::time::Instant::now();
     let (walk, walk_diag) = best_reference_diag_forced(
-        center, span, formula, julia, julia_c, max_iter, p, Some(RefDeepScore::Walk),
+        center, span, formula, julia, julia_c, max_iter, p, Some(RefDeepScore::Walk), None,
     );
     let walk_secs = t.elapsed().as_secs_f64();
     let t = std::time::Instant::now();
     let (perturb, perturb_diag) = best_reference_diag_forced(
-        center, span, formula, julia, julia_c, max_iter, p, Some(RefDeepScore::Perturb),
+        center, span, formula, julia, julia_c, max_iter, p, Some(RefDeepScore::Perturb), None,
     );
     let perturb_secs = t.elapsed().as_secs_f64();
     let identical = eq(&walk[0], &perturb[0]) && eq(&walk[1], &perturb[1]);

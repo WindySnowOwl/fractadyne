@@ -195,6 +195,13 @@ pub(crate) struct RecomputeResult {
     /// assumed, because a lookup that silently misses falls back to a fresh build that renders
     /// the same picture.
     from_disk: bool,
+    /// What became of the speculative CENTRE build [`pick_and_build`] runs beside the pick:
+    /// `"centre"` (the pick was the centre, and this is that build), `"discarded"` (another point
+    /// won), `""` (no speculation — every other path). The same non-vacuity purpose as `reused`.
+    spec_build: &'static str,
+    /// Where the series skip came from: `"overlap"` (the walk that ran beside the build, kept
+    /// under `series_skip_holds_for`), `"walk"` (walked after the build), `""` (no SA).
+    sa_from: &'static str,
 }
 
 /// A cached reference the worker may EXTEND instead of rebuilding from scratch: the prior orbit's
@@ -585,17 +592,157 @@ pub(crate) fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
         }
         inp.reuse = None; // cannot happen (the lookup used the same test) — build fresh if it does
     }
+    let res = pick_and_build(&inp, crate::tunables::cost().ref_overlap == 1);
+    offer_to_orbit_cache(&res, key, inp.origin);
+    res
+}
+
+/// A FRESH pick + build of `inp` (no reuse, no disk cache), with or without the overlap of
+/// [`pick_and_build`] — the selftest's A/B: the two must agree byte for byte.
+pub(crate) fn fresh_build_for_selftest(inp: RecomputeInputs, overlap: bool) -> RecomputeResult {
+    pick_and_build(&inp, overlap)
+}
+
+/// Pick a reference and build it. With `overlap`, the CENTRE's walks run beside the pick instead
+/// of after it, and the pick's centre rescue reads its score off the centre's build.
+///
+/// Why: the sequential order walks the same orbit up to four times. At 4.6e1105× (4K export,
+/// the centre is the pick) that was phase 2 scoring the centre at `p`, the rescue re-scoring it
+/// at `p + 128`, the build walking it again at `p + 128`, and the series walk re-iterating it at
+/// `p` — pick 2.8 s + orbit 1.3 s + series 2.1 s of a 6.2 s reference window.
+///
+/// The centre is candidate 0, deep-scored first, and the likeliest pick, so its build (at the
+/// build precision and cap) and its series walk start on their own threads BEFORE the pick. When
+/// the pick is the centre, that build is the one `build_reference_from_point` would have made —
+/// same point, same cap, same precision — and the rescue's score is read off it
+/// (`scoring_len_from_build`). The series walk runs against an upper bound on the orbit length
+/// and is kept under `series_skip_holds_for`, else walked again. Any other pick cancels the
+/// series walk, drops the build, and builds as before. The result is therefore byte-identical
+/// to `overlap = false`; only the wall-clock changes (`ref-overlap-identical` selftest).
+fn pick_and_build(inp: &RecomputeInputs, overlap: bool) -> RecomputeResult {
+    use fractadyne_core as fc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    // The rescue scores at the pick's precision + REF_RESCUE_EXTRA_BITS and the build runs at
+    // + REF_PREC_HEADROOM: the same walk only while these agree.
+    const _: () = assert!(crate::tunables::REF_PREC_HEADROOM == fc::REF_RESCUE_EXTRA_BITS);
     // pick_reference scores candidate orbits in bignum; at extreme depth (cold, no reusable
     // reference) this is the DOMINANT export cost — ~7 s of a ~15 s me148 render, far more
     // than the orbit build (~1 s) or BLA build (~0.8 s). Timed here so the lever is visible.
-    let t_pick = Instant::now();
-    let rp = pick_reference(&inp);
-    if crate::diag::trace_on("ref") {
-        crate::diag::trace("ref", format!("pick_reference (candidate scoring) took {:.0}ms", t_pick.elapsed().as_secs_f64() * 1000.0));
+    let pick_trace = |t: Instant, how: &str| {
+        if crate::diag::trace_on("ref") {
+            crate::diag::trace(
+                "ref",
+                format!(
+                    "pick_reference (candidate scoring) took {:.0}ms{how}",
+                    t.elapsed().as_secs_f64() * 1000.0
+                ),
+            );
+        }
+    };
+    if !overlap {
+        let t_pick = Instant::now();
+        let rp = pick_reference(inp, None);
+        pick_trace(t_pick, "");
+        return build_reference_from_point(rp, inp.gpu_iter, inp.do_sa, inp);
     }
-    let res = build_reference_from_point(rp, inp.gpu_iter, inp.do_sa, &inp);
-    offer_to_orbit_cache(&res, key, inp.origin);
-    res
+    let centre = &inp.center_bf;
+    // `finish_reference` runs SA for `do_sa`, or for a short escaper, which needs a BLA view.
+    let sa_may_run = inp.do_sa || inp.bla_dc_max.is_some();
+    let cancel_sa = AtomicBool::new(false);
+    std::thread::scope(|s| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        s.spawn(move || {
+            let _ = tx.send(build_orbit(centre, inp.gpu_iter, inp));
+        });
+        let cancel = &cancel_sa;
+        let sa = sa_may_run.then(|| {
+            s.spawn(move || {
+                let t = Instant::now();
+                let skip = fc::series_skip_in_cancellable(
+                    fc::selected_backend(),
+                    &centre[0],
+                    &centre[1],
+                    sa_log2_max_dc(inp, centre),
+                    inp.gpu_iter,
+                    // An UPPER BOUND on the orbit length: the build stores at most cap + 1 samples.
+                    build_cap(inp.gpu_iter, inp).saturating_add(1),
+                    inp.formula,
+                    inp.precision,
+                    Some(cancel),
+                );
+                SaPre { skip, max_iter: inp.gpu_iter, ms: t.elapsed().as_secs_f64() * 1000.0 }
+            })
+        });
+        let built: std::cell::RefCell<Option<BuiltOrbit>> = std::cell::RefCell::new(None);
+        let take = || {
+            if built.borrow().is_none() {
+                *built.borrow_mut() = rx.recv().ok();
+            }
+        };
+        let rescue = || {
+            take();
+            let b = built.borrow();
+            let b = b.as_ref()?;
+            // The `c` the rescue walk iterates with: the centre itself, or Julia's constant.
+            let (cx, cy) = if inp.julia {
+                (
+                    fc::BigFloat::from_f64(inp.julia_c.0, b.orbit_prec),
+                    fc::BigFloat::from_f64(inp.julia_c.1, b.orbit_prec),
+                )
+            } else {
+                (centre[0].clone(), centre[1].clone())
+            };
+            fc::scoring_len_from_build(b.len, &b.tail, &cx, &cy, inp.formula, inp.gpu_iter, b.orbit_prec)
+        };
+        let t_pick = Instant::now();
+        let rp = pick_reference(inp, Some(&rescue));
+        pick_trace(t_pick, " (overlapped with the centre's build)");
+        let is_centre = same_point(&rp, centre);
+        if is_centre {
+            take();
+        }
+        let built = built.into_inner();
+        let spec_ms = built.as_ref().map_or(0.0, |b| b.ref_ms);
+        let res = match built.filter(|_| is_centre) {
+            Some(b) => {
+                let sa_wanted = inp.do_sa || sa_short_escaper(inp, b.len, !b.tail.escaped);
+                if !sa_wanted {
+                    cancel_sa.store(true, Ordering::Relaxed);
+                }
+                let sa_pre = sa.and_then(|h| h.join().ok()).filter(|_| sa_wanted);
+                let mut res = finish_reference(
+                    rp, b.o, b.len, b.tail, b.orbit_prec, inp.gpu_iter, inp.do_sa, inp, b.ref_ms, sa_pre,
+                );
+                res.spec_build = "centre";
+                res
+            }
+            None => {
+                cancel_sa.store(true, Ordering::Relaxed);
+                refwaste_log(inp.origin, "SPECULATIVE-DISCARDED", spec_ms);
+                let mut res = build_reference_from_point(rp, inp.gpu_iter, inp.do_sa, inp);
+                res.spec_build = "discarded";
+                res
+            }
+        };
+        if crate::diag::trace_on("ref") {
+            crate::diag::trace(
+                "ref",
+                format!(
+                    "[{}] overlap: centre build {} ({spec_ms:.0}ms beside the pick), sa={}",
+                    inp.origin,
+                    if res.spec_build == "centre" { "USED" } else { "DISCARDED" },
+                    if res.sa_from.is_empty() { "none" } else { res.sa_from },
+                ),
+            );
+        }
+        res
+    })
+}
+
+/// Exact equality of two bignum points (the pick returns a clone of the centre when it picks it).
+fn same_point(a: &[fractadyne_core::BigFloat; 2], b: &[fractadyne_core::BigFloat; 2]) -> bool {
+    let eq = |x: &fractadyne_core::BigFloat, y: &fractadyne_core::BigFloat| x.cmp(y).is_some_and(|o| o == 0);
+    eq(&a[0], &b[0]) && eq(&a[1], &b[1])
 }
 
 /// The identity of the orbit `inp` would build: formula, Julia c, and the backend a fresh build
@@ -697,17 +844,21 @@ fn offer_to_orbit_cache(res: &RecomputeResult, key: orbit_blob::OrbitKey, origin
 
 /// Choose the reference point for `inp`. The ranking scan is internally capped (`REF_SCORE_SCAN`),
 /// so this is cheap and deterministic — the SAME point comes back for any iteration budget past the
-/// cap, which is why a coarse and a full stage share it exactly.
-fn pick_reference(inp: &RecomputeInputs) -> [fractadyne_core::BigFloat; 2] {
-    let (point, diag) = fractadyne_core::best_reference_diag(
-        &inp.center_bf,
-        [inp.span.0, inp.span.1],
-        inp.formula,
-        inp.julia,
-        [inp.julia_c.0, inp.julia_c.1],
-        inp.gpu_iter,
-        inp.precision,
-    );
+/// cap, which is why a coarse and a full stage share it exactly. `rescue`: the centre-rescue score
+/// from a build of the centre ([`pick_and_build`]); `None` walks it as before.
+fn pick_reference(
+    inp: &RecomputeInputs,
+    rescue: Option<&dyn Fn() -> Option<u32>>,
+) -> [fractadyne_core::BigFloat; 2] {
+    let (center, span, julia_c) = (&inp.center_bf, [inp.span.0, inp.span.1], [inp.julia_c.0, inp.julia_c.1]);
+    let (point, diag) = match rescue {
+        Some(rescue) => fractadyne_core::best_reference_diag_rescued(
+            center, span, inp.formula, inp.julia, julia_c, inp.gpu_iter, inp.precision, rescue,
+        ),
+        None => fractadyne_core::best_reference_diag(
+            center, span, inp.formula, inp.julia, julia_c, inp.gpu_iter, inp.precision,
+        ),
+    };
     if crate::diag::trace_on("ref") {
         // Offset of the pick from the view centre, in spans — the same normalisation the reuse
         // drift gate uses, so a pick and its later reuse verdicts read in one unit.
@@ -759,6 +910,33 @@ fn build_reference_from_point(
     do_sa: bool,
     inp: &RecomputeInputs,
 ) -> RecomputeResult {
+    let b = build_orbit(&rp, orbit_iter, inp);
+    finish_reference(rp, b.o, b.len, b.tail, b.orbit_prec, orbit_iter, do_sa, inp, b.ref_ms, None)
+}
+
+/// A fresh orbit build of one point: what `finish_reference` takes, plus its cost.
+struct BuiltOrbit {
+    o: Vec<[f32; 4]>,
+    len: u32,
+    tail: fractadyne_core::OrbitTail,
+    orbit_prec: usize,
+    ref_ms: f64,
+}
+
+/// The iteration cap a fresh build of `orbit_iter` walks to. Cap the stored orbit LENGTH to the
+/// smaller of this build's cap (`inp.orbit_len_cap` — the LIVE path keeps the reference small for
+/// freeze safety) and the GPU storage-binding limit (`orbit_len_cap()`). `orbit_iter` (the
+/// render's iteration budget, passed unchanged to `finish_reference`) is untouched — pixels rebase
+/// past the truncated orbit to reach the full count. An escaping reference shorter than the cap
+/// builds identically (it stops at escape). The build stores at most `cap + 1` samples.
+fn build_cap(orbit_iter: u32, inp: &RecomputeInputs) -> u32 {
+    orbit_iter.min(inp.orbit_len_cap).min(orbit_len_cap())
+}
+
+/// Build the orbit of `rp` (to `build_cap`, at reuse-headroom precision). Everything the fresh
+/// build path walks, in one place, so the speculative centre build in [`pick_and_build`] is the
+/// same build by construction.
+fn build_orbit(rp: &[fractadyne_core::BigFloat; 2], orbit_iter: u32, inp: &RecomputeInputs) -> BuiltOrbit {
     use fractadyne_core as fc;
     let t = Instant::now();
     let orbit_prec = inp.precision + REF_PREC_HEADROOM;
@@ -773,18 +951,45 @@ fn build_reference_from_point(
     } else {
         (zero.clone(), zero, rp[0].clone(), rp[1].clone())
     };
-    // Cap the stored orbit LENGTH to the smaller of this build's cap (`inp.orbit_len_cap` — the
-    // LIVE path keeps the reference small for freeze safety) and the GPU storage-binding limit
-    // (`orbit_len_cap()`). `orbit_iter` (the render's iteration budget, passed unchanged to
-    // `finish_reference`) is untouched — pixels rebase past the truncated orbit to reach the full
-    // count. An escaping reference shorter than the cap builds identically (it stops at escape).
-    let (o, len, tail) = fc::reference_orbit_t(
-        &z0x, &z0y, &cx0, &cy0, inp.formula,
-        orbit_iter.min(inp.orbit_len_cap).min(orbit_len_cap()),
-        orbit_prec,
-    );
-    let ref_ms = t.elapsed().as_secs_f64() * 1000.0;
-    finish_reference(rp, o, len, tail, orbit_prec, orbit_iter, do_sa, inp, ref_ms)
+    let (o, len, tail) =
+        fc::reference_orbit_t(&z0x, &z0y, &cx0, &cy0, inp.formula, build_cap(orbit_iter, inp), orbit_prec);
+    BuiltOrbit { o, len, tail, orbit_prec, ref_ms: t.elapsed().as_secs_f64() * 1000.0 }
+}
+
+/// A series skip walked BEFORE the orbit length was known (beside the build, in
+/// [`pick_and_build`]), against an upper bound on it. `finish_reference` keeps it only under
+/// `series_skip_holds_for` and the same iteration budget.
+struct SaPre {
+    skip: fractadyne_core::SeriesSkip,
+    max_iter: u32,
+    ms: f64,
+}
+
+/// log₂ of the series approximation's worst-case |δc| for reference `rp`: its offset from the
+/// view centre plus the half-diagonal, in the view's delta exponent.
+fn sa_log2_max_dc(inp: &RecomputeInputs, rp: &[fractadyne_core::BigFloat; 2]) -> f64 {
+    use fractadyne_core as fc;
+    let dx = fc::ref_offset_mantissa(&inp.center_bf[0], &rp[0], inp.delta_exp, inp.precision);
+    let dy = fc::ref_offset_mantissa(&inp.center_bf[1], &rp[1], inp.delta_exp, inp.precision);
+    let roff = (dx * dx + dy * dy).sqrt();
+    let half_diag = 0.5
+        * (inp.span_mantissa.x * inp.span_mantissa.x + inp.span_mantissa.y * inp.span_mantissa.y).sqrt();
+    inp.delta_exp as f64 + (roff + half_diag).max(1e-300).log2()
+}
+
+/// A SHORT ESCAPED reference (deep EXTERIOR): the orbit escapes early (e.g. ~3.3k iters at 1e261×)
+/// and this orbit geometry has an EARLY-ITERATION perturbation glitch. A BLA view normally turns
+/// SERIES APPROXIMATION off ("BLA subsumes SA") — which leaves that glitch EXPOSED and shatters the
+/// view into "distorted overlapping tiles" (the e260 exterior artifact; confirmed headlessly:
+/// independent of BLA eps / dc_max / max-skip-level — it was never the skip validity). SA masks the
+/// glitch by seeding δz analytically PAST the early iterations, so `finish_reference` forces it
+/// back on for one. The BLA is KEPT (SA seeds, the BLA skips from there): dropping it instead would
+/// make a nearby MINIBROT's interior/late-escaping boundary pixels iterate to max_iter
+/// un-accelerated (slow, and a capped stand-in gives a hard borderless minibrot). Surviving
+/// references (partial: reached the cap without escaping) already run SA-or-BLA correctly. Gate on
+/// the escape being well short of the budget so this only touches genuine short escapers.
+fn sa_short_escaper(inp: &RecomputeInputs, len: u32, partial: bool) -> bool {
+    inp.bla_dc_max.is_some() && !partial && (len as u64).saturating_mul(2) < inp.gpu_iter.max(1) as u64
 }
 
 /// Assemble a `RecomputeResult` from an already-built (fresh or extended) orbit: derive the
@@ -803,6 +1008,7 @@ fn finish_reference(
     do_sa: bool,
     inp: &RecomputeInputs,
     ref_ms: f64,
+    sa_pre: Option<SaPre>,
 ) -> RecomputeResult {
     use fractadyne_core as fc;
     let partial = !tail.escaped;
@@ -812,20 +1018,8 @@ fn finish_reference(
     // wrong root cause: `len=626 partial=false escaped=false` was read as a period-626 nucleus
     // when it is an orbit that ESCAPED at 626.
     let tail_escaped = tail.escaped;
-    // A SHORT ESCAPED reference (deep EXTERIOR): the orbit escapes early (e.g. ~3.3k iters at 1e261×)
-    // and this orbit geometry has an EARLY-ITERATION perturbation glitch. A BLA view normally turns
-    // SERIES APPROXIMATION off ("BLA subsumes SA") — which leaves that glitch EXPOSED and shatters the
-    // view into "distorted overlapping tiles" (the e260 exterior artifact; confirmed headlessly:
-    // independent of BLA eps / dc_max / max-skip-level — it was never the skip validity). SA masks the
-    // glitch by seeding δz analytically PAST the early iterations, so force it back on here. The BLA is
-    // KEPT (SA seeds, the BLA skips from there): dropping it instead would make a nearby MINIBROT's
-    // interior/late-escaping boundary pixels iterate to max_iter un-accelerated (slow, and a capped
-    // stand-in gives a hard borderless minibrot). Surviving references (partial: reached the cap
-    // without escaping) already run SA-or-BLA correctly. Gate on the escape being well short of the
-    // budget so this only touches genuine short escapers.
-    let short_escaper = inp.bla_dc_max.is_some()
-        && !partial
-        && (len as u64).saturating_mul(2) < inp.gpu_iter.max(1) as u64;
+    // SA is forced back on for a short escaper even in a BLA view — see `sa_short_escaper`.
+    let short_escaper = sa_short_escaper(inp, len, partial);
     // Keep the tail even for a COMPLETE (escaped) orbit: it can't be EXTENDED, but it can still be
     // REUSED as-is (same point + orbit) so a rebuild doesn't re-pick a fresh reference — which at
     // extreme depth renders a hair differently each time and makes the view "jump" on zoom.
@@ -833,19 +1027,28 @@ fn finish_reference(
     let orbit = std::sync::Arc::new(o);
     // Series approximation for the chosen reference (at the exact depth precision, not the headroom).
     // Forced on for a short escaper (see above) even though `do_sa` was cleared by BLA eligibility.
+    // A skip walked beside the build (`sa_pre`, same point and inputs) stands when the bound rule
+    // says the walk to this `len` would stop at the same index; its time is its own walk's.
     let t_sa = Instant::now();
+    let mut sa_from = "";
+    let mut pre_ms = None;
     let sa = if do_sa || short_escaper {
-        let dx = fc::ref_offset_mantissa(&inp.center_bf[0], &rp[0], inp.delta_exp, inp.precision);
-        let dy = fc::ref_offset_mantissa(&inp.center_bf[1], &rp[1], inp.delta_exp, inp.precision);
-        let roff = (dx * dx + dy * dy).sqrt();
-        let half_diag = 0.5
-            * (inp.span_mantissa.x * inp.span_mantissa.x + inp.span_mantissa.y * inp.span_mantissa.y).sqrt();
-        let log2_max_dc = inp.delta_exp as f64 + (roff + half_diag).max(1e-300).log2();
-        fc::series_skip(&rp[0], &rp[1], log2_max_dc, orbit_iter, len, inp.formula, inp.precision)
+        match sa_pre.filter(|pre| pre.max_iter == orbit_iter && fc::series_skip_holds_for(&pre.skip, len)) {
+            Some(pre) => {
+                sa_from = "overlap";
+                pre_ms = Some(pre.ms);
+                pre.skip
+            }
+            None => {
+                sa_from = "walk";
+                let log2_max_dc = sa_log2_max_dc(inp, &rp);
+                fc::series_skip(&rp[0], &rp[1], log2_max_dc, orbit_iter, len, inp.formula, inp.precision)
+            }
+        }
     } else {
         fc::SeriesSkip::NONE
     };
-    let series_ms = t_sa.elapsed().as_secs_f64() * 1000.0;
+    let series_ms = pre_ms.unwrap_or_else(|| t_sa.elapsed().as_secs_f64() * 1000.0);
     // BLA tree (Mandelbrot deep only; empty otherwise). Built with the same conservative dc_max the
     // live path uses so the main thread reuses it across pans.
     //
@@ -922,6 +1125,8 @@ fn finish_reference(
         // the orbit from a fresh pick. `from_disk` likewise, by `recompute_worker`.
         reused: false,
         from_disk: false,
+        spec_build: "",
+        sa_from,
     }
 }
 
@@ -997,6 +1202,7 @@ fn try_reuse_reference(inp: &RecomputeInputs) -> Option<RecomputeResult> {
         inp.do_sa,
         inp,
         ref_ms,
+        None,
     );
     res.reused = true;
     Some(res)
@@ -1034,7 +1240,7 @@ fn recompute_worker_staged(
             }
             inp.reuse = None;
         }
-        let rp = pick_reference(&inp);
+        let rp = pick_reference(&inp, None);
         // Coarse stage skips series approximation: its `series_skip` is a bignum coefficient pass
         // that costs seconds at extreme depth (≈ as much as the whole reference), and this stage
         // exists only to put a fast, BLA-accelerated, iteration-capped preview on screen so panning
@@ -2580,6 +2786,55 @@ impl FractadyneApp {
             let tail = s.orbit_tail.clone().ok_or_else(|| "the short orbit carries no tail".to_string())?;
             Ok(ReuseRef { point: s.rp.clone(), prefix: s.orbit.clone(), tail, prec: s.prec })
         })
+    }
+
+    /// ⭐**The overlapped pick + build is the sequential one, byte for byte** ([`pick_and_build`]).
+    /// Builds `vp` fresh both ways and compares everything a render reads from the result: the
+    /// point, the orbit samples, the series skip and its coefficients, the BLA table, the
+    /// precisions and the tail state. Returns the overlap arm's `(spec_build, sa_from)` and a
+    /// summary, so the caller can require the overlap to have ENGAGED: an arm that fell back to
+    /// the sequential path would compare that path with itself and pass.
+    pub(crate) fn selfcheck_ref_overlap(
+        &self,
+        vp: &Viewport,
+        max_iter: u32,
+    ) -> Result<(&'static str, &'static str, String), String> {
+        let budget = IterBudget { max_iter, auto_iter: false };
+        let inputs = || self.export_reference_inputs_for(vp, false, budget).ok_or("not a perturbation view");
+        let t = Instant::now();
+        let a = fresh_build_for_selftest(inputs()?, false);
+        let seq_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let t = Instant::now();
+        let b = fresh_build_for_selftest(inputs()?, true);
+        let ovl_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let bits = |v: &[[f32; 4]]| v.iter().flat_map(|q| q.map(f32::to_bits)).collect::<Vec<u32>>();
+        let sa_bits = |s: &fractadyne_core::SeriesSkip| {
+            (s.skip, s.a.map(f32::to_bits), s.a_exp, s.b.map(f32::to_bits), s.b_exp, s.c.map(f32::to_bits), s.c_exp)
+        };
+        let tail_escaped = |r: &RecomputeResult| r.orbit_tail.as_ref().map(|t| t.escaped);
+        let differs = [
+            ("point", !same_point(&a.rp, &b.rp)),
+            ("orbit", a.orbit_len != b.orbit_len || bits(&a.orbit) != bits(&b.orbit)),
+            ("series skip", sa_bits(&a.sa) != sa_bits(&b.sa)),
+            ("BLA", bits(&a.bla) != bits(&b.bla) || a.bla_dc_max_log2.to_bits() != b.bla_dc_max_log2.to_bits()),
+            ("precision", (a.prec, a.req_prec, a.iter) != (b.prec, b.req_prec, b.iter)),
+            ("tail", (a.partial, tail_escaped(&a)) != (b.partial, tail_escaped(&b))),
+        ];
+        if let Some((what, _)) = differs.iter().find(|(_, d)| *d) {
+            return Err(format!("the overlapped build differs from the sequential one in its {what}"));
+        }
+        Ok((
+            b.spec_build,
+            b.sa_from,
+            format!(
+                "identical; len={} sa_skip={} sa={}/{} centre build={} ({seq_ms:.0} ms sequential, {ovl_ms:.0} ms overlapped)",
+                b.orbit_len,
+                b.sa.skip,
+                if a.sa_from.is_empty() { "none" } else { a.sa_from },
+                if b.sa_from.is_empty() { "none" } else { b.sa_from },
+                b.spec_build,
+            ),
+        ))
     }
 
     /// ⭐⭐**Does an orbit that went through the DISK render the same image as a fresh pick?**

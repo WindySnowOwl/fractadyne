@@ -661,6 +661,7 @@ pub(crate) fn try_series_skip_walk(
     limit: u32,
     formula: u32,
     p: usize,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> Option<Option<(u32, [BigFloat; 6])>> {
     use crate::fractal::Field;
 
@@ -704,6 +705,9 @@ pub(crate) fn try_series_skip_walk(
     let (mut cxx, mut cyy) = (zero(ctx_c), zero(ctx_c));
     let mut best: Option<(u32, [Float; 6])> = None;
     for n in 1..=limit {
+        if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
+            return Some(None); // = SeriesSkip::NONE, as the astro walk returns when cancelled
+        }
         // For d = 2: Z^{d-1} = Z itself (astro's `cpow_bf(z, 1)` is an exact clone) and the
         // Z^{d-2} factor is the identity, so the recurrence collapses to the lines below.
         let (a2x, a2y) = cmul(&ax, &ay, &ax, &ay, ctx_c); // A²
