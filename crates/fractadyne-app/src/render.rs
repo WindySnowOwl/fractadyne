@@ -5446,7 +5446,13 @@ impl FractadyneApp {
             let fresh = !self.perf.hold_active[vs];
             self.perf.hold_active[vs] = true;
             (fresh, true)
-        } else if interacting && (self.perf.pin[vsub].is_some() || self.perf.chunk_dirty[vsub]) {
+        } else if interacting
+            && (self.perf.pin[vsub].is_some()
+                // Not in DIRECT mode: nothing there can ever clear it (no pin adopts, the latch is
+                // perturbation-only), so a stale flag would hold every moving frame forever. The
+                // mode switch clears it; this keeps any other path from reaching that state.
+                || (self.perf.chunk_dirty[vsub] && !chunk_mode.is_direct()))
+        {
             // Pin CONTINUE frames, and any interacting frame while the live texture diverges
             // from the frozen bookkeeping (an abandoned pin's residue — holds, freezes, pan
             // reprojections): serve the hold snapshot, never the diverged texture. `fresh` fires
@@ -6708,7 +6714,8 @@ impl FractadyneApp {
         // overshoot-safe by design, so the cost is one or two coarser frames after the crossover.
         if !offscreen {
             // `mode` itself is selected further down; it is a pure function of these two.
-            let m = RenderMode::select(fractal.supports_perturbation(), julia, magnification).to_u32();
+            let sel = RenderMode::select(fractal.supports_perturbation(), julia, magnification);
+            let m = sel.to_u32();
             if self.perf.budget_mode[vidx] != m {
                 let prev = self.perf.budget_mode[vidx];
                 self.perf.budget_mode[vidx] = m;
@@ -6722,6 +6729,18 @@ impl FractadyneApp {
                 // real frame is priced here, and the pin feedback likewise re-measures.
                 self.perf.motion_res_measured = false;
                 self.perf.pin_frames_last[vidx.min(1)] = 0;
+                // ENTERING DIRECT MODE ends any pin and its dirty residue. Only a perturbation
+                // mode's latch or a pin's own adoption can clear `chunk_dirty`, and neither exists
+                // in direct mode — so a pin a jump abandoned on the way OUT of perturbation left the
+                // flag set for the rest of the session, and the present gate served the stale
+                // snapshot for every moving frame there, magnified until the screen was solid
+                // colour (2026-09-27 report, 179× direct; reproduced by `--zoomtest-then-log2`: 100%
+                // of a glide held). Between the perturbation modes the latch still runs, so those
+                // crossovers keep their pins and their holds unchanged.
+                if sel.is_direct() {
+                    self.perf.pin[vsub] = None;
+                    self.perf.chunk_dirty[vsub] = false;
+                }
                 // Arm the BLA-suppression instrument (off unless FRACTADYNE_BLA_DROP_FRAMES is
                 // set). See `Perf::bla_suppress`: this is the only way found to reach the
                 // `bla_skip=0` post-crossover regime on demand.

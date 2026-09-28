@@ -12,6 +12,16 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Fixed: zooming could show a frozen, blown-up picture that looked like a solid colour**
+  (beta.134). After zooming out from a deep view into the shallow range, where a simpler kind of
+  arithmetic is used, every zoom with Space could keep showing the last finished picture for its
+  whole length. That picture was magnified until it was a few blocks of colour, instead of the view
+  being drawn as it zoomed. The cause: a moving frame interrupted during the zoom-out left behind a
+  "not ready" marker that nothing in the shallow range could clear. Crossing into that range now
+  clears it. The zoom test can now follow a user's path, going deep, jumping out while moving and
+  zooming again (`--zoomtest-then-log2`). It reproduced the bug in 3 runs out of 3 (the old picture
+  held for the whole 1.25 s zoom); with the fix, the view is drawn live on every frame. It also
+  reports how often the old picture was shown, which its earlier measures could not see.
 - **The safety stop passed the crash test on the RX 6800 XT** (beta.133, for testing). With the old
   behaviour, the crash test hung the whole machine. With beta.132's safety stop, all three runs
   survived. The stop fired on the first frame of about one second, the frame budget dropped from
