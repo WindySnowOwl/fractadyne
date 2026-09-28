@@ -473,6 +473,40 @@ fn sa_coefficient_width_is_output_neutral() {
     assert!(longest_break >= 100, "vacuous: the longest validity-cut walk was {longest_break} steps");
 }
 
+// The pipelined series walk (Z chain on its own thread, coefficients here) is the sequential walk,
+// byte for byte — the same values meet the same operations in the same order. Covers validity
+// cuts, cap-bound walks, an escaping reference (the Z chain stops at the escape), multibrot, and a
+// cancelled walk. Anti-vacuity: real skips, and walks long enough to exercise the channel.
+#[test]
+fn the_pipelined_sa_walk_is_the_sequential_one() {
+    let bits4 = |q: &[f32; 4]| [q[0].to_bits(), q[1].to_bits(), q[2].to_bits(), q[3].to_bits()];
+    let key = |s: &SeriesSkip| {
+        (s.skip, bits4(&s.a), s.a_exp, bits4(&s.b), s.b_exp, bits4(&s.c), s.c_exp)
+    };
+    let (p, pc) = (576usize, SA_COEFF_BITS);
+    let (mut cases, mut real, mut longest) = (0, 0, 0u32);
+    for f in [formula::MANDELBROT, formula::MULTIBROT3] {
+        for (sx, sy) in [("-0.5", "0.1"), ("-0.77568377", "0.13646737"), ("-0.745", "0.113"), ("0.26", "0.0015")] {
+            let cx = parse_bf_prec(sx, p).unwrap();
+            let cy = parse_bf_prec(sy, p).unwrap();
+            for dc in [-40.0f64, -400.0] {
+                let run = |pipe| series_skip_astro_piped(&cx, &cy, dc, 3000, 3002, f, p, pc, None, Some(pipe));
+                let (seq, piped) = (run(false), run(true));
+                assert_eq!(key(&seq), key(&piped), "{sx},{sy} f={f} dc={dc}");
+                cases += 1;
+                real += (seq.skip > 0) as u32;
+                longest = longest.max(seq.skip);
+            }
+        }
+    }
+    assert!(real >= cases / 2 && longest >= 1000, "vacuous: {real}/{cases} with a skip, longest {longest}");
+    // A cancelled pipelined walk returns NONE and does not hang on its Z chain.
+    let on = std::sync::atomic::AtomicBool::new(true);
+    let (cx, cy) = (bf(-0.5, p), bf(0.1, p));
+    let dead = series_skip_astro_piped(&cx, &cy, -40.0, 3000, 3002, 0, p, pc, Some(&on), Some(true));
+    assert_eq!(dead.skip, 0);
+}
+
 // The centre rescue may take its score from the app's build of the centre instead of walking it
 // again (`best_reference_diag_rescued` + `scoring_len_from_build`). The pick must come out
 // byte-identical to the plain one — point, score, scoring precision, rescue verdict — whatever

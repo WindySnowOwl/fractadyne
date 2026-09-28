@@ -703,6 +703,24 @@ pub(crate) fn series_skip_astro(
     pc: usize,
     cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> SeriesSkip {
+    series_skip_astro_piped(cx, cy, log2_max_dc, max_iter, orbit_len, formula, p, pc, cancel, None)
+}
+
+/// [`series_skip_astro`] with the pipeline FORCED on or off (`None` = the production rule), so a
+/// test can hold the two orders to the same bytes.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn series_skip_astro_piped(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    log2_max_dc: f64,
+    max_iter: u32,
+    orbit_len: u32,
+    formula: u32,
+    p: usize,
+    pc: usize,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+    pipe: Option<bool>,
+) -> SeriesSkip {
     if !log2_max_dc.is_finite() {
         return SeriesSkip::NONE;
     }
@@ -723,99 +741,147 @@ pub(crate) fn series_skip_astro(
     let c2_u = deg * (deg - 1) / 2; // C(d,2)
     let two_c2_u = deg * (deg - 1); // 2·C(d,2)
     let c3_u = deg * (deg - 1) * (deg - 2) / 6; // C(d,3) (0 for d=2)
-    let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
-    let (mut ax, mut ay) = (bf(0.0, pc), bf(0.0, pc));
-    let (mut bx, mut by) = (bf(0.0, pc), bf(0.0, pc));
-    let (mut cxx, mut cyy) = (bf(0.0, pc), bf(0.0, pc));
-    // The coefficients also take Z at `pc`: Z itself stays at `p` for the reference step, but a
-    // copy truncated to `pc` once per step turns every Z·coefficient product into a pc×pc one
-    // (at p = 3,738 that was 0.8 s of a 2.1 s walk). `pc = p` keeps the historical walk exactly.
+    // The walk is TWO CHAINS: the reference Z at `p` (the dear one at depth) and the coefficient
+    // recurrence at `pc`, which reads nothing of Z but a `pc`-bit copy of each iterate. One step
+    // of the Z chain yields that copy of Z_{n-1}, then advances to Z_n and says whether Z_n
+    // escaped. The coefficients also take Z at `pc`, a copy truncated once per step, so every
+    // Z·coefficient product is pc×pc (beta.144); `pc = p` keeps the historical walk exactly.
     let narrow = pc < p;
-    let mut best: Option<(u32, [BigFloat; 6])> = None;
-    for n in 1..=limit {
-        if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
-            return SeriesSkip::NONE;
+    let cut = |v: &BigFloat| {
+        let mut t = v.clone();
+        if narrow {
+            t.set_precision(pc, RM).expect("pc is a valid precision");
         }
-        let zc = narrow.then(|| {
-            let cut = |v: &BigFloat| {
-                let mut t = v.clone();
-                t.set_precision(pc, RM).expect("pc is a valid precision");
-                t
+        t
+    };
+    let z_step = |zx: &mut BigFloat, zy: &mut BigFloat| -> (BigFloat, BigFloat, bool) {
+        let (zcx, zcy) = (cut(zx), cut(zy));
+        let (nzx, nzy) = step_bf(zx, zy, cx, cy, formula, p);
+        *zx = nzx;
+        *zy = nzy;
+        let escaped = to_f64(zx) * to_f64(zx) + to_f64(zy) * to_f64(zy) > 1.0e12;
+        (zcx, zcy, escaped)
+    };
+    // The coefficient chain, fed one Z-chain step per iteration. `Err` = cancelled.
+    type Walked = Result<Option<(u32, [BigFloat; 6])>, ()>;
+    let walk = |next: &mut dyn FnMut() -> Option<(BigFloat, BigFloat, bool)>| -> Walked {
+        let (mut ax, mut ay) = (bf(0.0, pc), bf(0.0, pc));
+        let (mut bx, mut by) = (bf(0.0, pc), bf(0.0, pc));
+        let (mut cxx, mut cyy) = (bf(0.0, pc), bf(0.0, pc));
+        let mut best: Option<(u32, [BigFloat; 6])> = None;
+        for n in 1..=limit {
+            if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
+                return Err(());
+            }
+            // (The pipelined Z chain ends at the escape; the walk below breaks there first — a
+            // `continue` past it needs a non-finite A, and a non-finite A stays so, `best` frozen.)
+            let Some((zcx, zcy, z_escaped)) = next() else { break };
+            let (zcx, zcy) = (&zcx, &zcy);
+            // Advance the order-3 coefficients for z^d + c, using Z_{n-1} (current z):
+            //   A' = d·Z^{d-1}·A + 1
+            //   B' = d·Z^{d-1}·B + C(d,2)·Z^{d-2}·A²
+            //   C' = d·Z^{d-1}·C + 2·C(d,2)·Z^{d-2}·A·B + C(d,3)·Z^{d-3}·A³
+            // Everything here is coefficient arithmetic, carried at `pc`.
+            let (p1x, p1y) = cpow_bf(zcx, zcy, deg - 1, pc); // Z^{d-1} (Z itself for d = 2)
+            let (a2x, a2y) = cmul_bf(&ax, &ay, &ax, &ay, pc); // A²
+            let (abx, aby) = cmul_bf(&ax, &ay, &bx, &by, pc); // A·B
+            // Z^{d-2} is the identity (= 1) for d = 2 → `None` skips that whole complex multiply.
+            let p2 = (deg >= 3).then(|| cpow_bf(zcx, zcy, deg - 2, pc));
+            let zp2 = |wx: &BigFloat, wy: &BigFloat| match &p2 {
+                Some((p2x, p2y)) => cmul_bf(p2x, p2y, wx, wy, pc),
+                None => (wx.clone(), wy.clone()),
             };
-            (cut(&zx), cut(&zy))
-        });
-        let (zcx, zcy) = zc.as_ref().map_or((&zx, &zy), |(x, y)| (x, y));
-        // Advance the order-3 coefficients for z^d + c, using Z_{n-1} (current z):
-        //   A' = d·Z^{d-1}·A + 1
-        //   B' = d·Z^{d-1}·B + C(d,2)·Z^{d-2}·A²
-        //   C' = d·Z^{d-1}·C + 2·C(d,2)·Z^{d-2}·A·B + C(d,3)·Z^{d-3}·A³
-        // Everything below the reference step is coefficient arithmetic, carried at `pc`.
-        let (p1x, p1y) = cpow_bf(zcx, zcy, deg - 1, pc); // Z^{d-1} (Z itself for d = 2)
-        let (a2x, a2y) = cmul_bf(&ax, &ay, &ax, &ay, pc); // A²
-        let (abx, aby) = cmul_bf(&ax, &ay, &bx, &by, pc); // A·B
-        // Z^{d-2} is the identity (= 1) for d = 2 → `None` skips that whole complex multiply.
-        let p2 = (deg >= 3).then(|| cpow_bf(zcx, zcy, deg - 2, pc));
-        let zp2 = |wx: &BigFloat, wy: &BigFloat| match &p2 {
-            Some((p2x, p2y)) => cmul_bf(p2x, p2y, wx, wy, pc),
-            None => (wx.clone(), wy.clone()),
-        };
-        // A' = d·Z^{d-1}·A + 1
-        let (t, u) = cmul_bf(&p1x, &p1y, &ax, &ay, pc);
-        let na_x = mul_u32_bf(&t, d_u, pc).add(&one, pc, RM);
-        let na_y = mul_u32_bf(&u, d_u, pc);
-        // B' = d·Z^{d-1}·B + C(d,2)·Z^{d-2}·A²
-        let (t, u) = cmul_bf(&p1x, &p1y, &bx, &by, pc);
-        let (v, w) = zp2(&a2x, &a2y);
-        let nb_x = mul_u32_bf(&t, d_u, pc).add(&mul_u32_bf(&v, c2_u, pc), pc, RM);
-        let nb_y = mul_u32_bf(&u, d_u, pc).add(&mul_u32_bf(&w, c2_u, pc), pc, RM);
-        // C' = d·Z^{d-1}·C + 2·C(d,2)·Z^{d-2}·A·B + C(d,3)·Z^{d-3}·A³
-        let (t, u) = cmul_bf(&p1x, &p1y, &cxx, &cyy, pc);
-        let (v, w) = zp2(&abx, &aby);
-        let mut nc_x = mul_u32_bf(&t, d_u, pc).add(&mul_u32_bf(&v, two_c2_u, pc), pc, RM);
-        let mut nc_y = mul_u32_bf(&u, d_u, pc).add(&mul_u32_bf(&w, two_c2_u, pc), pc, RM);
-        if deg >= 3 {
-            let (a3x, a3y) = cmul_bf(&a2x, &a2y, &ax, &ay, pc); // A³
-            // Z^{d-3} is the identity for d = 3.
-            let (x3, y3) = if deg >= 4 {
-                let (p3x, p3y) = cpow_bf(zcx, zcy, deg - 3, pc);
-                cmul_bf(&p3x, &p3y, &a3x, &a3y, pc)
-            } else {
-                (a3x, a3y)
-            };
-            nc_x = nc_x.add(&mul_u32_bf(&x3, c3_u, pc), pc, RM);
-            nc_y = nc_y.add(&mul_u32_bf(&y3, c3_u, pc), pc, RM);
-        }
-        // Advance the reference at the working precision: Z_n = Z_{n-1}^d + c.
-        let (nzx, nzy) = step_bf(&zx, &zy, cx, cy, formula, p);
-        zx = nzx;
-        zy = nzy;
-        ax = na_x;
-        ay = na_y;
-        bx = nb_x;
-        by = nb_y;
-        cxx = nc_x;
-        cyy = nc_y;
-        // Validity (in log space → no overflow): cubic·|δc|³ ≤ 2^EPS · linear·|δc|.
-        let la = log2_cmag(&ax, &ay);
-        let lc = log2_cmag(&cxx, &cyy);
-        if !la.is_finite() {
-            continue;
-        }
-        let valid = lc + 2.0 * log2_max_dc < la + SA_EPS_LOG2;
-        if n >= SA_MIN_SKIP {
-            if valid {
-                best = Some((n, [ax.clone(), ay.clone(), bx.clone(), by.clone(), cxx.clone(), cyy.clone()]));
-            } else {
-                break; // coefficients only grow ⇒ once invalid, stays invalid
+            // A' = d·Z^{d-1}·A + 1
+            let (t, u) = cmul_bf(&p1x, &p1y, &ax, &ay, pc);
+            let na_x = mul_u32_bf(&t, d_u, pc).add(&one, pc, RM);
+            let na_y = mul_u32_bf(&u, d_u, pc);
+            // B' = d·Z^{d-1}·B + C(d,2)·Z^{d-2}·A²
+            let (t, u) = cmul_bf(&p1x, &p1y, &bx, &by, pc);
+            let (v, w) = zp2(&a2x, &a2y);
+            let nb_x = mul_u32_bf(&t, d_u, pc).add(&mul_u32_bf(&v, c2_u, pc), pc, RM);
+            let nb_y = mul_u32_bf(&u, d_u, pc).add(&mul_u32_bf(&w, c2_u, pc), pc, RM);
+            // C' = d·Z^{d-1}·C + 2·C(d,2)·Z^{d-2}·A·B + C(d,3)·Z^{d-3}·A³
+            let (t, u) = cmul_bf(&p1x, &p1y, &cxx, &cyy, pc);
+            let (v, w) = zp2(&abx, &aby);
+            let mut nc_x = mul_u32_bf(&t, d_u, pc).add(&mul_u32_bf(&v, two_c2_u, pc), pc, RM);
+            let mut nc_y = mul_u32_bf(&u, d_u, pc).add(&mul_u32_bf(&w, two_c2_u, pc), pc, RM);
+            if deg >= 3 {
+                let (a3x, a3y) = cmul_bf(&a2x, &a2y, &ax, &ay, pc); // A³
+                // Z^{d-3} is the identity for d = 3.
+                let (x3, y3) = if deg >= 4 {
+                    let (p3x, p3y) = cpow_bf(zcx, zcy, deg - 3, pc);
+                    cmul_bf(&p3x, &p3y, &a3x, &a3y, pc)
+                } else {
+                    (a3x, a3y)
+                };
+                nc_x = nc_x.add(&mul_u32_bf(&x3, c3_u, pc), pc, RM);
+                nc_y = nc_y.add(&mul_u32_bf(&y3, c3_u, pc), pc, RM);
+            }
+            // (The reference advanced to Z_n in the Z chain, at the working precision.)
+            ax = na_x;
+            ay = na_y;
+            bx = nb_x;
+            by = nb_y;
+            cxx = nc_x;
+            cyy = nc_y;
+            // Validity (in log space → no overflow): cubic·|δc|³ ≤ 2^EPS · linear·|δc|.
+            let la = log2_cmag(&ax, &ay);
+            let lc = log2_cmag(&cxx, &cyy);
+            if !la.is_finite() {
+                continue;
+            }
+            let valid = lc + 2.0 * log2_max_dc < la + SA_EPS_LOG2;
+            if n >= SA_MIN_SKIP {
+                if valid {
+                    best = Some((n, [ax.clone(), ay.clone(), bx.clone(), by.clone(), cxx.clone(), cyy.clone()]));
+                } else {
+                    break; // coefficients only grow ⇒ once invalid, stays invalid
+                }
+            }
+            // Stop if the reference itself escaped.
+            if z_escaped {
+                break;
             }
         }
-        // Stop if the reference itself escaped.
-        if to_f64(&zx) * to_f64(&zx) + to_f64(&zy) * to_f64(&zy) > 1.0e12 {
-            break;
-        }
+        Ok(best)
+    };
+    let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
+    let best = if pipe.unwrap_or(narrow && limit >= SA_PIPELINE_MIN_STEPS) {
+        // PIPELINED: the Z chain runs on its own thread, at most SA_PIPELINE_DEPTH steps ahead;
+        // the coefficient chain consumes its copies here. The same values meet the same
+        // operations in the same order, so the result is the sequential walk's, byte for byte
+        // (`the_pipelined_sa_walk_is_the_sequential_one`); the wall-clock is the dearer chain,
+        // not their sum. Dropping the receiver stops the Z chain at its next send.
+        std::thread::scope(|s| {
+            let (tx, rx) = std::sync::mpsc::sync_channel(SA_PIPELINE_DEPTH);
+            s.spawn(move || {
+                for _ in 0..limit {
+                    let step = z_step(&mut zx, &mut zy);
+                    let escaped = step.2;
+                    if tx.send(step).is_err() || escaped {
+                        break;
+                    }
+                }
+            });
+            let best = walk(&mut || rx.recv().ok());
+            drop(rx);
+            best
+        })
+    } else {
+        walk(&mut || Some(z_step(&mut zx, &mut zy)))
+    };
+    match best {
+        Ok(best) => series_best_to_skip(best),
+        Err(()) => SeriesSkip::NONE,
     }
-    series_best_to_skip(best)
 }
+
+/// Walks at least this long run their Z chain on a thread of its own ([`series_skip_astro`]);
+/// shorter ones are not worth a thread.
+const SA_PIPELINE_MIN_STEPS: u32 = 1024;
+/// How far the pipelined Z chain may run ahead of the coefficients: bounds the work thrown away
+/// when the walk stops (a validity break, a cancel) to this many reference steps.
+const SA_PIPELINE_DEPTH: usize = 256;
 
 // ---------------- BLA (bilinear approximation) -----------------------------------
 // Skips iterations *throughout* the orbit (series approximation only skips the start). While
@@ -1910,8 +1976,36 @@ fn pick_pass(
     // reference is IDENTICAL to the old sequential scan — threading changes wall-clock only). This
     // scan is the dominant cold-recompute cost at depth (~0.8 s at 1e400×, ~7.6 s at 1e1216×
     // sequential — the live-dive "monocolor" stall), and it parallelizes near-linearly.
+    // Phase 2's engine (see below) depends only on the inputs, so it is decided up front.
+    let use_perturb = perturb_scoring_supported(formula, julia)
+        && match force {
+            Some(RefDeepScore::Walk) => false,
+            Some(RefDeepScore::Perturb) => true,
+            None => {
+                span[0].log2() < REF_PICK_PERTURB_SPAN_LOG2
+                    && span[1].log2() < REF_PICK_PERTURB_SPAN_LOG2
+            }
+        };
     let idxs: Vec<usize> = (0..cands.len()).collect();
-    let scores = par_orbit_scores(&cands, &idxs, quick, julia, &jcx, &jcy, formula, p);
+    // ⭐The CENTRE's deep walk runs BESIDE phase 1. The centre is candidate 0, so whenever it
+    // survives phase 1 it is the first survivor, and phase 2 walks it to `max_iter` — the walk its
+    // phase-1 score is a prefix of. Starting it now takes phase 1 off the pick's critical path (at
+    // 4.6e1105×, ~0.3 s of phase 1 ahead of a ~1.2 s deep walk). A centre that does NOT survive
+    // phase 1 escaped inside `quick` steps, so its walk here was short. Results are unchanged:
+    // the same walk, recorded by the same engine rule, used only where phase 2 would have run it.
+    let (scores, centre_deep) = std::thread::scope(|s| {
+        let centre = s.spawn(|| {
+            if use_perturb {
+                let (len, samples) =
+                    orbit_length_bf_recorded(&zero, &zero, &cands[0][0], &cands[0][1], formula, max_iter, p);
+                (len, Some(samples))
+            } else {
+                (score(&cands[0][0], &cands[0][1], max_iter), None)
+            }
+        });
+        let scores = par_orbit_scores(&cands, &idxs, quick, julia, &jcx, &jcy, formula, p);
+        (scores, centre.join().expect("the centre's deep walk panicked"))
+    });
     let mut survivors: Vec<usize> = Vec::new();
     let (mut esc_i, mut esc_len) = (0usize, 0u32);
     for (idx, &len) in scores.iter().enumerate() {
@@ -1942,16 +2036,12 @@ fn pick_pass(
     // feed the same selection loop; `--pickcheck` asserts they elect the same point.
     let first = survivors[0];
     let rest: Vec<usize> = survivors.iter().skip(1).take(REF_DEEP_MAX - 1).copied().collect();
-    let use_perturb = perturb_scoring_supported(formula, julia)
-        && match force {
-            Some(RefDeepScore::Walk) => false,
-            Some(RefDeepScore::Perturb) => true,
-            None => {
-                span[0].log2() < REF_PICK_PERTURB_SPAN_LOG2
-                    && span[1].log2() < REF_PICK_PERTURB_SPAN_LOG2
-            }
-        };
-    let (dl0, ref_orbit) = if use_perturb && !rest.is_empty() {
+    let (dl0, ref_orbit) = if first == 0 {
+        // The centre's deep walk, already run beside phase 1. The recorded and plain walks return
+        // the same length, so only the recording's use follows the rule below.
+        let (len, samples) = centre_deep;
+        (len, samples.filter(|_| use_perturb && !rest.is_empty()))
+    } else if use_perturb && !rest.is_empty() {
         debug_assert!(!julia, "perturb engine is gated to c-plane candidates");
         let (len, samples) = orbit_length_bf_recorded(
             &zero,

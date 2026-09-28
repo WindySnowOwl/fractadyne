@@ -12,6 +12,21 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **Faster deep renders: more of the preparation runs in parallel, and `--render` exits
+  sooner** (beta.145).
+  - **Series approximation:** it has two parts. One steps the reference point's orbit at full
+    precision; the other updates three 128-bit coefficients from each step. They now run on two
+    threads, the first feeding the second, instead of taking turns.
+  - **Reference pick:** the pick first scores all 101 candidate points briefly, then walks the
+    best one to the end, and the view centre is always walked first. The centre's full walk now
+    starts while the brief scoring is still running.
+  - **Command-line render:** `--render` exits as soon as the image is written. Before, it drew
+    two frames of the live view first, and at a deep location those started another reference
+    calculation.
+  - **How much**, on 4K renders: at 4.6e1105 the whole render takes 3.1 s instead of 3.9 s. The
+    preparation before rendering takes 1.44 s instead of 2.04 s. At 4.2e275 it takes 0.39 s
+    instead of 0.45 s, and at 1.47e77 0.62 s instead of 0.65 s.
+  - **Pictures:** identical to the pixel at all five deep benchmark scenes.
 - **Slightly faster series approximation** (beta.144): its coefficient arithmetic now also uses
   a 128-bit copy of the reference point's orbit value instead of the full-precision one. At
   4.6e1105 the preparation before rendering takes 2.04 s instead of 2.20 s. Pictures are
