@@ -1284,7 +1284,12 @@ pub fn render_iter_tiled(
     let mut pricer = ChunkPricer::new();
     let mut max_dispatch_ms = 0.0f64;
     let (mut tiles_total, mut tiles_chunked) = (0u32, 0u32);
-    let mut chunk_wall_sink = 0.0f64; // iterate_ms stays 0.0 on this path (see the result)
+    // Pure-GPU iterate time, same accounting as `render_export`: an unchunked tile's timestamped
+    // pass, plus a chunked tile's fenced window walls (`run_tile`) and its timestamped resolve.
+    // Until beta.149 this path reported 0.0, so every normalized export's `gpu_iterate` read
+    // zero — exactly the deep scenes a profile most wants split.
+    let mut sum_iterate_ms = 0.0f64;
+    let ts_on = device.features().contains(wgpu::Features::TIMESTAMP_QUERY);
     // ROI effectiveness, reported under the `tile` trace: skipping depends entirely on whether
     // the wanted pixels CLUSTER, and tile size falls out of the work budget, so "how much did
     // this actually save" is not something to reason about — measure it.
@@ -1313,6 +1318,29 @@ pub fn render_iter_tiled(
         mapped_at_creation: false,
     });
     let iter_bg = make_iter_bg(device, iter_bgl, &iter_uniform, &orbit_buf, &counters_buf);
+    // Iterate begin/end timestamps (queries 0, 1). One set for the whole call, not one per tile
+    // as in `render_export`: every tile is awaited before the next is encoded, so reuse is safe,
+    // and the corrector calls this up to 64× where per-tile fixed cost is what dominates.
+    let ts = ts_on.then(|| {
+        let set = device.create_query_set(&wgpu::QuerySetDescriptor {
+            label: Some("itertiled.timestamps"),
+            ty: wgpu::QueryType::Timestamp,
+            count: 2,
+        });
+        let resolve = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("itertiled.ts_resolve"),
+            size: 256, // >= 2*8 bytes and a multiple of QUERY_RESOLVE_BUFFER_ALIGNMENT
+            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let read = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("itertiled.ts_read"),
+            size: 16,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        (set, resolve, read)
+    });
 
     let split = |v: f64| -> (f32, f32) {
         let hi = v as f32;
@@ -1427,7 +1455,7 @@ pub fn render_iter_tiled(
                     let (passes, read_set, max_chunk) = ch.run_tile(
                         device, queue, &iter_bg, &counters_buf, &mut iu, &iter_uniform,
                         [tw, th], req.max_iter, &mut pricer, None, deadline,
-                        &mut chunk_wall_sink,
+                        &mut sum_iterate_ms,
                     )?;
                     max_dispatch_ms = max_dispatch_ms.max(max_chunk);
                     Some((passes, read_set))
@@ -1457,7 +1485,13 @@ pub fn render_iter_tiled(
                     label: Some("itertiled.iter_pass"),
                     color_attachments: &[attach(&main_view), attach(&aux_view)],
                     depth_stencil_attachment: None,
-                    timestamp_writes: None,
+                    timestamp_writes: ts.as_ref().map(|(set, _, _)| {
+                        wgpu::RenderPassTimestampWrites {
+                            query_set: set,
+                            beginning_of_pass_write_index: Some(0),
+                            end_of_pass_write_index: Some(1),
+                        }
+                    }),
                     occlusion_query_set: None,
                 });
                 match (chunker.as_ref(), chunked) {
@@ -1473,6 +1507,10 @@ pub fn render_iter_tiled(
                         pass.draw(0..3, 0..1);
                     }
                 }
+            }
+            if let Some((set, resolve, read)) = &ts {
+                enc.resolve_query_set(set, 0..2, resolve, 0);
+                enc.copy_buffer_to_buffer(resolve, 0, read, 0, 16);
             }
             enc.copy_buffer_to_buffer(
                 &counters_buf, 0, &counters_read, 0, (crate::COUNTER_SLOTS * 4) as u64,
@@ -1505,9 +1543,16 @@ pub fn render_iter_tiled(
             counters_read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
                 let _ = ctx_.send(r);
             });
+            let ts_rx = ts.as_ref().map(|(_, _, read)| {
+                let (ttx, trx) = std::sync::mpsc::channel();
+                read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                    let _ = ttx.send(r);
+                });
+                trx
+            });
             // Bounded readback: escapes a lost device rather than blocking here forever. This path
-            // has no cancel flag yet (the deadline stays enforced between tiles); the counter
-            // `recv()` below shares this submission and so is already complete once we return.
+            // has no cancel flag yet (the deadline stays enforced between tiles); the counter and
+            // timestamp `recv()`s below share this submission, so they are complete once we return.
             await_readback(device, &rx, None, None).into_result()?;
             if ctr_rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
                 let mapped = counters_read.slice(..).get_mapped_range();
@@ -1517,6 +1562,18 @@ pub fn render_iter_tiled(
                 }
                 drop(mapped);
                 counters_read.unmap();
+            }
+            if let (Some((_, _, read)), Some(ts_rx)) = (&ts, &ts_rx) {
+                if ts_rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
+                    let mapped = read.slice(..).get_mapped_range();
+                    let t: &[u64] = bytemuck::cast_slice(&mapped[..16]);
+                    let period = queue.get_timestamp_period() as f64; // ns per tick
+                    let iterate_ms = t[1].saturating_sub(t[0]) as f64 * period / 1.0e6;
+                    drop(mapped);
+                    read.unmap();
+                    sum_iterate_ms += iterate_ms;
+                    crate::timing::accumulate(iterate_ms, 0.0);
+                }
             }
             let data = slice.get_mapped_range();
             let row_floats = (tw * 4) as usize;
@@ -1560,7 +1617,7 @@ chunks={chunk_passes}"
         height: h,
         ss: 1,
         pixels,
-        iterate_ms: 0.0, // per-tile GPU timestamps omitted here; the loop tracks wall-clock
+        iterate_ms: sum_iterate_ms,
         color_ms: 0.0,
         counters: ctr_sum,
         max_dispatch_ms,
@@ -2714,6 +2771,29 @@ pub fn color_iter_buffer(
         mapped_at_creation: false,
     });
 
+    // Color begin/end timestamps, so the normalized and corrected exports (which color here)
+    // report `gpu_color` like `render_export` does instead of 0.0.
+    let ts = device.features().contains(wgpu::Features::TIMESTAMP_QUERY).then(|| {
+        let set = device.create_query_set(&wgpu::QuerySetDescriptor {
+            label: Some("coloriter.timestamps"),
+            ty: wgpu::QueryType::Timestamp,
+            count: 2,
+        });
+        let resolve = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("coloriter.ts_resolve"),
+            size: 256, // >= 2*8 bytes and a multiple of QUERY_RESOLVE_BUFFER_ALIGNMENT
+            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let read = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("coloriter.ts_read"),
+            size: 16,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        (set, resolve, read)
+    });
+
     let mut enc =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("coloriter.enc") });
     {
@@ -2728,12 +2808,20 @@ pub fn color_iter_buffer(
                 },
             })],
             depth_stencil_attachment: None,
-            timestamp_writes: None,
+            timestamp_writes: ts.as_ref().map(|(set, _, _)| wgpu::RenderPassTimestampWrites {
+                query_set: set,
+                beginning_of_pass_write_index: Some(0),
+                end_of_pass_write_index: Some(1),
+            }),
             occlusion_query_set: None,
         });
         pass.set_pipeline(&color_pipeline);
         pass.set_bind_group(0, &color_bg, &[]);
         pass.draw(0..3, 0..1);
+    }
+    if let Some((set, resolve, read)) = &ts {
+        enc.resolve_query_set(set, 0..2, resolve, 0);
+        enc.copy_buffer_to_buffer(resolve, 0, read, 0, 16);
     }
     enc.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
@@ -2759,8 +2847,27 @@ pub fn color_iter_buffer(
     slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = tx.send(r);
     });
-    // Bounded readback (device-loss-aware) — the glitch-correction coloring path.
+    let ts_rx = ts.as_ref().map(|(_, _, read)| {
+        let (ttx, trx) = std::sync::mpsc::channel();
+        read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+            let _ = ttx.send(r);
+        });
+        trx
+    });
+    // Bounded readback (device-loss-aware) — the glitch-correction coloring path. The timestamp
+    // map shares this submission, so its `recv()` below no longer blocks.
     await_readback(device, &rx, None, None).into_result()?;
+    let mut color_ms = 0.0f64;
+    if let (Some((_, _, read)), Some(ts_rx)) = (&ts, &ts_rx) {
+        if ts_rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
+            let mapped = read.slice(..).get_mapped_range();
+            let t: &[u64] = bytemuck::cast_slice(&mapped[..16]);
+            color_ms = t[1].saturating_sub(t[0]) as f64 * queue.get_timestamp_period() as f64 / 1.0e6;
+            drop(mapped);
+            read.unmap();
+            crate::timing::accumulate(0.0, color_ms);
+        }
+    }
 
     let data = slice.get_mapped_range();
     let mut pixels = vec![0.0_f32; (w as usize) * (h as usize) * 4];
@@ -2780,7 +2887,7 @@ pub fn color_iter_buffer(
         ss: 1,
         pixels,
         iterate_ms: 0.0,
-        color_ms: 0.0,
+        color_ms,
         counters: [0u64; crate::COUNTER_SLOTS],
         max_dispatch_ms: 0.0,
         tiles_total: 0,

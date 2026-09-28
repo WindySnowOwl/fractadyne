@@ -68,6 +68,24 @@ evidence. Rebuild or refresh a page at any time with
 `python tools/make-report.py results\<host>-<stamp>`, including for folders written before the
 manifest existed.
 
+**Where Fractadyne's time went.** A wall time says how long, not where. The Fractadyne lane keeps
+every render's own log (`fd-logs/<scene>-r<rep>.log`) and parses it into `fd-phases.csv`, one row
+per rep: startup, the wait for the reference (and, under the `FRACTADYNE_TRACE=ref` the lane sets,
+that build's pick / orbit / SA / BLA times), GPU iterate and color time from timestamp queries,
+host work (readback, normalization), PNG encode + write, exit, and what falls outside the log
+(process launch, DLL load, teardown), plus the step counters: executed steps, iterations per step
+(BLA skipping), df32 share, rebases. `summary.md` and the report show the median per scene, as a
+table and as a stacked bar. The trace is a handful of log lines per render. In two interleaved
+A/B runs with the order swapped, whichever arm ran first was slower, by about 1% in the quieter
+run, and the trace made no difference that survived the swap. `-NoPhaseTrace` runs without it. `bench-lib.ps1` `Read-FdPhases` defines every
+column. Builds before beta.149 report no GPU iterate time on the normalized scenes and no PNG
+write time. The logs carry full paths, so redact them with the rest before publishing.
+
+**Every rep, not only the fastest.** The tables lead with the fastest rep, which is the protocol.
+With `-Reps 2` or more, `summary.md` adds each renderer's fastest, median and slowest per scene
+and the spread, (slowest - fastest) / median, and the report prints the median and spread under
+each time. Two renderers are only different by more than their spread.
+
 **Publishing a report.** `--self-contained` inlines the thumbnails and writes a single
 `report-standalone.html` that travels on its own. Before a report leaves the machine, add
 `--redact-home`: a Windows profile directory is an account name, often a real name, and the
@@ -210,7 +228,8 @@ benchmark that doesn't say which latest it measured is not reproducible.
    lanes with `-Skip imagina,fractalshark`).
 3. Results land in `results\<hostname>-<timestamp>\`: open **`report.html`** first; beside it are
    `run-manifest.json`, `sysinfo.txt`, `results.csv`,
-   `summary.md`, and `zoomseq\` when the sequence lane ran. Send the whole folder (or its zip) to feedback@fractadyne.org, or attach it
+   `summary.md`, `fd-phases.csv` and `fd-logs\` for the Fractadyne lane, and `zoomseq\` when the
+   sequence lane ran. Send the whole folder (or its zip) to feedback@fractadyne.org, or attach it
    to a GitHub issue on WindySnowOwl/fractadyne.
 
 ## FractalShark, honestly

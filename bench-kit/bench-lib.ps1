@@ -76,12 +76,16 @@ function Invoke-TimedRender($exe, $argLine, $timeoutS, $cwd) {
     if (-not $p.WaitForExit($timeoutS * 1000)) {
         try { $p.Kill() } catch {}
         $sw.Stop()
-        return @{ status = 'DNF-timeout'; wall_s = [math]::Round($sw.Elapsed.TotalSeconds, 1); stdout = ''; stderr = '' }
+        return @{ status = 'DNF-timeout'; wall_s = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+                 wall_ms = [math]::Round($sw.Elapsed.TotalMilliseconds, 1); stdout = ''; stderr = '' }
     }
     $sw.Stop()
     @{
         status = $(if ($p.ExitCode -eq 0) { 'ok' } else { "DNF-exit$($p.ExitCode)" })
         wall_s = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+        # Unrounded, for the per-phase table: its phases are milliseconds, and a wall rounded to
+        # 0.1 s cannot hold the remainder they leave.
+        wall_ms = [math]::Round($sw.Elapsed.TotalMilliseconds, 1)
         stdout = $out.Result
         stderr = $err.Result
     }
@@ -152,6 +156,108 @@ function Stop-SharkServer($cli, $endpoint, $srv) {
             $text | Out-File -FilePath $srv.log -Encoding ascii
         } catch {}
     }
+}
+
+# ---- Fractadyne per-phase figures, from the render's own log --------------------------------
+# A wall time says HOW LONG; it cannot say WHERE. Every fd render logs its phases anyway (the
+# `[+ s]` stamp on each line, the `[fd-perf]` GPU and step line, and under FRACTADYNE_TRACE=ref
+# the reference pick/orbit/SA/BLA times), so the lane keeps each render's log and this turns it
+# into one row of numbers. Phases, all in ms:
+#   startup     process start to the CLI render starting (window, GPU adapter, fonts)
+#   ref_wait    how long the render waited for the reference, which is built from the first
+#               millisecond BESIDE startup; pick/orbit/sa/bla are that build's own costs, mostly
+#               hidden behind startup, so they do not add up to the wall
+#   render      CLI render start to the [fd-perf] line: ref_wait + GPU + host work
+#   gpu_iterate / gpu_color   pure GPU pass time (timestamp queries; chunk walls when chunked)
+#   cpu_other   render - ref_wait - gpu_iterate - gpu_color: readback, normalization, tiling
+#   write       PNG encode + write (the file-write line; b149+)
+#   exit        the rest up to the [fd-exit] line
+#   outside     wall - the last log stamp: OS process launch, DLL load, teardown
+# Never throws; a missing log or an older build that lacks a line leaves that column empty.
+# Get-Content -Encoding UTF8: the log carries arrows and dashes, and 5.1 reads BOM-less as ANSI.
+$script:FdPhaseCols = @('scene', 'rep', 'status', 'wall_ms', 'startup_ms', 'ref_wait_ms',
+    'early_ref', 'early_lead_ms', 'ref_builds', 'pick_ms', 'orbit_ms', 'sa_ms', 'bla_ms',
+    'overlap', 'render_ms', 'gpu_iterate_ms', 'gpu_color_ms', 'max_dispatch_ms', 'cpu_other_ms',
+    'write_ms', 'file_bytes', 'exit_ms', 'outside_ms', 'mode', 'iter', 'rebase', 'ext', 'glitch',
+    'bla_skip', 'maxiter', 'step_px', 'step_executed', 'step_iterations', 'iters_per_step',
+    'step_full', 'df32_pct', 'logcheck')
+
+function Read-FdPhases($logPath, $wallMs) {
+    $p = [ordered]@{}
+    foreach ($c in $script:FdPhaseCols) { $p[$c] = '' }
+    $p.wall_ms = $wallMs
+    if (-not $logPath -or -not (Test-Path $logPath)) { return $p }
+    $tRender = $null; $tPerf = $null; $tExit = $null; $tLast = $null
+    $orbit = 0.0; $sa = 0.0; $bla = 0.0; $pick = 0.0; $builds = 0; $picks = 0
+    $num = [System.Globalization.CultureInfo]::InvariantCulture
+    foreach ($line in (Get-Content -Encoding UTF8 $logPath)) {
+        if ($line -notmatch '^\[\+\s*([0-9.]+)s\]') { continue }
+        $t = [double]::Parse($Matches[1], $num) * 1000.0
+        $tLast = $t
+        if ($null -eq $tRender -and $line -match '\[crumb\] \(main\) CLI render') { $tRender = $t }
+        elseif ($line -match 'early reference ([A-Z]+)') {
+            $p.early_ref = $Matches[1]
+            if ($line -match 'started (\d+) ms before') { $p.early_lead_ms = [int]$Matches[1] }
+            if ($line -match 'waited (\d+) ms') { $p.ref_wait_ms = [int]$Matches[1] }
+        }
+        elseif ($line -match 'pick_reference \(candidate scoring\) took (\d+)ms') { $pick += [double]$Matches[1]; $picks++ }
+        elseif ($line -match 'orbit_ms=(\d+) sa_ms=(\d+) bla_ms=(\d+)') {
+            $orbit += [double]$Matches[1]; $sa += [double]$Matches[2]; $bla += [double]$Matches[3]; $builds++
+        }
+        elseif ($line -match 'overlap: centre build ([A-Z]+)') { $p.overlap = $Matches[1] }
+        elseif ($null -eq $tPerf -and $line -match '\[fd-perf\] cli-render: ') {
+            $tPerf = $t
+            $keys = @{ mode = 'mode=(\d+)'; iter = ' iter=(\d+)'
+                       gpu_iterate_ms = 'gpu_iterate=([0-9.]+)ms'; gpu_color_ms = 'gpu_color=([0-9.]+)ms'
+                       max_dispatch_ms = 'max_dispatch=([0-9.]+)ms'; rebase = 'rebase=(\d+)'
+                       ext = ' ext=(\d+)'; glitch = 'glitch=(\d+)'; bla_skip = 'bla_skip=(\d+)'
+                       maxiter = 'maxiter=(\d+)'; step_px = ' px=(\d+)'; step_executed = 'executed=(\d+)'
+                       step_iterations = 'iterations=(\d+)'; iters_per_step = '= ([0-9.]+) per step'
+                       step_full = 'full=(\d+)'; df32_pct = 'in df32 ([0-9.]+)%' }
+            foreach ($k in $keys.Keys) { if ($line -match $keys[$k]) { $p[$k] = $Matches[1] } }
+        }
+        elseif ($line -match 'file-write: \w+ \d+x\d+ (\d+) bytes in ([0-9.]+)ms') {
+            $p.file_bytes = $Matches[1]; $p.write_ms = $Matches[2]
+        }
+        elseif ($line -match '\[fd-exit\]') { $tExit = $t }
+        elseif ($line -match '\[fd-logcheck\] ([A-Z]+)') { $p.logcheck = $Matches[1] }
+    }
+    $r1 = { param($v) [math]::Round([double]$v, 1) }
+    if ($null -ne $tRender) { $p.startup_ms = & $r1 $tRender }
+    if ($builds) { $p.ref_builds = $builds; $p.orbit_ms = $orbit; $p.sa_ms = $sa; $p.bla_ms = $bla }
+    if ($picks) { $p.pick_ms = $pick }
+    if ($null -ne $tRender -and $null -ne $tPerf) {
+        $p.render_ms = & $r1 ($tPerf - $tRender)
+        if ([string]$p.gpu_iterate_ms -ne '') {
+            $wait = 0.0; if ([string]$p.ref_wait_ms -ne '') { $wait = [double]$p.ref_wait_ms }
+            $p.cpu_other_ms = & $r1 ($p.render_ms - $wait - [double]::Parse($p.gpu_iterate_ms, $num) - [double]::Parse($p.gpu_color_ms, $num))
+        }
+    }
+    if ($null -ne $tPerf -and $null -ne $tExit) {
+        $w = 0.0; if ([string]$p.write_ms -ne '') { $w = [double]::Parse($p.write_ms, $num) }
+        $p.exit_ms = & $r1 ($tExit - $tPerf - $w)
+    }
+    if ($null -ne $tLast -and [string]$wallMs -ne '') { $p.outside_ms = & $r1 ([double]$wallMs - $tLast) }
+    $p
+}
+
+function Write-FdPhases($csvPath, $row) {
+    if (-not (Test-Path $csvPath)) {
+        ($script:FdPhaseCols -join ',') | Out-File -FilePath $csvPath -Encoding ascii
+    }
+    $vals = foreach ($c in $script:FdPhaseCols) { [string]$row[$c] }
+    Add-Content -Path $csvPath -Value ($vals -join ',') -Encoding ascii
+}
+
+# Median of the numeric values in a list (empty strings dropped); $null when none.
+# [string] on the left: `0 -ne ''` is FALSE in PowerShell (the '' is converted to 0), which
+# silently dropped every zero reading from the median.
+function Get-Median($values) {
+    $v = @($values | Where-Object { $null -ne $_ -and [string]$_ -ne '' } | ForEach-Object { [double]$_ } | Sort-Object)
+    if (-not $v.Count) { return $null }
+    $m = [int][math]::Floor($v.Count / 2)
+    if ($v.Count % 2) { return $v[$m] }
+    ($v[$m - 1] + $v[$m]) / 2.0
 }
 
 # Append one row to results.csv (schema: renderer,scene,rep,status,wall_s,reported_s,note).

@@ -446,6 +446,95 @@ def best_time(rows_by, renderer, scene):
     return min(ts) if ts else None
 
 
+def rep_stats(rows_by, renderer, scene):
+    """(n, fastest, median, slowest) over the ok reps' wall_s, or None. The tables lead with the
+    fastest rep (the published protocol); this is what says how steady that figure is."""
+    ts = sorted(t for t in (fnum(r["wall_s"]) for r in rows_by.get((renderer, scene), [])
+                            if r["status"] == "ok") if t)
+    if not ts:
+        return None
+    n = len(ts)
+    med = ts[n // 2] if n % 2 else (ts[n // 2 - 1] + ts[n // 2]) / 2.0
+    return n, ts[0], med, ts[-1]
+
+
+def median_of(vals):
+    v = sorted(x for x in (fnum(y) for y in vals) if x is not None)
+    if not v:
+        return None
+    n = len(v)
+    return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2.0
+
+
+# Where a Fractadyne render's wall went, in the order the phases happen. The kit parses each
+# render's kept log into fd-phases.csv (bench-lib.ps1 Read-FdPhases documents every column);
+# render = ref_wait + gpu_iterate + gpu_color + cpu_other by construction, so these segments
+# tile the wall up to the few ms between the exit line and the last log line.
+PHASES = [("startup_ms", "startup", "#6c7a96"), ("ref_wait_ms", "ref wait", "#e3b341"),
+          ("gpu_iterate_ms", "GPU iterate", "#5fd08a"), ("gpu_color_ms", "GPU color", "#2e9e5b"),
+          ("cpu_other_ms", "host other", "#ff7b72"), ("write_ms", "PNG write", "#79b8ff"),
+          ("exit_ms", "exit", "#b392f0"), ("outside_ms", "outside the log", "#3d4452")]
+
+
+def phase_section(ph_rows, scenes, mags, sorted_by_depth):
+    """Stacked bar + table of the median phase times per scene; '' when there is nothing."""
+    ok = [r for r in ph_rows if r.get("status") == "ok"]
+    by = defaultdict(list)
+    for r in ok:
+        by[r["scene"]].append(r)
+    todo = [s for s in scenes if s in by]
+    if not todo:
+        return ""
+    med = {s: {k: median_of(r.get(k) for r in by[s]) for k in
+               [p[0] for p in PHASES] + ["wall_ms", "pick_ms", "orbit_ms", "sa_ms", "bla_ms",
+                                          "iters_per_step", "df32_pct", "step_executed", "mode"]}
+           for s in todo}
+    top = max((med[s]["wall_ms"] or 0.0) for s in todo) or 1.0
+    o = []
+    o.append("<h2>Fractadyne: where the wall went</h2>")
+    o.append("<p class='sub'>Median over the ok reps, parsed from each render's own log "
+             "(<code>fd-logs/</code>; every rep is in <code>fd-phases.csv</code>). The reference "
+             "build starts at launch BESIDE startup, so only the part the render had to wait for "
+             "shows as <i>ref wait</i>; its own pick/orbit/SA/BLA cost is in the table. "
+             "<i>Host other</i> = render - ref wait - GPU: readback, normalization, tiling. "
+             "<i>Outside the log</i> = OS launch, DLL load and teardown. Builds before b149 lack "
+             "GPU iterate on the normalized path and the PNG write.</p>")
+    o.append("<div class='kv'>%s</div>" % " &nbsp; ".join(
+        "<span style='display:inline-block;width:10px;height:10px;background:%s'></span> %s"
+        % (c, esc(n)) for _, n, c in PHASES))
+    for s in todo:
+        m = med[s]
+        wall = m["wall_ms"] or 0.0
+        segs = []
+        for k, n, c in PHASES:
+            v = max(m[k] or 0.0, 0.0)
+            if v > 0:
+                segs.append("<div title='%s: %.0f ms' style='width:%.3f%%;background:%s'></div>"
+                            % (esc(n), v, 100.0 * v / top, c))
+        o.append("<div style='margin:8px 0 2px;font-size:13px'>%s%s &nbsp;<span class='dim'>"
+                 "%s ms</span></div>" % (esc(s), (" <span class='dim'>%s&times;</span>"
+                 % esc(fmt_mag(mags.get(s)))) if sorted_by_depth else "", "{:,.0f}".format(wall)))
+        o.append("<div style='display:flex;height:16px;background:#0f1115;border:1px solid "
+                 "var(--line);border-radius:3px;overflow:hidden'>%s</div>" % "".join(segs))
+    o.append("<table><tr><th>Scene</th><th>Wall</th>%s<th>Ref build: pick / orbit / SA / BLA</th>"
+             "<th>Iterations per step</th><th>df32</th></tr>"
+             % "".join("<th>%s</th>" % esc(n) for _, n, _ in PHASES))
+    f0 = lambda v: "-" if v is None else "{:,.0f}".format(v)
+    for s in todo:
+        m = med[s]
+        o.append("<tr><td>%s</td><td class='n'>%s</td>%s<td class='n'>%s</td><td class='n'>%s</td>"
+                 "<td class='n'>%s</td></tr>"
+                 % (esc(s), f0(m["wall_ms"]),
+                    "".join("<td class='n'>%s</td>" % ("-" if m[k] is None else
+                            ("%.1f" % m[k] if k == "gpu_color_ms" else f0(m[k])))
+                            for k, _, _ in PHASES),
+                    " / ".join(f0(m[k]) for k in ("pick_ms", "orbit_ms", "sa_ms", "bla_ms")),
+                    "-" if m["iters_per_step"] is None else "%.1f" % m["iters_per_step"],
+                    "-" if m["df32_pct"] is None else "%.1f%%" % m["df32_pct"]))
+    o.append("</table>")
+    return "".join(o)
+
+
 def status_of(rows_by, renderer, scene):
     rs = rows_by.get((renderer, scene), [])
     if not rs:
@@ -658,7 +747,9 @@ def main():
             a("<dt>%s</dt><dd>%s</dd>" % (esc(k), esc(v)))
         a("</dl></div>")
     a("<p class='note'>Every number below is wall-clock, process start to exit, fastest of the "
-      "repeats. A DNF is a result, not a gap: it never competes for 'fastest'.</p>")
+      "repeats; where a scene ran more than once, the median, the spread (slowest - fastest, "
+      "over the median) and the rep count sit under it. A DNF is a result, not a gap: it never "
+      "competes for 'fastest'.</p>")
 
     # ---- results table
     a("<h2>Results</h2>")
@@ -688,7 +779,14 @@ def main():
                 a("<td class='dnf'>%s</td>" % esc(st or "-"))
             else:
                 cls = "n win" if t == fastest else "n"
-                a("<td class='%s'>%.1f s</td>" % (cls, t))
+                st4 = rep_stats(rows_by, ren, s)
+                spread = ""
+                if st4 and st4[0] > 1:
+                    n, lo, med, hi = st4
+                    spread = ("<div class='dim' style='font-size:12px;font-weight:400'>"
+                              "med %.2f &middot; spread %.0f%% &middot; n=%d</div>"
+                              % (med, 100.0 * (hi - lo) / med if med else 0.0, n))
+                a("<td class='%s'>%.1f s%s</td>" % (cls, t, spread))
         a("</tr>")
     a("</table>")
 
@@ -707,6 +805,9 @@ def main():
               "joined across it, because a renderer that produced no picture has no time. Hover "
               "a point for its scene, magnification and figure.</p>")
             a(svg)
+
+    # ---- Fractadyne phases (fd-phases.csv; absent in folders from before the kit kept logs)
+    a(phase_section(load_csv(os.path.join(d, "fd-phases.csv")), scenes, mags, sorted_by_depth))
 
     # ---- per scene: images + the commands that made them
     a("<h2>Per scene: what was run, and what came out</h2>")
