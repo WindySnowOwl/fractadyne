@@ -47,7 +47,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 11   # 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
+$AgentVersion = 12   # 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -258,6 +258,10 @@ $Allowed = @{
     "--selftest-filter" = @("word"); "--bench-matrix" = @(); "--livetest" = @("pkgfile"); "--size" = @("size")
     "--chunk-sweep" = @("?int"); "--soak" = @("int"); "--soak-depth" = @("depth"); "--center" = @("num", "num")
     "--zoom" = @("num"); "--zoom-log2" = @("num"); "--iter" = @("int"); "--set" = @("assign"); "--window" = @("size")
+    # v12: BLA off makes every mode-2 step a full step - the most work a render can ask of a pass.
+    # For the step-bounded passes (beta.150) that is the case the per-pass bound exists for. It is
+    # heavier than any default render, so send it only with a build whose passes are bounded.
+    "--no-bla" = @()
 }
 $ValuePattern = @{
     "int" = '^[0-9]{1,9}$'; "num" = '^[-+0-9.eE]{1,2000}$'; "word" = '^[A-Za-z0-9_.-]{1,64}$'
