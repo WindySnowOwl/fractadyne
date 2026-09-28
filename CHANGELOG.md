@@ -19,10 +19,16 @@ detail is in the git history.
     reference is too small for ordinary precision. That stays true only early in a pixel's orbit.
     A step now switches to the ordinary format once the offset has grown past 2^-60, and back if
     it shrinks.
-  - **How much:** at the 4.2e275 benchmark scene the GPU part of a 4K render takes 1.39 s
-    instead of 2.68 s. The median of three interleaved pairs, same build, gives 1.93×.
-  - **Where it doesn't help yet:** 4.6e1105 (1.04×) and 1.2e148 (1.08×) spend their GPU time
-    elsewhere.
+  - **How much:** the rendering step of a 4K image (after the reference orbit is built) is
+    faster. Figures are the median of three interleaved pairs, same build:
+    - 4.2e275: 2.77 s instead of 4.05 s (1.46×).
+    - 4.6e1105: 0.74 s instead of 1.02 s (1.39×).
+    - 1.2e148: 1.09×. Its time goes mostly to the steps that skip many iterations at once, which
+      this does not change.
+    - An earlier version of this entry said 1.93× at 4.2e275 and 1.04× at 4.6e1105. Both
+      measured the wrong span of the log. At 4.6e1105 that span was mostly the preparation
+      before rendering, 13 s of a 15 s render. Most of that was one step of it, which beta.142
+      speeds up.
   - **Pictures:** identical to the pixel at 4.2e275, 4.6e1105 and 6.6e43. At 1.2e148, 0.14% of
     pixels differ by fractions of an iteration, and checking them against an exact calculation
     (`--tail-audit`) found no wrong escape.
