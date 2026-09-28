@@ -27,6 +27,7 @@ schema = 1
 name = "budget-blind"
 token = "FRAME BUDGET IS BLIND"
 max = 0
+instrument_ok = true
 why = "the frame budget stopped seeing the slow frames it prices (U15's tripwire)"
 mode.recordtest = { max = 2, why = "its blind phase trips the tripwire on purpose (the 8-frame rule), and its 13 s wedge trips it again (the lethal-band rule, beta.132)" }
 

@@ -12,6 +12,13 @@ detail is in the git history.
 
 ## 0.2.41 (unreleased)
 
+- **The safety stop passed the crash test on the RX 6800 XT** (beta.133, for testing). With the old
+  behaviour, the crash test hung the whole machine. With beta.132's safety stop, all three runs
+  survived. The stop fired on the first frame of about one second, the frame budget dropped from
+  the crash level to its starting value, and after one more slow frame already queued on the GPU,
+  every run stayed smooth to the end: no frame over 0.2 s through the zoom and the minute-long
+  rest. The log check no longer marks such a run as failed when the crash-recreating setting is on,
+  since the warning it counted is what that test is for.
 - **The safety stop now acts on the first dangerous frame, and the diagnostics survive a machine
   hang** (beta.132, for testing). On the RX 6800 XT, the crash test from beta.130, run with the
   old behaviour, hung the whole machine. The frame budget stayed at the crash level, no GPU timing

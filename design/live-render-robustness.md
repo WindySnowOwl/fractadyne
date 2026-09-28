@@ -2727,3 +2727,18 @@ forces the log and both record files to disk (`diag::sync_to_disk`). `--recordte
 proves the single-frame latch (frame 180 → 181; dead-man engaged twice). The honest limit stands:
 the trigger acts after the first lethal frame, so a FIRST dispatch past the watchdog is still only
 §5.1's fixed per-adapter ceiling's to prevent.
+
+**The PLUTO AFTER arms (2026-09-27, beta.132 defaults, three runs, `…185832-fu03`, `…185833-t2jz`,
+`…185834-7pc8`): all three survived, identically.**
+
+- At the start: 319–341 ms, then ~1,020 ms. The lethal-band trigger latched and the budget went
+  1.515e11 → 4.0e8.
+- One more ~1,400 ms frame followed: its dispatch was already queued before the derate. The latch
+  then cleared at 92–105 ms.
+- The rest of each run (11 taps, a 60 s hold) had a worst frame interval of 61–80 ms and nothing over
+  204 ms. The budget re-learned to 2.0e9. No lethal lines, no loss, no crash report.
+- §8's proof standard is met: one BEFORE arm reproducing the failure (the machine hung), three AFTER
+  arms that entered the regime and survived.
+- The exit code was 1 on all three, from logcheck's `budget-blind` rule (max 0 for zoomtest). Under a
+  regime instrument that line is the purpose of the run, so the rule is now `instrument_ok`
+  (beta.133).
