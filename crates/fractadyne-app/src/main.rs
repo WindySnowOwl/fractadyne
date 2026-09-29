@@ -1926,14 +1926,17 @@ impl Perf {
             .position(|p| p.is_some_and(|(f, s, _)| f == frame && s == steps));
         let Some(i) = hit else { return };
         let (_, _, at) = self.full_pass[v][i].take().unwrap();
-        let ns = ms * 1.0e6 / steps as f64;
+        let read = ms * 1.0e6 / steps as f64;
+        let ns = render::bounded_price_drop(self.refresh_price[v], read, at);
         self.refresh_price[v] = Some(RefreshPrice { ns, frame, at });
         if diag::trace_on("live") {
             diag::trace(
                 "live",
                 format!(
-                    "refresh-price v={v} f={} from={frame} mode={} {ms:.2}ms steps={steps} ns/step={ns:.5}",
-                    self.frame_idx, at.mode
+                    "refresh-price v={v} f={} from={frame} mode={} {ms:.2}ms steps={steps} ns/step={read:.5}{}",
+                    self.frame_idx,
+                    at.mode,
+                    if ns != read { format!(" (drop bounded: {ns:.5})") } else { String::new() },
                 ),
             );
         }

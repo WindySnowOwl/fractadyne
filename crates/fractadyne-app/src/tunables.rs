@@ -744,6 +744,14 @@ pub(crate) const LIVE_PRICE_MAX_OCT: f64 = 0.5;
 /// glide that briefly fell back to the hold returns to live without a shrunk probe. Farther, and
 /// only a probe may price the view.
 pub(crate) const LIVE_PRICE_STALE_OCT: f64 = 4.0;
+/// One reading may lower this view's price (same mode and navigation epoch, within
+/// `LIVE_PRICE_STALE_OCT`) by at most this factor; a dearer one replaces it at once. A glide's cost
+/// moves a few percent a frame, so a reading far under the last is a mis-paired timestamp, not the
+/// view: on the RX 6800 XT (0.3.0-beta.5) the second set of every 2-set reprobe read 0.25 ms for 4e9
+/// steps, 50–80× under the set before it, and priced the next four frames at 0.5 ms that each took
+/// 19–33 ms. The largest real drop seen, a 0.4-scale probe's price to the full frame after it, was
+/// 4.6× — two readings at this bound.
+pub(crate) const LIVE_PRICE_DROP_MAX: f64 = 4.0;
 
 /// Target GPU time of ONE motion / pinned-refresh chunk pass, ms (design/live-zoom-smoothing.md
 /// P-A). The frame budget (`TDR_BUDGET_MS`, 400 ms real) is a SAFETY bound; before this constant

@@ -351,6 +351,32 @@ fn a_shrunk_frame_stays_at_or_over_the_knee() {
 }
 
 #[test]
+fn one_reading_cannot_make_the_view_much_cheaper_but_any_can_make_it_dearer() {
+    use crate::tunables::LIVE_PRICE_DROP_MAX;
+    let v = at(DF32, 3, 40.0);
+    // The RX 6800 XT's 2-set reprobe: 14.63 ms for the first set, 0.26 for the second (4e9 steps).
+    let old = price(ns_for(14.63, 4_038_662_375), 698, v);
+    let bogus = ns_for(0.26, 4_038_662_375);
+    let got = bounded_price_drop(old, bogus, v);
+    assert!((got - old.unwrap().ns / LIVE_PRICE_DROP_MAX).abs() < 1e-15, "{got}");
+    // Dearer, or a drop inside the bound: as read.
+    let dear = old.unwrap().ns * 3.0;
+    assert_eq!(bounded_price_drop(old, dear, v), dear);
+    let near = old.unwrap().ns / 2.0;
+    assert_eq!(bounded_price_drop(old, near, v), near);
+    // A real 4.6× drop (a small probe's price, then the full frame) lands in two readings.
+    let full = old.unwrap().ns / 4.6;
+    let first = bounded_price_drop(old, full, v);
+    assert!(first > full);
+    assert_eq!(bounded_price_drop(price(first, 699, v), full, v), full);
+    // Against no price, or another mode's, another epoch's, or one octaves away: as read.
+    assert_eq!(bounded_price_drop(None, bogus, v), bogus);
+    assert_eq!(bounded_price_drop(old, bogus, at(DIRECT, 3, 40.0)), bogus);
+    assert_eq!(bounded_price_drop(old, bogus, at(DF32, 4, 40.0)), bogus);
+    assert_eq!(bounded_price_drop(old, bogus, at(DF32, 3, 40.0 + LIVE_PRICE_STALE_OCT * 1.01)), bogus);
+}
+
+#[test]
 fn a_reprobe_splits_no_finer_than_the_knee_and_one_pass_needs_no_hold() {
     // A price from a 0.4 Mpx probe only bounds a 1 Mpx frame: 11.25 ms, 3 passes.
     let v = at(DF32, 3, 40.0);

@@ -9972,6 +9972,25 @@ pub(crate) fn split_sets(pred_ms: f64, px: u64, knee_px: u64) -> Option<u32> {
     (k >= 2 && set_ms <= crate::tunables::LIVE_SPLIT_SET_MAX_MS).then_some(k)
 }
 
+/// The price a reading of `read_ns` per nominal step sets for a pass at `at`, against the view's
+/// current price `old`: at most `LIVE_PRICE_DROP_MAX` cheaper than an `old` about the same view
+/// (same mode and navigation epoch, within `LIVE_PRICE_STALE_OCT`), any amount dearer, and as read
+/// for any other view. Pure.
+pub(crate) fn bounded_price_drop(old: Option<crate::RefreshPrice>, read_ns: f64, at: crate::PriceView) -> f64 {
+    match old {
+        Some(p)
+            if p.ns > 0.0
+                && p.ns.is_finite()
+                && p.at.mode == at.mode
+                && p.at.nav == at.nav
+                && (p.at.l2 - at.l2).abs() <= crate::tunables::LIVE_PRICE_STALE_OCT =>
+        {
+            read_ns.max(p.ns / crate::tunables::LIVE_PRICE_DROP_MAX)
+        }
+        _ => read_ns,
+    }
+}
+
 /// The price, if it is about this view at all: same render mode and navigation epoch, within
 /// `LIVE_PRICE_STALE_OCT` of this depth (see [`live_refresh_verdict`]). Pure.
 fn usable_price(price: Option<crate::RefreshPrice>, a: &LiveAsk) -> Option<crate::RefreshPrice> {
