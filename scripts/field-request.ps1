@@ -135,7 +135,9 @@ switch ($Action) {
         if ($Instrument) {
             $req.env = [ordered]@{}
             foreach ($pair in ($Instrument -split ',' | Where-Object { $_ })) {
-                if ($pair -notmatch '^\s*([A-Z_]+)=([0-9]+)\s*$') { throw "bad -Instrument entry '$pair' (NAME=N)" }
+                # NAME=N, or FRACTADYNE_TRACE=<one category> (agent v13; it checks the category).
+                if ($pair -cmatch '^\s*(FRACTADYNE_TRACE)=([a-z]+)\s*$') { $req.env[$Matches[1]] = $Matches[2]; continue }
+                if ($pair -notmatch '^\s*([A-Z_]+)=([0-9]+)\s*$') { throw "bad -Instrument entry '$pair' (NAME=N, or FRACTADYNE_TRACE=category)" }
                 $req.env[$Matches[1]] = [int]$Matches[2]
             }
         }
