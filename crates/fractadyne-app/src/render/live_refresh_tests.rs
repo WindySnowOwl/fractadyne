@@ -24,7 +24,8 @@ fn ns_for(ms: f64, steps: u64) -> f64 {
 }
 
 /// A frame at `now` asking `steps`, at frame 101, no probe allowed — so with no price the answer
-/// is `No` — unfitted, under "prefer detail", with a complete frame to hold.
+/// is `No` — unfitted, under "prefer detail", with a complete frame to hold, on an adapter with no
+/// known occupancy knee.
 fn ask(now: PriceView, steps: u64) -> LiveAsk {
     LiveAsk {
         now,
@@ -35,6 +36,7 @@ fn ask(now: PriceView, steps: u64) -> LiveAsk {
         fit: 1.0,
         prefer_detail: true,
         can_split: true,
+        knee_px: 0,
     }
 }
 
@@ -269,4 +271,97 @@ fn a_frame_that_stays_off_live_says_why() {
     let stale = price(ns_for(LIVE_REPROBE_MS * 1.5, steps), 100 - LIVE_PRICE_FRESH_FRAMES - 5, v);
     assert_eq!(verdict(stale, ask(v, steps)), LiveRefresh::No);
     assert_eq!(live_no_reason(stale, &ask(v, steps)), LiveNo::BoundTooDear);
+}
+
+#[test]
+fn a_split_is_no_finer_than_brings_a_set_down_to_the_occupancy_knee() {
+    // RX 6800 XT (knee 524,288) at 1280×735: halves already sit under the knee.
+    assert_eq!(finest_split(940_800, 524_288), 2);
+    // RTX 3080 (knee 262,144) at 1457×1102: sevenths; eighths cost what sevenths do.
+    assert_eq!(finest_split(1457 * 1102, 262_144), 7);
+    // A frame under the knee cannot split at all; a huge one stops at LIVE_SPLIT_MAX; no knee known,
+    // LIVE_SPLIT_MAX.
+    assert_eq!(finest_split(100_000, 262_144), 1);
+    assert_eq!(finest_split(100_000_000, 262_144), LIVE_SPLIT_MAX);
+    assert_eq!(finest_split(100_000, 0), LIVE_SPLIT_MAX);
+    assert_eq!(finest_split(0, 262_144), 1);
+    assert_eq!(finest_split(u64::MAX, 262_144), LIVE_SPLIT_MAX);
+}
+
+#[test]
+fn a_split_set_is_priced_with_the_knee_counted() {
+    use crate::tunables::LIVE_SPLIT_SET_MAX_MS;
+    // The RTX 3080 just past the df32 switch (1457×1102, 27–32 ms frames): sevenths at the knee's
+    // floor, 0.163 of the frame, ~5 ms a set — as 0.3.0-beta.3 drew them.
+    let px = 1457 * 1102;
+    assert_eq!(split_sets(30.0, px, 262_144), Some(7));
+    assert_eq!(split_sets(36.0, px, 262_144), Some(7), "eighths cost what sevenths do");
+    // The RX 6800 XT (1262×724, 15–27 ms frames): halves under its 524k knee cost ~0.57 of the
+    // frame, over LIVE_SPLIT_SET_MAX_MS — the walk. A 9 ms frame halves at ~5 ms a set.
+    assert_eq!(split_sets(15.0, 1262 * 724, 524_288), None);
+    assert_eq!(split_sets(9.0, 1262 * 724, 524_288), Some(2));
+    // With no knee known, the plain share rule: ⌈pred / share⌉ sets.
+    assert_eq!(split_sets(2.5 * LIVE_REFRESH_MS, px, 0), Some(3));
+    // No split needed, or past LIVE_SPLIT_MAX, or a frame under the knee: none.
+    assert_eq!(split_sets(LIVE_REFRESH_MS, px, 262_144), None);
+    assert_eq!(split_sets(LIVE_SPLIT_MAX as f64 * LIVE_REFRESH_MS * 1.01, px, 0), None);
+    assert_eq!(split_sets(9.0, 200_000, 262_144), None);
+    // Halves at a 0.75 floor: exactly at the set bound, in; a hair over it, out.
+    assert_eq!(split_sets(2.0 * LIVE_REFRESH_MS, 400_000, 300_000), Some(2));
+    assert!((2.0 * LIVE_REFRESH_MS * 0.75 - LIVE_SPLIT_SET_MAX_MS).abs() < 1e-12);
+    assert_eq!(split_sets(2.0 * LIVE_REFRESH_MS, 400_000, 301_000), None);
+}
+
+#[test]
+fn a_refresh_whose_sets_the_knee_keeps_dear_takes_the_walk() {
+    let v = at(DF32, 3, 40.0); // 1 Mpx
+    let steps = 1_000_000_000;
+    let p = price(ns_for(2.5 * LIVE_REFRESH_MS, steps), 100, v); // 11.25 ms: 3 passes
+    // Thirds of 1 Mpx over a 300k knee cost their share, 3.75 ms: a split.
+    let a = LiveAsk { knee_px: 300_000, ..ask(v, steps) };
+    assert_eq!(verdict(p, a), LiveRefresh::Split(3));
+    // Under a 700k knee only halves help, and a half costs 0.7 of the frame, 7.9 ms: the walk,
+    // and the trace says why.
+    let a = LiveAsk { knee_px: 700_000, ..ask(v, steps) };
+    assert_eq!(verdict(p, a), LiveRefresh::No);
+    assert_eq!(live_no_reason(p, &a), LiveNo::UnderKnee);
+    // Past LIVE_SPLIT_MAX it is dear whatever the knee.
+    let dear = price(ns_for(LIVE_SPLIT_MAX as f64 * LIVE_REFRESH_MS * 1.5, steps), 100, v);
+    assert_eq!(live_no_reason(dear, &a), LiveNo::MeasuredDear);
+}
+
+#[test]
+fn a_shrunk_frame_stays_at_or_over_the_knee() {
+    let v = at(DF32, 3, 40.0); // 1 Mpx
+    let steps = 1_000_000_000;
+    // 1.5× the share: shrunk to √(1/1.5) = 0.816 per axis, 667k px.
+    let p = price(ns_for(1.5 * LIVE_REFRESH_MS, steps), 100, v);
+    let a = LiveAsk { prefer_detail: false, knee_px: 600_000, ..ask(v, steps) };
+    let (r, _, scale) = live_refresh_verdict(p, &a);
+    assert_eq!(r, LiveRefresh::Priced);
+    assert!((scale - (1.0f64 / 1.5).sqrt()).abs() < 1e-9, "{scale}");
+    // Under a 700k knee the shrunk frame would cost what one at the knee does; halves, priced
+    // with the knee, fit (4.7 ms a set).
+    let a = LiveAsk { knee_px: 700_000, ..a };
+    assert_eq!(verdict(p, a), LiveRefresh::Split(2));
+    // A frame under the knee neither shrinks nor splits usefully: the walk.
+    let a = LiveAsk { knee_px: 1_200_000, ..a };
+    assert_eq!(verdict(p, a), LiveRefresh::No);
+    assert_eq!(live_no_reason(p, &a), LiveNo::UnderKnee);
+}
+
+#[test]
+fn a_reprobe_splits_no_finer_than_the_knee_and_one_pass_needs_no_hold() {
+    // A price from a 0.4 Mpx probe only bounds a 1 Mpx frame: 11.25 ms, 3 passes.
+    let v = at(DF32, 3, 40.0);
+    let steps = 1_000_000_000;
+    let p = price(ns_for(2.5 * LIVE_REFRESH_MS, steps), 100, PriceView { px: 400_000, ..v });
+    let a = LiveAsk { probe_after: 0, ..ask(v, steps) };
+    assert_eq!(verdict(p, a), LiveRefresh::Reprobe(3));
+    assert_eq!(verdict(p, LiveAsk { knee_px: 400_000, ..a }), LiveRefresh::Reprobe(3));
+    assert_eq!(verdict(p, LiveAsk { knee_px: 600_000, ..a }), LiveRefresh::Reprobe(2));
+    let one = LiveAsk { knee_px: 1_200_000, ..a };
+    assert_eq!(verdict(p, one), LiveRefresh::Reprobe(1));
+    assert_eq!(verdict(p, LiveAsk { can_split: false, ..one }), LiveRefresh::Reprobe(1));
+    assert_eq!(verdict(p, LiveAsk { can_split: false, ..a }), LiveRefresh::Probe);
 }

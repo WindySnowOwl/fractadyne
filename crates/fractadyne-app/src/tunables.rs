@@ -698,6 +698,15 @@ pub(crate) const LIVE_REFRESH_MS: f64 = 4.5;
 /// pass longer than a display refresh holds up the frames behind it, and the frames over 20 ms
 /// doubled.)
 pub(crate) const LIVE_SPLIT_MAX: u32 = 8;
+/// The most GPU ms one split SET may be predicted to cost once the occupancy knee is counted
+/// (`render::split_sets`): a set of `px/k` pixels costs the frame's price × max(1/k, knee/px), because
+/// under the knee a pass costs its iterations over the knee's pixels whatever its own. Split into
+/// `⌈price / LIVE_REFRESH_MS⌉` sets, a frame far over the knee meets the share; one near it cannot,
+/// and a set that costs over this is no smoother than the pinned walk. 1.5× the share: on the RTX
+/// 3080 (knee 262k) at 1457×1102, sevenths and eighths of 27–36 ms frames ran at ~0.18–0.20 of the
+/// frame, 5–7 ms, and kept a 120 Hz glide at 115–120 fps (0.3.0-beta.3); on the RX 6800 XT (knee 524k)
+/// at 1262×724 even halves cost ~0.6 of a 15–27 ms frame.
+pub(crate) const LIVE_SPLIT_SET_MAX_MS: f64 = 1.5 * LIVE_REFRESH_MS;
 /// A live frame keeps the calibrated dispatch CEILING (the one bound nothing learned may raise): one
 /// whose nominal steps exceed it renders shrunk to fit — but no smaller than this fraction of its
 /// size on each axis. Below it a stretched fresh frame is no sharper than the held complete one, so

@@ -7221,6 +7221,7 @@ impl FractadyneApp {
                         fit: area.sqrt(),
                         prefer_detail: self.prefer_detail_effective(),
                         can_split: self.ref_cache[view_id as usize].frozen_center.is_some(),
+                        knee_px: crate::calibration::knee_px(),
                     };
                     let (verdict, pred, scale) = live_refresh_verdict(self.perf.refresh_price[lr], &ask);
                     // What the shrink below fits a priced frame (or a split) to: the ceiling, or
@@ -9853,6 +9854,9 @@ pub(crate) struct LiveAsk {
     pub(crate) prefer_detail: bool,
     /// There is a complete frame to hold while split passes compose (a frozen frame of this view).
     pub(crate) can_split: bool,
+    /// The adapter's occupancy knee, px (`calibration::knee_px`, 0 = none known): no split set and
+    /// no shrunk frame goes below it (`finest_split`).
+    pub(crate) knee_px: u64,
 }
 
 /// ⭐⭐LIVE REFRESH (0.3.0-beta.2). A moving df32 frame used to hold and reproject the last complete
@@ -9868,7 +9872,10 @@ pub(crate) struct LiveAsk {
 /// never a chunk sliver's, which is what once turned "fits in one pass" into 350 ms dispatches
 /// (see the forced-chunking note at `chunk_over`). A dearer refresh renders in SPLIT passes of at
 /// most the share each, up to `LIVE_SPLIT_MAX` of them (`split_passes`) — or, without "prefer
-/// detail", every frame shrunk to the share while that stays above `LIVE_MIN_SCALE`. (0.3.0-beta.2
+/// detail", every frame shrunk to the share while that stays above `LIVE_MIN_SCALE`. Both count the
+/// adapter's occupancy knee (0.3.0-beta.5), under which a pass costs what one at the knee does: a
+/// set is priced with it and must stay within `LIVE_SPLIT_SET_MAX_MS` (`split_sets`), and a shrunk
+/// frame may not go below it. (0.3.0-beta.2
 /// rendered it as ONE pass every `k`th frame instead; a pass longer than a display refresh holds up
 /// the frames behind it, which doubled the frames over 20 ms.) Returns the prediction (0 with no
 /// price, for the trace) and the linear scale to render a priced frame at (1.0 = as asked). It
@@ -9887,7 +9894,7 @@ pub(crate) struct LiveAsk {
 /// shrink leaves it too small to measure anything (a 29×22 probe read 0.044 ns a step against the
 /// full frame's 0.0002). Pure.
 pub(crate) fn live_refresh_verdict(price: Option<crate::RefreshPrice>, a: &LiveAsk) -> (LiveRefresh, f64, f64) {
-    use crate::tunables::{LIVE_MIN_SCALE, LIVE_REFRESH_MS, LIVE_SPLIT_MAX};
+    use crate::tunables::{LIVE_MIN_SCALE, LIVE_REFRESH_MS};
     let turn = a.frame >= a.probe_after;
     let probe = if turn && live_fit(a.steps, a.probe_cap, crate::tunables::LIVE_PROBE_MIN_SCALE).is_some() {
         LiveRefresh::Probe
@@ -9896,10 +9903,18 @@ pub(crate) fn live_refresh_verdict(price: Option<crate::RefreshPrice>, a: &LiveA
     };
     if let Some(p) = usable_price(price, a) {
         let pred = p.ns * a.steps as f64 / 1.0e6;
+        // ⭐The adapter's occupancy KNEE: below it a pass costs its iterations over the knee's
+        // pixels, whatever its own, so a smaller set or a smaller frame is no cheaper. On the RX
+        // 6800 XT (knee 524k px) an eighth of a 1262×724 frame took 6–27 ms against 15–27 for the
+        // whole; on the RTX 3080 (262k) at 1457×1102 a set costs its share down to sixths (a
+        // quarter: 0.250 of the frame), and sevenths and eighths ~0.19.
+        let finest = finest_split(a.now.px, a.knee_px);
         // The smoothness shrink: the scale that brings this frame to one displayed frame's share,
-        // if the ceiling fit leaves room for it above the floor.
+        // if the ceiling fit leaves room for it above the floor — and it stays at or over the knee.
         let shrink = (LIVE_REFRESH_MS / pred).sqrt();
-        let shrink_ok = !a.prefer_detail && shrink * a.fit >= LIVE_MIN_SCALE;
+        let shrink_ok = !a.prefer_detail
+            && shrink * a.fit >= LIVE_MIN_SCALE
+            && a.now.px as f64 * shrink * shrink >= a.knee_px as f64;
         let passes = split_passes(pred);
         let v = if price_is_bound(&p, a) {
             // Only a bound. A frame it prices at one displayed frame's share renders, and its
@@ -9907,11 +9922,13 @@ pub(crate) fn live_refresh_verdict(price: Option<crate::RefreshPrice>, a: &LiveA
             // split passes. Past that, only a probe — the view's cost moves with its REFERENCE as
             // well as its depth (the first df32 frames of a glide ran an escaped reference's
             // rebase storm at ~5× the per-step cost of the ones a second later), so a dear price
-            // must not outlive the reference it measured by octaves.
+            // must not outlive the reference it measured by octaves. (A frame the knee will not
+            // let split is reprobed in ONE pass: a one-off measurement, like a probe.)
+            let k = passes.min(finest);
             if pred <= LIVE_REFRESH_MS {
                 LiveRefresh::Priced
-            } else if pred <= crate::tunables::LIVE_REPROBE_MS && turn && a.can_split {
-                LiveRefresh::Reprobe(passes.min(LIVE_SPLIT_MAX))
+            } else if pred <= crate::tunables::LIVE_REPROBE_MS && turn && (k == 1 || a.can_split) {
+                LiveRefresh::Reprobe(k)
             } else {
                 probe
             }
@@ -9919,14 +9936,40 @@ pub(crate) fn live_refresh_verdict(price: Option<crate::RefreshPrice>, a: &LiveA
             LiveRefresh::Priced
         } else if shrink_ok {
             return (LiveRefresh::Priced, pred, shrink);
-        } else if passes <= LIVE_SPLIT_MAX && a.can_split {
-            LiveRefresh::Split(passes)
+        } else if let (Some(k), true) = (split_sets(pred, a.now.px, a.knee_px), a.can_split) {
+            LiveRefresh::Split(k)
         } else {
             LiveRefresh::No // measured dear, and fresh: the hold/pin path is right here
         };
         return (v, pred, 1.0);
     }
     (probe, 0.0, 1.0)
+}
+
+/// The most split passes that still make each set of a `px`-pixel frame cheaper: `LIVE_SPLIT_MAX`,
+/// and no more than bring a set down to the occupancy knee (`knee_px`, 0 = none known) — a finer set
+/// costs what one at the knee does. At least 1. Pure.
+pub(crate) fn finest_split(px: u64, knee_px: u64) -> u32 {
+    let cap = crate::tunables::LIVE_SPLIT_MAX;
+    match px.checked_add(knee_px.saturating_sub(1)).and_then(|n| n.checked_div(knee_px)) {
+        None => cap,
+        Some(k) => k.clamp(1, cap as u64) as u32,
+    }
+}
+
+/// The split a fresh price of `pred_ms` for a `px`-pixel frame renders in, if any: `k` =
+/// ⌈pred / `LIVE_REFRESH_MS`⌉ sets (at most `LIVE_SPLIT_MAX`), no finer than `finest_split`, each
+/// predicted at pred × max(1/k, knee/px) — the knee's floor — and at most `LIVE_SPLIT_SET_MAX_MS`.
+/// `None` for a frame that needs no split, cannot split usefully, or is too dear. Pure.
+pub(crate) fn split_sets(pred_ms: f64, px: u64, knee_px: u64) -> Option<u32> {
+    let passes = split_passes(pred_ms);
+    if passes < 2 || passes > crate::tunables::LIVE_SPLIT_MAX {
+        return None;
+    }
+    let k = passes.min(finest_split(px, knee_px));
+    let floor = if px == 0 { 1.0 } else { (knee_px as f64 / px as f64).min(1.0) };
+    let set_ms = pred_ms * (1.0 / k as f64).max(floor);
+    (k >= 2 && set_ms <= crate::tunables::LIVE_SPLIT_SET_MAX_MS).then_some(k)
 }
 
 /// The price, if it is about this view at all: same render mode and navigation epoch, within
@@ -9969,13 +10012,25 @@ pub(crate) enum LiveNo {
     BoundTooDear,
     /// Measured, fresh, and dearer than `LIVE_SPLIT_MAX` passes (or no complete frame to hold).
     MeasuredDear,
+    /// Measured and fresh, within `LIVE_SPLIT_MAX` passes, but the occupancy knee keeps its sets
+    /// dearer than `LIVE_SPLIT_SET_MAX_MS` (`split_sets`).
+    UnderKnee,
 }
 
 /// Why [`live_refresh_verdict`] said `No` to `a`. Pure.
 pub(crate) fn live_no_reason(price: Option<crate::RefreshPrice>, a: &LiveAsk) -> LiveNo {
     match usable_price(price, a) {
         Some(p) if price_is_bound(&p, a) => LiveNo::BoundTooDear,
-        Some(_) => LiveNo::MeasuredDear,
+        Some(p) => {
+            let pred = p.ns * a.steps as f64 / 1.0e6;
+            if split_passes(pred) <= crate::tunables::LIVE_SPLIT_MAX
+                && split_sets(pred, a.now.px, a.knee_px).is_none()
+            {
+                LiveNo::UnderKnee
+            } else {
+                LiveNo::MeasuredDear
+            }
+        }
         None if a.probe_after == u64::MAX => LiveNo::NoTiming,
         None if a.frame < a.probe_after => LiveNo::ProbeWaits,
         None => LiveNo::ProbeTooSmall,
