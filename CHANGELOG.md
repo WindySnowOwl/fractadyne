@@ -57,6 +57,46 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 - **Throughout.** Every dialog has a named way out with its buttons where you expect them, the app
   goes idle when left alone, and console output is opt-in.
 
+Changes after 0.3.0-beta.1:
+
+- **Shallow perturbation zooms keep their detail while moving** (0.3.0-beta.2).
+  - **The problem:** past about 1e4×, where the direct mode ends, a moving view held its last
+    complete frame and stretched it to follow the zoom, rebuilding it a piece at a time over a
+    dozen frames or more. On screen that was the old frame magnified about 1.5× on average, and up
+    to 3× just after the switch, although the graphics card could draw the whole frame in a few
+    milliseconds.
+  - **The change:** a moving frame whose whole refresh has been measured cheap is now drawn in one
+    pass and shown at once, as in the direct mode. The measurement is the GPU time of a recent
+    frame of the same view, timed by a timer of its own. A refresh up to 4.5 ms is drawn every
+    frame. A dearer one, up to 12 ms, is drawn at full size every second or third frame with
+    "Prefer detail while zooming" on, the frames between following the zoom as before, or every
+    frame at a slightly lower resolution with it off. A view with no measurement yet, just after
+    the switch or a jump, is measured with one smaller frame and then one full-size frame. No frame
+    exceeds the per-card dispatch limit. Dearer views, deeper zooms and the floatexp mode behave as
+    before. `--set LIVE_REFRESH=0` restores the old behaviour for a comparison.
+  - **How much**, glides from 1× at 2.7 octaves a second at a 1280×800 window on a 120 Hz
+    display, RTX 3080, "Prefer detail while zooming" on, against 0.3.0-beta.1:
+    - from 1e4× to 1e6×, including the switch, the frame on screen is stretched 1.17× on average
+      instead of 1.61×;
+    - from 1e6× to 1e12×, 1.00–1.01× instead of 1.54–1.60×, at 108–119 frames a second
+      instead of 107–113;
+    - from 1e12× to 1e18×, 1.14× instead of 1.65×, at 111 frames a second instead of 103;
+    - past about 1e18× the frames get dearer than a live pass may be, and the view behaves as
+      before (about 1.7× in both);
+    - the cost: more frames take longer than 20 ms, because a pass that runs past one refresh of
+      the display holds up the frames behind it. Per stretch of the glide: 25 instead of 0 from
+      1e4× to 1e6×, 24 instead of 10 from 1e6× to 1e9×, about 60 instead of 23 from 1e8× to
+      1e12×, about 70 instead of 43 from 1e12× to 1e18×.
+  - **The iteration count no longer climbs on views that do not need it.** The automatic
+    iteration count raises itself while pixels stop at the limit, and backs off when a raise
+    changes nothing. On a view drawn in several passes, the passes before the last reported no
+    pixels at the limit, and that report was taken as the starting point, so no raise ever looked
+    useless. At the whole-set view, 3.04% of pixels stopped at the limit at every count from 2,000
+    to 21,000, and the count still climbed ×10.5 in under a second and kept that multiplier for the
+    rest of the session: 57,000 iterations at 1e4× instead of 5,400, paid for by every frame. It
+    now backs off there after three raises. Starting to move in the middle of such a run of raises
+    also kept the raised count; it now goes back to where the run began.
+
 ## 0.2.41 (pre-releases v0.2.41-beta.1 to beta.150, rolled into 0.3.0)
 
 - **Faster deep exports: the graphics card is kept busy** (beta.150).

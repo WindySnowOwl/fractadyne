@@ -56,6 +56,7 @@ dir, logs included.
 | `ref` | every reference build (fresh *and* reused/extended) | Orbit length/iterations/precision, escaped/partial, SA skip, BLA nodes, and the build-time split `orbit_ms`/`sa_ms`/`bla_ms` + `pick_reference` scoring ms (scoring is parallel across all cores since 0.2.40-beta.7 — ~0.6 s at 1e1216× where it was ~7.6 s); also `lookahead install:` lines when a playback-prefetched reference installs. Every build line is tagged with its ORIGIN — `[live]` (reactive), `[lookahead]`, `[hold]`, `[export]`, `[test]` — without which a log of four concurrent builders cannot be read at all (two e72 root-cause attempts died on exactly that ambiguity). Reactive spawns also log `interacting`, `cap_now`, the installed `orbit_len`, and which of the three triggers (`out_of_view`/`needs_quality`/`bla_out_of_range`) fired; during playback, `holding=` transitions mark each hold's boundary |
 | `gpu` | live floatexp budget controller | Measured iterate ms per dispatch, budget grow/shrink, convergence; `aimd:` lines show the motion-res controller's real-frame cost signal + resolution decisions |
 | `tile` | live floatexp frame sizing | Per-frame resolution/ss/iterations/steps vs budget, reprojection, tiled-settle grid state |
+| `live` | every moving df32 frame the live-refresh rule does not decline, and every price | `live-refresh … Priced/Wait/Probe/Reprobe steps=S of N pred_ms=P scale=K since=F price_mode=M probe_cap=C` (the verdict, the steps it may render after the ceiling fit, the predicted GPU ms, the smoothness scale, frames since the last live one); `refresh-price … from=F Xms steps=S ns/step=Y` when a live pass's own timing prices the view. Low volume, so it does not slow the frames it describes the way `tile` does |
 | `glitch` | multi-reference correction | Per-run summary: references used, residual glitched px, elapsed |
 | `dpi` | every real change of scale factor or window size | Scale factor, logical size and **physical** size, before → after, one line per change (jitter suppressed). For the monitor-drag resize report: a healthy DPI transition HOLDS the logical size and rescales the physical one by exactly the new factor; the defect is the physical size ratcheting up beyond that, and the upstream reports describe the scale factor flipping repeatedly (1.0 ↔ 1.75) as it happens, which shows here as a burst of lines |
 | `idle` | every frame, while the performance overlay is on | Why the app is still drawing: the quiescence verdict and each input to it (animation/playback clock, per-view tiled-settle and chunk-walk pending, reference build in flight, frames since each view last dispatched). ⭐Answers "a settled app is still burning GPU — what is holding it awake?", which no other channel can: the 2026-09-04 climb-probe loop dispatched a real 36.9 ms pass every 3 frames forever while `tile` reported `iterates=false` (true — the iterate KEY was deduped; the probe re-keys by nonce) |
@@ -91,7 +92,7 @@ and fails if one is missing from this table.
 | `[fd-perf]` | always | Per-export GPU iterate/colour ms and event counters (every export path since beta.149, the normalized and glitch-corrected ones included), `tiles=`/`passes=` (beta.150); `file-write:` the CLI render's PNG/EXR encode + write ms and bytes |
 | `[fd-progress]` | always (CLI) | CLI render progress, ~2 s cadence (`[progress]` in the log file) |
 | `[fd-autodive]` `[fd-motiontest]` `[fd-zoomtest]` | harness | Each harness's own progress and verdict lines |
-| `[fd-req]` `[fd-ref]` `[fd-gpu]` `[fd-tile]` `[fd-glitch]` `[fd-idle]` `[fd-dpi]` `[fd-autopilot]` `[fd-refwaste]` | `FRACTADYNE_TRACE` | The trace categories in the table above; `refwaste` accounts every reference build's CPU cost as `USED` / `SUPERSEDED` / `DROPPED` |
+| `[fd-req]` `[fd-ref]` `[fd-gpu]` `[fd-tile]` `[fd-live]` `[fd-glitch]` `[fd-idle]` `[fd-dpi]` `[fd-autopilot]` `[fd-refwaste]` | `FRACTADYNE_TRACE` | The trace categories in the table above; `refwaste` accounts every reference build's CPU cost as `USED` / `SUPERSEDED` / `DROPPED` |
 | `[crumb]` | always, file only | Breadcrumbs — phase transitions — tagged with the writing thread's name (reference builds run on `fd-ref-live`, `fd-ref-lookahead`, `fd-ref-hold`, `fd-ref-export`) |
 
 `[selftest …ms]` lines stream `--selftest` check results. `fractadyne.log` rotates past ~5 MB
@@ -292,7 +293,16 @@ measured cost per active pixel-step so a pass lands near 200 ms, and never excee
 pixel-steps. The `[fd-perf]` line reports `tiles=` and `passes=`; `FRACTADYNE_TRACE=tile` prints
 one `steps pass N cap=C wall=W running=R` line per pass. Pictures are the same whichever way the
 frame is split (selftest `occupancy tile: step-bounded passes resume bit-identically`). Modes 0/1
-keep their tiles.
+keep their tiles. — and `LIVE_REFRESH` (default 1 from 0.3.0-beta.2; `0` = every moving
+perturbation frame holds and refreshes through the pinned chunk walk, as before): a moving df32
+frame whose whole refresh has been MEASURED cheap renders in one pass and is shown live. The price
+is the GPU time of a recent live pass of the same view (same mode, navigation epoch and depth
+window), timed by its own timer; a refresh up to 4.5 ms renders every frame, a dearer one up to
+12 ms every `k`th frame at full size under "Prefer detail while zooming" (the frames between
+reproject it) or every frame shrunk to 4.5 ms (down to 0.75 scale) without it. A live frame never
+exceeds the dispatch ceiling. With no price (a mode switch, a jump), one probe sized to a 40 ms
+share of the ceiling measures it, then one full-size pass. `FRACTADYNE_TRACE=live` shows every
+verdict and price.
 
 - **Not a configuration surface.** The defaults are the only tested path: the self-test, the
   goldens, `--bench-matrix` and `--livetest` all assume them. `--selftest` carries a check that

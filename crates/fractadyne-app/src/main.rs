@@ -1047,6 +1047,29 @@ struct AccumCmd {
     reset: bool,
 }
 
+/// Which view a whole-refresh price describes: its render mode, the navigation epoch
+/// (`Perf::nav_epoch`, bumped by every deliberate jump) and the depth (log2 magnification) of the
+/// dispatch it measured. `render::live_refresh_verdict` trusts a price only for the same view.
+/// `px` is the dispatch's pixel count: a price taken on a much SMALLER frame (a shrunk probe) is
+/// dearer per step than the full frame's — more divergent warps, near the occupancy knee — so it
+/// bounds the full frame from above rather than pricing it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PriceView {
+    pub(crate) mode: u32,
+    pub(crate) nav: u64,
+    pub(crate) l2: f64,
+    pub(crate) px: u64,
+}
+
+/// A whole refresh's measured GPU cost (`Perf::refresh_price`), in ns per nominal step, taken from
+/// the dispatch(es) built at `frame`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct RefreshPrice {
+    pub(crate) ns: f64,
+    pub(crate) frame: u64,
+    pub(crate) at: PriceView,
+}
+
 struct Perf {
     enabled: bool,
     /// Height (px) of the bottom status bar as of the last frame — instrumentation for `--uitest`,
@@ -1165,12 +1188,42 @@ struct Perf {
     iterate_frame: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     /// `app_micros` when that pass's timer was armed, published with it (0 = none).
     iterate_armed: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// The LIVE-REFRESH timer's sinks (`MandelbrotParams::live_timing`): ms (f64 bits), nominal
+    /// steps and pass frame of a live pass it timed. They feed only the live-refresh price.
+    live_ms: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    live_steps: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    live_frame: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// Whether the frame being built is a live-refresh pass (set in `build_params`, read where the
+    /// params are assembled).
+    live_pass: [bool; 2],
     /// Every GPU reading held against its frame's CPU-side completion window (see
     /// `timing_witness`); the verdict for the reading being judged rides here into the record.
     witness: timing_witness::Witness,
     witness_pending: [Option<timing_witness::Verdict>; 2],
     /// Nominal steps of the last frame that actually re-iterated — the cost that `iterate_ms` prices.
     fe_steps_last: [u64; 2],
+    /// ⭐LIVE REFRESH (`render::live_refresh_verdict`): the measured GPU cost of this view's last
+    /// WHOLE refresh. Only a whole refresh's own timestamps set it — a complete single pass,
+    /// priced for the mode it ran in — never one chunk pass, whose cost is one band's.
+    refresh_price: [Option<RefreshPrice>; 2],
+    /// The last few dispatches that were complete single-pass refreshes, newest first, as (frame,
+    /// nominal steps, view): the GPU reading that comes back with exactly that frame and step count
+    /// becomes `refresh_price`. Several, because live frames dispatch every frame, a reading lands
+    /// 2–4 frames after its dispatch, and each timer is one slot, so only some passes come back
+    /// timed at all.
+    /// ⛔A pinned walk cannot price itself for the same reason: summing its passes' readings needs
+    /// EVERY pass timed, and with that sampling almost none is (tried; it never produced a price).
+    full_pass: [[Option<(u64, u64, PriceView)>; 8]; 2],
+    /// No live-refresh PROBE (the unpriced single pass) before this frame: one probe's reading
+    /// must land before the next is tried, and an expensive one backs off.
+    live_probe_after: [u64; 2],
+    /// The frame of the last live-refresh pass (priced or probe): a refresh dearer than one
+    /// displayed frame's share renders every `k`th frame, holding between (`LiveRefresh::Wait`).
+    live_last: [u64; 2],
+    /// Probes since the last priced live frame: each doubles the wait for the next, so a view that
+    /// measures dear (or a card whose readings never pair) backs off instead of flashing a shrunk
+    /// probe every few frames.
+    live_probe_misses: [u32; 2],
     /// Last measured live iterate GPU ms per view — a copy of the swapped `iterate_ms`
     /// reading kept for the perf HUD (D3.5); the atomic itself is consumed by the controller.
     last_iterate_ms: [f64; 2],
@@ -1859,6 +1912,38 @@ impl Perf {
         }
     }
 
+    /// Price a WHOLE refresh from its own GPU timestamp (see `refresh_price`): the reading must
+    /// carry the frame and nominal step count `full_pass` recorded at a complete single-pass
+    /// dispatch, so a settle tile, a chunk pass or a deduped re-dispatch can never stand in for it.
+    pub(crate) fn note_refresh_reading(&mut self, v: usize, ms: f64, steps: u64, frame: u64) {
+        if steps == 0 || !(ms > 0.0) || !ms.is_finite() {
+            return;
+        }
+        let hit = self.full_pass[v]
+            .iter()
+            .position(|p| p.is_some_and(|(f, s, _)| f == frame && s == steps));
+        let Some(i) = hit else { return };
+        let (_, _, at) = self.full_pass[v][i].take().unwrap();
+        let ns = ms * 1.0e6 / steps as f64;
+        self.refresh_price[v] = Some(RefreshPrice { ns, frame, at });
+        if diag::trace_on("live") {
+            diag::trace(
+                "live",
+                format!(
+                    "refresh-price v={v} f={} from={frame} mode={} {ms:.2}ms steps={steps} ns/step={ns:.5}",
+                    self.frame_idx, at.mode
+                ),
+            );
+        }
+    }
+
+    /// Remember a complete single-pass dispatch so its reading can price the live-refresh gate.
+    pub(crate) fn record_full_pass(&mut self, v: usize, frame: u64, steps: u64, at: PriceView) {
+        let ring = &mut self.full_pass[v];
+        ring.rotate_right(1);
+        ring[0] = Some((frame, steps, at));
+    }
+
     /// A harness that renders each frame SYNCHRONOUSLY (a readback that waits for the queue)
     /// has, by the time the frame returns, completed every dispatch the GUI would learn about
     /// through `on_submitted_work_done`. It has no event loop to arm those callbacks, so it
@@ -1997,9 +2082,18 @@ impl Default for Perf {
             pass_clock_prev_t1: [0.0, 0.0],
             iterate_frame: [Default::default(), Default::default()],
             iterate_armed: [Default::default(), Default::default()],
+            live_ms: [Default::default(), Default::default()],
+            live_steps: [Default::default(), Default::default()],
+            live_frame: [Default::default(), Default::default()],
+            live_pass: [false, false],
             witness: Default::default(),
             witness_pending: [None, None],
             fe_steps_last: [0, 0],
+            refresh_price: [None, None],
+            full_pass: [[None; 8]; 2],
+            live_probe_after: [0, 0],
+            live_last: [0, 0],
+            live_probe_misses: [0, 0],
             last_iterate_ms: [0.0, 0.0],
             fe_budget_ok: [false, false],
             ts_reading_frame: [0, 0],
@@ -14713,6 +14807,16 @@ impl eframe::App for FractadyneApp {
         }
 
         self.drain_pass_clock();
+        // The live-refresh timer's readings (`MandelbrotParams::live_timing`): the price only.
+        for v in 0..2 {
+            use std::sync::atomic::Ordering::SeqCst;
+            let bits = self.perf.live_ms[v].swap(0, SeqCst);
+            if bits != 0 {
+                let steps = self.perf.live_steps[v].swap(0, SeqCst);
+                let frame = self.perf.live_frame[v].swap(0, SeqCst);
+                self.perf.note_refresh_reading(v, f64::from_bits(bits), steps, frame);
+            }
+        }
         // Re-size the floatexp frame budget from the LIVE iterate's measured GPU time, published by the
         // paint callback a couple of frames after the pass it describes. Walk the budget toward the
         // size that measures near TDR_BUDGET_MS by the observed time RATIO — no cost model, because at
@@ -14725,6 +14829,18 @@ impl eframe::App for FractadyneApp {
             let bits = self.perf.iterate_ms[v].swap(0, std::sync::atomic::Ordering::SeqCst);
             let ms = f64::from_bits(bits);
             if bits == 0 || !(ms > 0.01) || self.perf.fe_steps_last[v] == 0 {
+                // A real timing the budget cannot use (no app-side count to price it against) still
+                // carries its OWN paired count and frame, which is all the live-refresh gate needs.
+                // Peek, don't take: the budget path below has always left these for the next
+                // reading to overwrite, and still does.
+                if bits != 0 && ms > 0.01 {
+                    use std::sync::atomic::Ordering::SeqCst;
+                    let steps = self.perf.iterate_steps[v].load(SeqCst);
+                    let frame = self.perf.iterate_frame[v].load(SeqCst);
+                    if steps > 0 {
+                        self.perf.note_refresh_reading(v, ms, steps, frame);
+                    }
+                }
                 if diag::trace_on("gpu") && v == 0 {
                     diag::trace(
                         "gpu",
@@ -14806,6 +14922,8 @@ impl eframe::App for FractadyneApp {
                 }
             }
             self.perf.witness_pending[v] = verdict;
+            // A whole single-pass refresh's own reading prices the live-refresh gate.
+            self.perf.note_refresh_reading(v, ms, steps, frame);
             if self.apply_iterate_measurement(v, ms, steps, Self::SRC_GPU_ITERATE) {
                 ctx.request_repaint();
             }
