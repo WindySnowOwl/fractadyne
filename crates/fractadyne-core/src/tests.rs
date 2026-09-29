@@ -1,5 +1,26 @@
 use super::*;
 
+/// `formula::caps` replaced id ranges written out at each use (design/custom-formulas.md, phase 0).
+/// Each capability must answer exactly as the range it replaced, for every id — the known ones and
+/// the out-of-range ones a view file could carry — so the change moves no decision anywhere.
+#[test]
+fn formula_caps_answer_as_the_id_ranges_they_replaced() {
+    for id in 0..1000u32 {
+        let c = formula::caps(id);
+        assert_eq!(c.series_approximation, id <= 3, "series approximation, id {id}");
+        assert_eq!(c.bla, id == 0, "bla, id {id}");
+        assert_eq!(c.resumable_passes, id <= 3, "resumable passes, id {id}");
+        assert_eq!(c.nucleus_finder, matches!(id, 0..=3), "nucleus finder, id {id}");
+        assert_eq!(c.feature_solvers, id == 0, "feature solvers, id {id}");
+        assert_eq!(c.export_glitch_correction, id > 3, "export glitch correction, id {id}");
+        assert_eq!(c.convergent, id == 9, "convergent, id {id}");
+    }
+    // And by name, so a renumbering cannot quietly move a family's capabilities.
+    assert!(formula::caps(formula::MULTIBROT5).series_approximation);
+    assert!(!formula::caps(formula::TRICORN).resumable_passes);
+    assert!(formula::caps(formula::NEWTON).convergent);
+}
+
 /// `formula_dwell` must be the same oracle as `naive_dwell_bf` where both apply (Mandelbrot): the
 /// same escape iteration, and the same smooth count to float precision — escaped and interior.
 #[test]

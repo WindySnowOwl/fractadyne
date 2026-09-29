@@ -54,8 +54,9 @@
 //! doubling it again would approach the ~2 s watchdog. A sweep that stopped early says so.
 //!
 //! ⚠**An empty pass list is not a fast render.** `render_iter_chunked_timed` falls back to one
-//! unbounded `render_iter` dispatch outside its supported scope (mode, formula > 3, attachment
-//! bytes). That is reported as NOT MEASURED, never as a result.
+//! unbounded `render_iter` dispatch outside its supported scope (mode, a formula without
+//! `FormulaCaps::resumable_passes`, attachment bytes). That is reported as NOT MEASURED, never
+//! as a result.
 
 use crate::FractadyneApp;
 

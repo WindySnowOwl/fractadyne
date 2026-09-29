@@ -257,7 +257,7 @@ impl FractadyneApp {
     /// Misiurewicz points are a Mandelbrot-set feature: any other formula, or Julia mode, dives
     /// toward detail instead and says so.
     fn start_misi_target_solve(&mut self, ctx: &egui::Context) {
-        if self.fractal.formula_id() != 0 || self.julia_mode {
+        if !self.fractal.caps().feature_solvers || self.julia_mode {
             self.set_toast(
                 "Autopilot: a Misiurewicz target needs the Mandelbrot set\nDiving toward detail instead",
                 ctx,

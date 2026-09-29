@@ -8935,7 +8935,7 @@ impl FractadyneApp {
     ///   next report about it has no evidence to work from (this one arrived with none).
     fn find_minibrot(&mut self, ctx: &egui::Context) {
         let formula = self.fractal.formula_id();
-        if !matches!(formula, 0..=3) {
+        if !self.fractal.caps().nucleus_finder {
             self.set_toast(
                 "Minibrot finder needs a holomorphic family (Mandelbrot / Multibrot).",
                 ctx,
@@ -9048,7 +9048,7 @@ impl FractadyneApp {
     /// working. The worker runs the pure core calls; everything needing `&self` waits for
     /// [`poll_feature_solve`](Self::poll_feature_solve).
     fn goto_feature(&mut self, ctx: &egui::Context) {
-        if self.fractal.formula_id() != 0 {
+        if !self.fractal.caps().feature_solvers {
             self.goto.msg = Some("Feature finding is Mandelbrot-only.".into());
             return;
         }
@@ -9275,7 +9275,7 @@ impl FractadyneApp {
     /// Start the nucleus solve behind "snap to nearest center", seeded at the view the click just
     /// landed on. Never blocks; a solve already running wins (one at a time).
     fn start_snap_solve(&mut self, ctx: &egui::Context) {
-        if self.snap_solve.is_some() || self.fractal.formula_id() != 0 || self.julia_mode {
+        if self.snap_solve.is_some() || !self.fractal.caps().feature_solvers || self.julia_mode {
             return; // Mandelbrot-only, like every other nucleus solve in the app
         }
         let center = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];

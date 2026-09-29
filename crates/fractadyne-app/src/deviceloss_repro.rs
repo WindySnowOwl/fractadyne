@@ -257,7 +257,7 @@ impl FractadyneApp {
             println!("ABORT: no reference (orbit_len=0) — a non-perturbation view. Pick a deeper zoom.");
             return;
         }
-        if base.mode > 2 || base.formula > 3 {
+        if base.mode > 2 || !fractadyne_core::formula::caps(base.formula).resumable_passes {
             println!(
                 "ABORT: mode {} / formula {} is outside the chunk shaders' scope; render_iter_chunked_timed\n\
                  would fall back to one unbounded dispatch and measure nothing.",

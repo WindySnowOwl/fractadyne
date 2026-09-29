@@ -915,7 +915,7 @@ fn render_export_impl(
     let fe = req.mode == 2;
     let chunk_scope = allow_chunking
         && (req.mode == 1 || req.mode == 0 || req.mode == 2)
-        && req.formula <= 3
+        && fractadyne_core::formula::caps(req.formula).resumable_passes
         && !method_needs_aux(req.color_method)
         && device.limits().max_color_attachment_bytes_per_sample >= if fe { 64 } else { 48 };
     // Mode 2 in chunk scope: occupancy-sized tiles run as step-bounded passes (see
@@ -1517,7 +1517,7 @@ pub fn render_iter_tiled(
     // latency-bound dispatches the app issues, and its 120 s deadline is only checked BETWEEN
     // tiles — so before chunking, one such tile could still overrun the watchdog inside it.
     let chunk_scope = (req.mode == 1 || req.mode == 0 || req.mode == 2)
-        && req.formula <= 3
+        && fractadyne_core::formula::caps(req.formula).resumable_passes
         && device.limits().max_color_attachment_bytes_per_sample
             >= if req.mode == 2 { 64 } else { 48 };
     // Occupancy-sized, step-bounded tiles (see `OCC_TILE_SAMPLES`), mode 2 only as in
@@ -2786,10 +2786,10 @@ fn render_iter_passes(
 /// run as a single watchdog-tripping dispatch. Output is bit-identical to `render_iter` for the
 /// supported scope (the resumable shader replicates the direct branch's arithmetic and order
 /// exactly, and the state carries full df32 precision). Scope: DIRECT (`mode == 1`), df32
-/// perturbation (`mode == 0`) and floatexp perturbation (`mode == 2`), holomorphic formulas 0..=3,
-/// aux coloring off (glitch detection is supported since beta.124 — a glitched pixel settles as
-/// `ST_GLITCHED` and resolves to the same `-2` sentinel the single pass emits); anything else
-/// falls back to plain `render_iter`.
+/// perturbation (`mode == 0`) and floatexp perturbation (`mode == 2`), formulas whose
+/// `FormulaCaps::resumable_passes` is set, aux coloring off (glitch detection is supported since
+/// beta.124 — a glitched pixel settles as `ST_GLITCHED` and resolves to the same `-2` sentinel the
+/// single pass emits); anything else falls back to plain `render_iter`.
 /// Always `ss = 1`, like `render_iter`. `iterate_ms` is not measured on this path (0.0).
 ///
 /// Mode 2 runs the four-target `fs_iterate_chunk_fe` entry point instead — floatexp state does not
@@ -2829,7 +2829,8 @@ pub struct ChunkPassTiming {
 /// to a loop that already blocks on `poll(Wait)`.
 ///
 /// ⚠An `Ok` result with `passes` still EMPTY means the unsupported-scope fallback to `render_iter`
-/// fired (wrong mode, formula > 3, `chunk_iters == 0`, or too few color-attachment bytes) — i.e.
+/// fired (wrong mode, a formula without `resumable_passes`, `chunk_iters == 0`, or too few
+/// color-attachment bytes) — i.e.
 /// one unbounded dispatch ran instead of the windows you asked for. A caller measuring windows
 /// must treat that as "not measured", never as "one fast window".
 pub fn render_iter_chunked_timed(
@@ -2844,13 +2845,14 @@ pub fn render_iter_chunked_timed(
     // mode 0, four (64) for mode 2. A device that granted less can't run it: fall back to the
     // single-pass render (the caller's TDR exposure is then what it always was; the app requests
     // min(adapter, 64) at device creation). Scope: direct (1), df32 perturbation (0) and floatexp
-    // perturbation (2) with aux off, holomorphic formulas 0..3 — the same scope the chunk shaders
-    // are written to, which is narrower than `fs_iterate`'s.
+    // perturbation (2) with aux off, formulas with `FormulaCaps::resumable_passes` (Mandelbrot,
+    // Multibrot 3–5) — the same scope the chunk shaders are written to, which is narrower than
+    // `fs_iterate`'s.
     let fe = req.mode == 2; // floatexp: the four-target entry point
     let mode_ok = req.mode == 1 || req.mode == 0 || req.mode == 2;
     let attach_need = if fe { 64 } else { 48 };
     if !mode_ok
-        || req.formula > 3
+        || !fractadyne_core::formula::caps(req.formula).resumable_passes
         || chunk_iters == 0
         || device.limits().max_color_attachment_bytes_per_sample < attach_need
     {

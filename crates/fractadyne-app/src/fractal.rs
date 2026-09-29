@@ -22,6 +22,9 @@
 //!    floatexp — matching `formula_id`.
 //! 4. If the family is **not** deep-zoom capable, set `supports_perturbation: false`; it then runs
 //!    on the direct (shallow) path only and steps 2–3 need only the direct-mode arm.
+//! 5. **Capabilities** (`fractadyne_core::formula::caps`): series approximation, BLA, resumable
+//!    passes, the finders and the export glitch-correction policy. Code asks [`FractalKind::caps`],
+//!    never the id, so a new family only needs its row there.
 
 /// Per-family description shown in the info panel and Help.
 #[derive(Clone, Copy)]
@@ -260,6 +263,12 @@ impl FractalKind {
 
     pub(crate) fn info(self) -> FractalInfo {
         self.spec().info
+    }
+
+    /// What this family supports beyond plain iteration (series approximation, BLA, resumable
+    /// passes, the finders, the export glitch-correction policy). Ask this, not the id.
+    pub(crate) fn caps(self) -> fractadyne_core::formula::FormulaCaps {
+        fractadyne_core::formula::caps(self.formula_id())
     }
 
     /// Hover text for a formula picker: the iteration, what the family looks like, and

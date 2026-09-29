@@ -2267,7 +2267,7 @@ impl FractadyneApp {
             let scale = vp.gpu_scale();
             let (span_mantissa, delta_exp) = (scale.span_mantissa, scale.delta_exp);
             let bla_will_build = self.bla_eligible(mode, false);
-            let do_sa = self.fractal.formula_id() <= 3
+            let do_sa = self.fractal.caps().series_approximation
                 && !self.coloring.color_method.blocks_iter_skip()
                 && self.render_cfg.series_approx
                 && !bla_will_build;
@@ -2532,7 +2532,7 @@ impl FractadyneApp {
         let scale = vp.gpu_scale();
         let (span_mantissa, delta_exp) = (scale.span_mantissa, scale.delta_exp);
         let bla_will_build = self.bla_eligible(mode, false);
-        let do_sa = self.fractal.formula_id() <= 3
+        let do_sa = self.fractal.caps().series_approximation
             && !self.coloring.color_method.blocks_iter_skip()
             && self.render_cfg.series_approx
             && !bla_will_build;
@@ -2763,7 +2763,7 @@ impl FractadyneApp {
         self.render_cfg.use_bla
             && mode.is_floatexp()
             && !julia
-            && self.fractal.formula_id() == 0
+            && self.fractal.caps().bla
             && (!method.blocks_iter_skip() || aux_bla_ok)
     }
 
@@ -2832,7 +2832,7 @@ impl FractadyneApp {
         // (df32-pert mode 0, Multibrot, BLA off/aux-gated) — there it remains the only skip.
         let do_sa = (!mode.is_direct())
             && !julia
-            && self.fractal.formula_id() <= 3
+            && self.fractal.caps().series_approximation
             && !self.coloring.color_method.blocks_iter_skip()
             && self.render_cfg.series_approx
             && bla_dc_max.is_none();
@@ -6886,7 +6886,7 @@ impl FractadyneApp {
             let can_chunk = (chunk_mode.is_direct()
                 || chunk_mode == RenderMode::Df32Pert
                 || (chunk_mode == RenderMode::Floatexp && self.perf.chunk_fe_ok))
-                && fractal.formula_id() <= 3
+                && fractal.caps().resumable_passes
                 && !self.coloring.color_method.needs_aux()
                 && self.perf.chunk_ok;
             // A PINNED refresh spans many frames, so no single frame interval prices it; an
@@ -7822,7 +7822,7 @@ impl FractadyneApp {
         let chunk_over = (chunk_mode.is_direct()
             || chunk_mode == RenderMode::Df32Pert
             || (chunk_mode == RenderMode::Floatexp && self.perf.chunk_fe_ok))
-            && fractal.formula_id() <= 3
+            && fractal.caps().resumable_passes
             && !self.coloring.color_method.needs_aux()
             && self.perf.chunk_ok
             && !offscreen
@@ -8291,7 +8291,7 @@ impl FractadyneApp {
             let bla_will_build = self.bla_eligible(mode, julia);
             let do_sa = (!mode.is_direct())
                 && !julia
-                && fractal.formula_id() <= 3
+                && fractal.caps().series_approximation
                 && !self.coloring.color_method.blocks_iter_skip()
                 && self.render_cfg.series_approx
                 && !bla_will_build;

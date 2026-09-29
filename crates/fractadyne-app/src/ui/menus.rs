@@ -548,7 +548,7 @@ impl FractadyneApp {
                         // The mathematical tools lead: they are what distinguishes this app from
                         // every other deep-zoom explorer, and until 2026-08-13 they were filed
                         // under Locations / buried in a dialog tooltip (UI review).
-                        ui.add_enabled_ui(matches!(self.fractal.formula_id(), 0..=3), |ui| {
+                        ui.add_enabled_ui(self.fractal.caps().nucleus_finder, |ui| {
                             if ui
                                 .button("Find minibrot + zoom to it  (M)")
                                 .on_hover_text(

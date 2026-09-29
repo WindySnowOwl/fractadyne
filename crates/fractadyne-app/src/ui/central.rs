@@ -390,7 +390,7 @@ impl FractadyneApp {
                     .collect()
             } else {
                 let point = vp.complex_at_pixel_f64(cursor_px.0, cursor_px.1);
-                let newton = formula == 9;
+                let newton = fractadyne_core::formula::caps(formula).convergent;
                 let (z0, c) = if is_julia {
                     (point, self.julia_c)
                 } else if newton {

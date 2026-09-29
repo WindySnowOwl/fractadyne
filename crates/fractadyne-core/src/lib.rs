@@ -63,6 +63,8 @@ pub use backend::{
 /// - [`series_skip`] — only for polynomial `z^d + c` families (see [`formula_power`]).
 /// - [`formula_power`] — the escape power, if the family is a Multibrot-style `z^d + c`.
 /// - `fractadyne-gpu/src/mandelbrot.wgsl` `fs_iterate` — one branch per active render mode.
+/// - [`formula::caps`] — what else it supports (series approximation, BLA, resumable passes, the
+///   finders, the export glitch-correction policy). Callers ask the capability, never the id.
 ///
 /// An unknown id falls back to Mandelbrot in [`step_bf`]/[`orbit_points`] (a safe default, not an
 /// error) — validate with [`is_valid_formula`] at UI/CLI boundaries if a hard reject is wanted.
@@ -79,6 +81,46 @@ pub mod formula {
     pub const NEWTON: u32 = 9;
     /// Number of defined formula ids (ids are `0..COUNT`).
     pub const COUNT: u32 = 10;
+
+    /// What a formula supports beyond plain iteration (design/custom-formulas.md §4.3). These were
+    /// id ranges written out at each use (`formula_id() <= 3`, `== 0`, `> 3`); a custom formula
+    /// will compute its own from its definition, so every caller asks the capability instead.
+    /// (Julia and perturbation support are still the app's `FractalSpec` flags.)
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct FormulaCaps {
+        /// Series approximation can seed the perturbation (`series_skip`): the `z^d + c` families.
+        pub series_approximation: bool,
+        /// A BLA tree can be built for it (`build_bla_mandel`): Mandelbrot only.
+        pub bla: bool,
+        /// The resumable chunk shaders (`fs_iterate_chunk*`) implement it, so a live refresh or an
+        /// export tile can be split on the iteration axis.
+        pub resumable_passes: bool,
+        /// The minibrot (nucleus) finder applies (`find_nucleus`, via `formula_power`).
+        pub nucleus_finder: bool,
+        /// The Misiurewicz explorer, feature go-to, snap-to-nucleus and the autopilot's
+        /// Misiurewicz target: Mandelbrot only.
+        pub feature_solvers: bool,
+        /// Exports run multi-reference glitch correction (outside Julia mode): every family but the
+        /// `z^d + c` ones, where the glitch audit found it repaired nothing.
+        pub export_glitch_correction: bool,
+        /// Convergent (root finding) rather than escape time: the orbit starts at the point.
+        pub convergent: bool,
+    }
+
+    /// The built-in families' capabilities. An unknown id gets none of them, and glitch correction
+    /// on — what each gate gave an out-of-range id when it was written as an id range.
+    pub const fn caps(formula: u32) -> FormulaCaps {
+        let polynomial = matches!(formula, MANDELBROT | MULTIBROT3 | MULTIBROT4 | MULTIBROT5);
+        FormulaCaps {
+            series_approximation: polynomial,
+            bla: formula == MANDELBROT,
+            resumable_passes: polynomial,
+            nucleus_finder: polynomial,
+            feature_solvers: formula == MANDELBROT,
+            export_glitch_correction: !polynomial,
+            convergent: formula == NEWTON,
+        }
+    }
 }
 
 /// Whether `formula` is a defined id (`0..formula::COUNT`). Dispatch tolerates unknown ids by
