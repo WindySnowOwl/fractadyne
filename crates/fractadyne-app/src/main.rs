@@ -1221,6 +1221,11 @@ struct Perf {
     /// measures dear (or a card whose readings never pair) backs off instead of flashing a shrunk
     /// probe every few frames.
     live_probe_misses: [u32; 2],
+    /// Why the last moving df32 frame did NOT render live (`render::LiveNo`, 0 = it did, or it was
+    /// not asked), so `FRACTADYNE_TRACE=live` prints each reason once when it starts to apply
+    /// instead of every frame — or not at all, as before 0.3.0-beta.4, when a trace of a glide that
+    /// never went live came back EMPTY.
+    live_no: [u8; 2],
     /// Last measured live iterate GPU ms per view — a copy of the swapped `iterate_ms`
     /// reading kept for the perf HUD (D3.5); the atomic itself is consumed by the controller.
     last_iterate_ms: [f64; 2],
@@ -2090,6 +2095,7 @@ impl Default for Perf {
             full_pass: [[None; 8]; 2],
             live_probe_after: [0, 0],
             live_probe_misses: [0, 0],
+            live_no: [0, 0],
             last_iterate_ms: [0.0, 0.0],
             fe_budget_ok: [false, false],
             ts_reading_frame: [0, 0],

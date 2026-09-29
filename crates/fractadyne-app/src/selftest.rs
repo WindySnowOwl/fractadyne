@@ -745,6 +745,58 @@ impl FractadyneApp {
                 threshold: "< 0.6 of every tile (0.25 = exactly its share)",
                 pass: full.is_finite() && one.is_finite() && ratio < 0.6,
             });
+            // ⭐The PRICE's instrument. A live refresh is priced from GPU timestamps of its own pass
+            // (`MandelbrotParams::live_timing`), so they must describe that pass. On the RX 6800 XT
+            // they read a whole 1024² pass at 1.75 ms whose split twin took ~190 ms by the wall
+            // clock, and its live readings come in two values whatever the pass carries (0.22 or
+            // 4.06 ms). Both pipelines the live view draws with — the full-screen triangle and the
+            // split tile geometry — timed both ways on the same pass, median of three after a
+            // warm-up: the timestamp over the wall, which also holds the submission, so a faithful
+            // one sits a little under 1. Without timestamps the live refresh never probes, and there
+            // is nothing to check.
+            let median = |mut v: Vec<f64>| -> f64 {
+                v.sort_by(|a, b| a.total_cmp(b));
+                v.get(v.len() / 2).copied().unwrap_or(f64::NAN)
+            };
+            let mut walls = [f64::NAN; 2];
+            for (i, (label, tiles)) in [("full-screen triangle", false), ("split tile geometry", true)].into_iter().enumerate() {
+                let t = fractadyne_gpu::time_iter_pass(device, queue, &req, tiles, 3)
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (time_iter_pass): {e}"))
+                    .unwrap_or_default();
+                let ts = median(t.iter().map(|r| r[0]).collect());
+                let wall = median(t.iter().map(|r| r[1]).collect());
+                walls[i] = wall;
+                let ratio = ts / wall;
+                let (pass, result) = if t.is_empty() {
+                    (false, "render failed".to_string())
+                } else if ts.is_nan() {
+                    (true, format!("no GPU timestamps (wall {wall:.2} ms): the live refresh does not probe"))
+                } else {
+                    (
+                        (0.5..=1.05).contains(&ratio),
+                        format!("timestamp {ts:.2} ms against wall {wall:.2} ms = {ratio:.2}"),
+                    )
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "LiveSplit",
+                    name: format!("GPU timestamps describe their own pass ({label})"),
+                    params: format!("{SPLIT_COST_N}×{SPLIT_COST_N} df32 1e8x, one pass, median of 3"),
+                    result,
+                    threshold: "timestamp 0.5–1.05 of the wall",
+                    pass,
+                });
+            }
+            // …and the split refresh's geometry must not make the frame itself dearer: every tile
+            // through `vs_split_tiles` against the one full-screen triangle, by the wall clock.
+            let geo = walls[1] / walls[0];
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "LiveSplit",
+                name: "the split tile geometry costs what the full-screen pass does".into(),
+                params: format!("{SPLIT_COST_N}×{SPLIT_COST_N} df32 1e8x, every tile, wall, median of 3"),
+                result: format!("tiles {:.2} ms against the triangle {:.2} ms = {geo:.2}", walls[1], walls[0]),
+                threshold: "≤ 1.3",
+                pass: geo.is_finite() && geo <= 1.3,
+            });
             (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method) = saved;
         }
 

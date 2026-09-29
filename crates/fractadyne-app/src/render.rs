@@ -6489,6 +6489,22 @@ impl FractadyneApp {
         params
     }
 
+    /// A moving df32 frame of view `lr` did not render live, for `why`: remember it, and under
+    /// `FRACTADYNE_TRACE=live` say so once when that reason starts to apply (`detail` is built only
+    /// then).
+    fn note_live_no(&mut self, lr: usize, why: LiveNo, detail: impl FnOnce() -> String) {
+        if self.perf.live_no[lr] == why as u8 {
+            return;
+        }
+        self.perf.live_no[lr] = why as u8;
+        if crate::diag::trace_on("live") {
+            crate::diag::trace(
+                "live",
+                format!("live-refresh v={lr} f={} No: {why:?} {}", self.perf.frame_idx, detail()),
+            );
+        }
+    }
+
     /// Build the GPU params for one fractal view, computing the perturbation
     /// reference (deep Mandelbrot) or selecting the direct df32 path. Shared by the
     /// single view and both panels of the dual view.
@@ -7148,7 +7164,12 @@ impl FractadyneApp {
                 }
             });
             match cap.filter(|&c| live_fit(nominal, c, crate::tunables::LIVE_MIN_SCALE).is_some()) {
-                None => (LiveRefresh::No, 0, 0),
+                None => {
+                    self.note_live_no(lr, LiveNo::OverCeiling, || {
+                        format!("{nominal} nominal steps against the ceiling {cap:?}")
+                    });
+                    (LiveRefresh::No, 0, 0)
+                }
                 Some(cap) => {
                     let frame = self.perf.frame_idx;
                     // An unpriced probe fits a `TDR_BOOTSTRAP_MS` share of the ceiling at the
@@ -7163,7 +7184,19 @@ impl FractadyneApp {
                     let learned = (self.perf.budget_mode[lr] == live_mode.to_u32() && self.perf.fe_budget_ok[lr])
                         .then(|| (self.perf.fe_budget[lr] as f64 * share) as u64)
                         .unwrap_or(u64::MAX);
-                    let probe_cap = boot.min(learned).min(cap);
+                    // ⭐…or, larger, the bound this view's own passes already dispatch at (the last
+                    // dispatch's `tdr_steps` in this mode): a probe that size risks nothing the walk
+                    // does not. The share alone stopped fitting on the RX 6800 XT past ~3.3k
+                    // iterations at 1280×735 — below its 524k-px knee a dispatch costs its
+                    // iterations over the knee's pixels, so shrinking a probe stops helping — and
+                    // df32 starts at ~5k: not one live frame in a whole glide (PLUTO, 0.3.0-beta.3),
+                    // and the trace printed nothing.
+                    let walk = if self.perf.budget_mode[lr] == live_mode.to_u32() {
+                        probe_walk_bound(self.perf.frozen_budget[lr], gpu_iter, crate::calibration::knee_px())
+                    } else {
+                        0
+                    };
+                    let probe_cap = boot.min(learned).max(walk).min(cap);
                     // No probe without GPU timestamps to price it (it could never pay off), and
                     // each one that has not priced the view doubles the wait for the next.
                     let probe_after = if self.perf.ts_supported && !self.perf.wall_fallback {
@@ -7206,7 +7239,20 @@ impl FractadyneApp {
                         LiveRefresh::Priced | LiveRefresh::Split(_) => {
                             self.perf.live_probe_misses[lr] = 0;
                         }
-                        LiveRefresh::No => {}
+                        LiveRefresh::No => {
+                            let why = live_no_reason(self.perf.refresh_price[lr], &ask);
+                            self.note_live_no(lr, why, || {
+                                format!(
+                                    "steps={} of {nominal} pred_ms={pred:.2} probe_cap={probe_cap} \
+                                     probe_after={}",
+                                    ask.steps,
+                                    if ask.probe_after == u64::MAX { -1 } else { ask.probe_after as i64 },
+                                )
+                            });
+                        }
+                    }
+                    if verdict != LiveRefresh::No {
+                        self.perf.live_no[lr] = 0;
                     }
                     if crate::diag::trace_on("live") && verdict != LiveRefresh::No {
                         crate::diag::trace(
@@ -7224,6 +7270,11 @@ impl FractadyneApp {
                 }
             }
         } else {
+            // Not asked. A pin frame keeps the reason (a walk between two frames that stayed off
+            // live is not news); anything else re-arms it for the next glide.
+            if !pin_frame {
+                self.perf.live_no[(view_id as usize).min(1)] = 0;
+            }
             (LiveRefresh::No, 0, 0)
         };
         // A SPLIT refresh's pass this frame, `[passes, this pass]`: the next set of a split pin in
@@ -9836,36 +9887,21 @@ pub(crate) struct LiveAsk {
 /// shrink leaves it too small to measure anything (a 29×22 probe read 0.044 ns a step against the
 /// full frame's 0.0002). Pure.
 pub(crate) fn live_refresh_verdict(price: Option<crate::RefreshPrice>, a: &LiveAsk) -> (LiveRefresh, f64, f64) {
-    use crate::tunables::{
-        LIVE_MIN_SCALE, LIVE_PRICE_FRESH_FRAMES, LIVE_PRICE_MAX_OCT, LIVE_PRICE_STALE_OCT, LIVE_REFRESH_MS,
-        LIVE_SPLIT_MAX,
-    };
-    let ours = price.filter(|p| {
-        p.ns > 0.0
-            && p.ns.is_finite()
-            && p.at.mode == a.now.mode
-            && p.at.nav == a.now.nav
-            && (p.at.l2 - a.now.l2).abs() <= LIVE_PRICE_STALE_OCT
-    });
+    use crate::tunables::{LIVE_MIN_SCALE, LIVE_REFRESH_MS, LIVE_SPLIT_MAX};
     let turn = a.frame >= a.probe_after;
     let probe = if turn && live_fit(a.steps, a.probe_cap, crate::tunables::LIVE_PROBE_MIN_SCALE).is_some() {
         LiveRefresh::Probe
     } else {
         LiveRefresh::No
     };
-    if let Some(p) = ours {
+    if let Some(p) = usable_price(price, a) {
         let pred = p.ns * a.steps as f64 / 1.0e6;
-        let fresh = (p.at.l2 - a.now.l2).abs() <= LIVE_PRICE_MAX_OCT
-            && a.frame.saturating_sub(p.frame) <= LIVE_PRICE_FRESH_FRAMES;
-        // Measured on a much smaller frame than this one: dearer per step than this frame will be
-        // (a 0.4-scale probe priced a glide's frames at 33 ms that ran at 7 ms full size).
-        let small = (p.at.px as f64) < a.now.px as f64 * crate::tunables::LIVE_PRICE_SIZE_MIN;
         // The smoothness shrink: the scale that brings this frame to one displayed frame's share,
         // if the ceiling fit leaves room for it above the floor.
         let shrink = (LIVE_REFRESH_MS / pred).sqrt();
         let shrink_ok = !a.prefer_detail && shrink * a.fit >= LIVE_MIN_SCALE;
         let passes = split_passes(pred);
-        let v = if !fresh || small {
+        let v = if price_is_bound(&p, a) {
             // Only a bound. A frame it prices at one displayed frame's share renders, and its
             // reading re-prices; one it prices not far past that is measured at full size, in
             // split passes. Past that, only a probe — the view's cost moves with its REFERENCE as
@@ -9891,6 +9927,72 @@ pub(crate) fn live_refresh_verdict(price: Option<crate::RefreshPrice>, a: &LiveA
         return (v, pred, 1.0);
     }
     (probe, 0.0, 1.0)
+}
+
+/// The price, if it is about this view at all: same render mode and navigation epoch, within
+/// `LIVE_PRICE_STALE_OCT` of this depth (see [`live_refresh_verdict`]). Pure.
+fn usable_price(price: Option<crate::RefreshPrice>, a: &LiveAsk) -> Option<crate::RefreshPrice> {
+    price.filter(|p| {
+        p.ns > 0.0
+            && p.ns.is_finite()
+            && p.at.mode == a.now.mode
+            && p.at.nav == a.now.nav
+            && (p.at.l2 - a.now.l2).abs() <= crate::tunables::LIVE_PRICE_STALE_OCT
+    })
+}
+
+/// A usable price that only BOUNDS this frame: stale (past `LIVE_PRICE_MAX_OCT` or
+/// `LIVE_PRICE_FRESH_FRAMES`), or measured on a much smaller frame, which is dearer per step than
+/// this one will be (a 0.4-scale probe priced a glide's frames at 33 ms that ran at 7 ms full size).
+/// Pure.
+fn price_is_bound(p: &crate::RefreshPrice, a: &LiveAsk) -> bool {
+    let fresh = (p.at.l2 - a.now.l2).abs() <= crate::tunables::LIVE_PRICE_MAX_OCT
+        && a.frame.saturating_sub(p.frame) <= crate::tunables::LIVE_PRICE_FRESH_FRAMES;
+    let small = (p.at.px as f64) < a.now.px as f64 * crate::tunables::LIVE_PRICE_SIZE_MIN;
+    !fresh || small
+}
+
+/// Why a moving df32 frame did not render live — `FRACTADYNE_TRACE=live` prints each once when it
+/// starts to apply (`Perf::live_no`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum LiveNo {
+    /// The frame does not fit the dispatch ceiling above `LIVE_MIN_SCALE`.
+    OverCeiling = 1,
+    /// No price, and no GPU timestamps to price a probe with.
+    NoTiming,
+    /// No price; the next probe waits for its frame (`probe_after`).
+    ProbeWaits,
+    /// No price, and a probe under its bound (`probe_cap`) would shrink past `LIVE_PROBE_MIN_SCALE`.
+    ProbeTooSmall,
+    /// Only a bound, predicting too much for a frame, and a reprobe not due or past `LIVE_REPROBE_MS`.
+    BoundTooDear,
+    /// Measured, fresh, and dearer than `LIVE_SPLIT_MAX` passes (or no complete frame to hold).
+    MeasuredDear,
+}
+
+/// Why [`live_refresh_verdict`] said `No` to `a`. Pure.
+pub(crate) fn live_no_reason(price: Option<crate::RefreshPrice>, a: &LiveAsk) -> LiveNo {
+    match usable_price(price, a) {
+        Some(p) if price_is_bound(&p, a) => LiveNo::BoundTooDear,
+        Some(_) => LiveNo::MeasuredDear,
+        None if a.probe_after == u64::MAX => LiveNo::NoTiming,
+        None if a.frame < a.probe_after => LiveNo::ProbeWaits,
+        None => LiveNo::ProbeTooSmall,
+    }
+}
+
+/// The nominal steps a live PROBE may carry under `bound`, the per-dispatch bound this view's own
+/// passes already run at: all of it when a probe that size stays at or over the occupancy knee
+/// (`knee_px`, 0 = none), else nothing. Below the knee a dispatch costs its iterations over the
+/// knee's pixels, whatever its own (`calibration`), so a probe of `iter` iterations carries at least
+/// `knee_px × iter` steps' worth of worst case, and shrinking it further buys nothing. Pure.
+pub(crate) fn probe_walk_bound(bound: u64, iter: u32, knee_px: u64) -> u64 {
+    if bound >= knee_px.saturating_mul(iter.max(1) as u64) {
+        bound
+    } else {
+        0
+    }
 }
 
 /// Nominal steps of one pass over the whole ask: every one of `spx`·ss² texels, or one of `split`

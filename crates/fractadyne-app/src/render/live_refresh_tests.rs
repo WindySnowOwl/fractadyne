@@ -230,3 +230,43 @@ fn a_split_pass_carries_its_share_of_the_frame_steps() {
     assert_eq!(full_pass_steps(1_000_000, 1, 5_000, 4), full / 4);
     assert_eq!(full_pass_steps(1_000_000, 2, 5_000, 1), full * 4, "ss² counts");
 }
+
+#[test]
+fn a_probe_may_carry_what_the_walk_already_dispatches_but_only_at_or_over_the_knee() {
+    // The RX 6800 XT (knee 524,288 px) just past the df32 switch of the PLUTO glide: 6,078
+    // iterations. Under a pass bound of 2.63e9 even a knee-sized probe (3.19e9 steps' worth of
+    // worst case) is over it, and a smaller one costs the same: none.
+    let knee = 524_288u64;
+    assert_eq!(probe_walk_bound(2_630_000_000, 6_078, knee), 0);
+    // One reading later the walk's bound is 3.9e9: a probe of up to that many steps (641k px) runs.
+    assert_eq!(probe_walk_bound(3_900_000_000, 6_078, knee), 3_900_000_000);
+    // Exactly at the knee counts; no knee term (an unknown adapter's 0) bounds by the steps alone.
+    assert_eq!(probe_walk_bound(knee * 6_078, 6_078, knee), knee * 6_078);
+    assert_eq!(probe_walk_bound(1_000, 6_078, 0), 1_000);
+    // A 0 iteration count is one iteration, not a free pass.
+    assert_eq!(probe_walk_bound(knee - 1, 0, knee), 0);
+}
+
+#[test]
+fn a_frame_that_stays_off_live_says_why() {
+    let v = at(DF32, 3, 40.0);
+    let steps = 1_000_000_000;
+    // No price: no timestamps, the probe's turn not yet come, or a probe too small to run.
+    assert_eq!(live_no_reason(None, &ask(v, steps)), LiveNo::NoTiming);
+    let waits = LiveAsk { probe_after: 200, ..ask(v, steps) };
+    assert_eq!(verdict(None, waits), LiveRefresh::No);
+    assert_eq!(live_no_reason(None, &waits), LiveNo::ProbeWaits);
+    let tiny = LiveAsk { probe_after: 0, probe_cap: steps / 100, ..ask(v, steps) };
+    assert_eq!(verdict(None, tiny), LiveRefresh::No, "a 0.1-scale probe measures nothing");
+    assert_eq!(live_no_reason(None, &tiny), LiveNo::ProbeTooSmall);
+    // A price for another mode is no price.
+    let other = price(ns_for(1.0, steps), 100, at(DIRECT, 3, 40.0));
+    assert_eq!(live_no_reason(other, &waits), LiveNo::ProbeWaits);
+    // Fresh and past the split limit, or only a bound too dear to act on.
+    let dear = price(ns_for(LIVE_SPLIT_MAX as f64 * LIVE_REFRESH_MS * 1.5, steps), 100, v);
+    assert_eq!(verdict(dear, ask(v, steps)), LiveRefresh::No);
+    assert_eq!(live_no_reason(dear, &ask(v, steps)), LiveNo::MeasuredDear);
+    let stale = price(ns_for(LIVE_REPROBE_MS * 1.5, steps), 100 - LIVE_PRICE_FRESH_FRAMES - 5, v);
+    assert_eq!(verdict(stale, ask(v, steps)), LiveRefresh::No);
+    assert_eq!(live_no_reason(stale, &ask(v, steps)), LiveNo::BoundTooDear);
+}
