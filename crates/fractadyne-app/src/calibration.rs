@@ -193,6 +193,11 @@ pub(crate) fn ceiling_for(mode: RenderMode, formula: FractalKind, px: u64) -> Op
     ceiling(cost, factor_of(&a.factors, formula, mode), a.cal.knee_px, px)
 }
 
+/// The running adapter's occupancy knee, px (0 = unknown, or no knee term).
+pub(crate) fn knee_px() -> u64 {
+    ACTIVE.get().map_or(0, |a| a.cal.knee_px)
+}
+
 /// Apply the ceiling to a dispatch budget. Never raises it.
 pub(crate) fn capped(budget: u64, ceiling: Option<u64>) -> u64 {
     ceiling.map_or(budget, |c| budget.min(c))

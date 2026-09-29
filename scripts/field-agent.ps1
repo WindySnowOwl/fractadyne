@@ -47,7 +47,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 12   # 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
+$AgentVersion = 13   # 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -393,8 +393,10 @@ function New-ViewSession($r) {
 
 # The diagnostic INSTRUMENTS a request may arm (DIAGNOSTICS.md, "Environment variables"): the first
 # two put the live path in a regime that has killed devices, on purpose; PASS_CLOCK only observes
-# (v7). Integer values only; nothing else from a request ever reaches the environment.
-$InstrumentEnv = @("FRACTADYNE_REF_ESCAPE_AT", "FRACTADYNE_BLA_DROP_FRAMES", "FRACTADYNE_PASS_CLOCK", "FRACTADYNE_SEED_BUDGET")
+# (v7). Integer values only; nothing else from a request ever reaches the environment - except
+# FRACTADYNE_TRACE (v13), which also only observes: ONE trace category, by name, from $TraceCats.
+$InstrumentEnv = @("FRACTADYNE_REF_ESCAPE_AT", "FRACTADYNE_BLA_DROP_FRAMES", "FRACTADYNE_PASS_CLOCK", "FRACTADYNE_SEED_BUDGET", "FRACTADYNE_TRACE")
+$TraceCats = @("live", "gpu", "tile", "glide", "ref", "req", "idle")
 
 function Get-RequestEnv($r) {
     $e = Get-Field $r "env" $null
@@ -402,7 +404,10 @@ function Get-RequestEnv($r) {
     if ($null -eq $e) { return $out }
     foreach ($p in $e.PSObject.Properties) {
         if ($InstrumentEnv -notcontains $p.Name) { Stop-Refused "env $($p.Name) is not an allowed instrument ($($InstrumentEnv -join ', '))" }
-        if ([string]$p.Value -notmatch '^[0-9]{1,9}$') { Stop-Refused "env $($p.Name) must be a whole number" }
+        if ($p.Name -eq "FRACTADYNE_TRACE") {
+            if ($TraceCats -cnotcontains [string]$p.Value) { Stop-Refused "env FRACTADYNE_TRACE must be one of: $($TraceCats -join ', ')" }
+        }
+        elseif ([string]$p.Value -notmatch '^[0-9]{1,9}$') { Stop-Refused "env $($p.Name) must be a whole number" }
         $out[$p.Name] = [string]$p.Value
     }
     return $out

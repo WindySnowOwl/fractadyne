@@ -1217,13 +1217,15 @@ struct Perf {
     /// No live-refresh PROBE (the unpriced single pass) before this frame: one probe's reading
     /// must land before the next is tried, and an expensive one backs off.
     live_probe_after: [u64; 2],
-    /// The frame of the last live-refresh pass (priced or probe): a refresh dearer than one
-    /// displayed frame's share renders every `k`th frame, holding between (`LiveRefresh::Wait`).
-    live_last: [u64; 2],
     /// Probes since the last priced live frame: each doubles the wait for the next, so a view that
     /// measures dear (or a card whose readings never pair) backs off instead of flashing a shrunk
     /// probe every few frames.
     live_probe_misses: [u32; 2],
+    /// Why the last moving df32 frame did NOT render live (`render::LiveNo`, 0 = it did, or it was
+    /// not asked), so `FRACTADYNE_TRACE=live` prints each reason once when it starts to apply
+    /// instead of every frame — or not at all, as before 0.3.0-beta.4, when a trace of a glide that
+    /// never went live came back EMPTY.
+    live_no: [u8; 2],
     /// Last measured live iterate GPU ms per view — a copy of the swapped `iterate_ms`
     /// reading kept for the perf HUD (D3.5); the atomic itself is consumed by the controller.
     last_iterate_ms: [f64; 2],
@@ -1924,14 +1926,17 @@ impl Perf {
             .position(|p| p.is_some_and(|(f, s, _)| f == frame && s == steps));
         let Some(i) = hit else { return };
         let (_, _, at) = self.full_pass[v][i].take().unwrap();
-        let ns = ms * 1.0e6 / steps as f64;
+        let read = ms * 1.0e6 / steps as f64;
+        let ns = render::bounded_price_drop(self.refresh_price[v], read, at);
         self.refresh_price[v] = Some(RefreshPrice { ns, frame, at });
         if diag::trace_on("live") {
             diag::trace(
                 "live",
                 format!(
-                    "refresh-price v={v} f={} from={frame} mode={} {ms:.2}ms steps={steps} ns/step={ns:.5}",
-                    self.frame_idx, at.mode
+                    "refresh-price v={v} f={} from={frame} mode={} {ms:.2}ms steps={steps} ns/step={read:.5}{}",
+                    self.frame_idx,
+                    at.mode,
+                    if ns != read { format!(" (drop bounded: {ns:.5})") } else { String::new() },
                 ),
             );
         }
@@ -2092,8 +2097,8 @@ impl Default for Perf {
             refresh_price: [None, None],
             full_pass: [[None; 8]; 2],
             live_probe_after: [0, 0],
-            live_last: [0, 0],
             live_probe_misses: [0, 0],
+            live_no: [0, 0],
             last_iterate_ms: [0.0, 0.0],
             fe_budget_ok: [false, false],
             ts_reading_frame: [0, 0],
@@ -14839,6 +14844,14 @@ impl eframe::App for FractadyneApp {
                     let frame = self.perf.iterate_frame[v].load(SeqCst);
                     if steps > 0 {
                         self.perf.note_refresh_reading(v, ms, steps, frame);
+                        // …and it proves timestamps ARE arriving, which is all the starvation check
+                        // below asks. A split live refresh displays its hold reprojected, which
+                        // unpairs `fe_steps_last`, so every reading of a run of split passes took
+                        // this branch: 30 frames of them tripped the wall-clock fallback with
+                        // readings landing every few frames (RTX 3080, 30-octave glide,
+                        // 0.3.0-beta.8: 7 in a minute, past the logcheck's `timing-starved` limit;
+                        // beta.3 2–4; with this, 1 — the direct-mode start every build has).
+                        self.perf.ts_reading_frame[v] = self.perf.frame_idx;
                     }
                 }
                 if diag::trace_on("gpu") && v == 0 {

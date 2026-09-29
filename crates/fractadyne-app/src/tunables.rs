@@ -679,18 +679,34 @@ pub(crate) const REFRESH_MAX_SECS: f64 = 0.15;
 
 pub(crate) const REFRESH_MIN_DRIFT: f64 = 0.02;
 
-/// ⭐LIVE REFRESH (`render::live_refresh_verdict`): the GPU ms per DISPLAYED frame a moving df32
-/// frame's COMPLETE single-pass refresh may average and still render live instead of holding and
-/// reprojecting. The prediction is this view's last measured whole-refresh price (ns per nominal
-/// step) times this frame's nominal steps. A refresh predicted at `k` × this renders every `k`th
-/// frame, the frames between reprojecting it (up to `LIVE_REFRESH_MAX_MS`). 4.5 ms keeps a 120 Hz
-/// display fed: the iterate is not the frame's only GPU or CPU work — every-frame refreshes priced
-/// at 8 ms ran 10–12 ms apart (85–95 fps) on the RTX 3080, and frames shrunk to 6 ms ran at 98 fps.
+/// ⭐LIVE REFRESH (`render::live_refresh_verdict`): the GPU ms of iterate work one DISPLAYED frame
+/// may carry for a moving df32 refresh to render live instead of holding and reprojecting. The
+/// prediction is this view's last measured whole-refresh price (ns per nominal step) times this
+/// frame's nominal steps; a refresh predicted at `k` × this renders in `k` split passes, one per
+/// frame (`LIVE_SPLIT_MAX`). 4.5 ms keeps a 120 Hz display fed: the iterate is not the frame's only
+/// GPU or CPU work — every-frame refreshes priced at 8 ms ran 10–12 ms apart (85–95 fps) on the
+/// RTX 3080, and frames shrunk to 6 ms ran at 98 fps.
 pub(crate) const LIVE_REFRESH_MS: f64 = 4.5;
-/// The dearest single live refresh, GPU ms: past it the reuse hold and the pinned walk take over,
-/// as before. One live pass holds the queue for its whole length, so this is also the longest a
-/// present can slip behind vsync — 12 ms is one repeated frame at 120 Hz.
-pub(crate) const LIVE_REFRESH_MAX_MS: f64 = 12.0;
+/// The most SPLIT passes one live refresh may take (a split pin, `PinnedRefresh::split`): each
+/// renders one checkerboard set of the frame, an even share of its cost, and the hold serves the
+/// last complete frame until all have run. So a refresh up to this × `LIVE_REFRESH_MS` (36 ms)
+/// renders live, a new picture every that-many frames with no pass longer than the share; dearer
+/// ones take the reuse hold and the pinned walk, as before. More passes mean an older held frame
+/// (at most twice this many frames), still well under the old path's stretch: just past the df32
+/// switch a short escaped reference with no BLA prices the frame at 25–37 ms for a second at a
+/// time. (0.3.0-beta.2 drew a refresh of up to 12 ms as ONE pass every second or third frame: a
+/// pass longer than a display refresh holds up the frames behind it, and the frames over 20 ms
+/// doubled.)
+pub(crate) const LIVE_SPLIT_MAX: u32 = 8;
+/// The most GPU ms one split SET may be predicted to cost once the occupancy knee is counted
+/// (`render::split_sets`): a set of `px/k` pixels costs the frame's price × max(1/k, knee/px), because
+/// under the knee a pass costs its iterations over the knee's pixels whatever its own. Split into
+/// `⌈price / LIVE_REFRESH_MS⌉` sets, a frame far over the knee meets the share; one near it cannot,
+/// and a set that costs over this is no smoother than the pinned walk. 1.5× the share: on the RTX
+/// 3080 (knee 262k) at 1457×1102, sevenths and eighths of 27–36 ms frames ran at ~0.18–0.20 of the
+/// frame, 5–7 ms, and kept a 120 Hz glide at 115–120 fps (0.3.0-beta.3); on the RX 6800 XT (knee 524k)
+/// at 1262×724 even halves cost ~0.6 of a 15–27 ms frame.
+pub(crate) const LIVE_SPLIT_SET_MAX_MS: f64 = 1.5 * LIVE_REFRESH_MS;
 /// A live frame keeps the calibrated dispatch CEILING (the one bound nothing learned may raise): one
 /// whose nominal steps exceed it renders shrunk to fit — but no smaller than this fraction of its
 /// size on each axis. Below it a stretched fresh frame is no sharper than the held complete one, so
@@ -711,9 +727,22 @@ pub(crate) const LIVE_PROBE_MIN_SCALE: f64 = 0.35;
 /// `LIVE_MIN_SCALE`² (0.5625), so a live frame shrunk for smoothness still prices its successor.
 pub(crate) const LIVE_PRICE_SIZE_MIN: f64 = 0.5;
 /// A bound (see `LIVE_PRICE_SIZE_MIN`, `LIVE_PRICE_STALE_OCT`) predicting at most this many ms
-/// earns one FULL-SIZE pass to measure the frame itself, spaced like a probe: at worst a few
-/// repeated frames, where a bound was the one thing keeping the glide on the hold.
+/// earns one FULL-SIZE refresh, in up to `LIVE_SPLIT_MAX` split passes, spaced like a probe, to
+/// measure the frame itself: a bound was the one thing keeping the glide on the hold. Past it a
+/// bound earns a probe, and past twice it nothing until it lapses. Both scale by the dearest frame
+/// the adapter can render live at the frame's size over the 36 ms it can with no occupancy knee in
+/// the way (`render::live_max_ms`; 0.3.0-beta.7): 48 ms on the RTX 3080 at 1457×1102, ~16 on the RX
+/// 6800 XT at 1262×724, where bounds of 35–51 ms had re-probed every few dozen frames for nothing.
 pub(crate) const LIVE_REPROBE_MS: f64 = 48.0;
+/// A price predicting more than this × the dearest frame the adapter can render live at this size
+/// (`render::live_max_ms`) proves the view cannot render live: a stale one earns no probe, and one
+/// stale past `LIVE_PRICE_STALE_OCT` still stands, however deep the zoom has gone, until the render
+/// mode or navigation epoch changes or its prediction falls under this (0.3.0-beta.8). On the RX
+/// 6800 XT at 1280×800 (~12 ms live max) glide views measured 27–37 ms and each probe that re-found
+/// that was a 26–33 ms frame, 3–4 a glide. On the RTX 3080 (36 ms) the dearest measured, 55 ms just
+/// past the df32 switch, is 1.5× — and the first df32 frames of a glide once cost ~5× those a
+/// second later, so a view there must keep its probes: 2×, not less.
+pub(crate) const LIVE_HOPE_X: f64 = 2.0;
 /// Frames between probes: a probe's reading lands 2–3 frames after its dispatch. Doubles for each
 /// probe since the last priced live frame (up to 32×), so a view that measures dear, or a card
 /// whose readings never pair, cannot flash a shrunk probe every few frames.
@@ -728,6 +757,14 @@ pub(crate) const LIVE_PRICE_MAX_OCT: f64 = 0.5;
 /// glide that briefly fell back to the hold returns to live without a shrunk probe. Farther, and
 /// only a probe may price the view.
 pub(crate) const LIVE_PRICE_STALE_OCT: f64 = 4.0;
+/// One reading may lower this view's price (same mode and navigation epoch, within
+/// `LIVE_PRICE_STALE_OCT`) by at most this factor; a dearer one replaces it at once. A glide's cost
+/// moves a few percent a frame, so a reading far under the last is a mis-paired timestamp, not the
+/// view: on the RX 6800 XT (0.3.0-beta.5) the second set of every 2-set reprobe read 0.25 ms for 4e9
+/// steps, 50–80× under the set before it, and priced the next four frames at 0.5 ms that each took
+/// 19–33 ms. The largest real drop seen, a 0.4-scale probe's price to the full frame after it, was
+/// 4.6× — two readings at this bound.
+pub(crate) const LIVE_PRICE_DROP_MAX: f64 = 4.0;
 
 /// Target GPU time of ONE motion / pinned-refresh chunk pass, ms (design/live-zoom-smoothing.md
 /// P-A). The frame budget (`TDR_BUDGET_MS`, 400 ms real) is a SAFETY bound; before this constant
@@ -830,10 +867,10 @@ pub(crate) const EARLY_REF_DEFAULT: u64 = 1;
 /// before/after measurement.
 pub(crate) const TILE_OCCUPANCY_DEFAULT: u64 = 1;
 
-/// 1 = a moving df32 frame whose whole refresh is measured cheap (`LIVE_REFRESH_MS`) renders in one
-/// pass and is shown live, as a direct-mode frame is, instead of the reuse hold and the pinned chunk
-/// walk (`render::live_refresh_verdict`). 0 = the hold/pin path for every moving perturbation
-/// frame, for the before/after measurement.
+/// 1 = a moving df32 frame whose whole refresh is measured cheap (`LIVE_REFRESH_MS` a pass, up to
+/// `LIVE_SPLIT_MAX` passes) renders live, as a direct-mode frame is, instead of the reuse hold and
+/// the pinned chunk walk (`render::live_refresh_verdict`). 0 = the hold/pin path for every moving
+/// perturbation frame, for the before/after measurement.
 pub(crate) const LIVE_REFRESH_DEFAULT: u64 = 1;
 
 /// The most a held frame may MAGNIFY before its refresh lands, octaves — the zoom-rate-aware half

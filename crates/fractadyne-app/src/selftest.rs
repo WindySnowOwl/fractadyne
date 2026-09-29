@@ -320,7 +320,7 @@ impl FractadyneApp {
         let filter: Option<String> = self.selftest.filter.clone();
         const GROUPS: &[&str] = &[
             "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
-            "consistency", "counters", "iter-budget", "iter-chunk", "nr-zoom", "coords",
+            "consistency", "counters", "iter-budget", "iter-chunk", "live-split", "nr-zoom", "coords",
             "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
             "checklist",
@@ -601,6 +601,204 @@ impl FractadyneApp {
                     pass,
                 });
             }
+        }
+
+        // ⭐⭐(0.3.0-beta.3) THE SPLIT LIVE REFRESH. A moving df32 frame dearer than one displayed
+        // frame's share renders as k passes of `fs_iterate` over `vs_split_tiles`, one checkerboard
+        // set of 16-texel tiles each, composing in the live texture while the hold serves the last
+        // complete frame (`MandelbrotParams::split`). Two claims, each with a vacuous way to pass:
+        // - the k sets compose the frame BIT FOR BIT against one pass: a tile no set covers stays
+        //   cleared and shows as a difference, and so does an edge the clamp misses — the frame is
+        //   220², not a multiple of 16;
+        // - ONE set alone writes exactly its share and nothing else: a `discard` in the fragment
+        //   stage composed the frame just as well and cost every pass the whole frame, because a
+        //   demoted helper invocation runs on through the loop. Only geometry that never reaches
+        //   the rasterizer is free, and the texel count is what shows the geometry did the work.
+        if want("live-split") {
+            let saved = (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method);
+            self.render_cfg.max_iter = 20_000;
+            self.render_cfg.auto_iter = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            let bit_exact = |a: &[f32], b: &[f32]| -> usize {
+                a.chunks(4).zip(b.chunks(4)).filter(|(x, y)| x.iter().zip(*y).any(|(p, q)| p.to_bits() != q.to_bits())).count()
+            };
+            // Seahorse Valley in df32 perturbation (the mode the split serves) and in direct mode
+            // (the same `fs_iterate`, no reference): the geometry must not care which.
+            for (label, mag, mode) in [("df32 1e8x", 1.0e8, 0u32), ("direct 3e3x", 3.0e3, 1u32)] {
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = fractadyne_core::parse_bf(SX).unwrap();
+                vp.center_y = fractadyne_core::parse_bf(SY).unwrap();
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
+                vp.precision = fractadyne_core::precision_for_magnification(mag);
+                let mut req = self.current_export_request_for(&vp, false);
+                req.width = N;
+                req.height = N;
+                req.ss = 1;
+                let control = render(&req);
+                let mut parts = Vec::new();
+                let mut all_zero = control.is_some() && req.mode == mode;
+                for k in [2u32, 3, 4, 8] {
+                    let s = fractadyne_gpu::render_iter_split(device, queue, &req, k, None)
+                        .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_split): {e}"))
+                        .ok();
+                    match (&control, &s) {
+                        (Some(c), Some(s)) if c.len() == s.pixels.len() => {
+                            let d = bit_exact(c, &s.pixels);
+                            all_zero &= d == 0;
+                            parts.push(format!("k={k}: {d}"));
+                        }
+                        _ => {
+                            all_zero = false;
+                            parts.push(format!("k={k}: render failed"));
+                        }
+                    }
+                }
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "LiveSplit",
+                    name: format!("split passes compose the frame bit for bit ({label})"),
+                    params: format!("{N}×{N} (not a multiple of 16), 20,000 iter, mode {}", req.mode),
+                    result: format!("texels differing from one pass — {}", parts.join(", ")),
+                    threshold: "0 at every k, in the named mode",
+                    pass: all_zero,
+                });
+                // One set alone, over the cleared texture: exactly the texels of its tiles.
+                let (k, j) = (4u32, 1u32);
+                let expected: usize = (0..N)
+                    .flat_map(|y| (0..N).map(move |x| (x, y)))
+                    .filter(|&(x, y)| (x / 16 + y / 16) % k == j)
+                    .count();
+                let one = fractadyne_gpu::render_iter_split(device, queue, &req, k, Some(j))
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_split, one set): {e}"))
+                    .ok();
+                let (pass, result) = match (&one, &control) {
+                    (Some(o), Some(c)) => {
+                        // A written texel matches the control; an unwritten one stays all zero.
+                        let written = o.pixels.chunks(4).filter(|t| t.iter().any(|v| v.to_bits() != 0)).count();
+                        let stray = o
+                            .pixels
+                            .chunks(4)
+                            .zip(c.chunks(4))
+                            .enumerate()
+                            .filter(|(i, (t, ctl))| {
+                                let (x, y) = ((*i as u32) % N, (*i as u32) / N);
+                                let mine = (x / 16 + y / 16) % k == j;
+                                if mine {
+                                    t.iter().zip(ctl.iter()).any(|(p, q)| p.to_bits() != q.to_bits())
+                                } else {
+                                    t.iter().any(|v| v.to_bits() != 0)
+                                }
+                            })
+                            .count();
+                        (
+                            stray == 0 && written == expected,
+                            format!("{written} texels written of {expected} in set {j} of {k}; {stray} misplaced"),
+                        )
+                    }
+                    _ => (false, "render failed".into()),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "LiveSplit",
+                    name: format!("one split set writes only its own tiles ({label})"),
+                    params: format!("{N}×{N}, set {j} of {k}"),
+                    result,
+                    threshold: "its tiles' texels, equal to one pass; nothing else",
+                    pass,
+                });
+            }
+            // ⭐The COST claim, which neither check above can see: a `discard` in the fragment stage
+            // passed both (it composed the frame and wrote only its set) and still cost every pass
+            // the whole frame. At a size that fills the GPU (220² is all fixed cost), one set of four
+            // must time well under every tile drawn through the SAME geometry (k = 1) — measured
+            // ~0.9–1.0 with the discard, 0.47 with the tile geometry on the RTX 3080 (a quarter of
+            // 1024² sits at the occupancy knee, so a set cannot reach its bare 0.25 here; the live
+            // frame's sets measured 0.3–0.4). Wall clock, submission to completion, best of three:
+            // the RX 6800 XT's GPU timestamps read a COLD whole pass (a new pipeline's first) at
+            // 1.75 ms and a quarter at 79 (warmed they agree with the wall — the checks below).
+            const SPLIT_COST_N: u32 = 1024;
+            let mut vp = Viewport::new(SPLIT_COST_N as f64, SPLIT_COST_N as f64);
+            vp.center_x = fractadyne_core::parse_bf(SX).unwrap();
+            vp.center_y = fractadyne_core::parse_bf(SY).unwrap();
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (SPLIT_COST_N as f64 * 1.0e8));
+            vp.precision = fractadyne_core::precision_for_magnification(1.0e8);
+            let mut req = self.current_export_request_for(&vp, false);
+            req.width = SPLIT_COST_N;
+            req.height = SPLIT_COST_N;
+            req.ss = 1;
+            let best = |k: u32, j: u32| {
+                (0..3)
+                    .filter_map(|_| {
+                        fractadyne_gpu::render_iter_split(device, queue, &req, k, Some(j))
+                            .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_split, cost): {e}"))
+                            .ok()
+                            .map(|r| r.iterate_ms)
+                    })
+                    .filter(|ms| *ms > 0.0)
+                    .fold(f64::INFINITY, f64::min)
+            };
+            let full = best(1, 0);
+            let one = best(4, 1);
+            let ratio = one / full;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "LiveSplit",
+                name: "one split set costs about its share of the pass".into(),
+                params: format!("{SPLIT_COST_N}×{SPLIT_COST_N} df32 1e8x, set 1 of 4, wall, best of 3"),
+                result: format!("one set {one:.2} ms against every tile {full:.2} ms = {ratio:.2}"),
+                threshold: "< 0.6 of every tile (0.25 = exactly its share)",
+                pass: full.is_finite() && one.is_finite() && ratio < 0.6,
+            });
+            // ⭐The PRICE's instrument. A live refresh is priced from GPU timestamps of its own pass
+            // (`MandelbrotParams::live_timing`), so they must describe that pass. On the RX 6800 XT
+            // a COLD pass (a new pipeline's first) read 1.75 ms whose split twin took ~190 ms by
+            // the wall clock; warmed, this check reads 1.01 (triangle) and 1.00 (tiles) there, 0.99
+            // and 0.99 on the RTX 3080. Both pipelines the live view draws with — the full-screen
+            // triangle and the split tile geometry — timed both ways on the same pass, median of
+            // three after a warm-up: the timestamp over the wall, which also holds the submission,
+            // so a faithful one sits at or a little under 1. Without timestamps the live refresh
+            // never probes, and there is nothing to check.
+            let median = |mut v: Vec<f64>| -> f64 {
+                v.sort_by(|a, b| a.total_cmp(b));
+                v.get(v.len() / 2).copied().unwrap_or(f64::NAN)
+            };
+            let mut walls = [f64::NAN; 2];
+            for (i, (label, tiles)) in [("full-screen triangle", false), ("split tile geometry", true)].into_iter().enumerate() {
+                let t = fractadyne_gpu::time_iter_pass(device, queue, &req, tiles, 3)
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (time_iter_pass): {e}"))
+                    .unwrap_or_default();
+                let ts = median(t.iter().map(|r| r[0]).collect());
+                let wall = median(t.iter().map(|r| r[1]).collect());
+                walls[i] = wall;
+                let ratio = ts / wall;
+                let (pass, result) = if t.is_empty() {
+                    (false, "render failed".to_string())
+                } else if ts.is_nan() {
+                    (true, format!("no GPU timestamps (wall {wall:.2} ms): the live refresh does not probe"))
+                } else {
+                    (
+                        (0.5..=1.05).contains(&ratio),
+                        format!("timestamp {ts:.2} ms against wall {wall:.2} ms = {ratio:.2}"),
+                    )
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "LiveSplit",
+                    name: format!("GPU timestamps describe their own pass ({label})"),
+                    params: format!("{SPLIT_COST_N}×{SPLIT_COST_N} df32 1e8x, one pass, median of 3"),
+                    result,
+                    threshold: "timestamp 0.5–1.05 of the wall",
+                    pass,
+                });
+            }
+            // …and the split refresh's geometry must not make the frame itself dearer: every tile
+            // through `vs_split_tiles` against the one full-screen triangle, by the wall clock.
+            let geo = walls[1] / walls[0];
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "LiveSplit",
+                name: "the split tile geometry costs what the full-screen pass does".into(),
+                params: format!("{SPLIT_COST_N}×{SPLIT_COST_N} df32 1e8x, every tile, wall, median of 3"),
+                result: format!("tiles {:.2} ms against the triangle {:.2} ms = {geo:.2}", walls[1], walls[0]),
+                threshold: "≤ 1.3",
+                pass: geo.is_finite() && geo <= 1.3,
+            });
+            (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method) = saved;
         }
 
         // (D4) The TILED chunked iterate — the per-tile windowed dispatch that fixed the 5K

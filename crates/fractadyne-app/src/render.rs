@@ -6007,6 +6007,7 @@ impl FractadyneApp {
         vidx: usize,
         vsub: usize,
         pin_frame: bool,
+        split: [u32; 2],
     ) -> MandelbrotParams {
         // Never submit a full-length perturbation iterate without a reference. During the async
         // cold-start (`ref_pt` None) a FRESH view can't reproject the placeholder — there is no
@@ -6254,9 +6255,7 @@ impl FractadyneApp {
                 .saturating_mul(r[3] as u64)
                 .saturating_mul((ss as u64).saturating_mul(ss as u64))
                 .saturating_mul(gpu_iter.max(1) as u64),
-            (None, None) => spx
-                .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                .saturating_mul(gpu_iter.max(1) as u64),
+            (None, None) => full_pass_steps(spx, ss, gpu_iter, split[0]),
         };
         // Display-honesty tripwire (`--motiontest` A3): an interacting frame whose live texture
         // diverges from the frozen bookkeeping must be serving the hold snapshot. If this ever
@@ -6283,6 +6282,7 @@ impl FractadyneApp {
             live_ms: Some(self.perf.live_ms[vs.min(1)].clone()),
             live_steps: Some(self.perf.live_steps[vs.min(1)].clone()),
             live_frame: Some(self.perf.live_frame[vs.min(1)].clone()),
+            split,
             now_us: Some(crate::app_micros),
             nominal_steps,
             pass_clock: (crate::tunables::instrument("FRACTADYNE_PASS_CLOCK") > 0)
@@ -6489,6 +6489,22 @@ impl FractadyneApp {
         params
     }
 
+    /// A moving df32 frame of view `lr` did not render live, for `why`: remember it, and under
+    /// `FRACTADYNE_TRACE=live` say so once when that reason starts to apply (`detail` is built only
+    /// then).
+    fn note_live_no(&mut self, lr: usize, why: LiveNo, detail: impl FnOnce() -> String) {
+        if self.perf.live_no[lr] == why as u8 {
+            return;
+        }
+        self.perf.live_no[lr] = why as u8;
+        if crate::diag::trace_on("live") {
+            crate::diag::trace(
+                "live",
+                format!("live-refresh v={lr} f={} No: {why:?} {}", self.perf.frame_idx, detail()),
+            );
+        }
+    }
+
     /// Build the GPU params for one fractal view, computing the perturbation
     /// reference (deep Mandelbrot) or selecting the direct df32 path. Shared by the
     /// single view and both panels of the dual view.
@@ -6618,6 +6634,26 @@ impl FractadyneApp {
                     self.perf.chunk_dirty[vsub] = false;
                     self.perf.adopt_complete[vsub] =
                         self.perf.adopt_complete[vsub].wrapping_add(1);
+                    // A SPLIT's texture is complete by construction — every pixel ran the whole
+                    // ask in its set's pass — so it is verified as a single live pass is, and the
+                    // next split may snapshot it this same frame.
+                    if pin.split > 1 {
+                        let ct = &mut self.perf.content[vsub];
+                        ct.live_tag = pin.started_frame;
+                        ct.live_complete = true;
+                        if crate::diag::trace_on("live") {
+                            crate::diag::trace(
+                                "live",
+                                format!(
+                                    "split v={vsub} f={} adopt {} passes from f{} lag_oct={:.2}",
+                                    self.perf.frame_idx,
+                                    pin.split,
+                                    pin.started_frame,
+                                    (live_l2 - pin.log2mag).abs(),
+                                ),
+                            );
+                        }
+                    }
                     if crate::diag::trace_on("tile") {
                         let ct = &self.perf.content[vsub];
                         crate::diag::trace(
@@ -7128,7 +7164,12 @@ impl FractadyneApp {
                 }
             });
             match cap.filter(|&c| live_fit(nominal, c, crate::tunables::LIVE_MIN_SCALE).is_some()) {
-                None => (LiveRefresh::No, 0, 0),
+                None => {
+                    self.note_live_no(lr, LiveNo::OverCeiling, || {
+                        format!("{nominal} nominal steps against the ceiling {cap:?}")
+                    });
+                    (LiveRefresh::No, 0, 0)
+                }
                 Some(cap) => {
                     let frame = self.perf.frame_idx;
                     // An unpriced probe fits a `TDR_BOOTSTRAP_MS` share of the ceiling at the
@@ -7143,7 +7184,19 @@ impl FractadyneApp {
                     let learned = (self.perf.budget_mode[lr] == live_mode.to_u32() && self.perf.fe_budget_ok[lr])
                         .then(|| (self.perf.fe_budget[lr] as f64 * share) as u64)
                         .unwrap_or(u64::MAX);
-                    let probe_cap = boot.min(learned).min(cap);
+                    // ⭐…or, larger, the bound this view's own passes already dispatch at (the last
+                    // dispatch's `tdr_steps` in this mode): a probe that size risks nothing the walk
+                    // does not. The share alone stopped fitting on the RX 6800 XT past ~3.3k
+                    // iterations at 1280×735 — below its 524k-px knee a dispatch costs its
+                    // iterations over the knee's pixels, so shrinking a probe stops helping — and
+                    // df32 starts at ~5k: not one live frame in a whole glide (PLUTO, 0.3.0-beta.3),
+                    // and the trace printed nothing.
+                    let walk = if self.perf.budget_mode[lr] == live_mode.to_u32() {
+                        probe_walk_bound(self.perf.frozen_budget[lr], gpu_iter, crate::calibration::knee_px())
+                    } else {
+                        0
+                    };
+                    let probe_cap = boot.min(learned).max(walk).min(cap);
                     // No probe without GPU timestamps to price it (it could never pay off), and
                     // each one that has not priced the view doubles the wait for the next.
                     let probe_after = if self.perf.ts_supported && !self.perf.wall_fallback {
@@ -7163,42 +7216,53 @@ impl FractadyneApp {
                         },
                         steps: fitted,
                         frame,
-                        since_live: frame.saturating_sub(self.perf.live_last[lr]),
                         probe_after,
                         probe_cap,
                         fit: area.sqrt(),
-                        amortize: self.prefer_detail_effective(),
+                        prefer_detail: self.prefer_detail_effective(),
+                        can_split: self.ref_cache[view_id as usize].frozen_center.is_some(),
+                        knee_px: crate::calibration::knee_px(),
                     };
                     let (verdict, pred, scale) = live_refresh_verdict(self.perf.refresh_price[lr], &ask);
-                    // What the shrink below fits a priced frame (or a reprobe) to: the ceiling, or
+                    // What the shrink below fits a priced frame (or a split) to: the ceiling, or
                     // under it the smoothness scale's share.
                     let cap = (fitted as f64 * scale * scale) as u64;
                     match verdict {
-                        LiveRefresh::Probe | LiveRefresh::Reprobe => {
-                            // One pass — its own timer (`MandelbrotParams::live_timing`) is idle
+                        LiveRefresh::Probe | LiveRefresh::Reprobe(_) => {
+                            // One refresh — its own timer (`MandelbrotParams::live_timing`) is idle
                             // after a stretch with no live frame, so it comes back priced — then
                             // a wait that doubles with each probe since the last priced frame.
                             let misses = self.perf.live_probe_misses[lr].min(5);
                             self.perf.live_probe_misses[lr] += 1;
                             self.perf.live_probe_after[lr] =
                                 frame + (crate::tunables::LIVE_PROBE_WAIT_FRAMES << misses);
-                            self.perf.live_last[lr] = frame;
                         }
-                        LiveRefresh::Priced => {
-                            self.perf.live_last[lr] = frame;
+                        LiveRefresh::Priced | LiveRefresh::Split(_) => {
                             self.perf.live_probe_misses[lr] = 0;
                         }
-                        LiveRefresh::Wait | LiveRefresh::No => {}
+                        LiveRefresh::No => {
+                            let why = live_no_reason(self.perf.refresh_price[lr], &ask);
+                            self.note_live_no(lr, why, || {
+                                format!(
+                                    "steps={} of {nominal} pred_ms={pred:.2} probe_cap={probe_cap} \
+                                     probe_after={}",
+                                    ask.steps,
+                                    if ask.probe_after == u64::MAX { -1 } else { ask.probe_after as i64 },
+                                )
+                            });
+                        }
+                    }
+                    if verdict != LiveRefresh::No {
+                        self.perf.live_no[lr] = 0;
                     }
                     if crate::diag::trace_on("live") && verdict != LiveRefresh::No {
                         crate::diag::trace(
                             "live",
                             format!(
                                 "live-refresh v={lr} f={frame} {verdict:?} steps={} of {nominal} \
-                                 pred_ms={pred:.2} scale={scale:.3} since={} price_mode={:?} \
+                                 pred_ms={pred:.2} scale={scale:.3} price_mode={:?} \
                                  probe_cap={probe_cap}",
                                 ask.steps,
-                                ask.since_live,
                                 self.perf.refresh_price[lr].map(|p| p.at.mode),
                             ),
                         );
@@ -7207,25 +7271,37 @@ impl FractadyneApp {
                 }
             }
         } else {
+            // Not asked. A pin frame keeps the reason (a walk between two frames that stayed off
+            // live is not news); anything else re-arms it for the next glide.
+            if !pin_frame {
+                self.perf.live_no[(view_id as usize).min(1)] = 0;
+            }
             (LiveRefresh::No, 0, 0)
         };
-        // Live: one pass, no reuse hold, no chunking. A PRICED frame (and a REPROBE) is fitted
-        // under the dispatch ceiling (`live_cap`, the resolution shrink below) — a measurement says
-        // what it costs there, never that it may exceed the bound; a PROBE under `live_probe_cap`,
-        // a bound the calibration vouches for with no price at all — and its reading prices the
-        // rest. A WAIT frame holds the live frame before it (the reuse hold).
-        let live_refresh =
-            matches!(live_verdict, LiveRefresh::Priced | LiveRefresh::Probe | LiveRefresh::Reprobe);
+        // A SPLIT refresh's pass this frame, `[passes, this pass]`: the next set of a split pin in
+        // progress (its view shadows this frame's, as any pin's does), or the first set of one this
+        // verdict starts (the pin itself is created at the commit point below, like a walk's).
+        let split_pin = self.perf.pin[vsub].as_ref().filter(|p| p.split > 1);
+        let split_pass: Option<[u32; 2]> = match (pin_frame, split_pin) {
+            (true, Some(p)) => Some([p.split, p.split_next]),
+            _ => Some(live_verdict.passes()).filter(|&k| k > 1).map(|k| [k, 0]),
+        };
+        let split_frame = pin_frame && split_pass.is_some();
+        // Live: one pass, no reuse hold, no chunking. A PRICED frame (and a SPLIT pass, of either
+        // kind) is fitted under the dispatch ceiling (`live_cap`, the resolution shrink below) — a
+        // measurement says what it costs there, never that it may exceed the bound; a PROBE under
+        // `live_probe_cap`, a bound the calibration vouches for with no price at all — and its
+        // reading prices the rest.
+        let live_refresh = live_verdict.passes() > 0 || split_frame;
         // …and its pass asks for the live-refresh timer (`MandelbrotParams::live_timing`).
-        self.perf.live_pass[(view_id as usize).min(1)] = live_refresh;
-        let live_wait = live_verdict == LiveRefresh::Wait;
-        let res_scale = if live_refresh { motion_scale } else { res_scale };
+        self.perf.live_pass[vsub] = live_refresh;
+        let res_scale = if live_refresh && !split_frame { motion_scale } else { res_scale };
         let reuse_hold = is_pert
             && interacting
             && !live_refresh
             && !self.autopilot.stepping
             && frozen_drift < REFRESH_OCTAVES
-            && (frozen_fresh || zoom_drift < REFRESH_MIN_DRIFT || live_wait);
+            && (frozen_fresh || zoom_drift < REFRESH_MIN_DRIFT);
         // A reprojection/freeze frame runs NO iterate (it re-samples the frozen texture), so the
         // motion res_scale saves nothing on it — and worse, it shrinks the frame's base below the
         // frozen texture's settle-time resolution, so the color-pass aspect-fit `fit = out_res /
@@ -7770,8 +7846,9 @@ impl FractadyneApp {
             // (their compose has tiles and the serialized walk).
             // A pin OWNS its progression: its eligibility was decided when it started, and a
             // rate estimate that later says "this would fit in one pass" (a fast-escape sliver
-            // read as ~0.2 ms) must not hand a 90 %-complete pin off as un-chunked.
-            && (pin_frame
+            // read as ~0.2 ms) must not hand a 90 %-complete pin off as un-chunked. (A SPLIT pin's
+            // passes are single passes by construction — `split_frame` — and never chunk.)
+            && ((pin_frame && !split_frame)
                 // …and EVERY moving refresh past the opening step is chunked, whatever the
                 // nominal rate says: an over-estimated rate (a deduped 0.2 ms reading, or a
                 // pass memory earned in a cheap band) turned refreshes into single 350 ms
@@ -7800,7 +7877,7 @@ impl FractadyneApp {
         // this frame still renders the PINNED view — un-chunked and COMPLETE, affordable by the
         // gate's own arithmetic — and the ordinary latch below re-synchronizes the frozen
         // bookkeeping with the texture, clearing the dirty residue. Next frame is live again.
-        if pin_frame && !chunk_over {
+        if pin_frame && !chunk_over && !split_frame {
             self.perf.pin[vsub] = None;
             if crate::diag::trace_on("tile") {
                 crate::diag::trace(
@@ -7834,9 +7911,9 @@ impl FractadyneApp {
             // bound nothing learned may raise (`live_fit` already declined any deep shrink). A
             // probe fits its own bound (`live_probe_cap`, never above the ceiling).
             let cap = match live_verdict {
-                LiveRefresh::Priced | LiveRefresh::Reprobe => live_cap,
+                LiveRefresh::Priced | LiveRefresh::Split(_) | LiveRefresh::Reprobe(_) => live_cap,
                 LiveRefresh::Probe => live_probe_cap,
-                LiveRefresh::Wait | LiveRefresh::No => tdr_allowed,
+                LiveRefresh::No => tdr_allowed,
             };
             if iter_cost > cap && !chunk_over {
                 let f = (cap as f64 / iter_cost as f64).sqrt();
@@ -8516,6 +8593,8 @@ impl FractadyneApp {
                     orbit_len: self.ref_cache[vi].orbit_len,
                     ref_pt: self.ref_cache[vi].ref_pt.clone(),
                     started_frame: self.perf.frame_idx,
+                    split: 0,
+                    split_next: 0,
                 });
                 self.perf.chunk_cursor[vs] = end;
                 self.perf.chunk_idx[vs] = 1;
@@ -8557,6 +8636,64 @@ impl FractadyneApp {
                             resolution[1],
                             if hold_copy { "fresh" } else { "kept" },
                             self.perf.content[vs.min(1)].hold_verified,
+                        ),
+                    );
+                }
+            }
+            // ---- SPLIT refresh, commit point (`PinnedRefresh::split`) ----
+            // A split pass that really renders (the freeze verdict kept it) advances its pin, or
+            // starts one: the first set renders this frame at the live view, which becomes the
+            // pin's; the display serves the hold snapshot — taken this same frame, before the pass
+            // lands — until every set has run, and the frozen latch below waits for adoption.
+            let mut split_started = false;
+            if let Some([k, j]) = split_pass.filter(|_| reproject.is_none()) {
+                if split_frame {
+                    if let Some(p) = self.perf.pin[vsub].as_mut() {
+                        p.split_next = j + 1;
+                    }
+                } else if self.perf.pin[vsub].is_none() {
+                    split_started = true;
+                    self.perf.norm_complete_submit[vs] = false;
+                    self.perf.pin[vsub] = Some(PinnedRefresh {
+                        center_bf: center_bf.clone(),
+                        center,
+                        span,
+                        magnification,
+                        log2mag,
+                        upp_l2,
+                        eff_iter,
+                        gpu_iter,
+                        resolution,
+                        panel: panel_res,
+                        ss,
+                        orbit_id: self.ref_cache[vi].orbit_id,
+                        orbit_len: self.ref_cache[vi].orbit_len,
+                        ref_pt: self.ref_cache[vi].ref_pt.clone(),
+                        started_frame: self.perf.frame_idx,
+                        split: k,
+                        split_next: 1,
+                    });
+                    self.perf.chunk_dirty[vsub] = true;
+                    // The display gate, exactly as a walk's pin-start takes it: a snapshot only of
+                    // a texture known to hold a picture (the last live frame, or an adopted split).
+                    let live_ok = self.perf.content[vsub].live_verified();
+                    hold_copy = !self.perf.hold_active[vs] && live_ok;
+                    if hold_copy {
+                        self.perf.content[vsub].hold_verified = true;
+                    }
+                    self.perf.hold_active[vs] = true;
+                    display_hold = true;
+                    pin_gate = true;
+                }
+                if crate::diag::trace_on("live") {
+                    crate::diag::trace(
+                        "live",
+                        format!(
+                            "split v={vsub} f={} pass {j}/{k}{} res={}x{}",
+                            self.perf.frame_idx,
+                            if split_started { " start" } else { "" },
+                            resolution[0],
+                            resolution[1],
                         ),
                     );
                 }
@@ -8618,7 +8755,7 @@ impl FractadyneApp {
             // ⚠NOT on pin frames: the pin's passes compose a texture that is not yet complete —
             // the latch is DEFERRED to adoption (the §10 requirement: a partial refresh can never
             // become the held frame).
-            if reproject.is_none() && !pin_frame && !pin_started {
+            if reproject.is_none() && !pin_frame && !pin_started && !split_started {
                 // Gate observability (design/mode2-chunking.md §11, asserted by `--motiontest`):
                 // DURING INTERACTION at a chunked view, count whether the texture this latch
                 // adopts is COMPLETE. A chunked motion frame that latches with its range short of
@@ -8768,12 +8905,15 @@ impl FractadyneApp {
         // glide at a fixed size re-iterates a new VIEW every frame with it false, so a live frame —
         // a moving view by construction — counts on its own (priced frames went unpriced for want
         // of it, and the price expired under them).
+        // A SPLIT pass counts too: one set's share of the steps, at the whole frame's density (its
+        // tiles are spread over the frame), so it prices the frame per step exactly as a single
+        // pass does.
         let one_pass = chunk_range.is_none_or(|[s, e]| s == 0 && e >= gpu_iter);
         if one_pass && tile.is_none() && !will_reproject && (key_changed || live_refresh) {
-            let span = chunk_range.map_or(gpu_iter, |[s, e]| e.saturating_sub(s));
-            let steps = spx
-                .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                .saturating_mul(span.max(1) as u64);
+            let steps = match chunk_range {
+                Some([s, e]) => full_pass_steps(spx, ss, e.saturating_sub(s), 1),
+                None => full_pass_steps(spx, ss, gpu_iter, split_pass.map_or(1, |[k, _]| k)),
+            };
             let at = crate::PriceView {
                 mode: mode as u32,
                 nav: self.perf.nav_epoch,
@@ -8821,6 +8961,7 @@ impl FractadyneApp {
             vidx,
             vsub,
             pin_frame,
+            split_pass.filter(|_| chunk_range.is_none() && tile.is_none()).unwrap_or([0, 0]),
         )
     }
 }
@@ -9001,6 +9142,13 @@ pub(crate) struct PinnedRefresh {
     /// and still abandons.
     pub(crate) ref_pt: Option<[fractadyne_core::BigFloat; 2]>,
     pub(crate) started_frame: u64,
+    /// ⭐A SPLIT live refresh (`LiveRefresh::Split`, 0.3.0-beta.3) when > 1: this many checkerboard
+    /// passes of the WHOLE ask, one per frame (`MandelbrotParams::split`), each an even share of the
+    /// frame's cost; 0 = a chunked walk, as before. Its progress is `split_next` passes dispatched —
+    /// not the chunk cursor — and it is complete by construction when every set has run: each pixel
+    /// ran the full ask in its pass, exactly as in a single live pass.
+    pub(crate) split: u32,
+    pub(crate) split_next: u32,
 }
 
 /// Is `res` the reference already installed in `vc` — same point, same length and completeness,
@@ -9227,6 +9375,9 @@ impl ContentTrack {
 /// view: `Adopt` must land before `reuse_hold` reads `frozen_l2`, and `Continue` is what licenses
 /// shadowing the view parameters for the rest of the frame.
 pub(crate) fn pin_verdict(pin: &PinnedRefresh, i: &PinInputs) -> PinVerdict {
+    if pin.split > 1 {
+        return split_verdict(pin, i);
+    }
     if i.cursor >= pin.gpu_iter {
         // ⭐⭐The walk is done, and the ANSWER is in its reading, not in the cursor. A reading
         // with detail adopts (escapes only accumulate, so any reading of this render that shows
@@ -9266,6 +9417,37 @@ pub(crate) fn pin_verdict(pin: &PinnedRefresh, i: &PinInputs) -> PinVerdict {
         if !(i.same_point && i.orbit_len >= pin.orbit_len) {
             return PinVerdict::Stop(PinStop::Orbit);
         }
+    }
+    if i.panel != pin.panel {
+        return PinVerdict::Stop(PinStop::Panel);
+    }
+    if i.caller_reproject {
+        return PinVerdict::Stop(PinStop::CallerReproject);
+    }
+    if i.drift_oct > crate::tunables::PIN_ABANDON_OCTAVES {
+        return PinVerdict::Stop(PinStop::Drift);
+    }
+    if i.pan_spans > crate::tunables::PIN_ABANDON_SPANS {
+        return PinVerdict::Stop(PinStop::Pan);
+    }
+    if i.frame_idx.saturating_sub(pin.started_frame) > crate::tunables::PIN_MAX_FRAMES {
+        return PinVerdict::Stop(PinStop::Age);
+    }
+    PinVerdict::Continue
+}
+
+/// A SPLIT pin's decision (`PinnedRefresh::split`). Complete once every set has run — and then
+/// it adopts, outranking every abandon as a finished walk does, but with no reading to wait for:
+/// each pixel ran the whole ask in its own pass, exactly as in a single live pass, whose frames are
+/// verified by construction too. Until then a walk's abandons apply, except the orbit one: a pass
+/// keeps no state for the next, so a reference installed between passes only changes which (valid)
+/// orbit the later sets are computed against.
+fn split_verdict(pin: &PinnedRefresh, i: &PinInputs) -> PinVerdict {
+    if pin.split_next >= pin.split {
+        return PinVerdict::Adopt;
+    }
+    if !i.interacting {
+        return PinVerdict::Stop(PinStop::Settled);
     }
     if i.panel != pin.panel {
         return PinVerdict::Stop(PinStop::Panel);
@@ -9615,17 +9797,37 @@ mod motion_pace;
 pub(crate) enum LiveRefresh {
     /// This view's measured whole-refresh price says the frame fits: render it in one pass, live.
     Priced,
-    /// Priced within `LIVE_REFRESH_MAX_MS`, but the last live frame's cost is still being paid off:
-    /// hold (reproject) this frame, and a later one renders live.
-    Wait,
+    /// Priced dearer than one displayed frame's share: render it in this many SPLIT passes, one
+    /// per frame (a split pin, `PinnedRefresh::split`), each an even share — the hold serving the
+    /// last complete frame until the last pass lands.
+    Split(u32),
     /// No usable price: render ONE single pass to measure it, shrunk to `probe_cap` (the caller
     /// spaces probes out).
     Probe,
     /// Only an upper bound (a price from a much smaller frame, or a stale one) that is not far
-    /// off: ONE full-size pass, spaced like a probe, whose reading prices the frame itself.
-    Reprobe,
+    /// off: the frame at full size in this many split passes, spaced like a probe, whose readings
+    /// price the frame itself.
+    Reprobe(u32),
     /// Too dear, or nothing safe to go on: the reuse hold and the pinned walk, as before.
     No,
+}
+
+impl LiveRefresh {
+    /// Passes this verdict renders the frame in (0 = it does not render one).
+    pub(crate) fn passes(self) -> u32 {
+        match self {
+            LiveRefresh::Priced | LiveRefresh::Probe => 1,
+            LiveRefresh::Split(k) | LiveRefresh::Reprobe(k) => k,
+            LiveRefresh::No => 0,
+        }
+    }
+}
+
+/// Split passes that bring a refresh predicted at `pred_ms` to one displayed frame's share
+/// (`LIVE_REFRESH_MS`) each: at least 1. Pure.
+pub(crate) fn split_passes(pred_ms: f64) -> u32 {
+    let k = (pred_ms / crate::tunables::LIVE_REFRESH_MS).ceil();
+    if k.is_finite() && k >= 1.0 { k.min(u32::MAX as f64) as u32 } else { 1 }
 }
 
 /// Everything [`live_refresh_verdict`] reads about the frame being built.
@@ -9636,8 +9838,6 @@ pub(crate) struct LiveAsk {
     /// Its nominal steps at the size it would render (already fitted under the dispatch ceiling).
     pub(crate) steps: u64,
     pub(crate) frame: u64,
-    /// Frames since the last live frame (priced or probe) of this panel.
-    pub(crate) since_live: u64,
     /// No probe before this frame (`u64::MAX`: none at all — no GPU timestamps to price it with).
     pub(crate) probe_after: u64,
     /// The nominal steps a probe is shrunk to fit — it has no price, so a bound the calibration
@@ -9647,10 +9847,16 @@ pub(crate) struct LiveAsk {
     /// The linear scale the ceiling fit already applied to `steps` (1.0 = none): any further
     /// shrink for smoothness must keep the product at or above `LIVE_MIN_SCALE`.
     pub(crate) fit: f64,
-    /// "Prefer detail while zooming": a refresh dearer than one displayed frame's share renders
-    /// at FULL size every `k`th frame, the hold reprojecting between (the setting's own contract).
-    /// Off, it renders every frame, shrunk to the share — smoother, a little softer.
-    pub(crate) amortize: bool,
+    /// "Prefer detail while zooming": a refresh dearer than one displayed frame's share renders at
+    /// FULL size in split passes, the hold reprojecting the last complete frame meanwhile (the
+    /// setting's own contract). Off, it renders every frame, shrunk to the share while that stays
+    /// above `LIVE_MIN_SCALE` — a new picture every frame, a little softer.
+    pub(crate) prefer_detail: bool,
+    /// There is a complete frame to hold while split passes compose (a frozen frame of this view).
+    pub(crate) can_split: bool,
+    /// The adapter's occupancy knee, px (`calibration::knee_px`, 0 = none known): no split set and
+    /// no shrunk frame goes below it (`finest_split`).
+    pub(crate) knee_px: u64,
 }
 
 /// ⭐⭐LIVE REFRESH (0.3.0-beta.2). A moving df32 frame used to hold and reproject the last complete
@@ -9660,14 +9866,18 @@ pub(crate) struct LiveAsk {
 /// (1e10–1e70×, 120 Hz): 0 fresh frames a second while the GPU dispatched 30–60, the screen showing
 /// frames stretched 1.6–1.9× on average, where direct mode just shallower rendered all 120.
 ///
-/// The rule: render live when this view's last WHOLE refresh — a complete single pass — predicts
-/// this frame at most `LIVE_REFRESH_MS` per displayed frame (its GPU ns per nominal step × this
-/// frame's nominal steps, averaged over the frames since the last live one), and at most
-/// `LIVE_REFRESH_MAX_MS` outright. A price is the whole frame's cost, the rebase-storm band
-/// included, never a chunk sliver's, which is what once turned "fits in one pass" into 350 ms
-/// dispatches (see the forced-chunking note at `chunk_over`). A refresh dearer than the share either
-/// renders every `k`th frame at full size (`amortize`) or every frame shrunk to the share — down to
-/// `LIVE_MIN_SCALE` — and past that every `k`th frame anyway. Returns the prediction (0 with no
+/// The rule: render live when this view's last WHOLE refresh — a complete pass — predicts this
+/// frame (its GPU ns per nominal step × this frame's nominal steps) at most `LIVE_REFRESH_MS`, one
+/// displayed frame's share. A price is the whole frame's cost, the rebase-storm band included,
+/// never a chunk sliver's, which is what once turned "fits in one pass" into 350 ms dispatches
+/// (see the forced-chunking note at `chunk_over`). A dearer refresh renders in SPLIT passes of at
+/// most the share each, up to `LIVE_SPLIT_MAX` of them (`split_passes`) — or, without "prefer
+/// detail", every frame shrunk to the share while that stays above `LIVE_MIN_SCALE`. Both count the
+/// adapter's occupancy knee (0.3.0-beta.5), under which a pass costs what one at the knee does: a
+/// set is priced with it and must stay within `LIVE_SPLIT_SET_MAX_MS` (`split_sets`), and a shrunk
+/// frame may not go below it. (0.3.0-beta.2
+/// rendered it as ONE pass every `k`th frame instead; a pass longer than a display refresh holds up
+/// the frames behind it, which doubled the frames over 20 ms.) Returns the prediction (0 with no
 /// price, for the trace) and the linear scale to render a priced frame at (1.0 = as asked). It
 /// never licenses a frame past the dispatch CEILING, whatever it predicts: the caller fits `steps`
 /// under it first.
@@ -9678,68 +9888,256 @@ pub(crate) struct LiveAsk {
 /// frames the view magnifies by ~3 %, so interior cannot appear faster than the price can follow.
 /// A STALE one (same mode and epoch, within `LIVE_PRICE_STALE_OCT`), or one measured on a frame
 /// under `LIVE_PRICE_SIZE_MIN` of this one's pixels, is only an upper bound: it licenses a frame at
-/// the strict per-frame share (which re-prices), a full-size REPROBE when it predicts at most
-/// `LIVE_REPROBE_MS`, and past that a probe. With NO price for this mode and epoch (a mode switch,
+/// the share (which re-prices), a full-size REPROBE in split passes when it predicts at most
+/// `LIVE_REPROBE_MS`, past that a probe, and past `LIVE_HOPE_X` × `live_max_ms` nothing — both
+/// scaled by how dear a frame this adapter can render live at this size (0.3.0-beta.7), and a price
+/// that dear still stands after it lapses (`hopeless_price`, the back-off, 0.3.0-beta.8).
+/// With NO price for this mode and epoch (a mode switch,
 /// a jump), a PROBE measures it: shrunk to `probe_cap`, spaced by `probe_after` — unless that
 /// shrink leaves it too small to measure anything (a 29×22 probe read 0.044 ns a step against the
 /// full frame's 0.0002). Pure.
 pub(crate) fn live_refresh_verdict(price: Option<crate::RefreshPrice>, a: &LiveAsk) -> (LiveRefresh, f64, f64) {
-    use crate::tunables::{
-        LIVE_MIN_SCALE, LIVE_PRICE_FRESH_FRAMES, LIVE_PRICE_MAX_OCT, LIVE_PRICE_STALE_OCT, LIVE_REFRESH_MAX_MS,
-        LIVE_REFRESH_MS,
-    };
-    let ours = price.filter(|p| {
-        p.ns > 0.0
-            && p.ns.is_finite()
-            && p.at.mode == a.now.mode
-            && p.at.nav == a.now.nav
-            && (p.at.l2 - a.now.l2).abs() <= LIVE_PRICE_STALE_OCT
-    });
+    use crate::tunables::{LIVE_MIN_SCALE, LIVE_REFRESH_MS};
     let turn = a.frame >= a.probe_after;
-    let probe = if turn && live_fit(a.steps, a.probe_cap, crate::tunables::LIVE_PROBE_MIN_SCALE).is_some() {
+    // ⭐No ROOM to split (a frame under twice the occupancy knee, `split_room`): no piece of it can
+    // cost less than the whole, so nothing here pays for a measurement — no probe, reprobe or split.
+    // A price it already has for free (a settled frame's own pass) still licenses a frame at the
+    // share, or shrunk to it. On the RX 6800 XT at 1280×800, with only two probes a glide and no
+    // live frame, the walk's passes still ran slower after each probe (p90 frame 22 ms, against
+    // 19.6 with live refresh off — which matched 0.3.0-beta.3 exactly); 0.3.0-beta.9.
+    let room = split_room(a.now.px, a.knee_px);
+    let probe = if room && turn && live_fit(a.steps, a.probe_cap, crate::tunables::LIVE_PROBE_MIN_SCALE).is_some() {
         LiveRefresh::Probe
     } else {
         LiveRefresh::No
     };
-    if let Some(p) = ours {
+    if let Some(p) = usable_price(price, a) {
         let pred = p.ns * a.steps as f64 / 1.0e6;
-        let fresh = (p.at.l2 - a.now.l2).abs() <= LIVE_PRICE_MAX_OCT
-            && a.frame.saturating_sub(p.frame) <= LIVE_PRICE_FRESH_FRAMES;
-        // Measured on a much smaller frame than this one: dearer per step than this frame will be
-        // (a 0.4-scale probe priced a glide's frames at 33 ms that ran at 7 ms full size).
-        let small = (p.at.px as f64) < a.now.px as f64 * crate::tunables::LIVE_PRICE_SIZE_MIN;
+        // ⭐The adapter's occupancy KNEE: below it a pass costs its iterations over the knee's
+        // pixels, whatever its own, so a smaller set or a smaller frame is no cheaper. On the RX
+        // 6800 XT (knee 524k px) an eighth of a 1262×724 frame took 6–27 ms against 15–27 for the
+        // whole; on the RTX 3080 (262k) at 1457×1102 a set costs its share down to sixths (a
+        // quarter: 0.250 of the frame), and sevenths and eighths ~0.19.
+        let finest = finest_split(a.now.px, a.knee_px);
         // The smoothness shrink: the scale that brings this frame to one displayed frame's share,
-        // if the ceiling fit leaves room for it above the floor.
+        // if the ceiling fit leaves room for it above the floor — and it stays at or over the knee.
         let shrink = (LIVE_REFRESH_MS / pred).sqrt();
-        let shrink_ok = !a.amortize && shrink * a.fit >= LIVE_MIN_SCALE;
-        let v = if !fresh || small {
+        let shrink_ok = !a.prefer_detail
+            && shrink * a.fit >= LIVE_MIN_SCALE
+            && a.now.px as f64 * shrink * shrink >= a.knee_px as f64;
+        let passes = split_passes(pred);
+        let v = if price_is_bound(&p, a) {
             // Only a bound. A frame it prices at one displayed frame's share renders, and its
-            // reading re-prices; one it prices not far past that is measured at full size. Past
-            // that, only a probe — the view's cost moves with its REFERENCE as well as its depth
-            // (the first df32 frames of a glide ran an escaped reference's rebase storm at ~5×
-            // the per-step cost of the ones a second later), so a dear price must not outlive the
-            // reference it measured by octaves.
+            // reading re-prices; one it prices not far past that is measured at full size, in
+            // split passes. Past that, only a probe — the view's cost moves with its REFERENCE as
+            // well as its depth (the first df32 frames of a glide ran an escaped reference's
+            // rebase storm at ~5× the per-step cost of the ones a second later), so a dear price
+            // must not outlive the reference it measured by octaves.
+            // Both re-measurements scale with the dearest frame this adapter could render live at
+            // this size (`live_max_ms`): on the RX 6800 XT at 1280×800 that is ~12 ms, and bounds
+            // of 35–51 ms re-probed every few dozen frames for nothing — each a 20–35 ms frame.
+            let k = passes.min(finest);
+            let live_max = live_max_ms(a.now.px, a.knee_px);
+            let reach = live_max / (crate::tunables::LIVE_SPLIT_MAX as f64 * LIVE_REFRESH_MS);
+            let reprobe_ms = crate::tunables::LIVE_REPROBE_MS * reach;
             if pred <= LIVE_REFRESH_MS {
                 LiveRefresh::Priced
-            } else if pred <= crate::tunables::LIVE_REPROBE_MS && turn {
-                LiveRefresh::Reprobe
-            } else {
+            } else if room && pred <= reprobe_ms && turn && a.can_split {
+                LiveRefresh::Reprobe(k)
+            } else if pred <= crate::tunables::LIVE_HOPE_X * live_max {
                 probe
+            } else {
+                LiveRefresh::No // far too dear to hope for: the walk (`hopeless_price`)
             }
-        } else if !(pred <= LIVE_REFRESH_MAX_MS) {
-            LiveRefresh::No // measured dear, and fresh: the hold/pin path is right here
         } else if pred <= LIVE_REFRESH_MS {
             LiveRefresh::Priced
         } else if shrink_ok {
             return (LiveRefresh::Priced, pred, shrink);
-        } else if pred <= LIVE_REFRESH_MS * a.since_live.max(1) as f64 {
-            LiveRefresh::Priced
+        } else if let (Some(k), true) = (split_sets(pred, a.now.px, a.knee_px), a.can_split && room) {
+            LiveRefresh::Split(k)
         } else {
-            LiveRefresh::Wait
+            LiveRefresh::No // measured dear, and fresh: the hold/pin path is right here
         };
         return (v, pred, 1.0);
     }
+    // No usable price — but one that proved this view hopeless still stands (the BACK-OFF).
+    if let Some(pred) = hopeless_price(price, a) {
+        return (LiveRefresh::No, pred, 1.0);
+    }
     (probe, 0.0, 1.0)
+}
+
+/// The prediction of the view's last price, however far the zoom has gone since, when it proves
+/// the view cannot render live on this adapter at this size: same render mode and navigation epoch,
+/// and over `LIVE_HOPE_X` × `live_max_ms`. Such a view earns no probe until one of those changes or
+/// the prediction falls under that. Pure.
+pub(crate) fn hopeless_price(price: Option<crate::RefreshPrice>, a: &LiveAsk) -> Option<f64> {
+    let p = price.filter(|p| p.ns > 0.0 && p.ns.is_finite() && p.at.mode == a.now.mode && p.at.nav == a.now.nav)?;
+    let pred = p.ns * a.steps as f64 / 1.0e6;
+    (pred > crate::tunables::LIVE_HOPE_X * live_max_ms(a.now.px, a.knee_px)).then_some(pred)
+}
+
+/// Room to split a `px`-pixel frame: at least two sets at or over the adapter's occupancy knee
+/// (`knee_px`; none known = always). Without it every piece costs about what the whole frame does.
+/// The RX 6800 XT (knee 524,288) at 1280×800 has none; the RTX 3080 (262,144) there has 3.6
+/// knees' worth. Pure.
+pub(crate) fn split_room(px: u64, knee_px: u64) -> bool {
+    knee_px == 0 || px >= knee_px.saturating_mul(2)
+}
+
+/// The most split passes that still make each set of a `px`-pixel frame cheaper: `LIVE_SPLIT_MAX`,
+/// and no more than bring a set down to the occupancy knee (`knee_px`, 0 = none known) — a finer set
+/// costs what one at the knee does. At least 1. Pure.
+pub(crate) fn finest_split(px: u64, knee_px: u64) -> u32 {
+    let cap = crate::tunables::LIVE_SPLIT_MAX;
+    match px.checked_add(knee_px.saturating_sub(1)).and_then(|n| n.checked_div(knee_px)) {
+        None => cap,
+        Some(k) => k.clamp(1, cap as u64) as u32,
+    }
+}
+
+/// The dearest refresh (ms) a `px`-pixel frame can still render live at, split or whole, on an
+/// adapter with occupancy knee `knee_px`: `LIVE_SPLIT_MAX` × `LIVE_REFRESH_MS` (36 ms) with no knee
+/// in the way, down to the share itself when not even halves help — exactly the largest price
+/// `split_sets` accepts. RTX 3080 at 1457×1102: 36 ms; RX 6800 XT at 1262×724: ~11.8. Pure.
+pub(crate) fn live_max_ms(px: u64, knee_px: u64) -> f64 {
+    use crate::tunables::{LIVE_REFRESH_MS, LIVE_SPLIT_MAX, LIVE_SPLIT_SET_MAX_MS};
+    let finest = finest_split(px, knee_px);
+    if finest < 2 {
+        return LIVE_REFRESH_MS;
+    }
+    let floor = if px == 0 { 1.0 } else { (knee_px as f64 / px as f64).min(1.0) };
+    (LIVE_SPLIT_MAX as f64 * LIVE_REFRESH_MS).min(LIVE_SPLIT_SET_MAX_MS / (1.0 / finest as f64).max(floor))
+}
+
+/// The split a fresh price of `pred_ms` for a `px`-pixel frame renders in, if any: `k` =
+/// ⌈pred / `LIVE_REFRESH_MS`⌉ sets (at most `LIVE_SPLIT_MAX`), no finer than `finest_split`, each
+/// predicted at pred × max(1/k, knee/px) — the knee's floor — and at most `LIVE_SPLIT_SET_MAX_MS`.
+/// `None` for a frame that needs no split, cannot split usefully, or is too dear. Pure.
+pub(crate) fn split_sets(pred_ms: f64, px: u64, knee_px: u64) -> Option<u32> {
+    let passes = split_passes(pred_ms);
+    if passes < 2 || passes > crate::tunables::LIVE_SPLIT_MAX {
+        return None;
+    }
+    let k = passes.min(finest_split(px, knee_px));
+    let floor = if px == 0 { 1.0 } else { (knee_px as f64 / px as f64).min(1.0) };
+    let set_ms = pred_ms * (1.0 / k as f64).max(floor);
+    (k >= 2 && set_ms <= crate::tunables::LIVE_SPLIT_SET_MAX_MS).then_some(k)
+}
+
+/// The price a reading of `read_ns` per nominal step sets for a pass at `at`, against the view's
+/// current price `old`: at most `LIVE_PRICE_DROP_MAX` cheaper than an `old` about the same view
+/// (same mode and navigation epoch, within `LIVE_PRICE_STALE_OCT`), any amount dearer, and as read
+/// for any other view. Pure.
+pub(crate) fn bounded_price_drop(old: Option<crate::RefreshPrice>, read_ns: f64, at: crate::PriceView) -> f64 {
+    match old {
+        Some(p)
+            if p.ns > 0.0
+                && p.ns.is_finite()
+                && p.at.mode == at.mode
+                && p.at.nav == at.nav
+                && (p.at.l2 - at.l2).abs() <= crate::tunables::LIVE_PRICE_STALE_OCT =>
+        {
+            read_ns.max(p.ns / crate::tunables::LIVE_PRICE_DROP_MAX)
+        }
+        _ => read_ns,
+    }
+}
+
+/// The price, if it is about this view at all: same render mode and navigation epoch, within
+/// `LIVE_PRICE_STALE_OCT` of this depth (see [`live_refresh_verdict`]). Pure.
+fn usable_price(price: Option<crate::RefreshPrice>, a: &LiveAsk) -> Option<crate::RefreshPrice> {
+    price.filter(|p| {
+        p.ns > 0.0
+            && p.ns.is_finite()
+            && p.at.mode == a.now.mode
+            && p.at.nav == a.now.nav
+            && (p.at.l2 - a.now.l2).abs() <= crate::tunables::LIVE_PRICE_STALE_OCT
+    })
+}
+
+/// A usable price that only BOUNDS this frame: stale (past `LIVE_PRICE_MAX_OCT` or
+/// `LIVE_PRICE_FRESH_FRAMES`), or measured on a much smaller frame, which is dearer per step than
+/// this one will be (a 0.4-scale probe priced a glide's frames at 33 ms that ran at 7 ms full size).
+/// Pure.
+fn price_is_bound(p: &crate::RefreshPrice, a: &LiveAsk) -> bool {
+    let fresh = (p.at.l2 - a.now.l2).abs() <= crate::tunables::LIVE_PRICE_MAX_OCT
+        && a.frame.saturating_sub(p.frame) <= crate::tunables::LIVE_PRICE_FRESH_FRAMES;
+    let small = (p.at.px as f64) < a.now.px as f64 * crate::tunables::LIVE_PRICE_SIZE_MIN;
+    !fresh || small
+}
+
+/// Why a moving df32 frame did not render live — `FRACTADYNE_TRACE=live` prints each once when it
+/// starts to apply (`Perf::live_no`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum LiveNo {
+    /// The frame does not fit the dispatch ceiling above `LIVE_MIN_SCALE`.
+    OverCeiling = 1,
+    /// No price, and no GPU timestamps to price a probe with.
+    NoTiming,
+    /// No price; the next probe waits for its frame (`probe_after`).
+    ProbeWaits,
+    /// No price, and a probe under its bound (`probe_cap`) would shrink past `LIVE_PROBE_MIN_SCALE`.
+    ProbeTooSmall,
+    /// Only a bound, predicting too much for a frame, and a reprobe not due or past `LIVE_REPROBE_MS`.
+    BoundTooDear,
+    /// Measured, fresh, and dearer than `LIVE_SPLIT_MAX` passes (or no complete frame to hold).
+    MeasuredDear,
+    /// Measured and fresh, within `LIVE_SPLIT_MAX` passes, but the occupancy knee keeps its sets
+    /// dearer than `LIVE_SPLIT_SET_MAX_MS` (`split_sets`).
+    UnderKnee,
+    /// No usable price, but a lapsed one proved the view hopeless (`hopeless_price`): no probe.
+    BackedOff,
+    /// The frame is under twice the occupancy knee (`split_room`): no probe, reprobe or split —
+    /// only a price it already has may license a frame at the share.
+    NoSplitRoom,
+}
+
+/// Why [`live_refresh_verdict`] said `No` to `a`. Pure.
+pub(crate) fn live_no_reason(price: Option<crate::RefreshPrice>, a: &LiveAsk) -> LiveNo {
+    if !split_room(a.now.px, a.knee_px) {
+        return LiveNo::NoSplitRoom;
+    }
+    match usable_price(price, a) {
+        Some(p) if price_is_bound(&p, a) => LiveNo::BoundTooDear,
+        Some(p) => {
+            let pred = p.ns * a.steps as f64 / 1.0e6;
+            if split_passes(pred) <= crate::tunables::LIVE_SPLIT_MAX
+                && split_sets(pred, a.now.px, a.knee_px).is_none()
+            {
+                LiveNo::UnderKnee
+            } else {
+                LiveNo::MeasuredDear
+            }
+        }
+        None if hopeless_price(price, a).is_some() => LiveNo::BackedOff,
+        None if a.probe_after == u64::MAX => LiveNo::NoTiming,
+        None if a.frame < a.probe_after => LiveNo::ProbeWaits,
+        None => LiveNo::ProbeTooSmall,
+    }
+}
+
+/// The nominal steps a live PROBE may carry under `bound`, the per-dispatch bound this view's own
+/// passes already run at: all of it when a probe that size stays at or over the occupancy knee
+/// (`knee_px`, 0 = none), else nothing. Below the knee a dispatch costs its iterations over the
+/// knee's pixels, whatever its own (`calibration`), so a probe of `iter` iterations carries at least
+/// `knee_px × iter` steps' worth of worst case, and shrinking it further buys nothing. Pure.
+pub(crate) fn probe_walk_bound(bound: u64, iter: u32, knee_px: u64) -> u64 {
+    if bound >= knee_px.saturating_mul(iter.max(1) as u64) {
+        bound
+    } else {
+        0
+    }
+}
+
+/// Nominal steps of one pass over the whole ask: every one of `spx`·ss² texels, or one of `split`
+/// checkerboard sets of them (`split` ≤ 1 = all). The ONE formula for both the count a pass carries
+/// to the GPU (and gets back with its timing) and the one the price ring records it under — they
+/// must agree exactly for a reading to price anything. Pure.
+pub(crate) fn full_pass_steps(spx: u64, ss: u32, iter: u32, split: u32) -> u64 {
+    spx.saturating_mul((ss as u64).saturating_mul(ss as u64)).saturating_mul(iter.max(1) as u64)
+        / split.max(1) as u64
 }
 
 /// Fit a live frame's nominal `steps` under `cap`: the linear scale to render at (1.0 when it

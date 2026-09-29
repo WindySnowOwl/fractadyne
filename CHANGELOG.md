@@ -59,6 +59,88 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Live refresh stays out of the way where it cannot help** (0.3.0-beta.8 and beta.9).
+  - **The problem:** on the RX 6800 XT at 1280×800 no frame can be drawn in cheaper pieces: every
+    piece would be under the size at which that card is fully busy. The live refresh still took
+    test frames to measure each view, and zooms there had 6–14 frames over 25 ms instead of
+    beta.3's 1–5, with no live frame to show for it.
+  - **The change:** a frame too small to split into pieces of at least that size is never
+    measured, re-measured or split. A cost it already knows without measuring (from the settled
+    frame a zoom starts on) still lets a cheap frame be drawn live. Elsewhere, a view measured far
+    too costly for the card is no longer re-measured as the zoom goes deeper.
+    `FRACTADYNE_TRACE=live` names the new reasons, `NoSplitRoom` and `BackedOff`.
+  - **Also fixed:** during a split refresh the frame budget mistook its own timings for silence
+    and fell back to wall-clock timing several times a minute; one RTX 3080 test run failed its
+    log check for it. It now happens once per run, at the start, as in every build.
+  - **How much:** the RX 6800 XT matches beta.3 again (1e6× to 4e9×, four runs each, interleaved:
+    90th-percentile frame 19.5–19.7 ms for both, 2–5 frames over 25 ms for both). RTX 3080 glides
+    are unchanged.
+
+- **Pieces sized to what the graphics card can actually use** (0.3.0-beta.5 to beta.7).
+  - **The problem:** a graphics card is only fully busy above a certain number of pixels (about
+    262,000 on the RTX 3080, 524,000 on the RX 6800 XT). A piece of a split frame smaller than that
+    costs about as much as one that size. On the RX 6800 XT at 1280×800 an eighth of a frame took
+    6–27 ms against 15–27 ms for the whole. That card also sometimes timed the second of two pieces
+    at a quarter of a millisecond; that one reading marked the view as cheap, and the next frames
+    were each drawn whole, at 19–33 ms apiece.
+  - **The change:** a piece's cost now counts that minimum size, and a split runs only if each piece
+    stays within 6.75 ms. A frame shrunk for smoothness is never made smaller than that size either.
+    One reading can no longer make a view look more than four times cheaper at once. A view measured
+    too costly to ever draw live on the card at its size is no longer re-measured over and over.
+    `FRACTADYNE_TRACE=live` names the new reason, `UnderKnee`.
+  - **How much:** on the RTX 3080 (1280×800, 120 Hz), glides are the same as beta.3's; its splits
+    rarely hit the limit. On the RX 6800 XT (1280×800, 60 Hz, from 1e6× to 4e9×, three runs
+    against beta.3's nine), the picture lags the zoom a little less (0.56–0.61 octaves instead of
+    0.67–0.68), but 6–14 frames take over 25 ms instead of 1–5. At these views a frame costs 26–51 ms there,
+    too much to draw live, and the remaining test frames cost a few long frames.
+
+- **Live refresh can start on the Radeon RX 6800 XT** (0.3.0-beta.4).
+  - **The problem:** on the RX 6800 XT the live refresh of beta.2 and beta.3 never started. Before
+    it draws live frames it measures one small test frame. On that card, just after the switch to
+    perturbation, no test frame of any size fitted the time allowed, so the zoom stayed on the
+    frame-by-frame refresh all the way down.
+  - **The change:** the test frame may now be as large as the pieces the frame-by-frame refresh
+    already draws. `FRACTADYNE_TRACE=live` also says why a moving frame is not drawn live, once
+    each time the reason changes; before, such a zoom traced nothing.
+  - **How much:** little yet. In a 30-octave glide on the RX 6800 XT (1280×800, 60 Hz, three runs
+    each) the live refresh starts about 4 seconds after the switch, but frame rate, frames over 20 ms
+    and the on-screen stretch are the same as beta.3's. Such a frame costs 15–27 ms there in one
+    piece, and drawing it in pieces saves little on that card: an eighth of the frame took 6–27 ms.
+    RTX 3080 glides are unchanged.
+  - **Self-test:** two new `live-split` checks confirm that the GPU's own timing of a pass matches
+    the wall clock, and that the split's tile drawing costs about what one full-screen pass does
+    (RTX 3080 0.99 and 1.04×, RX 6800 XT 1.00–1.01 and 1.18×).
+
+- **Detailed zooms without the stutter: a dear frame is drawn in pieces** (0.3.0-beta.3).
+  - **The problem:** 0.3.0-beta.2 drew a moving frame of 4.5–12 ms as one piece every second or
+    third frame. A piece of work that runs past one refresh of the display holds up every frame
+    behind it, so zooms kept their detail but stuttered: two to three times as many frames took
+    longer than 20 ms.
+  - **The change:** such a frame is now drawn in 2 to 8 pieces, one per displayed frame, each
+    taking no more than 4.5 ms. Each piece is one set of 16-pixel squares spread in a checkerboard
+    over the whole picture, so every piece costs an even share whatever the picture holds. Until
+    the last piece lands, the screen shows the previous complete frame following the zoom, as
+    before. Frames up to 36 ms are now drawn this way, where 12 ms was the limit. Without "Prefer
+    detail while zooming", a frame that fits 4.5 ms at a slightly lower resolution is still drawn
+    that way instead, a new picture every frame.
+  - **How much**, the same 80-octave glide as for beta.2 (1280×800, 120 Hz, RTX 3080, two runs,
+    "Prefer detail while zooming" on), against 0.3.0-beta.1:
+    - from 1e4× to 1e6×, including the switch: stretched 1.12× on average instead of 1.60×;
+    - from 1e6× to 1e12×: 1.06–1.09× instead of 1.54–1.60×, at 120 frames a second instead of
+      107–113, and no frames over 20 ms (beta.1: 33, beta.2: about 80);
+    - from 1e12× to 1e18×: 1.19× instead of 1.65×, at 120 frames a second instead of 103, 2 or 3
+      frames over 20 ms instead of 43;
+    - past 1e18×: 1.56× instead of 1.73×, 114 frames a second instead of 109, about 20 frames over
+      20 ms instead of 57;
+    - with "Prefer detail while zooming" off: 1.02–1.09× instead of 1.46–1.83×.
+    - The cost that remains is at the switch from the direct mode, 6 to 11 frames over 20 ms where
+      beta.1 had none, while the first measurements of the new mode are taken.
+  - The graphics program draws the pieces as geometry: telling the pixels outside a piece to skip
+    themselves kept every one of them running, and each piece cost as much as the whole frame.
+    New self-tests: the pieces make the same picture as one pass, bit for bit, in 2, 3, 4 and 8
+    pieces; one piece draws only its own squares; and one piece of four costs well under the whole
+    frame (0.45 of it on an RTX 3080, 0.39 on an RX 6800 XT).
+
 - **Shallow perturbation zooms keep their detail while moving** (0.3.0-beta.2).
   - **The problem:** past about 1e4×, where the direct mode ends, a moving view held its last
     complete frame and stretched it to follow the zoom, rebuilding it a piece at a time over a
