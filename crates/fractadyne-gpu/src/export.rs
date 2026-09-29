@@ -2378,9 +2378,13 @@ pub fn render_iter(
 /// `render_iter` drawn as the live view's SPLIT refresh draws a frame (`MandelbrotParams::split`):
 /// `k` passes of `fs_iterate` over `vs_split_tiles`, one checkerboard set of 16-texel tiles each,
 /// each its own submission, the texture cleared before the first and kept after. `only` renders
-/// just that one set over the cleared texture. For `--selftest`: all `k` sets must compose the
-/// frame bit for bit, and one set must cover only its share — and cost about that share, which is
-/// what `iterate_ms` measures for a single set (0.0 for a full split render).
+/// just that one set over the cleared texture; `k` = 1 draws every tile through the same geometry
+/// (the cost claim's control). For `--selftest`: all `k` sets must compose the frame bit for bit,
+/// and one set must cover only its share — and cost about that share.
+///
+/// `iterate_ms` here is the WALL time of the passes, each from its submission to its completion
+/// (the pipeline is compiled before, the readback after): the RX 6800 XT's GPU timestamps timed a
+/// whole 1024² pass at 1.75 ms and one quarter of it at 79 ms, and do not describe their own pass.
 pub fn render_iter_split(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -2388,7 +2392,7 @@ pub fn render_iter_split(
     k: u32,
     only: Option<u32>,
 ) -> Result<ExportResult, GpuError> {
-    render_iter_passes(device, queue, req, Some((k.max(2), only)))
+    render_iter_passes(device, queue, req, Some((k.max(1), only)))
 }
 
 fn render_iter_passes(
@@ -2524,9 +2528,8 @@ fn render_iter_passes(
     // Iterate-pass timestamps (D3.1/F14): render_iter is the primitive under the
     // multi-reference glitch loop — the app's worst historical time sink ran on a path
     // with zero instrumentation.
-    // Timed: the one pass, or the one set of a single-set split render (the selftest's cost claim).
-    let timed = sets.is_none_or(|(_, only)| only.is_some());
-    let ts = if timed && device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+    // GPU timestamps for the one-pass render only; a split render is timed by wall clock below.
+    let ts = if sets.is_none() && device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
         let set = device.create_query_set(&wgpu::QuerySetDescriptor {
             label: Some("selftest.timestamps"),
             ty: wgpu::QueryType::Timestamp,
@@ -2550,6 +2553,7 @@ fn render_iter_passes(
     };
     let mut enc =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("selftest.enc") });
+    let mut split_wall_ms = 0.0f64;
     match sets {
         None => {
             let attach = |v| Some(wgpu::RenderPassColorAttachment {
@@ -2602,19 +2606,18 @@ fn render_iter_passes(
                         label: Some("selftest.iter_split_pass"),
                         color_attachments: &[attach(&main_copy_view), attach(&aux_view)],
                         depth_stencil_attachment: None,
-                        // `ts` exists only for a single-set render: its one pass is the one timed.
-                        timestamp_writes: ts.as_ref().map(|(set, _, _)| wgpu::RenderPassTimestampWrites {
-                            query_set: set,
-                            beginning_of_pass_write_index: Some(0),
-                            end_of_pass_write_index: Some(1),
-                        }),
+                        timestamp_writes: None,
                         occlusion_query_set: None,
                     });
                     pass.set_pipeline(&iter_pipeline);
                     pass.set_bind_group(0, &iter_bg, &[]);
                     pass.draw(0..6, 0..tiles);
                 }
+                // Alone in the queue from submission to completion: that interval is its cost.
+                let t0 = std::time::Instant::now();
                 queue.submit(std::iter::once(e.finish()));
+                let _ = device.poll(wgpu::Maintain::Wait);
+                split_wall_ms += t0.elapsed().as_secs_f64() * 1000.0;
             }
         }
     }
@@ -2656,7 +2659,7 @@ fn render_iter_passes(
     // Bounded readback (device-loss-aware). The timestamp `recv()` below shares this submission, so
     // it is already complete once this returns.
     await_readback(device, &rx, None, None).into_result()?;
-    let mut iterate_ms = 0.0f64;
+    let mut iterate_ms = split_wall_ms;
     if let (Some((_, _, read)), Some(ts_rx)) = (&ts, &ts_rx) {
         if ts_rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
             let mapped = read.slice(..).get_mapped_range();

@@ -708,10 +708,11 @@ impl FractadyneApp {
             // ⭐The COST claim, which neither check above can see: a `discard` in the fragment stage
             // passed both (it composed the frame and wrote only its set) and still cost every pass
             // the whole frame. At a size that fills the GPU (220² is all fixed cost), one set of four
-            // must time well under the whole pass — measured ~0.9–1.0 of it with the discard, 0.48
-            // with the tile geometry on the RTX 3080 (a quarter of 1024² sits at the occupancy knee,
-            // so a set cannot reach its bare 0.25 here; the live frame's sets measured 0.3–0.4).
-            // Best of three each; a GPU without timestamps cannot say.
+            // must time well under every tile drawn through the SAME geometry (k = 1) — measured
+            // ~0.9–1.0 with the discard, 0.47 with the tile geometry on the RTX 3080 (a quarter of
+            // 1024² sits at the occupancy knee, so a set cannot reach its bare 0.25 here; the live
+            // frame's sets measured 0.3–0.4). Wall clock, submission to completion, best of three:
+            // the RX 6800 XT's GPU timestamps read the whole pass at 1.75 ms and a quarter at 79.
             const SPLIT_COST_N: u32 = 1024;
             let mut vp = Viewport::new(SPLIT_COST_N as f64, SPLIT_COST_N as f64);
             vp.center_x = fractadyne_core::parse_bf(SX).unwrap();
@@ -722,29 +723,27 @@ impl FractadyneApp {
             req.width = SPLIT_COST_N;
             req.height = SPLIT_COST_N;
             req.ss = 1;
-            let (pass, result) = if device.features().contains(eframe::wgpu::Features::TIMESTAMP_QUERY) {
-                let best = |f: &dyn Fn() -> Option<f64>| {
-                    (0..3).filter_map(|_| f()).filter(|ms| *ms > 0.0).fold(f64::INFINITY, f64::min)
-                };
-                let full = best(&|| fractadyne_gpu::render_iter(device, queue, &req).ok().map(|r| r.iterate_ms));
-                let one = best(&|| {
-                    fractadyne_gpu::render_iter_split(device, queue, &req, 4, Some(1)).ok().map(|r| r.iterate_ms)
-                });
-                let ratio = one / full;
-                (
-                    full.is_finite() && one.is_finite() && ratio < 0.6,
-                    format!("one set {one:.2} ms against the whole pass {full:.2} ms = {ratio:.2}"),
-                )
-            } else {
-                (true, "skipped: no TIMESTAMP_QUERY on this GPU".to_string())
+            let best = |k: u32, j: u32| {
+                (0..3)
+                    .filter_map(|_| {
+                        fractadyne_gpu::render_iter_split(device, queue, &req, k, Some(j))
+                            .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_split, cost): {e}"))
+                            .ok()
+                            .map(|r| r.iterate_ms)
+                    })
+                    .filter(|ms| *ms > 0.0)
+                    .fold(f64::INFINITY, f64::min)
             };
+            let full = best(1, 0);
+            let one = best(4, 1);
+            let ratio = one / full;
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "LiveSplit",
                 name: "one split set costs about its share of the pass".into(),
-                params: format!("{SPLIT_COST_N}×{SPLIT_COST_N} df32 1e8x, set 1 of 4, best of 3"),
-                result,
-                threshold: "< 0.6 of the whole pass (0.25 = exactly its share)",
-                pass,
+                params: format!("{SPLIT_COST_N}×{SPLIT_COST_N} df32 1e8x, set 1 of 4, wall, best of 3"),
+                result: format!("one set {one:.2} ms against every tile {full:.2} ms = {ratio:.2}"),
+                threshold: "< 0.6 of every tile (0.25 = exactly its share)",
+                pass: full.is_finite() && one.is_finite() && ratio < 0.6,
             });
             (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method) = saved;
         }
