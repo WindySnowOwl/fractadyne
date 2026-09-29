@@ -59,6 +59,24 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Pieces sized to what the graphics card can actually use** (0.3.0-beta.5 to beta.7).
+  - **The problem:** a graphics card is only fully busy above a certain number of pixels (about
+    262,000 on the RTX 3080, 524,000 on the RX 6800 XT). A piece of a split frame smaller than that
+    costs about as much as one that size. On the RX 6800 XT at 1280×800 an eighth of a frame took
+    6–27 ms against 15–27 ms for the whole. That card also sometimes timed the second of two pieces
+    at a quarter of a millisecond; that one reading marked the view as cheap, and the next frames
+    were each drawn whole, at 19–33 ms apiece.
+  - **The change:** a piece's cost now counts that minimum size, and a split runs only if each piece
+    stays within 6.75 ms. A frame shrunk for smoothness is never made smaller than that size either.
+    One reading can no longer make a view look more than four times cheaper at once. A view measured
+    too costly to ever draw live on the card at its size is no longer re-measured over and over.
+    `FRACTADYNE_TRACE=live` names the new reason, `UnderKnee`.
+  - **How much:** on the RTX 3080 (1280×800, 120 Hz), glides are the same as beta.3's; its splits
+    rarely hit the limit. On the RX 6800 XT (1280×800, 60 Hz, from 1e6× to 4e9×, three runs
+    against beta.3's nine), the picture lags the zoom a little less (0.56–0.61 octaves instead of
+    0.67–0.68), but 6–14 frames take over 25 ms instead of 1–5. At these views a frame costs 26–51 ms there,
+    too much to draw live, and the remaining test frames cost a few long frames.
+
 - **Live refresh can start on the Radeon RX 6800 XT** (0.3.0-beta.4).
   - **The problem:** on the RX 6800 XT the live refresh of beta.2 and beta.3 never started. Before
     it draws live frames it measures one small test frame. On that card, just after the switch to
