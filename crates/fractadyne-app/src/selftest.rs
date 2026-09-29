@@ -631,6 +631,11 @@ impl FractadyneApp {
             req.width = N;
             req.height = N;
             req.ss = 1;
+            // ⚠Since beta.150 a mode-2 tile is sized for GPU occupancy (1024 samples), and this
+            // whole 220-px frame would be ONE tile — no cross-tile state reuse, no per-tile
+            // counter epochs, nothing this case exists for. The pre-occupancy tile, 70 px
+            // (sqrt(2e10 / 4M)), keeps it at 16 tiles. The occupancy tile itself is the next case.
+            req.tile_px_max = Some(70);
             self.render_cfg.max_iter = saved_iter;
             self.render_cfg.auto_iter = saved_auto;
             self.coloring.color_method = saved_method;
@@ -663,10 +668,12 @@ impl FractadyneApp {
                     (Some(a), Some(b)) if a.pixels.len() == b.pixels.len() => {
                         let diffs = bit_exact(&a.pixels, &b.pixels);
                         (
-                            diffs == 0 && a.max_dispatch_ms > 0.0,
+                            // The tile count is part of the claim: at one tile this case tests
+                            // nothing it is named after (see `tile_px_max` above).
+                            diffs == 0 && a.max_dispatch_ms > 0.0 && a.tiles_total == 16,
                             format!(
-                                "{diffs} texels differ; max dispatch {:.0}ms vs control {:.0}ms",
-                                a.max_dispatch_ms, b.max_dispatch_ms
+                                "{diffs} texels differ; {} tiles; max dispatch {:.0}ms vs control {:.0}ms",
+                                a.tiles_total, a.max_dispatch_ms, b.max_dispatch_ms
                             ),
                         )
                     }
@@ -702,6 +709,60 @@ impl FractadyneApp {
                     params: "corpus07 1e30x, 4M iter, 16 tiles, raw".into(),
                     result,
                     threshold: "0 texels differ",
+                    pass,
+                });
+
+                // ⭐⭐(beta.150) THE OCCUPANCY TILE AND ITS STEP-BOUNDED PASSES. The same frame
+                // unpinned is ONE tile (the old nominal sizing made it 16), and its passes stop each
+                // pixel after `step_cap` executed steps and resume from state. Everything the claim
+                // rests on is asserted, because each has a vacuous way to pass:
+                // - one tile: otherwise occupancy sizing did not engage;
+                // - more passes than tiles: otherwise no pass ever stopped a running pixel, and the
+                //   resume path this exists to prove never ran;
+                // - every pass within `STEP_MAX_PX_STEPS`: the bound that replaces the tile budget;
+                // - bit-identical to the single-dispatch control: where passes split never
+                //   changes a pixel.
+                // ⚠512², not the 220² above: a pass's step cap is its pixel-step budget over its
+                // AREA, and at 220² (≈2.7k steps) every pixel here finished inside ONE pass — the
+                // case read "1 tile, 1 passes" and failed, correctly. At 512² (≈500 steps, still
+                // one occupancy tile) the slow pixels must resume.
+                const OCC_N: u32 = 512;
+                let mut occ_req = req.clone();
+                occ_req.tile_px_max = None;
+                occ_req.width = OCC_N;
+                occ_req.height = OCC_N;
+                let o = fractadyne_gpu::render_export(device, queue, &occ_req, &progress, &cancel)
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (render_export, occupancy): {e}"))
+                    .ok();
+                let occ_ctl =
+                    fractadyne_gpu::render_export_unchunked(device, queue, &occ_req, &progress, &cancel)
+                        .map_err(|e| eprintln!("[selftest] GPU ERROR (render_export_unchunked, occupancy): {e}"))
+                        .ok();
+                let (pass, result) = match (&o, &occ_ctl) {
+                    (Some(o), Some(b)) if o.pixels.len() == b.pixels.len() => {
+                        let diffs = bit_exact(&o.pixels, &b.pixels);
+                        let bound = fractadyne_gpu::STEP_MAX_PX_STEPS as u64;
+                        (
+                            diffs == 0
+                                && o.tiles_total == 1
+                                && o.chunk_passes > o.tiles_chunked
+                                && o.max_dispatch_work > 0
+                                && o.max_dispatch_work <= bound,
+                            format!(
+                                "{diffs} texels differ; {} tile(s), {} passes; largest pass {} \
+                                 pixel-steps (ceiling {bound})",
+                                o.tiles_total, o.chunk_passes, o.max_dispatch_work
+                            ),
+                        )
+                    }
+                    _ => (false, "render failed".into()),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "IterChunk",
+                    name: "occupancy tile: step-bounded passes resume bit-identically".into(),
+                    params: "corpus07 1e30x, 4M iter, 512px in one tile".into(),
+                    result,
+                    threshold: "0 texels differ, 1 tile, passes > tiles, pass <= ceiling",
                     pass,
                 });
             }

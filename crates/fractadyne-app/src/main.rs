@@ -243,8 +243,10 @@ fn main() -> eframe::Result<()> {
                 tunables::status_line()
             );
         }
-        // The GPU crate's process-wide copy of the df32 tail-phase switch (`TAIL_DF32`).
+        // The GPU crate's process-wide copies of the df32 tail-phase switch (`TAIL_DF32`) and the
+        // occupancy-sized export tiles (`TILE_OCCUPANCY`).
         fractadyne_gpu::set_tail_df32(tunables::cost().tail_df32 == 1);
+        fractadyne_gpu::set_tile_occupancy(tunables::cost().tile_occupancy == 1);
     }
     // `--oomtest`: force a real allocation failure, to prove the OOM path actually writes a crash
     // report. It cannot be verified any other way — an out-of-memory abort skips the panic hook,

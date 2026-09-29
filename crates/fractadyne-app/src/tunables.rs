@@ -93,6 +93,8 @@ pub(crate) struct Cost {
     pub ref_overlap: u64,
     /// A `--render`'s reference started before the window (`EARLY_REF_DEFAULT`; 0 = off, 1 = on).
     pub early_ref: u64,
+    /// Occupancy-sized export tiles (`TILE_OCCUPANCY_DEFAULT`; 0 = off, 1 = on).
+    pub tile_occupancy: u64,
     /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
     /// second override channel because duplicating the machinery for a single value would be worse.
     /// See the note above on what earns a place in this set.
@@ -126,6 +128,7 @@ impl Default for Cost {
             tail_df32: TAIL_DF32_DEFAULT,
             ref_overlap: REF_OVERLAP_DEFAULT,
             early_ref: EARLY_REF_DEFAULT,
+            tile_occupancy: TILE_OCCUPANCY_DEFAULT,
             bla_eps: BLA_EPS,
         }
     }
@@ -338,6 +341,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "TILE_OCCUPANCY" => {
+                let p = c.tile_occupancy;
+                c.tile_occupancy = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set TILE_OCCUPANCY: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "MOTION_NEED_QUANTILE" => {
                 let p = c.motion_need_quantile;
                 let v = f()?;
@@ -377,7 +389,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     TDR_BOOTSTRAP_MS, MOTION_UNPRICED_MAX, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL, \
-    DEAD_MAN, DISPATCH_CEILING, TAIL_DF32, REF_OVERLAP, EARLY_REF";
+    DEAD_MAN, DISPATCH_CEILING, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY";
 
 #[cfg(test)]
 mod override_tests;
@@ -749,6 +761,12 @@ pub(crate) const REF_OVERLAP_DEFAULT: u64 = 1;
 /// inputs match exactly. 0 = the build starts when the export asks, for the before/after
 /// measurement.
 pub(crate) const EARLY_REF_DEFAULT: u64 = 1;
+
+/// 1 = export tiles sized for GPU occupancy where the chunked iterate is in scope, with the work
+/// budget bounding each chunk dispatch instead of each tile (`OCC_TILE_SAMPLES` in
+/// fractadyne-gpu's export.rs). 0 = tiles sized by nominal work (`tile² · ss² · max_iter`), for the
+/// before/after measurement.
+pub(crate) const TILE_OCCUPANCY_DEFAULT: u64 = 1;
 
 /// The most a held frame may MAGNIFY before its refresh lands, octaves — the zoom-rate-aware half
 /// of the refresh sizing. At `zoom_oct_s` octaves per second the refresh has `HELD_MAX_OCT /

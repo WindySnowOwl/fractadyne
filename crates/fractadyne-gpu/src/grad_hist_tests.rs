@@ -1,9 +1,9 @@
 //! The step histogram's readback, including the bucket the shader deliberately never writes.
 
 use crate::{
-    grad_hist_from_slots, StepStats, COUNTER_SLOTS, CTR_ESC_HIST, CTR_GRAD_HIST, CTR_GRAD_N,
-    CTR_STEP_BIG, CTR_STEP_EXEC, CTR_STEP_FULL, CTR_STEP_ITER, CTR_STEP_PX, ESC_HIST_BUCKETS,
-    GRAD_HIST_BUCKETS,
+    grad_hist_from_slots, StepStats, COUNTER_SLOTS, CTR_CHUNK_RUNNING, CTR_ESC_HIST,
+    CTR_GRAD_HIST, CTR_GRAD_N, CTR_STEP_BIG, CTR_STEP_EXEC, CTR_STEP_FULL, CTR_STEP_ITER,
+    CTR_STEP_PX, ESC_HIST_BUCKETS, GRAD_HIST_BUCKETS,
 };
 
 #[test]
@@ -50,7 +50,9 @@ fn the_histogram_fits_the_counter_buffer() {
         [CTR_STEP_EXEC, CTR_STEP_ITER, CTR_STEP_FULL, CTR_STEP_BIG],
         [CTR_STEP_PX + 1, CTR_STEP_PX + 3, CTR_STEP_PX + 5, CTR_STEP_PX + 7]
     );
-    assert_eq!(CTR_STEP_BIG + 2, COUNTER_SLOTS);
+    // ...and the step-bounded runner's one-word running count after the last two-word sum.
+    assert_eq!(CTR_STEP_BIG + 2, CTR_CHUNK_RUNNING);
+    assert_eq!(CTR_CHUNK_RUNNING + 1, COUNTER_SLOTS);
     assert!(CTR_GRAD_HIST > CTR_GRAD_N, "the histogram must not overlap the gradient sum/count");
 }
 
@@ -65,6 +67,7 @@ fn the_shader_agrees_on_the_step_accounting_slots() {
         ("CTR_STEP_ITER", CTR_STEP_ITER),
         ("CTR_STEP_FULL", CTR_STEP_FULL),
         ("CTR_STEP_BIG", CTR_STEP_BIG),
+        ("CTR_CHUNK_RUNNING", CTR_CHUNK_RUNNING),
     ] {
         let decl = format!("const {name}: u32 = {v}u;");
         assert!(wgsl.contains(&decl), "mandelbrot.wgsl must declare `{decl}`");
