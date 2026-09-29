@@ -59,6 +59,23 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Live refresh can start on the Radeon RX 6800 XT** (0.3.0-beta.4).
+  - **The problem:** on the RX 6800 XT the live refresh of beta.2 and beta.3 never started. Before
+    it draws live frames it measures one small test frame. On that card, just after the switch to
+    perturbation, no test frame of any size fitted the time allowed, so the zoom stayed on the
+    frame-by-frame refresh all the way down.
+  - **The change:** the test frame may now be as large as the pieces the frame-by-frame refresh
+    already draws. `FRACTADYNE_TRACE=live` also says why a moving frame is not drawn live, once
+    each time the reason changes; before, such a zoom traced nothing.
+  - **How much:** little yet. In a 30-octave glide on the RX 6800 XT (1280×800, 60 Hz, three runs
+    each) the live refresh starts about 4 seconds after the switch, but frame rate, frames over 20 ms
+    and the on-screen stretch are the same as beta.3's. Such a frame costs 15–27 ms there in one
+    piece, and drawing it in pieces saves little on that card: an eighth of the frame took 6–27 ms.
+    RTX 3080 glides are unchanged.
+  - **Self-test:** two new `live-split` checks confirm that the GPU's own timing of a pass matches
+    the wall clock, and that the split's tile drawing costs about what one full-screen pass does
+    (RTX 3080 0.99 and 1.04×, RX 6800 XT 1.00–1.01 and 1.18×).
+
 - **Detailed zooms without the stutter: a dear frame is drawn in pieces** (0.3.0-beta.3).
   - **The problem:** 0.3.0-beta.2 drew a moving frame of 4.5–12 ms as one piece every second or
     third frame. A piece of work that runs past one refresh of the display holds up every frame

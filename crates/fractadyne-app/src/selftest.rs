@@ -712,7 +712,8 @@ impl FractadyneApp {
             // ~0.9–1.0 with the discard, 0.47 with the tile geometry on the RTX 3080 (a quarter of
             // 1024² sits at the occupancy knee, so a set cannot reach its bare 0.25 here; the live
             // frame's sets measured 0.3–0.4). Wall clock, submission to completion, best of three:
-            // the RX 6800 XT's GPU timestamps read the whole pass at 1.75 ms and a quarter at 79.
+            // the RX 6800 XT's GPU timestamps read a COLD whole pass (a new pipeline's first) at
+            // 1.75 ms and a quarter at 79 (warmed they agree with the wall — the checks below).
             const SPLIT_COST_N: u32 = 1024;
             let mut vp = Viewport::new(SPLIT_COST_N as f64, SPLIT_COST_N as f64);
             vp.center_x = fractadyne_core::parse_bf(SX).unwrap();
@@ -747,13 +748,13 @@ impl FractadyneApp {
             });
             // ⭐The PRICE's instrument. A live refresh is priced from GPU timestamps of its own pass
             // (`MandelbrotParams::live_timing`), so they must describe that pass. On the RX 6800 XT
-            // they read a whole 1024² pass at 1.75 ms whose split twin took ~190 ms by the wall
-            // clock, and its live readings come in two values whatever the pass carries (0.22 or
-            // 4.06 ms). Both pipelines the live view draws with — the full-screen triangle and the
-            // split tile geometry — timed both ways on the same pass, median of three after a
-            // warm-up: the timestamp over the wall, which also holds the submission, so a faithful
-            // one sits a little under 1. Without timestamps the live refresh never probes, and there
-            // is nothing to check.
+            // a COLD pass (a new pipeline's first) read 1.75 ms whose split twin took ~190 ms by
+            // the wall clock; warmed, this check reads 1.01 (triangle) and 1.00 (tiles) there, 0.99
+            // and 0.99 on the RTX 3080. Both pipelines the live view draws with — the full-screen
+            // triangle and the split tile geometry — timed both ways on the same pass, median of
+            // three after a warm-up: the timestamp over the wall, which also holds the submission,
+            // so a faithful one sits at or a little under 1. Without timestamps the live refresh
+            // never probes, and there is nothing to check.
             let median = |mut v: Vec<f64>| -> f64 {
                 v.sort_by(|a, b| a.total_cmp(b));
                 v.get(v.len() / 2).copied().unwrap_or(f64::NAN)

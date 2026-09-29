@@ -2383,8 +2383,9 @@ pub fn render_iter(
 /// and one set must cover only its share — and cost about that share.
 ///
 /// `iterate_ms` here is the WALL time of the passes, each from its submission to its completion
-/// (the pipeline is compiled before, the readback after): the RX 6800 XT's GPU timestamps timed a
-/// whole 1024² pass at 1.75 ms and one quarter of it at 79 ms, and do not describe their own pass.
+/// (the pipeline is compiled before, the readback after). On the RX 6800 XT the GPU timestamps of a
+/// COLD pass — the first of a new pipeline, which is all `render_iter` ever times — read a whole
+/// 1024² pass at 1.75 ms against ~190 ms; warmed (`time_iter_pass`) they agree with the wall within 1%.
 pub fn render_iter_split(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -2400,7 +2401,8 @@ pub fn render_iter_split(
 /// the queue, the pipeline built and warmed by one untimed pass first. `tiles` draws it through the
 /// split refresh's tile geometry (`vs_split_tiles`, every tile) instead of the full-screen triangle.
 /// For `--selftest`: the live refresh PRICES frames from these timestamps, so they must describe
-/// their own pass — the RX 6800 XT's read a 1024² pass at 1.75 ms whose split twin took 190 wall.
+/// their own pass. (The RX 6800 XT's read a COLD 1024² pass at 1.75 ms whose split twin took 190
+/// wall; warmed, 157.8 against 156.6.)
 pub fn time_iter_pass(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
