@@ -1217,9 +1217,6 @@ struct Perf {
     /// No live-refresh PROBE (the unpriced single pass) before this frame: one probe's reading
     /// must land before the next is tried, and an expensive one backs off.
     live_probe_after: [u64; 2],
-    /// The frame of the last live-refresh pass (priced or probe): a refresh dearer than one
-    /// displayed frame's share renders every `k`th frame, holding between (`LiveRefresh::Wait`).
-    live_last: [u64; 2],
     /// Probes since the last priced live frame: each doubles the wait for the next, so a view that
     /// measures dear (or a card whose readings never pair) backs off instead of flashing a shrunk
     /// probe every few frames.
@@ -2092,7 +2089,6 @@ impl Default for Perf {
             refresh_price: [None, None],
             full_pass: [[None; 8]; 2],
             live_probe_after: [0, 0],
-            live_last: [0, 0],
             live_probe_misses: [0, 0],
             last_iterate_ms: [0.0, 0.0],
             fe_budget_ok: [false, false],

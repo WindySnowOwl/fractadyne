@@ -68,10 +68,12 @@ pub(crate) struct IterUniforms {
     /// take them without moving a single existing field — this one struct is bound by every iterate
     /// pipeline in the app, the live view included.
     pub(crate) gather: [u32; 2],
-    /// `[tail_on, step_cap, pad, pad]`: 1 = the mode-2 df32 TAIL PHASE is enabled (`TAIL_DF32_MIN`
-    /// in the shader); `step_cap` > 0 stops each pixel of a mode-2 chunk pass after that many
-    /// executed steps (the export's step-bounded passes, beta.150; 0 everywhere else). A whole
-    /// 16-byte row, so Rust's `#[repr(C)]` size keeps matching WGSL's. See [`tail_word`].
+    /// `[tail_on, step_cap, split_n, split_j]`: 1 = the mode-2 df32 TAIL PHASE is enabled
+    /// (`TAIL_DF32_MIN` in the shader); `step_cap` > 0 stops each pixel of a mode-2 chunk pass after
+    /// that many executed steps (the export's step-bounded passes, beta.150; 0 everywhere else);
+    /// `split_n` > 1 makes `fs_iterate` render only checkerboard set `split_j` of `split_n`
+    /// ([`MandelbrotParams::split`]). A whole 16-byte row, so Rust's `#[repr(C)]` size keeps
+    /// matching WGSL's. See [`tail_word`].
     pub(crate) tail: [u32; 4],
 }
 
@@ -854,6 +856,8 @@ struct ViewResources {
     last_chunk: Option<[u32; 2]>,
     /// The budget-climb probe nonce rendered last (see `MandelbrotParams::probe_nonce`).
     last_probe: u32,
+    /// The split pass rendered last (see `MandelbrotParams::split`).
+    last_split: [u32; 2],
     /// Present-gating hold: a snapshot of the iteration G-buffer (tex, aux) taken at compose
     /// start, plus the (size, ss) it was built at — the color pass samples it while a composite
     /// builds invisibly in the live buffer. Dropped when a normal (ungated) frame renders.
@@ -915,6 +919,9 @@ struct ChunkState {
 
 struct Renderer {
     iter_pipeline: wgpu::RenderPipeline,
+    /// `fs_iterate` over a split refresh's tile geometry (`vs_split_tiles`; see
+    /// `MandelbrotParams::split`).
+    iter_split_pipeline: wgpu::RenderPipeline,
     color_pipeline: wgpu::RenderPipeline,
     /// Nearest-neighbour upscale of the old iteration/aux textures into a resized pair — runs once
     /// when a tiled settle grows the texture, so the display never drops to black mid-refine.
@@ -1290,6 +1297,19 @@ pub(crate) fn fullscreen_pipeline(
     formats: &[wgpu::TextureFormat],
     label: &str,
 ) -> wgpu::RenderPipeline {
+    raster_pipeline(device, shader, layout, "vs_main", fs_entry, formats, label)
+}
+
+/// [`fullscreen_pipeline`] with its own vertex stage (`vs_split_tiles`: a split refresh's tiles).
+pub(crate) fn raster_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    vs_entry: &str,
+    fs_entry: &str,
+    formats: &[wgpu::TextureFormat],
+    label: &str,
+) -> wgpu::RenderPipeline {
     let targets: Vec<Option<wgpu::ColorTargetState>> = formats
         .iter()
         .map(|&format| {
@@ -1305,7 +1325,7 @@ pub(crate) fn fullscreen_pipeline(
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
-            entry_point: Some("vs_main"),
+            entry_point: Some(vs_entry),
             buffers: &[],
             compilation_options: Default::default(),
         },
@@ -1337,7 +1357,9 @@ pub(crate) fn shader_module(device: &wgpu::Device) -> wgpu::ShaderModule {
 fn uniform_bgl_entry() -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding: 0,
-        visibility: wgpu::ShaderStages::FRAGMENT,
+        // The vertex stage too: a split refresh's tile geometry (`vs_split_tiles`) reads the
+        // resolution and the split from the iterate uniform.
+        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
         ty: wgpu::BindingType::Buffer {
             ty: wgpu::BufferBindingType::Uniform,
             has_dynamic_offset: false,
@@ -1674,6 +1696,10 @@ impl Renderer {
             device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
             "fractadyne.iter_pipeline",
         );
+        let iter_split_pipeline = raster_pipeline(
+            device, &shader, &iter_layout, "vs_split_tiles", "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+            "fractadyne.iter_split_pipeline",
+        );
         let color_pipeline = fullscreen_pipeline(
             device, &shader, &color_layout, "fs_color", &[target_format],
             "fractadyne.color_pipeline",
@@ -1772,6 +1798,7 @@ impl Renderer {
 
         Self {
             iter_pipeline,
+            iter_split_pipeline,
             color_pipeline,
             seed_pipeline,
             iter_bgl,
@@ -1848,6 +1875,7 @@ impl ViewResources {
             chunk_state: None,
             last_chunk: None,
             last_probe: 0,
+            last_split: [0, 0],
             hold: None,
             accum: None,
             content_stamp: None,
@@ -2100,6 +2128,13 @@ pub struct MandelbrotParams {
     pub live_ms: Option<Arc<std::sync::atomic::AtomicU64>>,
     pub live_steps: Option<Arc<std::sync::atomic::AtomicU64>>,
     pub live_frame: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// `[passes, this pass]` of a SPLIT live refresh: a single pass (no chunk range, no tile) that
+    /// renders only checkerboard set `split[1]` of `split[0]` sets of 16-texel tiles, over the
+    /// texture's existing content (it loads rather than clears), so `split[0]` consecutive passes
+    /// at one view compose the whole frame, each costing an even share of it. `split[0]` ≤ 1 = the
+    /// whole frame, as always. Part of the re-render test, like `tile` and `chunk_range`: every
+    /// pass of one split has the same view key.
+    pub split: [u32; 2],
     /// The app's clock (µs), for the timing witness. `None` = no witness stamp and no extra poll.
     pub now_us: Option<fn() -> u64>,
     /// This dispatch's nominal cost (`px x ss^2 x iterations`; for a tile, the TILE's px). Handed
@@ -2342,6 +2377,7 @@ impl CallbackTrait for MandelbrotParams {
         let iter_bgl = &r.iter_bgl;
         let color_bgl = &r.color_bgl;
         let iter_pipeline = &r.iter_pipeline;
+        let iter_split_pipeline = &r.iter_split_pipeline;
         let seed_pipeline = &r.seed_pipeline;
         // Mode 2 (floatexp) chunks through its OWN four-target pipelines; every other mode uses
         // the three-target pair. Resolved once here so the chunk block below stays mode-agnostic —
@@ -2619,7 +2655,8 @@ impl CallbackTrait for MandelbrotParams {
             && (view.last_iter_key != Some(key)
                 || view.last_tile != self.tile
                 || view.last_chunk != self.chunk_range
-                || view.last_probe != self.probe_nonce)
+                || view.last_probe != self.probe_nonce
+                || view.last_split != self.split)
         {
             // Per-texel step *mantissa*: span_mantissa (= span · 2^-delta_exp, already O(1))
             // divided by the texture dim. The shared exponent carries the true scale, so no
@@ -2669,6 +2706,12 @@ impl CallbackTrait for MandelbrotParams {
                 gather: [0; 2],
                 tail: tail_word(),
             };
+            // A split pass is a single full-frame pass by definition (`MandelbrotParams::split`).
+            let split_on = self.split[0] > 1 && self.chunk_range.is_none() && self.tile.is_none();
+            if split_on {
+                iu.tail[2] = self.split[0];
+                iu.tail[3] = self.split[1];
+            }
             // Effective chunk: requested AND the resumable pipelines exist (the device granted the
             // 48-byte color-attachment limit). A device that couldn't grant it clamps THIS dispatch
             // to the app's per-frame step instead — a capped image beats a lost device, and the
@@ -2835,7 +2878,8 @@ impl CallbackTrait for MandelbrotParams {
                 // A tile must compose with the tiles (and seed) already in the texture, so it loads
                 // rather than clears. Full frames clear, as before. (`view.rendered` guards the
                 // cold-start corner: a brand-new texture is zero-initialized either way.)
-                let load = if tile_px.is_some() && view.rendered {
+                // …and so must a split pass, over the sets its sibling passes wrote.
+                let load = if (tile_px.is_some() || split_on) && view.rendered {
                     wgpu::LoadOp::Load
                 } else {
                     wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
@@ -2874,9 +2918,17 @@ impl CallbackTrait for MandelbrotParams {
                 if let Some(t) = tile_px {
                     pass.set_scissor_rect(t[0], t[1], t[2], t[3]);
                 }
-                pass.set_pipeline(iter_pipeline);
                 pass.set_bind_group(0, &view.iter_bg, &[]);
-                pass.draw(0..3, 0..1);
+                if split_on {
+                    // One instanced quad per 16-texel tile of the texture; the vertex stage drops
+                    // the tiles of the other sets (`vs_split_tiles`).
+                    let tiles = size[0].div_ceil(16) * size[1].div_ceil(16);
+                    pass.set_pipeline(iter_split_pipeline);
+                    pass.draw(0..6, 0..tiles);
+                } else {
+                    pass.set_pipeline(iter_pipeline);
+                    pass.draw(0..3, 0..1);
+                }
             }
             if let Some(k) = clock_k {
                 view.pass_clock.as_ref().unwrap().marker_pass(encoder, PASS_CLOCK_Q * k as u32 + 4);
@@ -2948,7 +3000,10 @@ impl CallbackTrait for MandelbrotParams {
                     0,
                     (COUNTER_SLOTS * 4) as u64,
                 );
-                view.counter_read.px = (size[0] as u64) * (size[1] as u64);
+                // A split pass counts only its own set's pixels, so its fractions (capped pixels,
+                // escaped pixels) are taken over that set: an even share of the frame.
+                view.counter_read.px = (size[0] as u64) * (size[1] as u64)
+                    / if split_on { self.split[0] as u64 } else { 1 };
                 view.counter_read.max_iter = self.max_iter;
                 view.counter_read.norm_sig = self.norm_sig;
                 view.counter_read.norm_complete = self.norm_complete;
@@ -2961,6 +3016,7 @@ impl CallbackTrait for MandelbrotParams {
             view.last_tile = self.tile;
             view.last_chunk = self.chunk_range;
             view.last_probe = self.probe_nonce;
+            view.last_split = self.split;
             view.last_ss = ss; // remember the ss this texture was built at (for reprojection)
             view.rendered = true; // the texture now holds a real frame (survives orbit swaps)
             // Provenance of what now sits in the texture. A FULL-frame pass rewrites every pixel,

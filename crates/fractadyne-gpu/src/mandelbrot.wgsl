@@ -480,8 +480,11 @@ struct IterU {
     // steps) in this pass; 0 = no cap. The step-bounded export passes (beta.150) set it. A former
     // padding word of the tail row, so no field moved (see `gather_w` above for why that matters).
     step_cap: u32,
-    tail_pad1: u32,
-    tail_pad2: u32,
+    // `fs_iterate` only: a SPLIT live refresh (`split_n` > 1) renders the pixels of one checkerboard
+    // set of `SPLIT_TILE`-texel tiles per pass — set `split_j` of `split_n` — and leaves the rest of
+    // the texture as it is. The last two padding words of the tail row, so no field moved.
+    split_n: u32,
+    split_j: u32,
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo). When BLA is on,
@@ -1513,6 +1516,41 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
 fn fs_iterate(in: VsOut) -> FragOut {
     // Global texel coordinate = this tile's offset + local fragment position.
     return iterate_at(iu.px_offset.x + in.pos.x, iu.px_offset.y + in.pos.y);
+}
+
+// Side of a split-refresh tile in texels. A GPU shades 2×2 quads packed into warps that cover a
+// small screen-aligned block, so a split by ROWS would leave every warp half masked and each pass
+// as slow as the whole frame; 16-texel tiles keep a warp's pixels in one pass, and are fine enough
+// that each pass holds an even share of the picture's cost whatever its content.
+const SPLIT_TILE: u32 = 16u;
+
+// A SPLIT live refresh's geometry (`split_n` > 1, with `fs_iterate`): one quad per SPLIT_TILE tile,
+// drawn instanced over the whole grid, and a tile outside set `split_j` collapses to a point, which
+// rasterizes nothing. The pixels that do rasterize are `fs_iterate`'s own, bit for bit.
+// ⛔NOT a `discard` in the fragment stage: it only DEMOTES the invocation to a helper, which (in the
+// driver tested) went on through the whole iteration loop — a quarter-set pass measured as dear as
+// the full frame. Geometry that never reaches the rasterizer costs nothing.
+@vertex
+fn vs_split_tiles(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {
+    let res = vec2<u32>(iu.res);
+    let cols = (res.x + SPLIT_TILE - 1u) / SPLIT_TILE;
+    let t = vec2<u32>(ii % cols, ii / cols);
+    var out: VsOut;
+    out.uv = vec2<f32>(0.0, 0.0);
+    if ((t.x + t.y) % max(iu.split_n, 1u) != iu.split_j) {
+        out.pos = vec4<f32>(-2.0, -2.0, 0.0, 1.0); // all six corners at one point: no area
+        return out;
+    }
+    var corner = array<vec2<u32>, 6>(
+        vec2<u32>(0u, 0u), vec2<u32>(1u, 0u), vec2<u32>(0u, 1u),
+        vec2<u32>(0u, 1u), vec2<u32>(1u, 0u), vec2<u32>(1u, 1u),
+    );
+    // The tile's corner in texels, clamped to the texture on the last row and column.
+    let p = vec2<f32>(min((t + corner[vi]) * SPLIT_TILE, res));
+    let r = vec2<f32>(res);
+    out.pos = vec4<f32>(p.x / r.x * 2.0 - 1.0, 1.0 - p.y / r.y * 2.0, 0.0, 1.0);
+    out.uv = p / r;
+    return out;
 }
 
 // ---------------- scattered-gather iterate (multi-reference glitch correction) ----------------

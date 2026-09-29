@@ -2372,6 +2372,31 @@ pub fn render_iter(
     queue: &wgpu::Queue,
     req: &ExportRequest,
 ) -> Result<ExportResult, GpuError> {
+    render_iter_passes(device, queue, req, None)
+}
+
+/// `render_iter` drawn as the live view's SPLIT refresh draws a frame (`MandelbrotParams::split`):
+/// `k` passes of `fs_iterate` over `vs_split_tiles`, one checkerboard set of 16-texel tiles each,
+/// each its own submission, the texture cleared before the first and kept after. `only` renders
+/// just that one set over the cleared texture. For `--selftest`: all `k` sets must compose the
+/// frame bit for bit, and one set must cover only its share — and cost about that share, which is
+/// what `iterate_ms` measures for a single set (0.0 for a full split render).
+pub fn render_iter_split(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+    k: u32,
+    only: Option<u32>,
+) -> Result<ExportResult, GpuError> {
+    render_iter_passes(device, queue, req, Some((k.max(2), only)))
+}
+
+fn render_iter_passes(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+    sets: Option<(u32, Option<u32>)>,
+) -> Result<ExportResult, GpuError> {
     let max_dim = device.limits().max_texture_dimension_2d;
     let w = req.width.clamp(1, max_dim);
     let h = req.height.clamp(1, max_dim);
@@ -2383,10 +2408,17 @@ pub fn render_iter(
         bind_group_layouts: &[&iter_bgl],
         push_constant_ranges: &[],
     });
-    let iter_pipeline = fullscreen_pipeline(
-        device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
-        "selftest.iter_pipeline",
-    );
+    let iter_pipeline = if sets.is_some() {
+        crate::raster_pipeline(
+            device, &shader, &iter_layout, "vs_split_tiles", "fs_iterate",
+            &[ITER_FORMAT, ITER_FORMAT], "selftest.iter_split_pipeline",
+        )
+    } else {
+        fullscreen_pipeline(
+            device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+            "selftest.iter_pipeline",
+        )
+    };
 
     let iter_uniform = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("selftest.iter_uniform"),
@@ -2418,7 +2450,7 @@ pub fn render_iter(
     };
     let (sxh, sxl) = split(req.span_mantissa.x / w as f64);
     let (syh, syl) = split(req.span_mantissa.y / h as f64);
-    let iu = IterUniforms {
+    let mut iu = IterUniforms {
         step: [sxh, sxl, syh, syl],
         ref_offset: req.ref_offset.to_array(),
         center: req.center,
@@ -2492,7 +2524,9 @@ pub fn render_iter(
     // Iterate-pass timestamps (D3.1/F14): render_iter is the primitive under the
     // multi-reference glitch loop — the app's worst historical time sink ran on a path
     // with zero instrumentation.
-    let ts = if device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+    // Timed: the one pass, or the one set of a single-set split render (the selftest's cost claim).
+    let timed = sets.is_none_or(|(_, only)| only.is_some());
+    let ts = if timed && device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
         let set = device.create_query_set(&wgpu::QuerySetDescriptor {
             label: Some("selftest.timestamps"),
             ty: wgpu::QueryType::Timestamp,
@@ -2516,29 +2550,73 @@ pub fn render_iter(
     };
     let mut enc =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("selftest.enc") });
-    {
-        let attach = |v| Some(wgpu::RenderPassColorAttachment {
-            view: v,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                store: wgpu::StoreOp::Store,
-            },
-        });
-        let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("selftest.iter_pass"),
-            color_attachments: &[attach(&main_copy_view), attach(&aux_view)],
-            depth_stencil_attachment: None,
-            timestamp_writes: ts.as_ref().map(|(set, _, _)| wgpu::RenderPassTimestampWrites {
-                query_set: set,
-                beginning_of_pass_write_index: Some(0),
-                end_of_pass_write_index: Some(1),
-            }),
-            occlusion_query_set: None,
-        });
-        pass.set_pipeline(&iter_pipeline);
-        pass.set_bind_group(0, &iter_bg, &[]);
-        pass.draw(0..3, 0..1);
+    match sets {
+        None => {
+            let attach = |v| Some(wgpu::RenderPassColorAttachment {
+                view: v,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            });
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("selftest.iter_pass"),
+                color_attachments: &[attach(&main_copy_view), attach(&aux_view)],
+                depth_stencil_attachment: None,
+                timestamp_writes: ts.as_ref().map(|(set, _, _)| wgpu::RenderPassTimestampWrites {
+                    query_set: set,
+                    beginning_of_pass_write_index: Some(0),
+                    end_of_pass_write_index: Some(1),
+                }),
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&iter_pipeline);
+            pass.set_bind_group(0, &iter_bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        Some((k, only)) => {
+            // One submission per set: the uniform carries the set, and a queued write lands before
+            // the submission after it (the readback encoder above is submitted after all of them).
+            let tiles = w.div_ceil(16) * h.div_ceil(16);
+            let sets: Vec<u32> = only.map_or_else(|| (0..k).collect(), |j| vec![j]);
+            for (n, j) in sets.into_iter().enumerate() {
+                iu.tail[2] = k;
+                iu.tail[3] = j;
+                queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
+                let mut e = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("selftest.split_enc"),
+                });
+                {
+                    let load = if n == 0 {
+                        wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+                    } else {
+                        wgpu::LoadOp::Load
+                    };
+                    let attach = |v| Some(wgpu::RenderPassColorAttachment {
+                        view: v,
+                        resolve_target: None,
+                        ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
+                    });
+                    let mut pass = e.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("selftest.iter_split_pass"),
+                        color_attachments: &[attach(&main_copy_view), attach(&aux_view)],
+                        depth_stencil_attachment: None,
+                        // `ts` exists only for a single-set render: its one pass is the one timed.
+                        timestamp_writes: ts.as_ref().map(|(set, _, _)| wgpu::RenderPassTimestampWrites {
+                            query_set: set,
+                            beginning_of_pass_write_index: Some(0),
+                            end_of_pass_write_index: Some(1),
+                        }),
+                        occlusion_query_set: None,
+                    });
+                    pass.set_pipeline(&iter_pipeline);
+                    pass.set_bind_group(0, &iter_bg, &[]);
+                    pass.draw(0..6, 0..tiles);
+                }
+                queue.submit(std::iter::once(e.finish()));
+            }
+        }
     }
     if let Some((set, resolve, read)) = &ts {
         enc.resolve_query_set(set, 0..2, resolve, 0);

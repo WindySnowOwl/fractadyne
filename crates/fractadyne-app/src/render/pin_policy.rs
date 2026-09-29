@@ -21,6 +21,8 @@ fn pin() -> PinnedRefresh {
         orbit_len: 868,
         ref_pt: None,
         started_frame: 1_000,
+        split: 0,
+        split_next: 0,
     }
 }
 
@@ -183,6 +185,51 @@ fn every_abandon_reason_fires_and_is_ordered_after_adopt() {
         // The same violation with a COMPLETE cursor still adopts.
         i.cursor = 1_000_000;
         assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Adopt, "adopt outranks {want:?}");
+    }
+}
+
+fn split_pin(passes: u32, next: u32) -> PinnedRefresh {
+    PinnedRefresh { split: passes, split_next: next, ..pin() }
+}
+
+#[test]
+fn a_split_pin_adopts_when_every_set_has_run_whatever_else_holds() {
+    // Complete by construction — no reading to wait for (none of this pin's content has come
+    // back), no cursor (the walk's progress slot is irrelevant to it) — and, like a finished walk,
+    // it outranks every abandon: the texture is whole.
+    let mut i = inputs();
+    i.detail = None;
+    i.reading_final = false;
+    i.cursor = 0;
+    i.interacting = false;
+    i.drift_oct = 5.0;
+    i.orbit_id = 99;
+    i.frame_idx = 1_000 + crate::tunables::PIN_MAX_FRAMES + 1;
+    assert_eq!(pin_verdict(&split_pin(3, 3), &i), PinVerdict::Adopt);
+    // One set short is not complete.
+    assert_eq!(pin_verdict(&split_pin(3, 2), &inputs()), PinVerdict::Continue);
+}
+
+#[test]
+fn a_split_pin_keeps_the_walk_abandons_but_not_the_orbit_one() {
+    // A split pass keeps no state for the next: a reference installed between passes only changes
+    // which valid orbit the later sets use, so it continues where a walk would stop.
+    let mut i = inputs();
+    i.orbit_id = 8;
+    i.orbit_len = 100;
+    assert_eq!(pin_verdict(&split_pin(4, 1), &i), PinVerdict::Continue);
+    let cases: &[(&dyn Fn(&mut PinInputs), PinStop)] = &[
+        (&|i| i.interacting = false, PinStop::Settled),
+        (&|i| i.panel = [961, 540], PinStop::Panel),
+        (&|i| i.caller_reproject = true, PinStop::CallerReproject),
+        (&|i| i.drift_oct = 2.1, PinStop::Drift),
+        (&|i| i.pan_spans = 1.6, PinStop::Pan),
+        (&|i| i.frame_idx = 1_000 + crate::tunables::PIN_MAX_FRAMES + 1, PinStop::Age),
+    ];
+    for (mutate, want) in cases {
+        let mut i = inputs();
+        mutate(&mut i);
+        assert_eq!(pin_verdict(&split_pin(4, 1), &i), PinVerdict::Stop(*want), "expected {want:?}");
     }
 }
 
