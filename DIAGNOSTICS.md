@@ -56,7 +56,7 @@ dir, logs included.
 | `ref` | every reference build (fresh *and* reused/extended) | Orbit length/iterations/precision, escaped/partial, SA skip, BLA nodes, and the build-time split `orbit_ms`/`sa_ms`/`bla_ms` + `pick_reference` scoring ms (scoring is parallel across all cores since 0.2.40-beta.7 — ~0.6 s at 1e1216× where it was ~7.6 s); also `lookahead install:` lines when a playback-prefetched reference installs. Every build line is tagged with its ORIGIN — `[live]` (reactive), `[lookahead]`, `[hold]`, `[export]`, `[test]` — without which a log of four concurrent builders cannot be read at all (two e72 root-cause attempts died on exactly that ambiguity). Reactive spawns also log `interacting`, `cap_now`, the installed `orbit_len`, and which of the three triggers (`out_of_view`/`needs_quality`/`bla_out_of_range`) fired; during playback, `holding=` transitions mark each hold's boundary |
 | `gpu` | live floatexp budget controller | Measured iterate ms per dispatch, budget grow/shrink, convergence; `aimd:` lines show the motion-res controller's real-frame cost signal + resolution decisions |
 | `tile` | live floatexp frame sizing | Per-frame resolution/ss/iterations/steps vs budget, reprojection, tiled-settle grid state |
-| `live` | every moving df32 frame the live-refresh rule does not decline, and every price | `live-refresh … Priced/Wait/Probe/Reprobe steps=S of N pred_ms=P scale=K since=F price_mode=M probe_cap=C` (the verdict, the steps it may render after the ceiling fit, the predicted GPU ms, the smoothness scale, frames since the last live one); `refresh-price … from=F Xms steps=S ns/step=Y` when a live pass's own timing prices the view. Low volume, so it does not slow the frames it describes the way `tile` does |
+| `live` | every moving df32 frame the live-refresh rule does not decline, every price, every split pass | `live-refresh … Priced/Split(k)/Probe/Reprobe(k) steps=S of N pred_ms=P scale=K price_mode=M probe_cap=C` (the verdict, the steps it may render after the ceiling fit, the predicted GPU ms, the smoothness scale); `refresh-price … from=F Xms steps=S ns/step=Y` when a live pass's own timing prices the view (a split pass carries its set's share of the steps); `split v0 f… pass j/k [start]` and `split v0 f… adopt k passes from f… lag_oct=L` for a split refresh. Low volume, so it does not slow the frames it describes the way `tile` does |
 | `glitch` | multi-reference correction | Per-run summary: references used, residual glitched px, elapsed |
 | `dpi` | every real change of scale factor or window size | Scale factor, logical size and **physical** size, before → after, one line per change (jitter suppressed). For the monitor-drag resize report: a healthy DPI transition HOLDS the logical size and rescales the physical one by exactly the new factor; the defect is the physical size ratcheting up beyond that, and the upstream reports describe the scale factor flipping repeatedly (1.0 ↔ 1.75) as it happens, which shows here as a burst of lines |
 | `idle` | every frame, while the performance overlay is on | Why the app is still drawing: the quiescence verdict and each input to it (animation/playback clock, per-view tiled-settle and chunk-walk pending, reference build in flight, frames since each view last dispatched). ⭐Answers "a settled app is still burning GPU — what is holding it awake?", which no other channel can: the 2026-09-04 climb-probe loop dispatched a real 36.9 ms pass every 3 frames forever while `tile` reported `iterates=false` (true — the iterate KEY was deduped; the probe re-keys by nonce) |
@@ -295,14 +295,19 @@ one `steps pass N cap=C wall=W running=R` line per pass. Pictures are the same w
 frame is split (selftest `occupancy tile: step-bounded passes resume bit-identically`). Modes 0/1
 keep their tiles. — and `LIVE_REFRESH` (default 1 from 0.3.0-beta.2; `0` = every moving
 perturbation frame holds and refreshes through the pinned chunk walk, as before): a moving df32
-frame whose whole refresh has been MEASURED cheap renders in one pass and is shown live. The price
-is the GPU time of a recent live pass of the same view (same mode, navigation epoch and depth
-window), timed by its own timer; a refresh up to 4.5 ms renders every frame, a dearer one up to
-12 ms every `k`th frame at full size under "Prefer detail while zooming" (the frames between
-reproject it) or every frame shrunk to 4.5 ms (down to 0.75 scale) without it. A live frame never
-exceeds the dispatch ceiling. With no price (a mode switch, a jump), one probe sized to a 40 ms
-share of the ceiling measures it, then one full-size pass. `FRACTADYNE_TRACE=live` shows every
-verdict and price.
+frame whose whole refresh has been MEASURED cheap renders live. The price is the GPU time of a
+recent live pass of the same view (same mode, navigation epoch and depth window), timed by its own
+timer; a refresh up to 4.5 ms renders every frame in one pass. From 0.3.0-beta.3 a dearer one, up
+to 36 ms, renders as a SPLIT: `k` = ⌈cost / 4.5 ms⌉ passes (at most 8), one per frame, each one
+checkerboard set of 16-texel tiles of the frame at the view the split started at, the display
+serving the last complete frame (reprojected to the live view) until the last set has run.
+Without "Prefer detail while zooming" a frame that shrinks to 4.5 ms at no less than 0.75 scale
+renders every frame that way instead. A live frame never exceeds the dispatch ceiling. With no
+price (a mode switch, a jump), one probe sized to a 40 ms share of the ceiling measures it, then
+one full-size split. `FRACTADYNE_TRACE=live` shows every verdict (`Priced`, `Split(k)`, `Probe`,
+`Reprobe(k)`), every price, and each split's passes (`split v0 f… pass j/k [start]`, `… adopt k
+passes from f… lag_oct=…`). Selftest group `live-split`: the sets compose the frame bit for bit,
+one set writes only its tiles, and one set costs about its share (wall-clock timed).
 
 - **Not a configuration surface.** The defaults are the only tested path: the self-test, the
   goldens, `--bench-matrix` and `--livetest` all assume them. `--selftest` carries a check that

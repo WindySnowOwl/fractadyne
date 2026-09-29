@@ -59,6 +59,36 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Detailed zooms without the stutter: a dear frame is drawn in pieces** (0.3.0-beta.3).
+  - **The problem:** 0.3.0-beta.2 drew a moving frame of 4.5–12 ms as one piece every second or
+    third frame. A piece of work that runs past one refresh of the display holds up every frame
+    behind it, so zooms kept their detail but stuttered: two to three times as many frames took
+    longer than 20 ms.
+  - **The change:** such a frame is now drawn in 2 to 8 pieces, one per displayed frame, each
+    taking no more than 4.5 ms. Each piece is one set of 16-pixel squares spread in a checkerboard
+    over the whole picture, so every piece costs an even share whatever the picture holds. Until
+    the last piece lands, the screen shows the previous complete frame following the zoom, as
+    before. Frames up to 36 ms are now drawn this way, where 12 ms was the limit. Without "Prefer
+    detail while zooming", a frame that fits 4.5 ms at a slightly lower resolution is still drawn
+    that way instead, a new picture every frame.
+  - **How much**, the same 80-octave glide as for beta.2 (1280×800, 120 Hz, RTX 3080, two runs,
+    "Prefer detail while zooming" on), against 0.3.0-beta.1:
+    - from 1e4× to 1e6×, including the switch: stretched 1.12× on average instead of 1.60×;
+    - from 1e6× to 1e12×: 1.06–1.09× instead of 1.54–1.60×, at 120 frames a second instead of
+      107–113, and no frames over 20 ms (beta.1: 33, beta.2: about 80);
+    - from 1e12× to 1e18×: 1.19× instead of 1.65×, at 120 frames a second instead of 103, 2 or 3
+      frames over 20 ms instead of 43;
+    - past 1e18×: 1.56× instead of 1.73×, 114 frames a second instead of 109, about 20 frames over
+      20 ms instead of 57;
+    - with "Prefer detail while zooming" off: 1.02–1.09× instead of 1.46–1.83×.
+    - The cost that remains is at the switch from the direct mode, 6 to 11 frames over 20 ms where
+      beta.1 had none, while the first measurements of the new mode are taken.
+  - The graphics program draws the pieces as geometry: telling the pixels outside a piece to skip
+    themselves kept every one of them running, and each piece cost as much as the whole frame.
+    New self-tests: the pieces make the same picture as one pass, bit for bit, in 2, 3, 4 and 8
+    pieces; one piece draws only its own squares; and one piece of four costs well under the whole
+    frame (0.45 of it on an RTX 3080, 0.39 on an RX 6800 XT).
+
 - **Shallow perturbation zooms keep their detail while moving** (0.3.0-beta.2).
   - **The problem:** past about 1e4×, where the direct mode ends, a moving view held its last
     complete frame and stretched it to follow the zoom, rebuilding it a piece at a time over a
