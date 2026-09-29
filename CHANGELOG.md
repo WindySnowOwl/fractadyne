@@ -59,6 +59,23 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Live refresh stays out of the way where it cannot help** (0.3.0-beta.8 and beta.9).
+  - **The problem:** on the RX 6800 XT at 1280×800 no frame can be drawn in cheaper pieces: every
+    piece would be under the size at which that card is fully busy. The live refresh still took
+    test frames to measure each view, and zooms there had 6–14 frames over 25 ms instead of
+    beta.3's 1–5, with no live frame to show for it.
+  - **The change:** a frame too small to split into pieces of at least that size is never
+    measured, re-measured or split. A cost it already knows without measuring (from the settled
+    frame a zoom starts on) still lets a cheap frame be drawn live. Elsewhere, a view measured far
+    too costly for the card is no longer re-measured as the zoom goes deeper.
+    `FRACTADYNE_TRACE=live` names the new reasons, `NoSplitRoom` and `BackedOff`.
+  - **Also fixed:** during a split refresh the frame budget mistook its own timings for silence
+    and fell back to wall-clock timing several times a minute; one RTX 3080 test run failed its
+    log check for it. It now happens once per run, at the start, as in every build.
+  - **How much:** the RX 6800 XT matches beta.3 again (1e6× to 4e9×, four runs each, interleaved:
+    90th-percentile frame 19.5–19.7 ms for both, 2–5 frames over 25 ms for both). RTX 3080 glides
+    are unchanged.
+
 - **Pieces sized to what the graphics card can actually use** (0.3.0-beta.5 to beta.7).
   - **The problem:** a graphics card is only fully busy above a certain number of pixels (about
     262,000 on the RTX 3080, 524,000 on the RX 6800 XT). A piece of a split frame smaller than that
