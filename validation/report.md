@@ -1,7 +1,7 @@
 # Fractadyne validation report
 
-- **Version:** 0.3.0-beta.1 (build 3746, ge195f03)
-- **Generated:** 2026-09-29 02:13:05 UTC (unix 1790647985)
+- **Version:** 0.3.0-beta.9 (build 3826, g38eb213)
+- **Generated:** 2026-09-29 20:41:04 UTC (unix 1790714464)
 - **GPU:** NVIDIA GeForce RTX 3080
 - **CPU:** AMD Ryzen 9 3950X 16-Core Processor (16 cores / 32 threads, L2 8192 KB, L3 65536 KB)
 - **OS:** windows / x86_64
@@ -24,16 +24,24 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | IterChunk | chunked render is bit-identical | mode2 corpus07 1.3e30×, 21k iter, 7 passes | mode 2 — 0 texels differ (max Δ 0.000e0), bla_skip 124, rebase 187097 | 0 texels differ (mode 2: and BLA engaged) | ✅ PASS |
 | IterChunk | chunked render is bit-identical | mode2 nucleus 1.3e30× (interior), 21k iter, 7 passes | mode 2 — 0 texels differ (max Δ 0.000e0), bla_skip 12325890, rebase 361830 | 0 texels differ (mode 2: and BLA engaged) | ✅ PASS |
 | IterChunk | chunked render is bit-identical | mode2 97-sample ref (orbit wraps), 21k iter, chunk 2600 | mode 2 — 0 texels differ (max Δ 0.000e0), bla_skip 0, rebase 1790800 | 0 texels differ (mode 2: and BLA engaged) | ✅ PASS |
-| IterChunk | tiled chunked export is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, colored | 0 texels differ; 16 tiles; max dispatch 4ms vs control 4ms | 0 texels differ | ✅ PASS |
+| LiveSplit | split passes compose the frame bit for bit (df32 1e8x) | 220×220 (not a multiple of 16), 20,000 iter, mode 0 | texels differing from one pass — k=2: 0, k=3: 0, k=4: 0, k=8: 0 | 0 at every k, in the named mode | ✅ PASS |
+| LiveSplit | one split set writes only its own tiles (df32 1e8x) | 220×220, set 1 of 4 | 12288 texels written of 12288 in set 1 of 4; 0 misplaced | its tiles' texels, equal to one pass; nothing else | ✅ PASS |
+| LiveSplit | split passes compose the frame bit for bit (direct 3e3x) | 220×220 (not a multiple of 16), 20,000 iter, mode 1 | texels differing from one pass — k=2: 0, k=3: 0, k=4: 0, k=8: 0 | 0 at every k, in the named mode | ✅ PASS |
+| LiveSplit | one split set writes only its own tiles (direct 3e3x) | 220×220, set 1 of 4 | 12288 texels written of 12288 in set 1 of 4; 0 misplaced | its tiles' texels, equal to one pass; nothing else | ✅ PASS |
+| LiveSplit | one split set costs about its share of the pass | 1024×1024 df32 1e8x, set 1 of 4, wall, best of 3 | one set 33.54 ms against every tile 68.13 ms = 0.49 | < 0.6 of every tile (0.25 = exactly its share) | ✅ PASS |
+| LiveSplit | GPU timestamps describe their own pass (full-screen triangle) | 1024×1024 df32 1e8x, one pass, median of 3 | timestamp 65.55 ms against wall 67.19 ms = 0.98 | timestamp 0.5–1.05 of the wall | ✅ PASS |
+| LiveSplit | GPU timestamps describe their own pass (split tile geometry) | 1024×1024 df32 1e8x, one pass, median of 3 | timestamp 70.31 ms against wall 71.37 ms = 0.99 | timestamp 0.5–1.05 of the wall | ✅ PASS |
+| LiveSplit | the split tile geometry costs what the full-screen pass does | 1024×1024 df32 1e8x, every tile, wall, median of 3 | tiles 71.37 ms against the triangle 67.19 ms = 1.06 | ≤ 1.3 | ✅ PASS |
+| IterChunk | tiled chunked export is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, colored | 0 texels differ; 16 tiles; max dispatch 3ms vs control 4ms | 0 texels differ | ✅ PASS |
 | IterChunk | tiled chunked iter buffer is bit-identical | corpus07 1e30x, 4M iter, 16 tiles, raw | 0 texels differ | 0 texels differ | ✅ PASS |
 | IterChunk | occupancy tile: step-bounded passes resume bit-identically | corpus07 1e30x, 4M iter, 512px in one tile | 0 texels differ; 1 tile(s), 2 passes; largest pass 599785472 pixel-steps (ceiling 600000000) | 0 texels differ, 1 tile, passes > tiles, pass <= ceiling | ✅ PASS |
-| RefReuse | a reused reference renders the same as a fresh pick | corpus07 1e30x, 200k iter, extend vs fresh pick | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 183ms fresh vs 153ms extend | reuse engaged AND 0 texels differ | ✅ PASS |
-| RefOverlap | overlapped pick + build is byte-identical: bench-10 centre @2^150 (centre, short escaper) | 250000 iter, sequential vs overlapped fresh build | identical; len=9736 sa_skip=4158 sa=walk/overlap centre build=centre (94 ms sequential, 55 ms overlapped) | point, orbit, series skip, BLA, precision, tail all identical | ✅ PASS |
-| RefOverlap | overlapped pick + build is byte-identical: bench 6.6e43 (short escaper) | 60000 iter, sequential vs overlapped fresh build | identical; len=1429 sa_skip=1221 sa=walk/walk centre build=discarded (31 ms sequential, 32 ms overlapped) | point, orbit, series skip, BLA, precision, tail all identical | ✅ PASS |
-| RefOverlap | overlapped pick + build is byte-identical: corpus07 1e30 (survivor) | 200000 iter, sequential vs overlapped fresh build | identical; len=200001 sa_skip=0 sa=none/none centre build=centre (414 ms sequential, 320 ms overlapped) | point, orbit, series skip, BLA, precision, tail all identical | ✅ PASS |
+| RefReuse | a reused reference renders the same as a fresh pick | corpus07 1e30x, 200k iter, extend vs fresh pick | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 235ms fresh vs 159ms extend | reuse engaged AND 0 texels differ | ✅ PASS |
+| RefOverlap | overlapped pick + build is byte-identical: bench-10 centre @2^150 (centre, short escaper) | 250000 iter, sequential vs overlapped fresh build | identical; len=9736 sa_skip=4158 sa=walk/overlap centre build=centre (125 ms sequential, 67 ms overlapped) | point, orbit, series skip, BLA, precision, tail all identical | ✅ PASS |
+| RefOverlap | overlapped pick + build is byte-identical: bench 6.6e43 (short escaper) | 60000 iter, sequential vs overlapped fresh build | identical; len=1429 sa_skip=1221 sa=walk/walk centre build=discarded (35 ms sequential, 42 ms overlapped) | point, orbit, series skip, BLA, precision, tail all identical | ✅ PASS |
+| RefOverlap | overlapped pick + build is byte-identical: corpus07 1e30 (survivor) | 200000 iter, sequential vs overlapped fresh build | identical; len=200001 sa_skip=0 sa=none/none centre build=centre (551 ms sequential, 335 ms overlapped) | point, orbit, series skip, BLA, precision, tail all identical | ✅ PASS |
 | RefOverlap | the overlap engaged (centre build + parallel series skip used) | across the views above | engaged=true | at least one view took both from the overlap | ✅ PASS |
-| OrbitCache | an orbit from the disk cache renders the same as a fresh pick | corpus07 1e30x, 200k iter; written, found, loaded, extended; then unaided | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 241ms fresh vs 189ms extend; unaided, the worker served len=200001 from disk in 76ms (1 entries, 3.1 MB) | found AND reuse engaged AND 0 texels differ AND the unaided worker hit | ✅ PASS |
-| View format | a thumbnail borrows the live reference, never builds one | 1e30x, 128x96, ss=2; refused with none resident, then borrowed | refused in 0.3ms; borrowed and rendered 128x96 in 91ms; 53.6 KB of base64 | None when nothing is resident; a real 128x96 when it is | ✅ PASS |
+| OrbitCache | an orbit from the disk cache renders the same as a fresh pick | corpus07 1e30x, 200k iter; written, found, loaded, extended; then unaided | extended 20001 to 200001 (fresh 200001); 0 of 193600 texels differ; reference 233ms fresh vs 225ms extend; unaided, the worker served len=200001 from disk in 86ms (1 entries, 3.1 MB) | found AND reuse engaged AND 0 texels differ AND the unaided worker hit | ✅ PASS |
+| View format | a thumbnail borrows the live reference, never builds one | 1e30x, 128x96, ss=2; refused with none resident, then borrowed | refused in 0.4ms; borrowed and rendered 128x96 in 100ms; 53.6 KB of base64 | None when nothing is resident; a real 128x96 when it is | ✅ PASS |
 | Framing | an export CONTAINS the window view at any aspect | window 1200x900 (aspect 1.333), 6 aspects | 6 aspects (3 wider, 2 narrower than the window): contained, tight, isotropic; window = identity | no axis shrinks; binding axis exact; isotropic; BOTH branches tried | ✅ PASS |
 | Framing | a wider canvas contains the narrower one — direct f64 (1e2x) | 160px vs 240px at h=128, 2000 iter, 20480 texels compared | 160px inside 240px at h=128: identical over 20480 texels | 0 texels differ | ✅ PASS |
 | Framing | a wider canvas contains the narrower one — perturbation (1e30x) | 160px vs 240px at h=128, 60000 iter, 20480 texels compared | 160px inside 240px at h=128: identical over 20480 texels | <= 64 texels differ (measured glitch noise; a misframing differs in 10,000s) | ✅ PASS |
@@ -210,7 +218,7 @@ All checks use exact mathematics (arbitrary-precision dwell, closed-form propert
 | bench-matrix | fractal-phoenix | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 | bench-matrix | fractal-newton | path signature vs baseline | mode 1 eff-it 2000 sa-skip 0 counters ok | exact | ✅ PASS |
 
-**195/195 checks passed.**
+**203/203 checks passed.**
 
 ## Coverage & scope
 
