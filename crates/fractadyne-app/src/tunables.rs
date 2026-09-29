@@ -95,6 +95,8 @@ pub(crate) struct Cost {
     pub early_ref: u64,
     /// Occupancy-sized export tiles (`TILE_OCCUPANCY_DEFAULT`; 0 = off, 1 = on).
     pub tile_occupancy: u64,
+    /// Cheap moving perturbation frames render live (`LIVE_REFRESH_DEFAULT`; 0 = off, 1 = on).
+    pub live_refresh: u64,
     /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
     /// second override channel because duplicating the machinery for a single value would be worse.
     /// See the note above on what earns a place in this set.
@@ -129,6 +131,7 @@ impl Default for Cost {
             ref_overlap: REF_OVERLAP_DEFAULT,
             early_ref: EARLY_REF_DEFAULT,
             tile_occupancy: TILE_OCCUPANCY_DEFAULT,
+            live_refresh: LIVE_REFRESH_DEFAULT,
             bla_eps: BLA_EPS,
         }
     }
@@ -350,6 +353,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "LIVE_REFRESH" => {
+                let p = c.live_refresh;
+                c.live_refresh = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set LIVE_REFRESH: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "MOTION_NEED_QUANTILE" => {
                 let p = c.motion_need_quantile;
                 let v = f()?;
@@ -389,7 +401,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     TDR_BOOTSTRAP_MS, MOTION_UNPRICED_MAX, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL, \
-    DEAD_MAN, DISPATCH_CEILING, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY";
+    DEAD_MAN, DISPATCH_CEILING, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH";
 
 #[cfg(test)]
 mod override_tests;
@@ -667,6 +679,56 @@ pub(crate) const REFRESH_MAX_SECS: f64 = 0.15;
 
 pub(crate) const REFRESH_MIN_DRIFT: f64 = 0.02;
 
+/// ⭐LIVE REFRESH (`render::live_refresh_verdict`): the GPU ms per DISPLAYED frame a moving df32
+/// frame's COMPLETE single-pass refresh may average and still render live instead of holding and
+/// reprojecting. The prediction is this view's last measured whole-refresh price (ns per nominal
+/// step) times this frame's nominal steps. A refresh predicted at `k` × this renders every `k`th
+/// frame, the frames between reprojecting it (up to `LIVE_REFRESH_MAX_MS`). 4.5 ms keeps a 120 Hz
+/// display fed: the iterate is not the frame's only GPU or CPU work — every-frame refreshes priced
+/// at 8 ms ran 10–12 ms apart (85–95 fps) on the RTX 3080, and frames shrunk to 6 ms ran at 98 fps.
+pub(crate) const LIVE_REFRESH_MS: f64 = 4.5;
+/// The dearest single live refresh, GPU ms: past it the reuse hold and the pinned walk take over,
+/// as before. One live pass holds the queue for its whole length, so this is also the longest a
+/// present can slip behind vsync — 12 ms is one repeated frame at 120 Hz.
+pub(crate) const LIVE_REFRESH_MAX_MS: f64 = 12.0;
+/// A live frame keeps the calibrated dispatch CEILING (the one bound nothing learned may raise): one
+/// whose nominal steps exceed it renders shrunk to fit — but no smaller than this fraction of its
+/// size on each axis. Below it a stretched fresh frame is no sharper than the held complete one, so
+/// the hold and the pinned walk take over.
+pub(crate) const LIVE_MIN_SCALE: f64 = 0.75;
+/// With no price for this mode and navigation epoch (a mode switch, a jump), ONE single-pass
+/// refresh PROBES it: shrunk to a `TDR_BOOTSTRAP_MS` share of the calibrated dispatch ceiling — at
+/// most 40 ms even all-interior at the adapter's worst measured step cost — and its own reading
+/// then prices the frames after it. A probe shrunk past this fraction of its size on each axis is
+/// not run: it would measure its own overhead rather than the frame (right after a mode switch a
+/// 29×22 probe read 0.044 ns a step against the full frame's 0.0002). Lower than `LIVE_MIN_SCALE`
+/// because a probe is shown for one frame, where a priced frame is shown for every frame of a glide.
+pub(crate) const LIVE_PROBE_MIN_SCALE: f64 = 0.35;
+/// A price measured on a frame under this fraction of the current frame's pixels (a shrunk probe)
+/// only BOUNDS the current frame: per step a smaller frame is dearer — its warps span more of the
+/// fractal and diverge more, and it sits near the occupancy knee. Measured at a mode switch: a
+/// 0.4-scale probe at 0.0037 ns a step against 0.0008 for the full frames after it. Below
+/// `LIVE_MIN_SCALE`² (0.5625), so a live frame shrunk for smoothness still prices its successor.
+pub(crate) const LIVE_PRICE_SIZE_MIN: f64 = 0.5;
+/// A bound (see `LIVE_PRICE_SIZE_MIN`, `LIVE_PRICE_STALE_OCT`) predicting at most this many ms
+/// earns one FULL-SIZE pass to measure the frame itself, spaced like a probe: at worst a few
+/// repeated frames, where a bound was the one thing keeping the glide on the hold.
+pub(crate) const LIVE_REPROBE_MS: f64 = 48.0;
+/// Frames between probes: a probe's reading lands 2–3 frames after its dispatch. Doubles for each
+/// probe since the last priced live frame (up to 32×), so a view that measures dear, or a card
+/// whose readings never pair, cannot flash a shrunk probe every few frames.
+pub(crate) const LIVE_PROBE_WAIT_FRAMES: u64 = 8;
+/// A whole-refresh price describes this view for this many frames after the dispatch it measured
+/// (live frames re-price every few frames, a pinned walk every walk). Older is no price.
+pub(crate) const LIVE_PRICE_FRESH_FRAMES: u64 = 12;
+/// …and within this many octaves of the depth it was measured at.
+pub(crate) const LIVE_PRICE_MAX_OCT: f64 = 0.5;
+/// A price past those windows is STALE, but within this many octaves it still licenses a frame it
+/// prices at one displayed frame's share (`LIVE_REFRESH_MS`), whose own reading re-prices — so a
+/// glide that briefly fell back to the hold returns to live without a shrunk probe. Farther, and
+/// only a probe may price the view.
+pub(crate) const LIVE_PRICE_STALE_OCT: f64 = 4.0;
+
 /// Target GPU time of ONE motion / pinned-refresh chunk pass, ms (design/live-zoom-smoothing.md
 /// P-A). The frame budget (`TDR_BUDGET_MS`, 400 ms real) is a SAFETY bound; before this constant
 /// existed it also SIZED every motion pass, so a refresh right after a jump or a mode switch was a
@@ -767,6 +829,12 @@ pub(crate) const EARLY_REF_DEFAULT: u64 = 1;
 /// fractadyne-gpu's export.rs). 0 = tiles sized by nominal work (`tile² · ss² · max_iter`), for the
 /// before/after measurement.
 pub(crate) const TILE_OCCUPANCY_DEFAULT: u64 = 1;
+
+/// 1 = a moving df32 frame whose whole refresh is measured cheap (`LIVE_REFRESH_MS`) renders in one
+/// pass and is shown live, as a direct-mode frame is, instead of the reuse hold and the pinned chunk
+/// walk (`render::live_refresh_verdict`). 0 = the hold/pin path for every moving perturbation
+/// frame, for the before/after measurement.
+pub(crate) const LIVE_REFRESH_DEFAULT: u64 = 1;
 
 /// The most a held frame may MAGNIFY before its refresh lands, octaves — the zoom-rate-aware half
 /// of the refresh sizing. At `zoom_oct_s` octaves per second the refresh has `HELD_MAX_OCT /

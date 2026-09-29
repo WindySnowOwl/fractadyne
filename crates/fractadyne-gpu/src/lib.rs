@@ -653,7 +653,7 @@ impl CounterRead {
 
     /// Advance the readback; publishes the last completed full-frame iterate's MAXITER FRACTION
     /// into `out` as `(frac_f32_bits << 32) | armed_max_iter` (the budget tag lets the app discard
-    /// stale readings), and the frame's escaped
+    /// stale readings) — only from a pass whose range reached the ask — and the frame's escaped
     /// smooth-iteration RANGE into `norm_out` as `(min_bits << 32) | max_bits` (f32 bit patterns;
     /// `min_bits == 0xFFFFFFFF` = no escaped pixels). The app drains both with `swap(u64::MAX)`;
     /// `u64::MAX` = no fresh reading.
@@ -687,7 +687,15 @@ impl CounterRead {
                         let data = self.read.slice(..).get_mapped_range();
                         let slots: [u32; COUNTER_SLOTS] =
                             bytemuck::pod_read_unaligned(&data[..COUNTER_SLOTS * 4]);
-                        if let Some(o) = out {
+                        // ⭐Only a pass that REACHED THE ASK can say how many pixels exhaust it. A
+                        // chunked walk's earlier passes count `ST_INTERIOR` pixels, which exist only
+                        // at `iter >= max_iter`, so mid-walk they read 0% by construction (see
+                        // `fs_resolve`) — and published under the same budget tag as the completing
+                        // pass, that 0% became the adaptive probe's baseline before every raise, so
+                        // a raise that changed nothing (3.04% → 3.04% at 1x, a view whose capped
+                        // pixels are interior) never read as flat: five raises to boost 10.5, carried
+                        // into every later frame as 10x the iterations anyone could see.
+                        if let Some(o) = out.filter(|_| self.content_cursor >= self.max_iter) {
                             let frac = (slots[CTR_MAXITER] as f64 / self.px.max(1) as f64) as f32;
                             // (frac f32 bits << 32) | armed max_iter — the app checks the budget
                             // tag against the CURRENT budget and discards stale readings.
@@ -799,6 +807,8 @@ impl CounterRead {
 struct ViewResources {
     /// GPU timing for the live iterate pass; `None` when the device lacks `TIMESTAMP_QUERY`.
     timing: Option<IterTiming>,
+    /// A second timer for LIVE-REFRESH passes only ([`MandelbrotParams::live_timing`]).
+    live_timing: Option<IterTiming>,
     /// The diagnostic pass clock, created on the first frame that asks for it
     /// ([`MandelbrotParams::pass_clock`]); `None` otherwise, or without `TIMESTAMP_QUERY`.
     pass_clock: Option<PassClock>,
@@ -1816,6 +1826,7 @@ impl ViewResources {
 
         Self {
             timing: IterTiming::new(device),
+            live_timing: IterTiming::new(device),
             pass_clock: None,
             counter_read: CounterRead::new(device),
             last_tile: None,
@@ -2077,6 +2088,18 @@ pub struct MandelbrotParams {
     pub iterate_frame: Option<Arc<std::sync::atomic::AtomicU64>>,
     /// Sink for the app-clock µs at which that pass's timer was armed (see `IterTiming::armed_us`).
     pub iterate_armed_us: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// ⭐This pass is a LIVE REFRESH, whose own GPU time prices the ones after it (the app's
+    /// `live_refresh_verdict`). The iterate timer above is one slot and times about one pass in
+    /// three, so a lone probe usually went unpriced; a live pass is bracketed by its OWN timer
+    /// whenever that one is idle — and when the iterate timer is idle too, the same ticks are
+    /// copied into it, so the frame budget's readings lose nothing. Single passes only (a chunked
+    /// pass is never live).
+    pub live_timing: bool,
+    /// That timer's sinks, published like `iterate_ms` / `iterate_steps` / `iterate_frame` (the
+    /// count and frame before the time).
+    pub live_ms: Option<Arc<std::sync::atomic::AtomicU64>>,
+    pub live_steps: Option<Arc<std::sync::atomic::AtomicU64>>,
+    pub live_frame: Option<Arc<std::sync::atomic::AtomicU64>>,
     /// The app's clock (µs), for the timing witness. `None` = no witness stamp and no extra poll.
     pub now_us: Option<fn() -> u64>,
     /// This dispatch's nominal cost (`px x ss^2 x iterations`; for a tile, the TILE's px). Handed
@@ -2347,6 +2370,16 @@ impl CallbackTrait for MandelbrotParams {
                 self.iterate_steps.as_ref(),
                 self.iterate_frame.as_ref(),
                 self.iterate_armed_us.as_ref(),
+            );
+        }
+        if let Some(t) = view.live_timing.as_mut() {
+            t.pump(
+                device,
+                queue,
+                self.live_ms.as_ref(),
+                self.live_steps.as_ref(),
+                self.live_frame.as_ref(),
+                None,
             );
         }
         if self.pass_clock.is_some() && view.pass_clock.is_none() {
@@ -2665,6 +2698,10 @@ impl CallbackTrait for MandelbrotParams {
                 .as_ref()
                 .is_some_and(|t| t.state == TimingState::Idle)
                 && !matches!(chunk, Some([s, e]) if s >= e);
+            // A live refresh's own timer (see `MandelbrotParams::live_timing`): single passes only.
+            let arm_live = self.live_timing
+                && chunk.is_none()
+                && view.live_timing.as_ref().is_some_and(|t| t.state == TimingState::Idle);
             // The diagnostic pass clock, when asked for, brackets EVERY pass (its own ring); an
             // armed pricer then takes its reading from the clock's ticks for this same pass.
             let clock_k = if self.pass_clock.is_some() {
@@ -2808,11 +2845,18 @@ impl CallbackTrait for MandelbrotParams {
                     resolve_target: None,
                     ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
                 });
+                // One query set brackets the pass: the pass clock's, else the live timer's (whose
+                // ticks the iterate timer then shares), else the iterate timer's.
                 let ts_writes = match clock_k {
                     Some(k) => Some(wgpu::RenderPassTimestampWrites {
                         query_set: &view.pass_clock.as_ref().unwrap().qs,
                         beginning_of_pass_write_index: Some(PASS_CLOCK_Q * k as u32),
                         end_of_pass_write_index: Some(PASS_CLOCK_Q * k as u32 + 1),
+                    }),
+                    None if arm_live => Some(wgpu::RenderPassTimestampWrites {
+                        query_set: &view.live_timing.as_ref().unwrap().qs,
+                        beginning_of_pass_write_index: Some(0),
+                        end_of_pass_write_index: Some(1),
                     }),
                     None => arm_ts.then(|| wgpu::RenderPassTimestampWrites {
                         query_set: &view.timing.as_ref().unwrap().qs,
@@ -2858,6 +2902,30 @@ impl CallbackTrait for MandelbrotParams {
                     // bracketed the pass itself.
                     let t = view.timing.as_mut().unwrap();
                     encoder.copy_buffer_to_buffer(&s.resolve, 0, &t.read, 0, 16);
+                    t.steps = self.nominal_steps;
+                    t.frame = self.pass_frame;
+                    t.armed_us = witness_stamp(device, self.now_us);
+                    t.state = TimingState::Recorded;
+                }
+                if arm_live {
+                    let lt = view.live_timing.as_mut().unwrap();
+                    encoder.copy_buffer_to_buffer(&s.resolve, 0, &lt.read, 0, 16);
+                    lt.steps = self.nominal_steps;
+                    lt.frame = self.pass_frame;
+                    lt.state = TimingState::Recorded;
+                }
+            } else if arm_live {
+                let lt = view.live_timing.as_mut().unwrap();
+                encoder.resolve_query_set(&lt.qs, 0..2, &lt.resolve, 0);
+                encoder.copy_buffer_to_buffer(&lt.resolve, 0, &lt.read, 0, 16);
+                lt.steps = self.nominal_steps;
+                lt.frame = self.pass_frame;
+                lt.state = TimingState::Recorded;
+                if arm_ts {
+                    // The same ticks, for the frame budget — as if its own timer had bracketed it.
+                    let t = view.timing.as_mut().unwrap();
+                    let live_resolve = &view.live_timing.as_ref().unwrap().resolve;
+                    encoder.copy_buffer_to_buffer(live_resolve, 0, &t.read, 0, 16);
                     t.steps = self.nominal_steps;
                     t.frame = self.pass_frame;
                     t.armed_us = witness_stamp(device, self.now_us);
