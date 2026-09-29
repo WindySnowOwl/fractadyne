@@ -14844,6 +14844,14 @@ impl eframe::App for FractadyneApp {
                     let frame = self.perf.iterate_frame[v].load(SeqCst);
                     if steps > 0 {
                         self.perf.note_refresh_reading(v, ms, steps, frame);
+                        // …and it proves timestamps ARE arriving, which is all the starvation check
+                        // below asks. A split live refresh displays its hold reprojected, which
+                        // unpairs `fe_steps_last`, so every reading of a run of split passes took
+                        // this branch: 30 frames of them tripped the wall-clock fallback with
+                        // readings landing every few frames (RTX 3080, 30-octave glide,
+                        // 0.3.0-beta.8: 7 in a minute, past the logcheck's `timing-starved` limit;
+                        // beta.3 2–4; with this, 1 — the direct-mode start every build has).
+                        self.perf.ts_reading_frame[v] = self.perf.frame_idx;
                     }
                 }
                 if diag::trace_on("gpu") && v == 0 {

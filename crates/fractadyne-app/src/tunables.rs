@@ -734,6 +734,15 @@ pub(crate) const LIVE_PRICE_SIZE_MIN: f64 = 0.5;
 /// the way (`render::live_max_ms`; 0.3.0-beta.7): 48 ms on the RTX 3080 at 1457×1102, ~16 on the RX
 /// 6800 XT at 1262×724, where bounds of 35–51 ms had re-probed every few dozen frames for nothing.
 pub(crate) const LIVE_REPROBE_MS: f64 = 48.0;
+/// A price predicting more than this × the dearest frame the adapter can render live at this size
+/// (`render::live_max_ms`) proves the view cannot render live: a stale one earns no probe, and one
+/// stale past `LIVE_PRICE_STALE_OCT` still stands, however deep the zoom has gone, until the render
+/// mode or navigation epoch changes or its prediction falls under this (0.3.0-beta.8). On the RX
+/// 6800 XT at 1280×800 (~12 ms live max) glide views measured 27–37 ms and each probe that re-found
+/// that was a 26–33 ms frame, 3–4 a glide. On the RTX 3080 (36 ms) the dearest measured, 55 ms just
+/// past the df32 switch, is 1.5× — and the first df32 frames of a glide once cost ~5× those a
+/// second later, so a view there must keep its probes: 2×, not less.
+pub(crate) const LIVE_HOPE_X: f64 = 2.0;
 /// Frames between probes: a probe's reading lands 2–3 frames after its dispatch. Doubles for each
 /// probe since the last priced live frame (up to 32×), so a view that measures dear, or a card
 /// whose readings never pair, cannot flash a shrunk probe every few frames.

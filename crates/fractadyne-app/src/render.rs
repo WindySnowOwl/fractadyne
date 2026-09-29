@@ -9889,8 +9889,9 @@ pub(crate) struct LiveAsk {
 /// A STALE one (same mode and epoch, within `LIVE_PRICE_STALE_OCT`), or one measured on a frame
 /// under `LIVE_PRICE_SIZE_MIN` of this one's pixels, is only an upper bound: it licenses a frame at
 /// the share (which re-prices), a full-size REPROBE in split passes when it predicts at most
-/// `LIVE_REPROBE_MS`, past that a probe, and past twice that nothing until it lapses — both bounds
-/// scaled by how dear a frame this adapter can render live at this size (`live_max_ms`, 0.3.0-beta.7).
+/// `LIVE_REPROBE_MS`, past that a probe, and past `LIVE_HOPE_X` × `live_max_ms` nothing — both
+/// scaled by how dear a frame this adapter can render live at this size (0.3.0-beta.7), and a price
+/// that dear still stands after it lapses (`hopeless_price`, the back-off, 0.3.0-beta.8).
 /// With NO price for this mode and epoch (a mode switch,
 /// a jump), a PROBE measures it: shrunk to `probe_cap`, spaced by `probe_after` — unless that
 /// shrink leaves it too small to measure anything (a 29×22 probe read 0.044 ns a step against the
@@ -9930,17 +9931,17 @@ pub(crate) fn live_refresh_verdict(price: Option<crate::RefreshPrice>, a: &LiveA
             // this size (`live_max_ms`): on the RX 6800 XT at 1280×800 that is ~12 ms, and bounds
             // of 35–51 ms re-probed every few dozen frames for nothing — each a 20–35 ms frame.
             let k = passes.min(finest);
-            let reach = live_max_ms(a.now.px, a.knee_px)
-                / (crate::tunables::LIVE_SPLIT_MAX as f64 * LIVE_REFRESH_MS);
+            let live_max = live_max_ms(a.now.px, a.knee_px);
+            let reach = live_max / (crate::tunables::LIVE_SPLIT_MAX as f64 * LIVE_REFRESH_MS);
             let reprobe_ms = crate::tunables::LIVE_REPROBE_MS * reach;
             if pred <= LIVE_REFRESH_MS {
                 LiveRefresh::Priced
             } else if pred <= reprobe_ms && turn && (k == 1 || a.can_split) {
                 LiveRefresh::Reprobe(k)
-            } else if pred <= 2.0 * reprobe_ms {
+            } else if pred <= crate::tunables::LIVE_HOPE_X * live_max {
                 probe
             } else {
-                LiveRefresh::No // far too dear to hope for: the walk, until the price lapses
+                LiveRefresh::No // far too dear to hope for: the walk (`hopeless_price`)
             }
         } else if pred <= LIVE_REFRESH_MS {
             LiveRefresh::Priced
@@ -9953,7 +9954,21 @@ pub(crate) fn live_refresh_verdict(price: Option<crate::RefreshPrice>, a: &LiveA
         };
         return (v, pred, 1.0);
     }
+    // No usable price — but one that proved this view hopeless still stands (the BACK-OFF).
+    if let Some(pred) = hopeless_price(price, a) {
+        return (LiveRefresh::No, pred, 1.0);
+    }
     (probe, 0.0, 1.0)
+}
+
+/// The prediction of the view's last price, however far the zoom has gone since, when it proves
+/// the view cannot render live on this adapter at this size: same render mode and navigation epoch,
+/// and over `LIVE_HOPE_X` × `live_max_ms`. Such a view earns no probe until one of those changes or
+/// the prediction falls under that. Pure.
+pub(crate) fn hopeless_price(price: Option<crate::RefreshPrice>, a: &LiveAsk) -> Option<f64> {
+    let p = price.filter(|p| p.ns > 0.0 && p.ns.is_finite() && p.at.mode == a.now.mode && p.at.nav == a.now.nav)?;
+    let pred = p.ns * a.steps as f64 / 1.0e6;
+    (pred > crate::tunables::LIVE_HOPE_X * live_max_ms(a.now.px, a.knee_px)).then_some(pred)
 }
 
 /// The most split passes that still make each set of a `px`-pixel frame cheaper: `LIVE_SPLIT_MAX`,
@@ -10058,6 +10073,8 @@ pub(crate) enum LiveNo {
     /// Measured and fresh, within `LIVE_SPLIT_MAX` passes, but the occupancy knee keeps its sets
     /// dearer than `LIVE_SPLIT_SET_MAX_MS` (`split_sets`).
     UnderKnee,
+    /// No usable price, but a lapsed one proved the view hopeless (`hopeless_price`): no probe.
+    BackedOff,
 }
 
 /// Why [`live_refresh_verdict`] said `No` to `a`. Pure.
@@ -10074,6 +10091,7 @@ pub(crate) fn live_no_reason(price: Option<crate::RefreshPrice>, a: &LiveAsk) ->
                 LiveNo::MeasuredDear
             }
         }
+        None if hopeless_price(price, a).is_some() => LiveNo::BackedOff,
         None if a.probe_after == u64::MAX => LiveNo::NoTiming,
         None if a.frame < a.probe_after => LiveNo::ProbeWaits,
         None => LiveNo::ProbeTooSmall,
