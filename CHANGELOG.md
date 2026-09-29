@@ -10,7 +10,54 @@ new functional enhancement; a **minor** bump (e.g. 0.2.0) marks a milestone that
 run of patch releases. The `0.2.0` entry summarizes **0.1.29 – 0.1.68** by theme — per-version
 detail is in the git history.
 
-## 0.2.41 (unreleased)
+## 0.3.0 (unreleased)
+
+0.3.0 is the milestone for the 0.2.41 series. Everything under the 0.2.41 heading below was
+published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "beta.N" there means
+0.2.41-beta.N. `0.3.0-beta.1` is the first build under the new number, with the same code as
+0.2.41-beta.150. The themes, newest first:
+
+- **Deep zoom is much faster.** At the benchmark's deepest scene, 4.6e1105× at 4K, a render
+  took 27.8 s at 0.2.41-beta.112 and takes 1.7 s at beta.148 with the accelerated (MPFR) build.
+  From beta.150, 1.2e148× takes 6.4 s instead of 11.5 s. The time went where it was measured to
+  go: glitch correction, which on Mandelbrot and Multibrot exports fixed none of the pixels it
+  changed, is off for them; the reference orbit's repeated calculations overlap and run in
+  parallel, and a command-line render starts them before its window opens; the series
+  approximation no longer runs at full precision; full steps switch to cheaper arithmetic once
+  that is safe; and the graphics card is given pieces of work large enough to keep it busy.
+- **Safer on AMD graphics cards.** A safety stop catches a frame the GPU timings misjudged before
+  it can hang the machine: on an RX 6800 XT, the crash test that hung the whole machine under the
+  old behaviour ran to the end three times out of three. A fixed per-card limit bounds the work
+  handed to the GPU at once, and deep exports limit the steps each pixel may take in one
+  submission. Device loss on AMD cards is made less likely, not fixed (issue #1).
+- **Easier to diagnose.** The app keeps a record of every frame it draws, and a crash report
+  carries it, together with the location that crashed as a view file you can open. Every build
+  names the commit it was built from, the log rolls over in a long session, an issue report no
+  longer contains your user name, and the benchmark kit reports where each render's time went.
+- **Smoother live zooming.** Zooms are paced for smoothness at every speed and keep their detail
+  wherever the frame can afford it. The view no longer flashes black or to a single colour while
+  diving, at the start of a Space zoom, or after a large click-to-zoom. "Normalize deep colors"
+  keeps working while you zoom and no longer makes the palette breathe.
+- **A better auto-zoom.** It steers smoothly, stays out of flat, empty regions, can dive exactly
+  into a Misiurewicz point, can show where it is heading, and says so when it stops because the
+  iteration count ran out.
+- **Navigation.** Click-to-zoom and "Nearest minibrot" work in the dual view, and click-to-zoom
+  gains a 25× step, snap-to-centre and a magnifier. Coordinates accept expressions: functions,
+  constants, powers, polar form and exact points. A Misiurewicz explorer lists points to visit.
+  Returning to an extreme location costs seconds instead of hours: at 9.98e60205×, a reference
+  that took 6 h 26 min to build loads from the new orbit cache in 1.3 s.
+- **Colour.** The gradient editor is rebuilt, with blend curves between stops, a ring view you can
+  rotate, a library of saved gradients, and a colour picker with an eyedropper. Palettes are no
+  longer limited to eight colours, and Fractint and Kalles Fraktaler `.map`, Ultra Fractal
+  `.ugr`, GIMP `.ggr` and Adobe `.ase` files import.
+- **Views as files.** A `.fdn` view carries its gradient and a thumbnail, the gallery lists them,
+  and an export at a different aspect no longer crops the composition.
+- **Packages.** The accelerated (MPFR) build is available for Linux as well as Windows: four
+  downloads per release.
+- **Throughout.** Every dialog has a named way out with its buttons where you expect them, the app
+  goes idle when left alone, and console output is opt-in.
+
+## 0.2.41 (pre-releases v0.2.41-beta.1 to beta.150, rolled into 0.3.0)
 
 - **Faster deep exports: the graphics card is kept busy** (beta.150).
   - **The problem:** an export splits the picture into tiles and renders them one after another.
