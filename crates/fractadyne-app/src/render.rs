@@ -9889,7 +9889,9 @@ pub(crate) struct LiveAsk {
 /// A STALE one (same mode and epoch, within `LIVE_PRICE_STALE_OCT`), or one measured on a frame
 /// under `LIVE_PRICE_SIZE_MIN` of this one's pixels, is only an upper bound: it licenses a frame at
 /// the share (which re-prices), a full-size REPROBE in split passes when it predicts at most
-/// `LIVE_REPROBE_MS`, and past that a probe. With NO price for this mode and epoch (a mode switch,
+/// `LIVE_REPROBE_MS`, past that a probe, and past twice that nothing until it lapses — both bounds
+/// scaled by how dear a frame this adapter can render live at this size (`live_max_ms`, 0.3.0-beta.7).
+/// With NO price for this mode and epoch (a mode switch,
 /// a jump), a PROBE measures it: shrunk to `probe_cap`, spaced by `probe_after` — unless that
 /// shrink leaves it too small to measure anything (a 29×22 probe read 0.044 ns a step against the
 /// full frame's 0.0002). Pure.
@@ -9924,13 +9926,21 @@ pub(crate) fn live_refresh_verdict(price: Option<crate::RefreshPrice>, a: &LiveA
             // rebase storm at ~5× the per-step cost of the ones a second later), so a dear price
             // must not outlive the reference it measured by octaves. (A frame the knee will not
             // let split is reprobed in ONE pass: a one-off measurement, like a probe.)
+            // Both re-measurements scale with the dearest frame this adapter could render live at
+            // this size (`live_max_ms`): on the RX 6800 XT at 1280×800 that is ~12 ms, and bounds
+            // of 35–51 ms re-probed every few dozen frames for nothing — each a 20–35 ms frame.
             let k = passes.min(finest);
+            let reach = live_max_ms(a.now.px, a.knee_px)
+                / (crate::tunables::LIVE_SPLIT_MAX as f64 * LIVE_REFRESH_MS);
+            let reprobe_ms = crate::tunables::LIVE_REPROBE_MS * reach;
             if pred <= LIVE_REFRESH_MS {
                 LiveRefresh::Priced
-            } else if pred <= crate::tunables::LIVE_REPROBE_MS && turn && (k == 1 || a.can_split) {
+            } else if pred <= reprobe_ms && turn && (k == 1 || a.can_split) {
                 LiveRefresh::Reprobe(k)
-            } else {
+            } else if pred <= 2.0 * reprobe_ms {
                 probe
+            } else {
+                LiveRefresh::No // far too dear to hope for: the walk, until the price lapses
             }
         } else if pred <= LIVE_REFRESH_MS {
             LiveRefresh::Priced
@@ -9955,6 +9965,20 @@ pub(crate) fn finest_split(px: u64, knee_px: u64) -> u32 {
         None => cap,
         Some(k) => k.clamp(1, cap as u64) as u32,
     }
+}
+
+/// The dearest refresh (ms) a `px`-pixel frame can still render live at, split or whole, on an
+/// adapter with occupancy knee `knee_px`: `LIVE_SPLIT_MAX` × `LIVE_REFRESH_MS` (36 ms) with no knee
+/// in the way, down to the share itself when not even halves help — exactly the largest price
+/// `split_sets` accepts. RTX 3080 at 1457×1102: 36 ms; RX 6800 XT at 1262×724: ~11.8. Pure.
+pub(crate) fn live_max_ms(px: u64, knee_px: u64) -> f64 {
+    use crate::tunables::{LIVE_REFRESH_MS, LIVE_SPLIT_MAX, LIVE_SPLIT_SET_MAX_MS};
+    let finest = finest_split(px, knee_px);
+    if finest < 2 {
+        return LIVE_REFRESH_MS;
+    }
+    let floor = if px == 0 { 1.0 } else { (knee_px as f64 / px as f64).min(1.0) };
+    (LIVE_SPLIT_MAX as f64 * LIVE_REFRESH_MS).min(LIVE_SPLIT_SET_MAX_MS / (1.0 / finest as f64).max(floor))
 }
 
 /// The split a fresh price of `pred_ms` for a `px`-pixel frame renders in, if any: `k` =

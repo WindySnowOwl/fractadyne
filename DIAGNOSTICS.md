@@ -313,7 +313,11 @@ that knee: a set of `px/k` pixels is predicted at the frame's cost × max(1/k, k
 stay within `LIVE_SPLIT_SET_MAX_MS` (6.75 ms), no split goes finer than brings a set down to the
 knee, and a shrunk frame may not go below it. On the RX 6800 XT at 1280×800 that leaves halves of
 frames up to ~9 ms and sends dearer ones to the walk (an eighth of a 15–27 ms frame had cost
-6–27 ms); on the RTX 3080 it changes little (sevenths of 1457×1102 still split).
+6–27 ms); on the RTX 3080 it changes little (sevenths of 1457×1102 still split). From
+0.3.0-beta.7 a stale price's re-measurements scale the same way: a reprobe below 4/3 and a probe
+below 8/3 of the dearest frame the adapter can render live at this size (`live_max_ms`: 36 ms on
+the RTX 3080, ~12 on the RX 6800 XT at 1280×800), nothing past that until the price lapses; and
+from 0.3.0-beta.6 one reading may lower a view's price by at most 4× (`LIVE_PRICE_DROP_MAX`).
 `FRACTADYNE_TRACE=live` shows every verdict (`Priced`,
 `Split(k)`, `Probe`, `Reprobe(k)`), each reason for `No` as it starts to apply, every price, and
 each split's passes (`split v0 f… pass j/k [start]`, `… adopt k passes from f… lag_oct=…`).

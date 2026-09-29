@@ -141,9 +141,12 @@ fn a_stale_price_licenses_only_a_frame_at_the_share_or_a_spaced_reprobe() {
             LiveRefresh::Reprobe(LIVE_SPLIT_MAX),
             "{now:?} {frame}"
         );
-        // …or, far past the reprobe bound, with a shrunk probe.
-        let very = price(ns_for(2.0 * LIVE_REPROBE_MS, steps), 100, v);
+        // …or, past the reprobe bound, with a shrunk probe — and past twice it, nothing until the
+        // price lapses.
+        let very = price(ns_for(1.9 * LIVE_REPROBE_MS, steps), 100, v);
         assert_eq!(verdict(very, LiveAsk { probe_after: 0, ..a }), LiveRefresh::Probe, "{now:?} {frame}");
+        let hopeless = price(ns_for(2.1 * LIVE_REPROBE_MS, steps), 100, v);
+        assert_eq!(verdict(hopeless, LiveAsk { probe_after: 0, ..a }), LiveRefresh::No, "{now:?} {frame}");
     }
     // Within the fresh windows the same dear price splits.
     let dear = price(ns_for(1.5 * LIVE_REFRESH_MS, steps), 100, v);
@@ -351,6 +354,44 @@ fn a_shrunk_frame_stays_at_or_over_the_knee() {
 }
 
 #[test]
+fn the_dearest_live_frame_is_the_largest_price_a_split_accepts() {
+    // No knee in the way (or none known), and the RTX 3080's 1.6 Mpx frame: 8 × the share, 36 ms.
+    assert_eq!(live_max_ms(1_000_000, 0), LIVE_SPLIT_MAX as f64 * LIVE_REFRESH_MS);
+    assert_eq!(live_max_ms(1457 * 1102, 262_144), LIVE_SPLIT_MAX as f64 * LIVE_REFRESH_MS);
+    // The RX 6800 XT at 1262×724: halves at the knee's floor, ~11.8 ms.
+    let radeon = live_max_ms(1262 * 724, 524_288);
+    assert!((radeon - 11.76).abs() < 0.01, "{radeon}");
+    // Under the knee: only a frame within the share.
+    assert_eq!(live_max_ms(200_000, 262_144), LIVE_REFRESH_MS);
+    // It is exactly split_sets' edge.
+    for (px, knee) in [(1262 * 724, 524_288), (1457 * 1102, 262_144), (400_000, 300_000)] {
+        let m = live_max_ms(px, knee);
+        assert!(split_sets(m * 0.999, px, knee).is_some(), "{px} {knee}");
+        assert!(split_sets(m * 1.001, px, knee).is_none(), "{px} {knee}");
+    }
+}
+
+#[test]
+fn a_bound_the_adapter_cannot_render_live_is_not_re_measured() {
+    // The RX 6800 XT at 1262×724 (knee 524k): a stale 35 ms price. With nothing over ~11.8 ms able
+    // to go live there, neither a reprobe nor a probe — the walk, until the price lapses.
+    let px = 1262 * 724;
+    let v = PriceView { px, ..at(DF32, 3, 40.0) };
+    let steps = 8_000_000_000;
+    let a = LiveAsk { probe_after: 0, frame: 100 + LIVE_PRICE_FRESH_FRAMES + 1, knee_px: 524_288, ..ask(v, steps) };
+    let stale = |ms: f64| price(ns_for(ms, steps), 100, v);
+    assert_eq!(verdict(stale(35.0), a), LiveRefresh::No);
+    assert_eq!(live_no_reason(stale(35.0), &a), LiveNo::BoundTooDear);
+    // Within 4/3 of its reach, a reprobe in halves; within twice that, a probe.
+    assert_eq!(verdict(stale(15.0), a), LiveRefresh::Reprobe(2));
+    assert_eq!(verdict(stale(25.0), a), LiveRefresh::Probe);
+    // The same stale price on the RTX 3080's frame earns its reprobe as before.
+    let v = PriceView { px: 1457 * 1102, ..v };
+    let a = LiveAsk { now: v, knee_px: 262_144, ..a };
+    assert_eq!(verdict(price(ns_for(35.0, steps), 100, v), a), LiveRefresh::Reprobe(7));
+}
+
+#[test]
 fn one_reading_cannot_make_the_view_much_cheaper_but_any_can_make_it_dearer() {
     use crate::tunables::LIVE_PRICE_DROP_MAX;
     let v = at(DF32, 3, 40.0);
@@ -386,8 +427,12 @@ fn a_reprobe_splits_no_finer_than_the_knee_and_one_pass_needs_no_hold() {
     assert_eq!(verdict(p, a), LiveRefresh::Reprobe(3));
     assert_eq!(verdict(p, LiveAsk { knee_px: 400_000, ..a }), LiveRefresh::Reprobe(3));
     assert_eq!(verdict(p, LiveAsk { knee_px: 600_000, ..a }), LiveRefresh::Reprobe(2));
-    let one = LiveAsk { knee_px: 1_200_000, ..a };
-    assert_eq!(verdict(p, one), LiveRefresh::Reprobe(1));
-    assert_eq!(verdict(p, LiveAsk { can_split: false, ..one }), LiveRefresh::Reprobe(1));
     assert_eq!(verdict(p, LiveAsk { can_split: false, ..a }), LiveRefresh::Probe);
+    // A frame under the knee renders live only within the share, so its reprobe bound is 4/3 of
+    // that (6 ms): 11.25 ms earns only a probe, 5.4 ms one pass, which needs no held frame.
+    let one = LiveAsk { knee_px: 1_200_000, ..a };
+    assert_eq!(verdict(p, one), LiveRefresh::Probe);
+    let near = price(ns_for(1.2 * LIVE_REFRESH_MS, steps), 100, PriceView { px: 400_000, ..v });
+    assert_eq!(verdict(near, one), LiveRefresh::Reprobe(1));
+    assert_eq!(verdict(near, LiveAsk { can_split: false, ..one }), LiveRefresh::Reprobe(1));
 }

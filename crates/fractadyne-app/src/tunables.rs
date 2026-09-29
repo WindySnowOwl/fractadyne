@@ -728,7 +728,11 @@ pub(crate) const LIVE_PROBE_MIN_SCALE: f64 = 0.35;
 pub(crate) const LIVE_PRICE_SIZE_MIN: f64 = 0.5;
 /// A bound (see `LIVE_PRICE_SIZE_MIN`, `LIVE_PRICE_STALE_OCT`) predicting at most this many ms
 /// earns one FULL-SIZE refresh, in up to `LIVE_SPLIT_MAX` split passes, spaced like a probe, to
-/// measure the frame itself: a bound was the one thing keeping the glide on the hold.
+/// measure the frame itself: a bound was the one thing keeping the glide on the hold. Past it a
+/// bound earns a probe, and past twice it nothing until it lapses. Both scale by the dearest frame
+/// the adapter can render live at the frame's size over the 36 ms it can with no occupancy knee in
+/// the way (`render::live_max_ms`; 0.3.0-beta.7): 48 ms on the RTX 3080 at 1457×1102, ~16 on the RX
+/// 6800 XT at 1262×724, where bounds of 35–51 ms had re-probed every few dozen frames for nothing.
 pub(crate) const LIVE_REPROBE_MS: f64 = 48.0;
 /// Frames between probes: a probe's reading lands 2–3 frames after its dispatch. Doubles for each
 /// probe since the last priced live frame (up to 32×), so a view that measures dear, or a card
