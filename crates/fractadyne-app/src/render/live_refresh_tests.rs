@@ -323,14 +323,44 @@ fn a_refresh_whose_sets_the_knee_keeps_dear_takes_the_walk() {
     // Thirds of 1 Mpx over a 300k knee cost their share, 3.75 ms: a split.
     let a = LiveAsk { knee_px: 300_000, ..ask(v, steps) };
     assert_eq!(verdict(p, a), LiveRefresh::Split(3));
-    // Under a 700k knee only halves help, and a half costs 0.7 of the frame, 7.9 ms: the walk,
-    // and the trace says why.
-    let a = LiveAsk { knee_px: 700_000, ..ask(v, steps) };
-    assert_eq!(verdict(p, a), LiveRefresh::No);
-    assert_eq!(live_no_reason(p, &a), LiveNo::UnderKnee);
+    // Under a 450k knee a 16 ms frame needs 4 sets, only 3 help, and each costs 0.45 of the
+    // frame, 7.2 ms: the walk, and the trace says why.
+    let a = LiveAsk { knee_px: 450_000, ..ask(v, steps) };
+    let dear16 = price(ns_for(16.0, steps), 100, v);
+    assert_eq!(verdict(dear16, a), LiveRefresh::No);
+    assert_eq!(live_no_reason(dear16, &a), LiveNo::UnderKnee);
     // Past LIVE_SPLIT_MAX it is dear whatever the knee.
     let dear = price(ns_for(LIVE_SPLIT_MAX as f64 * LIVE_REFRESH_MS * 1.5, steps), 100, v);
     assert_eq!(live_no_reason(dear, &a), LiveNo::MeasuredDear);
+    // Under TWO knees (700k) there is no room to split at all.
+    let a = LiveAsk { knee_px: 700_000, ..ask(v, steps) };
+    assert_eq!(verdict(p, a), LiveRefresh::No);
+    assert_eq!(live_no_reason(p, &a), LiveNo::NoSplitRoom);
+}
+
+#[test]
+fn a_frame_under_two_knees_measures_nothing_but_keeps_a_free_price() {
+    assert!(!split_room(1262 * 724, 524_288), "the RX 6800 XT at 1280×800");
+    assert!(split_room(2 * 524_288, 524_288));
+    assert!(split_room(1280 * 735, 262_144), "the RTX 3080 at 1280×800");
+    assert!(split_room(1, 0), "no knee known");
+    // The RX 6800 XT at 1262×724: no probe, whatever its turn…
+    let v = PriceView { px: 1262 * 724, ..at(DF32, 3, 40.0) };
+    let steps = 8_000_000_000;
+    let a = LiveAsk { probe_after: 0, knee_px: 524_288, ..ask(v, steps) };
+    assert_eq!(verdict(None, a), LiveRefresh::No);
+    assert_eq!(live_no_reason(None, &a), LiveNo::NoSplitRoom);
+    // …no reprobe of a bound, no split of a fresh price…
+    let stale = price(ns_for(10.0, steps), 100 - LIVE_PRICE_FRESH_FRAMES - 5, v);
+    assert_eq!(verdict(stale, a), LiveRefresh::No);
+    assert_eq!(verdict(price(ns_for(9.0, steps), 100, v), a), LiveRefresh::No);
+    // …but a price it already has (a settled frame's own pass) still licenses a frame at the
+    // share, or shrunk to it while the shrunk frame stays over the knee (6 ms: 0.87, 685k px).
+    assert_eq!(verdict(price(ns_for(4.0, steps), 100, v), a), LiveRefresh::Priced);
+    let nd = LiveAsk { prefer_detail: false, ..a };
+    let (r, _, scale) = live_refresh_verdict(price(ns_for(6.0, steps), 100, v), &nd);
+    assert_eq!(r, LiveRefresh::Priced);
+    assert!((scale - 0.75f64.sqrt()).abs() < 1e-9, "{scale}");
 }
 
 #[test]
@@ -343,14 +373,13 @@ fn a_shrunk_frame_stays_at_or_over_the_knee() {
     let (r, _, scale) = live_refresh_verdict(p, &a);
     assert_eq!(r, LiveRefresh::Priced);
     assert!((scale - (1.0f64 / 1.5).sqrt()).abs() < 1e-9, "{scale}");
-    // Under a 700k knee the shrunk frame would cost what one at the knee does; halves, priced
-    // with the knee, fit (4.7 ms a set).
-    let a = LiveAsk { knee_px: 700_000, ..a };
-    assert_eq!(verdict(p, a), LiveRefresh::Split(2));
-    // A frame under the knee neither shrinks nor splits usefully: the walk.
-    let a = LiveAsk { knee_px: 1_200_000, ..a };
-    assert_eq!(verdict(p, a), LiveRefresh::No);
-    assert_eq!(live_no_reason(p, &a), LiveNo::UnderKnee);
+    // Under a 700k knee the shrunk frame would cost what one at the knee does, and the frame has
+    // no room to split: the walk. Likewise a frame under the knee itself.
+    for knee in [700_000, 1_200_000] {
+        let a = LiveAsk { knee_px: knee, ..a };
+        assert_eq!(verdict(p, a), LiveRefresh::No, "{knee}");
+        assert_eq!(live_no_reason(p, &a), LiveNo::NoSplitRoom, "{knee}");
+    }
 }
 
 #[test]
@@ -373,19 +402,20 @@ fn the_dearest_live_frame_is_the_largest_price_a_split_accepts() {
 
 #[test]
 fn a_bound_the_adapter_cannot_render_live_is_not_re_measured() {
-    // The RX 6800 XT at 1262×724 (knee 524k): a stale 35 ms price. With nothing over ~11.8 ms able
-    // to go live there, neither a reprobe nor a probe — the walk, until the price lapses.
-    let px = 1262 * 724;
+    // The RX 6800 XT (knee 524k) at 1500×800, room for 2.3 knees: nothing over ~15.4 ms can go live
+    // there, so a stale 35 ms price earns neither a reprobe nor a probe.
+    let px = 1500 * 800;
     let v = PriceView { px, ..at(DF32, 3, 40.0) };
     let steps = 8_000_000_000;
     let a = LiveAsk { probe_after: 0, frame: 100 + LIVE_PRICE_FRESH_FRAMES + 1, knee_px: 524_288, ..ask(v, steps) };
     let stale = |ms: f64| price(ns_for(ms, steps), 100, v);
     assert_eq!(verdict(stale(35.0), a), LiveRefresh::No);
     assert_eq!(live_no_reason(stale(35.0), &a), LiveNo::BoundTooDear);
-    // Within 4/3 of its reach, a reprobe in halves; within LIVE_HOPE_X of it (23.5 ms), a probe.
-    assert_eq!(verdict(stale(15.0), a), LiveRefresh::Reprobe(2));
-    assert_eq!(verdict(stale(20.0), a), LiveRefresh::Probe);
-    assert_eq!(verdict(stale(25.0), a), LiveRefresh::No);
+    // Within 4/3 of its reach (20.6 ms), a reprobe in thirds; within LIVE_HOPE_X of it (30.9), a
+    // probe.
+    assert_eq!(verdict(stale(15.0), a), LiveRefresh::Reprobe(3));
+    assert_eq!(verdict(stale(25.0), a), LiveRefresh::Probe);
+    assert_eq!(verdict(stale(32.0), a), LiveRefresh::No);
     // The same stale price on the RTX 3080's frame earns its reprobe as before.
     let v = PriceView { px: 1457 * 1102, ..v };
     let a = LiveAsk { now: v, knee_px: 262_144, ..a };
@@ -394,9 +424,9 @@ fn a_bound_the_adapter_cannot_render_live_is_not_re_measured() {
 
 #[test]
 fn a_view_proved_hopeless_is_not_probed_again_when_its_price_lapses() {
-    // The RX 6800 XT at 1262×724 (live max ~11.8 ms, hope 23.5): a probe measured the glide's view
+    // The RX 6800 XT at 1500×800 (live max ~15.4 ms, hope 30.9): a probe measured the glide's view
     // at 35 ms, and the zoom has since gone past LIVE_PRICE_STALE_OCT — no usable price.
-    let px = 1262 * 724;
+    let px = 1500 * 800;
     let measured = PriceView { px, ..at(DF32, 3, 20.0) };
     let now = PriceView { l2: 20.0 + LIVE_PRICE_STALE_OCT + 0.5, ..measured };
     let steps = 8_000_000_000;
@@ -444,7 +474,7 @@ fn one_reading_cannot_make_the_view_much_cheaper_but_any_can_make_it_dearer() {
 }
 
 #[test]
-fn a_reprobe_splits_no_finer_than_the_knee_and_one_pass_needs_no_hold() {
+fn a_reprobe_splits_no_finer_than_the_knee() {
     // A price from a 0.4 Mpx probe only bounds a 1 Mpx frame: 11.25 ms, 3 passes.
     let v = at(DF32, 3, 40.0);
     let steps = 1_000_000_000;
@@ -452,16 +482,11 @@ fn a_reprobe_splits_no_finer_than_the_knee_and_one_pass_needs_no_hold() {
     let a = LiveAsk { probe_after: 0, ..ask(v, steps) };
     assert_eq!(verdict(p, a), LiveRefresh::Reprobe(3));
     assert_eq!(verdict(p, LiveAsk { knee_px: 400_000, ..a }), LiveRefresh::Reprobe(3));
-    assert_eq!(verdict(p, LiveAsk { knee_px: 600_000, ..a }), LiveRefresh::Reprobe(2));
+    // Exactly two knees: halves.
+    assert_eq!(verdict(p, LiveAsk { knee_px: 500_000, ..a }), LiveRefresh::Reprobe(2));
+    // No held frame to split over: a probe; no room to split: nothing.
     assert_eq!(verdict(p, LiveAsk { can_split: false, ..a }), LiveRefresh::Probe);
-    // A frame under the knee renders live only within the share, so its reprobe bound is 4/3 of
-    // that (6 ms) and its hope twice it (9 ms): 11.25 ms earns nothing, 7.2 ms a probe, 5.4 ms one
-    // pass, which needs no held frame.
-    let one = LiveAsk { knee_px: 1_200_000, ..a };
-    assert_eq!(verdict(p, one), LiveRefresh::No);
-    let mid = price(ns_for(1.6 * LIVE_REFRESH_MS, steps), 100, PriceView { px: 400_000, ..v });
-    assert_eq!(verdict(mid, one), LiveRefresh::Probe);
-    let near = price(ns_for(1.2 * LIVE_REFRESH_MS, steps), 100, PriceView { px: 400_000, ..v });
-    assert_eq!(verdict(near, one), LiveRefresh::Reprobe(1));
-    assert_eq!(verdict(near, LiveAsk { can_split: false, ..one }), LiveRefresh::Reprobe(1));
+    for knee in [600_000, 1_200_000] {
+        assert_eq!(verdict(p, LiveAsk { knee_px: knee, ..a }), LiveRefresh::No, "{knee}");
+    }
 }

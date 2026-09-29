@@ -9899,7 +9899,14 @@ pub(crate) struct LiveAsk {
 pub(crate) fn live_refresh_verdict(price: Option<crate::RefreshPrice>, a: &LiveAsk) -> (LiveRefresh, f64, f64) {
     use crate::tunables::{LIVE_MIN_SCALE, LIVE_REFRESH_MS};
     let turn = a.frame >= a.probe_after;
-    let probe = if turn && live_fit(a.steps, a.probe_cap, crate::tunables::LIVE_PROBE_MIN_SCALE).is_some() {
+    // ⭐No ROOM to split (a frame under twice the occupancy knee, `split_room`): no piece of it can
+    // cost less than the whole, so nothing here pays for a measurement — no probe, reprobe or split.
+    // A price it already has for free (a settled frame's own pass) still licenses a frame at the
+    // share, or shrunk to it. On the RX 6800 XT at 1280×800, with only two probes a glide and no
+    // live frame, the walk's passes still ran slower after each probe (p90 frame 22 ms, against
+    // 19.6 with live refresh off — which matched 0.3.0-beta.3 exactly); 0.3.0-beta.9.
+    let room = split_room(a.now.px, a.knee_px);
+    let probe = if room && turn && live_fit(a.steps, a.probe_cap, crate::tunables::LIVE_PROBE_MIN_SCALE).is_some() {
         LiveRefresh::Probe
     } else {
         LiveRefresh::No
@@ -9925,8 +9932,7 @@ pub(crate) fn live_refresh_verdict(price: Option<crate::RefreshPrice>, a: &LiveA
             // split passes. Past that, only a probe — the view's cost moves with its REFERENCE as
             // well as its depth (the first df32 frames of a glide ran an escaped reference's
             // rebase storm at ~5× the per-step cost of the ones a second later), so a dear price
-            // must not outlive the reference it measured by octaves. (A frame the knee will not
-            // let split is reprobed in ONE pass: a one-off measurement, like a probe.)
+            // must not outlive the reference it measured by octaves.
             // Both re-measurements scale with the dearest frame this adapter could render live at
             // this size (`live_max_ms`): on the RX 6800 XT at 1280×800 that is ~12 ms, and bounds
             // of 35–51 ms re-probed every few dozen frames for nothing — each a 20–35 ms frame.
@@ -9936,7 +9942,7 @@ pub(crate) fn live_refresh_verdict(price: Option<crate::RefreshPrice>, a: &LiveA
             let reprobe_ms = crate::tunables::LIVE_REPROBE_MS * reach;
             if pred <= LIVE_REFRESH_MS {
                 LiveRefresh::Priced
-            } else if pred <= reprobe_ms && turn && (k == 1 || a.can_split) {
+            } else if room && pred <= reprobe_ms && turn && a.can_split {
                 LiveRefresh::Reprobe(k)
             } else if pred <= crate::tunables::LIVE_HOPE_X * live_max {
                 probe
@@ -9947,7 +9953,7 @@ pub(crate) fn live_refresh_verdict(price: Option<crate::RefreshPrice>, a: &LiveA
             LiveRefresh::Priced
         } else if shrink_ok {
             return (LiveRefresh::Priced, pred, shrink);
-        } else if let (Some(k), true) = (split_sets(pred, a.now.px, a.knee_px), a.can_split) {
+        } else if let (Some(k), true) = (split_sets(pred, a.now.px, a.knee_px), a.can_split && room) {
             LiveRefresh::Split(k)
         } else {
             LiveRefresh::No // measured dear, and fresh: the hold/pin path is right here
@@ -9969,6 +9975,14 @@ pub(crate) fn hopeless_price(price: Option<crate::RefreshPrice>, a: &LiveAsk) ->
     let p = price.filter(|p| p.ns > 0.0 && p.ns.is_finite() && p.at.mode == a.now.mode && p.at.nav == a.now.nav)?;
     let pred = p.ns * a.steps as f64 / 1.0e6;
     (pred > crate::tunables::LIVE_HOPE_X * live_max_ms(a.now.px, a.knee_px)).then_some(pred)
+}
+
+/// Room to split a `px`-pixel frame: at least two sets at or over the adapter's occupancy knee
+/// (`knee_px`; none known = always). Without it every piece costs about what the whole frame does.
+/// The RX 6800 XT (knee 524,288) at 1280×800 has none; the RTX 3080 (262,144) there has 3.6
+/// knees' worth. Pure.
+pub(crate) fn split_room(px: u64, knee_px: u64) -> bool {
+    knee_px == 0 || px >= knee_px.saturating_mul(2)
 }
 
 /// The most split passes that still make each set of a `px`-pixel frame cheaper: `LIVE_SPLIT_MAX`,
@@ -10075,10 +10089,16 @@ pub(crate) enum LiveNo {
     UnderKnee,
     /// No usable price, but a lapsed one proved the view hopeless (`hopeless_price`): no probe.
     BackedOff,
+    /// The frame is under twice the occupancy knee (`split_room`): no probe, reprobe or split —
+    /// only a price it already has may license a frame at the share.
+    NoSplitRoom,
 }
 
 /// Why [`live_refresh_verdict`] said `No` to `a`. Pure.
 pub(crate) fn live_no_reason(price: Option<crate::RefreshPrice>, a: &LiveAsk) -> LiveNo {
+    if !split_room(a.now.px, a.knee_px) {
+        return LiveNo::NoSplitRoom;
+    }
     match usable_price(price, a) {
         Some(p) if price_is_bound(&p, a) => LiveNo::BoundTooDear,
         Some(p) => {
