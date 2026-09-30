@@ -1148,6 +1148,54 @@ impl FractadyneApp {
         self.perf.layout.top_bar = Some(top.response.rect);
     }
 
+    /// The DIRECT path's precision wall, for the status-bar diagnostic (design/custom-formulas.md
+    /// §5.1). Current GPU compilers fold the error-free transforms double-single arithmetic relies
+    /// on (`--gputest`), so a pixel's coordinate is single precision: once one f32 step of it spans
+    /// more than a pixel, neighbouring pixels compute the same point and the image breaks into
+    /// blocks. Measured per component, at the pixel coordinate's own magnitude — the orbit passing
+    /// |z| ≈ 1 does not merge pixels (at 0.286+0.012i the blocks were 1.98 px across, the real
+    /// part's step, and 1.00 down) — and on a field view (−1.64+0.36i, 549,309×) as 17×4-px
+    /// blocks, one f32 step each way. `cx`/`cy` are the view centre, `half_w`/`half_h` its
+    /// half-extent (the step is taken at the largest magnitude in view), `upp` the pixel size.
+    /// Only the direct path has this wall; perturbation iterates small offsets.
+    pub(crate) fn direct_precision_status(
+        direct: bool,
+        (cx, cy): (f64, f64),
+        (half_w, half_h): (f64, f64),
+        upp: f64,
+        mag: f64,
+    ) -> Option<(&'static str, String, bool)> {
+        if !direct || !(upp > 0.0) || !upp.is_finite() {
+            return None;
+        }
+        // One f32 step at |v|: the gap to the next representable value.
+        let f32_step = |v: f64| {
+            let a = v.abs() as f32;
+            if !a.is_finite() {
+                return f64::INFINITY;
+            }
+            (f32::from_bits(a.to_bits() + 1) - a) as f64
+        };
+        let step = f32_step(cx.abs() + half_w).max(f32_step(cy.abs() + half_h));
+        if step <= upp {
+            return None;
+        }
+        let blocks = step / upp;
+        Some((
+            "⚠ depth limit",
+            format!(
+                "This view renders directly on the GPU in single precision, where one step of the \
+                 coordinates is {} pixels wide here: neighbouring pixels compute the same point, \
+                 so the image breaks into blocks. At this location it is sharp to about {}×. This \
+                 formula has no deep-zoom (perturbation) path yet, so zooming further shows no \
+                 more detail.",
+                commas(&format!("{blocks:.0}")),
+                commas(&format!("{:.0}", mag / blocks))
+            ),
+            true,
+        ))
+    }
+
     /// Bottom status bar — center coordinate, cursor, zoom, effective iteration count, and the
     /// live script / benchmark playback progress.
     /// Classify which rendering limit (if any) is binding, for the status-bar diagnostic.
@@ -1416,18 +1464,32 @@ impl FractadyneApp {
                 // Misiurewicz-spar reports arrived as mystery screenshots precisely because the
                 // app knew it was clamped and said nothing).
                 let vc = &self.ref_cache[0];
-                let limit = Self::limit_status(
-                    vc.partial,
-                    vc.orbit_len,
-                    crate::render::orbit_len_cap(),
-                    eff_iter,
-                    self.perf.capped_frac[0],
-                    self.perf.budget_measured[0],
-                    self.perf.budget_maxed[0],
-                    self.perf.norm_range[0].map(|(_, mx)| mx as f64),
-                    self.perf.iter_plateau[0],
-                    self.perf.iter_exhausted[0],
-                );
+                let vp = &self.viewport;
+                let mag = vp.magnification();
+                let upp = vp.units_per_pixel.to_f64();
+                let direct = crate::RenderMode::select(self.fractal.supports_perturbation(), self.julia_mode, mag)
+                    .is_direct();
+                let limit = Self::direct_precision_status(
+                    direct,
+                    vp.center_f64(),
+                    (upp * vp.width_px * 0.5, upp * vp.height_px * 0.5),
+                    upp,
+                    mag,
+                )
+                .or_else(|| {
+                    Self::limit_status(
+                        vc.partial,
+                        vc.orbit_len,
+                        crate::render::orbit_len_cap(),
+                        eff_iter,
+                        self.perf.capped_frac[0],
+                        self.perf.budget_measured[0],
+                        self.perf.budget_maxed[0],
+                        self.perf.norm_range[0].map(|(_, mx)| mx as f64),
+                        self.perf.iter_plateau[0],
+                        self.perf.iter_exhausted[0],
+                    )
+                });
                 // ⭐The diagnostic slot is ALWAYS the SAME WIDGET with the SAME METRICS — like the
                 // cursor readout above, but stricter. The label comes and goes with live counters;
                 // on a width where the bar just fits, its arrival wrapped the bar to two lines,
@@ -1832,6 +1894,35 @@ impl FractadyneApp {
 #[cfg(test)]
 mod tests {
     use crate::FractadyneApp;
+
+    /// The direct-path precision wall fires where blocks were MEASURED and stays quiet where the
+    /// image was sharp. The panel is 1,340 px tall (the field report's), home span 4.
+    #[test]
+    fn direct_precision_status_matches_the_measured_views() {
+        let h = 1340.0;
+        let w = 2160.0;
+        let at = |mag: f64, c: (f64, f64), direct: bool| {
+            let upp = 4.0 / mag / h;
+            FractadyneApp::direct_precision_status(direct, c, (upp * w * 0.5, upp * h * 0.5), upp, mag)
+        };
+        let field = (-1.637_805_920_305_324, 0.358_468_406_943_270);
+        // 549,309×: bricked, 21×5 px measured in the screenshot.
+        let s = at(549_309.0, field, true).expect("the bricked view must warn");
+        assert!(s.0.contains("depth limit") && s.2, "{s:?}");
+        assert!(s.1.contains("22 pixels wide"), "one f32 step at |x| = 1.64 is ~22 px here: {}", s.1);
+        // 21,077×: sharp in the screenshot (0.84 px per step).
+        assert!(at(21_077.0, field, true).is_none());
+        // The same bricked view on a perturbation path has no such wall.
+        assert!(at(549_309.0, field, false).is_none());
+        // Near the origin the step is the coordinate's own, not |z| ≈ 1's: 0.286+0.012i at a
+        // 5e-8 pixel (1.00-px runs measured) is quiet; at 1.5e-8 (1.98-px runs) it warns.
+        let upp_mag = |upp: f64| 4.0 / (upp * h);
+        let near = (0.2860, 0.0118);
+        let quiet = FractadyneApp::direct_precision_status(true, near, (5e-8 * w / 2.0, 5e-8 * h / 2.0), 5e-8, upp_mag(5e-8));
+        assert!(quiet.is_none(), "{quiet:?}");
+        let warns = FractadyneApp::direct_precision_status(true, near, (1.5e-8 * w / 2.0, 1.5e-8 * h / 2.0), 1.5e-8, upp_mag(1.5e-8));
+        assert!(warns.is_some());
+    }
 
     /// The measured limit regimes classify correctly, and ordinary states stay quiet.
     /// Every case here is a real view measured this week, not an invented one.
