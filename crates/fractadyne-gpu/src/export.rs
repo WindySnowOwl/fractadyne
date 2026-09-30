@@ -2874,7 +2874,9 @@ pub fn render_iter_chunked_timed(
     let w = req.width.clamp(1, max_dim);
     let h = req.height.clamp(1, max_dim);
 
-    let shader = shader_module(device);
+    // A custom formula chunks through its OWN module's chunk pass: the fixed module's would read
+    // formula id 1000 and iterate the Mandelbrot step.
+    let shader = crate::shader_module_for(device, req.custom.as_deref());
     let iter_bgl = iter_bind_group_layout(device);
     let targets: usize = if fe { 4 } else { 3 };
     let state_bgl = crate::state_bind_group_layout_n(device, targets as u32);

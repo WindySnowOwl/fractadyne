@@ -3553,6 +3553,103 @@ impl FractadyneApp {
                     });
                 }
             }
+
+            // (d) RESUMABLE PASSES: a custom module carries its own chunk pass (`fs_iterate_chunk`
+            //     with the generated step spliced in), so a custom view splits its iterations
+            //     across passes like a built-in. As for the built-ins ("chunked render is
+            //     bit-identical"): odd window sizes, so boundaries land mid-phase for a hybrid, and a
+            //     rebase storm (a 97-sample reference) so they land on rebases. Also covered: z_{n-1}
+            //     carried across passes (Phoenix's step reads it; the chunk pass keeps it where a
+            //     built-in keeps its derivative) and Julia mode (where that slot starts at 1, not 0).
+            //     ⚠Each render must SHOW passes: `render_iter_chunked_timed` falls back to one
+            //     unbounded dispatch out of scope, which would agree trivially.
+            let phoenix = ir::Formula::single(ir::builtin_step(fractadyne_core::formula::PHOENIX).unwrap());
+            let hybrid = pert_cases[0].1.clone();
+            let chunk_cases: Vec<(&str, ir::Formula, Vec<(f64, f64)>, bool, f64, u32, u32, bool, u32)> = vec![
+                // (label, formula, params, julia, magnification, max_iter, window, truncate, mode)
+                ("Phoenix step (reads z_{n-1}), direct", phoenix.clone(), vec![], false, 1.0, 2_000, 137, false, 1),
+                ("sin z + c (f32 functions), direct", ir::parse::parse("sin(z) + c").unwrap(), vec![], false, 1.0, 600, 37, false, 1),
+                ("hybrid Mandelbrot/Burning Ship, direct", hybrid.clone(), vec![], false, 1.0, 2_000, 137, false, 1),
+                ("z³ − p·z + c (a parameter), direct", ir::parse::parse("z^3 - p1*z + c").unwrap(), vec![(0.4, 0.0)], false, 1.0, 2_000, 137, false, 1),
+                // Julia mode with a step that reads z_{n-1}: the slot carrying it starts at 1 there.
+                ("Phoenix step, Julia, direct", phoenix, vec![], true, 1.0, 2_000, 137, false, 1),
+                ("hybrid Mandelbrot/Burning Ship, perturbed 1e6×", hybrid.clone(), vec![], false, 1.0e6, 3_000, 517, false, 0),
+                ("hybrid Mandelbrot/Burning Ship, 7-sample reference (rebase storm)", hybrid, vec![], false, 1.0e6, 3_000, 517, true, 0),
+            ];
+            for (label, formula, params, julia, mag, max_iter, window, truncate, want_mode) in chunk_cases {
+                let mut padded = params.clone();
+                padded.resize(fractadyne_core::ir::parse::MAX_PARAMS, (0.0, 0.0));
+                let Ok(shader) = fractadyne_gpu::custom::build(&formula, &padded) else { continue };
+                // Perturbed cases sit on the formula's boundary (as (b)); direct ones at home.
+                let at = if mag > 1.0e4 { boundary(&formula, &padded, first) } else { Some((-0.5, 0.0)) };
+                let Some(at) = at else {
+                    push_check(&mut checks, &mut last_check_t, no_boundary(format!("{label}: chunked = single pass"), first));
+                    continue;
+                };
+                self.fractal = FractalKind::Custom;
+                self.julia_mode = julia;
+                self.julia_c = (0.56667, 0.0); // the classic Phoenix Julia constant (p = −0.5)
+                self.custom = Some(std::sync::Arc::new(crate::custom_formula::CustomFormula {
+                    source: label.to_string(),
+                    params: padded.clone(),
+                    formula: formula.clone(),
+                    shader: std::sync::Arc::new(shader),
+                }));
+                self.render_cfg.max_iter = max_iter;
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = bf(at.0);
+                vp.center_y = bf(at.1);
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
+                vp.precision = fractadyne_core::precision_for_magnification(mag).max(64);
+                let mut req = self.current_export_request_for(&vp, julia);
+                req.width = N;
+                req.height = N;
+                req.ss = 1;
+                let built_len = req.orbit_len;
+                if truncate {
+                    // 7 samples, not the built-ins' 97: here pixels Zhuoran-rebase about every ten
+                    // iterations, so a 97-sample cut was never reached (measured: the same 14.9M
+                    // rebases, the same image). Odd, so the end-of-orbit rebase alternates phase.
+                    let short: Vec<[f32; 4]> = req.orbit.iter().take(7).copied().collect();
+                    req.orbit = std::sync::Arc::new(short);
+                    req.orbit_len = 7;
+                }
+                let single = st_render_iter(device, queue, &req);
+                let mut passes = Vec::new();
+                let chunked = fractadyne_gpu::render_iter_chunked_timed(device, queue, &req, window, &mut passes)
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_chunked, custom): {e}"))
+                    .ok();
+                let (pass, result) = match (&single, &chunked) {
+                    _ if req.mode != want_mode || req.custom.is_none() => {
+                        (false, format!("ran in mode {} (custom module {}), not mode {want_mode}", req.mode, req.custom.is_some()))
+                    }
+                    (Some(a), Some(r)) if a.len() == r.pixels.len() => {
+                        let diffs = a.iter().zip(&r.pixels).filter(|(x, y)| x.to_bits() != y.to_bits()).count();
+                        let px = a.len() / 4;
+                        let escaped = (0..px).filter(|&k| a[k * 4] >= 0.0).count();
+                        let reb = r.counters[fractadyne_gpu::CTR_REBASE];
+                        (
+                            diffs == 0 && passes.len() >= 2 && escaped * 10 > px && escaped < px,
+                            format!(
+                                "mode {}, ref {built_len}→{}, {} passes — {diffs} texels differ; {escaped} of {px} px escaped, rebase {reb}",
+                                req.mode,
+                                req.orbit_len,
+                                passes.len()
+                            ),
+                        )
+                    }
+                    _ => (false, "render failed".into()),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Custom formula (GPU)",
+                    name: format!("{label}: chunked = single pass"),
+                    params: format!("{mag:.0e}×, {max_iter} iter, window {window}"),
+                    result,
+                    threshold: "0 texels differ, ≥2 passes, >10% escaped, some interior",
+                    pass,
+                });
+            }
+            self.julia_mode = false;
             self.fractal = FractalKind::Mandelbrot;
         }
 

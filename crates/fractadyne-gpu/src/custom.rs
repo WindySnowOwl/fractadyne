@@ -37,14 +37,34 @@ const REBASE_BEGIN: &str = "// @@CUSTOM_REBASE_BEGIN";
 const REBASE_END: &str = "// @@CUSTOM_REBASE_END";
 const SMOOTH0_BEGIN: &str = "// @@CUSTOM_SMOOTH0_BEGIN";
 const SMOOTH0_END: &str = "// @@CUSTOM_SMOOTH0_END";
+// The resumable chunk pass (`fs_iterate_chunk`) and its resolve: the same five slots again, so a
+// custom formula splits its iterations across passes like a built-in.
+const CHUNK_STEP_BEGIN: &str = "// @@CUSTOM_CHUNK_STEP_BEGIN";
+const CHUNK_STEP_END: &str = "// @@CUSTOM_CHUNK_STEP_END";
+const CHUNK_SMOOTH_BEGIN: &str = "// @@CUSTOM_CHUNK_SMOOTH_BEGIN";
+const CHUNK_SMOOTH_END: &str = "// @@CUSTOM_CHUNK_SMOOTH_END";
+const CHUNK_PSTEP_BEGIN: &str = "// @@CUSTOM_CHUNK_PSTEP_BEGIN";
+const CHUNK_PSTEP_END: &str = "// @@CUSTOM_CHUNK_PSTEP_END";
+const CHUNK_REBASE_BEGIN: &str = "// @@CUSTOM_CHUNK_REBASE_BEGIN";
+const CHUNK_REBASE_END: &str = "// @@CUSTOM_CHUNK_REBASE_END";
+const CHUNK_SMOOTH0_BEGIN: &str = "// @@CUSTOM_CHUNK_SMOOTH0_BEGIN";
+const CHUNK_SMOOTH0_END: &str = "// @@CUSTOM_CHUNK_SMOOTH0_END";
+const RESOLVE_DE_BEGIN: &str = "// @@CUSTOM_RESOLVE_DE_BEGIN";
+const RESOLVE_DE_END: &str = "// @@CUSTOM_RESOLVE_DE_END";
 /// Every slot, in file order: `(begin, end)`.
-const SLOTS: [(&str, &str); 6] = [
+const SLOTS: [(&str, &str); 12] = [
     (STEP_BEGIN, STEP_END),
     (SMOOTH_BEGIN, SMOOTH_END),
     (CUT_BEGIN, CUT_END),
     (PSTEP_BEGIN, PSTEP_END),
     (REBASE_BEGIN, REBASE_END),
     (SMOOTH0_BEGIN, SMOOTH0_END),
+    (CHUNK_STEP_BEGIN, CHUNK_STEP_END),
+    (CHUNK_SMOOTH_BEGIN, CHUNK_SMOOTH_END),
+    (CHUNK_PSTEP_BEGIN, CHUNK_PSTEP_END),
+    (CHUNK_REBASE_BEGIN, CHUNK_REBASE_END),
+    (CHUNK_SMOOTH0_BEGIN, CHUNK_SMOOTH0_END),
+    (RESOLVE_DE_BEGIN, RESOLVE_DE_END),
 ];
 
 /// How much precision the generated step carries.
@@ -407,7 +427,21 @@ fn splice(step_fns: &str, power: f32) -> Result<String, CustomError> {
     // custom formula (measured: `100·exp(c)` escaping at n = 1 gives −1.45), unreachable from the
     // built-ins' views. Clamped at 0 it stays escaped; every value ≥ 0 keeps its bits.
     let smooth = "        let smit = max(f32(iter) + 1.0 - nu, 0.0);\n".to_string();
-    let fills: [String; 6] = [
+    // `iter` has already advanced to the NEXT step's index where the rebase runs, so the reference
+    // restarts at the sample whose phase that step will run.
+    let rebase = |re: &str, im: &str| {
+        format!(
+            "            if (rebase_now || ref_n + 1u >= iu.orbit_len) {{
+                n_rebase = n_rebase + 1u;
+                let base = iter % CUSTOM_PHASES;
+                let r0 = orbit_cdf(reference[base]);
+                dz = cset(df_sub({re}, r0.re), df_sub({im}, r0.im));
+                ref_n = base;
+            }}
+"
+        )
+    };
+    let fills: [String; 12] = [
         format!(
             "                var zn: Cdf = custom_tame(custom_step(z, c, zprev, iter));\n{}",
             power_line("                ")
@@ -415,18 +449,26 @@ fn splice(step_fns: &str, power: f32) -> Result<String, CustomError> {
         smooth.clone(),
         String::new(),
         format!("            dz = custom_pstep(z, dz, dc, iter);\n{}", power_line("            ")),
-        // `iter` has already advanced to the NEXT step's index here, so the reference restarts at
-        // the sample whose phase that step will run.
-        "            if (rebase_now || ref_n + 1u >= iu.orbit_len) {
-                n_rebase = n_rebase + 1u;
-                let base = iter % CUSTOM_PHASES;
-                let r0 = orbit_cdf(reference[base]);
-                dz = cset(df_sub(zr_full, r0.re), df_sub(zi_full, r0.im));
-                ref_n = base;
-            }
-"
-        .to_string(),
+        rebase("zr_full", "zi_full"),
         smooth,
+        // The chunk pass's direct step: a custom formula has no derivative (fs_iterate computes
+        // none for it), so the state slot the built-ins carry it in carries z_{n-1} instead,
+        // which starts at 0 — as `zprev` does in fs_iterate — whatever the derivative's start.
+        format!(
+            "            var zp = dz;
+            if (iter == 0u) {{ zp = cset(zero, zero); }}
+            let zn = custom_tame(custom_step(z, c, zp, iter));
+            dz = z;
+            z = zn;
+{}",
+            power_line("            ")
+        ),
+        "            smit_out = max(f32(iter) + 1.0 - nu, 0.0);\n".to_string(),
+        format!("            dz = custom_pstep(z, dz, dc, iter);\n{}", power_line("            ")),
+        rebase("z_full_re", "z_full_im"),
+        "            smit = max(f32(iter) + 1.0 - nu, 0.0);\n".to_string(),
+        // fs_iterate's values for a formula without a derivative: no slope, no distance estimate.
+        "    let nrm = vec2<f32>(0.0, 0.0);\n    let de = 1.0e30;\n".to_string(),
     ];
     let mut out = String::with_capacity(FIXED.len() + step_fns.len());
     let mut at = 0;

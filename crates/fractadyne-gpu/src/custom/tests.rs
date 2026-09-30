@@ -39,8 +39,15 @@ fn every_built_in_step_generates_a_valid_module_without_the_perturbation_paths()
         let s = &shader.source;
         assert!(s.contains("var zn: Cdf = custom_tame(custom_step(z, c, zprev, iter));"));
         assert_eq!(s.matches("let smit = max(f32(iter) + 1.0 - nu, 0.0);").count(), 2, "both smooth values clamped");
-        assert!(s.contains("dz = custom_pstep(z, dz, dc, iter);"), "the mode-0 step slot");
-        assert!(s.contains("let base = iter % CUSTOM_PHASES;"), "the phase-aligned rebase");
+        // And the resumable chunk pass: its direct step (z_{n-1} carried in the derivative's
+        // slot), both its smooth values, its perturbed step and rebase, and the resolve's DE.
+        assert!(s.contains("let zn = custom_tame(custom_step(z, c, zp, iter));"), "the chunk pass's direct step");
+        assert_eq!(s.matches("max(f32(iter) + 1.0 - nu, 0.0);").count(), 4, "all four smooth values clamped");
+        assert_eq!(s.matches("dz = custom_pstep(z, dz, dc, iter);").count(), 2, "both mode-0 step slots");
+        assert_eq!(s.matches("let base = iter % CUSTOM_PHASES;").count(), 2, "both rebases phase-aligned");
+        assert!(s.contains("dz = cset(df_sub(z_full_re, r0.re), df_sub(z_full_im, r0.im));"), "the chunk rebase's names");
+        assert!(s.contains("    let nrm = vec2<f32>(0.0, 0.0);\n    let de = 1.0e30;\n"), "the resolve's no-DE values");
+        assert!(!s.contains("let de = de_log2(mag2, d.x * d.x + d.y * d.y, sm.w);"), "the resolve's DE survived");
         assert!(!s.contains(cut), "formula {id}: floatexp path still present");
         assert!(SLOTS.iter().all(|(b, e)| !s.contains(b) && !s.contains(e)), "a marker survived");
         assert!(s.contains("fn fs_iterate(") && s.contains("fn vs_split_tiles("));

@@ -117,13 +117,15 @@ pub mod formula {
     /// The built-in families' capabilities. An unknown id gets none of them, and glitch correction
     /// on — what each gate gave an out-of-range id when it was written as an id range. Except
     /// [`CUSTOM`]: glitch correction builds its extra references from the formula ID, which names
-    /// no custom step (a custom export ran 52 references of the wrong orbit before this).
+    /// no custom step (a custom export ran 52 references of the wrong orbit before this); and a
+    /// custom formula's generated module carries its own resumable chunk pass (`custom.rs`), so
+    /// it has `resumable_passes` — ⚠which every chunk pipeline must then build from THAT module.
     pub const fn caps(formula: u32) -> FormulaCaps {
         let polynomial = matches!(formula, MANDELBROT | MULTIBROT3 | MULTIBROT4 | MULTIBROT5);
         FormulaCaps {
             series_approximation: polynomial,
             bla: formula == MANDELBROT,
-            resumable_passes: polynomial,
+            resumable_passes: polynomial || formula == CUSTOM,
             nucleus_finder: polynomial,
             feature_solvers: formula == MANDELBROT,
             export_glitch_correction: !polynomial && formula != CUSTOM,

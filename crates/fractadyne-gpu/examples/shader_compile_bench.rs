@@ -97,7 +97,9 @@ fn main() {
         };
         let mut line = format!("variant {variant} ({what}): module {t_module:7.1} ms");
         let entries: &[(&str, usize)] = if variant >= 7 {
-            &[("fs_iterate", 2)]
+            // What the app builds for a custom formula: the iterate pass, the resumable chunk pass
+            // and its resolve (no mode 2).
+            &[("fs_iterate", 2), ("fs_iterate_chunk", 3), ("fs_resolve", 2)]
         } else {
             &[("fs_iterate", 2), ("fs_iterate_chunk", 3), ("fs_iterate_chunk_fe", 4)]
         };

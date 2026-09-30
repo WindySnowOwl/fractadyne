@@ -965,16 +965,24 @@ struct Renderer {
     custom: Option<CustomPipelines>,
 }
 
-/// A custom formula's `fs_iterate` pair: the full-screen and the split-tile pipeline, from its
-/// generated module (`custom::build`) and the fixed iterate layout.
+/// A custom formula's iterate pipelines, from its generated module (`custom::build`) and the fixed
+/// layouts: the `fs_iterate` pair (full-screen and split-tile), and the resumable chunk pass with
+/// its resolve (`None` where the device lacks the state targets, as for the built-ins). A custom
+/// module never runs mode 2, so there is no four-target pair.
 struct CustomPipelines {
     key: u64,
     iter: wgpu::RenderPipeline,
     iter_split: wgpu::RenderPipeline,
+    chunk: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
 }
 
 impl CustomPipelines {
-    fn new(device: &wgpu::Device, iter_bgl: &wgpu::BindGroupLayout, shader: &custom::CustomShader) -> Self {
+    fn new(
+        device: &wgpu::Device,
+        iter_bgl: &wgpu::BindGroupLayout,
+        state_bgl: &wgpu::BindGroupLayout,
+        shader: &custom::CustomShader,
+    ) -> Self {
         let module = shader_module_for(device, Some(shader));
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("fractadyne.custom.iter_layout"),
@@ -989,7 +997,24 @@ impl CustomPipelines {
             device, &module, &layout, "vs_split_tiles", "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
             "fractadyne.custom.iter_split_pipeline",
         );
-        CustomPipelines { key: shader.key, iter, iter_split }
+        let chunk = (device.limits().max_color_attachment_bytes_per_sample >= 48).then(|| {
+            let chunk_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("fractadyne.custom.chunk_layout"),
+                bind_group_layouts: &[iter_bgl, state_bgl],
+                push_constant_ranges: &[],
+            });
+            (
+                fullscreen_pipeline(
+                    device, &module, &chunk_layout, "fs_iterate_chunk",
+                    &[ITER_FORMAT, ITER_FORMAT, ITER_FORMAT], "fractadyne.custom.chunk_pipeline",
+                ),
+                fullscreen_pipeline(
+                    device, &module, &chunk_layout, "fs_resolve", &[ITER_FORMAT, ITER_FORMAT],
+                    "fractadyne.custom.resolve_pipeline",
+                ),
+            )
+        });
+        CustomPipelines { key: shader.key, iter, iter_split, chunk }
     }
 }
 
@@ -2433,7 +2458,7 @@ impl CallbackTrait for MandelbrotParams {
         // A custom formula iterates through its own module's pipelines (everything else is shared).
         if let Some(c) = self.custom.as_deref() {
             if r.custom.as_ref().map(|p| p.key) != Some(c.key) {
-                r.custom = Some(CustomPipelines::new(device, &r.iter_bgl, c));
+                r.custom = Some(CustomPipelines::new(device, &r.iter_bgl, &r.state_bgl, c));
             }
         }
         let iter_bgl = &r.iter_bgl;
@@ -2447,10 +2472,17 @@ impl CallbackTrait for MandelbrotParams {
         // the three-target pair. Resolved once here so the chunk block below stays mode-agnostic —
         // and note the fallback is the same one a 48-byte device already takes: if the mode-2 pair
         // is `None`, `chunk` resolves to `None` and this dispatch is clamped instead of split.
-        let (chunk_pipeline, resolve_pipeline, state_bgl, chunk_targets) = if self.mode == 2 {
-            (r.chunk_fe_pipeline.as_ref(), r.resolve_fe_pipeline.as_ref(), &r.state_bgl4, 4usize)
-        } else {
-            (r.chunk_pipeline.as_ref(), r.resolve_pipeline.as_ref(), &r.state_bgl, 3usize)
+        // A custom formula chunks through its own module's pair (never mode 2); the fixed module's
+        // would read formula id 1000 and iterate the Mandelbrot step.
+        let (chunk_pipeline, resolve_pipeline, state_bgl, chunk_targets) = match (self.custom.as_ref(), r.custom.as_ref()) {
+            (Some(_), Some(p)) => {
+                let pair = p.chunk.as_ref().filter(|_| self.mode != 2);
+                (pair.map(|c| &c.0), pair.map(|c| &c.1), &r.state_bgl, 3usize)
+            }
+            _ if self.mode == 2 => {
+                (r.chunk_fe_pipeline.as_ref(), r.resolve_fe_pipeline.as_ref(), &r.state_bgl4, 4usize)
+            }
+            _ => (r.chunk_pipeline.as_ref(), r.resolve_pipeline.as_ref(), &r.state_bgl, 3usize),
         };
         let esc_min_seed = &r.esc_min_seed;
         // Progressive-SSAA passes (disjoint fields, borrowed alongside the per-view resources).

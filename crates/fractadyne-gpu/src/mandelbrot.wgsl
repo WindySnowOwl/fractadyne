@@ -1752,6 +1752,8 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             // Formula step + derivative update — the exact arithmetic and ORDER of the direct
             // branch in fs_iterate (derivative uses the CURRENT z, before z advances), so a
             // chunked render is bit-identical to the single-pass one.
+            // @@CUSTOM_CHUNK_STEP_BEGIN — a custom formula's module replaces the step from here to
+            // the matching END marker; it carries z_{n-1} where the derivative is (no DE there).
             var zn: Cdf;
             if (iu.formula == 0u) {
                 zn = c_sqr(z);
@@ -1776,6 +1778,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             if (iu.julia == 0u) { dz = c_add(dz, one); }
             zn = c_add(zn, c);
             z = zn;
+            // @@CUSTOM_CHUNK_STEP_END
             iter = iter + 1u;
             zf = vec2<f32>(z.re.x, z.im.x);
             if (dot(zf, zf) > bail2) { escaped = true; break; }
@@ -1785,7 +1788,9 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             status = ST_ESCAPED;
             let mag2 = dot(zf, zf);
             let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
+            // @@CUSTOM_CHUNK_SMOOTH_BEGIN — clamped at 0 in a custom module, as fs_iterate's.
             smit_out = f32(iter) + 1.0 - nu;
+            // @@CUSTOM_CHUNK_SMOOTH_END
             esc_range_commit(smit_out);
         } else if (iter >= iu.max_iter) {
             status = ST_INTERIOR;
@@ -1857,6 +1862,8 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             if (iter >= stop) { break; }
             n_full = n_full + 1u;
             let z = orbit_cdf(reference[ref_n]);
+            // @@CUSTOM_CHUNK_PSTEP_BEGIN — a custom module replaces the derivative and the δ-update
+            // from here to the matching END marker with its generated perturbed step.
             // Derivative update using the CURRENT full z (before the δ advances).
             let zfn = vec2<f32>(z.re.x + dz.re.x, z.im.x + dz.im.x);
             let fp = deriv_factor(iu.formula, zfn);
@@ -1885,6 +1892,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             } else {
                 dz = c_add(c_add(c_two(c_mul(z, dz)), c_sqr(dz)), dc);
             }
+            // @@CUSTOM_CHUNK_PSTEP_END
             ref_n = ref_n + 1u;
             iter = iter + 1u;
             let rn = orbit_cdf(reference[ref_n]);
@@ -1919,6 +1927,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
                 let dl = vec2<f32>(dz.re.x * LIFT, dz.im.x * LIFT);
                 rebase_now = dot(zl, zl) < dot(dl, dl);
             }
+            // @@CUSTOM_CHUNK_REBASE_BEGIN — rebased PHASE-ALIGNED in a custom module, as fs_iterate's.
             if (rebase_now || ref_n + 1u >= iu.orbit_len) {
                 n_rebase = n_rebase + 1u;
                 let r0 = orbit_cdf(reference[0]);
@@ -1928,6 +1937,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
                 );
                 ref_n = 0u;
             }
+            // @@CUSTOM_CHUNK_REBASE_END
         }
         ctr_commit(n_rebase, 0u, 0u);
         step_commit(gx, gy, n_full, n_full, 0u, iter - iter0);
@@ -1944,7 +1954,9 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             status = ST_ESCAPED;
             let mag2 = dot(zf, zf);
             let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
+            // @@CUSTOM_CHUNK_SMOOTH0_BEGIN — clamped at 0 in a custom module, as fs_iterate's.
             smit = f32(iter) + 1.0 - nu;
+            // @@CUSTOM_CHUNK_SMOOTH0_END
             esc_range_commit(smit);
             // At escape the δ is no longer needed — store the FULL z so the resolve can shade
             // without knowing the reference, plus the derivative mantissa/exponent for DE.
@@ -2448,8 +2460,11 @@ fn fs_resolve(in: VsOut) -> FragOut {
     let zf = vec2<f32>(sz.x, sz.z);
     let d = vec2<f32>(sdz.x, sdz.z);
     let mag2 = dot(zf, zf);
+    // @@CUSTOM_RESOLVE_DE_BEGIN — a custom module has no derivative (st_dz carries z_{n-1}), so
+    // it writes fs_iterate's no-DE values here instead.
     let nrm = slope_normal(zf, d);
     let de = de_log2(mag2, d.x * d.x + d.y * d.y, sm.w);
+    // @@CUSTOM_RESOLVE_DE_END
     // ⭐⭐WHOLE-FRAME ESCAPE RANGE FOR LIVE AUTO-NORMALIZATION. The iterate passes commit the range
     // at each pixel's SETTLE TRANSITION, which on a chunked walk means only the pixels that
     // happened to settle inside THIS pass's iteration window — so the reading a chunked frame

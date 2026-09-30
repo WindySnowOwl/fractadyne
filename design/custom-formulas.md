@@ -374,6 +374,31 @@ separate, later decision, and only if phase 4 shows the generated render is iden
       there, so the pipeline check uses the twin check's tolerance, not 0.01.
   - Live: a `--shot` of custom `z² + c` at 1.1e30× draws the built-in's spiral.
   - A report-table fix: a `|` in a check's name (`|z|`) split the markdown row; cells are escaped.
+- **Resumable passes for custom formulas.** The field report's blocky views had two causes. One
+  was the direct path's precision, which is solved by perturbation for ring formulas and inherent
+  to functions until phase 5. The other was a high iteration count with no resumable passes: the
+  live frame could not split along the iteration axis, so it shrank (188×144). The chunk pass
+  (`fs_iterate_chunk`) and its resolve now carry six more marker pairs, filled like the
+  single-pass ones: the direct step, both smooth clamps, the perturbed step, the phase-aligned
+  rebase, and the resolve's distance estimate. A custom step has no derivative, so the state slot
+  a built-in keeps its derivative in carries z_{n-1} instead. It starts at 0, as `zprev` does,
+  even in Julia mode, where the built-ins' derivative starts at 1. `caps(CUSTOM).resumable_passes`
+  is set, and every chunk pipeline for a custom request is built from the custom module: the live
+  renderer's (`CustomPipelines::chunk`), the export tile chunker's (already), and
+  `render_iter_chunked`'s. The fixed module would read id 1000 and iterate the Mandelbrot step.
+  Measured:
+  - Self-test +7 (full run 237/237, goldens 19/19): chunked = single pass, 0 texels differ, with
+    6–17 passes asserted per render. Rows: Phoenix's step (reads z_{n-1}), `sin z + c`, a hybrid
+    with odd windows (boundaries mid-phase), a parameter, Phoenix in Julia mode, and perturbed at
+    1e6× with and without a 7-sample reference. The first try cut the reference to the built-ins'
+    97 samples, which was never reached: pixels Zhuoran-rebase about every ten iterations there,
+    and both renders gave the same 14.9M rebases. At 7 samples the storm makes 18.0M. Dropping the
+    zero start of z_{n-1} (a planted bug) turned the Julia Phoenix row red (48,400 texels).
+  - Live, `sin z + cos z·cos z + c` at 1,000,000 iterations renders at the panel's full
+    resolution in 57,718-iteration windows.
+  - First use of a formula now compiles `fs_iterate` (0.41–0.46 s), `fs_iterate_chunk`
+    (0.26–0.29 s) and `fs_resolve` (0.03–0.09 s) on the RTX 3080: about 0.8 s once per formula, on
+    the render thread. Building them off that thread is the obvious follow-up.
 
 ## 6. Validation plan
 
