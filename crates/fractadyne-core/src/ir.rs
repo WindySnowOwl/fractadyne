@@ -229,6 +229,49 @@ impl Program {
         self.insts.iter().all(Op::is_ring)
     }
 
+    /// The same program without the instructions its output does not depend on, renumbered in
+    /// order. Evaluation is unchanged (every surviving instruction computes what it did).
+    pub fn without_dead_code(&self) -> Program {
+        let mut live = vec![false; self.insts.len()];
+        live[self.out.index()] = true;
+        for i in (0..self.insts.len()).rev() {
+            if live[i] {
+                for v in self.insts[i].operands() {
+                    live[v.index()] = true;
+                }
+            }
+        }
+        let mut map = vec![0u32; self.insts.len()];
+        let mut insts = Vec::with_capacity(self.insts.len());
+        let remap = |v: Val, map: &[u32]| Val(map[v.index()]);
+        for (i, op) in self.insts.iter().enumerate() {
+            if !live[i] {
+                continue;
+            }
+            map[i] = insts.len() as u32;
+            insts.push(match *op {
+                Op::Add(a, b) => Op::Add(remap(a, &map), remap(b, &map)),
+                Op::Sub(a, b) => Op::Sub(remap(a, &map), remap(b, &map)),
+                Op::Mul(a, b) => Op::Mul(remap(a, &map), remap(b, &map)),
+                Op::Div(a, b) => Op::Div(remap(a, &map), remap(b, &map)),
+                Op::Pow(a, b) => Op::Pow(remap(a, &map), remap(b, &map)),
+                Op::Sqr(a) => Op::Sqr(remap(a, &map)),
+                Op::PowI(a, n) => Op::PowI(remap(a, &map), n),
+                Op::Scale(a, k) => Op::Scale(remap(a, &map), k),
+                Op::Neg(a) => Op::Neg(remap(a, &map)),
+                Op::Conj(a) => Op::Conj(remap(a, &map)),
+                Op::AbsRe(a) => Op::AbsRe(remap(a, &map)),
+                Op::AbsIm(a) => Op::AbsIm(remap(a, &map)),
+                Op::Re(a) => Op::Re(remap(a, &map)),
+                Op::Im(a) => Op::Im(remap(a, &map)),
+                Op::Norm(a) => Op::Norm(remap(a, &map)),
+                Op::Func(f, a) => Op::Func(f, remap(a, &map)),
+                leaf @ (Op::Z | Op::C | Op::ZPrev | Op::Param(_) | Op::Const(..)) => leaf,
+            });
+        }
+        Program { insts, out: Val(map[self.out.index()]) }
+    }
+
     /// One more than the highest parameter index read (0 if none).
     pub fn param_count(&self) -> usize {
         self.insts
@@ -264,7 +307,7 @@ impl Program {
                 | Op::Re(a)
                 | Op::Im(a) => g(a),
                 Op::Pow(a, b) => match self.insts[b.index()] {
-                    Op::Const(k, im) if im == 0.0 => g(a).map(|a| k * a),
+                    Op::Const(k, 0.0) => g(a).map(|a| k * a),
                     _ => None,
                 },
                 Op::Func(Func::Sqrt, a) => g(a).map(|a| 0.5 * a),
@@ -1017,6 +1060,9 @@ fn run_reference<B: RefBackend + IrField>(
         backend: B::BIT,
     })
 }
+
+/// Formulas written as Fractint-style expressions.
+pub mod parse;
 
 #[cfg(test)]
 mod tests;
