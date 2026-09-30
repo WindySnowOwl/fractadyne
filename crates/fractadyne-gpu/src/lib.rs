@@ -16,6 +16,8 @@ use std::sync::Arc;
 mod export;
 pub use export::*;
 pub mod timing;
+/// Custom formulas: WGSL generated from the formula IR and spliced into the fixed shader.
+pub mod custom;
 
 /// The Rust/WGSL uniform-layout gate — see the module's own docs.
 #[cfg(test)]

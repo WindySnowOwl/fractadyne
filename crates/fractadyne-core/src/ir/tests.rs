@@ -362,6 +362,38 @@ fn programs_are_validated() {
 }
 
 #[test]
+fn escape_degrees_follow_the_leading_term() {
+    let degree = |id| builtin_step(id).unwrap().escape_degree();
+    for (id, d) in [
+        (f::MANDELBROT, 2.0),
+        (f::MULTIBROT3, 3.0),
+        (f::MULTIBROT4, 4.0),
+        (f::MULTIBROT5, 5.0),
+        (f::TRICORN, 2.0),
+        (f::BURNING_SHIP, 2.0),
+        (f::CELTIC, 2.0),
+        (f::BUFFALO, 2.0),
+        (f::PHOENIX, 2.0),
+    ] {
+        assert_eq!(degree(id), Some(d), "formula {id}");
+    }
+    // Newton: z − (z³ − 1)/(3z²) is degree 1 (it converges; nothing escapes).
+    assert_eq!(degree(f::NEWTON), Some(1.0));
+    let hybrid = Formula::new(vec![builtin_step(f::MANDELBROT).unwrap(), builtin_step(f::MULTIBROT3).unwrap()]).unwrap();
+    assert!((hybrid.escape_degree().unwrap() - 6f64.sqrt()).abs() < 1e-12);
+    // exp(z) + c has no power law; z^2.5 + c has degree 2.5.
+    let mut b = Builder::new();
+    let z = b.push(Op::Z);
+    let e = b.push(Op::Func(Func::Exp, z));
+    assert_eq!(b.finish(e).unwrap().escape_degree(), None);
+    let mut b = Builder::new();
+    let z = b.push(Op::Z);
+    let k = b.push(Op::Const(2.5, 0.0));
+    let p = b.push(Op::Pow(z, k));
+    assert_eq!(b.finish(p).unwrap().escape_degree(), Some(2.5));
+}
+
+#[test]
 fn opcodes_negate_and_rotate_exactly() {
     let one = |ops: &[Opcode], z: (f64, f64)| step_f64(&lower_opcodes(ops).unwrap(), z, (0.0, 0.0), (0.0, 0.0), &[]).unwrap();
     let z = (0.375, -1.25);

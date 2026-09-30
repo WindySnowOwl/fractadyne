@@ -54,12 +54,25 @@ fn main() {
     // 1-2: every formula, a never-used escape radius (a distinct f32, so no cached binary fits).
     // 3-6: the same, with the formula id a CONSTANT (Mandelbrot, Multibrot 3, Burning Ship,
     //      Phoenix) instead of the uniform — what a shader generated for one formula would compile.
-    for variant in 0..7u32 {
+    // 7-9: the modules `custom::build` actually generates (Mandelbrot, Burning Ship, a three-phase
+    //      hybrid), which also drop the perturbation paths. Only `fs_iterate` is built from them.
+    use fractadyne_core::{formula as f, ir};
+    let custom = |ids: &[u32]| {
+        let phases = ids.iter().map(|&id| ir::builtin_step(id).unwrap()).collect();
+        fractadyne_gpu::custom::build(&ir::Formula::new(phases).unwrap(), &[]).unwrap().source
+    };
+    for variant in 0..10u32 {
         let r = 300 + (stamp % 5000) as u32 * 8 + variant; // an integer: exact in f32
+        let base = match variant {
+            7 => custom(&[f::MANDELBROT]),
+            8 => custom(&[f::BURNING_SHIP]),
+            9 => custom(&[f::MANDELBROT, f::BURNING_SHIP, f::MULTIBROT3]),
+            _ => src.to_string(),
+        };
         let mut wgsl = if variant == 0 {
-            src.to_string()
+            base
         } else {
-            src.replace("let bail2 = 256.0 * 256.0;", &format!("let bail2 = {r}.0 * {r}.0;"))
+            base.replace("let bail2 = 256.0 * 256.0;", &format!("let bail2 = {r}.0 * {r}.0;"))
         };
         let fixed = match variant {
             3 => Some(0u32),
@@ -77,11 +90,18 @@ fn main() {
             source: wgpu::ShaderSource::Wgsl(wgsl.into()),
         });
         let t_module = t0.elapsed().as_secs_f64() * 1e3;
-        let mut line = format!(
-            "variant {variant} ({}): module {t_module:7.1} ms",
-            fixed.map_or("all formulas".to_string(), |f| format!("formula {f} const"))
-        );
-        for (entry, targets) in [("fs_iterate", 2usize), ("fs_iterate_chunk", 3), ("fs_iterate_chunk_fe", 4)] {
+        let what = match (variant, fixed) {
+            (7..=9, _) => "generated custom".to_string(),
+            (_, Some(f)) => format!("formula {f} const"),
+            _ => "all formulas".to_string(),
+        };
+        let mut line = format!("variant {variant} ({what}): module {t_module:7.1} ms");
+        let entries: &[(&str, usize)] = if variant >= 7 {
+            &[("fs_iterate", 2)]
+        } else {
+            &[("fs_iterate", 2), ("fs_iterate_chunk", 3), ("fs_iterate_chunk_fe", 4)]
+        };
+        for &(entry, targets) in entries {
             let formats: Vec<Option<wgpu::ColorTargetState>> = (0..targets)
                 .map(|i| Some(wgpu::ColorTargetState {
                     format: two[i.min(1)],

@@ -84,6 +84,10 @@ pub mod formula {
     pub const NEWTON: u32 = 9;
     /// Number of defined formula ids (ids are `0..COUNT`).
     pub const COUNT: u32 = 10;
+    /// The id a custom formula ([`crate::ir`]) renders under. Outside `0..COUNT`, so every
+    /// built-in branch of the shader skips it and [`caps`] grants it none of the built-in
+    /// capabilities; its step comes from its own generated shader module instead.
+    pub const CUSTOM: u32 = 1000;
 
     /// What a formula supports beyond plain iteration (design/custom-formulas.md §4.3). These were
     /// id ranges written out at each use (`formula_id() <= 3`, `== 0`, `> 3`); a custom formula

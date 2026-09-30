@@ -816,6 +816,8 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 zf = vec2<f32>(z.re.x, z.im.x);
                 if (c_mag2(f) < 1.0e-12) { escaped = true; break; }
             } else {
+                // @@CUSTOM_STEP_BEGIN — a custom formula's module replaces everything from here to
+                // the matching END marker with its generated step (`custom.rs`). Comments only here.
                 var zn: Cdf;
                 if (iu.formula == 0u) {
                     zn = c_sqr(z);
@@ -879,6 +881,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     dz = dn;
                 }
                 zn = c_add(zn, c);
+                // @@CUSTOM_STEP_END
                 zprev = z;
                 z = zn;
                 iter = iter + 1u;
@@ -911,7 +914,10 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
-    } else if (iu.mode == 2u) {
+    }
+    // @@CUSTOM_CUT_BEGIN — a custom formula renders in direct mode only, so its module drops the
+    // perturbation paths from here to the matching END marker (most of this pipeline's compile).
+    else if (iu.mode == 2u) {
         // Floatexp perturbation (mode 2): δz/δc carried as floatexp (df32 mantissa +
         // i32 exponent), so the deviation never underflows f32 → extreme depth. ~1.7×
         // costlier per iteration than mode 0, so it's used only past df32's reach. In
@@ -1510,6 +1516,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     }
+    // @@CUSTOM_CUT_END
 }
 
 @fragment

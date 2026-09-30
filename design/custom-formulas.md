@@ -169,6 +169,10 @@ The shader is restructured so every formula-specific piece sits behind **named f
 - **Compile policy:** a small direct-only preview pipeline while editing (one entry point); the full
   set compiled in the background on "apply"; a pipeline cache keyed by the IR's hash, persisted with
   wgpu's `PipelineCache` where the backend supports it, and the driver's own cache otherwise.
+  **Measured after building it (phase 2):** the module `custom::build` generates (direct path only,
+  perturbation paths cut) compiles its `fs_iterate` pipeline in **74–119 ms cold** on the RTX 3080,
+  against 3.98–4.15 s for today's all-formula module in the same run. That is fast enough to recompile
+  on every edit, so the preview needs no separate pipeline. The perturbation paths are the cost.
 - The restructuring of the fixed module is its own **byte-neutral** step, gated by the goldens, the
   self-test's bit-exact checks and the F3 corpus, before any generated code exists.
 
@@ -235,6 +239,14 @@ separate, later decision, and only if phase 4 shows the generated render is iden
     keeps every gate green: astro-float's `(−a) + b` and `b − a` agree on these cases, so the fold is
     kept for cost (negation is free), not because identity needs it.
   - `cargo test` 935 passed, 0 failed (+12).
+- **Phase 2, slice 1 (generation).** `fractadyne_gpu::custom::build` turns a formula into WGSL using the shader's own df32
+  helpers and splices it into the fixed module at two marker comments (`@@CUSTOM_STEP`, `@@CUSTOM_CUT`).
+  The fixed module gained comments only: self-test 203/203, goldens 19/19. All ten built-in steps,
+  hybrids, parameters, every elementary function and the whole op set generate modules that naga
+  validates; generated built-in steps are exactly the built-in helper calls (Mandelbrot `c_sqr` then
+  `c_add`). Elementary functions run at `f32` precision for now (`Precision::F32`). The
+  `escape_degree` of the IR sets smooth colouring's power, with 2 where no power law holds.
+  `cargo test` 942 passed.
 
 ## 6. Validation plan
 

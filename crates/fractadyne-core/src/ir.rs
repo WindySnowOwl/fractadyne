@@ -240,6 +240,40 @@ impl Program {
             .max()
             .unwrap_or(0)
     }
+
+    /// The step's degree in `z` as `|z| → ∞` — the `d` in `|z'| ≈ |z|^d` that smooth colouring
+    /// divides by (`z^5 + c` → 5, `|x| + i|y|` squared → 2, Phoenix → 2). `None` where no power law
+    /// holds: exponentials, trigonometry, logarithms, a non-constant exponent.
+    pub fn escape_degree(&self) -> Option<f64> {
+        let mut deg: Vec<Option<f64>> = Vec::with_capacity(self.insts.len());
+        for op in &self.insts {
+            let g = |v: Val| deg[v.index()];
+            let d = match *op {
+                Op::Z | Op::ZPrev => Some(1.0),
+                Op::C | Op::Param(_) | Op::Const(..) => Some(0.0),
+                Op::Add(a, b) | Op::Sub(a, b) => g(a).zip(g(b)).map(|(a, b)| a.max(b)),
+                Op::Mul(a, b) => g(a).zip(g(b)).map(|(a, b)| a + b),
+                Op::Div(a, b) => g(a).zip(g(b)).map(|(a, b)| a - b),
+                Op::Sqr(a) | Op::Norm(a) => g(a).map(|a| 2.0 * a),
+                Op::PowI(a, n) => g(a).map(|a| n as f64 * a),
+                Op::Scale(a, _)
+                | Op::Neg(a)
+                | Op::Conj(a)
+                | Op::AbsRe(a)
+                | Op::AbsIm(a)
+                | Op::Re(a)
+                | Op::Im(a) => g(a),
+                Op::Pow(a, b) => match self.insts[b.index()] {
+                    Op::Const(k, im) if im == 0.0 => g(a).map(|a| k * a),
+                    _ => None,
+                },
+                Op::Func(Func::Sqrt, a) => g(a).map(|a| 0.5 * a),
+                Op::Func(..) => None,
+            };
+            deg.push(d);
+        }
+        deg[self.out.index()]
+    }
 }
 
 /// Appends instructions and hands back their values.
@@ -296,6 +330,16 @@ impl Formula {
 
     pub fn param_count(&self) -> usize {
         self.phases.iter().map(Program::param_count).max().unwrap_or(0)
+    }
+
+    /// The per-iteration escape degree: the geometric mean of the phases' (a hybrid alternating
+    /// `z²` and `z³` grows as `|z|^√6` per iteration). `None` if any phase has none.
+    pub fn escape_degree(&self) -> Option<f64> {
+        let mut log_sum = 0.0;
+        for p in &self.phases {
+            log_sum += p.escape_degree()?.ln();
+        }
+        Some((log_sum / self.phases.len() as f64).exp())
     }
 }
 
