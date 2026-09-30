@@ -319,7 +319,7 @@ impl FractadyneApp {
         // `@response-file` expansion is honored (raw args would silently drop them).
         let filter: Option<String> = self.selftest.filter.clone();
         const GROUPS: &[&str] = &[
-            "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
+            "numeric", "symmetry", "abs-family", "custom-formula", "multibrot-sa", "bla", "aux-bla",
             "consistency", "counters", "iter-budget", "iter-chunk", "live-split", "nr-zoom", "coords",
             "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
@@ -2818,6 +2818,265 @@ impl FractadyneApp {
                     });
                 }
             }
+        }
+
+        // ---- custom formulas: generated shader modules (design/custom-formulas.md phase 2) ----
+        // (1) A built-in's step generated from the formula IR must render BIT FOR BIT as the
+        //     built-in (direct mode, smooth-iteration channel) — the generated code is the built-in's
+        //     own helper calls, so any difference is a splice or codegen bug.
+        // (2) Formulas with no built-in: the GPU against the IR's f64 interpreter (which the core
+        //     tests hold bit-identical to every built-in), pixel by pixel at the shader's own pixel
+        //     centres.
+        if want("custom-formula") {
+            use fractadyne_core::ir;
+            self.julia_mode = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.use_custom_palette = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 1000;
+            let nn = N as usize;
+            let view = |cx: f64, cy: f64, span: f64| {
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = fractadyne_core::BigFloat::from_f64(cx, 64);
+                vp.center_y = fractadyne_core::BigFloat::from_f64(cy, 64);
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(span / N as f64);
+                vp.precision = 64;
+                vp
+            };
+            let twins: &[(FractalKind, f64, f64, f64)] = &[
+                (FractalKind::Mandelbrot, -0.745, 0.112, 0.02),
+                (FractalKind::Multibrot3, 0.0, 0.0, 3.0),
+                (FractalKind::Tricorn, -0.2, 0.0, 3.5),
+                (FractalKind::BurningShip, -1.7548, -0.0312, 0.05),
+            ];
+            for &(fractal, cx, cy, span) in twins {
+                self.fractal = fractal;
+                let mut base = self.current_export_request_for(&view(cx, cy, span), false);
+                base.width = N;
+                base.height = N;
+                base.ss = 1;
+                base.mode = 1;
+                let step = ir::builtin_step(fractal.formula_id()).expect("every built-in has a step");
+                let built = fractadyne_gpu::custom::build(&ir::Formula::single(step), &[]);
+                let mut gen = base.clone();
+                gen.formula = fractadyne_core::formula::CUSTOM;
+                gen.custom = built.as_ref().ok().map(|s| std::sync::Arc::new(s.clone()));
+                let name = format!("generated {} = built-in", fractal.name());
+                if let Err(e) = &built {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Custom formula (GPU)",
+                        name,
+                        params: format!("direct, span {span}"),
+                        result: format!("build failed: {e}"),
+                        threshold: "builds",
+                        pass: false,
+                    });
+                    continue;
+                }
+                if let (Some(a), Some(b)) = (st_render_iter(device, queue, &base), st_render_iter(device, queue, &gen)) {
+                    let (mut escaped, mut differ) = (0u64, 0u64);
+                    for k in 0..nn * nn {
+                        escaped += (a[k * 4] >= 0.0) as u64;
+                        differ += (a[k * 4].to_bits() != b[k * 4].to_bits()) as u64;
+                    }
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Custom formula (GPU)",
+                        name,
+                        params: format!("direct, span {span}, {escaped} escaped px"),
+                        result: format!("{differ} px differ"),
+                        threshold: "0 differ, >10% escaped",
+                        pass: differ == 0 && escaped * 10 > (nn * nn) as u64,
+                    });
+                }
+            }
+
+            // (2) GPU vs the CPU interpreter at the shader's own pixel centres. A pixel DISAGREES when
+            // its escape status differs or its smooth values are more than `tol` apart. Three kinds:
+            //  - Iterated df32 formulas: only the boundary's chaotic pixels may part company (<1%), and
+            //    none that escape within EARLY iterations — too few steps for df32 rounding to grow.
+            //  - Each f32-tier function EVALUATED ONCE per pixel: `z' = z + 8·(f(c) + 1 + 2i)` grows
+            //    linearly, escapes after a few steps, and its smooth value encodes |f(c) + 1 + 2i|
+            //    (the offset makes a sign error in either component change it). Nothing is amplified,
+            //    so only f32-vs-f64 rounding separates the two. (A first cut, `z' = 100·f(c)`, escaped
+            //    at n = 1, where the smooth value is negative: 0 of 484,000 pixels escaped on either
+            //    side, and the check could not have seen a wrong function.)
+            //  - `sin z + c` iterated, a stress test of the overflow guard. The family expands by
+            //    |cos z| ≈ cosh(Im z) per step, so f32 rounding reaches O(1) within ~10 iterations
+            //    (measured: a pixel's GPU and CPU orbits escaped at |z| ≈ 2.7e3 and 6e23) and only
+            //    loose agreement is possible. Its gate is that NO smooth value is non-finite: before
+            //    `custom_tame`, 3,044 pixels escaped as −∞, which the colour pass paints as interior.
+            enum Kind {
+                Iterated,
+                Once,
+                Stress,
+            }
+            let hybrid = ir::Formula::new(vec![
+                ir::builtin_step(fractadyne_core::formula::MANDELBROT).unwrap(),
+                ir::builtin_step(fractadyne_core::formula::BURNING_SHIP).unwrap(),
+            ])
+            .unwrap();
+            let quad_param = {
+                let mut b = ir::Builder::new();
+                let z = b.push(ir::Op::Z);
+                let s = b.push(ir::Op::Sqr(z));
+                let p = b.push(ir::Op::Param(0));
+                let pz = b.push(ir::Op::Mul(p, z));
+                let t = b.push(ir::Op::Add(s, pz));
+                let c = b.push(ir::Op::C);
+                let out = b.push(ir::Op::Add(t, c));
+                ir::Formula::single(b.finish(out).unwrap())
+            };
+            let sine = {
+                let mut b = ir::Builder::new();
+                let z = b.push(ir::Op::Z);
+                let s = b.push(ir::Op::Func(ir::Func::Sin, z));
+                let c = b.push(ir::Op::C);
+                let out = b.push(ir::Op::Add(s, c));
+                ir::Formula::single(b.finish(out).unwrap())
+            };
+            // Each f32-tier function once: z' = z + 8·(f(c) + 1 + 2i) (a complex power takes the
+            // exponent 1.5+0.5i).
+            let once = |f: Option<ir::Func>| {
+                let mut b = ir::Builder::new();
+                let z = b.push(ir::Op::Z);
+                let c = b.push(ir::Op::C);
+                let v = match f {
+                    Some(f) => b.push(ir::Op::Func(f, c)),
+                    None => {
+                        let w = b.push(ir::Op::Const(1.5, 0.5));
+                        b.push(ir::Op::Pow(c, w))
+                    }
+                };
+                let k = b.push(ir::Op::Const(1.0, 2.0));
+                let s = b.push(ir::Op::Add(v, k));
+                let t = b.push(ir::Op::Scale(s, 8.0));
+                let out = b.push(ir::Op::Add(z, t));
+                ir::Formula::single(b.finish(out).unwrap())
+            };
+            use ir::Func as F;
+            let mut cpu_cases: Vec<(String, ir::Formula, Vec<(f64, f64)>, (f64, f64, f64), Kind)> = vec![
+                ("hybrid Mandelbrot/Burning Ship".into(), hybrid, vec![], (-0.5, 0.0, 3.5), Kind::Iterated),
+                ("z² + p·z + c (parameter)".into(), quad_param, vec![(0.25, -0.1)], (-0.3, 0.0, 3.5), Kind::Iterated),
+                ("sin z + c, iterated (f32 tier)".into(), sine, vec![], (0.0, 0.0, 6.0), Kind::Stress),
+            ];
+            for f in [F::Exp, F::Log, F::Sqrt, F::Sin, F::Cos, F::Tan, F::Sinh, F::Cosh, F::Tanh] {
+                cpu_cases.push((format!("{f:?}"), once(Some(f)), vec![], (0.0, 0.0, 12.0), Kind::Once));
+            }
+            cpu_cases.push(("c^(1.5+0.5i)".into(), once(None), vec![], (0.0, 0.0, 12.0), Kind::Once));
+            // The functions-once cases report as ONE check (their total, and the worst function).
+            let (mut once_n, mut once_bad, mut once_escaped, mut once_worst) = (0u64, 0u64, 0u64, (0u64, String::new()));
+            for (label, formula, params, (cx, cy, span), kind) in cpu_cases {
+                self.fractal = FractalKind::Mandelbrot;
+                let mut req = self.current_export_request_for(&view(cx, cy, span), false);
+                req.width = N;
+                req.height = N;
+                req.ss = 1;
+                req.mode = 1;
+                req.formula = fractadyne_core::formula::CUSTOM;
+                if matches!(kind, Kind::Once) {
+                    req.max_iter = 64; // linear growth: n ≈ 32/|f(c) + 1 + 2i|
+                }
+                let shader = match fractadyne_gpu::custom::build(&formula, &params) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Custom formula (GPU)",
+                            name: format!("{label}: GPU = CPU interpreter"),
+                            params: String::new(),
+                            result: format!("build failed: {e}"),
+                            threshold: "builds",
+                            pass: false,
+                        });
+                        continue;
+                    }
+                };
+                let power = shader.power as f64;
+                let precision = shader.precision;
+                req.custom = Some(std::sync::Arc::new(shader));
+                let Some(gpu) = st_render_iter(device, queue, &req) else { continue };
+                // The shader's pixel centre: centre + step·((i + ½) − N/2)·2^delta_exp (y flipped).
+                let centre = (req.center[0] as f64 + req.center[2] as f64, req.center[1] as f64 + req.center[3] as f64);
+                let scale = 2f64.powi(req.delta_exp);
+                let (sx, sy) = (req.span_mantissa.x / N as f64, req.span_mantissa.y / N as f64);
+                let bail2 = 256.0 * 256.0;
+                let tol = if matches!(kind, Kind::Once) { 1.0e-3 } else { 0.01 };
+                const EARLY: usize = 20;
+                let (mut escaped, mut disagree, mut early, mut early_bad, mut nonfinite) = (0u64, 0u64, 0u64, 0u64, 0u64);
+                // Escaped with a smooth value the clamp did not flatten: the pixels that can show a
+                // wrong value at all.
+                let mut informative = 0u64;
+                for j in 0..nn {
+                    for i in 0..nn {
+                        let c = (
+                            centre.0 + sx * ((i as f64 + 0.5) - N as f64 * 0.5) * scale,
+                            centre.1 + sy * (N as f64 * 0.5 - (j as f64 + 0.5)) * scale,
+                        );
+                        let pts = ir::orbit_points(&formula, (0.0, 0.0), c, &params, req.max_iter as usize, bail2)
+                            .expect("parameters supplied");
+                        // The generated step's overflow guard, mirrored (it can only touch the last point).
+                        let (x, y) = fractadyne_gpu::custom::tame_f64(*pts.last().unwrap());
+                        let mag2 = x * x + y * y;
+                        // …and its smooth value, clamped at 0 as the generated module clamps it.
+                        let cpu = if mag2 > bail2 {
+                            ((pts.len() - 1) as f64 + 1.0 - (mag2.ln() * 0.5 / 2f64.ln()).ln() / power.ln()).max(0.0)
+                        } else {
+                            -1.0
+                        };
+                        let g = gpu[(j * nn + i) * 4] as f64;
+                        nonfinite += (!g.is_finite()) as u64;
+                        escaped += (cpu >= 0.0) as u64;
+                        informative += (cpu > 0.5) as u64;
+                        let same = if cpu < 0.0 || g < 0.0 { (cpu < 0.0) == (g < 0.0) } else { (cpu - g).abs() < tol };
+                        disagree += (!same) as u64;
+                        if cpu >= 0.0 && pts.len() - 1 <= EARLY {
+                            early += 1;
+                            early_bad += (!same) as u64;
+                        }
+                    }
+                }
+                let px = (nn * nn) as u64;
+                let frac = disagree as f64 / px as f64;
+                match kind {
+                    Kind::Once => {
+                        once_n += px;
+                        once_bad += disagree;
+                        once_escaped += informative;
+                        if disagree >= once_worst.0 {
+                            once_worst = (disagree, label);
+                        }
+                    }
+                    Kind::Iterated => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Custom formula (GPU)",
+                        name: format!("{label}: GPU = CPU interpreter"),
+                        params: format!("direct, span {span}, {precision:?}, {escaped} escaped px, {early} within {EARLY} it"),
+                        result: format!("{disagree} px disagree ({:.3}%), {early_bad} of the early escapes", frac * 100.0),
+                        threshold: "<1% disagree, 0 early, >10% escaped",
+                        pass: frac < 0.01 && early_bad == 0 && early > 0 && escaped * 10 > px,
+                    }),
+                    Kind::Stress => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Custom formula (GPU)",
+                        name: format!("{label}: overflow guard"),
+                        params: format!("direct, span {span}, {precision:?}, {escaped} escaped px"),
+                        result: format!("{nonfinite} non-finite, {disagree} px disagree ({:.3}%)", frac * 100.0),
+                        threshold: "0 non-finite, <5% disagree, >10% escaped",
+                        pass: nonfinite == 0 && frac < 0.05 && escaped * 10 > px,
+                    }),
+                }
+            }
+            let once_frac = once_bad as f64 / once_n.max(1) as f64;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Custom formula (GPU)",
+                name: "f32-tier functions, each once: GPU = CPU interpreter".into(),
+                params: format!("10 functions, span 12, {once_escaped} of {once_n} px escaped with smooth > 0.5"),
+                result: format!(
+                    "{once_bad} px disagree ({:.4}%), worst {} ({})",
+                    once_frac * 100.0,
+                    once_worst.1,
+                    once_worst.0
+                ),
+                threshold: "<0.1% disagree (|Δ| > 1e-3), >25% informative",
+                pass: once_frac < 0.001 && once_escaped * 4 > once_n,
+            });
         }
 
         // ---- series approximation engages for the Multibrot families ----

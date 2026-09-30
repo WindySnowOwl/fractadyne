@@ -927,6 +927,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         max_iter: p.max_iter,
         mode: p.mode,
         formula: p.formula,
+        custom: None,
         julia: p.julia,
         cycle: p.cycle,
         offset: p.offset,

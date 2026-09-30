@@ -17,7 +17,7 @@ fn unary(op: fn(Val) -> Op) -> Formula {
 
 #[test]
 fn the_fixed_module_has_each_slot_marker_once_as_a_comment() {
-    for m in [STEP_BEGIN, STEP_END, CUT_BEGIN, CUT_END] {
+    for m in [STEP_BEGIN, STEP_END, SMOOTH_BEGIN, SMOOTH_END, CUT_BEGIN, CUT_END] {
         assert_eq!(FIXED.matches(m).count(), 1, "{m}");
         let (s, e) = marker_line(FIXED, m).unwrap();
         assert!(FIXED[s..e].trim_start().starts_with("//"), "{m} must sit on a comment line");
@@ -35,7 +35,8 @@ fn every_built_in_step_generates_a_valid_module_without_the_perturbation_paths()
     let mut built = 0;
     for id in 0..f::COUNT {
         let shader = build(&single(builtin_step(id).unwrap()), &[]).unwrap_or_else(|e| panic!("formula {id}: {e}"));
-        assert!(shader.source.contains("var zn: Cdf = custom_step(z, c, zprev, iter);"));
+        assert!(shader.source.contains("var zn: Cdf = custom_tame(custom_step(z, c, zprev, iter));"));
+        assert!(shader.source.contains("let smit = max(f32(iter) + 1.0 - nu, 0.0);"));
         assert!(!shader.source.contains(cut), "formula {id}: perturbation paths still present");
         assert!(!shader.source.contains(STEP_BEGIN) && !shader.source.contains(CUT_BEGIN));
         assert!(shader.source.contains("fn fs_iterate(") && shader.source.contains("fn vs_split_tiles("));
@@ -145,6 +146,19 @@ fn constants_outside_f32_range_are_refused() {
     let k = b.push(Op::Const(1.0e300, 0.0));
     let out = b.push(Op::Add(z, k));
     assert_eq!(build(&single(b.finish(out).unwrap()), &[]).map(|s| s.key), Err(CustomError::OutOfRange(1.0e300)));
+}
+
+#[test]
+fn the_cpu_tame_mirrors_the_shader_rules() {
+    let t = TAME as f64;
+    assert_eq!(tame_f64((5.0, -6.0)), (5.0, -6.0), "ordinary values pass through");
+    assert_eq!(tame_f64((1.0e20, -3.0)), (t, -3.0), "only the overflowing part is clamped");
+    assert_eq!(tame_f64((-f64::INFINITY, 1.0e30)), (-t, t), "infinities keep their sign");
+    assert_eq!(tame_f64((f64::NAN, -1.0e16)), (0.0, -t), "NaN has no direction");
+    assert_eq!(tame_f64((f64::NAN, f64::NAN)), (t, 0.0), "all NaN still escapes");
+    // The shader source carries the same threshold, as bits.
+    let s = build(&single(builtin_step(f::MANDELBROT).unwrap()), &[]).unwrap().source;
+    assert!(s.contains(&format!("{:#x}u", TAME.to_bits())));
 }
 
 #[test]

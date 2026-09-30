@@ -22,6 +22,8 @@ use fractadyne_core::ir::{Formula, Func, Op, Program};
 const FIXED: &str = include_str!("mandelbrot.wgsl");
 const STEP_BEGIN: &str = "// @@CUSTOM_STEP_BEGIN";
 const STEP_END: &str = "// @@CUSTOM_STEP_END";
+const SMOOTH_BEGIN: &str = "// @@CUSTOM_SMOOTH_BEGIN";
+const SMOOTH_END: &str = "// @@CUSTOM_SMOOTH_END";
 const CUT_BEGIN: &str = "// @@CUSTOM_CUT_BEGIN";
 const CUT_END: &str = "// @@CUSTOM_CUT_END";
 
@@ -263,26 +265,87 @@ fn marker_line(src: &str, marker: &'static str) -> Result<(usize, usize), Custom
     Ok((start, end))
 }
 
-/// The fixed module with the step slot replaced by `custom_step` and the perturbation paths cut.
+/// The fixed module with the step slot replaced by `custom_step`, the smooth value clamped and the
+/// perturbation paths cut.
 fn splice(step_fns: &str, power: f32) -> Result<String, CustomError> {
     let (s0, _) = marker_line(FIXED, STEP_BEGIN)?;
     let (_, s1) = marker_line(FIXED, STEP_END)?;
+    let (m0, _) = marker_line(FIXED, SMOOTH_BEGIN)?;
+    let (_, m1) = marker_line(FIXED, SMOOTH_END)?;
     let (c0, _) = marker_line(FIXED, CUT_BEGIN)?;
     let (_, c1) = marker_line(FIXED, CUT_END)?;
-    if !(s0 < s1 && s1 <= c0 && c0 < c1) {
+    if !(s0 < s1 && s1 <= m0 && m0 < m1 && m1 <= c0 && c0 < c1) {
         return Err(CustomError::Marker(STEP_BEGIN));
     }
     let mut out = String::with_capacity(FIXED.len() + step_fns.len());
     out.push_str(&FIXED[..s0]);
-    out.push_str("                var zn: Cdf = custom_step(z, c, zprev, iter);\n");
-    out.push_str("                power_f = CUSTOM_POWER;\n");
-    out.push_str(&FIXED[s1..c0]);
+    out.push_str("                var zn: Cdf = custom_tame(custom_step(z, c, zprev, iter));\n");
+    // The power must stay OPAQUE to the compiler, as the fixed module's is (the uniform picks it
+    // there), so `log(power_f)` in the smooth value runs on the GPU in both. Folded at compile time
+    // it differs in the last bit: measured, a generated Mandelbrot then differed from the built-in
+    // by 1–2 ulps of the smooth value on 1,292 pixels, and by nothing with this line. ⚠Both halves
+    // are load-bearing, each found by a gate going red: the condition must be one the compiler
+    // cannot decide (`iu.max_iter == 0u` was folded — the loop's own guard proves it false here),
+    // and the two arms must differ (with both 2.0 for Mandelbrot, the select folds to a constant).
+    out.push_str(&format!(
+        "                power_f = select(CUSTOM_POWER + 1.0, CUSTOM_POWER, iu.formula == {}u);\n",
+        fractadyne_core::formula::CUSTOM
+    ));
+    out.push_str(&FIXED[s1..m0]);
+    // The smooth value `n + 1 − log(log₂|z|)/log d` goes NEGATIVE — which reads as interior — for a
+    // pixel that escapes within a couple of iterations or far past the bailout: routine for a steep
+    // custom formula (measured: `100·exp(c)` escaping at n = 1 gives −1.45), unreachable from the
+    // built-ins' views. Clamped at 0 it stays escaped; every value ≥ 0 keeps its bits.
+    out.push_str("        let smit = max(f32(iter) + 1.0 - nu, 0.0);\n");
+    out.push_str(&FIXED[m1..c0]);
     out.push_str("    return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), AUX_NONE);\n");
     out.push_str(&FIXED[c1..]);
     out.push_str("\n// ---------------- generated: custom formula (custom.rs) ----------------\n");
     out.push_str(&format!("const CUSTOM_POWER: f32 = {};\n", lit(power)));
+    out.push_str(&tame_source());
     out.push_str(step_fns);
     Ok(out)
+}
+
+/// The largest component magnitude a step may leave: past it (or non-finite) a component is
+/// replaced by `±TAME`. [`tame_f64`] is the CPU mirror.
+pub const TAME: f32 = 1.0e15;
+
+/// `custom_tame`: an escaping step of a steep formula (`exp`, `sin`, a high power) can overflow
+/// f32 outright, and the smooth value of an infinite `z` is −∞, which reads as INTERIOR (measured:
+/// `sin z + c` escapes to |z|² ≈ 1e50–1e158 in one step). Any component past [`TAME`], infinite or
+/// NaN is replaced by `±TAME` (NaN, which has no sign, by 0; both NaN by `TAME + 0i`), so the pixel
+/// escapes with a finite value. Polynomials up to degree 6 never reach it from the bailout (256⁶ ≈
+/// 2.8e14), so no built-in step is affected. The tests are on the BITS: a compiler may assume floats
+/// are finite and fold a NaN comparison.
+fn tame_source() -> String {
+    let t = TAME.to_bits();
+    format!(
+        "fn custom_tame(v: Cdf) -> Cdf {{
+    let ax = bitcast<u32>(v.re.x) & 0x7fffffffu;
+    let ay = bitcast<u32>(v.im.x) & 0x7fffffffu;
+    if (ax < {t:#x}u && ay < {t:#x}u) {{ return v; }}
+    var x = select(0.0, clamp(v.re.x, -{m}, {m}), ax <= 0x7f800000u);
+    let y = select(0.0, clamp(v.im.x, -{m}, {m}), ay <= 0x7f800000u);
+    if (ax > 0x7f800000u && ay > 0x7f800000u) {{ x = {m}; }}
+    return cset(vec2<f32>(x, 0.0), vec2<f32>(y, 0.0));
+}}
+",
+        m = lit(TAME)
+    )
+}
+
+/// `custom_tame` in `f64`, applied to an orbit's final point (the only one a tame can touch, since
+/// a tamed value is always past the bailout).
+pub fn tame_f64(z: (f64, f64)) -> (f64, f64) {
+    let t = TAME as f64;
+    let big = |v: f64| !(v.abs() < t);
+    if !big(z.0) && !big(z.1) {
+        return z;
+    }
+    let part = |v: f64| if v.is_nan() { 0.0 } else { v.clamp(-t, t) };
+    let x = if z.0.is_nan() && z.1.is_nan() { t } else { part(z.0) };
+    (x, part(z.1))
 }
 
 /// Parse and validate with naga, so a generator bug is an error here rather than a driver-side

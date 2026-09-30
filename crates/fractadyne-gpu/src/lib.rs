@@ -1355,6 +1355,22 @@ pub(crate) fn shader_module(device: &wgpu::Device) -> wgpu::ShaderModule {
     })
 }
 
+/// [`shader_module`], or a custom formula's generated module ([`custom::build`]) when given. The
+/// generated module keeps every entry point but the perturbation paths, so the colour and resolve
+/// pipelines build from it unchanged.
+pub(crate) fn shader_module_for(
+    device: &wgpu::Device,
+    custom: Option<&custom::CustomShader>,
+) -> wgpu::ShaderModule {
+    match custom {
+        None => shader_module(device),
+        Some(c) => device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("fractadyne.custom"),
+            source: wgpu::ShaderSource::Wgsl(c.source.as_str().into()),
+        }),
+    }
+}
+
 /// A fragment-visible uniform buffer at `binding` 0 — shared by both bind-group layouts.
 fn uniform_bgl_entry() -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {

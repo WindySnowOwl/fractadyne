@@ -234,6 +234,9 @@ pub struct ExportRequest {
     pub max_iter: u32,
     pub mode: u32,
     pub formula: u32,
+    /// A custom formula's generated shader module ([`crate::custom::build`]), rendered with
+    /// `formula == fractadyne_core::formula::CUSTOM` in direct mode (1). `None` for the built-ins.
+    pub custom: Option<Arc<crate::custom::CustomShader>>,
     pub julia: u32,
     pub cycle: f32,
     pub offset: f32,
@@ -928,7 +931,7 @@ fn render_export_impl(
         .min(req.tile_px_max.unwrap_or(u32::MAX))
         .clamp(1, 2048);
 
-    let shader = shader_module(device);
+    let shader = crate::shader_module_for(device, req.custom.as_deref());
     let iter_bgl = iter_bind_group_layout(device);
     let color_bgl = color_bind_group_layout(device);
     let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1464,7 +1467,12 @@ pub struct IterScaffold {
 
 impl IterScaffold {
     pub fn new(device: &wgpu::Device) -> Self {
-        let shader = shader_module(device);
+        Self::new_for(device, None)
+    }
+
+    /// For a custom formula's module (`None` = the fixed one).
+    fn new_for(device: &wgpu::Device, custom: Option<&crate::custom::CustomShader>) -> Self {
+        let shader = crate::shader_module_for(device, custom);
         let iter_bgl = iter_bind_group_layout(device);
         let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("itertiled.layout"),
@@ -1534,12 +1542,13 @@ pub fn render_iter_tiled(
 
     let t_setup = std::time::Instant::now();
     // Reuse the caller's scaffold (the corrector hoists one across its up-to-64 passes) or build a
-    // private one — same shader/layout/pipeline either way, so output is byte-identical.
+    // private one — same shader/layout/pipeline either way, so output is byte-identical. A caller's
+    // scaffold holds the FIXED module, so a custom formula always builds its own.
     let local_scaffold;
-    let sc = match scaffold {
+    let sc = match scaffold.filter(|_| req.custom.is_none()) {
         Some(s) => s,
         None => {
-            local_scaffold = IterScaffold::new(device);
+            local_scaffold = IterScaffold::new_for(device, req.custom.as_deref());
             &local_scaffold
         }
     };
@@ -2051,6 +2060,9 @@ impl GatherPass {
         work_budget: u64,
         deadline: Option<std::time::Instant>,
     ) -> Result<GatherResult, GpuError> {
+        // Glitch correction is a perturbation-mode repair; custom formulas render direct-only, and
+        // this pass's pipeline is built from the fixed module.
+        debug_assert!(req.custom.is_none(), "gather pass asked to render a custom formula");
         let n_total = coords.len();
         let mut out = GatherResult {
             // Pre-filled with the GLITCH sentinel, not zero. Every entry is overwritten on the success
@@ -2426,7 +2438,7 @@ fn render_iter_passes(
     let w = req.width.clamp(1, max_dim);
     let h = req.height.clamp(1, max_dim);
 
-    let shader = shader_module(device);
+    let shader = crate::shader_module_for(device, req.custom.as_deref());
     let iter_bgl = iter_bind_group_layout(device);
     let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("selftest.iter_layout"),

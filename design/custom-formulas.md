@@ -247,6 +247,31 @@ separate, later decision, and only if phase 4 shows the generated render is iden
   `c_add`). Elementary functions run at `f32` precision for now (`Precision::F32`). The
   `escape_degree` of the IR sets smooth colouring's power, with 2 where no power law holds.
   `cargo test` 942 passed.
+- **Phase 2, slice 2 (GPU equivalence).** `ExportRequest::custom` carries a generated module through
+  the export paths. The self-test group `custom-formula` (8 checks; full run 211/211, goldens 19/19):
+  - Generated Mandelbrot, Multibrot 3, Tricorn and Burning Ship vs the built-ins, direct mode:
+    **0 pixels differ** (31,835–45,478 escaped pixels each). The first attempt differed by 1–2 ulps of the
+    smooth value on 1,292–15,848 pixels. The cause was isolated by experiment: cutting the perturbation
+    paths changes nothing (0 px), while the generated step differs. The difference was `log(power_f)` folded
+    at compile time, where the fixed module computes it on the GPU. The generated power is therefore kept opaque
+    to the compiler. Two further red gates showed what that takes. A condition the loop guard decides
+    (`max_iter == 0`) is folded. So are equal arms (`select(2.0, 2.0, …)` for Mandelbrot).
+  - GPU vs the CPU interpreter, at the shader's own pixel centres: a two-phase hybrid 0.76% and a
+    parameterised quadratic 0.36% of pixels disagree (boundary chaos). None of the ~42,000 pixels that
+    escape within 20 iterations disagree. Each f32-tier function evaluated once per pixel
+    (`z + 8·(f(c) + 1 + 2i)`): 1 of 371,940 informative pixels. A sign error planted in `cos`
+    turned that check red (75,838 px), as it should.
+  - **Two rendering bugs found and fixed in the generated module** (the built-ins cannot reach either
+    from their views): (1) an escaping step of a steep formula overflows f32 (`sin z + c` jumps to
+    |z|² ≈ 1e50–1e158), and the smooth value of an infinite `z` is −∞, which the colour pass paints as
+    interior. 3,044 pixels were affected; `custom_tame` now clamps a non-finite or ≥1e15 component
+    (bit tests, since a compiler may assume floats are finite). (2) The smooth value
+    `n + 1 − log(log₂|z|)/log d` is negative for an escape at n ≤ 2 or far past the bailout, which
+    also reads as interior. It is now clamped at 0 through a third marker pair; every value ≥ 0 keeps its bits.
+  - `sin z + c` iterated disagrees on 3.0% of pixels and cannot do better. The family expands by
+    |cos z| ≈ cosh(Im z) per step, so f32 rounding reaches O(1) within about 10 iterations. "No
+    disagreement among early escapes" is therefore not a bug detector for expansive formulas. That
+    check's gate is 0 non-finite smooth values (the overflow guard).
 
 ## 6. Validation plan
 

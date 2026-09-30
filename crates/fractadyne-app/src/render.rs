@@ -3640,6 +3640,7 @@ impl FractadyneApp {
             max_iter: req_max_iter,
             mode: mode.to_u32(),
             formula: self.fractal.formula_id(),
+            custom: None,
             julia: julia as u32,
             // WYSIWYG: a GUI export bakes in the live view's auto-normalized palette mapping when
             // it's active (headless CLI runs have no live range → always classic; `--normalize`

@@ -903,7 +903,9 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         }
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
+        // @@CUSTOM_SMOOTH_BEGIN — a custom formula's module clamps this line at 0 (`custom.rs`).
         let smit = f32(iter) + 1.0 - nu;
+        // @@CUSTOM_SMOOTH_END
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
         if (iu.formula <= 3u || iu.formula == 8u) {
