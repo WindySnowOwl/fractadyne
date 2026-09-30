@@ -59,6 +59,24 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Custom formulas** (0.3.0-beta.10).
+  - **What:** Fractal ▸ Custom formula… takes a formula's step in Fractint-style expressions
+    (`z = z^3 - p1*z + c`, several statements, parameters p1–p5, the usual functions), with an
+    on-screen keypad and a syntax check as you type. Views, sessions and exported images keep the
+    formula's text; `--formula` renders one from the command line.
+  - **Deep zoom:** every formula deep-zooms, with the same extended-range arithmetic past 1e28× as
+    the built-in fractals, except one with a power whose exponent varies with z or c (such as
+    `z^c`), which renders directly and is sharp to about 1e4×–1e5×. Custom `z² + c` matches the
+    built-in Mandelbrot on the deepest corpus spiral through 1e100×.
+  - **Limits:** every step is iterated in full, with no series approximation or BLA, so a deep view
+    is slower than a built-in's (at 1e100× with 60,000 iterations, 60 ms of GPU time against
+    13 ms). Near its boundary a formula with functions orbits chaotically, and single precision
+    follows a long orbit there only loosely. log, sqrt and non-integer powers jump across the
+    negative real axis; a pixel whose orbit crosses there when the reference's does not carries
+    on at about single precision, so deep views straddling that line show noise along it.
+  - **Tested:** 85 self-test checks against the CPU and exact arithmetic, and seven new golden
+    images.
+
 - **Live refresh stays out of the way where it cannot help** (0.3.0-beta.8 and beta.9).
   - **The problem:** on the RX 6800 XT at 1280×800 no frame can be drawn in cheaper pieces: every
     piece would be under the size at which that card is fully busy. The live refresh still took
