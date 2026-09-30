@@ -2905,6 +2905,11 @@ impl FractadyneApp {
             //    (measured: a pixel's GPU and CPU orbits escaped at |z| ≈ 2.7e3 and 6e23) and only
             //    loose agreement is possible. Its gate is that NO smooth value is non-finite: before
             //    `custom_tame`, 3,044 pixels escaped as −∞, which the colour pass paints as interior.
+            //    Agreement is judged only where the CPU's own value survives c ± 1e-5 (an error per
+            //    step about f32 range reduction's at |z| ≈ 256); elsewhere the orbit is chaos on any
+            //    GPU. A bound on ALL pixels (<5%) was one GPU's calibration: the RTX 3080 disagreed on
+            //    3.0% and the RX 6800 XT on 7.1%, while the 3080 disagreed on 0 of 43,692 stable pixels
+            //    (90%). A sin off by 1e-4 (1e-5) relative fails it: 5.9% (0.17%) of stable pixels.
             enum Kind {
                 Iterated,
                 Once,
@@ -3005,30 +3010,61 @@ impl FractadyneApp {
                 // Escaped with a smooth value the clamp did not flatten: the pixels that can show a
                 // wrong value at all.
                 let mut informative = 0u64;
+                // The disagreements by kind: escape status, the escape step (|Δ| ≥ ½), or the value
+                // at the same step (a last point 1% apart in log|z|: an orbit that parted earlier).
+                let (mut bad_status, mut bad_step, mut bad_value) = (0u64, 0u64, 0u64);
+                // Stress only: the pixels whose CPU value survives c ± PROBE and c ± PROBE·i — an
+                // error per step about the size of f32 range reduction at |z| ≈ 256 — and how many
+                // of those the GPU gets wrong. A pixel that fails the probe is chaos on any GPU.
+                const PROBE: f64 = 1.0e-5;
+                let (mut stable, mut stable_bad) = (0u64, 0u64);
+                // The CPU's smooth value at c (−1 = interior) and its step count.
+                let cpu_at = |c: (f64, f64)| {
+                    let pts = ir::orbit_points(&formula, (0.0, 0.0), c, &params, req.max_iter as usize, bail2)
+                        .expect("parameters supplied");
+                    // The generated step's overflow guard, mirrored (it can only touch the last point).
+                    let (x, y) = fractadyne_gpu::custom::tame_f64(*pts.last().unwrap());
+                    let mag2 = x * x + y * y;
+                    // …and its smooth value, clamped at 0 as the generated module clamps it.
+                    let v = if mag2 > bail2 {
+                        ((pts.len() - 1) as f64 + 1.0 - (mag2.ln() * 0.5 / 2f64.ln()).ln() / power.ln()).max(0.0)
+                    } else {
+                        -1.0
+                    };
+                    (v, pts.len() - 1)
+                };
+                let agree = |a: f64, b: f64| if a < 0.0 || b < 0.0 { (a < 0.0) == (b < 0.0) } else { (a - b).abs() < tol };
                 for j in 0..nn {
                     for i in 0..nn {
                         let c = (
                             centre.0 + sx * ((i as f64 + 0.5) - N as f64 * 0.5) * scale,
                             centre.1 + sy * (N as f64 * 0.5 - (j as f64 + 0.5)) * scale,
                         );
-                        let pts = ir::orbit_points(&formula, (0.0, 0.0), c, &params, req.max_iter as usize, bail2)
-                            .expect("parameters supplied");
-                        // The generated step's overflow guard, mirrored (it can only touch the last point).
-                        let (x, y) = fractadyne_gpu::custom::tame_f64(*pts.last().unwrap());
-                        let mag2 = x * x + y * y;
-                        // …and its smooth value, clamped at 0 as the generated module clamps it.
-                        let cpu = if mag2 > bail2 {
-                            ((pts.len() - 1) as f64 + 1.0 - (mag2.ln() * 0.5 / 2f64.ln()).ln() / power.ln()).max(0.0)
-                        } else {
-                            -1.0
-                        };
+                        let (cpu, steps) = cpu_at(c);
                         let g = gpu[(j * nn + i) * 4] as f64;
                         nonfinite += (!g.is_finite()) as u64;
                         escaped += (cpu >= 0.0) as u64;
                         informative += (cpu > 0.5) as u64;
-                        let same = if cpu < 0.0 || g < 0.0 { (cpu < 0.0) == (g < 0.0) } else { (cpu - g).abs() < tol };
+                        let same = agree(cpu, g);
                         disagree += (!same) as u64;
-                        if cpu >= 0.0 && pts.len() - 1 <= EARLY {
+                        if matches!(kind, Kind::Stress)
+                            && [(PROBE, 0.0), (-PROBE, 0.0), (0.0, PROBE), (0.0, -PROBE)]
+                                .iter()
+                                .all(|d| agree(cpu, cpu_at((c.0 + d.0, c.1 + d.1)).0))
+                        {
+                            stable += 1;
+                            stable_bad += (!same) as u64;
+                        }
+                        if !same {
+                            if cpu < 0.0 || g < 0.0 {
+                                bad_status += 1;
+                            } else if (cpu - g).abs() >= 0.5 {
+                                bad_step += 1;
+                            } else {
+                                bad_value += 1;
+                            }
+                        }
+                        if cpu >= 0.0 && steps <= EARLY {
                             early += 1;
                             early_bad += (!same) as u64;
                         }
@@ -3057,9 +3093,14 @@ impl FractadyneApp {
                         category: "Custom formula (GPU)",
                         name: format!("{label}: overflow guard"),
                         params: format!("direct, span {span}, {precision:?}, {escaped} escaped px"),
-                        result: format!("{nonfinite} non-finite, {disagree} px disagree ({:.3}%)", frac * 100.0),
-                        threshold: "0 non-finite, <5% disagree, >10% escaped",
-                        pass: nonfinite == 0 && frac < 0.05 && escaped * 10 > px,
+                        result: format!(
+                            "{nonfinite} non-finite, {disagree} px disagree ({:.3}%): status {bad_status}, step {bad_step}, \
+                             value {bad_value}; {early_bad} of {early} escaping within {EARLY} it; \
+                             {stable_bad} of {stable} stable under c ± {PROBE:e}",
+                            frac * 100.0
+                        ),
+                        threshold: "0 non-finite, <0.1% of stable px disagree, ≥75% stable, >10% escaped",
+                        pass: nonfinite == 0 && stable_bad * 1000 < stable && stable * 4 >= px * 3 && escaped * 10 > px,
                     }),
                 }
             }
