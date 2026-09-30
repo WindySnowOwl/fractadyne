@@ -640,8 +640,10 @@ fn custom_reference(inp: &RecomputeInputs) -> RecomputeResult {
             }
         }
     }
-    let (rp, b) = best;
-    finish_reference(rp, b.o, b.len, b.tail, b.orbit_prec, inp.gpu_iter, false, inp, b.ref_ms, None)
+    let (rp, mut b) = best;
+    // An explosive formula's escaping sample can be past what the GPU holds (`trim_reference`).
+    let len = fractadyne_gpu::custom::trim_reference(&mut b.o);
+    finish_reference(rp, b.o, len, b.tail, b.orbit_prec, inp.gpu_iter, false, inp, b.ref_ms, None)
 }
 
 /// A FRESH pick + build of `inp` (no reuse, no disk cache), with or without the overlap of

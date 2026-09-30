@@ -72,9 +72,12 @@ lines interleave, iteration `n` runs phase `n mod len`). Still to come with the 
 - `bailout`: a predicate (default `|z|² ≤ R²`), or a convergence test for Newton-type formulas;
 - parameter declarations with defaults and UI metadata (values are already an evaluation input).
 
-Division and the elementary functions are `f64`-only for now: a reference orbit may depend on them only
-once their bignum forms meet the same astro-float/MPFR bit-identity contract as the ring operations
-(phase 5). `Program::bignum_evaluable` says which programs qualify.
+Division, `exp` and the circular and hyperbolic functions evaluate in bignum too (astro-float, and
+rug when enabled), so a custom formula's reference orbit may use them. The two backends agree on them
+only to within their rounding, not bit for bit as on the ring operations. That is harmless for a
+custom formula, whose orbits are never cached or shared, and it is why no built-in uses them. `log`,
+`sqrt` and complex powers stay `f64`-only (their branch cuts have no perturbed form either).
+`Program::bignum_evaluable` says which programs qualify.
 
 Everything else is **generated from the IR**:
 
@@ -140,8 +143,11 @@ general symbolic algebra), with `W = Z + δ` (widened) and `B = Z` (reference):
   sum; `P(sqr f) = (2·B(f) + P(f))·P(f)`;
 - `P(|f|ₓ) = diffabs(B(fₓ), P(fₓ))`, and likewise for the imaginary part; negation and conjugation
   pass through;
-- `P(1/f) = −P(f) / (B(f)·W(f))`; `P(exp f) = exp(B(f))·expm1(P(f))`; `P(log f) = log1p(P(f)/B(f))`;
-  and so on for the elementary functions.
+- `P(f/g) = (P(f)·B(g) − B(f)·P(g)) / (B(g)·W(g))`; `P(exp f) = exp(B(f))·expm1(P(f))`;
+  `P(sin f) = 2·cos(B + P/2)·sin(P/2)` and its cos, sinh, cosh kin; `P(tanh f) = sinh(P)·sech(B)·sech(W)`
+  for a small `P`, `tanh W − tanh B` for a large one (an op of its own, `DiffTanh`; tan likewise).
+  Implemented as listed (§5.1, "Functions and division"); `P(log f) = log1p(P(f)/B(f))` and `sqrt`
+  are not yet.
 
 Tiers, by what the rest of the pipeline also needs:
 
@@ -418,6 +424,52 @@ separate, later decision, and only if phase 4 shows the generated render is iden
     in the settings hash the tiled settle's key uses (formula id, custom key, Julia and its c, the
     colour inputs). The step also checks that its picture differs from the z³ step's, in the band
     right of the dialog: 5.4 fixed against 0.0 stale.
+- **Functions and division in deep zoom.** The rule table gained division, `exp`, `sin`, `cos`,
+  `sinh`, `cosh`, `tan` and `tanh` (§4.4), so a formula like `sin(z) + cos(z)·cos(z) + c` perturbs
+  past the direct path's ~1e5× wall. Only `log`, `sqrt`, non-integer powers and `z_prev` stay
+  direct. Each rule is an identity whose small-argument part goes through an internal function
+  accurate RELATIVE to its argument (`SinSmall`, `SinhSmall`, `Expm1`). On the GPU these are Taylor
+  series through the 9th power below 0.5, because a GPU's `sin` is accurate only in absolute terms
+  (~5e-7, all of a 1e-10 offset). Against the exact difference in 256-bit bignum, the eight new
+  formulas give a worst error of **5.9e-16 to 2.3e-14 relative** (400 cases each). Naive f64
+  differencing is off by up to 100%. The reference needs the functions in bignum
+  (`Transcendental`, over astro-float's cached constants and rug). That costs **110–560 µs a
+  bignum iteration** at 128–512 bits (sin, the user's formula), about 1,000× a ring step.
+  Measured on the GPU, three traps, each found by a failing check:
+  - Explosive escapes. `sin z` jumps past f32's range in one step, and the perturbed δ became inf,
+    then NaN, which never escapes. `custom_tame` (±1e15) now clamps the perturbed step as it
+    clamps the direct one. Status disagreements at 1e6× fell from 2,406 to 10 (`sin z + c`) and
+    from 6,604 to 3 (the user's formula). The reference's last sample could hold the overflow too;
+    `trim_reference` drops such samples.
+  - tanh (tan likewise), in three attempts. `sinh(P)/(cosh B·cosh W)` overflows f32 once the real
+    parts sum past ~89, where the value is tiny: 2,263 of 48,400 pixels of `z²·tanh z + c`
+    escaped early on the clamp (4.7%). `tanh(P)·(1 − tanh B·tanh W)` cancels to exactly 0 in f64
+    there (both tanh round to ±1): the rule test's error went to 99%. `sinh(P)·sech B·sech W`,
+    with an overflow-free sech (`2e^−s/(1 + e^−2s)`), is relatively accurate for a small P but
+    inf·0 once P is large, near escape: 72 pixels escaping by iteration 43 rendered interior. No
+    product of separately evaluated factors holds for both a deep pixel's tiny P and an escaping
+    orbit's huge one. `DiffTanh(b, p)` / `DiffTan` is therefore an op of its own (as `DiffAbsRe`
+    is), with the product below |Re p| = 40 and the plain difference above (it cannot cancel much
+    there). Result: 2 pixels. The direct `tan`/`tanh` also moved to double-angle forms divided
+    through by cosh 2y, which tend cleanly to ±i / ±1 where the quotient was inf/inf, at ~44 in
+    f32 and ~355 in f64.
+  - The 2% bound of the perturbation check had let the 72 through (0.149%). The check now also
+    counts pixels escaping 10+ iterations before the budget that the GPU calls interior. With the
+    step correct that is 0–3 per case; the bound is ≤10. Re-planting the product form turned it
+    red at 67.
+
+  Self-test +6 (perturbation, 1e6×): `sin z + c` 11 px, the user's formula 1, `½·exp z − ½ + c` 3,
+  `½·sinh z + c` 2, `z²·tanh z + c` 2, `z² + c/(z + 2)` 0 of 48,400. Plain `exp z + c` escapes at
+  c = 0, and `sinh z + c` is parabolic there, so the half forms give an interior to bisect from.
+  These run 60 iterations: on a boundary view, long orbits of a function formula are chaotic
+  transients that no single-precision path follows (measured at 2,000: direct f32 at 1e2× missed
+  50% of `sin z + c`'s smooth values, perturbation at 1e6× 33%, the f64 perturbed step on the CPU
+  none of those sampled). Self-test +3 (the app's deep pipeline against bignum): `sin z + c` at
+  1e11×, the user's formula at 1e12×, the quotient at 1e10×, 0 disagreements each. At 60
+  iterations the view is on the level curve |z₆₀| = bailout. The band of pixels too close to it
+  for an f32 escape test has a fixed width in c: 27% of a 1e12× view of `sin z + c`, more of the
+  quotient's. Those formulas therefore test at the deepest of 1e12…1e9× where a view is ≥90%
+  decidable. The bignum oracle alone picks the depth, never the GPU's render.
 
 ## 6. Validation plan
 

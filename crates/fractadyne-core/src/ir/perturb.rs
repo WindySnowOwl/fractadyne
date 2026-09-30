@@ -17,15 +17,23 @@
 //! | `k·a`, `−a`, `conj a`, `re a`, `im a` | likewise | likewise |
 //! | `\|Re a\|` | `\|Re B(a)\|` | `diffabs(Re B(a), Re P(a))` (`DiffAbsRe`) |
 //! | `\|a\|²` | `\|B(a)\|²` | `Re((2·B(a) + P(a))·conj P(a))` |
+//! | `a / b` | `B(a)/B(b)` | `(P(a)·B(b) − B(a)·P(b)) / (B(b)·W(b))` |
+//! | `exp a` | `exp B(a)` | `exp B(a)·expm1 P(a)` |
+//! | `sin a` (`cos`) | `sin B(a)` | `2·cos(B + P/2)·sin(P/2)` (`−2·sin(B + P/2)·sin(P/2)`) |
+//! | `sinh a` (`cosh`) | `sinh B(a)` | `2·cosh(B + P/2)·sinh(P/2)` (`2·sinh(B + P/2)·sinh(P/2)`) |
+//! | `tan a` (`tanh`) | `tan B(a)` | `DiffTan(B, P)` (`DiffTanh`): `sin P·sec B·sec W`, or `tan W − tan B` for a large `P` |
+//!
+//! A function's small-argument part (`sin(P/2)`, `expm1 P`, …) is an internal function accurate
+//! RELATIVE to the argument ([`Func::SinSmall`], [`Func::SinhSmall`], [`Func::Expm1`]); the rest
+//! multiplies by functions of full-size values, where absolute accuracy suffices.
 //!
 //! The result is an ordinary IR [`Program`] over the inputs `Z`, `C` (the reference's values),
 //! [`Op::Delta`] and [`Op::DeltaC`], so every interpreter and the WGSL generator run it unchanged.
 //!
-//! Not yet: division, powers with a non-integer exponent, the elementary functions (their rules
-//! need the functions of the reference at high precision, design phase 5), and the previous iterate
-//! (a second perturbation to carry).
+//! Not yet: powers with a non-integer exponent, `log` and `sqrt` (branch cuts), and the previous
+//! iterate (a second perturbation to carry).
 
-use super::{Builder, Formula, Op, Program, Val};
+use super::{Builder, Formula, Func, Op, Program, Val};
 
 /// Why a formula has no perturbed step (yet).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -102,6 +110,49 @@ impl Rewriter {
             self.push(Op::Mul(s, px))
         });
         Pair { b, p }
+    }
+    /// P(f(a)) for the functions with a perturbed form, from `B(a)` (`b`), `f(B(a))` (`fb`) and
+    /// `P(a)` (`p`). Each is an identity whose only small-argument part goes through a
+    /// relative-accuracy function ([`Func::SinSmall`], [`Func::Expm1`], …); the rest multiplies by
+    /// functions of full-size values, where absolute accuracy is enough:
+    /// - `exp(B+P) − exp(B) = exp(B)·expm1(P)`
+    /// - `sin(B+P) − sin(B) = 2·cos(B + P/2)·sin(P/2)`, `cos`: `−2·sin(B + P/2)·sin(P/2)`
+    /// - `sinh(B+P) − sinh(B) = 2·cosh(B + P/2)·sinh(P/2)`, `cosh`: `2·sinh(B + P/2)·sinh(P/2)`
+    /// - `tan` and `tanh`: an op of their own ([`Op::DiffTan`], [`Op::DiffTanh`]), because no
+    ///   product of separately evaluated factors holds up in `f32` for both a deep pixel's tiny
+    ///   `P` and an escaping orbit's huge one. `sin(P) / (cos(B)·cos(B+P))` overflows once the two
+    ///   imaginary parts (real, for `tanh`) sum past ~89, where the value is tiny — measured, 2,263
+    ///   of 48,400 pixels of `z²·tanh z + c` escaped early on the clamp; `tanh(P)·(1 −
+    ///   tanh(B)·tanh(B+P))` cancels to exactly 0 there; `sinh(P)·sech(B)·sech(B+P)` with an
+    ///   overflow-free `sech` is inf·0 once `P` is large (72 pixels never escaped).
+    fn func(&mut self, f: Func, b: Val, fb: Val, p: Val) -> Val {
+        let half = |r: &mut Self| {
+            let h = r.push(Op::Scale(p, 0.5));
+            let m = r.push(Op::Add(b, h));
+            (h, m)
+        };
+        match f {
+            Func::Exp => {
+                let e = self.push(Op::Func(Func::Expm1, p));
+                self.push(Op::Mul(fb, e))
+            }
+            Func::Sin | Func::Cos | Func::Sinh | Func::Cosh => {
+                let (h, m) = half(self);
+                let (outer, small) = match f {
+                    Func::Sin => (Func::Cos, Func::SinSmall),
+                    Func::Cos => (Func::Sin, Func::SinSmall),
+                    Func::Sinh => (Func::Cosh, Func::SinhSmall),
+                    _ => (Func::Sinh, Func::SinhSmall),
+                };
+                let o = self.push(Op::Func(outer, m));
+                let s = self.push(Op::Func(small, h));
+                let t = self.push(Op::Mul(o, s));
+                self.push(Op::Scale(t, if f == Func::Cos { -2.0 } else { 2.0 }))
+            }
+            Func::Tan => self.push(Op::DiffTan(b, p)),
+            Func::Tanh => self.push(Op::DiffTanh(b, p)),
+            _ => unreachable!("only the functions with a perturbed form reach here"),
+        }
     }
     fn zero(&mut self) -> Val {
         if let Some(z) = self.zero {
@@ -197,10 +248,37 @@ pub fn perturbed(prog: &Program) -> Result<Program, NotPerturbable> {
                 Pair { b, p }
             }
             Op::ZPrev => return Err(NotPerturbable("the previous iterate")),
-            Op::Div(..) => return Err(NotPerturbable("division")),
+            Op::Div(a, b) => {
+                let (x, y) = (v(a), v(b));
+                let bq = r.push(Op::Div(x.b, y.b));
+                // P(x/y) = (P(x)·B(y) − B(x)·P(y)) / (B(y)·W(y)): every term carries a P.
+                let p = match (x.p, y.p) {
+                    (None, None) => None,
+                    (Some(px), None) => Some(r.push(Op::Div(px, y.b))),
+                    (px, Some(py)) => {
+                        let left = px.map(|px| r.push(Op::Mul(px, y.b)));
+                        let bxpy = r.push(Op::Mul(x.b, py));
+                        let num = r.add(left, Some(bxpy), true).expect("the right term exists");
+                        let wy = r.full(y);
+                        let den = r.push(Op::Mul(y.b, wy));
+                        Some(r.push(Op::Div(num, den)))
+                    }
+                };
+                Pair { b: bq, p }
+            }
             Op::Pow(..) => return Err(NotPerturbable("a non-integer power")),
-            Op::Func(..) => return Err(NotPerturbable("an elementary function")),
-            Op::Delta | Op::DeltaC | Op::DiffAbsRe(..) | Op::DiffAbsIm(..) => {
+            Op::Func(f @ (Func::Exp | Func::Sin | Func::Cos | Func::Sinh | Func::Cosh | Func::Tan | Func::Tanh), a) => {
+                let x = v(a);
+                let b = r.push(Op::Func(f, x.b));
+                let p = x.p.map(|p| r.func(f, x.b, b, p));
+                Pair { b, p }
+            }
+            Op::Func(Func::Log, _) => return Err(NotPerturbable("log")),
+            Op::Func(Func::Sqrt, _) => return Err(NotPerturbable("sqrt")),
+            Op::Func(Func::SinSmall | Func::SinhSmall | Func::Expm1, _) => {
+                return Err(NotPerturbable("an already perturbed program"))
+            }
+            Op::Delta | Op::DeltaC | Op::DiffAbsRe(..) | Op::DiffAbsIm(..) | Op::DiffTanh(..) | Op::DiffTan(..) => {
                 return Err(NotPerturbable("an already perturbed program"))
             }
         };

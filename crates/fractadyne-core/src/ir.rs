@@ -45,8 +45,11 @@ impl Val {
     }
 }
 
-/// Elementary functions. `f64` only: their bignum forms need their own bit-identity contract across
-/// backends before a reference orbit may depend on them (design phase 5).
+/// Elementary functions. `exp`, the circular and the hyperbolic ones also evaluate in bignum (a
+/// custom formula's reference orbit), where the two backends agree only to within their rounding —
+/// unlike the ring operations, which they reproduce bit for bit. That is harmless for a custom
+/// formula, whose orbits are never cached or shared, and it is why a built-in never uses them.
+/// `log` and `sqrt` are `f64` only (their branch cuts have no perturbed form yet).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Func {
     Exp,
@@ -58,6 +61,14 @@ pub enum Func {
     Sinh,
     Cosh,
     Tanh,
+    /// Internal, in perturbed steps only (no formula-language name): `sin` of a SMALL argument,
+    /// accurate RELATIVE to it. A GPU's `sin` is accurate only in absolute terms (~5e-7), which is
+    /// all of a 1e-10 offset.
+    SinSmall,
+    /// Internal: `sinh` of a small argument, relative accuracy (as [`Func::SinSmall`]).
+    SinhSmall,
+    /// Internal: `exp(a) − 1`, relative accuracy for a small `a` (where `exp(a) − 1` cancels).
+    Expm1,
 }
 
 /// One instruction. Operands are earlier instructions' values.
@@ -93,11 +104,12 @@ pub enum Op {
     Im(Val),
     /// `|z|² + 0i` — Fractint's `|z|`.
     Norm(Val),
-    /// Complex division, `a·conj(b) / |b|²`. Not exact-ring: `f64` only.
+    /// Complex division, `a·conj(b) / |b|²`. Not exact-ring: `f64` and bignum, each rounding it
+    /// its own way (see [`Func`]).
     Div(Val, Val),
     /// `a^b = exp(b·log a)`, and `0^b = 0`. `f64` only.
     Pow(Val, Val),
-    /// An elementary function. `f64` only.
+    /// An elementary function — in bignum too, except `log` and `sqrt` (see [`Func`]).
     Func(Func, Val),
     /// The perturbation of the iterate, δz — in a PERTURBED program ([`perturb`]), where `Z` and
     /// `C` are the reference's values.
@@ -109,6 +121,12 @@ pub enum Op {
     DiffAbsRe(Val, Val),
     /// `(Re p, diffabs(Im b, Im p))`, likewise for `AbsIm`.
     DiffAbsIm(Val, Val),
+    /// `tanh(b + p) − tanh(b)`: the perturbation of `tanh` at reference `b` with perturbation `p`,
+    /// without cancellation and without overflow (a product form below [`TANH_DIFF_SPLIT`], the
+    /// plain difference above it). `f64` only (it branches).
+    DiffTanh(Val, Val),
+    /// `tan(b + p) − tan(b)`, likewise.
+    DiffTan(Val, Val),
 }
 
 impl Op {
@@ -122,7 +140,9 @@ impl Op {
             | Op::Div(a, b)
             | Op::Pow(a, b)
             | Op::DiffAbsRe(a, b)
-            | Op::DiffAbsIm(a, b) => (Some(a), Some(b)),
+            | Op::DiffAbsIm(a, b)
+            | Op::DiffTanh(a, b)
+            | Op::DiffTan(a, b) => (Some(a), Some(b)),
             Op::Sqr(a)
             | Op::PowI(a, _)
             | Op::Scale(a, _)
@@ -142,7 +162,30 @@ impl Op {
     /// operations plus the exact ones (sign, abs, parts). Division and the elementary functions are
     /// not — see [`Func`].
     pub fn is_ring(&self) -> bool {
-        !matches!(self, Op::Div(..) | Op::Pow(..) | Op::Func(..) | Op::DiffAbsRe(..) | Op::DiffAbsIm(..))
+        !matches!(
+            self,
+            Op::Div(..)
+                | Op::Pow(..)
+                | Op::Func(..)
+                | Op::DiffAbsRe(..)
+                | Op::DiffAbsIm(..)
+                | Op::DiffTanh(..)
+                | Op::DiffTan(..)
+        )
+    }
+
+    /// Whether the bignum fields evaluate it at all: the ring, division, and the functions with a
+    /// bignum form (see [`Func`]).
+    pub fn is_bignum(&self) -> bool {
+        self.is_ring()
+            || matches!(
+                self,
+                Op::Div(..)
+                    | Op::Func(
+                        Func::Exp | Func::Sin | Func::Cos | Func::Tan | Func::Sinh | Func::Cosh | Func::Tanh,
+                        _
+                    )
+            )
     }
 }
 
@@ -163,7 +206,8 @@ pub enum IrError {
     MulBeforeStore { opcode: usize },
     /// The program reads parameter `index`; only `supplied` values were given.
     MissingParam { index: u16, supplied: usize },
-    /// A bignum evaluation of a program with non-ring operations.
+    /// A bignum evaluation of a program with an operation bignum has no form of (see
+    /// [`Op::is_bignum`]).
     NotBignum,
 }
 
@@ -185,7 +229,7 @@ impl std::fmt::Display for IrError {
             }
             IrError::NotBignum => write!(
                 f,
-                "division and elementary functions have no bignum form yet (f64 only)"
+                "log, sqrt and non-integer powers have no bignum form yet (f64 only)"
             ),
         }
     }
@@ -238,9 +282,9 @@ impl Program {
         self.insts.iter().any(|op| matches!(op, Op::ZPrev))
     }
 
-    /// Whether the bignum interpreter can run it (see [`Op::is_ring`]).
+    /// Whether the bignum interpreter can run it (see [`Op::is_bignum`]).
     pub fn bignum_evaluable(&self) -> bool {
-        self.insts.iter().all(Op::is_ring)
+        self.insts.iter().all(Op::is_bignum)
     }
 
     /// The same program without the instructions its output does not depend on, renumbered in
@@ -282,6 +326,8 @@ impl Program {
                 Op::Func(f, a) => Op::Func(f, remap(a, &map)),
                 Op::DiffAbsRe(a, b) => Op::DiffAbsRe(remap(a, &map), remap(b, &map)),
                 Op::DiffAbsIm(a, b) => Op::DiffAbsIm(remap(a, &map), remap(b, &map)),
+                Op::DiffTanh(a, b) => Op::DiffTanh(remap(a, &map), remap(b, &map)),
+                Op::DiffTan(a, b) => Op::DiffTan(remap(a, &map), remap(b, &map)),
                 leaf @ (Op::Z | Op::C | Op::ZPrev | Op::Param(_) | Op::Const(..) | Op::Delta | Op::DeltaC) => leaf,
             });
         }
@@ -332,6 +378,7 @@ impl Program {
                 Op::Delta => Some(1.0),
                 Op::DeltaC => Some(0.0),
                 Op::DiffAbsRe(_, p) | Op::DiffAbsIm(_, p) => g(p),
+                Op::DiffTanh(..) | Op::DiffTan(..) => None,
             };
             deg.push(d);
         }
@@ -551,8 +598,99 @@ pub(crate) trait IrField: Field {
     /// Exact negation (a sign flip).
     fn fneg(self) -> Self;
     /// A non-ring operation on materialised operands, or `None` where this field has none.
-    fn elementary(_op: &Op, _a: &(Self, Self), _b: Option<&(Self, Self)>) -> Option<(Self, Self)> {
+    fn elementary(_op: &Op, _a: &(Self, Self), _b: Option<&(Self, Self)>, _ctx: Self::Ctx) -> Option<(Self, Self)> {
         None
+    }
+}
+
+/// What a bignum field needs beyond the ring for [`Op::is_bignum`]: division and five real
+/// functions, at the working precision.
+pub(crate) trait Transcendental: IrField {
+    fn fdiv(&self, o: &Self, ctx: Self::Ctx) -> Self;
+    fn fexp(&self, ctx: Self::Ctx) -> Self;
+    fn fsin(&self, ctx: Self::Ctx) -> Self;
+    fn fcos(&self, ctx: Self::Ctx) -> Self;
+    fn fsinh(&self, ctx: Self::Ctx) -> Self;
+    fn fcosh(&self, ctx: Self::Ctx) -> Self;
+}
+
+/// The complex forms, from the real functions — the same identities as the `f64` interpreter's
+/// ([`cfunc`], [`cdiv`]), except tan and tanh as plain quotients (a bignum does not overflow).
+fn complex_elementary<F: Transcendental>(op: &Op, a: &(F, F), b: Option<&(F, F)>, p: F::Ctx) -> Option<(F, F)> {
+    let (x, y) = a;
+    let div = |a: &(F, F), b: &(F, F)| {
+        let dd = b.0.fmul(&b.0, p).fadd(&b.1.fmul(&b.1, p), p);
+        let re = a.0.fmul(&b.0, p).fadd(&a.1.fmul(&b.1, p), p);
+        let im = a.1.fmul(&b.0, p).fsub(&a.0.fmul(&b.1, p), p);
+        (re.fdiv(&dd, p), im.fdiv(&dd, p))
+    };
+    let sin = || (x.fsin(p).fmul(&y.fcosh(p), p), x.fcos(p).fmul(&y.fsinh(p), p));
+    let cos = || (x.fcos(p).fmul(&y.fcosh(p), p), x.fsin(p).fmul(&y.fsinh(p), p).fneg());
+    let sinh = || (x.fsinh(p).fmul(&y.fcos(p), p), x.fcosh(p).fmul(&y.fsin(p), p));
+    let cosh = || (x.fcosh(p).fmul(&y.fcos(p), p), x.fsinh(p).fmul(&y.fsin(p), p));
+    Some(match *op {
+        Op::Div(..) => div(a, b?),
+        Op::Func(Func::Exp, _) => {
+            let r = x.fexp(p);
+            (r.fmul(&y.fcos(p), p), r.fmul(&y.fsin(p), p))
+        }
+        Op::Func(Func::Sin, _) => sin(),
+        Op::Func(Func::Cos, _) => cos(),
+        Op::Func(Func::Tan, _) => div(&sin(), &cos()),
+        Op::Func(Func::Sinh, _) => sinh(),
+        Op::Func(Func::Cosh, _) => cosh(),
+        Op::Func(Func::Tanh, _) => div(&sinh(), &cosh()),
+        _ => return None,
+    })
+}
+
+thread_local! {
+    /// astro-float's cache of π, e and friends for its transcendental functions, built once per
+    /// thread (a reference build runs on a worker; each keeps its own).
+    static ASTRO_CONSTS: std::cell::RefCell<astro_float::Consts> =
+        std::cell::RefCell::new(astro_float::Consts::new().expect("astro-float constant cache"));
+}
+
+impl Transcendental for BigFloat {
+    fn fdiv(&self, o: &BigFloat, p: usize) -> BigFloat {
+        self.div(o, p, crate::RM)
+    }
+    fn fexp(&self, p: usize) -> BigFloat {
+        ASTRO_CONSTS.with(|c| self.exp(p, crate::RM, &mut c.borrow_mut()))
+    }
+    fn fsin(&self, p: usize) -> BigFloat {
+        ASTRO_CONSTS.with(|c| self.sin(p, crate::RM, &mut c.borrow_mut()))
+    }
+    fn fcos(&self, p: usize) -> BigFloat {
+        ASTRO_CONSTS.with(|c| self.cos(p, crate::RM, &mut c.borrow_mut()))
+    }
+    fn fsinh(&self, p: usize) -> BigFloat {
+        ASTRO_CONSTS.with(|c| self.sinh(p, crate::RM, &mut c.borrow_mut()))
+    }
+    fn fcosh(&self, p: usize) -> BigFloat {
+        ASTRO_CONSTS.with(|c| self.cosh(p, crate::RM, &mut c.borrow_mut()))
+    }
+}
+
+#[cfg(feature = "rug")]
+impl Transcendental for rug::Float {
+    fn fdiv(&self, o: &rug::Float, p: u32) -> rug::Float {
+        rug::Float::with_val_round(p, self / o, rug::float::Round::Zero).0
+    }
+    fn fexp(&self, p: u32) -> rug::Float {
+        rug::Float::with_val_round(p, self.exp_ref(), rug::float::Round::Zero).0
+    }
+    fn fsin(&self, p: u32) -> rug::Float {
+        rug::Float::with_val_round(p, self.sin_ref(), rug::float::Round::Zero).0
+    }
+    fn fcos(&self, p: u32) -> rug::Float {
+        rug::Float::with_val_round(p, self.cos_ref(), rug::float::Round::Zero).0
+    }
+    fn fsinh(&self, p: u32) -> rug::Float {
+        rug::Float::with_val_round(p, self.sinh_ref(), rug::float::Round::Zero).0
+    }
+    fn fcosh(&self, p: u32) -> rug::Float {
+        rug::Float::with_val_round(p, self.cosh_ref(), rug::float::Round::Zero).0
     }
 }
 
@@ -563,7 +701,7 @@ impl IrField for f64 {
     fn fneg(self) -> f64 {
         -self
     }
-    fn elementary(op: &Op, a: &(f64, f64), b: Option<&(f64, f64)>) -> Option<(f64, f64)> {
+    fn elementary(op: &Op, a: &(f64, f64), b: Option<&(f64, f64)>, _: ()) -> Option<(f64, f64)> {
         Some(match *op {
             Op::Div(..) => cdiv(*a, *b?),
             Op::Pow(..) => cpow(*a, *b?),
@@ -576,9 +714,47 @@ impl IrField for f64 {
                 let p = *b?;
                 (p.0, diffabs(a.1, p.1))
             }
+            Op::DiffTanh(..) => tanh_diff(*a, *b?),
+            // tan a = −i·tanh(i·a)
+            Op::DiffTan(..) => {
+                let p = *b?;
+                let d = tanh_diff((-a.1, a.0), (-p.1, p.0));
+                (d.1, -d.0)
+            }
             _ => return None,
         })
     }
+}
+
+/// `sech a = 2·e^−s / (1 + e^−2s)` with `s = ±a`, `Re s ≥ 0`: `e^−s` is at most 1 in size, so
+/// nothing overflows, and it tends to 0 (relative accuracy intact) where `cosh a` overflows.
+/// The shader's `cf_sech`.
+fn csech(a: (f64, f64)) -> (f64, f64) {
+    let (x, y) = if a.0 < 0.0 { (-a.0, -a.1) } else { a };
+    let r = (-x).exp();
+    let e = (r * y.cos(), -r * y.sin());
+    let e2 = cmul64(e, e);
+    cdiv((2.0 * e.0, 2.0 * e.1), (1.0 + e2.0, e2.1))
+}
+
+/// Below this `|Re p|`, [`tanh_diff`] takes the product form; above it, the plain difference.
+/// `sinh p` stays finite in `f32` to ~89.
+pub const TANH_DIFF_SPLIT: f64 = 40.0;
+
+/// `tanh(b + p) − tanh(b)` as the perturbed `tanh` needs it, the shader's `cf_tanh_diff` branch for
+/// branch. For a small `p` (a deep pixel's offset) it is `sinh(p)·sech(b)·sech(b + p)`: accurate
+/// RELATIVE to itself, where the difference of the two `tanh`s would cancel (they round to the
+/// same ±1 once the real parts pass ~19) — and with `sech` overflow-free, where
+/// `sinh(p) / (cosh(b)·cosh(b + p))` gave `f32` inf/inf. For a large `p` (an escaping orbit),
+/// `sinh(p)` itself overflows and meets a `sech` of 0 — so there the plain difference, which
+/// cannot cancel much when the arguments are that far apart.
+pub(crate) fn tanh_diff(b: (f64, f64), p: (f64, f64)) -> (f64, f64) {
+    let w = (b.0 + p.0, b.1 + p.1);
+    if p.0.abs() >= TANH_DIFF_SPLIT {
+        let (t, u) = (cfunc(Func::Tanh, w), cfunc(Func::Tanh, b));
+        return (t.0 - u.0, t.1 - u.1);
+    }
+    cmul64(cmul64(cfunc(Func::SinhSmall, p), csech(b)), csech(w))
 }
 
 /// `|c + d| − |c|` without cancellation (Kalles Fraktaler's "diffabs"): exactly `±d` while `c` and
@@ -606,6 +782,9 @@ impl IrField for BigFloat {
         self.inv_sign();
         self
     }
+    fn elementary(op: &Op, a: &(BigFloat, BigFloat), b: Option<&(BigFloat, BigFloat)>, p: usize) -> Option<(BigFloat, BigFloat)> {
+        complex_elementary(op, a, b, p)
+    }
 }
 
 #[cfg(feature = "rug")]
@@ -615,6 +794,9 @@ impl IrField for rug::Float {
     }
     fn fneg(self) -> rug::Float {
         -self
+    }
+    fn elementary(op: &Op, a: &(rug::Float, rug::Float), b: Option<&(rug::Float, rug::Float)>, p: u32) -> Option<(rug::Float, rug::Float)> {
+        complex_elementary(op, a, b, p)
     }
 }
 
@@ -670,10 +852,29 @@ fn cfunc(f: Func, a: (f64, f64)) -> (f64, f64) {
         Func::Sqrt => csqrt(a),
         Func::Sin => (x.sin() * y.cosh(), x.cos() * y.sinh()),
         Func::Cos => (x.cos() * y.cosh(), -(x.sin() * y.sinh())),
-        Func::Tan => cdiv(cfunc(Func::Sin, a), cfunc(Func::Cos, a)),
+        // tan and tanh as double-angle forms divided through by cosh 2y (cosh 2x): sin/cos
+        // (sinh/cosh) is inf/inf = NaN once the imaginary (real) part passes ~355, where the value
+        // is ±i (±1); these tend cleanly to it. The same forms as the GPU's.
+        Func::Tan => {
+            let ch = (2.0 * y).cosh();
+            let d = (2.0 * x).cos() / ch + 1.0;
+            ((2.0 * x).sin() / ch / d, (2.0 * y).tanh() / d)
+        }
         Func::Sinh => (x.sinh() * y.cos(), x.cosh() * y.sin()),
         Func::Cosh => (x.cosh() * y.cos(), x.sinh() * y.sin()),
-        Func::Tanh => cdiv(cfunc(Func::Sinh, a), cfunc(Func::Cosh, a)),
+        Func::Tanh => {
+            let ch = (2.0 * x).cosh();
+            let d = (2.0 * y).cos() / ch + 1.0;
+            ((2.0 * x).tanh() / d, (2.0 * y).sin() / ch / d)
+        }
+        // `f64`'s own `sin` and `sinh` are already accurate relative to a small argument.
+        Func::SinSmall => cfunc(Func::Sin, a),
+        Func::SinhSmall => cfunc(Func::Sinh, a),
+        // e^x·cos y − 1 = expm1(x)·cos y − 2·sin²(y/2), with no difference of near-equal terms.
+        Func::Expm1 => {
+            let s = (0.5 * y).sin();
+            (x.exp_m1() * y.cos() - 2.0 * s * s, x.exp() * y.sin())
+        }
     }
 }
 
@@ -908,17 +1109,22 @@ impl<'f, F: IrField> Machine<'f, F> {
                     let (xx, yy) = (self.mul(a.re, a.re), self.mul(a.im, a.im));
                     Cs { re: self.add(xx, yy), im: zero }
                 }
-                Op::Div(a, b) | Op::Pow(a, b) | Op::DiffAbsRe(a, b) | Op::DiffAbsIm(a, b) => {
+                Op::Div(a, b)
+                | Op::Pow(a, b)
+                | Op::DiffAbsRe(a, b)
+                | Op::DiffAbsIm(a, b)
+                | Op::DiffTanh(a, b)
+                | Op::DiffTan(a, b) => {
                     let (a, b) = (g(a), g(b));
                     let a = (self.materialize(a.re), self.materialize(a.im));
                     let b = (self.materialize(b.re), self.materialize(b.im));
-                    let (re, im) = F::elementary(op, &a, Some(&b)).ok_or(IrError::NotBignum)?;
+                    let (re, im) = F::elementary(op, &a, Some(&b), self.ctx).ok_or(IrError::NotBignum)?;
                     Cs { re: self.push(re), im: self.push(im) }
                 }
                 Op::Func(_, a) => {
                     let a = g(a);
                     let a = (self.materialize(a.re), self.materialize(a.im));
-                    let (re, im) = F::elementary(op, &a, None).ok_or(IrError::NotBignum)?;
+                    let (re, im) = F::elementary(op, &a, None, self.ctx).ok_or(IrError::NotBignum)?;
                     Cs { re: self.push(re), im: self.push(im) }
                 }
             };

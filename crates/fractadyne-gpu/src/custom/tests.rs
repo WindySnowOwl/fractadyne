@@ -43,7 +43,7 @@ fn every_built_in_step_generates_a_valid_module_without_the_perturbation_paths()
         // slot), both its smooth values, its perturbed step and rebase, and the resolve's DE.
         assert!(s.contains("let zn = custom_tame(custom_step(z, c, zp, iter));"), "the chunk pass's direct step");
         assert_eq!(s.matches("max(f32(iter) + 1.0 - nu, 0.0);").count(), 4, "all four smooth values clamped");
-        assert_eq!(s.matches("dz = custom_pstep(z, dz, dc, iter);").count(), 2, "both mode-0 step slots");
+        assert_eq!(s.matches("dz = custom_tame(custom_pstep(z, dz, dc, iter));").count(), 2, "both mode-0 step slots, tamed");
         assert_eq!(s.matches("let base = iter % CUSTOM_PHASES;").count(), 2, "both rebases phase-aligned");
         assert!(s.contains("dz = cset(df_sub(z_full_re, r0.re), df_sub(z_full_im, r0.im));"), "the chunk rebase's names");
         assert!(s.contains("    let nrm = vec2<f32>(0.0, 0.0);\n    let de = 1.0e30;\n"), "the resolve's no-DE values");
@@ -52,9 +52,10 @@ fn every_built_in_step_generates_a_valid_module_without_the_perturbation_paths()
         assert!(SLOTS.iter().all(|(b, e)| !s.contains(b) && !s.contains(e)), "a marker survived");
         assert!(s.contains("fn fs_iterate(") && s.contains("fn vs_split_tiles("));
         assert_eq!(shader.precision, Precision::Df32, "formula {id}");
-        // The eight opcode families are perturbable; Phoenix reads z_prev and Newton divides.
-        assert_eq!(shader.perturbation.is_ok(), id < f::PHOENIX, "formula {id}: {:?}", shader.perturbation);
-        assert_eq!(s.contains("fn custom_pphase0("), id < f::PHOENIX);
+        // Every step but Phoenix's is perturbable (it reads z_prev); Newton's divides, which has
+        // a perturbed form.
+        assert_eq!(shader.perturbation.is_ok(), id != f::PHOENIX, "formula {id}: {:?}", shader.perturbation);
+        assert_eq!(s.contains("fn custom_pphase0("), id != f::PHOENIX);
         built += 1;
     }
     assert_eq!(built, 10);
@@ -124,7 +125,18 @@ fn powers_hybrids_parameters_and_functions_generate_valid_modules() {
         let s = build(&unary(op), &[]).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(s.precision, Precision::F32, "{name}");
         assert!(s.source.contains(&format!("cf_{name}(v0)")), "{name}");
+        // The functions with a perturbed form carry it, through the small-argument helpers.
+        let perturbs = !matches!(name, "log" | "sqrt");
+        assert_eq!(s.perturbation.is_ok(), perturbs, "{name}: {:?}", s.perturbation);
+        if perturbs {
+            let small = ["cf_sin_small(", "cf_sinh_small(", "cf_expm1(", "cf_tanh_diff(", "cf_tan_diff("];
+            let pstep = &s.source[s.source.find("fn custom_pphase0(").expect("a perturbed step")..];
+            assert!(small.iter().any(|h| pstep.contains(h)), "{name}: no small-argument helper in its perturbed step");
+        }
     }
+    // The shader's tanh_diff branches where the interpreter's does.
+    let split = format!("if (abs(p.re.x) >= {:?}) {{", fractadyne_core::ir::TANH_DIFF_SPLIT as f32);
+    assert!(F32_HELPERS.contains(&split), "cf_tanh_diff's split is not TANH_DIFF_SPLIT ({split})");
     let mut b = Builder::new();
     let z = b.push(Op::Z);
     let w = b.push(Op::Const(2.5, 0.5));

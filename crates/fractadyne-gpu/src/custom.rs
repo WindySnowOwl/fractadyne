@@ -72,8 +72,10 @@ const SLOTS: [(&str, &str); 12] = [
 pub enum Precision {
     /// df32 throughout (~48 bits): the ring operations and division.
     Df32,
-    /// An elementary function (or complex power) evaluates in `f32` (~24 bits): the depth limit
-    /// drops accordingly. Their df32 forms are future work.
+    /// An elementary function (or complex power) evaluates in `f32` (~24 bits): on the direct
+    /// path the depth limit drops accordingly (their df32 forms are future work). A perturbed
+    /// step does not mind: its functions take full-size reference values, where absolute
+    /// accuracy suffices, and the small offsets go through relative-accuracy forms.
     F32,
 }
 
@@ -126,6 +128,8 @@ pub fn cost_factor(formula: &Formula) -> f64 {
                     Op::Div(..) => 15.0,
                     Op::Func(Func::Tan | Func::Tanh, _) => 18.0,
                     Op::Func(Func::Sin | Func::Cos | Func::Sinh | Func::Cosh, _) => 8.0,
+                    Op::Func(Func::SinSmall | Func::SinhSmall | Func::Expm1, _) => 10.0,
+                    Op::DiffTanh(..) | Op::DiffTan(..) => 50.0,
                     Op::Func(..) => 4.0,
                     Op::Pow(..) => 12.0,
                 })
@@ -321,6 +325,14 @@ fn phase_body(prog: &Program, params: &[(f64, f64)], out: &mut String) -> Result
                 precision = Precision::F32;
                 format!("cf_pow({}, {})", v(a), v(b))
             }
+            Op::DiffTanh(b, p) => {
+                precision = Precision::F32;
+                format!("cf_tanh_diff({}, {})", v(b), v(p))
+            }
+            Op::DiffTan(b, p) => {
+                precision = Precision::F32;
+                format!("cf_tan_diff({}, {})", v(b), v(p))
+            }
             Op::Func(f, a) => {
                 precision = Precision::F32;
                 let name = match f {
@@ -333,6 +345,9 @@ fn phase_body(prog: &Program, params: &[(f64, f64)], out: &mut String) -> Result
                     Func::Sinh => "sinh",
                     Func::Cosh => "cosh",
                     Func::Tanh => "tanh",
+                    Func::SinSmall => "sin_small",
+                    Func::SinhSmall => "sinh_small",
+                    Func::Expm1 => "expm1",
                 };
                 format!("cf_{name}({})", v(a))
             }
@@ -368,13 +383,85 @@ fn cf_sqrt(a: Cdf) -> Cdf {
 }
 fn cf_sin(a: Cdf) -> Cdf { return cf_make(sin(a.re.x) * cosh(a.im.x), cos(a.re.x) * sinh(a.im.x)); }
 fn cf_cos(a: Cdf) -> Cdf { return cf_make(cos(a.re.x) * cosh(a.im.x), -(sin(a.re.x) * sinh(a.im.x))); }
-fn cf_tan(a: Cdf) -> Cdf { return cf_div(cf_sin(a), cf_cos(a)); }
+// tan and tanh as sin/cos (sinh/cosh) overflow f32 once the imaginary (real) part passes ~44 —
+// inf/inf = NaN where the value is ±i (±1). The double-angle forms divided through by cosh 2y
+// (cosh 2x) tend cleanly to the limit instead.
+// The real tanh is clamped past 20, where it is ±1 in f32: a driver may compute it through exp,
+// which overflows the same way.
+fn rf_tanh(x: f32) -> f32 {
+    if (abs(x) > 20.0) { return sign(x); }
+    return tanh(x);
+}
+fn cf_tan(a: Cdf) -> Cdf {
+    let ch = cosh(2.0 * a.im.x);
+    let d = cos(2.0 * a.re.x) / ch + 1.0;
+    return cf_make(sin(2.0 * a.re.x) / ch / d, rf_tanh(2.0 * a.im.x) / d);
+}
 fn cf_sinh(a: Cdf) -> Cdf { return cf_make(sinh(a.re.x) * cos(a.im.x), cosh(a.re.x) * sin(a.im.x)); }
 fn cf_cosh(a: Cdf) -> Cdf { return cf_make(cosh(a.re.x) * cos(a.im.x), sinh(a.re.x) * sin(a.im.x)); }
-fn cf_tanh(a: Cdf) -> Cdf { return cf_div(cf_sinh(a), cf_cosh(a)); }
+fn cf_tanh(a: Cdf) -> Cdf {
+    let ch = cosh(2.0 * a.re.x);
+    let d = cos(2.0 * a.im.x) / ch + 1.0;
+    return cf_make(rf_tanh(2.0 * a.re.x) / d, sin(2.0 * a.im.x) / ch / d);
+}
 fn cf_pow(a: Cdf, b: Cdf) -> Cdf {
     if (a.re.x == 0.0 && a.im.x == 0.0) { return cf_make(0.0, 0.0); }
     return cf_exp(cf_mul(b, cf_log(a)));
+}
+// Perturbed steps' small-argument forms (`ir::perturb`): accurate RELATIVE to a small argument,
+// where the GPU's own sin, sinh and exp − 1 are accurate only in absolute terms (~5e-7 — all of a
+// 1e-10 offset). Taylor series through the 9th power below 0.5 (truncation under 1e-9 relative),
+// the built-ins above it.
+fn rf_sin_small(x: f32) -> f32 {
+    if (abs(x) >= 0.5) { return sin(x); }
+    let q = x * x;
+    return x * (1.0 - q / 6.0 * (1.0 - q / 20.0 * (1.0 - q / 42.0 * (1.0 - q / 72.0))));
+}
+fn rf_sinh_small(x: f32) -> f32 {
+    if (abs(x) >= 0.5) { return sinh(x); }
+    let q = x * x;
+    return x * (1.0 + q / 6.0 * (1.0 + q / 20.0 * (1.0 + q / 42.0 * (1.0 + q / 72.0))));
+}
+fn rf_expm1(x: f32) -> f32 {
+    if (abs(x) >= 0.5) { return exp(x) - 1.0; }
+    return x * (1.0 + x / 2.0 * (1.0 + x / 3.0 * (1.0 + x / 4.0 * (1.0 + x / 5.0
+        * (1.0 + x / 6.0 * (1.0 + x / 7.0 * (1.0 + x / 8.0 * (1.0 + x / 9.0))))))));
+}
+fn cf_sin_small(a: Cdf) -> Cdf {
+    return cf_make(rf_sin_small(a.re.x) * cosh(a.im.x), cos(a.re.x) * rf_sinh_small(a.im.x));
+}
+fn cf_sinh_small(a: Cdf) -> Cdf {
+    return cf_make(rf_sinh_small(a.re.x) * cos(a.im.x), cosh(a.re.x) * rf_sin_small(a.im.x));
+}
+// e^x·cos y − 1 = expm1(x)·cos y − 2·sin²(y/2): no difference of near-equal terms.
+fn cf_expm1(a: Cdf) -> Cdf {
+    let s = rf_sin_small(0.5 * a.im.x);
+    return cf_make(rf_expm1(a.re.x) * cos(a.im.x) - 2.0 * s * s, exp(a.re.x) * rf_sin_small(a.im.x));
+}
+// The perturbed tanh and tan (`ir::tanh_diff`, branch for branch): tanh(b + p) − tanh(b) as
+// sinh(p)·sech(b)·sech(b + p) below |Re p| = 40 (TANH_DIFF_SPLIT), the plain difference above.
+// sech a = 2·e^−s / (1 + e^−2s) with s = ±a, Re s ≥ 0: e^−s is at most 1 in size, so nothing
+// overflows. tan a = −i·tanh(i·a).
+fn cf_sech(a: Cdf) -> Cdf {
+    let sg = select(1.0, -1.0, a.re.x < 0.0);
+    let r = exp(-sg * a.re.x);
+    let y = sg * a.im.x;
+    let e = cf_make(r * cos(y), -r * sin(y));
+    let e2 = cf_mul(e, e);
+    return cf_div(cf_make(2.0 * e.re.x, 2.0 * e.im.x), cf_make(1.0 + e2.re.x, e2.im.x));
+}
+fn cf_tanh_diff(b: Cdf, p: Cdf) -> Cdf {
+    let w = cf_make(b.re.x + p.re.x, b.im.x + p.im.x);
+    if (abs(p.re.x) >= 40.0) {
+        let t = cf_tanh(w);
+        let u = cf_tanh(b);
+        return cf_make(t.re.x - u.re.x, t.im.x - u.im.x);
+    }
+    return cf_mul(cf_mul(cf_sinh_small(p), cf_sech(b)), cf_sech(w));
+}
+fn cf_tan_diff(b: Cdf, p: Cdf) -> Cdf {
+    let d = cf_tanh_diff(cf_make(-b.im.x, b.re.x), cf_make(-p.im.x, p.re.x));
+    return cf_make(d.im.x, -d.re.x);
 }
 ";
 
@@ -448,7 +535,11 @@ fn splice(step_fns: &str, power: f32) -> Result<String, CustomError> {
         ),
         smooth.clone(),
         String::new(),
-        format!("            dz = custom_pstep(z, dz, dc, iter);\n{}", power_line("            ")),
+        // Tamed as the direct step is: a function's escape is a JUMP (sin z from |z| ≈ 6 past f32's
+        // range in one step, cosh overflowing), and an infinite or NaN δ never passes the escape
+        // test — measured, 2,406 of 48,400 pixels at 1e6× read interior or 0 with a 60-iteration
+        // budget. Below `TAME` it returns δ bit for bit, so the ring formulas are unchanged.
+        format!("            dz = custom_tame(custom_pstep(z, dz, dc, iter));\n{}", power_line("            ")),
         rebase("zr_full", "zi_full"),
         smooth,
         // The chunk pass's direct step: a custom formula has no derivative (fs_iterate computes
@@ -464,7 +555,7 @@ fn splice(step_fns: &str, power: f32) -> Result<String, CustomError> {
             power_line("            ")
         ),
         "            smit_out = max(f32(iter) + 1.0 - nu, 0.0);\n".to_string(),
-        format!("            dz = custom_pstep(z, dz, dc, iter);\n{}", power_line("            ")),
+        format!("            dz = custom_tame(custom_pstep(z, dz, dc, iter));\n{}", power_line("            ")),
         rebase("z_full_re", "z_full_im"),
         "            smit = max(f32(iter) + 1.0 - nu, 0.0);\n".to_string(),
         // fs_iterate's values for a formula without a derivative: no slope, no distance estimate.
@@ -493,6 +584,25 @@ fn splice(step_fns: &str, power: f32) -> Result<String, CustomError> {
 /// The largest component magnitude a step may leave: past it (or non-finite) a component is
 /// replaced by `±TAME`. [`tame_f64`] is the CPU mirror.
 pub const TAME: f32 = 1.0e15;
+
+/// Trim a custom formula's reference orbit to samples the perturbed step can hold, returning the
+/// new length. An escaping step of an explosive formula (`sin z` once |Im z| passes ~89) leaves a
+/// final sample beyond f32's range — inf or NaN in the packed sample — and every pixel that
+/// reaches it carries that into its value and never escapes (measured: all 494 escaping samples of
+/// `sin z + c` at 1e12× read interior). Trailing samples past [`TAME`] or not finite are dropped;
+/// a pixel reaching the new end rebases and takes that last step from `Z₀` in full, tamed exactly
+/// as the direct step is. The built-ins never reach this (their last step from |Z| ≤ 1e6 stays in
+/// range), and a custom orbit is never extended or cached, so nothing else reads the dropped tail.
+pub fn trim_reference(orbit: &mut Vec<[f32; 4]>) -> u32 {
+    let fits = |s: &[f32; 4]| {
+        let (x, y) = fractadyne_core::sample_xy(s);
+        x.is_finite() && y.is_finite() && x.abs() <= TAME as f64 && y.abs() <= TAME as f64
+    };
+    while orbit.len() > 1 && !fits(orbit.last().expect("non-empty")) {
+        orbit.pop();
+    }
+    orbit.len() as u32
+}
 
 /// `custom_tame`: an escaping step of a steep formula (`exp`, `sin`, a high power) can overflow
 /// f32 outright, and the smooth value of an infinite `z` is −∞, which reads as INTERIOR (measured:

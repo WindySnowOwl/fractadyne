@@ -74,7 +74,7 @@ fn f64_orbits_match_the_hand_written_ones_bit_for_bit() {
 #[test]
 fn newton_step_matches_bit_for_bit() {
     let prog = builtin_step(f::NEWTON).unwrap();
-    assert!(!prog.bignum_evaluable(), "Newton divides: f64 only");
+    assert!(prog.bignum_evaluable(), "Newton divides, and division has a bignum form");
     let mut seed = 0x9e37_u64;
     let mut steps = 0usize;
     for _ in 0..2_000 {
@@ -351,14 +351,46 @@ fn programs_are_validated() {
     assert_eq!(Program::new(vec![Z, Scale(Val(0), f64::INFINITY)], Val(1)), Err(IrError::NonFinite { inst: 1 }));
     assert_eq!(Formula::new(vec![]), Err(IrError::Empty));
     assert_eq!(lower_opcodes(&[Opcode::Sqr, Opcode::Mul]), Err(IrError::MulBeforeStore { opcode: 1 }));
-    // Non-ring programs are refused by the bignum interpreter rather than half-run.
-    let newton = Formula::single(builtin_step(f::NEWTON).unwrap());
+    // Programs with no bignum form (`log`) are refused by the bignum interpreter rather than half-run.
+    let log = crate::ir::parse::parse("log(z) + c").unwrap();
     let p = 128;
     let z = BigFloat::from_f64(0.5, p);
     assert_eq!(
-        reference_orbit_in(BackendChoice::Astro, &newton, &z, &z, &z, &z, &[], 10, p).map(|r| r.1),
+        reference_orbit_in(BackendChoice::Astro, &log, &z, &z, &z, &z, &[], 10, p).map(|r| r.1),
         Err(IrError::NotBignum)
     );
+}
+
+/// Division and the functions in bignum follow the `f64` orbit, as far as `f64` can follow it:
+/// the first steps agree to near `f64` rounding, before chaos amplifies it.
+#[test]
+fn bignum_functions_follow_the_f64_orbit() {
+    let p = 256;
+    let mut compared = 0;
+    for src in [
+        "sin(z) + c",
+        "cos(z)*cos(z) + c",
+        "exp(z) + c",
+        "sinh(z) - cosh(z)*c",
+        "tan(z) + c",
+        "tanh(z) + c",
+        "z^2 + c/(z + 2)",
+    ] {
+        let formula = crate::ir::parse::parse(src).unwrap();
+        let (c, z0) = ((0.21, -0.37), (0.0, 0.0));
+        let want = orbit_points(&formula, z0, c, &[], 8, 1.0e8).unwrap();
+        let bf = |v: f64| BigFloat::from_f64(v, p);
+        let (orbit, _, _) =
+            reference_orbit_in(BackendChoice::Astro, &formula, &bf(z0.0), &bf(z0.1), &bf(c.0), &bf(c.1), &[], 8, p)
+                .unwrap_or_else(|e| panic!("{src}: {e}"));
+        for (k, (w, s)) in want.iter().zip(&orbit).enumerate() {
+            let g = crate::sample_xy(s);
+            let err = (g.0 - w.0).hypot(g.1 - w.1) / w.0.hypot(w.1).max(1.0);
+            assert!(err < 1.0e-12, "{src}: step {k}: bignum {g:?} vs f64 {w:?} ({err:e})");
+            compared += 1;
+        }
+    }
+    assert!(compared >= 50, "too few points compared ({compared})");
 }
 
 #[test]
@@ -439,6 +471,37 @@ fn elementary_functions_satisfy_their_identities() {
         close(cmul64(unary(|v| Op::Func(Func::Tanh, v), z), ch), sh, "tanh·cosh");
         close(unary(Op::Norm, z), (z.0 * z.0 + z.1 * z.1, 0.0), "norm");
     }
+    // Where cosh (cos) overflows, tanh (tan) is ±1 (±i) — not the NaN of inf/inf.
+    for x in [400.0, -400.0, 750.0, -750.0] {
+        let t = unary(|v| Op::Func(Func::Tanh, v), (x, 0.3));
+        assert_eq!(t, (f64::signum(x), 0.0), "tanh({x} + 0.3i)");
+        let t = unary(|v| Op::Func(Func::Tan, v), (0.3, x));
+        assert_eq!(t, (0.0, f64::signum(x)), "tan(0.3 + {x}i)");
+    }
+    // The perturbed tanh and tan: the plain difference wherever it does not cancel (a small b),
+    // on both sides of the split, and finite where a product of factors would be inf·0.
+    let binary = |op: fn(Val, Val) -> Op, b: (f64, f64), p: (f64, f64)| {
+        let mut k = Builder::new();
+        let (vb, vp) = (k.push(Op::Z), k.push(Op::C));
+        let out = k.push(op(vb, vp));
+        step_f64(&k.finish(out).unwrap(), b, p, (0.0, 0.0), &[]).unwrap()
+    };
+    let b = (0.2, 0.1);
+    for p in [(0.7, -0.4), (30.0, 1.0), (39.9, 0.5), (40.0, 0.5), (60.0, -1.0), (800.0, 0.2), (-800.0, 0.2)] {
+        let naive = |f: fn(Val) -> Op, b: (f64, f64), p: (f64, f64)| {
+            let (t, u) = (unary(f, (b.0 + p.0, b.1 + p.1)), unary(f, b));
+            (t.0 - u.0, t.1 - u.1)
+        };
+        let naive_tanh = naive(|v| Op::Func(Func::Tanh, v), b, p);
+        close(binary(Op::DiffTanh, b, p), naive_tanh, &format!("DiffTanh({b:?}, {p:?})"));
+        let (bi, pi) = ((b.1, b.0), (p.1, p.0));
+        let naive_tan = naive(|v| Op::Func(Func::Tan, v), bi, pi);
+        close(binary(Op::DiffTan, bi, pi), naive_tan, &format!("DiffTan({bi:?}, {pi:?})"));
+    }
+    // Far out, the product form stays RELATIVELY accurate where the difference is exactly 0.
+    let d = binary(Op::DiffTanh, (30.0, 0.0), (1e-9, 0.0));
+    let want = 1e-9 * 4.0 * (-60.0f64).exp(); // sinh(p)·sech²(30)
+    assert!(((d.0 - want) / want).abs() < 1e-6 && d.1 == 0.0, "DiffTanh far out: {d:?} vs {want:e}");
     // Division and complex powers.
     let mut b = Builder::new();
     let z = b.push(Op::Z);

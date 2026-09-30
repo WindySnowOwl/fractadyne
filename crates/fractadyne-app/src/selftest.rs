@@ -3093,8 +3093,10 @@ impl FractadyneApp {
             self.render_cfg.max_iter = 2000;
             let max_iter = 2000u32;
             let bail2 = 256.0 * 256.0;
-            let cpu_smooth = |formula: &ir::Formula, params: &[(f64, f64)], c: (f64, f64), power: f64| -> f64 {
-                let pts = ir::orbit_points(formula, (0.0, 0.0), c, params, max_iter as usize, bail2).unwrap();
+            // Every helper below takes the iteration BUDGET: the ring formulas run 2,000, while the
+            // functions and division run 60 (see (b)), where single precision can follow them.
+            let cpu_smooth = |formula: &ir::Formula, params: &[(f64, f64)], c: (f64, f64), power: f64, budget: u32| -> f64 {
+                let pts = ir::orbit_points(formula, (0.0, 0.0), c, params, budget as usize, bail2).unwrap();
                 let (x, y) = fractadyne_gpu::custom::tame_f64(*pts.last().unwrap());
                 let mag2 = x * x + y * y;
                 if mag2 > bail2 {
@@ -3105,12 +3107,12 @@ impl FractadyneApp {
             };
             // Over a set of pixels, split across threads: a 2000-iteration frame on one core takes
             // long enough (10 s) to trip the hang watchdog.
-            let cpu_pixels = |formula: &ir::Formula, params: &[(f64, f64)], power: f64, cs: &[(f64, f64)]| -> Vec<f64> {
+            let cpu_pixels = |formula: &ir::Formula, params: &[(f64, f64)], power: f64, cs: &[(f64, f64)], budget: u32| -> Vec<f64> {
                 let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
                 std::thread::scope(|s| {
                     let parts: Vec<_> = cs
                         .chunks(cs.len().div_ceil(threads).max(1))
-                        .map(|part| s.spawn(move || part.iter().map(|&c| cpu_smooth(formula, params, c, power)).collect::<Vec<_>>()))
+                        .map(|part| s.spawn(move || part.iter().map(|&c| cpu_smooth(formula, params, c, power, budget)).collect::<Vec<_>>()))
                         .collect();
                     parts.into_iter().flat_map(|h| h.join().expect("a CPU interpreter thread panicked")).collect()
                 })
@@ -3119,10 +3121,10 @@ impl FractadyneApp {
             // point (c = 0) and an escaping one. Hand-picking a point for a formula nobody has
             // explored is how a check ends up comparing a flat frame — hand-picked views here were
             // all interior (Tricorn) or had a reference escaping in under 20 steps (three others).
-            let boundary = |formula: &ir::Formula, params: &[(f64, f64)], outside: (f64, f64)| -> Option<(f64, f64)> {
+            let boundary = |formula: &ir::Formula, params: &[(f64, f64)], outside: (f64, f64), budget: u32| -> Option<(f64, f64)> {
                 let escapes = |c: (f64, f64)| {
-                    let pts = ir::orbit_points(formula, (0.0, 0.0), c, params, max_iter as usize, bail2).unwrap();
-                    pts.len() <= max_iter as usize
+                    let pts = ir::orbit_points(formula, (0.0, 0.0), c, params, budget as usize, bail2).unwrap();
+                    pts.len() <= budget as usize
                 };
                 // The escaping end: the direction's first multiple that escapes (the Buffalo set
                 // still holds −0.9−0.7i).
@@ -3168,7 +3170,7 @@ impl FractadyneApp {
                 FractalKind::Buffalo,
             ] {
                 let step = ir::builtin_step(fractal.formula_id()).expect("every built-in has a step");
-                match boundary(&ir::Formula::single(step), &[], third) {
+                match boundary(&ir::Formula::single(step), &[], third, max_iter) {
                     Some(at) => pert_twins.push((fractal, bf(at.0), bf(at.1), 1.0e6)),
                     None => push_check(
                         &mut checks,
@@ -3218,7 +3220,7 @@ impl FractadyneApp {
                 let close = |v: f32, cpu: f64| if v < 0.0 || cpu < 0.0 { (v < 0.0) == (cpu < 0.0) } else { (v as f64 - cpu).abs() <= 2.0 };
                 let (mut escaped, mut base_only, mut gen_only) = (0u64, 0u64, 0u64);
                 let (mut err_base, mut err_gen) = (Vec::new(), Vec::new());
-                for (k, cpu) in cpu_pixels(&formula, &[], power, &cs).into_iter().enumerate() {
+                for (k, cpu) in cpu_pixels(&formula, &[], power, &cs, max_iter).into_iter().enumerate() {
                     let (x, y) = (a[k * 4], b[k * 4]);
                     escaped += (x >= 0.0) as u64;
                     let (bx, gy) = (close(x, cpu), close(y, cpu));
@@ -3268,8 +3270,16 @@ impl FractadyneApp {
             //     blocks — on the GPU's perturbation path against the CPU interpreter in f64 (which
             //     resolves this view's 1.4e-8 pixel easily). The reference orbit is the IR's own
             //     bignum one at the view centre, which sits on the formula's boundary as above.
+            //     ⚠The BUDGET differs by class, and the tolerance with it. The ring formulas run
+            //     2,000 iterations to 0.01 of the smooth value. Functions and division run 60, on
+            //     status and within 2 iterations: on a boundary view their long orbits are chaotic
+            //     transients that no single-precision path follows (measured at 2,000: direct f32
+            //     iteration at 1e2× missed 50% of `sin z + c`'s smooth values, perturbation at 1e6×
+            //     33%, the f64 perturbed step on the CPU none of the sampled ones), and an explosive
+            //     escape (sin z jumping past f32's range) leaves a smooth value that moves ~0.1
+            //     between f32 and f64. At 60, perturbation's status disagreed on 10 of 48,400.
             let mag = 1.0e6;
-            let pert_cases: Vec<(&str, ir::Formula, Vec<(f64, f64)>)> = vec![
+            let pert_cases: Vec<(&str, ir::Formula, Vec<(f64, f64)>, u32)> = vec![
                 (
                     "hybrid Mandelbrot/Burning Ship",
                     ir::Formula::new(vec![
@@ -3278,13 +3288,30 @@ impl FractadyneApp {
                     ])
                     .unwrap(),
                     vec![],
+                    2000,
                 ),
-                ("z² + p·z + c", ir::parse::parse("z^2 + p1*z + c").unwrap(), vec![(0.25, -0.1)]),
-                ("|z|·z + conj(z)² + c", ir::parse::parse("|z|*z*0.3 + conj(z)^2 + c").unwrap(), vec![]),
+                ("z² + p·z + c", ir::parse::parse("z^2 + p1*z + c").unwrap(), vec![(0.25, -0.1)], 2000),
+                ("|z|·z + conj(z)² + c", ir::parse::parse("|z|*z*0.3 + conj(z)^2 + c").unwrap(), vec![], 2000),
+                // Functions and division: their perturbed forms run the small-argument helpers
+                // and the δ-quotient on the GPU.
+                ("sin z + c", ir::parse::parse("sin(z) + c").unwrap(), vec![], 60),
+                ("sin z + cos z·cos z + c", ir::parse::parse("z = sin(z) + cos(z)*cos(z) + c").unwrap(), vec![], 60),
+                // ½·exp z − ½ and ½·sinh z have attracting fixed points at c = 0 (plain exp z + c
+                // escapes there, sinh z + c is parabolic) — each exercises a small-argument helper.
+                ("½·exp z − ½ + c", ir::parse::parse("0.5*exp(z) - 0.5 + c").unwrap(), vec![], 60),
+                ("½·sinh z + c", ir::parse::parse("0.5*sinh(z) + c").unwrap(), vec![], 60),
+                ("z²·tanh z + c", ir::parse::parse("z*z*tanh(z) + c").unwrap(), vec![], 60),
+                ("z² + c/(z + 2)", ir::parse::parse("z^2 + c/(z + 2)").unwrap(), vec![], 60),
             ];
             let first = (0.9, 0.7);
-            for (label, formula, params) in &pert_cases {
-                let Some(at) = boundary(formula, params, first) else {
+            // The rays a boundary is looked for along, in order: exp-type sets escape to the right
+            // and fold back elsewhere, so one ray does not serve every formula.
+            let rays = [first, (-0.9, -0.7), (-0.9, 0.7), (0.9, -0.7), (1.2, 0.2)];
+            for (label, formula, params, budget) in &pert_cases {
+                let budget = *budget;
+                // The ring formulas' tight tolerance; the others' status-and-2-iterations (above).
+                let tol = if budget > 60 { 0.01 } else { 2.0 };
+                let Some(at) = rays.iter().find_map(|&r| boundary(formula, params, r, budget)) else {
                     push_check(&mut checks, &mut last_check_t, no_boundary(format!("{label}: perturbed GPU = CPU interpreter"), first));
                     continue;
                 };
@@ -3296,11 +3323,12 @@ impl FractadyneApp {
                 vp.precision = fractadyne_core::precision_for_magnification(mag).max(64);
                 let mut req = self.current_export_request_for(&vp, false);
                 let zero = fractadyne_core::BigFloat::from_f64(0.0, vp.precision);
-                let Ok((orbit, len, _)) =
-                    ir::reference_orbit(formula, &zero, &zero, &vp.center_x, &vp.center_y, params, max_iter, vp.precision)
+                let Ok((mut orbit, _, _)) =
+                    ir::reference_orbit(formula, &zero, &zero, &vp.center_x, &vp.center_y, params, budget, vp.precision)
                 else {
                     continue;
                 };
+                let len = fractadyne_gpu::custom::trim_reference(&mut orbit);
                 let Ok(shader) = fractadyne_gpu::custom::build(formula, params) else { continue };
                 let power = shader.power as f64;
                 req.width = N;
@@ -3309,7 +3337,7 @@ impl FractadyneApp {
                 req.mode = 0;
                 req.sa_skip = 0;
                 req.bla_on = 0;
-                req.max_iter = max_iter;
+                req.max_iter = budget;
                 req.orbit = std::sync::Arc::new(orbit);
                 req.orbit_len = len;
                 req.ref_offset = fractadyne_gpu::RefOffset::ZERO;
@@ -3327,29 +3355,41 @@ impl FractadyneApp {
                         )
                     })
                     .collect();
-                let (mut escaped, mut disagree) = (0u64, 0u64);
-                for (k, cpu) in cpu_pixels(formula, params, power, &cs).into_iter().enumerate() {
+                let (mut escaped, mut disagree, mut missed) = (0u64, 0u64, 0u64);
+                for (k, cpu) in cpu_pixels(formula, params, power, &cs, budget).into_iter().enumerate() {
                     let g = gpu[k * 4] as f64;
                     escaped += (cpu >= 0.0) as u64;
-                    let same = if cpu < 0.0 || g < 0.0 { (cpu < 0.0) == (g < 0.0) } else { (cpu - g).abs() < 0.01 };
+                    let same = if cpu < 0.0 || g < 0.0 { (cpu < 0.0) == (g < 0.0) } else { (cpu - g).abs() < tol };
                     disagree += (!same) as u64;
+                    missed += (cpu >= 0.0 && cpu < budget as f64 - 10.0 && g < 0.0) as u64;
                 }
                 let px = (nn * nn) as u64;
                 let frac = disagree as f64 / px as f64;
                 push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "Custom formula (GPU)",
                     name: format!("{label}: perturbed GPU = CPU interpreter"),
-                    params: format!("1e6× at {:.9}{:+.9}i, mode 0, ref {len}, {escaped} escaped px", at.0, at.1),
-                    result: format!("{disagree} px disagree ({:.3}%)", frac * 100.0),
-                    threshold: "<2% disagree, >10% escaped, some interior",
-                    pass: frac < 0.02 && escaped * 10 > px && escaped < px,
+                    params: format!("1e6× at {:.9}{:+.9}i, {budget} iter, mode 0, ref {len}, {escaped} escaped px", at.0, at.1),
+                    result: format!("{disagree} px disagree ({:.3}%), {missed} early escapes called interior", frac * 100.0),
+                    // ⚠The 2% bound alone let through a NaN that froze escaping orbits: `z²·tanh z`'s
+                    // perturbed step as sinh(δ)·sech·sech is inf·0 once δ is large, and 72 pixels
+                    // escaping by iteration 43 rendered interior (0.149%). Pixels escaping 10 or more
+                    // iterations before the budget are far from any rounding edge — measured 0–3
+                    // called interior per case with the step correct — so those get a bound of their
+                    // own.
+                    threshold: if budget > 60 {
+                        "<2% disagree (status, or |Δ| ≥ 0.01); ≤10 escaping 10+ iter early called interior; >10% escaped, some interior"
+                    } else {
+                        "<2% disagree (status, or > 2 iter); ≤10 escaping 10+ iter early called interior; >10% escaped, some interior"
+                    },
+                    pass: frac < 0.02 && missed <= 10 && escaped * 10 > px && escaped < px,
                 });
             }
 
             // (c) The APP's deep pipeline, end to end: the custom formula applied as the app holds
             //     it, and the export request built exactly as for any view — mode selection
             //     (`render_mode`), the reference from the IR (`render::custom_reference`), no SA, BLA
-            //     or glitch correction — at 1e12× and 1e20×, far past f64. The truth is the IR
+            //     or glitch correction — at 1e12× and 1e20× (past f64; the short-budget formulas
+            //     shallower, see below), all far past the f32 wall. The truth is the IR
             //     interpreter in bignum at each sampled pixel's own c (a 32×32 grid). The view is on
             //     the formula's boundary: the f64 bisection above, continued in bignum along the
             //     same ray, since an f64 point is only good to ~1e-16.
@@ -3361,13 +3401,15 @@ impl FractadyneApp {
             // in ANY single-precision escape test, and is no test of the perturbation. (Measured: a
             // view bisected onto the curve |z₂₀₀₀| = 256 had every pixel within 1e-8 of it at
             // 1e20×; f64 perturbation and bignum split them, the GPU's f32 test called all interior.)
-            let big_eval = |formula: &ir::Formula, params: &[(f64, f64)], c: &[fractadyne_core::BigFloat; 2], power: f64| {
+            let big_eval = |formula: &ir::Formula, params: &[(f64, f64)], c: &[fractadyne_core::BigFloat; 2], power: f64, budget: u32| {
                 let z = big(0.0);
-                let (orbit, _, _) = ir::reference_orbit(formula, &z, &z, &c[0], &c[1], params, max_iter, deep_prec)
+                let (orbit, _, _) = ir::reference_orbit(formula, &z, &z, &c[0], &c[1], params, budget, deep_prec)
                     .expect("a perturbable formula evaluates in bignum");
                 let mut margin = f64::INFINITY;
                 for (n, s) in orbit.iter().enumerate().skip(1) {
-                    let (x, y) = fractadyne_core::sample_xy(s);
+                    // Tamed as the GPU and the f64 interpreter tame an escaping value (an explosive
+                    // step can pass f32's range, where the packed sample holds inf or NaN).
+                    let (x, y) = fractadyne_gpu::custom::tame_f64(fractadyne_core::sample_xy(s));
                     let mag2 = x * x + y * y;
                     margin = margin.min((mag2 / bail2 - 1.0).abs());
                     if mag2 > bail2 {
@@ -3377,14 +3419,14 @@ impl FractadyneApp {
                 }
                 (-1.0, margin)
             };
-            let big_smooth = |formula: &ir::Formula, params: &[(f64, f64)], c: &[fractadyne_core::BigFloat; 2], power: f64| {
-                big_eval(formula, params, c, power).0
+            let big_smooth = |formula: &ir::Formula, params: &[(f64, f64)], c: &[fractadyne_core::BigFloat; 2], power: f64, budget: u32| {
+                big_eval(formula, params, c, power, budget).0
             };
             // The boundary point along `toward`, in bignum: the f64 bisection, then a bracket in
             // bignum (the f64 verdict need not hold there — on `|z|·z + conj(z)² + c` the two
             // disagreed for 1e-12 around it) and 64 halvings of a ≤1e-6 bracket (to 5e-26).
-            let deep_boundary = |formula: &ir::Formula, padded: &[(f64, f64)], power: f64, toward: (f64, f64)| {
-                let at = boundary(formula, padded, toward)?;
+            let deep_boundary = |formula: &ir::Formula, padded: &[(f64, f64)], power: f64, toward: (f64, f64), budget: u32| {
+                let at = boundary(formula, padded, toward, budget)?;
                 let hyp = toward.0.hypot(toward.1);
                 let dir = (toward.0 / hyp, toward.1 / hyp);
                 let point = |d: f64| {
@@ -3393,7 +3435,7 @@ impl FractadyneApp {
                         fractadyne_core::add_f64(&big(at.1), d * dir.1, deep_prec),
                     ]
                 };
-                let escapes = |d: f64| big_smooth(formula, padded, &point(d), power) >= 0.0;
+                let escapes = |d: f64| big_smooth(formula, padded, &point(d), power, budget) >= 0.0;
                 let steps = (6..=15).rev().map(|k| 10f64.powi(-k));
                 let mut d_in = std::iter::once(0.0).chain(steps.clone().map(|d| -d)).find(|&d| !escapes(d))?;
                 let mut d_out = steps.clone().find(|&d| escapes(d))?;
@@ -3407,8 +3449,8 @@ impl FractadyneApp {
             // decidable in f32 (see `big_eval`). A boundary piece where the escape time varies
             // smoothly is, at that depth, all one level curve of |z_n| — measured on the first
             // quadrant of `|z|·z + conj(z)² + c`: 0 of 1,024 samples decidable.
-            let decidable_at_1e20 = |formula: &ir::Formula, padded: &[(f64, f64)], power: f64, centre: &[fractadyne_core::BigFloat; 2]| {
-                let w = 3.0 / 1.0e20;
+            let decidable_at = |formula: &ir::Formula, padded: &[(f64, f64)], power: f64, centre: &[fractadyne_core::BigFloat; 2], budget: u32, mag: f64| {
+                let w = 3.0 / mag;
                 let ok = (0..9)
                     .filter(|k| {
                         let (i, j) = ((k % 3) as f64 - 1.0, (k / 3) as f64 - 1.0);
@@ -3416,15 +3458,17 @@ impl FractadyneApp {
                             fractadyne_core::add_f64(&centre[0], 0.4 * w * i, deep_prec),
                             fractadyne_core::add_f64(&centre[1], 0.4 * w * j, deep_prec),
                         ];
-                        big_eval(formula, padded, &c, power).1 >= 1.0e-4
+                        big_eval(formula, padded, &c, power, budget).1 >= 1.0e-4
                     })
                     .count();
                 ok >= 8
             };
-            // (b)'s cases, except that `|z|·z + conj(z)² + c` has no such view along any of the four
-            // rays (its boundary is smooth there, measured), so conj comes in through a
-            // Mandelbrot/Tricorn hybrid instead.
-            let deep_cases: Vec<(&str, ir::Formula, Vec<(f64, f64)>)> = vec![
+            // (b)'s ring cases, except that `|z|·z + conj(z)² + c` has no such view along any of the
+            // four rays (its boundary is smooth there, measured), so conj comes in through a
+            // Mandelbrot/Tricorn hybrid instead; and functions and division at (b)'s short budget,
+            // where the bignum oracle is also affordable (sin and cos cost 110–560 µs a bignum
+            // iteration, measured at 128–512 bits — 1,000× a ring step).
+            let deep_cases: Vec<(&str, ir::Formula, Vec<(f64, f64)>, u32)> = vec![
                 pert_cases[0].clone(),
                 pert_cases[1].clone(),
                 (
@@ -3435,30 +3479,57 @@ impl FractadyneApp {
                     ])
                     .unwrap(),
                     vec![],
+                    2000,
                 ),
+                pert_cases[3].clone(),
+                pert_cases[4].clone(),
+                pert_cases[8].clone(),
             ];
-            for (label, formula, params) in &deep_cases {
+            for (label, formula, params, budget) in &deep_cases {
+                let budget = *budget;
+                self.render_cfg.max_iter = budget;
                 let mut padded = params.clone();
                 padded.resize(fractadyne_core::ir::parse::MAX_PARAMS, (0.0, 0.0));
                 let Ok(shader) = fractadyne_gpu::custom::build(formula, &padded) else { continue };
                 let power = shader.power as f64;
-                let directions = [first, (-0.9, -0.7), (-0.9, 0.7), (0.9, -0.7)];
-                let found = directions.iter().find_map(|&toward| {
-                    deep_boundary(formula, &padded, power, toward)
-                        .filter(|c| decidable_at_1e20(formula, &padded, power, c))
-                        .map(|c| (c, toward))
-                });
-                let Some((centre, toward)) = found else {
+                // The depths. The ring formulas at 1e12× and 1e20×, the view required decidable at
+                // 1e20×. At the short budget the view sits on the level curve |z₆₀| = bailout,
+                // smooth at these scales, and the band of pixels within 1e-4 of it (in |z|², see
+                // `big_eval`) has a FIXED width in c: 27% of a 1e12× view of `sin z + c`
+                // (measured: probe margins 6e-5–4e-4 at 1.2e-12 off the curve), more of the
+                // quotient's (8e-6–4e-5). Those test at the deepest of 1e12…1e9× where the view can
+                // be judged — chosen by the bignum oracle alone, never by what the GPU renders, and
+                // every one 1e4× past the f32 wall. The boundaries are found lazily, ray by ray (a
+                // bignum sin bisection costs ~1.5 s).
+                let candidates: &[f64] = if budget > 60 { &[1.0e20] } else { &[1.0e12, 1.0e11, 1.0e10, 1.0e9] };
+                let mut boundaries: Vec<Option<Option<[fractadyne_core::BigFloat; 2]>>> = vec![None; rays.len()];
+                let mut found = None;
+                'depth: for &mag in candidates {
+                    for (r, &toward) in rays.iter().enumerate() {
+                        let c = boundaries[r].get_or_insert_with(|| deep_boundary(formula, &padded, power, toward, budget));
+                        if let Some(c) = c.as_ref().filter(|c| decidable_at(formula, &padded, power, c, budget, mag)) {
+                            found = Some((c.clone(), toward, mag));
+                            break 'depth;
+                        }
+                    }
+                }
+                let Some((centre, toward, deepest)) = found else {
                     push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Custom formula (GPU)",
                         name: format!("{label}: deep app pipeline = bignum"),
                         params: String::new(),
-                        result: "no boundary view decidable in f32 at 1e20× along 4 directions".into(),
+                        result: format!(
+                            "no boundary view decidable in f32 at {:.0e}×–{:.0e}× along {} rays",
+                            candidates[0],
+                            candidates[candidates.len() - 1],
+                            rays.len()
+                        ),
                         threshold: "a boundary to test at",
                         pass: false,
                     });
                     continue;
                 };
+                let mags: Vec<f64> = if budget > 60 { vec![1.0e12, deepest] } else { vec![deepest] };
                 self.fractal = FractalKind::Custom;
                 self.julia_mode = false;
                 self.custom = Some(std::sync::Arc::new(crate::custom_formula::CustomFormula {
@@ -3467,7 +3538,7 @@ impl FractadyneApp {
                     formula: formula.clone(),
                     shader: std::sync::Arc::new(shader),
                 }));
-                for mag in [1.0e12, 1.0e20] {
+                for &mag in &mags {
                     let mut vp = Viewport::new(N as f64, N as f64);
                     vp.center_x = centre[0].clone();
                     vp.center_y = centre[1].clone();
@@ -3498,11 +3569,14 @@ impl FractadyneApp {
                             .chunks(samples.len().div_ceil(threads))
                             .map(|part| {
                                 let padded = &padded;
-                                s.spawn(move || part.iter().map(|(_, c)| big_eval(formula, padded, c, power)).collect::<Vec<_>>())
+                                s.spawn(move || part.iter().map(|(_, c)| big_eval(formula, padded, c, power, budget)).collect::<Vec<_>>())
                             })
                             .collect();
                         parts.into_iter().flat_map(|h| h.join().expect("a bignum oracle thread panicked")).collect()
                     });
+                    // An explosive escape's smooth value moves ~0.1 between f32 and exact (see
+                    // (b)), so the median bound is the ring formulas' 0.01 only for them.
+                    let med_tol = if budget > 60 { 0.01 } else { 0.25 };
                     // Judged as the twin check judges: the same status and within 2 iterations.
                     // Single-precision perturbation drifts from the exact value on pixels escaping
                     // late in a chaotic region (Mandelbrot/Tricorn at 1e12×: 0.01–11 iterations on
@@ -3535,24 +3609,29 @@ impl FractadyneApp {
                         category: "Custom formula (GPU)",
                         name: format!("{label}: deep app pipeline = bignum at {mag:.0e}×"),
                         params: format!(
-                            "boundary toward {}{:+}i, mode {mode}, ref {orbit_len}, {judged} of {n} sampled px decidable in f32, {escaped} of them escaped",
+                            "boundary toward {}{:+}i, {budget} iter, mode {mode}, ref {orbit_len}, {judged} of {n} sampled px decidable in f32, {escaped} of them escaped",
                             toward.0, toward.1
                         ),
                         result: format!(
                             "{disagree} of {judged} disagree ({:.2}%), median |Δ| {median:.5}",
                             disagree as f64 * 100.0 / judged.max(1) as f64
                         ),
-                        threshold: "mode 0 with the custom module; ≥90% decidable; <2% differ in status or by >2 iter; median |Δ| < 0.01; >10% escaped, some interior",
+                        threshold: if budget > 60 {
+                            "mode 0 with the custom module; ≥90% decidable; <2% differ in status or by >2 iter; median |Δ| < 0.01; >10% escaped, some interior"
+                        } else {
+                            "mode 0 with the custom module; ≥90% decidable; <2% differ in status or by >2 iter; median |Δ| < 0.25; >10% escaped, some interior"
+                        },
                         pass: mode == 0
                             && has_custom
                             && judged * 10 >= n * 9
                             && disagree * 50 < judged
-                            && median < 0.01
+                            && median < med_tol
                             && escaped * 10 > judged
                             && escaped < judged,
                     });
                 }
             }
+            self.render_cfg.max_iter = max_iter;
 
             // (d) RESUMABLE PASSES: a custom module carries its own chunk pass (`fs_iterate_chunk`
             //     with the generated step spliced in), so a custom view splits its iterations
@@ -3581,7 +3660,7 @@ impl FractadyneApp {
                 padded.resize(fractadyne_core::ir::parse::MAX_PARAMS, (0.0, 0.0));
                 let Ok(shader) = fractadyne_gpu::custom::build(&formula, &padded) else { continue };
                 // Perturbed cases sit on the formula's boundary (as (b)); direct ones at home.
-                let at = if mag > 1.0e4 { boundary(&formula, &padded, first) } else { Some((-0.5, 0.0)) };
+                let at = if mag > 1.0e4 { boundary(&formula, &padded, first, max_iter) } else { Some((-0.5, 0.0)) };
                 let Some(at) = at else {
                     push_check(&mut checks, &mut last_check_t, no_boundary(format!("{label}: chunked = single pass"), first));
                     continue;

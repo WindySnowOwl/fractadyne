@@ -37,6 +37,15 @@ fn cases() -> Vec<(String, Program, Vec<(f64, f64)>)> {
         ("conj(z)^3 + p1*c", vec![(1.0, 0.5)]),
         ("abs(z + c)^2 - z + c", vec![]),
         ("t = sqr(z), z = t*t - t + c", vec![]),
+        // Division and the functions with a perturbed form, alone and composed.
+        ("z^2 + c/(z + 2)", vec![]),
+        ("(z^2 + p1)/(z - p1) + c", vec![(0.75, 0.25)]),
+        ("sin(z) + c", vec![]),
+        ("sin(z) + cos(z)*cos(z + 3.14159) + c", vec![]),
+        ("exp(z) + c", vec![]),
+        ("sinh(z) + cosh(z)*c", vec![]),
+        ("tan(z) + c", vec![]),
+        ("tanh(z*z) + c", vec![]),
     ] {
         v.push((src.to_string(), parse(src).unwrap().phases()[0].clone(), params));
     }
@@ -136,10 +145,12 @@ fn a_perturbed_orbit_tracks_the_pixels_exact_orbit() {
 #[test]
 fn what_cannot_be_perturbed_yet_says_what() {
     let err = |src: &str| perturbed(&parse(src).unwrap().phases()[0]).unwrap_err().0;
-    assert_eq!(err("z/c + c"), "division");
-    assert_eq!(err("sin(z) + c"), "an elementary function");
+    assert_eq!(err("log(z) + c"), "log");
+    assert_eq!(err("sqrt(z) + c"), "sqrt");
     assert_eq!(err("z^2.5 + c"), "a non-integer power");
     assert!(perturbable(&parse("z^2 + c").unwrap()));
+    assert!(perturbable(&parse("z/c + c").unwrap()), "division has a perturbed form");
+    assert!(perturbable(&parse("sin(z) + cos(z)*cos(z) + c").unwrap()), "so do sin and cos");
     assert!(!perturbable(&Formula::single(builtin_step(crate::formula::PHOENIX).unwrap())), "Phoenix reads z_prev");
     // A step that ignores z and c perturbs to zero.
     let flat = perturbed(&parse("(0.5, 0.5)").unwrap().phases()[0]).unwrap();
