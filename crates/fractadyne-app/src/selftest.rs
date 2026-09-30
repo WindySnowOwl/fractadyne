@@ -3077,6 +3077,274 @@ impl FractadyneApp {
                 threshold: "<0.1% disagree (|Δ| > 1e-3), >25% informative",
                 pass: once_frac < 0.001 && once_escaped * 4 > once_n,
             });
+
+            // (3) PERTURBATION (mode 0), which takes a custom formula past the f32 wall.
+            // (a) The generated perturbed step (`ir::perturb`) against each built-in's hand-written
+            //     one, on the SAME reference orbit — the built-in's own request with only the formula
+            //     and module swapped, SA and BLA off in both. The rule table orders the arithmetic
+            //     differently ((2Z + δ)·δ against 2Z·δ + δ²), so the renders need not be identical:
+            //     on a main component's boundary (where bisection lands) escape by `max_iter` is
+            //     chaotic, and 2–14% of pixels flip between the two — evenly, the CPU interpreter
+            //     siding with each about half the time (measured). So the CPU interpreter in f64
+            //     settles every pixel, and the generated step must be right no less often than the
+            //     hand-written one (beyond the ±3σ of a fair coin), and its smooth value no further
+            //     off.
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 2000;
+            let max_iter = 2000u32;
+            let bail2 = 256.0 * 256.0;
+            let cpu_smooth = |formula: &ir::Formula, params: &[(f64, f64)], c: (f64, f64), power: f64| -> f64 {
+                let pts = ir::orbit_points(formula, (0.0, 0.0), c, params, max_iter as usize, bail2).unwrap();
+                let (x, y) = fractadyne_gpu::custom::tame_f64(*pts.last().unwrap());
+                let mag2 = x * x + y * y;
+                if mag2 > bail2 {
+                    ((pts.len() - 1) as f64 + 1.0 - (mag2.ln() * 0.5 / 2f64.ln()).ln() / power.ln()).max(0.0)
+                } else {
+                    -1.0
+                }
+            };
+            // Over a set of pixels, split across threads: a 2000-iteration frame on one core takes
+            // long enough (10 s) to trip the hang watchdog.
+            let cpu_pixels = |formula: &ir::Formula, params: &[(f64, f64)], power: f64, cs: &[(f64, f64)]| -> Vec<f64> {
+                let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+                std::thread::scope(|s| {
+                    let parts: Vec<_> = cs
+                        .chunks(cs.len().div_ceil(threads).max(1))
+                        .map(|part| s.spawn(move || part.iter().map(|&c| cpu_smooth(formula, params, c, power)).collect::<Vec<_>>()))
+                        .collect();
+                    parts.into_iter().flat_map(|h| h.join().expect("a CPU interpreter thread panicked")).collect()
+                })
+            };
+            // Every view sits ON its formula's boundary, found by bisecting between an interior
+            // point (c = 0) and an escaping one. Hand-picking a point for a formula nobody has
+            // explored is how a check ends up comparing a flat frame — hand-picked views here were
+            // all interior (Tricorn) or had a reference escaping in under 20 steps (three others).
+            let boundary = |formula: &ir::Formula, params: &[(f64, f64)], outside: (f64, f64)| -> Option<(f64, f64)> {
+                let escapes = |c: (f64, f64)| {
+                    let pts = ir::orbit_points(formula, (0.0, 0.0), c, params, max_iter as usize, bail2).unwrap();
+                    pts.len() <= max_iter as usize
+                };
+                // The escaping end: the direction's first multiple that escapes (the Buffalo set
+                // still holds −0.9−0.7i).
+                let mut inside = (0.0, 0.0);
+                let mut outside = [1.0, 2.0, 4.0].iter().map(|k| (outside.0 * k, outside.1 * k)).find(|&o| escapes(o))?;
+                if escapes(inside) {
+                    return None;
+                }
+                for _ in 0..48 {
+                    let mid = ((inside.0 + outside.0) * 0.5, (inside.1 + outside.1) * 0.5);
+                    if escapes(mid) { outside = mid } else { inside = mid }
+                }
+                Some(inside)
+            };
+            let no_boundary = |name: String, outside: (f64, f64)| SelfCheck {
+                category: "Custom formula (GPU)",
+                name,
+                params: String::new(),
+                result: format!("no boundary between 0 and 4×({}{:+}i)", outside.0, outside.1),
+                threshold: "a boundary to test at",
+                pass: false,
+            };
+            let bf = |v: f64| fractadyne_core::BigFloat::from_f64(v, 64);
+            // Each family at 1e6× on its own boundary, and Mandelbrot's seahorse valley at 1e8×.
+            // The built-ins bisect into the THIRD quadrant: with Im c > 0 the Burning Ship's |Im|
+            // fold never engages (Im z' = 2|x||y| + Im c stays positive), and a mutant dropping
+            // that fold from the generated step passed every first-quadrant view (measured).
+            let third = (-0.9, -0.7);
+            let mut pert_twins = vec![(
+                FractalKind::Mandelbrot,
+                fractadyne_core::parse_bf("-0.743643887037158704752191506114774").unwrap(),
+                fractadyne_core::parse_bf("0.131825904205311970493132056385139").unwrap(),
+                1.0e8,
+            )];
+            for fractal in [
+                FractalKind::Mandelbrot,
+                FractalKind::Multibrot3,
+                FractalKind::Multibrot4,
+                FractalKind::Multibrot5,
+                FractalKind::Tricorn,
+                FractalKind::BurningShip,
+                FractalKind::Celtic,
+                FractalKind::Buffalo,
+            ] {
+                let step = ir::builtin_step(fractal.formula_id()).expect("every built-in has a step");
+                match boundary(&ir::Formula::single(step), &[], third) {
+                    Some(at) => pert_twins.push((fractal, bf(at.0), bf(at.1), 1.0e6)),
+                    None => push_check(
+                        &mut checks,
+                        &mut last_check_t,
+                        no_boundary(format!("generated {} perturbation = built-in", fractal.name()), third),
+                    ),
+                }
+            }
+            for (fractal, cx, cy, mag) in pert_twins {
+                self.fractal = fractal;
+                let at = (fractadyne_core::to_f64(&cx), fractadyne_core::to_f64(&cy));
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = cx;
+                vp.center_y = cy;
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
+                vp.precision = fractadyne_core::precision_for_magnification(mag).max(64);
+                let mut base = self.current_export_request_for(&vp, false);
+                base.width = N;
+                base.height = N;
+                base.ss = 1;
+                base.sa_skip = 0;
+                base.bla_on = 0;
+                let formula = ir::Formula::single(ir::builtin_step(fractal.formula_id()).expect("every built-in has a step"));
+                let Ok(shader) = fractadyne_gpu::custom::build(&formula, &[]) else { continue };
+                let power = shader.power as f64;
+                let mut gen = base.clone();
+                gen.formula = fractadyne_core::formula::CUSTOM;
+                gen.custom = Some(std::sync::Arc::new(shader));
+                let (Some(a), Some(b)) = (st_render_iter(device, queue, &base), st_render_iter(device, queue, &gen)) else {
+                    continue;
+                };
+                let scale = 2f64.powi(base.delta_exp);
+                let (sx, sy) = (base.span_mantissa.x / N as f64, base.span_mantissa.y / N as f64);
+                // Both renders against the CPU, pixel by pixel: right = the same status and within 2
+                // iterations; and among pixels both get right, how far each smooth value is off (an
+                // error in the smooth value moves every pixel, so its median shows it; chaos moves
+                // both renders alike).
+                let cs: Vec<(f64, f64)> = (0..nn * nn)
+                    .map(|k| {
+                        let (i, j) = (k % nn, k / nn);
+                        (
+                            at.0 + sx * ((i as f64 + 0.5) - N as f64 * 0.5) * scale,
+                            at.1 + sy * (N as f64 * 0.5 - (j as f64 + 0.5)) * scale,
+                        )
+                    })
+                    .collect();
+                let close = |v: f32, cpu: f64| if v < 0.0 || cpu < 0.0 { (v < 0.0) == (cpu < 0.0) } else { (v as f64 - cpu).abs() <= 2.0 };
+                let (mut escaped, mut base_only, mut gen_only) = (0u64, 0u64, 0u64);
+                let (mut err_base, mut err_gen) = (Vec::new(), Vec::new());
+                for (k, cpu) in cpu_pixels(&formula, &[], power, &cs).into_iter().enumerate() {
+                    let (x, y) = (a[k * 4], b[k * 4]);
+                    escaped += (x >= 0.0) as u64;
+                    let (bx, gy) = (close(x, cpu), close(y, cpu));
+                    base_only += (bx && !gy) as u64;
+                    gen_only += (gy && !bx) as u64;
+                    if bx && gy && cpu >= 0.0 {
+                        err_base.push((x as f64 - cpu).abs());
+                        err_gen.push((y as f64 - cpu).abs());
+                    }
+                }
+                let median = |v: &mut Vec<f64>| {
+                    if v.is_empty() {
+                        return f64::INFINITY;
+                    }
+                    let mid = v.len() / 2;
+                    *v.select_nth_unstable_by(mid, f64::total_cmp).1
+                };
+                let (med_base, med_gen) = (median(&mut err_base), median(&mut err_gen));
+                let px = (nn * nn) as u64;
+                let allowance = 3.0 * ((base_only + gen_only) as f64).sqrt() + 3.0;
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Custom formula (GPU)",
+                    name: format!("generated {} perturbation = built-in", fractal.name()),
+                    params: format!(
+                        "{mag:.0e}× at {:.9}{:+.9}i, mode {}, ref {}, {:.1}% escaped",
+                        at.0,
+                        at.1,
+                        base.mode,
+                        base.orbit_len,
+                        escaped as f64 * 100.0 / px as f64
+                    ),
+                    result: format!(
+                        "right only in built-in {base_only} / only in generated {gen_only} px; median |Δ| to CPU {med_base:.5} / {med_gen:.5} over {} px",
+                        err_base.len()
+                    ),
+                    threshold: "mode 0, ref >100, 10–99% escaped; generated no worse (3σ; median ×1.25 + 1e-4)",
+                    pass: base.mode == 0
+                        && base.orbit_len > 100
+                        && escaped * 10 > px
+                        && escaped * 100 < px * 99
+                        && (base_only as f64) <= gen_only as f64 + allowance
+                        && med_gen <= med_base * 1.25 + 1.0e-4,
+                });
+            }
+
+            // (b) Formulas no built-in covers, at 1e6× — past the f32 wall, where the direct path is
+            //     blocks — on the GPU's perturbation path against the CPU interpreter in f64 (which
+            //     resolves this view's 1.4e-8 pixel easily). The reference orbit is the IR's own
+            //     bignum one at the view centre, which sits on the formula's boundary as above.
+            let mag = 1.0e6;
+            let pert_cases: Vec<(&str, ir::Formula, Vec<(f64, f64)>)> = vec![
+                (
+                    "hybrid Mandelbrot/Burning Ship",
+                    ir::Formula::new(vec![
+                        ir::builtin_step(fractadyne_core::formula::MANDELBROT).unwrap(),
+                        ir::builtin_step(fractadyne_core::formula::BURNING_SHIP).unwrap(),
+                    ])
+                    .unwrap(),
+                    vec![],
+                ),
+                ("z² + p·z + c", ir::parse::parse("z^2 + p1*z + c").unwrap(), vec![(0.25, -0.1)]),
+                ("|z|·z + conj(z)² + c", ir::parse::parse("|z|*z*0.3 + conj(z)^2 + c").unwrap(), vec![]),
+            ];
+            for (label, formula, params) in pert_cases {
+                let first = (0.9, 0.7);
+                let Some(at) = boundary(&formula, &params, first) else {
+                    push_check(&mut checks, &mut last_check_t, no_boundary(format!("{label}: perturbed GPU = CPU interpreter"), first));
+                    continue;
+                };
+                self.fractal = FractalKind::Mandelbrot;
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = bf(at.0);
+                vp.center_y = bf(at.1);
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
+                vp.precision = fractadyne_core::precision_for_magnification(mag).max(64);
+                let mut req = self.current_export_request_for(&vp, false);
+                let zero = fractadyne_core::BigFloat::from_f64(0.0, vp.precision);
+                let Ok((orbit, len, _)) =
+                    ir::reference_orbit(&formula, &zero, &zero, &vp.center_x, &vp.center_y, &params, max_iter, vp.precision)
+                else {
+                    continue;
+                };
+                let Ok(shader) = fractadyne_gpu::custom::build(&formula, &params) else { continue };
+                let power = shader.power as f64;
+                req.width = N;
+                req.height = N;
+                req.ss = 1;
+                req.mode = 0;
+                req.sa_skip = 0;
+                req.bla_on = 0;
+                req.max_iter = max_iter;
+                req.orbit = std::sync::Arc::new(orbit);
+                req.orbit_len = len;
+                req.ref_offset = fractadyne_gpu::RefOffset::ZERO;
+                req.formula = fractadyne_core::formula::CUSTOM;
+                req.custom = Some(std::sync::Arc::new(shader));
+                let Some(gpu) = st_render_iter(device, queue, &req) else { continue };
+                let scale = 2f64.powi(req.delta_exp);
+                let (sx, sy) = (req.span_mantissa.x / N as f64, req.span_mantissa.y / N as f64);
+                let cs: Vec<(f64, f64)> = (0..nn * nn)
+                    .map(|k| {
+                        let (i, j) = (k % nn, k / nn);
+                        (
+                            at.0 + sx * ((i as f64 + 0.5) - N as f64 * 0.5) * scale,
+                            at.1 + sy * (N as f64 * 0.5 - (j as f64 + 0.5)) * scale,
+                        )
+                    })
+                    .collect();
+                let (mut escaped, mut disagree) = (0u64, 0u64);
+                for (k, cpu) in cpu_pixels(&formula, &params, power, &cs).into_iter().enumerate() {
+                    let g = gpu[k * 4] as f64;
+                    escaped += (cpu >= 0.0) as u64;
+                    let same = if cpu < 0.0 || g < 0.0 { (cpu < 0.0) == (g < 0.0) } else { (cpu - g).abs() < 0.01 };
+                    disagree += (!same) as u64;
+                }
+                let px = (nn * nn) as u64;
+                let frac = disagree as f64 / px as f64;
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Custom formula (GPU)",
+                    name: format!("{label}: perturbed GPU = CPU interpreter"),
+                    params: format!("1e6× at {:.9}{:+.9}i, mode 0, ref {len}, {escaped} escaped px", at.0, at.1),
+                    result: format!("{disagree} px disagree ({:.3}%)", frac * 100.0),
+                    threshold: "<2% disagree, >10% escaped, some interior",
+                    pass: frac < 0.02 && escaped * 10 > px && escaped < px,
+                });
+            }
         }
 
         // ---- series approximation engages for the Multibrot families ----

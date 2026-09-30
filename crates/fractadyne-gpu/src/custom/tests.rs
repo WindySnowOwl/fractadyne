@@ -17,7 +17,7 @@ fn unary(op: fn(Val) -> Op) -> Formula {
 
 #[test]
 fn the_fixed_module_has_each_slot_marker_once_as_a_comment() {
-    for m in [STEP_BEGIN, STEP_END, SMOOTH_BEGIN, SMOOTH_END, CUT_BEGIN, CUT_END] {
+    for m in SLOTS.iter().flat_map(|(b, e)| [*b, *e]) {
         assert_eq!(FIXED.matches(m).count(), 1, "{m}");
         let (s, e) = marker_line(FIXED, m).unwrap();
         assert!(FIXED[s..e].trim_start().starts_with("//"), "{m} must sit on a comment line");
@@ -31,16 +31,23 @@ fn every_built_in_step_generates_a_valid_module_without_the_perturbation_paths()
     let (c0, _) = marker_line(FIXED, CUT_BEGIN).unwrap();
     let (_, c1) = marker_line(FIXED, CUT_END).unwrap();
     let cut = &FIXED[c0..c1];
-    assert!(cut.len() > 20_000, "the cut region should be the perturbation paths ({} bytes)", cut.len());
+    assert!(cut.len() > 10_000, "the cut region should be the floatexp path ({} bytes)", cut.len());
+    assert!(cut.contains("Floatexp perturbation (mode 2)"), "the cut region is not the floatexp path");
     let mut built = 0;
     for id in 0..f::COUNT {
         let shader = build(&single(builtin_step(id).unwrap()), &[]).unwrap_or_else(|e| panic!("formula {id}: {e}"));
-        assert!(shader.source.contains("var zn: Cdf = custom_tame(custom_step(z, c, zprev, iter));"));
-        assert!(shader.source.contains("let smit = max(f32(iter) + 1.0 - nu, 0.0);"));
-        assert!(!shader.source.contains(cut), "formula {id}: perturbation paths still present");
-        assert!(!shader.source.contains(STEP_BEGIN) && !shader.source.contains(CUT_BEGIN));
-        assert!(shader.source.contains("fn fs_iterate(") && shader.source.contains("fn vs_split_tiles("));
+        let s = &shader.source;
+        assert!(s.contains("var zn: Cdf = custom_tame(custom_step(z, c, zprev, iter));"));
+        assert_eq!(s.matches("let smit = max(f32(iter) + 1.0 - nu, 0.0);").count(), 2, "both smooth values clamped");
+        assert!(s.contains("dz = custom_pstep(z, dz, dc, iter);"), "the mode-0 step slot");
+        assert!(s.contains("let base = iter % CUSTOM_PHASES;"), "the phase-aligned rebase");
+        assert!(!s.contains(cut), "formula {id}: floatexp path still present");
+        assert!(SLOTS.iter().all(|(b, e)| !s.contains(b) && !s.contains(e)), "a marker survived");
+        assert!(s.contains("fn fs_iterate(") && s.contains("fn vs_split_tiles("));
         assert_eq!(shader.precision, Precision::Df32, "formula {id}");
+        // The eight opcode families are perturbable; Phoenix reads z_prev and Newton divides.
+        assert_eq!(shader.perturbation.is_ok(), id < f::PHOENIX, "formula {id}: {:?}", shader.perturbation);
+        assert_eq!(s.contains("fn custom_pphase0("), id < f::PHOENIX);
         built += 1;
     }
     assert_eq!(built, 10);

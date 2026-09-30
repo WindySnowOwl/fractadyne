@@ -310,6 +310,40 @@ separate, later decision, and only if phase 4 shows the generated render is iden
   The limit is where one f32 step of `c` spans a pixel: ~1e4–1e5× for any custom formula. Past it,
   only a perturbed step helps, which is how the built-ins get past 1e4× on the same card (phase 4).
   The dialog note and Help now state the measured limit.
+- **Phase 4 brought forward, stage A: the rule table** (`f170a34`). `ir::perturb` rewrites a step into
+  one computing `δz'` from `Z`, `C`, `δz`, `δc`, as an ordinary IR program (new inputs `Delta`,
+  `DeltaC`, and `DiffAbsRe`/`DiffAbsIm` for the folds). It covers the ring (sums, products, integer
+  powers, scale, negation, conj, re/im, |·|², abs folds). It refuses, naming the feature, division,
+  non-integer powers, the elementary functions and `z_prev`. Against the exact difference in 256-bit
+  bignum, the eight built-in programs and eight typed formulas give a worst error of **3.2e-16 to
+  5.0e-15 relative** (400 cases each, δ at 1e-8…1e-13). Naive f64 differencing of the same cases is
+  off by up to **100%**. Iterated at a 1e-20 offset, a single-phase and a hybrid formula track the
+  pixel's exact bignum orbit for 200 steps.
+- **Stage B: the generated perturbed step on the GPU (mode 0, df32).** Three more marker pairs
+  (`@@CUSTOM_PSTEP`, `@@CUSTOM_REBASE`, `@@CUSTOM_SMOOTH0`) put the generated `custom_pstep` into
+  mode 0 of the generated module; only mode 2 (floatexp) is still cut. A hybrid rebases
+  phase-aligned: `iter % phases` becomes the new reference index, so the rebased pixel continues
+  with the phase it is in. Self-test (+12 checks, full run 224/224, goldens 19/19):
+  - The generated perturbed step of each opcode family vs its hand-written one, on the same
+    reference, SA and BLA off, 1e6× on the family's own boundary plus the seahorse valley at
+    1e8×. Bisection from `c = 0` lands on a main component's boundary, where escape by
+    `max_iter` is chaotic. Between the two renders, 0–26% of pixels differ, and **evenly**: the CPU
+    interpreter sides with the built-in on 2,408 and with the generated step on 2,432 (Multibrot 3).
+    So the CPU settles every pixel. The gate: the generated step is right no less often than the
+    built-in (3σ of a fair coin), and its median smooth-value error against the CPU is no larger
+    (×1.25 + 1e-4; measured 0.00002–0.0036 for both). Three planted bugs each turned the gate red:
+    dropping δ² from the square (all 12 perturbation checks), and dropping either abs fold (Burning
+    Ship, Buffalo, and Celtic for Re). The first views bisected into the first quadrant, where
+    the Burning Ship's |Im| fold never engages (`Im z' = 2|x||y| + Im c > 0`). The Im-fold bug passed
+    every built-in view there, and only the hybrid caught it. The built-ins now bisect into the third
+    quadrant.
+  - Formulas no built-in covers, perturbed at 1e6× against the CPU interpreter in f64 (reference
+    orbit = the IR's own bignum orbit): a two-phase hybrid 0.012%, `z² + p·z + c` 0.145%,
+    `|z|·z·0.3 + conj(z)² + c` 0.021% of pixels disagree (tolerance 0.01 iteration).
+  - The generated module now compiles in **0.40–0.45 s** (`fs_iterate`, RTX 3080), up from
+    74–119 ms without mode 0; the all-formula module takes 4.4 s.
+  - Not yet in the app. Stage C is the reference orbit from the IR in the live and export pipelines, mode
+    selection for a perturbable Custom formula, and the depth indicator past ~1e28× (no mode 2).
 
 ## 6. Validation plan
 

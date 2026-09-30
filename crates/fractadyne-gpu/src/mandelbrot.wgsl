@@ -917,8 +917,8 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     }
-    // @@CUSTOM_CUT_BEGIN — a custom formula renders in direct mode only, so its module drops the
-    // perturbation paths from here to the matching END marker (most of this pipeline's compile).
+    // @@CUSTOM_CUT_BEGIN — a custom formula has no floatexp perturbation yet, so its module drops
+    // mode 2 from here to the matching END marker (most of this pipeline's compile time).
     else if (iu.mode == 2u) {
         // Floatexp perturbation (mode 2): δz/δc carried as floatexp (df32 mantissa +
         // i32 exponent), so the deviation never underflows f32 → extreme depth. ~1.7×
@@ -1310,7 +1310,9 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
-    } else {
+    }
+    // @@CUSTOM_CUT_END
+    else {
         // df32 perturbation (mode 0): the fast path for the common deep range. Valid
         // until the df32 δ's f32 exponent underflows (~1e30×); deeper zoom uses mode 2.
         // `off_*`/`ref_offset` are mantissas scaled by 2^-delta_exp → restore the real δ.
@@ -1374,6 +1376,8 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 Dprev = D;
                 D = dn;
             }
+            // @@CUSTOM_PSTEP_BEGIN — a custom formula's module replaces the perturbed step from
+            // here to the matching END marker with its generated one (`custom.rs`).
             if (iu.formula == 1u) {
                 power_f = 3.0;
                 let z2 = c_sqr(z); let dz2 = c_sqr(dz); let dz3 = c_mul(dz2, dz);
@@ -1426,6 +1430,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             } else {
                 dz = c_add(c_add(c_two(c_mul(z, dz)), c_sqr(dz)), dc);
             }
+            // @@CUSTOM_PSTEP_END
             ref_n = ref_n + 1u;
             iter = iter + 1u;
             // orbit_cdf: an extended-range dip sample (NaN-marked) reads as (0,0) here.
@@ -1478,6 +1483,8 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 let dl = vec2<f32>(dz.re.x * LIFT, dz.im.x * LIFT);
                 rebase_now = dot(zl, zl) < dot(dl, dl);
             }
+            // @@CUSTOM_REBASE_BEGIN — a custom formula's module rebases PHASE-ALIGNED from here to
+            // the matching END marker (a hybrid's reference index must stay ≡ iter mod phases).
             if (rebase_now || ref_n + 1u >= iu.orbit_len) {
                 n_rebase = n_rebase + 1u;
                 let r0 = orbit_cdf(reference[0]);
@@ -1496,6 +1503,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 );
                 ref_n = 0u;
             }
+            // @@CUSTOM_REBASE_END
         }
         ctr_commit(n_rebase, n_ext, n_bla);
         step_commit(gx, gy, n_bla + n_full, n_full, n_big, iter);
@@ -1506,7 +1514,9 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         }
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
+        // @@CUSTOM_SMOOTH0_BEGIN — as the direct path's: a custom module clamps this line at 0.
         let smit = f32(iter) + 1.0 - nu;
+        // @@CUSTOM_SMOOTH0_END
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
         if (iu.formula <= 3u || iu.formula == 8u) {
@@ -1518,7 +1528,6 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     }
-    // @@CUSTOM_CUT_END
 }
 
 @fragment

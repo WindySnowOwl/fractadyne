@@ -1,13 +1,18 @@
 //! Custom formulas on the GPU (design/custom-formulas.md §4.5).
 //!
-//! A formula's IR ([`fractadyne_core::ir`]) becomes a WGSL `custom_step` function written in the
-//! shader's own df32 helpers (`c_sqr`, `c_mul`, `df_abs`, …), spliced into the fixed module at two
-//! marked slots inside `iterate_at`:
+//! A formula's IR ([`fractadyne_core::ir`]) becomes WGSL written in the shader's own df32 helpers
+//! (`c_sqr`, `c_mul`, `df_abs`, …): `custom_step` (the direct step) and, when the formula is
+//! perturbable ([`fractadyne_core::ir::perturb`]), `custom_pstep` (its perturbed step, δz' from the
+//! reference `Z`, `δz` and `δc`). They are spliced into the fixed module at marked slots in
+//! `iterate_at`:
 //!
-//! - `@@CUSTOM_STEP` — the direct path's formula step, replaced by a call to `custom_step`;
-//! - `@@CUSTOM_CUT` — the perturbation paths, removed. A custom formula renders in direct mode only
-//!   until design phase 4 derives its perturbed step, and those paths are most of the iterate
-//!   pipeline's compile time (§3 A6: ~4 s with every formula, ~1 s specialised).
+//! - `@@CUSTOM_STEP` / `@@CUSTOM_SMOOTH` — the direct path's formula step and smooth value;
+//! - `@@CUSTOM_CUT` — the floatexp perturbation path (mode 2), removed: custom formulas have none
+//!   yet, and it is most of the iterate pipeline's compile time (§3 A6);
+//! - `@@CUSTOM_PSTEP` / `@@CUSTOM_REBASE` / `@@CUSTOM_SMOOTH0` — the df32 perturbation path's
+//!   (mode 0) formula step, rebase and smooth value. The rebase is PHASE-ALIGNED for a hybrid: the
+//!   reference index restarts at `iter mod phases`, not 0, so reference and pixel stay in the same
+//!   phase (identical to the fixed module's for one phase).
 //!
 //! The fixed module carries only the marker COMMENTS, so every built-in pipeline compiles from the
 //! same code as before. A custom module renders under [`fractadyne_core::formula::CUSTOM`], an id no
@@ -26,6 +31,21 @@ const SMOOTH_BEGIN: &str = "// @@CUSTOM_SMOOTH_BEGIN";
 const SMOOTH_END: &str = "// @@CUSTOM_SMOOTH_END";
 const CUT_BEGIN: &str = "// @@CUSTOM_CUT_BEGIN";
 const CUT_END: &str = "// @@CUSTOM_CUT_END";
+const PSTEP_BEGIN: &str = "// @@CUSTOM_PSTEP_BEGIN";
+const PSTEP_END: &str = "// @@CUSTOM_PSTEP_END";
+const REBASE_BEGIN: &str = "// @@CUSTOM_REBASE_BEGIN";
+const REBASE_END: &str = "// @@CUSTOM_REBASE_END";
+const SMOOTH0_BEGIN: &str = "// @@CUSTOM_SMOOTH0_BEGIN";
+const SMOOTH0_END: &str = "// @@CUSTOM_SMOOTH0_END";
+/// Every slot, in file order: `(begin, end)`.
+const SLOTS: [(&str, &str); 6] = [
+    (STEP_BEGIN, STEP_END),
+    (SMOOTH_BEGIN, SMOOTH_END),
+    (CUT_BEGIN, CUT_END),
+    (PSTEP_BEGIN, PSTEP_END),
+    (REBASE_BEGIN, REBASE_END),
+    (SMOOTH0_BEGIN, SMOOTH0_END),
+];
 
 /// How much precision the generated step carries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +69,9 @@ pub struct CustomShader {
     pub precision: Precision,
     /// The dispatch ceiling's per-step cost factor relative to Mandelbrot ([`cost_factor`]).
     pub cost_factor: f64,
+    /// `Ok` when the module carries a perturbed step (the df32 perturbation path, mode 0, renders
+    /// it); otherwise why not — the formula then renders on the direct path only.
+    pub perturbation: Result<(), fractadyne_core::ir::perturb::NotPerturbable>,
 }
 
 /// A custom formula's cost per step relative to Mandelbrot, for the dispatch ceiling
@@ -135,10 +158,39 @@ pub fn build(formula: &Formula, params: &[(f64, f64)]) -> Result<CustomShader, C
         .into());
     }
     let power = formula.escape_degree().filter(|d| *d > 1.0 && d.is_finite()).unwrap_or(2.0) as f32;
-    let (step, precision) = step_source(formula, params)?;
+    let (mut step, precision) = step_source(formula, params)?;
+    let perturbation = fractadyne_core::ir::perturb::perturbed_formula(formula);
+    match &perturbation {
+        Ok(p) => step.push_str(&pstep_source(p, params)?),
+        // Never dispatched (the app renders a non-perturbable formula directly), but the mode-0
+        // path calls it, so it must exist.
+        Err(_) => step.push_str("fn custom_pstep(z: Cdf, dz: Cdf, dc: Cdf, iter: u32) -> Cdf { return dz; }\n"),
+    }
+    step.push_str(&format!("const CUSTOM_PHASES: u32 = {}u;\n", formula.phases().len()));
     let source = splice(&step, power)?;
     validate(&source)?;
-    Ok(CustomShader { key: fnv1a(source.as_bytes()), source, power, precision, cost_factor: cost_factor(formula) })
+    Ok(CustomShader {
+        key: fnv1a(source.as_bytes()),
+        source,
+        power,
+        precision,
+        cost_factor: cost_factor(formula),
+        perturbation: perturbation.map(|_| ()),
+    })
+}
+
+/// `custom_step(…, iter)`-style dispatch over the phases: `name{k}(args)` for phase `iter mod n`.
+fn phase_dispatch(out: &mut String, name: &str, args: &str, n: usize) {
+    if n == 1 {
+        out.push_str(&format!("    return {name}0({args});\n"));
+    } else {
+        out.push_str(&format!("    switch (iter % {n}u) {{\n"));
+        for k in 0..n - 1 {
+            out.push_str(&format!("        case {k}u: {{ return {name}{k}({args}); }}\n"));
+        }
+        out.push_str(&format!("        default: {{ return {name}{}({args}); }}\n", n - 1));
+        out.push_str("    }\n");
+    }
 }
 
 /// The generated functions: one per phase, and `custom_step` choosing by iteration.
@@ -152,21 +204,41 @@ fn step_source(formula: &Formula, params: &[(f64, f64)]) -> Result<(String, Prec
         }
         out.push_str("}\n");
     }
-    let n = formula.phases().len();
     out.push_str("fn custom_step(z: Cdf, c: Cdf, zp: Cdf, iter: u32) -> Cdf {\n");
-    if n == 1 {
-        out.push_str("    return custom_phase0(z, c, zp);\n");
-    } else {
-        out.push_str(&format!("    switch (iter % {n}u) {{\n"));
-        for k in 0..n - 1 {
-            out.push_str(&format!("        case {k}u: {{ return custom_phase{k}(z, c, zp); }}\n"));
-        }
-        out.push_str(&format!("        default: {{ return custom_phase{}(z, c, zp); }}\n", n - 1));
-        out.push_str("    }\n");
-    }
+    phase_dispatch(&mut out, "custom_phase", "z, c, zp", formula.phases().len());
     out.push_str("}\n");
     out.push_str(F32_HELPERS);
     Ok((out, precision))
+}
+
+/// The perturbed step: `custom_pstep(Z, δz, δc, iter)` → δz', over `custom_pphase{k}(Z, C, δz, δc)`
+/// with `C` the REFERENCE's c — the Julia constant, or the view centre less the reference offset
+/// (which is how the perturbation paths define δc: pixel − reference).
+fn pstep_source(perturbed: &Formula, params: &[(f64, f64)]) -> Result<String, CustomError> {
+    let mut out = String::new();
+    for (k, prog) in perturbed.phases().iter().enumerate() {
+        out.push_str(&format!("fn custom_pphase{k}(z: Cdf, c: Cdf, dz: Cdf, dc: Cdf) -> Cdf {{\n"));
+        phase_body(prog, params, &mut out)?;
+        out.push_str("}\n");
+    }
+    out.push_str(
+        "fn custom_cref() -> Cdf {
+    if (iu.julia == 1u) {
+        return cset(vec2<f32>(iu.julia_c.x, iu.julia_c.z), vec2<f32>(iu.julia_c.y, iu.julia_c.w));
+    }
+    let dsc = exp2(f32(iu.delta_exp));
+    return cset(
+        df_sub(vec2<f32>(iu.center.x, iu.center.z), df_mul_f32(vec2<f32>(iu.ref_offset.x, iu.ref_offset.z), dsc)),
+        df_sub(vec2<f32>(iu.center.y, iu.center.w), df_mul_f32(vec2<f32>(iu.ref_offset.y, iu.ref_offset.w), dsc)),
+    );
+}
+fn custom_pstep(z: Cdf, dz: Cdf, dc: Cdf, iter: u32) -> Cdf {
+    let c = custom_cref();
+",
+    );
+    phase_dispatch(&mut out, "custom_pphase", "z, c, dz, dc", perturbed.phases().len());
+    out.push_str("}\n");
+    Ok(out)
 }
 
 /// One `let` per instruction.
@@ -314,21 +386,9 @@ fn marker_line(src: &str, marker: &'static str) -> Result<(usize, usize), Custom
     Ok((start, end))
 }
 
-/// The fixed module with the step slot replaced by `custom_step`, the smooth value clamped and the
-/// perturbation paths cut.
+/// The fixed module with every slot filled: the direct and perturbed steps replaced by the
+/// generated ones, both smooth values clamped, the floatexp path cut, the rebase phase-aligned.
 fn splice(step_fns: &str, power: f32) -> Result<String, CustomError> {
-    let (s0, _) = marker_line(FIXED, STEP_BEGIN)?;
-    let (_, s1) = marker_line(FIXED, STEP_END)?;
-    let (m0, _) = marker_line(FIXED, SMOOTH_BEGIN)?;
-    let (_, m1) = marker_line(FIXED, SMOOTH_END)?;
-    let (c0, _) = marker_line(FIXED, CUT_BEGIN)?;
-    let (_, c1) = marker_line(FIXED, CUT_END)?;
-    if !(s0 < s1 && s1 <= m0 && m0 < m1 && m1 <= c0 && c0 < c1) {
-        return Err(CustomError::Marker(STEP_BEGIN));
-    }
-    let mut out = String::with_capacity(FIXED.len() + step_fns.len());
-    out.push_str(&FIXED[..s0]);
-    out.push_str("                var zn: Cdf = custom_tame(custom_step(z, c, zprev, iter));\n");
     // The power must stay OPAQUE to the compiler, as the fixed module's is (the uniform picks it
     // there), so `log(power_f)` in the smooth value runs on the GPU in both. Folded at compile time
     // it differs in the last bit: measured, a generated Mandelbrot then differed from the built-in
@@ -336,19 +396,51 @@ fn splice(step_fns: &str, power: f32) -> Result<String, CustomError> {
     // are load-bearing, each found by a gate going red: the condition must be one the compiler
     // cannot decide (`iu.max_iter == 0u` was folded — the loop's own guard proves it false here),
     // and the two arms must differ (with both 2.0 for Mandelbrot, the select folds to a constant).
-    out.push_str(&format!(
-        "                power_f = select(CUSTOM_POWER + 1.0, CUSTOM_POWER, iu.formula == {}u);\n",
-        fractadyne_core::formula::CUSTOM
-    ));
-    out.push_str(&FIXED[s1..m0]);
+    let power_line = |indent: &str| {
+        format!(
+            "{indent}power_f = select(CUSTOM_POWER + 1.0, CUSTOM_POWER, iu.formula == {}u);\n",
+            fractadyne_core::formula::CUSTOM
+        )
+    };
     // The smooth value `n + 1 − log(log₂|z|)/log d` goes NEGATIVE — which reads as interior — for a
     // pixel that escapes within a couple of iterations or far past the bailout: routine for a steep
     // custom formula (measured: `100·exp(c)` escaping at n = 1 gives −1.45), unreachable from the
     // built-ins' views. Clamped at 0 it stays escaped; every value ≥ 0 keeps its bits.
-    out.push_str("        let smit = max(f32(iter) + 1.0 - nu, 0.0);\n");
-    out.push_str(&FIXED[m1..c0]);
-    out.push_str("    return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), AUX_NONE);\n");
-    out.push_str(&FIXED[c1..]);
+    let smooth = "        let smit = max(f32(iter) + 1.0 - nu, 0.0);\n".to_string();
+    let fills: [String; 6] = [
+        format!(
+            "                var zn: Cdf = custom_tame(custom_step(z, c, zprev, iter));\n{}",
+            power_line("                ")
+        ),
+        smooth.clone(),
+        String::new(),
+        format!("            dz = custom_pstep(z, dz, dc, iter);\n{}", power_line("            ")),
+        // `iter` has already advanced to the NEXT step's index here, so the reference restarts at
+        // the sample whose phase that step will run.
+        "            if (rebase_now || ref_n + 1u >= iu.orbit_len) {
+                n_rebase = n_rebase + 1u;
+                let base = iter % CUSTOM_PHASES;
+                let r0 = orbit_cdf(reference[base]);
+                dz = cset(df_sub(zr_full, r0.re), df_sub(zi_full, r0.im));
+                ref_n = base;
+            }
+"
+        .to_string(),
+        smooth,
+    ];
+    let mut out = String::with_capacity(FIXED.len() + step_fns.len());
+    let mut at = 0;
+    for ((begin, end), fill) in SLOTS.iter().zip(&fills) {
+        let (b0, _) = marker_line(FIXED, begin)?;
+        let (_, e1) = marker_line(FIXED, end)?;
+        if b0 < at || e1 <= b0 {
+            return Err(CustomError::Marker(begin));
+        }
+        out.push_str(&FIXED[at..b0]);
+        out.push_str(fill);
+        at = e1;
+    }
+    out.push_str(&FIXED[at..]);
     out.push_str("\n// ---------------- generated: custom formula (custom.rs) ----------------\n");
     out.push_str(&format!("const CUSTOM_POWER: f32 = {};\n", lit(power)));
     out.push_str(&tame_source());
