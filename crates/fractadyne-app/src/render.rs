@@ -5513,13 +5513,21 @@ impl FractadyneApp {
             // under the new one — a translucent copy of another location (field report
             // 2026-09-16). Restarting the walk is output-neutral (bit-identity contract); only
             // its cost is paid, and only when the view really moved.
+            // ⚠And WHAT is iterated: the settings hash (`view_key.4` — formula id, custom shader
+            // key, Julia and its c, the iterate-affecting colour inputs). It was missing, so a
+            // formula switch at an unchanged view resumed the previous formula's finished walk and
+            // re-showed its image: measured when custom formulas gained resumable passes — the
+            // uitest's Custom step at home (−0.5+0i, Mandelbrot's home too) kept showing the
+            // formula applied three steps earlier. The tiled settle's key had the same hole once
+            // (`settings_hash`'s own note).
             let sig = (
                 center.0.to_bits()
                     ^ center.1.to_bits().rotate_left(17)
                     ^ magnification.to_bits().rotate_left(34)
                     ^ (self.ref_cache[vidx].orbit_len as u64).rotate_left(51)
                     ^ jbits.rotate_left(7)
-                    ^ pos_sig.rotate_left(41),
+                    ^ pos_sig.rotate_left(41)
+                    ^ view_key.4.rotate_left(29),
                 gpu_iter,
                 resolution,
                 ss,
