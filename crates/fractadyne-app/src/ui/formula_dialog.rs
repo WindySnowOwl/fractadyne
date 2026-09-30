@@ -90,6 +90,11 @@ impl FractadyneApp {
             ),
         );
         self.custom = Some(std::sync::Arc::new(c));
+        if self.fractal == crate::FractalKind::Custom {
+            // `set_fractal` is a no-op for the family already shown, but the step changed: a
+            // reference orbit (or one in flight) is the OLD formula's and must not be reused.
+            self.invalidate_refs();
+        }
         self.set_fractal(crate::FractalKind::Custom);
     }
 
@@ -165,8 +170,8 @@ impl FractadyneApp {
                         }
                     });
                 }
-                if let Some(c) = self.custom.as_ref().filter(|_| self.fractal == crate::FractalKind::Custom) {
-                    ui.label(egui::RichText::new(c.depth_note()).weak().small());
+                if let Ok(f) = &check {
+                    ui.label(egui::RichText::new(crate::custom_formula::depth_note_for(f)).weak().small());
                 }
                 if let Some(e) = &self.formula_dialog.error {
                     ui.colored_label(egui::Color32::from_rgb(0xE0, 0x6C, 0x60), e);

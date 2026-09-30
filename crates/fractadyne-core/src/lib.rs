@@ -115,7 +115,9 @@ pub mod formula {
     }
 
     /// The built-in families' capabilities. An unknown id gets none of them, and glitch correction
-    /// on — what each gate gave an out-of-range id when it was written as an id range.
+    /// on — what each gate gave an out-of-range id when it was written as an id range. Except
+    /// [`CUSTOM`]: glitch correction builds its extra references from the formula ID, which names
+    /// no custom step (a custom export ran 52 references of the wrong orbit before this).
     pub const fn caps(formula: u32) -> FormulaCaps {
         let polynomial = matches!(formula, MANDELBROT | MULTIBROT3 | MULTIBROT4 | MULTIBROT5);
         FormulaCaps {
@@ -124,7 +126,7 @@ pub mod formula {
             resumable_passes: polynomial,
             nucleus_finder: polynomial,
             feature_solvers: formula == MANDELBROT,
-            export_glitch_correction: !polynomial,
+            export_glitch_correction: !polynomial && formula != CUSTOM,
             convergent: formula == NEWTON,
         }
     }

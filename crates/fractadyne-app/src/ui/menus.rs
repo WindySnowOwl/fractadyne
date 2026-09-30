@@ -1196,6 +1196,25 @@ impl FractadyneApp {
         ))
     }
 
+    /// A custom formula's perturbation wall, for the status-bar diagnostic: its module perturbs in
+    /// df32 only, sharp to [`crate::render::CUSTOM_PERT_LIMIT`] (measured); past it the pixel
+    /// offsets fall under f32's exponent floor and the image breaks up.
+    pub(crate) fn custom_pert_status(custom_pert: bool, mag: f64) -> Option<(&'static str, String, bool)> {
+        (custom_pert && mag >= crate::render::CUSTOM_PERT_LIMIT).then(|| {
+            (
+                "⚠ depth limit",
+                format!(
+                    "Custom formulas deep-zoom in single-precision perturbation, which stays sharp \
+                     to about {:.0e}x. Past it the offsets underflow and the image breaks up: the \
+                     extended-range arithmetic the built-in formulas switch to is not generated \
+                     for custom formulas yet.",
+                    crate::render::CUSTOM_PERT_LIMIT
+                ),
+                true,
+            )
+        })
+    }
+
     /// Bottom status bar — center coordinate, cursor, zoom, effective iteration count, and the
     /// live script / benchmark playback progress.
     /// Classify which rendering limit (if any) is binding, for the status-bar diagnostic.
@@ -1467,8 +1486,7 @@ impl FractadyneApp {
                 let vp = &self.viewport;
                 let mag = vp.magnification();
                 let upp = vp.units_per_pixel.to_f64();
-                let direct = crate::RenderMode::select(self.fractal.supports_perturbation(), self.julia_mode, mag)
-                    .is_direct();
+                let direct = self.render_mode(self.fractal, self.julia_mode, mag).is_direct();
                 let limit = Self::direct_precision_status(
                     direct,
                     vp.center_f64(),
@@ -1476,6 +1494,7 @@ impl FractadyneApp {
                     upp,
                     mag,
                 )
+                .or_else(|| Self::custom_pert_status(self.fractal == crate::FractalKind::Custom && !direct, mag))
                 .or_else(|| {
                     Self::limit_status(
                         vc.partial,
@@ -1922,6 +1941,17 @@ mod tests {
         assert!(quiet.is_none(), "{quiet:?}");
         let warns = FractadyneApp::direct_precision_status(true, near, (1.5e-8 * w / 2.0, 1.5e-8 * h / 2.0), 1.5e-8, upp_mag(1.5e-8));
         assert!(warns.is_some());
+    }
+
+    /// A perturbing custom formula warns from the measured df32 wall on (1e36×; broken at 1e38×),
+    /// and not before, nor for a view that is not a perturbing custom one.
+    #[test]
+    fn custom_pert_status_fires_at_the_measured_wall() {
+        assert!(FractadyneApp::custom_pert_status(true, 1.0e34).is_none(), "sharp at 1e34x (measured)");
+        let s = FractadyneApp::custom_pert_status(true, 1.0e38).expect("broken at 1e38x (measured)");
+        assert!(s.0.contains("depth limit") && s.2 && s.1.contains("1e36x"), "{s:?}");
+        assert!(FractadyneApp::custom_pert_status(true, f64::INFINITY).is_some(), "past f64 range is past it too");
+        assert!(FractadyneApp::custom_pert_status(false, 1.0e38).is_none());
     }
 
     /// The measured limit regimes classify correctly, and ordinary states stay quiet.

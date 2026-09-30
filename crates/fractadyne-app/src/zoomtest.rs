@@ -464,12 +464,7 @@ impl FractadyneApp {
                 // A start at 1× renders DIRECT — no reference is ever built there, so requiring
                 // one would wait forever (it did: 180 s aborts on the first 1× → 1e100 runs).
                 // Demand a reference only where the start view is a perturbation view.
-                let needs_ref = !crate::RenderMode::select(
-                    self.fractal.supports_perturbation(),
-                    false,
-                    self.viewport.magnification(),
-                )
-                .is_direct();
+                let needs_ref = !self.render_mode(self.fractal, false, self.viewport.magnification()).is_direct();
                 // Likewise the frozen-frame latch belongs to the perturbation freeze machinery
                 // (`render.rs`, the reuse-hold/pin block) and is never written for a direct view.
                 let rc = &self.ref_cache[0];

@@ -19,6 +19,10 @@ fn formula_caps_answer_as_the_id_ranges_they_replaced() {
     assert!(formula::caps(formula::MULTIBROT5).series_approximation);
     assert!(!formula::caps(formula::TRICORN).resumable_passes);
     assert!(formula::caps(formula::NEWTON).convergent);
+    // A custom formula has none of them: every one is implemented per built-in id.
+    let custom = formula::caps(formula::CUSTOM);
+    assert!(!custom.series_approximation && !custom.bla && !custom.resumable_passes && !custom.nucleus_finder);
+    assert!(!custom.feature_solvers && !custom.export_glitch_correction && !custom.convergent);
 }
 
 /// `formula_dwell` must be the same oracle as `naive_dwell_bf` where both apply (Mandelbrot): the

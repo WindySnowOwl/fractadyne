@@ -30,6 +30,14 @@ pub(crate) struct FrameCost {
     pub(crate) iter_cap: u32,
 }
 
+/// How deep a custom formula's perturbation stays sharp. Its generated module has no floatexp
+/// path, so it perturbs in df32 at every depth, and df32's offsets are f32. MEASURED on the corpus
+/// spiral (`08-deep-6.6e43.fdn`), custom `z² + c` against the built-in Mandelbrot (floatexp from
+/// 1e28×), 400×300 at 60,000 iterations: mean Δ 3.5–3.9 per channel (the filament aliasing the
+/// two show at 1e12× too) through 1e34×, 5.1 at 1e36×, 67 at 1e38× — broken, the pixel offsets
+/// under f32's exponent floor.
+pub(crate) const CUSTOM_PERT_LIMIT: f64 = 1.0e36;
+
 /// Is this view in the extended-range floatexp regime (mode 2, several× costlier per iteration)?
 ///
 /// A free function rather than a `FrameCost` field: the caller no longer needs it — the two places
@@ -398,6 +406,9 @@ pub(crate) struct RecomputeInputs {
     precision: usize,
     julia: bool,
     formula: u32,
+    /// The custom formula the orbit is built from when `formula` is `formula::CUSTOM` (the id
+    /// alone names no step). Such a build takes its own path — see [`custom_reference`].
+    custom: Option<std::sync::Arc<crate::custom_formula::CustomFormula>>,
     julia_c: (f64, f64),
     do_sa: bool,
     bla_dc_max: Option<fractadyne_core::FloatExp>,
@@ -568,6 +579,9 @@ pub(crate) fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
         inp.precision,
         crate::diag::memory_summary()
     ));
+    if inp.custom.is_some() {
+        return custom_reference(&inp);
+    }
     // Deep-dive reuse: when the prior reference is still valid for this (deeper) frame, EXTEND its
     // orbit instead of recomputing every bignum step (the orbit build dominates a deep frame). Falls
     // back to a fresh pick + full build when there's no reusable orbit or it no longer qualifies.
@@ -595,6 +609,39 @@ pub(crate) fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
     let res = pick_and_build(&inp, crate::tunables::cost().ref_overlap == 1);
     offer_to_orbit_cache(&res, key, inp.origin);
     res
+}
+
+/// A custom formula's reference: its orbit from the IR interpreter in bignum (`ir::reference_orbit`),
+/// with none of the built-ins' machinery — no candidate pick (`best_reference` iterates the
+/// built-in steps), no extension of a previous orbit, no disk cache (keyed on the formula id), no
+/// series approximation or BLA (neither is derived for a custom step; `do_sa` and `bla_dc_max`
+/// arrive off from the capabilities). The reference is the view centre; when the centre escapes
+/// early, a 3×3 grid of points a quarter-span apart is tried and the longest orbit kept (the first
+/// to reach the cap wins). Pixels past a short reference's end rebase, so the choice is speed and
+/// fewer rebases, not correctness.
+fn custom_reference(inp: &RecomputeInputs) -> RecomputeResult {
+    use fractadyne_core as fc;
+    let cap = build_cap(inp.gpu_iter, inp);
+    let mut best = (inp.center_bf.clone(), build_orbit(&inp.center_bf, inp.gpu_iter, inp));
+    if best.1.tail.escaped && best.1.len.saturating_mul(2) < cap {
+        let prec = inp.precision + REF_PREC_HEADROOM;
+        'grid: for (i, j) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
+            let p = [
+                fc::add_floatexp(&inp.center_bf[0], inp.span.0.mul_f64(0.25 * i as f64), prec),
+                fc::add_floatexp(&inp.center_bf[1], inp.span.1.mul_f64(0.25 * j as f64), prec),
+            ];
+            let b = build_orbit(&p, inp.gpu_iter, inp);
+            let done = !b.tail.escaped;
+            if b.len > best.1.len {
+                best = (p, b);
+            }
+            if done {
+                break 'grid;
+            }
+        }
+    }
+    let (rp, b) = best;
+    finish_reference(rp, b.o, b.len, b.tail, b.orbit_prec, inp.gpu_iter, false, inp, b.ref_ms, None)
 }
 
 /// A FRESH pick + build of `inp` (no reuse, no disk cache), with or without the overlap of
@@ -817,7 +864,7 @@ impl FractadyneApp {
     /// direct-mode view (no reference).
     fn export_fresh_reference_inputs(&self, vp: &Viewport, julia: bool) -> Option<RecomputeInputs> {
         let eff_iter = self.export_eff_iter(vp, julia);
-        let mode = RenderMode::select(self.fractal.supports_perturbation(), julia, vp.magnification());
+        let mode = self.render_mode(self.fractal, julia, vp.magnification());
         if mode.is_direct() {
             return None;
         }
@@ -1064,8 +1111,14 @@ fn build_orbit(rp: &[fractadyne_core::BigFloat; 2], orbit_iter: u32, inp: &Recom
     } else {
         (zero.clone(), zero, rp[0].clone(), rp[1].clone())
     };
-    let (o, len, tail) =
-        fc::reference_orbit_t(&z0x, &z0y, &cx0, &cy0, inp.formula, build_cap(orbit_iter, inp), orbit_prec);
+    let cap = build_cap(orbit_iter, inp);
+    let (o, len, tail) = match &inp.custom {
+        // Only a formula with a perturbed step reaches here, and those evaluate in bignum (no
+        // division or functions) with every parameter supplied.
+        Some(c) => fc::ir::reference_orbit(&c.formula, &z0x, &z0y, &cx0, &cy0, &c.params, cap, orbit_prec)
+            .expect("a perturbable custom formula evaluates in bignum"),
+        None => fc::reference_orbit_t(&z0x, &z0y, &cx0, &cy0, inp.formula, cap, orbit_prec),
+    };
     BuiltOrbit { o, len, tail, orbit_prec, ref_ms: t.elapsed().as_secs_f64() * 1000.0 }
 }
 
@@ -1336,7 +1389,7 @@ fn recompute_worker_staged(
     // `gpu_iter` is already below it at shallow depth (until ~1e17×), so this naturally no-ops for
     // normal views → a single full build.
     const COARSE_ITER: u32 = 16384;
-    if progressive && COARSE_ITER < inp.gpu_iter {
+    if progressive && COARSE_ITER < inp.gpu_iter && inp.custom.is_none() {
         // ⭐A cold start at a location the on-disk cache holds is not cold: the full orbit is
         // there, and a coarse preview would only put a capped frame on screen for the instant
         // it takes to load. Same lookup as `recompute_worker`, and for the same reason it comes
@@ -2250,7 +2303,7 @@ impl FractadyneApp {
                 fractadyne_core::Viewport::new(self.viewport.width_px, self.viewport.height_px);
             vp.set_center_log2mag(s.cx, s.cy, target_l2);
             let mag = vp.magnification();
-            let mode = RenderMode::select(self.fractal.supports_perturbation(), false, mag);
+            let mode = self.render_mode(self.fractal, false, mag);
             if mode.is_direct() {
                 break; // shallow frames rebuild in microseconds — nothing to prefetch
             }
@@ -2299,6 +2352,7 @@ impl FractadyneApp {
                 precision,
                 julia: false,
                 formula: self.fractal.formula_id(),
+                custom: self.custom_reference_formula_for(self.fractal),
                 julia_c: self.julia_c,
                 do_sa,
                 bla_dc_max: bla_will_build
@@ -2522,7 +2576,7 @@ impl FractadyneApp {
         let mut vp = fractadyne_core::Viewport::new(self.viewport.width_px, self.viewport.height_px);
         vp.set_center_log2mag(s.cx, s.cy, target_l2);
         let mag = vp.magnification();
-        let mode = RenderMode::select(self.fractal.supports_perturbation(), false, mag);
+        let mode = self.render_mode(self.fractal, false, mag);
         if mode.is_direct() {
             return;
         }
@@ -2575,6 +2629,7 @@ impl FractadyneApp {
             precision,
             julia: false,
             formula: self.fractal.formula_id(),
+            custom: self.custom_reference_formula_for(self.fractal),
             julia_c: self.julia_c,
             do_sa,
             bla_dc_max: bla_will_build
@@ -2847,6 +2902,7 @@ impl FractadyneApp {
             precision,
             julia,
             formula: self.fractal.formula_id(),
+            custom: self.custom_reference_formula_for(self.fractal),
             julia_c: self.julia_c,
             do_sa,
             bla_dc_max,
@@ -3179,11 +3235,7 @@ impl FractadyneApp {
         let vp = self.viewport.clone();
         let julia = self.julia_mode;
         // Direct mode needs no reference at all; perturbation modes need one we can borrow.
-        let mode = RenderMode::select(
-            self.fractal.supports_perturbation(),
-            julia,
-            vp.magnification(),
-        );
+        let mode = self.render_mode(self.fractal, julia, vp.magnification());
         if !mode.is_direct() && !self.live_ref_can_serve(&vp, julia) {
             crate::diag::log_line(
                 "view",
@@ -3383,7 +3435,7 @@ impl FractadyneApp {
     ) -> Option<RecomputeInputs> {
         let log2mag = vp.log2_magnification();
         let mag = vp.magnification();
-        let mode = RenderMode::select(self.fractal.supports_perturbation(), julia, mag);
+        let mode = self.render_mode(self.fractal, julia, mag);
         if mode.is_direct() {
             return None;
         }
@@ -3526,7 +3578,7 @@ impl FractadyneApp {
         let height = ((width as f64) * vp.height_px / vp.width_px).round().max(1.0) as u32;
         let mag = vp.magnification(); // saturates to ∞ past 1e308×; fine for the mode compares
         let eff_iter = self.export_eff_iter(vp, julia);
-        let mode = RenderMode::select(self.fractal.supports_perturbation(), julia, mag);
+        let mode = self.render_mode(self.fractal, julia, mag);
         let precision = vp.precision; // maintained by the viewport; valid at any depth
         let (cx, cy) = vp.center_f64();
         let scale = vp.gpu_scale();
@@ -4576,7 +4628,7 @@ impl FractadyneApp {
             self.effective_work_budget(),
             magnification,
             julia,
-            fractal.supports_perturbation(),
+            self.perturbs(fractal),
             interacting,
         );
         // ADAPTIVE LIVE ITERATION BUDGET (settled frames only). `zoom_iter_cap`'s 256/octave slope
@@ -5981,6 +6033,42 @@ impl FractadyneApp {
         self.custom_shader_for(fractal).map_or(0, |s| s.key)
     }
 
+    /// The custom formula a reference orbit for `fractal` is built from: `Some` only for a
+    /// `FractalKind::Custom` whose step has a perturbed form (otherwise it renders direct, with
+    /// no reference).
+    pub(crate) fn custom_reference_formula_for(
+        &self,
+        fractal: FractalKind,
+    ) -> Option<std::sync::Arc<crate::custom_formula::CustomFormula>> {
+        (fractal == FractalKind::Custom)
+            .then(|| self.custom.clone().filter(|c| c.shader.perturbation.is_ok()))
+            .flatten()
+    }
+
+    /// Whether `fractal` renders by perturbation past the direct range: a built-in by its spec, a
+    /// custom formula when `ir::perturb` derived its perturbed step.
+    pub(crate) fn perturbs(&self, fractal: FractalKind) -> bool {
+        if fractal == FractalKind::Custom {
+            self.custom_reference_formula_for(fractal).is_some()
+        } else {
+            fractal.supports_perturbation()
+        }
+    }
+
+    /// ⭐The arithmetic mode for `fractal` at `mag` — [`RenderMode::select`] with what the family
+    /// can do. Every mode decision goes through here, so a custom formula can never be handed a
+    /// mode its generated module lacks: it perturbs in df32 only (the floatexp path is cut from
+    /// the module), so past `PERT_FE_THRESHOLD` it stays in df32 — sharp to [`CUSTOM_PERT_LIMIT`],
+    /// where the status bar says "depth limit".
+    pub(crate) fn render_mode(&self, fractal: FractalKind, julia: bool, mag: f64) -> RenderMode {
+        let mode = RenderMode::select(self.perturbs(fractal), julia, mag);
+        if fractal == FractalKind::Custom && mode == RenderMode::Floatexp {
+            RenderMode::Df32Pert
+        } else {
+            mode
+        }
+    }
+
     /// `build_params` epilogue: the no-reference placeholder guard on the iteration ask,
     /// the LIVE manifest + per-frame cost stamps + motion-jam accounting, and the final
     /// [`MandelbrotParams`] assembly. Body moved verbatim from `build_params`.
@@ -6900,7 +6988,7 @@ impl FractadyneApp {
             // colouring, a formula past the chunk shaders' scope or a device without the state
             // targets renders each refresh as ONE dispatch, and then one pass is all there is.
             let chunk_mode =
-                RenderMode::select(fractal.supports_perturbation(), julia, magnification);
+                self.render_mode(fractal, julia, magnification);
             let can_chunk = (chunk_mode.is_direct()
                 || chunk_mode == RenderMode::Df32Pert
                 || (chunk_mode == RenderMode::Floatexp && self.perf.chunk_fe_ok))
@@ -7155,7 +7243,7 @@ impl FractadyneApp {
         // frame's own nominal steps (moving frames run at ss 1), at the resolution the motion scale
         // will give it, fitted under the calibrated dispatch ceiling. df32 only: the shallow
         // perturbation mode, and one with a ceiling to keep (floatexp has none — `calibration`).
-        let live_mode = RenderMode::select(fractal.supports_perturbation(), julia, magnification);
+        let live_mode = self.render_mode(fractal, julia, magnification);
         let (live_verdict, live_cap, live_probe_cap) = if interacting
             && live_mode == RenderMode::Df32Pert
             && !pin_frame
@@ -7399,7 +7487,7 @@ impl FractadyneApp {
         // overshoot-safe by design, so the cost is one or two coarser frames after the crossover.
         if !offscreen {
             // `mode` itself is selected further down; it is a pure function of these two.
-            let sel = RenderMode::select(fractal.supports_perturbation(), julia, magnification);
+            let sel = self.render_mode(fractal, julia, magnification);
             let m = sel.to_u32();
             if self.perf.budget_mode[vidx] != m {
                 let prev = self.perf.budget_mode[vidx];
@@ -7537,7 +7625,7 @@ impl FractadyneApp {
             // ceiling-sized dispatch takes ~400 ms there. `resolution` is a LOWER bound on the
             // dispatch's pixels (ss ≥ 1), so its knee term errs on the safe side.
             let ceiling = crate::calibration::ceiling_for(
-                RenderMode::select(fractal.supports_perturbation(), julia, magnification),
+                self.render_mode(fractal, julia, magnification),
                 fractal,
                 (resolution[0] as u64) * (resolution[1] as u64),
             );
@@ -7838,7 +7926,7 @@ impl FractadyneApp {
         // conservative rather than exact. The error is in the safe direction — a pixel that skips
         // past the requested `end` idles in later passes until the cursor catches up, costing some
         // wasted passes, never an over-budget dispatch.
-        let chunk_mode = RenderMode::select(fractal.supports_perturbation(), julia, magnification);
+        let chunk_mode = self.render_mode(fractal, julia, magnification);
         let chunk_over = (chunk_mode.is_direct()
             || chunk_mode == RenderMode::Df32Pert
             || (chunk_mode == RenderMode::Floatexp && self.perf.chunk_fe_ok))
@@ -8145,7 +8233,7 @@ impl FractadyneApp {
         // Render path: 1 = direct df32 (shallow / unsupported formulas), 0 = df32
         // perturbation (fast, common deep range), 2 = floatexp perturbation (past df32's
         // ~1e30× exponent limit → extreme depth, ~1.7× costlier so only when needed).
-        let mode = RenderMode::select(fractal.supports_perturbation(), julia, magnification);
+        let mode = self.render_mode(fractal, julia, magnification);
         let precision = fractadyne_core::precision_for_octaves(log2mag.max(0.0).ceil() as u64);
         let vi = view_id as usize;
 
@@ -8353,6 +8441,7 @@ impl FractadyneApp {
                     precision,
                     julia,
                     formula: self.fractal.formula_id(),
+                    custom: self.custom_reference_formula_for(self.fractal),
                     julia_c: self.julia_c,
                     do_sa,
                     bla_dc_max: bla_will_build

@@ -465,10 +465,13 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
          z = z^3 - p1*z + c, or several statements (t = sqr(z), then z = t*t + c). z is the \
          iterate, c the pixel (the Julia constant in Julia mode), p1-p5 parameters; |z| is the \
          squared modulus, as in Fractint, and the usual functions are available (sqr, abs, conj, \
-         real, imag, cabs, flip, recip, exp, log, sqrt, sin, cos, tan, sinh, cosh, tanh). A custom \
-         formula renders on the direct path - no deep zoom yet - so it stays sharp until one \
-         single-precision step of c spans a pixel: about 1e4x to 1e5x, less far from the origin. \
-         Views, sessions and exported images keep the formula's text.",
+         real, imag, cabs, flip, recip, exp, log, sqrt, sin, cos, tan, sinh, cosh, tanh). A step \
+         built from sums, products, whole-number powers, conj, abs, real, imag and |z| (the \
+         Mandelbrot, Burning Ship and hybrid kind) deep-zooms by perturbation, sharp to about \
+         1e36x; past that the status bar shows a depth limit. One with division, a fractional \
+         power or a function renders on the direct path, sharp until one single-precision step of \
+         c spans a pixel: about 1e4x to 1e5x, less far from the origin. The formula dialog says \
+         which applies. Views, sessions and exported images keep the formula's text.",
     );
 }
 
@@ -603,7 +606,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--resume", "Restart an interrupted render: keep frames already on disk and render only the missing ones. The newest frame is verified first and discarded if incomplete (a render dies on the frame it is writing), stepping back until a good one is found; a folder holding frames at a different size is refused rather than mixed into the sequence."),
         Section("View (with --render / --find-minibrot)"),
         Flag("--fractal NAME", "Family, e.g. \"Mandelbrot\" or \"Burning Ship\"."),
-        Flag("--formula STEP", "A custom formula's step in Fractint-style expressions, e.g. \"z = z^3 - p1*z + c\" (implies --fractal Custom; direct rendering, no deep zoom)."),
+        Flag("--formula STEP", "A custom formula's step in Fractint-style expressions, e.g. \"z = z^3 - p1*z + c\" (implies --fractal Custom; deep zoom to about 1e36x for a step without division, fractional powers or functions, direct rendering otherwise)."),
         Flag("--formula-params LIST", "The custom formula's parameters p1…p5 as re,im;re,im;…"),
         Flag("--center X Y", "View center (full-precision decimals or expressions: -3/4, -0.5 + 0.25*cos(pi/4))."),
         Flag("--zoom M", "Magnification, e.g. 2e7 or 1.0e23.9 (any depth; a bad value is fatal)."),

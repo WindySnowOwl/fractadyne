@@ -7,7 +7,7 @@
 //! edit) is reported and the view falls back to Mandelbrot rather than rendering something else.
 
 use fractadyne_core::ir::{self, parse::MAX_PARAMS};
-use fractadyne_gpu::custom::{CustomShader, Precision};
+use fractadyne_gpu::custom::CustomShader;
 use std::sync::Arc;
 
 pub(crate) struct CustomFormula {
@@ -35,21 +35,6 @@ impl CustomFormula {
         self.formula.param_count()
     }
 
-    /// One line on how deep the formula renders, for the dialog. MEASURED, not the double-single
-    /// theory: current NVIDIA and AMD shader compilers fold the error-free transforms df32 relies on
-    /// (`--gputest`; RTX 3080 / NVIDIA 616.92: df_add error 8.1e-8), so the pixel's `c` itself is
-    /// single precision. At −1.64+0.36i and 549,309× a formula with NO functions broke into the same
-    /// 17×4-px bricks as one with sin and cos (338 distinct values of 48,400 pixels): the limit is
-    /// where one f32 step of `c` spans a pixel, for every formula, whatever its precision tier.
-    pub(crate) fn depth_note(&self) -> &'static str {
-        match self.shader.precision {
-            Precision::Df32 | Precision::F32 => {
-                "Direct rendering: sharp until one single-precision step of c spans a pixel — about \
-                 1e4x to 1e5x, less far from the origin. No deep zoom yet."
-            }
-        }
-    }
-
     /// The `.fdn` form of the source: one line, with `\` and line breaks escaped
     /// (`\\`, `\n`) — a view file holds one `key=value` per line.
     pub(crate) fn source_line(&self) -> String {
@@ -63,6 +48,33 @@ impl CustomFormula {
             .map(|(re, im)| format!("{re:?},{im:?}"))
             .collect::<Vec<_>>()
             .join(";")
+    }
+}
+
+/// One line on how deep `formula` renders, for the dialog — of the text as typed, so the answer
+/// is there before Apply. Both limits are MEASURED.
+///
+/// With a perturbed step (`ir::perturb`): double-single perturbation, whose offsets are f32 —
+/// `z² + c` matched the built-in Mandelbrot (floatexp past 1e28×) image for image on the corpus
+/// spiral through 1e36× and broke entirely at 1e38×, f32's exponent floor
+/// ([`crate::render::CUSTOM_PERT_LIMIT`]).
+///
+/// Without one, the direct path, NOT the double-single theory: current NVIDIA and AMD shader
+/// compilers fold the error-free transforms df32 relies on (`--gputest`; RTX 3080 / NVIDIA 616.92:
+/// df_add error 8.1e-8), so the pixel's `c` itself is single precision. At −1.64+0.36i and
+/// 549,309× a formula with NO functions broke into the same 17×4-px bricks as one with sin and cos
+/// (338 distinct values of 48,400 pixels): the limit is where one f32 step of `c` spans a pixel,
+/// whatever the formula's precision tier.
+pub(crate) fn depth_note_for(formula: &ir::Formula) -> String {
+    match ir::perturb::perturbed_formula(formula) {
+        Ok(_) => "Deep zoom by perturbation, sharp to about 1e36x (every step iterated: no series \
+                  approximation or BLA for custom formulas yet)."
+            .to_string(),
+        Err(why) => format!(
+            "Direct rendering ({} has no deep-zoom form yet): sharp until one single-precision step \
+             of c spans a pixel — about 1e4x to 1e5x, less far from the origin.",
+            why.0
+        ),
     }
 }
 

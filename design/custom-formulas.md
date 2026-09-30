@@ -342,8 +342,38 @@ separate, later decision, and only if phase 4 shows the generated render is iden
     `|z|·z·0.3 + conj(z)² + c` 0.021% of pixels disagree (tolerance 0.01 iteration).
   - The generated module now compiles in **0.40–0.45 s** (`fs_iterate`, RTX 3080), up from
     74–119 ms without mode 0; the all-formula module takes 4.4 s.
-  - Not yet in the app. Stage C is the reference orbit from the IR in the live and export pipelines, mode
-    selection for a perturbable Custom formula, and the depth indicator past ~1e28× (no mode 2).
+- **Stage C: deep zoom in the app.** One mode rule for every caller, `render_mode(fractal, julia,
+  mag)`: a custom formula with a perturbed step perturbs past 1e4× like a built-in, in df32 only
+  (its module has no floatexp path). Its reference is the IR's bignum orbit
+  (`render::custom_reference`), at the view centre, or the longest of a 3×3 grid when the centre
+  escapes early. No candidate pick, extension, disk cache, SA or BLA: each is keyed or implemented
+  per built-in id. Export glitch correction is off for `CUSTOM` in `caps`: it builds its extra
+  references by formula id. Before that, a custom export ran 52 references of the wrong orbit;
+  `z² + c` hid it, since id 1000 fell through to the Mandelbrot step. Re-applying a formula while
+  Custom shows now drops the old reference (`set_fractal` returns early for the same family).
+  Measured:
+  - The depth limit. Custom `z² + c` against the built-in Mandelbrot (floatexp past 1e28×) on the
+    corpus spiral, 400×300 at 60,000 iterations, per-channel mean Δ: 3.5–3.9 (filament aliasing,
+    as at 1e12×) at 1e24–1e34×, 5.1 at 1e36×, 67 at 1e38× (broken: offsets under f32's exponent
+    floor). `CUSTOM_PERT_LIMIT` = 1e36× drives the status bar's "depth limit". The dialog states the
+    limit for the text as typed, naming what keeps a formula on the direct path.
+  - Self-test +6 (full run 230/230, goldens 19/19): the app's deep pipeline end to end (formula
+    applied as the app holds it, the export request built as for any view) at 1e12× and 1e20×
+    against the IR in bignum at 1,024 sampled pixels. A Mandelbrot/Burning Ship hybrid gives 0
+    disagreements, `z² + p·z + c` 0, a Mandelbrot/Tricorn hybrid 6 at 1e12× and 0 at 1e20× (same
+    status and within 2 iterations; median |Δ| 0.00000–0.00013). Building the reference without
+    the formula's parameters (a planted bug) gave 36% and 60%. Two traps in picking views:
+    - A boundary where the escape time varies smoothly is, at 1e20×, a single level curve of
+      |z₂₀₀₀|. Every pixel had |z|² within 1e-8 of the bailout, which no f32 escape test resolves:
+      f64 perturbation and bignum split the pixels, and the GPU called them all interior.
+      Pixels within 1e-4 of the bailout at a deciding step are therefore left out. A view must be
+      ≥90% decidable, and the view search tries four bisection rays for one that is.
+      `|z|·z·0.3 + conj(z)² + c` has none, so conj is covered deep by a Mandelbrot/Tricorn hybrid.
+    - Single-precision perturbation drifts 0.01–11 iterations from the exact value on pixels
+      escaping late (past iteration 1,860 of 2,000) in a chaotic region. The built-ins do the same
+      there, so the pipeline check uses the twin check's tolerance, not 0.01.
+  - Live: a `--shot` of custom `z² + c` at 1.1e30× draws the built-in's spiral.
+  - A report-table fix: a `|` in a check's name (`|z|`) split the markdown row; cells are escaped.
 
 ## 6. Validation plan
 

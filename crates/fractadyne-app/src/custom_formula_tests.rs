@@ -34,8 +34,21 @@ fn compile_reports_parse_errors_with_their_place() {
     assert!(err.contains("line 1"), "{err}");
     let f = CustomFormula::compile("z^2 + c", &[]).unwrap();
     assert_eq!(f.params.len(), MAX_PARAMS);
-    assert!(f.depth_note().contains("single-precision step of c"));
-    assert_eq!(CustomFormula::compile("sin(z) + c", &[]).unwrap().depth_note(), f.depth_note());
+    // A ring formula deep-zooms; one with a function or a division renders direct and says which
+    // feature stops it — and the dialog's note (of the typed text) agrees with the shader the
+    // renderer selects its mode by.
+    for (src, deep, why) in [
+        ("z^2 + c", true, ""),
+        ("sin(z) + c", false, "an elementary function"),
+        ("z^2 + 1/c", false, "division"),
+        ("z^2.5 + c", false, "a non-integer power"),
+    ] {
+        let f = CustomFormula::compile(src, &[]).unwrap();
+        let note = depth_note_for(&f.formula);
+        assert_eq!(note.contains("Deep zoom by perturbation"), deep, "{src}: {note}");
+        assert_eq!(f.shader.perturbation.is_ok(), deep, "{src}: the renderer disagrees with the note");
+        assert!(deep || (note.contains("single-precision step of c") && note.contains(why)), "{src}: {note}");
+    }
     // Different parameters, different module: the key tells two renders apart.
     let a = CustomFormula::compile("z^2 + p1", &[(0.1, 0.0)]).unwrap();
     let b = CustomFormula::compile("z^2 + p1", &[(0.2, 0.0)]).unwrap();
