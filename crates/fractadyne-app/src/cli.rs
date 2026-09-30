@@ -1229,6 +1229,9 @@ pub(crate) struct HarnessModes {
     /// the layout actually did rather than against the panel's nominal width.
     pub(crate) uitest_central_w: Option<f32>,
     pub(crate) uitest_panel_w: Option<f32>,
+    /// The shader key the `formula-apply-async` step applied, so its record can check that the
+    /// view switched to exactly that formula.
+    pub(crate) uitest_async_key: Option<u64>,
     pub(crate) soak: Option<crate::soak::Soak>,
     /// `--recordtest [FRAMES]`: the frame record's own gate — does it record every frame, fill
     /// every required field, and survive an abort? See `mod recordtest`.

@@ -5719,6 +5719,10 @@ struct FractadyneApp {
     /// kept so code that runs outside the frame closure — opening a dialog, saving a view —
     /// can render without every one of those paths growing two parameters.
     gpu: Option<(eframe::wgpu::Device, eframe::wgpu::Queue)>,
+    /// The window's render state (cloned `Arc`s, refreshed every frame), for work that must reach
+    /// the renderer from outside the paint callback — compiling a custom formula's pipelines off
+    /// the render thread (`fractadyne_gpu::compile_custom_async`).
+    render_state: Option<eframe::egui_wgpu::RenderState>,
     /// Bookmarks (saved views), persisted to the config dir; + window/input state.
     bookmarks: Vec<Bookmark>,
     /// The user's saved gradients, loaded from `gradients.toml` beside the bookmarks.
@@ -6689,6 +6693,7 @@ impl FractadyneApp {
                 uitest,
                 uitest_central_w: None,
                 uitest_panel_w: None,
+                uitest_async_key: None,
                 soak,
                 recordtest,
                 juliadive,
@@ -6794,6 +6799,7 @@ impl FractadyneApp {
             },
             gallery: GalleryState { dir: Self::pictures_dir(), ..Default::default() },
             gpu: None,
+            render_state: None,
             bookmarks: Self::load_bookmarks(),
             saved_gradients: Self::load_saved_gradients(),
             pending_thumb: None,
@@ -14770,6 +14776,9 @@ impl eframe::App for FractadyneApp {
             .wgpu_render_state()
             .map(|rs| (rs.device.clone(), rs.queue.clone()));
         self.gpu = gpu.clone();
+        self.render_state = frame.wgpu_render_state().cloned();
+        // A custom formula compiling off the render thread: switch to it once its pipelines exist.
+        self.poll_formula_compile(ctx);
         // Motion-jam bookkeeping: retire completed full-size dispatches (the callbacks fired
         // since last frame), then arm registrations owed from LAST frame's dispatches — eframe
         // has submitted that work by now, so `on_submitted_work_done` covers it and nothing

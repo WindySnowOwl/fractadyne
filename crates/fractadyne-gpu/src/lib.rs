@@ -3281,6 +3281,51 @@ pub fn install_renderer(render_state: &egui_wgpu::RenderState) {
         .insert(renderer);
 }
 
+/// A custom formula's pipelines, compiled off the render thread by [`compile_custom_async`].
+pub struct PreparedCustom(CustomPipelines);
+
+impl PreparedCustom {
+    /// The shader key the pipelines were built from (`CustomShader::key`).
+    pub fn key(&self) -> u64 {
+        self.0.key
+    }
+}
+
+/// Compile `shader`'s pipelines on a worker thread, against the live renderer's own bind-group
+/// layouts, and deliver them on the returned channel. The render thread otherwise builds them on
+/// the first frame that draws the formula — ~0.8 s on the RTX 3080 (`fs_iterate`, the chunk pass
+/// and its resolve; design/custom-formulas.md §5.1), a frozen window on every Apply, and every
+/// parameter change is a new module. `None` when the renderer is not installed yet or the thread
+/// could not start (the render thread's own build still covers it).
+pub fn compile_custom_async(
+    render_state: &egui_wgpu::RenderState,
+    shader: std::sync::Arc<custom::CustomShader>,
+) -> Option<std::sync::mpsc::Receiver<PreparedCustom>> {
+    let (iter_bgl, state_bgl) = {
+        let guard = render_state.renderer.read();
+        let r = guard.callback_resources.get::<Renderer>()?;
+        (r.iter_bgl.clone(), r.state_bgl.clone())
+    };
+    let device = render_state.device.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("fd-custom-compile".into())
+        .spawn(move || {
+            let _ = tx.send(PreparedCustom(CustomPipelines::new(&device, &iter_bgl, &state_bgl, &shader)));
+        })
+        .ok()?;
+    Some(rx)
+}
+
+/// Hand pipelines from [`compile_custom_async`] to the renderer: the next frame that draws that
+/// formula uses them instead of compiling. They replace the renderer's current custom pipelines,
+/// so install them in the same update that switches the view to their formula.
+pub fn install_custom(render_state: &egui_wgpu::RenderState, prepared: PreparedCustom) {
+    if let Some(r) = render_state.renderer.write().callback_resources.get_mut::<Renderer>() {
+        r.custom = Some(prepared.0);
+    }
+}
+
 pub fn add_mandelbrot(painter: &egui::Painter, rect: egui::Rect, params: MandelbrotParams) {
     painter.add(egui_wgpu::Callback::new_paint_callback(rect, params));
 }

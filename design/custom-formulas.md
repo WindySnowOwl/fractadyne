@@ -399,6 +399,25 @@ separate, later decision, and only if phase 4 shows the generated render is iden
   - First use of a formula now compiles `fs_iterate` (0.41–0.46 s), `fs_iterate_chunk`
     (0.26–0.29 s) and `fs_resolve` (0.03–0.09 s) on the RTX 3080: about 0.8 s once per formula, on
     the render thread. Building them off that thread is the obvious follow-up.
+- **Apply compiles off the render thread.** `fractadyne_gpu::compile_custom_async` builds a
+  formula's pipelines on a worker, against the live renderer's own bind-group layouts. The dialog's
+  Apply keeps the view rendering what it shows, then installs the pipelines and switches, in one
+  update (`poll_formula_compile`). No frame ever skips its dispatch, so no live-render state
+  machine sees a gap. Every parameter change is a new module (parameters are baked in), so this is
+  the common case, not a first-use one. The `formula-apply-async` uitest step measures it:
+  compiled off-thread in 689–819 ms, longest frame 19–23 ms. A planted render-thread compile froze
+  a frame for 858 ms and failed. Two traps, each found by a control:
+  - The driver keeps its own on-disk shader cache. With a fixed parameter the second walk
+    recompiled the same module in ~20 ms, and the planted bug PASSED. The step's parameter now
+    carries a per-run nonce (below 1e-6, invisible).
+  - Both checks passed on a frame showing the WRONG formula: the `formula` step's
+    z³ − 0.5z + c three steps earlier, 0.0 difference. The live chunk walk's signature (view,
+    zoom, reference length, jitter, iterations, resolution) did not cover what is iterated. Since
+    custom formulas gained resumable passes, a switch at an unchanged view (Custom's home is
+    Mandelbrot's) resumed the finished walk of the earlier formula. The walk signature now folds
+    in the settings hash the tiled settle's key uses (formula id, custom key, Julia and its c, the
+    colour inputs). The step also checks that its picture differs from the z³ step's, in the band
+    right of the dialog: 5.4 fixed against 0.0 stale.
 
 ## 6. Validation plan
 

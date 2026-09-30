@@ -1,7 +1,8 @@
 //! The "Custom formula" dialog (design/custom-formulas.md §4.8, first cut): a text field for the
 //! step in Fractint-style expressions, the parameters it reads, a syntax check as you type, and
-//! Apply. Apply compiles the formula into its shader (~0.1 s) and shows it; the view is kept when a
-//! custom formula is already showing, so a formula can be refined in place.
+//! Apply. Apply generates the formula's shader, compiles its pipelines off the render thread
+//! (~0.8 s) while the view keeps rendering, and then shows it; the view is kept when a custom
+//! formula is already showing, so a formula can be refined in place.
 
 use crate::custom_formula::CustomFormula;
 use crate::FractadyneApp;
@@ -26,6 +27,16 @@ pub(crate) struct FormulaDialog {
     pub(crate) error: Option<String>,
     /// The keypad's open tab.
     pub(crate) tab: crate::ui::formula_keypad::Tab,
+    /// An applied formula whose pipelines are compiling off the render thread. The view keeps
+    /// showing what it shows until they are ready, then switches (`poll_formula_compile`).
+    pub(crate) pending: Option<PendingFormula>,
+}
+
+/// A formula waiting for its pipelines (`fractadyne_gpu::compile_custom_async`).
+pub(crate) struct PendingFormula {
+    formula: CustomFormula,
+    rx: std::sync::mpsc::Receiver<fractadyne_gpu::PreparedCustom>,
+    started: std::time::Instant,
 }
 
 impl Default for FormulaDialog {
@@ -36,6 +47,7 @@ impl Default for FormulaDialog {
             params: std::array::from_fn(|_| ("0".to_string(), "0".to_string())),
             error: None,
             tab: Default::default(),
+            pending: None,
         }
     }
 }
@@ -96,6 +108,54 @@ impl FractadyneApp {
             self.invalidate_refs();
         }
         self.set_fractal(crate::FractalKind::Custom);
+    }
+
+    /// Apply `c` once its pipelines are compiled OFF the render thread, which otherwise builds them
+    /// on the first frame that draws it: ~0.8 s of frozen window on every Apply, and every
+    /// parameter change is a new module. Until then the view keeps rendering what it shows. With
+    /// no renderer to compile against, applies at once (the render thread compiles).
+    pub(crate) fn apply_custom_formula_async(&mut self, c: CustomFormula) {
+        let rx = self
+            .render_state
+            .as_ref()
+            .and_then(|rs| fractadyne_gpu::compile_custom_async(rs, c.shader.clone()));
+        match rx {
+            // A newer Apply replaces an older one still compiling; that worker's result is dropped.
+            Some(rx) => {
+                self.formula_dialog.pending =
+                    Some(PendingFormula { formula: c, rx, started: std::time::Instant::now() })
+            }
+            None => self.apply_custom_formula(c),
+        }
+    }
+
+    /// Switch to a pending formula whose pipelines have arrived: install them, then apply, in the
+    /// same update — so the frame that first draws the formula finds them ready.
+    pub(crate) fn poll_formula_compile(&mut self, ctx: &egui::Context) {
+        let Some(p) = self.formula_dialog.pending.as_ref() else { return };
+        match p.rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(30));
+            }
+            got => {
+                let p = self.formula_dialog.pending.take().expect("checked above");
+                match (got, self.render_state.as_ref()) {
+                    (Ok(prepared), Some(rs)) => {
+                        crate::diag::log_line(
+                            "formula",
+                            &format!(
+                                "custom formula pipelines compiled off the render thread in {:.0} ms",
+                                p.started.elapsed().as_secs_f64() * 1000.0
+                            ),
+                        );
+                        fractadyne_gpu::install_custom(rs, prepared);
+                    }
+                    // The worker died (or the renderer went away): the render thread compiles.
+                    _ => crate::diag::log_line("formula", "off-thread compile failed; the render thread compiles"),
+                }
+                self.apply_custom_formula(p.formula);
+            }
+        }
     }
 
     pub(crate) fn draw_formula_dialog(&mut self, ctx: &egui::Context) {
@@ -177,11 +237,16 @@ impl FractadyneApp {
                     ui.colored_label(egui::Color32::from_rgb(0xE0, 0x6C, 0x60), e);
                 }
                 ui.add_space(4.0);
+                let compiling = self.formula_dialog.pending.is_some();
                 ui.horizontal(|ui| {
                     apply = ui
                         .add_enabled(check.is_ok(), egui::Button::new("Apply"))
                         .on_hover_text("Compile the formula and show it")
                         .clicked();
+                    // Always laid out, blank when idle, so the row does not reflow as it comes and
+                    // goes.
+                    let note = if compiling { "Compiling the formula for the GPU…" } else { "" };
+                    ui.label(egui::RichText::new(note).weak().small());
                 });
             });
         if let Some(i) = example {
@@ -198,7 +263,7 @@ impl FractadyneApp {
             match result {
                 Ok(c) => {
                     self.formula_dialog.error = None;
-                    self.apply_custom_formula(c);
+                    self.apply_custom_formula_async(c);
                 }
                 Err(e) => self.formula_dialog.error = Some(e),
             }

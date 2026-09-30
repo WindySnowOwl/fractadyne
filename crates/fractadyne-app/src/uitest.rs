@@ -79,6 +79,11 @@ enum Screen {
     FormulaError,
     /// The dialog's keypad on its functions tab (the `123` tab shows on the Formula screen).
     FormulaFunctions,
+    /// Apply a formula no earlier step compiled, through the dialog's path: its pipelines compile
+    /// off the render thread while the view keeps rendering, then the view switches. Checked: it
+    /// switched to exactly that formula, and no frame of the step took anywhere near the ~0.8 s the
+    /// compile costs on the render thread.
+    FormulaApplyAsync,
     /// Dual view on one formula, then the SAME dual view on another — checklist steps 45-46, and
     /// the field report behind them: switching formula while dual left the parameter pane showing
     /// the previous formula. The pair is the check; neither screen means anything alone.
@@ -191,6 +196,9 @@ struct StepResult {
     /// one before it. Whole-frame statistics are too coarse for that: two different fractals can
     /// share a mean and a spread, and the panel chrome dominates either way.
     left_fp: Vec<u8>,
+    /// The same over the middle band (45–75% across), which the formula dialog — docked left —
+    /// does not cover, so two formula steps can be told apart by their pictures.
+    mid_fp: Vec<u8>,
     /// Whether view 0 held a tiled settle grid when this step was captured.
     ///
     /// ⭐Recorded so a check whose PRECONDITION is "a grid completed" can assert it rather than
@@ -203,7 +211,11 @@ struct StepResult {
 /// status bar. That region is the dual view's PARAMETER pane — the half the field report was
 /// about — and cropping to it keeps the Julia pane and the chrome out of the comparison.
 fn left_pane_fingerprint(px: &[egui::Color32], w: usize, h: usize) -> Vec<u8> {
-    let (x0, x1) = (w / 40, (w * 45) / 100);
+    band_fingerprint(px, w, h, w / 40, (w * 45) / 100)
+}
+
+/// The same thumbnail over the columns `x0..x1`.
+fn band_fingerprint(px: &[egui::Color32], w: usize, h: usize, x0: usize, x1: usize) -> Vec<u8> {
     let (y0, y1) = (h / 8, (h * 7) / 8);
     if x1 <= x0 + 16 || y1 <= y0 + 16 {
         return Vec::new();
@@ -285,6 +297,10 @@ pub(crate) struct UiTest {
     crashes_at_start: Vec<String>,
     /// Control-panel width measured during the toggle step's OPEN phase (`None` until then).
     panel_w: Option<f32>,
+    /// The longest gap between two harness ticks (= frames) in the current step, and the last
+    /// tick — a frozen frame shows here whatever froze it.
+    max_gap_ms: f64,
+    last_tick: Instant,
     /// Whether the session BEFORE this one left its unclean-exit marker armed — i.e. it did not
     /// shut down through `crate::exit`. Read at construction, because reporting clears the marker.
     prev_unclean: bool,
@@ -342,6 +358,8 @@ impl UiTest {
             quiet_since: Instant::now(),
             crashes_at_start: crate::diag::crash_report_names(),
             panel_w: None,
+            max_gap_ms: 0.0,
+            last_tick: Instant::now(),
             prev_unclean: crate::diag::previous_session_unclean(),
             prev_walk_clean: {
                 // Read the previous walk's verdict, then claim the marker for this one.
@@ -691,6 +709,7 @@ fn build_steps() -> Vec<Step> {
         screen("formula", Screen::Formula),
         screen("formula-error", Screen::FormulaError),
         screen("formula-functions", Screen::FormulaFunctions),
+        screen("formula-apply-async", Screen::FormulaApplyAsync),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
         live("live-direct-1e2", 2.0),
         live("live-df32-1e6", 6.0),
@@ -800,10 +819,14 @@ impl FractadyneApp {
                 ut.ref_changed_at = ut.step_start;
                 ut.quiet_since = ut.step_start;
                 ut.panel_w = None;
+                ut.max_gap_ms = 0.0;
+                ut.last_tick = ut.step_start;
                 ut.phase = Phase::Settle;
             }
             Phase::Settle => {
                 let now = Instant::now();
+                ut.max_gap_ms = ut.max_gap_ms.max(now.duration_since(ut.last_tick).as_secs_f64() * 1000.0);
+                ut.last_tick = now;
                 // Track the status-bar height range, but ONLY after a transition guard: a window
                 // resize legitimately changes the height for a frame or two while winit applies the
                 // new size, and that must not count as a waver. Past the guard, the width is fixed,
@@ -894,7 +917,8 @@ impl FractadyneApp {
                     || !ramp_done(0)
                     || (self.dual && !ramp_done(1))
                     || !self.misi_gallery_ready()
-                    || self.misi_jump_busy();
+                    || self.misi_jump_busy()
+                    || self.formula_dialog.pending.is_some();
                 if busy {
                     ut.quiet_since = now;
                 }
@@ -1355,6 +1379,28 @@ impl FractadyneApp {
                 self.formula_dialog.source = "z = sin(z) + cos(z)*cos(z) + c".into();
                 self.formula_dialog.tab = crate::ui::formula_keypad::Tab::Functions;
             }
+            Screen::FormulaApplyAsync => {
+                // A parameter no step and NO EARLIER RUN used, so this module has never been
+                // compiled: the driver keeps its own on-disk shader cache, and with a fixed
+                // parameter a second walk recompiled the module in ~20 ms — measured when a
+                // planted render-thread compile passed the freeze check below. A per-run nonce
+                // (sub-1e-6, invisible) changes the baked literal, hence the module.
+                let nonce = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.subsec_nanos() % 1_000_000) as f64
+                    * 1.0e-12;
+                let (src, p) = ("z = z^4 - p1*z + c", [(0.3125 + nonce, -0.0625)]);
+                self.open_formula_dialog();
+                self.formula_dialog.source = src.into();
+                self.formula_dialog.params[0] = (p[0].0.to_string(), p[0].1.to_string());
+                match crate::custom_formula::CustomFormula::compile(src, &p) {
+                    Ok(c) => {
+                        self.harness.uitest_async_key = Some(c.shader.key);
+                        self.apply_custom_formula_async(c);
+                    }
+                    Err(e) => self.formula_dialog.error = Some(e),
+                }
+            }
         }
     }
 
@@ -1407,6 +1453,7 @@ impl FractadyneApp {
         // Content-region stats: the central 60%, so menu/status chrome doesn't mask a blank view.
         let (mean_luma, luma_stddev, buckets) = centre_stats(&image.pixels, w as usize, h as usize);
         let left_fp = left_pane_fingerprint(&image.pixels, w as usize, h as usize);
+        let mid_fp = band_fingerprint(&image.pixels, w as usize, h as usize, (w as usize * 45) / 100, (w as usize * 75) / 100);
         let tiled = self.tile_state_present(0);
 
         let is_live = matches!(step.kind, StepKind::Live(_));
@@ -1426,6 +1473,45 @@ impl FractadyneApp {
             });
         } else {
             checks.push(pass("frame not blank", format!("stddev {luma_stddev:.1}, {buckets} buckets")));
+        }
+
+        if matches!(step.kind, StepKind::Screen(Screen::FormulaApplyAsync)) {
+            // The formula took — exactly the one applied, the compile no longer pending.
+            let want = self.harness.uitest_async_key;
+            let got = self.custom.as_ref().map(|c| c.shader.key);
+            let switched = self.fractal == crate::FractalKind::Custom
+                && want.is_some()
+                && got == want
+                && self.formula_dialog.pending.is_none();
+            checks.push(Check {
+                name: "formula applied after an off-thread compile".into(),
+                verdict: if switched { Verdict::Pass } else { Verdict::Fail },
+                detail: format!("want key {want:x?}, showing {got:x?} ({:?}), pending {}", self.fractal, self.formula_dialog.pending.is_some()),
+            });
+            // ~0.8 s is what the compile costs on the render thread (design/custom-formulas.md §5.1);
+            // a frame anywhere near it means the window froze for it.
+            let gap = ut.max_gap_ms;
+            checks.push(Check {
+                name: "no frame froze for the compile".into(),
+                verdict: if gap < 300.0 { Verdict::Pass } else { Verdict::Fail },
+                detail: format!("longest frame gap {gap:.0} ms (a render-thread compile is ~800)"),
+            });
+            // ⭐And the PICTURE is the new formula's. The two checks above passed on a frame that
+            // still showed the `formula` step's z³ − 0.5z + c: the chunk walk's signature did not
+            // cover the formula, so at the same home view the finished walk of the earlier formula
+            // was resumed, not redone. Compared on the band right of the dialog, which covers the
+            // left side of both screenshots. Measured: 0.0 for the stale frame (the same texture),
+            // 5.4 for z⁴ − 0.3125z + c against it.
+            let earlier = ut.results.iter().rev().find(|r| r.name == "formula");
+            let d = earlier.map_or(255.0, |r| fp_distance(&r.mid_fp, &mid_fp));
+            checks.push(Check {
+                name: "the view shows the new formula".into(),
+                verdict: if earlier.is_some() && d > 1.5 { Verdict::Pass } else { Verdict::Fail },
+                detail: format!(
+                    "picture differs from the z³ step's by {d:.1} (mean luma, middle band){}",
+                    if earlier.is_none() { " — no z³ step to compare" } else { "" }
+                ),
+            });
         }
 
         let mut mode = None;
@@ -1879,6 +1965,7 @@ impl FractadyneApp {
             luma_stddev,
             buckets,
             left_fp,
+            mid_fp,
             tiled,
         }
     }
@@ -1956,6 +2043,7 @@ impl FractadyneApp {
             luma_stddev: 0.0,
             buckets: 0,
             left_fp: Vec::new(),
+            mid_fp: Vec::new(),
             tiled: false,
         }
     }
@@ -2095,6 +2183,7 @@ fn timeout_result(step: &Step) -> StepResult {
         luma_stddev: 0.0,
         buckets: 0,
         left_fp: Vec::new(),
+        mid_fp: Vec::new(),
         tiled: false,
     }
 }
