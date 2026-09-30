@@ -77,6 +77,8 @@ enum Screen {
     Formula,
     /// The same dialog holding a formula with a syntax error: the positioned message, Apply off.
     FormulaError,
+    /// The dialog's keypad on its functions tab (the `123` tab shows on the Formula screen).
+    FormulaFunctions,
     /// Dual view on one formula, then the SAME dual view on another — checklist steps 45-46, and
     /// the field report behind them: switching formula while dual left the parameter pane showing
     /// the previous formula. The pair is the check; neither screen means anything alone.
@@ -688,6 +690,7 @@ fn build_steps() -> Vec<Step> {
         screen("color-picker", Screen::ColorPicker),
         screen("formula", Screen::Formula),
         screen("formula-error", Screen::FormulaError),
+        screen("formula-functions", Screen::FormulaFunctions),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
         live("live-direct-1e2", 2.0),
         live("live-df32-1e6", 6.0),
@@ -1041,6 +1044,7 @@ impl FractadyneApp {
         // The Formula screen SHOWS a custom formula; the steps after it assert Mandelbrot's render
         // modes, which a custom formula (direct only) would fail. Leave it with the window.
         self.formula_dialog.open = false;
+        self.formula_dialog.tab = Default::default();
         if self.fractal == crate::FractalKind::Custom {
             self.set_fractal(crate::FractalKind::Mandelbrot);
         }
@@ -1345,6 +1349,11 @@ impl FractadyneApp {
             Screen::FormulaError => {
                 self.open_formula_dialog();
                 self.formula_dialog.source = "z = z^3 - p1*z +\nfn1(z)".into();
+            }
+            Screen::FormulaFunctions => {
+                self.open_formula_dialog();
+                self.formula_dialog.source = "z = sin(z) + cos(z)*cos(z) + c".into();
+                self.formula_dialog.tab = crate::ui::formula_keypad::Tab::Functions;
             }
         }
     }

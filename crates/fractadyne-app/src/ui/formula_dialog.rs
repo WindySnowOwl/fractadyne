@@ -24,6 +24,8 @@ pub(crate) struct FormulaDialog {
     pub(crate) params: [(String, String); MAX_PARAMS],
     /// Why the last Apply did not take (a parse error names its line and column).
     pub(crate) error: Option<String>,
+    /// The keypad's open tab.
+    pub(crate) tab: crate::ui::formula_keypad::Tab,
 }
 
 impl Default for FormulaDialog {
@@ -33,6 +35,7 @@ impl Default for FormulaDialog {
             source: "z = z^2 + c".into(),
             params: std::array::from_fn(|_| ("0".to_string(), "0".to_string())),
             error: None,
+            tab: Default::default(),
         }
     }
 }
@@ -120,8 +123,10 @@ impl FractadyneApp {
                             });
                     });
                 });
+                let text_id = egui::Id::new("formula_source");
                 ui.add(
                     egui::TextEdit::multiline(&mut self.formula_dialog.source)
+                        .id(text_id)
                         .font(egui::TextStyle::Monospace)
                         .desired_rows(4)
                         .desired_width(f32::INFINITY)
@@ -129,13 +134,17 @@ impl FractadyneApp {
                 );
                 ui.label(
                     egui::RichText::new(
-                        "z the iterate, c the pixel, p1…p5 parameters; + − * / ^, |z| (squared \
-                         modulus), sqr abs conj real imag cabs flip recip exp log sqrt sin cos tan \
-                         sinh cosh tanh. Statements separated by a new line or a comma; ; starts a comment.",
+                        "Type, or use the keypad — it holds every name the formula language knows. \
+                         Statements are separated by a new line or a comma; ; starts a comment.",
                     )
                     .weak()
                     .small(),
                 );
+                if let Some(action) = crate::ui::formula_keypad::show(ui, &mut self.formula_dialog.tab) {
+                    let ctx = ui.ctx().clone();
+                    crate::ui::formula_keypad::press(&ctx, text_id, &mut self.formula_dialog.source, action);
+                    self.formula_dialog.error = None;
+                }
                 match &check {
                     Ok(_) => {
                         // Plain words: the UI font has no check-mark glyph (it drew a box).

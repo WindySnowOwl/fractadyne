@@ -8,6 +8,7 @@
 pub(crate) mod central;
 mod dialogs;
 pub(crate) mod formula_dialog;
+pub(crate) mod formula_keypad;
 mod menus;
 mod panels;
 pub(crate) mod diagnostics;
