@@ -346,6 +346,14 @@ impl FractadyneApp {
                             self.open_formula_dialog();
                             ui.close_menu();
                         }
+                        if ui
+                            .button("Formula library…")
+                            .on_hover_text("Saved custom formulas: apply, edit, import and export them")
+                            .clicked()
+                        {
+                            self.formula_library.open = true;
+                            ui.close_menu();
+                        }
                         ui.separator();
                         // Was two checkboxes ("Julia mode", "Dual view") of which only three
                         // combinations were legal — the fourth was suppressed by grey. One

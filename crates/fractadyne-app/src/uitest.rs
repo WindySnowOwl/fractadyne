@@ -84,6 +84,10 @@ enum Screen {
     /// switched to exactly that formula, and no frame of the step took anywhere near the ~0.8 s the
     /// compile costs on the render thread.
     FormulaApplyAsync,
+    /// The formula library window, seeded in memory: a parameterized formula SHOWING (its row
+    /// marked), a two-statement one, one that does not read in this version (its reason in red), and
+    /// a name long enough to need truncating.
+    FormulaLibrary,
     /// Dual view on one formula, then the SAME dual view on another — checklist steps 45-46, and
     /// the field report behind them: switching formula while dual left the parameter pane showing
     /// the previous formula. The pair is the check; neither screen means anything alone.
@@ -710,6 +714,7 @@ fn build_steps() -> Vec<Step> {
         screen("formula-error", Screen::FormulaError),
         screen("formula-functions", Screen::FormulaFunctions),
         screen("formula-apply-async", Screen::FormulaApplyAsync),
+        screen("formula-library", Screen::FormulaLibrary),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
         live("live-direct-1e2", 2.0),
         live("live-df32-1e6", 6.0),
@@ -1069,6 +1074,7 @@ impl FractadyneApp {
         // modes, which a custom formula (direct only) would fail. Leave it with the window.
         self.formula_dialog.open = false;
         self.formula_dialog.tab = Default::default();
+        self.formula_library = Default::default();
         if self.fractal == crate::FractalKind::Custom {
             self.set_fractal(crate::FractalKind::Mandelbrot);
         }
@@ -1409,6 +1415,31 @@ impl FractadyneApp {
                     }
                     Err(e) => self.formula_dialog.error = Some(e),
                 }
+            }
+            Screen::FormulaLibrary => {
+                // In memory only, as the gradient screen seeds its library: nothing is saved.
+                let entry = |name: &str, source: &str, params: &[(&str, &str)]| crate::formula_library::SavedFormula {
+                    name: name.into(),
+                    source: source.into(),
+                    params: params.iter().map(|(re, im)| [re.to_string(), im.to_string()]).collect(),
+                };
+                self.saved_formulas = vec![
+                    entry("Cubic with a parameter", "z = z^3 - p1*z + c", &[("0.5", "0")]),
+                    entry("From a newer build", "z = z^2 + fn9(z) + c", &[]),
+                    entry("Hybrid square", "t = sqr(z)\nz = t + p1*conj(t) + c ; hybrid", &[("0.25", "-0.125")]),
+                    entry(
+                        "Perpendicular Burning Ship, the variant with the flipped imaginary part and a long name",
+                        "z = (real(z) - flip(abs(imag(z))))^2 + c",
+                        &[],
+                    ),
+                    entry("Sine", "z = sin(z) + c", &[]),
+                ];
+                crate::formula_library::sort(&mut self.saved_formulas);
+                match crate::custom_formula::CustomFormula::compile("z = z^3 - p1*z + c", &[(0.5, 0.0)]) {
+                    Ok(c) => self.apply_custom_formula(c),
+                    Err(e) => self.formula_dialog.error = Some(e),
+                }
+                self.formula_library.open = true;
             }
         }
     }

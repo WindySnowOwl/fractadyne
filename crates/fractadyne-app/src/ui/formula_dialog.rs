@@ -30,6 +30,9 @@ pub(crate) struct FormulaDialog {
     /// An applied formula whose pipelines are compiling off the render thread. The view keeps
     /// showing what it shows until they are ready, then switches (`poll_formula_compile`).
     pub(crate) pending: Option<PendingFormula>,
+    /// The name the text is saved under in the formula library; follows the entry last loaded or
+    /// saved, so saving again updates it.
+    pub(crate) save_name: String,
 }
 
 /// A formula waiting for its pipelines (`fractadyne_gpu::compile_custom_async`).
@@ -48,6 +51,7 @@ impl Default for FormulaDialog {
             error: None,
             tab: Default::default(),
             pending: None,
+            save_name: String::new(),
         }
     }
 }
@@ -60,8 +64,21 @@ impl FormulaDialog {
         }
     }
 
+    /// Put a library entry in the dialog: its text, its parameters as typed (the rest 0), its name.
+    pub(crate) fn load_entry(&mut self, e: &crate::formula_library::SavedFormula) {
+        self.source = e.source.clone();
+        for (i, slot) in self.params.iter_mut().enumerate() {
+            *slot = match e.params.get(i) {
+                Some([re, im]) => (re.clone(), im.clone()),
+                None => ("0".to_string(), "0".to_string()),
+            };
+        }
+        self.save_name = e.name.clone();
+        self.error = None;
+    }
+
     /// The typed parameters, or which one is not a number.
-    fn parsed_params(&self, used: usize) -> Result<Vec<(f64, f64)>, String> {
+    pub(crate) fn parsed_params(&self, used: usize) -> Result<Vec<(f64, f64)>, String> {
         self.params[..used]
             .iter()
             .enumerate()
@@ -82,6 +99,10 @@ impl FractadyneApp {
         if let Some(c) = self.custom.clone() {
             self.formula_dialog.source = c.source.clone();
             self.formula_dialog.set_params(&c.params);
+            // Named as its library entry, if it is one, so Save updates that entry.
+            if let Some(i) = self.live_library_formula() {
+                self.formula_dialog.save_name = self.saved_formulas[i].name.clone();
+            }
         }
         self.formula_dialog.error = None;
         self.formula_dialog.open = true;
@@ -164,6 +185,7 @@ impl FractadyneApp {
         }
         let mut open = true;
         let mut apply = false;
+        let (mut save, mut library) = (false, false);
         let mut example: Option<usize> = None;
         // The syntax check runs on every frame the dialog is open: parsing is microseconds, and a
         // message that describes the text on screen can never be stale.
@@ -248,12 +270,46 @@ impl FractadyneApp {
                     let note = if compiling { "Compiling the formula for the GPU…" } else { "" };
                     ui.label(egui::RichText::new(note).weak().small());
                 });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.formula_dialog.save_name)
+                            .hint_text("name (optional)")
+                            .desired_width(180.0),
+                    );
+                    // Saving under a name the library holds UPDATES that entry, and says so first.
+                    let name = self.formula_dialog.save_name.trim();
+                    let label = if !name.is_empty() && self.saved_formulas.iter().any(|f| f.name == name) {
+                        "Update in library"
+                    } else {
+                        "Save to library"
+                    };
+                    save = ui
+                        .add_enabled(check.is_ok(), egui::Button::new(format!("{} {label}", crate::icons::SAVE)))
+                        .on_hover_text("Keep this formula and its parameters in the formula library")
+                        .on_disabled_hover_text("Only a formula that reads correctly can be saved")
+                        .clicked();
+                    library = ui
+                        .button("Library…")
+                        .on_hover_text("The saved formulas: apply, edit, import and export them")
+                        .clicked();
+                });
             });
         if let Some(i) = example {
-            let (_, src, params) = EXAMPLES[i];
+            let (label, src, params) = EXAMPLES[i];
             self.formula_dialog.source = src.to_string();
             self.formula_dialog.set_params(params);
             self.formula_dialog.error = None;
+            // Not the name of the entry last loaded: saving an example must not update that entry.
+            self.formula_dialog.save_name = label.to_string();
+        }
+        if save {
+            let name = self.formula_dialog.save_name.trim().to_string();
+            let entry = self.dialog_formula_entry(&name);
+            self.save_to_formula_library(entry);
+        }
+        if library {
+            self.formula_library.open = true;
         }
         if apply {
             let result = self

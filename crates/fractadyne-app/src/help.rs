@@ -482,6 +482,26 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
          differ from the exact orbit's, at 60 almost none. Views, sessions and exported images \
          keep the formula's text.",
     );
+    help_p(
+        ui,
+        "Numbers in a formula (0.1, 1/3, pi, the parameters) are read as double-precision values, \
+         about 16 digits, and the deep reference orbit iterates with exactly those values. Two \
+         formulas that are equal on paper can therefore differ deep down: 0.1*z multiplies by the \
+         double nearest 0.1, while z/10 divides by an exact 10, and the two pictures part past \
+         about 1e15x (measured: 5% of pixels at 1e15x, a third at 1e17x, all of them at 1e20x). \
+         Either picture is correct for its own formula; write the one you mean to share.",
+    );
+    help_p(
+        ui,
+        "The dialog's Save to library keeps a formula and its parameters under a name (saving under \
+         a name the library has updates that entry). Fractal > Formula library... lists them to \
+         apply, edit, export or delete; Import adds the formulas in a formula file without \
+         replacing any: one the library already has is skipped, and a new one whose name is taken \
+         becomes \"name (2)\". The library is formulas.toml in the folder named under Files & \
+         data (About), itself a formula file. A tour keyframe carries a formula as \
+         formula = \"...\" with formula_params = [[re, im], ...], and Tools > Tour from current \
+         view writes them for a custom view.",
+    );
 }
 
 pub(crate) fn help_methodology(ui: &mut egui::Ui) {
@@ -1061,8 +1081,9 @@ pub(crate) fn help_about(ui: &mut egui::Ui) {
     help_sub(ui, "Files & data");
     help_p(
         ui,
-        "Your session (current view, coloring, and preferences), bookmarks, and their \
-         thumbnails are stored in this per-user folder, and reloaded on the next launch:",
+        "Your session (current view, coloring, and preferences), bookmarks and their \
+         thumbnails, saved gradients and saved formulas are stored in this per-user folder, and \
+         reloaded on the next launch:",
     );
     ui.horizontal(|ui| {
         ui.label(

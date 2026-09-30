@@ -74,6 +74,20 @@ Changes after 0.3.0-beta.1:
     follows a long orbit there only loosely. log, sqrt and non-integer powers jump across the
     negative real axis; a pixel whose orbit crosses there when the reference's does not carries
     on at about single precision, so deep views straddling that line show noise along it.
+    Numbers in a formula are doubles (about 16 digits), so `0.1*z` and `z/10` are different
+    fractals past about 1e15×; Help says which is which.
+  - **Library (unreleased):** the formula dialog's Save to library keeps a formula and its
+    parameters under a name, and Fractal ▸ Formula library… applies, edits, exports and deletes
+    them. Import adds a formula file's formulas without replacing any: one already saved is
+    skipped, and a new one whose name is taken becomes "name (2)". The library is written
+    atomically, and a library file that cannot be read is set aside rather than overwritten.
+  - **Files (unreleased):** a tour keyframe can carry a formula (`formula`, `formula_params`), and
+    Tools ▸ Tour from current view writes them; before, a tour of a custom view was refused. A
+    formula with a character past Latin-1 in a comment (such as √) made a PNG export fail and an
+    EXR export crash the app; the view text now writes such characters as `\u{221a}`, and the
+    image writers can no longer fail or crash on the view text. A custom view's file is marked
+    format 2, so a build without custom formulas warns that it comes from a newer Fractadyne
+    instead of silently showing another fractal at those coordinates.
   - **Tested:** 85 self-test checks against the CPU and exact arithmetic, and seven new golden
     images. In beta.11 the single-precision `sin z + c` stress check judges only the pixels whose
     orbit is not chaotic (it had failed on the Radeon RX 6800 XT with 7.1% of all pixels differing,

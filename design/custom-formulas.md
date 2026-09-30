@@ -580,6 +580,33 @@ separate, later decision, and only if phase 4 shows the generated render is iden
     bignum-vetted views; iteration counts stay short where functions run, since a golden must hold
     on another card. Rejected after looking: the 60-iteration views at 1e12× (flat level curves),
     `z^2.5` at 1e6× (speckle: chaos), the crossing log at any structured depth (chaos).
+- **The RX 6800 XT (betas 10–12).** All seven goldens pass cross-GPU. The one new failure, the f32
+  `sin z + c` stress check (7.1% of pixels vs a <5% bound fitted to the 3080's 3.0%), was a real
+  bug that a looser bound would have hidden: judged only where the CPU value survives c ± 1e-5 (3080:
+  0 of 43,692), the Radeon had 1,924 wrong, all at the escape step. `sin z` overflows f32 there,
+  the df32 add of `c` runs `∞ − ∞` in its two-sum (folded to ∞ on the 3080's stack, NaN on the
+  Radeon's), and `custom_tame` mapped NaN to 0. A CPU model of exactly that predicted 1,924; NaN →
+  +TAME fixed it (Radeon: 0 of 43,692). A first theory, AMD's sin range reduction, was emulated on
+  the 3080 and changed nothing.
+- **Constants are doubles.** Literals and constant sub-expressions fold to f64 at parse time, and
+  the bignum reference takes that f64 exactly: the picture is self-consistent (reference and
+  pixels agree), but it is the fractal of the ROUNDED constant. A real constant factor becomes
+  `Scale(x, fl(k))`; division by a constant that is not a power of two stays a true `Div`, exact at
+  working precision. Measured on the `custom-zpc-1e40` view: `(0.25, −0.1)·z` against
+  `0.25·z − i·z/10` differ on 11 and 42 of 29,760 pixels at 1e6× and 1e12× (boundary noise), 4.8%
+  at 1e15×, 37% at 1e17× (the same boundary shifted ~10 px of 240), 100% at 1e20×. Carrying
+  constants exactly (the text is stored, so no format change is needed) would change every saved
+  deep view that uses a non-dyadic constant: the user's call. Help states the rule.
+- **Formula library and formats.** `formula_library.rs` + `ui/formula_library.rs`: entries are TEXT
+  (source, parameters as typed), keyed by name (save = update, as the gradient library); Import
+  merges without replacing (same formula skipped, taken name → "name (2)"); `formulas.toml` is
+  written atomically and an unreadable one is moved aside, never overwritten; a library file is an
+  export file. The formats audit found three gaps, now closed: a comment past Latin-1 made the PNG
+  export FAIL and the EXR export PANIC (both containers are Latin-1) — the formula line escapes to
+  ASCII `\u{hex}`, and the writers fall back to `iTXt` / return an error; tours refused
+  `fractal = "Custom"` — keyframes carry `formula` / `formula_params` (inherited, stepped, each
+  compiled once) and "Tour from current view" writes them; beta.9 opened a custom view as whatever
+  family it showed — a Custom view writes `format_version=2` (every other view still writes 1).
 
 ## 6. Validation plan
 

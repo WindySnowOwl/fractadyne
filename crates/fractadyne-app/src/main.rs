@@ -71,6 +71,7 @@ mod eyedropper;
 mod export;
 mod bench_matrix;
 mod custom_formula;
+mod formula_library;
 mod fractal;
 mod chunksweep;
 mod glitchaudit;
@@ -5620,6 +5621,10 @@ struct FractadyneApp {
     custom: Option<std::sync::Arc<custom_formula::CustomFormula>>,
     /// The "Custom formula" dialog's state (`ui/formula_dialog.rs`).
     formula_dialog: ui::formula_dialog::FormulaDialog,
+    /// The formula library window's state (`ui/formula_library.rs`).
+    formula_library: ui::formula_library::FormulaLibraryWindow,
+    /// The saved custom formulas, from `formulas.toml` beside the bookmarks (`formula_library.rs`).
+    saved_formulas: Vec<formula_library::SavedFormula>,
     /// Julia constant `c` (complex). In dual view it's driven by the Mandelbrot cursor.
     julia_c: (f64, f64),
     /// Single-view Julia mode: show the Julia set of the current formula for `julia_c`.
@@ -6585,6 +6590,9 @@ impl FractadyneApp {
             fractal,
             custom,
             formula_dialog: Default::default(),
+            formula_library: Default::default(),
+            // Loaded below, where a file that cannot be read can queue its toast.
+            saved_formulas: Vec::new(),
             julia_c: (s.julia_c_re, s.julia_c_im),
             julia_mode: s.julia_mode && fractal.supports_julia(),
             click_zoom: s.click_zoom,
@@ -6989,6 +6997,12 @@ impl FractadyneApp {
             last_state: s,
             dirty_since: None,
         };
+        let (formulas, unreadable) = formula_library::load();
+        app.saved_formulas = formulas;
+        if let Some(note) = unreadable {
+            // After a toast already queued (a device-loss restart says why the view moved).
+            app.pending_toast.get_or_insert(note);
+        }
         // `--bla` / `--no-bla` force BLA on/off for any headless mode (profiling / benchmark /
         // render), so it can be compared without a session file. Applied unconditionally (not just
         // the `--render` path) since `--profile`/`--benchmark` don't call `apply_cli_render`;
@@ -15367,6 +15381,7 @@ impl eframe::App for FractadyneApp {
         self.draw_update_dialog(ctx);
         self.draw_goto_dialog(ctx);
         self.draw_formula_dialog(ctx);
+        self.draw_formula_library(ctx);
         self.draw_snapshot_choice_dialog(ctx);
         self.draw_misiurewicz_explorer(ctx);
         self.draw_share_dialog(ctx);
