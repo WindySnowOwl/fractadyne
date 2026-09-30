@@ -467,8 +467,8 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
          squared modulus, as in Fractint, and the usual functions are available (sqr, abs, conj, \
          real, imag, cabs, flip, recip, exp, log, sqrt, sin, cos, tan, sinh, cosh, tanh). A step \
          built from sums, products, whole-number powers, division, conj, abs, real, imag, |z| and \
-         the functions exp, sin, cos, tan, sinh, cosh and tanh deep-zooms by perturbation, sharp \
-         to about 1e36x; past that the status bar shows a depth limit. One with log, sqrt or a \
+         the functions exp, sin, cos, tan, sinh, cosh and tanh deep-zooms by perturbation, with \
+         the same extended-range arithmetic past 1e28x as the built-in fractals. One with log, sqrt or a \
          fractional power renders on the direct path, sharp until one single-precision step of c \
          spans a pixel: about 1e4x to 1e5x, less far from the origin. The formula dialog says \
          which applies. Every step is iterated in full (no series approximation), so a deep view \
@@ -611,7 +611,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--resume", "Restart an interrupted render: keep frames already on disk and render only the missing ones. The newest frame is verified first and discarded if incomplete (a render dies on the frame it is writing), stepping back until a good one is found; a folder holding frames at a different size is refused rather than mixed into the sequence."),
         Section("View (with --render / --find-minibrot)"),
         Flag("--fractal NAME", "Family, e.g. \"Mandelbrot\" or \"Burning Ship\"."),
-        Flag("--formula STEP", "A custom formula's step in Fractint-style expressions, e.g. \"z = z^3 - p1*z + c\" (implies --fractal Custom; deep zoom to about 1e36x for a step without log, sqrt or fractional powers, direct rendering otherwise)."),
+        Flag("--formula STEP", "A custom formula's step in Fractint-style expressions, e.g. \"z = z^3 - p1*z + c\" (implies --fractal Custom; deep zoom for a step without log, sqrt or fractional powers, direct rendering otherwise)."),
         Flag("--formula-params LIST", "The custom formula's parameters p1…p5 as re,im;re,im;…"),
         Flag("--center X Y", "View center (full-precision decimals or expressions: -3/4, -0.5 + 0.25*cos(pi/4))."),
         Flag("--zoom M", "Magnification, e.g. 2e7 or 1.0e23.9 (any depth; a bad value is fatal)."),

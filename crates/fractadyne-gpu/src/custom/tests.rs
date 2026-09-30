@@ -27,28 +27,40 @@ fn the_fixed_module_has_each_slot_marker_once_as_a_comment() {
 }
 
 #[test]
-fn every_built_in_step_generates_a_valid_module_without_the_perturbation_paths() {
-    let (c0, _) = marker_line(FIXED, CUT_BEGIN).unwrap();
-    let (_, c1) = marker_line(FIXED, CUT_END).unwrap();
-    let cut = &FIXED[c0..c1];
-    assert!(cut.len() > 10_000, "the cut region should be the floatexp path ({} bytes)", cut.len());
-    assert!(cut.contains("Floatexp perturbation (mode 2)"), "the cut region is not the floatexp path");
+fn every_built_in_step_generates_a_valid_module_with_its_own_floatexp_paths() {
+    let region = |b, e| {
+        let (s0, _) = marker_line(FIXED, b).unwrap();
+        let (_, s1) = marker_line(FIXED, e).unwrap();
+        &FIXED[s0..s1]
+    };
+    let fe = region(FE_BEGIN, FE_END);
+    assert!(fe.len() > 10_000, "the replaced region should be the fixed floatexp path ({} bytes)", fe.len());
+    assert!(fe.contains("Floatexp perturbation (mode 2)"), "the replaced region is not the floatexp path");
+    let chunk_fe = region(CHUNK_FE_BEGIN, CHUNK_FE_END);
+    assert!(chunk_fe.contains("fn fs_iterate_chunk_fe(") && chunk_fe.contains("Series-approximation seeding"));
+    assert!(chunk_fe.contains("STEP-BOUNDED PASSES") && chunk_fe.trim_end().ends_with("CUSTOM_CHUNK_FE_END"));
     let mut built = 0;
     for id in 0..f::COUNT {
         let shader = build(&single(builtin_step(id).unwrap()), &[]).unwrap_or_else(|e| panic!("formula {id}: {e}"));
         let s = &shader.source;
         assert!(s.contains("var zn: Cdf = custom_tame(custom_step(z, c, zprev, iter));"));
-        assert_eq!(s.matches("let smit = max(f32(iter) + 1.0 - nu, 0.0);").count(), 2, "both smooth values clamped");
-        // And the resumable chunk pass: its direct step (z_{n-1} carried in the derivative's
-        // slot), both its smooth values, its perturbed step and rebase, and the resolve's DE.
+        // The direct, df32 and floatexp smooth values, clamped.
+        assert_eq!(s.matches("let smit = max(f32(iter) + 1.0 - nu, 0.0);").count(), 4, "every smooth value clamped");
+        // And the resumable chunk passes: the direct step (z_{n-1} carried in the derivative's
+        // slot), their smooth values, perturbed steps and rebases, and the resolve's DE.
         assert!(s.contains("let zn = custom_tame(custom_step(z, c, zp, iter));"), "the chunk pass's direct step");
-        assert_eq!(s.matches("max(f32(iter) + 1.0 - nu, 0.0);").count(), 4, "all four smooth values clamped");
+        assert_eq!(s.matches("max(f32(iter) + 1.0 - nu, 0.0);").count(), 6, "all six smooth values clamped");
         assert_eq!(s.matches("dz = custom_tame(custom_pstep(z, dz, dc, iter));").count(), 2, "both mode-0 step slots, tamed");
-        assert_eq!(s.matches("let base = iter % CUSTOM_PHASES;").count(), 2, "both rebases phase-aligned");
+        // Mode 2: the generated floatexp step (and the df32 tail's df32 one), in both passes.
+        assert_eq!(s.matches("dz = custom_tame_fe(custom_fstep(Z, dz, dc, iter));").count(), 2, "both mode-2 slots");
+        assert_eq!(s.matches("custom_tame(custom_pstep(Z, fe_to_cdf(dz), tail_dc(dc), iter))").count(), 2, "both tails");
+        assert_eq!(s.matches("let base = iter % CUSTOM_PHASES;").count(), 4, "all four rebases phase-aligned");
         assert!(s.contains("dz = cset(df_sub(z_full_re, r0.re), df_sub(z_full_im, r0.im));"), "the chunk rebase's names");
         assert!(s.contains("    let nrm = vec2<f32>(0.0, 0.0);\n    let de = 1.0e30;\n"), "the resolve's no-DE values");
         assert!(!s.contains("let de = de_log2(mag2, d.x * d.x + d.y * d.y, sm.w);"), "the resolve's DE survived");
-        assert!(!s.contains(cut), "formula {id}: floatexp path still present");
+        assert!(!s.contains(fe), "formula {id}: the fixed floatexp path is still present");
+        assert!(!s.contains(chunk_fe), "formula {id}: the fixed floatexp chunk pass is still present");
+        assert_eq!(s.matches("fn fs_iterate_chunk_fe(").count(), 1, "formula {id}: one floatexp chunk entry point");
         assert!(SLOTS.iter().all(|(b, e)| !s.contains(b) && !s.contains(e)), "a marker survived");
         assert!(s.contains("fn fs_iterate(") && s.contains("fn vs_split_tiles("));
         assert_eq!(shader.precision, Precision::Df32, "formula {id}");
@@ -56,6 +68,7 @@ fn every_built_in_step_generates_a_valid_module_without_the_perturbation_paths()
         // a perturbed form.
         assert_eq!(shader.perturbation.is_ok(), id != f::PHOENIX, "formula {id}: {:?}", shader.perturbation);
         assert_eq!(s.contains("fn custom_pphase0("), id != f::PHOENIX);
+        assert_eq!(s.contains("fn custom_fphase0("), id != f::PHOENIX);
         built += 1;
     }
     assert_eq!(built, 10);
@@ -217,6 +230,43 @@ fn the_cost_estimate_over_prices_every_measured_built_in() {
         cost_factor(&single(b.finish(out).unwrap()))
     };
     assert!(deep(9) > deep(3));
+}
+
+/// The floatexp step keeps every perturbation in floatexp: each rule lands on its floatexp form,
+/// and df32 appears only for reference-side and full-size values.
+#[test]
+fn the_floatexp_step_keeps_the_perturbations_in_floatexp() {
+    let fphase = |formula: &Formula| {
+        let s = build(formula, &[]).unwrap().source;
+        let at = s.find("fn custom_fphase0(").expect("a floatexp step");
+        let end = at + s[at..].find("\n}\n").expect("its end");
+        s[at..end].to_string()
+    };
+    let parse = |src: &str| fractadyne_core::ir::parse::parse(src).unwrap();
+    // Mandelbrot: P(z² + c) = (2Z + δz)·δz + δc. The full-size 2Z + δz is the one df32 value built
+    // from a perturbation (the only `fe_to_cdf`); the product and the sum stay floatexp, and so
+    // does the result.
+    let m = fphase(&single(builtin_step(f::MANDELBROT).unwrap()));
+    assert_eq!(m.matches("fe_to_cdf(").count(), 1, "{m}");
+    assert!(m.contains("fe_mul_cdf(") && m.contains("fe_add("), "{m}");
+    assert!(!m.contains("fe_from_cdf("), "a floatexp result, not a collapsed one: {m}");
+    // Each fold and function on its floatexp form.
+    for (formula, helper) in [
+        (single(builtin_step(f::BURNING_SHIP).unwrap()), "sf_diffabs("),
+        (parse("sin(z) + c"), "fe_sin_small("),
+        (parse("sinh(z) + c"), "fe_sinh_small("),
+        (parse("exp(z) + c"), "fe_expm1("),
+        (parse("tanh(z) + c"), "fe_tanh_diff("),
+        (parse("tan(z) + c"), "fe_tan_diff("),
+        (parse("z^2 + c/(z + 2)"), "fe_div_cdf("),
+    ] {
+        let p = fphase(&formula);
+        assert!(p.contains(helper), "{helper} missing: {p}");
+        assert!(!p.contains("fe_from_cdf(v"), "a perturbation collapsed and re-expanded: {p}");
+    }
+    // A non-perturbable formula still gets the (never dispatched) stub the mode-2 loop calls.
+    let s = build(&parse("log(z) + c"), &[]).unwrap().source;
+    assert!(s.contains("fn custom_fstep(z: Cdf, dz: Fe, dc: Fe, iter: u32) -> Fe { return dz; }"));
 }
 
 #[test]

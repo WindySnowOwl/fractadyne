@@ -1361,11 +1361,20 @@ impl FractadyneApp {
                 });
             }
             Screen::Formula => {
+                // Applied the direct way (as a session, a view file or `--formula` does), with a
+                // per-run nonce as `formula-apply-async` has, so its pipelines compile COLD on
+                // every run: with the driver's own shader cache warm this step compiled in ~20 ms,
+                // and only the first run of a build showed the 1.6 s compile the live stall guards
+                // then read as a GPU pass in the lethal band (`Perf::ui_compile_ms`).
+                let nonce = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.subsec_nanos() % 1_000_000) as f64
+                    * 1.0e-12;
                 let src = "z = z^3 - p1*z + c";
                 self.open_formula_dialog();
                 self.formula_dialog.source = src.into();
                 self.formula_dialog.params[0] = ("0.5".into(), "0".into());
-                match crate::custom_formula::CustomFormula::compile(src, &[(0.5, 0.0)]) {
+                match crate::custom_formula::CustomFormula::compile(src, &[(0.5 + nonce, 0.0)]) {
                     Ok(c) => self.apply_custom_formula(c),
                     Err(e) => self.formula_dialog.error = Some(e),
                 }

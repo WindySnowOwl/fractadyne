@@ -361,8 +361,9 @@ separate, later decision, and only if phase 4 shows the generated render is iden
   - The depth limit. Custom `z² + c` against the built-in Mandelbrot (floatexp past 1e28×) on the
     corpus spiral, 400×300 at 60,000 iterations, per-channel mean Δ: 3.5–3.9 (filament aliasing,
     as at 1e12×) at 1e24–1e34×, 5.1 at 1e36×, 67 at 1e38× (broken: offsets under f32's exponent
-    floor). `CUSTOM_PERT_LIMIT` = 1e36× drives the status bar's "depth limit". The dialog states the
-    limit for the text as typed, naming what keeps a formula on the direct path.
+    floor). `CUSTOM_PERT_LIMIT` = 1e36× drove the status bar's "depth limit" (gone since the
+    floatexp entry below). The dialog states the limit for the text as typed, naming what keeps a
+    formula on the direct path.
   - Self-test +6 (full run 230/230, goldens 19/19): the app's deep pipeline end to end (formula
     applied as the app holds it, the export request built as for any view) at 1e12× and 1e20×
     against the IR in bignum at 1,024 sampled pixels. A Mandelbrot/Burning Ship hybrid gives 0
@@ -470,6 +471,60 @@ separate, later decision, and only if phase 4 shows the generated render is iden
   for an f32 escape test has a fixed width in c: 27% of a 1e12× view of `sin z + c`, more of the
   quotient's. Those formulas therefore test at the deepest of 1e12…1e9× where a view is ≥90%
   decidable. The bignum oracle alone picks the depth, never the GPU's render.
+- **Floatexp (mode 2): no depth limit.** Past 1e28× a custom formula now switches to floatexp
+  perturbation like a built-in; the 1e36× "depth limit" and its status-bar warning are gone.
+  - The generated **floatexp step** (`custom_fstep`) types each value of the perturbed program as
+    reference-side (no δ in it: df32), full-size (`B + P`, `B + P/2`: df32) or a perturbation
+    (floatexp), and maps each rule onto the floatexp helpers (`fe_mul_cdf`, `fe_div_cdf`,
+    `sf_diffabs`, and new `fe_sin_small`/`fe_expm1`/`fe_tanh_diff`, which collapse to the df32 forms
+    from 2^-60 up and take the first series term below). The rule table never multiplies two
+    perturbations, so no `fe_mul` of two floatexp values appears.
+  - The custom module's mode 2 is its own loop, not the fixed one (no BLA, SA, glitch detection
+    or derivative): the `@@CUSTOM_FE` slot, and `@@CUSTOM_CHUNK_FE` around the whole
+    `fs_iterate_chunk_fe` for resumable passes. Both paste one step-and-rebase text, so a split
+    cannot change a pixel. The df32 tail runs the df32 step once |δz| ≥ 2^-60 (memoryless, as the
+    built-ins'). The full `z` and Zhuoran's test are in extended range; the rebase is
+    phase-aligned. An extended-range reference dip reads 0 in the step itself, as it does for
+    every built-in but Mandelbrot and Phoenix.
+  - Measured on the deepest corpus spiral, custom `z² + c` against the built-in Mandelbrot, 400×300
+    at 60,000 iterations: mean Δ (channel 0) 4.2 at 1e30×, 3.9 at 1e38× (67 with df32 alone), 3.6
+    at 1e50×, 3.5 at 1e100×: the filament aliasing the two show at 1e12× too. At 1e100× the two
+    iterate 26,082,925 and 26,082,236 steps and rebase 1,860,441 and 1,860,370 times. GPU time 60
+    against 13 ms: the built-in's BLA skips the small-δ steps, so its full steps are all df32 tail;
+    the custom formula's are 14% tail.
+  - Self-test +23 (group 65/65). Every (b) case also renders with mode 2 forced and the tail off
+    (the tail would take every step at 1e6×): the same 0–70 disagreeing pixels as mode 0. Every
+    (c) view renders three ways against one bignum truth: as the app picks the mode, with mode 2
+    forced and the tail off, and that again in passes (0 texels differ). Ring formulas now also
+    test at 1e40×, where the app picks mode 2 itself; the Mandelbrot/Burning Ship hybrid and
+    `z² + p·z + c` get views there, the Mandelbrot/Tricorn hybrid stays at 1e20×, and a check
+    asserts at least one formula reached a floatexp depth.
+  - Two planted bugs: a rebase restarting at sample 0 turned five hybrid checks red (2.8–41.5%);
+    an untamed floatexp step passed every (c) check, whose ~1e-11-wide views escape without
+    overflowing, and turned three (b) checks red (sin 10.8%, the user's formula 20.2%, sinh 16.7%).
+    That is why (b) got its floatexp twin.
+  - Two traps in picking the deeper views, both now in the probe. The bisection needed ~1e-44 at
+    1e40×, below what an f64 offset from one base point resolves (~2e-22 of a 1e-6 bracket), so it
+    re-centres on the inside end and bisects again. And a view must be MIXED and STABLE, not only
+    decidable: the hybrid's first 1e40× view was one escaping sliver thinner than the sample
+    spacing (all 1,024 samples interior), and its next was chaotic. There, at 1e12×, six sampled
+    pixels escaped at 470–1,714 in bignum and changed status or moved by 90–1,300 iterations with c
+    moved by 1e-12 of a pixel. f64 perturbation and the GPU each gave other values again (83% of
+    samples "disagreed"). No finite precision follows such a view, so the probe now requires the
+    nine points to keep their escape (±2) under that nudge.
+  - Compile cost. The dialog's off-thread compile went from 0.69–0.82 s to 1.38–1.45 s: 1.1 s
+    without the floatexp chunk pair, so the pair costs ~0.3 s and the mode-2 branch of
+    `fs_iterate` (compiled for both of its pipelines) the rest. A formula entered any other way (a
+    saved session, a view file, `--formula`) was compiled by the paint callback, now 1.6 s cold,
+    which the live stall guards read as a pass in flight in the lethal band and a blind frame
+    budget: the uitest's logcheck failed, but only on a build's first run, because the driver's
+    own shader cache made later runs compile in ~20 ms. Two changes. The uitest's direct-apply
+    step now takes a per-run nonce parameter, as the async one already did, so every run compiles
+    cold. And `draw_central` builds a missing custom module itself (`prepare_custom_now`), timed;
+    the next frame interval leaves that time out, as it leaves out the frame-cap sleep
+    (`Perf::ui_compile_ms`). Measured: 1,408 ms compiled on the UI thread, no stall line, logcheck
+    PASS. The window still freezes for that compile on those paths; only the dialog's Apply is
+    asynchronous.
 
 ## 6. Validation plan
 

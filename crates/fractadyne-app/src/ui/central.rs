@@ -915,6 +915,22 @@ impl FractadyneApp {
     /// orbit overlay, plus the watermark, guided-tour annotations, minimap, gradient editor,
     /// and help overlay drawn on top of it.
     pub(crate) fn draw_central(&mut self, ctx: &egui::Context) {
+        // A custom formula entered without the dialog's off-thread compile (a saved session, a view
+        // file, `--formula`) has no pipelines yet: build them here, timed, rather than in the paint
+        // callback, so the next frame interval leaves the compile out (`Perf::ui_compile_ms`).
+        if self.fractal == crate::FractalKind::Custom {
+            if let (Some(rs), Some(c)) = (self.render_state.as_ref(), self.custom.as_ref()) {
+                let t = std::time::Instant::now();
+                if fractadyne_gpu::prepare_custom_now(rs, &c.shader) {
+                    let ms = t.elapsed().as_secs_f64() * 1000.0;
+                    self.perf.ui_compile_ms += ms;
+                    crate::diag::log_line(
+                        "formula",
+                        &format!("custom formula pipelines compiled on the UI thread in {ms:.0} ms (not priced as GPU work)"),
+                    );
+                }
+            }
+        }
         let central = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {

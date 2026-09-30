@@ -1,7 +1,7 @@
 //! The "Custom formula" dialog (design/custom-formulas.md §4.8, first cut): a text field for the
 //! step in Fractint-style expressions, the parameters it reads, a syntax check as you type, and
 //! Apply. Apply generates the formula's shader, compiles its pipelines off the render thread
-//! (~0.8 s) while the view keeps rendering, and then shows it; the view is kept when a custom
+//! (~1.4 s on the RTX 3080) while the view keeps rendering, and then shows it; the view is kept when a custom
 //! formula is already showing, so a formula can be refined in place.
 
 use crate::custom_formula::CustomFormula;
@@ -111,8 +111,8 @@ impl FractadyneApp {
     }
 
     /// Apply `c` once its pipelines are compiled OFF the render thread, which otherwise builds them
-    /// on the first frame that draws it: ~0.8 s of frozen window on every Apply, and every
-    /// parameter change is a new module. Until then the view keeps rendering what it shows. With
+    /// on the first frame that draws it (`prepare_custom_now`): ~1.4 s of frozen window on every
+    /// Apply, and every parameter change is a new module. Until then the view keeps rendering what it shows. With
     /// no renderer to compile against, applies at once (the render thread compiles).
     pub(crate) fn apply_custom_formula_async(&mut self, c: CustomFormula) {
         let rx = self

@@ -966,14 +966,15 @@ struct Renderer {
 }
 
 /// A custom formula's iterate pipelines, from its generated module (`custom::build`) and the fixed
-/// layouts: the `fs_iterate` pair (full-screen and split-tile), and the resumable chunk pass with
-/// its resolve (`None` where the device lacks the state targets, as for the built-ins). A custom
-/// module never runs mode 2, so there is no four-target pair.
+/// layouts: the `fs_iterate` pair (full-screen and split-tile), the resumable chunk pass with its
+/// resolve, and — for a perturbable formula — the four-target mode-2 (floatexp) pair (each `None`
+/// where the device lacks the state targets, as for the built-ins).
 struct CustomPipelines {
     key: u64,
     iter: wgpu::RenderPipeline,
     iter_split: wgpu::RenderPipeline,
     chunk: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
+    chunk_fe: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
 }
 
 impl CustomPipelines {
@@ -981,6 +982,7 @@ impl CustomPipelines {
         device: &wgpu::Device,
         iter_bgl: &wgpu::BindGroupLayout,
         state_bgl: &wgpu::BindGroupLayout,
+        state_bgl4: &wgpu::BindGroupLayout,
         shader: &custom::CustomShader,
     ) -> Self {
         let module = shader_module_for(device, Some(shader));
@@ -1014,7 +1016,26 @@ impl CustomPipelines {
                 ),
             )
         });
-        CustomPipelines { key: shader.key, iter, iter_split, chunk }
+        // Mode 2 only ever runs a perturbable formula (the app's `render_mode`).
+        let chunk_fe = (shader.perturbation.is_ok() && device.limits().max_color_attachment_bytes_per_sample >= 64)
+            .then(|| {
+                let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("fractadyne.custom.chunk_fe_layout"),
+                    bind_group_layouts: &[iter_bgl, state_bgl4],
+                    push_constant_ranges: &[],
+                });
+                (
+                    fullscreen_pipeline(
+                        device, &module, &layout, "fs_iterate_chunk_fe",
+                        &[ITER_FORMAT, ITER_FORMAT, ITER_FORMAT, ITER_FORMAT], "fractadyne.custom.chunk_fe_pipeline",
+                    ),
+                    fullscreen_pipeline(
+                        device, &module, &layout, "fs_resolve", &[ITER_FORMAT, ITER_FORMAT],
+                        "fractadyne.custom.resolve_fe_pipeline",
+                    ),
+                )
+            });
+        CustomPipelines { key: shader.key, iter, iter_split, chunk, chunk_fe }
     }
 }
 
@@ -2458,7 +2479,7 @@ impl CallbackTrait for MandelbrotParams {
         // A custom formula iterates through its own module's pipelines (everything else is shared).
         if let Some(c) = self.custom.as_deref() {
             if r.custom.as_ref().map(|p| p.key) != Some(c.key) {
-                r.custom = Some(CustomPipelines::new(device, &r.iter_bgl, &r.state_bgl, c));
+                r.custom = Some(CustomPipelines::new(device, &r.iter_bgl, &r.state_bgl, &r.state_bgl4, c));
             }
         }
         let iter_bgl = &r.iter_bgl;
@@ -2472,11 +2493,15 @@ impl CallbackTrait for MandelbrotParams {
         // the three-target pair. Resolved once here so the chunk block below stays mode-agnostic —
         // and note the fallback is the same one a 48-byte device already takes: if the mode-2 pair
         // is `None`, `chunk` resolves to `None` and this dispatch is clamped instead of split.
-        // A custom formula chunks through its own module's pair (never mode 2); the fixed module's
-        // would read formula id 1000 and iterate the Mandelbrot step.
+        // A custom formula chunks through its own module's pairs; the fixed module's would read
+        // formula id 1000 and iterate the Mandelbrot step.
         let (chunk_pipeline, resolve_pipeline, state_bgl, chunk_targets) = match (self.custom.as_ref(), r.custom.as_ref()) {
+            (Some(_), Some(p)) if self.mode == 2 => {
+                let pair = p.chunk_fe.as_ref();
+                (pair.map(|c| &c.0), pair.map(|c| &c.1), &r.state_bgl4, 4usize)
+            }
             (Some(_), Some(p)) => {
-                let pair = p.chunk.as_ref().filter(|_| self.mode != 2);
+                let pair = p.chunk.as_ref();
                 (pair.map(|c| &c.0), pair.map(|c| &c.1), &r.state_bgl, 3usize)
             }
             _ if self.mode == 2 => {
@@ -3293,28 +3318,50 @@ impl PreparedCustom {
 
 /// Compile `shader`'s pipelines on a worker thread, against the live renderer's own bind-group
 /// layouts, and deliver them on the returned channel. The render thread otherwise builds them on
-/// the first frame that draws the formula — ~0.8 s on the RTX 3080 (`fs_iterate`, the chunk pass
-/// and its resolve; design/custom-formulas.md §5.1), a frozen window on every Apply, and every
+/// the first frame that draws the formula — ~0.8 s on the RTX 3080 before mode 2 (`fs_iterate`,
+/// the chunk pass and its resolve; design/custom-formulas.md §5.1), more with the floatexp chunk
+/// pair, a frozen window on every Apply, and every
 /// parameter change is a new module. `None` when the renderer is not installed yet or the thread
 /// could not start (the render thread's own build still covers it).
 pub fn compile_custom_async(
     render_state: &egui_wgpu::RenderState,
     shader: std::sync::Arc<custom::CustomShader>,
 ) -> Option<std::sync::mpsc::Receiver<PreparedCustom>> {
-    let (iter_bgl, state_bgl) = {
+    let (iter_bgl, state_bgl, state_bgl4) = {
         let guard = render_state.renderer.read();
         let r = guard.callback_resources.get::<Renderer>()?;
-        (r.iter_bgl.clone(), r.state_bgl.clone())
+        (r.iter_bgl.clone(), r.state_bgl.clone(), r.state_bgl4.clone())
     };
     let device = render_state.device.clone();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::Builder::new()
         .name("fd-custom-compile".into())
         .spawn(move || {
-            let _ = tx.send(PreparedCustom(CustomPipelines::new(&device, &iter_bgl, &state_bgl, &shader)));
+            let _ = tx.send(PreparedCustom(CustomPipelines::new(&device, &iter_bgl, &state_bgl, &state_bgl4, &shader)));
         })
         .ok()?;
     Some(rx)
+}
+
+/// Make sure the renderer holds `shader`'s pipelines, compiling them HERE, on the caller's thread,
+/// if it does not — `true` when it compiled. For the ways into a custom formula that switch the
+/// view at once (a saved session, a view file, `--formula`): the app calls this in its update and
+/// knows the time was a compile, where the paint callback's own fallback build is an unexplained
+/// ~1.4 s frame that the live renderer's stall guards read as a GPU pass in the lethal band.
+pub fn prepare_custom_now(render_state: &egui_wgpu::RenderState, shader: &custom::CustomShader) -> bool {
+    let layouts = {
+        let guard = render_state.renderer.read();
+        let Some(r) = guard.callback_resources.get::<Renderer>() else { return false };
+        if r.custom.as_ref().map(|p| p.key) == Some(shader.key) {
+            return false;
+        }
+        (r.iter_bgl.clone(), r.state_bgl.clone(), r.state_bgl4.clone())
+    };
+    let built = CustomPipelines::new(&render_state.device, &layouts.0, &layouts.1, &layouts.2, shader);
+    if let Some(r) = render_state.renderer.write().callback_resources.get_mut::<Renderer>() {
+        r.custom = Some(built);
+    }
+    true
 }
 
 /// Hand pipelines from [`compile_custom_async`] to the renderer: the next frame that draws that

@@ -1397,6 +1397,13 @@ struct Perf {
     /// spare — and the no-timestamp wall-clock budget fallback under-grew for the same reason.
     /// Sleeping is not work.
     cap_sleep_ms: f64,
+    /// Milliseconds the previous frame spent compiling a custom formula's pipelines
+    /// (`fractadyne_gpu::prepare_custom_now`, at the top of `draw_central` — after this frame's
+    /// interval is measured, so it lies inside the next one). Discounted like `cap_sleep_ms`: a
+    /// compile is not GPU work, and a 1.6 s one in the paint callback read as a pass IN FLIGHT in
+    /// the lethal band and a blind frame budget (uitest's `formula` step, a cold driver cache) —
+    /// the stall guards shed licences and reset the budget for a GPU that was idle.
+    ui_compile_ms: f64,
     /// ⭐DIAGNOSTIC INSTRUMENT (`FRACTADYNE_BLA_DROP_FRAMES=N`, default off). Frames of BLA
     /// suppression remaining for this view after an arithmetic-mode switch.
     ///
@@ -2152,6 +2159,7 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
             ],
             cap_sleep_ms: 0.0,
+            ui_compile_ms: 0.0,
             bla_suppress_until: [0, 0],
             tile_state: [None, None],
             tile_pending: [false, false],
@@ -15246,9 +15254,11 @@ impl eframe::App for FractadyneApp {
         }
         if let Some(prev) = self.perf.last_frame {
             // Discount the previous frame's deliberate cap sleep — it lies inside this interval and
-            // is not work. See `Perf::cap_sleep_ms` for the mispricing that cost.
+            // is not work. See `Perf::cap_sleep_ms` for the mispricing that cost. Likewise its
+            // pipeline compile (`Perf::ui_compile_ms`, also after this point in a frame).
             let dt = (frame_start.duration_since(prev).as_secs_f64() * 1000.0
-                - std::mem::take(&mut self.perf.cap_sleep_ms))
+                - std::mem::take(&mut self.perf.cap_sleep_ms)
+                - std::mem::take(&mut self.perf.ui_compile_ms))
                 .max(0.0);
             self.perf.last_dt_ms = dt; // the actual spike, with cap sleep removed
             // Observed zoom speed, octaves/s, for the rate-aware refresh sizing. A step of two

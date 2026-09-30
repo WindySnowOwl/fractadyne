@@ -30,14 +30,6 @@ pub(crate) struct FrameCost {
     pub(crate) iter_cap: u32,
 }
 
-/// How deep a custom formula's perturbation stays sharp. Its generated module has no floatexp
-/// path, so it perturbs in df32 at every depth, and df32's offsets are f32. MEASURED on the corpus
-/// spiral (`08-deep-6.6e43.fdn`), custom `z² + c` against the built-in Mandelbrot (floatexp from
-/// 1e28×), 400×300 at 60,000 iterations: mean Δ 3.5–3.9 per channel (the filament aliasing the
-/// two show at 1e12× too) through 1e34×, 5.1 at 1e36×, 67 at 1e38× — broken, the pixel offsets
-/// under f32's exponent floor.
-pub(crate) const CUSTOM_PERT_LIMIT: f64 = 1.0e36;
-
 /// Is this view in the extended-range floatexp regime (mode 2, several× costlier per iteration)?
 ///
 /// A free function rather than a `FrameCost` field: the caller no longer needs it — the two places
@@ -6067,16 +6059,10 @@ impl FractadyneApp {
 
     /// ⭐The arithmetic mode for `fractal` at `mag` — [`RenderMode::select`] with what the family
     /// can do. Every mode decision goes through here, so a custom formula can never be handed a
-    /// mode its generated module lacks: it perturbs in df32 only (the floatexp path is cut from
-    /// the module), so past `PERT_FE_THRESHOLD` it stays in df32 — sharp to [`CUSTOM_PERT_LIMIT`],
-    /// where the status bar says "depth limit".
+    /// mode its generated module lacks: one without a perturbed step renders direct at any depth;
+    /// one with it has both perturbation paths (df32, and floatexp past `PERT_FE_THRESHOLD`).
     pub(crate) fn render_mode(&self, fractal: FractalKind, julia: bool, mag: f64) -> RenderMode {
-        let mode = RenderMode::select(self.perturbs(fractal), julia, mag);
-        if fractal == FractalKind::Custom && mode == RenderMode::Floatexp {
-            RenderMode::Df32Pert
-        } else {
-            mode
-        }
+        RenderMode::select(self.perturbs(fractal), julia, mag)
     }
 
     /// `build_params` epilogue: the no-reference placeholder guard on the iteration ask,

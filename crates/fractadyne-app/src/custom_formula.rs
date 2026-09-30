@@ -54,10 +54,10 @@ impl CustomFormula {
 /// One line on how deep `formula` renders, for the dialog — of the text as typed, so the answer
 /// is there before Apply. Both limits are MEASURED.
 ///
-/// With a perturbed step (`ir::perturb`): double-single perturbation, whose offsets are f32 —
-/// `z² + c` matched the built-in Mandelbrot (floatexp past 1e28×) image for image on the corpus
-/// spiral through 1e36× and broke entirely at 1e38×, f32's exponent floor
-/// ([`crate::render::CUSTOM_PERT_LIMIT`]).
+/// With a perturbed step (`ir::perturb`): perturbation in df32, and in floatexp past 1e28× as for
+/// the built-ins — `z² + c` matches the built-in Mandelbrot on the deepest corpus spiral at 1e38×,
+/// 1e50× and 1e100× (mean Δ 3.5–3.9 per channel, the filament aliasing the two show at 1e12×
+/// too), where df32 alone had broken at 1e38× (67).
 ///
 /// Without one, the direct path, NOT the double-single theory: current NVIDIA and AMD shader
 /// compilers fold the error-free transforms df32 relies on (`--gputest`; RTX 3080 / NVIDIA 616.92:
@@ -67,8 +67,8 @@ impl CustomFormula {
 /// whatever the formula's precision tier.
 pub(crate) fn depth_note_for(formula: &ir::Formula) -> String {
     match ir::perturb::perturbed_formula(formula) {
-        Ok(_) => "Deep zoom by perturbation, sharp to about 1e36x (every step iterated: no series \
-                  approximation or BLA for custom formulas yet)."
+        Ok(_) => "Deep zoom by perturbation, extended range past 1e28x as for the built-in fractals \
+                  (every step iterated: no series approximation or BLA for custom formulas yet)."
             .to_string(),
         Err(why) => format!(
             "Direct rendering ({} has no deep-zoom form yet): sharp until one single-precision step \

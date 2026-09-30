@@ -917,8 +917,9 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     }
-    // @@CUSTOM_CUT_BEGIN — a custom formula has no floatexp perturbation yet, so its module drops
-    // mode 2 from here to the matching END marker (most of this pipeline's compile time).
+    // @@CUSTOM_FE_BEGIN — a custom formula's module replaces mode 2 from here to the matching END
+    // marker with its own, leaner floatexp loop (`custom.rs`): no BLA, SA, glitch detection or
+    // derivative, which are most of this pipeline's compile time.
     else if (iu.mode == 2u) {
         // Floatexp perturbation (mode 2): δz/δc carried as floatexp (df32 mantissa +
         // i32 exponent), so the deviation never underflows f32 → extreme depth. ~1.7×
@@ -1311,7 +1312,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
     }
-    // @@CUSTOM_CUT_END
+    // @@CUSTOM_FE_END
     else {
         // df32 perturbation (mode 0): the fast path for the common deep range. Valid
         // until the df32 δ's f32 exponent underflows (~1e30×); deeper zoom uses mode 2.
@@ -2034,6 +2035,8 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
 // it and passes the state through. Bit-identity is unaffected because the skip sequence is the
 // same one the unchunked loop takes; but the host's `steps = px * delta_iter` cost model
 // over-counts whenever BLA is live, which mode 0 never had to account for.
+// @@CUSTOM_CHUNK_FE_BEGIN — a custom formula's module replaces this whole entry point, to the
+// matching END marker, with its own (`custom.rs`): same state layout, its generated step.
 @fragment
 fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
     // Pixel coordinate mapping — identical to fs_iterate's prologue.
@@ -2394,6 +2397,7 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
         vec4<f32>(f32(D.e), 0.0, 0.0, 0.0),
     );
 }
+// @@CUSTOM_CHUNK_FE_END
 
 // State → the normal iteration G-buffer (smooth/normal/DE + aux), same contract as fs_iterate's
 // output, so the untouched color pass shades a chunked render identically. Pixels still RUNNING
