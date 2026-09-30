@@ -1103,10 +1103,16 @@ pub fn trim_reference(orbit: &mut Vec<[f32; 4]>) -> u32 {
 /// `custom_tame`: an escaping step of a steep formula (`exp`, `sin`, a high power) can overflow
 /// f32 outright, and the smooth value of an infinite `z` is −∞, which reads as INTERIOR (measured:
 /// `sin z + c` escapes to |z|² ≈ 1e50–1e158 in one step). Any component past [`TAME`], infinite or
-/// NaN is replaced by `±TAME` (NaN, which has no sign, by 0; both NaN by `TAME + 0i`), so the pixel
-/// escapes with a finite value. Polynomials up to degree 6 never reach it from the bailout (256⁶ ≈
-/// 2.8e14), so no built-in step is affected. The tests are on the BITS: a compiler may assume floats
-/// are finite and fold a NaN comparison.
+/// NaN is replaced by `±TAME` (NaN, which has no sign, by `+TAME`), so the pixel escapes with a
+/// finite value. Polynomials up to degree 6 never reach it from the bailout (256⁶ ≈ 2.8e14), so no
+/// built-in step is affected. The tests are on the BITS: a compiler may assume floats are finite and
+/// fold a NaN comparison.
+///
+/// A NaN here is an OVERFLOWED component, and whether it arrives as NaN depends on the compiler: the
+/// df32 add after an overflowing function (`sin z` + c) runs a two-sum whose `s − a` is ∞ − ∞. The
+/// RTX 3080's stack folds that and leaves ∞; the RX 6800 XT's keeps it, and the add returns NaN. When
+/// NaN became 0, |z| was TAME where the CPU's was √2·TAME, and the smooth value 0.0144 lower: 1,924
+/// of 43,692 stable `sin z + c` pixels on the Radeon, a count a CPU model of exactly this predicted.
 fn tame_source() -> String {
     let t = TAME.to_bits();
     format!(
@@ -1114,9 +1120,8 @@ fn tame_source() -> String {
     let ax = bitcast<u32>(v.re.x) & 0x7fffffffu;
     let ay = bitcast<u32>(v.im.x) & 0x7fffffffu;
     if (ax < {t:#x}u && ay < {t:#x}u) {{ return v; }}
-    var x = select(0.0, clamp(v.re.x, -{m}, {m}), ax <= 0x7f800000u);
-    let y = select(0.0, clamp(v.im.x, -{m}, {m}), ay <= 0x7f800000u);
-    if (ax > 0x7f800000u && ay > 0x7f800000u) {{ x = {m}; }}
+    let x = select({m}, clamp(v.re.x, -{m}, {m}), ax <= 0x7f800000u);
+    let y = select({m}, clamp(v.im.x, -{m}, {m}), ay <= 0x7f800000u);
     return cset(vec2<f32>(x, 0.0), vec2<f32>(y, 0.0));
 }}
 // The floatexp step's tame: a value under 2^41 with a finite mantissa is returned bit for bit;
@@ -1141,9 +1146,8 @@ pub fn tame_f64(z: (f64, f64)) -> (f64, f64) {
     if !big(z.0) && !big(z.1) {
         return z;
     }
-    let part = |v: f64| if v.is_nan() { 0.0 } else { v.clamp(-t, t) };
-    let x = if z.0.is_nan() && z.1.is_nan() { t } else { part(z.0) };
-    (x, part(z.1))
+    let part = |v: f64| if v.is_nan() { t } else { v.clamp(-t, t) };
+    (part(z.0), part(z.1))
 }
 
 /// Parse and validate with naga, so a generator bug is an error here rather than a driver-side

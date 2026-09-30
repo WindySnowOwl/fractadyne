@@ -192,8 +192,11 @@ fn the_cpu_tame_mirrors_the_shader_rules() {
     assert_eq!(tame_f64((5.0, -6.0)), (5.0, -6.0), "ordinary values pass through");
     assert_eq!(tame_f64((1.0e20, -3.0)), (t, -3.0), "only the overflowing part is clamped");
     assert_eq!(tame_f64((-f64::INFINITY, 1.0e30)), (-t, t), "infinities keep their sign");
-    assert_eq!(tame_f64((f64::NAN, -1.0e16)), (0.0, -t), "NaN has no direction");
-    assert_eq!(tame_f64((f64::NAN, f64::NAN)), (t, 0.0), "all NaN still escapes");
+    // NaN is an overflowed component (∞ − ∞ in a df32 add, on a compiler that keeps the two-sum):
+    // as big as ∞, with no sign to keep.
+    assert_eq!(tame_f64((f64::NAN, -1.0e16)), (t, -t), "NaN overflowed: +TAME");
+    assert_eq!(tame_f64((f64::NAN, 3.0)), (t, 3.0), "NaN beside an ordinary part");
+    assert_eq!(tame_f64((f64::NAN, f64::NAN)), (t, t), "all NaN: |z| as both parts overflowed");
     // The shader source carries the same threshold, as bits.
     let s = build(&single(builtin_step(f::MANDELBROT).unwrap()), &[]).unwrap().source;
     assert!(s.contains(&format!("{:#x}u", TAME.to_bits())));
