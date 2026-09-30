@@ -39,6 +39,9 @@ pub use reference::*;
 
 mod fractal;
 
+/// The formula intermediate representation and its interpreters (design/custom-formulas.md).
+pub mod ir;
+
 mod backend;
 #[cfg(feature = "rug")]
 mod backend_rug;

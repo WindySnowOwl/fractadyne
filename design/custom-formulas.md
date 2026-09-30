@@ -1,7 +1,8 @@
 # Custom formulas — design
 
-Status: **proposed** (2026-09-29). Supersedes the unbuilt M6 sketch in `DESIGN.md` §8 where they
-differ. Evidence behind every claim is in §3 (measured on this codebase) or cited.
+Status: **in progress** (2026-09-29): phases 0 and 1 done, results in §5.1. Supersedes the unbuilt
+M6 sketch in `DESIGN.md` §8 where they differ. Evidence behind every claim is in §3 (measured on
+this codebase) or cited.
 
 ## 1. Goal
 
@@ -59,15 +60,21 @@ from shipped code, not documented).
 
 ### 4.1 One intermediate representation
 
-`fractadyne-core::formula` gains an **expression IR**: a small typed tree over complex values —
-`z`, `c` (the pixel), the previous iterate (for Phoenix-like formulas), named real/complex parameters,
-constants, `+ − × ÷`, integer and real powers, `sqr`, `conj`, `abs` (per component), real/imag parts,
-and the elementary functions (`exp log sqrt sin cos tan` and hyperbolics, inverses). A formula is:
+`fractadyne-core::ir` holds an **expression IR**: instructions in SSA form, each computing one complex
+value from earlier ones. That makes it a linearised expression DAG, so a shared subexpression is computed once. Its values are
+`z`, `c` (the pixel), the previous iterate (for Phoenix-like formulas), parameters, constants,
+`+ − × ÷`, integer and complex powers, `sqr`, real scaling, `conj`, negation, `abs` per component,
+real/imag parts, `|z|²`, and the elementary functions (`exp log sqrt sin cos tan` and hyperbolics;
+inverses to follow with the `.frm` reader). A formula is one step program per **phase** (hybrid
+lines interleave, iteration `n` runs phase `n mod len`). Still to come with the front ends:
 
 - `init`: statements setting `z` (default `z = 0` for parameter-plane formulas);
-- `step`: statements ending in the new `z`;
 - `bailout`: a predicate (default `|z|² ≤ R²`), or a convergence test for Newton-type formulas;
-- parameters with defaults and UI metadata.
+- parameter declarations with defaults and UI metadata (values are already an evaluation input).
+
+Division and the elementary functions are `f64`-only for now: a reference orbit may depend on them only
+once their bignum forms meet the same astro-float/MPFR bit-identity contract as the ring operations
+(phase 5). `Program::bignum_evaluable` says which programs qualify.
 
 Everything else is **generated from the IR**:
 
@@ -110,12 +117,18 @@ Every formula — built-in or custom — carries a `FormulaCaps`:
 | `bla` | 0 | opcode class (2×2); polynomial holomorphic later |
 | `resumable_passes` (chunked walk / export tiles) | 0–3 | any generated formula whose state fits the attachments |
 | `distance_estimate` | 0–3, Phoenix | any formula with a derivative |
-| `finders` (nucleus, Misiurewicz) | 0–3 | integer-power polynomials |
-| `glitch_correction` policy | Julia or id > 3 | as for abs-family built-ins |
+| `nucleus_finder` | 0–3 | integer-power polynomials |
+| `feature_solvers` (Misiurewicz explorer, feature go-to, snap, autopilot target) | 0 | quadratic polynomials first |
+| `export_glitch_correction` policy | Julia or id > 3 | as for abs-family built-ins |
+| `convergent` | Newton | from the bailout kind |
 | cost factors (direct, df32) | `ceilings.toml` | measured at compile time (§4.6) |
 
-**Phase 0 replaces the ~20 hard-coded gates with these flags, byte-neutral.** The same structure is what
-the live-render plan's W7 ("typed capabilities") needs; this design supplies its formula half.
+**Phase 0 replaced the id gates with these flags, byte-neutral** (`formula::caps`; the gates that
+existed as id ranges: series approximation, BLA, resumable passes, the two finder rows, glitch
+policy, convergent). `julia` and `perturbation` are still the app's `FractalSpec` flags, and
+`distance_estimate` is still per-method; they move when custom formulas need them. The same
+structure is what the live-render plan's W7 ("typed capabilities") needs; this design supplies its
+formula half.
 
 ### 4.4 Deep zoom: what is derived automatically
 
@@ -201,6 +214,27 @@ editor of mockup `07` comes later.
 
 Built-ins stay on their hand-written paths throughout. Switching a built-in to generated code is a
 separate, later decision, and only if phase 4 shows the generated render is identical.
+
+### 5.1 Results
+
+- **Phase 0** (`1bcf16e`). `formula::caps` answers exactly as the replaced id expressions for ids
+  0..1000, out-of-range ids included (unit test). `cargo test` 923 passed, 0 failed; self-test
+  203/203, goldens 19/19.
+- **Phase 1**. Gates in `crates/fractadyne-core/src/ir/tests.rs`, each asserting a count floor:
+  - `f64`, 9 escape-time built-ins (eight opcode programs + Phoenix) vs `orbit_points`: 2,000 orbits
+    each, 28,565–78,512 points per family, **all bit-identical**. Newton's step: 15,886 steps, bit-identical.
+  - bignum vs `reference_orbit_t_in` (every sample, the length, and the full-precision tail): 9 families ×
+    p = 64, 128, 320, 1088 × 17 cases, 1,000 iterations, **bit-identical in astro-float and in MPFR**
+    (GNU toolchain, `--features rug`). Plus 5,000-step orbits: the real axis (chaotic) and a complex orbit
+    spiralling into a fixed point with multiplier 0.995.
+  - `PowI` reproduces the Multibrot 3/4/5 chains bit for bit; hybrid phases rotate per iteration
+    (checked against the hand-written steps, `f64` and bignum).
+  - **Controls.** Computing `Re z²` as `(x+y)(x−y)` turned 7 of the 11 tests then present red. The
+    long-orbit test stayed green because on the real axis `y = 0` makes the two forms identical, so
+    the complex long orbit was added; under the same mutation it goes red. Removing the sign fold (computing `(−a) + b` literally)
+    keeps every gate green: astro-float's `(−a) + b` and `b − a` agree on these cases, so the fold is
+    kept for cost (negation is free), not because identity needs it.
+  - `cargo test` 935 passed, 0 failed (+12).
 
 ## 6. Validation plan
 

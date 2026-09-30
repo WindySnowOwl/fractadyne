@@ -10,7 +10,7 @@ use crate::formula;
 use astro_float::BigFloat;
 
 /// Split an `f64` into a `(hi, lo)` `f32` pair (df64, ~14 digits).
-fn split_df64(v: f64) -> (f32, f32) {
+pub(crate) fn split_df64(v: f64) -> (f32, f32) {
     let hi = v as f32;
     let lo = (v - hi as f64) as f32;
     (hi, lo)
