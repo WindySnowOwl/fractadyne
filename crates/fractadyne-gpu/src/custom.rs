@@ -68,9 +68,10 @@ pub fn cost_factor(formula: &Formula) -> f64 {
             p.insts()
                 .iter()
                 .map(|op| match *op {
-                    Op::Z | Op::C | Op::ZPrev | Op::Param(_) | Op::Const(..) => 0.0,
+                    Op::Z | Op::C | Op::ZPrev | Op::Param(_) | Op::Const(..) | Op::Delta | Op::DeltaC => 0.0,
                     Op::Neg(_) | Op::Conj(_) | Op::Re(_) | Op::Im(_) => 0.0,
                     Op::AbsRe(_) | Op::AbsIm(_) => 0.5,
+                    Op::DiffAbsRe(..) | Op::DiffAbsIm(..) => 2.0,
                     Op::Add(..) | Op::Sub(..) | Op::Scale(..) => 2.0,
                     Op::Norm(_) => 3.0,
                     Op::Sqr(_) => 5.0,
@@ -219,6 +220,11 @@ fn phase_body(prog: &Program, params: &[(f64, f64)], out: &mut String) -> Result
                 "cset(df_add(df_mul({a}.re, {a}.re), df_mul({a}.im, {a}.im)), vec2<f32>(0.0, 0.0))",
                 a = v(a)
             ),
+            // Perturbed programs (`ir::perturb`): δz, δc, and the abs folds' diffabs.
+            Op::Delta => "dz".to_string(),
+            Op::DeltaC => "dc".to_string(),
+            Op::DiffAbsRe(b, p) => format!("cset(df_diffabs({b}.re, {p}.re), {p}.im)", b = v(b), p = v(p)),
+            Op::DiffAbsIm(b, p) => format!("cset({p}.re, df_diffabs({b}.im, {p}.im))", b = v(b), p = v(p)),
             Op::Pow(a, b) => {
                 precision = Precision::F32;
                 format!("cf_pow({}, {})", v(a), v(b))

@@ -99,16 +99,30 @@ pub enum Op {
     Pow(Val, Val),
     /// An elementary function. `f64` only.
     Func(Func, Val),
+    /// The perturbation of the iterate, δz — in a PERTURBED program ([`perturb`]), where `Z` and
+    /// `C` are the reference's values.
+    Delta,
+    /// The perturbation of c, δc (zero in Julia mode).
+    DeltaC,
+    /// `(diffabs(Re b, Re p), Im p)`: the perturbation of `AbsRe` at reference `b` with
+    /// perturbation `p` — `|Re b + Re p| − |Re b|` without cancellation. `f64` only (it compares).
+    DiffAbsRe(Val, Val),
+    /// `(Re p, diffabs(Im b, Im p))`, likewise for `AbsIm`.
+    DiffAbsIm(Val, Val),
 }
 
 impl Op {
     /// The operands this instruction reads.
     pub fn operands(&self) -> impl Iterator<Item = Val> {
         let (a, b) = match *self {
-            Op::Z | Op::C | Op::ZPrev | Op::Param(_) | Op::Const(..) => (None, None),
-            Op::Add(a, b) | Op::Sub(a, b) | Op::Mul(a, b) | Op::Div(a, b) | Op::Pow(a, b) => {
-                (Some(a), Some(b))
-            }
+            Op::Z | Op::C | Op::ZPrev | Op::Param(_) | Op::Const(..) | Op::Delta | Op::DeltaC => (None, None),
+            Op::Add(a, b)
+            | Op::Sub(a, b)
+            | Op::Mul(a, b)
+            | Op::Div(a, b)
+            | Op::Pow(a, b)
+            | Op::DiffAbsRe(a, b)
+            | Op::DiffAbsIm(a, b) => (Some(a), Some(b)),
             Op::Sqr(a)
             | Op::PowI(a, _)
             | Op::Scale(a, _)
@@ -128,7 +142,7 @@ impl Op {
     /// operations plus the exact ones (sign, abs, parts). Division and the elementary functions are
     /// not — see [`Func`].
     pub fn is_ring(&self) -> bool {
-        !matches!(self, Op::Div(..) | Op::Pow(..) | Op::Func(..))
+        !matches!(self, Op::Div(..) | Op::Pow(..) | Op::Func(..) | Op::DiffAbsRe(..) | Op::DiffAbsIm(..))
     }
 }
 
@@ -266,7 +280,9 @@ impl Program {
                 Op::Im(a) => Op::Im(remap(a, &map)),
                 Op::Norm(a) => Op::Norm(remap(a, &map)),
                 Op::Func(f, a) => Op::Func(f, remap(a, &map)),
-                leaf @ (Op::Z | Op::C | Op::ZPrev | Op::Param(_) | Op::Const(..)) => leaf,
+                Op::DiffAbsRe(a, b) => Op::DiffAbsRe(remap(a, &map), remap(b, &map)),
+                Op::DiffAbsIm(a, b) => Op::DiffAbsIm(remap(a, &map), remap(b, &map)),
+                leaf @ (Op::Z | Op::C | Op::ZPrev | Op::Param(_) | Op::Const(..) | Op::Delta | Op::DeltaC) => leaf,
             });
         }
         Program { insts, out: Val(map[self.out.index()]) }
@@ -312,6 +328,10 @@ impl Program {
                 },
                 Op::Func(Func::Sqrt, a) => g(a).map(|a| 0.5 * a),
                 Op::Func(..) => None,
+                // Perturbed programs: δz is of the iterate's degree, δc of c's.
+                Op::Delta => Some(1.0),
+                Op::DeltaC => Some(0.0),
+                Op::DiffAbsRe(_, p) | Op::DiffAbsIm(_, p) => g(p),
             };
             deg.push(d);
         }
@@ -548,8 +568,33 @@ impl IrField for f64 {
             Op::Div(..) => cdiv(*a, *b?),
             Op::Pow(..) => cpow(*a, *b?),
             Op::Func(f, _) => cfunc(f, *a),
+            Op::DiffAbsRe(..) => {
+                let p = *b?;
+                (diffabs(a.0, p.0), p.1)
+            }
+            Op::DiffAbsIm(..) => {
+                let p = *b?;
+                (p.0, diffabs(a.1, p.1))
+            }
             _ => return None,
         })
+    }
+}
+
+/// `|c + d| − |c|` without cancellation (Kalles Fraktaler's "diffabs"): exactly `±d` while `c` and
+/// `c + d` share a sign, `±(2c + d)` across the fold. The shader's `df_diffabs`, branch for branch.
+pub(crate) fn diffabs(c: f64, d: f64) -> f64 {
+    let cd = c + d;
+    if c >= 0.0 {
+        if cd >= 0.0 {
+            d
+        } else {
+            -(2.0 * c + d)
+        }
+    } else if cd > 0.0 {
+        2.0 * c + d
+    } else {
+        -d
     }
 }
 
@@ -663,6 +708,11 @@ const ZP_IM: usize = 3;
 const C_RE: usize = 4;
 const C_IM: usize = 5;
 const ZERO: usize = 6;
+// A perturbed program's δz and δc (zero for an ordinary one, which never reads them).
+const DZ_RE: usize = 7;
+const DZ_IM: usize = 8;
+const DC_RE: usize = 9;
+const DC_IM: usize = 10;
 
 /// Runs a [`Formula`] in one field. The state (`z`, `z_prev`, `c`) and every constant live in the
 /// fixed front of `pool`; a step appends its temporaries and the next step drops them.
@@ -688,7 +738,8 @@ impl<'f, F: IrField> Machine<'f, F> {
         params: &[(f64, f64)],
         ctx: F::Ctx,
     ) -> Result<Self, IrError> {
-        let mut pool = vec![z.0, z.1, zp.0, zp.1, c.0, c.1, F::konst(0.0, ctx)];
+        let zero = || F::konst(0.0, ctx);
+        let mut pool = vec![z.0, z.1, zp.0, zp.1, c.0, c.1, zero(), zero(), zero(), zero(), zero()];
         let push = |v: f64, pool: &mut Vec<F>| {
             pool.push(F::konst(v, ctx));
             S::pos(pool.len() - 1)
@@ -800,6 +851,8 @@ impl<'f, F: IrField> Machine<'f, F> {
                 Op::Z => Cs { re: S::pos(Z_RE), im: S::pos(Z_IM) },
                 Op::ZPrev => Cs { re: S::pos(ZP_RE), im: S::pos(ZP_IM) },
                 Op::C => Cs { re: S::pos(C_RE), im: S::pos(C_IM) },
+                Op::Delta => Cs { re: S::pos(DZ_RE), im: S::pos(DZ_IM) },
+                Op::DeltaC => Cs { re: S::pos(DC_RE), im: S::pos(DC_IM) },
                 Op::Const(..) | Op::Param(_) => self.leaves[k][i].expect("converted in new()"),
                 Op::Add(a, b) => {
                     let (a, b) = (g(a), g(b));
@@ -855,7 +908,7 @@ impl<'f, F: IrField> Machine<'f, F> {
                     let (xx, yy) = (self.mul(a.re, a.re), self.mul(a.im, a.im));
                     Cs { re: self.add(xx, yy), im: zero }
                 }
-                Op::Div(a, b) | Op::Pow(a, b) => {
+                Op::Div(a, b) | Op::Pow(a, b) | Op::DiffAbsRe(a, b) | Op::DiffAbsIm(a, b) => {
                     let (a, b) = (g(a), g(b));
                     let a = (self.materialize(a.re), self.materialize(a.im));
                     let b = (self.materialize(b.re), self.materialize(b.im));
@@ -936,6 +989,27 @@ pub fn step_f64(
     let formula = Formula::single(prog.clone());
     check_params(&formula, params)?;
     let mut m = Machine::new(&formula, z, zprev, c, params, ())?;
+    m.step(0)?;
+    Ok((m.pool[Z_RE], m.pool[Z_IM]))
+}
+
+/// One `f64` step of a PERTURBED program ([`perturb`]): `δz' = prog(Z, C, δz, δc)` with `Z`, `C`
+/// the reference's iterate and constant.
+pub fn step_perturbed_f64(
+    prog: &Program,
+    z: (f64, f64),
+    c: (f64, f64),
+    dz: (f64, f64),
+    dc: (f64, f64),
+    params: &[(f64, f64)],
+) -> Result<(f64, f64), IrError> {
+    let formula = Formula::single(prog.clone());
+    check_params(&formula, params)?;
+    let mut m = Machine::new(&formula, z, (0.0, 0.0), c, params, ())?;
+    m.pool[DZ_RE] = dz.0;
+    m.pool[DZ_IM] = dz.1;
+    m.pool[DC_RE] = dc.0;
+    m.pool[DC_IM] = dc.1;
     m.step(0)?;
     Ok((m.pool[Z_RE], m.pool[Z_IM]))
 }
@@ -1063,6 +1137,9 @@ fn run_reference<B: RefBackend + IrField>(
 
 /// Formulas written as Fractint-style expressions.
 pub mod parse;
+
+/// Perturbed steps derived from a formula (deep zoom).
+pub mod perturb;
 
 #[cfg(test)]
 mod tests;
