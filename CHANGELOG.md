@@ -59,7 +59,7 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
-- **Custom formulas** (0.3.0-beta.10).
+- **Custom formulas** (0.3.0-beta.10 and beta.11).
   - **What:** Fractal ▸ Custom formula… takes a formula's step in Fractint-style expressions
     (`z = z^3 - p1*z + c`, several statements, parameters p1–p5, the usual functions), with an
     on-screen keypad and a syntax check as you type. Views, sessions and exported images keep the
@@ -75,7 +75,9 @@ Changes after 0.3.0-beta.1:
     negative real axis; a pixel whose orbit crosses there when the reference's does not carries
     on at about single precision, so deep views straddling that line show noise along it.
   - **Tested:** 85 self-test checks against the CPU and exact arithmetic, and seven new golden
-    images.
+    images. In beta.11 the single-precision `sin z + c` stress check judges only the pixels whose
+    orbit is not chaotic (it failed on the Radeon RX 6800 XT with 7.1% of all pixels differing,
+    against a bound fitted to the RTX 3080's 3.0%).
 
 - **Live refresh stays out of the way where it cannot help** (0.3.0-beta.8 and beta.9).
   - **The problem:** on the RX 6800 XT at 1280×800 no frame can be drawn in cheaper pieces: every
