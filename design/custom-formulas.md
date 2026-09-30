@@ -296,6 +296,20 @@ separate, later decision, and only if phase 4 shows the generated render is iden
 - **Still open in phase 2:** the compile-time cost calibration (§4.6) to replace the estimate; a
   persisted pipeline cache (compiles take ~0.1 s, so this can wait); distance estimation for custom
   formulas (forward-mode duals). Compile times on the RX 6800 XT are not yet measured.
+- **The direct path's real depth limit (field report, measured 2026-09-30).** A custom formula
+  bricked past ~2×10⁴× (`sin z + cos z·cos z + c`: 21×5-px bricks at 549,309×). The first
+  explanation, single-precision elementary functions, was WRONG as the whole story. On the RTX 3080
+  (Vulkan, NVIDIA 616.92) `--gputest` still shows `two_sum`/`quick_two_sum` folded by the compiler
+  (df_add error 8.1e-8). The pixel's `c` is therefore single precision for EVERY formula. A linear
+  formula with no functions, `z + 5e7·(c − c₀) + 40`, showed the same 17×4-px bricks at the same
+  view: 338 distinct values in 48,400 pixels, against 17.5×4.4 predicted from one f32 step of `c`
+  at −1.64+0.36i. Double-single elementary functions therefore cannot help on this hardware, and are
+  dropped; AMD folds the multiply family, so it would not help there either. A precision check that
+  would have gated them (`z + M·(f(c) − f(c₀))` over a 1e-6 view) failed 98.6% of 482,520 pixels
+  on the f32 functions, as a control should. It was not kept, because no current GPU can pass it.
+  The limit is where one f32 step of `c` spans a pixel: ~1e4–1e5× for any custom formula. Past it,
+  only a perturbed step helps, which is how the built-ins get past 1e4× on the same card (phase 4).
+  The dialog note and Help now state the measured limit.
 
 ## 6. Validation plan
 

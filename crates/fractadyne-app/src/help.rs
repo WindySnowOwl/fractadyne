@@ -466,8 +466,8 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
          iterate, c the pixel (the Julia constant in Julia mode), p1-p5 parameters; |z| is the \
          squared modulus, as in Fractint, and the usual functions are available (sqr, abs, conj, \
          real, imag, cabs, flip, recip, exp, log, sqrt, sin, cos, tan, sinh, cosh, tanh). A custom \
-         formula renders on the direct path - no deep zoom yet - and a formula using exp, log, \
-         sqrt or the trigonometric functions evaluates them in single precision, sharp to ~1e3x. \
+         formula renders on the direct path - no deep zoom yet - so it stays sharp until one \
+         single-precision step of c spans a pixel: about 1e4x to 1e5x, less far from the origin. \
          Views, sessions and exported images keep the formula's text.",
     );
 }

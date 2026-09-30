@@ -34,8 +34,8 @@ fn compile_reports_parse_errors_with_their_place() {
     assert!(err.contains("line 1"), "{err}");
     let f = CustomFormula::compile("z^2 + c", &[]).unwrap();
     assert_eq!(f.params.len(), MAX_PARAMS);
-    assert!(f.depth_note().contains("1e6"));
-    assert!(CustomFormula::compile("sin(z) + c", &[]).unwrap().depth_note().contains("1e3"));
+    assert!(f.depth_note().contains("single-precision step of c"));
+    assert_eq!(CustomFormula::compile("sin(z) + c", &[]).unwrap().depth_note(), f.depth_note());
     // Different parameters, different module: the key tells two renders apart.
     let a = CustomFormula::compile("z^2 + p1", &[(0.1, 0.0)]).unwrap();
     let b = CustomFormula::compile("z^2 + p1", &[(0.2, 0.0)]).unwrap();

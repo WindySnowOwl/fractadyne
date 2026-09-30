@@ -35,13 +35,17 @@ impl CustomFormula {
         self.formula.param_count()
     }
 
-    /// One line on how deep the formula renders, for the dialog. The df32 figure is the direct
-    /// path's, as Help states it for Newton; f32 carries about half the digits.
+    /// One line on how deep the formula renders, for the dialog. MEASURED, not the double-single
+    /// theory: current NVIDIA and AMD shader compilers fold the error-free transforms df32 relies on
+    /// (`--gputest`; RTX 3080 / NVIDIA 616.92: df_add error 8.1e-8), so the pixel's `c` itself is
+    /// single precision. At −1.64+0.36i and 549,309× a formula with NO functions broke into the same
+    /// 17×4-px bricks as one with sin and cos (338 distinct values of 48,400 pixels): the limit is
+    /// where one f32 step of `c` spans a pixel, for every formula, whatever its precision tier.
     pub(crate) fn depth_note(&self) -> &'static str {
         match self.shader.precision {
-            Precision::Df32 => "Direct rendering (double-single precision): sharp to about 1e6x. No deep zoom yet.",
-            Precision::F32 => {
-                "Uses a function evaluated in single precision: sharp to about 1e3x. No deep zoom yet."
+            Precision::Df32 | Precision::F32 => {
+                "Direct rendering: sharp until one single-precision step of c spans a pixel — about \
+                 1e4x to 1e5x, less far from the origin. No deep zoom yet."
             }
         }
     }
