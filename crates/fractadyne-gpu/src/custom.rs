@@ -136,6 +136,9 @@ pub fn cost_factor(formula: &Formula) -> f64 {
                     Op::Func(Func::Sin | Func::Cos | Func::Sinh | Func::Cosh, _) => 8.0,
                     Op::Func(Func::SinSmall | Func::SinhSmall | Func::Expm1, _) => 10.0,
                     Op::DiffTanh(..) | Op::DiffTan(..) => 50.0,
+                    Op::DiffLog(..) => 45.0,
+                    Op::DiffSqrt(..) => 30.0,
+                    Op::DiffPow(..) => 90.0,
                     Op::Func(..) => 4.0,
                     Op::Pow(..) => 12.0,
                 })
@@ -354,6 +357,18 @@ fn cdf_expr(
             f32_tier = true;
             format!("cf_tan_diff({}, {})", v(b), v(p))
         }
+        Op::DiffLog(b, p) => {
+            f32_tier = true;
+            format!("cf_log_diff({}, {})", v(b), v(p))
+        }
+        Op::DiffSqrt(b, p) => {
+            f32_tier = true;
+            format!("cf_sqrt_diff({}, {})", v(b), v(p))
+        }
+        Op::DiffPow(b, p, k) => {
+            f32_tier = true;
+            format!("cf_pow_diff({}, {}, {})", v(b), v(p), v(k))
+        }
         Op::Func(f, a) => {
             f32_tier = true;
             format!("cf_{}({})", func_name(f), v(a))
@@ -470,6 +485,9 @@ fn fphase_body(prog: &Program, params: &[(f64, f64)], out: &mut String) -> Resul
             )),
             Op::DiffTanh(b, p) if small(p) => Some(format!("fe_tanh_diff({}, {})", d(b), v(p))),
             Op::DiffTan(b, p) if small(p) => Some(format!("fe_tan_diff({}, {})", d(b), v(p))),
+            Op::DiffLog(b, p) if small(p) => Some(format!("fe_log_diff({}, {})", d(b), v(p))),
+            Op::DiffSqrt(b, p) if small(p) => Some(format!("fe_sqrt_diff({}, {})", d(b), v(p))),
+            Op::DiffPow(b, p, k) if small(p) => Some(format!("fe_pow_diff({}, {}, {})", d(b), v(p), d(k))),
             Op::Func(f @ (Func::SinSmall | Func::SinhSmall | Func::Expm1), a) if small(a) => {
                 Some(format!("fe_{}({})", func_name(f), v(a)))
             }
@@ -603,6 +621,72 @@ fn cf_tan_diff(b: Cdf, p: Cdf) -> Cdf {
     let d = cf_tanh_diff(cf_make(-b.im.x, b.re.x), cf_make(-p.im.x, p.re.x));
     return cf_make(d.im.x, -d.re.x);
 }
+// The perturbed log, sqrt and powers (`ir::log_diff`, `sqrt_diff`, `pow_diff`, branch for branch;
+// the split at |p/b| = 0.5 is LOG_DIFF_SPLIT). The small parts through series, as for sin: a GPU's
+// log and atan are accurate only in absolute terms near 0.
+// log(1 + x) = 2·atanh(x / (2 + x)), the series below |x| = 0.5 (|s| ≤ 1/3: 1e-9 relative).
+fn rf_log1p(x: f32) -> f32 {
+    if (abs(x) >= 0.5) { return log(1.0 + x); }
+    let s = x / (2.0 + x);
+    let q = s * s;
+    return 2.0 * s * (1.0 + q * (1.0 / 3.0 + q * (1.0 / 5.0 + q * (1.0 / 7.0 + q * (1.0 / 9.0
+        + q * (1.0 / 11.0 + q * (1.0 / 13.0 + q / 15.0)))))));
+}
+// atan(t), the series below |t| = 0.25 (2e-10 relative).
+fn rf_atan_small(t: f32) -> f32 {
+    if (abs(t) >= 0.25) { return atan(t); }
+    let q = t * t;
+    return t * (1.0 - q * (1.0 / 3.0 - q * (1.0 / 5.0 - q * (1.0 / 7.0 - q * (1.0 / 9.0
+        - q * (1.0 / 11.0 - q / 13.0))))));
+}
+// log(1 + u) for |u| < 0.5: (½·log1p(2·Re u + |u|²), atan(Im u / (1 + Re u))).
+fn cf_log1p(u: Cdf) -> Cdf {
+    let x = u.re.x;
+    let y = u.im.x;
+    return cf_make(0.5 * rf_log1p(2.0 * x + x * x + y * y), rf_atan_small(y / (1.0 + x)));
+}
+// −1 / 0 / +1: b and w (near b) on opposite sides of the negative real axis, as `ir::cut_crossing`.
+fn cf_cut_crossing(b: Cdf, w: Cdf) -> f32 {
+    if (b.re.x >= 0.0 || w.re.x >= 0.0) { return 0.0; }
+    let bu = b.im.x >= 0.0;
+    let wu = w.im.x >= 0.0;
+    if (bu && !wu) { return -1.0; }
+    if (!bu && wu) { return 1.0; }
+    return 0.0;
+}
+fn cf_log_diff(b: Cdf, p: Cdf) -> Cdf {
+    let w = c_add(b, p);
+    let u = cf_div(p, b);
+    if (!(length(vec2<f32>(u.re.x, u.im.x)) < 0.5)) {
+        let lw = cf_log(w);
+        let lb = cf_log(b);
+        return cf_make(lw.re.x - lb.re.x, lw.im.x - lb.im.x);
+    }
+    let l = cf_log1p(u);
+    return cf_make(l.re.x, l.im.x + 6.2831855 * cf_cut_crossing(b, w));
+}
+fn cf_sqrt_diff(b: Cdf, p: Cdf) -> Cdf {
+    let sw = cf_sqrt(c_add(b, p));
+    let sb = cf_sqrt(b);
+    let s = vec2<f32>(sw.re.x + sb.re.x, sw.im.x + sb.im.x);
+    let d = vec2<f32>(sw.re.x - sb.re.x, sw.im.x - sb.im.x);
+    if (dot(s, s) >= dot(d, d)) {
+        if (s.x == 0.0 && s.y == 0.0) { return cf_make(0.0, 0.0); }
+        return cf_div(p, cf_make(s.x, s.y));
+    }
+    return cf_make(d.x, d.y);
+}
+fn cf_pow_diff(b: Cdf, p: Cdf, k: Cdf) -> Cdf {
+    let w = c_add(b, p);
+    if (b.re.x == 0.0 && b.im.x == 0.0) { return cf_pow(w, k); }
+    let u = cf_div(p, b);
+    if (!(length(vec2<f32>(u.re.x, u.im.x)) < 0.5)) {
+        let pw = cf_pow(w, k);
+        let pb = cf_pow(b, k);
+        return cf_make(pw.re.x - pb.re.x, pw.im.x - pb.im.x);
+    }
+    return cf_mul(cf_pow(b, k), cf_expm1(cf_mul(k, cf_log_diff(b, p))));
+}
 ";
 
 /// The floatexp forms the generated floatexp step (`custom_fstep`) needs beyond the fixed
@@ -638,6 +722,51 @@ fn fe_tanh_diff(b: Cdf, p: Fe) -> Fe {
 fn fe_tan_diff(b: Cdf, p: Fe) -> Fe {
     let d = fe_tanh_diff(cf_make(-b.im.x, b.re.x), fe_make(cset(-p.m.im, p.m.re), p.e));
     return fe_make(cset(d.m.im, -d.m.re), d.e);
+}
+// The perturbed log, sqrt and powers for a floatexp p, as the df32 forms above; u = p/b in floatexp.
+// Below |u| = 2^-60, log1p(u) = u and (1 + u)^k − 1 = k·u to past df32's reach; a crossing of the
+// cut that close to it is not seen. A power or root of a reference at 0 is W's own, in floatexp.
+fn fe_log_diff(b: Cdf, p: Fe) -> Fe {
+    let u = fe_div_cdf(p, b);
+    if (u.e < -60) { return u; }
+    let uc = fe_to_cdf(u);
+    if (!(length(vec2<f32>(uc.re.x, uc.im.x)) < 0.5)) { return fe_from_cdf(cf_log_diff(b, fe_to_cdf(p))); }
+    let l = cf_log1p(uc);
+    let w = c_add(b, fe_to_cdf(p));
+    return fe_from_cdf(cf_make(l.re.x, l.im.x + 6.2831855 * cf_cut_crossing(b, w)));
+}
+// a^k = m^k · 2^(e·Re k) · e^(i·e·Im k·ln 2): the exponent's integer part stays an exponent.
+fn fe_pow(a: Fe, k: Cdf) -> Fe {
+    if (a.m.re.x == 0.0 && a.m.im.x == 0.0) { return fe_zero(); }
+    let te = f32(a.e) * k.re.x;
+    let ie = floor(te);
+    let s = exp2(te - ie);
+    let ang = f32(a.e) * k.im.x * 0.6931472;
+    return fe_norm(cf_mul(cf_pow(a.m, k), cf_make(cos(ang) * s, sin(ang) * s)), i32(ie));
+}
+fn fe_sqrt(a: Fe) -> Fe {
+    if (a.m.re.x == 0.0 && a.m.im.x == 0.0) { return fe_zero(); }
+    // An even exponent halves exactly: an odd one lends a factor 2 to the mantissa.
+    if ((a.e & 1) != 0) { return fe_norm(cf_sqrt(c_scale(a.m, 2.0)), (a.e - 1) / 2); }
+    return fe_norm(cf_sqrt(a.m), a.e / 2);
+}
+fn fe_sqrt_diff(b: Cdf, p: Fe) -> Fe {
+    if (b.re.x == 0.0 && b.im.x == 0.0) { return fe_sqrt(p); }
+    let sw = cf_sqrt(c_add(b, fe_to_cdf(p)));
+    let sb = cf_sqrt(b);
+    let s = vec2<f32>(sw.re.x + sb.re.x, sw.im.x + sb.im.x);
+    let d = vec2<f32>(sw.re.x - sb.re.x, sw.im.x - sb.im.x);
+    if (dot(s, s) >= dot(d, d)) { return fe_div_cdf(p, cf_make(s.x, s.y)); }
+    return fe_from_cdf(cf_make(d.x, d.y));
+}
+fn fe_pow_diff(b: Cdf, p: Fe, k: Cdf) -> Fe {
+    if (b.re.x == 0.0 && b.im.x == 0.0) { return fe_pow(p, k); }
+    let u = fe_div_cdf(p, b);
+    if (u.e >= -60) {
+        let uc = fe_to_cdf(u);
+        if (!(length(vec2<f32>(uc.re.x, uc.im.x)) < 0.5)) { return fe_from_cdf(cf_pow_diff(b, fe_to_cdf(p), k)); }
+    }
+    return fe_mul_cdf(fe_expm1(fe_mul_cdf(fe_log_diff(b, p), k)), cf_pow(b, k));
 }
 ";
 

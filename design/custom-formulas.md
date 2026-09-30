@@ -72,12 +72,14 @@ lines interleave, iteration `n` runs phase `n mod len`). Still to come with the 
 - `bailout`: a predicate (default `|z|² ≤ R²`), or a convergence test for Newton-type formulas;
 - parameter declarations with defaults and UI metadata (values are already an evaluation input).
 
-Division, `exp` and the circular and hyperbolic functions evaluate in bignum too (astro-float, and
-rug when enabled), so a custom formula's reference orbit may use them. The two backends agree on them
-only to within their rounding, not bit for bit as on the ring operations. That is harmless for a
-custom formula, whose orbits are never cached or shared, and it is why no built-in uses them. `log`,
-`sqrt` and complex powers stay `f64`-only (their branch cuts have no perturbed form either).
-`Program::bignum_evaluable` says which programs qualify.
+Division, powers and every elementary function evaluate in bignum too (astro-float, and rug when
+enabled), so a custom formula's reference orbit may use them. The two backends agree on them only to
+within their rounding, not bit for bit as on the ring operations. That is harmless for a custom
+formula, whose orbits are never cached or shared, and it is why no built-in uses them. `log`, `sqrt`
+and non-integer powers are principal values, cut along the negative real axis, and every field (f64,
+both bignums, the GPU's sign tests) puts a point ON the cut on its upper side. Only a perturbed
+step's own operations (`DiffAbsRe`, `DiffLog`, …) stay `f64`-only. `Program::bignum_evaluable` says
+which programs qualify.
 
 Everything else is **generated from the IR**:
 
@@ -146,8 +148,10 @@ general symbolic algebra), with `W = Z + δ` (widened) and `B = Z` (reference):
 - `P(f/g) = (P(f)·B(g) − B(f)·P(g)) / (B(g)·W(g))`; `P(exp f) = exp(B(f))·expm1(P(f))`;
   `P(sin f) = 2·cos(B + P/2)·sin(P/2)` and its cos, sinh, cosh kin; `P(tanh f) = sinh(P)·sech(B)·sech(W)`
   for a small `P`, `tanh W − tanh B` for a large one (an op of its own, `DiffTanh`; tan likewise).
-  Implemented as listed (§5.1, "Functions and division"); `P(log f) = log1p(P(f)/B(f))` and `sqrt`
-  are not yet.
+  `P(log f) = log1p(P/B) + 2πi·n` (n from a crossing of the cut), `P(sqrt f) = P/(√W + √B)` or
+  `√W − √B` across the cut, `P(f^k) = B^k·expm1(k·P(log f))` or `W^k` at `B = 0`, for a fixed `k`.
+  Implemented as listed (§5.1, "Functions and division", "log, sqrt and powers"); a power whose
+  exponent varies with `z` or `c` is not.
 
 Tiers, by what the rest of the pipeline also needs:
 
@@ -525,6 +529,57 @@ separate, later decision, and only if phase 4 shows the generated render is iden
     (`Perf::ui_compile_ms`). Measured: 1,408 ms compiled on the UI thread, no stall line, logcheck
     PASS. The window still freezes for that compile on those paths; only the dialog's Apply is
     asynchronous.
+- **log, sqrt and powers in deep zoom; custom goldens.** Every step now perturbs except a power
+  whose exponent varies with `z` or `c` (`z^c`), which stays direct.
+  - Three perturbed-step ops, each branching on the full values as `DiffAbsRe` does:
+    - `DiffLog(B, P)` = `log1p(P/B)` + `2πi·n`, n = ∓1 where B and W straddle the negative real
+      axis (the signs of the imaginary parts decide it, both in the left half-plane), or
+      `Log W − Log B` past |P/B| = 0.5;
+    - `DiffSqrt(B, P)` = `P/(√W + √B)`, or `√W − √B` where the two roots point apart (the sum would
+      cancel; both forms are exact, since `(√W − √B)(√W + √B) = W − B` for any pair of roots);
+    - `DiffPow(B, P, k)` = `B^k·expm1(k·DiffLog)`, `W^k − B^k` past 0.5, and `W^k` itself at
+      `B = 0`, which the product form reaches as 0·∞, and which is every step after a rebase in
+      the parameter plane. The IR's first three-operand op (the exponent may be a parameter).
+  - The reference needs log, sqrt and powers in bignum: `Transcendental` gains sqrt, ln, atan, π and
+    a sign test; `arg` is atan with its quadrants, a zero imaginary part on the upper side. f64's
+    `clog`/`csqrt` agree via `y + 0.0` (IEEE's `atan2(−0, −1)` is −π).
+  - GPU: `log1p` and `atan` as series below 0.5 and 0.25 (a GPU's `log`/`atan` are accurate only in
+    absolute terms near 0); floatexp forms, with `fe_pow`/`fe_sqrt` for the zero reference.
+  - Core: the seven new rule-table formulas give 5e-16 to 2.4e-15 relative against 256-bit bignum
+    (naive: up to 14%). A branch-cut test (references above, below and ON the cut, a non-crossing,
+    the positive axis, a power's zero reference) caught a sign error on its first run: the jump
+    was added the wrong way round.
+  - Self-test +20 (group 85/85). (b) and (c) gain `z^2.5`, `z² + 0.1·log(z + ½)`, `√(z⁴ + c)` and
+    `z^p` (p = 2.2 + 0.3i), at the functions' 60-iteration budget. At 2,000 iterations 8–18% of
+    their 1e6× pixels disagreed with f64 (single-precision log/pow, long orbits), while their deep
+    bignum checks showed 0 of 1,024. Deep views at 1e10–1e12×, 0 disagreements. Three traps:
+    - The f64 bisection counted an escape only before the budget's last step, where everything
+      else counts the last step too. For `√(z⁴ + c)` it settled on the curve between escape at 59
+      and at 60, whose inside end bignum calls escaped: no deep bracket on any ray. Fixed; views
+      then sit on the budget's own level curve, whose undecidable band covers 16–20% of some, so
+      "decidable" is now ≥75% of the samples (was 90%).
+    - No view crossed a cut. A sqrt that never took its difference branch passed everything, so
+      the formulas are also checked ACROSS THE CUT: bisected along the negative real axis, the
+      reference ON the cut, half the pixels below it. That view caught the planted sqrt (49%). A
+      log that never saw a crossing failed only the complex power, because `log(z + 1)`'s argument
+      stays positive on the axis; with `log(z + 0.5)` its ordinary deep view fails too (50%).
+    - A crossing's jump is O(1) (`−2i√x`, `2πi`), where a fold's is as small as the reference's
+      distance from the fold. In single precision it swallows the pixel's own offset: at 1e12×
+      exactly half the samples of `√(z⁴ + c)` and `z^2.5` on the cut were wrong (all pixels
+      below then follow the conjugate of the reference's orbit), and the log and `z^2.5` cut views
+      stay 10–15% off even at 1e4–1e5×, while the f64 perturbation of the same reference agreed
+      with bignum on every pixel sampled. The rules are exact; a pixel on the other branch wants a
+      reference of its own (multi-reference correction, not done). So the cut views run at 1e5×
+      for `√(z⁴ + c)` and the complex power only, and Help states the limit.
+  - Goldens +7 (`custom-*`, 1080p, 20.4 MiB), one per path a generated module takes: the sin/cos
+    formula direct (f32 functions) and perturbed at 1e6×; `log(z + 1)` at 1e6×; the complex power
+    ON the cut at 1e5× (its seam is the formula's own; the planted crossing bug broke it, meanΔ 43);
+    `√(z⁴ + c)` at the seahorse at 1e6× (it IS the Mandelbrot set in w = z², and renders as the
+    built-in's does with the sqrt's cut crossed at every turn); `z² + p·z + c` at 1e40× and `z² + c`
+    on the corpus spiral at 1e100× (floatexp, chunked). Deep coordinates are the group's own
+    bignum-vetted views; iteration counts stay short where functions run, since a golden must hold
+    on another card. Rejected after looking: the 60-iteration views at 1e12× (flat level curves),
+    `z^2.5` at 1e6× (speckle: chaos), the crossing log at any structured depth (chaos).
 
 ## 6. Validation plan
 

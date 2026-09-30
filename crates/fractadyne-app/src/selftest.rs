@@ -3122,9 +3122,14 @@ impl FractadyneApp {
             // explored is how a check ends up comparing a flat frame — hand-picked views here were
             // all interior (Tricorn) or had a reference escaping in under 20 steps (three others).
             let boundary = |formula: &ir::Formula, params: &[(f64, f64)], outside: (f64, f64), budget: u32| -> Option<(f64, f64)> {
+                // Escaped = the last point is past the bailout, an escape ON the last step included,
+                // as the GPU, the CPU interpreter and the bignum oracle all count it. (`pts.len() <=
+                // budget` missed the last step: for `√(z⁴ + c)` the bisection then settled on the
+                // curve between escape at step 59 and at 60, whose "inside" end the bignum oracle
+                // calls escaped — no deep bracket along any ray.)
                 let escapes = |c: (f64, f64)| {
                     let pts = ir::orbit_points(formula, (0.0, 0.0), c, params, budget as usize, bail2).unwrap();
-                    pts.len() <= budget as usize
+                    pts.last().is_some_and(|z| z.0 * z.0 + z.1 * z.1 > bail2)
                 };
                 // The escaping end: the direction's first multiple that escapes (the Buffalo set
                 // still holds −0.9−0.7i).
@@ -3302,6 +3307,22 @@ impl FractadyneApp {
                 ("½·sinh z + c", ir::parse::parse("0.5*sinh(z) + c").unwrap(), vec![], 60),
                 ("z²·tanh z + c", ir::parse::parse("z*z*tanh(z) + c").unwrap(), vec![], 60),
                 ("z² + c/(z + 2)", ir::parse::parse("z^2 + c/(z + 2)").unwrap(), vec![], 60),
+                // The branch-cut functions and fixed-exponent powers (`DiffLog`, `DiffSqrt`,
+                // `DiffPow`): principal values, which jump across the negative real axis. At the
+                // functions' budget: their log, exp and pow run in f32 on the GPU, and at 2,000
+                // iterations 8–18% of these pixels disagreed with f64 (250–400 early escapers
+                // called interior) — the chaos of long orbits that single precision cannot follow,
+                // not the rules: the same formulas' deep bignum checks showed 0 of 1,024.
+                // `log(z + 0.5)`: 0 must be interior to bisect from (with `+ 2` the real orbit of
+                // c = 0 climbs without a fixed point), and the argument must go NEGATIVE on the real
+                // axis for the cut view below to cross log's own cut — with `log(z + 1)` it never
+                // did there (a crossing test that ignored crossings passed it). `√(z⁴ + c)`, not
+                // `z² + c·√(z + 1)`: that one's bisected point sat in an interior sliver thinner
+                // than a 1e6× pixel (all 48,400 escaped, in f64 and on the GPU alike).
+                ("z^2.5 + c", ir::parse::parse("z^2.5 + c").unwrap(), vec![], 60),
+                ("z² + 0.1·log(z + ½) + c", ir::parse::parse("z^2 + 0.1*log(z + 0.5) + c").unwrap(), vec![], 60),
+                ("√(z⁴ + c)", ir::parse::parse("sqrt(z^4 + c)").unwrap(), vec![], 60),
+                ("z^p + c, p = 2.2 + 0.3i", ir::parse::parse("z^p1 + c").unwrap(), vec![(2.2, 0.3)], 60),
             ];
             let first = (0.9, 0.7);
             // The rays a boundary is looked for along, in order: exp-type sets escape to the right
@@ -3497,7 +3518,13 @@ impl FractadyneApp {
             // 470–1,714 in bignum, and at c ± 1e-12 px changed status or moved by 90–1,300
             // iterations; f64 perturbation and the GPU each gave other values again (83% of samples
             // "disagreed"). No finite precision can follow such a view, so it tests nothing.
-            let decidable_at = |formula: &ir::Formula, padded: &[(f64, f64)], power: f64, centre: &[fractadyne_core::BigFloat; 2], budget: u32, mag: f64| {
+            let decidable_at = |formula: &ir::Formula,
+                                padded: &[(f64, f64)],
+                                power: f64,
+                                centre: &[fractadyne_core::BigFloat; 2],
+                                budget: u32,
+                                mag: f64,
+                                need_mixed: bool| {
                 let w = 3.0 / mag;
                 let nudge = 1.0e-12 * w / N as f64;
                 let pairs: Vec<((f64, f64), (f64, f64))> = (0..9)
@@ -3518,7 +3545,7 @@ impl FractadyneApp {
                     .iter()
                     .filter(|((a, _), (b, _))| if *a < 0.0 || *b < 0.0 { (*a < 0.0) == (*b < 0.0) } else { (a - b).abs() <= 2.0 })
                     .count();
-                ok >= 8 && stable >= 8 && escaped >= 1 && escaped <= 8
+                ok >= 8 && stable >= 8 && (!need_mixed || (escaped >= 1 && escaped <= 8))
             };
             // (b)'s ring cases, except that `|z|·z + conj(z)² + c` has no such view along any of the
             // four rays (its boundary is smooth there, measured), so conj comes in through a
@@ -3542,8 +3569,45 @@ impl FractadyneApp {
                 pert_cases[4].clone(),
                 pert_cases[8].clone(),
             ];
+            // The branch-cut functions and powers (at the short budget: a bignum `log`, `sqrt` or
+            // power also costs ~1 ms an iteration at 1e40×'s precision — atan, ln, exp — and a
+            // 2,000-iteration bisection took minutes a ray; measured, the group ran past 10 min).
+            // (label, formula, params, budget, the rays a view is looked for along)
+            let mut deep_cases: Vec<(String, ir::Formula, Vec<(f64, f64)>, u32, Vec<(f64, f64)>)> = deep_cases
+                .into_iter()
+                .chain(pert_cases[9..].iter().cloned())
+                .map(|(l, f, p, b)| (l.to_string(), f, p, b, rays.to_vec()))
+                .collect();
+            // ⭐ACROSS THE CUT: formulas again, bisected along the NEGATIVE REAL AXIS, so the view's
+            // centre — the reference — sits ON the branch cut (its upper side) with half the pixels
+            // below it, and the orbit keeps returning to the axes. The views above missed sqrt's
+            // cut: a sqrt that never took the difference branch passed them all (planted,
+            // measured). A log whose crossings were never seen failed only the complex power's —
+            // with `log(z + 1)`, whose argument stays positive on the axis; with `log(z + 0.5)` its
+            // own deep view fails too (50%).
+            // ⚠A crossing's jump is O(1) (`−2i√x` for sqrt, `2πi` for log), unlike a fold's, which
+            // is as small as the reference's distance from the fold. In single precision it
+            // swallows the pixel's own offset, so every pixel below then follows the same
+            // conjugate-of-reference orbit: measured at 1e12×, exactly half of `√(z⁴ + c)`'s and
+            // `z^2.5 + c`'s samples wrong (512 of 1,024, 493 of 986). The rule is exact (core's
+            // `the_branch_cut_functions_jump_where_their_principal_values_do`); what fails is the
+            // precision a single reference leaves. So these views test the crossing where a pixel
+            // survives it — 1e5× and shallower, still perturbed (the direct path gives way at
+            // ~1e4–1e5×) — and the limit is stated in Help.
+            // Not `z^2.5 + c` nor the log formula: with the reference ON the cut, their orbits pass
+            // near later crossings, where a pixel carries an O(1) δ and is then iterated at f32's
+            // precision — 10–15% of samples off at 1e4–1e5×, while the f64 perturbation of the same
+            // reference agreed with bignum on every one sampled. That is the single reference's
+            // limit (a pixel on the other branch wants a reference of its own), not the rule's:
+            // the log formula's ordinary deep view crosses too, and the planted "never a crossing"
+            // broke it at 50%. The complex power covers the same `cf_pow_diff`.
+            deep_cases.extend(
+                pert_cases[11..]
+                    .iter()
+                    .map(|(l, f, p, b)| (format!("{l} across the cut"), f.clone(), p.clone(), *b, vec![(-1.0, 0.0)])),
+            );
             let mut fe_depth_cases: Vec<String> = Vec::new();
-            for (label, formula, params, budget) in &deep_cases {
+            for (label, formula, params, budget, rays) in &deep_cases {
                 let budget = *budget;
                 self.render_cfg.max_iter = budget;
                 let mut padded = params.clone();
@@ -3560,14 +3624,28 @@ impl FractadyneApp {
                 // be judged — chosen by the bignum oracle alone, never by what the GPU renders, and
                 // every one 1e4× past the f32 wall. The boundaries are found lazily, ray by ray (a
                 // bignum sin bisection costs ~1.5 s).
-                let candidates: &[f64] = if budget > 60 { &[1.0e40, 1.0e32, 1.0e20] } else { &[1.0e12, 1.0e11, 1.0e10, 1.0e9] };
+                // Across the cut, only where single precision can still hold a pixel past the jump
+                // (see the note at `deep_cases`): 1e5× or 1e4×, the shallowest perturbed depth.
+                // After a crossing the pixel carries an O(1) δ and each later step evaluates its
+                // function on full-size values in f32: the pixel is iterated at about the DIRECT
+                // path's precision. And the view need not hold both statuses: every smooth value on
+                // the far side depends on the branch (the planted sqrt broke an ALL-escaping view at
+                // 50%).
+                let across = label.ends_with("across the cut");
+                let candidates: &[f64] = if across {
+                    &[1.0e5, 1.0e4]
+                } else if budget > 60 {
+                    &[1.0e40, 1.0e32, 1.0e20]
+                } else {
+                    &[1.0e12, 1.0e11, 1.0e10, 1.0e9, 1.0e8, 1.0e7]
+                };
                 let mut boundaries: Vec<Option<Option<[fractadyne_core::BigFloat; 2]>>> = vec![None; rays.len()];
                 let mut found = None;
                 'depth: for &mag in candidates {
                     for (r, &toward) in rays.iter().enumerate() {
                         let c = boundaries[r]
                             .get_or_insert_with(|| deep_boundary(formula, &padded, power, toward, budget, candidates[0]));
-                        if let Some(c) = c.as_ref().filter(|c| decidable_at(formula, &padded, power, c, budget, mag)) {
+                        if let Some(c) = c.as_ref().filter(|c| decidable_at(formula, &padded, power, c, budget, mag, !across)) {
                             found = Some((c.clone(), toward, mag));
                             break 'depth;
                         }
@@ -3708,12 +3786,16 @@ impl FractadyneApp {
                         (disagree, judged, escaped, median)
                     };
                     let n = samples.len();
+                    // ≥3/4 of the samples decidable, for enough of them to judge by: a view on the
+                    // budget's own level curve (as the bisection puts it, since it counts an escape
+                    // on the last step) keeps a band around it that no f32 escape test decides, a
+                    // fixed width in c — measured 16–20% of the short-budget views of `√(z⁴ + c)`
+                    // at 1e10× and the sin/cos formula at 1e12× (822 and 855 of 1,024 judged).
                     let judged_ok = |(disagree, judged, escaped, median): (usize, usize, usize, f64)| {
-                        judged * 10 >= n * 9
+                        judged * 4 >= n * 3
                             && disagree * 50 < judged
                             && median < med_tol
-                            && escaped * 10 > judged
-                            && escaped < judged
+                            && if across { escaped > 0 } else { escaped * 10 > judged && escaped < judged }
                     };
                     let tol_text = if budget > 60 { "0.01" } else { "0.25" };
                     let app = judge(&gpu);
@@ -3737,7 +3819,8 @@ impl FractadyneApp {
                             }
                         ),
                         threshold: format!(
-                            "mode {want_mode} with the custom module; ≥90% decidable; <2% differ in status or by >2 iter; median |Δ| < {tol_text}; >10% escaped, some interior{}",
+                            "mode {want_mode} with the custom module; ≥75% decidable; <2% differ in status or by >2 iter; median |Δ| < {tol_text}; {}{}",
+                            if across { "some escaped (either side of the cut)" } else { ">10% escaped, some interior" },
                             if want_mode == 2 { "; in ≥2 passes 0 texels differ" } else { "" }
                         )
                         .leak(),
@@ -7542,6 +7625,39 @@ zoom = \"1e94\"
             // flooding black (the adaptive appetite here is ~12k — see the black-minibrot arc).
             ("seahorse-998", FractalKind::Mandelbrot, "-0.7436438870371588707780645434936425750476099623212550602141", "0.1318259042053122928210973548747672652629885996790429749374", 1.597e15, 25000, 0, 1, false),
         ];
+        // ⭐CUSTOM FORMULAS (design/custom-formulas.md), one per path a generated module can take:
+        // the direct step with f32 functions; the df32 perturbed step with functions, `log`
+        // (`DiffLog`), a complex power (`DiffPow`) and `sqrt` (`DiffSqrt`); the floatexp step at
+        // 1e40× and at 1e100×. Deep views are the custom-formula group's own: bisected in bignum,
+        // checked decidable and stable. The "cut" view sits ON the negative real axis, so half its
+        // pixels take the other branch of the power; `z^p1`'s seam there is the formula's own
+        // discontinuity (a complex exponent has no conjugate symmetry), matched by bignum at 0 of
+        // 1,024 samples, and a power that never saw the crossing broke this golden (meanΔ 43).
+        // `√(z⁴ + c)` IS the Mandelbrot set in w = z² — its seahorse renders as the built-in's
+        // does, through a sqrt with the cut crossed at every turn. The log view is `log(z + 1)`'s,
+        // whose argument stays off the cut: the group's crossing log (`log(z + 0.5)`) is chaos at
+        // any structured depth, which a golden must not be. Short iteration counts where functions
+        // run: their long orbits are chaos no single-precision GPU follows alike, and a golden must
+        // hold on another card.
+        // (name, source, params, center_x, center_y, zoom, max_iter, palette_idx)
+        type CustomGoldenSpec =
+            (&'static str, &'static str, &'static [(f64, f64)], &'static str, &'static str, f64, u32, usize);
+        let custom_specs: &[CustomGoldenSpec] = &[
+            ("custom-sincos", "z = sin(z) + cos(z)*cos(z + pi) + c", &[], "0.0", "0.0", 0.45, 100, 0),
+            ("custom-sincos-1e6", "z = sin(z) + cos(z)*cos(z + pi) + c", &[], "0.8433651341985982", "0.6559506599322431", 1.0e6, 150, 0),
+            ("custom-log-1e6", "z = z^2 + 0.3*log(z + 1) + c", &[], "3.12358602939656217655721264291684642451682702136906079104549174840776970540901e-1", "2.4294558006417705509271924826816340358332255239354372640620070150641041095696e-1", 1.0e6, 200, 1),
+            ("custom-cpow-cut-1e5", "z = z^p1 + c", &[(2.2, 0.3)], "-8.74282550499493813679694360896665518897154704382566209070609675180207887024153e-1", "0.0", 1.0e5, 200, 0),
+            ("custom-sqrt-seahorse-1e6", "z = sqrt(z^4 + c)", &[], SX, SY, 1.0e6, 1500, 0),
+            ("custom-zpc-1e40", "z = z^2 + p1*z + c", &[(0.25, -0.1)], "2.5825378554724790808958856226538137436477114325577125141614518618614686040981e-1", "2.00864055425637292686986232460580778294541444653850380864716747871520178888717e-1", 1.0e40, 2000, 2),
+            ("custom-zsq-spiral-1e100", "z = z^2 + c", &[], "-2.8041054305504546698407770028983979273643258419006230007410381499044388400475119315630293940283589087269554184451138185325406436e-2", "6.94892753899652385892994339498967288039114990163797857613653087250435024223067409755982283759024506296110477464801459921366328420e-1", 1.0e100, 60000, 0),
+        ];
+        let all_specs: Vec<(GoldenSpec, Option<(&'static str, &'static [(f64, f64)])>)> = specs
+            .iter()
+            .map(|s| (*s, None))
+            .chain(custom_specs.iter().map(|&(name, src, params, cx, cy, zoom, iter, palette)| {
+                ((name, FractalKind::Custom, cx, cy, zoom, iter, 0, palette, false), Some((src, params)))
+            }))
+            .collect();
         // 1920x1080, raised from 320x240 (2026-08-22). 27x the pixels: a rendering
         // regression that survives 2M pixels is not one worth calling a golden, and the
         // old 76,800-pixel frames were coarse enough that fine filament structure fell
@@ -7584,13 +7700,22 @@ zoom = \"1e94\"
                 }
             }
         }
-        for &(name, fractal, cx, cy, zoom, iter, method, palette, relief) in specs {
+        for &((name, fractal, cx, cy, zoom, iter, method, palette, relief), custom) in &all_specs {
             // A filter matches goldens by group tag or by individual spec name
             // (`--selftest-filter multibrot3-1e6` re-renders one golden in seconds).
             if !(want("goldens") || filter.as_ref().is_some_and(|f| name.contains(f.as_str()))) {
                 continue;
             }
             self.fractal = fractal;
+            if let Some((src, params)) = custom {
+                match crate::custom_formula::CustomFormula::compile(src, params) {
+                    Ok(c) => self.custom = Some(std::sync::Arc::new(c)),
+                    Err(e) => {
+                        goldens.push((name.to_string(), 0, 0.0, 0, false, format!("formula does not compile: {e}"), "RENDER ERROR"));
+                        continue;
+                    }
+                }
+            }
             self.julia_mode = false;
             self.coloring.color_method = crate::ColorMethod::from_u32(method);
             self.coloring.palette_idx = palette;
@@ -7626,11 +7751,18 @@ zoom = \"1e94\"
             req.width = gw;
             req.height = gh;
             req.ss = 1;
+            let family = match custom {
+                Some((src, params)) if params.is_empty() => format!("--formula \"{src}\""),
+                Some((src, params)) => format!(
+                    "--formula \"{src}\" --formula-params \"{}\"",
+                    params.iter().map(|(re, im)| format!("{re},{im}")).collect::<Vec<_>>().join(";")
+                ),
+                None => format!("--fractal \"{}\"", fractal.name()),
+            };
             let reproduce = format!(
-                "fractadyne --render --out {name}.png --fractal \"{}\" --center {cx} {cy} \
+                "fractadyne --render --out {name}.png {family} --center {cx} {cy} \
                  --zoom {zoom} --size {gw} --iter {iter} --ss 1 --method {} --palette {palette} \
                  --no-watermark",
-                fractal.name(),
                 crate::ColorMethod::from_u32(method).key()
             );
             let progress = std::sync::atomic::AtomicU32::new(0);
@@ -7684,6 +7816,9 @@ zoom = \"1e94\"
                 Err(e) => goldens.push((name.to_string(), 0, 0.0, 0, false, format!("render failed: {e}"), "RENDER ERROR")),
             }
         }
+        // The custom goldens leave a custom formula selected; nothing after them should inherit it.
+        self.custom = None;
+        self.fractal = FractalKind::Mandelbrot;
 
         // bench-matrix rendering-pipeline sanity check (design/bench-matrix.md): assert each
         // deterministic path's EXACT signature (mode / skip / orbit-len / eff-iter / GPU event

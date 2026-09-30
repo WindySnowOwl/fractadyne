@@ -465,13 +465,17 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
          z = z^3 - p1*z + c, or several statements (t = sqr(z), then z = t*t + c). z is the \
          iterate, c the pixel (the Julia constant in Julia mode), p1-p5 parameters; |z| is the \
          squared modulus, as in Fractint, and the usual functions are available (sqr, abs, conj, \
-         real, imag, cabs, flip, recip, exp, log, sqrt, sin, cos, tan, sinh, cosh, tanh). A step \
-         built from sums, products, whole-number powers, division, conj, abs, real, imag, |z| and \
-         the functions exp, sin, cos, tan, sinh, cosh and tanh deep-zooms by perturbation, with \
-         the same extended-range arithmetic past 1e28x as the built-in fractals. One with log, sqrt or a \
-         fractional power renders on the direct path, sharp until one single-precision step of c \
-         spans a pixel: about 1e4x to 1e5x, less far from the origin. The formula dialog says \
-         which applies. Every step is iterated in full (no series approximation), so a deep view \
+         real, imag, cabs, flip, recip, exp, log, sqrt, sin, cos, tan, sinh, cosh, tanh). Every \
+         step deep-zooms by perturbation, with the same extended-range arithmetic past 1e28x as \
+         the built-in fractals, except one with a power whose exponent varies with z or c (such \
+         as z^c): that renders on the direct path, sharp until one single-precision step of c \
+         spans a pixel, about 1e4x to 1e5x, less far from the origin. The formula dialog says \
+         which applies. log, sqrt and non-integer powers take their principal values, which jump \
+         across the negative real axis. Perturbation follows the jump exactly, but a pixel whose \
+         orbit crosses where the reference's does not is carried on at about single precision \
+         from then on, so deep views whose orbits straddle a cut show noise there (measured: \
+         clean at 1e5x on the real axis for sqrt(z^4 + c), noisy for log formulas even at \
+         1e4x). Every step is iterated in full (no series approximation), so a deep view \
          with a high iteration count renders more slowly than a built-in fractal's. Near its \
          boundary a formula with functions orbits chaotically, and a long orbit there is followed \
          only loosely in single precision: at 2,000 iterations a third of sin(z) + c's pixels \
@@ -611,7 +615,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--resume", "Restart an interrupted render: keep frames already on disk and render only the missing ones. The newest frame is verified first and discarded if incomplete (a render dies on the frame it is writing), stepping back until a good one is found; a folder holding frames at a different size is refused rather than mixed into the sequence."),
         Section("View (with --render / --find-minibrot)"),
         Flag("--fractal NAME", "Family, e.g. \"Mandelbrot\" or \"Burning Ship\"."),
-        Flag("--formula STEP", "A custom formula's step in Fractint-style expressions, e.g. \"z = z^3 - p1*z + c\" (implies --fractal Custom; deep zoom for a step without log, sqrt or fractional powers, direct rendering otherwise)."),
+        Flag("--formula STEP", "A custom formula's step in Fractint-style expressions, e.g. \"z = z^3 - p1*z + c\" (implies --fractal Custom; deep zoom unless a power's exponent varies with z or c, direct rendering then)."),
         Flag("--formula-params LIST", "The custom formula's parameters p1…p5 as re,im;re,im;…"),
         Flag("--center X Y", "View center (full-precision decimals or expressions: -3/4, -0.5 + 0.25*cos(pi/4))."),
         Flag("--zoom M", "Magnification, e.g. 2e7 or 1.0e23.9 (any depth; a bad value is fatal)."),

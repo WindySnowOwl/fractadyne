@@ -22,6 +22,9 @@
 //! | `sin a` (`cos`) | `sin B(a)` | `2·cos(B + P/2)·sin(P/2)` (`−2·sin(B + P/2)·sin(P/2)`) |
 //! | `sinh a` (`cosh`) | `sinh B(a)` | `2·cosh(B + P/2)·sinh(P/2)` (`2·sinh(B + P/2)·sinh(P/2)`) |
 //! | `tan a` (`tanh`) | `tan B(a)` | `DiffTan(B, P)` (`DiffTanh`): `sin P·sec B·sec W`, or `tan W − tan B` for a large `P` |
+//! | `log a` | `Log B(a)` | `DiffLog(B, P)`: `log1p(P/B)` − 2πi per crossing of the cut, or `Log W − Log B` for a large `P/B` |
+//! | `sqrt a` | `sqrt B(a)` | `DiffSqrt(B, P)`: `P/(√W + √B)`, or `√W − √B` where the roots point apart |
+//! | `a^k` (`k` fixed) | `B(a)^k` | `DiffPow(B, P, k)`: `B^k·expm1(k·DiffLog)`, `W^k` at `B = 0`, or `W^k − B^k` for a large `P/B` |
 //!
 //! A function's small-argument part (`sin(P/2)`, `expm1 P`, …) is an internal function accurate
 //! RELATIVE to the argument ([`Func::SinSmall`], [`Func::SinhSmall`], [`Func::Expm1`]); the rest
@@ -30,8 +33,13 @@
 //! The result is an ordinary IR [`Program`] over the inputs `Z`, `C` (the reference's values),
 //! [`Op::Delta`] and [`Op::DeltaC`], so every interpreter and the WGSL generator run it unchanged.
 //!
-//! Not yet: powers with a non-integer exponent, `log` and `sqrt` (branch cuts), and the previous
-//! iterate (a second perturbation to carry).
+//! The branch cuts of `log`, `sqrt` and a non-integer power are handled as the abs folds are, by a
+//! decision on the full values: where `B` and `W` straddle the negative real axis the difference
+//! jumps, and the rule adds the jump. Exact in exact arithmetic; near a cut, as near a fold, a
+//! pixel's orbit leaving the reference's branch carries a large `δz` from then on.
+//!
+//! Not yet: a power whose exponent varies with `z` or `c`, and the previous iterate (a second
+//! perturbation to carry).
 
 use super::{Builder, Formula, Func, Op, Program, Val};
 
@@ -266,21 +274,42 @@ pub fn perturbed(prog: &Program) -> Result<Program, NotPerturbable> {
                 };
                 Pair { b: bq, p }
             }
-            Op::Pow(..) => return Err(NotPerturbable("a non-integer power")),
+            // A power with a fixed exponent (a constant or a parameter): `DiffPow` carries the
+            // branch cut and the reference's zero. One whose exponent varies with z or c would
+            // need a second perturbation inside the exponential.
+            Op::Pow(a, e) => {
+                let (x, k) = (v(a), v(e));
+                if k.p.is_some() {
+                    return Err(NotPerturbable("a power whose exponent varies"));
+                }
+                let b = r.push(Op::Pow(x.b, k.b));
+                let p = x.p.map(|p| r.push(Op::DiffPow(x.b, p, k.b)));
+                Pair { b, p }
+            }
             Op::Func(f @ (Func::Exp | Func::Sin | Func::Cos | Func::Sinh | Func::Cosh | Func::Tan | Func::Tanh), a) => {
                 let x = v(a);
                 let b = r.push(Op::Func(f, x.b));
                 let p = x.p.map(|p| r.func(f, x.b, b, p));
                 Pair { b, p }
             }
-            Op::Func(Func::Log, _) => return Err(NotPerturbable("log")),
-            Op::Func(Func::Sqrt, _) => return Err(NotPerturbable("sqrt")),
+            Op::Func(f @ (Func::Log | Func::Sqrt), a) => {
+                let x = v(a);
+                let b = r.push(Op::Func(f, x.b));
+                let p = x.p.map(|p| r.push(if f == Func::Log { Op::DiffLog(x.b, p) } else { Op::DiffSqrt(x.b, p) }));
+                Pair { b, p }
+            }
             Op::Func(Func::SinSmall | Func::SinhSmall | Func::Expm1, _) => {
                 return Err(NotPerturbable("an already perturbed program"))
             }
-            Op::Delta | Op::DeltaC | Op::DiffAbsRe(..) | Op::DiffAbsIm(..) | Op::DiffTanh(..) | Op::DiffTan(..) => {
-                return Err(NotPerturbable("an already perturbed program"))
-            }
+            Op::Delta
+            | Op::DeltaC
+            | Op::DiffAbsRe(..)
+            | Op::DiffAbsIm(..)
+            | Op::DiffTanh(..)
+            | Op::DiffTan(..)
+            | Op::DiffLog(..)
+            | Op::DiffSqrt(..)
+            | Op::DiffPow(..) => return Err(NotPerturbable("an already perturbed program")),
         };
         vals.push(pair);
     }

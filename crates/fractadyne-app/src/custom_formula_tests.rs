@@ -34,17 +34,18 @@ fn compile_reports_parse_errors_with_their_place() {
     assert!(err.contains("line 1"), "{err}");
     let f = CustomFormula::compile("z^2 + c", &[]).unwrap();
     assert_eq!(f.params.len(), MAX_PARAMS);
-    // A ring formula, division and the functions but log and sqrt deep-zoom; the rest render
-    // direct and say which feature stops them — and the dialog's note (of the typed text) agrees
-    // with the shader the renderer selects its mode by.
+    // Every step deep-zooms but one whose power has a varying exponent, which renders direct and
+    // says so — and the dialog's note (of the typed text) agrees with the shader the renderer
+    // selects its mode by.
     for (src, deep, why) in [
         ("z^2 + c", true, ""),
         ("sin(z) + c", true, ""),
         ("z^2 + 1/c", true, ""),
         ("z*z*tanh(z) + exp(z)/c", true, ""),
-        ("log(z) + c", false, "log"),
-        ("sqrt(z) + c", false, "sqrt"),
-        ("z^2.5 + c", false, "a non-integer power"),
+        ("log(z) + c", true, ""),
+        ("sqrt(z) + c", true, ""),
+        ("z^2.5 + c", true, ""),
+        ("z^c + c", false, "a power whose exponent varies"),
     ] {
         let f = CustomFormula::compile(src, &[]).unwrap();
         let note = depth_note_for(&f.formula);

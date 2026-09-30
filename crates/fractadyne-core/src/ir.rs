@@ -45,11 +45,12 @@ impl Val {
     }
 }
 
-/// Elementary functions. `exp`, the circular and the hyperbolic ones also evaluate in bignum (a
-/// custom formula's reference orbit), where the two backends agree only to within their rounding —
-/// unlike the ring operations, which they reproduce bit for bit. That is harmless for a custom
-/// formula, whose orbits are never cached or shared, and it is why a built-in never uses them.
-/// `log` and `sqrt` are `f64` only (their branch cuts have no perturbed form yet).
+/// Elementary functions. Every one also evaluates in bignum (a custom formula's reference orbit),
+/// where the two backends agree only to within their rounding — unlike the ring operations, which
+/// they reproduce bit for bit. That is harmless for a custom formula, whose orbits are never cached
+/// or shared, and it is why a built-in never uses them. `log` and `sqrt` are the principal branches,
+/// cut along the negative real axis, and every field puts a point ON the cut (a zero imaginary
+/// part of either sign) on its upper side: `Log(−1) = iπ`, `sqrt(−1) = i`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Func {
     Exp,
@@ -107,9 +108,9 @@ pub enum Op {
     /// Complex division, `a·conj(b) / |b|²`. Not exact-ring: `f64` and bignum, each rounding it
     /// its own way (see [`Func`]).
     Div(Val, Val),
-    /// `a^b = exp(b·log a)`, and `0^b = 0`. `f64` only.
+    /// `a^b = exp(b·Log a)`, and `0^b = 0`. `f64` and bignum.
     Pow(Val, Val),
-    /// An elementary function — in bignum too, except `log` and `sqrt` (see [`Func`]).
+    /// An elementary function, in `f64` and bignum (see [`Func`]).
     Func(Func, Val),
     /// The perturbation of the iterate, δz — in a PERTURBED program ([`perturb`]), where `Z` and
     /// `C` are the reference's values.
@@ -127,13 +128,23 @@ pub enum Op {
     DiffTanh(Val, Val),
     /// `tan(b + p) − tan(b)`, likewise.
     DiffTan(Val, Val),
+    /// `Log(b + p) − Log(b)` for the PRINCIPAL logarithm: `log1p(p/b)` (accurate relative to a
+    /// small `p`), plus `2πi` where `b` and `b + p` sit on opposite sides of the branch cut on the
+    /// negative real axis — see [`log_diff`]. `f64` only (it branches).
+    DiffLog(Val, Val),
+    /// `sqrt(b + p) − sqrt(b)`, principal branch: `p / (sqrt(b + p) + sqrt(b))`, or the plain
+    /// difference where the two roots point apart (across the cut) — see [`sqrt_diff`].
+    DiffSqrt(Val, Val),
+    /// `(b + p)^k − b^k` with the principal power `exp(k·Log a)` and `0^k = 0`, for an exponent `k`
+    /// with no perturbation — see [`pow_diff`].
+    DiffPow(Val, Val, Val),
 }
 
 impl Op {
     /// The operands this instruction reads.
     pub fn operands(&self) -> impl Iterator<Item = Val> {
-        let (a, b) = match *self {
-            Op::Z | Op::C | Op::ZPrev | Op::Param(_) | Op::Const(..) | Op::Delta | Op::DeltaC => (None, None),
+        let (a, b, c) = match *self {
+            Op::Z | Op::C | Op::ZPrev | Op::Param(_) | Op::Const(..) | Op::Delta | Op::DeltaC => (None, None, None),
             Op::Add(a, b)
             | Op::Sub(a, b)
             | Op::Mul(a, b)
@@ -142,7 +153,10 @@ impl Op {
             | Op::DiffAbsRe(a, b)
             | Op::DiffAbsIm(a, b)
             | Op::DiffTanh(a, b)
-            | Op::DiffTan(a, b) => (Some(a), Some(b)),
+            | Op::DiffTan(a, b)
+            | Op::DiffLog(a, b)
+            | Op::DiffSqrt(a, b) => (Some(a), Some(b), None),
+            Op::DiffPow(a, b, k) => (Some(a), Some(b), Some(k)),
             Op::Sqr(a)
             | Op::PowI(a, _)
             | Op::Scale(a, _)
@@ -153,9 +167,9 @@ impl Op {
             | Op::Re(a)
             | Op::Im(a)
             | Op::Norm(a)
-            | Op::Func(_, a) => (Some(a), None),
+            | Op::Func(_, a) => (Some(a), None, None),
         };
-        a.into_iter().chain(b)
+        a.into_iter().chain(b).chain(c)
     }
 
     /// Whether every field this crate iterates in evaluates it exactly the same way: the ring
@@ -171,18 +185,30 @@ impl Op {
                 | Op::DiffAbsIm(..)
                 | Op::DiffTanh(..)
                 | Op::DiffTan(..)
+                | Op::DiffLog(..)
+                | Op::DiffSqrt(..)
+                | Op::DiffPow(..)
         )
     }
 
-    /// Whether the bignum fields evaluate it at all: the ring, division, and the functions with a
-    /// bignum form (see [`Func`]).
+    /// Whether the bignum fields evaluate it at all: the ring, division, powers, and the functions
+    /// with a bignum form (see [`Func`]).
     pub fn is_bignum(&self) -> bool {
         self.is_ring()
             || matches!(
                 self,
                 Op::Div(..)
+                    | Op::Pow(..)
                     | Op::Func(
-                        Func::Exp | Func::Sin | Func::Cos | Func::Tan | Func::Sinh | Func::Cosh | Func::Tanh,
+                        Func::Exp
+                            | Func::Log
+                            | Func::Sqrt
+                            | Func::Sin
+                            | Func::Cos
+                            | Func::Tan
+                            | Func::Sinh
+                            | Func::Cosh
+                            | Func::Tanh,
                         _
                     )
             )
@@ -229,7 +255,7 @@ impl std::fmt::Display for IrError {
             }
             IrError::NotBignum => write!(
                 f,
-                "log, sqrt and non-integer powers have no bignum form yet (f64 only)"
+                "a perturbed step's own operations have no bignum form (f64 only)"
             ),
         }
     }
@@ -328,6 +354,9 @@ impl Program {
                 Op::DiffAbsIm(a, b) => Op::DiffAbsIm(remap(a, &map), remap(b, &map)),
                 Op::DiffTanh(a, b) => Op::DiffTanh(remap(a, &map), remap(b, &map)),
                 Op::DiffTan(a, b) => Op::DiffTan(remap(a, &map), remap(b, &map)),
+                Op::DiffLog(a, b) => Op::DiffLog(remap(a, &map), remap(b, &map)),
+                Op::DiffSqrt(a, b) => Op::DiffSqrt(remap(a, &map), remap(b, &map)),
+                Op::DiffPow(a, b, k) => Op::DiffPow(remap(a, &map), remap(b, &map), remap(k, &map)),
                 leaf @ (Op::Z | Op::C | Op::ZPrev | Op::Param(_) | Op::Const(..) | Op::Delta | Op::DeltaC) => leaf,
             });
         }
@@ -378,7 +407,7 @@ impl Program {
                 Op::Delta => Some(1.0),
                 Op::DeltaC => Some(0.0),
                 Op::DiffAbsRe(_, p) | Op::DiffAbsIm(_, p) => g(p),
-                Op::DiffTanh(..) | Op::DiffTan(..) => None,
+                Op::DiffTanh(..) | Op::DiffTan(..) | Op::DiffLog(..) | Op::DiffSqrt(..) | Op::DiffPow(..) => None,
             };
             deg.push(d);
         }
@@ -597,14 +626,21 @@ pub(crate) trait IrField: Field {
     fn konst(v: f64, ctx: Self::Ctx) -> Self;
     /// Exact negation (a sign flip).
     fn fneg(self) -> Self;
-    /// A non-ring operation on materialised operands, or `None` where this field has none.
-    fn elementary(_op: &Op, _a: &(Self, Self), _b: Option<&(Self, Self)>, _ctx: Self::Ctx) -> Option<(Self, Self)> {
+    /// A non-ring operation on materialised operands (up to three: [`Op::DiffPow`]), or `None`
+    /// where this field has none.
+    fn elementary(
+        _op: &Op,
+        _a: &(Self, Self),
+        _b: Option<&(Self, Self)>,
+        _c: Option<&(Self, Self)>,
+        _ctx: Self::Ctx,
+    ) -> Option<(Self, Self)> {
         None
     }
 }
 
-/// What a bignum field needs beyond the ring for [`Op::is_bignum`]: division and five real
-/// functions, at the working precision.
+/// What a bignum field needs beyond the ring for [`Op::is_bignum`]: division, the real functions,
+/// π and a sign test, at the working precision.
 pub(crate) trait Transcendental: IrField {
     fn fdiv(&self, o: &Self, ctx: Self::Ctx) -> Self;
     fn fexp(&self, ctx: Self::Ctx) -> Self;
@@ -612,10 +648,17 @@ pub(crate) trait Transcendental: IrField {
     fn fcos(&self, ctx: Self::Ctx) -> Self;
     fn fsinh(&self, ctx: Self::Ctx) -> Self;
     fn fcosh(&self, ctx: Self::Ctx) -> Self;
+    fn fsqrt(&self, ctx: Self::Ctx) -> Self;
+    fn fln(&self, ctx: Self::Ctx) -> Self;
+    fn fatan(&self, ctx: Self::Ctx) -> Self;
+    fn fpi(ctx: Self::Ctx) -> Self;
+    /// −1, 0 or +1 (a zero of either sign is 0).
+    fn fsign(&self) -> i8;
 }
 
 /// The complex forms, from the real functions — the same identities as the `f64` interpreter's
-/// ([`cfunc`], [`cdiv`]), except tan and tanh as plain quotients (a bignum does not overflow).
+/// ([`cfunc`], [`cdiv`], [`csqrt`], [`clog`], [`cpow`]), except tan and tanh as plain quotients (a
+/// bignum does not overflow).
 fn complex_elementary<F: Transcendental>(op: &Op, a: &(F, F), b: Option<&(F, F)>, p: F::Ctx) -> Option<(F, F)> {
     let (x, y) = a;
     let div = |a: &(F, F), b: &(F, F)| {
@@ -624,15 +667,68 @@ fn complex_elementary<F: Transcendental>(op: &Op, a: &(F, F), b: Option<&(F, F)>
         let im = a.1.fmul(&b.0, p).fsub(&a.0.fmul(&b.1, p), p);
         (re.fdiv(&dd, p), im.fdiv(&dd, p))
     };
+    let exp = |a: &(F, F)| {
+        let r = a.0.fexp(p);
+        (r.fmul(&a.1.fcos(p), p), r.fmul(&a.1.fsin(p), p))
+    };
+    // The principal logarithm: (½·ln(x² + y²), arg), arg ∈ (−π, π] with a zero imaginary part
+    // on the upper side (see [`Func`]). arg from atan: atan(y/x) off the imaginary axis, ±π/2 on it.
+    let log = |a: &(F, F)| {
+        let (x, y) = a;
+        let half = F::konst(0.5, p);
+        let re = x.fmul(x, p).fadd(&y.fmul(y, p), p).fln(p).fmul(&half, p);
+        let arg = match (x.fsign(), y.fsign()) {
+            (0, 0) => F::konst(0.0, p),
+            (0, s) => {
+                let h = F::fpi(p).fmul(&half, p);
+                if s > 0 { h } else { h.fneg() }
+            }
+            (sx, sy) => {
+                let t = y.fdiv(x, p).fatan(p);
+                match (sx > 0, sy >= 0) {
+                    (true, _) => t,
+                    (false, true) => t.fadd(&F::fpi(p), p),
+                    (false, false) => t.fsub(&F::fpi(p), p),
+                }
+            }
+        };
+        (re, arg)
+    };
     let sin = || (x.fsin(p).fmul(&y.fcosh(p), p), x.fcos(p).fmul(&y.fsinh(p), p));
     let cos = || (x.fcos(p).fmul(&y.fcosh(p), p), x.fsin(p).fmul(&y.fsinh(p), p).fneg());
     let sinh = || (x.fsinh(p).fmul(&y.fcos(p), p), x.fcosh(p).fmul(&y.fsin(p), p));
     let cosh = || (x.fcosh(p).fmul(&y.fcos(p), p), x.fsinh(p).fmul(&y.fsin(p), p));
     Some(match *op {
         Op::Div(..) => div(a, b?),
-        Op::Func(Func::Exp, _) => {
-            let r = x.fexp(p);
-            (r.fmul(&y.fcos(p), p), r.fmul(&y.fsin(p), p))
+        Op::Pow(..) => {
+            let k = b?;
+            if x.fsign() == 0 && y.fsign() == 0 {
+                (F::konst(0.0, p), F::konst(0.0, p))
+            } else {
+                let l = log(a);
+                let e = (k.0.fmul(&l.0, p).fsub(&k.1.fmul(&l.1, p), p), k.0.fmul(&l.1, p).fadd(&k.1.fmul(&l.0, p), p));
+                exp(&e)
+            }
+        }
+        Op::Func(Func::Exp, _) => exp(a),
+        Op::Func(Func::Log, _) => log(a),
+        // The principal square root, as [`csqrt`]: t = sqrt((|x| + |z|)/2), then (t, y/2t) for
+        // x ≥ 0, else (|y|/2t, ±t) — the sign of y, a zero counting as positive.
+        Op::Func(Func::Sqrt, _) => {
+            if x.fsign() == 0 && y.fsign() == 0 {
+                (F::konst(0.0, p), F::konst(0.0, p))
+            } else {
+                let m = x.fmul(x, p).fadd(&y.fmul(y, p), p).fsqrt(p);
+                let t = x.fabs().fadd(&m, p).fmul(&F::konst(0.5, p), p).fsqrt(p);
+                let two_t = t.fdouble();
+                if x.fsign() >= 0 {
+                    (t, y.fdiv(&two_t, p))
+                } else if y.fsign() >= 0 {
+                    (y.fabs().fdiv(&two_t, p), t)
+                } else {
+                    (y.fabs().fdiv(&two_t, p), t.fneg())
+                }
+            }
         }
         Op::Func(Func::Sin, _) => sin(),
         Op::Func(Func::Cos, _) => cos(),
@@ -670,6 +766,27 @@ impl Transcendental for BigFloat {
     fn fcosh(&self, p: usize) -> BigFloat {
         ASTRO_CONSTS.with(|c| self.cosh(p, crate::RM, &mut c.borrow_mut()))
     }
+    fn fsqrt(&self, p: usize) -> BigFloat {
+        self.sqrt(p, crate::RM)
+    }
+    fn fln(&self, p: usize) -> BigFloat {
+        ASTRO_CONSTS.with(|c| self.ln(p, crate::RM, &mut c.borrow_mut()))
+    }
+    fn fatan(&self, p: usize) -> BigFloat {
+        ASTRO_CONSTS.with(|c| self.atan(p, crate::RM, &mut c.borrow_mut()))
+    }
+    fn fpi(p: usize) -> BigFloat {
+        ASTRO_CONSTS.with(|c| c.borrow_mut().pi(p, crate::RM))
+    }
+    fn fsign(&self) -> i8 {
+        if self.is_zero() {
+            0
+        } else if self.is_negative() {
+            -1
+        } else {
+            1
+        }
+    }
 }
 
 #[cfg(feature = "rug")]
@@ -692,6 +809,27 @@ impl Transcendental for rug::Float {
     fn fcosh(&self, p: u32) -> rug::Float {
         rug::Float::with_val_round(p, self.cosh_ref(), rug::float::Round::Zero).0
     }
+    fn fsqrt(&self, p: u32) -> rug::Float {
+        rug::Float::with_val_round(p, self.sqrt_ref(), rug::float::Round::Zero).0
+    }
+    fn fln(&self, p: u32) -> rug::Float {
+        rug::Float::with_val_round(p, self.ln_ref(), rug::float::Round::Zero).0
+    }
+    fn fatan(&self, p: u32) -> rug::Float {
+        rug::Float::with_val_round(p, self.atan_ref(), rug::float::Round::Zero).0
+    }
+    fn fpi(p: u32) -> rug::Float {
+        rug::Float::with_val_round(p, rug::float::Constant::Pi, rug::float::Round::Zero).0
+    }
+    fn fsign(&self) -> i8 {
+        if self.is_zero() {
+            0
+        } else if self.is_sign_negative() {
+            -1
+        } else {
+            1
+        }
+    }
 }
 
 impl IrField for f64 {
@@ -701,11 +839,14 @@ impl IrField for f64 {
     fn fneg(self) -> f64 {
         -self
     }
-    fn elementary(op: &Op, a: &(f64, f64), b: Option<&(f64, f64)>, _: ()) -> Option<(f64, f64)> {
+    fn elementary(op: &Op, a: &(f64, f64), b: Option<&(f64, f64)>, c: Option<&(f64, f64)>, _: ()) -> Option<(f64, f64)> {
         Some(match *op {
             Op::Div(..) => cdiv(*a, *b?),
             Op::Pow(..) => cpow(*a, *b?),
             Op::Func(f, _) => cfunc(f, *a),
+            Op::DiffLog(..) => log_diff(*a, *b?),
+            Op::DiffSqrt(..) => sqrt_diff(*a, *b?),
+            Op::DiffPow(..) => pow_diff(*a, *b?, *c?),
             Op::DiffAbsRe(..) => {
                 let p = *b?;
                 (diffabs(a.0, p.0), p.1)
@@ -757,6 +898,82 @@ pub(crate) fn tanh_diff(b: (f64, f64), p: (f64, f64)) -> (f64, f64) {
     cmul64(cmul64(cfunc(Func::SinhSmall, p), csech(b)), csech(w))
 }
 
+/// Below this `|p/b|`, [`log_diff`] and [`pow_diff`] take their relative-accuracy forms; above it,
+/// the plain difference, which cannot cancel much when `b + p` is that far from `b`.
+pub const LOG_DIFF_SPLIT: f64 = 0.5;
+
+/// `log(1 + u)` accurate RELATIVE to a small `u`: `(½·ln_1p(2·Re u + |u|²), atan2(Im u, 1 + Re u))`.
+fn clog1p(u: (f64, f64)) -> (f64, f64) {
+    (0.5 * (2.0 * u.0 + u.0 * u.0 + u.1 * u.1).ln_1p(), u.1.atan2(1.0 + u.0))
+}
+
+/// Whether `b` and `w` sit on opposite sides of the principal branch cut (the negative real axis)
+/// — `+1` from below to above, `−1` from above to below, `0` otherwise. For `w` near `b` (the
+/// relative-accuracy forms only): the crossing then needs both in the left half-plane, and the
+/// signs of the imaginary parts decide it, a zero counting as above (see [`Func`]).
+fn cut_crossing(b: (f64, f64), w: (f64, f64)) -> i8 {
+    if b.0 >= 0.0 || w.0 >= 0.0 {
+        return 0;
+    }
+    match (b.1 >= 0.0, w.1 >= 0.0) {
+        (true, false) => -1,
+        (false, true) => 1,
+        _ => 0,
+    }
+}
+
+/// `Log(b + p) − Log(b)` as the perturbed `log` needs it, the shader's `cf_log_diff` branch for
+/// branch. For a small `p/b`, `log1p(p/b)` — accurate relative to itself, where two logs of nearly
+/// equal values would cancel — plus `2πi·n` for a crossing of the branch cut, which `log1p` cannot
+/// see: from above to below `Arg` drops by 2π (`n = −1`), from below to above it rises (`n = +1`).
+/// Else the plain difference.
+pub(crate) fn log_diff(b: (f64, f64), p: (f64, f64)) -> (f64, f64) {
+    let w = (b.0 + p.0, b.1 + p.1);
+    let u = cdiv(p, b);
+    if !(u.0.hypot(u.1) < LOG_DIFF_SPLIT) {
+        let (lw, lb) = (clog(w), clog(b));
+        return (lw.0 - lb.0, lw.1 - lb.1);
+    }
+    let l = clog1p(u);
+    (l.0, l.1 + std::f64::consts::TAU * cut_crossing(b, w) as f64)
+}
+
+/// `sqrt(b + p) − sqrt(b)` (principal) as the perturbed `sqrt` needs it, the shader's
+/// `cf_sqrt_diff`: `p / (sqrt(w) + sqrt(b))` while the two roots point the same way (the sum cannot
+/// cancel), else — across the branch cut, where `sqrt(w) ≈ −sqrt(b)` — the plain difference, which
+/// then cannot cancel. `(w − b) = (√w − √b)(√w + √b)` holds for any pair of roots, so both are exact.
+pub(crate) fn sqrt_diff(b: (f64, f64), p: (f64, f64)) -> (f64, f64) {
+    let (sw, sb) = (csqrt((b.0 + p.0, b.1 + p.1)), csqrt(b));
+    let sum = (sw.0 + sb.0, sw.1 + sb.1);
+    let dif = (sw.0 - sb.0, sw.1 - sb.1);
+    if sum.0 * sum.0 + sum.1 * sum.1 >= dif.0 * dif.0 + dif.1 * dif.1 {
+        if sum == (0.0, 0.0) {
+            return (0.0, 0.0);
+        }
+        cdiv(p, sum)
+    } else {
+        dif
+    }
+}
+
+/// `(b + p)^k − b^k` (principal power, `0^k = 0`) as the perturbed power needs it, the shader's
+/// `cf_pow_diff`: `b^k·expm1(k·(Log w − Log b))` for a small `p/b`, with [`log_diff`] carrying the
+/// branch cut; else the plain difference. At `b = 0` — a reference at `Z₀ = 0`, as after every
+/// rebase in the parameter plane — it is `w^k` itself, which the product form would reach as
+/// `0·∞`.
+pub(crate) fn pow_diff(b: (f64, f64), p: (f64, f64), k: (f64, f64)) -> (f64, f64) {
+    let w = (b.0 + p.0, b.1 + p.1);
+    if b == (0.0, 0.0) {
+        return cpow(w, k);
+    }
+    let u = cdiv(p, b);
+    if !(u.0.hypot(u.1) < LOG_DIFF_SPLIT) {
+        let (pw, pb) = (cpow(w, k), cpow(b, k));
+        return (pw.0 - pb.0, pw.1 - pb.1);
+    }
+    cmul64(cpow(b, k), cfunc(Func::Expm1, cmul64(k, log_diff(b, p))))
+}
+
 /// `|c + d| − |c|` without cancellation (Kalles Fraktaler's "diffabs"): exactly `±d` while `c` and
 /// `c + d` share a sign, `±(2c + d)` across the fold. The shader's `df_diffabs`, branch for branch.
 pub(crate) fn diffabs(c: f64, d: f64) -> f64 {
@@ -782,7 +999,13 @@ impl IrField for BigFloat {
         self.inv_sign();
         self
     }
-    fn elementary(op: &Op, a: &(BigFloat, BigFloat), b: Option<&(BigFloat, BigFloat)>, p: usize) -> Option<(BigFloat, BigFloat)> {
+    fn elementary(
+        op: &Op,
+        a: &(BigFloat, BigFloat),
+        b: Option<&(BigFloat, BigFloat)>,
+        _: Option<&(BigFloat, BigFloat)>,
+        p: usize,
+    ) -> Option<(BigFloat, BigFloat)> {
         complex_elementary(op, a, b, p)
     }
 }
@@ -795,7 +1018,13 @@ impl IrField for rug::Float {
     fn fneg(self) -> rug::Float {
         -self
     }
-    fn elementary(op: &Op, a: &(rug::Float, rug::Float), b: Option<&(rug::Float, rug::Float)>, p: u32) -> Option<(rug::Float, rug::Float)> {
+    fn elementary(
+        op: &Op,
+        a: &(rug::Float, rug::Float),
+        b: Option<&(rug::Float, rug::Float)>,
+        _: Option<&(rug::Float, rug::Float)>,
+        p: u32,
+    ) -> Option<(rug::Float, rug::Float)> {
         complex_elementary(op, a, b, p)
     }
 }
@@ -817,9 +1046,11 @@ fn cexp(a: (f64, f64)) -> (f64, f64) {
     (r * c, r * s)
 }
 
-/// The principal logarithm (branch cut on the negative real axis).
+/// The principal logarithm (branch cut on the negative real axis). `y + 0.0` turns a −0 into +0,
+/// so the cut itself is on the upper side as in every field (see [`Func`]): IEEE's
+/// `atan2(−0, −1)` is −π, the bignum fields' is π.
 fn clog(a: (f64, f64)) -> (f64, f64) {
-    (a.0.hypot(a.1).ln(), a.1.atan2(a.0))
+    (a.0.hypot(a.1).ln(), (a.1 + 0.0).atan2(a.0))
 }
 
 /// `0^b = 0` (Fractint's convention), else `exp(b·log a)`.
@@ -840,7 +1071,8 @@ fn csqrt(a: (f64, f64)) -> (f64, f64) {
     if x >= 0.0 {
         (t, y / (2.0 * t))
     } else {
-        (y.abs() / (2.0 * t), t.copysign(y))
+        // `y + 0.0`: a −0 on the cut takes the upper side's root, as in every field.
+        (y.abs() / (2.0 * t), t.copysign(y + 0.0))
     }
 }
 
@@ -1114,17 +1346,27 @@ impl<'f, F: IrField> Machine<'f, F> {
                 | Op::DiffAbsRe(a, b)
                 | Op::DiffAbsIm(a, b)
                 | Op::DiffTanh(a, b)
-                | Op::DiffTan(a, b) => {
+                | Op::DiffTan(a, b)
+                | Op::DiffLog(a, b)
+                | Op::DiffSqrt(a, b) => {
                     let (a, b) = (g(a), g(b));
                     let a = (self.materialize(a.re), self.materialize(a.im));
                     let b = (self.materialize(b.re), self.materialize(b.im));
-                    let (re, im) = F::elementary(op, &a, Some(&b), self.ctx).ok_or(IrError::NotBignum)?;
+                    let (re, im) = F::elementary(op, &a, Some(&b), None, self.ctx).ok_or(IrError::NotBignum)?;
+                    Cs { re: self.push(re), im: self.push(im) }
+                }
+                Op::DiffPow(a, b, k) => {
+                    let (a, b, k) = (g(a), g(b), g(k));
+                    let a = (self.materialize(a.re), self.materialize(a.im));
+                    let b = (self.materialize(b.re), self.materialize(b.im));
+                    let k = (self.materialize(k.re), self.materialize(k.im));
+                    let (re, im) = F::elementary(op, &a, Some(&b), Some(&k), self.ctx).ok_or(IrError::NotBignum)?;
                     Cs { re: self.push(re), im: self.push(im) }
                 }
                 Op::Func(_, a) => {
                     let a = g(a);
                     let a = (self.materialize(a.re), self.materialize(a.im));
-                    let (re, im) = F::elementary(op, &a, None, self.ctx).ok_or(IrError::NotBignum)?;
+                    let (re, im) = F::elementary(op, &a, None, None, self.ctx).ok_or(IrError::NotBignum)?;
                     Cs { re: self.push(re), im: self.push(im) }
                 }
             };

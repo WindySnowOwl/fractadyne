@@ -46,6 +46,14 @@ fn cases() -> Vec<(String, Program, Vec<(f64, f64)>)> {
         ("sinh(z) + cosh(z)*c", vec![]),
         ("tan(z) + c", vec![]),
         ("tanh(z*z) + c", vec![]),
+        // The branch-cut functions and fixed-exponent powers, alone and composed.
+        ("log(z*z + 1) + c", vec![]),
+        ("z^2 + 0.3*log(z + 2) + c", vec![]),
+        ("sqrt(z*z*z + c) + c", vec![]),
+        ("z^2 + c*sqrt(z + 1)", vec![]),
+        ("z^2.5 + c", vec![]),
+        ("z^p1 + c", vec![(2.2, 0.3)]),
+        ("sqrt(z)^3 + c", vec![]),
     ] {
         v.push((src.to_string(), parse(src).unwrap().phases()[0].clone(), params));
     }
@@ -142,15 +150,60 @@ fn a_perturbed_orbit_tracks_the_pixels_exact_orbit() {
     }
 }
 
+/// Across the branch cut (the negative real axis) the principal `log`, `sqrt` and powers JUMP, and
+/// the perturbed step must jump with them: `Log W − Log B` is `log1p(P/B) ∓ 2πi` there, and
+/// `√W − √B` is nearly `∓2i√|B|`, not the tiny `P/(√W + √B)` — a pixel whose orbit crosses where
+/// the reference's does not. Against the exact difference in 256-bit bignum, for references above,
+/// below and ON the cut (a zero imaginary part is its upper side), not crossing, crossing the
+/// positive axis (no cut), and a power's reference at 0 (`0^k = 0`, as after every rebase).
+#[test]
+fn the_branch_cut_functions_jump_where_their_principal_values_do() {
+    let one = |src: &str, params: &[(f64, f64)], z: (f64, f64), dz: (f64, f64)| {
+        let prog = parse(src).unwrap().phases()[0].clone();
+        let (zx, zy, zero) = (bf(z.0), bf(z.1), bf(0.0));
+        let (wx, wy) = (zx.add(&bf(dz.0), P, crate::RM), zy.add(&bf(dz.1), P, crate::RM));
+        let (fx, fy) = exact_step(&prog, (&zx, &zy), (&zero, &zero), params);
+        let (gx, gy) = exact_step(&prog, (&wx, &wy), (&zero, &zero), params);
+        let want = (crate::to_f64(&gx.sub(&fx, P, crate::RM)), crate::to_f64(&gy.sub(&fy, P, crate::RM)));
+        let pert = perturbed(&prog).unwrap();
+        let got = step_perturbed_f64(&pert, z, (0.0, 0.0), dz, (0.0, 0.0), params).unwrap();
+        let err = (got.0 - want.0).hypot(got.1 - want.1) / want.0.hypot(want.1);
+        assert!(err < 1.0e-9, "{src} at {z:?} + {dz:?}: {got:?} vs exact {want:?} ({err:e})");
+        want
+    };
+    let mut jumps = 0;
+    for (src, params) in [("log(z)", vec![]), ("sqrt(z)", vec![]), ("z^2.5", vec![]), ("z^p1", vec![(0.4, 0.3)])] {
+        for (z, dz, crosses) in [
+            ((-1.3, 2.0e-11), (1.0e-12, -5.0e-11), true),
+            ((-1.3, -2.0e-11), (0.0, 5.0e-11), true),
+            ((-1.3, 0.0), (3.0e-12, -1.0e-11), true),
+            ((-1.3, 0.0), (3.0e-12, 1.0e-11), false),
+            ((-1.3, 2.0e-11), (1.0e-12, 1.0e-11), false),
+            ((0.8, 1.0e-3), (1.0e-9, -2.0e-3), false),
+        ] {
+            let want = one(src, &params, z, dz);
+            // A crossing moves the value by O(1), anything else by O(|δz|) (≤ 3e-3 here).
+            assert_eq!(want.0.hypot(want.1) > 0.1, crosses, "{src} at {z:?} + {dz:?}: {want:?}");
+            jumps += crosses as usize;
+        }
+        if src != "log(z)" {
+            one(src, &params, (0.0, 0.0), (1.0e-12, 2.0e-12));
+        }
+    }
+    assert_eq!(jumps, 12);
+}
+
 #[test]
 fn what_cannot_be_perturbed_yet_says_what() {
     let err = |src: &str| perturbed(&parse(src).unwrap().phases()[0]).unwrap_err().0;
-    assert_eq!(err("log(z) + c"), "log");
-    assert_eq!(err("sqrt(z) + c"), "sqrt");
-    assert_eq!(err("z^2.5 + c"), "a non-integer power");
+    assert_eq!(err("z^c + c"), "a power whose exponent varies");
+    assert_eq!(err("z^(z*0.5) + c"), "a power whose exponent varies");
     assert!(perturbable(&parse("z^2 + c").unwrap()));
     assert!(perturbable(&parse("z/c + c").unwrap()), "division has a perturbed form");
     assert!(perturbable(&parse("sin(z) + cos(z)*cos(z) + c").unwrap()), "so do sin and cos");
+    for src in ["log(z) + c", "sqrt(z) + c", "z^2.5 + c", "z^p1 + c", "(z + 1)^(0.5, 0.25) + c"] {
+        assert!(perturbable(&parse(src).unwrap()), "{src}: log, sqrt and fixed-exponent powers perturb");
+    }
     assert!(!perturbable(&Formula::single(builtin_step(crate::formula::PHOENIX).unwrap())), "Phoenix reads z_prev");
     // A step that ignores z and c perturbs to zero.
     let flat = perturbed(&parse("(0.5, 0.5)").unwrap().phases()[0]).unwrap();

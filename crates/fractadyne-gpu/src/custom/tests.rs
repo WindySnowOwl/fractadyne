@@ -138,14 +138,13 @@ fn powers_hybrids_parameters_and_functions_generate_valid_modules() {
         let s = build(&unary(op), &[]).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(s.precision, Precision::F32, "{name}");
         assert!(s.source.contains(&format!("cf_{name}(v0)")), "{name}");
-        // The functions with a perturbed form carry it, through the small-argument helpers.
-        let perturbs = !matches!(name, "log" | "sqrt");
-        assert_eq!(s.perturbation.is_ok(), perturbs, "{name}: {:?}", s.perturbation);
-        if perturbs {
-            let small = ["cf_sin_small(", "cf_sinh_small(", "cf_expm1(", "cf_tanh_diff(", "cf_tan_diff("];
-            let pstep = &s.source[s.source.find("fn custom_pphase0(").expect("a perturbed step")..];
-            assert!(small.iter().any(|h| pstep.contains(h)), "{name}: no small-argument helper in its perturbed step");
-        }
+        // Every function has a perturbed form, carried through the small-argument helpers.
+        assert!(s.perturbation.is_ok(), "{name}: {:?}", s.perturbation);
+        let small = [
+            "cf_sin_small(", "cf_sinh_small(", "cf_expm1(", "cf_tanh_diff(", "cf_tan_diff(", "cf_log_diff(", "cf_sqrt_diff(",
+        ];
+        let pstep = &s.source[s.source.find("fn custom_pphase0(").expect("a perturbed step")..];
+        assert!(small.iter().any(|h| pstep.contains(h)), "{name}: no small-argument helper in its perturbed step");
     }
     // The shader's tanh_diff branches where the interpreter's does.
     let split = format!("if (abs(p.re.x) >= {:?}) {{", fractadyne_core::ir::TANH_DIFF_SPLIT as f32);
@@ -259,13 +258,18 @@ fn the_floatexp_step_keeps_the_perturbations_in_floatexp() {
         (parse("tanh(z) + c"), "fe_tanh_diff("),
         (parse("tan(z) + c"), "fe_tan_diff("),
         (parse("z^2 + c/(z + 2)"), "fe_div_cdf("),
+        (parse("log(z*z + 1) + c"), "fe_log_diff("),
+        (parse("sqrt(z) + c"), "fe_sqrt_diff("),
+        (parse("z^2.5 + c"), "fe_pow_diff("),
+        (parse("(z + 1)^(0.5, 0.25) + c"), "fe_pow_diff("),
     ] {
         let p = fphase(&formula);
         assert!(p.contains(helper), "{helper} missing: {p}");
         assert!(!p.contains("fe_from_cdf(v"), "a perturbation collapsed and re-expanded: {p}");
     }
-    // A non-perturbable formula still gets the (never dispatched) stub the mode-2 loop calls.
-    let s = build(&parse("log(z) + c"), &[]).unwrap().source;
+    // A non-perturbable formula (a power whose exponent varies) still gets the (never dispatched)
+    // stub the mode-2 loop calls.
+    let s = build(&parse("z^c + c"), &[]).unwrap().source;
     assert!(s.contains("fn custom_fstep(z: Cdf, dz: Fe, dc: Fe, iter: u32) -> Fe { return dz; }"));
 }
 

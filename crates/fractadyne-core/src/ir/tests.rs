@@ -351,12 +351,13 @@ fn programs_are_validated() {
     assert_eq!(Program::new(vec![Z, Scale(Val(0), f64::INFINITY)], Val(1)), Err(IrError::NonFinite { inst: 1 }));
     assert_eq!(Formula::new(vec![]), Err(IrError::Empty));
     assert_eq!(lower_opcodes(&[Opcode::Sqr, Opcode::Mul]), Err(IrError::MulBeforeStore { opcode: 1 }));
-    // Programs with no bignum form (`log`) are refused by the bignum interpreter rather than half-run.
-    let log = crate::ir::parse::parse("log(z) + c").unwrap();
+    // Programs with no bignum form (a perturbed step's own operations) are refused by the bignum
+    // interpreter rather than half-run.
+    let diff = Formula::single(Program::new(vec![Z, C, DiffTanh(Val(0), Val(1))], Val(2)).unwrap());
     let p = 128;
     let z = BigFloat::from_f64(0.5, p);
     assert_eq!(
-        reference_orbit_in(BackendChoice::Astro, &log, &z, &z, &z, &z, &[], 10, p).map(|r| r.1),
+        reference_orbit_in(BackendChoice::Astro, &diff, &z, &z, &z, &z, &[], 10, p).map(|r| r.1),
         Err(IrError::NotBignum)
     );
 }
@@ -375,6 +376,11 @@ fn bignum_functions_follow_the_f64_orbit() {
         "tan(z) + c",
         "tanh(z) + c",
         "z^2 + c/(z + 2)",
+        "log(z*z + 1) + c",
+        "sqrt(z) + c",
+        "sqrt(z^4 + c)",
+        "z^2.5 + c",
+        "(z + 1)^(0.5, 0.25) + c",
     ] {
         let formula = crate::ir::parse::parse(src).unwrap();
         let (c, z0) = ((0.21, -0.37), (0.0, 0.0));
