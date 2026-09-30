@@ -328,6 +328,13 @@ pub struct SessionState {
     /// left is fully restored (the center/zoom already are).
     #[serde(default = "default_fractal")]
     pub fractal: String,
+    /// The custom formula's source text (what `fractal = "Custom"` renders) and its parameters
+    /// p1…p5 as `[re, im]` — empty until one has been written. Kept when another family is chosen,
+    /// so switching back finds it.
+    #[serde(default)]
+    pub custom_formula: String,
+    #[serde(default)]
+    pub custom_params: Vec<[f64; 2]>,
     /// Julia mode + parameter `c` (the view state that pairs with center/zoom).
     #[serde(default)]
     pub julia_mode: bool,
@@ -621,6 +628,8 @@ impl Default for SessionState {
             right_panel_open: true,
             perf_panel: false,
             fractal: default_fractal(),
+            custom_formula: String::new(),
+            custom_params: Vec::new(),
             julia_mode: false,
             julia_c_re: default_julia_c_re(),
             julia_c_im: default_julia_c_im(),

@@ -70,6 +70,7 @@ mod exec_resolve;
 mod eyedropper;
 mod export;
 mod bench_matrix;
+mod custom_formula;
 mod fractal;
 mod chunksweep;
 mod glitchaudit;
@@ -775,6 +776,8 @@ mod task_invocation;
 /// hot path — a device loss must not itself do expensive work to record its own cause.
 struct CrashView {
     fractal: FractalKind,
+    /// The custom formula, for a Custom view (an `Arc` clone per frame; formatted only on a crash).
+    custom: Option<std::sync::Arc<custom_formula::CustomFormula>>,
     julia: bool,
     julia_c: (f64, f64),
     cx: fractadyne_core::BigFloat,
@@ -796,7 +799,7 @@ pub(crate) fn crash_view_fdn() -> Option<String> {
     let v = g.as_ref()?;
     Some(format!(
         "app=Fractadyne\nfractal={}\njulia={}\njulia_c_re={:.17e}\njulia_c_im={:.17e}\n\
-         center_re={}\ncenter_im={}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n",
+         center_re={}\ncenter_im={}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n{}",
         v.fractal.name(),
         v.julia as u32,
         v.julia_c.0,
@@ -807,6 +810,10 @@ pub(crate) fn crash_view_fdn() -> Option<String> {
         fmt_zoom_field(v.log2mag),
         v.max_iter,
         v.auto_iter as u32,
+        v.custom
+            .as_ref()
+            .map(|c| format!("formula={}\nformula_params={}\n", c.source_line(), c.params_line()))
+            .unwrap_or_default(),
     ))
 }
 
@@ -4373,6 +4380,8 @@ struct OrbitKey {
     upp: f64,
     julia: bool,
     formula: u32,
+    /// The custom formula's key (0 for a built-in): every custom formula is `formula` 1000.
+    custom: u64,
     jcx: f64,
     jcy: f64,
 }
@@ -5597,6 +5606,12 @@ struct FractadyneApp {
     viewport: Viewport,
     /// Which fractal is being rendered (single-view mode).
     fractal: FractalKind,
+    /// The custom formula `FractalKind::Custom` renders (design/custom-formulas.md). Kept while
+    /// another family is shown, so switching back finds it; `fractal` is never `Custom` while this
+    /// is `None`.
+    custom: Option<std::sync::Arc<custom_formula::CustomFormula>>,
+    /// The "Custom formula" dialog's state (`ui/formula_dialog.rs`).
+    formula_dialog: ui::formula_dialog::FormulaDialog,
     /// Julia constant `c` (complex). In dual view it's driven by the Mandelbrot cursor.
     julia_c: (f64, f64),
     /// Single-view Julia mode: show the Julia set of the current formula for `julia_c`.
@@ -5831,7 +5846,8 @@ struct FractadyneApp {
     /// Minimap overview cache: home-view thumbnail + the key (formula, palette, method) it was
     /// rendered for (re-render on change). The enable *toggle* lives in [`DialogState`].
     minimap_tex: Option<egui::TextureHandle>,
-    minimap_key: Option<(u32, usize, u32, u32)>,
+    /// (formula id, custom-formula key — every custom formula is id 1000, palette, method, rev).
+    minimap_key: Option<(u32, u64, usize, u32, u32)>,
     /// Precision reticle (hold Shift with click-to-zoom armed): what the DRAW phase saw under the
     /// cursor, handed to the UPDATE phase, which is the only place with a GPU device to render
     /// with. One frame of latency, which a magnifier can afford.
@@ -6530,11 +6546,33 @@ impl FractadyneApp {
             );
         }
         // Restore the saved fractal family (so the view you left is fully recreated).
-        let fractal = FractalKind::from_name(&s.fractal).unwrap_or(FractalKind::Mandelbrot);
+        let mut fractal = FractalKind::from_name(&s.fractal).unwrap_or(FractalKind::Mandelbrot);
+        // …and the custom formula, rebuilt from its text. One that no longer compiles is dropped
+        // (with a log line), and a view that showed it falls back to Mandelbrot.
+        let custom = if s.custom_formula.trim().is_empty() {
+            None
+        } else {
+            let params: Vec<(f64, f64)> = s.custom_params.iter().map(|p| (p[0], p[1])).collect();
+            match custom_formula::CustomFormula::compile(&s.custom_formula, &params) {
+                Ok(c) => Some(std::sync::Arc::new(c)),
+                Err(e) => {
+                    diag::log_line("start", &format!("saved custom formula dropped: {e}"));
+                    None
+                }
+            }
+        };
+        if fractal == FractalKind::Custom && custom.is_none() {
+            fractal = FractalKind::Mandelbrot;
+        }
+        if let Some(c) = &custom {
+            calibration::set_custom_factor(c.shader.cost_factor);
+        }
 
         let mut app = Self {
             viewport,
             fractal,
+            custom,
+            formula_dialog: Default::default(),
             julia_c: (s.julia_c_re, s.julia_c_im),
             julia_mode: s.julia_mode && fractal.supports_julia(),
             click_zoom: s.click_zoom,
@@ -7081,6 +7119,31 @@ impl FractadyneApp {
                 }
             }
         }
+        // `--formula "<step>"` [`--formula-params "re,im;re,im"`]: a custom formula, shown (implies
+        // `--fractal Custom`). One that does not compile is an error, never a quiet fallback.
+        if let Some(src) = val("--formula") {
+            let params = match val("--formula-params") {
+                None => Vec::new(),
+                Some(p) => custom_formula::parse_params_line(p).unwrap_or_else(|| {
+                    eprintln!("fractadyne: --formula-params: expected \"re,im;re,im;…\", got \"{p}\".");
+                    crate::exit(2)
+                }),
+            };
+            match custom_formula::CustomFormula::compile(src, &params) {
+                Ok(c) => {
+                    calibration::set_custom_factor(c.shader.cost_factor);
+                    self.custom = Some(std::sync::Arc::new(c));
+                    self.fractal = FractalKind::Custom;
+                }
+                Err(e) => {
+                    eprintln!("fractadyne: --formula: {e}");
+                    crate::exit(2)
+                }
+            }
+        } else if self.fractal == FractalKind::Custom && self.custom.is_none() {
+            eprintln!("fractadyne: --fractal Custom needs --formula \"<step>\" (or a saved custom formula).");
+            crate::exit(2)
+        }
         self.julia_mode = self.fractal.supports_julia() && args.iter().any(|a| a == "--julia");
         if let Some((re, im)) = two("--julia-c") {
             self.julia_c = (
@@ -7456,6 +7519,12 @@ impl FractadyneApp {
             right_panel_open: self.dialogs.right_panel_open,
             perf_panel: self.perf.enabled,
             fractal: self.fractal.name().to_string(),
+            custom_formula: self.custom.as_ref().map(|c| c.source.clone()).unwrap_or_default(),
+            custom_params: self
+                .custom
+                .as_ref()
+                .map(|c| c.params[..c.params_used()].iter().map(|p| [p.0, p.1]).collect())
+                .unwrap_or_default(),
             julia_mode: self.julia_mode,
             julia_c_re: self.julia_c.0,
             julia_c_im: self.julia_c.1,
@@ -7937,6 +8006,12 @@ impl FractadyneApp {
         if self.fractal == kind {
             return;
         }
+        if kind == FractalKind::Custom && self.custom.is_none() {
+            // Nothing to render: Custom is entered through `apply_custom_formula`, which sets the
+            // formula first. Refused rather than drawing some other formula under its name.
+            diag::log_line("formula", "switch to Custom refused: no custom formula has been applied");
+            return;
+        }
         self.fractal = kind;
         if !kind.supports_julia() {
             self.julia_mode = false;
@@ -8018,6 +8093,7 @@ impl FractadyneApp {
         if let Ok(mut g) = CRASH_VIEW.lock() {
             *g = Some(CrashView {
                 fractal: self.fractal,
+                custom: self.custom.clone().filter(|_| self.fractal == FractalKind::Custom),
                 julia: self.julia_mode,
                 julia_c: self.julia_c,
                 cx: self.viewport.center_x.clone(),
@@ -8182,8 +8258,9 @@ impl FractadyneApp {
     /// carries the family so a period never bleeds across a fractal or Julia switch.
     fn view_key(&self) -> String {
         format!(
-            "{}:{}|{}|{}|{}",
+            "{}/{:x}:{}|{}|{}|{}",
             self.fractal.formula_id(),
+            self.custom_key_for(self.fractal),
             self.julia_mode as u8,
             fmt_zoom_field(self.viewport.log2_magnification()),
             fractadyne_core::to_decimal_string(&self.viewport.center_x),
@@ -12716,7 +12793,13 @@ impl FractadyneApp {
         } else {
             (self.coloring.palette_idx, 0)
         };
-        let key = (self.fractal.formula_id(), pal_idx, self.coloring.color_method.to_u32(), pal_rev);
+        let key = (
+            self.fractal.formula_id(),
+            self.custom_key_for(self.fractal),
+            pal_idx,
+            self.coloring.color_method.to_u32(),
+            pal_rev,
+        );
         if self.minimap_key == Some(key) && self.minimap_tex.is_some() {
             return;
         }
@@ -15264,6 +15347,7 @@ impl eframe::App for FractadyneApp {
         self.poll_update_check(ctx);
         self.draw_update_dialog(ctx);
         self.draw_goto_dialog(ctx);
+        self.draw_formula_dialog(ctx);
         self.draw_snapshot_choice_dialog(ctx);
         self.draw_misiurewicz_explorer(ctx);
         self.draw_share_dialog(ctx);

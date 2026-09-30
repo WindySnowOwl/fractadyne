@@ -7,6 +7,7 @@
 
 pub(crate) mod central;
 mod dialogs;
+pub(crate) mod formula_dialog;
 mod menus;
 mod panels;
 pub(crate) mod diagnostics;

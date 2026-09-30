@@ -72,6 +72,11 @@ enum Screen {
     PaletteEditorRing,
     /// The colour picker popup, which no walk can reach by clicking.
     ColorPicker,
+    /// The Custom formula dialog with a formula APPLIED — the dialog, its parameter row and depth
+    /// note, and the custom formula rendering behind it.
+    Formula,
+    /// The same dialog holding a formula with a syntax error: the positioned message, Apply off.
+    FormulaError,
     /// Dual view on one formula, then the SAME dual view on another — checklist steps 45-46, and
     /// the field report behind them: switching formula while dual left the parameter pane showing
     /// the previous formula. The pair is the check; neither screen means anything alone.
@@ -681,6 +686,8 @@ fn build_steps() -> Vec<Step> {
         screen("palette-editor", Screen::PaletteEditor),
         screen("palette-editor-ring", Screen::PaletteEditorRing),
         screen("color-picker", Screen::ColorPicker),
+        screen("formula", Screen::Formula),
+        screen("formula-error", Screen::FormulaError),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
         live("live-direct-1e2", 2.0),
         live("live-df32-1e6", 6.0),
@@ -1031,6 +1038,12 @@ impl FractadyneApp {
         // The Reference cache screen turns the (task-invocation-disabled) orbit cache on against a
         // scratch store; no later step may render from it, so it goes back off with the window.
         crate::refcache_persist::set_enabled(false);
+        // The Formula screen SHOWS a custom formula; the steps after it assert Mandelbrot's render
+        // modes, which a custom formula (direct only) would fail. Leave it with the window.
+        self.formula_dialog.open = false;
+        if self.fractal == crate::FractalKind::Custom {
+            self.set_fractal(crate::FractalKind::Mandelbrot);
+        }
     }
 
     fn uitest_open_screen(&mut self, ctx: &egui::Context, s: Screen) {
@@ -1318,6 +1331,20 @@ impl FractadyneApp {
                 ctx.memory_mut(|m| {
                     m.open_popup(egui::Id::new("stop_color").with("popup"));
                 });
+            }
+            Screen::Formula => {
+                let src = "z = z^3 - p1*z + c";
+                self.open_formula_dialog();
+                self.formula_dialog.source = src.into();
+                self.formula_dialog.params[0] = ("0.5".into(), "0".into());
+                match crate::custom_formula::CustomFormula::compile(src, &[(0.5, 0.0)]) {
+                    Ok(c) => self.apply_custom_formula(c),
+                    Err(e) => self.formula_dialog.error = Some(e),
+                }
+            }
+            Screen::FormulaError => {
+                self.open_formula_dialog();
+                self.formula_dialog.source = "z = z^3 - p1*z +\nfn1(z)".into();
             }
         }
     }

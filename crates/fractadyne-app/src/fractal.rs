@@ -48,6 +48,10 @@ pub(crate) enum FractalKind {
     Buffalo,
     Phoenix,
     Newton,
+    /// The session's custom formula (`FractadyneApp::custom`, design/custom-formulas.md): its step
+    /// comes from a generated shader module. Last, and outside [`FractalKind::ALL`], which lists the
+    /// built-in families.
+    Custom,
 }
 
 /// All the app-side metadata for one family, gathered in one place so adding a formula is a
@@ -69,6 +73,8 @@ pub(crate) struct FractalSpec {
 }
 
 impl FractalKind {
+    /// The BUILT-IN families, in order: what the pickers list and the benchmarks sweep.
+    /// [`FractalKind::Custom`] is not among them — it has no step of its own until the user writes one.
     pub(crate) const ALL: [FractalKind; 10] = [
         FractalKind::Mandelbrot,
         FractalKind::Multibrot3,
@@ -223,6 +229,22 @@ impl FractalKind {
                 reference: "https://en.wikipedia.org/wiki/Newton_fractal",
             },
         },
+        // The one row whose id is not its index: a custom formula renders under
+        // `formula::CUSTOM`, which no built-in branch of the shader matches.
+        FractalSpec {
+            kind: FractalKind::Custom,
+            name: "Custom",
+            formula_id: fractadyne_core::formula::CUSTOM,
+            default_center: (-0.5, 0.0),
+            supports_julia: true,
+            supports_perturbation: false,
+            info: FractalInfo {
+                formula: "z -> the formula you write",
+                about: "A formula written in Fractint-style expressions (Fractal > Custom \
+                        formula...). It renders on the direct path, so it has no deep zoom yet.",
+                reference: "",
+            },
+        },
     ];
 
     /// This family's metadata row. O(1): rows are ordered to match the enum (test-enforced).
@@ -296,9 +318,14 @@ mod tests {
     fn specs_cover_all_kinds_in_order() {
         assert_eq!(
             FractalKind::SPECS.len(),
-            FractalKind::ALL.len(),
-            "every FractalKind needs exactly one SPECS row"
+            FractalKind::ALL.len() + 1,
+            "every FractalKind needs exactly one SPECS row (the built-ins, then Custom)"
         );
+        let custom = FractalKind::SPECS.last().unwrap();
+        assert_eq!(custom.kind, FractalKind::Custom);
+        assert_eq!(FractalKind::Custom as usize, FractalKind::SPECS.len() - 1, "spec() indexes by variant");
+        assert_eq!(custom.formula_id, fractadyne_core::formula::CUSTOM);
+        assert!(!custom.supports_perturbation, "a custom formula renders on the direct path");
         for (i, kind) in FractalKind::ALL.iter().enumerate() {
             let spec = &FractalKind::SPECS[i];
             assert_eq!(spec.kind, *kind, "SPECS row {i} is out of declaration order");
@@ -338,10 +365,10 @@ mod tests {
     /// Names are used as stable tokens in view files; they must round-trip and be unique.
     #[test]
     fn names_round_trip_and_are_unique() {
-        for k in FractalKind::ALL {
+        for k in FractalKind::ALL.into_iter().chain([FractalKind::Custom]) {
             assert_eq!(FractalKind::from_name(k.name()), Some(k));
         }
-        let mut names: Vec<&str> = FractalKind::ALL.iter().map(|k| k.name()).collect();
+        let mut names: Vec<&str> = FractalKind::SPECS.iter().map(|s| s.name).collect();
         names.sort_unstable();
         let n = names.len();
         names.dedup();

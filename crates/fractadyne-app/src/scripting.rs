@@ -2315,6 +2315,11 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
         if let Some(name) = &k.fractal {
             fractal = FractalKind::from_name(name)
                 .ok_or_else(|| format!("keyframe {id}: unknown fractal \"{name}\""))?;
+            if fractal == FractalKind::Custom {
+                // A keyframe names a family, and a custom formula is not one: it would have to
+                // carry its text, which the tour format does not have yet.
+                return Err(format!("keyframe {id}: tours cannot use a custom formula yet"));
+            }
         }
         if let Some(j) = k.julia {
             julia = j;

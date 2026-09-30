@@ -188,6 +188,8 @@ struct IterKey {
     orbit_id: u64,
     mode: u32,
     formula: u32,
+    /// The custom formula's shader key (0 for a built-in): every custom formula is `formula` 1000.
+    custom: u64,
     julia: u32,
     delta_exp: i32,
     color_method: u32,
@@ -957,6 +959,38 @@ struct Renderer {
     present_bgl: wgpu::BindGroupLayout,
     target_format: wgpu::TextureFormat,
     views: std::collections::HashMap<u32, ViewResources>,
+    /// The iterate pipelines of the custom formula last drawn (`MandelbrotParams::custom`), built on
+    /// first use and kept until another formula replaces them. Built on the render thread: ~0.1 s
+    /// cold on the RTX 3080 (design/custom-formulas.md §4.5), paid once per formula.
+    custom: Option<CustomPipelines>,
+}
+
+/// A custom formula's `fs_iterate` pair: the full-screen and the split-tile pipeline, from its
+/// generated module (`custom::build`) and the fixed iterate layout.
+struct CustomPipelines {
+    key: u64,
+    iter: wgpu::RenderPipeline,
+    iter_split: wgpu::RenderPipeline,
+}
+
+impl CustomPipelines {
+    fn new(device: &wgpu::Device, iter_bgl: &wgpu::BindGroupLayout, shader: &custom::CustomShader) -> Self {
+        let module = shader_module_for(device, Some(shader));
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("fractadyne.custom.iter_layout"),
+            bind_group_layouts: &[iter_bgl],
+            push_constant_ranges: &[],
+        });
+        let iter = fullscreen_pipeline(
+            device, &module, &layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+            "fractadyne.custom.iter_pipeline",
+        );
+        let iter_split = raster_pipeline(
+            device, &module, &layout, "vs_split_tiles", "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+            "fractadyne.custom.iter_split_pipeline",
+        );
+        CustomPipelines { key: shader.key, iter, iter_split }
+    }
 }
 
 pub(crate) fn make_iter_texture(device: &wgpu::Device, size: [u32; 2]) -> wgpu::TextureView {
@@ -1834,6 +1868,7 @@ impl Renderer {
             present_bgl,
             target_format,
             views: std::collections::HashMap::new(),
+            custom: None,
         }
     }
 }
@@ -2279,6 +2314,9 @@ pub struct MandelbrotParams {
     pub mode: u32,
     /// Escape-time formula id (see the shader's `fs_iterate`).
     pub formula: u32,
+    /// A custom formula's generated module (`formula` = `fractadyne_core::formula::CUSTOM`, direct
+    /// mode only); `None` for the built-ins. Its `key` joins the iterate key.
+    pub custom: Option<Arc<custom::CustomShader>>,
     /// 0 = Mandelbrot mode (z0=0, c=pixel), 1 = Julia mode (z0=pixel, c=const).
     pub julia: u32,
     /// Complex span *mantissa* (`span · 2^-delta_exp`, O(1)) — see [`fractadyne_core::GpuScale`].
@@ -2392,10 +2430,18 @@ impl CallbackTrait for MandelbrotParams {
             let vr = ViewResources::new(device, &r.iter_bgl, &r.color_bgl);
             r.views.insert(self.view_id, vr);
         }
+        // A custom formula iterates through its own module's pipelines (everything else is shared).
+        if let Some(c) = self.custom.as_deref() {
+            if r.custom.as_ref().map(|p| p.key) != Some(c.key) {
+                r.custom = Some(CustomPipelines::new(device, &r.iter_bgl, c));
+            }
+        }
         let iter_bgl = &r.iter_bgl;
         let color_bgl = &r.color_bgl;
-        let iter_pipeline = &r.iter_pipeline;
-        let iter_split_pipeline = &r.iter_split_pipeline;
+        let (iter_pipeline, iter_split_pipeline) = match (self.custom.as_ref(), r.custom.as_ref()) {
+            (Some(_), Some(p)) => (&p.iter, &p.iter_split),
+            _ => (&r.iter_pipeline, &r.iter_split_pipeline),
+        };
         let seed_pipeline = &r.seed_pipeline;
         // Mode 2 (floatexp) chunks through its OWN four-target pipelines; every other mode uses
         // the three-target pair. Resolved once here so the chunk block below stays mode-agnostic —
@@ -2655,6 +2701,7 @@ impl CallbackTrait for MandelbrotParams {
             orbit_id: self.orbit_id,
             mode: self.mode,
             formula: self.formula,
+            custom: self.custom.as_ref().map_or(0, |c| c.key),
             julia: self.julia,
             delta_exp: self.delta_exp,
             color_method: self.color_method,

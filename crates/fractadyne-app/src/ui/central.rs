@@ -355,6 +355,7 @@ impl FractadyneApp {
             upp: vp.units_per_pixel.to_f64(),
             julia: is_julia,
             formula,
+            custom: self.custom_key_for(self.fractal),
             jcx: self.julia_c.0,
             jcy: self.julia_c.1,
         };
@@ -398,7 +399,13 @@ impl FractadyneApp {
                 } else {
                     ((0.0, 0.0), point)
                 };
-                fractadyne_core::orbit_points(z0, c, formula, ORBIT_MAX, 1.0e8)
+                match self.custom.as_ref().filter(|_| self.fractal == FractalKind::Custom) {
+                    // The core's id-keyed step would fall back to Mandelbrot for id 1000; the IR
+                    // interpreter iterates the formula itself.
+                    Some(cf) => fractadyne_core::ir::orbit_points(&cf.formula, z0, c, &cf.params, ORBIT_MAX, 1.0e8)
+                        .unwrap_or_default(),
+                    None => fractadyne_core::orbit_points(z0, c, formula, ORBIT_MAX, 1.0e8),
+                }
             };
             // Trim the final escape to infinity so the normalized fit / racing dot reflect
             // the real |z|≲4 trajectory rather than one huge blown-up iterate.

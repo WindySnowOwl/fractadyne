@@ -338,6 +338,14 @@ impl FractadyneApp {
                                 ui.close_menu();
                             }
                         }
+                        if ui
+                            .selectable_label(self.fractal == FractalKind::Custom, "Custom formula…")
+                            .on_hover_text(FractalKind::Custom.menu_hint())
+                            .clicked()
+                        {
+                            self.open_formula_dialog();
+                            ui.close_menu();
+                        }
                         ui.separator();
                         // Was two checkboxes ("Julia mode", "Dual view") of which only three
                         // combinations were legal — the fourth was suppressed by grey. One
@@ -916,16 +924,25 @@ impl FractadyneApp {
                 // formulas is what would silently put the scrollbar back, which is the exact
                 // failure this computation exists to prevent.
                 const SHOW_GROUP_ROWS: f32 = 5.0; // separator + "Show" + three options
+                const CUSTOM_ROWS: f32 = 1.0; // "Custom formula…"
                 let sp = ui.spacing();
                 let popup_h = (sp.interact_size.y + sp.item_spacing.y)
-                    * (FractalKind::ALL.len() as f32 + SHOW_GROUP_ROWS)
+                    * (FractalKind::ALL.len() as f32 + CUSTOM_ROWS + SHOW_GROUP_ROWS)
                     + sp.item_spacing.y * 4.0;
+                let mut open_formula = false;
                 egui::ComboBox::from_id_salt("fractal_dropdown")
                     .height(popup_h)
                     .selected_text(self.fractal.name())
                     .show_ui(ui, |ui| {
                         for k in FractalKind::ALL {
                             ui.selectable_value(&mut sel, k, k.name());
+                        }
+                        if ui
+                            .selectable_label(self.fractal == FractalKind::Custom, "Custom formula…")
+                            .on_hover_text(FractalKind::Custom.menu_hint())
+                            .clicked()
+                        {
+                            open_formula = true;
                         }
                         // The picker is where someone goes looking for "Julia", so this is where
                         // it has to be — next to the formula it belongs to, not in a menu they
@@ -935,6 +952,9 @@ impl FractadyneApp {
                     });
                 if sel != prev {
                     self.set_fractal(sel);
+                }
+                if open_formula {
+                    self.open_formula_dialog();
                 }
                 ui.separator();
                 // The two toolbar toggles are the FAST path for someone who already knows what a

@@ -40,12 +40,13 @@ fn the_default_is_at_least_as_conservative_as_every_calibrated_card() {
     }
 }
 
-/// Every formula has a measured row, so adding a formula forces a decision about its cost rather
-/// than silently pricing it as Mandelbrot; and every row names a real formula.
+/// Every built-in formula has a measured row, so adding a formula forces a decision about its cost
+/// rather than silently pricing it as Mandelbrot; and every row names a real formula. (`Custom` is
+/// priced by its own estimate — see the test below.)
 #[test]
 fn every_formula_has_a_factor_row_and_every_row_is_a_formula() {
     let t = table();
-    for spec in FractalKind::SPECS {
+    for spec in FractalKind::SPECS.iter().filter(|s| s.kind != FractalKind::Custom) {
         assert!(
             t.formula.iter().any(|f| f.name == spec.name),
             "no [[formula]] row for {:?} in validation/calibration/ceilings.toml",
@@ -55,6 +56,22 @@ fn every_formula_has_a_factor_row_and_every_row_is_a_formula() {
     for f in &t.formula {
         assert!(FractalKind::from_name(&f.name).is_some(), "row {:?} names no formula", f.name);
     }
+}
+
+/// A custom formula is priced by the estimate of the one applied, and before any is applied by a
+/// factor above every built-in's — never as Mandelbrot, which a row lookup by name would give it.
+#[test]
+fn a_custom_formula_prices_by_its_estimate_never_as_mandelbrot() {
+    let t = table();
+    assert!(!t.formula.iter().any(|f| f.name == FractalKind::Custom.name()), "Custom must not have a row");
+    let most = t.formula.iter().map(|f| f.direct.max(f.df32_pert)).fold(1.0f64, f64::max);
+    set_custom_factor(f64::NAN);
+    assert!(factor(&t, FractalKind::Custom, RenderMode::Direct) > most, "the unset default is above every built-in");
+    set_custom_factor(2.25);
+    assert_eq!(factor(&t, FractalKind::Custom, RenderMode::Direct), 2.25);
+    set_custom_factor(0.4);
+    assert!(factor(&t, FractalKind::Custom, RenderMode::Direct) > most, "an estimate below 1 is not trusted");
+    set_custom_factor(f64::NAN);
 }
 
 #[test]

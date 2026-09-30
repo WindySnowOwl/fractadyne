@@ -692,14 +692,22 @@ impl FractadyneApp {
                 // i.e. literally "Mandelbrot", which reads as a formula SELECTOR next to the toolbar
                 // dropdown that actually is one.
                 let info = self.fractal.info();
+                let custom_src = (self.fractal == FractalKind::Custom)
+                    .then(|| self.custom.as_ref().map(|c| c.source.clone()))
+                    .flatten();
                 egui::CollapsingHeader::new(format!("About {}", self.fractal.name()))
                     .default_open(false)
                     .show(ui, |ui| {
-                        ui.monospace(info.formula);
+                        match &custom_src {
+                            Some(src) => ui.monospace(src),
+                            None => ui.monospace(info.formula),
+                        };
                         ui.add_space(4.0);
                         ui.label(info.about);
-                        ui.add_space(4.0);
-                        ui.hyperlink_to("Reference \u{2197}", info.reference);
+                        if !info.reference.is_empty() {
+                            ui.add_space(4.0);
+                            ui.hyperlink_to("Reference \u{2197}", info.reference);
+                        }
                     });
                 // Performance section, docked at the bottom of this same panel
                 // (toggle via the Perf button or the View menu).

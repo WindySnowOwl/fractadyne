@@ -9,6 +9,7 @@ use super::relaunch_decision;
 fn crash_view_fdn_is_a_loadable_location() {
     *super::CRASH_VIEW.lock().unwrap() = Some(super::CrashView {
         fractal: super::FractalKind::Mandelbrot,
+        custom: None,
         julia: false,
         julia_c: (0.0, 0.0),
         cx: fractadyne_core::parse_bf("-0.7436438870371588707780645434936425750476").unwrap(),
@@ -29,6 +30,29 @@ fn crash_view_fdn_is_a_loadable_location() {
         (fractadyne_core::to_f64(&v) - (-0.7436438870371589)).abs() < 1e-12,
         "centre did not round-trip: {cre}"
     );
+    assert!(!fdn.contains("formula="), "a built-in view carries no formula:\n{fdn}");
+
+    // A Custom view carries its formula (same test: `CRASH_VIEW` is one global, and a second test
+    // writing it in parallel would race this one).
+    let custom = crate::custom_formula::CustomFormula::compile("t = sqr(z)\nz = t + p1*z + c", &[(0.5, -0.25)])
+        .expect("compiles");
+    *super::CRASH_VIEW.lock().unwrap() = Some(super::CrashView {
+        fractal: super::FractalKind::Custom,
+        custom: Some(std::sync::Arc::new(custom)),
+        julia: false,
+        julia_c: (0.0, 0.0),
+        cx: fractadyne_core::parse_bf("-0.25").unwrap(),
+        cy: fractadyne_core::parse_bf("0").unwrap(),
+        upp_log2: -8.0,
+        log2mag: 0.5,
+        max_iter: 500,
+        auto_iter: false,
+    });
+    let fdn = super::crash_view_fdn().expect("a view was stashed");
+    assert!(super::location_text_verdict(&fdn).is_ok(), "not accepted as a location:\n{fdn}");
+    assert!(fdn.contains("fractal=Custom\n"), "{fdn}");
+    assert!(fdn.contains("formula=t = sqr(z)\\nz = t + p1*z + c\n"), "the formula, one escaped line:\n{fdn}");
+    assert!(fdn.contains("formula_params=0.5,-0.25\n"), "{fdn}");
 }
 
 #[test]

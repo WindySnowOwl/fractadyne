@@ -140,10 +140,29 @@ pub(crate) fn factor(t: &Table, formula: FractalKind, mode: RenderMode) -> f64 {
 }
 
 fn factor_of(rows: &[Factor], formula: FractalKind, mode: RenderMode) -> f64 {
+    if formula == FractalKind::Custom {
+        // No row can describe a formula the user wrote: its estimate (`custom::cost_factor`).
+        return custom_factor();
+    }
     let v = rows.iter().find(|f| f.name == formula.name()).map_or(1.0, |f| {
         if mode.is_direct() { f.direct } else { f.df32_pert }
     });
     if v.is_finite() { v.max(1.0) } else { 1.0 }
+}
+
+/// The active custom formula's cost factor, as `f64` bits. Process-wide like the table itself: one
+/// custom formula is active at a time, and an export of it runs with the same one.
+static CUSTOM_FACTOR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Set when a custom formula is applied (`fractadyne_gpu::custom::CustomShader::cost_factor`).
+pub(crate) fn set_custom_factor(v: f64) {
+    CUSTOM_FACTOR.store(v.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Before any custom formula is applied, 3× Mandelbrot — above every built-in's measured factor.
+fn custom_factor() -> f64 {
+    let v = f64::from_bits(CUSTOM_FACTOR.load(std::sync::atomic::Ordering::Relaxed));
+    if v.is_finite() && v >= 1.0 { v } else { 3.0 }
 }
 
 /// Resolve the running adapter's calibration, once. Returns it for the log. A table that does not

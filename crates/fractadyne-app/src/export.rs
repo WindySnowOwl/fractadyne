@@ -276,6 +276,9 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "center_re_expr", "center_im_expr", "center_re_offset", "center_im_offset",
     // Pre-v0.2.20 spellings, still read. See `LEGACY_VIEW_KEYS`.
     "center_x", "center_y",
+    // A custom formula's source text (one line, `\n`/`\\` escaped) and its parameters p1…p5 as
+    // `re,im;re,im;…`. Written only with `fractal=Custom`, so a built-in view is unchanged.
+    "formula", "formula_params",
 ];
 
 /// Without these a "view" is not a view. Their absence is reported by NAME, so a paste that
@@ -779,7 +782,7 @@ impl FractadyneApp {
             "app=Fractadyne\nversion={}\nformat_version={}\nsaved_unix={}\nsaved={}\n\
              notes={}\nfractal={}\njulia={}\njulia_c_re={:.17e}\njulia_c_im={:.17e}\n\
              center_re={}\ncenter_im={}\nupp={:.17e}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n\
-             palette={}\ncycle={}\noffset={}\naa={}\n{}{}",
+             palette={}\ncycle={}\noffset={}\naa={}\n{}{}{}",
             version_string(),
             VIEW_FORMAT_VERSION,
             secs,
@@ -827,7 +830,17 @@ impl FractadyneApp {
             // The centre's source expression + offset, when it was entered as one (empty otherwise,
             // so an ordinary view's metadata is byte-identical to before this existed).
             self.center_expr_metadata(),
+            // The custom formula, for a Custom view (empty otherwise, likewise).
+            self.custom_formula_metadata(),
         )
+    }
+
+    /// `formula=` and `formula_params=` for a Custom view; empty for a built-in family.
+    fn custom_formula_metadata(&self) -> String {
+        match self.custom.as_ref().filter(|_| self.fractal == FractalKind::Custom) {
+            Some(c) => format!("formula={}\nformula_params={}\n", c.source_line(), c.params_line()),
+            None => String::new(),
+        }
     }
 
     /// The centre's source expression and its offset from that anchor — the `center_re_expr` /
@@ -879,8 +892,33 @@ impl FractadyneApp {
         let field = |key: &str| fields.iter().find(|(k, _, _, _)| k == key);
         let get = |key: &str| -> Option<String> { field(key).map(|(_, v, _, _)| v.clone()) };
         let file_ver = report.newer.unwrap_or(VIEW_FORMAT_VERSION);
-        if let Some(f) = get("fractal").and_then(|s| FractalKind::from_name(&s)) {
-            self.fractal = f;
+        match get("fractal").and_then(|s| FractalKind::from_name(&s)) {
+            // A Custom view carries its formula; it is applied only if it compiles, and a view
+            // that cannot be shown as written says so instead of rendering some other formula.
+            Some(FractalKind::Custom) => {
+                // Absent parameters are none; present but malformed ones are a problem (`None`).
+                let params = match get("formula_params") {
+                    None => Some(Vec::new()),
+                    Some(s) => crate::custom_formula::parse_params_line(&s),
+                };
+                match (get("formula").filter(|s| !s.trim().is_empty()), params) {
+                    (Some(src), Some(params)) => {
+                        let src = crate::custom_formula::unescape_line(&src);
+                        match crate::custom_formula::CustomFormula::compile(&src, &params) {
+                            Ok(c) => {
+                                crate::calibration::set_custom_factor(c.shader.cost_factor);
+                                self.custom = Some(std::sync::Arc::new(c));
+                                self.fractal = FractalKind::Custom;
+                            }
+                            Err(e) => report.problems.push(format!("the custom formula does not compile: {e}")),
+                        }
+                    }
+                    (Some(_), None) => report.problems.push("formula_params is not a list of re,im pairs".into()),
+                    (None, _) => report.problems.push("fractal=Custom, but the view carries no formula".into()),
+                }
+            }
+            Some(f) => self.fractal = f,
+            None => {}
         }
         self.julia_mode =
             get("julia").map(|s| s == "1").unwrap_or(false) && self.fractal.supports_julia();

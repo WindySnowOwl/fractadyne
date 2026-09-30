@@ -47,6 +47,49 @@ pub struct CustomShader {
     /// The escape degree smooth colouring divides by (2 where the formula has none).
     pub power: f32,
     pub precision: Precision,
+    /// The dispatch ceiling's per-step cost factor relative to Mandelbrot ([`cost_factor`]).
+    pub cost_factor: f64,
+}
+
+/// A custom formula's cost per step relative to Mandelbrot, for the dispatch ceiling
+/// (`validation/calibration/ceilings.toml` holds the measured built-ins'). ESTIMATED from the
+/// generated code until the compile-time calibration pass exists (design §4.6): each operation's
+/// df32 helper cost in units of one `df_add`/`df_mul`, plus a fixed per-iteration loop cost,
+/// relative to Mandelbrot's, times a 1.5 margin. Against the measured direct factors this
+/// over-prices every built-in — the safe direction for a device-loss guard (Multibrot 4: 2.1
+/// against 1.54 measured; Multibrot 5: 2.9 against 1.77; Burning Ship: 1.6 against 0.81).
+pub fn cost_factor(formula: &Formula) -> f64 {
+    const LOOP: f64 = 5.0; // escape test, counters, bookkeeping — per iteration, any formula
+    const MANDELBROT: f64 = 5.0 + 2.0 + LOOP; // c_sqr + c_add + the loop
+    let per_phase: Vec<f64> = formula
+        .phases()
+        .iter()
+        .map(|p| {
+            p.insts()
+                .iter()
+                .map(|op| match *op {
+                    Op::Z | Op::C | Op::ZPrev | Op::Param(_) | Op::Const(..) => 0.0,
+                    Op::Neg(_) | Op::Conj(_) | Op::Re(_) | Op::Im(_) => 0.0,
+                    Op::AbsRe(_) | Op::AbsIm(_) => 0.5,
+                    Op::Add(..) | Op::Sub(..) | Op::Scale(..) => 2.0,
+                    Op::Norm(_) => 3.0,
+                    Op::Sqr(_) => 5.0,
+                    Op::Mul(..) => 6.0,
+                    Op::PowI(_, n) => {
+                        let bits = 31 - n.leading_zeros();
+                        5.0 * bits as f64 + 6.0 * (n.count_ones() - 1) as f64
+                    }
+                    Op::Div(..) => 15.0,
+                    Op::Func(Func::Tan | Func::Tanh, _) => 18.0,
+                    Op::Func(Func::Sin | Func::Cos | Func::Sinh | Func::Cosh, _) => 8.0,
+                    Op::Func(..) => 4.0,
+                    Op::Pow(..) => 12.0,
+                })
+                .sum::<f64>()
+        })
+        .collect();
+    let mean = per_phase.iter().sum::<f64>() / per_phase.len().max(1) as f64;
+    (1.5 * (mean + LOOP) / MANDELBROT).max(1.0)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -94,7 +137,7 @@ pub fn build(formula: &Formula, params: &[(f64, f64)]) -> Result<CustomShader, C
     let (step, precision) = step_source(formula, params)?;
     let source = splice(&step, power)?;
     validate(&source)?;
-    Ok(CustomShader { key: fnv1a(source.as_bytes()), source, power, precision })
+    Ok(CustomShader { key: fnv1a(source.as_bytes()), source, power, precision, cost_factor: cost_factor(formula) })
 }
 
 /// The generated functions: one per phase, and `custom_step` choosing by iteration.

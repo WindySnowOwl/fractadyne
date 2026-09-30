@@ -3640,7 +3640,7 @@ impl FractadyneApp {
             max_iter: req_max_iter,
             mode: mode.to_u32(),
             formula: self.fractal.formula_id(),
-            custom: None,
+            custom: self.custom_shader_for(self.fractal),
             julia: julia as u32,
             // WYSIWYG: a GUI export bakes in the live view's auto-normalized palette mapping when
             // it's active (headless CLI runs have no live range → always classic; `--normalize`
@@ -5965,6 +5965,22 @@ impl FractadyneApp {
         PresentGate { hold_copy, display_hold, pin_gate, aa_filter }
     }
 
+    /// The generated shader module `fractal` renders with: the custom formula's for
+    /// `FractalKind::Custom`, none for a built-in.
+    pub(crate) fn custom_shader_for(
+        &self,
+        fractal: FractalKind,
+    ) -> Option<std::sync::Arc<fractadyne_gpu::custom::CustomShader>> {
+        (fractal == FractalKind::Custom).then(|| self.custom.as_ref().map(|c| c.shader.clone())).flatten()
+    }
+
+    /// The key that tells two renders of `fractal` apart where `formula_id` cannot: every custom
+    /// formula is id 1000, so caches keyed on the id alone would serve one formula's frame for
+    /// another's. 0 for a built-in.
+    pub(crate) fn custom_key_for(&self, fractal: FractalKind) -> u64 {
+        self.custom_shader_for(fractal).map_or(0, |s| s.key)
+    }
+
     /// `build_params` epilogue: the no-reference placeholder guard on the iteration ask,
     /// the LIVE manifest + per-frame cost stamps + motion-jam accounting, and the final
     /// [`MandelbrotParams`] assembly. Body moved verbatim from `build_params`.
@@ -6322,6 +6338,7 @@ impl FractadyneApp {
             julia_c,
             mode: mode.to_u32(),
             formula: fractal.formula_id(),
+            custom: self.custom_shader_for(fractal),
             julia: julia as u32,
             span_mantissa,
             max_iter: shader_iter,
@@ -7684,6 +7701,8 @@ impl FractadyneApp {
             // it did NOT reproduce in the harness, so this is the rule being restored, not a
             // confirmed fix for that report.)
             fractal.formula_id().hash(&mut h);
+            // Every custom formula is id 1000: its shader key tells them apart.
+            self.custom_key_for(fractal).hash(&mut h);
             julia.hash(&mut h);
             self.coloring.color_method.to_u32().hash(&mut h);
             self.coloring.stripe_freq.to_bits().hash(&mut h);

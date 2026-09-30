@@ -161,6 +161,38 @@ fn the_cpu_tame_mirrors_the_shader_rules() {
     assert!(s.contains(&format!("{:#x}u", TAME.to_bits())));
 }
 
+/// The estimate must over-price every measured built-in (direct factors from
+/// validation/calibration/ceilings.toml, RTX 3080): a guard against device loss may err only high.
+#[test]
+fn the_cost_estimate_over_prices_every_measured_built_in() {
+    let measured = [
+        (f::MANDELBROT, 1.00),
+        (f::MULTIBROT3, 1.27),
+        (f::MULTIBROT4, 1.54),
+        (f::MULTIBROT5, 1.77),
+        (f::TRICORN, 0.86),
+        (f::BURNING_SHIP, 0.81),
+        (f::CELTIC, 0.87),
+        (f::BUFFALO, 0.94),
+        (f::PHOENIX, 1.24),
+    ];
+    for (id, direct) in measured {
+        let est = cost_factor(&single(builtin_step(id).unwrap()));
+        assert!(est >= direct * 1.15, "formula {id}: estimate {est:.2} vs measured {direct}");
+        assert!(est <= direct * 3.5, "formula {id}: estimate {est:.2} is uselessly high vs {direct}");
+    }
+    // A dearer formula prices dearer.
+    let deep = |src_ops: u32| {
+        let mut b = Builder::new();
+        let z = b.push(Op::Z);
+        let p = b.push(Op::PowI(z, src_ops));
+        let c = b.push(Op::C);
+        let out = b.push(Op::Add(p, c));
+        cost_factor(&single(b.finish(out).unwrap()))
+    };
+    assert!(deep(9) > deep(3));
+}
+
 #[test]
 fn the_key_follows_the_source() {
     let m = build(&single(builtin_step(f::MANDELBROT).unwrap()), &[]).unwrap();

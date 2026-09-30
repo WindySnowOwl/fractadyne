@@ -5284,6 +5284,45 @@ zoom = \"1e94\"
                 pass: rt_ok,
             });
 
+            // A Custom view carries its formula — a multi-line source with a comment, and its
+            // parameters — through the real writer and reader; and a view whose formula no longer
+            // compiles says so and is NOT shown under whatever formula happened to be loaded.
+            {
+                let src = "t = sqr(z)\nz = t + p1*conj(t) + c ; hybrid";
+                let made = crate::custom_formula::CustomFormula::compile(src, &[(0.25, -0.125)]).expect("compiles");
+                let key = made.shader.key;
+                self.custom = Some(std::sync::Arc::new(made));
+                self.fractal = FractalKind::Custom;
+                let blob = self.view_metadata();
+                // Scramble: another formula, another family.
+                self.custom =
+                    Some(std::sync::Arc::new(crate::custom_formula::CustomFormula::compile("z^3 + c", &[]).expect("compiles")));
+                self.fractal = FractalKind::Mandelbrot;
+                let rt = self.load_view_metadata(&blob);
+                let back = self.custom.as_ref().map(|c| (c.source.clone(), c.params[0], c.shader.key));
+                let round_trip = rt.note().is_none()
+                    && self.fractal == FractalKind::Custom
+                    && back == Some((src.to_string(), (0.25, -0.125), key));
+                let broken = blob
+                    .lines()
+                    .map(|l| if l.starts_with("formula=") { "formula=z = z^2 +" } else { l })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                self.fractal = FractalKind::Mandelbrot;
+                let rb = self.load_view_metadata(&broken);
+                let refused = self.fractal == FractalKind::Mandelbrot
+                    && rb.problems.iter().any(|p| p.contains("does not compile"));
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "View format",
+                    name: "a_custom_view_round_trips_its_formula".into(),
+                    params: "Custom view → scramble → load; then a broken formula line".into(),
+                    result: format!("round trip {round_trip}, broken one refused {refused}"),
+                    threshold: "formula, parameters and shader key restored; broken formula reported, view not switched",
+                    pass: round_trip && refused,
+                });
+                self.fractal = FractalKind::Mandelbrot;
+            }
+
             // ⭐A coordinate ENTERED AS AN EXPRESSION travels with the view and is re-derived on
             // load, so a reopened file can be zoomed deeper than it was saved without the centre
             // freezing at the digits a plain decimal would carry. Round-tripped through the real

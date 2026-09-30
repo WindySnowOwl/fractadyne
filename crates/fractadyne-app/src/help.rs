@@ -455,8 +455,20 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
          they use a sign-aware perturbation; this now runs at floatexp range too, deep-zooming far \
          past the old ~1e28× df32 limit (rare speckle near the abs folds awaits multi-reference \
          glitch correction). Phoenix uses a two-term perturbation and also deep-zooms at floatexp \
-         range (without SA/BLA, so heavier than Mandelbrot). Only Newton uses the direct path, \
-         sharp to ~1e6×.",
+         range (without SA/BLA, so heavier than Mandelbrot). Only Newton and custom formulas use \
+         the direct path, sharp to ~1e6×.",
+    );
+    help_sub(ui, "Custom formulas");
+    help_p(
+        ui,
+        "Fractal > Custom formula... takes a formula's step in Fractint-style expressions: \
+         z = z^3 - p1*z + c, or several statements (t = sqr(z), then z = t*t + c). z is the \
+         iterate, c the pixel (the Julia constant in Julia mode), p1-p5 parameters; |z| is the \
+         squared modulus, as in Fractint, and the usual functions are available (sqr, abs, conj, \
+         real, imag, cabs, flip, recip, exp, log, sqrt, sin, cos, tan, sinh, cosh, tanh). A custom \
+         formula renders on the direct path - no deep zoom yet - and a formula using exp, log, \
+         sqrt or the trigonometric functions evaluates them in single precision, sharp to ~1e3x. \
+         Views, sessions and exported images keep the formula's text.",
     );
 }
 
@@ -591,6 +603,8 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--resume", "Restart an interrupted render: keep frames already on disk and render only the missing ones. The newest frame is verified first and discarded if incomplete (a render dies on the frame it is writing), stepping back until a good one is found; a folder holding frames at a different size is refused rather than mixed into the sequence."),
         Section("View (with --render / --find-minibrot)"),
         Flag("--fractal NAME", "Family, e.g. \"Mandelbrot\" or \"Burning Ship\"."),
+        Flag("--formula STEP", "A custom formula's step in Fractint-style expressions, e.g. \"z = z^3 - p1*z + c\" (implies --fractal Custom; direct rendering, no deep zoom)."),
+        Flag("--formula-params LIST", "The custom formula's parameters p1…p5 as re,im;re,im;…"),
         Flag("--center X Y", "View center (full-precision decimals or expressions: -3/4, -0.5 + 0.25*cos(pi/4))."),
         Flag("--zoom M", "Magnification, e.g. 2e7 or 1.0e23.9 (any depth; a bad value is fatal)."),
         Flag("--zoom-log2 L", "Magnification = 2^L — for depths past f64 range (>= ~1e308x)."),

@@ -272,6 +272,30 @@ separate, later decision, and only if phase 4 shows the generated render is iden
     |cos z| ≈ cosh(Im z) per step, so f32 rounding reaches O(1) within about 10 iterations. "No
     disagreement among early escapes" is therefore not a bug detector for expansive formulas. That
     check's gate is 0 non-finite smooth values (the overflow guard).
+- **Phase 3 core, brought forward** (`defa724`). A custom formula needs a text form before it can be typed
+  or saved, so the expression core of the `.frm` reader came first: `ir::parse`, Fractint-style
+  statements (`z = z^3 - p1*z + c`, temporaries, `;` comments, `|z|` as the squared modulus,
+  p1–p5, 20 named functions). Typed built-ins reproduce the built-ins bit for bit in f64 and bignum.
+  `init:`/`bailout:` sections, `if` and `fn1`–`fn4` are errors that name the feature. They remain
+  phase 3, together with the corpus gate.
+- **Phase 2, slice 3 (the app).** `FractalKind::Custom` (the last variant, id 1000, outside
+  `ALL`, `supports_perturbation: false`, so direct mode comes from the existing mode selection). The
+  formula lives on the app as `CustomFormula` (text, parameters, IR, shader). The live renderer caches
+  the custom `fs_iterate` pair per shader key, and the shader key joins every cache keyed on the formula
+  id: the iterate key, the settings hash, `view_key`, the minimap and the orbit overlay (which iterates
+  the IR). Persistence: `.fdn`, exported images and the crash view carry `formula=` (one escaped line)
+  and `formula_params=`, written only for Custom views, so built-in views are byte-identical. Sessions
+  keep the formula. A view whose formula does not compile is reported, and the view is not switched.
+  Tours refuse Custom for now. The dispatch ceiling prices a custom formula by
+  `custom::cost_factor` (a static estimate that over-prices every measured built-in, tested), or by 3×
+  before one is applied. UI: Fractal > Custom formula… and the toolbar picker open a dialog (live syntax
+  check, parameters, examples, depth note), plus `--formula` / `--formula-params` on the command line.
+  Checked by looking: a `--render` export, a `--shot` live window loading a Custom `.fdn` (the dual
+  view's Julia panel included), and two new `--uitest` screens (47 steps, 0 fail; the one WARN,
+  `live-floatexp-1e30`, predates this work). `cargo test` 953, self-test 212/212, goldens 19/19.
+- **Still open in phase 2:** the compile-time cost calibration (§4.6) to replace the estimate; a
+  persisted pipeline cache (compiles take ~0.1 s, so this can wait); distance estimation for custom
+  formulas (forward-mode duals). Compile times on the RX 6800 XT are not yet measured.
 
 ## 6. Validation plan
 
