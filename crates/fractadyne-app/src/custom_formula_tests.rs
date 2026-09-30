@@ -7,12 +7,34 @@ fn a_source_round_trips_through_one_line() {
         "t = sqr(z)\nz = t*t + c ; comment",
         "z = z^3 - p1*z + c\r\nz = z + p2\r",
         "back\\slash and \\n literally",
+        "a written \\u{41} escape stays written",
+        "z = z^2 + c ; √ variant, café, tab\there, 😀",
         "",
     ] {
         let line = escape_line(src);
         assert!(!line.contains('\n') && !line.contains('\r'), "{line:?}");
+        // ASCII and printable: the line rides in PNG tEXt and EXR attributes (Latin-1 only).
+        assert!(line.chars().all(|c| c.is_ascii() && !c.is_ascii_control()), "{line:?}");
         let normalised = src.replace("\r\n", "\n").replace('\r', "\n");
         assert_eq!(unescape_line(&line), normalised, "{src:?}");
+    }
+    assert_eq!(escape_line("√ é\t😀"), "\\u{221a} \\u{e9}\\u{9}\\u{1f600}");
+}
+
+#[test]
+fn a_malformed_escape_in_a_hand_edited_file_is_kept_as_written() {
+    for (line, read) in [
+        ("\\u{zz}", "\\u{zz}"),
+        ("\\u{110000}", "\\u{110000}"), // past the last character
+        ("\\u{d800}", "\\u{d800}"),     // a surrogate is not a character
+        ("\\u{1234567}", "\\u{1234567}"),
+        ("\\u{}", "\\u{}"),
+        ("\\u{41", "\\u{41"),
+        ("\\u41", "\\u41"),
+        ("\\u", "\\u"),
+        ("x\\u{41}y\\u{221A}", "xAy√"),
+    ] {
+        assert_eq!(unescape_line(line), read, "{line:?}");
     }
 }
 

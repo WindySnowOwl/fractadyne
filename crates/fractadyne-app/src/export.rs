@@ -184,7 +184,17 @@ pub(crate) fn stamp_watermark(pixels: &mut [f32], w: u32, h: u32, ov: &WmOverlay
 /// ignores unknown keys and defaults missing ones, so old and new builds interoperate).
 /// A file whose `format_version` exceeds this is from a newer build: we still load the
 /// fields we recognise, but warn the user that newer settings/semantics may not apply.
-pub(crate) const VIEW_FORMAT_VERSION: u32 = 1;
+///
+/// 2 — `fractal=Custom`, with `formula=` / `formula_params=`. Written ONLY by a Custom view
+/// ([`VIEW_FORMAT_PLAIN`] otherwise), so every other file is format 1 byte for byte and loads
+/// without a word in every build. Bumped although the keys are additive because an older reader
+/// cannot honour the new `fractal` value and does not fail: v0.3.0-beta.9 keeps the family it is
+/// showing when the name is unknown, so a shared custom view opened as, say, Mandelbrot at those
+/// coordinates, with only an "unknown key: formula" note. Format 2 makes it say "saved by a newer
+/// Fractadyne" instead.
+pub(crate) const VIEW_FORMAT_VERSION: u32 = 2;
+/// The format a view that is not a custom formula writes: nothing in it needs format 2.
+pub(crate) const VIEW_FORMAT_PLAIN: u32 = 1;
 
 /// Largest zoom depth (octaves = log2 of magnification) accepted from an untrusted view
 /// file. Past this the bignum working precision (∝ octaves) would balloon into a memory
@@ -638,7 +648,7 @@ pub(crate) fn inspect_view_text(meta: &str) -> (ViewLoad, Vec<(String, String, u
     // A file with no `format_version` predates the field but is format-1 compatible.
     let file_ver = field("format_version")
         .and_then(|(_, v, _, _)| v.parse::<u32>().ok())
-        .unwrap_or(VIEW_FORMAT_VERSION);
+        .unwrap_or(VIEW_FORMAT_PLAIN);
     report.newer = (file_ver > VIEW_FORMAT_VERSION).then_some(file_ver);
 
     // Keys we do not recognize (capped, so a junk file cannot flood the report).
@@ -784,7 +794,7 @@ impl FractadyneApp {
              center_re={}\ncenter_im={}\nupp={:.17e}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n\
              palette={}\ncycle={}\noffset={}\naa={}\n{}{}{}",
             version_string(),
-            VIEW_FORMAT_VERSION,
+            if self.custom_formula_metadata().is_empty() { VIEW_FORMAT_PLAIN } else { VIEW_FORMAT_VERSION },
             secs,
             Self::utc_date_string(secs),
             notes,

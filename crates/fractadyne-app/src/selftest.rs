@@ -6249,6 +6249,72 @@ zoom = \"1e94\"
                 self.fractal = FractalKind::Mandelbrot;
             }
 
+            // ⭐A custom view travels in EVERY format that carries a view, with a comment past
+            // Latin-1 in its formula: that made the PNG export FAIL and the EXR export PANIC (both
+            // containers are Latin-1), and "Tour from current view" wrote a tour the parser refused.
+            // The view text must be ASCII (the formula escaped), come back verbatim from the real
+            // PNG and EXR writers, and the generated tour must show the same formula; a built-in
+            // view still writes format 1, so older builds read it as they always did.
+            {
+                let src = "t = sqr(z)\nz = t + p1*conj(t) + c ; √ hybrid, café 😀";
+                let params = (0.25, -0.125);
+                let made = crate::custom_formula::CustomFormula::compile(src, &[params]).expect("compiles");
+                self.custom = Some(std::sync::Arc::new(made));
+                self.fractal = FractalKind::Custom;
+                let blob = self.view_metadata();
+                // The formula lines (the notes field may hold Latin-1, which both containers take).
+                let ascii = blob
+                    .lines()
+                    .filter(|l| l.starts_with("formula"))
+                    .all(|l| l.chars().all(|c| c.is_ascii() && !c.is_ascii_control()));
+                let format2 = blob.lines().any(|l| l == "format_version=2");
+                let restores = |app: &mut Self, text: Option<String>| -> bool {
+                    let Some(text) = text else { return false };
+                    app.custom = None;
+                    app.fractal = FractalKind::Mandelbrot;
+                    let r = app.load_view_metadata(&text);
+                    r.note().is_none()
+                        && app.fractal == FractalKind::Custom
+                        && app.custom.as_ref().is_some_and(|c| c.source == src && c.params[0] == params)
+                };
+                let dir = std::env::temp_dir().join(format!("fd-selftest-formats-{}", std::process::id()));
+                let _ = std::fs::create_dir_all(&dir);
+                let (png, exr) = (dir.join("custom.png"), dir.join("custom.exr"));
+                let pixels = vec![0.5f32; 4 * 4 * 4];
+                let png_ok = fractadyne_export::write_png(&png, 4, 4, &pixels, Some(&blob)).is_ok()
+                    && restores(self, fractadyne_export::read_png_metadata(&png).ok().flatten());
+                let exr_ok = fractadyne_export::write_exr(&exr, 4, 4, &pixels, Some(&blob)).is_ok()
+                    && restores(self, fractadyne_export::read_exr_metadata(&exr).ok().flatten());
+                let _ = std::fs::remove_dir_all(&dir);
+                // The tour: "Tour from current view", parsed back by the tour reader.
+                let tour_ok = restores(self, Some(blob.clone())) && {
+                    let text = self.build_dive_script("", 5.0);
+                    match crate::scripting::parse_tour_text(&text) {
+                        Ok(pb) => {
+                            let s = pb.sample(0.0);
+                            s.fractal == FractalKind::Custom
+                                && s.custom.as_ref().is_some_and(|c| c.source == src && c.params[0] == params)
+                        }
+                        Err(e) => {
+                            eprintln!("[selftest] the generated tour does not parse: {e}");
+                            false
+                        }
+                    }
+                };
+                self.fractal = FractalKind::Mandelbrot;
+                let plain1 = self.view_metadata().lines().any(|l| l == "format_version=1");
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "View format",
+                    name: "a_custom_view_travels_in_every_format".into(),
+                    params: "formula with a √ / é / emoji comment: view text, PNG, EXR, tour".into(),
+                    result: format!(
+                        "ASCII {ascii}, format 2 {format2}; PNG {png_ok}, EXR {exr_ok}, tour {tour_ok}; built-in view format 1 {plain1}"
+                    ),
+                    threshold: "all true",
+                    pass: ascii && format2 && png_ok && exr_ok && tour_ok && plain1,
+                });
+            }
+
             // ⭐A coordinate ENTERED AS AN EXPRESSION travels with the view and is re-derived on
             // load, so a reopened file can be zoomed deeper than it was saved without the centre
             // freezing at the digits a plain decimal would carry. Round-tripped through the real

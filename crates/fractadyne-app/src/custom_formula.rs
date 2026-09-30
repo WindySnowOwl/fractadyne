@@ -78,7 +78,15 @@ pub(crate) fn depth_note_for(formula: &ir::Formula) -> String {
     }
 }
 
-/// `\` → `\\`, line break → `\n` (CR LF and lone CR included), so any source fits one line.
+/// `\` → `\\`, line break → `\n` (CR LF and lone CR included), any other control character or
+/// non-ASCII character → `\u{hex}`, so any source fits one ASCII line.
+///
+/// ⚠⚠**ASCII because the view text rides in Latin-1 containers.** It is a PNG `tEXt` chunk and an
+/// EXR text attribute, and both take only U+0000–U+00FF: a formula with `√` in a comment made the
+/// PNG export FAIL ("cannot be encoded into valid ISO 8859-1") and the EXR export PANIC inside the
+/// `exr` crate. Only a comment can hold such a character (the formula language is ASCII), and the
+/// text is the formula's identity, so it is escaped, never dropped. ASCII rather than Latin-1 also
+/// survives a paste through a forum or a mail client.
 pub(crate) fn escape_line(src: &str) -> String {
     let mut out = String::with_capacity(src.len());
     let mut chars = src.chars().peekable();
@@ -92,16 +100,17 @@ pub(crate) fn escape_line(src: &str) -> String {
                 out.push_str("\\n");
             }
             '\n' => out.push_str("\\n"),
-            c => out.push(c),
+            c if c.is_ascii() && !c.is_ascii_control() => out.push(c),
+            c => out.push_str(&format!("\\u{{{:x}}}", c as u32)),
         }
     }
     out
 }
 
-/// The inverse of [`escape_line`]. An unknown escape is kept as written.
+/// The inverse of [`escape_line`]. An unknown or malformed escape is kept as written.
 pub(crate) fn unescape_line(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
-    let mut chars = line.chars();
+    let mut chars = line.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch != '\\' {
             out.push(ch);
@@ -110,6 +119,24 @@ pub(crate) fn unescape_line(line: &str) -> String {
         match chars.next() {
             Some('n') => out.push('\n'),
             Some('\\') => out.push('\\'),
+            Some('u') if chars.peek() == Some(&'{') => {
+                // `\u{hex}`: 1–6 hex digits naming a character; anything else stays as written.
+                let rest: String = chars.clone().skip(1).take(8).collect();
+                let decoded = rest.split_once('}').and_then(|(hex, _)| {
+                    let ok = (1..=6).contains(&hex.len()) && hex.chars().all(|c| c.is_ascii_hexdigit());
+                    ok.then(|| u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)).flatten().map(|c| (c, hex.len()))
+                });
+                match decoded {
+                    Some((c, n)) => {
+                        out.push(c);
+                        // `{`, the digits and `}`.
+                        for _ in 0..n + 2 {
+                            chars.next();
+                        }
+                    }
+                    None => out.push_str("\\u"),
+                }
+            }
             Some(other) => {
                 out.push('\\');
                 out.push(other);

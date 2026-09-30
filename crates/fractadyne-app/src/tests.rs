@@ -1271,6 +1271,9 @@ fn stopping_playback_restores_interaction() {
         "im",
         "zoom",
         "fractal",
+        // A tour that shows a custom formula leaves you on it, as it leaves you on its family.
+        "formula",
+        "formula_params",
         "julia",
         "dual",
         "julia_re",

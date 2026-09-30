@@ -110,7 +110,9 @@ A camera waypoint. The view eases from the previous keyframe to this one, ARRIVI
 | `zoom` | float | string | (inherit, else 1) | Magnification here, e.g. 2667 or "6.5e94". Strings carry depths past f64's ~1e308 ceiling. |
 | `max_iter` | int | (inherit, else [render]) | Exact iteration budget at this keyframe, interpolated geometrically along the glide. One script-wide number cannot serve both a 1.33x home view and a 1e94x dive. |
 | `palette` | string | (inherit) | Palette id, preset name, or preset index; interpolated between keyframes. |
-| `fractal` | string | (inherit) | Fractal family name (e.g. "Mandelbrot", "Burning Ship"). |
+| `fractal` | string | (inherit) | Fractal family name (e.g. "Mandelbrot", "Burning Ship"), or "Custom" with a formula. |
+| `formula` | string | (inherit) | A custom formula's step, as the Custom formula dialog takes it ("z = z^3 - p1*z + c"; a multi-line string for several statements). Implies fractal = "Custom". Each distinct formula is compiled once, when the script is read. |
+| `formula_params` | array of [re, im] | (inherit) | The formula's parameters p1, p2, ... e.g. [[0.5, 0.0]]. Given alone, they re-parameterize the inherited formula. Stepped at the keyframe, not interpolated: each value is its own shader module. |
 | `julia` | bool | (inherit) | Julia mode for the family. |
 | `dual` | bool | (inherit) | Show the linked dual view (Mandelbrot + its Julia set side by side). |
 | `dual_split` | float | (inherit) | Fraction of the width given to the LEFT (Mandelbrot) panel of the dual view, 0.15..0.85 — what dragging the divider sets. Interpolated between keyframes; the viewer's own split is restored when the tour ends. |

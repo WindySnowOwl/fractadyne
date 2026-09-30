@@ -1392,6 +1392,16 @@ impl FractadyneApp {
         s.push_str("id = \"home\"\n");
         s.push_str("t = 0.0\n");
         s.push_str(&format!("fractal = \"{}\"\n", self.fractal.name()));
+        // A custom view's formula, or the tour would refuse `fractal = "Custom"`. TOML's own string
+        // quoting (via the toml crate) carries line breaks, quotes and any character verbatim.
+        if let Some(c) = self.custom.as_ref().filter(|_| self.fractal == crate::FractalKind::Custom) {
+            s.push_str(&format!("formula = {}\n", toml::Value::String(c.source.clone())));
+            let used = &c.params[..c.params_used()];
+            if !used.is_empty() {
+                let pairs: Vec<String> = used.iter().map(|(re, im)| format!("[{re:?}, {im:?}]")).collect();
+                s.push_str(&format!("formula_params = [{}]\n", pairs.join(", ")));
+            }
+        }
         if self.julia_mode {
             s.push_str("julia = true\n");
         }
