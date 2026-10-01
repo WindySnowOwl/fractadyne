@@ -533,6 +533,17 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
          formula = \"...\" with formula_params = [[re, im], ...], and Tools > Tour from current \
          view writes them for a custom view.",
     );
+    help_p(
+        ui,
+        "A collection of 45 formulas comes with Fractadyne, written for it: higher powers and the \
+         folded variants of the Burning Ship and Celtic families, blends and two-step hybrids, the \
+         Mandelbrot set seen through another map (inverted, log-polar, through sine), \
+         transcendental and rational formulas, and Julia sets. They are the dialog's Examples and \
+         the Collection tab of the formula library, where Copy to mine adds one to your formulas. \
+         Each has a starting view, and Apply goes there: a formula opened on the home view is \
+         often not where its picture is. A formula you save while it is showing keeps the view you \
+         are at in the same way, and Apply returns to it.",
+    );
 }
 
 pub(crate) fn help_methodology(ui: &mut egui::Ui) {

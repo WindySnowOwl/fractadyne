@@ -25,7 +25,7 @@ pub(crate) const FILE_MAX: u64 = 4 * 1024 * 1024;
 const NAME_MAX: usize = 120;
 const SOURCE_MAX: usize = 16 * 1024;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SavedFormula {
     pub(crate) name: String,
     /// The step as written; statements on separate lines.
@@ -33,6 +33,66 @@ pub(crate) struct SavedFormula {
     /// `p1`… as typed, `[re, im]` — only the ones the formula reads.
     #[serde(default)]
     pub(crate) params: Vec<[String; 2]>,
+    /// Where Apply shows it: without one, a formula opens on the home view, which for many is not
+    /// where the picture is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) view: Option<StartView>,
+    /// A line on what it is (the collection's entries have one).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) about: String,
+    /// The collection's grouping ("Powers and folds", "Julia sets", …).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) category: String,
+}
+
+/// A formula's starting view, as TEXT so a deep one keeps every digit: the centre, the
+/// magnification (1 = the home view; height-anchored, so the same at any window size), the
+/// iteration count, and — for a Julia set — Julia mode with its constant.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct StartView {
+    /// `[re, im]` as decimals.
+    pub(crate) center: [String; 2],
+    /// As the go-to field reads it: "4", "2.5e12", "1e500".
+    pub(crate) zoom: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) iterations: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) julia: Option<[String; 2]>,
+}
+
+/// The most iterations a starting view may ask for (a view file's limit).
+const VIEW_ITER_MAX: u32 = 10_000_000;
+/// The deepest starting view, in octaves (a view file's limit).
+const VIEW_OCTAVES_MAX: f64 = 3.4e7;
+
+impl StartView {
+    /// `log2` of the magnification, if the zoom reads and is within the limit.
+    pub(crate) fn log2_zoom(&self) -> Option<f64> {
+        crate::parse_zoom_to_log2(&self.zoom).filter(|l| l.abs() <= VIEW_OCTAVES_MAX)
+    }
+
+    /// The Julia constant, if this is a Julia set and it reads.
+    pub(crate) fn julia_c(&self) -> Option<(f64, f64)> {
+        let [re, im] = self.julia.as_ref()?;
+        let (re, im) = (re.trim().parse::<f64>().ok()?, im.trim().parse::<f64>().ok()?);
+        (re.is_finite() && im.is_finite()).then_some((re, im))
+    }
+
+    /// The view as it may be used: untrusted (an imported file), so a centre that does not read as
+    /// a finite number, a zoom that does not read or is out of range, or a Julia constant that does
+    /// not read makes no view at all; the iteration count is clamped.
+    fn tidy(self) -> Option<StartView> {
+        let finite = |s: &str| fractadyne_core::parse_bf(s.trim()).is_some();
+        let short = |s: &str| s.trim().chars().take(20_000).collect::<String>();
+        let v = StartView {
+            center: [short(&self.center[0]), short(&self.center[1])],
+            zoom: self.zoom.trim().chars().take(64).collect(),
+            iterations: self.iterations.map(|n| n.clamp(16, VIEW_ITER_MAX)),
+            julia: self.julia.map(|[re, im]| [re.trim().to_string(), im.trim().to_string()]),
+        };
+        let ok = finite(&v.center[0]) && finite(&v.center[1]) && v.log2_zoom().is_some();
+        (ok && (v.julia.is_none() || v.julia_c().is_some())).then_some(v)
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -83,7 +143,15 @@ impl SavedFormula {
             .take(MAX_PARAMS)
             .map(|[re, im]| [one_line(&re).trim().to_string(), one_line(&im).trim().to_string()])
             .collect();
-        Some(SavedFormula { name, source, params })
+        let line = |s: &str, max: usize| one_line(s).trim().chars().take(max).collect::<String>();
+        Some(SavedFormula {
+            name,
+            source,
+            params,
+            view: self.view.and_then(StartView::tidy),
+            about: line(&self.about, 400),
+            category: line(&self.category, 60),
+        })
     }
 
     /// The same formula, whatever the names: the same source and parameter values (a parameter
@@ -105,6 +173,32 @@ impl SavedFormula {
     /// The source on one line for a list row: statements joined by the language's own `, `.
     pub(crate) fn one_line(&self) -> String {
         self.source.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(", ")
+    }
+}
+
+/// The collection that comes with the app, a formula file of our own (written from the
+/// mathematics: no formula corpus is bundled, design/custom-formulas.md §10).
+const COLLECTION: &str = include_str!("../assets/formulas/collection.toml");
+
+/// The collection, in the file's order (grouped by category), each entry with its starting view.
+/// Read once. An entry `tidy` would drop, or a view it would refuse, is a test failure.
+pub(crate) fn collection() -> &'static [SavedFormula] {
+    static ALL: std::sync::OnceLock<Vec<SavedFormula>> = std::sync::OnceLock::new();
+    ALL.get_or_init(|| {
+        parse_file(COLLECTION).map(|list| list.into_iter().filter_map(SavedFormula::tidy).collect()).unwrap_or_default()
+    })
+}
+
+/// A magnification as text, from its `log2`: plainly while it is a modest number ("2.5", "4096"),
+/// in scientific form past that ("1.2346e500") — `parse_zoom_to_log2` reads both, at any depth.
+pub(crate) fn zoom_text(log2: f64) -> String {
+    if log2.abs() < 40.0 {
+        let s = format!("{:.6}", log2.exp2());
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    } else {
+        let l10 = log2 * std::f64::consts::LOG10_2;
+        let e = l10.floor();
+        format!("{:.4}e{}", 10f64.powf(l10 - e), e as i64)
     }
 }
 

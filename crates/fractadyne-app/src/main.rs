@@ -3547,7 +3547,7 @@ pub(crate) fn fmt_zoom_field(log2mag: f64) -> String {
 /// Parse a magnification string (plain or scientific, e.g. `256`, `1.5e400`) into
 /// `log2(magnification)`, reading the base-10 exponent directly so values far past f64
 /// range still work. Grouping (`,` `_` spaces) is ignored. `None` on garbage / non-positive.
-fn parse_zoom_to_log2(s: &str) -> Option<f64> {
+pub(crate) fn parse_zoom_to_log2(s: &str) -> Option<f64> {
     let t: String = s.chars().filter(|c| !matches!(c, ',' | '_' | ' ' | '\t')).collect();
     if t.is_empty() {
         return None;

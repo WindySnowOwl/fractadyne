@@ -5,18 +5,9 @@
 //! formula is already showing, so a formula can be refined in place.
 
 use crate::custom_formula::CustomFormula;
+use crate::formula_library::StartView;
 use crate::FractadyneApp;
 use fractadyne_core::ir::parse::{parse, MAX_PARAMS};
-
-/// Starting points, each a family the built-ins do not have. `(label, source, parameters)`.
-const EXAMPLES: &[(&str, &str, &[(f64, f64)])] = &[
-    ("z² + c", "z = z^2 + c", &[]),
-    ("Cubic with a parameter", "z = z^3 - p1*z + c", &[(0.5, 0.0)]),
-    ("Hybrid square", "t = sqr(z)\nz = t + p1*conj(t) + c", &[(0.25, 0.0)]),
-    ("Perpendicular Burning Ship", "z = (real(z) - flip(abs(imag(z))))^2 + c", &[]),
-    ("Sine", "z = sin(z) + c", &[]),
-    ("Exponential", "z = exp(z) + c", &[]),
-];
 
 pub(crate) struct FormulaDialog {
     pub(crate) open: bool,
@@ -41,11 +32,16 @@ pub(crate) struct FormulaDialog {
     /// The name the text is saved under in the formula library; follows the entry last loaded or
     /// saved, so saving again updates it.
     pub(crate) save_name: String,
+    /// The starting view of the entry last loaded (from the collection or the library), and the
+    /// text it came with: Apply goes there while the text is still that entry's.
+    pub(crate) loaded_view: Option<(String, StartView)>,
 }
 
 /// A formula waiting for its pipelines (`fractadyne_gpu::compile_custom_async`).
 pub(crate) struct PendingFormula {
     formula: CustomFormula,
+    /// Where to show it once it is ready.
+    view: Option<StartView>,
     rx: std::sync::mpsc::Receiver<fractadyne_gpu::PreparedCustom>,
     started: std::time::Instant,
 }
@@ -64,6 +60,7 @@ impl Default for FormulaDialog {
             editor: Default::default(),
             pending: None,
             save_name: String::new(),
+            loaded_view: None,
         }
     }
 }
@@ -87,6 +84,13 @@ impl FormulaDialog {
         }
         self.save_name = e.name.clone();
         self.error = None;
+        self.loaded_view = e.view.clone().map(|v| (e.source.clone(), v));
+    }
+
+    /// The loaded entry's starting view, if the text is still that entry's.
+    fn view_for_apply(&self) -> Option<StartView> {
+        let (src, v) = self.loaded_view.as_ref()?;
+        (src.trim() == self.source.trim()).then(|| v.clone())
     }
 
     /// The typed parameters, or which one is not a number.
@@ -146,8 +150,9 @@ impl FractadyneApp {
     /// Apply `c` once its pipelines are compiled OFF the render thread, which otherwise builds them
     /// on the first frame that draws it (`prepare_custom_now`): ~1.4 s of frozen window on every
     /// Apply, and every parameter change is a new module. Until then the view keeps rendering what it shows. With
-    /// no renderer to compile against, applies at once (the render thread compiles).
-    pub(crate) fn apply_custom_formula_async(&mut self, c: CustomFormula) {
+    /// no renderer to compile against, applies at once (the render thread compiles). `view`: where
+    /// to show it — a collection or library entry's starting view — once it is shown.
+    pub(crate) fn apply_custom_formula_async(&mut self, c: CustomFormula, view: Option<StartView>) {
         let rx = self
             .render_state
             .as_ref()
@@ -156,9 +161,18 @@ impl FractadyneApp {
             // A newer Apply replaces an older one still compiling; that worker's result is dropped.
             Some(rx) => {
                 self.formula_dialog.pending =
-                    Some(PendingFormula { formula: c, rx, started: std::time::Instant::now() })
+                    Some(PendingFormula { formula: c, view, rx, started: std::time::Instant::now() })
             }
-            None => self.apply_custom_formula(c),
+            None => self.apply_custom_formula_at(c, view),
+        }
+    }
+
+    /// [`Self::apply_custom_formula`], then the starting view if there is one: AFTER, as switching
+    /// into Custom goes to its home view.
+    fn apply_custom_formula_at(&mut self, c: CustomFormula, view: Option<StartView>) {
+        self.apply_custom_formula(c);
+        if let Some(v) = view {
+            self.apply_start_view(&v);
         }
     }
 
@@ -186,7 +200,7 @@ impl FractadyneApp {
                     // The worker died (or the renderer went away): the render thread compiles.
                     _ => crate::diag::log_line("formula", "off-thread compile failed; the render thread compiles"),
                 }
-                self.apply_custom_formula(p.formula);
+                self.apply_custom_formula_at(p.formula, p.view);
             }
         }
     }
@@ -229,11 +243,20 @@ impl FractadyneApp {
                         {
                             ui.ctx().copy_text(crate::ui::textbook::latex::latex(&self.formula_dialog.source));
                         }
+                        // The collection, by category: picking one loads it (and its view, which
+                        // Apply goes to while the text is unchanged).
                         egui::ComboBox::from_id_salt("formula_examples")
                             .selected_text("Examples")
+                            .height(420.0)
                             .show_ui(ui, |ui| {
-                                for (i, (label, src, _)) in EXAMPLES.iter().enumerate() {
-                                    if ui.selectable_label(false, *label).on_hover_text(*src).clicked() {
+                                let mut heading = "";
+                                for (i, e) in crate::formula_library::collection().iter().enumerate() {
+                                    if e.category != heading {
+                                        heading = &e.category;
+                                        ui.label(egui::RichText::new(heading).small().strong());
+                                    }
+                                    let tip = format!("{}\n\n{}", e.about, e.source);
+                                    if ui.selectable_label(false, &e.name).on_hover_text(tip).clicked() {
                                         example = Some(i);
                                     }
                                 }
@@ -409,13 +432,9 @@ impl FractadyneApp {
                         .clicked();
                 });
             });
-        if let Some(i) = example {
-            let (label, src, params) = EXAMPLES[i];
-            self.formula_dialog.source = src.to_string();
-            self.formula_dialog.set_params(params);
-            self.formula_dialog.error = None;
-            // Not the name of the entry last loaded: saving an example must not update that entry.
-            self.formula_dialog.save_name = label.to_string();
+        if let Some(e) = example.and_then(|i| crate::formula_library::collection().get(i)) {
+            // Its name, not the entry last loaded's: saving an example must not update that entry.
+            self.formula_dialog.load_entry(e);
         }
         if save {
             let name = self.formula_dialog.save_name.trim().to_string();
@@ -433,7 +452,8 @@ impl FractadyneApp {
             match result {
                 Ok(c) => {
                     self.formula_dialog.error = None;
-                    self.apply_custom_formula_async(c);
+                    let view = self.formula_dialog.view_for_apply();
+                    self.apply_custom_formula_async(c, view);
                 }
                 Err(e) => self.formula_dialog.error = Some(e),
             }

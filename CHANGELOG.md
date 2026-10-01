@@ -92,6 +92,13 @@ Changes after 0.3.0-beta.1:
     computation: `|z|`, the squared modulus, shows as |z|², and `exp(z)` stays exp(z). A line
     that does not read shows in red, to be edited as text. A LaTeX button copies the formula as
     LaTeX source, and the formula library shows its formulas typeset while Textbook is on.
+  - **Collection (unreleased):** 45 formulas come with the app, written for it (no formula
+    corpus is bundled): higher powers and folded variants of the Burning Ship and Celtic
+    families, blends and hybrids, the Mandelbrot set through another map, transcendental and
+    rational formulas, and Julia sets. They are the dialog's Examples and the formula library's
+    new Collection tab. Each opens at a starting view where its picture is, and a formula saved
+    while it shows keeps the view it was saved at. A test renders every one at its view and
+    checks that a picture is there; the GPU renders were compared with it by eye.
   - **Library (unreleased):** the formula dialog's Save to library keeps a formula and its
     parameters under a name, and Fractal ▸ Formula library… applies, edits, exports and deletes
     them. Import adds a formula file's formulas without replacing any: one already saved is

@@ -5,6 +5,7 @@ fn entry(name: &str, source: &str, params: &[(&str, &str)]) -> SavedFormula {
         name: name.into(),
         source: source.into(),
         params: params.iter().map(|(re, im)| [re.to_string(), im.to_string()]).collect(),
+        ..Default::default()
     }
 }
 
@@ -166,4 +167,228 @@ fn an_unreadable_library_is_moved_aside_never_overwritten() {
 #[test]
 fn a_row_shows_the_source_on_one_line() {
     assert_eq!(entry("x", "t = sqr(z)\n\n  z = t + c  ", &[]).one_line(), "t = sqr(z), z = t + c");
+}
+
+// ---- Starting views ----
+
+/// A starting view survives a file round trip; one that does not read is dropped (the entry kept);
+/// an entry without one writes no `view` table, so a library file stays as it was.
+#[test]
+fn a_starting_view_round_trips_and_a_bad_one_is_dropped() {
+    let view = StartView {
+        center: ["-0.74364388703".into(), "0.13182590421".into()],
+        zoom: "1.2346e500".into(),
+        iterations: Some(5000),
+        julia: Some(["-0.8".into(), "0.156".into()]),
+    };
+    let with = SavedFormula { view: Some(view.clone()), ..entry("deep", "z = z^2 + c", &[]) };
+    let back = parse_file(&file_text(&[with.clone()])).unwrap().remove(0).tidy().unwrap();
+    assert_eq!(back, with);
+    assert!((back.view.unwrap().log2_zoom().unwrap() - (1.2346_f64.log2() + 500.0 * std::f64::consts::LOG2_10)).abs() < 1e-9);
+    assert!(!file_text(&[entry("plain", "z = z^2 + c", &[])]).contains("view"));
+    for bad in [
+        StartView { center: ["nan".into(), "0".into()], ..view.clone() },
+        StartView { zoom: "lots".into(), ..view.clone() },
+        StartView { zoom: "1e99999999".into(), ..view.clone() },
+        StartView { julia: Some(["x".into(), "0".into()]), ..view.clone() },
+    ] {
+        let e = SavedFormula { view: Some(bad.clone()), ..entry("e", "z = z^2 + c", &[]) }.tidy().unwrap();
+        assert_eq!(e.view, None, "{bad:?}");
+    }
+    let many = SavedFormula { view: Some(StartView { iterations: Some(u32::MAX), ..view }), ..entry("e", "z", &[]) };
+    assert_eq!(many.tidy().unwrap().view.unwrap().iterations, Some(10_000_000));
+}
+
+/// A zoom written as text reads back as the same depth, plainly or past f64's range.
+#[test]
+fn zoom_text_reads_back_at_any_depth() {
+    for l2 in [0.0, 1.5, -2.0, 39.9, 40.0, 1000.0, 3.3e6] {
+        let back = crate::parse_zoom_to_log2(&zoom_text(l2)).unwrap();
+        assert!((back - l2).abs() < 1e-4 * l2.abs().max(1.0), "{l2} → {} → {back}", zoom_text(l2));
+    }
+    assert_eq!(zoom_text(0.0), "1");
+    assert_eq!(zoom_text(1.0), "2");
+}
+
+// ---- The collection ----
+
+/// A frame of escape counts: `Some(n)` escaped at step n, `None` still bounded at the last step.
+struct Frame {
+    w: usize,
+    h: usize,
+    px: Vec<Option<u32>>,
+}
+
+/// `e` rendered on the CPU at its starting view, `w`×`h`, as the GPU iterates it: z₀ = 0 and c the
+/// pixel (Julia mode: z₀ the pixel and c the constant), escape past |z| = 256, a value that stops
+/// being finite tamed to an escape (`fractadyne_gpu::custom::tame_f64`).
+fn render(e: &SavedFormula, w: usize, h: usize, max_iter: u32) -> Frame {
+    let params: Vec<(f64, f64)> =
+        e.params.iter().map(|[re, im]| (re.parse().expect("re"), im.parse().expect("im"))).collect();
+    let cf = crate::custom_formula::CustomFormula::compile(&e.source, &params)
+        .unwrap_or_else(|why| panic!("{}: {why}", e.name));
+    let v = e.view.as_ref().unwrap_or_else(|| panic!("{}: no starting view", e.name));
+    let l2 = v.log2_zoom().expect("zoom");
+    let (cx, cy): (f64, f64) = (v.center[0].parse().expect("re"), v.center[1].parse().expect("im"));
+    let tall = fractadyne_core::Viewport::REFERENCE_HEIGHT / l2.exp2();
+    let wide = tall * w as f64 / h as f64;
+    let julia = v.julia_c();
+    let bail2 = 256.0 * 256.0;
+    let mut px = Vec::with_capacity(w * h);
+    for j in 0..h {
+        for i in 0..w {
+            let p = (cx + ((i as f64 + 0.5) / w as f64 - 0.5) * wide, cy + (0.5 - (j as f64 + 0.5) / h as f64) * tall);
+            let (z0, c) = match julia {
+                Some(k) => (p, k),
+                None => ((0.0, 0.0), p),
+            };
+            let pts = fractadyne_core::ir::orbit_points(&cf.formula, z0, c, &cf.params, max_iter as usize, bail2)
+                .expect("parameters supplied");
+            let gone = pts.iter().position(|&(x, y)| !(x.is_finite() && y.is_finite()) || x * x + y * y > bail2);
+            px.push(gone.map(|n| n as u32));
+        }
+    }
+    Frame { w, h, px }
+}
+
+/// What the judge measured.
+#[derive(Debug)]
+struct Verdict {
+    /// Distinct values (escape counts, and "inside" as one).
+    levels: usize,
+    /// Distinct values in the middle quarter of the frame: something to see where the view looks.
+    centre_levels: usize,
+    /// The commonest value's share of the frame.
+    dominant: f64,
+    /// Neighbouring pixels that agree (within 2 steps, or both inside): a picture, not noise.
+    coherent: f64,
+    /// Neighbouring pixels that differ sharply (3+ steps, or inside against outside): a boundary,
+    /// not only the smooth gradient far from the set.
+    edges: f64,
+}
+
+impl Verdict {
+    fn ok(&self) -> bool {
+        self.levels >= 8 && self.centre_levels >= 4 && self.dominant <= 0.92 && self.coherent >= 0.5 && self.edges >= 0.005
+    }
+}
+
+fn judge(f: &Frame) -> Verdict {
+    use std::collections::{HashMap, HashSet};
+    let mut count: HashMap<Option<u32>, usize> = HashMap::new();
+    for p in &f.px {
+        *count.entry(*p).or_default() += 1;
+    }
+    let mut centre = HashSet::new();
+    for j in f.h / 4..f.h * 3 / 4 {
+        for i in f.w / 4..f.w * 3 / 4 {
+            centre.insert(f.px[j * f.w + i]);
+        }
+    }
+    let (mut pairs, mut agree, mut sharp) = (0usize, 0usize, 0usize);
+    for j in 0..f.h {
+        for i in 0..f.w {
+            let a = f.px[j * f.w + i];
+            let right = (i + 1 < f.w).then(|| f.px[j * f.w + i + 1]);
+            let below = (j + 1 < f.h).then(|| f.px[(j + 1) * f.w + i]);
+            for b in [right, below].into_iter().flatten() {
+                pairs += 1;
+                match (a, b) {
+                    (None, None) => agree += 1,
+                    (Some(x), Some(y)) if x.abs_diff(y) <= 2 => agree += 1,
+                    _ => sharp += 1,
+                }
+            }
+        }
+    }
+    let n = f.px.len() as f64;
+    Verdict {
+        levels: count.len(),
+        centre_levels: centre.len(),
+        dominant: *count.values().max().unwrap_or(&0) as f64 / n,
+        coherent: agree as f64 / pairs as f64,
+        edges: sharp as f64 / pairs as f64,
+    }
+}
+
+/// A frame as a PPM image, for looking at: inside black, outside coloured by escape count.
+fn write_ppm(f: &Frame, path: &std::path::Path) {
+    let mut out = format!("P6\n{} {}\n255\n", f.w, f.h).into_bytes();
+    for p in &f.px {
+        let rgb = match p {
+            None => [0, 0, 0],
+            Some(n) => {
+                let t = (*n as f64).sqrt() * 0.9;
+                let ch = |k: f64| ((0.5 + 0.5 * (t + k).sin()) * 235.0 + 20.0) as u8;
+                [ch(0.0), ch(2.1), ch(4.2)]
+            }
+        };
+        out.extend_from_slice(&rgb);
+    }
+    std::fs::write(path, out).unwrap();
+}
+
+/// The collection reads in full: every entry survives `tidy` (none dropped, no view refused), has
+/// a category, a line about it and a starting view, and no two share a name or a formula and view.
+#[test]
+fn the_collection_reads_in_full() {
+    let raw = parse_file(COLLECTION).expect("the collection is a formula file");
+    let all = collection();
+    assert_eq!(all.len(), raw.len(), "an entry tidy dropped");
+    assert!(all.len() >= 35, "{} formulas", all.len());
+    for (e, r) in all.iter().zip(&raw) {
+        assert!(r.view.is_some() && e.view.is_some(), "{}: no starting view, or one tidy refused", e.name);
+        assert!(!e.category.is_empty() && !e.about.is_empty(), "{}", e.name);
+    }
+    for (i, a) in all.iter().enumerate() {
+        for b in &all[i + 1..] {
+            assert_ne!(a.name, b.name);
+            assert!(!a.same_formula(b) || a.view != b.view, "{} and {} are the same", a.name, b.name);
+        }
+    }
+}
+
+/// THE gate: every formula in the collection, rendered at its starting view, shows a picture —
+/// structure, a boundary, something in the middle, and not noise. The judge is held to its job by
+/// controls it must fail (a view of nothing, a formula that never escapes, noise) and one it must
+/// pass (the Mandelbrot set). `FRACTADYNE_COLLECTION_PPM=<dir>` also writes each frame, larger.
+#[test]
+fn every_collection_formula_shows_a_picture_at_its_view() {
+    let look = std::env::var_os("FRACTADYNE_COLLECTION_PPM").map(std::path::PathBuf::from);
+    let mut bad = Vec::new();
+    for (k, e) in collection().iter().enumerate() {
+        let iters = e.view.as_ref().and_then(|v| v.iterations).unwrap_or(300).min(400);
+        let v = judge(&render(e, 64, 40, iters));
+        if !v.ok() {
+            bad.push(format!("{}: {v:?}", e.name));
+        }
+        if let Some(dir) = &look {
+            let f = render(e, 320, 200, e.view.as_ref().and_then(|v| v.iterations).unwrap_or(300));
+            std::fs::create_dir_all(dir).unwrap();
+            write_ppm(&f, &dir.join(format!("{k:02}.ppm")));
+        }
+    }
+    assert!(bad.is_empty(), "no picture at the starting view:\n{}", bad.join("\n"));
+
+    let control = |source: &str, center: [&str; 2], zoom: &str| SavedFormula {
+        name: "control".into(),
+        source: source.into(),
+        view: Some(StartView { center: center.map(String::from), zoom: zoom.into(), iterations: Some(300), julia: None }),
+        ..Default::default()
+    };
+    let nothing = judge(&render(&control("z = z^2 + c", ["1000", "1000"], "1"), 64, 40, 300));
+    assert!(!nothing.ok(), "a view where everything escapes at once passed: {nothing:?}");
+    let inside = judge(&render(&control("z = z*0.5 + c*0", ["0", "0"], "1"), 64, 40, 300));
+    assert!(!inside.ok(), "a formula that never escapes passed: {inside:?}");
+    let mut seed = 0x9e37_79b9_u64;
+    let noise: Vec<Option<u32>> = (0..64 * 40)
+        .map(|_| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            Some((seed >> 33) as u32 % 60)
+        })
+        .collect();
+    let noise = judge(&Frame { w: 64, h: 40, px: noise });
+    assert!(!noise.ok(), "noise passed: {noise:?}");
+    let m = judge(&render(&control("z = z^2 + c", ["-0.5", "0"], "1"), 64, 40, 300));
+    assert!(m.ok(), "the Mandelbrot set failed the judge: {m:?}");
 }

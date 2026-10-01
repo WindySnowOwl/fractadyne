@@ -108,6 +108,11 @@ enum Screen {
     /// The formula library with the formula dialog in Textbook mode: its rows typeset, one that
     /// does not read as text.
     FormulaLibraryTypeset,
+    /// The formula library's Collection tab: the formulas that come with the app, by category.
+    FormulaCollection,
+    /// A collection formula applied at its starting view (the Celtic Julia set): rendered on the
+    /// GPU where the collection's CPU gate judged it.
+    FormulaCollectionApplied,
     /// The formula library window, seeded in memory: a parameterized formula SHOWING (its row
     /// marked), a two-statement one, one that does not read in this version (its reason in red), and
     /// a name long enough to need truncating.
@@ -748,6 +753,8 @@ fn build_steps() -> Vec<Step> {
         screen("formula-respell", Screen::FormulaRespell),
         screen("formula-library", Screen::FormulaLibrary),
         screen("formula-library-typeset", Screen::FormulaLibraryTypeset),
+        screen("formula-collection", Screen::FormulaCollection),
+        screen("formula-collection-applied", Screen::FormulaCollectionApplied),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
         live("live-direct-1e2", 2.0),
         live("live-df32-1e6", 6.0),
@@ -1113,6 +1120,8 @@ impl FractadyneApp {
         self.formula_dialog.editor = Default::default();
         self.formula_library = Default::default();
         if self.fractal == crate::FractalKind::Custom {
+            // A collection formula may have been shown as a Julia set, at its own view.
+            self.julia_mode = false;
             self.set_fractal(crate::FractalKind::Mandelbrot);
         }
     }
@@ -1448,7 +1457,7 @@ impl FractadyneApp {
                 match crate::custom_formula::CustomFormula::compile(src, &p) {
                     Ok(c) => {
                         self.harness.uitest_async_key = Some(c.shader.key);
-                        self.apply_custom_formula_async(c);
+                        self.apply_custom_formula_async(c, None);
                     }
                     Err(e) => self.formula_dialog.error = Some(e),
                 }
@@ -1518,6 +1527,23 @@ impl FractadyneApp {
                 self.formula_dialog.textbook = true;
                 ctx.memory_mut(|m| m.request_focus(egui::Id::new("formula_textbook")));
             }
+            Screen::FormulaCollection => {
+                self.saved_formulas = Vec::new();
+                self.formula_library.shelf = Some(crate::ui::formula_library::Shelf::Collection);
+                self.formula_library.open = true;
+            }
+            Screen::FormulaCollectionApplied => {
+                // At once, not off the render thread as Apply does: the step's settle then waits on
+                // the render as for any view.
+                let e = crate::formula_library::collection().iter().find(|e| e.name == "Celtic Julia").cloned();
+                match e.map(|e| (crate::custom_formula::CustomFormula::compile(&e.source, &[]), e.view)) {
+                    Some((Ok(c), Some(view))) => {
+                        self.apply_custom_formula(c);
+                        self.apply_start_view(&view);
+                    }
+                    other => self.pending_toast = Some(format!("formula-collection-applied: {:?}", other.map(|o| o.0.err()))),
+                }
+            }
             Screen::FormulaRespell => {
                 self.open_formula_dialog();
                 self.formula_dialog.source = "; ln as a textbook writes it\nz = ln(z^2 + c) + cot(z)*p1".into();
@@ -1529,6 +1555,7 @@ impl FractadyneApp {
                     name: name.into(),
                     source: source.into(),
                     params: params.iter().map(|(re, im)| [re.to_string(), im.to_string()]).collect(),
+                    ..Default::default()
                 };
                 self.saved_formulas = vec![
                     entry("Cubic with a parameter", "z = z^3 - p1*z + c", &[("0.5", "0")]),
