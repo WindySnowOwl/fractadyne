@@ -3,7 +3,7 @@
 Fractadyne ships as a statically-linked binary that includes the open-source Rust crates
 and bundled fonts listed below. Each distinct license text appears once, followed by the
 components distributed under it. This file reproduces the notices required by the MIT, BSD,
-Apache-2.0, ISC, Zlib, BSL, Unicode, and font (OFL / Ubuntu) licenses.
+Apache-2.0, ISC, Zlib, BSL, Unicode, and font (OFL / Ubuntu / GUST) licenses.
 
 The `option-ext` crate is under the **Mozilla Public License 2.0 (MPL-2.0)**; its unmodified
 source is available at <https://crates.io/crates/option-ext> and
@@ -21,6 +21,12 @@ hand. Keep this section in step with `crates/fractadyne-app/assets/fonts/`.
 * **Lucide** icons - ISC (text below). The bundled `Lucide.ttf` is a SUBSET containing only the
   icons the UI uses, produced by `scripts/subset_lucide.py` from the upstream font; the icon
   artwork is unmodified. Upstream: <https://lucide.dev/>.
+* **Fractadyne Math** - GUST Font License (text below). A derived work of **Latin Modern Math**
+  1.959 by Bogusław Jackowski, Piotr Strzelczyk and Piotr Pianowski, and NOT Latin Modern Math: its
+  authors do not support it. Made by `scripts/subset_math_font.py`: subset to the glyphs the
+  formula editor's textbook mode can show, size variants and assembly parts given Private Use
+  Area code points, OpenType layout tables and hinting removed, renamed as the licence asks. The
+  unmodified original: <https://ctan.org/pkg/lm-math>.
 
 ### SIL Open Font License 1.1 - Spline Sans, Spline Sans Mono
 
@@ -166,6 +172,43 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+```
+
+### GUST Font License - Fractadyne Math (derived from Latin Modern Math)
+
+```
+Copyright 2012--2014 for the Latin Modern math extensions by B. Jackowski,
+P. Strzelczyk and P. Pianowski (on behalf of TeX Users Groups).
+
+% This is a preliminary version (2006-09-30), barring acceptance from
+% the LaTeX Project Team and other feedback, of the GUST Font License.
+% (GUST is the Polish TeX Users Group, http://www.gust.org.pl)
+%
+% For the most recent version of this license see
+% http://www.gust.org.pl/fonts/licenses/GUST-FONT-LICENSE.txt
+% or
+% http://tug.org/fonts/licenses/GUST-FONT-LICENSE.txt
+%
+% This work may be distributed and/or modified under the conditions
+% of the LaTeX Project Public License, either version 1.3c of this
+% license or (at your option) any later version.
+%
+% Please also observe the following clause:
+% 1) it is requested, but not legally required, that derived works be
+%    distributed only after changing the names of the fonts comprising this
+%    work and given in an accompanying "manifest", and that the
+%    files comprising the Work, as listed in the manifest, also be given
+%    new names. Any exceptions to this request are also given in the
+%    manifest.
+%
+%    We recommend the manifest be given in a separate file named
+%    MANIFEST-<fontid>.txt, where <fontid> is some unique identification
+%    of the font family. If a separate "readme" file accompanies the Work,
+%    we recommend a name of the form README-<fontid>.txt.
+%
+% The latest version of the LaTeX Project Public License is in
+% http://www.latex-project.org/lppl.txt and version 1.3c or later
+% is part of all distributions of LaTeX version 2006/05/20 or later.
 ```
 
 ## Licenses in this distribution

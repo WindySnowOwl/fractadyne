@@ -11,6 +11,7 @@ pub(crate) mod formula_dialog;
 pub(crate) mod formula_editor;
 pub(crate) mod formula_keypad;
 pub(crate) mod formula_library;
+pub(crate) mod textbook;
 mod menus;
 mod panels;
 pub(crate) mod diagnostics;

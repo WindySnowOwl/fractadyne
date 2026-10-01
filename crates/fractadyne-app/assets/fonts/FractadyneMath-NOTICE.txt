@@ -1,0 +1,19 @@
+Fractadyne Math (FractadyneMath.otf)
+
+A derived work of Latin Modern Math, version 1.959 (5 IX 2014), by Boguslaw Jackowski, Piotr
+Strzelczyk and Piotr Pianowski, Copyright 2012--2014 for the Latin Modern math extensions (on behalf
+of TeX Users Groups). It is distributed under the GUST Font License (GUST-FONT-LICENSE.txt), an
+instance of the LaTeX Project Public License 1.3c (http://www.latex-project.org/lppl.txt).
+
+It is NOT Latin Modern Math, and its authors do not support it. As the licence asks, it has a new
+name. Changes, all made by scripts/subset_math_font.py in the Fractadyne repository:
+
+- Subset to the 269 glyphs the Fractadyne formula language can show (ASCII, mathematical italic
+  Latin, pi, the minus, dot, times and radical signs, a left arrow, the double bar) together with
+  the size variants and assembly parts its MATH table names for them. The MATH table is unchanged.
+- 103 of those size variants and assembly parts, which have no Unicode code point in the original,
+  are given Private Use Area code points from U+E000, so that a text renderer can draw them.
+- OpenType layout tables (GSUB, GPOS, GDEF) and hinting removed; the font renamed "Fractadyne Math".
+
+The unmodified original: https://mirrors.ctan.org/fonts/lm-math.zip
+(SHA-256 of the archive this was made from: 3d906317f27279af05eb095aa4db5e7f3f87312e69d672e8f8928b64adcd403c)

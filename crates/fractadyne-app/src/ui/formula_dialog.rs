@@ -29,6 +29,8 @@ pub(crate) struct FormulaDialog {
     pub(crate) tab: crate::ui::formula_keypad::Tab,
     /// The text field's completion list.
     pub(crate) completion: crate::ui::formula_editor::Completion,
+    /// The textbook layout's type specimen window (opened by the uitest only).
+    pub(crate) specimen: bool,
     /// An applied formula whose pipelines are compiling off the render thread. The view keeps
     /// showing what it shows until they are ready, then switches (`poll_formula_compile`).
     pub(crate) pending: Option<PendingFormula>,
@@ -53,6 +55,7 @@ impl Default for FormulaDialog {
             error: None,
             tab: Default::default(),
             completion: Default::default(),
+            specimen: false,
             pending: None,
             save_name: String::new(),
         }
@@ -183,6 +186,9 @@ impl FractadyneApp {
     }
 
     pub(crate) fn draw_formula_dialog(&mut self, ctx: &egui::Context) {
+        if self.formula_dialog.specimen {
+            crate::ui::textbook::specimen_window(ctx, &mut self.formula_dialog.specimen);
+        }
         if !self.formula_dialog.open {
             return;
         }

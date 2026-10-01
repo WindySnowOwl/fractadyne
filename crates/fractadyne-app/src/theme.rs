@@ -312,6 +312,17 @@ pub(crate) fn install_fonts(ctx: &egui::Context) {
     if let Some(mono) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
         mono.insert(0, "SplineSansMono".to_owned());
     }
+    // The formula editor's textbook mode: Fractadyne Math (a subset of Latin Modern Math), a family
+    // of its own with NO fallback — the layout reads every glyph's metrics from this font, so a
+    // glyph drawn from another would sit wrongly; a test holds what the layout emits to its cmap.
+    fonts.font_data.insert(
+        crate::ui::textbook::font::FONT_NAME.to_owned(),
+        Arc::new(egui::FontData::from_static(crate::ui::textbook::font::FONT_BYTES)),
+    );
+    fonts.families.insert(
+        crate::ui::textbook::font::family(),
+        vec![crate::ui::textbook::font::FONT_NAME.to_owned()],
+    );
     ctx.set_fonts(fonts);
 
     // Secondary text, one step up from egui's default.
