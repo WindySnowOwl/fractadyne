@@ -4,12 +4,15 @@
 //! - [`font`]: Fractadyne Math (a Latin Modern Math subset) and its MATH table.
 //! - [`layout`]: a TeX-style box layout of a math list.
 //! - [`paint`]: drawing a laid-out formula with egui.
+//! - [`model`]: the formula as rows of atoms — read from the text, printed back, typeset.
+//! - [`edit`]: the document and the editing commands; [`editor`]: the widget.
 
+pub(crate) mod edit;
+pub(crate) mod editor;
 pub(crate) mod font;
 pub(crate) mod layout;
 pub(crate) mod model;
 pub(crate) mod paint;
-pub(crate) mod view;
 
 use layout::{Ctx, Node};
 
@@ -64,7 +67,7 @@ pub(crate) fn specimen() -> Vec<Vec<Node>> {
             eq.clone(),
             sup(v("z"), vec![n("2.2"), plus.clone(), n("0.3"), v("i")]),
             plus.clone(),
-            Node::Slot,
+            Node::Slot(None),
         ],
         vec![
             v("u"),

@@ -493,6 +493,21 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
     );
     help_p(
         ui,
+        "Textbook (the switch above the formula) shows it typeset as a textbook sets it, and edits \
+         it in place. Type as in the text: / makes a fraction of the term before it, ^ an \
+         exponent (+, - or = typed at an exponent's end steps out of it), ( parentheses, or a \
+         call after a function's name, | bars, and a comma inside parentheses a complex constant. \
+         The arrows move through the formula, Up and Down between a numerator and its \
+         denominator, Tab to the next empty box; Backspace at the start of a fraction or a pair of \
+         parentheses selects it, and a second press removes it and keeps what it held. Copy, \
+         paste and undo work as in a text field. Every edit is written back to the text, so the \
+         two views always hold the same formula; a line you have not edited keeps its spacing and \
+         comment. The notation never changes what is computed: |z| is the squared modulus and \
+         shows as |z|², cabs(z) shows as |z|, and exp(z) stays exp(z). A line that does not read \
+         shows in red; click it to edit it as text.",
+    );
+    help_p(
+        ui,
         "Numbers in a formula (0.1, 1/3, pi, the parameters) are read as double-precision values, \
          about 16 digits, and the deep reference orbit iterates with exactly those values. Two \
          formulas that are equal on paper can therefore differ deep down: 0.1*z multiplies by the \

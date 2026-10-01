@@ -167,6 +167,11 @@ fn function(name: &str) -> Option<Named> {
     })
 }
 
+/// Whether `name` (in any case, as the lexer reads names) is one of the language's functions.
+pub fn is_function(name: &str) -> bool {
+    function(&name.to_ascii_lowercase()).is_some()
+}
+
 /// Fractint features outside this subset, named so the error says what is missing.
 fn unsupported(name: &str) -> Option<&'static str> {
     Some(match name {

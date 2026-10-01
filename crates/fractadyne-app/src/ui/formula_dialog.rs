@@ -33,6 +33,8 @@ pub(crate) struct FormulaDialog {
     pub(crate) specimen: bool,
     /// Show the formula typeset (Textbook) instead of as text; persisted with the session.
     pub(crate) textbook: bool,
+    /// The Textbook editor's document, caret and history (it follows `source`).
+    pub(crate) editor: crate::ui::textbook::edit::Editor,
     /// An applied formula whose pipelines are compiling off the render thread. The view keeps
     /// showing what it shows until they are ready, then switches (`poll_formula_compile`).
     pub(crate) pending: Option<PendingFormula>,
@@ -59,6 +61,7 @@ impl Default for FormulaDialog {
             completion: Default::default(),
             specimen: false,
             textbook: false,
+            editor: Default::default(),
             pending: None,
             save_name: String::new(),
         }
@@ -208,6 +211,7 @@ impl FractadyneApp {
             .resizable(true)
             .default_width(460.0)
             .show(ctx, |ui| {
+                let was_textbook = self.formula_dialog.textbook;
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("The step, in Fractint-style expressions").weak().small());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -229,14 +233,42 @@ impl FractadyneApp {
                     });
                 });
                 let text_id = egui::Id::new("formula_source");
+                let book_id = egui::Id::new("formula_textbook");
+                // Text mode at source byte `at`, its field focused.
+                let to_text = |ui: &egui::Ui, src: &str, at: usize| {
+                    let ch = src[..at.min(src.len())].chars().count();
+                    crate::ui::formula_editor::store_cursor(ui.ctx(), text_id, ch);
+                    ui.ctx().memory_mut(|m| m.request_focus(text_id));
+                };
+                // The toggle moves the caret across: to the line the other mode's caret was on.
+                if self.formula_dialog.textbook != was_textbook {
+                    let src = &self.formula_dialog.source;
+                    if self.formula_dialog.textbook {
+                        let ch = crate::ui::formula_editor::stored_cursor(ui.ctx(), text_id).unwrap_or(0);
+                        let byte = src.char_indices().nth(ch).map_or(src.len(), |(b, _)| b);
+                        self.formula_dialog.editor.sync(src);
+                        self.formula_dialog.editor.place_at(byte);
+                        ui.ctx().memory_mut(|m| m.request_focus(book_id));
+                    } else {
+                        to_text(ui, src, self.formula_dialog.editor.caret_offset());
+                    }
+                }
                 if self.formula_dialog.textbook {
-                    // Read-only for now: a click edits that line as text, the caret at its start.
-                    if let Some(at) = crate::ui::textbook::view::show(ui, &self.formula_dialog.source, 96.0) {
-                        let src = &self.formula_dialog.source;
-                        let ch = src[..at.min(src.len())].chars().count();
+                    let out = crate::ui::textbook::editor::show(
+                        ui,
+                        book_id,
+                        &mut self.formula_dialog.editor,
+                        &mut self.formula_dialog.source,
+                        96.0,
+                        check.as_ref().err().map(|e| e.line),
+                    );
+                    if out.changed {
+                        self.formula_dialog.error = None;
+                    }
+                    // A line that does not read is edited as text.
+                    if let Some(at) = out.to_text {
                         self.formula_dialog.textbook = false;
-                        crate::ui::formula_editor::store_cursor(ui.ctx(), text_id, ch);
-                        ui.ctx().memory_mut(|m| m.request_focus(text_id));
+                        to_text(ui, &self.formula_dialog.source, at);
                     }
                 } else {
                     crate::ui::formula_editor::source_field(
@@ -250,8 +282,9 @@ impl FractadyneApp {
                 }
                 ui.label(
                     egui::RichText::new(if self.formula_dialog.textbook {
-                        "The formula typeset. Click a line to edit it as text; the keypad types into the \
-                         text too."
+                        "Type as in the text: / makes a fraction of the term before it, ^ an exponent, \
+                         ( parentheses. The arrows move through the formula; Tab goes to the next empty \
+                         box. A line in red does not read: click it to edit it as text."
                     } else {
                         "Type, or use the keypad — it holds every name the formula language knows. \
                          Names complete as you type (Tab). Statements are separated by a new line or a \
@@ -273,7 +306,14 @@ impl FractadyneApp {
                         ui.label(egui::RichText::new("Reads correctly.").small().color(ui.visuals().hyperlink_color));
                     }
                     Err(e) => {
-                        ui.colored_label(egui::Color32::from_rgb(0xE0, 0x6C, 0x60), e.to_string());
+                        // Typeset, the text's columns are nowhere to be seen: the line is underlined,
+                        // and an empty box (which prints as `()`) is named as what it is.
+                        let msg = match self.formula_dialog.textbook {
+                            true if self.formula_dialog.editor.has_empty_box() => "Fill the empty box.".to_string(),
+                            true => format!("Line {}: {}", e.line, e.message),
+                            false => e.to_string(),
+                        };
+                        ui.colored_label(egui::Color32::from_rgb(0xE0, 0x6C, 0x60), msg);
                     }
                 }
                 if used > 0 {

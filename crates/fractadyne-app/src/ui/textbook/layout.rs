@@ -27,7 +27,9 @@ pub(crate) enum Class {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Node {
     /// Characters of the math font, set as given (a math-italic 𝑧 is U+1D467: see [`italic`]).
-    Glyphs { text: String, class: Class },
+    /// `anchors` are (character boundary 0..=len, id): places a caret can stand inside the run,
+    /// reported back with their positions — marks would split the run and its spacing.
+    Glyphs { text: String, class: Class, anchors: Vec<(usize, u32)> },
     Frac { num: Vec<Node>, den: Vec<Node> },
     /// A base with an exponent and/or a subscript.
     Scripts { base: Box<Node>, sup: Option<Vec<Node>>, sub: Option<Vec<Node>> },
@@ -35,13 +37,30 @@ pub(crate) enum Node {
     Fenced { open: char, close: char, body: Vec<Node> },
     Radical(Vec<Node>),
     Overline(Vec<Node>),
-    /// An empty place still to be filled: a dashed box.
-    Slot,
+    /// An empty place still to be filled: a dashed box (with the anchor of a caret in it).
+    Slot(Option<u32>),
+    /// A place a caret can stand between two nodes: no width, no class (the spacing is the two
+    /// neighbours'), reported back as an [`Anchor`] in the middle of the space between them.
+    Mark(u32),
+    /// A sub-list set as one node, as TeX's `{…}`: what an exponent's base with a mark after it is.
+    /// With one node besides marks it is that node (its class, its italic correction).
+    Row(Vec<Node>),
+}
+
+/// Where a [`Node::Mark`] (or a glyph-run or slot anchor) went: x and its row's baseline, and that
+/// row's extent above and below the baseline — a caret's line.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Anchor {
+    pub(crate) id: u32,
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) above: f32,
+    pub(crate) below: f32,
 }
 
 impl Node {
     pub(crate) fn glyphs(text: impl Into<String>, class: Class) -> Node {
-        Node::Glyphs { text: text.into(), class }
+        Node::Glyphs { text: text.into(), class, anchors: Vec::new() }
     }
     /// A variable: its letters in math italic.
     pub(crate) fn var(name: &str) -> Node {
@@ -147,6 +166,8 @@ pub(crate) struct LBox {
     pub(crate) height: f32,
     pub(crate) depth: f32,
     pub(crate) items: Vec<Item>,
+    /// Caret places; an anchor whose extent is still NaN takes that of the list it ends up in.
+    pub(crate) anchors: Vec<Anchor>,
     /// The italic correction of a box that is a single italic character, for an exponent after it.
     italic: f32,
     /// A single character (TeX places scripts on one differently from a compound base).
@@ -157,9 +178,14 @@ impl LBox {
     /// Append `b` with its left edge at `x` and its baseline `dy` below ours.
     fn put(&mut self, b: &LBox, x: f32, dy: f32) {
         self.items.extend(b.items.iter().map(|it| it.shifted(x, dy)));
+        self.anchors.extend(b.anchors.iter().map(|a| Anchor { x: a.x + x, y: a.y + dy, ..*a }));
         self.height = self.height.max(b.height - dy);
         self.depth = self.depth.max(b.depth + dy);
     }
+}
+
+fn anchor(id: u32, x: f32) -> Anchor {
+    Anchor { id, x, y: 0.0, above: f32::NAN, below: f32::NAN }
 }
 
 /// How to lay out: the text size in points and the display's physical pixels per point.
@@ -227,7 +253,8 @@ fn classes_of(n: &Node) -> (Class, Class) {
         }
         Node::Fenced { .. } => (Class::Open, Class::Close),
         Node::Frac { .. } => (Class::Inner, Class::Inner),
-        Node::Radical(_) | Node::Overline(_) | Node::Slot => (Class::Ord, Class::Ord),
+        Node::Row(_) if !std::ptr::eq(sole(n), n) => classes_of(sole(n)),
+        Node::Radical(_) | Node::Row(_) | Node::Overline(_) | Node::Slot(_) | Node::Mark(_) => (Class::Ord, Class::Ord),
     }
 }
 
@@ -235,12 +262,26 @@ fn class_of(n: &Node) -> Class {
     classes_of(n).0
 }
 
+/// The node a [`Node::Row`] of one node (and marks) stands for.
+fn sole(n: &Node) -> &Node {
+    match n {
+        Node::Row(ns) => {
+            let mut real = ns.iter().filter(|n| !matches!(n, Node::Mark(_)));
+            match (real.next(), real.next()) {
+                (Some(only), None) => sole(only),
+                _ => n,
+            }
+        }
+        _ => n,
+    }
+}
+
 /// Each node's (left, right) class after TeX's rule for binary operators: one with nothing to
 /// operate on — first, or after an operator, a relation, an opening or punctuation, or last, or
 /// before a relation, closing or punctuation — is set as an ordinary symbol (so a unary minus gets
 /// no space around it).
-fn effective_classes(nodes: &[Node]) -> Vec<(Class, Class)> {
-    let mut cs: Vec<(Class, Class)> = nodes.iter().map(classes_of).collect();
+fn effective_classes(nodes: &[&Node]) -> Vec<(Class, Class)> {
+    let mut cs: Vec<(Class, Class)> = nodes.iter().map(|n| classes_of(n)).collect();
     for i in 0..cs.len() {
         if cs[i].0 != Class::Bin {
             continue;
@@ -259,40 +300,89 @@ pub(crate) fn hlist(nodes: &[Node], st: St, ctx: &Ctx) -> LBox {
     hlist_with_marks(nodes, st, ctx).0
 }
 
-/// [`hlist`], with the x at which each node starts.
+/// [`hlist`], with the x at which each node starts (a mark's: where its anchor went). Marks take
+/// no part in spacing: the space is the two real neighbours', and a mark's anchor stands in the
+/// middle of it. Anchors that do not know their row yet get this list's extent, at least a letter's.
 pub(crate) fn hlist_with_marks(nodes: &[Node], st: St, ctx: &Ctx) -> (LBox, Vec<f32>) {
-    let classes = effective_classes(nodes);
+    let (mut out, marks) = hlist_inner(nodes, st, ctx);
+    let em = ctx.em(st);
+    let (above, below) = (out.height.max(0.7 * em), out.depth.max(0.2 * em));
+    for a in out.anchors.iter_mut().filter(|a| a.above.is_nan()) {
+        a.above = above + a.y;
+        a.below = below - a.y;
+    }
+    (out, marks)
+}
+
+/// [`hlist_with_marks`] without giving the anchors an extent: a [`Node::Row`]'s are its list's.
+fn hlist_inner(nodes: &[Node], st: St, ctx: &Ctx) -> (LBox, Vec<f32>) {
+    let real: Vec<&Node> = nodes.iter().filter(|n| !matches!(n, Node::Mark(_))).collect();
+    let classes = effective_classes(&real);
     let mu = ctx.em(st) / 18.0;
     let mut out = LBox::default();
     let mut x = 0.0;
-    let mut marks = Vec::with_capacity(nodes.len());
-    for (i, n) in nodes.iter().enumerate() {
-        if i > 0 {
-            x += space_mu(classes[i - 1].1, classes[i].0, st.is_script()) * mu;
+    let mut starts = Vec::with_capacity(nodes.len());
+    let mut k = 0; // the next real node's index in `real`
+    let mut pending: Vec<u32> = Vec::new();
+    for n in nodes {
+        if let Node::Mark(id) = n {
+            pending.push(*id);
+            starts.push(x);
+            continue;
         }
-        marks.push(x);
+        let space = if k > 0 { space_mu(classes[k - 1].1, classes[k].0, st.is_script()) * mu } else { 0.0 };
+        for id in pending.drain(..) {
+            out.anchors.push(anchor(id, x + space / 2.0));
+        }
+        x += space;
+        starts.push(x);
         let b = node(n, st, ctx);
         out.put(&b, x, 0.0);
         x += b.width;
-        if nodes.len() == 1 {
+        if real.len() == 1 {
             out.italic = b.italic;
             out.is_char = b.is_char;
         }
+        k += 1;
+    }
+    for id in pending {
+        out.anchors.push(anchor(id, x));
     }
     out.width = x;
-    (out, marks)
+    (out, starts)
 }
 
 fn node(n: &Node, st: St, ctx: &Ctx) -> LBox {
     match n {
-        Node::Glyphs { text, class } => glyphs(text, *class, st, ctx),
+        Node::Glyphs { text, class, anchors } => {
+            let mut b = glyphs(text, *class, st, ctx);
+            let xs = glyph_xs(text, st, ctx);
+            b.anchors.extend(anchors.iter().map(|&(k, id)| anchor(id, xs[k.min(xs.len() - 1)])));
+            b
+        }
         Node::Frac { num, den } => frac(num, den, st, ctx),
         Node::Scripts { base, sup, sub } => scripts(base, sup.as_deref(), sub.as_deref(), st, ctx),
         Node::Fenced { open, close, body } => fenced(*open, *close, body, st, ctx),
         Node::Radical(body) => radical(body, st, ctx),
         Node::Overline(body) => overline(body, st, ctx),
-        Node::Slot => slot(st, ctx),
+        Node::Slot(id) => {
+            let mut b = slot(st, ctx);
+            b.anchors.extend(id.map(|id| anchor(id, b.width / 2.0)));
+            b
+        }
+        Node::Mark(id) => LBox { anchors: vec![anchor(*id, 0.0)], ..Default::default() },
+        Node::Row(ns) => hlist_inner(ns, st, ctx).0,
     }
+}
+
+/// The x of each character boundary of a glyph run, 0 through the last advance.
+fn glyph_xs(text: &str, st: St, ctx: &Ctx) -> Vec<f32> {
+    let f = ctx.f();
+    let mut xs = vec![0.0];
+    for ch in text.chars() {
+        xs.push(xs.last().copied().unwrap_or(0.0) + ctx.u(st, f.advance(ch)));
+    }
+    xs
 }
 
 fn glyphs(text: &str, class: Class, st: St, ctx: &Ctx) -> LBox {
@@ -349,7 +439,7 @@ fn scripts(base: &Node, sup: Option<&[Node]>, sub: Option<&[Node]>, st: St, ctx:
     // A single italic letter: its exponent goes after the italic correction, its subscript tucks
     // under the lean (TeX's rule 17). `glyphs` counted the correction into an Ord run's width.
     let ic = if bb.is_char { bb.italic } else { 0.0 };
-    let counted = bb.is_char && matches!(base, Node::Glyphs { class: Class::Ord, .. });
+    let counted = bb.is_char && matches!(sole(base), Node::Glyphs { class: Class::Ord, .. });
     let base_w = if counted { bb.width - ic } else { bb.width };
     let sp = sup.map(|s| hlist(s, st.sup(), ctx));
     let sb = sub.map(|s| hlist(s, st.sub(), ctx));
@@ -543,6 +633,8 @@ pub(crate) struct Laid {
     pub(crate) items: Vec<Item>,
     /// Where each row went, in the same coordinates.
     pub(crate) rows: Vec<RowPlace>,
+    /// The caret places, in the same coordinates (`y` a baseline).
+    pub(crate) anchors: Vec<Anchor>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -570,6 +662,7 @@ pub(crate) fn rows(rows: &[Vec<Node>], ctx: &Ctx) -> Laid {
     let align = laid.iter().filter_map(|(_, r)| *r).fold(0.0_f32, f32::max);
     let gap = 0.35 * em;
     let mut items = Vec::new();
+    let mut anchors = Vec::new();
     let mut places = Vec::with_capacity(laid.len());
     let (mut y, mut width) = (0.0, 0.0_f32);
     for (i, (b, rel)) in laid.iter().enumerate() {
@@ -580,11 +673,12 @@ pub(crate) fn rows(rows: &[Vec<Node>], ctx: &Ctx) -> Laid {
         let top = y;
         let baseline = y + b.height;
         items.extend(b.items.iter().map(|it| it.shifted(dx, baseline)));
+        anchors.extend(b.anchors.iter().map(|a| Anchor { x: a.x + dx, y: a.y + baseline, ..*a }));
         y = baseline + b.depth;
         width = width.max(dx + b.width);
         places.push(RowPlace { top, baseline, bottom: y, left: dx, right: dx + b.width });
     }
-    Laid { size: egui::vec2(width, y), items, rows: places }
+    Laid { size: egui::vec2(width, y), items, rows: places, anchors }
 }
 
 #[cfg(test)]

@@ -1,8 +1,35 @@
 # Textbook mode for the formula editor — design
 
-Status: **proposed** (2026-10-01), nothing built. Extends the Custom formula dialog
+Status: **P0–P3 built** on `feat/formula-textbook` (2026-10-01); P4 (keypad, completion, Copy as
+LaTeX, library rows) to do. The user chose the recommendations of §8: Latin Modern Math, `=` as
+typed, juxtaposition, the notation of §4.5, full scope. Extends the Custom formula dialog
 (`design/custom-formulas.md` §4.8; `ui/formula_dialog.rs`, `ui/formula_editor.rs`). Facts about the
 current code are checked against it and cited; anything still to be proven is marked **spike**.
+
+## As built (P3): where it departs from the text below
+
+- **Atoms are characters.** Names and numbers are runs of `Char` atoms (MathQuill's model), not
+  `Word`/`Number` strings: every caret place is a boundary between atoms, and a run reads as the
+  lexer reads the same text (`model::run_tokens`: `p1` one name, `2z` a number then a name). There is
+  no `Slot` atom: an empty row inside a structure is drawn as the dashed box.
+- **Implied products are not atoms.** A `*` the printer would write anyway (`2*z`, `z*(z + 1)`) is
+  left out of the row, on reading and after every edit, so no caret step is invisible; one it would
+  not (`z*c`, which would run into the name `zc`) stays, and shows as a dot. The dot rule of §4.5 is
+  extended on the same principle: between two names (𝑧·𝑐) and before a sign (𝑧·−𝑐).
+- **`+`, `-`, `=` typed at the end of a non-empty exponent step out of it** (MathQuill's
+  `charsThatBreakOutOfSupSub`, as Desmos sets it), so `z^2+c` types as 𝑧² + 𝑐, as the text reads.
+  `z^-1` keeps its sign. A `/` in an exponent still makes a fraction there.
+- **`)` with no `(`** groups what is before the caret (after the row's `=`), as MathQuill does.
+- **Backspace taking a call apart keeps its argument's parentheses** (`sin(z)` → `(z)`); an empty
+  structure goes in one press.
+- **Paste** reads the text alone, except that a leading `+`/`-` after an operand is typed as the
+  operator first (read alone, `- 1/z` is a negative fraction).
+- **Errors:** the line the syntax check stops at is underlined; the message gives that line, or
+  "Fill the empty box." when there is one. Atom-level underlining needs a printer source map: not
+  done.
+- **Comments** are shown, kept and moved with their line, but edited in Text mode.
+- **Focus:** `Response::has_focus()` is false in an unfocused WINDOW (egui ≥ 0.29); the editor
+  reads its focus from memory, and only the caret hides with the window's focus.
 
 ## 1. Goal
 

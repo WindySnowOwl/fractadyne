@@ -94,6 +94,12 @@ enum Screen {
     /// The Custom formula dialog in Textbook view: several statements aligned at `=`, a comment, a
     /// fraction, functions in their notation, and a line that does not read.
     FormulaTextbook,
+    /// Textbook editing: an exponent just typed on a parenthesised denominator, its empty box
+    /// holding the caret; `p1` before it typeset as 𝑝₁ again now the caret has left it.
+    FormulaTextbookCaret,
+    /// Textbook editing: a fraction selected (Shift+←), the selection behind it, and the name being
+    /// typed (`pix`) shown as typed.
+    FormulaTextbookSelect,
     /// The formula library window, seeded in memory: a parameterized formula SHOWING (its row
     /// marked), a two-statement one, one that does not read in this version (its reason in red), and
     /// a name long enough to need truncating.
@@ -728,6 +734,8 @@ fn build_steps() -> Vec<Step> {
         screen("formula-complete", Screen::FormulaComplete),
         screen("textbook-specimen", Screen::TextbookSpecimen),
         screen("formula-textbook", Screen::FormulaTextbook),
+        screen("formula-textbook-caret", Screen::FormulaTextbookCaret),
+        screen("formula-textbook-select", Screen::FormulaTextbookSelect),
         screen("formula-library", Screen::FormulaLibrary),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
         live("live-direct-1e2", 2.0),
@@ -1091,6 +1099,7 @@ impl FractadyneApp {
         self.formula_dialog.completion = Default::default();
         self.formula_dialog.specimen = false;
         self.formula_dialog.textbook = false;
+        self.formula_dialog.editor = Default::default();
         self.formula_library = Default::default();
         if self.fractal == crate::FractalKind::Custom {
             self.set_fractal(crate::FractalKind::Mandelbrot);
@@ -1455,6 +1464,38 @@ impl FractadyneApp {
                      z = w + sqrt(|t| + cabs(z)) - exp(-z/2) + (0.25, -0.1)*c\nz = z + ("
                     .into();
                 self.formula_dialog.textbook = true;
+            }
+            Screen::FormulaTextbookCaret | Screen::FormulaTextbookSelect => {
+                use crate::ui::textbook::edit::{Dir, Editor};
+                self.open_formula_dialog();
+                let src = "t = sqr(z) ; square\nz = t + c";
+                let mut ed = Editor::new(src);
+                ed.place_at(src.len());
+                if matches!(s, Screen::FormulaTextbookCaret) {
+                    // c/(1 + p1), out of the parentheses, then ^: the caret in the empty exponent.
+                    for ch in "/(1+p1".chars() {
+                        ed.type_char(ch);
+                    }
+                    ed.step(Dir::Right, false);
+                    ed.type_char('^');
+                } else {
+                    for ch in "/(1+p1".chars() {
+                        ed.type_char(ch);
+                    }
+                    ed.step(Dir::Right, false);
+                    ed.step(Dir::Right, false);
+                    for ch in "+pix".chars() {
+                        ed.type_char(ch);
+                    }
+                    // Back over `pix` and the `+`, then the fraction whole.
+                    for _ in 0..5 {
+                        ed.step(Dir::Left, true);
+                    }
+                }
+                self.formula_dialog.source = ed.synced.clone();
+                self.formula_dialog.editor = ed;
+                self.formula_dialog.textbook = true;
+                ctx.memory_mut(|m| m.request_focus(egui::Id::new("formula_textbook")));
             }
             Screen::FormulaLibrary => {
                 // In memory only, as the gradient screen seeds its library: nothing is saved.

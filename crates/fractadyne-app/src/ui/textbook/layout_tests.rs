@@ -26,6 +26,28 @@ fn rules_of(b: &LBox) -> Vec<(f32, f32, f32, f32)> {
         .collect()
 }
 
+/// Marks take no room and no part in spacing: a list sets the same with them as without, each
+/// mark's anchor in the middle of the space it is in, its extent the list's.
+#[test]
+fn marks_change_nothing_and_stand_between() {
+    let st = St::DISPLAY;
+    let plain = vec![Node::var("z"), Node::bin('+'), Node::var("c")];
+    let marked =
+        vec![Node::Mark(0), Node::var("z"), Node::Mark(1), Node::bin('+'), Node::Mark(2), Node::var("c"), Node::Mark(3)];
+    let (a, b) = (hlist(&plain, st, &CTX), hlist_with_marks(&marked, st, &CTX).0);
+    assert_eq!((&a.items, a.width), (&b.items, b.width));
+    let x: Vec<f32> = b.anchors.iter().map(|a| a.x).collect();
+    let g = glyphs_of(&b);
+    let plus = g[1].1;
+    assert_eq!((x[0], x[3]), (0.0, b.width));
+    assert!(x[1] > g[0].1 && x[1] < plus && x[2] > plus && x[2] < g[2].1, "{x:?} around {g:?}");
+    assert!(b.anchors.iter().all(|an| an.above >= b.height && an.below >= b.depth));
+    // A place inside a run of letters is at the boundary between them.
+    let run = Node::Glyphs { text: "ab".into(), class: Class::Ord, anchors: vec![(1, 7)] };
+    let r = hlist_with_marks(&[run], st, &CTX).0;
+    assert_eq!(r.anchors[0].x, glyphs_of(&r)[1].1);
+}
+
 fn frac(num: Vec<Node>, den: Vec<Node>) -> Node {
     Node::Frac { num, den }
 }
@@ -208,7 +230,7 @@ fn every_emitted_glyph_is_in_the_font() {
         Node::Overline(vec![Node::var("t")]),
         Node::Scripts { base: Box::new(Node::var("p")), sup: None, sub: Some(vec![Node::num("1")]) },
         Node::Fenced { open: '(', close: ')', body: tower },
-        Node::Slot,
+        Node::Slot(None),
     ];
     let b = hlist(&all, st, &CTX);
     for (ch, _, _) in glyphs_of(&b) {

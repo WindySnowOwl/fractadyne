@@ -79,6 +79,14 @@ Changes after 0.3.0-beta.1:
   - **Editor (unreleased):** in the formula field, parentheses are coloured by nesting level,
     the pair at the cursor is highlighted and an unmatched one is red; after two letters a list
     completes the language's names and the formula's own variables (Tab or Enter; Esc closes it).
+  - **Textbook mode (unreleased):** a Text | Textbook switch in the formula dialog shows the
+    formula typeset as LaTeX sets it, in Latin Modern Math: fractions stacked, exponents raised,
+    parentheses that grow with what they hold, statements aligned at their `=`. It edits in
+    place: `/` makes a fraction of the term before it, `^` an exponent, `(` parentheses or a
+    call; the arrows move through the formula and Tab goes to the next empty box. Every edit is
+    written back to the text, and a line nobody edited keeps its spacing and comment. The
+    notation never changes the computation: `|z|`, the squared modulus, shows as |z|², and
+    `exp(z)` stays exp(z). A line that does not read shows in red, to be edited as text.
   - **Library (unreleased):** the formula dialog's Save to library keeps a formula and its
     parameters under a name, and Fractal ▸ Formula library… applies, edits, exports and deletes
     them. Import adds a formula file's formulas without replacing any: one already saved is

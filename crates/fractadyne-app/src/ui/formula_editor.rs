@@ -316,7 +316,7 @@ pub(crate) struct Completion {
 }
 
 /// The cursor (a character index) egui keeps for field `id`.
-fn stored_cursor(ctx: &egui::Context, id: egui::Id) -> Option<usize> {
+pub(crate) fn stored_cursor(ctx: &egui::Context, id: egui::Id) -> Option<usize> {
     egui::text_edit::TextEditState::load(ctx, id).and_then(|s| s.cursor.char_range()).map(|r| r.primary.index)
 }
 
