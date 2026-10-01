@@ -59,7 +59,7 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
-- **Fifteen more fractal families (0.3.0-beta.13).** Multibrot 6, 7 and 8, and Burning Ship, Tricorn,
+- **Fifteen more fractal families (0.3.0-beta.13 and beta.14).** Multibrot 6, 7 and 8, and Burning Ship, Tricorn,
   Celtic and Buffalo at powers 3, 4 and 5, each built in and deep-zooming as its power-2 sibling
   does (perturbation in df32 and extended-range floatexp, distance estimation for the Multibrot
   powers, glitch correction for the folds' exports). Multibrot 6, 7 and 8 also have what Multibrot
