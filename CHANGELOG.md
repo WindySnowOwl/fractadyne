@@ -59,7 +59,7 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
-- **Fifteen more fractal families (unreleased).** Multibrot 6, 7 and 8, and Burning Ship, Tricorn,
+- **Fifteen more fractal families (0.3.0-beta.13).** Multibrot 6, 7 and 8, and Burning Ship, Tricorn,
   Celtic and Buffalo at powers 3, 4 and 5, each built in and deep-zooming as its power-2 sibling
   does (perturbation in df32 and extended-range floatexp, distance estimation for the Multibrot
   powers, glitch correction for the folds' exports). Multibrot 6, 7 and 8 also have what Multibrot
@@ -89,7 +89,7 @@ Changes after 0.3.0-beta.1:
     per shape). The
     dispatch ceiling's cost factors for them are measured, with the method beside them in
     `validation/calibration/ceilings.toml`.
-- **Fixed: a deep Multibrot 4 or 5 view could render black (unreleased).** Where the series
+- **Fixed: a deep Multibrot 4 or 5 view could render black (0.3.0-beta.13).** Where the series
   approximation skipped to within a step or two of the end of an escaping reference orbit (a view
   with no structure, every pixel escaping together), the first test of each pixel overflowed
   single precision, and every pixel read as inside the set: Multibrot 5 at 1e40× was all black.
@@ -111,13 +111,13 @@ Changes after 0.3.0-beta.1:
     on at about single precision, so deep views straddling that line show noise along it.
     Numbers in a formula are doubles (about 16 digits), so `0.1*z` and `z/10` are different
     fractals past about 1e15×; Help says which is which.
-  - **Editor (unreleased):** in the formula field, parentheses are coloured by nesting level,
+  - **Editor (0.3.0-beta.13):** in the formula field, parentheses are coloured by nesting level,
     the pair at the cursor is highlighted and an unmatched one is red; after two letters a list
     completes the language's names and the formula's own variables (Tab or Enter; Esc closes it).
     `log` is the natural logarithm, as in Fractint; a call written `ln(…)` (or `cot`, `coth`,
     `Re`, `Im`) still does not read, but the syntax check names the function to write instead,
     a button rewrites every such call, and typing `ln` offers `log`.
-  - **Textbook mode (unreleased):** a Text | Textbook switch in the formula dialog shows the
+  - **Textbook mode (0.3.0-beta.13):** a Text | Textbook switch in the formula dialog shows the
     formula typeset as LaTeX sets it, in Latin Modern Math: fractions stacked, exponents raised,
     parentheses that grow with what they hold, statements aligned at their `=`. It edits in
     place: `/` makes a fraction of the term before it, `^` an exponent, `(` parentheses or a
@@ -127,19 +127,19 @@ Changes after 0.3.0-beta.1:
     computation: `|z|`, the squared modulus, shows as |z|², and `exp(z)` stays exp(z). A line
     that does not read shows in red, to be edited as text. A LaTeX button copies the formula as
     LaTeX source, and the formula library shows its formulas typeset while Textbook is on.
-  - **Collection (unreleased):** 53 formulas come with the app, written for it (no formula
+  - **Collection (0.3.0-beta.13):** 53 formulas come with the app, written for it (no formula
     corpus is bundled): higher powers and folded variants of the Burning Ship and Celtic
     families, blends and hybrids, the Mandelbrot set through another map, transcendental and
     rational formulas, Julia sets, and Fractint classics. They are the dialog's Examples and the
     formula library's new Collection tab. Each opens at a starting view where its picture is,
     and a formula saved while it shows keeps the view it was saved at. A test renders every one
     at its view and checks that a picture is there; the GPU renders were compared with it by eye.
-  - **Library (unreleased):** the formula dialog's Save to library keeps a formula and its
+  - **Library (0.3.0-beta.13):** the formula dialog's Save to library keeps a formula and its
     parameters under a name, and Fractal ▸ Formula library… applies, edits, exports and deletes
     them. Import adds a formula file's formulas without replacing any: one already saved is
     skipped, and a new one whose name is taken becomes "name (2)". The library is written
     atomically, and a library file that cannot be read is set aside rather than overwritten.
-  - **Fractint's formulas (unreleased):** a formula may use Fractint's sections: an init section
+  - **Fractint's formulas (0.3.0-beta.13):** a formula may use Fractint's sections: an init section
     before a `:`, run once per pixel; a final comparison as its own bailout test (Magnet's
     `|z| <= 100 && |z - 1| > 0.000001` stops at escape or at the fixed point 1);
     `if`/`elseif`/`else`/`endif`; and variables kept from step to step. Comparisons, `&&` and `||`,
@@ -158,7 +158,7 @@ Changes after 0.3.0-beta.1:
     On the command line, a value beginning with a minus sign that is not a single number was
     refused as an unknown option: `--center -3/4 0` (the expression form Help gives as an
     example), `--formula-params -0.5,0`, a formula beginning with `-`.
-  - **Files (unreleased):** a tour keyframe can carry a formula (`formula`, `formula_params`), and
+  - **Files (0.3.0-beta.13):** a tour keyframe can carry a formula (`formula`, `formula_params`), and
     Tools ▸ Tour from current view writes them; before, a tour of a custom view was refused. A
     formula with a character past Latin-1 in a comment (such as √) made a PNG export fail and an
     EXR export crash the app; the view text now writes such characters as `\u{221a}`, and the
