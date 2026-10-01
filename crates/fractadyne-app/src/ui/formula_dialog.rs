@@ -31,6 +31,8 @@ pub(crate) struct FormulaDialog {
     pub(crate) completion: crate::ui::formula_editor::Completion,
     /// The textbook layout's type specimen window (opened by the uitest only).
     pub(crate) specimen: bool,
+    /// Show the formula typeset (Textbook) instead of as text; persisted with the session.
+    pub(crate) textbook: bool,
     /// An applied formula whose pipelines are compiling off the render thread. The view keeps
     /// showing what it shows until they are ready, then switches (`poll_formula_compile`).
     pub(crate) pending: Option<PendingFormula>,
@@ -56,6 +58,7 @@ impl Default for FormulaDialog {
             tab: Default::default(),
             completion: Default::default(),
             specimen: false,
+            textbook: false,
             pending: None,
             save_name: String::new(),
         }
@@ -208,6 +211,12 @@ impl FractadyneApp {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("The step, in Fractint-style expressions").weak().small());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Laid out right to left: Textbook | Text appear as Text | Textbook.
+                        ui.selectable_value(&mut self.formula_dialog.textbook, true, "Textbook")
+                            .on_hover_text("Show the formula typeset, as a textbook would set it");
+                        ui.selectable_value(&mut self.formula_dialog.textbook, false, "Text")
+                            .on_hover_text("Edit the formula as text");
+                        ui.separator();
                         egui::ComboBox::from_id_salt("formula_examples")
                             .selected_text("Examples")
                             .show_ui(ui, |ui| {
@@ -220,25 +229,41 @@ impl FractadyneApp {
                     });
                 });
                 let text_id = egui::Id::new("formula_source");
-                crate::ui::formula_editor::source_field(
-                    ui,
-                    text_id,
-                    &mut self.formula_dialog.source,
-                    4,
-                    "z = z^2 + c",
-                    &mut self.formula_dialog.completion,
-                );
+                if self.formula_dialog.textbook {
+                    // Read-only for now: a click edits that line as text, the caret at its start.
+                    if let Some(at) = crate::ui::textbook::view::show(ui, &self.formula_dialog.source, 96.0) {
+                        let src = &self.formula_dialog.source;
+                        let ch = src[..at.min(src.len())].chars().count();
+                        self.formula_dialog.textbook = false;
+                        crate::ui::formula_editor::store_cursor(ui.ctx(), text_id, ch);
+                        ui.ctx().memory_mut(|m| m.request_focus(text_id));
+                    }
+                } else {
+                    crate::ui::formula_editor::source_field(
+                        ui,
+                        text_id,
+                        &mut self.formula_dialog.source,
+                        4,
+                        "z = z^2 + c",
+                        &mut self.formula_dialog.completion,
+                    );
+                }
                 ui.label(
-                    egui::RichText::new(
+                    egui::RichText::new(if self.formula_dialog.textbook {
+                        "The formula typeset. Click a line to edit it as text; the keypad types into the \
+                         text too."
+                    } else {
                         "Type, or use the keypad — it holds every name the formula language knows. \
                          Names complete as you type (Tab). Statements are separated by a new line or a \
-                         comma; ; starts a comment.",
-                    )
+                         comma; ; starts a comment."
+                    })
                     .weak()
                     .small(),
                 );
                 if let Some(action) = crate::ui::formula_keypad::show(ui, &mut self.formula_dialog.tab) {
                     let ctx = ui.ctx().clone();
+                    // Editing is textual for now: a key in the Textbook view goes to the text.
+                    self.formula_dialog.textbook = false;
                     crate::ui::formula_keypad::press(&ctx, text_id, &mut self.formula_dialog.source, action);
                     self.formula_dialog.error = None;
                 }

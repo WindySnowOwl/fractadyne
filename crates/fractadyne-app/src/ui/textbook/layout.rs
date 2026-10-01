@@ -541,32 +541,50 @@ fn slot(st: St, ctx: &Ctx) -> LBox {
 pub(crate) struct Laid {
     pub(crate) size: egui::Vec2,
     pub(crate) items: Vec<Item>,
+    /// Where each row went, in the same coordinates.
+    pub(crate) rows: Vec<RowPlace>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct RowPlace {
+    pub(crate) top: f32,
+    pub(crate) baseline: f32,
+    pub(crate) bottom: f32,
+    pub(crate) left: f32,
+    pub(crate) right: f32,
 }
 
 pub(crate) fn rows(rows: &[Vec<Node>], ctx: &Ctx) -> Laid {
+    let em = ctx.em(St::DISPLAY);
     let laid: Vec<(LBox, Option<f32>)> = rows
         .iter()
         .map(|r| {
-            let (b, marks) = hlist_with_marks(r, St::DISPLAY, ctx);
+            let (mut b, marks) = hlist_with_marks(r, St::DISPLAY, ctx);
+            // An empty row (a comment alone, a line that does not read) still takes a line.
+            b.height = b.height.max(0.75 * em);
+            b.depth = b.depth.max(0.25 * em);
             let rel = r.iter().position(|n| class_of(n) == Class::Rel).map(|i| marks[i]);
             (b, rel)
         })
         .collect();
     let align = laid.iter().filter_map(|(_, r)| *r).fold(0.0_f32, f32::max);
-    let gap = 0.35 * ctx.em(St::DISPLAY);
+    let gap = 0.35 * em;
     let mut items = Vec::new();
+    let mut places = Vec::with_capacity(laid.len());
     let (mut y, mut width) = (0.0, 0.0_f32);
     for (i, (b, rel)) in laid.iter().enumerate() {
         let dx = rel.map_or(0.0, |r| align - r);
         if i > 0 {
             y += gap;
         }
+        let top = y;
         let baseline = y + b.height;
         items.extend(b.items.iter().map(|it| it.shifted(dx, baseline)));
         y = baseline + b.depth;
         width = width.max(dx + b.width);
+        places.push(RowPlace { top, baseline, bottom: y, left: dx, right: dx + b.width });
     }
-    Laid { size: egui::vec2(width, y), items }
+    Laid { size: egui::vec2(width, y), items, rows: places }
 }
 
 #[cfg(test)]

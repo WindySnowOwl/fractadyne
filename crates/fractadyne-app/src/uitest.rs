@@ -91,6 +91,9 @@ enum Screen {
     FormulaComplete,
     /// The textbook layout's type specimen: one formula per construct, in Fractadyne Math.
     TextbookSpecimen,
+    /// The Custom formula dialog in Textbook view: several statements aligned at `=`, a comment, a
+    /// fraction, functions in their notation, and a line that does not read.
+    FormulaTextbook,
     /// The formula library window, seeded in memory: a parameterized formula SHOWING (its row
     /// marked), a two-statement one, one that does not read in this version (its reason in red), and
     /// a name long enough to need truncating.
@@ -724,6 +727,7 @@ fn build_steps() -> Vec<Step> {
         screen("formula-parens", Screen::FormulaParens),
         screen("formula-complete", Screen::FormulaComplete),
         screen("textbook-specimen", Screen::TextbookSpecimen),
+        screen("formula-textbook", Screen::FormulaTextbook),
         screen("formula-library", Screen::FormulaLibrary),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
         live("live-direct-1e2", 2.0),
@@ -1086,6 +1090,7 @@ impl FractadyneApp {
         self.formula_dialog.tab = Default::default();
         self.formula_dialog.completion = Default::default();
         self.formula_dialog.specimen = false;
+        self.formula_dialog.textbook = false;
         self.formula_library = Default::default();
         if self.fractal == crate::FractalKind::Custom {
             self.set_fractal(crate::FractalKind::Mandelbrot);
@@ -1444,6 +1449,13 @@ impl FractadyneApp {
                 ctx.memory_mut(|m| m.request_focus(id));
             }
             Screen::TextbookSpecimen => self.formula_dialog.specimen = true,
+            Screen::FormulaTextbook => {
+                self.open_formula_dialog();
+                self.formula_dialog.source = "; a hybrid, typeset\nt = sqr(z), w = (t - p1*conj(t))/(t^2 + 1)\n\
+                     z = w + sqrt(|t| + cabs(z)) - exp(-z/2) + (0.25, -0.1)*c\nz = z + ("
+                    .into();
+                self.formula_dialog.textbook = true;
+            }
             Screen::FormulaLibrary => {
                 // In memory only, as the gradient screen seeds its library: nothing is saved.
                 let entry = |name: &str, source: &str, params: &[(&str, &str)]| crate::formula_library::SavedFormula {

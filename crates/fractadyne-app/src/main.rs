@@ -6589,7 +6589,7 @@ impl FractadyneApp {
             viewport,
             fractal,
             custom,
-            formula_dialog: Default::default(),
+            formula_dialog: ui::formula_dialog::FormulaDialog { textbook: s.formula_textbook, ..Default::default() },
             formula_library: Default::default(),
             // Loaded below, where a file that cannot be read can queue its toast.
             saved_formulas: Vec::new(),
@@ -7553,6 +7553,7 @@ impl FractadyneApp {
                 .as_ref()
                 .map(|c| c.params[..c.params_used()].iter().map(|p| [p.0, p.1]).collect())
                 .unwrap_or_default(),
+            formula_textbook: self.formula_dialog.textbook,
             julia_mode: self.julia_mode,
             julia_c_re: self.julia_c.0,
             julia_c_im: self.julia_c.1,

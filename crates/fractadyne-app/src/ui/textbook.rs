@@ -7,7 +7,9 @@
 
 pub(crate) mod font;
 pub(crate) mod layout;
+pub(crate) mod model;
 pub(crate) mod paint;
+pub(crate) mod view;
 
 use layout::{Ctx, Node};
 

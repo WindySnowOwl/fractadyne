@@ -335,6 +335,10 @@ pub struct SessionState {
     pub custom_formula: String,
     #[serde(default)]
     pub custom_params: Vec<[f64; 2]>,
+    /// The formula editor shows the formula typeset (Textbook) rather than as text. Off by default,
+    /// so a session from before the toggle opens the editor as it always did.
+    #[serde(default)]
+    pub formula_textbook: bool,
     /// Julia mode + parameter `c` (the view state that pairs with center/zoom).
     #[serde(default)]
     pub julia_mode: bool,
@@ -630,6 +634,7 @@ impl Default for SessionState {
             fractal: default_fractal(),
             custom_formula: String::new(),
             custom_params: Vec::new(),
+            formula_textbook: false,
             julia_mode: false,
             julia_c_re: default_julia_c_re(),
             julia_c_im: default_julia_c_im(),
