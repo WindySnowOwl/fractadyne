@@ -1,6 +1,7 @@
 # Built-in power and fold families
 
-Status: phases 1–3 built, 2026-10-01 (§5.1); 4 (2×2 BLA for the folds) and 5 (RX 6800 XT) open. Step 3 of "ship a formula collection, read Fractint's formulas, add the
+Status: phases 1–3 built and phase 5 run on the RX 6800 XT, 2026-10-01 (§5.1); 4 (2×2 BLA for the
+folds) open. Step 3 of "ship a formula collection, read Fractint's formulas, add the
 families deep zoomers use" (the user: "proceed in order 1-3 with appropriate tests").
 
 ## 1. Goal
@@ -212,6 +213,17 @@ gates and goldens review.
     wrong at sensitive pixels for Mandelbrot and Multibrot 6 alike.
   - *Gates.* Core 172, gpu 53, app 679, self-test 431/431, goldens 31/31, uitest 65/65; live
     zoomtest 2^60 → 2^100 on Multibrot 6: 55.6 fps, worst frame 30.8 ms.
+- **Phase 5** (RX 6800 XT, PLUTO; field battery `20261001-145757-j02k`, `0.3.0-beta.13` = `34d4ca9`).
+  Self-test 430/431: the one failure is the known Windows/Radeon "a wider canvas contains the
+  narrower one" (10 of 20,480 texels at 1e2×); every power-family check passes — SA no worse than
+  SA-off (178/153, 68/65, 221/242, 32/33, 0/0, 2/1 wrong vs the CPU for d = 3..8), BLA = no BLA
+  (0 mismatch, each power), seeds in range, the period-2 nuclei. Goldens 31/31 (cross-GPU
+  tolerance, the five new included). Live-res, livetest, uitest (the dropdown whole at 1.0×),
+  recordtest and screen pass; gputest's exit 1 is the expected compiler-folding report.
+  - *Bench matrix:* no algorithmic drift; 15 new segments. Its logcheck FAILED: 25 direct-mode
+    fractal segments, which build no reference, ran ~12 s without a liveness stamp and the
+    watchdog called it a possible hang (the 3080 finishes the whole matrix in 16.6 s). Fixed by a
+    breadcrumb per segment (`dd955b0`), verified on the 3080; not yet re-run on PLUTO.
 
 ## 6. Risks
 
