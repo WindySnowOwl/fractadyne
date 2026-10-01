@@ -112,6 +112,26 @@ fn the_prefix_is_a_name_being_typed_at_the_cursor() {
     assert_eq!(prefix_at("z + ", 4), None);
 }
 
+/// Another notation's name for a function does not read, but is suggested: typing `ln` offers
+/// `log(`, and every call so written can be rewritten — comments, variables and numbers left alone.
+#[test]
+fn other_notations_names_are_offered_and_rewritten() {
+    let (_, _, cs) = completion("z = ln", 6).expect("a list for ln");
+    assert_eq!(cs.iter().map(|c| c.insert.as_str()).collect::<Vec<_>>(), ["log("]);
+    assert!(cs[0].hint.contains("ln is written log"), "{}", cs[0].hint);
+    // `co` already lists cotan and cotanh: cot adds nothing twice.
+    let co = candidates("", "co");
+    assert_eq!(co.iter().filter(|c| c.name == "cotan").count(), 1);
+    let src = "z = LN(z) + ln2*ln (c) ; ln(x) stays\nln = 2, w = cot(z) + 1e5*re(z)";
+    assert_eq!(
+        other_spellings(src),
+        vec![("LN".to_string(), "log"), ("ln".to_string(), "log"), ("cot".to_string(), "cotan"), ("re".to_string(), "real")]
+    );
+    assert_eq!(respell(src), "z = log(z) + ln2*log (c) ; ln(x) stays\nln = 2, w = cotan(z) + 1e5*real(z)");
+    assert!(parse("z = ln(z) + c").is_err());
+    assert!(parse(&respell("z = ln(z) + c")).is_ok());
+}
+
 #[test]
 fn candidates_are_the_languages_names_and_the_formulas_variables() {
     let names = |src: &str, p: &str| candidates(src, p).into_iter().map(|c| c.insert).collect::<Vec<_>>();

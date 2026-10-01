@@ -79,6 +79,9 @@ Changes after 0.3.0-beta.1:
   - **Editor (unreleased):** in the formula field, parentheses are coloured by nesting level,
     the pair at the cursor is highlighted and an unmatched one is red; after two letters a list
     completes the language's names and the formula's own variables (Tab or Enter; Esc closes it).
+    `log` is the natural logarithm, as in Fractint; a call written `ln(…)` (or `cot`, `coth`,
+    `Re`, `Im`) still does not read, but the syntax check names the function to write instead,
+    a button rewrites every such call, and typing `ln` offers `log`.
   - **Textbook mode (unreleased):** a Text | Textbook switch in the formula dialog shows the
     formula typeset as LaTeX sets it, in Latin Modern Math: fractions stacked, exponents raised,
     parentheses that grow with what they hold, statements aligned at their `=`. It edits in

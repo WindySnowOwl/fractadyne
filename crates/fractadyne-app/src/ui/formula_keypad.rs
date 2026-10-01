@@ -125,7 +125,7 @@ const FUNCTIONS: [[Option<Key>; 5]; 4] = [
         Some(key("cosh", Wrap("cosh(", ")"), "Hyperbolic cosine")),
         Some(key("tanh", Wrap("tanh(", ")"), "Hyperbolic tangent")),
         Some(key("cotanh", Wrap("cotanh(", ")"), "Hyperbolic cotangent")),
-        Some(key("log", Wrap("log(", ")"), "Natural logarithm (principal branch)")),
+        Some(key("log", Wrap("log(", ")"), "Natural logarithm, ln (principal branch)")),
     ],
     [
         Some(key("sqr", Wrap("sqr(", ")"), "Square: sqr(z) = z²")),

@@ -465,7 +465,11 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
          z = z^3 - p1*z + c, or several statements (t = sqr(z), then z = t*t + c). z is the \
          iterate, c the pixel (the Julia constant in Julia mode), p1-p5 parameters; |z| is the \
          squared modulus, as in Fractint, and the usual functions are available (sqr, abs, conj, \
-         real, imag, cabs, flip, recip, exp, log, sqrt, sin, cos, tan, sinh, cosh, tanh). Every \
+         real, imag, cabs, flip, recip, ident, exp, log, sqrt, sin, cos, tan, cotan, sinh, cosh, \
+         tanh, cotanh). log is the natural logarithm, as in Fractint and in complex analysis: \
+         what many textbooks write ln (there is no base-10 logarithm). A formula written with \
+         ln, cot, coth, Re or Im does not read; the syntax check names the function to use, a \
+         button rewrites it, and typing ln offers log. Every \
          step deep-zooms by perturbation, with the same extended-range arithmetic past 1e28x as \
          the built-in fractals, except one with a power whose exponent varies with z or c (such \
          as z^c): that renders on the direct path, sharp until one single-precision step of c \

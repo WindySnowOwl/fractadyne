@@ -102,6 +102,9 @@ enum Screen {
     FormulaTextbookSelect,
     /// Textbook editing: `co` typed after `t*`, the completion list open under the caret.
     FormulaTextbookComplete,
+    /// A formula written with `ln` and `cot`: the syntax check names `log`, and a button offers to
+    /// rewrite both.
+    FormulaRespell,
     /// The formula library with the formula dialog in Textbook mode: its rows typeset, one that
     /// does not read as text.
     FormulaLibraryTypeset,
@@ -742,6 +745,7 @@ fn build_steps() -> Vec<Step> {
         screen("formula-textbook-caret", Screen::FormulaTextbookCaret),
         screen("formula-textbook-select", Screen::FormulaTextbookSelect),
         screen("formula-textbook-complete", Screen::FormulaTextbookComplete),
+        screen("formula-respell", Screen::FormulaRespell),
         screen("formula-library", Screen::FormulaLibrary),
         screen("formula-library-typeset", Screen::FormulaLibraryTypeset),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
@@ -1513,6 +1517,10 @@ impl FractadyneApp {
                 self.formula_dialog.editor = ed;
                 self.formula_dialog.textbook = true;
                 ctx.memory_mut(|m| m.request_focus(egui::Id::new("formula_textbook")));
+            }
+            Screen::FormulaRespell => {
+                self.open_formula_dialog();
+                self.formula_dialog.source = "; ln as a textbook writes it\nz = ln(z^2 + c) + cot(z)*p1".into();
             }
             Screen::FormulaLibrary | Screen::FormulaLibraryTypeset => {
                 self.formula_dialog.textbook = matches!(s, Screen::FormulaLibraryTypeset);

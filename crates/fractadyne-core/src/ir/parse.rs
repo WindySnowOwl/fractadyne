@@ -172,6 +172,26 @@ pub fn is_function(name: &str) -> bool {
     function(&name.to_ascii_lowercase()).is_some()
 }
 
+/// Functions other notations write differently: (their name, the language's, what it is). `ln` is
+/// how ISO 80000-2, LaTeX and most textbooks write the natural logarithm, which the language (as
+/// Fractint) calls `log`; cot, coth, Re and Im are how the formula editor's Textbook mode shows
+/// cotan, cotanh, real and imag. A call so written does not read: the language keeps one name per
+/// function. Its error says what to write instead, and the editor offers to rewrite it. Only CALLS:
+/// a variable may still be called `ln`.
+pub const OTHER_SPELLINGS: [(&str, &str, &str); 5] = [
+    ("ln", "log", "the natural logarithm"),
+    ("cot", "cotan", "the cotangent"),
+    ("coth", "cotanh", "the hyperbolic cotangent"),
+    ("re", "real", "the real part"),
+    ("im", "imag", "the imaginary part"),
+];
+
+/// The language's name for function `name` as another notation writes it (`ln` → `log`).
+pub fn our_spelling(name: &str) -> Option<&'static str> {
+    let name = name.to_ascii_lowercase();
+    OTHER_SPELLINGS.iter().find(|(other, _, _)| *other == name).map(|&(_, ours, _)| ours)
+}
+
 /// Fractint features outside this subset, named so the error says what is missing.
 fn unsupported(name: &str) -> Option<&'static str> {
     Some(match name {
@@ -594,7 +614,11 @@ impl Parser<'_> {
                     return Ok((self.apply(f, a), tree));
                 }
                 if self.peek() == &Tok::LParen {
-                    return Err(self.err_at(tok_at, format!("unknown function `{name}`")));
+                    let message = match OTHER_SPELLINGS.iter().find(|(other, _, _)| *other == name) {
+                        Some((_, ours, what)) => format!("unknown function `{name}`: {what} is written `{ours}` here"),
+                        None => format!("unknown function `{name}`"),
+                    };
+                    return Err(self.err_at(tok_at, message));
                 }
                 let tree = self.node(tok_at, ExprKind::Name(name.clone()));
                 match name.as_str() {

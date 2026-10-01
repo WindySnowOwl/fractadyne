@@ -251,6 +251,17 @@ fn a_name_completes_at_the_caret() {
     assert_eq!(e.name_at_caret(), Some((2, "pixel".to_string())));
 }
 
+/// `ln(` typed stays a call, as in the text — so the syntax check names `log` and the dialog can
+/// rewrite it — not the product of a variable `ln` never set.
+#[test]
+fn another_notations_name_stays_a_call() {
+    let src = typed("z=ln(z)+c");
+    assert_eq!(src, "z = ln(z) + c");
+    let e = parse(&src).expect_err("ln is not the language's");
+    assert!(e.message.contains("`log`"), "{e}");
+    assert_eq!(crate::ui::formula_editor::respell(&src), "z = log(z) + c");
+}
+
 /// An empty box is known, so the dialog can say to fill it.
 #[test]
 fn an_empty_box_is_known() {

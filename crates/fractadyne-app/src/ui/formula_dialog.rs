@@ -339,6 +339,20 @@ impl FractadyneApp {
                             false => e.to_string(),
                         };
                         ui.colored_label(egui::Color32::from_rgb(0xE0, 0x6C, 0x60), msg);
+                        // Another notation's name for a function (`ln`): one click writes the
+                        // language's (`log`) in every such call. The language keeps one name each.
+                        let fixes = crate::ui::formula_editor::other_spellings(&self.formula_dialog.source);
+                        if !fixes.is_empty() {
+                            let what: Vec<String> = fixes.iter().map(|(name, ours)| format!("{name} to {ours}")).collect();
+                            if ui
+                                .button(format!("Change {}", what.join(", ")))
+                                .on_hover_text("Write these functions as the formula language names them")
+                                .clicked()
+                            {
+                                self.formula_dialog.source = crate::ui::formula_editor::respell(&self.formula_dialog.source);
+                                self.formula_dialog.error = None;
+                            }
+                        }
                     }
                 }
                 if used > 0 {

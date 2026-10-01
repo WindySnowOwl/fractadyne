@@ -16,7 +16,14 @@
 //!   caret's places marked.
 
 use super::layout::{Class, Node};
-use fractadyne_core::ir::parse::{is_function, syntax};
+use fractadyne_core::ir::parse::{is_function, our_spelling, syntax};
+
+/// A name that is a call before parentheses: one of the language's functions — or another
+/// notation's name for one (`ln`), kept a call so the text says `ln(z)`, which the syntax check
+/// answers with the language's name, rather than the product `ln*(z)` of a variable never set.
+fn called(name: &str) -> bool {
+    is_function(name) || our_spelling(name).is_some()
+}
 use fractadyne_core::ir::syntax::{BinOp, Expr, ExprKind, Span};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -352,7 +359,7 @@ fn implied(l: &[Atom], r: &[Atom]) -> bool {
         return false;
     }
     let calls = matches!(r[0], Atom::Group(_) | Atom::Complex { .. })
-        && token_ending_at(l, l.len()).is_some_and(|(t, name)| t.kind == Kind::Name && is_function(&name));
+        && token_ending_at(l, l.len()).is_some_and(|(t, name)| t.kind == Kind::Name && called(&name));
     let times = [Atom::Op(Op::Times)];
     !calls && items(&[l, r].concat()) == items(&[l, &times[..], r].concat())
 }
@@ -542,7 +549,7 @@ pub(crate) fn normalize(row: &mut Row, prefix: &mut Vec<(usize, u8)>, carets: &m
     let mut e = 1;
     while e < row.len() {
         let call = match row[e] {
-            Atom::Group(_) => token_ending_at(row, e).filter(|(t, name)| t.kind == Kind::Name && is_function(name)),
+            Atom::Group(_) => token_ending_at(row, e).filter(|(t, name)| t.kind == Kind::Name && called(name)),
             _ => None,
         };
         if let Some((t, name)) = call {

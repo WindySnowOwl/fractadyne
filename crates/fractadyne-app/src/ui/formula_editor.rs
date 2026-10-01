@@ -9,6 +9,7 @@
 
 use crate::ui::formula_keypad::{self, Action, Tab};
 use egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat};
+use fractadyne_core::ir::parse::{our_spelling, OTHER_SPELLINGS};
 
 /// A completion list opens once this many characters of a name are typed: one letter matches too
 /// much (`c` is the pixel and the start of seven functions), and every name the language has is
@@ -273,7 +274,74 @@ pub(crate) fn candidates(src: &str, prefix: &str) -> Vec<Candidate> {
         .chain(known)
         .filter(|c| c.name.starts_with(&p))
         .collect();
+    // Another notation's name (`ln`) offers the language's function under it: taking it writes
+    // `log(`. The language itself keeps one name per function.
+    for (other, ours, what) in OTHER_SPELLINGS {
+        if other.starts_with(&p) && !out.iter().any(|c| c.name == ours) {
+            let hint = format!("{} — {other} is written {ours} here", capitalised(what));
+            out.push(Candidate { name: ours.into(), insert: format!("{ours}("), hint });
+        }
+    }
     out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+fn capitalised(s: &str) -> String {
+    let mut cs = s.chars();
+    cs.next().map_or(String::new(), |c| c.to_uppercase().chain(cs).collect())
+}
+
+/// The calls in `src` written with another notation's name for a function (`ln(z)`, `cot (z)`):
+/// each name as written, once, with the language's. Comments do not count, nor do variables (a
+/// name not followed by `(`), nor a name that runs on from a number (`1e5`).
+pub(crate) fn other_spellings(src: &str) -> Vec<(String, &'static str)> {
+    let mut out: Vec<(String, &'static str)> = Vec::new();
+    for (_, name, ours) in spelled_calls(src) {
+        if !out.iter().any(|(n, _)| *n == name) {
+            out.push((name, ours));
+        }
+    }
+    out
+}
+
+/// `src` with every such call written with the language's name: `ln(z)` → `log(z)`.
+pub(crate) fn respell(src: &str) -> String {
+    let mut out = src.to_string();
+    for (at, name, ours) in spelled_calls(src).into_iter().rev() {
+        out.replace_range(at..at + name.len(), ours);
+    }
+    out
+}
+
+/// Each call written with another notation's name: its byte offset, the name as written, the
+/// language's name.
+fn spelled_calls(src: &str) -> Vec<(usize, String, &'static str)> {
+    let skip = comments(src);
+    let bytes = src.as_bytes();
+    let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let starts = (bytes[i].is_ascii_alphabetic() || bytes[i] == b'_') && (i == 0 || !(word(bytes[i - 1]) || bytes[i - 1] == b'.'));
+        if !starts || skip.iter().any(|r| r.contains(&i)) {
+            i += 1;
+            continue;
+        }
+        let mut j = i;
+        while j < bytes.len() && word(bytes[j]) {
+            j += 1;
+        }
+        let mut k = j;
+        while k < bytes.len() && (bytes[k] == b' ' || bytes[k] == b'\t') {
+            k += 1;
+        }
+        if bytes.get(k) == Some(&b'(') {
+            if let Some(ours) = our_spelling(&src[i..j]) {
+                out.push((i, src[i..j].to_string(), ours));
+            }
+        }
+        i = j;
+    }
     out
 }
 

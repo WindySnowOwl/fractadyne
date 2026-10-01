@@ -143,6 +143,18 @@ fn errors_name_the_problem_and_the_place() {
     assert!(err("sin = 3").message.contains("cannot be assigned"));
     assert!(err("z = (z, 1)").message.contains("two real numbers"));
     assert!(err("z = foo(z)").message.contains("unknown function `foo`"));
+    // Another notation's name for a function says the language's; any case, as names are read.
+    let e = err("z = LN(z) + c");
+    assert!(e.message.contains("natural logarithm is written `log`"), "{e}");
+    assert!(err("z = cot(z)").message.contains("`cotan`"));
+    // Only as a call: a variable may be called ln.
+    assert!(parse("ln = 2, z = z^2 + ln*c").is_ok());
+    assert_eq!(our_spelling("Ln"), Some("log"));
+    assert_eq!(our_spelling("log"), None);
+    // Every spelling's target is a function, and none of them is one already.
+    for (other, ours, _) in OTHER_SPELLINGS {
+        assert!(is_function(ours) && !is_function(other), "{other} -> {ours}");
+    }
     assert!(err("z = z^2 + p6").message.contains("used before it is assigned"), "p6 is not a parameter");
     let e = err("z = z^2\n  + c @");
     assert_eq!((e.line, e.col), (2, 7), "{e}");
