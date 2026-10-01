@@ -279,6 +279,30 @@ fn family_view(formula: u32, mag: f64, px: u32, budget: u32) -> Option<(f64, f64
     best.filter(|(n, _)| n * 100 >= G * G * 2).map(|(_, at)| at)
 }
 
+/// Deep boundary points of Multibrot 6, 7 and 8, good to ~2^-112 — the core's deep-pick fixtures
+/// (`scorer_matches_oracle_multibrot_6_to_8`, which records how they were found). A
+/// [`family_boundary`] point is f64, good to ~1e-15 and garbage past that: at 1e30× its reference
+/// escapes early and every pixel with it, so a chunked render agrees trivially (the corpus-07 note
+/// in "iter-chunk"). These keep their digits, and their 1e-30 neighbours escape hundreds to
+/// thousands of steps apart.
+const MULTIBROT_DEEP: [(FractalKind, &str, &str); 3] = [
+    (
+        FractalKind::Multibrot6,
+        "6.857394901829179081616429758180505352925479174432123629563e-1",
+        "4.494574077574449791211463579695434838514006741731437234958e-2",
+    ),
+    (
+        FractalKind::Multibrot7,
+        "8.476326589810416770591545692023465481479590290010075317289e-1",
+        "1.686046188662333201185254044899073603644196631087163205889e-1",
+    ),
+    (
+        FractalKind::Multibrot8,
+        "7.83482963062576633425633295165828974709342271037759608728e-1",
+        "2.659566285584885991743283420348254644023437952052363285336e-1",
+    ),
+];
+
 /// A power family's iteration texture at `req`'s view as the CPU computes it — the f64 orbit of
 /// each pixel centre by the built-in's own step and policy (escape at 256, at 128 for Multibrot 8;
 /// the smooth value unclamped, as the shader's) — in `render_iter`'s layout (the smooth value at
@@ -651,7 +675,8 @@ impl FractadyneApp {
             const CRY: &str = "0.1853420232408490265512092752061929308714979";
             const NX: &str = "-0.74364388703715887077806454349323251348";
             const NY: &str = "0.131825904205312292821097354874199108694";
-            let cases: &[(&str, &str, f64, u32, u32, bool, u32, &str)] = &[
+            const CHUNK_FAMILY_COUNTS_MIN: usize = 20;
+            let mandel: &[(&str, &str, f64, u32, u32, bool, u32, &str)] = &[
                 ("-0.5", "0.0", 1.0, 2_000, 137, false, 1, "home 1×, 2000 iter, chunk 137"),
                 (SX, SY, 2.0e3, 2_000, 137, false, 1, "seahorse 2e3×, 2000 iter, chunk 137"),
                 ("-0.5", "0.0", 1.0, 50_000, 7_000, false, 1, "home 1×, 50k iter, chunk 7000"),
@@ -663,7 +688,39 @@ impl FractadyneApp {
                 (NX, NY, 1.0e30, 21_000, 3_000, false, 2, "mode2 nucleus 1.3e30× (interior), 21k iter, 7 passes"),
                 (CRX, CRY, 1.0e30, 21_000, 2_600, true, 2, "mode2 97-sample ref (orbit wraps), 21k iter, chunk 2600"),
             ];
-            for (cx, cy, mag, max_iter, chunk, truncate, want_mode, desc) in cases {
+            type ChunkCase = (FractalKind, String, String, f64, u32, u32, bool, u32, String);
+            let mut cases: Vec<ChunkCase> = mandel
+                .iter()
+                .map(|&(x, y, m, it, ch, tr, md, d)| (FractalKind::Mandelbrot, x.into(), y.into(), m, it, ch, tr, md, d.into()))
+                .collect();
+            // ⭐Multibrot 6–8 (design/power-families.md, phase 2): the chunk passes carry their
+            // family arms, which must be fs_iterate's to the bit in every mode — direct and df32 at
+            // a `family_view` boundary (an f64 centre is exact enough there), the rebase storm, and
+            // floatexp at 1e30× on a `MULTIBROT_DEEP` point. BLA is Mandelbrot's alone, so their
+            // mode-2 row cannot show skips; it shows escapes spread over many counts instead (below).
+            for (kind, dx, dy) in MULTIBROT_DEEP {
+                let f = kind.formula_id();
+                let name = kind.name();
+                let Some(at) = family_view(f, 2.0e4, N, 3_000) else {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "IterChunk",
+                        name: "chunked render is bit-identical".into(),
+                        params: format!("{name}: a view"),
+                        result: "no ray from 0 reaches a boundary with smooth escaping pixels at 2e4×".into(),
+                        threshold: "a view to test at",
+                        pass: false,
+                    });
+                    continue;
+                };
+                let (ax, ay) = (format!("{:.17}", at.0), format!("{:.17}", at.1));
+                cases.push((kind, ax.clone(), ay.clone(), 2.0e3, 2_000, 137, false, 1, format!("{name} 2e3×, 2000 iter, chunk 137")));
+                cases.push((kind, ax.clone(), ay.clone(), 2.0e4, 3_000, 517, false, 0, format!("mode0 {name} 2e4×, 3000 iter, chunk 517")));
+                cases.push((kind, ax, ay, 2.0e4, 20_000, 700, true, 0, format!("mode0 {name} 97-sample ref (rebase storm), 20k iter, chunk 700")));
+                cases.push((kind, dx.into(), dy.into(), 1.0e30, 21_000, 7_000, false, 2, format!("mode2 {name} deep boundary 1.3e30×, 21k iter, 3 passes")));
+            }
+            let prev_fractal = self.fractal;
+            for (kind, cx, cy, mag, max_iter, chunk, truncate, want_mode, desc) in &cases {
+                self.fractal = *kind;
                 let mut req = make(self, cx, cy, *mag);
                 req.max_iter = *max_iter;
                 if *truncate {
@@ -697,12 +754,26 @@ impl FractadyneApp {
                             // if BLA silently switched off in BOTH renders they would still agree,
                             // and the chunked path would be running the beta.101 e100 pathology
                             // (0.04 Gsteps/s against 174 in the same frame) with a green gate.
-                            let bla_ok = *want_mode != 2 || *truncate || bla > 0;
+                            // A power family has no BLA, so its deep row shows the other thing a
+                            // trivial agreement lacks: orbits that part — escapes over many counts.
+                            let family = *kind != FractalKind::Mandelbrot;
+                            let bla_ok = family || *want_mode != 2 || *truncate || bla > 0;
+                            let mut counts: Vec<u32> =
+                                a.iter().step_by(4).filter(|v| **v >= 0.0).map(|v| *v as u32).collect();
+                            let escaped = counts.len();
+                            counts.sort_unstable();
+                            counts.dedup();
+                            let spread_ok = !family || *want_mode != 2 || counts.len() >= CHUNK_FAMILY_COUNTS_MIN;
                             (
-                                diffs == 0 && bla_ok,
+                                diffs == 0 && bla_ok && spread_ok,
                                 format!(
-                                    "mode {} — {diffs} texels differ (max Δ {maxd:.3e}), bla_skip {bla}, rebase {reb}",
-                                    req.mode
+                                    "mode {} — {diffs} texels differ (max Δ {maxd:.3e}), bla_skip {bla}, rebase {reb}{}",
+                                    req.mode,
+                                    if family {
+                                        format!(", {escaped} escaped over {} counts, sa_skip {}", counts.len(), req.sa_skip)
+                                    } else {
+                                        String::new()
+                                    }
                                 ),
                             )
                         }
@@ -712,12 +783,13 @@ impl FractadyneApp {
                 push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "IterChunk",
                     name: "chunked render is bit-identical".into(),
-                    params: (*desc).into(),
+                    params: desc.clone(),
                     result,
-                    threshold: "0 texels differ (mode 2: and BLA engaged)",
+                    threshold: "0 texels differ (mode 2: and BLA engaged, or a power family's escapes over ≥ 20 counts)",
                     pass,
                 });
             }
+            self.fractal = prev_fractal;
         }
 
         // ⭐⭐(0.3.0-beta.3) THE SPLIT LIVE REFRESH. A moving df32 frame dearer than one displayed
@@ -4413,6 +4485,67 @@ impl FractadyneApp {
         // here we confirm the app actually selects SA for these formulas (skip > 0) and the
         // GPU render is finite and bit-consistent with an SA-off render (the seed shader code
         // is formula-agnostic, already validated for Mandelbrot in modes 0 and 2).
+        // ⛔A SEED PAST THE BAILOUT (found 2026-10-01, design/power-families.md phase 2). The walk
+        // stops at the REFERENCE's escape, |Z|² > 1e12, so a skip could land two samples before
+        // the reference's end with |Z| far past 256; the GPU's first test of the seeded pixel, a
+        // step later, squared |z| past f32: |z|² = ∞, every smooth value −∞, a black frame —
+        // Multibrot 5 at its first row's view here (a released family), Multibrot 6 at its deep
+        // point at 1e45×. `sa_seed_max2` bounds the seed. These views are featureless, every pixel
+        // escaping on the reference's own step, so ONE interior or non-finite pixel is the bug.
+        if want("multibrot-sa") {
+            let prev = self.fractal;
+            self.julia_mode = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.use_custom_palette = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 30_000;
+            self.render_cfg.series_approx = true;
+            let mut rows: Vec<(FractalKind, String, String, f64)> = Vec::new();
+            for kind in [
+                FractalKind::Multibrot4,
+                FractalKind::Multibrot5,
+                FractalKind::Multibrot6,
+                FractalKind::Multibrot7,
+                FractalKind::Multibrot8,
+            ] {
+                if let Some(at) = family_view(kind.formula_id(), 1.0e5, N, 3_000) {
+                    rows.push((kind, format!("{:.17}", at.0), format!("{:.17}", at.1), 1.0e40));
+                }
+            }
+            let (k6, x6, y6) = MULTIBROT_DEEP[0];
+            rows.push((k6, x6.into(), y6.into(), 7.5e44));
+            for (kind, x, y, mag) in rows {
+                self.fractal = kind;
+                let mut req = make(self, &x, &y, mag);
+                req.max_iter = 30_000;
+                let name = format!("{} SA seed stays in f32 range ({mag:.1e}×, featureless)", kind.name());
+                let params = format!("mode {}, skip {} of a {}-sample reference", req.mode, req.sa_skip, req.orbit_len);
+                match render(&req) {
+                    Some(px) => {
+                        let v: Vec<f32> = px.iter().step_by(4).copied().collect();
+                        let bad = v.iter().filter(|x| !(x.is_finite() && **x >= 0.0)).count();
+                        let engaged = req.sa_skip > 0 && req.orbit_len < req.max_iter;
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Series approximation",
+                            name,
+                            params,
+                            result: format!("{bad} of {} pixels interior or non-finite", v.len()),
+                            threshold: "SA engaged, the reference escapes, every pixel escapes finite",
+                            pass: engaged && bad == 0,
+                        });
+                    }
+                    None => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Series approximation",
+                        name,
+                        params,
+                        result: "render failed".into(),
+                        threshold: "SA engaged, the reference escapes, every pixel escapes finite",
+                        pass: false,
+                    }),
+                }
+            }
+            self.fractal = prev;
+        }
         if want("multibrot-sa") {
             self.julia_mode = false;
             self.coloring.color_method = crate::ColorMethod::Smooth;
@@ -4424,15 +4557,53 @@ impl FractadyneApp {
             // SA disabled (e.g. by tooling that stages the session file) made all three checks
             // report "SA did not engage" with no code defect present. Pin it like `color_method`.
             self.render_cfg.series_approx = true;
-            for (fractal, cx, cy) in [
-                (FractalKind::Multibrot3, "0.2", "0.1"),
-                (FractalKind::Multibrot4, "0.2", "0.1"),
-                (FractalKind::Multibrot5, "0.2", "0.1"),
+            // (fractal, centre, a boundary view). The INTERIOR view (0.2, 0.1) is the original
+            // three rows: every pixel stays interior through a skip of 3,999, and SA on and off
+            // must agree exactly. ⚠It has no escaping pixel, so it could not see an SA that
+            // misplaces an escape (found 2026-10-01, design/power-families.md phase 2, when
+            // Multibrot 6–8 joined). So every power also gets a BOUNDARY view (`family_view`).
+            // There SA on and off part on thousands of pixels — 4,555 of Multibrot 3's, 13,078 of
+            // 4's — nearly all steep, and by the CPU's f64 orbit EQUALLY right: at the pixels
+            // smooth by the CPU's own neighbours, SA on was wrong at 182 / 81 / 242 / 31 / 0 / 3
+            // (Multibrot 3–8), SA off at 190 / 76 / 226 / 32 / 0 / 3. A 4,000-step boundary view is
+            // chaotic, and a seed within 2^EPS of the stepped δ is one rounding more. So the
+            // boundary row asks the question that has an answer: is SA any worse than no SA,
+            // against an independent truth, where that truth is sure of itself.
+            let mut sa_cases: Vec<(FractalKind, String, String, bool)> = vec![
+                (FractalKind::Multibrot3, "0.2".into(), "0.1".into(), false),
+                (FractalKind::Multibrot4, "0.2".into(), "0.1".into(), false),
+                (FractalKind::Multibrot5, "0.2".into(), "0.1".into(), false),
+            ];
+            for kind in [
+                FractalKind::Multibrot3,
+                FractalKind::Multibrot4,
+                FractalKind::Multibrot5,
+                FractalKind::Multibrot6,
+                FractalKind::Multibrot7,
+                FractalKind::Multibrot8,
             ] {
+                match family_view(kind.formula_id(), 1.0e7, N, self.render_cfg.max_iter) {
+                    Some(at) => sa_cases.push((kind, format!("{:.17}", at.0), format!("{:.17}", at.1), true)),
+                    None => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Series approximation",
+                        name: format!("{} SA no worse than SA-off vs CPU @1e7× (boundary)", kind.name()),
+                        params: String::new(),
+                        result: "no ray from 0 reaches a boundary with smooth escaping pixels at 1e7×".into(),
+                        threshold: "a view to test at",
+                        pass: false,
+                    }),
+                }
+            }
+            for (fractal, cx, cy, boundary) in sa_cases {
+                let name = if boundary {
+                    format!("{} SA no worse than SA-off vs CPU @1e7× (boundary)", fractal.name())
+                } else {
+                    format!("{} SA engages + matches SA-off @1e7×", fractal.name())
+                };
                 self.fractal = fractal;
                 let mut vp = Viewport::new(N as f64, N as f64);
-                vp.center_x = fractadyne_core::parse_bf(cx).unwrap();
-                vp.center_y = fractadyne_core::parse_bf(cy).unwrap();
+                vp.center_x = fractadyne_core::parse_bf(&cx).unwrap();
+                vp.center_y = fractadyne_core::parse_bf(&cy).unwrap();
                 vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * 1.0e7));
                 vp.precision = fractadyne_core::precision_for_magnification(1.0e7);
                 let mut on = self.current_export_request_for(&vp, false);
@@ -4446,7 +4617,7 @@ impl FractadyneApp {
                     st_render_iter(device, queue, &on),
                     st_render_iter(device, queue, &off),
                 ) {
-                    (Some(a), Some(b)) if skip > 0 && mode == 0 => {
+                    (Some(a), Some(b)) if skip > 0 && mode == 0 && !boundary => {
                         let finite = a.iter().step_by(4).all(|v| v.is_finite());
                         let (mut mism, mut esc) = (0u64, 0u64);
                         for i in 0..(a.len() / 4) {
@@ -4463,16 +4634,63 @@ impl FractadyneApp {
                         }
                         push_check(&mut checks, &mut last_check_t, SelfCheck {
                             category: "Series approximation",
-                            name: format!("{} SA engages + matches SA-off @1e7×", fractal.name()),
+                            name,
                             params: format!("mode {mode}, skip {skip} of {} iter, {esc} escaped", on.max_iter),
                             result: format!("{mism} mismatch, {}", if finite { "finite" } else { "NON-FINITE!" }),
                             threshold: "skip>0, mode 0, finite, 0 mismatch",
                             pass: finite && mism == 0,
                         });
                     }
+                    (Some(a), Some(b)) if skip > 0 && mode == 0 => {
+                        let finite = a.iter().step_by(4).all(|v| v.is_finite());
+                        let esc = a.iter().step_by(4).filter(|v| **v >= 0.0).count();
+                        let nn = N as usize;
+                        let t = cpu_family_iter(&on, fractal.formula_id(), N);
+                        // The truth is sure of a pixel whose CPU neighbours agree with it (same
+                        // class, within 2 iterations: the BLA check's "steep", inverted).
+                        let sure = |k: usize| -> bool {
+                            let (i, j) = (k % nn, k / nn);
+                            let g = t[k * 4];
+                            [(1isize, 0isize), (-1, 0), (0, 1), (0, -1)].iter().all(|&(di, dj)| {
+                                let (ni, nj) = (i as isize + di, j as isize + dj);
+                                if ni < 0 || nj < 0 || ni as usize >= nn || nj as usize >= nn {
+                                    return true;
+                                }
+                                let gn = t[(nj as usize * nn + ni as usize) * 4];
+                                (g < 0.0) == (gn < 0.0) && (g < 0.0 || (g - gn).abs() <= 2.0)
+                            })
+                        };
+                        let wrong = |px: &[f32], k: usize| {
+                            let (p, q) = (px[k * 4], t[k * 4]);
+                            (p < 0.0) != (q < 0.0) || (p >= 0.0 && (p - q).abs() > 0.5)
+                        };
+                        let (mut n_sure, mut on_wrong, mut off_wrong) = (0u64, 0u64, 0u64);
+                        for k in (0..nn * nn).filter(|&k| sure(k)) {
+                            n_sure += 1;
+                            on_wrong += u64::from(wrong(&a, k));
+                            off_wrong += u64::from(wrong(&b, k));
+                        }
+                        // Two draws of the same sensitive set differ by tens (226 against 242);
+                        // a seed that is wrong is wrong at thousands of pixels.
+                        let bound = off_wrong + off_wrong / 4 + 10;
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Series approximation",
+                            name,
+                            params: format!(
+                                "mode {mode}, skip {skip} of {} iter, {esc} escaped, CPU sure of {n_sure} px",
+                                on.max_iter
+                            ),
+                            result: format!(
+                                "wrong vs CPU: SA on {on_wrong}, SA off {off_wrong}, {}",
+                                if finite { "finite" } else { "NON-FINITE!" }
+                            ),
+                            threshold: "skip>0, mode 0, finite, escapes, CPU sure of ≥ 2,000 px, SA on ≤ 1.25 × SA off + 10",
+                            pass: finite && esc > 0 && n_sure >= 2_000 && on_wrong <= bound,
+                        });
+                    }
                     _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Series approximation",
-                        name: format!("{} SA engages + matches SA-off @1e7×", fractal.name()),
+                        name,
                         params: format!("mode {mode}, skip {skip}"),
                         result: if skip == 0 { "SA did not engage (skip=0)".into() } else { "render failed / wrong mode".into() },
                         threshold: "skip>0, mode 0, finite, 0 mismatch",

@@ -190,7 +190,10 @@ pub mod formula {
     /// custom formula's generated module carries its own resumable chunk pass (`custom.rs`), so
     /// it has `resumable_passes` — ⚠which every chunk pipeline must then build from THAT module.
     pub const fn caps(formula: u32) -> FormulaCaps {
-        let polynomial = matches!(formula, MANDELBROT | MULTIBROT3 | MULTIBROT4 | MULTIBROT5);
+        let polynomial = matches!(
+            formula,
+            MANDELBROT | MULTIBROT3 | MULTIBROT4 | MULTIBROT5 | MULTIBROT6 | MULTIBROT7 | MULTIBROT8
+        );
         FormulaCaps {
             series_approximation: polynomial,
             bla: formula == MANDELBROT,

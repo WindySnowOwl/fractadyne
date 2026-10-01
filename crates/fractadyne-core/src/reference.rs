@@ -591,6 +591,19 @@ fn log2_cmag(re: &BigFloat, im: &BigFloat) -> f64 {
 pub(crate) const SA_EPS_LOG2: f64 = -16.0;
 /// Below this skip the bookkeeping isn't worth it (shared likewise).
 pub(crate) const SA_MIN_SKIP: u32 = 8;
+
+/// The largest |Z_n|² a series seed may start from, for `z^d + c`: 2^(120/d). The walk stops at
+/// the REFERENCE's escape (|Z|² > 1e12, or 1e9), far outside a pixel's 256, so a skip can land
+/// where every pixel has already escaped; the GPU tests a seeded pixel only after its next step,
+/// where |z|² ≈ |Z_n|^(2d) must stay inside f32 (2^128; 2^8 spared for δz and c). For z² and z³
+/// that late test is harmless — the smooth count is the same a step on, and (1e6)^(2d) ≤ 1e36 —
+/// and the bound never binds below the reference's own stop (2^60, 2^40 ≈ 1.1e12). From z⁴ the
+/// step overflows: |z|² = ∞, the smooth value −∞, and the pixel reads as interior — Multibrot 5
+/// at 1e40× (a skip of 4,466 on a reference of 4,468) rendered every pixel so (found 2026-10-01,
+/// design/power-families.md phase 2). A seed past the bound is treated as an invalid step.
+pub(crate) fn sa_seed_max2(d: u32) -> f64 {
+    2f64.powf(120.0 / f64::from(d))
+}
 /// Width (bits) the walk carries the series COEFFICIENTS at; the reference `Z` stays at the
 /// working precision `p` (shared likewise). `Z` needs `p`: it IS the orbit, and an error in it is
 /// a different `c`. The coefficients do not. They leave the walk only through `coeff_to_fe` (the
@@ -686,7 +699,8 @@ fn series_best_to_skip(best: Option<(u32, [BigFloat; 6])>) -> SeriesSkip {
 }
 
 /// Compute the [`SeriesSkip`] for a reference at `c = (cx, cy)` of the polynomial family
-/// `formula` (Mandelbrot `z²+c` = 0, Multibrot `z³/z⁴/z⁵+c` = 1/2/3). Iterates the reference
+/// `formula` (Mandelbrot `z²+c` = 0, Multibrot `z³/z⁴/z⁵+c` = 1/2/3, `z⁶/z⁷/z⁸+c` = 10/11/12).
+/// Iterates the reference
 /// together with the order-3 series coefficients in arbitrary precision, and skips while the
 /// cubic term stays below `2^EPS_LOG2` of the linear term at the worst-case corner `|δc|`
 /// (given as `log2_max_dc`) — which guarantees validity, and that no pixel escapes, before
@@ -747,12 +761,8 @@ pub(crate) fn series_skip_astro_piped(
     // build for the same frame.
     let limit = max_iter.min(orbit_len.saturating_sub(2)).min(sa_step_budget(p));
     // Degree d of z^d + c, and the binomial weights that appear in the order-3 recurrence.
-    let deg: u32 = match formula {
-        formula::MULTIBROT3 => 3,
-        formula::MULTIBROT4 => 4,
-        formula::MULTIBROT5 => 5,
-        _ => 2,
-    };
+    // (`formula_power`, 2 for an id outside the `z^d + c` families, as before.)
+    let deg: u32 = formula_power(formula).unwrap_or(2);
     let one = bf(1.0, pc);
     // Recurrence factors — all small exact integers, applied via `mul_u32_bf` (shift-and-add).
     let d_u = deg;
@@ -772,17 +782,19 @@ pub(crate) fn series_skip_astro_piped(
         }
         t
     };
-    let z_step = |zx: &mut BigFloat, zy: &mut BigFloat| -> (BigFloat, BigFloat, bool) {
+    // Z_n's |Z|² past which no seed may start (`sa_seed_max2`).
+    let seed_max2 = sa_seed_max2(deg);
+    let z_step = |zx: &mut BigFloat, zy: &mut BigFloat| -> (BigFloat, BigFloat, bool, bool) {
         let (zcx, zcy) = (cut(zx), cut(zy));
         let (nzx, nzy) = step_bf(zx, zy, cx, cy, formula, p);
         *zx = nzx;
         *zy = nzy;
-        let escaped = to_f64(zx) * to_f64(zx) + to_f64(zy) * to_f64(zy) > ref_escape2(formula);
-        (zcx, zcy, escaped)
+        let m2 = to_f64(zx) * to_f64(zx) + to_f64(zy) * to_f64(zy);
+        (zcx, zcy, m2 > ref_escape2(formula), m2 <= seed_max2)
     };
     // The coefficient chain, fed one Z-chain step per iteration. `Err` = cancelled.
     type Walked = Result<Option<(u32, [BigFloat; 6])>, ()>;
-    let walk = |next: &mut dyn FnMut() -> Option<(BigFloat, BigFloat, bool)>| -> Walked {
+    let walk = |next: &mut dyn FnMut() -> Option<(BigFloat, BigFloat, bool, bool)>| -> Walked {
         let (mut ax, mut ay) = (bf(0.0, pc), bf(0.0, pc));
         let (mut bx, mut by) = (bf(0.0, pc), bf(0.0, pc));
         let (mut cxx, mut cyy) = (bf(0.0, pc), bf(0.0, pc));
@@ -793,7 +805,7 @@ pub(crate) fn series_skip_astro_piped(
             }
             // (The pipelined Z chain ends at the escape; the walk below breaks there first — a
             // `continue` past it needs a non-finite A, and a non-finite A stays so, `best` frozen.)
-            let Some((zcx, zcy, z_escaped)) = next() else { break };
+            let Some((zcx, zcy, z_escaped, z_seedable)) = next() else { break };
             let (zcx, zcy) = (&zcx, &zcy);
             // Advance the order-3 coefficients for z^d + c, using Z_{n-1} (current z):
             //   A' = d·Z^{d-1}·A + 1
@@ -850,10 +862,12 @@ pub(crate) fn series_skip_astro_piped(
             }
             let valid = lc + 2.0 * log2_max_dc < la + SA_EPS_LOG2;
             if n >= SA_MIN_SKIP {
-                if valid {
+                if valid && z_seedable {
                     best = Some((n, [ax.clone(), ay.clone(), bx.clone(), by.clone(), cxx.clone(), cyy.clone()]));
                 } else {
-                    break; // coefficients only grow ⇒ once invalid, stays invalid
+                    // Coefficients only grow ⇒ once invalid, stays invalid; and a reference past
+                    // the seed bound is past the bailout, so it escapes from there on.
+                    break;
                 }
             }
             // Stop if the reference itself escaped.
@@ -2355,6 +2369,7 @@ fn formula_power(formula: u32) -> Option<u32> {
         formula::MULTIBROT3 => Some(3),
         formula::MULTIBROT4 => Some(4),
         formula::MULTIBROT5 => Some(5),
+        formula::MULTIBROT6 | formula::MULTIBROT7 | formula::MULTIBROT8 => Some(formula::power(formula)),
         _ => None,
     }
 }

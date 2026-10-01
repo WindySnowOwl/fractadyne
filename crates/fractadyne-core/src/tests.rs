@@ -7,14 +7,19 @@ use super::*;
 fn formula_caps_answer_as_the_id_ranges_they_replaced() {
     for id in 0..1000u32 {
         let c = formula::caps(id);
-        assert_eq!(c.series_approximation, id <= 3, "series approximation, id {id}");
+        // The `z^d + c` families: Mandelbrot and Multibrot 3–5, and since the power families'
+        // phase 2 (design/power-families.md) Multibrot 6–8, ids 10–12.
+        let polynomial = id <= 3 || (10..=12).contains(&id);
+        assert_eq!(c.series_approximation, polynomial, "series approximation, id {id}");
         assert_eq!(c.bla, id == 0, "bla, id {id}");
-        assert_eq!(c.resumable_passes, id <= 3, "resumable passes, id {id}");
-        assert_eq!(c.nucleus_finder, matches!(id, 0..=3), "nucleus finder, id {id}");
+        assert_eq!(c.resumable_passes, polynomial, "resumable passes, id {id}");
+        assert_eq!(c.nucleus_finder, polynomial, "nucleus finder, id {id}");
         assert_eq!(c.feature_solvers, id == 0, "feature solvers, id {id}");
-        assert_eq!(c.export_glitch_correction, id > 3, "export glitch correction, id {id}");
+        assert_eq!(c.export_glitch_correction, !polynomial, "export glitch correction, id {id}");
         assert_eq!(c.convergent, id == 9, "convergent, id {id}");
     }
+    assert!(formula::caps(formula::MULTIBROT8).series_approximation);
+    assert!(!formula::caps(formula::BURNING_SHIP3).resumable_passes);
     // And by name, so a renumbering cannot quietly move a family's capabilities.
     assert!(formula::caps(formula::MULTIBROT5).series_approximation);
     assert!(!formula::caps(formula::TRICORN).resumable_passes);
@@ -440,6 +445,173 @@ fn series_skip_matches_exact_multibrot3() {
     let err = ((series.0 - ex).powi(2) + (series.1 - ey).powi(2)).sqrt();
     let mag = (ex * ex + ey * ey).sqrt().max(1e-300);
     assert!(err / mag < 1.0e-3, "z³ series vs exact rel err {:.2e} at skip {}", err / mag, s.skip);
+}
+
+// The order-3 recurrence is generic in the degree (its `d·Z^(d−1)`, `C(d,2)·Z^(d−2)` and
+// `C(d,3)·Z^(d−3)` come from `d`), so Multibrot 6–8 take it unchanged (design/power-families.md,
+// B5). The truth here is the plainest there is: the pixel's own bignum orbit minus the
+// reference's, each by the family's step. A walk at the wrong degree (the `_ => 2` the match had
+// for these ids) is off by orders of magnitude at the interior point, whose |Z| stays ~0.3.
+#[test]
+fn series_skip_matches_exact_multibrot_6_to_8() {
+    let p = 160;
+    for f in [formula::MULTIBROT6, formula::MULTIBROT7, formula::MULTIBROT8] {
+        let (cx, cy) = (bf(0.2, p), bf(0.2, p)); // interior for every power here
+        let max_dc = 1.0e-9_f64;
+        let s = series_skip(&cx, &cy, max_dc.log2(), 5000, 5000, f, p);
+        assert!(s.skip >= 8, "formula {f}: no usable skip found (skip={})", s.skip);
+
+        let cof = |m: [f32; 4], e: i32| -> (f64, f64) {
+            let k = 2f64.powi(e);
+            ((m[0] as f64 + m[1] as f64) * k, (m[2] as f64 + m[3] as f64) * k)
+        };
+        let cmul = |a: (f64, f64), b: (f64, f64)| (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0);
+        let dc = (max_dc, 0.0);
+        let dc2 = cmul(dc, dc);
+        let t1 = cmul(cof(s.a, s.a_exp), dc);
+        let t2 = cmul(cof(s.b, s.b_exp), dc2);
+        let t3 = cmul(cof(s.c, s.c_exp), cmul(dc2, dc));
+        let series = (t1.0 + t2.0 + t3.0, t1.1 + t2.1 + t3.1);
+
+        let (px, py) = (cx.add(&bf(max_dc, p), p, RM), cy.clone());
+        let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
+        let (mut wx, mut wy) = (bf(0.0, p), bf(0.0, p));
+        for _ in 0..s.skip {
+            (zx, zy) = step_bf(&zx, &zy, &cx, &cy, f, p);
+            (wx, wy) = step_bf(&wx, &wy, &px, &py, f, p);
+        }
+        let (ex, ey) = (to_f64(&wx.sub(&zx, p, RM)), to_f64(&wy.sub(&zy, p, RM)));
+        let err = ((series.0 - ex).powi(2) + (series.1 - ey).powi(2)).sqrt();
+        let mag = (ex * ex + ey * ey).sqrt().max(1e-300);
+        assert!(err / mag < 1.0e-3, "formula {f}: series vs exact rel err {:.2e} at skip {}", err / mag, s.skip);
+    }
+}
+
+// A series seed starts where the GPU's first test of it — one step later — stays inside f32
+// (`sa_seed_max2`). Each point sits just past its family's real cusp c* = (d−1)/d · d^(−1/(d−1)),
+// so the orbit creeps out for thousands of steps and then leaves fast: the walk runs to the
+// reference's end, as at the views that broke (Multibrot 5 at 1e40×, every pixel −∞). For z² and
+// z³ the bound sits above the reference's own stop, so the skip is the cap it always was; from
+// z⁴ it is the last sample inside the bound — the cap when the orbit jumps clear past it in one
+// step, which is why each power is tried at eight offsets and must BIND at one at least.
+// Mutation: without the bound, Multibrot 5 seeds at |Z|² > 2^24 here (found 2026-10-01).
+#[test]
+fn a_series_seed_starts_where_its_next_step_stays_in_f32() {
+    let p = 128;
+    for f in [
+        formula::MANDELBROT,
+        formula::MULTIBROT3,
+        formula::MULTIBROT4,
+        formula::MULTIBROT5,
+        formula::MULTIBROT6,
+        formula::MULTIBROT7,
+        formula::MULTIBROT8,
+    ] {
+        let d = formula::power(f);
+        let df = f64::from(d);
+        let cstar = (df - 1.0) / df * df.powf(-1.0 / (df - 1.0));
+        let bound = crate::reference::sa_seed_max2(d);
+        let mut binds = 0;
+        for eps in [1.0e-6, 1.3e-6, 1.7e-6, 2.2e-6, 2.9e-6, 3.7e-6, 4.8e-6, 6.2e-6] {
+            let (cx, cy) = (bf(cstar + eps, p), bf(0.0, p));
+            // The reference as the app records it: samples Z_0..=Z_n, n the first past its escape.
+            let mut m2 = vec![0.0f64];
+            let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
+            while *m2.last().unwrap() <= crate::reference::ref_escape2(f) && m2.len() < 100_000 {
+                (zx, zy) = step_bf(&zx, &zy, &cx, &cy, f, p);
+                m2.push(to_f64(&zx).powi(2) + to_f64(&zy).powi(2));
+            }
+            let len = m2.len() as u32;
+            assert!(len > 500 && len < 100_000, "formula {f}, ε {eps}: the fixture must creep out (len {len})");
+            let s = series_skip(&cx, &cy, -200.0, 100_000, len, f, p);
+            let k = s.skip as usize;
+            assert!(k > 0, "formula {f}, ε {eps}: no skip");
+            assert!(m2[k] <= bound, "formula {f}, ε {eps}: seed at {k} has |Z|² = {:e} > {bound:e}", m2[k]);
+            if d <= 3 {
+                assert_eq!(s.skip, len - 2, "formula {f}, ε {eps}: the bound must not bind below the stop");
+            } else if s.skip < len - 2 {
+                assert!(m2[k + 1] > bound, "formula {f}, ε {eps}: the seed at {k} is not the LAST inside the bound");
+                binds += 1;
+            }
+        }
+        // (z⁴'s real exit from its cusp is the same path at every offset — 984 then 9e11, |Z|²
+        // under 2^30 and then past the stop — so its bound never binds here; 5–8 bound at 3, 2,
+        // 1 and 4 of the eight when this was written.)
+        assert!(d <= 4 || binds > 0, "formula {f}: the bound never bound — the test proved nothing for it");
+    }
+}
+
+// The series coefficients ARE the exact map's Taylor coefficients, δz_n(δc) = A·δc + B·δc² +
+// C·δc³ + O(δc⁴), for every power. The tests above judge δz at one δc, where SA's own criterion
+// holds the cubic term under 2^-16 of the linear one — so a wrong C hides there, and in every
+// render: a walk that dropped the C(d,3)·Z^(d−3)·A³ term passed them all and the self-test's
+// boundary views, its skips merely longer (Multibrot 4: 49 → 67; 2026-10-01). Here each
+// coefficient is read off the map itself: the exact δz at δc = h·iᵏ (k = 0..3) from two bignum
+// orbits, and Σₖ δz_k·(−i)^(mk) / (4·hᵐ) = a_m + O(h⁴). The points are exact and so are the
+// rotations, so nothing but the h⁴ alias stands between a_m and the coefficient the walk carried.
+#[test]
+fn series_coefficients_are_the_maps_taylor_coefficients() {
+    let p = 320;
+    let n = 12u32;
+    let h_log2 = -30i32;
+    let neg = |x: &BigFloat| bf(0.0, p).sub(x, p, RM);
+    for f in [
+        formula::MANDELBROT,
+        formula::MULTIBROT3,
+        formula::MULTIBROT4,
+        formula::MULTIBROT5,
+        formula::MULTIBROT6,
+        formula::MULTIBROT7,
+        formula::MULTIBROT8,
+    ] {
+        let (cx, cy) = (bf(0.2, p), bf(0.2, p));
+        let s = series_skip(&cx, &cy, -40.0, n, 5000, f, p);
+        assert_eq!(s.skip, n, "formula {f}: the walk must run to the cap");
+        let orbit_n = |x: &BigFloat, y: &BigFloat| {
+            let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
+            for _ in 0..n {
+                (zx, zy) = step_bf(&zx, &zy, x, y, f, p);
+            }
+            (zx, zy)
+        };
+        let (rx, ry) = orbit_n(&cx, &cy);
+        let (h, zero) = (bf(2f64.powi(h_log2), p), bf(0.0, p));
+        let dz: Vec<(BigFloat, BigFloat)> = [
+            (h.clone(), zero.clone()),
+            (zero.clone(), h.clone()),
+            (neg(&h), zero.clone()),
+            (zero.clone(), neg(&h)),
+        ]
+        .iter()
+        .map(|(dx, dy)| {
+            let (zx, zy) = orbit_n(&cx.add(dx, p, RM), &cy.add(dy, p, RM));
+            (zx.sub(&rx, p, RM), zy.sub(&ry, p, RM))
+        })
+        .collect();
+        for (m, coef, e) in [(1usize, s.a, s.a_exp), (2, s.b, s.b_exp), (3, s.c, s.c_exp)] {
+            let (mut sx, mut sy) = (bf(0.0, p), bf(0.0, p));
+            for (k, (x, y)) in dz.iter().enumerate() {
+                // (x + iy)·(−i)^(mk)
+                let (tx, ty) = match (m * k) % 4 {
+                    0 => (x.clone(), y.clone()),
+                    1 => (y.clone(), neg(x)),
+                    2 => (neg(x), neg(y)),
+                    _ => (neg(y), x.clone()),
+                };
+                sx = sx.add(&tx, p, RM);
+                sy = sy.add(&ty, p, RM);
+            }
+            let scale = 2f64.powi(-h_log2 * m as i32) / 4.0;
+            let (ex, ey) = (to_f64(&sx) * scale, to_f64(&sy) * scale);
+            let k2 = 2f64.powi(e);
+            let (gx, gy) = ((coef[0] as f64 + coef[1] as f64) * k2, (coef[2] as f64 + coef[3] as f64) * k2);
+            let rel = (gx - ex).hypot(gy - ey) / ex.hypot(ey);
+            assert!(
+                rel < 1.0e-9,
+                "formula {f}: coefficient {m} is ({gx:e}, {gy:e}), the map's is ({ex:e}, {ey:e}): rel err {rel:.2e}"
+            );
+        }
+    }
 }
 
 // The series walk carries its coefficients at `SA_COEFF_BITS` while the reference `Z` stays at

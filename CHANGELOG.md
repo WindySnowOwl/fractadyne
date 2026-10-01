@@ -62,20 +62,32 @@ Changes after 0.3.0-beta.1:
 - **Fifteen more fractal families (unreleased).** Multibrot 6, 7 and 8, and Burning Ship, Tricorn,
   Celtic and Buffalo at powers 3, 4 and 5, each built in and deep-zooming as its power-2 sibling
   does (perturbation in df32 and extended-range floatexp, distance estimation for the Multibrot
-  powers, glitch correction for exports). The Fractal menu and the toolbar dropdown list them one
+  powers, glitch correction for the folds' exports). Multibrot 6, 7 and 8 also have what Multibrot
+  3–5 have: series approximation, frames split into resumable passes, the minibrot finder (M), and
+  exports without glitch correction, which at their deep views changed under 0.03% of the pixels
+  and corrected none of them. The Fractal menu and the toolbar dropdown list them one
   family to a row ("Burning Ship  3 4 5"). A view of one writes format_version 2, so an older
   Fractadyne says it comes from a newer build instead of showing another family at its
   coordinates. Multibrot 8 escapes at radius 128 rather than 256, and Multibrot 7 and 8 end the
   reference orbit at |Z|² > 1e9 rather than 1e12, where the next step would leave single-precision
   range; a custom formula of degree 7 or more now does the same (its reference's last sample could
-  overflow). Series approximation and BLA for them are still to come (design/power-families.md).
+  overflow). BLA for them is still to come (design/power-families.md).
   - **Tested:** each family's CPU step is its formula-language program bit for bit (what one types
     as `abs(z)^3 + c` computes Burning Ship 3 exactly); on the GPU, the direct render matches the
     generated module bit for bit up to power 6 and the CPU within 0.4% for powers 7 and 8; the
     perturbation matches the CPU at 1e5× (mean difference under 0.0002 iterations) and at 1e6×,
-    floatexp matches df32 at 1e10×, and every family stays finite at 1e35×. Self-test 386 checks
-    (90 new), goldens 31 (five new, one per shape). The dispatch ceiling's cost factors for them
-    are measured, with the method beside them in `validation/calibration/ceilings.toml`.
+    floatexp matches df32 at 1e10×, and every family stays finite at 1e35×. For Multibrot 6–8, a
+    frame split into passes is the single-pass frame bit for bit in all three modes, down to 1e30×;
+    the series coefficients are the formula's own Taylor coefficients; and a render with series
+    approximation is as close to the CPU as one without, at views where pixels escape (the
+    Multibrot 3–5 check had none). Self-test 413 checks, goldens 31 (five new, one per shape). The
+    dispatch ceiling's cost factors for them are measured, with the method beside them in
+    `validation/calibration/ceilings.toml`.
+- **Fixed: a deep Multibrot 4 or 5 view could render black (unreleased).** Where the series
+  approximation skipped to within a step or two of the end of an escaping reference orbit (a view
+  with no structure, every pixel escaping together), the first test of each pixel overflowed
+  single precision, and every pixel read as inside the set: Multibrot 5 at 1e40× was all black.
+  The skip now stops where the next step stays in range.
 - **Custom formulas** (0.3.0-beta.10 to beta.12).
   - **What:** Fractal ▸ Custom formula… takes a formula's step in Fractint-style expressions
     (`z = z^3 - p1*z + c`, several statements, parameters p1–p5, the usual functions), with an

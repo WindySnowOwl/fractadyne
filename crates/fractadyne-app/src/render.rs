@@ -2859,7 +2859,7 @@ impl FractadyneApp {
     /// choices: the orbit is built to exactly `eff_iter` (no live-style spare headroom), and the BLA
     /// `dc_max` is the per-frame-tight bound (no `×2` pan-reuse margin). `None` for the direct path
     /// (`mode == 1`), which iterates from 0 with no reference. Series approximation applies to the
-    /// holomorphic polynomial families (Mandelbrot / Multibrot 3-5) with a non-aux coloring method.
+    /// holomorphic polynomial families (Mandelbrot / Multibrot 3-8) with a non-aux coloring method.
     #[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 2/4: fold into a reference-inputs struct
     fn export_reference_inputs(
         &self,
@@ -7911,7 +7911,7 @@ impl FractadyneApp {
         // the resumable CHUNKED path instead (the block after the tile decision): full resolution,
         // one bounded pass over an iteration RANGE per frame — so skip the shrink (it would defeat
         // the full-res payoff) and the settle tiling (wrong axis). Gated to the chunk shaders'
-        // scope: holomorphic formulas 0..3, aux coloring off (a chunk pass carries no orbit
+        // scope: the holomorphic formulas (`resumable_passes`), aux coloring off (a chunk pass carries no orbit
         // statistics), and the perturbation modes additionally glitch-free (live never runs glitch
         // detection).
         //

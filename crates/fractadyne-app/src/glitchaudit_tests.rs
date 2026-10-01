@@ -40,14 +40,15 @@ fn stability_compares_integer_escape_counts_and_interior() {
 
 #[test]
 fn correction_never_runs_for_the_audited_families_and_otherwise_follows_the_setting() {
-    // Mandelbrot and Multibrot 3–5 in Mandelbrot mode: off whatever the setting says.
-    for f in 0..=3 {
+    // Mandelbrot and Multibrot 3–8 in Mandelbrot mode: off whatever the setting says.
+    for f in [0, 1, 2, 3, 10, 11, 12] {
         assert!(!correction_applies(true, f, false), "formula {f}");
     }
     // Julia views of the same families, and every other family: the user's setting decides.
     assert!(correction_applies(true, 0, true));
     assert!(!correction_applies(false, 0, true));
-    for f in 4..=8 {
+    assert!(correction_applies(true, 11, true));
+    for f in (4..=8).chain(13..=24) {
         assert!(correction_applies(true, f, false), "formula {f}");
         assert!(!correction_applies(false, f, false), "formula {f}");
     }

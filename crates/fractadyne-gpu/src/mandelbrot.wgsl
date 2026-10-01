@@ -1112,8 +1112,8 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         }
         // Series approximation: seed δz (and the derivative D) from the order-3 polynomial
         // δz ≈ A·δc + B·δc² + C·δc³ and start at iteration `sa_skip`, skipping that many
-        // perturbation steps. Mandelbrot only (the CPU gates this: formula 0, no Julia, no
-        // aux-accumulating coloring method).
+        // perturbation steps. The `z^d + c` families only (the CPU gates this: the formula's
+        // `series_approximation`, no Julia, no aux-accumulating coloring method).
         if (iu.sa_skip > 0u && iu.julia == 0u) {
             let A = fe_norm(cset(iu.sa_a.xy, iu.sa_a.zw), iu.sa_a_exp);
             let B = fe_norm(cset(iu.sa_b.xy, iu.sa_b.zw), iu.sa_b_exp);
@@ -1769,7 +1769,7 @@ fn fs_iterate_gather(in: VsOut) -> FragOut {
 // `[start_iter, min(end_iter, max_iter))` per dispatch, carrying per-pixel state between passes in
 // three ping-pong textures; `fs_resolve` converts settled state into the normal iteration
 // G-buffer that the color pass consumes. Scope: DIRECT mode (1) and DF32-PERTURBATION mode (0),
-// holomorphic formulas 0..3, aux off (glitch detection IS supported — see ST_GLITCHED);
+// holomorphic formulas 0..3 and 10..12, aux off (glitch detection IS supported — see ST_GLITCHED);
 // everything else keeps single-pass `fs_iterate`,
 // whose behaviour is untouched. Mode 0 carries δz + the floatexp derivative + ref_n between
 // passes, rebasing across chunk boundaries exactly as the single pass would.
@@ -1900,6 +1900,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
         if (iu.formula == 1u) { power_f = 3.0; }
         else if (iu.formula == 2u) { power_f = 4.0; }
         else if (iu.formula == 3u) { power_f = 5.0; }
+        else if (fam_holo(iu.formula)) { power_f = f32(fam_power(iu.formula)); }
         var zf = vec2<f32>(z.re.x, z.im.x);
         var escaped = false;
         loop {
@@ -1916,6 +1917,8 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
                 zn = c_mul(c_sqr(z), z);
             } else if (iu.formula == 2u) {
                 zn = c_sqr(c_sqr(z));
+            } else if (fam_holo(iu.formula)) {
+                zn = fam_direct(iu.formula, z); // Multibrot 6–8, as fs_iterate's family arm
             } else {
                 zn = c_mul(c_sqr(c_sqr(z)), z);
             }
@@ -1926,6 +1929,9 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
                 fp = c_scale(c_sqr(z), 3.0);
             } else if (iu.formula == 2u) {
                 fp = c_scale(c_mul(c_sqr(z), z), 4.0);
+            } else if (fam_holo(iu.formula)) {
+                let d = fam_power(iu.formula);
+                fp = c_scale(fam_pow_df(z, d - 1u), f32(d));
             } else {
                 fp = c_scale(c_sqr(c_sqr(z)), 5.0);
             }
@@ -1959,7 +1965,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
         // ---------------- df32 perturbation (mode 0): δz vs the reference orbit ----------------
         // The exact arithmetic and ORDER of fs_iterate's mode-0 branch (derivative first, using
         // Z[ref_n] + δz; then the formula δ-update; then advance and rebase-check), restricted to
-        // the holomorphic formulas 0..3 with aux/glitch off — the app gates activation to that
+        // the holomorphic formulas 0..3 and 10..12 with aux/glitch off — the app gates activation to that
         // scope. State: δz (df32) in st_z, the floatexp derivative's MANTISSA in st_dz and its
         // EXPONENT in info ch3, the reference position ref_n in info ch2 while running.
         let pert = cset(
@@ -2007,6 +2013,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
         if (iu.formula == 1u) { power_f = 3.0; }
         else if (iu.formula == 2u) { power_f = 4.0; }
         else if (iu.formula == 3u) { power_f = 5.0; }
+        else if (fam_holo(iu.formula)) { power_f = f32(fam_power(iu.formula)); }
         var zf = vec2<f32>(0.0, 0.0);
         var z_full_re = vec2<f32>(0.0, 0.0); // full z, df32 — stored at escape for the resolve
         var z_full_im = vec2<f32>(0.0, 0.0);
@@ -2021,11 +2028,15 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             // from here to the matching END marker with its generated perturbed step.
             // Derivative update using the CURRENT full z (before the δ advances).
             let zfn = vec2<f32>(z.re.x + dz.re.x, z.im.x + dz.im.x);
-            let fp = deriv_factor(iu.formula, zfn);
+            var fp: vec2<f32>;
+            if (fam_holo(iu.formula)) { fp = fam_deriv(iu.formula, zfn); } else { fp = deriv_factor(iu.formula, zfn); }
             D = fe_mul_c(D, fp.x, fp.y);
             if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
-            // Formula δ-update (holomorphic families only — the app gates to formula ≤ 3).
-            if (iu.formula == 1u) {
+            // Formula δ-update (holomorphic families only — the app gates to `resumable_passes`:
+            // Mandelbrot, Multibrot 3–8).
+            if (fam_holo(iu.formula)) {
+                dz = c_add(fam_pert_df(iu.formula, z, dz), dc); // as fs_iterate's family arm
+            } else if (iu.formula == 1u) {
                 let z2 = c_sqr(z); let dz2 = c_sqr(dz); let dz3 = c_mul(dz2, dz);
                 var t = c_add(c_scale(c_mul(z2, dz), 3.0), c_scale(c_mul(z, dz2), 3.0));
                 t = c_add(t, dz3); dz = c_add(t, dc);
@@ -2165,7 +2176,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
 //   st_exp  RUNNING ch0 D.e, ch1..3 spare                     | ESCAPE unused
 //
 // Scope, inherited from the app's `chunk_over` gate exactly as mode 0's chunk body is: the
-// HOLOMORPHIC formulas 0..3 only, aux coloring off. That is what keeps the 13-float budget
+// HOLOMORPHIC formulas 0..3 and 10..12 only, aux coloring off. That is what keeps the 13-float budget
 // honest — Phoenix (formula 8) additionally carries δz_{n-1} AND D_{n-1} (ten more values,
 // which alone would blow four targets), and aux coloring carries a five-float orbit
 // accumulator. Tricorn (4) and the abs families (5..7) are out of scope, so their δ-updates are
@@ -2286,12 +2297,13 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
     }
 
     // Fixed up front from the formula (the single-pass loop assigns it inside each branch, which
-    // is the same value for formulas 0..3 — but only if the loop body runs, and a resumed pass
+    // is the same value for each formula in scope — but only if the loop body runs, and a resumed pass
     // may escape on its first iteration).
     var power_f = 2.0;
     if (iu.formula == 1u) { power_f = 3.0; }
     else if (iu.formula == 2u) { power_f = 4.0; }
     else if (iu.formula == 3u) { power_f = 5.0; }
+    else if (fam_holo(iu.formula)) { power_f = f32(fam_power(iu.formula)); }
 
     var zf = vec2<f32>(0.0, 0.0);
     var z_full: Fe = fe_zero(); // full z = Z_{n+1} + δz, kept for the escape store
@@ -2354,7 +2366,7 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
                 let zx = rn.re.x + ndzf.x;
                 let zy = rn.im.x + ndzf.y;
                 if (zx * zx + zy * zy > bail2) { continue; } // overshoot → drop a level
-                D = fe_add(fe_mul(A, D), B); // formula <= 3 by scope
+                D = fe_add(fe_mul(A, D), B); // BLA is Mandelbrot only (`bla_levels` above)
                 dz = ndz;
                 ref_n = nref;
                 iter = iter + span;
@@ -2416,11 +2428,15 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
         // BEFORE the δ advances — the same order as the single-pass loop.
         let dzc = fe_lo_f32(dz);
         let zfn = vec2<f32>(Z.re.x + dzc.x, Z.im.x + dzc.y);
-        let fp = deriv_factor(iu.formula, zfn);
+        var fp: vec2<f32>;
+        if (fam_holo(iu.formula)) { fp = fam_deriv(iu.formula, zfn); } else { fp = deriv_factor(iu.formula, zfn); }
         D = fe_mul_c(D, fp.x, fp.y);
         if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
 
-        if (iu.formula == 1u) {
+        if (fam_holo(iu.formula)) {
+            // Multibrot 6–8, as fs_iterate's family arm (no extended-range dip handling, as 3–5).
+            dz = fe_add(fam_pert_fe(iu.formula, Z, dz), dc);
+        } else if (iu.formula == 1u) {
             // z^3: δz' = 3Z²δz + 3Z δz² + δz³ + δc
             let Z2 = c_sqr(Z);
             let dz2 = fe_sqr(dz);

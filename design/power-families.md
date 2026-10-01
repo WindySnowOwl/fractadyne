@@ -1,6 +1,6 @@
 # Built-in power and fold families
 
-Status: design, 2026-10-01. Step 3 of "ship a formula collection, read Fractint's formulas, add the
+Status: phases 1 and 2 built, 2026-10-01 (§5.1); 3–5 open. Step 3 of "ship a formula collection, read Fractint's formulas, add the
 families deep zoomers use" (the user: "proceed in order 1-3 with appropriate tests").
 
 ## 1. Goal
@@ -157,6 +157,40 @@ gates and goldens review.
     as custom formulas; their case rests on the fixed path's extras and on phases 2–4. Specialising
     the fixed shader per family (a module per family, as the custom path builds) looks like a
     broad per-step win for the existing families too — not started, a decision of its own.
+- **Phase 2** (RTX 3080). `caps` counts Multibrot 6–8 as `z^d + c`: series approximation,
+  resumable passes, the nucleus finder, exports without glitch correction.
+  - *B5.* The walk was already generic in d; only its degree table stopped at 5. Its coefficients
+    are now checked against the map itself, not only through δz at one δc: the exact δz at
+    δc = h·iᵏ from bignum orbits, Fourier-summed, gives A, B and C to 1e-9 for d = 2..8
+    (`series_coefficients_are_the_maps_taylor_coefficients`). That test exists because a walk that
+    dropped the C(d,3)·A³ term passed everything else — SA's own criterion holds the cubic term
+    under 2^-16 of the linear one, so a wrong C only lengthens skips (Multibrot 4: 49 → 67).
+  - *The old SA check was vacuous.* "Multibrot 3–5 SA matches SA-off at 1e7×" ran at (0.2, 0.1),
+    every pixel interior. At boundary views SA on and off part on thousands of pixels for every
+    power, old ones included (4,555 for Multibrot 3), nearly all steep; against the CPU's f64 orbit,
+    at the pixels its own neighbours agree on, they are equally right (SA on / off wrong at 182 /
+    190, 81 / 76, 242 / 226, 31 / 32, 0 / 0, 3 / 3 for d = 3..8). The boundary rows now ask that
+    question; the interior rows stay.
+  - *A seed past the bailout — a black frame in a released family.* The walk stops at the
+    reference's escape (|Z|² > 1e12), so a skip could land two samples before the end with |Z| far
+    past 256; the shader first tests the seeded pixel a step later, where |z|² ≈ |Z|^(2d)
+    overflows f32 from d = 4: −∞ everywhere, all "interior". Multibrot 5 at 1e40× (skip 4,466 of a
+    4,468-sample reference) and Multibrot 6 at 1e45× rendered black. Seeds are now bounded by
+    |Z_n|² ≤ 2^(120/d) (`sa_seed_max2`), which for d ≤ 3 sits above the reference's own stop, so
+    Mandelbrot and Multibrot 3 skip exactly as before (the MPFR twin mirrors it;
+    `the_sa_walk_is_backend_identical` green on the GNU build).
+  - *Chunked = single pass, bit for bit,* in direct, df32 (incl. the rebase storm) and floatexp at
+    1e30× on deep points bisected in bignum: 48,390 pixels escaping over 7,474 distinct counts,
+    SA seeding at 1,920 (Multibrot 6). ⚠The first bisected points left the set through the main
+    body, whose boundary is neutral: every neighbour escaped on step 1999 or 2000 — a view that
+    agrees trivially. The fixtures are the first rays whose 1e-30 neighbours spread ≥ 300 steps.
+  - *Glitch correction* (the audit, 800×450 at 1e30×): it changed 0.016–0.027% of pixels and, of
+    24 sampled per family, made none right that was wrong (22–24 sub-pixel sensitive, the rest
+    right either way) — Multibrot 3–5's finding. Off for 6–8, as for them.
+  - *Live:* a 40-octave zoomtest 2^60 → 2^100 on Multibrot 6, 55.5 fps, worst frame 27.7 ms, every
+    dispatch chunked.
+  - *Gates.* Core 170, app 679, self-test 413/413 (27 new), goldens 31/31 unchanged; the MPFR
+    identity matrix now covers ids 0–24.
 
 ## 6. Risks
 

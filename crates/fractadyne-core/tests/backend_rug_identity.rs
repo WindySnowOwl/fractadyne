@@ -58,9 +58,10 @@ fn the_mpfr_backend_is_byte_identical_to_astro_float() {
     let (mut cases, mut samples) = (0usize, 0usize);
     let mut bad: Vec<String> = Vec::new();
 
-    // All ten formula ids, so Phoenix's two-term recurrence and the `abs` families (Burning Ship,
-    // Celtic, Buffalo, Tricorn) are covered — not just Mandelbrot's `z²+c`.
-    for formula in 0..10u32 {
+    // Every built-in formula id, so Phoenix's two-term recurrence, the `abs` families (Burning
+    // Ship, Celtic, Buffalo, Tricorn) and the power families (Multibrot 6–8 and the folds at
+    // powers 3–5, ids 10–24) are covered — not just Mandelbrot's `z²+c`.
+    for formula in 0..fc::formula::COUNT {
         for (label, sx, sy, zx, zy) in POINTS {
             for &p in &precisions {
                 let cx = fc::parse_bf_prec(sx, p).unwrap();
@@ -275,7 +276,7 @@ fn the_pick_scoring_walk_is_backend_identical() {
     let (mut cases, mut samples) = (0usize, 0usize);
     let mut bad: Vec<String> = Vec::new();
 
-    for formula in 0..10u32 {
+    for formula in 0..fc::formula::COUNT {
         for (label, sx, sy, zx, zy) in POINTS {
             for &p in &precisions {
                 let cx = fc::parse_bf_prec(sx, p).unwrap();

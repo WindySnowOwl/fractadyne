@@ -706,7 +706,9 @@ pub(crate) fn try_series_skip_walk(
     // coefficient-width copy of Z_{n-1}, advances the reference through the shared generic step
     // (byte-identical by the orbit matrix) and says whether Z_n escaped (truncating f64 view,
     // like `to_f64`).
-    let z_step = |zx: &mut Float, zy: &mut Float| -> (Float, Float, bool) {
+    // And whether Z_n is within the seed bound (`sa_seed_max2`, degree 2 here).
+    let seed_max2 = crate::reference::sa_seed_max2(2);
+    let z_step = |zx: &mut Float, zy: &mut Float| -> (Float, Float, bool, bool) {
         let (zcx, zcy) = if narrow {
             (Float::with_val_round(ctx_c, &*zx, RZ).0, Float::with_val_round(ctx_c, &*zy, RZ).0)
         } else {
@@ -716,11 +718,12 @@ pub(crate) fn try_series_skip_walk(
         *zx = nzx;
         *zy = nzy;
         let (fx, fy) = (zx.to_f64_trunc(), zy.to_f64_trunc());
-        (zcx, zcy, fx * fx + fy * fy > 1.0e12)
+        let m2 = fx * fx + fy * fy;
+        (zcx, zcy, m2 > 1.0e12, m2 <= seed_max2)
     };
     // The coefficient chain. `Err` = cancelled.
     type Walked = Result<Option<(u32, [Float; 6])>, ()>;
-    let walk = |next: &mut dyn FnMut() -> Option<(Float, Float, bool)>| -> Walked {
+    let walk = |next: &mut dyn FnMut() -> Option<(Float, Float, bool, bool)>| -> Walked {
         let (mut ax, mut ay) = (zero(ctx_c), zero(ctx_c));
         let (mut bx, mut by) = (zero(ctx_c), zero(ctx_c));
         let (mut cxx, mut cyy) = (zero(ctx_c), zero(ctx_c));
@@ -729,7 +732,7 @@ pub(crate) fn try_series_skip_walk(
             if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
                 return Err(());
             }
-            let Some((zcx, zcy, z_escaped)) = next() else { break };
+            let Some((zcx, zcy, z_escaped, z_seedable)) = next() else { break };
             let (zcx, zcy) = (&zcx, &zcy);
             // For d = 2: Z^{d-1} = Z itself (astro's `cpow_bf(z, 1)` is an exact clone) and the
             // Z^{d-2} factor is the identity, so the recurrence collapses to the lines below.
@@ -761,13 +764,13 @@ pub(crate) fn try_series_skip_walk(
             }
             let valid = lc + 2.0 * log2_max_dc < la + crate::reference::SA_EPS_LOG2;
             if n >= crate::reference::SA_MIN_SKIP {
-                if valid {
+                if valid && z_seedable {
                     best = Some((
                         n,
                         [ax.clone(), ay.clone(), bx.clone(), by.clone(), cxx.clone(), cyy.clone()],
                     ));
                 } else {
-                    break; // coefficients only grow ⇒ once invalid, stays invalid
+                    break; // once invalid, stays invalid; past the seed bound, escaping
                 }
             }
             // Stop if the reference itself escaped.

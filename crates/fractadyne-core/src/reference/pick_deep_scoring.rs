@@ -159,6 +159,37 @@ fn scorer_matches_oracle_multibrot5() {
     );
 }
 
+/// Powers 6–8 (design/power-families.md, phase 2: `formula_power` admits them, so the deep pick
+/// scores their candidates). Each fixture is a boundary point bisected in bignum — 192 bits, 112
+/// halvings of "escapes within 2,000" between 0 and twice a unit ray — on the first ray of
+/// 3.75° + 7.5°·k whose candidates here escape over ≥ 300 distinct steps (Multibrot 6: 3.75°,
+/// 7: 11.25°, 8: 18.75°). ⚠The first rays tried left the set through the main body, whose boundary
+/// is NEUTRAL: every candidate escaped on step 1999 or 2000, all trusted, nothing outliving the
+/// reference by more than a step — a fixture that tests the δ-step for one link and no rebase.
+/// Found 2026-10-01 (trusted / flagged: 3 / 3, 5 / 1, 4 / 2; every trusted score exact).
+#[test]
+fn scorer_matches_oracle_multibrot_6_to_8() {
+    for (formula, x, y) in [
+        (
+            formula::MULTIBROT6,
+            "6.857394901829179081616429758180505352925479174432123629563e-1",
+            "4.494574077574449791211463579695434838514006741731437234958e-2",
+        ),
+        (
+            formula::MULTIBROT7,
+            "8.476326589810416770591545692023465481479590290010075317289e-1",
+            "1.686046188662333201185254044899073603644196631087163205889e-1",
+        ),
+        (
+            formula::MULTIBROT8,
+            "7.83482963062576633425633295165828974709342271037759608728e-1",
+            "2.659566285584885991743283420348254644023437952052363285336e-1",
+        ),
+    ] {
+        scorer_matches_oracle_at(formula, x, y, 1, 1);
+    }
+}
+
 /// The acceptance property end to end, on the tight-spread fixture: both phase-2 engines
 /// elect the SAME point, the perturbation engine actually scored someone (an early-return
 /// fixture could never go red), and the production auto-resolution takes the new engine at

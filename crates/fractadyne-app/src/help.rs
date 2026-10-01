@@ -434,8 +434,9 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
          z's parts and then the power; Tricorn d conjugates first; Celtic d and Buffalo d fold the \
          real part (and, for Buffalo, the imaginary part) of z^d. The Fractal menu and the \
          dropdown list them one family to a row (\"Burning Ship  3 4 5\"). Each deep-zooms as its \
-         power-2 sibling does; Multibrot 8 escapes at radius 128 instead of 256, where its next \
-         step would leave single-precision range.",
+         power-2 sibling does, and Multibrot 6, 7 and 8 also take series approximation and the \
+         minibrot finder (M), as Multibrot 3–5 do. Multibrot 8 escapes at radius 128 instead of \
+         256, where its next step would leave single-precision range.",
     );
     help_sub(ui, "Phoenix");
     help_p(
