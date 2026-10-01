@@ -1586,6 +1586,9 @@ fn run_reference<B: RefBackend + IrField>(
 /// Formulas written as Fractint-style expressions.
 pub mod parse;
 
+/// The syntax tree the parser reads a formula into (the textbook editor's view of it).
+pub mod syntax;
+
 /// Perturbed steps derived from a formula (deep zoom).
 pub mod perturb;
 

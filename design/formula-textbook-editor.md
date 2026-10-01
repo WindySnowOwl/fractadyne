@@ -113,15 +113,21 @@ pub enum Expr {                            // every node carries its source Span
 }
 ```
 
-`parse(src)` becomes `lower(&syntax(src)?)`. Constant folding, variable binding and every error that
-is raised while building IR ("used before it is assigned", "a complex constant takes two real
-numbers", …) move into `lower` with their spans. **One grammar** serves the renderer and the editor,
-so the two cannot drift.
+**As built (P1, `5de58e7`…):** not a parse-then-lower split but **one pass** that builds both.
+A split would have changed which error a source reports: the parser stops at its first error of
+either kind, so `a2 ^= z` is "`a2` is used before it is assigned" today, while a syntax pass first
+would report the `=`. Instead every production returns its IR value AND its node; `parse(src)` runs
+the pass building IR exactly as before (the same calls in the same order), and `syntax(src)` runs it
+with the three evaluation-only checks — a name used before it is assigned, a complex constant of
+non-constants, a formula with no step — left out, so a formula still being typed has a tree. **One
+grammar** serves the renderer and the editor, so the two cannot drift.
 
-**Gate (byte-neutral):** for every formula text in the unit tests, the self-test, the keypad and
-completion tests, the examples and the library seeds, the IR and the generated WGSL are **identical**
-before and after; for an error corpus, every message and line/column is identical. Same discipline as
-the image-rendering rework.
+**Gate (byte-neutral), met:** a snapshot of 2,100 inputs — the repository's formulas plus 1,500
+generated ones and corrupted copies — records each one's IR (Debug form, every constant's bits) or
+exact error; it was recorded BEFORE the change and is unchanged after it, and a planted one-character
+change to the parser turns it red, naming the inputs. Over the same corpus: whatever `parse` accepts
+`syntax` accepts; where `syntax` refuses, `parse` refuses with the same error or with an evaluation
+error earlier in the text.
 
 ### 4.3 The editor tree
 

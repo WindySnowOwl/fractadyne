@@ -17,6 +17,7 @@
 //! Not yet (the rest of design phase 3): `init:`/`bailout:` sections, `if`, comparisons, `fn1`…`fn4`.
 //! They are reported as errors, never mis-read.
 
+use super::syntax::{BinOp, Comment, Expr, ExprKind, Name, Span, Statement, Syntax};
 use super::{Builder, Formula, Func, Op, Val};
 
 /// Where and why a source failed to parse. `line` and `col` are 1-based, `col` in characters.
@@ -40,12 +41,29 @@ pub const MAX_PARAMS: usize = 5;
 
 /// Parse a step. The result has one phase; its parameters are `p1`…`p5` in order.
 pub fn parse(src: &str) -> Result<Formula, ParseError> {
-    let tokens = lex(src)?;
-    let mut p = Parser { src, tokens, at: 0, b: Builder::new(), vars: Vec::new(), consts: Vec::new() };
+    run(src, true).map(|(f, _)| f.expect("a lowering run returns its formula"))
+}
+
+/// Read a source into its syntax tree, without evaluating it: what the formula editor's textbook
+/// mode typesets. It is the same pass as [`parse`] with the IR's own checks left out — a name used
+/// before it is assigned, a complex constant with non-constant parts, a formula with no step — so a
+/// formula still being typed still has a tree. A source `parse` accepts always has one, and the
+/// grammar's errors are the same errors in the same places.
+pub fn syntax(src: &str) -> Result<Syntax, ParseError> {
+    run(src, false).map(|(_, s)| s)
+}
+
+/// One pass over `src`: the syntax tree always, the IR as well when `lower`. ⚠The IR is built by
+/// exactly the calls, in exactly the order, of the parser before the tree existed (the snapshot in
+/// `parse/snapshot.rs` holds it to that), and with `lower` every error comes where it came before.
+fn run(src: &str, lower: bool) -> Result<(Option<Formula>, Syntax), ParseError> {
+    let (tokens, comments) = lex(src)?;
+    let mut p = Parser { src, tokens, at: 0, b: Builder::new(), vars: Vec::new(), consts: Vec::new(), lower };
     let z = p.leaf(Op::Z);
     p.vars.push(("z".to_string(), z));
     let mut assigned_z = false;
     let mut last_bare = None;
+    let mut statements = Vec::new();
     loop {
         while p.eat(&Tok::Sep) {}
         if p.peek() == &Tok::End {
@@ -57,23 +75,30 @@ pub fn parse(src: &str) -> Result<Formula, ParseError> {
             if reserved(&name) {
                 return Err(p.err_at(stmt_at, format!("`{name}` cannot be assigned")));
             }
-            let v = p.expr()?;
+            let (v, body) = p.expr()?;
             if name == "z" {
                 assigned_z = true;
             }
+            let target = Name { name: name.clone(), span: p.token_span(stmt_at) };
             match p.vars.iter_mut().find(|(n, _)| *n == name) {
                 Some(slot) => slot.1 = v,
                 None => p.vars.push((name, v)),
             }
             last_bare = None;
+            statements.push(Statement { span: p.span_from(stmt_at), target: Some(target), body });
         } else {
-            let v = p.expr()?;
+            let (v, body) = p.expr()?;
             last_bare = Some(v);
+            statements.push(Statement { span: body.span, target: None, body });
         }
         match p.peek() {
             Tok::Sep | Tok::End => {}
             _ => return Err(p.err(format!("expected ',' or a new line, found {}", p.peek().describe()))),
         }
+    }
+    let tree = Syntax { statements, comments };
+    if !lower {
+        return Ok((None, tree));
     }
     let out = match last_bare {
         Some(v) => v,
@@ -82,7 +107,7 @@ pub fn parse(src: &str) -> Result<Formula, ParseError> {
     };
     let prog = p.b.finish(out).map_err(|e| ParseError { line: 1, col: 1, message: e.to_string() })?;
     // Folding leaves the folded parts' instructions behind; drop everything the output does not read.
-    Ok(Formula::single(prog.without_dead_code()))
+    Ok((Some(Formula::single(prog.without_dead_code())), tree))
 }
 
 /// `1/k` is exact: `k` is a normal power of two.
@@ -202,11 +227,13 @@ impl Tok {
     }
 }
 
-/// Tokens with their byte offsets. A ',' at parenthesis depth 0 is a statement separator; inside
-/// parentheses it separates a complex constant's parts.
-fn lex(src: &str) -> Result<Vec<(Tok, usize)>, ParseError> {
+/// Tokens with their byte ranges, and the comments. A ',' at parenthesis depth 0 is a statement
+/// separator; inside parentheses it separates a complex constant's parts.
+#[allow(clippy::type_complexity)]
+fn lex(src: &str) -> Result<(Vec<(Tok, usize, usize)>, Vec<Comment>), ParseError> {
     let bytes = src.as_bytes();
     let mut out = Vec::new();
+    let mut comments = Vec::new();
     let (mut i, mut depth) = (0usize, 0i32);
     let err = |at: usize, message: String| {
         let (line, col) = line_col(src, at);
@@ -225,6 +252,8 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize)>, ParseError> {
                 while i < bytes.len() && bytes[i] != b'\n' {
                     i += 1;
                 }
+                let text = src[start + 1..i].trim_end_matches('\r').to_string();
+                comments.push(Comment { text, span: Span { start, end: i } });
                 continue;
             }
             b'0'..=b'9' | b'.' => {
@@ -247,7 +276,7 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize)>, ParseError> {
                 let text = &src[i..j];
                 let v: f64 = text.parse().map_err(|_| err(i, format!("`{text}` is not a number")))?;
                 i = j;
-                out.push((Tok::Num(v), start));
+                out.push((Tok::Num(v), start, i));
                 continue;
             }
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
@@ -257,7 +286,7 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize)>, ParseError> {
                 }
                 let name = src[i..j].to_ascii_lowercase();
                 i = j;
-                out.push((Tok::Ident(name), start));
+                out.push((Tok::Ident(name), start, i));
                 continue;
             }
             b'+' => Tok::Plus,
@@ -300,10 +329,10 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize)>, ParseError> {
             }
         };
         i += 1;
-        out.push((tok, start));
+        out.push((tok, start, i));
     }
-    out.push((Tok::End, src.len()));
-    Ok(out)
+    out.push((Tok::End, src.len(), src.len()));
+    Ok((out, comments))
 }
 
 fn line_col(src: &str, at: usize) -> (usize, usize) {
@@ -315,15 +344,32 @@ fn line_col(src: &str, at: usize) -> (usize, usize) {
 
 struct Parser<'a> {
     src: &'a str,
-    tokens: Vec<(Tok, usize)>,
+    /// Tokens with their byte ranges.
+    tokens: Vec<(Tok, usize, usize)>,
     at: usize,
     b: Builder,
     vars: Vec<(String, Val)>,
     /// Values known to be constants, for folding `(re, im)` parts, `-2` and `2*3`.
     consts: Vec<(Val, (f64, f64))>,
+    /// Building the IR (and so making its checks); without, only the syntax tree is wanted.
+    lower: bool,
 }
 
 impl Parser<'_> {
+    /// Token `i`'s byte range.
+    fn token_span(&self, i: usize) -> Span {
+        let (_, start, end) = &self.tokens[i.min(self.tokens.len() - 1)];
+        Span { start: *start, end: *end }
+    }
+    /// From token `first` to the last token consumed.
+    fn span_from(&self, first: usize) -> Span {
+        let start = self.token_span(first).start;
+        let end = if self.at > first { self.token_span(self.at - 1).end } else { start };
+        Span { start, end }
+    }
+    fn node(&self, first: usize, kind: ExprKind) -> Expr {
+        Expr { kind, span: self.span_from(first) }
+    }
     fn peek(&self) -> &Tok {
         &self.tokens[self.at].0
     }
@@ -373,8 +419,9 @@ impl Parser<'_> {
         self.consts.iter().find(|(c, _)| *c == v).map(|(_, k)| *k)
     }
 
-    fn expr(&mut self) -> Result<Val, ParseError> {
-        let mut acc = self.term()?;
+    fn expr(&mut self) -> Result<(Val, Expr), ParseError> {
+        let first = self.at;
+        let (mut acc, mut tree) = self.term()?;
         loop {
             let add = if self.eat(&Tok::Plus) {
                 true
@@ -383,19 +430,22 @@ impl Parser<'_> {
             } else {
                 break;
             };
-            let rhs = self.term()?;
+            let (rhs, rhs_tree) = self.term()?;
             acc = match (self.const_of(acc), self.const_of(rhs)) {
                 (Some(a), Some(b)) if add => self.konst(a.0 + b.0, a.1 + b.1),
                 (Some(a), Some(b)) => self.konst(a.0 - b.0, a.1 - b.1),
                 _ if add => self.b.push(Op::Add(acc, rhs)),
                 _ => self.b.push(Op::Sub(acc, rhs)),
             };
+            let op = if add { BinOp::Add } else { BinOp::Sub };
+            tree = self.node(first, ExprKind::Bin(op, Box::new(tree), Box::new(rhs_tree)));
         }
-        Ok(acc)
+        Ok((acc, tree))
     }
 
-    fn term(&mut self) -> Result<Val, ParseError> {
-        let mut acc = self.unary()?;
+    fn term(&mut self) -> Result<(Val, Expr), ParseError> {
+        let first = self.at;
+        let (mut acc, mut tree) = self.unary()?;
         loop {
             let mul = if self.eat(&Tok::Star) {
                 true
@@ -404,7 +454,9 @@ impl Parser<'_> {
             } else {
                 break;
             };
-            let rhs = self.unary()?;
+            let (rhs, rhs_tree) = self.unary()?;
+            let op = if mul { BinOp::Mul } else { BinOp::Div };
+            tree = self.node(first, ExprKind::Bin(op, Box::new(tree), Box::new(rhs_tree)));
             let (ka, kb) = (self.const_of(acc), self.const_of(rhs));
             let real = |k: Option<(f64, f64)>| k.filter(|k| k.1 == 0.0).map(|k| k.0);
             acc = if let (Some(a), Some(b)) = (ka, kb) {
@@ -429,36 +481,46 @@ impl Parser<'_> {
                 self.b.push(Op::Div(acc, rhs))
             };
         }
-        Ok(acc)
+        Ok((acc, tree))
     }
 
-    fn unary(&mut self) -> Result<Val, ParseError> {
+    fn unary(&mut self) -> Result<(Val, Expr), ParseError> {
+        let first = self.at;
         if self.eat(&Tok::Minus) {
-            let v = self.unary()?;
-            return Ok(match self.const_of(v) {
+            let (v, inner) = self.unary()?;
+            let v = match self.const_of(v) {
                 Some((re, im)) => self.konst(-re, -im),
                 None => self.b.push(Op::Neg(v)),
-            });
+            };
+            return Ok((v, self.node(first, ExprKind::Neg(Box::new(inner)))));
         }
         if self.eat(&Tok::Plus) {
-            return self.unary();
+            let (v, inner) = self.unary()?;
+            return Ok((v, self.node(first, ExprKind::Pos(Box::new(inner)))));
         }
         self.power()
     }
 
-    fn power(&mut self) -> Result<Val, ParseError> {
-        let base = self.atom()?;
+    fn power(&mut self) -> Result<(Val, Expr), ParseError> {
+        let first = self.at;
+        let (base, base_tree) = self.atom()?;
         if !self.eat(&Tok::Caret) {
-            return Ok(base);
+            return Ok((base, base_tree));
         }
-        let exp = self.unary()?; // right-associative: z^2^3 = z^(2^3); z^-1 allowed
+        let (exp, exp_tree) = self.unary()?; // right-associative: z^2^3 = z^(2^3); z^-1 allowed
+        let tree = self.node(first, ExprKind::Pow(Box::new(base_tree), Box::new(exp_tree)));
+        Ok((self.power_value(base, exp), tree))
+    }
+
+    /// `base ^ exp`: an integer constant exponent as repeated products, constants folded.
+    fn power_value(&mut self, base: Val, exp: Val) -> Val {
         let k = match self.const_of(exp) {
             Some((k, im)) if im == 0.0 && k.fract() == 0.0 && k.abs() <= 64.0 => k,
-            _ => return Ok(self.b.push(Op::Pow(base, exp))),
+            _ => return self.b.push(Op::Pow(base, exp)),
         };
         let n = k.abs() as u32;
         if n == 0 {
-            return Ok(self.konst(1.0, 0.0));
+            return self.konst(1.0, 0.0);
         }
         if let Some((re, im)) = self.const_of(base) {
             let (mut r, b) = ((1.0, 0.0), (re, im));
@@ -469,44 +531,50 @@ impl Parser<'_> {
                 let d = r.0 * r.0 + r.1 * r.1;
                 r = (r.0 / d, -r.1 / d);
             }
-            return Ok(self.konst(r.0, r.1));
+            return self.konst(r.0, r.1);
         }
         let p = if n == 1 { base } else { self.b.push(Op::PowI(base, n)) };
-        Ok(if k < 0.0 {
+        if k < 0.0 {
             let one = self.konst(1.0, 0.0);
             self.b.push(Op::Div(one, p))
         } else {
             p
-        })
+        }
     }
 
-    fn atom(&mut self) -> Result<Val, ParseError> {
+    fn atom(&mut self) -> Result<(Val, Expr), ParseError> {
         let tok_at = self.at;
         match self.peek().clone() {
             Tok::Num(v) => {
                 self.at += 1;
-                Ok(self.konst(v, 0.0))
+                Ok((self.konst(v, 0.0), self.node(tok_at, ExprKind::Num(v))))
             }
             Tok::LParen => {
                 self.at += 1;
-                let first = self.expr()?;
+                let (first, first_tree) = self.expr()?;
                 if self.eat(&Tok::Comma) {
-                    let second = self.expr()?;
+                    let (second, second_tree) = self.expr()?;
                     let real = |k: Option<(f64, f64)>| k.filter(|k| k.1 == 0.0).map(|k| k.0);
-                    let (Some(re), Some(im)) = (real(self.const_of(first)), real(self.const_of(second))) else {
-                        return Err(self.err_at(tok_at, "a complex constant `(re, im)` takes two real numbers".into()));
+                    let parts = match (real(self.const_of(first)), real(self.const_of(second))) {
+                        (Some(re), Some(im)) => (re, im),
+                        _ if self.lower => {
+                            return Err(self.err_at(tok_at, "a complex constant `(re, im)` takes two real numbers".into()))
+                        }
+                        // Only the tree is wanted: a formula still being typed has one.
+                        _ => (0.0, 0.0),
                     };
                     self.expect(&Tok::RParen)?;
-                    return Ok(self.konst(re, im));
+                    let tree = self.node(tok_at, ExprKind::Complex(Box::new(first_tree), Box::new(second_tree)));
+                    return Ok((self.konst(parts.0, parts.1), tree));
                 }
                 self.expect(&Tok::RParen)?;
-                Ok(first)
+                Ok((first, self.node(tok_at, ExprKind::Group(Box::new(first_tree)))))
             }
             Tok::Bar => {
                 self.at += 1;
-                let v = self.expr()?;
+                let (v, inner) = self.expr()?;
                 self.expect(&Tok::Bar)?;
-                Ok(self.b.push(Op::Norm(v)))
+                Ok((self.b.push(Op::Norm(v)), self.node(tok_at, ExprKind::Bars(Box::new(inner)))))
             }
             Tok::Ident(name) => {
                 self.at += 1;
@@ -515,23 +583,30 @@ impl Parser<'_> {
                 }
                 if let Some(f) = function(&name) {
                     self.expect(&Tok::LParen)?;
-                    let a = self.expr()?;
+                    let (a, arg) = self.expr()?;
                     self.expect(&Tok::RParen)?;
-                    return Ok(self.apply(f, a));
+                    let tree = self.node(tok_at, ExprKind::Call { func: name, arg: Box::new(arg) });
+                    return Ok((self.apply(f, a), tree));
                 }
                 if self.peek() == &Tok::LParen {
                     return Err(self.err_at(tok_at, format!("unknown function `{name}`")));
                 }
+                let tree = self.node(tok_at, ExprKind::Name(name.clone()));
                 match name.as_str() {
-                    "c" | "pixel" => return Ok(self.leaf(Op::C)),
-                    "pi" => return Ok(self.konst(std::f64::consts::PI, 0.0)),
-                    "e" => return Ok(self.konst(std::f64::consts::E, 0.0)),
+                    "c" | "pixel" => return Ok((self.leaf(Op::C), tree)),
+                    "pi" => return Ok((self.konst(std::f64::consts::PI, 0.0), tree)),
+                    "e" => return Ok((self.konst(std::f64::consts::E, 0.0), tree)),
                     _ => {}
                 }
                 if let Some(i) = param_index(&name) {
-                    return Ok(self.leaf(Op::Param(i)));
+                    return Ok((self.leaf(Op::Param(i)), tree));
                 }
-                self.var(&name).ok_or_else(|| self.err_at(tok_at, format!("`{name}` is used before it is assigned")))
+                match self.var(&name) {
+                    Some(v) => Ok((v, tree)),
+                    None if self.lower => Err(self.err_at(tok_at, format!("`{name}` is used before it is assigned"))),
+                    // Only the tree is wanted: stand in with `z`, which is always bound.
+                    None => Ok((self.leaf(Op::Z), tree)),
+                }
             }
             Tok::Unsupported(what) => Err(self.err(format!("{what} operators are not supported yet (no `if` or bailout tests)"))),
             other => Err(self.err(format!("expected a value, found {}", other.describe()))),
@@ -583,3 +658,6 @@ mod tests;
 
 #[cfg(test)]
 mod snapshot;
+
+#[cfg(test)]
+mod syntax_tests;

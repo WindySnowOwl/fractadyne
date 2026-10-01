@@ -149,7 +149,7 @@ impl Gen {
     }
 }
 
-fn corpus() -> Vec<String> {
+pub(super) fn corpus() -> Vec<String> {
     let mut out: Vec<String> = KNOWN.iter().map(|s| s.to_string()).collect();
     let mut g = Gen(0x5eed_f0f0_1234_abcd);
     for _ in 0..1500 {
