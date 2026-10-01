@@ -74,7 +74,11 @@ Changes after 0.3.0-beta.1:
   overflow). BLA (bilinear approximation) now covers Multibrot 3–8 as well as Mandelbrot: at the
   interior of a deep Multibrot 6 minibrot (1e30×, 200,000 iterations) a render takes 1.3 s instead
   of 4.5 s; a deep view whose reference escapes early pays for it as Mandelbrot's do (4.4 s instead
-  of 2.9 s at the same depth), the trade-off Mandelbrot's policy already makes there.
+  of 2.9 s at the same depth), the trade-off Mandelbrot's policy already makes there. Burning Ship,
+  Tricorn, Celtic and Buffalo, at power 2 and at powers 3–5, take BLA too, through a real 2×2 map
+  per step that knows where each fold lies. They have no series approximation, so a deep view's
+  interior used to iterate every step: inside Burning Ship's main body at 1e30× with 30,000
+  iterations, the GPU now takes 4 ms instead of 5.1 s (the render 1.0 s instead of 6.2 s).
   - **Tested:** each family's CPU step is its formula-language program bit for bit (what one types
     as `abs(z)^3 + c` computes Burning Ship 3 exactly); on the GPU, the direct render matches the
     generated module bit for bit up to power 6 and the CPU within 0.4% for powers 7 and 8; the
@@ -85,8 +89,10 @@ Changes after 0.3.0-beta.1:
     approximation is as close to the CPU as one without, at views where pixels escape (the
     Multibrot 3–5 check had none). BLA matches the render without it at every smooth pixel of a
     deep chaotic view of each of Multibrot 3–8 (1e30×, thousands of escape counts), and a split
-    frame with BLA is the single pass bit for bit. Self-test 431 checks, goldens 31 (five new, one
-    per shape). The
+    frame with BLA is the single pass bit for bit. For the folds, each skip lands where the exact
+    steps go (to 1e-4 of the offset, all 16 families at deep views), and a deep view with BLA
+    differs from one without no more than the same view shifted a thousandth of a pixel does.
+    Self-test 463 checks, goldens 31 (five new, one per shape). The
     dispatch ceiling's cost factors for them are measured, with the method beside them in
     `validation/calibration/ceilings.toml`.
 - **Fixed: a deep Multibrot 4 or 5 view could render black (0.3.0-beta.13).** Where the series

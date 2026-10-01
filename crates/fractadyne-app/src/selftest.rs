@@ -279,6 +279,29 @@ fn family_view(formula: u32, mag: f64, px: u32, budget: u32) -> Option<(f64, f64
     best.filter(|(n, _)| n * 100 >= G * G * 2).map(|(_, at)| at)
 }
 
+/// Deep points of the fold families, good to ~2^-112, whose 1e-30 neighbourhood is mostly STABLE
+/// (a sub-pixel nudge leaves a pixel's count alone) — the core's `FOLD_DEEP_FIXTURES`, which record
+/// how they were found. A fold's chaotic boundary is noise at any depth (bisected points first tried
+/// had no stable pixel at all), and a check there would compare noise with noise.
+const FOLD_DEEP: [(FractalKind, &str, &str); 16] = [
+    (FractalKind::Celtic, "-7.523183301672266119158619702700220349889660622278404512203e-1", "-2.14835958763750446308384443362044395573177458962387293481e-1"),
+    (FractalKind::Celtic3, "-1.390111097603047035481381903268406231192188759277730469272e-1", "-1.208364211005726539769261155232087101766648293103934130593e+0"),
+    (FractalKind::Buffalo3, "4.608237148512231691928989032718950631004591668346324319821e-1", "1.154303315171477277006095095403463761887149114811342024179e-1"),
+    (FractalKind::Buffalo5, "4.029273516218120856749052413703955216672657505935849857889e-1", "-5.821723262584372350783097339293223693418500863674671803413e-1"),
+    (FractalKind::BurningShip, "1.510426975372399155276004915912049480568178198670688953146e-1", "4.221360602684940155668847406639261668137033173647796363826e-1"),
+    (FractalKind::Tricorn, "-1.245181750030167260019164378722004235435653851940847122794e+0", "-2.037605720180463320107795585296334647328774720528326395773e-2"),
+    (FractalKind::Buffalo, "-1.510426975372401197787866671960570444323379772291351660331e-1", "4.221360602684941728921263977360891137815433991908003217154e-1"),
+    (FractalKind::BurningShip3, "-9.15383227746129862363246806792022038019889900108861939843e-1", "-1.665596356636845051404128728242821066413195064087217571441e-1"),
+    (FractalKind::BurningShip4, "-1.059059912399875949806604684756823369616419345477182022818e+0", "-6.941445398749050928167618993678418040977879789587693625044e-2"),
+    (FractalKind::BurningShip5, "-1.069304830077022750409631353845070556935692686852387744345e+0", "-7.008594136830775532707863552269324262159198773198077894119e-2"),
+    (FractalKind::Tricorn3, "-8.301165086600040786410117965340966101130685955529819862755e-1", "-7.279926396365465868944042532991377115141048551447173006979e-1"),
+    (FractalKind::Tricorn4, "-2.596843675593252253654911553479302337079929899170186367197e-1", "-5.265878052427495866136872211038079448051950717593488419814e-1"),
+    (FractalKind::Tricorn5, "-9.033536580960661097439171803785319140128294786602977017732e-1", "-4.272544604520101032739291828337394992900827230127916689602e-1"),
+    (FractalKind::Celtic4, "-4.234565860024477641147504048357300264219746679250861041278e-1", "-4.09820898134915444566944199392919060263917505185772053164e-1"),
+    (FractalKind::Celtic5, "-2.281553024011103909013555011760308970573078526808823516802e-1", "-5.773582579137733907699085669559048183803546885637493650668e-1"),
+    (FractalKind::Buffalo4, "-3.071721506556603906348160925396570822822053282996192416967e-1", "4.14173699729186134054547251993249825273527878456300080967e-1"),
+];
+
 /// Deep boundary points of Multibrot 3–8, good to ~2^-112 — the core's fixtures
 /// (`MULTIBROT_DEEP_FIXTURES` in its tests, and `scorer_matches_oracle_multibrot_6_to_8`, which
 /// records how they were found). A [`family_boundary`] point is f64, good to ~1e-15 and garbage
@@ -4861,10 +4884,14 @@ impl FractadyneApp {
             // Multibrot 3–8 (design/power-families.md phase 3, B6): the same question at each
             // power's deep chaotic point, whose pixels escape hundreds to thousands of steps apart —
             // level 0's A = d·Z^(d−1) and radius 2·eps·|Z|/(d−1), and the merge every power shares.
-            // A BLA that is no faster proves nothing, so the skips must SHOW (`CTR_BLA_SKIP`).
+            // And every fold family (phase 4, B7) at a deep point whose pixels are mostly stable,
+            // through its real 2×2 tree. A BLA that is no faster proves nothing, so the skips must
+            // SHOW (`CTR_BLA_SKIP`). Glitch detection off in both renders: the fold families'
+            // requests carry it for the export's corrector, and the question is plain BLA against
+            // plain perturbation.
             let prev = self.fractal;
             self.render_cfg.max_iter = 30_000;
-            for (kind, x, y) in MULTIBROT_DEEP {
+            for (kind, x, y) in MULTIBROT_DEEP.iter().chain(FOLD_DEEP.iter()).copied() {
                 self.fractal = kind;
                 let mut vp = Viewport::new(N as f64, N as f64);
                 vp.center_x = fractadyne_core::parse_bf(x).unwrap();
@@ -4875,10 +4902,20 @@ impl FractadyneApp {
                 on.width = N;
                 on.height = N;
                 on.ss = 1;
+                on.glitch_on = 0;
                 let mut off = on.clone();
                 off.bla_on = 0;
                 let (bon, mode) = (on.bla_on, on.mode);
                 let name = format!("{} BLA == non-BLA @1e30× (deep boundary)", kind.name());
+                // A fold row's CHAOS FLOOR: the render without BLA, shifted a thousandth of a pixel.
+                let fold = fractadyne_core::fold_shape(kind.formula_id()).is_some();
+                let shifted = fold.then(|| {
+                    let mut s = off.clone();
+                    let [rh, ih, rl, il] = s.ref_offset.to_array();
+                    let px = s.span_mantissa.x / N as f64;
+                    s.ref_offset = fractadyne_gpu::RefOffset::from_df32(rh as f64 + rl as f64 + 1.0e-3 * px, ih as f64 + il as f64);
+                    s
+                });
                 match (
                     fractadyne_gpu::render_iter(device, queue, &on)
                         .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter): {e}"))
@@ -4888,33 +4925,52 @@ impl FractadyneApp {
                     (Some(ra), Some(b)) => {
                         let a = &ra.pixels;
                         let skips = ra.counters[fractadyne_gpu::CTR_BLA_SKIP];
-                        let (mut mism, mut esc) = (0u64, 0u64);
-                        for j in 0..nn {
-                            for i in 0..nn {
-                                if steep(&b, i, j) {
-                                    continue;
-                                }
-                                let k = j * nn + i;
-                                let (va, vb) = (a[k * 4], b[k * 4]);
-                                match (va < 0.0, vb < 0.0) {
-                                    (false, false) => {
-                                        esc += 1;
-                                        if (va - vb).abs() > 0.5 {
-                                            mism += 1;
-                                        }
+                        let count = |a: &[f32]| {
+                            let (mut mism, mut esc) = (0u64, 0u64);
+                            for j in 0..nn {
+                                for i in 0..nn {
+                                    if steep(&b, i, j) {
+                                        continue;
                                     }
-                                    (true, true) => {}
-                                    _ => mism += 1,
+                                    let k = j * nn + i;
+                                    let (va, vb) = (a[k * 4], b[k * 4]);
+                                    match (va < 0.0, vb < 0.0) {
+                                        (false, false) => {
+                                            esc += 1;
+                                            if (va - vb).abs() > 0.5 {
+                                                mism += 1;
+                                            }
+                                        }
+                                        (true, true) => {}
+                                        _ => mism += 1,
+                                    }
                                 }
                             }
-                        }
+                            (mism, esc)
+                        };
+                        let (mism, esc) = count(a);
+                        // ⚠A fold's pixel can be "smooth" (its neighbours within 2 iterations) and still
+                        // turn on the DIRECTION of an error far below a pixel — the core traced one
+                        // where BLA's state was 4e-12 off and a δc nudge moving it 7e-11 changed
+                        // nothing. So a fold row is held to its CHAOS FLOOR, the mismatches of the
+                        // same render shifted a thousandth of a pixel: measured 2026-10-01, BLA's
+                        // 95 / 1 / 2 / 1 against the shift's 178 / 1 / 6 / 4 (Celtic, Burning Ship
+                        // 3, 4, Celtic 5), and 0 wherever the shift gave 0.
+                        let floor = shifted.as_ref().and_then(|s| st_render_iter(device, queue, s)).map(|p| count(&p).0);
+                        let (ok, threshold) = match floor {
+                            Some(fl) => (mism <= fl + fl / 4, "bla engaged and skipping, escapers>100, mismatch ≤ 1.25 × a 0.001-px shift's"),
+                            None => (mism == 0, "bla engaged and skipping, escapers>100, 0 mismatch"),
+                        };
                         push_check(&mut checks, &mut last_check_t, SelfCheck {
                             category: "BLA",
                             name,
                             params: format!("mode {mode}, bla_on {bon}, {skips} skips, {esc} smooth escapers"),
-                            result: format!("{mism} mismatch"),
-                            threshold: "bla engaged and skipping, escapers>100, 0 mismatch",
-                            pass: bon == 1 && mode == 2 && skips > 0 && esc > 100 && mism == 0,
+                            result: match floor {
+                                Some(fl) => format!("{mism} mismatch (a 0.001-px shift: {fl})"),
+                                None => format!("{mism} mismatch"),
+                            },
+                            threshold,
+                            pass: bon == 1 && mode == 2 && skips > 0 && esc > 100 && ok,
                         });
                     }
                     _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
@@ -4923,6 +4979,57 @@ impl FractadyneApp {
                         params: format!("mode {mode}, bla_on {bon}"),
                         result: "render failed".into(),
                         threshold: "bla engaged and skipping, escapers>100, 0 mismatch",
+                        pass: false,
+                    }),
+                }
+            }
+            // ⭐The folds have no series approximation, so a deep view's INTERIOR ground through every
+            // iteration until the 2×2 tree (Burning Ship inside its main body at 1e30×, 30,000
+            // iterations: 5.1 s of GPU without it, 4 ms with). Inside each fold's main body (c =
+            // 0.1 − 0.05i: off both axes, and off Re z² = 0, where Celtic's fold radius would be 0),
+            // every pixel interior in both renders, and the tree carrying them: ≥ 5 skips a pixel.
+            for kind in FractalKind::ALL.into_iter().filter(|k| fractadyne_core::fold_shape(k.formula_id()).is_some()) {
+                self.fractal = kind;
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = fractadyne_core::parse_bf("0.1").unwrap();
+                vp.center_y = fractadyne_core::parse_bf("-0.05").unwrap();
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * 1.0e30));
+                vp.precision = fractadyne_core::precision_for_magnification(1.0e30);
+                let mut on = self.current_export_request_for(&vp, false);
+                on.width = N;
+                on.height = N;
+                on.ss = 1;
+                on.glitch_on = 0;
+                let mut off = on.clone();
+                off.bla_on = 0;
+                let name = format!("{} BLA carries a deep interior @1e30×", kind.name());
+                let threshold = "bla engaged, every pixel interior in both, ≥ 5 skips a pixel";
+                match (
+                    fractadyne_gpu::render_iter(device, queue, &on)
+                        .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter): {e}"))
+                        .ok(),
+                    st_render_iter(device, queue, &off),
+                ) {
+                    (Some(ra), Some(b)) => {
+                        let n = (nn * nn) as u64;
+                        let int_a = ra.pixels.iter().step_by(4).filter(|v| **v < 0.0).count() as u64;
+                        let int_b = b.iter().step_by(4).filter(|v| **v < 0.0).count() as u64;
+                        let skips = ra.counters[fractadyne_gpu::CTR_BLA_SKIP];
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "BLA",
+                            name,
+                            params: format!("mode {}, bla_on {}, {skips} skips over {n} px", on.mode, on.bla_on),
+                            result: format!("interior {int_a} with BLA, {int_b} without"),
+                            threshold,
+                            pass: on.bla_on == 1 && on.mode == 2 && int_a == n && int_b == n && skips >= 5 * n,
+                        });
+                    }
+                    _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "BLA",
+                        name,
+                        params: format!("mode {}, bla_on {}", on.mode, on.bla_on),
+                        result: "render failed".into(),
+                        threshold,
                         pass: false,
                     }),
                 }

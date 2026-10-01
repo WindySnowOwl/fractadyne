@@ -689,7 +689,10 @@ fn pick_and_build(inp: &RecomputeInputs, overlap: bool) -> RecomputeResult {
     }
     let centre = &inp.center_bf;
     // `finish_reference` runs SA for `do_sa`, or for a short escaper, which needs a BLA view.
-    let sa_may_run = inp.do_sa || inp.bla_dc_max.is_some();
+    // (A BLA view may want SA back for a short escaper — only a formula that HAS one: the folds take
+    // a BLA tree but have no series.)
+    let sa_may_run = inp.do_sa
+        || (inp.bla_dc_max.is_some() && fractadyne_core::formula::caps(inp.formula).series_approximation);
     let cancel_sa = AtomicBool::new(false);
     std::thread::scope(|s| {
         let (tx, rx) = std::sync::mpsc::channel();
@@ -1149,8 +1152,13 @@ fn sa_log2_max_dc(inp: &RecomputeInputs, rp: &[fractadyne_core::BigFloat; 2]) ->
 /// un-accelerated (slow, and a capped stand-in gives a hard borderless minibrot). Surviving
 /// references (partial: reached the cap without escaping) already run SA-or-BLA correctly. Gate on
 /// the escape being well short of the budget so this only touches genuine short escapers.
+/// ⚠Only for a formula with a series: since the power families' phase 4 the folds take a BLA tree
+/// too, and none has a series (forcing one would walk z²'s for a Burning Ship reference).
 fn sa_short_escaper(inp: &RecomputeInputs, len: u32, partial: bool) -> bool {
-    inp.bla_dc_max.is_some() && !partial && (len as u64).saturating_mul(2) < inp.gpu_iter.max(1) as u64
+    inp.bla_dc_max.is_some()
+        && fractadyne_core::formula::caps(inp.formula).series_approximation
+        && !partial
+        && (len as u64).saturating_mul(2) < inp.gpu_iter.max(1) as u64
 }
 
 /// Assemble a `RecomputeResult` from an already-built (fresh or extended) orbit: derive the
@@ -1226,19 +1234,14 @@ fn finish_reference(
     let (bla, bla_dc_max_log2) = match inp.bla_dc_max {
         Some(dc_max) => {
             let power = fc::formula::power(inp.formula);
-            let levels = fc::build_bla(
+            let tree = fc::bla_tree_gpu(
                 &orbit,
                 dc_max,
                 crate::tunables::cost().bla_eps,
                 aux_agg_from_orbit(&orbit, inp.stripe_freq, inp.trap_type, power),
-                power,
+                inp.formula,
             );
-            let arc = if levels.is_empty() {
-                std::sync::Arc::new(Vec::new())
-            } else {
-                std::sync::Arc::new(fc::bla_to_gpu(&levels))
-            };
-            (arc, dc_max.log2())
+            (std::sync::Arc::new(tree), dc_max.log2())
         }
         _ => (std::sync::Arc::new(Vec::new()), f64::NEG_INFINITY),
     };
@@ -2838,18 +2841,19 @@ impl FractadyneApp {
         orbit: &[[f32; 4]],
         dc_max: fractadyne_core::FloatExp,
     ) -> Option<std::sync::Arc<Vec<[f32; 4]>>> {
-        let power = fractadyne_core::formula::power(self.fractal.formula_id());
-        let levels = fractadyne_core::build_bla(
+        let formula = self.fractal.formula_id();
+        let power = fractadyne_core::formula::power(formula);
+        let tree = fractadyne_core::bla_tree_gpu(
             orbit,
             dc_max,
             crate::tunables::cost().bla_eps,
             aux_agg_from_orbit(orbit, self.coloring.stripe_freq as f64, self.coloring.trap_type as u32, power),
-            power,
+            formula,
         );
-        if levels.is_empty() {
+        if tree.is_empty() {
             return None;
         }
-        Some(std::sync::Arc::new(fractadyne_core::bla_to_gpu(&levels)))
+        Some(std::sync::Arc::new(tree))
     }
 }
 
@@ -3930,7 +3934,7 @@ impl FractadyneApp {
             let (bla, bla_on) = match bla_dc_max {
                 Some(dc_max) => {
                     let power = fractadyne_core::formula::power(req.formula);
-                    let levels = fractadyne_core::build_bla(
+                    let tree = fractadyne_core::bla_tree_gpu(
                         &orbit,
                         dc_max,
                         crate::tunables::cost().bla_eps,
@@ -3940,13 +3944,10 @@ impl FractadyneApp {
                             self.coloring.trap_type as u32,
                             power,
                         ),
-                        power,
+                        req.formula,
                     );
-                    if levels.is_empty() {
-                        (std::sync::Arc::new(Vec::new()), 0)
-                    } else {
-                        (std::sync::Arc::new(fractadyne_core::bla_to_gpu(&levels)), 1)
-                    }
+                    let on = u32::from(!tree.is_empty());
+                    (std::sync::Arc::new(tree), on)
                 }
                 None => (std::sync::Arc::new(Vec::new()), 0),
             };
@@ -8928,6 +8929,7 @@ impl FractadyneApp {
             // BLA eligibility `do_sa` is false, so without this the (off-thread-computed) SA would sit
             // unused. Same predicate as `finish_reference` keeps the two paths in lock-step.
             let short_escaper = self.bla_eligible(mode, julia)
+                && self.fractal.caps().series_approximation
                 && !self.ref_cache[vi].partial
                 && (self.ref_cache[vi].orbit_len as u64).saturating_mul(2) < ref_build_iter.max(1) as u64;
             // Series approximation travels with the reference (computed off-thread); read it back.

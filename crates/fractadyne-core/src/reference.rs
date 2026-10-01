@@ -3617,6 +3617,10 @@ pub fn render_multiref_mandel(
 // (vs exact per-iteration accumulation), so we know BEFORE any GPU work whether the aux coloring
 // stats can safely ride BLA/SA iteration-skipping. Trap is the canary: a min over ~the same values,
 // so its error must be tiny; a large trap error means the ORACLE is buggy, not the method.
+// The fold families' 2×2 BLA (design/power-families.md, phase 4).
+mod bla_fold;
+pub use bla_fold::*;
+
 #[cfg(test)]
 mod pick_deep_scoring;
 

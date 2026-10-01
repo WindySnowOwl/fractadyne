@@ -166,8 +166,9 @@ pub mod formula {
     pub struct FormulaCaps {
         /// Series approximation can seed the perturbation (`series_skip`): the `z^d + c` families.
         pub series_approximation: bool,
-        /// A BLA tree can be built for it (`build_bla`): the `z^d + c` families (Multibrot 3–8
-        /// since the power families' phase 3; Mandelbrot before).
+        /// A BLA tree can be built for it (`bla_tree_gpu`): the `z^d + c` families (Multibrot 3–8
+        /// since the power families' phase 3; Mandelbrot before) and, with a 2×2 tree since phase 4,
+        /// the folds (Tricorn, Burning Ship, Celtic, Buffalo at every power).
         pub bla: bool,
         /// The resumable chunk shaders (`fs_iterate_chunk*`) implement it, so a live refresh or an
         /// export tile can be split on the iteration axis.
@@ -195,9 +196,15 @@ pub mod formula {
             formula,
             MANDELBROT | MULTIBROT3 | MULTIBROT4 | MULTIBROT5 | MULTIBROT6 | MULTIBROT7 | MULTIBROT8
         );
+        // The folds at every power: a real 2×2 BLA tree (`build_bla_fold`).
+        let fold = matches!(formula, TRICORN | BURNING_SHIP | CELTIC | BUFFALO)
+            || matches!(
+                family(formula),
+                Some((Shape::BurningShip | Shape::Tricorn | Shape::Celtic | Shape::Buffalo, _))
+            );
         FormulaCaps {
             series_approximation: polynomial,
-            bla: polynomial,
+            bla: polynomial || fold,
             resumable_passes: polynomial || formula == CUSTOM,
             nucleus_finder: polynomial,
             feature_solvers: formula == MANDELBROT,

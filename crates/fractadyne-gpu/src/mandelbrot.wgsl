@@ -434,9 +434,19 @@ fn deriv_factor(formula: u32, z: vec2<f32>) -> vec2<f32> {
 fn is_fam(f: u32) -> bool { return f >= 10u && f <= 24u; }
 // The holomorphic ones (Multibrot d): a derivative, so a distance estimate.
 fn fam_holo(f: u32) -> bool { return f >= 10u && f <= 12u; }
-// The `z^d + c` families a BLA tree is built for (Mandelbrot, Multibrot 3–8): the host's
-// `FormulaCaps::bla`, tested here too so `bla_on` alone never walks a tree for another formula.
-fn bla_formula(f: u32) -> bool { return f <= 3u || fam_holo(f); }
+// The families a BLA tree is built for — the `z^d + c` ones (Mandelbrot, Multibrot 3–8) and the
+// folds (Tricorn, Burning Ship, Celtic, Buffalo at every power): the host's `FormulaCaps::bla`,
+// tested here too so `bla_on` alone never walks a tree for another formula.
+fn bla_formula(f: u32) -> bool { return f <= 7u || is_fam(f); }
+// The folds, whose tree is a real 2×2 one (`fractadyne_core::build_bla_fold`): the node's first two
+// vec4s are each a matrix's four f32 mantissas, row-major, under the exponent in the third.
+fn bla_fold(f: u32) -> bool { return (f >= 4u && f <= 7u) || (is_fam(f) && !fam_holo(f)); }
+// The 2×2 matrix `m`·2^me applied to a floatexp complex `v` (as the column (re, im)).
+fn fe_mat(m: vec4<f32>, me: i32, v: Fe) -> Fe {
+    let re = df_add(df_mul_f32(v.m.re, m.x), df_mul_f32(v.m.im, m.y));
+    let im = df_add(df_mul_f32(v.m.re, m.z), df_mul_f32(v.m.im, m.w));
+    return fe_norm(cset(re, im), v.e + me);
+}
 fn fam_shape(f: u32) -> u32 { return (f - 10u) / 3u; }
 fn fam_power(f: u32) -> u32 {
     let k = f - 10u;
@@ -1172,7 +1182,13 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     let v1 = reference[node + 1u];
                     let A = fe_norm(cset(v0.xy, v0.zw), i32(v2.x));
                     let B = fe_norm(cset(v1.xy, v1.zw), i32(v2.y));
-                    let ndz = fe_add(fe_mul(A, dz), fe_mul(B, dc));
+                    var ndz: Fe;
+                    let fold = bla_fold(iu.formula);
+                    if (fold) {
+                        ndz = fe_add(fe_mat(v0, i32(v2.x), dz), fe_mat(v1, i32(v2.y), dc));
+                    } else {
+                        ndz = fe_add(fe_mul(A, dz), fe_mul(B, dc));
+                    }
                     let nref = ref_n + span;
                     // orbit_cdf: the landing sample may be an extended-range dip (NaN-marked).
                     let rn = orbit_cdf(reference[nref]);
@@ -1180,7 +1196,8 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     let zx = rn.re.x + ndzf.x;
                     let zy = rn.im.x + ndzf.y;
                     if (zx * zx + zy * zy > bail2) { continue; } // overshoot → drop a level
-                    if (bla_formula(iu.formula)) { D = fe_add(fe_mul(A, D), B); }
+                    // (The folds carry no derivative: they have no distance estimate.)
+                    if (bla_formula(iu.formula) && !fold) { D = fe_add(fe_mul(A, D), B); }
                     dz = ndz;
                     ref_n = nref;
                     iter = iter + span;
@@ -2262,11 +2279,12 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
     var n_ext: u32 = 0u;
     var n_bla: u32 = 0u;
 
-    // BLA level layout, rebuilt per pass from the reference length — see the note above.
+    // BLA level layout, rebuilt per pass from the reference length — see the note above. Never a
+    // fold's 2×2 tree: the folds are not resumable, and this pass reads a node as complex.
     var bla_off: array<u32, 32>;
     var bla_len: array<u32, 32>;
     var bla_levels = 0u;
-    if (iu.bla_on == 1u && bla_formula(iu.formula) && iu.orbit_len > 1u) {
+    if (iu.bla_on == 1u && bla_formula(iu.formula) && !bla_fold(iu.formula) && iu.orbit_len > 1u) {
         var blen = iu.orbit_len - 1u;
         var boff = 0u;
         loop {

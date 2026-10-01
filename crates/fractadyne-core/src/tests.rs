@@ -11,7 +11,8 @@ fn formula_caps_answer_as_the_id_ranges_they_replaced() {
         // phase 2 (design/power-families.md) Multibrot 6–8, ids 10–12.
         let polynomial = id <= 3 || (10..=12).contains(&id);
         assert_eq!(c.series_approximation, polynomial, "series approximation, id {id}");
-        assert_eq!(c.bla, polynomial, "bla, id {id}");
+        let fold = (4..=7).contains(&id) || (13..=24).contains(&id);
+        assert_eq!(c.bla, polynomial || fold, "bla, id {id}");
         assert_eq!(c.resumable_passes, polynomial, "resumable passes, id {id}");
         assert_eq!(c.nucleus_finder, polynomial, "nucleus finder, id {id}");
         assert_eq!(c.feature_solvers, id == 0, "feature solvers, id {id}");
@@ -1070,10 +1071,10 @@ fn bla_matches_naive_including_escapes_for_every_power() {
         let naive = |dc: (f64, f64)| -> Option<f64> {
             let mut e = (0.0f64, 0.0f64);
             for m in 0..(max_iter as usize).min(nstep) {
-                let z = orbit[m];
-                e = power_pert_step(d, (z[0] as f64 + z[2] as f64, z[1] as f64 + z[3] as f64), e, dc);
-                let zn = orbit[m + 1];
-                let (zx, zy) = (zn[0] as f64 + zn[2] as f64 + e.0, zn[1] as f64 + zn[3] as f64 + e.1);
+                // `sample_xy`: a deep dip is stored in extended range (a lane sum misreads it).
+                e = power_pert_step(d, sample_xy(&orbit[m]), e, dc);
+                let zn = sample_xy(&orbit[m + 1]);
+                let (zx, zy) = (zn.0 + e.0, zn.1 + e.1);
                 let mag2 = zx * zx + zy * zy;
                 if mag2 > bail2 {
                     let nu = (mag2.ln() * 0.5 / std::f64::consts::LN_2).ln() / f64::from(d).ln();

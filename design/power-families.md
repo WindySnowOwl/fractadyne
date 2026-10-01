@@ -1,7 +1,7 @@
 # Built-in power and fold families
 
-Status: phases 1–3 built and phase 5 run on the RX 6800 XT, 2026-10-01 (§5.1); 4 (2×2 BLA for the
-folds) open. Step 3 of "ship a formula collection, read Fractint's formulas, add the
+Status: phases 1–4 built, phase 5 run on the RX 6800 XT for 1–3, 2026-10-01 (§5.1); phase 4 is
+not yet run on it. Step 3 of "ship a formula collection, read Fractint's formulas, add the
 families deep zoomers use" (the user: "proceed in order 1-3 with appropriate tests").
 
 ## 1. Goal
@@ -213,6 +213,50 @@ gates and goldens review.
     wrong at sensitive pixels for Mandelbrot and Multibrot 6 alike.
   - *Gates.* Core 172, gpu 53, app 679, self-test 431/431, goldens 31/31, uitest 65/65; live
     zoomtest 2^60 → 2^100 on Multibrot 6: 55.6 fps, worst frame 30.8 ms.
+- **Phase 4** (RTX 3080). The folds at every power (ids 4–7, 13–24) take a real 2×2 tree
+  (`reference/bla_fold.rs`): level 0 is the step's linear map — Burning Ship `M(d·F^(d−1))·diag(sgn
+  X, sgn Y)` (F = |X| + i|Y|; the power-2 ship folds |Im z²| after the square, the same map),
+  Tricorn `M(d·Z̄^(d−1))·diag(1, −1)`, Celtic/Buffalo `diag(sgn Re W, [sgn Im W])·M(d·Z^(d−1))` —
+  and its radius the lesser of the power's `2·eps·|Z|/(d−1)` and the fold's (`min(|X|, |Y|)`;
+  `|Re W|` [and `|Im W|`] over `(1 + eps)·|d·Z^(d−1)|`). Merging divides by EXACT spectral norms (a
+  Frobenius bound is √2 high on a rotation and compounds over levels). A node is the complex one's
+  16 floats (matrices as f32 mantissas under one exponent), so the shader's traversal and the aux
+  patching are shared; the shader applies `fe_mat` for a fold. The chunk pass never sees a fold
+  tree (folds are not resumable). ⚠Three places assumed "a BLA view has a series to fall back on"
+  (the walk started beside the build, the short-escaper rule, its live mirror) — true until the
+  folds; each now asks `series_approximation`.
+  - *B7, core.* Level 0 is each fold's linearisation to 1.5·eps in every direction at reference
+    values in all four quadrants, for all 16; the fold radius binds next to a fold (y ≈ 3e-8; arg z
+    = π/(2d) + 1e-7), holds inside, fails twice past it — ⚠a mutation that dropped the fold radius
+    passed every other test, since away from an axis the power's radius is ~1e-6 and the smaller;
+    the spectral norm is exact against brute force; at an ATTRACTING interior reference per family
+    the skips reproduce the exact perturbation (< 1e-3 while skipping ≥ 3/4). ⚠"Bounded" is not
+    interior: c = −1 − i is a repelling Burning Ship fixed point (every perturbation overflows), and
+    −1 − 0.4i a chaotic bounded orbit.
+  - *Deep views — what can be judged.* No finite precision is truth at a fold's chaotic boundary: a
+    pixel wanders for hundreds of steps after its offset reaches O(1) (Burning Ship: f64
+    perturbation followed the 192-bit difference to 1e-14 until step 300, then parted ×1.3 a step).
+    And a pixel's fate can turn on the DIRECTION of an error far below a pixel: at Celtic's fixture
+    BLA's state at step 97 was 4e-12 from plain perturbation's, a δc nudge moving plain's 7e-11
+    changed nothing, and BLA's pixel escaped at 162 where plain's never did. So the core judges
+    WHERE EACH SKIP LANDS — within 1e-4 of plain perturbation (the same walk, rebasing, no skips) at
+    that iteration, up to the first rebase, over 25 δc per family — and the final counts only at 90%
+    of the pixels stable under nudges; the self-test holds each fold row to its CHAOS FLOOR, the
+    mismatches of the render without BLA shifted 0.001 px: BLA 95 / 1 / 2 / 1 against the shift's
+    178 / 1 / 6 / 4 (Celtic, Burning Ship 3, 4, Celtic 5), 0 wherever the shift gave 0. Mutations:
+    no fold radius → a landing 53% off; the shader's matrix transposed → thousands of mismatches in
+    every fold row, the interior rows unmoved.
+  - *Deep fixtures.* The first ones (bisection + a 300-step spread, as for the powers) were noise for
+    ten families — not one of 25 pixels stable, which the app draws as noise too; the kept ones are
+    the first rays with ≥ 15 of 25 stable (≥ 10 for Celtic, Celtic 3, Buffalo 3 and 5). Two test bugs
+    on the way: a lane-summed orbit sample reads an extended-range dip as |z| ≈ 300 (`sample_xy`);
+    `parse_bf_prec` may keep more bits than asked, which moved an escape by 665 steps between two
+    "identical" inputs.
+  - *Cost.* Inside Burning Ship's main body at 1e30×, 30,000 iterations (960×540): GPU 4 ms with the
+    tree, 5,118 ms without; 0.97 s against 6.15 s end to end. At Tricorn 3's chaotic fixture (1e30×):
+    2.74 s against 2.42 s — the short-escaper cost the `z^d + c` families pay too.
+  - *Gates.* Core 178, gpu 53, app 679, self-test 463/463 (32 new), goldens 31/31, uitest 65/65;
+    live zoomtest 2^60 → 2^100 on the Burning Ship fixture: 56.0 fps, worst frame 57 ms.
 - **Phase 5** (RX 6800 XT, PLUTO; field battery `20261001-145757-j02k`, `0.3.0-beta.13` = `34d4ca9`).
   Self-test 430/431: the one failure is the known Windows/Radeon "a wider canvas contains the
   narrower one" (10 of 20,480 texels at 1e2×); every power-family check passes — SA no worse than
