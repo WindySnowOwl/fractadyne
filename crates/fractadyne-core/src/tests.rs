@@ -11,7 +11,7 @@ fn formula_caps_answer_as_the_id_ranges_they_replaced() {
         // phase 2 (design/power-families.md) Multibrot 6–8, ids 10–12.
         let polynomial = id <= 3 || (10..=12).contains(&id);
         assert_eq!(c.series_approximation, polynomial, "series approximation, id {id}");
-        assert_eq!(c.bla, id == 0, "bla, id {id}");
+        assert_eq!(c.bla, polynomial, "bla, id {id}");
         assert_eq!(c.resumable_passes, polynomial, "resumable passes, id {id}");
         assert_eq!(c.nucleus_finder, polynomial, "nucleus finder, id {id}");
         assert_eq!(c.feature_solvers, id == 0, "feature solvers, id {id}");
@@ -931,6 +931,181 @@ fn bla_matches_naive_including_escapes() {
     check(1.5e-3, &[(0.0, 0.0), (1.0e-3, 0.0), (-1.0e-3, 5.0e-4), (8.0e-4, -9.0e-4), (1.5e-3, 1.5e-3)]);
     // Fast escapers: large δc leave the set quickly (BLA can't engage — full steps).
     check(0.8, &[(0.2, 0.1), (0.4, -0.2), (0.5, 0.3), (-0.6, 0.0)]);
+}
+
+/// Deep boundary points of Multibrot 3–8, good to ~2^-112, whose 1e-30 neighbours escape hundreds
+/// to thousands of steps apart (6–8 are the deep-pick scorer's fixtures; all found the same way:
+/// bignum bisection of "escapes within 2,000" along the first ray of 3.75° + 7.5°·k with that
+/// spread — rays leaving through the main body meet its NEUTRAL boundary, where every neighbour
+/// escapes on the same step).
+const MULTIBROT_DEEP_FIXTURES: [(u32, &str, &str); 6] = [
+    (
+        formula::MULTIBROT3,
+        "-7.542988421659047012682575462407727648742957195599927956575e-2",
+        "1.150837642332408274574812674609472971463521952952769779238e+0",
+    ),
+    (
+        formula::MULTIBROT4,
+        "6.332712744727028788597360205303212675970690061507204539421e-1",
+        "2.149666311355967986884147897121404542351347657064834463711e-1",
+    ),
+    (
+        formula::MULTIBROT5,
+        "6.077504591516768732823798182613786336218861548355426472285e-1",
+        "3.983406962035189108405800236915385332818636675353539031671e-2",
+    ),
+    (
+        formula::MULTIBROT6,
+        "6.857394901829179081616429758180505352925479174432123629563e-1",
+        "4.494574077574449791211463579695434838514006741731437234958e-2",
+    ),
+    (
+        formula::MULTIBROT7,
+        "8.476326589810416770591545692023465481479590290010075317289e-1",
+        "1.686046188662333201185254044899073603644196631087163205889e-1",
+    ),
+    (
+        formula::MULTIBROT8,
+        "7.83482963062576633425633295165828974709342271037759608728e-1",
+        "2.659566285584885991743283420348254644023437952052363285336e-1",
+    ),
+];
+
+/// The exact perturbed step of `z^d + c` in f64: δ' = Σₖ C(d,k)·Z^(d−k)·δ^k + δc (Horner in δ).
+fn power_pert_step(d: u32, z: (f64, f64), e: (f64, f64), dc: (f64, f64)) -> (f64, f64) {
+    let mul = |a: (f64, f64), b: (f64, f64)| (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0);
+    let binom = |n: u32, k: u32| (0..k).fold(1.0, |acc, i| acc * f64::from(n - i) / f64::from(i + 1));
+    let mut zp = vec![(1.0, 0.0)];
+    for _ in 1..d {
+        zp.push(mul(*zp.last().unwrap(), z));
+    }
+    let mut acc = (0.0, 0.0);
+    for k in (1..=d).rev() {
+        let (c, t) = (binom(d, k), zp[(d - k) as usize]);
+        acc = mul(acc, e);
+        acc = (acc.0 + c * t.0, acc.1 + c * t.1);
+    }
+    let r = mul(acc, e);
+    (r.0 + dc.0, r.1 + dc.1)
+}
+
+// BLA for z^d + c (design/power-families.md phase 3, B6): at an interior reference the tree's skips
+// reproduce the exact perturbation for every power 3..8 while skipping most steps — level 0's
+// A = d·Z^(d−1) and radius 2·eps·|Z|/(d−1) are what make that so.
+#[test]
+fn bla_reproduces_exact_perturbation_for_every_power() {
+    let p = 96;
+    let target: u32 = 2000;
+    let dc = (1.0e-9_f64, 0.0_f64);
+    let dc_c = CFloatExp { re: FloatExp::from_f64(dc.0), im: FloatExp::from_f64(dc.1) };
+    for f in [
+        formula::MULTIBROT3,
+        formula::MULTIBROT4,
+        formula::MULTIBROT5,
+        formula::MULTIBROT6,
+        formula::MULTIBROT7,
+        formula::MULTIBROT8,
+    ] {
+        let d = formula::power(f);
+        let (orbit, len) = reference_orbit(&bf(0.0, p), &bf(0.0, p), &bf(0.2, p), &bf(0.2, p), f, target, p);
+        assert!(len >= target, "formula {f}: reference escaped early (len={len})");
+        let levels = build_bla(&orbit, FloatExp::from_f64(dc.0), 1.0e-6, AuxAggParams::default(), d);
+        let z_at = |m: u32| {
+            let z = orbit[m as usize];
+            (z[0] as f64 + z[2] as f64, z[1] as f64 + z[3] as f64)
+        };
+        let (mut dz, mut m, mut ops) = ((0.0f64, 0.0f64), 0u32, 0u32);
+        while m < target {
+            ops += 1;
+            let dzc = CFloatExp { re: FloatExp::from_f64(dz.0), im: FloatExp::from_f64(dz.1) };
+            let dzmag = dzc.abs();
+            let mut used = false;
+            for l in (0..levels.len()).rev() {
+                if (m & ((1u32 << l) - 1)) != 0 {
+                    continue;
+                }
+                let Some(&node) = levels[l].get((m >> l) as usize) else { continue };
+                if m + node.span > target || !dzmag.lt(node.r) {
+                    continue;
+                }
+                let n = node.a * dzc + node.b * dc_c;
+                dz = (n.re.to_f64(), n.im.to_f64());
+                m += node.span;
+                used = true;
+                break;
+            }
+            if !used {
+                dz = power_pert_step(d, z_at(m), dz, dc);
+                m += 1;
+            }
+        }
+        let mut e = (0.0f64, 0.0f64);
+        for m in 0..target {
+            e = power_pert_step(d, z_at(m), e, dc);
+        }
+        let err = ((dz.0 - e.0).powi(2) + (dz.1 - e.1).powi(2)).sqrt();
+        let mag = (e.0 * e.0 + e.1 * e.1).sqrt().max(1e-300);
+        assert!(err / mag < 1.0e-3, "formula {f}: BLA vs exact rel err {:.2e} (ops={ops})", err / mag);
+        assert!(ops < target / 4, "formula {f}: BLA didn't skip enough (ops={ops} of {target})");
+    }
+}
+
+// The same end to end at deep CHAOTIC boundary points, escapes included: `bla_iterate_power` (the
+// algorithm the shader mirrors, overshoot revert and all) against plain full-step perturbation off
+// one reference, at δc spread over 1e-30 — pixels that escape hundreds to thousands of steps apart.
+// ⚠Judged only where that plain perturbation is itself RIGHT (the bignum orbit's count): with one
+// reference and no rebasing it can glitch, and then the two approximations part for nothing to do
+// with BLA — Multibrot 8 at δc = (−0.6, 0.6)·1e-30 escapes at 2271.8, plain perturbation says
+// 2299.4 and BLA 2156.4. Anti-vacuity: at least three judged escapes a power, and a deep tree.
+#[test]
+fn bla_matches_naive_including_escapes_for_every_power() {
+    let p = 192;
+    let max_iter: u32 = 30_000;
+    for (f, sx, sy) in MULTIBROT_DEEP_FIXTURES {
+        let d = formula::power(f);
+        let bail2 = if f == formula::MULTIBROT8 { 128.0 * 128.0 } else { 256.0 * 256.0 };
+        let (cx, cy) = (parse_bf_prec(sx, p).unwrap(), parse_bf_prec(sy, p).unwrap());
+        let (orbit, _len) = reference_orbit(&bf(0.0, p), &bf(0.0, p), &cx, &cy, f, max_iter, p);
+        let nstep = orbit.len() - 1;
+        let naive = |dc: (f64, f64)| -> Option<f64> {
+            let mut e = (0.0f64, 0.0f64);
+            for m in 0..(max_iter as usize).min(nstep) {
+                let z = orbit[m];
+                e = power_pert_step(d, (z[0] as f64 + z[2] as f64, z[1] as f64 + z[3] as f64), e, dc);
+                let zn = orbit[m + 1];
+                let (zx, zy) = (zn[0] as f64 + zn[2] as f64 + e.0, zn[1] as f64 + zn[3] as f64 + e.1);
+                let mag2 = zx * zx + zy * zy;
+                if mag2 > bail2 {
+                    let nu = (mag2.ln() * 0.5 / std::f64::consts::LN_2).ln() / f64::from(d).ln();
+                    return Some((m + 1) as f64 + 1.0 - nu);
+                }
+            }
+            None
+        };
+        let levels = build_bla(&orbit, FloatExp::from_f64(1.0e-30), 1.0e-6, AuxAggParams::default(), d);
+        let truth = |fx: f64, fy: f64| {
+            let off = |v: f64| parse_bf_prec(&format!("{:e}", v * 1.0e-30), p).unwrap();
+            let (px, py) = (cx.add(&off(fx), p, RM), cy.add(&off(fy), p, RM));
+            formula_dwell(&px, &py, f, max_iter, bail2, p).map(|(_, s)| f64::from(s))
+        };
+        let agree = |a: Option<f64>, b: Option<f64>| match (a, b) {
+            (None, None) => true,
+            (Some(x), Some(y)) => (x - y).abs() < 0.5,
+            _ => false,
+        };
+        let mut judged = 0;
+        for (fx, fy) in [(0.0, 0.0), (0.04, 0.0), (-0.12, 0.28), (0.5, -0.5), (-0.28, -0.04), (0.12, 0.12), (-0.6, 0.6)] {
+            let dc = (fx * 1.0e-30, fy * 1.0e-30);
+            let (b, n) = (bla_iterate_power(&orbit, &levels, dc, bail2, max_iter, d), naive(dc));
+            if n.is_none() || !agree(n, truth(fx, fy)) {
+                continue; // plain perturbation glitched (or outlived the reference): no yardstick
+            }
+            judged += 1;
+            assert!(agree(b, n), "formula {f}: BLA {b:?} vs naive {n:?} (= the bignum count) at δc={dc:?}");
+        }
+        assert!(judged >= 3, "formula {f}: only {judged} δc judged — the fixture tests little");
+        assert!(levels.len() > 8, "formula {f}: a tree of {} levels skips nothing much", levels.len());
+    }
 }
 
 #[test]

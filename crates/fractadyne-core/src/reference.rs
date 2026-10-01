@@ -1055,11 +1055,26 @@ fn bla_level0_node(
     eps: f64,
     aux: AuxAggParams,
     one: CFloatExp,
+    d: u32,
 ) -> BlaNode {
     // `sample_xy`, not lane sums: an extended-range dip sample carries a NaN marker.
     let (zr, zi) = sample_xy(&orbit[n]);
-    let a = CFloatExp { re: FloatExp::from_f64(2.0 * zr), im: FloatExp::from_f64(2.0 * zi) };
-    let r = a.abs().mul_f64(eps); // |2Z|·eps : drops δz² with rel error ≤ eps
+    let (a, r) = if d == 2 {
+        let a = CFloatExp { re: FloatExp::from_f64(2.0 * zr), im: FloatExp::from_f64(2.0 * zi) };
+        (a, a.abs().mul_f64(eps)) // |2Z|·eps : drops δz² with rel error ≤ eps
+    } else {
+        // z^d + c (design/power-families.md §4.5): A = d·Z^(d−1); the first dropped term is
+        // C(d,2)·Z^(d−2)·δz², under eps·|A·δz| while |δz| ≤ eps·2|Z|/(d−1) — |2Z|·eps at d = 2.
+        // The rest, C(d,k)·Z^(d−k)·δz^k, shrink by a further (2·eps/(d−1))^(k−2) each.
+        // In floatexp: a dip |Z| ~ 1e-71 to the 7th is past f64.
+        let z = CFloatExp { re: FloatExp::from_f64(zr), im: FloatExp::from_f64(zi) };
+        let mut w = z;
+        for _ in 2..d {
+            w = w * z;
+        }
+        let a = CFloatExp { re: w.re.mul_f64(f64::from(d)), im: w.im.mul_f64(f64::from(d)) };
+        (a, z.abs().mul_f64(2.0 * eps / f64::from(d - 1)))
+    };
     // Aux aggregate for this node's single landing iterate Z_{n+1} (the shader accumulates the
     // POST-step value). TIA's `prev` is |Z_n|; node 0 lands on the global first iterate z_1,
     // whose TIA is skipped by the `n>=1` guard, so its TIA seed is 0.
@@ -1086,7 +1101,13 @@ pub fn build_bla_mandel(
     eps: f64,
     aux: AuxAggParams,
 ) -> Vec<Vec<BlaNode>> {
-    build_bla_mandel_impl(orbit, dc_max, eps, aux, BLA_PAR_THRESHOLD)
+    build_bla_mandel_impl(orbit, dc_max, eps, aux, BLA_PAR_THRESHOLD, 2)
+}
+
+/// [`build_bla_mandel`] for the `z^d + c` family of degree `d` (2..=8: Mandelbrot, Multibrot 3–8).
+/// Only level 0 knows the degree (its A and radius); merging is the same composition for every d.
+pub fn build_bla(orbit: &[[f32; 4]], dc_max: FloatExp, eps: f64, aux: AuxAggParams, d: u32) -> Vec<Vec<BlaNode>> {
+    build_bla_mandel_impl(orbit, dc_max, eps, aux, BLA_PAR_THRESHOLD, d)
 }
 
 /// The body of [`build_bla_mandel`], with the parallel-fill threshold exposed so a test can force
@@ -1097,6 +1118,7 @@ fn build_bla_mandel_impl(
     eps: f64,
     aux: AuxAggParams,
     par_threshold: usize,
+    d: u32,
 ) -> Vec<Vec<BlaNode>> {
     let nstep = orbit.len().saturating_sub(1);
     if nstep == 0 {
@@ -1116,7 +1138,7 @@ fn build_bla_mandel_impl(
     // Level 0 — every node is an independent pure function of the orbit + aux, so build them in
     // parallel over scoped threads (byte-identical to the serial loop; see `par_fill`).
     let mut lvl0 = vec![placeholder; nstep];
-    par_fill(&mut lvl0, par_threshold, |n| bla_level0_node(n, orbit, eps, aux, one));
+    par_fill(&mut lvl0, par_threshold, |n| bla_level0_node(n, orbit, eps, aux, one, d));
     let mut levels = vec![lvl0];
     // Each higher level merges disjoint adjacent pairs of the level below — `next[k]` depends only
     // on `prev[2k]` and `prev[2k+1]`, so a level is also independent per output index. Levels stay
@@ -1283,6 +1305,20 @@ pub fn bla_iterate(
     bailout2: f64,
     max_iter: u32,
 ) -> Option<f64> {
+    bla_iterate_power(orbit, levels, dc, bailout2, max_iter, 2)
+}
+
+/// [`bla_iterate`] for `z^d + c`: the same traversal; the full step is the binomial
+/// `Σₖ C(d,k)·Z^(d−k)·δz^k + δc` (d = 2: [`bla_iterate`]'s `2Zδz + δz² + δc`, unchanged), and the
+/// smooth count's log base is d.
+pub fn bla_iterate_power(
+    orbit: &[[f32; 4]],
+    levels: &[Vec<BlaNode>],
+    dc: (f64, f64),
+    bailout2: f64,
+    max_iter: u32,
+    d: u32,
+) -> Option<f64> {
     let dc_c = CFloatExp { re: FloatExp::from_f64(dc.0), im: FloatExp::from_f64(dc.1) };
     let mut dz = CFloatExp { re: FloatExp::ZERO, im: FloatExp::ZERO };
     let mut m: u32 = 0;
@@ -1320,17 +1356,38 @@ pub fn bla_iterate(
         }
         // Full perturbation step at Zₘ: δz' = 2Zδz + δz² + δc (exact — used near the escape).
         let z = orbit[m as usize];
-        let two_z = CFloatExp {
-            re: FloatExp::from_f64(2.0 * (z[0] as f64 + z[2] as f64)),
-            im: FloatExp::from_f64(2.0 * (z[1] as f64 + z[3] as f64)),
-        };
-        dz = two_z * dz + dz * dz + dc_c;
+        if d == 2 {
+            let two_z = CFloatExp {
+                re: FloatExp::from_f64(2.0 * (z[0] as f64 + z[2] as f64)),
+                im: FloatExp::from_f64(2.0 * (z[1] as f64 + z[3] as f64)),
+            };
+            dz = two_z * dz + dz * dz + dc_c;
+        } else {
+            // Σₖ C(d,k)·Z^(d−k)·δz^k, k = 1..d, by Horner in δz: ((C(d,d)·δz + C(d,d−1)·Z)·δz + …)
+            let zc = CFloatExp {
+                re: FloatExp::from_f64(z[0] as f64 + z[2] as f64),
+                im: FloatExp::from_f64(z[1] as f64 + z[3] as f64),
+            };
+            let mut zpow = vec![CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO }];
+            for _ in 1..d {
+                let next = *zpow.last().unwrap() * zc;
+                zpow.push(next);
+            }
+            let mut acc = CFloatExp { re: FloatExp::ZERO, im: FloatExp::ZERO };
+            for k in (1..=d).rev() {
+                let c = binom(d as usize, k as usize);
+                let t = zpow[(d - k) as usize];
+                acc = acc * dz + CFloatExp { re: t.re.mul_f64(c), im: t.im.mul_f64(c) };
+            }
+            dz = acc * dz + dc_c;
+        }
         m += 1;
         let (zx, zy) = bla_full_z(orbit, m, &dz);
         let mag2 = zx * zx + zy * zy;
         if mag2 > bailout2 {
-            // Smooth escape count (power 2), matching the shader's formula.
-            let nu = (mag2.ln() * 0.5 / std::f64::consts::LN_2).ln() / std::f64::consts::LN_2;
+            // Smooth escape count, matching the shader's formula (log base d).
+            let ln_d = if d == 2 { std::f64::consts::LN_2 } else { f64::from(d).ln() };
+            let nu = (mag2.ln() * 0.5 / std::f64::consts::LN_2).ln() / ln_d;
             return Some(m as f64 + 1.0 - nu);
         }
     }

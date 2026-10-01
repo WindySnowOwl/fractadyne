@@ -434,6 +434,9 @@ fn deriv_factor(formula: u32, z: vec2<f32>) -> vec2<f32> {
 fn is_fam(f: u32) -> bool { return f >= 10u && f <= 24u; }
 // The holomorphic ones (Multibrot d): a derivative, so a distance estimate.
 fn fam_holo(f: u32) -> bool { return f >= 10u && f <= 12u; }
+// The `z^d + c` families a BLA tree is built for (Mandelbrot, Multibrot 3–8): the host's
+// `FormulaCaps::bla`, tested here too so `bla_on` alone never walks a tree for another formula.
+fn bla_formula(f: u32) -> bool { return f <= 3u || fam_holo(f); }
 fn fam_shape(f: u32) -> u32 { return (f - 10u) / 3u; }
 fn fam_power(f: u32) -> u32 {
     let k = f - 10u;
@@ -1098,7 +1101,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         var bla_off: array<u32, 32>;
         var bla_len: array<u32, 32>;
         var bla_levels = 0u;
-        if (iu.bla_on == 1u && iu.formula == 0u && iu.orbit_len > 1u) {
+        if (iu.bla_on == 1u && bla_formula(iu.formula) && iu.orbit_len > 1u) {
             var blen = iu.orbit_len - 1u;
             var boff = 0u;
             loop {
@@ -1177,7 +1180,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     let zx = rn.re.x + ndzf.x;
                     let zy = rn.im.x + ndzf.y;
                     if (zx * zx + zy * zy > bail2) { continue; } // overshoot → drop a level
-                    if (iu.formula <= 3u) { D = fe_add(fe_mul(A, D), B); }
+                    if (bla_formula(iu.formula)) { D = fe_add(fe_mul(A, D), B); }
                     dz = ndz;
                     ref_n = nref;
                     iter = iter + span;
@@ -2263,7 +2266,7 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
     var bla_off: array<u32, 32>;
     var bla_len: array<u32, 32>;
     var bla_levels = 0u;
-    if (iu.bla_on == 1u && iu.formula == 0u && iu.orbit_len > 1u) {
+    if (iu.bla_on == 1u && bla_formula(iu.formula) && iu.orbit_len > 1u) {
         var blen = iu.orbit_len - 1u;
         var boff = 0u;
         loop {
@@ -2366,7 +2369,7 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
                 let zx = rn.re.x + ndzf.x;
                 let zy = rn.im.x + ndzf.y;
                 if (zx * zx + zy * zy > bail2) { continue; } // overshoot → drop a level
-                D = fe_add(fe_mul(A, D), B); // BLA is Mandelbrot only (`bla_levels` above)
+                D = fe_add(fe_mul(A, D), B); // a `z^d + c` family by `bla_levels` above
                 dz = ndz;
                 ref_n = nref;
                 iter = iter + span;

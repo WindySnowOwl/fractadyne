@@ -166,7 +166,8 @@ pub mod formula {
     pub struct FormulaCaps {
         /// Series approximation can seed the perturbation (`series_skip`): the `z^d + c` families.
         pub series_approximation: bool,
-        /// A BLA tree can be built for it (`build_bla_mandel`): Mandelbrot only.
+        /// A BLA tree can be built for it (`build_bla`): the `z^d + c` families (Multibrot 3–8
+        /// since the power families' phase 3; Mandelbrot before).
         pub bla: bool,
         /// The resumable chunk shaders (`fs_iterate_chunk*`) implement it, so a live refresh or an
         /// export tile can be split on the iteration axis.
@@ -196,7 +197,7 @@ pub mod formula {
         );
         FormulaCaps {
             series_approximation: polynomial,
-            bla: formula == MANDELBROT,
+            bla: polynomial,
             resumable_passes: polynomial || formula == CUSTOM,
             nucleus_finder: polynomial,
             feature_solvers: formula == MANDELBROT,

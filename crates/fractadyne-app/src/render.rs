@@ -427,7 +427,7 @@ pub(crate) struct RecomputeInputs {
 /// BLA is Mandelbrot-only) — both reference-intrinsic, so the tree caches per reference with no live
 /// dependency. Point-trap uses the default trap aggregate (trap_type 0). `stripe_freq` stays default
 /// (stripe's per-node aggregate isn't folded yet — it would need a rebuild on the freq slider).
-fn aux_agg_from_orbit(orbit: &[[f32; 4]], stripe_freq: f64, trap_type: u32) -> fractadyne_core::AuxAggParams {
+fn aux_agg_from_orbit(orbit: &[[f32; 4]], stripe_freq: f64, trap_type: u32, power: u32) -> fractadyne_core::AuxAggParams {
     let cmag = orbit
         .get(1)
         .map(|z| {
@@ -440,8 +440,9 @@ fn aux_agg_from_orbit(orbit: &[[f32; 4]], stripe_freq: f64, trap_type: u32) -> f
     // `stripe_freq` and `trap_type` must be the LIVE values: the aux aggregates they select
     // (stripe's Σ(0.5+0.5·sin(freq·arg Z)); trap's running min of aux_trap_dist(Z, trap_type)) are
     // parameter-specific, so a stripe/cross/circle-trap BLA tree rebuilds when its slider changes
-    // (see the live rebuild in build_params). `power` stays 2 (BLA is Mandelbrot-only).
-    fractadyne_core::AuxAggParams { trap_type, stripe_freq, cmag, power: 2.0 }
+    // (see the live rebuild in build_params). `power` is the formula's degree, the
+    // triangle-inequality term's (BLA runs for every `z^d + c` family).
+    fractadyne_core::AuxAggParams { trap_type, stripe_freq, cmag, power: f64::from(power) }
 }
 
 /// Device-derived ceiling on the stored reference-orbit LENGTH (in samples), set once at startup
@@ -1209,7 +1210,7 @@ fn finish_reference(
         fc::SeriesSkip::NONE
     };
     let series_ms = pre_ms.unwrap_or_else(|| t_sa.elapsed().as_secs_f64() * 1000.0);
-    // BLA tree (Mandelbrot deep only; empty otherwise). Built with the same conservative dc_max the
+    // BLA tree (deep `z^d + c` only — `FormulaCaps::bla`; empty otherwise). Built with the same conservative dc_max the
     // live path uses so the main thread reuses it across pans.
     //
     // SKIP the BLA for a SHORT ESCAPED reference (deep EXTERIOR). At such a spot every candidate
@@ -1224,11 +1225,13 @@ fn finish_reference(
     let t_bla = Instant::now();
     let (bla, bla_dc_max_log2) = match inp.bla_dc_max {
         Some(dc_max) => {
-            let levels = fc::build_bla_mandel(
+            let power = fc::formula::power(inp.formula);
+            let levels = fc::build_bla(
                 &orbit,
                 dc_max,
                 crate::tunables::cost().bla_eps,
-                aux_agg_from_orbit(&orbit, inp.stripe_freq, inp.trap_type),
+                aux_agg_from_orbit(&orbit, inp.stripe_freq, inp.trap_type, power),
+                power,
             );
             let arc = if levels.is_empty() {
                 std::sync::Arc::new(Vec::new())
@@ -2795,7 +2798,7 @@ impl FractadyneApp {
     /// doesn't apply (disabled, not floatexp/Mandelbrot/non-Julia, or an aux coloring method
     /// that BLA would skip). `dx`/`dy` are the reference-offset mantissas and `span_mantissa`
     /// the view span — both scaled by `2^delta_exp` — used for the worst-case `|δc|`.
-    /// Whether BLA applies to this render (deep floatexp Mandelbrot, non-Julia, non-aux coloring).
+    /// Whether BLA applies to this render (deep floatexp `z^d + c`, non-Julia, non-aux coloring).
     fn bla_eligible(&self, mode: RenderMode, julia: bool) -> bool {
         // Aux coloring blocks iteration-skipping — EXCEPT the methods whose per-BLA-node aggregate is
         // folded on each skip (GPU-validated: the fold render matches the full render), which ride BLA
@@ -2835,11 +2838,13 @@ impl FractadyneApp {
         orbit: &[[f32; 4]],
         dc_max: fractadyne_core::FloatExp,
     ) -> Option<std::sync::Arc<Vec<[f32; 4]>>> {
-        let levels = fractadyne_core::build_bla_mandel(
+        let power = fractadyne_core::formula::power(self.fractal.formula_id());
+        let levels = fractadyne_core::build_bla(
             orbit,
             dc_max,
             crate::tunables::cost().bla_eps,
-            aux_agg_from_orbit(orbit, self.coloring.stripe_freq as f64, self.coloring.trap_type as u32),
+            aux_agg_from_orbit(orbit, self.coloring.stripe_freq as f64, self.coloring.trap_type as u32, power),
+            power,
         );
         if levels.is_empty() {
             return None;
@@ -3924,7 +3929,8 @@ impl FractadyneApp {
                 .then(|| Self::bla_dc_max(req.span_mantissa, delta_exp));
             let (bla, bla_on) = match bla_dc_max {
                 Some(dc_max) => {
-                    let levels = fractadyne_core::build_bla_mandel(
+                    let power = fractadyne_core::formula::power(req.formula);
+                    let levels = fractadyne_core::build_bla(
                         &orbit,
                         dc_max,
                         crate::tunables::cost().bla_eps,
@@ -3932,7 +3938,9 @@ impl FractadyneApp {
                             &orbit,
                             self.coloring.stripe_freq as f64,
                             self.coloring.trap_type as u32,
+                            power,
                         ),
+                        power,
                     );
                     if levels.is_empty() {
                         (std::sync::Arc::new(Vec::new()), 0)
@@ -8971,6 +8979,7 @@ impl FractadyneApp {
                         &orbit,
                         self.coloring.stripe_freq as f64,
                         self.coloring.trap_type as u32,
+                        fractadyne_core::formula::power(self.fractal.formula_id()),
                     );
                     let vc = &mut self.ref_cache[vi];
                     let mut buf = (*vc.bla).clone();

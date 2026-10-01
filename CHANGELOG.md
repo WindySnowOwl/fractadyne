@@ -71,7 +71,10 @@ Changes after 0.3.0-beta.1:
   coordinates. Multibrot 8 escapes at radius 128 rather than 256, and Multibrot 7 and 8 end the
   reference orbit at |Z|² > 1e9 rather than 1e12, where the next step would leave single-precision
   range; a custom formula of degree 7 or more now does the same (its reference's last sample could
-  overflow). BLA for them is still to come (design/power-families.md).
+  overflow). BLA (bilinear approximation) now covers Multibrot 3–8 as well as Mandelbrot: at the
+  interior of a deep Multibrot 6 minibrot (1e30×, 200,000 iterations) a render takes 1.3 s instead
+  of 4.5 s; a deep view whose reference escapes early pays for it as Mandelbrot's do (4.4 s instead
+  of 2.9 s at the same depth), the trade-off Mandelbrot's policy already makes there.
   - **Tested:** each family's CPU step is its formula-language program bit for bit (what one types
     as `abs(z)^3 + c` computes Burning Ship 3 exactly); on the GPU, the direct render matches the
     generated module bit for bit up to power 6 and the CPU within 0.4% for powers 7 and 8; the
@@ -80,7 +83,10 @@ Changes after 0.3.0-beta.1:
     frame split into passes is the single-pass frame bit for bit in all three modes, down to 1e30×;
     the series coefficients are the formula's own Taylor coefficients; and a render with series
     approximation is as close to the CPU as one without, at views where pixels escape (the
-    Multibrot 3–5 check had none). Self-test 413 checks, goldens 31 (five new, one per shape). The
+    Multibrot 3–5 check had none). BLA matches the render without it at every smooth pixel of a
+    deep chaotic view of each of Multibrot 3–8 (1e30×, thousands of escape counts), and a split
+    frame with BLA is the single pass bit for bit. Self-test 431 checks, goldens 31 (five new, one
+    per shape). The
     dispatch ceiling's cost factors for them are measured, with the method beside them in
     `validation/calibration/ceilings.toml`.
 - **Fixed: a deep Multibrot 4 or 5 view could render black (unreleased).** Where the series

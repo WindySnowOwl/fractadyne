@@ -1,6 +1,6 @@
 # Built-in power and fold families
 
-Status: phases 1 and 2 built, 2026-10-01 (§5.1); 3–5 open. Step 3 of "ship a formula collection, read Fractint's formulas, add the
+Status: phases 1–3 built, 2026-10-01 (§5.1); 4 (2×2 BLA for the folds) and 5 (RX 6800 XT) open. Step 3 of "ship a formula collection, read Fractint's formulas, add the
 families deep zoomers use" (the user: "proceed in order 1-3 with appropriate tests").
 
 ## 1. Goal
@@ -191,6 +191,27 @@ gates and goldens review.
     dispatch chunked.
   - *Gates.* Core 170, app 679, self-test 413/413 (27 new), goldens 31/31 unchanged; the MPFR
     identity matrix now covers ids 0–24.
+- **Phase 3** (RTX 3080). `caps.bla` for every `z^d + c` family (Multibrot 3–8 with Mandelbrot);
+  `build_bla(…, d)`: level 0 is A = d·Z^(d−1), r = 2·eps·|Z|/(d−1) (d = 2 keeps its exact bytes);
+  merging and the shader's traversal were already power-agnostic. The triangle-inequality BLA
+  aggregate takes the degree too.
+  - *B6.* Core: at an interior reference the skips reproduce the exact perturbation for d = 3..8
+    (rel. err < 1e-3 while skipping ≥ 3/4 of the steps); at a deep chaotic point per power,
+    `bla_iterate_power` matches plain perturbation where plain perturbation matches the bignum
+    count. ⚠Unjudged elsewhere: one reference and no rebasing glitches (Multibrot 8, a δc of
+    0.85e-30: truth 2271.8, plain 2299.4, BLA 2156.4). Mutation (A = d·Z^(d−2)) → both red.
+    Self-test: BLA = no BLA at every smooth pixel of each power's deep chaotic view at 1e30×
+    (7,714–29,203 escapers, 55,608–1,456,655 skips); split frames with BLA bit-identical.
+  - *Cost* (end to end, 960×540, ss 2): Multibrot 6 inside the period-1590 minibrot at 1e30×,
+    200k iterations — 1.27 s with BLA, 4.48 s without (3.47 s of it the SA walk, d = 6 costs it
+    3 products a step). The deep chaotic view (reference escaping at ~2,560) — 4.35 s with, 2.87 s
+    without: BLA saved 1.7% of the steps and its level search costs every step. Mandelbrot pays the
+    same at its short escapers (corpus 07 at 1e30×: 64 vs 29 ms GPU), the trade-off its policy
+    keeps for a nearby minibrot's interior; so does Multibrot now.
+  - *Not a finding:* BLA forced onto floatexp at 1e10–1e17 (a mode the app never selects there) is
+    wrong at sensitive pixels for Mandelbrot and Multibrot 6 alike.
+  - *Gates.* Core 172, gpu 53, app 679, self-test 431/431, goldens 31/31, uitest 65/65; live
+    zoomtest 2^60 → 2^100 on Multibrot 6: 55.6 fps, worst frame 30.8 ms.
 
 ## 6. Risks
 

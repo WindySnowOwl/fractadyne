@@ -468,8 +468,9 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
          past the old ~1e28× df32 limit (rare speckle near the abs folds awaits multi-reference \
          glitch correction). Phoenix uses a two-term perturbation and also deep-zooms at floatexp \
          range (without SA/BLA, so heavier than Mandelbrot). The higher powers deep-zoom the same \
-         way, each power's perturbation following its own chain of squarings, without series \
-         approximation or BLA for now. Only Newton uses the direct path, sharp to ~1e6×; custom \
+         way, each power's perturbation following its own chain of squarings; Multibrot 3–8 also \
+         take series approximation and BLA, as Mandelbrot does. Only Newton uses the direct path, \
+         sharp to ~1e6×; custom \
          formulas deep-zoom unless the Custom formulas section below says otherwise.",
     );
     help_sub(ui, "Custom formulas");
@@ -743,7 +744,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--autopilot-priority speed|quality", "What the auto-zoom puts first (the \"Auto-zoom priority\" switch in the right panel; overrides the saved preference). speed: zoom at the set rate and refresh the screen as soon as a frame with detail is ready. quality: only fully resolved full-resolution frames reach the screen, and the zoom slows as needed so the picture never magnifies far before the next one lands."),
         Flag("--autopilot-target detail|misiurewicz", "What the auto-zoom aims at (the \"Auto-zoom target\" switch; overrides the saved preference). detail: the richest edge in view, re-chosen as the dive goes. misiurewicz: the nearest Misiurewicz point, solved to the dive limit's depth first (the dive holds still meanwhile), then dived into exactly — Mandelbrot set only."),
         Flag("--show-timestamp / --no-show-timestamp", "Force the elapsed-time overlay on / off (View > Show timestamp; overrides the saved preference). Draws a large clock over the view reading the same \"+12.345s\" the log stamps every line with, plus the frame number, so a screen recording of a problem that only appears in motion can be lined up against the log frame by frame."),
-        Flag("--bla / --no-bla", "Force bilinear approximation (BLA) on / off for deep floatexp Mandelbrot."),
+        Flag("--bla / --no-bla", "Force bilinear approximation (BLA) on / off for deep floatexp Mandelbrot and Multibrot 3–8."),
         Flag("--glitch / --no-glitch", "Force multi-reference glitch correction on / off for the export (default on). It never runs for Mandelbrot or Multibrot views outside Julia mode, where --glitch-audit found it repairs nothing."),
         Flag("--orbit-cache / --no-orbit-cache", "Force the on-disk reference-orbit cache on / off. By default it is ON for an ordinary launch and OFF for every task invocation (--render, --selftest, --bench-matrix, tours, …), because a cached orbit makes a timed run look faster than the code is and a gate must build what it measures. A CLI render of a location you have visited in the app can opt in with --orbit-cache. File > Settings > Reference cache… shows where it is, how big, and clears it."),
         Flag("--sound / --no-sound", "Play or silence the tone that marks a finished render (default on). The FRACTADYNE_NO_SOUND environment variable does the same and is what batch runs want, because it is inherited by child processes -- --torture launches each rung as its own exe and the corpus harness shells out per location, neither of which sees a flag passed to the parent. An explicit --sound wins over the variable."),

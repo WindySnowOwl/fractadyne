@@ -279,13 +279,28 @@ fn family_view(formula: u32, mag: f64, px: u32, budget: u32) -> Option<(f64, f64
     best.filter(|(n, _)| n * 100 >= G * G * 2).map(|(_, at)| at)
 }
 
-/// Deep boundary points of Multibrot 6, 7 and 8, good to ~2^-112 — the core's deep-pick fixtures
-/// (`scorer_matches_oracle_multibrot_6_to_8`, which records how they were found). A
-/// [`family_boundary`] point is f64, good to ~1e-15 and garbage past that: at 1e30× its reference
-/// escapes early and every pixel with it, so a chunked render agrees trivially (the corpus-07 note
-/// in "iter-chunk"). These keep their digits, and their 1e-30 neighbours escape hundreds to
-/// thousands of steps apart.
-const MULTIBROT_DEEP: [(FractalKind, &str, &str); 3] = [
+/// Deep boundary points of Multibrot 3–8, good to ~2^-112 — the core's fixtures
+/// (`MULTIBROT_DEEP_FIXTURES` in its tests, and `scorer_matches_oracle_multibrot_6_to_8`, which
+/// records how they were found). A [`family_boundary`] point is f64, good to ~1e-15 and garbage
+/// past that: at 1e30× its reference escapes early and every pixel with it, so a chunked render
+/// agrees trivially (the corpus-07 note in "iter-chunk"). These keep their digits, and their 1e-30
+/// neighbours escape hundreds to thousands of steps apart.
+const MULTIBROT_DEEP: [(FractalKind, &str, &str); 6] = [
+    (
+        FractalKind::Multibrot3,
+        "-7.542988421659047012682575462407727648742957195599927956575e-2",
+        "1.150837642332408274574812674609472971463521952952769779238e+0",
+    ),
+    (
+        FractalKind::Multibrot4,
+        "6.332712744727028788597360205303212675970690061507204539421e-1",
+        "2.149666311355967986884147897121404542351347657064834463711e-1",
+    ),
+    (
+        FractalKind::Multibrot5,
+        "6.077504591516768732823798182613786336218861548355426472285e-1",
+        "3.983406962035189108405800236915385332818636675353539031671e-2",
+    ),
     (
         FractalKind::Multibrot6,
         "6.857394901829179081616429758180505352925479174432123629563e-1",
@@ -693,11 +708,11 @@ impl FractadyneApp {
                 .iter()
                 .map(|&(x, y, m, it, ch, tr, md, d)| (FractalKind::Mandelbrot, x.into(), y.into(), m, it, ch, tr, md, d.into()))
                 .collect();
-            // ⭐Multibrot 6–8 (design/power-families.md, phase 2): the chunk passes carry their
-            // family arms, which must be fs_iterate's to the bit in every mode — direct and df32 at
-            // a `family_view` boundary (an f64 centre is exact enough there), the rebase storm, and
-            // floatexp at 1e30× on a `MULTIBROT_DEEP` point. BLA is Mandelbrot's alone, so their
-            // mode-2 row cannot show skips; it shows escapes spread over many counts instead (below).
+            // ⭐Multibrot 3–8 (design/power-families.md, phases 2–3): the chunk passes carry their
+            // arms, which must be fs_iterate's to the bit in every mode — direct and df32 at a
+            // `family_view` boundary (an f64 centre is exact enough there), the rebase storm, and
+            // floatexp at 1e30× on a `MULTIBROT_DEEP` point, where their mode-2 row must show BLA
+            // skips as Mandelbrot's do AND escapes spread over many counts (below).
             for (kind, dx, dy) in MULTIBROT_DEEP {
                 let f = kind.formula_id();
                 let name = kind.name();
@@ -754,10 +769,10 @@ impl FractadyneApp {
                             // if BLA silently switched off in BOTH renders they would still agree,
                             // and the chunked path would be running the beta.101 e100 pathology
                             // (0.04 Gsteps/s against 174 in the same frame) with a green gate.
-                            // A power family has no BLA, so its deep row shows the other thing a
-                            // trivial agreement lacks: orbits that part — escapes over many counts.
+                            // A Multibrot's deep row also shows the other thing a trivial agreement
+                            // lacks: orbits that part — escapes over many counts.
                             let family = *kind != FractalKind::Mandelbrot;
-                            let bla_ok = family || *want_mode != 2 || *truncate || bla > 0;
+                            let bla_ok = *want_mode != 2 || *truncate || bla > 0;
                             let mut counts: Vec<u32> =
                                 a.iter().step_by(4).filter(|v| **v >= 0.0).map(|v| *v as u32).collect();
                             let escaped = counts.len();
@@ -785,7 +800,7 @@ impl FractadyneApp {
                     name: "chunked render is bit-identical".into(),
                     params: desc.clone(),
                     result,
-                    threshold: "0 texels differ (mode 2: and BLA engaged, or a power family's escapes over ≥ 20 counts)",
+                    threshold: "0 texels differ (mode 2: and BLA engaged; a Multibrot's escapes over ≥ 20 counts)",
                     pass,
                 });
             }
@@ -4500,6 +4515,10 @@ impl FractadyneApp {
             self.render_cfg.auto_iter = false;
             self.render_cfg.max_iter = 30_000;
             self.render_cfg.series_approx = true;
+            // BLA subsumes SA in floatexp: with a tree built no seed is walked (phase 3). The
+            // seed is what this asks about, so the tree is kept out of these views.
+            let saved_bla = self.render_cfg.use_bla;
+            self.render_cfg.use_bla = false;
             let mut rows: Vec<(FractalKind, String, String, f64)> = Vec::new();
             for kind in [
                 FractalKind::Multibrot4,
@@ -4512,7 +4531,8 @@ impl FractadyneApp {
                     rows.push((kind, format!("{:.17}", at.0), format!("{:.17}", at.1), 1.0e40));
                 }
             }
-            let (k6, x6, y6) = MULTIBROT_DEEP[0];
+            let (k6, x6, y6) = MULTIBROT_DEEP[3];
+            debug_assert!(k6 == FractalKind::Multibrot6);
             rows.push((k6, x6.into(), y6.into(), 7.5e44));
             for (kind, x, y, mag) in rows {
                 self.fractal = kind;
@@ -4544,6 +4564,7 @@ impl FractadyneApp {
                     }),
                 }
             }
+            self.render_cfg.use_bla = saved_bla;
             self.fractal = prev;
         }
         if want("multibrot-sa") {
@@ -4837,6 +4858,77 @@ impl FractadyneApp {
                     });
                 }
             }
+            // Multibrot 3–8 (design/power-families.md phase 3, B6): the same question at each
+            // power's deep chaotic point, whose pixels escape hundreds to thousands of steps apart —
+            // level 0's A = d·Z^(d−1) and radius 2·eps·|Z|/(d−1), and the merge every power shares.
+            // A BLA that is no faster proves nothing, so the skips must SHOW (`CTR_BLA_SKIP`).
+            let prev = self.fractal;
+            self.render_cfg.max_iter = 30_000;
+            for (kind, x, y) in MULTIBROT_DEEP {
+                self.fractal = kind;
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = fractadyne_core::parse_bf(x).unwrap();
+                vp.center_y = fractadyne_core::parse_bf(y).unwrap();
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * 1.0e30));
+                vp.precision = fractadyne_core::precision_for_magnification(1.0e30);
+                let mut on = self.current_export_request_for(&vp, false);
+                on.width = N;
+                on.height = N;
+                on.ss = 1;
+                let mut off = on.clone();
+                off.bla_on = 0;
+                let (bon, mode) = (on.bla_on, on.mode);
+                let name = format!("{} BLA == non-BLA @1e30× (deep boundary)", kind.name());
+                match (
+                    fractadyne_gpu::render_iter(device, queue, &on)
+                        .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter): {e}"))
+                        .ok(),
+                    st_render_iter(device, queue, &off),
+                ) {
+                    (Some(ra), Some(b)) => {
+                        let a = &ra.pixels;
+                        let skips = ra.counters[fractadyne_gpu::CTR_BLA_SKIP];
+                        let (mut mism, mut esc) = (0u64, 0u64);
+                        for j in 0..nn {
+                            for i in 0..nn {
+                                if steep(&b, i, j) {
+                                    continue;
+                                }
+                                let k = j * nn + i;
+                                let (va, vb) = (a[k * 4], b[k * 4]);
+                                match (va < 0.0, vb < 0.0) {
+                                    (false, false) => {
+                                        esc += 1;
+                                        if (va - vb).abs() > 0.5 {
+                                            mism += 1;
+                                        }
+                                    }
+                                    (true, true) => {}
+                                    _ => mism += 1,
+                                }
+                            }
+                        }
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "BLA",
+                            name,
+                            params: format!("mode {mode}, bla_on {bon}, {skips} skips, {esc} smooth escapers"),
+                            result: format!("{mism} mismatch"),
+                            threshold: "bla engaged and skipping, escapers>100, 0 mismatch",
+                            pass: bon == 1 && mode == 2 && skips > 0 && esc > 100 && mism == 0,
+                        });
+                    }
+                    _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "BLA",
+                        name,
+                        params: format!("mode {mode}, bla_on {bon}"),
+                        result: "render failed".into(),
+                        threshold: "bla engaged and skipping, escapers>100, 0 mismatch",
+                        pass: false,
+                    }),
+                }
+            }
+            self.fractal = prev;
+            self.render_cfg.max_iter = 5000;
             self.render_cfg.use_bla = false;
             self.render_cfg.series_approx = true;
         }
