@@ -1,7 +1,6 @@
 # Built-in power and fold families
 
-Status: phases 1–4 built, phase 5 run on the RX 6800 XT for 1–3, 2026-10-01 (§5.1); phase 4 is
-not yet run on it. Step 3 of "ship a formula collection, read Fractint's formulas, add the
+Status: phases 1–4 built and validated on the RX 6800 XT (phase 5), 2026-10-01 (§5.1). Step 3 of "ship a formula collection, read Fractint's formulas, add the
 families deep zoomers use" (the user: "proceed in order 1-3 with appropriate tests").
 
 ## 1. Goal
@@ -267,7 +266,13 @@ gates and goldens review.
   - *Bench matrix:* no algorithmic drift; 15 new segments. Its logcheck FAILED: 25 direct-mode
     fractal segments, which build no reference, ran ~12 s without a liveness stamp and the
     watchdog called it a possible hang (the 3080 finishes the whole matrix in 16.6 s). Fixed by a
-    breadcrumb per segment (`dd955b0`), verified on the 3080; not yet re-run on PLUTO.
+    breadcrumb per segment (`dd955b0`).
+  - *Phase 4 on PLUTO* (battery `20261001-170154-78u0`, `0.3.0-beta.14` = `76d3732`). Self-test
+    462/463, the one failure again the known wider-canvas; goldens 31/31. Every fold BLA row
+    passes: the deep rows within their chaos floor (Celtic 118 against a 0.001-px shift's 173,
+    Burning Ship 3 1/1, Burning Ship 4 3/6, Celtic 5 2/5, the other twelve 0/0) and all 16 interior
+    rows. The bench matrix's logcheck now passes. Live-res, livetest, uitest, recordtest, screen
+    pass; gputest's exit 1 is the expected report.
 
 ## 6. Risks
 
