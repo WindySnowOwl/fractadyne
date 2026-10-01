@@ -113,8 +113,12 @@ fn spans_nest(src: &str, e: &Expr) {
     let kids: Vec<&Expr> = match &e.kind {
         ExprKind::Num(_) | ExprKind::Name(_) => vec![],
         ExprKind::Call { arg, .. } => vec![arg],
-        ExprKind::Group(a) | ExprKind::Bars(a) | ExprKind::Neg(a) | ExprKind::Pos(a) => vec![a],
-        ExprKind::Complex(a, b) | ExprKind::Bin(_, a, b) | ExprKind::Pow(a, b) => vec![a, b],
+        ExprKind::Group(a) | ExprKind::Bars(a) | ExprKind::Neg(a) | ExprKind::Pos(a) | ExprKind::Assign(_, a) => vec![a],
+        ExprKind::Complex(a, b)
+        | ExprKind::Bin(_, a, b)
+        | ExprKind::Pow(a, b)
+        | ExprKind::Cmp(_, a, b)
+        | ExprKind::Logic(_, a, b) => vec![a, b],
     };
     let mut at = e.span.start;
     for k in kids {

@@ -92,18 +92,37 @@ Changes after 0.3.0-beta.1:
     computation: `|z|`, the squared modulus, shows as |z|², and `exp(z)` stays exp(z). A line
     that does not read shows in red, to be edited as text. A LaTeX button copies the formula as
     LaTeX source, and the formula library shows its formulas typeset while Textbook is on.
-  - **Collection (unreleased):** 45 formulas come with the app, written for it (no formula
+  - **Collection (unreleased):** 53 formulas come with the app, written for it (no formula
     corpus is bundled): higher powers and folded variants of the Burning Ship and Celtic
     families, blends and hybrids, the Mandelbrot set through another map, transcendental and
-    rational formulas, and Julia sets. They are the dialog's Examples and the formula library's
-    new Collection tab. Each opens at a starting view where its picture is, and a formula saved
-    while it shows keeps the view it was saved at. A test renders every one at its view and
-    checks that a picture is there; the GPU renders were compared with it by eye.
+    rational formulas, Julia sets, and Fractint classics. They are the dialog's Examples and the
+    formula library's new Collection tab. Each opens at a starting view where its picture is,
+    and a formula saved while it shows keeps the view it was saved at. A test renders every one
+    at its view and checks that a picture is there; the GPU renders were compared with it by eye.
   - **Library (unreleased):** the formula dialog's Save to library keeps a formula and its
     parameters under a name, and Fractal ▸ Formula library… applies, edits, exports and deletes
     them. Import adds a formula file's formulas without replacing any: one already saved is
     skipped, and a new one whose name is taken becomes "name (2)". The library is written
     atomically, and a library file that cannot be read is set aside rather than overwritten.
+  - **Fractint's formulas (unreleased):** a formula may use Fractint's sections: an init section
+    before a `:`, run once per pixel; a final comparison as its own bailout test (Magnet's
+    `|z| <= 100 && |z - 1| > 0.000001` stops at escape or at the fixed point 1);
+    `if`/`elseif`/`else`/`endif`; and variables kept from step to step. Comparisons, `&&` and `||`,
+    the inverse functions (`asin` to `atanh`), `cosxx`, `floor`, `ceil`, `trunc` and `round`,
+    `maxit` and `ismand` read too, and an assignment is a value (`a = b = pixel`). Such a formula
+    renders on the direct path, without deep zoom. Formula library ▸ Import reads Fractint `.frm`
+    files: each entry that reads becomes a formula, and its row says what the reading changed
+    (`fn1`–`fn4` take Fractint's defaults sin, sqr, sinh and cosh; Fractint's variable `c` is
+    renamed `c_`, as `c` is the pixel here; a name nothing sets is 0, as in Fractint). The import's
+    message counts the entries that do not read and names the commonest reason. Of the 20,758
+    distinct formula bodies in the Orgform collection (read locally, not bundled), 88.6% read; most
+    of the rest use Fractint's screen and view variables (`whitesq`, `rotskew`, `center`,
+    `scrnpix`) or `lastsqr`. The collection gains eight Fractint classics written with sections:
+    Magnet I and II, the Lambda parameter plane, Nova, Barnsley M1, Spider, Manowar, and Phoenix
+    with its parameter free. The library's list has a filter and draws at most 100 rows at a time.
+    On the command line, a value beginning with a minus sign that is not a single number was
+    refused as an unknown option: `--center -3/4 0` (the expression form Help gives as an
+    example), `--formula-params -0.5,0`, a formula beginning with `-`.
   - **Files (unreleased):** a tour keyframe can carry a formula (`formula`, `formula_params`), and
     Tools ▸ Tour from current view writes them; before, a tour of a custom view was refused. A
     formula with a character past Latin-1 in a comment (such as √) made a PNG export fail and an

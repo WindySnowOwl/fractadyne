@@ -25,9 +25,15 @@
 //! interpreter uses (`Sqr` → `c_sqr`, `Mul` → `c_mul`, `PowI` → the same square-and-multiply chain),
 //! so a generated built-in step is the built-in step's own helper calls.
 
-use fractadyne_core::ir::{Formula, Func, Op, Program, Val};
+use fractadyne_core::ir::{Cmp, Formula, Func, Op, Program, Round, Val};
 
 const FIXED: &str = include_str!("mandelbrot.wgsl");
+// A `.frm`-style formula's init section and own bailout, on the direct path (the only path such a
+// formula renders on): empty, and the escape test as it was, for every other formula.
+const INIT_BEGIN: &str = "// @@CUSTOM_INIT_BEGIN";
+const INIT_END: &str = "// @@CUSTOM_INIT_END";
+const BAILOUT_BEGIN: &str = "// @@CUSTOM_BAILOUT_BEGIN";
+const BAILOUT_END: &str = "// @@CUSTOM_BAILOUT_END";
 const STEP_BEGIN: &str = "// @@CUSTOM_STEP_BEGIN";
 const STEP_END: &str = "// @@CUSTOM_STEP_END";
 const SMOOTH_BEGIN: &str = "// @@CUSTOM_SMOOTH_BEGIN";
@@ -57,8 +63,10 @@ const CHUNK_FE_END: &str = "// @@CUSTOM_CHUNK_FE_END";
 const RESOLVE_DE_BEGIN: &str = "// @@CUSTOM_RESOLVE_DE_BEGIN";
 const RESOLVE_DE_END: &str = "// @@CUSTOM_RESOLVE_DE_END";
 /// Every slot, in file order: `(begin, end)`.
-const SLOTS: [(&str, &str); 13] = [
+const SLOTS: [(&str, &str); 15] = [
+    (INIT_BEGIN, INIT_END),
     (STEP_BEGIN, STEP_END),
+    (BAILOUT_BEGIN, BAILOUT_END),
     (SMOOTH_BEGIN, SMOOTH_END),
     (FE_BEGIN, FE_END),
     (PSTEP_BEGIN, PSTEP_END),
@@ -100,6 +108,9 @@ pub struct CustomShader {
     /// `Ok` when the module carries a perturbed step, in df32 (mode 0) and floatexp (mode 2);
     /// otherwise why not — the formula then renders on the direct path only.
     pub perturbation: Result<(), fractadyne_core::ir::perturb::NotPerturbable>,
+    /// Whether the chunked passes may carry it: not a formula with Fractint's sections, whose
+    /// persistent variables and init live only in the single-pass direct loop.
+    pub resumable: bool,
 }
 
 /// A custom formula's cost per step relative to Mandelbrot, for the dispatch ceiling
@@ -141,6 +152,9 @@ pub fn cost_factor(formula: &Formula) -> f64 {
                     Op::DiffPow(..) => 90.0,
                     Op::Func(..) => 4.0,
                     Op::Pow(..) => 12.0,
+                    Op::Var(_) | Op::MaxIter => 0.0,
+                    Op::Cmp(..) | Op::And(..) | Op::Or(..) | Op::Select(..) => 1.0,
+                    Op::Round(..) => 2.0,
                 })
                 .sum::<f64>()
         })
@@ -207,7 +221,7 @@ fn custom_fstep(z: Cdf, dz: Fe, dc: Fe, iter: u32) -> Fe { return dz; }
         ),
     }
     step.push_str(&format!("const CUSTOM_PHASES: u32 = {}u;\n", formula.phases().len()));
-    let source = splice(&step, power)?;
+    let source = splice(&step, power, formula.init().is_some(), formula.has_bailout())?;
     validate(&source)?;
     Ok(CustomShader {
         key: fnv1a(source.as_bytes()),
@@ -216,6 +230,7 @@ fn custom_fstep(z: Cdf, dz: Fe, dc: Fe, iter: u32) -> Fe { return dz; }
         precision,
         cost_factor: cost_factor(formula),
         perturbation: perturbation.map(|_| ()),
+        resumable: !formula.has_sections(),
     })
 }
 
@@ -237,6 +252,21 @@ fn phase_dispatch(out: &mut String, name: &str, args: &str, n: usize) {
 fn step_source(formula: &Formula, params: &[(f64, f64)]) -> Result<(String, Precision), CustomError> {
     let mut out = String::new();
     let mut precision = Precision::Df32;
+    // Fractint's persistent variables and the bailout's verdict: per-invocation globals, zero (and
+    // `true`) at the start of every pixel, set by the init section and each step.
+    for j in 0..formula.vars() {
+        out.push_str(&format!("var<private> cv{j}: Cdf;\n"));
+    }
+    if formula.has_bailout() {
+        out.push_str("var<private> cv_go: bool = true;\n");
+    }
+    if let Some(init) = formula.init() {
+        out.push_str("fn custom_init(z: Cdf, c: Cdf) -> Cdf {\n");
+        if phase_body(init, params, &mut out)? == Precision::F32 {
+            precision = Precision::F32;
+        }
+        out.push_str("}\n");
+    }
     for (k, prog) in formula.phases().iter().enumerate() {
         out.push_str(&format!("fn custom_phase{k}(z: Cdf, c: Cdf, zp: Cdf) -> Cdf {{\n"));
         if phase_body(prog, params, &mut out)? == Precision::F32 {
@@ -292,6 +322,14 @@ fn phase_body(prog: &Program, params: &[(f64, f64)], out: &mut String) -> Result
             precision = Precision::F32;
         }
         out.push_str(&format!("    let v{i} = {expr};\n"));
+    }
+    // A `.frm`-style step's persistent variables and bailout: every value is computed above, so
+    // setting them now cannot change what the step read.
+    for &(j, val) in prog.vars() {
+        out.push_str(&format!("    cv{j} = v{};\n", val.index()));
+    }
+    if let Some(c) = prog.cond() {
+        out.push_str(&format!("    cv_go = v{}.re.x != 0.0;\n", c.index()));
     }
     out.push_str(&format!("    return v{};\n", prog.out().index()));
     Ok(precision)
@@ -372,6 +410,35 @@ fn cdf_expr(
         Op::Func(f, a) => {
             f32_tier = true;
             format!("cf_{}({})", func_name(f), v(a))
+        }
+        // `.frm`-style formulas: persistent variables, comparisons of real parts in df32, and an
+        // `if` block's choice.
+        Op::Var(j) => format!("cv{j}"),
+        Op::Cmp(cmp, a, b) => {
+            let code = match cmp {
+                Cmp::Lt => 0,
+                Cmp::Le => 1,
+                Cmp::Gt => 2,
+                Cmp::Ge => 3,
+                Cmp::Eq => 4,
+                Cmp::Ne => 5,
+            };
+            format!("cf_cmp(df_order({}.re, {}.re), {code}u)", v(a), v(b))
+        }
+        Op::And(a, b) => format!("cf_bool({}.re.x != 0.0 && {}.re.x != 0.0)", v(a), v(b)),
+        Op::Or(a, b) => format!("cf_bool({}.re.x != 0.0 || {}.re.x != 0.0)", v(a), v(b)),
+        Op::Select(c, a, b) => format!("cf_select({}, {}, {})", v(c), v(a), v(b)),
+        // The iteration cap from the uniform (it changes with the budget; a baked constant would
+        // need a new module each time).
+        Op::MaxIter => "cset(df_from_u32(iu.max_iter), vec2<f32>(0.0, 0.0))".to_string(),
+        Op::Round(r, a) => {
+            let code = match r {
+                Round::Floor => 0,
+                Round::Ceil => 1,
+                Round::Trunc => 2,
+                Round::Nearest => 3,
+            };
+            format!("cset(df_round({a}.re, {code}u), df_round({a}.im, {code}u))", a = v(a))
         }
     };
     Ok((expr, f32_tier))
@@ -519,6 +586,56 @@ fn fphase_body(prog: &Program, params: &[(f64, f64)], out: &mut String) -> Resul
 /// `f32` complex elementary functions over the high words (the `Precision::F32` tier). Same
 /// formulas and branch choices as the CPU interpreter's `f64` ones.
 const F32_HELPERS: &str = "\
+fn cf_bool(t: bool) -> Cdf { return cset(vec2<f32>(select(0.0, 1.0, t), 0.0), vec2<f32>(0.0, 0.0)); }
+// The order of two df32 values: −1, 0 or 1, and 2 where either is NaN (every comparison but != is
+// then false, as on the CPU).
+fn df_order(a: vec2<f32>, b: vec2<f32>) -> i32 {
+    if (a.x != a.x || b.x != b.x) { return 2; }
+    if (a.x < b.x) { return -1; }
+    if (a.x > b.x) { return 1; }
+    if (a.y < b.y) { return -1; }
+    if (a.y > b.y) { return 1; }
+    return 0;
+}
+// A comparison by code: 0 <, 1 <=, 2 >, 3 >=, 4 ==, 5 !=.
+fn cf_cmp(o: i32, k: u32) -> Cdf {
+    var t = false;
+    switch (k) {
+        case 0u: { t = o == -1; }
+        case 1u: { t = o == -1 || o == 0; }
+        case 2u: { t = o == 1; }
+        case 3u: { t = o == 1 || o == 0; }
+        case 4u: { t = o == 0; }
+        default: { t = o != 0; }
+    }
+    return cf_bool(t);
+}
+fn cf_select(c: Cdf, a: Cdf, b: Cdf) -> Cdf {
+    let t = c.re.x != 0.0;
+    return cset(select(b.re, a.re, t), select(b.im, a.im, t));
+}
+// floor of a df32 value: a high word that is not an integer decides it alone (the low word is
+// under half its ulp, so cannot carry the sum across an integer); an integer one adds the low
+// word's floor.
+fn df_floor(a: vec2<f32>) -> vec2<f32> {
+    let h = floor(a.x);
+    if (h != a.x) { return vec2<f32>(h, 0.0); }
+    return quick_two_sum(h, floor(a.y));
+}
+// Rounding by code: 0 floor, 1 ceil, 2 toward zero, 3 Fractint's round, floor(x + 0.5).
+fn df_round(a: vec2<f32>, k: u32) -> vec2<f32> {
+    switch (k) {
+        case 0u: { return df_floor(a); }
+        case 1u: { return -df_floor(-a); }
+        case 2u: { if (a.x < 0.0) { return -df_floor(-a); } return df_floor(a); }
+        default: { return df_floor(df_add(a, vec2<f32>(0.5, 0.0))); }
+    }
+}
+// An iteration count as df32: exact to 2^48.
+fn df_from_u32(n: u32) -> vec2<f32> {
+    let h = f32(n);
+    return vec2<f32>(h, f32(i32(n) - i32(h)));
+}
 fn cf_make(x: f32, y: f32) -> Cdf { return cset(vec2<f32>(x, 0.0), vec2<f32>(y, 0.0)); }
 fn cf_mul(a: Cdf, b: Cdf) -> Cdf {
     return cf_make(a.re.x * b.re.x - a.im.x * b.im.x, a.re.x * b.im.x + a.im.x * b.re.x);
@@ -800,7 +917,7 @@ fn marker_line(src: &str, marker: &'static str) -> Result<(usize, usize), Custom
 
 /// The fixed module with every slot filled: the direct and perturbed steps replaced by the
 /// generated ones, both smooth values clamped, the floatexp path cut, the rebase phase-aligned.
-fn splice(step_fns: &str, power: f32) -> Result<String, CustomError> {
+fn splice(step_fns: &str, power: f32, init: bool, bailout: bool) -> Result<String, CustomError> {
     // The power must stay OPAQUE to the compiler, as the fixed module's is (the uniform picks it
     // there), so `log(power_f)` in the smooth value runs on the GPU in both. Folded at compile time
     // it differs in the last bit: measured, a generated Mandelbrot then differed from the built-in
@@ -833,12 +950,26 @@ fn splice(step_fns: &str, power: f32) -> Result<String, CustomError> {
 "
         )
     };
-    let fills: [String; 13] = [
+    // A formula's own bailout stops where it says, often near |z| = 2 or not escaping at all (a
+    // convergence test): the smooth value's log-log term holds only past a few units, so below
+    // that the plain count shows.
+    let direct_smooth = if bailout {
+        "        let smit = select(f32(iter), max(f32(iter) + 1.0 - nu, 0.0), mag2 > 4.0);\n".to_string()
+    } else {
+        smooth.clone()
+    };
+    let fills: [String; 15] = [
+        if init { "        z = custom_init(z, c);\n".to_string() } else { String::new() },
         format!(
             "                var zn: Cdf = custom_tame(custom_step(z, c, zprev, iter));\n{}",
             power_line("                ")
         ),
-        smooth.clone(),
+        if bailout {
+            "                if (!cv_go) { escaped = true; break; }\n".to_string()
+        } else {
+            "                if (dot(zf, zf) > bail2) { escaped = true; break; }\n".to_string()
+        },
+        direct_smooth,
         fe_branch(),
         // Tamed as the direct step is: a function's escape is a JUMP (sin z from |z| ≈ 6 past f32's
         // range in one step, cosh overflowing), and an infinite or NaN δ never passes the escape

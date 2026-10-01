@@ -276,6 +276,43 @@ fn the_floatexp_step_keeps_the_perturbations_in_floatexp() {
     assert!(s.contains("fn custom_fstep(z: Cdf, dz: Fe, dc: Fe, iter: u32) -> Fe { return dz; }"));
 }
 
+/// Fractint's sections generate valid modules: the init section before the loop, persistent
+/// variables as per-pixel globals, the formula's own bailout in place of the escape test, and
+/// comparisons and `if` blocks. Such a formula is neither perturbable nor resumable; a formula
+/// without sections keeps the escape test and has no init.
+#[test]
+fn fractint_sections_generate_valid_modules() {
+    let parse = |src: &str| fractadyne_core::ir::parse::parse(src).unwrap_or_else(|e| panic!("{src:?}: {e}"));
+    let cases = [
+        ("z = 0.5:\n z = c*z*(1 - z)\n |z| <= 100", ["fn custom_init(", "z = custom_init(z, c);", "if (!cv_go) { escaped = true; break; }"]),
+        ("z = pixel, z1 = pixel:\n t = z\n z = sqr(z) + z1 + pixel\n z1 = t\n |z| <= 4", ["var<private> cv0: Cdf;", "cv0 = v", "cv_go = v"]),
+        ("z = pixel:\n if (real(z) >= 0)\n  z = (z - 1)*p1\n else\n  z = (z + 1)*p1\n endif\n |z| <= 4", ["cf_select(", "cf_cmp(df_order(", "cv_go"]),
+        ("z = sqr((z^2 + c - 1)/(2*z + c - 2))\n |z| <= 100 && |z - 1| > 0.000001", ["cf_bool(", "cf_cmp(", "cv_go"]),
+        // `maxit` reads the uniform; the rounding functions round df32 part by part.
+        (
+            "z = pixel, iter = 0:\n iter = iter + 1\n z = sqr(z) + pixel\n if (iter == maxit)\n  z = floor(z*8)/8 + ceil(z) + trunc(z) + round(z)\n endif\n |z| <= 4",
+            ["df_from_u32(iu.max_iter)", "df_round(", "cv_go"],
+        ),
+    ];
+    for (src, want) in cases {
+        let s = build(&parse(src), &[(0.5, 0.0)]).unwrap_or_else(|e| panic!("{src:?}: {e}"));
+        for w in want {
+            assert!(s.source.contains(w), "{src:?}: no {w:?}");
+        }
+        assert!(!s.resumable && s.perturbation.is_err(), "{src:?}");
+    }
+    // Without sections, rounding and `maxit` resume across passes (z is all the state) but do not
+    // perturb.
+    for src in ["round(z^2 + c)", "z^2 + c*maxit/1000"] {
+        let s = build(&parse(src), &[]).unwrap_or_else(|e| panic!("{src:?}: {e}"));
+        assert!(s.resumable && s.perturbation.is_err(), "{src:?}");
+    }
+    let plain = build(&parse("z^2 + c"), &[]).unwrap();
+    assert!(plain.resumable && plain.perturbation.is_ok());
+    assert!(!plain.source.contains("custom_init") && !plain.source.contains("cv_go"));
+    assert!(plain.source.contains("if (dot(zf, zf) > bail2) { escaped = true; break; }"));
+}
+
 #[test]
 fn the_key_follows_the_source() {
     let m = build(&single(builtin_step(f::MANDELBROT).unwrap()), &[]).unwrap();

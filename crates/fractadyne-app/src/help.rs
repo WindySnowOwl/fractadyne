@@ -466,7 +466,8 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
          iterate, c the pixel (the Julia constant in Julia mode), p1-p5 parameters; |z| is the \
          squared modulus, as in Fractint, and the usual functions are available (sqr, abs, conj, \
          real, imag, cabs, flip, recip, ident, exp, log, sqrt, sin, cos, tan, cotan, sinh, cosh, \
-         tanh, cotanh). log is the natural logarithm, as in Fractint and in complex analysis: \
+         tanh, cotanh, asin, acos, atan, asinh, acosh, atanh, cosxx, and floor, ceil, trunc and \
+         round, which round each part). log is the natural logarithm, as in Fractint and in complex analysis: \
          what many textbooks write ln (there is no base-10 logarithm). A formula written with \
          ln, cot, coth, Re or Im does not read; the syntax check names the function to use, a \
          button rewrites it, and typing ln offers log. Every \
@@ -485,6 +486,27 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
          only loosely in single precision: at 2,000 iterations a third of sin(z) + c's pixels \
          differ from the exact orbit's, at 60 almost none. Views, sessions and exported images \
          keep the formula's text.",
+    );
+    help_p(
+        ui,
+        "Fractint's sections work too. Statements before a ':' are the init section, run once \
+         per pixel; a comparison as the last statement is the formula's own bailout test, \
+         iterating while it holds (|z| <= 100 && |z - 1| > 0.000001 stops an orbit that escapes \
+         or settles on 1); if (...), elseif (...), else and endif choose statements; and a \
+         variable read before it is set in a step has its value from the step before (from the \
+         init section, or 0). Comparisons compare real parts and give 1 or 0, && and || combine \
+         them, and an assignment is a value too (a = b = pixel). pixel, p1-p5, pi and e may be \
+         assigned, keeping their own value until they are; maxit is the iteration count and \
+         ismand is 1 (the formula's Mandelbrot form). A formula with any of these, or with \
+         rounding, renders on the direct path, without deep zoom. Formula library > Import reads \
+         Fractint .frm files as well. Each entry that reads becomes a formula, and its row says \
+         what the reading changed: fn1-fn4 take Fractint's defaults (sin, sqr, sinh, cosh); \
+         Fractint's variable c is renamed c_, as c is the pixel here; a name nothing sets is 0, \
+         as in Fractint; blanks inside a name are dropped (end if is endif), as Fractint drops \
+         them. The import's message counts the entries that do not read and gives the commonest \
+         reason: the screen and view variables (whitesq, scrnpix, scrnmax, center, magxmag, \
+         rotskew), lastsqr and random numbers are not supported. The Collection's Fractint \
+         classics (Magnet, Nova, Spider, Manowar and others) are written with these sections.",
     );
     help_p(
         ui,

@@ -67,6 +67,18 @@ pub enum ExprKind {
     Bin(BinOp, Box<Expr>, Box<Expr>),
     /// `base ^ exponent`.
     Pow(Box<Expr>, Box<Expr>),
+    /// A comparison of real parts (Fractint's): `|z| <= 4`.
+    Cmp(super::Cmp, Box<Expr>, Box<Expr>),
+    /// `a && b`, `a || b`.
+    Logic(Logic, Box<Expr>, Box<Expr>),
+    /// An assignment used as a value (Fractint's): the `b = pixel` of `a = b = pixel`.
+    Assign(Name, Box<Expr>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Logic {
+    And,
+    Or,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

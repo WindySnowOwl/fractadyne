@@ -136,9 +136,14 @@ fn errors_name_the_problem_and_the_place() {
     assert!(e.message.contains("`w` is used before it is assigned"), "{e}");
     assert!(err("z = sin(z").message.contains("expected ')'"));
     assert!(err("z = fn1(z) + c").message.contains("fn1"));
-    assert!(err("if (|z| > 4)").message.contains("`if`"));
-    assert!(err("z = z < 2").message.contains("comparison"));
-    assert!(err("init: z = 0").message.contains("sections"));
+    assert!(err("if (|z| > 4)").message.contains("`endif`"));
+    assert!(err("z = z^2\nelse\nz = c").message.contains("without an `if`"));
+    assert!(err("z = 0: z = z^2: z = c").message.contains("second ':'"));
+    assert!(err("if = 3").message.contains("cannot be assigned"));
+    assert!(err("z = z & c").message.contains("&&"));
+    assert!(err("{ z = z^2 + c }").message.contains(".frm"));
+    // `init` is no keyword: the language's init section is everything before a ':'.
+    assert!(err("init: z = 0").message.contains("`init` is used before it is assigned"));
     assert!(err("c = 3").message.contains("cannot be assigned"));
     assert!(err("sin = 3").message.contains("cannot be assigned"));
     assert!(err("z = (z, 1)").message.contains("two real numbers"));
@@ -161,4 +166,272 @@ fn errors_name_the_problem_and_the_place() {
     assert!(err("").message.contains("no step"));
     assert!(err("; only a comment").message.contains("no step"));
     assert!(err("t = z").message.contains("no step"), "assigning only a temporary is not a step");
+}
+
+// ---- Fractint's sections ----
+
+/// `orbit_points` of `src` and of a hand-written loop agree bit for bit over a grid of pixels.
+fn same_orbits(src: &str, hand: impl Fn((f64, f64)) -> Vec<(f64, f64)>) {
+    let f = parse(src).unwrap_or_else(|e| panic!("{src:?}: {e}"));
+    let mut points = 0;
+    for j in 0..12 {
+        for i in 0..16 {
+            let c = (-2.0 + 3.0 * i as f64 / 15.0, -1.4 + 2.8 * j as f64 / 11.0);
+            let got = orbit_points(&f, (0.0, 0.0), c, &[(0.6, 0.0)], 300, 1.0e300).unwrap();
+            let want = hand(c);
+            assert_eq!(
+                got.iter().map(|p| bits(*p)).collect::<Vec<_>>(),
+                want.iter().map(|p| bits(*p)).collect::<Vec<_>>(),
+                "{src:?} at {c:?}"
+            );
+            points += want.len();
+        }
+    }
+    assert!(points > 500, "{src:?}: too few points ({points})");
+}
+
+fn cmul(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
+    (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0)
+}
+fn csq(a: (f64, f64)) -> (f64, f64) {
+    (a.0 * a.0 - a.1 * a.1, 2.0 * (a.0 * a.1))
+}
+fn cadd(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
+    (a.0 + b.0, a.1 + b.1)
+}
+fn norm(a: (f64, f64)) -> f64 {
+    a.0 * a.0 + a.1 * a.1
+}
+
+/// An init section runs once, from z₀; a final comparison is the bailout, evaluated with the
+/// step's values — Fractint's Mandelbrot is the Mandelbrot set with escape radius 2.
+#[test]
+fn an_init_section_and_a_bailout() {
+    let f = parse("z = 0.5:\n  z = z*z + pixel\n  |z| <= 4").unwrap();
+    assert!(f.init().is_some() && f.has_bailout() && f.vars() == 0);
+    assert!(!f.bignum_evaluable(), "a sectioned formula has no reference orbit");
+    same_orbits("z = 0.5:\n  z = z*z + pixel\n  |z| <= 4", |c| {
+        let mut z = (0.5, 0.0);
+        let mut out = vec![z];
+        for _ in 0..300 {
+            z = cadd(csq(z), c);
+            out.push(z);
+            if !(norm(z) <= 4.0) {
+                break;
+            }
+        }
+        out
+    });
+    // Without a comparison at the end, the escape radius decides, as before.
+    assert!(!parse("z = 0.5: z = z^2 + c").unwrap().has_bailout());
+}
+
+/// Variables persist from step to step: Manowar carries the step before's z, and a name read
+/// before its statement is its value from the step before (0 at first).
+#[test]
+fn variables_persist_from_step_to_step() {
+    let f = parse("z = pixel, z1 = pixel:\n  t = z\n  z = sqr(z) + z1 + pixel\n  z1 = t\n  |z| <= 4").unwrap();
+    assert_eq!(f.vars(), 1, "z1 carries over; t does not");
+    same_orbits("z = pixel, z1 = pixel:\n  t = z\n  z = sqr(z) + z1 + pixel\n  z1 = t\n  |z| <= 4", |c| {
+        let (mut z, mut z1) = (c, c);
+        let mut out = vec![z];
+        for _ in 0..300 {
+            let t = z;
+            z = cadd(cadd(csq(z), z1), c);
+            z1 = t;
+            out.push(z);
+            if !(norm(z) <= 4.0) {
+                break;
+            }
+        }
+        out
+    });
+    // No init section: `w` starts at 0 and is read before its statement each step.
+    same_orbits("z = z^2 + w + c\nw = z*p1", |c| {
+        let (mut z, mut w) = ((0.0, 0.0), (0.0, 0.0));
+        let mut out = vec![z];
+        for _ in 0..300 {
+            z = cadd(cadd(csq(z), w), c);
+            w = cmul(z, (0.6, 0.0));
+            out.push(z);
+            if norm(z) > 1.0e300 {
+                break;
+            }
+        }
+        out
+    });
+    // A name nothing assigns is still a mistake.
+    assert!(parse("z = z^2 + zz + c").unwrap_err().message.contains("`zz` is used before it is assigned"));
+}
+
+/// `if … elseif … else … endif` keeps one branch's values; a variable a branch leaves alone keeps
+/// its value from before the block.
+#[test]
+fn if_blocks_keep_one_branch() {
+    let src = "z = pixel:\n  if (real(z) >= 0)\n    z = (z - 1)*p1\n  elseif (imag(z) > 0.5)\n    z = z*z\n  else\n    z = (z + 1)*p1\n  endif\n  |z| <= 4";
+    same_orbits(src, |c| {
+        let mut z = c;
+        let mut out = vec![z];
+        let p1 = (0.6, 0.0);
+        for _ in 0..300 {
+            z = if z.0 >= 0.0 {
+                cmul((z.0 - 1.0, z.1), p1)
+            } else if z.1 > 0.5 {
+                cmul(z, z)
+            } else {
+                cmul((z.0 + 1.0, z.1), p1)
+            };
+            out.push(z);
+            if !(norm(z) <= 4.0) {
+                break;
+            }
+        }
+        out
+    });
+    // A branch that leaves `w` alone: `w` keeps its value (carried, as it is read before it is set).
+    let f = parse("if (real(z) > 0)\n  w = z\nendif\nz = z^2 + w + c").unwrap();
+    assert_eq!(f.vars(), 1);
+}
+
+/// Comparisons compare real parts and give 1 or 0; `&&` and `||` take real parts too.
+#[test]
+fn comparisons_and_logic_give_one_or_zero() {
+    let cases = [
+        ("(z < 2) + 0*c", (1.5, 9.0), 1.0),
+        ("(z < 2) + 0*c", (2.5, -9.0), 0.0),
+        ("(z <= 2) + (z >= 2) + 0*c", (2.0, 5.0), 2.0),
+        ("(z == 2) + (z != 2) + 0*c", (2.0, 1.0), 1.0),
+        ("(z > 1 && z < 3) + 0*c", (2.0, 0.0), 1.0),
+        ("(z > 1 && z < 3) + 0*c", (4.0, 0.0), 0.0),
+        ("(z < 1 || z > 3) + 0*c", (4.0, 0.0), 1.0),
+        ("(z < 1 || z > 3) + 0*c", (2.0, 0.0), 0.0),
+    ];
+    for (src, z, want) in cases {
+        assert_eq!(step(src, z, (0.0, 0.0), &[]), (want, 0.0), "{src} at {z:?}");
+    }
+    // Looser than arithmetic, tighter than nothing: `a + 1 < b` is `(a + 1) < b`.
+    assert_eq!(step("(z + 1 < 3) + 0*c", (1.5, 0.0), (0.0, 0.0), &[]), (1.0, 0.0));
+}
+
+/// Fractint's assignment is a value where its value is the whole of what is read: chained, or
+/// opening parentheses (an `if`'s condition among them). Elsewhere an `=` is still an error.
+#[test]
+fn assignment_is_a_value_where_fractint_writes_one() {
+    assert_eq!(step("a = b = c*2, a + b", (0.0, 0.0), (0.5, 0.25), &[]), (2.0, 1.0));
+    assert_eq!(step("w = (z = z*2) + 1, w + z", (1.5, 0.0), (0.0, 0.0), &[]), (7.0, 0.0));
+    assert_eq!(step("if ((d = |z|) < 4)\n z = d\nendif\nz + 0*c", (1.0, 1.0), (0.0, 0.0), &[]), (2.0, 0.0));
+    assert_eq!(step("sqr(t = z + 1) + t", (1.0, 0.0), (0.0, 0.0), &[]), (6.0, 0.0));
+    let e = parse("z = p1^z = 2").expect_err("an assignment inside a power");
+    assert!(e.message.contains("found '='"), "{e}");
+    assert!(parse("z = (c = 2)").expect_err("c").message.contains("cannot be assigned"));
+    // The tree holds the inner assignment, its span inside the statement's.
+    let s = crate::ir::parse::syntax("a = b = pixel").unwrap();
+    assert!(matches!(&s.statements[0].body.kind, ExprKind::Assign(n, _) if n.name == "b"));
+}
+
+/// Fractint's predefined variables may be assigned; each holds its predefined value until it is
+/// (in the loop, a read before the assignment is the step before's value, the first time the
+/// predefined one). `c`, this language's pixel, may not.
+#[test]
+fn predefined_names_can_be_assigned() {
+    same_orbits("pixel = pixel*0.5, z = z*z + pixel, |z| <= 4", |c| {
+        let (mut p, mut z) = (c, (0.0, 0.0));
+        let mut out = vec![z];
+        for _ in 0..300 {
+            p = (p.0 * 0.5, p.1 * 0.5);
+            z = cadd(csq(z), p);
+            out.push(z);
+            if !(norm(z) <= 4.0) {
+                break;
+            }
+        }
+        out
+    });
+    // Set in the init section, read in the loop: p1 is 0.6 + 1 there.
+    same_orbits("p1 = p1 + 1:\n z = z*z + p1*pixel\n |z| <= 4", |c| {
+        let mut z = (0.0, 0.0);
+        let mut out = vec![z];
+        for _ in 0..300 {
+            z = cadd(csq(z), cmul((1.6, 0.0), c));
+            out.push(z);
+            if !(norm(z) <= 4.0) {
+                break;
+            }
+        }
+        out
+    });
+    assert_eq!(step("e = 2, z*e", (1.5, 0.0), (0.0, 0.0), &[]), (3.0, 0.0));
+}
+
+/// With a bailout, a loop need not set z: the test alone decides (Fractint draws such "formulas"
+/// of the pixel alone).
+#[test]
+fn a_bailout_alone_is_a_step() {
+    let f = parse("|pixel| < 4").unwrap();
+    assert_eq!(orbit_points(&f, (0.0, 0.0), (3.0, 0.0), &[], 50, 1.0e300).unwrap().len(), 2, "fails at once");
+    assert_eq!(orbit_points(&f, (0.0, 0.0), (1.0, 0.0), &[], 50, 1.0e300).unwrap().len(), 51, "holds to the cap");
+    assert!(parse("t = z").is_err(), "without one, a loop that sets no z is still no step");
+}
+
+/// `maxit` is the iteration cap (0 for a lone step), `ismand` 1; neither has a deep-zoom form.
+#[test]
+fn maxit_and_ismand() {
+    let f = parse("z*0 + maxit + ismand").unwrap();
+    assert_eq!(orbit_points(&f, (0.0, 0.0), (0.0, 0.0), &[], 7, 1.0e300).unwrap()[1], (8.0, 0.0));
+    assert_eq!(step("z*0 + maxit + ismand", (0.0, 0.0), (0.0, 0.0), &[]), (1.0, 0.0));
+    assert!(!f.bignum_evaluable());
+}
+
+/// Fractint's rounding, part by part; its `round` is `floor(x + 0.5)`.
+#[test]
+fn rounding_functions_round_each_part() {
+    let z = (-1.5, 2.5);
+    assert_eq!(step("floor(z)", z, (0.0, 0.0), &[]), (-2.0, 2.0));
+    assert_eq!(step("ceil(z)", z, (0.0, 0.0), &[]), (-1.0, 3.0));
+    assert_eq!(step("trunc(z)", z, (0.0, 0.0), &[]), (-1.0, 2.0));
+    assert_eq!(step("round(z)", z, (0.0, 0.0), &[]), (-1.0, 3.0));
+    assert!(!parse("floor(z) + c").unwrap().bignum_evaluable());
+}
+
+/// An `if`'s condition opens with a parenthesis and runs on (`if (a) || (b)`); a function's
+/// parentheses may hold a complex constant (`sin(1, 2)`).
+#[test]
+fn fractints_looser_forms() {
+    let src = "if (real(z) > 0) || (imag(z) > 0)\n z = z*2\nendif\nz = z + c";
+    assert_eq!(step(src, (1.0, -1.0), (0.5, 0.0), &[]), (2.5, -2.0));
+    assert_eq!(step(src, (-1.0, -1.0), (0.5, 0.0), &[]), (-0.5, -1.0));
+    assert_eq!(step("sin(1, 2) + 0*z", (0.0, 0.0), (0.0, 0.0), &[]), step("sin((1, 2)) + 0*z", (0.0, 0.0), (0.0, 0.0), &[]));
+    assert!(parse("z = sin(z, 2)").expect_err("not constant").message.contains("two real numbers"));
+}
+
+/// `p0` (and `p6` on) are ordinary names, not parameters — `p0` once underflowed the index.
+#[test]
+fn names_past_the_parameters_are_variables() {
+    assert_eq!(step("p0 = z*2, p0 + c", (1.5, 0.0), (0.25, 0.0), &[]), (3.25, 0.0));
+    assert!(parse("z = z*z + p0").is_err(), "an unset `p0` is an unknown name");
+}
+
+/// The inverse functions invert, on the principal branches; `cosxx` is the cosine's conjugate.
+#[test]
+fn the_inverse_functions_invert() {
+    let w = (0.3, 0.2);
+    let close = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1e-12 && (a.1 - b.1).abs() < 1e-12;
+    for (inv, fwd) in [("asin", "sin"), ("acos", "cos"), ("atan", "tan"), ("asinh", "sinh"), ("acosh", "cosh"), ("atanh", "tanh")] {
+        let y = step(&format!("{fwd}(z) + 0*c"), w, (0.0, 0.0), &[]);
+        let back = step(&format!("{inv}(z) + 0*c"), y, (0.0, 0.0), &[]);
+        assert!(close(back, w), "{inv}({fwd}({w:?})) = {back:?}");
+    }
+    let c = step("cos(z) + 0*c", w, (0.0, 0.0), &[]);
+    assert_eq!(step("cosxx(z) + 0*c", w, (0.0, 0.0), &[]), (c.0, -c.1));
+}
+
+/// The syntax tree holds comparisons and logic, and an `if` block's statements.
+#[test]
+fn the_tree_holds_comparisons_and_branches() {
+    use crate::ir::syntax::{ExprKind, Logic};
+    let s = syntax("z = 0:\nif (real(z) > 0 && imag(z) < 1)\n  z = z^2\nendif\n|z| <= 4").unwrap();
+    assert_eq!(s.statements.len(), 3, "z = 0, the branch's z = z^2, the bailout");
+    assert!(matches!(s.statements[2].body.kind, ExprKind::Cmp(crate::ir::Cmp::Le, ..)));
+    let any_logic = |e: &crate::ir::syntax::Expr| matches!(e.kind, ExprKind::Logic(Logic::And, ..));
+    assert!(!any_logic(&s.statements[1].body), "the condition is not a statement");
 }

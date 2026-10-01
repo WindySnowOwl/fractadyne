@@ -481,3 +481,87 @@ center = ["0", "0"]
 zoom = "1.2"
 iterations = 300
 julia = ["-1.1", "0.05"]
+
+# ---- Fractint classics: an init section, a bailout test of their own, an if block ----
+
+[[formula]]
+name = "Magnet I"
+category = "Fractint classics"
+about = "((z² + c − 1)/(2z + c − 2))², from a model of magnetism. Its own test stops an orbit that escapes or settles on the fixed point 1."
+source = "z = sqr((z^2 + c - 1)/(2*z + c - 2))\n|z| <= 100 && |z - 1| > 0.000001"
+[formula.view]
+center = ["1.3", "0"]
+zoom = "0.9"
+iterations = 300
+
+[[formula]]
+name = "Magnet II"
+category = "Fractint classics"
+about = "Magnet I's cubic sibling from the same model; the same test, for escape or the fixed point 1."
+source = "z = sqr((z^3 + 3*(c - 1)*z + (c - 1)*(c - 2))/(3*z^2 + 3*(c - 2)*z + (c - 1)*(c - 2) + 1))\n|z| <= 100 && |z - 1| > 0.000001"
+[formula.view]
+center = ["1", "0"]
+zoom = "1.2"
+iterations = 300
+
+[[formula]]
+name = "Lambda parameter plane"
+category = "Fractint classics"
+about = "λz(1 − z) from its critical point ½ (the init section): the λ whose Lambda Julia set is connected, two Mandelbrot sets back to back."
+source = "z = 0.5:\nz = c*z*(1 - z)"
+[formula.view]
+center = ["1", "0"]
+zoom = "0.75"
+iterations = 300
+
+[[formula]]
+name = "Nova"
+category = "Fractint classics"
+about = "Newton's method for z³ = 1, plus c, from the critical point 1: Mandelbrot-like copies among Newton's basins. It stops where it settles."
+source = "z = 1:\nw = z\nz = z - (z^3 - 1)/(3*z^2) + c\n|z - w| > 0.000000001"
+[formula.view]
+center = ["-0.5", "0"]
+zoom = "3"
+iterations = 300
+
+[[formula]]
+name = "Barnsley M1"
+category = "Fractint classics"
+about = "Barnsley's map, z ↦ (z − 1)c or (z + 1)c by the sign of Re z, from z = c: an if block in every step."
+source = "z = c:\nif (real(z) >= 0)\n  z = (z - 1)*c\nelse\n  z = (z + 1)*c\nendif\n|z| <= 4"
+[formula.view]
+center = ["0", "0"]
+zoom = "1"
+iterations = 300
+
+[[formula]]
+name = "Spider"
+category = "Fractint classics"
+about = "z ↦ z² + s while s ↦ s/2 + z, both from c: a second variable carried from step to step."
+source = "z = c, s = c:\nz = z*z + s\ns = s/2 + z\n|z| <= 4"
+[formula.view]
+center = ["-0.5", "0"]
+zoom = "1.2"
+iterations = 300
+
+[[formula]]
+name = "Manowar"
+category = "Fractint classics"
+about = "z ↦ z² + z₋₁ + c, the step before's z carried along, from z = z₋₁ = c: a small jellyfish, tentacles trailing left."
+source = "z = c, z1 = c:\nt = z\nz = z*z + z1 + c\nz1 = t\n|z| <= 4"
+[formula.view]
+center = ["-0.15", "0"]
+zoom = "5"
+iterations = 300
+
+[[formula]]
+name = "Phoenix with a parameter"
+category = "Fractint classics"
+about = "z ↦ z² + c + p₁·y, y the step before's z (from 0): Ushiki's Phoenix Julia set at c = 0.56667, p₁ = −0.5, with p₁ free to change."
+source = "t = z\nz = z*z + c + p1*y\ny = t"
+params = [["-0.5", "0"]]
+[formula.view]
+center = ["0", "0"]
+zoom = "1.3"
+iterations = 300
+julia = ["0.56667", "0"]

@@ -804,6 +804,8 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         var dprev = cset(zero, zero); // Phoenix derivative D_{n-1} (two-term)
         let cmag = length(vec2<f32>(c.re.x, c.im.x));
         var aux = aux_init(vec2<f32>(z.re.x, z.im.x));
+        // @@CUSTOM_INIT_BEGIN — a custom formula's init section, run once from z₀ (`custom.rs`).
+        // @@CUSTOM_INIT_END
         loop {
             if (iter >= iu.max_iter) { break; }
             if (newton) {
@@ -887,7 +889,9 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 iter = iter + 1u;
                 zf = vec2<f32>(z.re.x, z.im.x);
                 if ((iu.aux_on & 1u) == 1u) { aux_step(&aux, zf, cmag, power_f); }
+                // @@CUSTOM_BAILOUT_BEGIN — a custom formula's own bailout replaces this test (`custom.rs`).
                 if (dot(zf, zf) > bail2) { escaped = true; break; }
+                // @@CUSTOM_BAILOUT_END
             }
         }
         if (!escaped) {

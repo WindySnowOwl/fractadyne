@@ -14,11 +14,24 @@
 //! complex constant; `p1`…`p5` are parameters; `pixel` is a synonym of `c`. `^` binds tighter than
 //! unary minus (`-z^2` is `-(z^2)`) and associates to the right.
 //!
-//! Not yet (the rest of design phase 3): `init:`/`bailout:` sections, `if`, comparisons, `fn1`…`fn4`.
-//! They are reported as errors, never mis-read.
+//! Fractint's formula sections too (design phase 3):
+//!
+//! ```text
+//! z = 0.5:                    an init section: run once per pixel, before the first step
+//!   z = c*z*(1 - z)           the loop
+//!   |z| <= 100                a final COMPARISON is the bailout: iterate while it holds
+//! ```
+//!
+//! Variables persist from one step to the next, as in Fractint: a name read before its statement
+//! has run in this step is its value from the step before (from the init section, or 0) — when a
+//! statement assigns it somewhere; otherwise it is a mistake, and an error. Comparisons (`< <= > >=
+//! == !=`) compare REAL parts and give 1 or 0; `&&` and `||` evaluate both sides; `if (…) … elseif
+//! (…) … else … endif` blocks compute both branches and keep one. Not supported, and reported:
+//! `fn1`…`fn4` (the `.frm` reader puts Fractint's default functions in their place), the screen
+//! variables, random numbers and `lastsqr`.
 
-use super::syntax::{BinOp, Comment, Expr, ExprKind, Name, Span, Statement, Syntax};
-use super::{Builder, Formula, Func, Op, Val};
+use super::syntax::{BinOp, Comment, Expr, ExprKind, Logic, Name, Span, Statement, Syntax};
+use super::{Builder, Cmp, Formula, Func, Op, Val};
 
 /// Where and why a source failed to parse. `line` and `col` are 1-based, `col` in characters.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,56 +71,124 @@ pub fn syntax(src: &str) -> Result<Syntax, ParseError> {
 /// `parse/snapshot.rs` holds it to that), and with `lower` every error comes where it came before.
 fn run(src: &str, lower: bool) -> Result<(Option<Formula>, Syntax), ParseError> {
     let (tokens, comments) = lex(src)?;
-    let mut p = Parser { src, tokens, at: 0, b: Builder::new(), vars: Vec::new(), consts: Vec::new(), lower };
+    // Every name a statement assigns: one read before its statement has run carries its value over
+    // from the step before (Fractint's variables persist), rather than being a mistake.
+    let mut assigned: Vec<String> = Vec::new();
+    for w in tokens.windows(2) {
+        if let (Tok::Ident(n), Tok::Assign) = (&w[0].0, &w[1].0) {
+            if !assigned.contains(n) {
+                assigned.push(n.clone());
+            }
+        }
+    }
+    let has_init = tokens.iter().any(|t| t.0 == Tok::Colon);
+    let mut p = Parser {
+        src,
+        tokens,
+        at: 0,
+        b: Builder::new(),
+        vars: Vec::new(),
+        consts: Vec::new(),
+        lower,
+        assigned,
+        state: Vec::new(),
+        in_init: has_init,
+    };
+    let ir_err = |e: super::IrError| ParseError { line: 1, col: 1, message: e.to_string() };
+    let mut statements = Vec::new();
+    // The init section: a program of its own, run once from z = z₀.
+    let mut init = None;
+    if has_init {
+        let z = p.leaf(Op::Z);
+        p.vars.push(("z".to_string(), z));
+        p.statements(&mut statements)?;
+        p.expect(&Tok::Colon)?;
+        let out = p.var("z").expect("z is always bound");
+        init = Some((std::mem::take(&mut p.b), out, std::mem::take(&mut p.vars)));
+        p.consts.clear();
+        p.in_init = false;
+    }
     let z = p.leaf(Op::Z);
     p.vars.push(("z".to_string(), z));
-    let mut assigned_z = false;
-    let mut last_bare = None;
-    let mut statements = Vec::new();
-    loop {
-        while p.eat(&Tok::Sep) {}
-        if p.peek() == &Tok::End {
-            break;
-        }
-        let stmt_at = p.at;
-        if let (Tok::Ident(name), Tok::Assign) = (p.peek().clone(), p.peek_at(1).clone()) {
-            p.at += 2;
-            if reserved(&name) {
-                return Err(p.err_at(stmt_at, format!("`{name}` cannot be assigned")));
-            }
-            let (v, body) = p.expr()?;
-            if name == "z" {
-                assigned_z = true;
-            }
-            let target = Name { name: name.clone(), span: p.token_span(stmt_at) };
-            match p.vars.iter_mut().find(|(n, _)| *n == name) {
-                Some(slot) => slot.1 = v,
-                None => p.vars.push((name, v)),
-            }
-            last_bare = None;
-            statements.push(Statement { span: p.span_from(stmt_at), target: Some(target), body });
-        } else {
-            let (v, body) = p.expr()?;
-            last_bare = Some(v);
-            statements.push(Statement { span: body.span, target: None, body });
-        }
-        match p.peek() {
-            Tok::Sep | Tok::End => {}
-            _ => return Err(p.err(format!("expected ',' or a new line, found {}", p.peek().describe()))),
-        }
+    let block = p.statements(&mut statements)?;
+    if p.peek() == &Tok::Colon {
+        return Err(p.err("a second ':' — the init section ends at the first".into()));
+    }
+    if p.peek() != &Tok::End {
+        return Err(p.err(format!("{} without an `if`", p.peek().describe())));
     }
     let tree = Syntax { statements, comments };
     if !lower {
         return Ok((None, tree));
     }
-    let out = match last_bare {
-        Some(v) => v,
-        None if assigned_z => p.var("z").expect("z is always bound"),
-        None => return Err(ParseError { line: 1, col: 1, message: "no step: assign `z` or end with an expression".into() }),
+    // A final comparison is the bailout (Fractint's last loop statement); any other final bare
+    // expression is the new z. With a bailout, a loop that leaves z alone is a step too (the test
+    // alone decides, on the pixel or on the other variables).
+    let cond = block.last_bare.filter(|v| matches!(p.b.insts[v.index()], Op::Cmp(..) | Op::And(..) | Op::Or(..)));
+    let out = match block.last_bare {
+        Some(v) if cond.is_none() => v,
+        _ if block.assigned_z || cond.is_some() => p.var("z").expect("z is always bound"),
+        _ => return Err(ParseError { line: 1, col: 1, message: "no step: assign `z` or end with an expression".into() }),
     };
-    let prog = p.b.finish(out).map_err(|e| ParseError { line: 1, col: 1, message: e.to_string() })?;
-    // Folding leaves the folded parts' instructions behind; drop everything the output does not read.
-    Ok((Some(Formula::single(prog.without_dead_code())), tree))
+    // Each carried variable the loop sets: its value at the end of the step.
+    let sets = |vals: &[(String, Val)], state: &[String]| -> Vec<(u16, Val)> {
+        state
+            .iter()
+            .enumerate()
+            .filter_map(|(i, name)| vals.iter().find(|(n, _)| n == name).map(|(_, v)| (i as u16, *v)))
+            .collect()
+    };
+    let mut prog = std::mem::take(&mut p.b).finish(out).map_err(ir_err)?;
+    prog = prog.with_vars(sets(&p.vars, &p.state)).map_err(ir_err)?;
+    if let Some(c) = cond {
+        prog = prog.with_cond(c).map_err(ir_err)?;
+    }
+    // Folding leaves the folded parts' instructions behind; drop everything the outputs do not read.
+    let formula = Formula::single(prog.without_dead_code());
+    if !has_init && p.state.is_empty() && cond.is_none() {
+        return Ok((Some(formula), tree));
+    }
+    // A predefined name the loop assigns, and reads before it does, starts at its predefined value:
+    // the init section (one that leaves z alone, if there is none) gives it.
+    let starts: Vec<String> = p.state.iter().filter(|n| predefined(n)).cloned().collect();
+    let init = match init {
+        None if !starts.is_empty() => {
+            let mut b = Builder::new();
+            let z = b.push(Op::Z);
+            Some((b, z, Vec::new()))
+        }
+        other => other,
+    };
+    let init = match init {
+        Some((mut b, out, mut vals)) => {
+            std::mem::swap(&mut p.b, &mut b);
+            for name in &starts {
+                if !vals.iter().any(|(n, _)| n == name) {
+                    let v = p.predefined_value(name).expect("a predefined name");
+                    vals.push((name.clone(), v));
+                }
+            }
+            std::mem::swap(&mut p.b, &mut b);
+            let prog = b.finish(out).map_err(ir_err)?.with_vars(sets(&vals, &p.state)).map_err(ir_err)?;
+            Some(prog.without_dead_code())
+        }
+        None => None,
+    };
+    let n = u16::try_from(p.state.len()).map_err(|_| ParseError { line: 1, col: 1, message: "too many variables".into() })?;
+    Ok((Some(formula.with_sections(n, init).map_err(ir_err)?), tree))
+}
+
+/// What a run of statements left: its last bare expression (unless something followed it), and
+/// whether it assigned `z`.
+#[derive(Default)]
+struct Block {
+    last_bare: Option<Val>,
+    assigned_z: bool,
+}
+
+/// The block keywords, which end a run of statements.
+fn ends_block(t: &Tok) -> bool {
+    matches!(t, Tok::End | Tok::Colon) || matches!(t, Tok::Ident(k) if matches!(k.as_str(), "elseif" | "else" | "endif"))
 }
 
 /// `1/k` is exact: `k` is a normal power of two.
@@ -115,13 +196,32 @@ fn exact_reciprocal(k: f64) -> bool {
     k.is_normal() && k.to_bits() & ((1u64 << 52) - 1) == 0 && (1.0 / k).is_normal()
 }
 
-fn reserved(name: &str) -> bool {
-    matches!(name, "c" | "pixel" | "pi" | "e") || param_index(name).is_some() || function(name).is_some()
+/// The end of the error for a name nothing assigns (one place, as [`unassigned_name`] reads it).
+const UNASSIGNED: &str = "` is used before it is assigned";
+
+/// The name an error says nothing assigns — the `.frm` reader sets it to 0, as Fractint has it.
+pub fn unassigned_name(e: &ParseError) -> Option<&str> {
+    e.message.strip_prefix('`')?.strip_suffix(UNASSIGNED)
+}
+
+/// Whether a statement may assign `name`. Fractint's predefined variables — `pixel`, `p1`…`p5`,
+/// `pi`, `e` — may be: each holds its predefined value until it is. `c`, this language's own name
+/// for the pixel, may not (a `.frm` file's `c` is renamed as it is read).
+fn assignable(name: &str) -> bool {
+    !matches!(name, "c" | "if" | "elseif" | "else" | "endif") && function(name).is_none()
+}
+
+/// Whether `name` has a value before anything assigns it (see [`assignable`]): with Fractint's
+/// `maxit` (the iteration cap) and `ismand` (1: the formula's own Mandelbrot form, as Fractint
+/// draws it until its Julia toggle).
+fn predefined(name: &str) -> bool {
+    matches!(name, "c" | "pixel" | "pi" | "e" | "maxit" | "ismand") || param_index(name).is_some()
 }
 
 fn param_index(name: &str) -> Option<u16> {
     let n: u16 = name.strip_prefix('p')?.parse().ok()?;
-    (1..=MAX_PARAMS as u16).contains(&n).then_some(n - 1)
+    // `then`, not `then_some`: `p0` would underflow evaluating the argument.
+    (1..=MAX_PARAMS as u16).contains(&n).then(|| n - 1)
 }
 
 /// A named function: an elementary one, or one lowered to other operations.
@@ -139,6 +239,17 @@ enum Named {
     Ident,
     Cotan,
     Cotanh,
+    /// Fractint's `cosxx`, the conjugate of the cosine (its cos before version 16).
+    Cosxx,
+    /// The inverse functions, from their logarithm forms (principal values).
+    Asin,
+    Acos,
+    Atan,
+    Asinh,
+    Acosh,
+    Atanh,
+    /// `floor`, `ceil`, `trunc`, `round`, part by part.
+    Round(super::Round),
 }
 
 fn function(name: &str) -> Option<Named> {
@@ -163,6 +274,17 @@ fn function(name: &str) -> Option<Named> {
         "ident" => Named::Ident,
         "cotan" => Named::Cotan,
         "cotanh" => Named::Cotanh,
+        "cosxx" => Named::Cosxx,
+        "asin" => Named::Asin,
+        "acos" => Named::Acos,
+        "atan" => Named::Atan,
+        "asinh" => Named::Asinh,
+        "acosh" => Named::Acosh,
+        "atanh" => Named::Atanh,
+        "floor" => Named::Round(super::Round::Floor),
+        "ceil" => Named::Round(super::Round::Ceil),
+        "trunc" => Named::Round(super::Round::Trunc),
+        "round" => Named::Round(super::Round::Nearest),
         _ => return None,
     })
 }
@@ -195,16 +317,14 @@ pub fn our_spelling(name: &str) -> Option<&'static str> {
 /// Fractint features outside this subset, named so the error says what is missing.
 fn unsupported(name: &str) -> Option<&'static str> {
     Some(match name {
-        "fn1" | "fn2" | "fn3" | "fn4" => "the fn1…fn4 function slots are not supported yet",
-        "if" | "elseif" | "else" | "endif" => "`if` blocks are not supported yet",
-        "whitesq" | "scrnpix" | "scrnmax" | "maxit" | "ismand" | "center" | "magxmag" | "rotskew" => {
+        "fn1" | "fn2" | "fn3" | "fn4" => {
+            "the fn1…fn4 function slots are not supported — write a function (sin, sqr, …) in their place"
+        }
+        "whitesq" | "scrnpix" | "scrnmax" | "center" | "magxmag" | "rotskew" => {
             "screen and view variables are not supported"
         }
         "rand" | "srand" => "random numbers are not supported",
         "lastsqr" => "`lastsqr` is not supported",
-        "cosxx" | "asin" | "acos" | "atan" | "asinh" | "acosh" | "atanh" | "floor" | "ceil" | "trunc" | "round" => {
-            "this function is not supported yet"
-        }
         _ => return None,
     })
 }
@@ -223,7 +343,13 @@ enum Tok {
     Comma,
     Bar,
     Assign,
-    /// A comparison or logical operator: recognised only to be refused.
+    /// `< <= > >= == !=`.
+    Cmp(Cmp),
+    AndAnd,
+    OrOr,
+    /// The end of the init section.
+    Colon,
+    /// A lone `&` or `!`: recognised only to be refused.
     Unsupported(&'static str),
     /// A statement separator: a new line (a `,` outside parentheses becomes one too).
     Sep,
@@ -245,6 +371,10 @@ impl Tok {
             Tok::Comma => "','".into(),
             Tok::Bar => "'|'".into(),
             Tok::Assign => "'='".into(),
+            Tok::Cmp(c) => format!("'{}'", c.symbol()),
+            Tok::AndAnd => "'&&'".into(),
+            Tok::OrOr => "'||'".into(),
+            Tok::Colon => "':'".into(),
             Tok::Unsupported(s) => format!("'{s}'"),
             Tok::Sep => "the end of the statement".into(),
             Tok::End => "the end of the formula".into(),
@@ -331,22 +461,34 @@ fn lex(src: &str) -> Result<(Vec<(Tok, usize, usize)>, Vec<Comment>), ParseError
             b',' => Tok::Comma,
             b'|' if bytes.get(i + 1) == Some(&b'|') => {
                 i += 1;
-                Tok::Unsupported("||")
+                Tok::OrOr
             }
             b'|' => Tok::Bar,
-            b'=' if bytes.get(i + 1) == Some(&b'=') => {
+            b'&' if bytes.get(i + 1) == Some(&b'&') => {
                 i += 1;
-                Tok::Unsupported("==")
+                Tok::AndAnd
             }
+            b'&' => Tok::Unsupported("&"),
+            b'<' | b'>' | b'=' | b'!' if bytes.get(i + 1) == Some(&b'=') => {
+                let cmp = match ch {
+                    b'<' => Cmp::Le,
+                    b'>' => Cmp::Ge,
+                    b'=' => Cmp::Eq,
+                    _ => Cmp::Ne,
+                };
+                i += 1;
+                Tok::Cmp(cmp)
+            }
+            b'<' => Tok::Cmp(Cmp::Lt),
+            b'>' => Tok::Cmp(Cmp::Gt),
+            b'!' => Tok::Unsupported("!"),
             b'=' => Tok::Assign,
-            b'<' | b'>' | b'!' | b'&' => {
-                if bytes.get(i + 1) == Some(&b'=') || bytes.get(i + 1) == Some(&b'&') {
-                    i += 1;
-                }
-                Tok::Unsupported("comparison")
-            }
-            b':' | b'{' | b'}' => {
-                return Err(err(i, "sections (`init:`, `{ }`) are not supported yet — write the loop body only".into()))
+            b':' => Tok::Colon,
+            b'{' | b'}' => {
+                return Err(err(
+                    i,
+                    "braces belong around a formula in a .frm file — here, write its statements only".into(),
+                ))
             }
             _ => {
                 let c = src[i..].chars().next().unwrap_or('?');
@@ -378,6 +520,12 @@ struct Parser<'a> {
     consts: Vec<(Val, (f64, f64))>,
     /// Building the IR (and so making its checks); without, only the syntax tree is wanted.
     lower: bool,
+    /// Every name a statement assigns (see [`run`]).
+    assigned: Vec<String>,
+    /// The variables carried from one step to the next, by `Op::Var` index.
+    state: Vec<String>,
+    /// Reading the init section, where nothing is carried yet.
+    in_init: bool,
 }
 
 impl Parser<'_> {
@@ -431,20 +579,218 @@ impl Parser<'_> {
     fn leaf(&mut self, op: Op) -> Val {
         let found = self.b.insts.iter().position(|o| *o == op);
         match found {
-            Some(i) if matches!(op, Op::Z | Op::C | Op::ZPrev | Op::Param(_)) => Val(i as u32),
+            Some(i) if matches!(op, Op::Z | Op::C | Op::ZPrev | Op::Param(_) | Op::Var(_)) => Val(i as u32),
             _ => self.b.push(op),
         }
+    }
+    /// `name`'s value carried over from the step before (from the init section, or 0).
+    fn carried(&mut self, name: &str) -> Val {
+        let i = match self.state.iter().position(|n| n == name) {
+            Some(i) => i,
+            None => {
+                self.state.push(name.to_string());
+                self.state.len() - 1
+            }
+        };
+        self.leaf(Op::Var(i as u16))
+    }
+
+    /// Statements up to a block keyword, the init section's `:` or the end; each recorded in `tree`.
+    fn statements(&mut self, tree: &mut Vec<Statement>) -> Result<Block, ParseError> {
+        let mut block = Block::default();
+        loop {
+            while self.eat(&Tok::Sep) {}
+            if ends_block(self.peek()) {
+                return Ok(block);
+            }
+            let stmt_at = self.at;
+            // An assignment inside a statement (`a = b = pixel`) may set z too.
+            let z_before = self.var("z");
+            let assignment = matches!((self.peek(), self.peek_at(1)), (Tok::Ident(_), Tok::Assign));
+            if !assignment && matches!(self.peek(), Tok::Ident(k) if k == "if") {
+                self.at += 1;
+                self.branches(tree)?;
+                match self.peek() {
+                    Tok::Ident(k) if k == "endif" => self.at += 1,
+                    other => {
+                        let found = other.describe();
+                        return Err(self.err(format!("expected `endif` to close the `if`, found {found}")));
+                    }
+                }
+                block.last_bare = None;
+            } else if let (Tok::Ident(name), Tok::Assign) = (self.peek().clone(), self.peek_at(1).clone()) {
+                self.at += 2;
+                if !assignable(&name) {
+                    return Err(self.err_at(stmt_at, format!("`{name}` cannot be assigned")));
+                }
+                let (v, body) = self.assign_or_expr()?;
+                if name == "z" {
+                    block.assigned_z = true;
+                }
+                let target = Name { name: name.clone(), span: self.token_span(stmt_at) };
+                self.bind(name, v);
+                block.last_bare = None;
+                tree.push(Statement { span: self.span_from(stmt_at), target: Some(target), body });
+            } else {
+                let (v, body) = self.expr()?;
+                block.last_bare = Some(v);
+                tree.push(Statement { span: body.span, target: None, body });
+            }
+            block.assigned_z |= self.var("z") != z_before;
+            match self.peek() {
+                Tok::Sep | Tok::End | Tok::Colon => {}
+                Tok::Unsupported(what) => {
+                    return Err(self.err(format!("'{what}' is not an operator (Fractint's are && and ||)")))
+                }
+                _ => return Err(self.err(format!("expected ',' or a new line, found {}", self.peek().describe()))),
+            }
+        }
+    }
+
+    /// After `if` or `elseif`: `(condition)`, its statements, then `elseif …`, `else …` or nothing,
+    /// up to (not including) the `endif`. Both branches are computed; each variable either sets
+    /// takes the branch's value by the condition — a variable one branch leaves alone keeps its
+    /// value from before the block (or from the step before).
+    fn branches(&mut self, tree: &mut Vec<Statement>) -> Result<(), ParseError> {
+        // The condition opens with a parenthesis, and runs on as an expression: Fractint reads
+        // `if (|z| > b) || (t > n)`.
+        if self.peek() != &Tok::LParen {
+            return Err(self.err(format!("expected '(', found {}", self.peek().describe())));
+        }
+        let (cond, _) = self.expr()?;
+        let before = self.vars.clone();
+        self.statements(tree)?;
+        let then_vars = std::mem::replace(&mut self.vars, before.clone());
+        match self.peek().clone() {
+            Tok::Ident(k) if k == "elseif" => {
+                self.at += 1;
+                self.branches(tree)?;
+            }
+            Tok::Ident(k) if k == "else" => {
+                self.at += 1;
+                self.statements(tree)?;
+            }
+            _ => {}
+        }
+        let else_vars = std::mem::replace(&mut self.vars, before.clone());
+        let mut names: Vec<String> = Vec::new();
+        for (n, _) in then_vars.iter().chain(&else_vars) {
+            if !names.contains(n) {
+                names.push(n.clone());
+            }
+        }
+        let find = |vals: &[(String, Val)], n: &str| vals.iter().find(|(m, _)| m == n).map(|(_, v)| *v);
+        for name in names {
+            let t = find(&then_vars, &name).or(find(&before, &name));
+            let e = find(&else_vars, &name).or(find(&before, &name));
+            let t = match t {
+                Some(v) => v,
+                None => self.carried(&name),
+            };
+            let e = match e {
+                Some(v) => v,
+                None => self.carried(&name),
+            };
+            let v = if t == e { t } else { self.b.push(Op::Select(cond, t, e)) };
+            self.bind(name, v);
+        }
+        Ok(())
+    }
+
+    /// `name` now holds `v`.
+    fn bind(&mut self, name: String, v: Val) {
+        match self.vars.iter_mut().find(|(n, _)| *n == name) {
+            Some(slot) => slot.1 = v,
+            None => self.vars.push((name, v)),
+        }
+    }
+
+    /// A predefined name's value (see [`predefined`]).
+    fn predefined_value(&mut self, name: &str) -> Option<Val> {
+        Some(match name {
+            "c" | "pixel" => self.leaf(Op::C),
+            "pi" => self.konst(std::f64::consts::PI, 0.0),
+            "e" => self.konst(std::f64::consts::E, 0.0),
+            "maxit" => self.leaf(Op::MaxIter),
+            "ismand" => self.konst(1.0, 0.0),
+            _ => self.leaf(Op::Param(param_index(name)?)),
+        })
     }
     fn konst(&mut self, re: f64, im: f64) -> Val {
         let v = self.b.push(Op::Const(re, im));
         self.consts.push((v, (re, im)));
         v
     }
+    /// `(re, im)`, whose parts are real constants; `at` is the token an error points to.
+    fn complex_constant(&mut self, at: usize, re: Val, im: Val) -> Result<Val, ParseError> {
+        let real = |k: Option<(f64, f64)>| k.filter(|k| k.1 == 0.0).map(|k| k.0);
+        let parts = match (real(self.const_of(re)), real(self.const_of(im))) {
+            (Some(re), Some(im)) => (re, im),
+            _ if self.lower => return Err(self.err_at(at, "a complex constant `(re, im)` takes two real numbers".into())),
+            // Only the tree is wanted: a formula still being typed has one.
+            _ => (0.0, 0.0),
+        };
+        Ok(self.konst(parts.0, parts.1))
+    }
     fn const_of(&self, v: Val) -> Option<(f64, f64)> {
         self.consts.iter().find(|(c, _)| *c == v).map(|(_, k)| *k)
     }
 
+    /// An assignment used as a value, or an expression. Fractint's assignment is an expression
+    /// too, written where its value is the whole of what is read: chained (`a = b = pixel`) or
+    /// opening parentheses (`(z = sin(z))*k`, `if ((d = |w|) < r)`). Elsewhere — `p1^z = 2` — an
+    /// `=` stays the error it was.
+    fn assign_or_expr(&mut self) -> Result<(Val, Expr), ParseError> {
+        let Tok::Ident(name) = self.peek().clone() else { return self.expr() };
+        if self.peek_at(1) != &Tok::Assign {
+            return self.expr();
+        }
+        let at = self.at;
+        if !assignable(&name) {
+            return Err(self.err_at(at, format!("`{name}` cannot be assigned")));
+        }
+        self.at += 2;
+        let (v, body) = self.assign_or_expr()?;
+        let target = Name { name: name.clone(), span: self.token_span(at) };
+        self.bind(name, v);
+        Ok((v, self.node(at, ExprKind::Assign(target, Box::new(body)))))
+    }
+
+    /// An expression: `||` binds loosest, then `&&`, then the comparisons, then the arithmetic.
     fn expr(&mut self) -> Result<(Val, Expr), ParseError> {
+        let first = self.at;
+        let (mut acc, mut tree) = self.conjunction()?;
+        while self.eat(&Tok::OrOr) {
+            let (rhs, rhs_tree) = self.conjunction()?;
+            acc = self.b.push(Op::Or(acc, rhs));
+            tree = self.node(first, ExprKind::Logic(Logic::Or, Box::new(tree), Box::new(rhs_tree)));
+        }
+        Ok((acc, tree))
+    }
+
+    fn conjunction(&mut self) -> Result<(Val, Expr), ParseError> {
+        let first = self.at;
+        let (mut acc, mut tree) = self.relation()?;
+        while self.eat(&Tok::AndAnd) {
+            let (rhs, rhs_tree) = self.relation()?;
+            acc = self.b.push(Op::And(acc, rhs));
+            tree = self.node(first, ExprKind::Logic(Logic::And, Box::new(tree), Box::new(rhs_tree)));
+        }
+        Ok((acc, tree))
+    }
+
+    /// One comparison at most (`a < b < c` is not Fractint's either).
+    fn relation(&mut self) -> Result<(Val, Expr), ParseError> {
+        let first = self.at;
+        let (lhs, lhs_tree) = self.sum()?;
+        let Tok::Cmp(cmp) = *self.peek() else { return Ok((lhs, lhs_tree)) };
+        self.at += 1;
+        let (rhs, rhs_tree) = self.sum()?;
+        let v = self.b.push(Op::Cmp(cmp, lhs, rhs));
+        Ok((v, self.node(first, ExprKind::Cmp(cmp, Box::new(lhs_tree), Box::new(rhs_tree)))))
+    }
+
+    fn sum(&mut self) -> Result<(Val, Expr), ParseError> {
         let first = self.at;
         let (mut acc, mut tree) = self.term()?;
         loop {
@@ -576,21 +922,13 @@ impl Parser<'_> {
             }
             Tok::LParen => {
                 self.at += 1;
-                let (first, first_tree) = self.expr()?;
+                let (first, first_tree) = self.assign_or_expr()?;
                 if self.eat(&Tok::Comma) {
                     let (second, second_tree) = self.expr()?;
-                    let real = |k: Option<(f64, f64)>| k.filter(|k| k.1 == 0.0).map(|k| k.0);
-                    let parts = match (real(self.const_of(first)), real(self.const_of(second))) {
-                        (Some(re), Some(im)) => (re, im),
-                        _ if self.lower => {
-                            return Err(self.err_at(tok_at, "a complex constant `(re, im)` takes two real numbers".into()))
-                        }
-                        // Only the tree is wanted: a formula still being typed has one.
-                        _ => (0.0, 0.0),
-                    };
+                    let v = self.complex_constant(tok_at, first, second)?;
                     self.expect(&Tok::RParen)?;
                     let tree = self.node(tok_at, ExprKind::Complex(Box::new(first_tree), Box::new(second_tree)));
-                    return Ok((self.konst(parts.0, parts.1), tree));
+                    return Ok((v, tree));
                 }
                 self.expect(&Tok::RParen)?;
                 Ok((first, self.node(tok_at, ExprKind::Group(Box::new(first_tree)))))
@@ -608,8 +946,17 @@ impl Parser<'_> {
                 }
                 if let Some(f) = function(&name) {
                     self.expect(&Tok::LParen)?;
-                    let (a, arg) = self.expr()?;
-                    self.expect(&Tok::RParen)?;
+                    let open = self.at - 1;
+                    let (mut a, mut arg) = self.assign_or_expr()?;
+                    // `sin(1, 2)`: the call's parentheses are a complex constant's too (Fractint's).
+                    if self.eat(&Tok::Comma) {
+                        let (im, im_tree) = self.expr()?;
+                        a = self.complex_constant(open, a, im)?;
+                        self.expect(&Tok::RParen)?;
+                        arg = self.node(open, ExprKind::Complex(Box::new(arg), Box::new(im_tree)));
+                    } else {
+                        self.expect(&Tok::RParen)?;
+                    }
                     let tree = self.node(tok_at, ExprKind::Call { func: name, arg: Box::new(arg) });
                     return Ok((self.apply(f, a), tree));
                 }
@@ -621,23 +968,24 @@ impl Parser<'_> {
                     return Err(self.err_at(tok_at, message));
                 }
                 let tree = self.node(tok_at, ExprKind::Name(name.clone()));
-                match name.as_str() {
-                    "c" | "pixel" => return Ok((self.leaf(Op::C), tree)),
-                    "pi" => return Ok((self.konst(std::f64::consts::PI, 0.0), tree)),
-                    "e" => return Ok((self.konst(std::f64::consts::E, 0.0), tree)),
-                    _ => {}
+                if let Some(v) = self.var(&name) {
+                    return Ok((v, tree));
                 }
-                if let Some(i) = param_index(&name) {
-                    return Ok((self.leaf(Op::Param(i)), tree));
+                // A predefined name the loop assigns is carried like any variable; before the loop
+                // (and where nothing assigns it) it has its predefined value.
+                if predefined(&name) && (self.in_init || !self.assigned.contains(&name)) {
+                    return Ok((self.predefined_value(&name).expect("a predefined name"), tree));
                 }
-                match self.var(&name) {
-                    Some(v) => Ok((v, tree)),
-                    None if self.lower => Err(self.err_at(tok_at, format!("`{name}` is used before it is assigned"))),
+                match () {
+                    // Assigned by a statement still to come (or in the loop, read in the init
+                    // section): its value from the step before.
+                    _ if self.assigned.contains(&name) => Ok((self.carried(&name), tree)),
+                    _ if self.lower => Err(self.err_at(tok_at, format!("`{name}{UNASSIGNED}"))),
                     // Only the tree is wanted: stand in with `z`, which is always bound.
-                    None => Ok((self.leaf(Op::Z), tree)),
+                    _ => Ok((self.leaf(Op::Z), tree)),
                 }
             }
-            Tok::Unsupported(what) => Err(self.err(format!("{what} operators are not supported yet (no `if` or bailout tests)"))),
+            Tok::Unsupported(what) => Err(self.err(format!("'{what}' is not an operator (Fractint's are && and ||)"))),
             other => Err(self.err(format!("expected a value, found {}", other.describe()))),
         }
     }
@@ -678,7 +1026,79 @@ impl Parser<'_> {
                 let s = self.b.push(Op::Func(Func::Sinh, a));
                 self.b.push(Op::Div(c, s))
             }
+            Named::Cosxx => {
+                let c = self.b.push(Op::Func(Func::Cos, a));
+                self.b.push(Op::Conj(c))
+            }
+            // asin a = −i·log(i·a + √(1 − a²))
+            Named::Asin => {
+                let r = self.sqrt_one_minus_sq(a);
+                let i = self.konst(0.0, 1.0);
+                let ia = self.b.push(Op::Mul(i, a));
+                let s = self.b.push(Op::Add(ia, r));
+                self.minus_i_log(s)
+            }
+            // acos a = −i·log(a + i·√(1 − a²))
+            Named::Acos => {
+                let r = self.sqrt_one_minus_sq(a);
+                let i = self.konst(0.0, 1.0);
+                let ir = self.b.push(Op::Mul(i, r));
+                let s = self.b.push(Op::Add(a, ir));
+                self.minus_i_log(s)
+            }
+            // atan a = (i/2)·(log(1 − i·a) − log(1 + i·a))
+            Named::Atan => {
+                let (one, i) = (self.konst(1.0, 0.0), self.konst(0.0, 1.0));
+                let ia = self.b.push(Op::Mul(i, a));
+                let (m, p) = (self.b.push(Op::Sub(one, ia)), self.b.push(Op::Add(one, ia)));
+                let (lm, lp) = (self.b.push(Op::Func(Func::Log, m)), self.b.push(Op::Func(Func::Log, p)));
+                let d = self.b.push(Op::Sub(lm, lp));
+                let half_i = self.konst(0.0, 0.5);
+                self.b.push(Op::Mul(half_i, d))
+            }
+            // asinh a = log(a + √(a² + 1))
+            Named::Asinh => {
+                let one = self.konst(1.0, 0.0);
+                let a2 = self.b.push(Op::Sqr(a));
+                let s = self.b.push(Op::Add(a2, one));
+                let r = self.b.push(Op::Func(Func::Sqrt, s));
+                let t = self.b.push(Op::Add(a, r));
+                self.b.push(Op::Func(Func::Log, t))
+            }
+            // acosh a = log(a + √(a + 1)·√(a − 1))
+            Named::Acosh => {
+                let one = self.konst(1.0, 0.0);
+                let (p, m) = (self.b.push(Op::Add(a, one)), self.b.push(Op::Sub(a, one)));
+                let (rp, rm) = (self.b.push(Op::Func(Func::Sqrt, p)), self.b.push(Op::Func(Func::Sqrt, m)));
+                let r = self.b.push(Op::Mul(rp, rm));
+                let t = self.b.push(Op::Add(a, r));
+                self.b.push(Op::Func(Func::Log, t))
+            }
+            // atanh a = (log(1 + a) − log(1 − a))/2
+            Named::Atanh => {
+                let one = self.konst(1.0, 0.0);
+                let (p, m) = (self.b.push(Op::Add(one, a)), self.b.push(Op::Sub(one, a)));
+                let (lp, lm) = (self.b.push(Op::Func(Func::Log, p)), self.b.push(Op::Func(Func::Log, m)));
+                let d = self.b.push(Op::Sub(lp, lm));
+                self.b.push(Op::Scale(d, 0.5))
+            }
+            Named::Round(r) => self.b.push(Op::Round(r, a)),
         }
+    }
+
+    /// `√(1 − a²)`.
+    fn sqrt_one_minus_sq(&mut self, a: Val) -> Val {
+        let one = self.konst(1.0, 0.0);
+        let a2 = self.b.push(Op::Sqr(a));
+        let d = self.b.push(Op::Sub(one, a2));
+        self.b.push(Op::Func(Func::Sqrt, d))
+    }
+
+    /// `−i·log(s)`.
+    fn minus_i_log(&mut self, s: Val) -> Val {
+        let l = self.b.push(Op::Func(Func::Log, s));
+        let mi = self.konst(0.0, -1.0);
+        self.b.push(Op::Mul(mi, l))
     }
 }
 

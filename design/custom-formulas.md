@@ -103,7 +103,10 @@ Everything else is **generated from the IR**:
    `if/elseif/else/endif`; real-part comparisons and non-short-circuit `&& ||` as in Fractint; `|x|` as
    the squared modulus; `cosxx`. Out of the first subset: `whitesq scrnpix scrnmax rand LastSqr`
    (reported as unsupported, not silently mis-rendered). Symmetry annotations are ignored (we do not
-   force symmetry).
+   force symmetry). *As built (§5.1, phase 3):* `fn1..fn4` become Fractint's defaults (sin, sqr,
+   sinh, cosh) written into the text, editable there; `center magxmag rotskew` (they change with the
+   view) join the unsupported; `maxit`, `ismand`, the rounding functions and assignment as a value
+   are in.
 3. **Optional author-supplied perturbation**, in the model of Ultra Fractal 6: `perturbinit:` /
    `perturbloop:` statements updating `#dz` from the reference `#z`, `#dpixel` and parameters, with a
    `perturb` guard. Used when automatic derivation (§4.4) does not apply.
@@ -607,6 +610,58 @@ separate, later decision, and only if phase 4 shows the generated render is iden
   `fractal = "Custom"` — keyframes carry `formula` / `formula_params` (inherited, stepped, each
   compiled once) and "Tour from current view" writes them; beta.9 opened a custom view as whatever
   family it showed — a Custom view writes `format_version=2` (every other view still writes 1).
+- **Phase 3, the `.frm` reader.**
+  - *IR.* `Op::Var` (a variable kept from step to step), `Cmp`/`And`/`Or` (real parts, 1 or 0),
+    `Select` (an `if` block: both branches computed), `MaxIter`, `Round`; `Program` carries the
+    variables it sets and an optional bailout condition, `Formula` an init program. A formula with
+    sections is f64 only (no bignum, no perturbation) and not resumable; one with rounding or
+    `maxit` alone is direct but resumable (z is all its state). GPU: `CUSTOM_INIT` and
+    `CUSTOM_BAILOUT` slots, the variables as `var<private>`, the bailout replacing the escape test;
+    `maxit` reads the iteration uniform (a baked constant would mean a module per budget change).
+  - *Language, Fractint's semantics.* A name read before its statement is the step before's value
+    (init's, or 0); the predefined names (`pixel p1..p5 pi e maxit ismand`) may be assigned and hold
+    their value until they are — `c`, the language's pixel, may not; an assignment is a value only
+    chained or opening parentheses (`a = b = pixel`, `if ((d = |w|) < r)`; `p1^z = 2` stays an
+    error); `if (a) || (b)`; `sin(1, 2)`; a loop of only a bailout test is a step. The parse
+    snapshot moved on 74 of 2,100 inputs, every one a construct newly read.
+  - *Reader* (`ir::frm`). `fn1..fn4` → sin, sqr, sinh, cosh; Fractint's `c` → `c_` (the first free
+    `c_…`); names lower-cased; blanks inside a word dropped, as Fractint drops them (`end if`,
+    `else if`, `sqrt 5` — that last the variable `sqrt5`, 0); `\` continuation, blanks after it
+    allowed; a name nothing sets → `name = 0` in the init section; a final bare expression that
+    does not compare → `(x) != 0`, as Fractint's last statement is always the test. Each change is
+    a note, which the library shows in the entry's `about`.
+  - *Gate.* Orgform, read locally (`FRACTADYNE_FRM_CORPUS`, an ignored test; never bundled): 320
+    files, 29,351 entries, 20,758 distinct bodies (after translation, comments and blanks out),
+    **18,396 read = 88.6%** (gate 88%). The way there, each step measured on the corpus: 66.4% on
+    the first run; 85.8% with assignment as a value, assignable predefined names, the free-running
+    `if` condition, bailout-only loops and 0 for unset names; 87.9% with `maxit`, `ismand` and
+    rounding (a body counts only when ALL its blockers go: of the remaining 2,950, those three
+    alone freed 520, the view variables 547 more); 88.6% with blanks dropped. Left: `whitesq`
+    1,336, `rotskew` 386, `center` 215, `lastsqr` 130, `scrnpix` 97, prose inside braces about
+    100. The first run also found a parser panic on `p0` (`then_some(n − 1)` evaluates its
+    argument; release builds wrapped silently).
+  - *Spot checks.* Eight sectioned classics joined the collection (Magnet I/II, Lambda parameter
+    plane, Nova, Barnsley M1, Spider, Manowar, Phoenix with its parameter free), each passing the
+    CPU judge at its view and looked at, on the CPU and through `--render` on the GPU; the judge's render now ends an orbit where a formula's own test does, as the shader does
+    (before, a Magnet orbit stopped by its test read as inside). Manowar's first view passed the
+    judge and was wrong to the eye (a flat frame with a speck: the set is 0.7 wide); it is framed on
+    the jellyfish now.
+  - *The GPU, LOOKED AT, found a bug no check had.* `--render` of the first seven drew Lambda black,
+    Spider black, Nova flat, Magnet's outside black. The export path's three chunk-scope tests read
+    the formula FAMILY's `resumable_passes` (true for Custom), never the shader's own `resumable`,
+    so a sectioned formula ran in the iteration-chunk pass, which has no init slot and carries no
+    variables (the live path had been fixed, the export path not). One rule now,
+    `ExportRequest::resumable()`, at every site. The self-test's GPU = CPU checks could not have
+    seen it: `render_iter` is a single pass. New: "chunked render = single pass" for Manowar (0
+    chunk passes, bit-identical) against a control that must chunk (z² + c: 7 passes, identical);
+    with the old test restored it goes red (7 passes, 48,396 texels differ).
+  - *GPU = CPU on sections* (self-test, RTX 3080): Manowar 0.49% of pixels (0 early escapes),
+    `maxit` + the four roundings 0.22%; Magnet I and Barnsley M1 judged on pixels stable under
+    c ± 1e-5, as `sin z + c` is: Magnet 0 of 44,160 (its 2.9% overall are orbits lingering by the
+    repelling |z| ≈ 4 of its far map z²/4, ×2 a step, early escapes 0.01–0.6 apart), Barnsley 32
+    of 47,156 — every one CPU-interior and GPU-escaped at the rim of its oval, mirror-symmetric in
+    the four quadrants: each step multiplies by |c| > 1 there, so rounding injected every step
+    kicks off an orbit that a one-time move of c leaves bounded.
 
 ## 6. Validation plan
 

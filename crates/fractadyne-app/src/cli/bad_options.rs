@@ -25,6 +25,20 @@ fn values_and_documented_shorthands_never_trip_it() {
     assert_eq!(first_bad_option(&s(&["exe", "-V"])), None);
 }
 
+/// A free-form value that begins with a minus sign is a value: an expression for the centre (Help's
+/// own example), a formula, a parameter list. These were refused as unknown options.
+#[test]
+fn free_form_values_that_start_with_a_minus_are_values() {
+    assert_eq!(first_bad_option(&s(&["exe", "--render", "--center", "-3/4", "-0.5 + 0.25*cos(pi/4)"])), None);
+    assert_eq!(first_bad_option(&s(&["exe", "--render", "--formula", "-z^2 + c", "--formula-params", "-0.5,0;-1,2"])), None);
+    assert_eq!(first_bad_option(&s(&["exe", "--julia-c", "-0.8", "-0.156", "--render"])), None);
+    // Only that many values: an unknown option after them is still caught.
+    assert_eq!(
+        first_bad_option(&s(&["exe", "--formula", "z^2 + c", "-x"])),
+        Some(BadOption::UnknownShort("-x".into()))
+    );
+}
+
 #[test]
 fn unknown_options_are_flagged_in_both_spellings() {
     assert_eq!(

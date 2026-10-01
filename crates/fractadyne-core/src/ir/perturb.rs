@@ -57,13 +57,29 @@ impl std::error::Error for NotPerturbable {}
 
 /// The perturbed step of every phase.
 pub fn perturbed_formula(formula: &Formula) -> Result<Formula, NotPerturbable> {
+    sectionless(formula)?;
     let phases = formula.phases().iter().map(perturbed).collect::<Result<Vec<_>, _>>()?;
     Ok(Formula::new(phases).expect("one phase per phase, and there was at least one"))
 }
 
 /// Whether [`perturbed_formula`] succeeds.
 pub fn perturbable(formula: &Formula) -> bool {
-    formula.phases().iter().all(|p| perturbed(p).is_ok())
+    sectionless(formula).is_ok() && formula.phases().iter().all(|p| perturbed(p).is_ok())
+}
+
+/// A Fractint-style formula's init section, persistent variables or own bailout have no perturbed
+/// form (yet): the reference would have to carry them, and a bailout decides per pixel.
+fn sectionless(formula: &Formula) -> Result<(), NotPerturbable> {
+    if formula.init().is_some() {
+        return Err(NotPerturbable("an init section"));
+    }
+    if formula.has_bailout() {
+        return Err(NotPerturbable("a bailout of its own"));
+    }
+    if formula.vars() > 0 {
+        return Err(NotPerturbable("a variable kept from step to step"));
+    }
+    Ok(())
 }
 
 /// A value of the step, as the rewritten program sees it: its reference `B`, and its perturbation
@@ -256,6 +272,12 @@ pub fn perturbed(prog: &Program) -> Result<Program, NotPerturbable> {
                 Pair { b, p }
             }
             Op::ZPrev => return Err(NotPerturbable("the previous iterate")),
+            Op::Var(_) => return Err(NotPerturbable("a variable kept from step to step")),
+            Op::Cmp(..) | Op::And(..) | Op::Or(..) | Op::Select(..) => {
+                return Err(NotPerturbable("a comparison or an if block"))
+            }
+            Op::Round(..) => return Err(NotPerturbable("rounding (floor, ceil, trunc, round)")),
+            Op::MaxIter => return Err(NotPerturbable("maxit")),
             Op::Div(a, b) => {
                 let (x, y) = (v(a), v(b));
                 let bq = r.push(Op::Div(x.b, y.b));

@@ -25,10 +25,25 @@ pub(crate) struct FormulaLibraryWindow {
     name: String,
     /// The entry whose Delete was pressed once: its row asks before anything is lost.
     confirm_delete: Option<String>,
+    /// Only the entries whose name or text holds this (in any case) are listed.
+    filter: String,
+    /// Whether each source reads, by source: an imported `.frm` file brings thousands of entries,
+    /// too many to parse every frame.
+    reads: std::collections::HashMap<String, Result<(), String>>,
+}
+
+impl FormulaLibraryWindow {
+    /// The list's filter, as if typed (the UI test's filtered screen).
+    pub(crate) fn set_filter(&mut self, text: &str) {
+        self.filter = text.to_string();
+    }
 }
 
 /// The text size of a typeset formula in the list, in points (the dialog's is 18).
 const LIBRARY_PT: f32 = 14.0;
+
+/// The most rows the list draws (each is laid out every frame); the filter finds the rest.
+const ROWS_MAX: usize = 100;
 
 /// One line of text, cut with an ellipsis at the width the row is given.
 fn clipped(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) -> egui::Response {
@@ -192,11 +207,14 @@ impl FractadyneApp {
         }
     }
 
-    /// Import a formula file into the library. Nothing already there is replaced (see
-    /// [`lib::merge`]); the toast says what was added, skipped and renamed.
+    /// Import a formula file into the library — ours, or Fractint's `.frm` (the entries that read
+    /// in this version). Nothing already there is replaced (see [`lib::merge`]); the toast says what
+    /// was added, skipped and renamed, and for a `.frm` how many did not read and why, most often.
     fn import_formula_file(&mut self) {
         let Some(path) = rfd::FileDialog::new()
+            .add_filter("Formula files", &["toml", "frm"])
             .add_filter("Fractadyne formulas", &["toml"])
+            .add_filter("Fractint formulas", &["frm"])
             .add_filter("All files", &["*"])
             .set_directory(self.dialog_dir_default())
             .pick_file()
@@ -206,16 +224,45 @@ impl FractadyneApp {
         self.remember_dir(&path);
         let file = path.file_name().map_or_else(String::new, |f| f.to_string_lossy().into_owned());
         let read = match std::fs::metadata(&path) {
-            Ok(m) if m.len() <= lib::FILE_MAX => std::fs::read_to_string(&path).map_err(|e| e.to_string()),
+            Ok(m) if m.len() <= lib::FILE_MAX => std::fs::read(&path).map_err(|e| e.to_string()),
             Ok(_) => Err("far too large to be a formula file".to_string()),
             Err(e) => Err(e.to_string()),
         };
-        match read.and_then(|text| lib::parse_file(&text)) {
-            Ok(incoming) => {
+        let frm_named = path.extension().is_some_and(|x| x.eq_ignore_ascii_case("frm"));
+        let read = read.and_then(|bytes| {
+            // Ours by its name, or by reading as ours; else a `.frm`, if anything in it reads.
+            let ours = if frm_named {
+                None
+            } else {
+                Some(String::from_utf8(bytes.clone()).map_err(|_| "not a text file".to_string()).and_then(|t| lib::parse_file(&t)))
+            };
+            match ours {
+                Some(Ok(list)) => Ok((list, None)),
+                ours => {
+                    let frm = lib::from_frm(&bytes, &file);
+                    match ours {
+                        Some(Err(why)) if frm.formulas.is_empty() => Err(why),
+                        _ if frm.formulas.is_empty() && frm.unread.is_empty() => Err("no formulas in it".to_string()),
+                        _ => {
+                            let unread = frm.sentence();
+                            crate::diag::log_line("formula", &format!("frm import of {file}: unread {:?}", frm.unread));
+                            Ok((frm.formulas, unread))
+                        }
+                    }
+                }
+            }
+        });
+        match read {
+            Ok((incoming, unread)) => {
                 let report = lib::merge(&mut self.saved_formulas, incoming);
                 crate::diag::log_line("formula", &format!("formula import from {}: {report:?}", path.display()));
                 if report.added == 0 || self.save_formula_library() {
-                    self.pending_toast = Some(report.sentence(&file));
+                    let mut s = report.sentence(&file);
+                    if let Some(u) = unread {
+                        s.push(' ');
+                        s.push_str(&u);
+                    }
+                    self.pending_toast = Some(s);
                 }
             }
             Err(why) => self.pending_toast = Some(format!("Couldn't import \"{file}\": {why}.")),
@@ -361,16 +408,37 @@ impl FractadyneApp {
                         .on_hover_text("Write every formula here to one file, to share or keep")
                         .clicked();
                 });
+                ui.horizontal(|ui| {
+                    ui.label("Filter");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.formula_library.filter)
+                            .hint_text("filter by name or text")
+                            .desired_width(220.0),
+                    );
+                });
                 ui.separator();
                 if self.saved_formulas.is_empty() {
                     ui.label(
                         "No saved formulas yet. Save one from the Custom formula dialog, add the one \
-                         the view shows, or import a file.",
+                         the view shows, or import a file (ours, or Fractint's .frm).",
                     );
                 }
+                let needle = self.formula_library.filter.trim().to_lowercase();
+                let shown: Vec<usize> = (0..self.saved_formulas.len())
+                    .filter(|&i| {
+                        let f = &self.saved_formulas[i];
+                        needle.is_empty() || f.name.to_lowercase().contains(&needle) || f.source.to_lowercase().contains(&needle)
+                    })
+                    .collect();
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    for (i, f) in self.saved_formulas.iter().enumerate() {
-                        let reads = parse(&f.source);
+                    for &i in shown.iter().take(ROWS_MAX) {
+                        let f = &self.saved_formulas[i];
+                        let reads = self
+                            .formula_library
+                            .reads
+                            .entry(f.source.clone())
+                            .or_insert_with(|| parse(&f.source).map(|_| ()).map_err(|e| e.to_string()))
+                            .clone();
                         ui.horizontal(|ui| {
                             // The marker first: a truncated name takes the rest of the row.
                             if live == Some(i) {
@@ -378,7 +446,10 @@ impl FractadyneApp {
                             }
                             clipped(ui, egui::RichText::new(&f.name).strong()).on_hover_text(&f.name);
                         });
-                        formula_body(ui, f, &reads.as_ref().map(|_| ()).map_err(|e| e.to_string()), textbook, danger);
+                        formula_body(ui, f, &reads, textbook, danger);
+                        if !f.about.is_empty() {
+                            clipped(ui, egui::RichText::new(&f.about).weak().small()).on_hover_text(&f.about);
+                        }
                         ui.horizontal(|ui| {
                             let apply = ui
                                 .add_enabled_ui(reads.is_ok(), |ui| crate::theme::confirm_button(ui, "Apply"))
@@ -414,6 +485,12 @@ impl FractadyneApp {
                             }
                         });
                         ui.separator();
+                    }
+                    if shown.len() > ROWS_MAX {
+                        let more = crate::commas(&(shown.len() - ROWS_MAX).to_string());
+                        ui.label(egui::RichText::new(format!("…and {more} more: type in the filter to find one.")).weak());
+                    } else if shown.is_empty() && !self.saved_formulas.is_empty() {
+                        ui.label(egui::RichText::new("None match the filter.").weak());
                     }
                 });
                 ui.separator();

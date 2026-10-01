@@ -168,6 +168,13 @@ fn fnv(s: &str) -> u64 {
 
 fn fingerprint(src: &str) -> String {
     match parse(src) {
+        // As recorded before `.frm` sections existed: the phases' instructions and outputs. The
+        // fields the sections added (empty unless a formula has one) are rendered only when not.
+        Ok(f) if !f.has_sections() => {
+            let phases: Vec<String> =
+                f.phases().iter().map(|p| format!("Program {{ insts: {:?}, out: {:?} }}", p.insts(), p.out())).collect();
+            format!("Formula {{ phases: [{}] }}", phases.join(", "))
+        }
         Ok(f) => format!("{f:?}"),
         Err(e) => format!("ERR {e}"),
     }

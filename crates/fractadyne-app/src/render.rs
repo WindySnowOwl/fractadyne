@@ -6065,6 +6065,14 @@ impl FractadyneApp {
         RenderMode::select(self.perturbs(fractal), julia, mag)
     }
 
+    /// Whether `fractal`'s frames may be spread over chunked passes: the family's capability, and
+    /// for a custom formula its module's — not one with Fractint's sections, whose init and
+    /// persistent variables live only in the single-pass loop.
+    pub(crate) fn resumable(&self, fractal: FractalKind) -> bool {
+        fractal.caps().resumable_passes
+            && (fractal != FractalKind::Custom || self.custom.as_ref().is_none_or(|c| c.shader.resumable))
+    }
+
     /// `build_params` epilogue: the no-reference placeholder guard on the iteration ask,
     /// the LIVE manifest + per-frame cost stamps + motion-jam accounting, and the final
     /// [`MandelbrotParams`] assembly. Body moved verbatim from `build_params`.
@@ -6988,7 +6996,7 @@ impl FractadyneApp {
             let can_chunk = (chunk_mode.is_direct()
                 || chunk_mode == RenderMode::Df32Pert
                 || (chunk_mode == RenderMode::Floatexp && self.perf.chunk_fe_ok))
-                && fractal.caps().resumable_passes
+                && self.resumable(fractal)
                 && !self.coloring.color_method.needs_aux()
                 && self.perf.chunk_ok;
             // A PINNED refresh spans many frames, so no single frame interval prices it; an
@@ -7926,7 +7934,7 @@ impl FractadyneApp {
         let chunk_over = (chunk_mode.is_direct()
             || chunk_mode == RenderMode::Df32Pert
             || (chunk_mode == RenderMode::Floatexp && self.perf.chunk_fe_ok))
-            && fractal.caps().resumable_passes
+            && self.resumable(fractal)
             && !self.coloring.color_method.needs_aux()
             && self.perf.chunk_ok
             && !offscreen

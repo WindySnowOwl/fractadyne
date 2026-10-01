@@ -113,6 +113,14 @@ enum Screen {
     /// A collection formula applied at its starting view (the Celtic Julia set): rendered on the
     /// GPU where the collection's CPU gate judged it.
     FormulaCollectionApplied,
+    /// A Fractint classic with sections applied at its view (Magnet I: its own bailout test,
+    /// escape or the fixed point 1), on the GPU's init and bailout slots.
+    FormulaClassicApplied,
+    /// The library after a `.frm` import: each entry's note of what the reading changed, and past
+    /// the row cap, how many more the filter finds.
+    FormulaLibraryFrm,
+    /// The same list filtered.
+    FormulaLibraryFiltered,
     /// The formula library window, seeded in memory: a parameterized formula SHOWING (its row
     /// marked), a two-statement one, one that does not read in this version (its reason in red), and
     /// a name long enough to need truncating.
@@ -755,6 +763,9 @@ fn build_steps() -> Vec<Step> {
         screen("formula-library-typeset", Screen::FormulaLibraryTypeset),
         screen("formula-collection", Screen::FormulaCollection),
         screen("formula-collection-applied", Screen::FormulaCollectionApplied),
+        screen("formula-classic-applied", Screen::FormulaClassicApplied),
+        screen("formula-library-frm", Screen::FormulaLibraryFrm),
+        screen("formula-library-filtered", Screen::FormulaLibraryFiltered),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
         live("live-direct-1e2", 2.0),
         live("live-df32-1e6", 6.0),
@@ -1531,6 +1542,43 @@ impl FractadyneApp {
                 self.saved_formulas = Vec::new();
                 self.formula_library.shelf = Some(crate::ui::formula_library::Shelf::Collection);
                 self.formula_library.open = true;
+            }
+            Screen::FormulaLibraryFrm | Screen::FormulaLibraryFiltered => {
+                // A `.frm` file of our own, imported as Import does, then 150 more entries: past the
+                // row cap. In memory only: nothing is saved.
+                let frm = b"; a sample, written for this screen\n\
+                    Mandel (XAXIS) { z = 0: z = sqr(z) + pixel, |z| <= 4 }\n\
+                    Trig { z = pixel: z = fn1(z)*fn2(z) + pixel, |z| < 64 }\n\
+                    Newt { z = pixel: f1 = z^3 - 1, z = z - f1/(3*z^2 - f3*f1), |f1| > 1e-10 }\n\
+                    Screen { z = pixel: z = z*z + whitesq, |z| <= 4 }\n";
+                let got = crate::formula_library::from_frm(frm, "sample.frm");
+                self.saved_formulas = Vec::new();
+                crate::formula_library::merge(&mut self.saved_formulas, got.formulas.clone());
+                let many: Vec<_> = (1..=150)
+                    .map(|k| crate::formula_library::SavedFormula {
+                        name: format!("Power {k:03}"),
+                        source: format!("z = z^{} + c", k + 1),
+                        ..Default::default()
+                    })
+                    .collect();
+                crate::formula_library::merge(&mut self.saved_formulas, many);
+                self.pending_toast = got.sentence();
+                self.formula_dialog.textbook = false;
+                self.formula_library.shelf = Some(crate::ui::formula_library::Shelf::Mine);
+                if matches!(s, Screen::FormulaLibraryFiltered) {
+                    self.formula_library.set_filter("power 12");
+                }
+                self.formula_library.open = true;
+            }
+            Screen::FormulaClassicApplied => {
+                let e = crate::formula_library::collection().iter().find(|e| e.name == "Magnet I").cloned();
+                match e.map(|e| (crate::custom_formula::CustomFormula::compile(&e.source, &[]), e.view)) {
+                    Some((Ok(c), Some(view))) => {
+                        self.apply_custom_formula(c);
+                        self.apply_start_view(&view);
+                    }
+                    other => self.pending_toast = Some(format!("formula-classic-applied: {:?}", other.map(|o| o.0.err()))),
+                }
             }
             Screen::FormulaCollectionApplied => {
                 // At once, not off the render thread as Apply does: the step's settle then waits on

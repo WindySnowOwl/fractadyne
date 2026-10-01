@@ -138,13 +138,98 @@ pub enum Op {
     /// `(b + p)^k − b^k` with the principal power `exp(k·Log a)` and `0^k = 0`, for an exponent `k`
     /// with no perturbation — see [`pow_diff`].
     DiffPow(Val, Val, Val),
+    /// Persistent variable `i` of a `.frm`-style formula ([`Formula::vars`]): its value from the
+    /// step before (or the init section's, or zero). `f64` only, like everything below.
+    Var(u16),
+    /// `(1, 0)` where the comparison holds between the REAL parts, else `(0, 0)` — Fractint's.
+    Cmp(Cmp, Val, Val),
+    /// Fractint's `&&`: `(1, 0)` where both real parts are non-zero. Both sides are evaluated.
+    And(Val, Val),
+    /// Fractint's `||`.
+    Or(Val, Val),
+    /// `a` where the real part of `cond` is non-zero, else `b`: an `if` block, its branches both
+    /// computed (an untaken branch's NaN goes nowhere).
+    Select(Val, Val, Val),
+    /// The render's iteration cap, `(max_iter, 0)` — Fractint's `maxit`.
+    MaxIter,
+    /// Both parts rounded to integers (Fractint's `floor`, `ceil`, `trunc`, `round`).
+    Round(Round, Val),
+}
+
+/// How [`Op::Round`] rounds each part.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Round {
+    Floor,
+    Ceil,
+    /// Toward zero.
+    Trunc,
+    /// Fractint's `round`: `floor(x + 0.5)` (halves up, not away from zero).
+    Nearest,
+}
+
+impl Round {
+    pub fn apply(self, x: f64) -> f64 {
+        match self {
+            Round::Floor => x.floor(),
+            Round::Ceil => x.ceil(),
+            Round::Trunc => x.trunc(),
+            Round::Nearest => (x + 0.5).floor(),
+        }
+    }
+}
+
+/// A comparison of real parts ([`Op::Cmp`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Cmp {
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Eq,
+    Ne,
+}
+
+impl Cmp {
+    pub fn holds(self, a: f64, b: f64) -> bool {
+        match self {
+            Cmp::Lt => a < b,
+            Cmp::Le => a <= b,
+            Cmp::Gt => a > b,
+            Cmp::Ge => a >= b,
+            Cmp::Eq => a == b,
+            Cmp::Ne => a != b,
+        }
+    }
+
+    /// The operator as written (and in WGSL).
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Cmp::Lt => "<",
+            Cmp::Le => "<=",
+            Cmp::Gt => ">",
+            Cmp::Ge => ">=",
+            Cmp::Eq => "==",
+            Cmp::Ne => "!=",
+        }
+    }
 }
 
 impl Op {
     /// The operands this instruction reads.
     pub fn operands(&self) -> impl Iterator<Item = Val> {
         let (a, b, c) = match *self {
-            Op::Z | Op::C | Op::ZPrev | Op::Param(_) | Op::Const(..) | Op::Delta | Op::DeltaC => (None, None, None),
+            Op::Z
+            | Op::C
+            | Op::ZPrev
+            | Op::Param(_)
+            | Op::Const(..)
+            | Op::Delta
+            | Op::DeltaC
+            | Op::Var(_)
+            | Op::MaxIter => (None, None, None),
+            Op::Select(c, a, b) => (Some(c), Some(a), Some(b)),
+            Op::Round(_, a) => (Some(a), None, None),
+            Op::Cmp(_, a, b) | Op::And(a, b) | Op::Or(a, b) => (Some(a), Some(b), None),
             Op::Add(a, b)
             | Op::Sub(a, b)
             | Op::Mul(a, b)
@@ -188,6 +273,13 @@ impl Op {
                 | Op::DiffLog(..)
                 | Op::DiffSqrt(..)
                 | Op::DiffPow(..)
+                | Op::Var(_)
+                | Op::Cmp(..)
+                | Op::And(..)
+                | Op::Or(..)
+                | Op::Select(..)
+                | Op::MaxIter
+                | Op::Round(..)
         )
     }
 
@@ -268,6 +360,12 @@ impl std::error::Error for IrError {}
 pub struct Program {
     insts: Vec<Op>,
     out: Val,
+    /// The persistent variables the step sets: `(variable, its new value)` ([`Formula::vars`]).
+    vars: Vec<(u16, Val)>,
+    /// The formula's own bailout: iterate while this value's real part is not 0 — Fractint's last
+    /// loop statement, evaluated with the step's values. `None`: until `|z|` passes the escape
+    /// radius.
+    cond: Option<Val>,
 }
 
 impl Program {
@@ -293,7 +391,31 @@ impl Program {
         if out.index() >= insts.len() {
             return Err(IrError::BadOutput(out.index()));
         }
-        Ok(Program { insts, out })
+        Ok(Program { insts, out, vars: Vec::new(), cond: None })
+    }
+
+    /// The same program also setting persistent variables: `(variable, value)`, each value an
+    /// instruction of the program.
+    pub fn with_vars(mut self, vars: Vec<(u16, Val)>) -> Result<Self, IrError> {
+        if let Some(&(_, v)) = vars.iter().find(|(_, v)| v.index() >= self.insts.len()) {
+            return Err(IrError::BadOutput(v.index()));
+        }
+        self.vars = vars;
+        Ok(self)
+    }
+
+    /// The same program with its own bailout condition (see [`Program::cond`]).
+    pub fn with_cond(mut self, cond: Val) -> Result<Self, IrError> {
+        if cond.index() >= self.insts.len() {
+            return Err(IrError::BadOutput(cond.index()));
+        }
+        self.cond = Some(cond);
+        Ok(self)
+    }
+
+    /// The bailout condition: iterate while its real part is not 0.
+    pub fn cond(&self) -> Option<Val> {
+        self.cond
     }
 
     pub fn insts(&self) -> &[Op] {
@@ -302,6 +424,11 @@ impl Program {
 
     pub fn out(&self) -> Val {
         self.out
+    }
+
+    /// The persistent variables this step sets, with their new values.
+    pub fn vars(&self) -> &[(u16, Val)] {
+        &self.vars
     }
 
     pub fn reads_zprev(&self) -> bool {
@@ -318,6 +445,12 @@ impl Program {
     pub fn without_dead_code(&self) -> Program {
         let mut live = vec![false; self.insts.len()];
         live[self.out.index()] = true;
+        for &(_, v) in &self.vars {
+            live[v.index()] = true;
+        }
+        if let Some(v) = self.cond {
+            live[v.index()] = true;
+        }
         for i in (0..self.insts.len()).rev() {
             if live[i] {
                 for v in self.insts[i].operands() {
@@ -357,10 +490,25 @@ impl Program {
                 Op::DiffLog(a, b) => Op::DiffLog(remap(a, &map), remap(b, &map)),
                 Op::DiffSqrt(a, b) => Op::DiffSqrt(remap(a, &map), remap(b, &map)),
                 Op::DiffPow(a, b, k) => Op::DiffPow(remap(a, &map), remap(b, &map), remap(k, &map)),
-                leaf @ (Op::Z | Op::C | Op::ZPrev | Op::Param(_) | Op::Const(..) | Op::Delta | Op::DeltaC) => leaf,
+                Op::Cmp(cmp, a, b) => Op::Cmp(cmp, remap(a, &map), remap(b, &map)),
+                Op::And(a, b) => Op::And(remap(a, &map), remap(b, &map)),
+                Op::Or(a, b) => Op::Or(remap(a, &map), remap(b, &map)),
+                Op::Select(c, a, b) => Op::Select(remap(c, &map), remap(a, &map), remap(b, &map)),
+                Op::Round(r, a) => Op::Round(r, remap(a, &map)),
+                leaf @ (Op::Z
+                | Op::C
+                | Op::ZPrev
+                | Op::Param(_)
+                | Op::Const(..)
+                | Op::Delta
+                | Op::DeltaC
+                | Op::Var(_)
+                | Op::MaxIter) => leaf,
             });
         }
-        Program { insts, out: Val(map[self.out.index()]) }
+        let vars = self.vars.iter().map(|&(k, v)| (k, Val(map[v.index()]))).collect();
+        let cond = self.cond.map(|v| Val(map[v.index()]));
+        Program { insts, out: Val(map[self.out.index()]), vars, cond }
     }
 
     /// One more than the highest parameter index read (0 if none).
@@ -408,6 +556,13 @@ impl Program {
                 Op::DeltaC => Some(0.0),
                 Op::DiffAbsRe(_, p) | Op::DiffAbsIm(_, p) => g(p),
                 Op::DiffTanh(..) | Op::DiffTan(..) | Op::DiffLog(..) | Op::DiffSqrt(..) | Op::DiffPow(..) => None,
+                // A comparison is 0 or 1; a branch is as large as its larger side; a variable
+                // carried from step to step follows no law the step alone shows.
+                Op::Cmp(..) | Op::And(..) | Op::Or(..) | Op::MaxIter => Some(0.0),
+                Op::Select(_, a, b) => g(a).zip(g(b)).map(|(a, b)| a.max(b)),
+                Op::Var(_) => None,
+                // Rounding moves a value by less than 1: its size follows the operand's.
+                Op::Round(_, a) => g(a),
             };
             deg.push(d);
         }
@@ -438,9 +593,19 @@ impl Builder {
 
 /// A formula: one program per phase, run in turn (iteration `n` runs phase `n mod len`) — the
 /// hybrid model's interleaved lines. An ordinary formula has one phase.
+///
+/// A Fractint-style (`.frm`) formula may also have persistent variables, kept from one step to the
+/// next ([`Op::Var`]); an init section, run once per pixel before the first step; and a bailout
+/// condition of its own ([`Program::cond`]). Such a formula evaluates in `f64` only and renders on
+/// the direct path (no reference orbit, no chunked passes).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Formula {
     phases: Vec<Program>,
+    /// How many persistent variables there are (`Op::Var(i)`, `i < vars`).
+    vars: u16,
+    /// Run once per pixel, from `z = z₀` (0, or the pixel in Julia mode) and every variable 0: its
+    /// output is the starting `z`, and it sets the variables in its `vars`.
+    init: Option<Program>,
 }
 
 impl Formula {
@@ -448,15 +613,51 @@ impl Formula {
         if phases.is_empty() {
             return Err(IrError::Empty);
         }
-        Ok(Formula { phases })
+        Ok(Formula { phases, vars: 0, init: None })
     }
 
     pub fn single(step: Program) -> Self {
-        Formula { phases: vec![step] }
+        Formula { phases: vec![step], vars: 0, init: None }
+    }
+
+    /// The same formula with Fractint's sections: `vars` persistent variables and an init section.
+    /// Every `Op::Var` read or set must be below `vars`.
+    pub fn with_sections(mut self, vars: u16, init: Option<Program>) -> Result<Self, IrError> {
+        let all = self.phases.iter().chain(&init);
+        for p in all {
+            let bad = p.insts.iter().find_map(|op| match op {
+                Op::Var(i) if *i >= vars => Some(*i),
+                _ => None,
+            });
+            if let Some(i) = bad.or_else(|| p.vars.iter().map(|&(i, _)| i).find(|&i| i >= vars)) {
+                return Err(IrError::BadOutput(i as usize));
+            }
+        }
+        self.vars = vars;
+        self.init = init;
+        Ok(self)
     }
 
     pub fn phases(&self) -> &[Program] {
         &self.phases
+    }
+
+    pub fn vars(&self) -> u16 {
+        self.vars
+    }
+
+    pub fn init(&self) -> Option<&Program> {
+        self.init.as_ref()
+    }
+
+    /// Whether a phase has a bailout condition of its own.
+    pub fn has_bailout(&self) -> bool {
+        self.phases.iter().any(|p| p.cond.is_some())
+    }
+
+    /// Whether it has any of Fractint's sections: persistent variables, an init or a bailout.
+    pub fn has_sections(&self) -> bool {
+        self.vars > 0 || self.init.is_some() || self.has_bailout()
     }
 
     pub fn reads_zprev(&self) -> bool {
@@ -464,11 +665,19 @@ impl Formula {
     }
 
     pub fn bignum_evaluable(&self) -> bool {
-        self.phases.iter().all(Program::bignum_evaluable)
+        !self.has_sections() && self.phases.iter().all(Program::bignum_evaluable)
     }
 
     pub fn param_count(&self) -> usize {
-        self.phases.iter().map(Program::param_count).max().unwrap_or(0)
+        self.phases.iter().chain(&self.init).map(Program::param_count).max().unwrap_or(0)
+    }
+
+    /// Program `k` of [`Machine`]'s numbering: the phases, then the init section.
+    fn program(&self, k: usize) -> &Program {
+        match self.phases.get(k) {
+            Some(p) => p,
+            None => self.init.as_ref().expect("init numbered only if present"),
+        }
     }
 
     /// The per-iteration escape degree: the geometric mean of the phases' (a hybrid alternating
@@ -635,6 +844,11 @@ pub(crate) trait IrField: Field {
         _c: Option<&(Self, Self)>,
         _ctx: Self::Ctx,
     ) -> Option<(Self, Self)> {
+        None
+    }
+    /// Whether a real value is non-zero (a `.frm` condition), where this field decides conditions
+    /// at all (`f64` only).
+    fn truthy(_v: &Self) -> Option<bool> {
         None
     }
 }
@@ -862,8 +1076,16 @@ impl IrField for f64 {
                 let d = tanh_diff((-a.1, a.0), (-p.1, p.0));
                 (d.1, -d.0)
             }
+            // Fractint's conditions: real parts only, 1 or 0.
+            Op::Cmp(cmp, ..) => (f64::from(u8::from(cmp.holds(a.0, b?.0))), 0.0),
+            Op::And(..) => (f64::from(u8::from(a.0 != 0.0 && b?.0 != 0.0)), 0.0),
+            Op::Or(..) => (f64::from(u8::from(a.0 != 0.0 || b?.0 != 0.0)), 0.0),
+            Op::Round(r, _) => (r.apply(a.0), r.apply(a.1)),
             _ => return None,
         })
+    }
+    fn truthy(v: &f64) -> Option<bool> {
+        Some(*v != 0.0)
     }
 }
 
@@ -1146,6 +1368,8 @@ const DZ_RE: usize = 7;
 const DZ_IM: usize = 8;
 const DC_RE: usize = 9;
 const DC_IM: usize = 10;
+// A `.frm`-style formula's persistent variables, two slots each, before the constants.
+const VAR_BASE: usize = 11;
 
 /// Runs a [`Formula`] in one field. The state (`z`, `z_prev`, `c`) and every constant live in the
 /// fixed front of `pool`; a step appends its temporaries and the next step drops them.
@@ -1159,6 +1383,8 @@ struct Machine<'f, F: IrField> {
     vals: Vec<Cs>,
     /// The formula reads `z_prev`, so each step shifts `z` into it.
     shift: bool,
+    /// The bailout condition the last step left, for a formula with one ([`Program::cond`]).
+    go: Option<bool>,
     ctx: F::Ctx,
 }
 
@@ -1169,16 +1395,28 @@ impl<'f, F: IrField> Machine<'f, F> {
         zp: (F, F),
         c: (F, F),
         params: &[(f64, f64)],
+        max_iter: f64,
         ctx: F::Ctx,
     ) -> Result<Self, IrError> {
         let zero = || F::konst(0.0, ctx);
         let mut pool = vec![z.0, z.1, zp.0, zp.1, c.0, c.1, zero(), zero(), zero(), zero(), zero()];
+        for _ in 0..2 * formula.vars as usize {
+            pool.push(zero());
+        }
         let push = |v: f64, pool: &mut Vec<F>| {
             pool.push(F::konst(v, ctx));
             S::pos(pool.len() - 1)
         };
-        let mut leaves = Vec::with_capacity(formula.phases.len());
-        for prog in &formula.phases {
+        // The phases, then the init section ([`Formula::program`]'s numbering; an absent one has
+        // no leaves).
+        let n = formula.phases.len();
+        let programs = (0..n + 1).map(|k| formula.phases.get(k).or(formula.init.as_ref()));
+        let mut leaves = Vec::with_capacity(n + 1);
+        for prog in programs {
+            let Some(prog) = prog else {
+                leaves.push(Vec::new());
+                continue;
+            };
             let mut lv = Vec::with_capacity(prog.insts.len());
             for op in &prog.insts {
                 lv.push(match *op {
@@ -1189,6 +1427,7 @@ impl<'f, F: IrField> Machine<'f, F> {
                             .ok_or(IrError::MissingParam { index: i, supplied: params.len() })?;
                         Some(Cs { re: push(re, &mut pool), im: push(im, &mut pool) })
                     }
+                    Op::MaxIter => Some(Cs { re: push(max_iter, &mut pool), im: push(0.0, &mut pool) }),
                     Op::Scale(_, k) => {
                         let s = push(k, &mut pool);
                         Some(Cs { re: s, im: s })
@@ -1200,7 +1439,7 @@ impl<'f, F: IrField> Machine<'f, F> {
         }
         let fixed = pool.len();
         let shift = formula.reads_zprev();
-        Ok(Machine { formula, pool, fixed, leaves, vals: Vec::new(), shift, ctx })
+        Ok(Machine { formula, pool, fixed, leaves, vals: Vec::new(), shift, go: None, ctx })
     }
 
     fn push(&mut self, v: F) -> S {
@@ -1271,10 +1510,11 @@ impl<'f, F: IrField> Machine<'f, F> {
         }
     }
 
-    /// Evaluate phase `k` on the current state; the result's scalars are in the pool.
+    /// Evaluate program `k` ([`Formula::program`]: a phase, the init section or the bailout) on the
+    /// current state; the result's scalars are in the pool.
     fn eval(&mut self, k: usize) -> Result<Cs, IrError> {
         let formula = self.formula;
-        let prog = &formula.phases[k];
+        let prog = formula.program(k);
         self.pool.truncate(self.fixed);
         self.vals.clear();
         let zero = S::pos(ZERO);
@@ -1286,7 +1526,27 @@ impl<'f, F: IrField> Machine<'f, F> {
                 Op::C => Cs { re: S::pos(C_RE), im: S::pos(C_IM) },
                 Op::Delta => Cs { re: S::pos(DZ_RE), im: S::pos(DZ_IM) },
                 Op::DeltaC => Cs { re: S::pos(DC_RE), im: S::pos(DC_IM) },
-                Op::Const(..) | Op::Param(_) => self.leaves[k][i].expect("converted in new()"),
+                Op::Var(j) => {
+                    let s = VAR_BASE + 2 * j as usize;
+                    Cs { re: S::pos(s), im: S::pos(s + 1) }
+                }
+                Op::Cmp(_, a, b) | Op::And(a, b) | Op::Or(a, b) => {
+                    let (a, b) = (g(a), g(b));
+                    let a = (self.materialize(a.re), self.materialize(a.im));
+                    let b = (self.materialize(b.re), self.materialize(b.im));
+                    let (re, im) = F::elementary(op, &a, Some(&b), None, self.ctx).ok_or(IrError::NotBignum)?;
+                    Cs { re: self.push(re), im: self.push(im) }
+                }
+                Op::Select(c, a, b) => {
+                    let (c, a, b) = (g(c), g(a), g(b));
+                    let cond = self.materialize(c.re);
+                    match F::truthy(&cond) {
+                        Some(true) => a,
+                        Some(false) => b,
+                        None => return Err(IrError::NotBignum),
+                    }
+                }
+                Op::Const(..) | Op::Param(_) | Op::MaxIter => self.leaves[k][i].expect("converted in new()"),
                 Op::Add(a, b) => {
                     let (a, b) = (g(a), g(b));
                     Cs { re: self.add(a.re, b.re), im: self.add(a.im, b.im) }
@@ -1363,7 +1623,7 @@ impl<'f, F: IrField> Machine<'f, F> {
                     let (re, im) = F::elementary(op, &a, Some(&b), Some(&k), self.ctx).ok_or(IrError::NotBignum)?;
                     Cs { re: self.push(re), im: self.push(im) }
                 }
-                Op::Func(_, a) => {
+                Op::Func(_, a) | Op::Round(_, a) => {
                     let a = g(a);
                     let a = (self.materialize(a.re), self.materialize(a.im));
                     let (re, im) = F::elementary(op, &a, None, None, self.ctx).ok_or(IrError::NotBignum)?;
@@ -1412,9 +1672,51 @@ impl<'f, F: IrField> Machine<'f, F> {
 
     /// One iteration `n` (0-based): phase `n mod len`.
     fn step(&mut self, n: usize) -> Result<(), IrError> {
-        let out = self.eval(n % self.formula.phases.len())?;
+        self.run(n % self.formula.phases.len())
+    }
+
+    /// Evaluate program `k` and commit it: its bailout condition and persistent variables (read
+    /// before anything moves, as `commit` moves temporaries), then `z`.
+    fn run(&mut self, k: usize) -> Result<(), IrError> {
+        let out = self.eval(k)?;
+        if let Some(c) = self.formula.program(k).cond {
+            let re = self.materialize(self.vals[c.index()].re);
+            self.go = Some(F::truthy(&re).ok_or(IrError::NotBignum)?);
+        }
+        let sets: Vec<(usize, F, F)> = self
+            .formula
+            .program(k)
+            .vars
+            .iter()
+            .map(|&(j, v)| {
+                let cs = self.vals[v.index()];
+                (VAR_BASE + 2 * j as usize, self.materialize(cs.re), self.materialize(cs.im))
+            })
+            .collect();
         self.commit(out);
+        for (s, re, im) in sets {
+            self.pool[s] = re;
+            self.pool[s + 1] = im;
+        }
         Ok(())
+    }
+
+    /// The init section, if the formula has one: from `z = z₀` and every variable 0, the starting
+    /// `z` and variables. `z_prev` stays 0.
+    fn init(&mut self) -> Result<(), IrError> {
+        if self.formula.init.is_none() {
+            return Ok(());
+        }
+        let shift = std::mem::replace(&mut self.shift, false);
+        let r = self.run(self.formula.phases.len());
+        self.shift = shift;
+        r
+    }
+
+    /// Whether to go on iterating by the formula's bailout, as the last step decided it (`None`
+    /// without one: the caller tests the escape radius).
+    fn keep_going(&self) -> Option<bool> {
+        self.go
     }
 }
 
@@ -1426,7 +1728,8 @@ fn check_params(formula: &Formula, params: &[(f64, f64)]) -> Result<(), IrError>
     Ok(())
 }
 
-/// One `f64` step of `prog`: `z' = prog(z, c, z_prev)`.
+/// One `f64` step of `prog`: `z' = prog(z, c, z_prev)`. A lone step has no iteration cap:
+/// `maxit` reads 0.
 pub fn step_f64(
     prog: &Program,
     z: (f64, f64),
@@ -1436,7 +1739,7 @@ pub fn step_f64(
 ) -> Result<(f64, f64), IrError> {
     let formula = Formula::single(prog.clone());
     check_params(&formula, params)?;
-    let mut m = Machine::new(&formula, z, zprev, c, params, ())?;
+    let mut m = Machine::new(&formula, z, zprev, c, params, 0.0, ())?;
     m.step(0)?;
     Ok((m.pool[Z_RE], m.pool[Z_IM]))
 }
@@ -1453,7 +1756,7 @@ pub fn step_perturbed_f64(
 ) -> Result<(f64, f64), IrError> {
     let formula = Formula::single(prog.clone());
     check_params(&formula, params)?;
-    let mut m = Machine::new(&formula, z, (0.0, 0.0), c, params, ())?;
+    let mut m = Machine::new(&formula, z, (0.0, 0.0), c, params, 0.0, ())?;
     m.pool[DZ_RE] = dz.0;
     m.pool[DZ_IM] = dz.1;
     m.pool[DC_RE] = dc.0;
@@ -1463,7 +1766,7 @@ pub fn step_perturbed_f64(
 }
 
 /// The `f64` orbit, with [`crate::orbit_points`]'s contract: `z₀` first, then each iterate until
-/// `|z|² > bailout2` or `max_points` steps. `z_prev` starts at zero.
+/// `|z|² > bailout2` or `max_points` steps. `z_prev` starts at zero; `maxit` is `max_points`.
 pub fn orbit_points(
     formula: &Formula,
     z0: (f64, f64),
@@ -1473,15 +1776,20 @@ pub fn orbit_points(
     bailout2: f64,
 ) -> Result<Vec<(f64, f64)>, IrError> {
     check_params(formula, params)?;
-    let mut m = Machine::new(formula, z0, (0.0, 0.0), c, params, ())?;
+    let mut m = Machine::new(formula, z0, (0.0, 0.0), c, params, max_points as f64, ())?;
+    m.init()?;
     let mut pts = Vec::with_capacity(max_points.min(1024) + 1);
-    pts.push(z0);
+    pts.push((m.pool[Z_RE], m.pool[Z_IM]));
     for n in 0..max_points {
         m.step(n)?;
         let (x, y) = (m.pool[Z_RE], m.pool[Z_IM]);
         pts.push((x, y));
-        if x * x + y * y > bailout2 {
-            break;
+        // A formula's own bailout replaces the escape radius (Fractint's: iterate while it holds).
+        match m.keep_going() {
+            Some(go) if !go => break,
+            Some(_) => {}
+            None if x * x + y * y > bailout2 => break,
+            None => {}
         }
     }
     Ok(pts)
@@ -1560,7 +1868,7 @@ fn run_reference<B: RefBackend + IrField>(
     let z = (B::from_carrier(z0x, ctx), B::from_carrier(z0y, ctx));
     let zp = (B::from_carrier(&zero, ctx), B::from_carrier(&zero, ctx));
     let c = (B::from_carrier(cx, ctx), B::from_carrier(cy, ctx));
-    let mut m = Machine::new(formula, z, zp, c, params, ctx)?;
+    let mut m = Machine::new(formula, z, zp, c, params, f64::from(max_iter), ctx)?;
     let mut escaped = false;
     for n in 0..max_iter as usize {
         m.step(n)?;
@@ -1591,6 +1899,9 @@ pub mod syntax;
 
 /// Perturbed steps derived from a formula (deep zoom).
 pub mod perturb;
+
+/// Fractint's `.frm` formula files, read into the formula language.
+pub mod frm;
 
 #[cfg(test)]
 mod tests;

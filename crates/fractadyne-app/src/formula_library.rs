@@ -251,27 +251,96 @@ pub(crate) struct MergeReport {
 /// holds is skipped, and a new formula whose name is taken is added as "name (2)" rather than
 /// replacing the entry of that name — an import must never overwrite the user's own work.
 pub(crate) fn merge(list: &mut Vec<SavedFormula>, incoming: Vec<SavedFormula>) -> MergeReport {
+    use std::collections::HashSet;
     let mut report = MergeReport::default();
+    // Indexed, as a `.frm` file brings thousands: a source not among these is no duplicate, and a
+    // name not among these is free.
+    let mut sources: HashSet<String> = list.iter().map(|f| f.source.trim().to_string()).collect();
+    let mut names: HashSet<String> = list.iter().map(|f| f.name.clone()).collect();
     for entry in incoming {
         let Some(entry) = entry.tidy() else {
             report.skipped += 1;
             continue;
         };
-        if list.iter().any(|f| f.same_formula(&entry)) {
+        if sources.contains(entry.source.trim()) && list.iter().any(|f| f.same_formula(&entry)) {
             report.duplicates += 1;
             continue;
         }
-        let taken = |name: &str| list.iter().any(|f| f.name == name);
         let mut name = entry.name.clone();
-        if taken(&name) {
-            name = (2..).map(|k| format!("{} ({k})", entry.name)).find(|n| !taken(n)).expect("unbounded");
+        if names.contains(&name) {
+            name = (2..).map(|k| format!("{} ({k})", entry.name)).find(|n| !names.contains(n)).expect("unbounded");
             report.renamed.push((entry.name.clone(), name.clone()));
         }
+        sources.insert(entry.source.trim().to_string());
+        names.insert(name.clone());
         list.push(SavedFormula { name, ..entry });
         report.added += 1;
     }
     sort(list);
     report
+}
+
+/// What a Fractint `.frm` file holds for the library: its entries that read, as library entries
+/// (each parameter it reads at 0, as Fractint's are without a `.par`; what the translation changed
+/// in `about`), and those that do not, counted by why.
+#[derive(Debug, Default)]
+pub(crate) struct FrmImport {
+    pub(crate) formulas: Vec<SavedFormula>,
+    /// `(why, how many)`, the commonest first.
+    pub(crate) unread: Vec<(String, usize)>,
+}
+
+impl FrmImport {
+    pub(crate) fn unread_total(&self) -> usize {
+        self.unread.iter().map(|(_, n)| n).sum()
+    }
+
+    /// The sentence the import's toast adds: how many did not read, and the commonest reason.
+    pub(crate) fn sentence(&self) -> Option<String> {
+        let n = self.unread_total();
+        let (why, _) = self.unread.first()?;
+        let some = if n == 1 { "1 entry doesn't".to_string() } else { format!("{} entries don't", crate::commas(&n.to_string())) };
+        Some(format!("{some} read in this version (most often: {why})."))
+    }
+}
+
+/// Read a `.frm` file (bytes: the DOS-era ones are Latin-1) named `file`.
+pub(crate) fn from_frm(bytes: &[u8], file: &str) -> FrmImport {
+    let mut out = FrmImport::default();
+    let mut why: Vec<(String, usize)> = Vec::new();
+    for e in fractadyne_core::ir::frm::read_frm_bytes(bytes) {
+        match (e.reads, fractadyne_core::ir::parse::parse(&e.source)) {
+            (Ok(()), Ok(f)) => {
+                // The notes start with a name (`fn1`, `f3`) as often as not: joined, not capitalised.
+                let about = if e.notes.is_empty() {
+                    format!("From {file}.")
+                } else {
+                    format!("From {file}: {}.", e.notes.join("; "))
+                };
+                out.formulas.push(SavedFormula {
+                    name: e.name,
+                    source: e.source,
+                    params: vec![["0".to_string(), "0".to_string()]; f.param_count()],
+                    about,
+                    ..Default::default()
+                });
+            }
+            (Err(m), _) | (_, Err(fractadyne_core::ir::parse::ParseError { message: m, .. })) => {
+                // "`whitesq`: screen and view variables…" and "`scrnpix`: …" are one reason.
+                let m = match m.strip_prefix('`').and_then(|r| r.split_once("`: ")) {
+                    Some((_, reason)) => reason.to_string(),
+                    None => m,
+                };
+                match why.iter_mut().find(|(w, _)| *w == m) {
+                    Some(slot) => slot.1 += 1,
+                    None => why.push((m, 1)),
+                }
+            }
+        }
+    }
+    why.sort_by(|a, b| b.1.cmp(&a.1));
+    out.unread = why;
+    out
 }
 
 impl MergeReport {

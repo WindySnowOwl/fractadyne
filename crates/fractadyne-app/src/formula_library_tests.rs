@@ -102,6 +102,39 @@ fn an_import_never_overwrites_the_library() {
     assert_eq!(one.sentence("y.toml"), "Imported 1 formula from \"y.toml\": \"Sine\" was taken, so it is \"Sine (2)\".");
 }
 
+/// A Fractint `.frm` file (our own text here: no corpus is bundled) imports the entries that read,
+/// each parameter it reads at 0 and what the translation changed in its `about`; the rest are
+/// counted by why, and the toast names the commonest.
+#[test]
+fn a_frm_file_imports_what_reads() {
+    let bytes = b"; caf\xe9 formulas\r\n\
+        Mandel (XAXIS) {\r\n  z = 0:\r\n  z = sqr(z) + pixel\r\n  |z| <= 4\r\n}\r\n\
+        Trig { z = pixel: z = fn1(z)*p2 + pixel, |z| < 64 }\r\n\
+        Mandel { z = pixel: z = z*z*z + pixel, |z| <= 4 }\r\n\
+        Screen { z = pixel: z = z*z + whitesq, |z| <= 4 }\r\n\
+        Screen2 { z = pixel: z = z*z + scrnpix, |z| <= 4 }\r\n\
+        Noise { z = pixel: z = z*z + rand, |z| <= 4 }\r\n";
+    let got = from_frm(bytes, "mine.frm");
+    let names: Vec<&str> = got.formulas.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(names, ["Mandel", "Trig", "Mandel"]);
+    assert_eq!(got.formulas[0].about, "From mine.frm.");
+    assert_eq!(got.formulas[1].about, "From mine.frm: fn1 is sin (Fractint's default).");
+    assert_eq!(got.formulas[1].params, vec![["0".to_string(), "0".to_string()]; 2], "p1 and p2, as it reads p2");
+    // Grouped by the reason, whichever name it was given for; the commonest first.
+    assert_eq!(
+        got.unread,
+        [("screen and view variables are not supported".to_string(), 2), ("random numbers are not supported".to_string(), 1)]
+    );
+    let mut list = vec![entry("Mandel", "z = z^2 + c", &[])];
+    let report = merge(&mut list, got.formulas.clone());
+    assert_eq!((report.added, report.renamed.len()), (3, 2), "two more Mandels, renamed");
+    assert_eq!(
+        got.sentence().unwrap(),
+        "3 entries don't read in this version (most often: screen and view variables are not supported)."
+    );
+    assert!(from_frm(b"; nothing here\n", "empty.frm").sentence().is_none());
+}
+
 #[test]
 fn a_formula_file_round_trips_every_character() {
     let list = vec![
@@ -220,8 +253,9 @@ struct Frame {
 }
 
 /// `e` rendered on the CPU at its starting view, `w`×`h`, as the GPU iterates it: z₀ = 0 and c the
-/// pixel (Julia mode: z₀ the pixel and c the constant), escape past |z| = 256, a value that stops
-/// being finite tamed to an escape (`fractadyne_gpu::custom::tame_f64`).
+/// pixel (Julia mode: z₀ the pixel and c the constant), escape past |z| = 256 — or, for a formula
+/// with its own bailout, where that ends the orbit before the cap (the shader's test replaces the
+/// radius) — a value that stops being finite tamed to an escape (`fractadyne_gpu::custom::tame_f64`).
 fn render(e: &SavedFormula, w: usize, h: usize, max_iter: u32) -> Frame {
     let params: Vec<(f64, f64)> =
         e.params.iter().map(|[re, im]| (re.parse().expect("re"), im.parse().expect("im"))).collect();
@@ -244,7 +278,13 @@ fn render(e: &SavedFormula, w: usize, h: usize, max_iter: u32) -> Frame {
             };
             let pts = fractadyne_core::ir::orbit_points(&cf.formula, z0, c, &cf.params, max_iter as usize, bail2)
                 .expect("parameters supplied");
-            let gone = pts.iter().position(|&(x, y)| !(x.is_finite() && y.is_finite()) || x * x + y * y > bail2);
+            let finite = |&(x, y): &(f64, f64)| x.is_finite() && y.is_finite();
+            let gone = if cf.formula.has_bailout() {
+                let ended = (pts.len() <= max_iter as usize).then(|| pts.len() - 1);
+                pts.iter().position(|p| !finite(p)).or(ended)
+            } else {
+                pts.iter().position(|&(x, y)| !finite(&(x, y)) || x * x + y * y > bail2)
+            };
             px.push(gone.map(|n| n as u32));
         }
     }

@@ -280,6 +280,15 @@ pub struct ExportRequest {
     pub tile_px_max: Option<u32>,
 }
 
+impl ExportRequest {
+    /// Whether the resumable chunk pass may iterate this frame: the formula family's capability,
+    /// and for a custom formula its own shader's — one with Fractint's sections (an init section,
+    /// variables kept from step to step) has state the chunk pass neither starts nor carries.
+    pub fn resumable(&self) -> bool {
+        fractadyne_core::formula::caps(self.formula).resumable_passes && self.custom.as_ref().is_none_or(|s| s.resumable)
+    }
+}
+
 /// The actual `(width, height)` an export produced after clamping to the GPU's
 /// max texture dimension, plus the effective supersampling used.
 pub struct ExportResult {
@@ -918,7 +927,7 @@ fn render_export_impl(
     let fe = req.mode == 2;
     let chunk_scope = allow_chunking
         && (req.mode == 1 || req.mode == 0 || req.mode == 2)
-        && fractadyne_core::formula::caps(req.formula).resumable_passes
+        && req.resumable()
         && !method_needs_aux(req.color_method)
         && device.limits().max_color_attachment_bytes_per_sample >= if fe { 64 } else { 48 };
     // Mode 2 in chunk scope: occupancy-sized tiles run as step-bounded passes (see
@@ -1525,7 +1534,7 @@ pub fn render_iter_tiled(
     // latency-bound dispatches the app issues, and its 120 s deadline is only checked BETWEEN
     // tiles — so before chunking, one such tile could still overrun the watchdog inside it.
     let chunk_scope = (req.mode == 1 || req.mode == 0 || req.mode == 2)
-        && fractadyne_core::formula::caps(req.formula).resumable_passes
+        && req.resumable()
         && device.limits().max_color_attachment_bytes_per_sample
             >= if req.mode == 2 { 64 } else { 48 };
     // Occupancy-sized, step-bounded tiles (see `OCC_TILE_SAMPLES`), mode 2 only as in
@@ -2864,7 +2873,7 @@ pub fn render_iter_chunked_timed(
     let mode_ok = req.mode == 1 || req.mode == 0 || req.mode == 2;
     let attach_need = if fe { 64 } else { 48 };
     if !mode_ok
-        || !fractadyne_core::formula::caps(req.formula).resumable_passes
+        || !req.resumable()
         || chunk_iters == 0
         || device.limits().max_color_attachment_bytes_per_sample < attach_need
     {

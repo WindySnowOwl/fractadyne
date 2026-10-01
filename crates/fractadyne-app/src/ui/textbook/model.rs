@@ -135,6 +135,15 @@ pub(crate) fn read(src: &str) -> Vec<(Line, Span)> {
 /// One line (no line break in it) whose first byte is byte `at` of the source.
 pub(crate) fn read_line(raw: &str, at: usize) -> Line {
     match syntax(raw) {
+        // Fractint's sections — an init section's ':', a comparison (a bailout, a condition), an
+        // assignment inside an expression — have no typeset form yet: such a line shows, and is
+        // edited, as text.
+        Ok(s) if raw.split(';').next().unwrap_or("").contains(':') || s.statements.iter().any(|st| fractint_only(&st.body)) => {
+            Line::Unread {
+                text: raw.trim_end_matches('\r').to_string(),
+                error: "Fractint's sections (an init's ':', comparisons, a = b = …) are edited as text".into(),
+            }
+        }
         Ok(s) => Line::Read {
             stmts: s
                 .statements
@@ -144,6 +153,18 @@ pub(crate) fn read_line(raw: &str, at: usize) -> Line {
             comment: s.comments.first().map(|c| c.text.trim().to_string()),
         },
         Err(e) => Line::Unread { text: raw.trim_end_matches('\r').to_string(), error: e.message },
+    }
+}
+
+/// Whether an expression compares, or assigns, anywhere in it.
+fn fractint_only(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Cmp(..) | ExprKind::Logic(..) | ExprKind::Assign(..) => true,
+        ExprKind::Num(_) | ExprKind::Name(_) => false,
+        ExprKind::Call { arg: a, .. } | ExprKind::Group(a) | ExprKind::Bars(a) | ExprKind::Neg(a) | ExprKind::Pos(a) => {
+            fractint_only(a)
+        }
+        ExprKind::Complex(a, b) | ExprKind::Bin(_, a, b) | ExprKind::Pow(a, b) => fractint_only(a) || fractint_only(b),
     }
 }
 
@@ -193,6 +214,8 @@ pub(crate) fn flatten(src: &str, e: &Expr) -> Row {
             }
         }
         ExprKind::Pow(b, x) => [flatten(src, b), vec![Atom::Sup(unwrap(x))]].concat(),
+        // `read_line` keeps such a line as text; nothing comes here.
+        ExprKind::Cmp(..) | ExprKind::Logic(..) | ExprKind::Assign(..) => Vec::new(),
     }
 }
 

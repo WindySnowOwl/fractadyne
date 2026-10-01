@@ -2910,10 +2910,20 @@ impl FractadyneApp {
             //    GPU. A bound on ALL pixels (<5%) was one GPU's calibration: the RTX 3080 disagreed on
             //    3.0% and the RX 6800 XT on 7.1%, while the 3080 disagreed on 0 of 43,692 stable pixels
             //    (90%). A sin off by 1e-4 (1e-5) relative fails it: 5.9% (0.17%) of stable pixels.
+            //  - Formulas whose own dynamics amplify rounding even in early escapes, judged like the
+            //    stress test on the pixels stable under c ± PROBE: Magnet I lingers by the repelling
+            //    point |z| ≈ 4 of its far map z²/4 (×2 per step: GPU and CPU orbits escaping at
+            //    steps 14–20 measured 0.01–0.6 apart; 0 of 44,160 stable pixels disagree), and
+            //    Barnsley M1 branches on the sign of Re z. Its stable pixels still part company at
+            //    the rim of its oval (RTX 3080: 32 of 47,156, every one CPU-interior and GPU-escaped
+            //    after 110–297 steps, mirror-symmetric in the four quadrants): there each step
+            //    multiplies by |c| > 1, and an orbit kept bounded in exact arithmetic is kicked off
+            //    by rounding injected EVERY step — which a one-time move of c does not model.
             enum Kind {
                 Iterated,
                 Once,
                 Stress,
+                Chaotic,
             }
             let hybrid = ir::Formula::new(vec![
                 ir::builtin_step(fractadyne_core::formula::MANDELBROT).unwrap(),
@@ -2968,6 +2978,43 @@ impl FractadyneApp {
                 cpu_cases.push((format!("{f:?}"), once(Some(f)), vec![], (0.0, 0.0, 12.0), Kind::Once));
             }
             cpu_cases.push(("c^(1.5+0.5i)".into(), once(None), vec![], (0.0, 0.0, 12.0), Kind::Once));
+            // Fractint's sections (phase 3), on the shader's init and bailout slots: an init section
+            // and a variable kept from step to step (Manowar), an if block (Barnsley M1), the
+            // formula's own test ending an orbit at escape or at a fixed point (Magnet I), and
+            // `maxit` (the uniform: read as 0, nothing would escape) with the four roundings.
+            for (label, src, view_at, kind) in [
+                ("Manowar (init, variables, bailout)", "z = c, z1 = c:\nt = z\nz = z*z + z1 + c\nz1 = t\n|z| <= 4", (-0.15, 0.0, 0.8), Kind::Iterated),
+                (
+                    "Barnsley M1 (if block)",
+                    "z = c:\nif (real(z) >= 0)\n z = (z - 1)*c\nelse\n z = (z + 1)*c\nendif\n|z| <= 4",
+                    (0.0, 0.0, 4.0),
+                    Kind::Chaotic,
+                ),
+                (
+                    "Magnet I (escape or converge)",
+                    "z = sqr((z^2 + c - 1)/(2*z + c - 2))\n|z| <= 100 && |z - 1| > 0.000001",
+                    (1.3, 0.0, 4.4),
+                    Kind::Chaotic,
+                ),
+                (
+                    "maxit and rounding",
+                    "z = z^2 + c*(maxit/1000) + floor(c*3)/16 + ceil(c*2)/32 + trunc(c*5)/64 + round(c*7)/128",
+                    (-0.5, 0.0, 3.5),
+                    Kind::Iterated,
+                ),
+            ] {
+                match ir::parse::parse(src) {
+                    Ok(f) => cpu_cases.push((label.into(), f, vec![], view_at, kind)),
+                    Err(e) => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Custom formula (GPU)",
+                        name: format!("{label}: GPU = CPU interpreter"),
+                        params: String::new(),
+                        result: format!("does not read: {e}"),
+                        threshold: "reads",
+                        pass: false,
+                    }),
+                }
+            }
             // The functions-once cases report as ONE check (their total, and the worst function).
             let (mut once_n, mut once_bad, mut once_escaped, mut once_worst) = (0u64, 0u64, 0u64, (0u64, String::new()));
             for (label, formula, params, (cx, cy, span), kind) in cpu_cases {
@@ -2980,6 +3027,9 @@ impl FractadyneApp {
                 req.formula = fractadyne_core::formula::CUSTOM;
                 if matches!(kind, Kind::Once) {
                     req.max_iter = 64; // linear growth: n ≈ 32/|f(c) + 1 + 2i|
+                }
+                if matches!(kind, Kind::Chaotic) {
+                    req.max_iter = 300; // the probe runs five orbits a pixel; the interior runs to the cap
                 }
                 let shader = match fractadyne_gpu::custom::build(&formula, &params) {
                     Ok(s) => s,
@@ -3019,19 +3069,30 @@ impl FractadyneApp {
                 const PROBE: f64 = 1.0e-5;
                 let (mut stable, mut stable_bad) = (0u64, 0u64);
                 // The CPU's smooth value at c (−1 = interior) and its step count.
+                let own_test = formula.has_bailout();
                 let cpu_at = |c: (f64, f64)| {
                     let pts = ir::orbit_points(&formula, (0.0, 0.0), c, &params, req.max_iter as usize, bail2)
                         .expect("parameters supplied");
                     // The generated step's overflow guard, mirrored (it can only touch the last point).
                     let (x, y) = fractadyne_gpu::custom::tame_f64(*pts.last().unwrap());
                     let mag2 = x * x + y * y;
-                    // …and its smooth value, clamped at 0 as the generated module clamps it.
-                    let v = if mag2 > bail2 {
-                        ((pts.len() - 1) as f64 + 1.0 - (mag2.ln() * 0.5 / 2f64.ln()).ln() / power.ln()).max(0.0)
+                    let steps = pts.len() - 1;
+                    let nu = |mag2: f64| (mag2.ln() * 0.5 / 2f64.ln()).ln() / power.ln();
+                    // …and its smooth value, clamped at 0 as the generated module clamps it. A formula's
+                    // own test ends the orbit where it says (escaped, unless it ran to the cap); the
+                    // module's log-log term applies only past |z| = 2, the step count below.
+                    let v = if own_test {
+                        match (steps < req.max_iter as usize, mag2 > 4.0) {
+                            (false, _) => -1.0,
+                            (true, true) => (steps as f64 + 1.0 - nu(mag2)).max(0.0),
+                            (true, false) => steps as f64,
+                        }
+                    } else if mag2 > bail2 {
+                        (steps as f64 + 1.0 - nu(mag2)).max(0.0)
                     } else {
                         -1.0
                     };
-                    (v, pts.len() - 1)
+                    (v, steps)
                 };
                 let agree = |a: f64, b: f64| if a < 0.0 || b < 0.0 { (a < 0.0) == (b < 0.0) } else { (a - b).abs() < tol };
                 for j in 0..nn {
@@ -3047,7 +3108,7 @@ impl FractadyneApp {
                         informative += (cpu > 0.5) as u64;
                         let same = agree(cpu, g);
                         disagree += (!same) as u64;
-                        if matches!(kind, Kind::Stress)
+                        if matches!(kind, Kind::Stress | Kind::Chaotic)
                             && [(PROBE, 0.0), (-PROBE, 0.0), (0.0, PROBE), (0.0, -PROBE)]
                                 .iter()
                                 .all(|d| agree(cpu, cpu_at((c.0 + d.0, c.1 + d.1)).0))
@@ -3085,7 +3146,11 @@ impl FractadyneApp {
                         category: "Custom formula (GPU)",
                         name: format!("{label}: GPU = CPU interpreter"),
                         params: format!("direct, span {span}, {precision:?}, {escaped} escaped px, {early} within {EARLY} it"),
-                        result: format!("{disagree} px disagree ({:.3}%), {early_bad} of the early escapes", frac * 100.0),
+                        result: format!(
+                            "{disagree} px disagree ({:.3}%): status {bad_status}, step {bad_step}, value {bad_value}; \
+                             {early_bad} of the early escapes",
+                            frac * 100.0
+                        ),
                         threshold: "<1% disagree, 0 early, >10% escaped",
                         pass: frac < 0.01 && early_bad == 0 && early > 0 && escaped * 10 > px,
                     }),
@@ -3100,6 +3165,18 @@ impl FractadyneApp {
                             frac * 100.0
                         ),
                         threshold: "0 non-finite, <0.1% of stable px disagree, ≥75% stable, >10% escaped",
+                        pass: nonfinite == 0 && stable_bad * 1000 < stable && stable * 4 >= px * 3 && escaped * 10 > px,
+                    }),
+                    Kind::Chaotic => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Custom formula (GPU)",
+                        name: format!("{label}: GPU = CPU interpreter"),
+                        params: format!("direct, span {span}, {precision:?}, {escaped} escaped px"),
+                        result: format!(
+                            "{stable_bad} of {stable} px stable under c ± {PROBE:e} disagree; all px: {disagree} ({:.3}%): \
+                             status {bad_status}, step {bad_step}, value {bad_value}; {nonfinite} non-finite",
+                            frac * 100.0
+                        ),
+                        threshold: "<0.1% of stable px disagree, ≥75% stable, >10% escaped, 0 non-finite",
                         pass: nonfinite == 0 && stable_bad * 1000 < stable && stable * 4 >= px * 3 && escaped * 10 > px,
                     }),
                 }
@@ -3118,6 +3195,68 @@ impl FractadyneApp {
                 threshold: "<0.1% disagree (|Δ| > 1e-3), >25% informative",
                 pass: once_frac < 0.001 && once_escaped * 4 > once_n,
             });
+
+            // A formula with sections is not resumable: the chunk pass neither runs its init section
+            // nor carries its variables, so a chunked path must fall back to the single pass for it.
+            // The export path once did not (`--render` drew the Lambda parameter plane black and
+            // Spider blank), and the checks above, single passes, could not see it. The control, a
+            // formula without sections, must chunk — or "did not chunk" would prove nothing.
+            for (label, src, (cx, cy, span), want_chunked) in [
+                ("z² + c (control)", "z = z^2 + c", (-0.5, 0.0, 3.0), true),
+                ("Manowar (sections)", "z = c, z1 = c:\nt = z\nz = z*z + z1 + c\nz1 = t\n|z| <= 4", (-0.15, 0.0, 0.8), false),
+            ] {
+                self.fractal = FractalKind::Mandelbrot;
+                let mut req = self.current_export_request_for(&view(cx, cy, span), false);
+                req.width = N;
+                req.height = N;
+                req.ss = 1;
+                req.mode = 1;
+                req.max_iter = 400;
+                req.formula = fractadyne_core::formula::CUSTOM;
+                let built = ir::parse::parse(src).map_err(|e| e.to_string()).and_then(|f| {
+                    fractadyne_gpu::custom::build(&f, &[]).map_err(|e| e.to_string())
+                });
+                let name = format!("{label}: chunked render = single pass");
+                let shader = match built {
+                    Ok(s) => s,
+                    Err(e) => {
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Custom formula (GPU)",
+                            name,
+                            params: String::new(),
+                            result: format!("build failed: {e}"),
+                            threshold: "builds",
+                            pass: false,
+                        });
+                        continue;
+                    }
+                };
+                req.custom = Some(std::sync::Arc::new(shader));
+                let single = st_render_iter(device, queue, &req);
+                let mut passes = Vec::new();
+                let chunked = fractadyne_gpu::render_iter_chunked_timed(device, queue, &req, 64, &mut passes)
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_chunked_timed): {e}"))
+                    .ok();
+                let (pass, result) = match (&single, &chunked) {
+                    (Some(a), Some(r)) if a.len() == r.pixels.len() => {
+                        let differ = a.iter().zip(&r.pixels).filter(|(x, y)| x.to_bits() != y.to_bits()).count();
+                        let escaped = a.chunks(4).filter(|p| p[0] >= 0.0).count();
+                        (
+                            differ == 0 && passes.is_empty() != want_chunked && escaped * 10 > a.len() / 4,
+                            format!("{} chunk passes, {differ} texels differ, {escaped} escaped px", passes.len()),
+                        )
+                    }
+                    _ => (false, "render failed".into()),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Custom formula (GPU)",
+                    name,
+                    params: format!("direct, span {span}, 400 iterations, 64 a pass"),
+                    result,
+                    threshold: if want_chunked { "chunked, 0 differ, >10% escaped" } else { "not chunked, 0 differ, >10% escaped" },
+                    pass,
+                });
+            }
 
             // (3) PERTURBATION (mode 0), which takes a custom formula past the f32 wall.
             // (a) The generated perturbed step (`ir::perturb`) against each built-in's hand-written
