@@ -174,6 +174,83 @@ fn pasting_reads_the_text() {
     assert_eq!(paste("", "c*", "-1/z"), "c*(-1/z)");
 }
 
+/// Every keypad key, in Textbook mode, does what it does to the text: wherever the text the key
+/// makes reads, the formula the editor makes computes the same. Pressed in an empty formula, after
+/// `z = 2`, and on a selection of `z + c` (where a function key wraps it).
+#[test]
+fn every_keypad_key_computes_what_it_types() {
+    use crate::ui::formula_keypad::{apply, rows, Tab};
+    let mut checked = 0;
+    for tab in Tab::ALL {
+        for k in rows(tab).into_iter().flatten().flatten() {
+            for (src, sel) in [("", None), ("z = 2", None), ("z = z + c", Some(4..9))] {
+                let mut e = Editor::new(src);
+                let n = src.chars().count();
+                let text_sel = match &sel {
+                    Some(r) => {
+                        e.home_end(false, false);
+                        for _ in 0..2 {
+                            e.step(Dir::Right, false);
+                        }
+                        for _ in r.clone().step_by(2).take(3) {
+                            e.step(Dir::Right, true);
+                        }
+                        (r.start, r.end)
+                    }
+                    None => (n, n),
+                };
+                if sel.is_some() {
+                    assert_eq!(e.copy().as_deref(), Some("z + c"), "the selection is z + c");
+                }
+                let Some(_) = e.press(k.action) else {
+                    assert_eq!(k.label, "; …", "only a comment goes to Text mode");
+                    continue;
+                };
+                // The text's template (0.5, 0.5) is two boxes here: fill them as the text has them.
+                if k.label == "(a, b)" {
+                    keys(&mut e, "0.5{Tab}0.5");
+                }
+                let caret_ok = e.doc.row(&e.caret).is_some_and(|r| e.caret.pos <= r.len());
+                assert!(caret_ok, "{}: caret {:?}", k.label, e.caret);
+                let (text, _) = apply(src, text_sel, k.action);
+                if let Ok(want) = parse(&text) {
+                    let got = e.doc.source();
+                    assert_eq!(parse(&got).as_ref(), Ok(&want), "key {} on {src:?}: text {text:?}, typeset {got:?}", k.label);
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 30, "{checked} keys compared");
+}
+
+/// The name at the caret completes: a function gets its parentheses with the caret in them, or,
+/// already followed by some, becomes their call.
+#[test]
+fn a_name_completes_at_the_caret() {
+    let mut e = Editor::new("");
+    keys(&mut e, "z=si");
+    assert_eq!(e.name_at_caret(), Some((2, "si".to_string())));
+    e.complete(2, "sin", true);
+    keys(&mut e, "z");
+    assert_eq!(e.doc.source(), "z = sin(z)");
+    // `co` is no function: typed, it stays a name before parentheses (a product).
+    let mut e = Editor::new("");
+    keys(&mut e, "z=co(z)");
+    e.caret = Caret { pos: 4, ..Default::default() };
+    assert_eq!(e.name_at_caret(), Some((2, "co".to_string())));
+    e.complete(2, "cos", true);
+    assert_eq!(e.doc.source(), "z = cos(z)");
+    assert_eq!(e.caret.path, vec![(2, 0)], "the caret in the argument");
+    // Not in the middle of a name; a variable completes as itself.
+    e = Editor::new("z = pixel");
+    e.caret.pos = 4;
+    assert_eq!(e.name_at_caret(), None);
+    e.caret.pos = 7;
+    keys(&mut e, "{End}");
+    assert_eq!(e.name_at_caret(), Some((2, "pixel".to_string())));
+}
+
 /// An empty box is known, so the dialog can say to fill it.
 #[test]
 fn an_empty_box_is_known() {

@@ -500,11 +500,14 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
          The arrows move through the formula, Up and Down between a numerator and its \
          denominator, Tab to the next empty box; Backspace at the start of a fraction or a pair of \
          parentheses selects it, and a second press removes it and keeps what it held. Copy, \
-         paste and undo work as in a text field. Every edit is written back to the text, so the \
-         two views always hold the same formula; a line you have not edited keeps its spacing and \
-         comment. The notation never changes what is computed: |z| is the squared modulus and \
-         shows as |z|², cabs(z) shows as |z|, and exp(z) stays exp(z). A line that does not read \
-         shows in red; click it to edit it as text.",
+         paste and undo work as in a text field, names complete as they do there, and the keypad \
+         types into the typeset formula (□² squares what is before the caret, a function key \
+         wraps the selection). Every edit is written back to the text, so the two views always \
+         hold the same formula; a line you have not edited keeps its spacing and comment. The \
+         notation never changes what is computed: |z| is the squared modulus and shows as |z|², \
+         cabs(z) shows as |z|, and exp(z) stays exp(z). A line that does not read shows in red; \
+         click it to edit it as text. LaTeX copies the formula as LaTeX source, as it is typeset, \
+         and while Textbook is on the formula library shows its formulas typeset too.",
     );
     help_p(
         ui,

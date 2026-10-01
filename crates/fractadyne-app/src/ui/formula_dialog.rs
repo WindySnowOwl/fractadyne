@@ -217,10 +217,18 @@ impl FractadyneApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Laid out right to left: Textbook | Text appear as Text | Textbook.
                         ui.selectable_value(&mut self.formula_dialog.textbook, true, "Textbook")
-                            .on_hover_text("Show the formula typeset, as a textbook would set it");
+                            .on_hover_text("Show the formula typeset, as a textbook would set it, and edit it so");
                         ui.selectable_value(&mut self.formula_dialog.textbook, false, "Text")
                             .on_hover_text("Edit the formula as text");
                         ui.separator();
+                        if self.formula_dialog.textbook
+                            && ui
+                                .small_button("LaTeX")
+                                .on_hover_text("Copy the formula as LaTeX, as it is typeset here")
+                                .clicked()
+                        {
+                            ui.ctx().copy_text(crate::ui::textbook::latex::latex(&self.formula_dialog.source));
+                        }
                         egui::ComboBox::from_id_salt("formula_examples")
                             .selected_text("Examples")
                             .show_ui(ui, |ui| {
@@ -295,9 +303,26 @@ impl FractadyneApp {
                 );
                 if let Some(action) = crate::ui::formula_keypad::show(ui, &mut self.formula_dialog.tab) {
                     let ctx = ui.ctx().clone();
-                    // Editing is textual for now: a key in the Textbook view goes to the text.
-                    self.formula_dialog.textbook = false;
-                    crate::ui::formula_keypad::press(&ctx, text_id, &mut self.formula_dialog.source, action);
+                    let typeset = self.formula_dialog.textbook;
+                    match typeset.then(|| self.formula_dialog.editor.press(action)).flatten() {
+                        // In Textbook mode a key is the editor's command (§4.8), the focus back on it.
+                        Some(changed) => {
+                            if changed {
+                                self.formula_dialog.source = self.formula_dialog.editor.synced.clone();
+                            }
+                            ctx.memory_mut(|m| m.request_focus(book_id));
+                        }
+                        None => {
+                            // Text mode's key, or one the typeset form has no command for (a
+                            // comment): typed into the text, at the end of the caret's line.
+                            if typeset {
+                                self.formula_dialog.textbook = false;
+                                let at = self.formula_dialog.editor.caret_line_end();
+                                to_text(ui, &self.formula_dialog.source, at);
+                            }
+                            crate::ui::formula_keypad::press(&ctx, text_id, &mut self.formula_dialog.source, action);
+                        }
+                    }
                     self.formula_dialog.error = None;
                 }
                 match &check {

@@ -796,10 +796,20 @@ fn units(row: &[Atom]) -> Vec<Unit> {
     out
 }
 
-fn look(row: &[Atom], u: Unit) -> Look {
+/// How unit `u` looks at its edges. `left`: the edge a following unit meets — where a name shown
+/// with its digits as a subscript (𝑝₁) has ended unmistakably, unless it shows as typed (`raw`).
+fn look(row: &[Atom], u: Unit, left: bool, raw: bool) -> Look {
     match u {
         Unit::Tok(t) if t.kind == Kind::Number => Look::Num,
-        Unit::Tok(t) if t.kind == Kind::Name && !token_text(row, t).eq_ignore_ascii_case("pi") => Look::Name,
+        Unit::Tok(t) if t.kind == Kind::Name => {
+            let text = token_text(row, t);
+            let subscripted = text.ends_with(|c: char| c.is_ascii_digit()) && text.starts_with(|c: char| c.is_ascii_alphabetic());
+            if text.eq_ignore_ascii_case("pi") || (left && subscripted && !raw) {
+                Look::Other
+            } else {
+                Look::Name
+            }
+        }
         Unit::At(i) => match &row[i] {
             Atom::Frac { .. } => Look::Frac,
             Atom::Func { name, .. } if name.eq_ignore_ascii_case("recip") => Look::Frac,
@@ -863,7 +873,9 @@ fn emit_from(row: &[Atom], from: usize, path: &mut Vec<(usize, u8)>, m: &mut Mar
             out.extend(m.mark(path, start).map(Node::Mark));
         }
         // An implied product that needs its dot.
-        if prev.is_some_and(|p| is_factor_end(p) && is_factor_start(row, u) && needs_dot(look(row, p), look(row, u))) {
+        let raw = |u: Unit| matches!(u, Unit::Tok(t) if m.touches(path, t.start, t.end));
+        let dot = |l: Unit, r: Unit| needs_dot(look(row, l, true, raw(l)), look(row, r, false, raw(r)));
+        if prev.is_some_and(|p| is_factor_end(p) && is_factor_start(row, u) && dot(p, u)) {
             out.push(Node::bin('\u{22C5}'));
         }
         match u {
@@ -899,7 +911,7 @@ fn emit_from(row: &[Atom], from: usize, path: &mut Vec<(usize, u8)>, m: &mut Mar
             Unit::Op(_, Op::Times) => {
                 // Written, it shows where the product needs a dot — or has an operand missing.
                 let (l, r) = (prev.filter(|&p| is_factor_end(p)), next.filter(|&n| is_factor_start(row, n)));
-                if l.zip(r).is_none_or(|(l, r)| needs_dot(look(row, l), look(row, r))) {
+                if l.zip(r).is_none_or(|(l, r)| dot(l, r)) {
                     out.push(Node::bin('\u{22C5}'));
                 }
             }

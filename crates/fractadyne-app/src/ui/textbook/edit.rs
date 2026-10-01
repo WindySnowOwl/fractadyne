@@ -6,6 +6,7 @@
 //! comment); an edited one is printed from its rows, its indentation and comment kept.
 
 use super::model::{self, Atom, Caret, Line, Op, Row};
+use crate::ui::formula_keypad::Action;
 
 /// What a line of the source is.
 #[derive(Clone, Debug, PartialEq)]
@@ -283,6 +284,10 @@ pub(crate) struct Editor {
     typing: Option<Caret>,
     /// The source the document was read from or last printed to.
     pub(crate) synced: String,
+    /// The completion list's highlighted entry, and the name Esc closed it for (where the name
+    /// starts, and its text): it stays closed until that changes.
+    pub(crate) list_sel: usize,
+    pub(crate) list_dismissed: Option<(Caret, String)>,
 }
 
 /// Characters that end an exponent when typed at its end (MathQuill's `charsThatBreakOutOfSupSub`
@@ -343,6 +348,11 @@ impl Editor {
     /// Where the caret's line starts in the source, for Text mode.
     pub(crate) fn caret_offset(&self) -> usize {
         self.doc.line_start(self.caret.line)
+    }
+
+    /// Where the caret's line ends in the source (before its break).
+    pub(crate) fn caret_line_end(&self) -> usize {
+        self.caret_offset() + self.doc.lines.get(self.caret.line).map_or(0, |l| self.doc.line_text(l).len())
     }
 
     fn row(&self, c: &Caret) -> &[Atom] {
@@ -893,6 +903,92 @@ impl Editor {
             }
         }
         changed
+    }
+
+    /// A keypad key, as the commands it stands for (design §4.8). `None`: one the Textbook editor
+    /// has no command for (a comment), for Text mode.
+    pub(crate) fn press(&mut self, action: Action) -> Option<bool> {
+        Some(match action {
+            Action::Insert("\n") => self.enter(),
+            Action::Insert(" ; ") => return None,
+            // □²: the exponent typed and stepped out of, as the text's cursor ends after `^2`.
+            Action::Insert("^2") => {
+                if !self.type_char('^') {
+                    return Some(false);
+                }
+                self.type_char('2');
+                self.step(Dir::Right, false);
+                true
+            }
+            // (a, b): in place of the selection, as the text's key, the constant's two places to
+            // fill, the caret in the first.
+            Action::Insert("(0.5, 0.5)") => {
+                self.unwrap = None;
+                self.begin(false);
+                self.delete_selection();
+                self.structure(|_| Atom::Complex { re: Vec::new(), im: Vec::new() }, 0);
+                self.done();
+                true
+            }
+            Action::Insert(s) => s.chars().fold(false, |changed, ch| self.type_char(ch) | changed),
+            Action::Wrap("|", "|") => self.type_char('|'),
+            Action::Wrap(open, ")") if open.ends_with('(') => {
+                let name = open.trim_end_matches('(').to_string();
+                self.unwrap = None;
+                self.begin(false);
+                self.structure(|arg| Atom::Func { name, arg }, 0);
+                self.done();
+                true
+            }
+            Action::Wrap(..) => return None,
+            Action::Backspace => self.backspace(),
+            Action::Left => {
+                self.step(Dir::Left, false);
+                false
+            }
+            Action::Right => {
+                self.step(Dir::Right, false);
+                false
+            }
+        })
+    }
+
+    /// The name being typed at the caret — where it starts in the caret's row and what it is so
+    /// far — when the caret is at its end (a letter after the caret would make it a longer name).
+    pub(crate) fn name_at_caret(&self) -> Option<(usize, String)> {
+        if self.selection().is_some() {
+            return None;
+        }
+        let row = self.row(&self.caret);
+        let p = self.caret.pos;
+        if matches!(row.get(p), Some(Atom::Char(c)) if c.is_ascii_alphanumeric() || *c == '_') {
+            return None;
+        }
+        let (t, text) = model::token_ending_at(row, p)?;
+        (t.kind == model::Kind::Name).then_some((t.start, text))
+    }
+
+    /// Replace the name being typed (atoms `start` to the caret) with `name`. A function gets its
+    /// parentheses and the caret in them — or, already followed by some, becomes their call.
+    pub(crate) fn complete(&mut self, start: usize, name: &str, call: bool) -> bool {
+        self.unwrap = None;
+        self.begin(false);
+        let c = self.caret.clone();
+        let Some(row) = self.doc.row_mut(&c) else { return false };
+        let end = c.pos.min(row.len());
+        let start = start.min(end);
+        let followed = matches!(row.get(end), Some(Atom::Group(_)));
+        row.splice(start..end, model::chars(name));
+        let after = start + name.chars().count();
+        self.caret.pos = after;
+        if call && !followed {
+            row.insert(after, Atom::Group(Vec::new()));
+            self.caret.path.push((after, 0));
+            self.caret.pos = 0;
+        }
+        // Normalising makes the name and the parentheses one call, the caret in its argument.
+        self.done();
+        true
     }
 
     /// What is typed here follows an operand: the caret (or the selection, which typing replaces)

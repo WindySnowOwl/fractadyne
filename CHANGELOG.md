@@ -83,10 +83,12 @@ Changes after 0.3.0-beta.1:
     formula typeset as LaTeX sets it, in Latin Modern Math: fractions stacked, exponents raised,
     parentheses that grow with what they hold, statements aligned at their `=`. It edits in
     place: `/` makes a fraction of the term before it, `^` an exponent, `(` parentheses or a
-    call; the arrows move through the formula and Tab goes to the next empty box. Every edit is
-    written back to the text, and a line nobody edited keeps its spacing and comment. The
-    notation never changes the computation: `|z|`, the squared modulus, shows as |z|², and
-    `exp(z)` stays exp(z). A line that does not read shows in red, to be edited as text.
+    call; the arrows move through the formula and Tab goes to the next empty box. Names
+    complete, and the keypad types into the typeset formula. Every edit is written back to the
+    text, and a line nobody edited keeps its spacing and comment. The notation never changes the
+    computation: `|z|`, the squared modulus, shows as |z|², and `exp(z)` stays exp(z). A line
+    that does not read shows in red, to be edited as text. A LaTeX button copies the formula as
+    LaTeX source, and the formula library shows its formulas typeset while Textbook is on.
   - **Library (unreleased):** the formula dialog's Save to library keeps a formula and its
     parameters under a name, and Fractal ▸ Formula library… applies, edits, exports and deletes
     them. Import adds a formula file's formulas without replacing any: one already saved is

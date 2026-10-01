@@ -10,6 +10,7 @@
 pub(crate) mod edit;
 pub(crate) mod editor;
 pub(crate) mod font;
+pub(crate) mod latex;
 pub(crate) mod layout;
 pub(crate) mod model;
 pub(crate) mod paint;

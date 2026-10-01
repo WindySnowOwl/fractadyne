@@ -311,8 +311,11 @@ fn the_notation_is_truthful() {
     assert_eq!(dots("z*2"), 1);
     assert_eq!(dots("2*3"), 1);
     assert_eq!(dots("p1*conj(t)"), 0);
-    // Between two names, and before a sign: 𝑧·𝑐, not the name 𝑧𝑐; 𝑧·−𝑐, not 𝑧 − 𝑐.
+    // Between two names, and before a sign: 𝑧·𝑐, not the name 𝑧𝑐; 𝑧·−𝑐, not 𝑧 − 𝑐. A name whose
+    // digits are a subscript has ended plainly: 𝑝₁𝑧 (but 𝑧·𝑝₁, which could be the name 𝑧𝑝₁).
     assert_eq!(dots("z*c"), 1);
+    assert_eq!(dots("p1*z"), 0);
+    assert_eq!(dots("z*p1"), 1);
     assert_eq!(dots("z*-c"), 1);
     assert_eq!(dots("(z + 1)*2"), 1);
     // An exponent on a fraction parenthesises it: (1/𝑧)², not 1/𝑧².

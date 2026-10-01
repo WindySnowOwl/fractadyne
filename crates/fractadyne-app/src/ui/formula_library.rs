@@ -16,6 +16,9 @@ pub(crate) struct FormulaLibraryWindow {
     confirm_delete: Option<String>,
 }
 
+/// The text size of a typeset formula in the list, in points (the dialog's is 18).
+const LIBRARY_PT: f32 = 14.0;
+
 /// One line of text, cut with an ellipsis at the width the row is given.
 fn clipped(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) -> egui::Response {
     ui.add(egui::Label::new(text).truncate())
@@ -185,6 +188,7 @@ impl FractadyneApp {
         let (mut add, mut import, mut export_all) = (false, false, false);
         let live = self.live_library_formula();
         let danger = crate::theme::danger_color(ctx);
+        let textbook = self.formula_dialog.textbook;
         egui::Window::new("Formula library")
             .open(&mut open)
             .default_size([480.0, 460.0])
@@ -234,7 +238,13 @@ impl FractadyneApp {
                             }
                             clipped(ui, egui::RichText::new(&f.name).strong()).on_hover_text(&f.name);
                         });
-                        clipped(ui, egui::RichText::new(f.one_line()).monospace().small())
+                        // Typeset when the formula dialog is (the user's choice of view); as text when
+                        // it is not, or when the formula does not read.
+                        let typeset = (textbook && reads.is_ok())
+                            .then(|| crate::ui::textbook::editor::typeset(ui, &f.source, LIBRARY_PT))
+                            .flatten();
+                        typeset
+                            .unwrap_or_else(|| clipped(ui, egui::RichText::new(f.one_line()).monospace().small()))
                             .on_hover_text(egui::RichText::new(&f.source).monospace());
                         if !f.params.is_empty() {
                             let ps: Vec<String> = f

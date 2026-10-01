@@ -188,6 +188,27 @@ fn the_selection_and_the_caret_are_drawn() {
     assert!(r.focused());
 }
 
+/// A name being typed opens the completion list: Tab takes the first entry (a function, with the
+/// caret in its parentheses), Esc closes the list and keeps the focus.
+#[test]
+fn completion_takes_a_name_and_keeps_the_focus() {
+    let mut r = Rig::new("");
+    r.frame(vec![Event::Text("z=co".into())]);
+    r.frame(vec![]);
+    assert!(r.ctx.memory(|m| m.area_rect(id().with("completion"))).is_some(), "the list is drawn");
+    r.frame(vec![key(Key::Tab)]);
+    assert_eq!(r.src, "z = conj()");
+    r.frame(vec![Event::Text("z".into())]);
+    assert_eq!(r.src, "z = conj(z)");
+    assert!(r.focused());
+    // Esc closes it; the next Tab is the editor's again (the next empty box: none).
+    r.frame(vec![key(Key::End), Event::Text("+si".into())]);
+    r.frame(vec![key(Key::Escape)]);
+    assert!(r.focused(), "Esc was the list's");
+    r.frame(vec![key(Key::Tab)]);
+    assert_eq!(r.src, "z = conj(z) + si", "the list stayed closed");
+}
+
 /// A line that does not read is edited as text: a click on it says where it starts.
 #[test]
 fn a_click_on_a_line_that_does_not_read_goes_to_text() {

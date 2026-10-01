@@ -7,6 +7,7 @@ use super::edit::{Dir, Editor, Shown, Vertical};
 use super::layout::{self, Anchor, Ctx, Laid};
 use super::model::{self, Caret, Marker};
 use super::paint;
+use crate::ui::formula_editor::{Candidate, ListKey};
 
 /// The text size of the typeset formula, in points.
 pub(crate) const SIZE_PT: f32 = 18.0;
@@ -108,6 +109,44 @@ impl Frame {
             .find(|(r, p)| r.unread.is_some() && y >= p.top - 4.0 && y <= p.bottom + 4.0)
             .and_then(|(r, _)| r.unread.as_ref())
     }
+}
+
+/// The completion list for the name being typed at the caret: where the name starts, what is typed,
+/// the names to offer — the text field's list (`formula_editor::offer`), unless Esc closed it here.
+fn open_list(ed: &Editor, source: &str) -> Option<(usize, String, Vec<Candidate>)> {
+    let (start, prefix) = ed.name_at_caret()?;
+    let here = (Caret { pos: start, ..ed.caret.clone() }, prefix.clone());
+    if ed.list_dismissed.as_ref() == Some(&here) {
+        return None;
+    }
+    let cs = crate::ui::formula_editor::offer(source, &prefix)?;
+    Some((start, prefix, cs))
+}
+
+/// `src` typeset, read-only, at `size_pt`: its statements stacked (comments left out), clipped to
+/// the width there is. `None` if a line does not read, for the caller to show the text instead.
+pub(crate) fn typeset(ui: &mut egui::Ui, src: &str, size_pt: f32) -> Option<egui::Response> {
+    let doc = super::edit::Doc::read(src);
+    let shown = doc.shown();
+    if shown.iter().any(|s| matches!(s, Shown::Unread { .. })) {
+        return None;
+    }
+    let rows: Vec<_> = shown
+        .iter()
+        .filter_map(|s| match s {
+            Shown::Stmt { row, .. } if !row.is_empty() => Some(model::math_row(row)),
+            _ => None,
+        })
+        .collect();
+    if rows.is_empty() {
+        return None;
+    }
+    let laid = layout::rows(&rows, &Ctx { size_pt, ppp: ui.ctx().pixels_per_point() });
+    let size = egui::vec2(laid.size.x.min(ui.available_width()), laid.size.y);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let v = ui.visuals();
+    paint::paint(&ui.painter_at(rect), rect.min, &laid, v.text_color(), v.weak_text_color());
+    Some(response)
 }
 
 /// A drag that left the selection's statement stays in it, at the end it left by.
@@ -277,9 +316,26 @@ pub(crate) fn show(
                 ui.memory_mut(|m| {
                     m.set_focus_lock_filter(id, egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true })
                 });
-                let (changed, by_key) = keys(ui, ed, &frame);
+                // An open completion list takes its keys first (consumed: the editor never sees them).
+                let mut changed = false;
+                if let Some((start, prefix, cs)) = open_list(ed, source) {
+                    match crate::ui::formula_editor::list_keys(ui, &mut ed.list_sel, &cs, &prefix) {
+                        ListKey::Take => {
+                            let c = &cs[ed.list_sel];
+                            changed = ed.complete(start, &c.name, c.insert.ends_with('('));
+                            ed.list_sel = 0;
+                            moved = true;
+                        }
+                        ListKey::Dismiss => ed.list_dismissed = Some((Caret { pos: start, ..ed.caret.clone() }, prefix)),
+                        ListKey::Nothing => {}
+                    }
+                }
+                let (typed, by_key) = keys(ui, ed, &frame);
                 moved |= by_key;
-                if changed {
+                if typed {
+                    ed.list_sel = 0;
+                }
+                if changed || typed {
                     *source = ed.synced.clone();
                     out.changed = true;
                 }
@@ -327,15 +383,33 @@ pub(crate) fn show(
                 }
             }
             // The caret, blinking as egui's text cursor does.
-            if has_focus && ui.input(|i| i.focused) {
-                if let Some(a) = frame.anchor(&ed.caret) {
-                    let ppp = ui.ctx().pixels_per_point();
-                    let x = ((origin.x + a.x) * ppp).round() / ppp;
-                    let r = egui::Rect::from_x_y_ranges(x..=x, origin.y + a.y - a.above..=origin.y + a.y + a.below);
-                    let since = now - ui.data(|d| d.get_temp::<f64>(touched)).unwrap_or(now);
-                    egui::text_selection::visuals::paint_text_cursor(ui, &painter, r, since);
-                    if moved || out.changed {
-                        ui.scroll_to_rect(r.expand2(egui::vec2(SIZE_PT, 0.0)), None);
+            let caret_at = frame.anchor(&ed.caret).map(|a| {
+                let ppp = ui.ctx().pixels_per_point();
+                let x = ((origin.x + a.x) * ppp).round() / ppp;
+                egui::Rect::from_x_y_ranges(x..=x, origin.y + a.y - a.above..=origin.y + a.y + a.below)
+            });
+            if let Some(r) = caret_at.filter(|_| has_focus && ui.input(|i| i.focused)) {
+                let since = now - ui.data(|d| d.get_temp::<f64>(touched)).unwrap_or(now);
+                egui::text_selection::visuals::paint_text_cursor(ui, &painter, r, since);
+                if moved || out.changed {
+                    ui.scroll_to_rect(r.expand2(egui::vec2(SIZE_PT, 0.0)), None);
+                }
+            }
+            // The completion list under the caret. ⚠Drawn while the editor had focus at the START
+            // of the frame too: a press on the list takes the editor's focus in that same frame, so
+            // a list drawn only while focused would vanish under the press that chose from it.
+            if let (Some(r), true) = (caret_at, focused || has_focus) {
+                if let Some((start, _, cs)) = open_list(ed, source) {
+                    let at = r.left_bottom() + egui::vec2(0.0, 4.0);
+                    if let Some(k) = crate::ui::formula_editor::completion_list(ui.ctx(), id, at, &cs, ed.list_sel) {
+                        let c = &cs[k];
+                        if ed.complete(start, &c.name, c.insert.ends_with('(')) {
+                            *source = ed.synced.clone();
+                            out.changed = true;
+                        }
+                        ed.list_sel = 0;
+                        ui.memory_mut(|m| m.request_focus(id));
+                        ui.ctx().request_repaint();
                     }
                 }
             }

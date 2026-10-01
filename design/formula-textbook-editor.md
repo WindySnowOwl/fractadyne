@@ -1,8 +1,8 @@
 # Textbook mode for the formula editor — design
 
-Status: **P0–P3 built** on `feat/formula-textbook` (2026-10-01); P4 (keypad, completion, Copy as
-LaTeX, library rows) to do. The user chose the recommendations of §8: Latin Modern Math, `=` as
-typed, juxtaposition, the notation of §4.5, full scope. Extends the Custom formula dialog
+Status: **P0–P4 built** on `feat/formula-textbook` (2026-10-01), for the user's review. The user
+chose the recommendations of §8: Latin Modern Math, `=` as typed, juxtaposition, the notation of
+§4.5, full scope. Extends the Custom formula dialog
 (`design/custom-formulas.md` §4.8; `ui/formula_dialog.rs`, `ui/formula_editor.rs`). Facts about the
 current code are checked against it and cited; anything still to be proven is marked **spike**.
 
@@ -30,6 +30,14 @@ current code are checked against it and cited; anything still to be proven is ma
 - **Comments** are shown, kept and moved with their line, but edited in Text mode.
 - **Focus:** `Response::has_focus()` is false in an unfocused WINDOW (egui ≥ 0.29); the editor
   reads its focus from memory, and only the caret hides with the window's focus.
+- **P4:** the keypad's keys are the commands of §4.8, checked key by key against Text mode (where
+  the text a key makes reads, the typeset formula computes the same IR); `(a, b)` replaces the
+  selection with two boxes, as the text key replaces it with its template; the comment key goes to
+  Text mode. Completion is the text field's list (`formula_editor::offer`, `completion_list`,
+  `list_keys`, shared). "Copy as LaTeX" is the LaTeX button beside the toggle, written from the
+  typeset nodes (`latex.rs`), so it cannot disagree with the screen. Library rows are typeset
+  (14 pt) while the dialog is in Textbook mode. A name whose digits are a subscript needs no dot
+  after it (𝑝₁𝑧), though one is kept before it (𝑧·𝑝₁ could be the name 𝑧𝑝₁).
 
 ## 1. Goal
 

@@ -281,12 +281,82 @@ pub(crate) fn candidates(src: &str, prefix: &str) -> Vec<Candidate> {
 /// names — only when there is something to complete (more than the name already typed in full).
 pub(crate) fn completion(src: &str, cursor: usize) -> Option<(usize, String, Vec<Candidate>)> {
     let (start, prefix) = prefix_at(src, cursor)?;
+    offer(src, &prefix).map(|cs| (start, prefix, cs))
+}
+
+/// The names to offer for `prefix` typed in `src` — only when there is something to complete: a
+/// long enough prefix, and more than the name already typed in full. (The Textbook editor finds
+/// its prefix in its own way and offers the same list.)
+pub(crate) fn offer(src: &str, prefix: &str) -> Option<Vec<Candidate>> {
     if prefix.chars().count() < MIN_PREFIX {
         return None;
     }
-    let cs = candidates(src, &prefix);
-    let nothing_to_add = cs.len() == 1 && cs[0].insert.eq_ignore_ascii_case(&prefix);
-    (!cs.is_empty() && !nothing_to_add).then_some((start, prefix, cs))
+    let cs = candidates(src, prefix);
+    let nothing_to_add = cs.len() == 1 && cs[0].insert.eq_ignore_ascii_case(prefix);
+    (!cs.is_empty() && !nothing_to_add).then_some(cs)
+}
+
+/// Draw the completion list for `cs` with its top-left at `at`, entry `sel` highlighted. Returns
+/// the entry a press landed on: taken on the PRESS, because by the release the list is gone (the
+/// press took the editor's focus).
+pub(crate) fn completion_list(ctx: &egui::Context, id: egui::Id, at: egui::Pos2, cs: &[Candidate], sel: usize) -> Option<usize> {
+    let mut pressed = None;
+    egui::Area::new(id.with("completion")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
+        egui::Frame::popup(ui.style()).show(ui, |ui| {
+            for (k, c) in cs.iter().take(MAX_SHOWN).enumerate() {
+                let r = ui
+                    .horizontal(|ui| {
+                        let name = egui::RichText::new(&c.insert).monospace();
+                        let r = ui.selectable_label(k == sel, name);
+                        ui.label(egui::RichText::new(&c.hint).weak().small());
+                        r
+                    })
+                    .inner;
+                if r.is_pointer_button_down_on() {
+                    pressed = Some(k);
+                }
+            }
+            if cs.len() > MAX_SHOWN {
+                ui.label(egui::RichText::new(format!("… {} more", cs.len() - MAX_SHOWN)).weak().small());
+            }
+            ui.label(egui::RichText::new("Tab or Enter to complete, Esc to close").weak().small());
+        });
+    });
+    pressed
+}
+
+/// What the keys did to an open completion list.
+pub(crate) enum ListKey {
+    Nothing,
+    /// Tab, or Enter when the entry adds to what is typed (Enter after a name typed in full is the
+    /// editor's: a new line).
+    Take,
+    /// Esc: closed for this prefix.
+    Dismiss,
+}
+
+/// The keys of an open list for `cs` (`prefix` typed): ↑/↓ move `sel` among the entries shown.
+/// The keys are consumed BEFORE the editor under the list sees them, or it would move its cursor
+/// or start a line as well.
+pub(crate) fn list_keys(ui: &mut egui::Ui, sel: &mut usize, cs: &[Candidate], prefix: &str) -> ListKey {
+    let shown = cs.len().min(MAX_SHOWN);
+    *sel = (*sel).min(shown.saturating_sub(1));
+    ui.input_mut(|i| {
+        if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
+            *sel = (*sel + 1) % shown;
+        }
+        if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
+            *sel = (*sel + shown - 1) % shown;
+        }
+        let adds = !cs[*sel].insert.eq_ignore_ascii_case(prefix);
+        if i.consume_key(egui::Modifiers::NONE, egui::Key::Tab) || (adds && i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
+            ListKey::Take
+        } else if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
+            ListKey::Dismiss
+        } else {
+            ListKey::Nothing
+        }
+    })
 }
 
 /// Replace the prefix (characters `start..cursor`) with `c`. Returns the new text and cursor. A
@@ -347,23 +417,12 @@ pub(crate) fn source_field(
         (st.dismissed.as_ref() != Some(&(start, prefix.clone()))).then_some((start, prefix, cs))
     };
     if let Some((start, prefix, cs)) = open(text, stored_cursor(&ctx, id), st).filter(|_| focused) {
-        let shown = cs.len().min(MAX_SHOWN);
-        st.sel = st.sel.min(shown - 1);
         let mut take = false;
-        ui.input_mut(|i| {
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
-                st.sel = (st.sel + 1) % shown;
-            }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
-                st.sel = (st.sel + shown - 1) % shown;
-            }
-            let adds = !cs[st.sel].insert.eq_ignore_ascii_case(&prefix);
-            take = i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
-                || (adds && i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-            if !take && i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
-                st.dismissed = Some((start, prefix.clone()));
-            }
-        });
+        match list_keys(ui, &mut st.sel, &cs, &prefix) {
+            ListKey::Take => take = true,
+            ListKey::Dismiss => st.dismissed = Some((start, prefix.clone())),
+            ListKey::Nothing => {}
+        }
         if take {
             let cursor = stored_cursor(&ctx, id).unwrap_or(0);
             let (new, at) = complete(text, start, cursor, &cs[st.sel]);
@@ -420,30 +479,9 @@ pub(crate) fn source_field(
             });
             let at = now.unwrap_or(0);
             let caret = out.galley.pos_from_ccursor(CCursor::new(at)).translate(out.galley_pos.to_vec2());
-            egui::Area::new(id.with("completion"))
-                .order(egui::Order::Foreground)
-                .fixed_pos(caret.left_bottom() + egui::vec2(0.0, 2.0))
-                .show(&ctx, |ui| {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| {
-                        for (k, c) in cs.iter().take(MAX_SHOWN).enumerate() {
-                            let r = ui
-                                .horizontal(|ui| {
-                                    let name = egui::RichText::new(&c.insert).monospace();
-                                    let r = ui.selectable_label(k == st.sel, name);
-                                    ui.label(egui::RichText::new(&c.hint).weak().small());
-                                    r
-                                })
-                                .inner;
-                            if r.is_pointer_button_down_on() {
-                                clicked = Some((start, at, c.clone()));
-                            }
-                        }
-                        if cs.len() > MAX_SHOWN {
-                            ui.label(egui::RichText::new(format!("… {} more", cs.len() - MAX_SHOWN)).weak().small());
-                        }
-                        ui.label(egui::RichText::new("Tab or Enter to complete, Esc to close").weak().small());
-                    });
-                });
+            if let Some(k) = completion_list(&ctx, id, caret.left_bottom() + egui::vec2(0.0, 2.0), &cs, st.sel) {
+                clicked = Some((start, at, cs[k].clone()));
+            }
         }
     }
     if let Some((start, at, c)) = clicked {

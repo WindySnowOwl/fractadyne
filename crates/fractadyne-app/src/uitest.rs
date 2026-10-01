@@ -100,6 +100,11 @@ enum Screen {
     /// Textbook editing: a fraction selected (Shift+←), the selection behind it, and the name being
     /// typed (`pix`) shown as typed.
     FormulaTextbookSelect,
+    /// Textbook editing: `co` typed after `t*`, the completion list open under the caret.
+    FormulaTextbookComplete,
+    /// The formula library with the formula dialog in Textbook mode: its rows typeset, one that
+    /// does not read as text.
+    FormulaLibraryTypeset,
     /// The formula library window, seeded in memory: a parameterized formula SHOWING (its row
     /// marked), a two-statement one, one that does not read in this version (its reason in red), and
     /// a name long enough to need truncating.
@@ -736,7 +741,9 @@ fn build_steps() -> Vec<Step> {
         screen("formula-textbook", Screen::FormulaTextbook),
         screen("formula-textbook-caret", Screen::FormulaTextbookCaret),
         screen("formula-textbook-select", Screen::FormulaTextbookSelect),
+        screen("formula-textbook-complete", Screen::FormulaTextbookComplete),
         screen("formula-library", Screen::FormulaLibrary),
+        screen("formula-library-typeset", Screen::FormulaLibraryTypeset),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
         live("live-direct-1e2", 2.0),
         live("live-df32-1e6", 6.0),
@@ -1497,7 +1504,18 @@ impl FractadyneApp {
                 self.formula_dialog.textbook = true;
                 ctx.memory_mut(|m| m.request_focus(egui::Id::new("formula_textbook")));
             }
-            Screen::FormulaLibrary => {
+            Screen::FormulaTextbookComplete => {
+                self.open_formula_dialog();
+                let src = "t = sqr(z)\nz = t*co";
+                let mut ed = crate::ui::textbook::edit::Editor::new(src);
+                ed.place_at(src.len());
+                self.formula_dialog.source = ed.synced.clone();
+                self.formula_dialog.editor = ed;
+                self.formula_dialog.textbook = true;
+                ctx.memory_mut(|m| m.request_focus(egui::Id::new("formula_textbook")));
+            }
+            Screen::FormulaLibrary | Screen::FormulaLibraryTypeset => {
+                self.formula_dialog.textbook = matches!(s, Screen::FormulaLibraryTypeset);
                 // In memory only, as the gradient screen seeds its library: nothing is saved.
                 let entry = |name: &str, source: &str, params: &[(&str, &str)]| crate::formula_library::SavedFormula {
                     name: name.into(),
