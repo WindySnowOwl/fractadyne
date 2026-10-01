@@ -121,6 +121,9 @@ enum Screen {
     FormulaLibraryFrm,
     /// The same list filtered.
     FormulaLibraryFiltered,
+    /// The toolbar's family dropdown open, Burning Ship 4 showing: the power families one family to
+    /// a row ("Burning Ship  3 4 5"), the showing family's label strong and its power selected.
+    FractalDropdown,
     /// The formula library window, seeded in memory: a parameterized formula SHOWING (its row
     /// marked), a two-statement one, one that does not read in this version (its reason in red), and
     /// a name long enough to need truncating.
@@ -766,6 +769,7 @@ fn build_steps() -> Vec<Step> {
         screen("formula-classic-applied", Screen::FormulaClassicApplied),
         screen("formula-library-frm", Screen::FormulaLibraryFrm),
         screen("formula-library-filtered", Screen::FormulaLibraryFiltered),
+        screen("fractal-dropdown", Screen::FractalDropdown),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
         live("live-direct-1e2", 2.0),
         live("live-df32-1e6", 6.0),
@@ -1130,7 +1134,9 @@ impl FractadyneApp {
         self.formula_dialog.textbook = false;
         self.formula_dialog.editor = Default::default();
         self.formula_library = Default::default();
-        if self.fractal == crate::FractalKind::Custom {
+        // So does a power family (the dropdown screen shows Burning Ship 4): the live steps render
+        // Mandelbrot's deep point and read a flat frame as a failure (measured: both df32 bands).
+        if self.fractal == crate::FractalKind::Custom || self.fractal.power_family().is_some() {
             // A collection formula may have been shown as a Julia set, at its own view.
             self.julia_mode = false;
             self.set_fractal(crate::FractalKind::Mandelbrot);
@@ -1569,6 +1575,10 @@ impl FractadyneApp {
                     self.formula_library.set_filter("power 12");
                 }
                 self.formula_library.open = true;
+            }
+            Screen::FractalDropdown => {
+                self.set_fractal(crate::FractalKind::BurningShip4);
+                self.dialogs.open_fractal_dropdown = true;
             }
             Screen::FormulaClassicApplied => {
                 let e = crate::formula_library::collection().iter().find(|e| e.name == "Magnet I").cloned();

@@ -191,7 +191,8 @@ pub(crate) fn stamp_watermark(pixels: &mut [f32], w: u32, h: u32, ov: &WmOverlay
 /// cannot honour the new `fractal` value and does not fail: v0.3.0-beta.9 keeps the family it is
 /// showing when the name is unknown, so a shared custom view opened as, say, Mandelbrot at those
 /// coordinates, with only an "unknown key: formula" note. Format 2 makes it say "saved by a newer
-/// Fractadyne" instead.
+/// Fractadyne" instead. A view of a power family ("Burning Ship 3", design/power-families.md)
+/// writes it for the same reason: a build without that family keeps showing another.
 pub(crate) const VIEW_FORMAT_VERSION: u32 = 2;
 /// The format a view that is not a custom formula writes: nothing in it needs format 2.
 pub(crate) const VIEW_FORMAT_PLAIN: u32 = 1;
@@ -794,7 +795,11 @@ impl FractadyneApp {
              center_re={}\ncenter_im={}\nupp={:.17e}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n\
              palette={}\ncycle={}\noffset={}\naa={}\n{}{}{}",
             version_string(),
-            if self.custom_formula_metadata().is_empty() { VIEW_FORMAT_PLAIN } else { VIEW_FORMAT_VERSION },
+            if self.custom_formula_metadata().is_empty() && self.fractal.power_family().is_none() {
+                VIEW_FORMAT_PLAIN
+            } else {
+                VIEW_FORMAT_VERSION
+            },
             secs,
             Self::utc_date_string(secs),
             notes,

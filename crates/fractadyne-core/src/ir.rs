@@ -681,13 +681,16 @@ impl Formula {
     }
 
     /// The per-iteration escape degree: the geometric mean of the phases' (a hybrid alternating
-    /// `z²` and `z³` grows as `|z|^√6` per iteration). `None` if any phase has none.
+    /// `z²` and `z³` grows as `|z|^√6` per iteration). `None` if any phase has none. Phases of one
+    /// degree give it exactly: `exp(ln 7)` is 6.999999999999999, which a rule taking effect from
+    /// degree 7 (the reference's escape test) must not read.
     pub fn escape_degree(&self) -> Option<f64> {
-        let mut log_sum = 0.0;
-        for p in &self.phases {
-            log_sum += p.escape_degree()?.ln();
+        let degrees = self.phases.iter().map(|p| p.escape_degree()).collect::<Option<Vec<f64>>>()?;
+        if degrees.iter().all(|d| *d == degrees[0]) {
+            return Some(degrees[0]);
         }
-        Some((log_sum / self.phases.len() as f64).exp())
+        let log_sum: f64 = degrees.iter().map(|d| d.ln()).sum();
+        Some((log_sum / degrees.len() as f64).exp())
     }
 }
 
@@ -819,7 +822,31 @@ pub fn builtin_step(formula: u32) -> Option<Program> {
             let q = b.push(Op::Div(f, d));
             b.push(Op::Sub(z, q))
         }
-        _ => return None,
+        // The power families: the fold, the power, the fold — as the parser reads `abs(z)^d + c`,
+        // `conj(z)^d + c`, `z^d + c` and the Celtic and Buffalo folds of `z^d`.
+        f => {
+            use crate::formula::Shape;
+            let (shape, d) = crate::formula::family(f)?;
+            let base = match shape {
+                Shape::BurningShip => {
+                    let r = b.push(Op::AbsRe(z));
+                    b.push(Op::AbsIm(r))
+                }
+                Shape::Tricorn => b.push(Op::Conj(z)),
+                _ => z,
+            };
+            let p = b.push(Op::PowI(base, d));
+            let w = match shape {
+                Shape::Celtic => b.push(Op::AbsRe(p)),
+                Shape::Buffalo => {
+                    let r = b.push(Op::AbsRe(p));
+                    b.push(Op::AbsIm(r))
+                }
+                _ => p,
+            };
+            let c = b.push(Op::C);
+            b.push(Op::Add(w, c))
+        }
     };
     b.finish(out).ok()
 }
@@ -1795,10 +1822,6 @@ pub fn orbit_points(
     Ok(pts)
 }
 
-/// The reference orbit's escape test on the truncated `f64` view — the literal
-/// `crate::reference::run_orbit_gen` uses. The bit-identity test compares orbit LENGTHS, so a
-/// drift between the two is caught there.
-const REFERENCE_BAILOUT2: f64 = 1.0e12;
 
 /// A reference orbit of `formula` in the session's bignum backend, with
 /// [`crate::reference_orbit_t`]'s contract: the same samples (`Z₀` split exactly, then
@@ -1870,12 +1893,17 @@ fn run_reference<B: RefBackend + IrField>(
     let c = (B::from_carrier(cx, ctx), B::from_carrier(cy, ctx));
     let mut m = Machine::new(formula, z, zp, c, params, f64::from(max_iter), ctx)?;
     let mut escaped = false;
+    // The reference orbit's escape test on the truncated `f64` view, by the rule
+    // `crate::reference::run_orbit_gen` follows (lower from degree 7, where the next sample
+    // would overflow f32). The bit-identity test compares orbit LENGTHS, so a drift between the
+    // two is caught there.
+    let escape2 = crate::reference::ref_escape2_of_degree(formula.escape_degree().unwrap_or(2.0));
     for n in 0..max_iter as usize {
         m.step(n)?;
         let xv = m.pool[Z_RE].to_f64_trunc();
         let yv = m.pool[Z_IM].to_f64_trunc();
         out.push(pack_sample(xv, yv));
-        if xv * xv + yv * yv > REFERENCE_BAILOUT2 {
+        if xv * xv + yv * yv > escape2 {
             escaped = true;
             break;
         }

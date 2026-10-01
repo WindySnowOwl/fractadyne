@@ -57,6 +57,21 @@ fn typed_built_ins_are_the_built_ins_bit_for_bit() {
     same_as_builtin("abs(z)^2 + c", f::BURNING_SHIP);
 }
 
+/// The power families as one types them (the collection ships several): each the built-in bit for
+/// bit, so a custom formula and the family it spells agree (design/power-families.md).
+#[test]
+fn typed_power_families_are_the_built_ins_bit_for_bit() {
+    for d in 6..=8u32 {
+        same_as_builtin(&format!("z^{d} + c"), f::MULTIBROT6 + d - 6);
+    }
+    for d in 3..=5u32 {
+        same_as_builtin(&format!("abs(z)^{d} + c"), f::BURNING_SHIP3 + d - 3);
+        same_as_builtin(&format!("conj(z)^{d} + c"), f::TRICORN3 + d - 3);
+        same_as_builtin(&format!("abs(real(z^{d})) + flip(imag(z^{d})) + c"), f::CELTIC3 + d - 3);
+        same_as_builtin(&format!("abs(z^{d}) + c"), f::BUFFALO3 + d - 3);
+    }
+}
+
 #[test]
 fn statements_temporaries_and_comments() {
     let z = (0.3, -0.7);

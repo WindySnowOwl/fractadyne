@@ -125,6 +125,36 @@ impl FractadyneApp {
     /// That is the whole teaching device: a new user sees the thing they came for, named, and
     /// sees the Julia set offered as its sibling rather than as a mode — and the third option
     /// shows them the relation instead of describing it.
+    /// The family picker's list, drawn identically in the Fractal menu and the toolbar dropdown:
+    /// each family that is not a power family on its own row, then one row per power family
+    /// ("Burning Ship  3 4 5"), so fifteen families cost five rows. Returns the family picked.
+    fn family_list(&self, ui: &mut egui::Ui) -> Option<FractalKind> {
+        let mut picked = None;
+        for kind in FractalKind::ALL.into_iter().filter(|k| k.power_family().is_none()) {
+            if ui.selectable_label(self.fractal == kind, kind.name()).on_hover_text(kind.menu_hint()).clicked() {
+                picked = Some(kind);
+            }
+        }
+        ui.separator();
+        ui.label(egui::RichText::new("Higher powers").weak().small());
+        egui::Grid::new(ui.next_auto_id()).num_columns(2).spacing([10.0, 2.0]).show(ui, |ui| {
+            for (label, kinds) in FractalKind::POWER_GROUPS {
+                let showing = kinds.contains(&self.fractal);
+                ui.label(if showing { egui::RichText::new(label).strong() } else { egui::RichText::new(label) });
+                ui.horizontal(|ui| {
+                    for k in kinds {
+                        let d = k.power_family().expect("a power family");
+                        if ui.selectable_label(self.fractal == k, d.to_string()).on_hover_text(k.menu_hint()).clicked() {
+                            picked = Some(k);
+                        }
+                    }
+                });
+                ui.end_row();
+            }
+        });
+        picked
+    }
+
     pub(crate) fn show_mode_group(&mut self, ui: &mut egui::Ui) {
         let can_julia = self.fractal.supports_julia();
         let name = self.fractal.name();
@@ -328,16 +358,11 @@ impl FractadyneApp {
                         // the dropdown is the fast way to switch once you know what you
                         // want, and this is where you find that out. Hence the hints -
                         // without them the two really would be the same control twice.
-                        for kind in FractalKind::ALL {
-                            if ui
-                                .selectable_label(self.fractal == kind, kind.name())
-                                .on_hover_text(kind.menu_hint())
-                                .clicked()
-                            {
-                                self.set_fractal(kind);
-                                ui.close_menu();
-                            }
+                        if let Some(kind) = self.family_list(ui) {
+                            self.set_fractal(kind);
+                            ui.close_menu();
                         }
+                        ui.separator();
                         if ui
                             .selectable_label(self.fractal == FractalKind::Custom, "Custom formula…")
                             .on_hover_text(FractalKind::Custom.menu_hint())
@@ -927,24 +952,37 @@ impl FractadyneApp {
                 // button text plus padding, ~17 px at the default 12.5 px button font, which is why
                 // ten of them land within a few pixels of the 200 px cap.)
                 //
-                // ⚠The popup now also carries the "Show" group, so the row count is the formulas
-                // PLUS that group — a separator, its heading and three radios. Counting only the
-                // formulas is what would silently put the scrollbar back, which is the exact
-                // failure this computation exists to prevent.
-                const SHOW_GROUP_ROWS: f32 = 5.0; // separator + "Show" + three options
-                const CUSTOM_ROWS: f32 = 1.0; // "Custom formula…"
-                let sp = ui.spacing();
-                let popup_h = (sp.interact_size.y + sp.item_spacing.y)
-                    * (FractalKind::ALL.len() as f32 + CUSTOM_ROWS + SHOW_GROUP_ROWS)
-                    + sp.item_spacing.y * 4.0;
+                // ⚠The popup now also carries the "Show" group and, since the power families
+                // (design/power-families.md), a grid of them under a heading — taller than 400 px,
+                // and 400 is a SECOND cap that `height` cannot lift: egui lays a new popup's area
+                // out within `spacing.default_area_size` (600×400) on its first frame, the area
+                // remembers that size for the session, and the ScrollArea inside never grows past
+                // it. (The uitest's `fractal-dropdown` showed the list cut off at the "Show"
+                // heading with any `height`, the window's own included.) So the bound is the room
+                // below the button, and the area default is raised to it for this one call — the
+                // style is the context's, so it is put back straight after.
+                let popup_h = (ui.ctx().screen_rect().bottom()
+                    - ui.next_widget_position().y
+                    - 2.0 * ui.spacing().interact_size.y)
+                    .max(ui.spacing().combo_height);
+                let area_default = ui.ctx().style().spacing.default_area_size;
+                ui.ctx().style_mut(|s| s.spacing.default_area_size.y = popup_h);
                 let mut open_formula = false;
+                if std::mem::take(&mut self.dialogs.open_fractal_dropdown) {
+                    // The combo box's own id rule (egui 0.31): `from_id_salt` wraps the salt in an
+                    // `Id`, the button is the parent's persistent id of THAT, and the popup sits
+                    // beside it ("popup"). (Of the bare string it is another id: nothing opened.)
+                    let popup = ui.make_persistent_id(egui::Id::new("fractal_dropdown")).with("popup");
+                    ui.memory_mut(|m| m.open_popup(popup));
+                }
                 egui::ComboBox::from_id_salt("fractal_dropdown")
                     .height(popup_h)
                     .selected_text(self.fractal.name())
                     .show_ui(ui, |ui| {
-                        for k in FractalKind::ALL {
-                            ui.selectable_value(&mut sel, k, k.name());
+                        if let Some(k) = self.family_list(ui) {
+                            sel = k;
                         }
+                        ui.separator();
                         if ui
                             .selectable_label(self.fractal == FractalKind::Custom, "Custom formula…")
                             .on_hover_text(FractalKind::Custom.menu_hint())
@@ -958,6 +996,7 @@ impl FractadyneApp {
                         ui.separator();
                         self.show_mode_group(ui);
                     });
+                ui.ctx().style_mut(|s| s.spacing.default_area_size = area_default);
                 if sel != prev {
                     self.set_fractal(sel);
                 }

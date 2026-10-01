@@ -59,6 +59,23 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Fifteen more fractal families (unreleased).** Multibrot 6, 7 and 8, and Burning Ship, Tricorn,
+  Celtic and Buffalo at powers 3, 4 and 5, each built in and deep-zooming as its power-2 sibling
+  does (perturbation in df32 and extended-range floatexp, distance estimation for the Multibrot
+  powers, glitch correction for exports). The Fractal menu and the toolbar dropdown list them one
+  family to a row ("Burning Ship  3 4 5"). A view of one writes format_version 2, so an older
+  Fractadyne says it comes from a newer build instead of showing another family at its
+  coordinates. Multibrot 8 escapes at radius 128 rather than 256, and Multibrot 7 and 8 end the
+  reference orbit at |Z|² > 1e9 rather than 1e12, where the next step would leave single-precision
+  range; a custom formula of degree 7 or more now does the same (its reference's last sample could
+  overflow). Series approximation and BLA for them are still to come (design/power-families.md).
+  - **Tested:** each family's CPU step is its formula-language program bit for bit (what one types
+    as `abs(z)^3 + c` computes Burning Ship 3 exactly); on the GPU, the direct render matches the
+    generated module bit for bit up to power 6 and the CPU within 0.4% for powers 7 and 8; the
+    perturbation matches the CPU at 1e5× (mean difference under 0.0002 iterations) and at 1e6×,
+    floatexp matches df32 at 1e10×, and every family stays finite at 1e35×. Self-test 386 checks
+    (90 new), goldens 31 (five new, one per shape). The dispatch ceiling's cost factors for them
+    are measured, with the method beside them in `validation/calibration/ceilings.toml`.
 - **Custom formulas** (0.3.0-beta.10 to beta.12).
   - **What:** Fractal ▸ Custom formula… takes a formula's step in Fractint-style expressions
     (`z = z^3 - p1*z + c`, several statements, parameters p1–p5, the usual functions), with an

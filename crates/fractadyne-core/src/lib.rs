@@ -82,12 +82,81 @@ pub mod formula {
     pub const BUFFALO: u32 = 7;
     pub const PHOENIX: u32 = 8;
     pub const NEWTON: u32 = 9;
+    /// The power and fold families (design/power-families.md): ids `FAMILY_FIRST..COUNT`, five
+    /// shapes in [`Shape`] order, three powers each — see [`family`].
+    pub const MULTIBROT6: u32 = 10;
+    pub const MULTIBROT7: u32 = 11;
+    pub const MULTIBROT8: u32 = 12;
+    pub const BURNING_SHIP3: u32 = 13;
+    pub const BURNING_SHIP4: u32 = 14;
+    pub const BURNING_SHIP5: u32 = 15;
+    pub const TRICORN3: u32 = 16;
+    pub const TRICORN4: u32 = 17;
+    pub const TRICORN5: u32 = 18;
+    pub const CELTIC3: u32 = 19;
+    pub const CELTIC4: u32 = 20;
+    pub const CELTIC5: u32 = 21;
+    pub const BUFFALO3: u32 = 22;
+    pub const BUFFALO4: u32 = 23;
+    pub const BUFFALO5: u32 = 24;
+    /// The first power-family id.
+    pub const FAMILY_FIRST: u32 = MULTIBROT6;
     /// Number of defined formula ids (ids are `0..COUNT`).
-    pub const COUNT: u32 = 10;
+    pub const COUNT: u32 = 25;
+
+    /// A power family's shape: where its fold sits relative to the power (design/power-families.md
+    /// §1). The WGSL twin numbers them in this order (`fam_shape`).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Shape {
+        /// `z^d + c`.
+        Multibrot,
+        /// `(|x| + i|y|)^d + c`: the fold before the power.
+        BurningShip,
+        /// `conj(z)^d + c`.
+        Tricorn,
+        /// `|Re w| + i·Im w + c`, `w = z^d`: the fold after.
+        Celtic,
+        /// `|Re w| + i·|Im w| + c`.
+        Buffalo,
+    }
+
+    /// A power family's shape and power, for ids `FAMILY_FIRST..COUNT` (`None` for every other id,
+    /// the older families included: their arms are their own).
+    pub const fn family(formula: u32) -> Option<(Shape, u32)> {
+        if formula < FAMILY_FIRST || formula >= COUNT {
+            return None;
+        }
+        let k = formula - FAMILY_FIRST;
+        let shape = match k / 3 {
+            0 => Shape::Multibrot,
+            1 => Shape::BurningShip,
+            2 => Shape::Tricorn,
+            3 => Shape::Celtic,
+            _ => Shape::Buffalo,
+        };
+        // Multibrot runs on from 5 (6, 7, 8); the fold families from their power-2 originals.
+        let d = if k < 3 { 6 + k } else { 3 + k % 3 };
+        Some((shape, d))
+    }
     /// The id a custom formula ([`crate::ir`]) renders under. Outside `0..COUNT`, so every
     /// built-in branch of the shader skips it and [`caps`] grants it none of the built-in
     /// capabilities; its step comes from its own generated shader module instead.
     pub const CUSTOM: u32 = 1000;
+
+    /// The escape degree `d` (`|z'| ≈ |z|^d` far out): the smooth count's log base, as the
+    /// shader's `power_f`. 2 for every family that is not a higher power (Phoenix and Newton
+    /// included, as the shader has them).
+    pub const fn power(formula: u32) -> u32 {
+        match formula {
+            MULTIBROT3 => 3,
+            MULTIBROT4 => 4,
+            MULTIBROT5 => 5,
+            f => match family(f) {
+                Some((_, d)) => d,
+                None => 2,
+            },
+        }
+    }
 
     /// What a formula supports beyond plain iteration (design/custom-formulas.md §4.3). These were
     /// id ranges written out at each use (`formula_id() <= 3`, `== 0`, `> 3`); a custom formula

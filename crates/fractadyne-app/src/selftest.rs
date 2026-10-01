@@ -209,6 +209,123 @@ pub(crate) fn anchored(rel: &str) -> std::path::PathBuf {
 /// `render_iter` that PRINTS a GPU error instead of swallowing it (design/diagnostics.md
 /// D2.5/F11): the suite's checks skip on `None`, so without this a device-level failure
 /// silently shrank the check count instead of naming itself.
+/// A built-in family's boundary point between `c = 0` (inside) and the first of `outside`·{1, 2, 4}
+/// that escapes, by 48 bisections of the f64 orbit (`fractadyne_core::orbit_points`) — a view rich
+/// in escaping pixels for a family nobody hand-picked one for.
+fn family_boundary(formula: u32, outside: (f64, f64), budget: u32) -> Option<(f64, f64)> {
+    let bail2 = 256.0 * 256.0;
+    let escapes = |c: (f64, f64)| {
+        let pts = fractadyne_core::orbit_points((0.0, 0.0), c, formula, budget as usize, bail2);
+        pts.last().is_some_and(|z| z.0 * z.0 + z.1 * z.1 > bail2)
+    };
+    let mut inside = (0.0, 0.0);
+    let mut outside = [1.0, 2.0, 4.0].iter().map(|k| (outside.0 * k, outside.1 * k)).find(|&o| escapes(o))?;
+    if escapes(inside) {
+        return None;
+    }
+    for _ in 0..48 {
+        let mid = ((inside.0 + outside.0) * 0.5, (inside.1 + outside.1) * 0.5);
+        if escapes(mid) {
+            outside = mid
+        } else {
+            inside = mid
+        }
+    }
+    Some(inside)
+}
+
+/// A view for the abs-family checks: a boundary point ([`family_boundary`] along a ray from 0)
+/// whose view at `mag` (3/mag wide) has smooth escaping pixels to compare. A boundary can be dust
+/// there — Burning Ship 3's third-quadrant ray lands in a stretch that is noise at 30×, every pixel
+/// "steep" — so the rays are tried in turn, third quadrant first (where the |Im| folds engage), and
+/// the first is taken whose view, sampled 24 × 24 on the CPU, has at least 15% samples that escape
+/// within 2 iterations of their neighbours ONE CHECK PIXEL away (`px` of the view's width), the
+/// test the check's own "steep" applies. Where no ray reaches that (a hairy boundary — Multibrot 7,
+/// the Tricorns), the ray with the most such samples, if 2% or more.
+fn family_view(formula: u32, mag: f64, px: u32, budget: u32) -> Option<(f64, f64)> {
+    const G: usize = 24;
+    let bail2 = 256.0 * 256.0;
+    let dwell = |c: (f64, f64)| {
+        let pts = fractadyne_core::orbit_points((0.0, 0.0), c, formula, budget as usize, bail2);
+        pts.last().filter(|z| z.0 * z.0 + z.1 * z.1 > bail2).map(|_| pts.len() as i64)
+    };
+    let mut best: Option<(usize, (f64, f64))> = None;
+    // Never along a symmetry axis: on the real axis an orbit stays real, so the |Im| folds never
+    // engage, and a Tricorn's axes end in parabolic points (Tricorn 3 at 0.3849, and at 0.3849i by
+    // its fourfold symmetry: interior beside stripes of escape time diverging, every pixel "steep").
+    // The families' axes lie at whole multiples of 30°, 36° or 45°; rays at 3.75° past a multiple
+    // of 7.5° meet none of them. Forty-eight of them: Tricorn 3's best of 24 was a view of 625
+    // comparable pixels, where the direct path's f32-quantised c (two ulps a pixel at |c| ≈ 1, the
+    // shader compiler folds df32 to f32) moved the mean past the bound.
+    for t in (0..48).map(|k| (183.75 + 7.5 * k as f64).to_radians()) {
+        let Some(at) = family_boundary(formula, (t.cos(), t.sin()), budget) else { continue };
+        let span = 3.0 / mag;
+        let step = span / f64::from(px);
+        let smooth = (0..G * G)
+            .filter(|&k| {
+                let (i, j) = ((k % G) as f64, (k / G) as f64);
+                let p = (at.0 + span * ((i + 0.5) / G as f64 - 0.5), at.1 + span * (0.5 - (j + 0.5) / G as f64));
+                let Some(v) = dwell(p) else { return false };
+                [(step, 0.0), (0.0, step)].iter().all(|&(dx, dy)| dwell((p.0 + dx, p.1 + dy)).is_some_and(|w| (w - v).abs() <= 2))
+            })
+            .count();
+        if smooth * 100 >= G * G * 15 {
+            return Some(at);
+        }
+        if best.is_none_or(|(n, _)| smooth > n) {
+            best = Some((smooth, at));
+        }
+    }
+    best.filter(|(n, _)| n * 100 >= G * G * 2).map(|(_, at)| at)
+}
+
+/// A power family's iteration texture at `req`'s view as the CPU computes it — the f64 orbit of
+/// each pixel centre by the built-in's own step and policy (escape at 256, at 128 for Multibrot 8;
+/// the smooth value unclamped, as the shader's) — in `render_iter`'s layout (the smooth value at
+/// every fourth float, −1 for interior). The truth a deep check judges a perturbation render by
+/// where the direct path's f32 c is too coarse.
+fn cpu_family_iter(req: &fractadyne_gpu::ExportRequest, formula: u32, n: u32) -> Vec<f32> {
+    let nn = n as usize;
+    let d = f64::from(fractadyne_core::formula::power(formula));
+    let bail2 = if formula == fractadyne_core::formula::MULTIBROT8 { 128.0 * 128.0 } else { 256.0 * 256.0 };
+    let centre = (req.center[0] as f64 + req.center[2] as f64, req.center[1] as f64 + req.center[3] as f64);
+    let scale = 2f64.powi(req.delta_exp);
+    let (sx, sy) = (req.span_mantissa.x / n as f64, req.span_mantissa.y / n as f64);
+    let budget = req.max_iter as usize;
+    let rows: Vec<usize> = (0..nn).collect();
+    let threads = std::thread::available_parallelism().map_or(4, |t| t.get());
+    let parts: Vec<Vec<f32>> = std::thread::scope(|s| {
+        let handles: Vec<_> = rows
+            .chunks(nn.div_ceil(threads).max(1))
+            .map(|part| {
+                s.spawn(move || {
+                    let mut out = Vec::with_capacity(part.len() * nn * 4);
+                    for &j in part {
+                        for i in 0..nn {
+                            let c = (
+                                centre.0 + sx * ((i as f64 + 0.5) - n as f64 * 0.5) * scale,
+                                centre.1 + sy * (n as f64 * 0.5 - (j as f64 + 0.5)) * scale,
+                            );
+                            let pts = fractadyne_core::orbit_points((0.0, 0.0), c, formula, budget, bail2);
+                            let (x, y) = *pts.last().unwrap();
+                            let m2 = x * x + y * y;
+                            let v = if m2 > bail2 {
+                                (pts.len() - 1) as f64 + 1.0 - (m2.ln() * 0.5 / 2f64.ln()).ln() / d.ln()
+                            } else {
+                                -1.0
+                            };
+                            out.extend_from_slice(&[v as f32, 0.0, 0.0, 0.0]);
+                        }
+                    }
+                    out
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().expect("a CPU thread panicked")).collect()
+    });
+    parts.concat()
+}
+
 fn st_render_iter(
     device: &eframe::wgpu::Device,
     queue: &eframe::wgpu::Queue,
@@ -2609,17 +2726,32 @@ impl FractadyneApp {
                 }
                 false
             };
-            // (family, center, mag) — boundary-detail regions rich in escaping pixels.
-            let abs_cases: &[(FractalKind, &str, &str, f64)] = &[
-                (FractalKind::BurningShip, "-1.7548", "-0.0312", 1.0e5),
-                (FractalKind::Celtic, "-1.2566", "0.0480", 1.0e5),
-                (FractalKind::Buffalo, "-1.7548", "-0.0312", 1.0e5),
+            // (family, center, mag) — boundary-detail regions rich in escaping pixels. The power
+            // families (design/power-families.md B3) each on its own boundary, at a view with smooth
+            // escaping pixels to compare (`family_view`).
+            let mut abs_cases: Vec<(FractalKind, String, String, f64)> = vec![
+                (FractalKind::BurningShip, "-1.7548".into(), "-0.0312".into(), 1.0e5),
+                (FractalKind::Celtic, "-1.2566".into(), "0.0480".into(), 1.0e5),
+                (FractalKind::Buffalo, "-1.7548".into(), "-0.0312".into(), 1.0e5),
             ];
-            for &(fractal, cx, cy, mag) in abs_cases {
+            for kind in FractalKind::ALL.into_iter().filter(|k| k.power_family().is_some()) {
+                match family_view(kind.formula_id(), 1.0e5, N, self.render_cfg.max_iter) {
+                    Some(at) => abs_cases.push((kind, format!("{:.17}", at.0), format!("{:.17}", at.1), 1.0e5)),
+                    None => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Abs-family deep zoom",
+                        name: format!("{} perturbation vs CPU", kind.name()),
+                        params: String::new(),
+                        result: "no ray from 0 reaches a boundary with smooth escaping pixels at 1e5×".into(),
+                        threshold: "a view to test at",
+                        pass: false,
+                    }),
+                }
+            }
+            for (fractal, cx, cy, mag) in abs_cases {
                 self.fractal = fractal;
                 let mut vp = Viewport::new(N as f64, N as f64);
-                vp.center_x = fractadyne_core::parse_bf(cx).unwrap();
-                vp.center_y = fractadyne_core::parse_bf(cy).unwrap();
+                vp.center_x = fractadyne_core::parse_bf(&cx).unwrap();
+                vp.center_y = fractadyne_core::parse_bf(&cy).unwrap();
                 vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
                 vp.precision = fractadyne_core::precision_for_magnification(mag);
                 let mut pert = self.current_export_request_for(&vp, false);
@@ -2628,10 +2760,18 @@ impl FractadyneApp {
                 pert.ss = 1;
                 let mut direct = pert.clone();
                 direct.mode = 1; // force the trusted direct df32 path
-                if let (Some(a), Some(b)) = (
-                    st_render_iter(device, queue, &pert),
-                    st_render_iter(device, queue, &direct),
-                ) {
+                // A power family against the CPU's f64 orbit instead: the direct path's c is
+                // f32-quantised here (the compiler folds df32; two ulps a pixel at |c| ≈ 1), and at
+                // power 8 that quarter pixel moved the mean dwell past the bound (0.89 on a view
+                // where the 1e6× twins check matched the CPU to a median 0.0002).
+                let power_family = fractal.power_family().is_some();
+                let truth = if power_family {
+                    Some(cpu_family_iter(&pert, fractal.formula_id(), N))
+                } else {
+                    st_render_iter(device, queue, &direct)
+                };
+                let against = if power_family { "CPU" } else { "direct" };
+                if let (Some(a), Some(b)) = (st_render_iter(device, queue, &pert), truth) {
                     let (mut sum, mut n, mut big) = (0.0f64, 0u64, 0u64);
                     for j in 0..nn {
                         for i in 0..nn {
@@ -2654,8 +2794,8 @@ impl FractadyneApp {
                     let frac = if n == 0 { 1.0 } else { big as f64 / n as f64 };
                     push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Abs-family deep zoom",
-                        name: format!("{} perturbation vs direct", fractal.name()),
-                        params: format!("{mag:.0e}×, mode {} vs 1, n={n}", pert.mode),
+                        name: format!("{} perturbation vs {against}", fractal.name()),
+                        params: format!("{mag:.0e}× at {cx}, {cy}, mode {} vs {against}, n={n}", pert.mode),
                         result: format!("mean Δ={mean:.4} iter, >2iter {:.3}%", frac * 100.0),
                         threshold: "mode 0, mean<0.5, <2% differ, n>0",
                         pass: pert.mode == 0 && n > 0 && mean < 0.5 && frac < 0.02,
@@ -2843,13 +2983,18 @@ impl FractadyneApp {
                 vp.precision = 64;
                 vp
             };
-            let twins: &[(FractalKind, f64, f64, f64)] = &[
+            // The power families each over the whole set (design/power-families.md B1): the
+            // built-in's chain is the generated module's, helper for helper.
+            let twins: Vec<(FractalKind, f64, f64, f64)> = [
                 (FractalKind::Mandelbrot, -0.745, 0.112, 0.02),
                 (FractalKind::Multibrot3, 0.0, 0.0, 3.0),
                 (FractalKind::Tricorn, -0.2, 0.0, 3.5),
                 (FractalKind::BurningShip, -1.7548, -0.0312, 0.05),
-            ];
-            for &(fractal, cx, cy, span) in twins {
+            ]
+            .into_iter()
+            .chain(FractalKind::ALL.into_iter().filter(|k| k.power_family().is_some()).map(|k| (k, 0.0, 0.0, 3.0)))
+            .collect();
+            for (fractal, cx, cy, span) in twins {
                 self.fractal = fractal;
                 let mut base = self.current_export_request_for(&view(cx, cy, span), false);
                 base.width = N;
@@ -2870,6 +3015,75 @@ impl FractadyneApp {
                         result: format!("build failed: {e}"),
                         threshold: "builds",
                         pass: false,
+                    });
+                    continue;
+                }
+                let d = fractadyne_core::formula::power(fractal.formula_id());
+                if fractal.power_family().is_some() && d >= 7 {
+                    // From power 7 the two part by POLICY, not by step: a generated module tames an
+                    // escaping value past 1e15 (`custom_tame`), which z⁷ from |z| = 256 reaches, and
+                    // Multibrot 8 escapes at 128 (`bail2_of`) where the module escapes at 256. Leaving
+                    // those pixels out by the CPU orbit failed on chaotic ones (the GPU's orbit is not
+                    // the CPU's there), so the built-in is judged against the CPU interpreter with ITS
+                    // policy instead, as the iterated formulas below are: under 1% disagree (|Δ| > 0.01
+                    // or status) and none of the escapes within 20 steps. Powers to 6 stay bit for bit.
+                    let Some(a) = st_render_iter(device, queue, &base) else { continue };
+                    let bail2 = if d == 8 { 128.0 * 128.0 } else { 256.0 * 256.0 };
+                    let centre = (base.center[0] as f64 + base.center[2] as f64, base.center[1] as f64 + base.center[3] as f64);
+                    let scale = 2f64.powi(base.delta_exp);
+                    let (sx, sy) = (base.span_mantissa.x / N as f64, base.span_mantissa.y / N as f64);
+                    // The CPU's smooth value at c (−∞ = interior) and its step count.
+                    let cpu_at = |c: (f64, f64)| {
+                        let pts = fractadyne_core::orbit_points((0.0, 0.0), c, fractal.formula_id(), base.max_iter as usize, bail2);
+                        let (x, y) = *pts.last().unwrap();
+                        let mag2 = x * x + y * y;
+                        let steps = pts.len() - 1;
+                        let v = if mag2 > bail2 {
+                            steps as f64 + 1.0 - (mag2.ln() * 0.5 / 2f64.ln()).ln() / f64::from(d).ln()
+                        } else {
+                            f64::NEG_INFINITY
+                        };
+                        (v, steps)
+                    };
+                    let agree = |g: f64, cpu: f64| if cpu.is_finite() { g >= 0.0 && (g - cpu).abs() < 0.01 } else { g < 0.0 };
+                    const PROBE: f64 = 1.0e-5;
+                    let (mut escaped, mut disagree, mut early, mut early_bad) = (0u64, 0u64, 0u64, 0u64);
+                    for k in 0..nn * nn {
+                        let (i, j) = ((k % nn) as f64, (k / nn) as f64);
+                        let c = (
+                            centre.0 + sx * ((i + 0.5) - N as f64 * 0.5) * scale,
+                            centre.1 + sy * (N as f64 * 0.5 - (j + 0.5)) * scale,
+                        );
+                        let (cpu, steps) = cpu_at(c);
+                        let g = a[k * 4] as f64;
+                        let same = agree(g, cpu);
+                        escaped += cpu.is_finite() as u64;
+                        disagree += (!same) as u64;
+                        // An early escape must agree — unless the CPU's own value does not survive
+                        // c ± PROBE: at power 8 an f32 error grows ~1,000× a step, and an orbit landing
+                        // by the bailout radius escapes a step apart on the two (an escape-step tie,
+                        // as the Chaotic kind below judges).
+                        if cpu.is_finite()
+                            && steps <= 20
+                            && [(PROBE, 0.0), (-PROBE, 0.0), (0.0, PROBE), (0.0, -PROBE)]
+                                .iter()
+                                .all(|p| (cpu_at((c.0 + p.0, c.1 + p.1)).0 - cpu).abs() < 0.01)
+                        {
+                            early += 1;
+                            early_bad += (!same) as u64;
+                        }
+                    }
+                    let px = (nn * nn) as u64;
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Custom formula (GPU)",
+                        name: format!("{}: direct built-in = CPU interpreter", fractal.name()),
+                        params: format!("direct, span {span}, {escaped} escaped px, {early} stable within 20 it"),
+                        result: format!(
+                            "{disagree} px disagree ({:.3}%), {early_bad} of the stable early escapes",
+                            disagree as f64 * 100.0 / px as f64
+                        ),
+                        threshold: "<1% disagree, 0 stable early, >10% escaped",
+                        pass: disagree * 100 < px && early_bad == 0 && early > 0 && escaped * 10 > px,
                     });
                     continue;
                 }
@@ -3344,6 +3558,9 @@ impl FractadyneApp {
                 fractadyne_core::parse_bf("0.131825904205311970493132056385139").unwrap(),
                 1.0e8,
             )];
+            // The power families too (design/power-families.md B2, B3): the built-in's generic
+            // binomial perturbation and its folds against the generated module and the CPU.
+            let power_families = FractalKind::ALL.into_iter().filter(|k| k.power_family().is_some());
             for fractal in [
                 FractalKind::Mandelbrot,
                 FractalKind::Multibrot3,
@@ -3353,7 +3570,10 @@ impl FractadyneApp {
                 FractalKind::BurningShip,
                 FractalKind::Celtic,
                 FractalKind::Buffalo,
-            ] {
+            ]
+            .into_iter()
+            .chain(power_families)
+            {
                 let step = ir::builtin_step(fractal.formula_id()).expect("every built-in has a step");
                 match boundary(&ir::Formula::single(step), &[], third, max_iter) {
                     Some(at) => pert_twins.push((fractal, bf(at.0), bf(at.1), 1.0e6)),
@@ -3405,15 +3625,49 @@ impl FractadyneApp {
                 let close = |v: f32, cpu: f64| if v < 0.0 || cpu < 0.0 { (v < 0.0) == (cpu < 0.0) } else { (v as f64 - cpu).abs() <= 2.0 };
                 let (mut escaped, mut base_only, mut gen_only) = (0u64, 0u64, 0u64);
                 let (mut err_base, mut err_gen) = (Vec::new(), Vec::new());
-                for (k, cpu) in cpu_pixels(&formula, &[], power, &cs, max_iter).into_iter().enumerate() {
+                let cpu_gen = cpu_pixels(&formula, &[], power, &cs, max_iter);
+                // Each side against the CPU under ITS OWN policy. A generated module tames an escaping
+                // value past 1e15 and escapes at 256; a power family's built-in does neither from power
+                // 7 (z⁷ needs no tame; Multibrot 8 escapes at 128): judged by the module's policy, the
+                // built-in looked 1.6–3.6× worse in the smooth value where it was the more exact one.
+                let cpu_base = if fractal.power_family().is_some() {
+                    let id = fractal.formula_id();
+                    let b2 = if id == fractadyne_core::formula::MULTIBROT8 { 128.0 * 128.0 } else { bail2 };
+                    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+                    std::thread::scope(|s| {
+                        let parts: Vec<_> = cs
+                            .chunks(cs.len().div_ceil(threads).max(1))
+                            .map(|part| {
+                                s.spawn(move || {
+                                    part.iter()
+                                        .map(|&c| {
+                                            let pts = fractadyne_core::orbit_points((0.0, 0.0), c, id, max_iter as usize, b2);
+                                            let (x, y) = *pts.last().unwrap();
+                                            let m2 = x * x + y * y;
+                                            if m2 > b2 {
+                                                (pts.len() - 1) as f64 + 1.0 - (m2.ln() * 0.5 / 2f64.ln()).ln() / power.ln()
+                                            } else {
+                                                -1.0
+                                            }
+                                        })
+                                        .collect::<Vec<_>>()
+                                })
+                            })
+                            .collect();
+                        parts.into_iter().flat_map(|h| h.join().expect("a CPU thread panicked")).collect::<Vec<f64>>()
+                    })
+                } else {
+                    cpu_gen.clone()
+                };
+                for (k, (cb, cg)) in cpu_base.into_iter().zip(cpu_gen).enumerate() {
                     let (x, y) = (a[k * 4], b[k * 4]);
                     escaped += (x >= 0.0) as u64;
-                    let (bx, gy) = (close(x, cpu), close(y, cpu));
+                    let (bx, gy) = (close(x, cb), close(y, cg));
                     base_only += (bx && !gy) as u64;
                     gen_only += (gy && !bx) as u64;
-                    if bx && gy && cpu >= 0.0 {
-                        err_base.push((x as f64 - cpu).abs());
-                        err_gen.push((y as f64 - cpu).abs());
+                    if bx && gy && cb >= 0.0 && cg >= 0.0 {
+                        err_base.push((x as f64 - cb).abs());
+                        err_gen.push((y as f64 - cg).abs());
                     }
                 }
                 let median = |v: &mut Vec<f64>| {
@@ -3441,13 +3695,23 @@ impl FractadyneApp {
                         "right only in built-in {base_only} / only in generated {gen_only} px; median |Δ| to CPU {med_base:.5} / {med_gen:.5} over {} px",
                         err_base.len()
                     ),
-                    threshold: "mode 0, ref >100, 10–99% escaped; generated no worse (3σ; median ×1.25 + 1e-4)",
+                    // Which side is under test: the generated module, against a built-in of long
+                    // standing — or, for a power family (design/power-families.md B2), the new
+                    // built-in, against the generated module that passed its own gates.
+                    threshold: if fractal.power_family().is_some() {
+                        "mode 0, ref >100, 10–99% escaped; built-in no worse (3σ; median ×1.25 + 1e-4)"
+                    } else {
+                        "mode 0, ref >100, 10–99% escaped; generated no worse (3σ; median ×1.25 + 1e-4)"
+                    },
                     pass: base.mode == 0
                         && base.orbit_len > 100
                         && escaped * 10 > px
                         && escaped * 100 < px * 99
-                        && (base_only as f64) <= gen_only as f64 + allowance
-                        && med_gen <= med_base * 1.25 + 1.0e-4,
+                        && if fractal.power_family().is_some() {
+                            (gen_only as f64) <= base_only as f64 + allowance && med_base <= med_gen * 1.25 + 1.0e-4
+                        } else {
+                            (base_only as f64) <= gen_only as f64 + allowance && med_gen <= med_base * 1.25 + 1.0e-4
+                        },
                 });
             }
 
@@ -7850,6 +8114,15 @@ zoom = \"1e94\"
             ("buffalo", FractalKind::Buffalo, "-0.5", "-0.5", 0.7, 800, 0, 0, false),
             ("phoenix", FractalKind::Phoenix, "0.0", "0.0", 0.7, 800, 0, 0, false),
             ("newton", FractalKind::Newton, "0.0", "0.0", 0.7, 400, 0, 0, false),
+            // The power families (design/power-families.md), one overview per shape: every power is
+            // the same generic code with its own (shape, d), and each is held to its generated module
+            // and the CPU by the custom-formula and abs-family groups, so a golden apiece would add
+            // ~33 MB of history for no case those checks do not already make.
+            ("multibrot7", FractalKind::Multibrot7, "0.0", "0.0", 1.2, 800, 0, 0, false),
+            ("burning-ship3", FractalKind::BurningShip3, "0.0", "0.0", 1.2, 800, 0, 0, false),
+            ("tricorn4", FractalKind::Tricorn4, "0.0", "0.0", 1.2, 800, 0, 0, false),
+            ("celtic5", FractalKind::Celtic5, "0.0", "0.0", 1.2, 800, 0, 0, false),
+            ("buffalo3", FractalKind::Buffalo3, "0.0", "0.0", 1.2, 800, 0, 0, false),
             // Deep mode-0 (df32 perturbation, 1e6×) views at a bisected boundary coordinate (see
             // core's dump_deep_boundary_coords). These exercise the bignum reference orbit (step_bf)
             // + series approximation + the df32-perturbation shader branch — the deep pipeline the

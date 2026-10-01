@@ -426,6 +426,132 @@ fn deriv_factor(formula: u32, z: vec2<f32>) -> vec2<f32> {
     return 5.0 * z4; // formula 3
 }
 
+// ---------------- the power families (ids 10..24, design/power-families.md) ----------------
+// One id per (shape, power), as fractadyne_core::formula::family numbers them: shape 0 Multibrot
+// (z^d), 1 Burning Ship (|x| + i|y|, then the power), 2 Tricorn (conj, then the power), 3 Celtic
+// (the power, then |Re|), 4 Buffalo (the power, then |Re| and |Im|); d = 6..8 for Multibrot, 3..5
+// for the folds. Every path tests `is_fam` explicitly: the older families' arms are untouched.
+fn is_fam(f: u32) -> bool { return f >= 10u && f <= 24u; }
+// The holomorphic ones (Multibrot d): a derivative, so a distance estimate.
+fn fam_holo(f: u32) -> bool { return f >= 10u && f <= 12u; }
+fn fam_shape(f: u32) -> u32 { return (f - 10u) / 3u; }
+fn fam_power(f: u32) -> u32 {
+    let k = f - 10u;
+    return select(3u + k % 3u, 6u + k, k < 3u);
+}
+// The escape test's |z|²: 256² for every family but Multibrot 8, whose escaping step from |z| = 256
+// would square past f32 (|z|² up to 256^16 = 2^128): it escapes at 128.
+fn bail2_of(f: u32) -> f32 { return select(256.0 * 256.0, 128.0 * 128.0, f == 12u); }
+// b^d (d = 3..8) as the generated module chains it — square, and multiply by b on each set bit
+// below the top one, most significant first — with the same helper calls, so a family's direct
+// step is its generated module's bit for bit (self-test "generated … = built-in").
+fn fam_pow_df(b: Cdf, d: u32) -> Cdf {
+    switch (d) {
+        case 3u: { return c_mul(c_sqr(b), b); }
+        case 4u: { return c_sqr(c_sqr(b)); }
+        case 5u: { return c_mul(c_sqr(c_sqr(b)), b); }
+        case 6u: { return c_sqr(c_mul(c_sqr(b), b)); }
+        case 7u: { return c_mul(c_sqr(c_mul(c_sqr(b), b)), b); }
+        default: { return c_sqr(c_sqr(c_sqr(b))); } // 8
+    }
+}
+// A family's direct step without its `+ c`: the fold, the power, the fold.
+fn fam_direct(f: u32, z: Cdf) -> Cdf {
+    let shape = fam_shape(f);
+    var b = z;
+    if (shape == 1u) { b = cset(df_abs(z.re), df_abs(z.im)); }
+    if (shape == 2u) { b = c_conj(z); }
+    var w = fam_pow_df(b, fam_power(f));
+    if (shape == 3u) { w = cset(df_abs(w.re), w.im); }
+    if (shape == 4u) { w = cset(df_abs(w.re), df_abs(w.im)); }
+    return w;
+}
+// Multibrot d's f'(z) = d·z^(d−1), plain f32 as deriv_factor.
+fn fam_deriv(f: u32, z: vec2<f32>) -> vec2<f32> {
+    let d = fam_power(f);
+    var r = z;
+    for (var k = 2u; k < d; k = k + 1u) {
+        r = vec2<f32>(r.x * z.x - r.y * z.y, r.x * z.y + r.y * z.x);
+    }
+    return f32(d) * r;
+}
+// (Z + δ)^d − Z^d along the power's own chain (square; multiply by the base on each set bit below
+// the top one), one perturbation rule per link — P(sqr f) = (2·B + P)·P, P(f·g) = P(f)·W(g) +
+// B(f)·P(g) with W = B + P — as the generated module's rule table (`ir::perturb`) derives it. Every
+// term carries a P, so nothing cancels against Z^d, and the error grows with the chain's log₂ d
+// links: a table of Z's powers built by d − 2 sequential products (a binomial in Horner form) was
+// measured 1.6–2.3× further from the CPU for Multibrot 6–8.
+fn fam_dpow_df(Z: Cdf, dz: Cdf, d: u32) -> Cdf {
+    var B = Z;
+    var P = dz;
+    let W0 = c_add(Z, dz);
+    var bit = 31u - countLeadingZeros(d);
+    loop {
+        if (bit == 0u) { break; }
+        bit = bit - 1u;
+        P = c_mul(c_add(c_two(B), P), P);
+        B = c_sqr(B);
+        if (((d >> bit) & 1u) == 1u) {
+            P = c_add(c_mul(P, W0), c_mul(B, dz));
+            B = c_mul(B, Z);
+        }
+    }
+    return P;
+}
+// The same in floatexp (mode 2): every P in floatexp, so nothing underflows; B and the full-size
+// values (B + P, Z + δ) in df32, which holds them — a perturbation's digits below df32's reach are
+// negligible beside B (the generated module's `Class::Full`).
+fn fam_dpow_fe(Z: Cdf, dz: Fe, d: u32) -> Fe {
+    var B = Z;
+    var P = dz;
+    let W0 = c_add(Z, fe_to_cdf(dz));
+    var bit = 31u - countLeadingZeros(d);
+    loop {
+        if (bit == 0u) { break; }
+        bit = bit - 1u;
+        P = fe_mul_cdf(P, c_add(c_two(B), fe_to_cdf(P)));
+        B = c_sqr(B);
+        if (((d >> bit) & 1u) == 1u) {
+            P = fe_add(fe_mul_cdf(P, W0), fe_mul_cdf(dz, B));
+            B = c_mul(B, Z);
+        }
+    }
+    return P;
+}
+// A family's perturbed step without its `+ δc` (df32, mode 0). A fold perturbs by diffabs: on Z and
+// δ before the power (Burning Ship), on Z^d and δ(z^d) after it (Celtic, Buffalo).
+fn fam_pert_df(f: u32, Z: Cdf, dz: Cdf) -> Cdf {
+    let shape = fam_shape(f);
+    let d = fam_power(f);
+    if (shape == 1u) {
+        let bz = cset(df_abs(Z.re), df_abs(Z.im));
+        let bd = cset(df_diffabs(Z.re, dz.re), df_diffabs(Z.im, dz.im));
+        return fam_dpow_df(bz, bd, d);
+    }
+    if (shape == 2u) { return fam_dpow_df(c_conj(Z), c_conj(dz), d); }
+    let dw = fam_dpow_df(Z, dz, d);
+    if (shape == 0u) { return dw; }
+    let W = fam_pow_df(Z, d);
+    if (shape == 3u) { return cset(df_diffabs(W.re, dw.re), dw.im); }
+    return cset(df_diffabs(W.re, dw.re), df_diffabs(W.im, dw.im));
+}
+// The same in floatexp (mode 2).
+fn fam_pert_fe(f: u32, Z: Cdf, dz: Fe) -> Fe {
+    let shape = fam_shape(f);
+    let d = fam_power(f);
+    if (shape == 1u) {
+        let bz = cset(df_abs(Z.re), df_abs(Z.im));
+        let bd = fe_from_sf(sf_diffabs(sf_from_df(Z.re), sf_re(dz)), sf_diffabs(sf_from_df(Z.im), sf_im(dz)));
+        return fam_dpow_fe(bz, bd, d);
+    }
+    if (shape == 2u) { return fam_dpow_fe(c_conj(Z), fe_conj(dz), d); }
+    let dw = fam_dpow_fe(Z, dz, d);
+    if (shape == 0u) { return dw; }
+    let W = fam_pow_df(Z, d);
+    if (shape == 3u) { return fe_from_sf(sf_diffabs(sf_from_df(W.re), sf_re(dw)), sf_im(dw)); }
+    return fe_from_sf(sf_diffabs(sf_from_df(W.re), sf_re(dw)), sf_diffabs(sf_from_df(W.im), sf_im(dw)));
+}
+
 // ---------------- iteration pass (perturbation; writes smooth escape value) -----
 // Per pixel: c = c0 + δc, z_n = Z_n + δz_n where Z_n is the reference orbit.
 //   δz_{n+1} = 2·Z_n·δz_n + δz_n² + δc      (δz, δc carried in df32 → deep zoom)
@@ -757,7 +883,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
     let off_re = df_mul_f32(step_re, coord_re);
     let off_im = df_mul_f32(step_im, coord_im);
 
-    let bail2 = 256.0 * 256.0;
+    let bail2 = bail2_of(iu.formula);
     var iter: u32 = 0u;  // true iteration count
     var zf = vec2<f32>(0.0, 0.0);
     var escaped = false;
@@ -857,6 +983,9 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                         df_add(s.re, df_mul_f32(zprev.re, -0.5)),
                         df_add(s.im, df_mul_f32(zprev.im, -0.5)),
                     );
+                } else if (is_fam(iu.formula)) {
+                    zn = fam_direct(iu.formula, z);
+                    power_f = f32(fam_power(iu.formula));
                 } else {
                     zn = c_sqr(z);
                 }
@@ -881,6 +1010,12 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     dn = c_sub(dn, c_scale(dprev, 0.5));
                     dprev = dz;
                     dz = dn;
+                } else if (fam_holo(iu.formula)) {
+                    // Multibrot d: D' = d·z^(d−1)·D (+1 in Mandelbrot mode), in df32 as Multibrot
+                    // 3–5's. (Plain f32 here was measured no faster: 2.71× Mandelbrot either way.)
+                    let d = fam_power(iu.formula);
+                    dz = c_mul(c_scale(fam_pow_df(z, d - 1u), f32(d)), dz);
+                    if (iu.julia == 0u) { dz = c_add(dz, one); }
                 }
                 zn = c_add(zn, c);
                 // @@CUSTOM_STEP_END
@@ -912,7 +1047,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         // @@CUSTOM_SMOOTH_END
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
-        if (iu.formula <= 3u || iu.formula == 8u) {
+        if (iu.formula <= 3u || iu.formula == 8u || fam_holo(iu.formula)) {
             nrm = slope_normal(zf, vec2<f32>(dz.re.x, dz.im.x));
             de = de_log2(mag2, dz.re.x * dz.re.x + dz.im.x * dz.im.x, 0.0);
         }
@@ -1140,6 +1275,11 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 dn = fe_sub(dn, fe_scale(Dprev, 0.5));
                 Dprev = D;
                 D = dn;
+            } else if (fam_holo(iu.formula)) {
+                let dzc = fe_lo_f32(dz);
+                let fp = fam_deriv(iu.formula, vec2<f32>(Z.re.x + dzc.x, Z.im.x + dzc.y));
+                D = fe_mul_c(D, fp.x, fp.y);
+                if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
             }
 
             if (iu.formula == 1u) {
@@ -1212,6 +1352,9 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                         sf_add(sf_diffabs(Wim, sf_im(dw)), sf_im(dc)),
                     );
                 }
+            } else if (is_fam(iu.formula)) {
+                power_f = f32(fam_power(iu.formula));
+                dz = fe_add(fam_pert_fe(iu.formula, Z, dz), dc);
             } else if (iu.formula == 8u) {
                 // Phoenix: δz' = 2Z·δz + δz² + δc − 0.5·δz_{n-1}
                 var t: Fe;
@@ -1307,7 +1450,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         let smit = f32(iter) + 1.0 - nu;
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
-        if (iu.formula <= 3u || iu.formula == 8u) {
+        if (iu.formula <= 3u || iu.formula == 8u || fam_holo(iu.formula)) {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
@@ -1380,6 +1523,10 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 dn = fe_sub(dn, fe_scale(Dprev, 0.5));
                 Dprev = D;
                 D = dn;
+            } else if (fam_holo(iu.formula)) {
+                let fp = fam_deriv(iu.formula, vec2<f32>(z.re.x + dz.re.x, z.im.x + dz.im.x));
+                D = fe_mul_c(D, fp.x, fp.y);
+                if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
             }
             // @@CUSTOM_PSTEP_BEGIN — a custom formula's module replaces the perturbed step from
             // here to the matching END marker with its generated one (`custom.rs`).
@@ -1426,6 +1573,9 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     dz = cset(df_add(df_diffabs(W.re, dw.re), dc.re),
                               df_add(df_diffabs(W.im, dw.im), dc.im));
                 }
+            } else if (is_fam(iu.formula)) {
+                power_f = f32(fam_power(iu.formula));
+                dz = c_add(fam_pert_df(iu.formula, z, dz), dc);
             } else if (iu.formula == 8u) {
                 // Phoenix: δz' = 2Z·δz + δz² + δc − 0.5·δz_{n-1}
                 let base = c_add(c_add(c_two(c_mul(z, dz)), c_sqr(dz)), dc);
@@ -1524,7 +1674,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         // @@CUSTOM_SMOOTH0_END
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
-        if (iu.formula <= 3u || iu.formula == 8u) {
+        if (iu.formula <= 3u || iu.formula == 8u || fam_holo(iu.formula)) {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
@@ -1702,7 +1852,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
     let off_re = df_mul_f32(step_re, coord_re);
     let off_im = df_mul_f32(step_im, coord_im);
 
-    let bail2 = 256.0 * 256.0;
+    let bail2 = bail2_of(iu.formula);
     let zero = vec2<f32>(0.0, 0.0);
     let one = cset(vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 0.0));
     let dsc = exp2(f32(iu.delta_exp));
@@ -2053,7 +2203,7 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
     let off_re = df_mul_f32(step_re, coord_re);
     let off_im = df_mul_f32(step_im, coord_im);
 
-    let bail2 = 256.0 * 256.0;
+    let bail2 = bail2_of(iu.formula);
     let stop = min(iu.end_iter, iu.max_iter);
 
     // Prior state, when resuming.

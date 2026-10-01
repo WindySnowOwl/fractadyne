@@ -44,6 +44,52 @@ fn builtin(id: u32) -> Formula {
     Formula::single(builtin_step(id).expect("every built-in has a step program"))
 }
 
+/// The power families (design/power-families.md), every id from `FAMILY_FIRST`.
+fn power_families() -> Vec<(u32, String)> {
+    (f::FAMILY_FIRST..f::COUNT)
+        .map(|id| {
+            let (shape, d) = f::family(id).expect("an id in the family range");
+            (id, format!("{shape:?} {d}"))
+        })
+        .collect()
+}
+
+/// The hand-written power-family step (`fractal.rs`, the f64 overlay and the bignum reference)
+/// is its IR program bit for bit — the program the generated shader module is built from, and
+/// what the parser reads `abs(z)^3 + c` and the like as — with the program's escape degree `d`.
+#[test]
+fn power_families_are_their_programs_bit_for_bit() {
+    let mut seed = 0x6b_u64;
+    let mut bseed = 0x5eed_u64;
+    assert_eq!(power_families().len(), 15);
+    for (id, name) in power_families() {
+        let formula = builtin(id);
+        let (_, d) = f::family(id).unwrap();
+        assert_eq!(formula.escape_degree(), Some(f64::from(d)), "{name}");
+        assert_eq!(f::power(id), d, "{name}");
+        let mut points = 0usize;
+        for trial in 0..1_000 {
+            let c = (lcg(&mut seed) * 2.4 - 1.2, lcg(&mut seed) * 2.4 - 1.2);
+            let z0 = if trial % 2 == 0 { (0.0, 0.0) } else { (lcg(&mut seed) * 2.4 - 1.2, lcg(&mut seed) * 2.4 - 1.2) };
+            let want = crate::orbit_points(z0, c, id, 300, 1.0e8);
+            let got = orbit_points(&formula, z0, c, &[], 300, 1.0e8).unwrap();
+            assert_eq!(got.len(), want.len(), "{name}: orbit length, trial {trial}");
+            for (k, (g, w)) in got.iter().zip(&want).enumerate() {
+                assert_eq!(bits(*g), bits(*w), "{name}: trial {trial}, point {k}");
+            }
+            points += want.len();
+        }
+        assert!(points > 5_000, "{name}: too few points compared ({points})");
+        let mut samples = 0;
+        for p in [128usize, 320] {
+            for (z0, c) in bignum_cases(p, &mut bseed) {
+                samples += compare_reference(BackendChoice::Astro, &name, id, &formula, (&z0.0, &z0.1), (&c.0, &c.1), 1_000, p);
+            }
+        }
+        eprintln!("{name}: {points} f64 points and {samples} bignum samples identical");
+    }
+}
+
 #[test]
 fn f64_orbits_match_the_hand_written_ones_bit_for_bit() {
     let mut seed = 0x1a_2b_u64;
@@ -202,7 +248,15 @@ fn long_bignum_orbits_stay_identical() {
 fn long_complex_bignum_orbits_stay_identical() {
     let p = 192;
     let zero = BigFloat::from_f64(0.0, p);
-    for (d, id, name) in [(2, f::MANDELBROT, "Mandelbrot"), (3, f::MULTIBROT3, "Multibrot 3"), (4, f::MULTIBROT4, "Multibrot 4"), (5, f::MULTIBROT5, "Multibrot 5")] {
+    for (d, id, name) in [
+        (2, f::MANDELBROT, "Mandelbrot"),
+        (3, f::MULTIBROT3, "Multibrot 3"),
+        (4, f::MULTIBROT4, "Multibrot 4"),
+        (5, f::MULTIBROT5, "Multibrot 5"),
+        (6, f::MULTIBROT6, "Multibrot 6"),
+        (7, f::MULTIBROT7, "Multibrot 7"),
+        (8, f::MULTIBROT8, "Multibrot 8"),
+    ] {
         // Fixed point z* with d·z*^(d−1) = μ, and c = z* − z*^d.
         let mu = (0.995 * (0.6 * std::f64::consts::PI).cos(), 0.995 * (0.6 * std::f64::consts::PI).sin());
         let (r, t) = ((mu.0.hypot(mu.1) / d as f64).powf(1.0 / (d - 1) as f64), mu.1.atan2(mu.0) / (d - 1) as f64);

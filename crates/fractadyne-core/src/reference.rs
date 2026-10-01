@@ -34,6 +34,23 @@ const EXT_SAMPLE_THRESHOLD: f64 = 1.0e-36;
 /// scaled by 2^-exponent (the leading one normalized to [1,2)); the shader decodes via `orbit_fe`.
 /// NaN can never occur in a normal sample (the bignum pipeline yields finite values), so the marker
 /// is unambiguous.
+/// The reference orbit ends at its first sample past this `|Z|²` (that sample kept). 1e12 for every
+/// family but the powers from 7 (design/power-families.md §4.4): their next sample, up to
+/// `(1e6)^d`, would overflow the f32 lanes the GPU reads it in ([`pack_sample`]); at 1e9 it is at
+/// most `(10^4.5)^8 = 1e36`. Every walk that measures a reference's length asks this, so they agree.
+pub(crate) fn ref_escape2(formula: u32) -> f64 {
+    ref_escape2_of_degree(f64::from(formula::power(formula)))
+}
+
+/// [`ref_escape2`] by the escape degree `d` (a custom formula's comes from its program).
+pub(crate) fn ref_escape2_of_degree(d: f64) -> f64 {
+    if d >= 7.0 {
+        1.0e9
+    } else {
+        1.0e12
+    }
+}
+
 pub(crate) fn pack_sample(xv: f64, yv: f64) -> [f32; 4] {
     let mag = xv.abs().max(yv.abs());
     if mag != 0.0 && mag < EXT_SAMPLE_THRESHOLD {
@@ -388,6 +405,7 @@ fn run_orbit_gen<B: RefBackend>(
     ctx: B::Ctx,
 ) -> (B, B, B, B, bool) {
     let mut escaped = false;
+    let escape2 = ref_escape2(formula);
     while n < max_iter {
         let (nzx, nzy) = if formula == formula::PHOENIX {
             phoenix_step_gen(&zx, &zy, &zpx, &zpy, cx, cy, ctx)
@@ -406,7 +424,7 @@ fn run_orbit_gen<B: RefBackend>(
         let yv = zy.to_f64_trunc();
         out.push(pack_sample(xv, yv));
         n += 1;
-        if xv * xv + yv * yv > 1.0e12 {
+        if xv * xv + yv * yv > escape2 {
             escaped = true;
             break;
         }
@@ -759,7 +777,7 @@ pub(crate) fn series_skip_astro_piped(
         let (nzx, nzy) = step_bf(zx, zy, cx, cy, formula, p);
         *zx = nzx;
         *zy = nzy;
-        let escaped = to_f64(zx) * to_f64(zx) + to_f64(zy) * to_f64(zy) > 1.0e12;
+        let escaped = to_f64(zx) * to_f64(zx) + to_f64(zy) * to_f64(zy) > ref_escape2(formula);
         (zcx, zcy, escaped)
     };
     // The coefficient chain, fed one Z-chain step per iteration. `Err` = cancelled.
@@ -1445,7 +1463,7 @@ fn orbit_length_gen<B: RefBackend>(
             s.push(CFloatExp { re: zx.to_floatexp(), im: zy.to_floatexp() });
         }
         let (xv, yv) = (zx.to_f64_trunc(), zy.to_f64_trunc());
-        if xv * xv + yv * yv > 1.0e12 {
+        if xv * xv + yv * yv > ref_escape2(formula) {
             break;
         }
     }
@@ -1485,15 +1503,13 @@ fn orbit_length_bf_recorded(
     (n, samples)
 }
 
-/// Binomial rows for the `z^k + c` δ-step, `k = 2..=5` (`BINOM[k][j]` = C(k, j)).
-const BINOM: [[f64; 6]; 6] = [
-    [0., 0., 0., 0., 0., 0.],
-    [0., 0., 0., 0., 0., 0.],
-    [1., 2., 1., 0., 0., 0.],
-    [1., 3., 3., 1., 0., 0.],
-    [1., 4., 6., 4., 1., 0.],
-    [1., 5., 10., 10., 5., 1.],
-];
+/// The highest power the δ-step scorer takes (the Multibrot powers run to 8).
+const SCORE_POWER_MAX: usize = 8;
+
+/// `C(k, j)` for the `z^k + c` δ-step, `k ≤` [`SCORE_POWER_MAX`]: small integers, exact in `f64`.
+fn binom(k: usize, j: usize) -> f64 {
+    (0..j).fold(1.0, |acc, i| acc * (k - i) as f64 / (i + 1) as f64)
+}
 
 /// How many steps past its FIRST REBASE a perturbation-scored candidate may keep walking
 /// before its score is DISTRUSTED and the candidate falls back to a full bignum walk. In
@@ -1548,7 +1564,8 @@ fn perturb_orbit_length(
     rebases: &mut u32,
 ) -> Option<u32> {
     let k = power as usize;
-    debug_assert!((2..=5).contains(&k), "δ-step table covers z^2..z^5");
+    debug_assert!((2..=SCORE_POWER_MAX).contains(&k), "δ-step covers z^2..z^8");
+    let escape2 = ref_escape2_of_degree(f64::from(power));
     let last = orbit.len() - 1; // index of the reference's final (escaping or capped) sample
     debug_assert!(last >= 1, "a phase-1 survivor's orbit has at least one step");
     let one = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
@@ -1564,14 +1581,14 @@ fn perturb_orbit_length(
         }
         // δ-step at Zₘ: (Z+δ)^k − Z^k + δc = Σ_{j=1..k} C(k,j)·Z^{k−j}·δ^j + δc.
         let z = orbit[m];
-        let mut zp = [one; 5]; // Z^0 .. Z^{k−1}
+        let mut zp = [one; SCORE_POWER_MAX]; // Z^0 .. Z^{k−1}
         for j in 1..k {
             zp[j] = zp[j - 1] * z;
         }
         let mut acc = CFloatExp::ZERO;
         let mut dpow = dz; // δ^j
         for j in 1..=k {
-            acc = acc + (zp[k - j] * dpow).mul_f64(BINOM[k][j]);
+            acc = acc + (zp[k - j] * dpow).mul_f64(binom(k, j));
             if j < k {
                 dpow = dpow * dz;
             }
@@ -1581,7 +1598,7 @@ fn perturb_orbit_length(
         n += 1;
         let zf = orbit[m] + dz;
         let (xf, yf) = (zf.re.to_f64(), zf.im.to_f64());
-        if xf * xf + yf * yf > 1.0e12 {
+        if xf * xf + yf * yf > escape2 {
             return Some(n);
         }
         let z2 = zf.re * zf.re + zf.im * zf.im;
@@ -2295,8 +2312,7 @@ pub fn naive_dwell_bf(
 /// `Z₀ = 0`, `c` = the point). It is the point's OWN orbit in arbitrary precision
 /// ([`reference_orbit`]), scanned for the first sample past `bailout2` — no perturbation, no
 /// rebasing, no BLA, so it can judge a perturbation render of any family. The smooth count takes
-/// the formula's degree as its log base, as the shader's `power_f` does (Multibrot 3/4/5 = 3/4/5,
-/// every other family 2).
+/// the formula's degree as its log base, as the shader's `power_f` does ([`formula::power`]).
 pub fn formula_dwell(
     cx: &BigFloat,
     cy: &BigFloat,
@@ -2307,12 +2323,7 @@ pub fn formula_dwell(
 ) -> Option<(u32, f32)> {
     let zero = bf(0.0, p);
     let (orbit, len) = reference_orbit(&zero, &zero, cx, cy, formula, max, p);
-    let power: f64 = match formula {
-        1 => 3.0,
-        2 => 4.0,
-        3 => 5.0,
-        _ => 2.0,
-    };
+    let power = f64::from(formula::power(formula));
     for (n, s) in orbit.iter().enumerate().take(len as usize).skip(1) {
         let (x, y) = sample_xy(s);
         let m2 = x * x + y * y;

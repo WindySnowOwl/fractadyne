@@ -48,6 +48,22 @@ pub(crate) enum FractalKind {
     Buffalo,
     Phoenix,
     Newton,
+    // The power families (design/power-families.md): ids 10–24, `formula::family`.
+    Multibrot6,
+    Multibrot7,
+    Multibrot8,
+    BurningShip3,
+    BurningShip4,
+    BurningShip5,
+    Tricorn3,
+    Tricorn4,
+    Tricorn5,
+    Celtic3,
+    Celtic4,
+    Celtic5,
+    Buffalo3,
+    Buffalo4,
+    Buffalo5,
     /// The session's custom formula (`FractadyneApp::custom`, design/custom-formulas.md): its step
     /// comes from a generated shader module. Last, and outside [`FractalKind::ALL`], which lists the
     /// built-in families.
@@ -72,10 +88,36 @@ pub(crate) struct FractalSpec {
     pub(crate) info: FractalInfo,
 }
 
+const MULTIBROT_REF: &str = "https://en.wikipedia.org/wiki/Multibrot_set";
+const SHIP_REF: &str = "https://en.wikipedia.org/wiki/Burning_Ship_fractal";
+const TRICORN_REF: &str = "https://en.wikipedia.org/wiki/Tricorn_(mathematics)";
+const CELTIC_REF: &str = "https://paulbourke.net/fractals/burnship/";
+
+/// A power family's row: deep zoom and a Julia form, as every one has.
+const fn power_spec(
+    kind: FractalKind,
+    name: &'static str,
+    formula_id: u32,
+    default_center: (f64, f64),
+    formula: &'static str,
+    about: &'static str,
+    reference: &'static str,
+) -> FractalSpec {
+    FractalSpec {
+        kind,
+        name,
+        formula_id,
+        default_center,
+        supports_julia: true,
+        supports_perturbation: true,
+        info: FractalInfo { formula, about, reference },
+    }
+}
+
 impl FractalKind {
     /// The BUILT-IN families, in order: what the pickers list and the benchmarks sweep.
     /// [`FractalKind::Custom`] is not among them — it has no step of its own until the user writes one.
-    pub(crate) const ALL: [FractalKind; 10] = [
+    pub(crate) const ALL: [FractalKind; 25] = [
         FractalKind::Mandelbrot,
         FractalKind::Multibrot3,
         FractalKind::Multibrot4,
@@ -86,6 +128,21 @@ impl FractalKind {
         FractalKind::Buffalo,
         FractalKind::Phoenix,
         FractalKind::Newton,
+        FractalKind::Multibrot6,
+        FractalKind::Multibrot7,
+        FractalKind::Multibrot8,
+        FractalKind::BurningShip3,
+        FractalKind::BurningShip4,
+        FractalKind::BurningShip5,
+        FractalKind::Tricorn3,
+        FractalKind::Tricorn4,
+        FractalKind::Tricorn5,
+        FractalKind::Celtic3,
+        FractalKind::Celtic4,
+        FractalKind::Celtic5,
+        FractalKind::Buffalo3,
+        FractalKind::Buffalo4,
+        FractalKind::Buffalo5,
     ];
 
     /// The single source of truth for every family's app-side metadata. Row order MUST match the
@@ -229,6 +286,37 @@ impl FractalKind {
                 reference: "https://en.wikipedia.org/wiki/Newton_fractal",
             },
         },
+        // The power families (design/power-families.md): every one deep-zooms and has a Julia form.
+        power_spec(FractalKind::Multibrot6, "Multibrot 6", 10, (0.0, 0.0), "z -> z^6 + c",
+            "Multibrot at power 6: fivefold symmetry.", MULTIBROT_REF),
+        power_spec(FractalKind::Multibrot7, "Multibrot 7", 11, (0.0, 0.0), "z -> z^7 + c",
+            "Multibrot at power 7: sixfold symmetry, the bulbs thinning towards a circle.", MULTIBROT_REF),
+        power_spec(FractalKind::Multibrot8, "Multibrot 8", 12, (0.0, 0.0), "z -> z^8 + c",
+            "Multibrot at power 8: sevenfold symmetry.", MULTIBROT_REF),
+        power_spec(FractalKind::BurningShip3, "Burning Ship 3", 13, (0.0, 0.0), "z -> (|Re z| + i|Im z|)^3 + c",
+            "The Burning Ship at power 3: the absolute values are taken, then cubed.", SHIP_REF),
+        power_spec(FractalKind::BurningShip4, "Burning Ship 4", 14, (0.0, 0.0), "z -> (|Re z| + i|Im z|)^4 + c",
+            "The Burning Ship at power 4.", SHIP_REF),
+        power_spec(FractalKind::BurningShip5, "Burning Ship 5", 15, (0.0, 0.0), "z -> (|Re z| + i|Im z|)^5 + c",
+            "The Burning Ship at power 5.", SHIP_REF),
+        power_spec(FractalKind::Tricorn3, "Tricorn 3", 16, (0.0, 0.0), "z -> conj(z)^3 + c",
+            "The Tricorn (Mandelbar) at power 3: fourfold symmetry.", TRICORN_REF),
+        power_spec(FractalKind::Tricorn4, "Tricorn 4", 17, (0.0, 0.0), "z -> conj(z)^4 + c",
+            "The Tricorn at power 4: fivefold symmetry.", TRICORN_REF),
+        power_spec(FractalKind::Tricorn5, "Tricorn 5", 18, (0.0, 0.0), "z -> conj(z)^5 + c",
+            "The Tricorn at power 5: sixfold symmetry.", TRICORN_REF),
+        power_spec(FractalKind::Celtic3, "Celtic 3", 19, (0.0, 0.0), "Re -> |Re(z^3)| + cx;  Im -> Im(z^3) + cy",
+            "The Celtic fold at power 3: the absolute value of the real part of z^3.", CELTIC_REF),
+        power_spec(FractalKind::Celtic4, "Celtic 4", 20, (0.0, 0.0), "Re -> |Re(z^4)| + cx;  Im -> Im(z^4) + cy",
+            "The Celtic fold at power 4.", CELTIC_REF),
+        power_spec(FractalKind::Celtic5, "Celtic 5", 21, (0.0, 0.0), "Re -> |Re(z^5)| + cx;  Im -> Im(z^5) + cy",
+            "The Celtic fold at power 5.", CELTIC_REF),
+        power_spec(FractalKind::Buffalo3, "Buffalo 3", 22, (0.0, 0.0), "Re -> |Re(z^3)| + cx;  Im -> |Im(z^3)| + cy",
+            "The Buffalo at power 3: the absolute values of both parts of z^3.", CELTIC_REF),
+        power_spec(FractalKind::Buffalo4, "Buffalo 4", 23, (0.0, 0.0), "Re -> |Re(z^4)| + cx;  Im -> |Im(z^4)| + cy",
+            "The Buffalo at power 4.", CELTIC_REF),
+        power_spec(FractalKind::Buffalo5, "Buffalo 5", 24, (0.0, 0.0), "Re -> |Re(z^5)| + cx;  Im -> |Im(z^5)| + cy",
+            "The Buffalo at power 5.", CELTIC_REF),
         // The one row whose id is not its index: a custom formula renders under
         // `formula::CUSTOM`, which no built-in branch of the shader matches.
         FractalSpec {
@@ -285,6 +373,21 @@ impl FractalKind {
 
     pub(crate) fn info(self) -> FractalInfo {
         self.spec().info
+    }
+
+    /// The power families by shape, each row's kinds in power order: what the pickers show as one
+    /// line per family ("Burning Ship  3 4 5") rather than fifteen more rows.
+    pub(crate) const POWER_GROUPS: [(&'static str, [FractalKind; 3]); 5] = [
+        ("Multibrot", [FractalKind::Multibrot6, FractalKind::Multibrot7, FractalKind::Multibrot8]),
+        ("Burning Ship", [FractalKind::BurningShip3, FractalKind::BurningShip4, FractalKind::BurningShip5]),
+        ("Tricorn", [FractalKind::Tricorn3, FractalKind::Tricorn4, FractalKind::Tricorn5]),
+        ("Celtic", [FractalKind::Celtic3, FractalKind::Celtic4, FractalKind::Celtic5]),
+        ("Buffalo", [FractalKind::Buffalo3, FractalKind::Buffalo4, FractalKind::Buffalo5]),
+    ];
+
+    /// Whether this is one of the power families (listed by [`Self::POWER_GROUPS`]), and its power.
+    pub(crate) fn power_family(self) -> Option<u32> {
+        fractadyne_core::formula::family(self.formula_id()).map(|(_, d)| d)
     }
 
     /// What this family supports beyond plain iteration (series approximation, BLA, resumable
@@ -360,6 +463,22 @@ mod tests {
     fn only_the_family_without_deep_zoom_says_so() {
         assert!(FractalKind::Newton.menu_hint().contains("no deep zoom"));
         assert!(!FractalKind::Mandelbrot.menu_hint().contains("no deep zoom"));
+    }
+
+    /// The pickers list every power family through `POWER_GROUPS` and every other one by itself:
+    /// together, each built-in exactly once.
+    #[test]
+    fn the_power_groups_list_each_power_family_once() {
+        let grouped: Vec<FractalKind> = FractalKind::POWER_GROUPS.iter().flat_map(|(_, ks)| *ks).collect();
+        let singles = FractalKind::ALL.iter().filter(|k| k.power_family().is_none()).count();
+        assert_eq!(grouped.len() + singles, FractalKind::ALL.len());
+        for (label, kinds) in FractalKind::POWER_GROUPS {
+            for k in kinds {
+                let d = k.power_family().expect("a power family");
+                assert_eq!(k.name(), format!("{label} {d}"), "the row's label and power name the family");
+                assert_eq!(fractadyne_core::formula::power(k.formula_id()), d);
+            }
+        }
     }
 
     /// Names are used as stable tokens in view files; they must round-trip and be unique.

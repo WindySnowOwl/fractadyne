@@ -426,6 +426,17 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
         "Absolute value of both parts of z²: real = |x²−y²| + cx, imag = |2xy| + cy — a cross \
          between Celtic and Burning Ship.",
     );
+    help_sub(ui, "Higher powers");
+    help_p(
+        ui,
+        "Multibrot 6, 7 and 8 (z^d + c), and Burning Ship, Tricorn, Celtic and Buffalo at powers \
+         3, 4 and 5: the same folds at a higher power. Burning Ship d takes the absolute values of \
+         z's parts and then the power; Tricorn d conjugates first; Celtic d and Buffalo d fold the \
+         real part (and, for Buffalo, the imaginary part) of z^d. The Fractal menu and the \
+         dropdown list them one family to a row (\"Burning Ship  3 4 5\"). Each deep-zooms as its \
+         power-2 sibling does; Multibrot 8 escapes at radius 128 instead of 256, where its next \
+         step would leave single-precision range.",
+    );
     help_sub(ui, "Phoenix");
     help_p(
         ui,
@@ -455,8 +466,10 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
          they use a sign-aware perturbation; this now runs at floatexp range too, deep-zooming far \
          past the old ~1e28× df32 limit (rare speckle near the abs folds awaits multi-reference \
          glitch correction). Phoenix uses a two-term perturbation and also deep-zooms at floatexp \
-         range (without SA/BLA, so heavier than Mandelbrot). Only Newton and custom formulas use \
-         the direct path, sharp to ~1e6×.",
+         range (without SA/BLA, so heavier than Mandelbrot). The higher powers deep-zoom the same \
+         way, each power's perturbation following its own chain of squarings, without series \
+         approximation or BLA for now. Only Newton uses the direct path, sharp to ~1e6×; custom \
+         formulas deep-zoom unless the Custom formulas section below says otherwise.",
     );
     help_sub(ui, "Custom formulas");
     help_p(

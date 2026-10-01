@@ -188,6 +188,46 @@ impl Fractal for Buffalo {
     }
 }
 
+/// `z^d` by the IR interpreter's chain (`ir::Machine`, `PowI`): square, and multiply by `z` on each
+/// set bit below the top one, most significant first — so this, the bignum reference and the IR
+/// agree bit for bit (`z⁶ = ((z²)·z)²`, `z⁷ = (((z²)·z)²)·z`, `z⁸ = ((z²)²)²`).
+#[inline]
+fn cpow<F: Field>(x: &F, y: &F, d: u32, ctx: F::Ctx) -> (F, F) {
+    let (mut rx, mut ry) = (x.clone(), y.clone());
+    for bit in (0..31 - d.leading_zeros()).rev() {
+        (rx, ry) = csqr(&rx, &ry, ctx);
+        if (d >> bit) & 1 == 1 {
+            (rx, ry) = cmul(&rx, &ry, x, y, ctx);
+        }
+    }
+    (rx, ry)
+}
+
+/// The power families (design/power-families.md): a fold, `z^d`, a fold, `+ c`.
+struct PowerFamily {
+    shape: formula::Shape,
+    d: u32,
+}
+
+impl Fractal for PowerFamily {
+    #[inline]
+    fn step<F: Field>(&self, zx: &F, zy: &F, cx: &F, cy: &F, ctx: F::Ctx) -> (F, F) {
+        use formula::Shape;
+        let (rx, ry) = match self.shape {
+            Shape::BurningShip => cpow(&zx.fabs(), &zy.fabs(), self.d, ctx),
+            _ => cpow(zx, zy, self.d, ctx),
+        };
+        match self.shape {
+            // conj(z)^d = conj(z^d), and the IR's sign flags make them the same bits: its
+            // `conj` only flags the imaginary part, so the chain computes z^d's magnitudes.
+            Shape::Tricorn => (rx.fadd(cx, ctx), cy.fsub(&ry, ctx)),
+            Shape::Celtic => (rx.fabs().fadd(cx, ctx), ry.fadd(cy, ctx)),
+            Shape::Buffalo => (rx.fabs().fadd(cx, ctx), ry.fabs().fadd(cy, ctx)),
+            Shape::Multibrot | Shape::BurningShip => (rx.fadd(cx, ctx), ry.fadd(cy, ctx)),
+        }
+    }
+}
+
 /// Dispatch to a migrated family's generic step, or `None` for families still on the enum path.
 /// PoC scope: `{Mandelbrot, Multibrot3/4/5, BurningShip}`. `None` keeps every other family's
 /// numeric path exactly as it was (Tricorn / Celtic / Buffalo in the `match`, Phoenix / Newton in
@@ -210,7 +250,10 @@ pub(crate) fn trait_step<F: Field>(
         formula::TRICORN => Tricorn.step(zx, zy, cx, cy, ctx),
         formula::CELTIC => Celtic.step(zx, zy, cx, cy, ctx),
         formula::BUFFALO => Buffalo.step(zx, zy, cx, cy, ctx),
-        _ => return None,
+        f => {
+            let (shape, d) = formula::family(f)?;
+            PowerFamily { shape, d }.step(zx, zy, cx, cy, ctx)
+        }
     })
 }
 

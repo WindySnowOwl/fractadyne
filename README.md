@@ -27,8 +27,8 @@ A fractal explorer for Windows and Linux in Rust (wgpu + egui/eframe), built for
   **self-paces** when the pipeline lags (the dive slows instead of blurring), and an adaptive
   motion-resolution controller keeps detail refreshes within a vsync (floor configurable —
   Rendering → *Min motion resolution*).
-- **Fractal variety** — Mandelbrot, Multibrot 3/4/5, Tricorn, Burning Ship, Celtic,
-  Buffalo, Phoenix, Newton — each with an info panel; Julia mode for any family.
+- **Fractal variety** — Mandelbrot, Multibrot 3–8, Tricorn, Burning Ship, Celtic and
+  Buffalo at powers 2–5, Phoenix, Newton — each with an info panel; Julia mode for any family.
 - **Dual linked view** — Mandelbrot ↔ Julia, with click-to-pin Julia `c`.
 - **Coloring** — preset palettes, cycle/offset, animated cycling, and harmonious
   randomized morphing gradients. Six methods (smooth, stripe, triangle-inequality, orbit trap,

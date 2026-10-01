@@ -5578,6 +5578,9 @@ struct DialogState {
     pending_view: Option<PendingView>,
     /// "Accelerated build" dialog open (Help menu).
     accelerated_open: bool,
+    /// Open the toolbar's family dropdown on its next draw (the UI test's `fractal-dropdown`
+    /// step: a combo box's popup id comes from its parent `Ui`, so it can only be opened there).
+    open_fractal_dropdown: bool,
     /// Keyboard/help overlay window open.
     help_open: bool,
     /// Selected Help section index.
@@ -6747,6 +6750,7 @@ impl FractadyneApp {
                     && !s.crash_prompt_disabled
                     && !launched_for_a_task,
                 accelerated_open: false,
+                open_fractal_dropdown: false,
                 help_open: false,
                 help_section: 0,
                 snapshot_choice_open: false,

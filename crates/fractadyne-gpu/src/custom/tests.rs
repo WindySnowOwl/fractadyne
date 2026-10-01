@@ -71,7 +71,8 @@ fn every_built_in_step_generates_a_valid_module_with_its_own_floatexp_paths() {
         assert_eq!(s.contains("fn custom_fphase0("), id != f::PHOENIX);
         built += 1;
     }
-    assert_eq!(built, 10);
+    // The ten older families and the fifteen power families (design/power-families.md).
+    assert_eq!(built, 25);
 }
 
 #[test]
