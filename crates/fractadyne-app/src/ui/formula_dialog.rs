@@ -27,6 +27,8 @@ pub(crate) struct FormulaDialog {
     pub(crate) error: Option<String>,
     /// The keypad's open tab.
     pub(crate) tab: crate::ui::formula_keypad::Tab,
+    /// The text field's completion list.
+    pub(crate) completion: crate::ui::formula_editor::Completion,
     /// An applied formula whose pipelines are compiling off the render thread. The view keeps
     /// showing what it shows until they are ready, then switches (`poll_formula_compile`).
     pub(crate) pending: Option<PendingFormula>,
@@ -50,6 +52,7 @@ impl Default for FormulaDialog {
             params: std::array::from_fn(|_| ("0".to_string(), "0".to_string())),
             error: None,
             tab: Default::default(),
+            completion: Default::default(),
             pending: None,
             save_name: String::new(),
         }
@@ -211,18 +214,19 @@ impl FractadyneApp {
                     });
                 });
                 let text_id = egui::Id::new("formula_source");
-                ui.add(
-                    egui::TextEdit::multiline(&mut self.formula_dialog.source)
-                        .id(text_id)
-                        .font(egui::TextStyle::Monospace)
-                        .desired_rows(4)
-                        .desired_width(f32::INFINITY)
-                        .hint_text("z = z^2 + c"),
+                crate::ui::formula_editor::source_field(
+                    ui,
+                    text_id,
+                    &mut self.formula_dialog.source,
+                    4,
+                    "z = z^2 + c",
+                    &mut self.formula_dialog.completion,
                 );
                 ui.label(
                     egui::RichText::new(
                         "Type, or use the keypad — it holds every name the formula language knows. \
-                         Statements are separated by a new line or a comma; ; starts a comment.",
+                         Names complete as you type (Tab). Statements are separated by a new line or a \
+                         comma; ; starts a comment.",
                     )
                     .weak()
                     .small(),

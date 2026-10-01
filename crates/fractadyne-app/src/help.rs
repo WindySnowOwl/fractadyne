@@ -484,6 +484,15 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
     );
     help_p(
         ui,
+        "In the formula field, parentheses take a colour per nesting level; the pair next to the \
+         cursor is highlighted, and one without a partner is shown in red (a comment's do not \
+         count, as the parser ignores them). Names complete as you type: after two letters a \
+         list offers the functions, names and your own variables that begin so. Up and Down \
+         choose, Tab or Enter takes one (a function comes with its opening parenthesis), Esc \
+         closes the list, and Enter after a name typed in full still starts a new line.",
+    );
+    help_p(
+        ui,
         "Numbers in a formula (0.1, 1/3, pi, the parameters) are read as double-precision values, \
          about 16 digits, and the deep reference orbit iterates with exactly those values. Two \
          formulas that are equal on paper can therefore differ deep down: 0.1*z multiplies by the \

@@ -84,6 +84,11 @@ enum Screen {
     /// switched to exactly that formula, and no frame of the step took anywhere near the ~0.8 s the
     /// compile costs on the render thread.
     FormulaApplyAsync,
+    /// The formula field's parentheses: three depths, one inside a comment (dimmed, not counted), one
+    /// unmatched (error colour), and the pair at the cursor highlighted.
+    FormulaParens,
+    /// The formula field completing a name: `co` typed at the end, its list open.
+    FormulaComplete,
     /// The formula library window, seeded in memory: a parameterized formula SHOWING (its row
     /// marked), a two-statement one, one that does not read in this version (its reason in red), and
     /// a name long enough to need truncating.
@@ -714,6 +719,8 @@ fn build_steps() -> Vec<Step> {
         screen("formula-error", Screen::FormulaError),
         screen("formula-functions", Screen::FormulaFunctions),
         screen("formula-apply-async", Screen::FormulaApplyAsync),
+        screen("formula-parens", Screen::FormulaParens),
+        screen("formula-complete", Screen::FormulaComplete),
         screen("formula-library", Screen::FormulaLibrary),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
         live("live-direct-1e2", 2.0),
@@ -1074,6 +1081,7 @@ impl FractadyneApp {
         // modes, which a custom formula (direct only) would fail. Leave it with the window.
         self.formula_dialog.open = false;
         self.formula_dialog.tab = Default::default();
+        self.formula_dialog.completion = Default::default();
         self.formula_library = Default::default();
         if self.fractal == crate::FractalKind::Custom {
             self.set_fractal(crate::FractalKind::Mandelbrot);
@@ -1415,6 +1423,21 @@ impl FractadyneApp {
                     }
                     Err(e) => self.formula_dialog.error = Some(e),
                 }
+            }
+            Screen::FormulaParens | Screen::FormulaComplete => {
+                let parens = matches!(s, Screen::FormulaParens);
+                let src = if parens {
+                    "t = sqr((z + p1)*(z - c)) ; a (comment)\nz = flip(abs(t)) + (c"
+                } else {
+                    "t = sqr(z)\nz = t*co"
+                };
+                self.open_formula_dialog();
+                self.formula_dialog.source = src.into();
+                // The cursor just past `sqr(…)`'s closing parenthesis, or at the end after `co`.
+                let at = if parens { src.find("))").map_or(0, |i| i + 2) } else { src.chars().count() };
+                let id = egui::Id::new("formula_source");
+                crate::ui::formula_editor::store_cursor(ctx, id, at);
+                ctx.memory_mut(|m| m.request_focus(id));
             }
             Screen::FormulaLibrary => {
                 // In memory only, as the gradient screen seeds its library: nothing is saved.

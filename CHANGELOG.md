@@ -76,6 +76,9 @@ Changes after 0.3.0-beta.1:
     on at about single precision, so deep views straddling that line show noise along it.
     Numbers in a formula are doubles (about 16 digits), so `0.1*z` and `z/10` are different
     fractals past about 1e15×; Help says which is which.
+  - **Editor (unreleased):** in the formula field, parentheses are coloured by nesting level,
+    the pair at the cursor is highlighted and an unmatched one is red; after two letters a list
+    completes the language's names and the formula's own variables (Tab or Enter; Esc closes it).
   - **Library (unreleased):** the formula dialog's Save to library keeps a formula and its
     parameters under a name, and Fractal ▸ Formula library… applies, edits, exports and deletes
     them. Import adds a formula file's formulas without replacing any: one already saved is

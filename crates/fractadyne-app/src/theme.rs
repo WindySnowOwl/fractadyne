@@ -27,6 +27,26 @@ pub(crate) const OK_LIGHT: egui::Color32 = egui::Color32::from_rgb(0x1B, 0x6B, 0
 pub(crate) const DANGER_DARK: egui::Color32 = egui::Color32::from_rgb(0xF0, 0x79, 0x6A);
 pub(crate) const DANGER_LIGHT: egui::Color32 = egui::Color32::from_rgb(0xB0, 0x20, 0x20);
 
+/// The formula editor's parentheses by nesting depth (a fifth level takes the first colour again):
+/// amber, blue, violet, green (teal in the light theme), each at the body-text floor (4.5:1) on the
+/// text field's backing (`Palette::window`) and far enough from the text colour and from each other
+/// to be told apart — `theme_tests` holds them to both; its first run turned down a violet too near
+/// the dark text and a green too near the light text. The pair at the cursor is drawn in the TEXT
+/// colour on the hover fill instead: amber on that fill is 3.97:1 in the dark theme.
+pub(crate) const PAREN_DARK: [egui::Color32; 4] =
+    [rgb(0xE0, 0xA0, 0x30), rgb(0x6C, 0xB6, 0xFF), rgb(0xB8, 0x8A, 0xF0), rgb(0x7F, 0xD3, 0x9A)];
+pub(crate) const PAREN_LIGHT: [egui::Color32; 4] =
+    [rgb(0x85, 0x5C, 0x0C), rgb(0x1F, 0x5F, 0xAD), rgb(0x7A, 0x3E, 0xB1), rgb(0x00, 0x79, 0x6B)];
+
+/// The active theme's [`PAREN_DARK`] or [`PAREN_LIGHT`].
+pub(crate) fn paren_colors(ctx: &egui::Context) -> [egui::Color32; 4] {
+    if ctx.style().visuals.dark_mode {
+        PAREN_DARK
+    } else {
+        PAREN_LIGHT
+    }
+}
+
 /// Linear RGBA interpolation between two colors (`t` in 0..1).
 pub(crate) fn lerp_color(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
     let t = t.clamp(0.0, 1.0);

@@ -75,6 +75,28 @@ fn theme_contrast_meets_minimum() {
 }
 
 
+/// The formula editor's depth-coloured parentheses are TEXT on the text field's backing, so they get
+/// the body-text floor there; and they exist to be told apart, from each other and from the text
+/// around them.
+#[test]
+fn formula_parentheses_read_on_the_text_field_and_differ() {
+    for (name, p, colours) in [("dark", Palette::dark(), PAREN_DARK), ("light", Palette::light(), PAREN_LIGHT)] {
+        let dist = |a: egui::Color32, b: egui::Color32| {
+            (a.r() as i32 - b.r() as i32).abs() + (a.g() as i32 - b.g() as i32).abs() + (a.b() as i32 - b.b() as i32).abs()
+        };
+        for (i, &c) in colours.iter().enumerate() {
+            let r = contrast_ratio(c, p.window);
+            assert!(r >= 4.5, "{name}: the depth-{i} parenthesis on the text field is {r:.2}:1");
+            assert!(dist(c, p.text) >= 120, "{name}: depth {i} is too close to the text colour");
+            for (j, &d) in colours.iter().enumerate().skip(i + 1) {
+                assert!(dist(c, d) >= 120, "{name}: depths {i} and {j} are too alike ({})", dist(c, d));
+            }
+        }
+        // The pair at the cursor: text on the hover fill.
+        assert!(contrast_ratio(p.text, p.hover) >= 4.5, "{name}: the highlighted pair");
+    }
+}
+
 /// ⭐⭐**The affirmative green and the destructive red have to survive a BUTTON, not a panel.**
 /// A check that vanishes when you press the button it is on is worse than no check at all, so this
 /// measures both against every surface either theme ever draws a widget on — including the pressed
