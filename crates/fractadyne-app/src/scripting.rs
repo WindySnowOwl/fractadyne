@@ -579,6 +579,29 @@ struct KeyframeFile {
     orbit_re: Option<f64>,
     #[serde(default)]
     orbit_im: Option<f64>,
+    // --- L-systems (with `fractal = "L-system"`; inherited forward) ---
+    /// The L-system shown: a library name (`"Heighway dragon"`) or the system's text.
+    #[serde(default)]
+    lsystem: Option<String>,
+    /// An L-system's order: a number fixes it, `"auto"` lets it follow the zoom (the default).
+    #[serde(default)]
+    order: Option<NumOrStr>,
+    /// An L-system's angle, degrees — INTERPOLATED along a glide, so the curve morphs as it turns.
+    #[serde(default)]
+    angle: Option<f64>,
+    /// How much of an L-system is drawn, 0 to 1 — INTERPOLATED, so the curve draws itself on.
+    #[serde(default)]
+    draw: Option<f64>,
+}
+
+/// A keyframe's L-system state, inherited forward: the system (`None`: the one shown), its order
+/// (`None`: it follows the zoom), its angle (`None`: the system's), how much of it is drawn.
+#[derive(Clone, Default)]
+pub(crate) struct LsTour {
+    pub(crate) system: Option<std::sync::Arc<fractadyne_core::lsystem::LSystem>>,
+    pub(crate) order: Option<u32>,
+    pub(crate) angle: Option<f64>,
+    pub(crate) draw: Option<f32>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -713,6 +736,10 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
             SchemaField { name: "minimap", ty: "bool", default: "(inherit)", doc: "Show the minimap overview overlay (live playback only; offline renders ignore it). The viewer's own setting is restored when the tour ends." },
             SchemaField { name: "orbit_re", ty: "float", default: "(inherit)", doc: "The point whose orbit to draw, real part (both components required; interpolated)." },
             SchemaField { name: "orbit_im", ty: "float", default: "(inherit)", doc: "Orbit point imaginary part." },
+            SchemaField { name: "lsystem", ty: "string", default: "(inherit, else the one shown)", doc: "With fractal = \"L-system\": a library name (\"Heighway dragon\") or the system's text (a multi-line string). An L-system keyframe needs re, im and zoom in its own coordinates (any zoom, below 1x included) — Tools > Tour from current view writes them." },
+            SchemaField { name: "order", ty: "int or \"auto\"", default: "(inherit, else auto)", doc: "An L-system's order: a number fixes it; \"auto\" lets it follow the zoom. Stepped at the keyframe." },
+            SchemaField { name: "angle", ty: "float", default: "(inherit, else the system's)", doc: "An L-system's angle, degrees; interpolated, so the curve morphs as it turns." },
+            SchemaField { name: "draw", ty: "float", default: "(inherit, else 1)", doc: "How much of an L-system is drawn, 0 to 1, in the order the turtle draws it; interpolated, so the curve draws itself on." },
         ],
     },
     SchemaTable {
@@ -1229,6 +1256,8 @@ struct Kf {
     max_iter: Option<u32>,
     /// Index into `Playback::palettes` for this keyframe's coloring (interpolated along a glide).
     palette: Option<usize>,
+    /// The L-system state (angle and draw-on interpolated along a glide).
+    ls: LsTour,
 }
 
 /// The fully-resolved tour state at a moment in time: interpolated camera + the active keyframe's
@@ -1404,6 +1433,8 @@ pub(crate) struct Sampled {
     pub(crate) max_iter: Option<u32>,
     /// Coloring for this frame, when the script states one.
     pub(crate) palette: Option<PaletteApply>,
+    /// The L-system state this frame shows (when `fractal` is an L-system).
+    pub(crate) ls: LsTour,
 }
 
 /// Aggregates sampled while a benchmark tour plays.
@@ -1564,7 +1595,7 @@ impl Playback {
             }
         }
         let a = &self.kfs[i];
-        let mk = |cx, cy, lm, julia_c, orbit, max_iter, palette, dual_split| Sampled {
+        let mk = |cx, cy, lm, julia_c, orbit, max_iter, palette, dual_split, ls| Sampled {
             cx,
             cy,
             logmag: lm,
@@ -1579,6 +1610,7 @@ impl Playback {
             orbit,
             max_iter,
             palette,
+            ls,
         };
         // Holding at `a` (or past the final keyframe): return its state unchanged.
         if e <= a.at + a.hold || i + 1 >= n {
@@ -1587,7 +1619,7 @@ impl Playback {
                 TourPalette::Stops(s) => PaletteApply::Stops(s.clone()),
             });
             return mk(a.cx.clone(), a.cy.clone(), a.logmag, a.julia_c, a.orbit, a.max_iter, pal,
-                      a.dual_split);
+                      a.dual_split, a.ls.clone());
         }
         // Gliding a → b over its move window, with b's easing.
         let b = &self.kfs[i + 1];
@@ -1614,6 +1646,19 @@ impl Playback {
         let dual_split = match (a.dual_split, b.dual_split) {
             (Some(sa), Some(sb)) => Some(sa + (sb - sa) * ease as f32),
             (x, _) => x,
+        };
+        // An L-system's angle turns and its drawing advances with the glide (the curve morphing,
+        // the curve drawing itself on); its system and order change at the keyframe.
+        let ls = LsTour {
+            angle: match (a.ls.angle, b.ls.angle) {
+                (Some(x), Some(y)) => Some(x + (y - x) * ease),
+                (x, _) => x,
+            },
+            draw: match (a.ls.draw, b.ls.draw) {
+                (Some(x), Some(y)) => Some(x + (y - x) * ease as f32),
+                (x, _) => x,
+            },
+            ..a.ls.clone()
         };
         // Iteration budget: interpolate GEOMETRICALLY (in log space) — iteration cost grows with
         // depth like the zoom does, so a linear ramp would over-budget the whole first half of a
@@ -1664,7 +1709,7 @@ impl Playback {
                 fractadyne_core::lerp_bf(&a.cy, &b.cy, ease, p),
             )
         };
-        mk(cx, cy, lm, julia_c, orbit, max_iter, palette, dual_split)
+        mk(cx, cy, lm, julia_c, orbit, max_iter, palette, dual_split, ls)
     }
 
     /// Is the camera stationary at time `e` — inside a keyframe's hold, or past the final one?
@@ -2270,6 +2315,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
     let mut dual_split: Option<f32> = None;
     let mut minimap = false;
     let (mut max_iter, mut palette): (Option<u32>, Option<usize>) = (None, None);
+    let mut ls = LsTour::default();
     for (i, k) in sf.keyframe.iter().enumerate() {
         let id = k.id.clone().unwrap_or_else(|| format!("#{}", i + 1));
         let at = match k.t {
@@ -2313,11 +2359,9 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
         } else if let Some(z) = loc.and_then(|l| l.zoom.as_ref()) {
             zoom = Some(z.as_string());
         }
-        let logmag = match &zoom {
-            Some(z) => {
-                parse_zoom_log10(z).map_err(|e| format!("keyframe {id}: {e}"))?.max(0.0)
-                    * std::f64::consts::LN_10
-            }
+        // (log₁₀ of the magnification; clamped to 1× below for an escape-time family.)
+        let zoom_log10 = match &zoom {
+            Some(z) => parse_zoom_log10(z).map_err(|e| format!("keyframe {id}: {e}"))?,
             None => 0.0,
         };
         // Parse the centre at the DEEPEST depth the tour reaches (see `center_prec` above), not at
@@ -2391,6 +2435,51 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
                  formula dialog takes it"
             ));
         }
+        // 1× (4 units tall) frames every escape-time family whole, so less is never wanted there.
+        // An L-system's world is turtle steps — the dragon is ~1 across, a plant 100s — and its
+        // framing shot can need any zoom.
+        let logmag = if fractal == FractalKind::LSystem { zoom_log10 } else { zoom_log10.max(0.0) } * std::f64::consts::LN_10;
+        if fractal == FractalKind::LSystem && (center.is_none() || zoom.is_none()) {
+            return Err(format!(
+                "keyframe {id}: an L-system keyframe needs `re`, `im` and `zoom` (here or inherited) — \
+                 an L-system's coordinates are its own; Tools ▸ Tour from current view writes them"
+            ));
+        }
+        // An L-system: its system, order, angle and drawing (inherited forward).
+        if let Some(text) = &k.lsystem {
+            let system = match fractadyne_core::lsystem::library::find(text) {
+                Some(e) => e.system(),
+                None => fractadyne_core::lsystem::LSystem::parse(text),
+            }
+            .map_err(|e| format!("keyframe {id}: `lsystem` is neither a library name nor a system that reads: {e}"))?;
+            ls.system = Some(std::sync::Arc::new(system));
+        }
+        match &k.order {
+            Some(NumOrStr::Str(s)) if s.eq_ignore_ascii_case("auto") => ls.order = None,
+            Some(NumOrStr::Num(n)) if n.fract() == 0.0 && (0.0..=f64::from(fractadyne_core::lsystem::MAX_ORDER)).contains(n) => {
+                ls.order = Some(*n as u32)
+            }
+            Some(o) => {
+                return Err(format!(
+                    "keyframe {id}: order = {} — a whole number up to {}, or \"auto\" (it follows the zoom)",
+                    o.as_string(),
+                    fractadyne_core::lsystem::MAX_ORDER
+                ))
+            }
+            None => {}
+        }
+        if let Some(a) = k.angle {
+            if !(a.is_finite() && a.abs() <= 360.0) {
+                return Err(format!("keyframe {id}: angle = {a} — degrees, −360 to 360"));
+            }
+            ls.angle = Some(a);
+        }
+        if let Some(d) = k.draw {
+            if !d.is_finite() {
+                return Err(format!("keyframe {id}: draw = {d} — how much is drawn, 0 to 1"));
+            }
+            ls.draw = Some(d.clamp(0.0, 1.0) as f32);
+        }
         if let Some(j) = k.julia {
             julia = j;
         }
@@ -2459,6 +2548,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
             orbit,
             max_iter,
             palette,
+            ls: ls.clone(),
         });
     }
     let total = kfs.last().map(|k| k.at + k.hold).unwrap_or(0.0);
@@ -3220,6 +3310,7 @@ impl FractadyneApp {
             (max_iter as u64).saturating_mul(per_sample)
         }
         let mut low_mem_warned = false;
+        let mut ls_budget_warned = false;
         // Render ORDER. Sequential is the plain range; progressive is the temporal bisection
         // (keyframes first, then the largest gaps) — every frame still lands at its correct
         // `frame_%05d` index, so `--resume` and the final mp4 assembly are order-blind.
@@ -3281,6 +3372,10 @@ impl FractadyneApp {
             for &kfi in &kf_frames {
                 let t = if pb.total <= 0.0 { 0.0 } else { (kfi as f64 / fps).min(pb.total) };
                 let s = pb.sample(t);
+                // (An L-system's values are positions along it, depths, headings: not a range.)
+                if !s.fractal.is_escape_time() {
+                    continue;
+                }
                 self.install_tour_formula(&s);
                 self.fractal = s.fractal;
                 self.julia_mode = s.julia && s.fractal.supports_julia();
@@ -3326,9 +3421,13 @@ impl FractadyneApp {
             self.install_tour_formula(&s);
             self.fractal = s.fractal;
             self.julia_mode = s.julia && s.fractal.supports_julia();
-            self.dual = s.dual;
+            // (A family with no Julia set has no dual view, whatever an earlier keyframe said.)
+            self.dual = s.dual && s.fractal.supports_julia();
             if let Some(c) = s.julia_c {
                 self.julia_c = c;
+            }
+            if s.fractal == FractalKind::LSystem {
+                self.apply_tour_lsystem(&s.ls);
             }
             // Per-keyframe iteration budget + palette; fall back to the script-wide base. This is
             // what lets one script hold a 1.33× home view at a few thousand iterations and a 1e94×
@@ -3372,7 +3471,8 @@ impl FractadyneApp {
             // describe the successor's reference.
             pending_ref = None;
             let next_fi = order.get(pos + 1).copied();
-            if let (false, Some(nfi)) = (s.dual, next_fi) {
+            // (An L-system has no reference orbit to prefetch.)
+            if let (false, true, Some(nfi)) = (self.dual, s.fractal.is_escape_time(), next_fi) {
                 let t2 = if pb.total <= 0.0 { 0.0 } else { (nfi as f64 / fps).min(pb.total) };
                 let s2 = pb.sample(t2);
                 if !s2.dual && s2.fractal == s.fractal && s2.julia == s.julia && s2.julia_c == s.julia_c {
@@ -3422,7 +3522,17 @@ impl FractadyneApp {
                 fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)
                     .map_err(|e| format!("frame {fi}: {e}"))
             };
-            let (mut px, rw, rh) = if s.dual {
+            let (mut px, rw, rh) = if s.fractal == FractalKind::LSystem {
+                // An L-system: walked and drawn by its segment pass (`lsystem_view::export`).
+                self.viewport = fractadyne_core::Viewport::new(width as f64, height as f64);
+                self.viewport.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
+                let r = self.lsystem_tour_frame(device, queue, [width, height]).map_err(|e| format!("frame {fi}: {e}"))?;
+                if r.stopped && !ls_budget_warned {
+                    say("⚠ an L-system frame passed the 4,000,000-segment budget and is incomplete — fix its order lower");
+                    ls_budget_warned = true;
+                }
+                (r.pixels, r.width, r.height)
+            } else if self.dual {
                 // Side-by-side: Mandelbrot (left) | its Julia set (right). The split follows the
                 // script's `dual_split` (what the divider sets live), defaulting to half — before
                 // this the offline renderer hardcoded `width / 2`, so a rendered tour could not
@@ -3845,10 +3955,15 @@ impl FractadyneApp {
             self.julia_mode = s.julia && s.fractal.supports_julia();
             self.invalidate_refs();
         }
-        // Discrete overlays (dual view, Julia pin, orbits).
-        if self.dual != s.dual {
-            self.dual = s.dual;
+        // Discrete overlays (dual view, Julia pin, orbits). A family with no Julia set has no dual
+        // view, whatever an earlier keyframe said.
+        let dual = s.dual && s.fractal.supports_julia();
+        if self.dual != dual {
+            self.dual = dual;
             self.invalidate_refs();
+        }
+        if s.fractal == FractalKind::LSystem {
+            self.apply_tour_lsystem(&s.ls);
         }
         // The panel split is presentation, not geometry: each panel re-lays-out at its new width
         // and re-renders, but neither viewport's centre or zoom changes, so this must NOT
@@ -4607,6 +4722,9 @@ mod transition_tests;
 
 #[cfg(test)]
 mod formula_tests;
+
+#[cfg(test)]
+mod lsystem_tests;
 
 #[cfg(test)]
 mod schema_tests;

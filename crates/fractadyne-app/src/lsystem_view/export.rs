@@ -36,6 +36,9 @@ pub(crate) struct Rendered {
     pub(crate) height: u32,
     pub(crate) pixels: Vec<f32>,
     pub(crate) stopped: bool,
+    /// The deep tables and the built word it used (a tour keeps them for its next frame).
+    big: Option<Arc<BigTables>>,
+    ex: Option<Arc<Expansion>>,
 }
 
 impl Job {
@@ -112,7 +115,7 @@ impl Job {
         for a in pixels.iter_mut().skip(3).step_by(4) {
             *a = 1.0;
         }
-        Ok(Rendered { width: w, height: h, pixels, stopped: out.stats.stopped })
+        Ok(Rendered { width: w, height: h, pixels, stopped: out.stats.stopped, big: out.big, ex: out.ex })
     }
 
     /// A texel's colour: the screen colour pass's for an L-system.
@@ -181,6 +184,34 @@ impl FractadyneApp {
         // Contain (as `build_export_job`): the export's world span holds the window's, so a world
         // unit is `factor` times as many export pixels as screen pixels, inverted.
         let factor = vh.max(vw * f64::from(h) / f64::from(w)) / f64::from(h);
+        self.lsystem_job([w, h], factor)
+    }
+
+    /// A tour frame (scripting): the viewport, already the frame's size, as an image — keeping the
+    /// deep tables and built word it used for the next frame.
+    pub(crate) fn lsystem_tour_frame(
+        &mut self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        size: [u32; 2],
+    ) -> Result<Rendered, String> {
+        let (p, c) = (AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+        let job = self.lsystem_job(size, 1.0);
+        let r = job.render(device, queue, &p, &c)?;
+        let st = &mut self.lsystem;
+        if let Some(b) = &r.big {
+            st.big = Some((job.key.tables, b.clone()));
+        }
+        if let Some(x) = &r.ex {
+            st.expansion = Some((job.key.tables, job.key.order, x.clone()));
+        }
+        Ok(r)
+    }
+
+    /// The view walked at `size` pixels, a world unit `1 / factor` times as many of them as of the
+    /// screen's (the line width scaled with it), coloured and supersampled as the Export dialog says.
+    fn lsystem_job(&self, size: [u32; 2], factor: f64) -> Job {
+        let [w, h] = size;
         let st = &self.lsystem;
         let upp_log2 = self.viewport.units_per_pixel.log2() + factor.log2();
         let order = st.order_at(&self.viewport);

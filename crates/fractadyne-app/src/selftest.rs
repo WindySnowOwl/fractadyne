@@ -4733,6 +4733,60 @@ impl FractadyneApp {
                 threshold: "edge pixels only, ≤ 0.5%",
                 pass,
             });
+            // A tour of an L-system: "Tour from current view" of a plant zoomed in, read back by the
+            // tour reader — starting at the plant's framed home with its system, order and angle,
+            // ending at the view — and the end's frame drawn as the tour renderer draws it.
+            {
+                use std::f64::consts::{LN_10, LN_2};
+                let (fractal, viewport) = (self.fractal, self.viewport.clone());
+                self.fractal = FractalKind::LSystem;
+                if let Some(s) = library::find("Plant (ABOP 1.24a)").and_then(|e| e.system().ok()) {
+                    self.lsystem.set_system(s);
+                }
+                self.lsystem.set_angle(Some(30.0));
+                self.lsystem.fixed_order = Some(5);
+                self.viewport = fractadyne_core::Viewport::new(640.0, 360.0);
+                let ([hx, hy], home_l10) = self.lsystem_home_view();
+                // 16× in on the home view's centre: past "deep", so the tour recentres, then dives.
+                let want_log2 = home_l10 * std::f64::consts::LOG2_10 + 4.0;
+                let bf = |v: f64| fractadyne_core::BigFloat::from_f64(v, 128);
+                self.viewport.set_center_log2mag(bf(hx), bf(hy), want_log2);
+                let text = self.build_dive_script("", 4.0);
+                let (pass, result) = match crate::scripting::parse_tour_text(&text) {
+                    Err(e) => (false, format!("the tour does not parse: {e}")),
+                    Ok(pb) => {
+                        let (a, b) = (pb.sample(0.0), pb.sample(pb.total));
+                        let start = a.fractal == FractalKind::LSystem
+                            && a.ls.system.as_deref() == Some(&self.lsystem.system)
+                            && a.ls.order == Some(5)
+                            && a.ls.angle == Some(30.0)
+                            && (a.logmag / LN_10 - home_l10).abs() < 1e-6;
+                        let end = (b.logmag / LN_2 - want_log2).abs() < 1e-6;
+                        self.apply_tour_lsystem(&b.ls);
+                        self.viewport = fractadyne_core::Viewport::new(320.0, 180.0);
+                        self.viewport.set_center_log2mag(b.cx, b.cy, b.logmag / LN_2);
+                        let bg = self.interior_color();
+                        let lit = self.lsystem_tour_frame(device, queue, [320, 180]).map_or(0, |r| {
+                            r.pixels.chunks(4).filter(|p| (0..3).any(|k| (p[k] - bg[k]).abs() > 1e-3)).count()
+                        });
+                        (
+                            start && end && lit > 300,
+                            format!("start at the plant's home with its system, order and angle {start}; ends at the view {end}; the end's frame drew {lit} pixels"),
+                        )
+                    }
+                };
+                self.fractal = fractal;
+                self.viewport = viewport;
+                self.lsystem = crate::lsystem_view::LSystemState::default();
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "L-system",
+                    name: "a tour from an L-system view starts at its home and draws its end".into(),
+                    params: "ABOP 1.24a at 30°, order 5, 16× in: Tour from current view, read back".into(),
+                    result,
+                    threshold: "start, end, > 300 pixels drawn",
+                    pass,
+                });
+            }
         }
 
         // ---- series approximation engages for the Multibrot families ----

@@ -633,6 +633,44 @@ impl FractadyneApp {
         self.lsystem_frame(lsystem::bounds(&t, order, 1 << 21));
     }
 
+    /// The home view's centre and `log₁₀` magnification, without moving to it — what a tour that
+    /// starts framed starts from (Tools ▸ Tour from current view).
+    pub(crate) fn lsystem_home_view(&self) -> ([f64; 2], f64) {
+        let order = self.lsystem.order_for(0.0);
+        let sys = self.lsystem.drawn_system();
+        let bounds = match &sys.expanded {
+            Some(e) => lsystem::expand::bounds(&sys, &lsystem::expand::expand(&sys, e, order, lsystem::EXPAND_BUDGET)),
+            None => {
+                let t = &self.lsystem.tables;
+                let frame = lsystem::framing_order(t, 200_000.0);
+                let o = if self.lsystem.fixed_order.is_some() || !t.grows() { t.in_phase(order.min(frame)) } else { frame };
+                lsystem::bounds(t, o, 1 << 21)
+            }
+        };
+        let (w, h) = (self.viewport.width_px.max(1.0), self.viewport.height_px.max(1.0));
+        let (c, upp) = match bounds {
+            Some(b) => ([(b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5], ((b[2] - b[0]) / w).max((b[3] - b[1]) / h).max(1e-9) * 1.15),
+            None => ([0.0, 0.0], 4.0 / h),
+        };
+        (c, (fractadyne_core::Viewport::REFERENCE_HEIGHT / (upp * h)).log10())
+    }
+
+    /// A tour frame's L-system state (scripting): its system, order, angle and drawing. The panel's
+    /// animations stop — the tour drives them now.
+    pub(crate) fn apply_tour_lsystem(&mut self, t: &crate::scripting::LsTour) {
+        let st = &mut self.lsystem;
+        if let Some(s) = &t.system {
+            if st.system != **s {
+                st.set_system((**s).clone());
+            }
+        }
+        st.fixed_order = t.order;
+        st.set_angle(t.angle);
+        st.progress = t.draw.unwrap_or(1.0);
+        st.draw_anim = None;
+        st.angle_anim = None;
+    }
+
     /// Fit `bounds` (world units) to the canvas, with a margin.
     fn lsystem_frame(&mut self, bounds: Option<[f64; 4]>) {
         let size = [self.viewport.width_px, self.viewport.height_px];

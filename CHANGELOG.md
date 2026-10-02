@@ -93,7 +93,12 @@ Changes after 0.3.0-beta.1:
   `--shot … --svg FILE` writes one unattended. File ▸ Export image works for an L-system view: the
   picture on screen at the export's size — its order and line width the screen's, scaled — drawn
   in tiles at any size, supersampled, with the view embedded as for any export; `--shot … --image
-  FILE` writes one unattended. Not yet: tours of L-systems (design/lsystems.md).
+  FILE` writes one unattended. Tours show L-systems: a keyframe names the system (`lsystem`, a
+  library name or its text), its `order` (or "auto"), its `angle` and how much is `draw`n — the
+  angle and the drawing interpolate along a glide, so a tour can draw a curve on, morph it and
+  dive into it — and an L-system keyframe's zoom may go below 1× (its coordinates are its own).
+  Tools ▸ Tour from current view writes one from an L-system view, starting at its framed home;
+  `--render-tour` renders it, and it plays live.
 - **Conway's Game of Life and its relatives (not yet in a beta).** A new family under Fractal ▸
   Automata: Life-like cellular automata on an unbounded plane, stepped on the graphics card.
   Rules in B/S notation (Life, HighLife, Seeds and 19 more built in), Generations rules with
