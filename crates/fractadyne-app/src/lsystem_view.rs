@@ -258,6 +258,12 @@ impl LSystemState {
         order > t.max_depth || picture_px > t.f64_reach_log2()
     }
 
+    /// The bracket depth that colours as the palette's end at `order`: the most a branch can nest.
+    fn depth_scale(&self, order: u32) -> f64 {
+        let deepest = self.system.rules.iter().flatten().map(|p| nesting(&p.word)).max().unwrap_or(0);
+        f64::from(nesting(&self.system.axiom) + order * deepest).max(1.0)
+    }
+
     /// Whether a walk is running (the view should keep repainting until it lands).
     pub(crate) fn busy(&self) -> bool {
         self.job.is_some()
@@ -314,17 +320,13 @@ impl LSystemState {
         let done = Arc::new(AtomicBool::new(false));
         let id = self.next_id;
         self.next_id += 1;
-        let depth_scale = f64::from(
-            nesting(&self.system.axiom)
-                + key.order * self.system.rules.iter().flatten().map(|p| nesting(&p.word)).max().unwrap_or(0),
-        )
-        .max(1.0);
+        let depth_scale = self.depth_scale(key.order);
         let (r, d) = (result.clone(), done.clone());
         std::thread::Builder::new()
             .name("lsystem-walk".into())
             .spawn(move || {
                 let t0 = std::time::Instant::now();
-                let WalkOut { segments, triangles, stats, big, ex } = walk_segments(&system, &tables, big, ex, &key, depth_scale);
+                let WalkOut { segments, triangles, stats, big, ex, .. } = walk_segments(&system, &tables, big, ex, &key, depth_scale);
                 let ms = t0.elapsed().as_secs_f64() * 1e3;
                 if let Ok(mut slot) = r.lock() {
                     *slot = Some(Walked { key, segments: Arc::new(segments), triangles: Arc::new(triangles), id, stats, ms, big, ex });
@@ -342,6 +344,8 @@ impl LSystemState {
 struct WalkOut {
     segments: Vec<SegmentInstance>,
     triangles: Vec<TriangleInstance>,
+    /// The filled shapes' outlines (clipped to the view) and values, for SVG.
+    outlines: Vec<(Vec<[f32; 2]>, f32)>,
     stats: WalkStats,
     big: Option<Arc<BigTables>>,
     /// A parametric or context-sensitive system's word (built, or `ex` handed back).
@@ -363,7 +367,7 @@ fn walk_segments(
     let ex = sys.expanded.as_ref().map(|e| ex.unwrap_or_else(|| Arc::new(lsystem::expand::expand(sys, e, key.order, lsystem::EXPAND_BUDGET))));
     let depth_scale = ex.as_ref().map_or(depth_scale, |x| f64::from(x.max_brackets).max(1.0));
     let opts = WalkOptions { order: key.order, lod_px: LOD_PX, budget: BUDGET };
-    let (mut segments, mut triangles) = (Vec::new(), Vec::new());
+    let (mut segments, mut triangles, mut outlines) = (Vec::new(), Vec::new(), Vec::new());
     let value_of = |index: f64, span: f64, depth: u16, heading: f64, colour: i32, total: f64| {
         let value = match key.colouring {
             Colouring::Position => (index + 0.5 * span) / total,
@@ -392,6 +396,8 @@ fn walk_segments(
             for [i, j, k] in lsystem::polygon::triangulate(&pts) {
                 triangles.push(TriangleInstance { a: f(pts[i]), b: f(pts[j]), c: f(pts[k]), value });
             }
+            // The outline too, for SVG (a filled polygon, where triangles would show seams).
+            outlines.push((pts.iter().map(|&q| f(q)).collect(), value));
         }
     };
     if key.deep {
@@ -407,7 +413,7 @@ fn walk_segments(
             let view = DeepView { centre: key.centre.clone(), upp_log2: key.upp_log2, size, margin };
             let total = bt.axiom_count(key.order).max(1.0);
             let stats = lsystem::deep_walk_all(t, &bt, &view, &opts, lsystem::switch_px(t), &mut |d| take(d, total));
-            return WalkOut { segments, triangles, stats, big: Some(bt), ex: None };
+            return WalkOut { segments, triangles, outlines, stats, big: Some(bt), ex: None };
         }
         // Angles with no common unit (a decimal of more than 18 places): f64, as far as it goes.
     }
@@ -420,11 +426,11 @@ fn walk_segments(
     if let Some(x) = ex {
         let total = (x.segments as f64).max(1.0);
         let stats = lsystem::expand::draw(sys, &x, &view, BUDGET, &mut |d| take(d, total));
-        return WalkOut { segments, triangles, stats, big: None, ex: Some(x) };
+        return WalkOut { segments, triangles, outlines, stats, big: None, ex: Some(x) };
     }
     let total = t.axiom_entry(key.order.min(t.max_depth)).n.max(1.0);
     let stats = lsystem::walk_all(t, &view, &opts, &mut |d| take(d, total));
-    WalkOut { segments, triangles, stats, big: None, ex: None }
+    WalkOut { segments, triangles, outlines, stats, big: None, ex: None }
 }
 
 /// `d / 2^log2_den` as an `f64`, for any magnitudes (a centre difference at 1e400×).
@@ -443,20 +449,25 @@ fn ratio_f64(d: &BigFloat, log2_den: f64) -> f64 {
 impl FractadyneApp {
     /// The L-system frame: the walk this view needs (started off-thread if it is not the one
     /// shown), and the last walk, placed under the view.
-    pub(crate) fn build_lsystem_params(&mut self, resolution: [u32; 2], ss: u32) -> fractadyne_gpu::MandelbrotParams {
-        let centre = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
+    /// The walk the view needs, at `size` pixels.
+    fn lsystem_walk_key(&self, size: [u32; 2]) -> WalkKey {
         let upp_log2 = self.viewport.units_per_pixel.log2();
         let order = self.lsystem.order_for(upp_log2);
-        let want = WalkKey {
+        WalkKey {
             tables: self.lsystem.tables_id,
             order,
-            centre: centre.clone(),
+            centre: [self.viewport.center_x.clone(), self.viewport.center_y.clone()],
             upp_log2,
-            size: resolution,
+            size,
             colouring: self.lsystem.colouring(),
             margin: 0.5 * self.lsystem.width + 1.0,
             deep: self.lsystem.needs_deep(upp_log2, order),
-        };
+        }
+    }
+
+    pub(crate) fn build_lsystem_params(&mut self, resolution: [u32; 2], ss: u32) -> fractadyne_gpu::MandelbrotParams {
+        let want = self.lsystem_walk_key(resolution);
+        let (centre, upp_log2) = (want.centre.clone(), want.upp_log2);
         self.lsystem.drive(want);
         let p = self.viewport.precision.max(64);
         let frame = match &self.lsystem.shown {
@@ -649,6 +660,61 @@ impl FractadyneApp {
         });
     }
 
+    /// File > Export SVG…: the view as vectors (design/lsystems.md §7) — what it shows, in its
+    /// colours, at the canvas's size.
+    pub(crate) fn lsystem_export_svg(&mut self) {
+        let svg = self.lsystem_svg_of_view();
+        let name = self.lsystem.system.name.clone();
+        let stem: String = name.chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' }).collect();
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("SVG", &["svg"])
+            .set_directory(self.dialog_dir_default())
+            .set_file_name(format!("{}.svg", if stem.trim().is_empty() { "L-system" } else { stem.trim() }))
+            .save_file()
+        else {
+            return;
+        };
+        self.remember_dir(&path);
+        self.lsystem.message = Some(match std::fs::write(&path, svg) {
+            Ok(()) => format!("Exported {}", path.display()),
+            Err(e) => format!("Export failed: {e}"),
+        });
+    }
+
+    /// The view as an SVG document, at the canvas's size.
+    pub(crate) fn lsystem_svg_of_view(&self) -> String {
+        let size = [self.viewport.width_px.round().max(1.0) as u32, self.viewport.height_px.round().max(1.0) as u32];
+        self.lsystem_svg(&self.lsystem_walk_key(size))
+    }
+
+    /// The view walked at `key` as an SVG document, coloured as the screen colours it.
+    fn lsystem_svg(&self, key: &WalkKey) -> String {
+        let st = &self.lsystem;
+        let big = st.big.as_ref().filter(|(id, _)| *id == key.tables).map(|(_, b)| b.clone());
+        let ex = st.expansion.as_ref().filter(|(id, o, _)| *id == key.tables && *o == key.order).map(|(_, _, x)| x.clone());
+        let out = walk_segments(&st.drawn_system(), &st.tables, big, ex, key, st.depth_scale(key.order));
+        // The screen's palette lookup (`palette` in mandelbrot.wgsl): value + offset, wrapped; its
+        // channels are the bytes the monitor shows.
+        let (entries, smooth) = self.active_lut();
+        let lut = fractadyne_color::segment::Lut { entries: entries.to_vec(), smooth };
+        let offset = self.coloring.offset;
+        let byte = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let colour = |v: f32| {
+            let c = lut.sample(v + offset);
+            [byte(c[0]), byte(c[1]), byte(c[2])]
+        };
+        let bg = self.interior_color();
+        svg::document(&svg::Picture {
+            size: key.size,
+            width: st.width,
+            segments: &out.segments,
+            polygons: &out.outlines,
+            colour: &colour,
+            background: [byte(bg[0]), byte(bg[1]), byte(bg[2])],
+            title: &st.system.name,
+        })
+    }
+
     /// The side panel's L-system section.
     pub(crate) fn lsystem_panel(&mut self, ui: &mut egui::Ui) {
         crate::ui::labelled(ui, "System", |ui| {
@@ -684,6 +750,9 @@ impl FractadyneApp {
             }
             if ui.button("Save…").on_hover_text("Save the system as a .lsys text file.").clicked() {
                 self.lsystem_save_file();
+            }
+            if ui.button("SVG…").on_hover_text("Export the view as an SVG drawing: its lines and shapes as vectors, in its colours.").clicked() {
+                self.lsystem_export_svg();
             }
         });
         ui.separator();
@@ -975,6 +1044,8 @@ pub(crate) fn status_readouts(order: u32, drawn: Option<u64>) -> (String, String
     let count = drawn.map_or_else(|| "…".to_string(), |n| if n < 1_000_000_000 { crate::life_view::grouped(n) } else { format!("{:.3e}", n as f64) });
     (format!("order {order:>4}"), format!("drawn {count:>COUNT_W$}"))
 }
+
+mod svg;
 
 #[cfg(test)]
 mod tests;

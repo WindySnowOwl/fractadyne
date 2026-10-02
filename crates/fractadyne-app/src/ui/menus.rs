@@ -308,6 +308,15 @@ impl FractadyneApp {
                             self.lsystem_save_file();
                             ui.close_menu();
                         }
+                        if self.fractal == FractalKind::LSystem
+                            && ui
+                                .button(format!("{}  Export SVG…", crate::icons::SAVE))
+                                .on_hover_text("The view as an SVG drawing: its lines and shapes as vectors, in its colours.")
+                                .clicked()
+                        {
+                            self.lsystem_export_svg();
+                            ui.close_menu();
+                        }
                         ui.separator();
                         // Settings live under File — the conventional home users reach for first
                         // (File → Preferences/Settings); they sat under View until 2026-08-13,

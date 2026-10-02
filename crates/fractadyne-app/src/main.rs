@@ -6251,7 +6251,9 @@ impl FractadyneApp {
             let budget = val("--shot-timeout")
                 .map(|s| arg_parse::<u64>("--shot-timeout", s, "seconds"))
                 .unwrap_or(180);
-            Some(shot::Shot::new(loc, out, (w, h), budget))
+            let mut s = shot::Shot::new(loc, out, (w, h), budget);
+            s.svg = val("--svg").map(std::path::PathBuf::from);
+            Some(s)
         } else {
             None
         };

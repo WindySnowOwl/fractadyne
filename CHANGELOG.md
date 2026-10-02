@@ -86,8 +86,10 @@ Changes after 0.3.0-beta.1:
   lowers the order. Zoom has no limit: past what double precision places, the top of the drawing
   is computed in arbitrary precision with exact headings, so the Koch snowflake's corner at 1e100×
   is as sharp, and as quick, as at 1×. A view carries its system and writes format_version 4; the
-  session keeps it. Not yet: image export of an L-system view (refused with a message), and SVG
-  export (design/lsystems.md).
+  session keeps it. File ▸ Export SVG (or SVG… in the panel) writes the view as a vector drawing —
+  its lines as paths and its filled shapes as polygons, in its colours — for print or a plotter;
+  `--shot … --svg FILE` writes one unattended. Not yet: image export of an L-system view (refused
+  with a message), and tours of L-systems (design/lsystems.md).
 - **Conway's Game of Life and its relatives (not yet in a beta).** A new family under Fractal ▸
   Automata: Life-like cellular automata on an unbounded plane, stepped on the graphics card.
   Rules in B/S notation (Life, HighLife, Seeds and 19 more built in), Generations rules with

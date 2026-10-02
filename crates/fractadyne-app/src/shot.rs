@@ -38,6 +38,8 @@ pub(crate) struct Shot {
     ref_len_seen: u32,
     ref_changed_at: Instant,
     pending: bool,
+    /// `--svg`: an L-system view's SVG drawing, written when the shot is taken.
+    pub(crate) svg: Option<PathBuf>,
 }
 
 impl Shot {
@@ -53,6 +55,7 @@ impl Shot {
             ref_len_seen: 0,
             ref_changed_at: now,
             pending: false,
+            svg: None,
         }
     }
 }
@@ -176,6 +179,20 @@ impl crate::FractadyneApp {
             );
         }
         s.pending = true;
+        let svg = s.svg.clone();
         ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        if let Some(path) = svg {
+            if self.fractal != crate::FractalKind::LSystem {
+                eprintln!("fractadyne: --shot: --svg is for an L-system view; this is {}", self.fractal.name());
+                crate::exit(2);
+            }
+            match std::fs::write(&path, self.lsystem_svg_of_view()) {
+                Ok(()) => println!("--shot: wrote {}", path.display()),
+                Err(e) => {
+                    eprintln!("fractadyne: --shot: write {}: {e}", path.display());
+                    crate::exit(2);
+                }
+            }
+        }
     }
 }

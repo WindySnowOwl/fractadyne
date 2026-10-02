@@ -1,7 +1,7 @@
 # L-systems — turtle-drawn curves and plants, with deep zoom
 
 Status: **phases 0–3 built** (2026-10-02, branch `feat/lsystems`); phase 4 under way — filled
-shapes, stochastic, parametric and context-sensitive productions built; SVG export and the
+shapes, stochastic, parametric and context-sensitive productions and SVG export built; the
 animations to come (the user: "run the radeon tests and do phase 4"). The user:
 "Work on the design doc" (after "Are L-systems implemented" — no). Integration facts in §2 are from
 this tree at `21e2bd7` (Life merged). The user's decisions on the open questions are in §9 (all six:
@@ -130,6 +130,20 @@ Phase 4, parametric and context-sensitive productions, settled (`lsystem/expand.
 - **Library**: Hogeweg–Hesper plants 1.31a and 1.31d, the row of trees (1.37b), the branching
   pattern (1.39). ABOP's turtle starts facing up: the plants say `heading 90` (the first shots grew
   sideways).
+
+Phase 4, SVG export, settled (`lsystem_view/svg.rs`):
+
+- **The screen's walk, written as vectors**: the view's segments (culled, sub-pixel subtrees as
+  chords — so the file is bounded by the view's pixels at any zoom, deep views included) as
+  `<path>`s, consecutive segments that meet in the same colour joined into one; filled shapes as
+  `<polygon>`s of their clipped outlines (triangles would show seams), under the lines; the
+  interior colour as the background. Coordinates to 0.01 px, y flipped.
+- **Colours as the screen's**: the colour pass for an L-system is `palette(value + offset)` from
+  the baked LUT (`Lut::sample` is its Rust twin), its channels the bytes shown.
+- **Checked**: the file read back is the segment list (to 0.005 px, colour for colour); a view's
+  SVG has a polygon per shape and a line per segment; Inkscape renders of the mango leaf, the
+  stochastic plant and the filled snowflake (`--shot … --svg`) match the app's screenshots.
+- File ▸ Export SVG… and the panel's SVG… button; `--shot LOC --svg FILE` for unattended runs.
 
 ## 1. Goal
 

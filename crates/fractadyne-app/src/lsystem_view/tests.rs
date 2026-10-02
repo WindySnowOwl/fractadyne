@@ -116,6 +116,40 @@ fn a_parametric_system_is_built_once_at_its_order_and_drawn() {
     assert_eq!(again.stats, out.stats);
 }
 
+/// The SVG of a view holds its walk: a path per run of joined lines, a polygon per filled shape.
+#[test]
+fn an_svg_holds_the_walk_of_its_view() {
+    let mut st = LSystemState::default();
+    st.set_system(library::find("Mango leaf").unwrap().system().unwrap());
+    let t = st.tables.clone();
+    let order = st.order_for(0.0);
+    let zero = || BigFloat::from_f64(0.0, 128);
+    let key = WalkKey {
+        tables: 1,
+        order,
+        centre: [zero(), BigFloat::from_f64(20.0, 128)],
+        upp_log2: -1.0,
+        size: [300, 200],
+        colouring: Colouring::Depth,
+        margin: 1.0,
+        deep: false,
+    };
+    let out = walk_segments(&st.drawn_system(), &t, None, None, &key, st.depth_scale(order));
+    assert!(!out.outlines.is_empty() && !out.segments.is_empty(), "{:?}", out.stats);
+    let doc = svg::document(&svg::Picture {
+        size: key.size,
+        width: 1.5,
+        segments: &out.segments,
+        polygons: &out.outlines,
+        colour: &|v| [(v * 255.0) as u8, 0, 0],
+        background: [0, 0, 0],
+        title: "Mango leaf",
+    });
+    assert_eq!(doc.matches("<polygon ").count(), out.outlines.len());
+    let lines: usize = doc.lines().filter(|l| l.starts_with("<path ")).map(|l| l.matches(" L").count()).sum();
+    assert_eq!(lines, out.segments.len(), "every segment a line of some path");
+}
+
 #[test]
 fn a_centre_difference_divides_at_any_scale() {
     let p = 4096;
