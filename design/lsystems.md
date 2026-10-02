@@ -1,6 +1,6 @@
 # L-systems — turtle-drawn curves and plants, with deep zoom
 
-Status: **phases 0–2 built** (2026-10-02, branch `feat/lsystems`); phases 3–4 to come. The user:
+Status: **phases 0–3 built** (2026-10-02, branch `feat/lsystems`); phase 4 to come. The user:
 "Work on the design doc" (after "Are L-systems implemented" — no). Integration facts in §2 are from
 this tree at `21e2bd7` (Life merged). The user's decisions on the open questions are in §9 (all six:
 yes).
@@ -23,6 +23,35 @@ What building them settled, beyond the text below:
   current view (scale and offset), so a zoom follows at the walk's rate, never blank.
 - **Not in phase 2 after all**: image export (refused with a message, as for Life) and tours with an
   order or angle track.
+
+Phase 3 (unlimited zoom) settled:
+
+- **The tables lose precision with depth, and how fast is measurable.** A subtree's displacement is
+  a sum of its children's that cancel: the Sierpinski triangle's `F` advances 2 steps with 5 steps
+  of children, so rounding grows ~×2.2 a level (1.1 bits). Per system, `loss` = the most any
+  production's children reach over what it reaches (0 when every turn is a quarter turn and there
+  are no step factors: then the sums are of integers). At the deepest row the triangle's tables
+  were noise — its orientation came out turned 90° and its growth ×3 for ×2 — so the measure,
+  orientation and growth are taken at a moderate depth (8–64, ≥ 22 good bits), exactly
+  (`BigFloat`), and the growth law carries the step beyond it.
+- **Headings are whole numbers in the deep tables too.** Every angle written (a division, a decimal
+  such as 25.7° = 257/3,600 of a turn, a `\a`, the heading, `|`) is a rational fraction of a turn,
+  so a heading is an integer count of their common unit and a subtree's turn an integer sum; its
+  unit vector is computed from the count, exact for quarter turns. The first version multiplied
+  unit vectors, which carries rounding four-fold into every level above (the Koch curve): by depth
+  415 its headings were (0, 0).
+- **The deep walk**: `BigFloat` while a subtree reaches more than `2^S` px, then the `f64` walk,
+  where `S = 40 / (1 + loss / log₂ growth)` (31.7 for Koch, ~19 for the triangle) keeps `f64`'s
+  error under 2⁻¹² px; precision = the view's bits + order × loss + 96. The app walks deep when the
+  picture is larger than `2^S` px or the order is past the `f64` tables.
+- **A cull must allow for its own rounding.** In `f64` at 2⁷³ px the disc test rounds by hundreds
+  of pixels; near a subtree's far end its reach is exactly the distance to the view, and the
+  subtree holding the view was culled (the Koch curve's end at 3⁴⁰). The deep test keeps a 1e-9
+  relative slack.
+- **Self-similarity about the START proves nothing about precision**: coordinates near 0 are tiny
+  and any floating precision holds them (that test passed with the tables cut to 64 bits). About
+  the END, (1, 0), they are 1 − 3^-k: that test fails at 64 bits and passes at the computed
+  precision, at 3⁴⁰ and 3²⁰⁰ (and 3¹⁰⁰ in the self-test).
 
 ## 1. Goal
 

@@ -1776,8 +1776,7 @@ impl FractadyneApp {
 
         if matches!(step.kind, StepKind::Screen(Screen::LSystem)) {
             // The walk for the view landed and drew: segments, at the order that follows the zoom.
-            let upp = self.viewport.units_per_pixel.to_f64().max(1e-300);
-            let want_order = self.lsystem.order_for(upp);
+            let want_order = self.lsystem.order_at(&self.viewport);
             let ok = match self.lsystem.last_walk() {
                 Some((order, segments, stopped, _)) => order == want_order && segments > 1000 && !stopped,
                 None => false,

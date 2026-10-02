@@ -4597,7 +4597,7 @@ impl FractadyneApp {
                     let upp = ((b[2] - b[0]).max(b[3] - b[1]) / 600.0).max(1e-12);
                     let size = [(b[2] - b[0]) / upp + 2.0, (b[3] - b[1]) / upp + 2.0];
                     let v = ls::View { centre: [(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0], upp, size, margin: 1.0 };
-                    let order = t.auto_order(1.0 / upp, 1.5).unwrap_or_else(|| s.order.unwrap_or(6)).min(t.max_depth);
+                    let order = t.auto_order(1.0 / upp, 3.0).unwrap_or_else(|| s.order.unwrap_or(6)).min(t.max_depth);
                     let stats = ls::walk(&t, &v, &ls::WalkOptions { order, lod_px: 1.5, budget: 20_000_000 }, &mut |_| {});
                     if stats.segments as f64 > 4.0 * size[0] * size[1] {
                         heavy.push(format!("{}: {} segments for {:.0} pixels", e.name, stats.segments, size[0] * size[1]));
@@ -4620,6 +4620,45 @@ impl FractadyneApp {
                 threshold: "≤ 4 segments a pixel",
                 pass: heavy.is_empty(),
             });
+            // Unlimited zoom (phase 3): the Koch curve zoomed 3^100 (5e47×) about its END — where
+            // the coordinates are 1 − 3^-100 and every bit counts — is the Koch curve again, 100
+            // orders up, segment for segment.
+            {
+                let s = library::find("Koch curve").expect("in the library").system().expect("parses");
+                let t = ls::Tables::new(&s);
+                let (n, k, size) = (6u32, 100u32, [300.0, 200.0]);
+                let upp: f64 = 0.3 / 300.0;
+                let mut shallow = Vec::new();
+                ls::walk(&t, &ls::View { centre: [0.8, 0.05], upp, size, margin: 1.5 }, &ls::WalkOptions { order: n, lod_px: 0.0, budget: u64::MAX }, &mut |g| shallow.push(*g));
+                let upp_log2 = upp.log2() - f64::from(k) * 3f64.log2();
+                let p = ls::deep_precision(&t, n + k, upp_log2, 1.0);
+                let result = ls::BigTables::new(&s, &t, p, n + k).map(|bt| {
+                    // The centre exactly, as the coordinate field reads an expression.
+                    let expr = |s: String| fractadyne_core::parse_bf_prec(&s, p).expect("an expression");
+                    let cx = expr(format!("1 - 0.2*3^-{k}"));
+                    let cy = expr(format!("0.05*3^-{k}"));
+                    let view = ls::DeepView { centre: [cx, cy], upp_log2, size, margin: 1.5 };
+                    let mut deep = Vec::new();
+                    ls::deep_walk(&t, &bt, &view, &ls::WalkOptions { order: n + k, lod_px: 0.0, budget: u64::MAX }, ls::switch_px(&t), &mut |g| deep.push(*g));
+                    let inner = |g: &ls::Segment| g.a[0].abs() < 140.0 && g.a[1].abs() < 90.0;
+                    let near = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).abs() < 1e-3 && (a[1] - b[1]).abs() < 1e-3;
+                    let want: Vec<&ls::Segment> = shallow.iter().filter(|g| inner(g)).collect();
+                    let matched = want.iter().filter(|g| deep.iter().any(|d| near(g.a, d.a) && near(g.b, d.b))).count();
+                    (matched, want.len(), deep.len())
+                });
+                let (pass, result) = match result {
+                    Some((m, w, d)) => (m == w && w > 100, format!("{m} of {w} segments in place to 1e-3 px ({d} drawn deep, {} shallow)", shallow.len())),
+                    None => (false, "the deep tables could not be built".into()),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "L-system",
+                    name: "the Koch curve zoomed 3^100 about its end is itself".into(),
+                    params: format!("order 6 at 300×200 vs order 106 at 5e47×, {p}-bit tables"),
+                    result,
+                    threshold: "every inner segment matched to 1e-3 px",
+                    pass,
+                });
+            }
             for o in fractadyne_gpu::lsystem::check::coverage(device, queue) {
                 let (pass, result) = match o.result {
                     Ok(s) => (true, s),

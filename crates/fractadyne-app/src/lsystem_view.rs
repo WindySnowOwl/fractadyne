@@ -9,7 +9,8 @@
 //! at the walk's rate, never a blank.
 
 use crate::{FractadyneApp, FractalKind};
-use fractadyne_core::lsystem::{self, library, Colouring, LEntry, LSystem, Tables, View, WalkOptions, WalkStats};
+use fractadyne_core::lsystem::{self, library, BigTables, Colouring, DeepView, LEntry, LSystem, Tables, View, WalkOptions, WalkStats};
+use fractadyne_core::BigFloat;
 use fractadyne_gpu::lsystem::{LSystemFrame, SegmentInstance};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -32,15 +33,19 @@ const DEFAULT_SYSTEM: &str = "Heighway dragon";
 pub(crate) const MAX_VIEW_SYSTEM: usize = 64 * 1024;
 
 /// What a walk was for: when the view's key differs from the shown walk's, a new walk is due.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct WalkKey {
     tables: u64,
     order: u32,
-    centre: [f64; 2],
-    upp: f64,
+    /// The view's centre, exact.
+    centre: [BigFloat; 2],
+    /// `log₂` of world units a pixel.
+    upp_log2: f64,
     size: [u32; 2],
     colouring: Colouring,
     margin: f32,
+    /// Walked in `BigFloat` ([`lsystem::deep_walk`]): the picture is past what `f64` places.
+    deep: bool,
 }
 
 /// A finished walk.
@@ -50,6 +55,8 @@ struct Walked {
     id: u64,
     stats: WalkStats,
     ms: f64,
+    /// The deep tables it used, to reuse for the next deep walk.
+    big: Option<Arc<BigTables>>,
 }
 
 /// A walk in progress on its own thread.
@@ -83,6 +90,8 @@ pub(crate) struct LSystemState {
     shown: Option<Walked>,
     job: Option<Job>,
     next_id: u64,
+    /// The deep tables of the last deep walk, and the tables they belong to.
+    big: Option<(u64, Arc<BigTables>)>,
 }
 
 /// The library system called `name`, or the default.
@@ -113,6 +122,7 @@ impl Default for LSystemState {
             shown: None,
             job: None,
             next_id: 1,
+            big: None,
         }
     }
 }
@@ -169,15 +179,31 @@ impl LSystemState {
         self.colour.unwrap_or_else(|| self.system.colouring())
     }
 
-    /// The order to draw at, `upp` world units a pixel.
-    pub(crate) fn order_for(&self, upp: f64) -> u32 {
+    /// The order to draw at, `2^upp_log2` world units a pixel — at any zoom: past the `f64`
+    /// tables' depth, the deep walk draws it.
+    pub(crate) fn order_for(&self, upp_log2: f64) -> u32 {
         let t = &self.tables;
         let step_px = STEP_PX.max(STEP_WIDTHS * f64::from(self.width));
         let n = match self.fixed_order {
-            Some(n) => n,
-            None => t.auto_order(1.0 / upp, step_px).unwrap_or_else(|| self.system.order.unwrap_or(DEFAULT_ORDER)),
+            Some(n) => n.min(t.max_depth.max(lsystem::MAX_ORDER.min(n))),
+            None => t.auto_order_log2(-upp_log2, step_px).unwrap_or_else(|| self.system.order.unwrap_or(DEFAULT_ORDER).min(t.max_depth)),
         };
-        n.min(t.max_depth)
+        n.min(lsystem::MAX_ORDER)
+    }
+
+    /// The order the viewport draws at.
+    pub(crate) fn order_at(&self, vp: &fractadyne_core::Viewport) -> u32 {
+        self.order_for(vp.units_per_pixel.log2())
+    }
+
+    /// Whether a view at `upp_log2` and `order` needs the deep walk: the picture is larger than the
+    /// `f64` walk places to a fraction of a pixel ([`Tables::f64_reach_log2`]), or the order is
+    /// past the `f64` tables.
+    fn needs_deep(&self, upp_log2: f64, order: u32) -> bool {
+        let t = &self.tables;
+        let extent = 0.5 * t.box_area.max(1e-300).log2();
+        let picture_px = if t.box_area > 0.0 { extent - upp_log2 } else { -upp_log2 };
+        order > t.max_depth || picture_px > t.f64_reach_log2()
     }
 
     /// Whether a walk is running (the view should keep repainting until it lands).
@@ -198,6 +224,9 @@ impl LSystemState {
                 if let Some(w) = job.result.lock().ok().and_then(|mut r| r.take()) {
                     // A walk of tables since replaced is not this system's picture.
                     if w.key.tables == self.tables_id {
+                        if let Some(b) = &w.big {
+                            self.big = Some((w.key.tables, b.clone()));
+                        }
                         self.shown = Some(w);
                     }
                 }
@@ -214,6 +243,9 @@ impl LSystemState {
 
     fn start(&mut self, key: WalkKey) {
         let tables = self.tables.clone();
+        let system = self.drawn_system();
+        // The last deep tables, if they are this system's.
+        let big = self.big.as_ref().filter(|(id, _)| *id == key.tables).map(|(_, b)| b.clone());
         let result = Arc::new(Mutex::new(None));
         let done = Arc::new(AtomicBool::new(false));
         let id = self.next_id;
@@ -228,11 +260,10 @@ impl LSystemState {
             .name("lsystem-walk".into())
             .spawn(move || {
                 let t0 = std::time::Instant::now();
-                let segments = walk_segments(&tables, &key, depth_scale);
-                let (segments, stats) = segments;
+                let (segments, stats, big) = walk_segments(&system, &tables, big, &key, depth_scale);
                 let ms = t0.elapsed().as_secs_f64() * 1e3;
                 if let Ok(mut slot) = r.lock() {
-                    *slot = Some(Walked { key, segments: Arc::new(segments), id, stats, ms });
+                    *slot = Some(Walked { key, segments: Arc::new(segments), id, stats, ms, big });
                 }
                 d.store(true, Ordering::Release);
             })
@@ -241,58 +272,102 @@ impl LSystemState {
     }
 }
 
-/// Walks `key`'s view and colours each segment.
-fn walk_segments(t: &Tables, key: &WalkKey, depth_scale: f64) -> (Vec<SegmentInstance>, WalkStats) {
-    let view = View {
-        centre: key.centre,
-        upp: key.upp,
-        size: [f64::from(key.size[0]), f64::from(key.size[1])],
-        margin: f64::from(key.margin),
-    };
-    let total = t.axiom_entry(key.order).n.max(1.0);
-    let mut out = Vec::new();
+/// Walks `key`'s view — in `f64`, or deep through `BigTables` (reusing `big` when it is precise
+/// and deep enough) — and colours each segment. Returns the deep tables it used.
+fn walk_segments(
+    sys: &LSystem,
+    t: &Tables,
+    big: Option<Arc<BigTables>>,
+    key: &WalkKey,
+    depth_scale: f64,
+) -> (Vec<SegmentInstance>, WalkStats, Option<Arc<BigTables>>) {
+    let size = [f64::from(key.size[0]), f64::from(key.size[1])];
+    let margin = f64::from(key.margin);
     let opts = WalkOptions { order: key.order, lod_px: LOD_PX, budget: BUDGET };
-    let stats = lsystem::walk(t, &view, &opts, &mut |s| {
+    let mut out = Vec::new();
+    let mut colour = |s: &lsystem::Segment, total: f64| {
         let value = match key.colouring {
-            Colouring::Position => ((s.index + 0.5 * s.span) / total).clamp(0.0, 1.0),
+            Colouring::Position => (s.index + 0.5 * s.span) / total,
             Colouring::Depth => (f64::from(s.depth) / depth_scale).min(1.0),
             Colouring::Heading => s.heading,
             Colouring::Index => (f64::from(s.colour.rem_euclid(16)) + 0.5) / 16.0,
             Colouring::Plain => 0.5,
         };
-        out.push(SegmentInstance {
-            a: [s.a[0] as f32, s.a[1] as f32],
-            b: [s.b[0] as f32, s.b[1] as f32],
-            value: value as f32,
-        });
-    });
-    (out, stats)
+        // Past f64's integers an index is approximate, and past its range not a number: the
+        // value must stay a palette position (the shader reads < 0 as "no line").
+        let value = if value.is_finite() { value.clamp(0.0, 1.0) } else { 0.5 };
+        out.push(SegmentInstance { a: [s.a[0] as f32, s.a[1] as f32], b: [s.b[0] as f32, s.b[1] as f32], value: value as f32 });
+    };
+    if key.deep {
+        let extent = if t.box_area > 0.0 { 0.5 * t.box_area.log2() } else { 0.0 };
+        // Rounded up to 64 bits, so a slowly deepening zoom reuses its tables.
+        let p = lsystem::deep_precision(t, key.order, key.upp_log2, extent).div_ceil(64) * 64;
+        let bt = match big.filter(|b| b.prec >= p && b.depth >= key.order) {
+            Some(b) => Some(b),
+            // A few orders' room, for the zoom that comes next.
+            None => BigTables::new(sys, t, p, key.order + 8).map(Arc::new),
+        };
+        if let Some(bt) = bt {
+            let view = DeepView { centre: key.centre.clone(), upp_log2: key.upp_log2, size, margin };
+            let total = bt.axiom_count(key.order).max(1.0);
+            let stats = lsystem::deep_walk(t, &bt, &view, &opts, lsystem::switch_px(t), &mut |s| colour(s, total));
+            return (out, stats, Some(bt));
+        }
+        // Angles with no common unit (a decimal of more than 18 places): f64, as far as it goes.
+    }
+    let view = View {
+        centre: [fractadyne_core::to_f64(&key.centre[0]), fractadyne_core::to_f64(&key.centre[1])],
+        upp: key.upp_log2.exp2(),
+        size,
+        margin,
+    };
+    let total = t.axiom_entry(key.order.min(t.max_depth)).n.max(1.0);
+    let stats = lsystem::walk(t, &view, &opts, &mut |s| colour(s, total));
+    (out, stats, None)
+}
+
+/// `d / 2^log2_den` as an `f64`, for any magnitudes (a centre difference at 1e400×).
+fn ratio_f64(d: &BigFloat, log2_den: f64) -> f64 {
+    if d.is_zero() {
+        return 0.0;
+    }
+    let mag = (fractadyne_core::log2_abs(d) - log2_den).exp2();
+    if d.is_negative() {
+        -mag
+    } else {
+        mag
+    }
 }
 
 impl FractadyneApp {
     /// The L-system frame: the walk this view needs (started off-thread if it is not the one
     /// shown), and the last walk, placed under the view.
     pub(crate) fn build_lsystem_params(&mut self, resolution: [u32; 2], ss: u32) -> fractadyne_gpu::MandelbrotParams {
-        let (cx, cy) = self.viewport.center_f64();
-        let upp = self.viewport.units_per_pixel.to_f64().max(1e-300);
-        let order = self.lsystem.order_for(upp);
+        let centre = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
+        let upp_log2 = self.viewport.units_per_pixel.log2();
+        let order = self.lsystem.order_for(upp_log2);
         let want = WalkKey {
             tables: self.lsystem.tables_id,
             order,
-            centre: [cx, cy],
-            upp,
+            centre: centre.clone(),
+            upp_log2,
             size: resolution,
             colouring: self.lsystem.colouring(),
             margin: 0.5 * self.lsystem.width + 1.0,
+            deep: self.lsystem.needs_deep(upp_log2, order),
         };
         self.lsystem.drive(want);
+        let p = self.viewport.precision.max(64);
         let frame = match &self.lsystem.shown {
             Some(w) => LSystemFrame {
                 segments: w.segments.clone(),
                 segments_id: w.id,
                 // A walked pixel is at world `p·upp_w + c_w`; in this view, `(world − c)/upp`.
-                scale: (w.key.upp / upp) as f32,
-                offset: [((w.key.centre[0] - cx) / upp) as f32, ((w.key.centre[1] - cy) / upp) as f32],
+                scale: (w.key.upp_log2 - upp_log2).exp2() as f32,
+                offset: [
+                    ratio_f64(&fractadyne_core::bf_sub(&w.key.centre[0], &centre[0], p), upp_log2) as f32,
+                    ratio_f64(&fractadyne_core::bf_sub(&w.key.centre[1], &centre[1], p), upp_log2) as f32,
+                ],
                 width: self.lsystem.width,
             },
             None => LSystemFrame { segments: Arc::new(Vec::new()), segments_id: 0, scale: 1.0, offset: [0.0, 0.0], width: self.lsystem.width },
@@ -461,8 +536,7 @@ impl FractadyneApp {
         });
         ui.separator();
         // Order: follow the zoom, or fixed.
-        let upp = self.viewport.units_per_pixel.to_f64().max(1e-300);
-        let now = self.lsystem.order_for(upp);
+        let now = self.lsystem.order_at(&self.viewport);
         let grows = self.lsystem.tables.grows();
         ui.horizontal(|ui| {
             let mut follow = self.lsystem.fixed_order.is_none();
@@ -537,8 +611,8 @@ impl FractadyneApp {
                 ui.end_row();
             }
         });
-        if self.lsystem.tables.max_depth == self.lsystem.order_for(upp) && grows {
-            ui.label(egui::RichText::new("At the deepest order these tables reach: zooming further adds no detail yet.").small());
+        if now >= lsystem::MAX_ORDER && grows {
+            ui.label(egui::RichText::new(format!("At the deepest order drawn ({}): zooming further adds no detail.", lsystem::MAX_ORDER)).small());
         }
         if let Some(m) = &self.lsystem.message {
             ui.label(egui::RichText::new(m).small());
@@ -548,9 +622,8 @@ impl FractadyneApp {
     /// The toolbar's L-system group, in the slot Julia and the dual view take for an escape-time
     /// family: lower / raise the order (fixing it), follow the zoom again, edit.
     pub(crate) fn lsystem_toolbar(&mut self, ui: &mut egui::Ui) {
-        let upp = self.viewport.units_per_pixel.to_f64().max(1e-300);
-        let now = self.lsystem.order_for(upp);
-        let max = self.lsystem.tables.max_depth;
+        let now = self.lsystem.order_at(&self.viewport);
+        let max = self.lsystem.tables.max_depth.max(now);
         if ui.button("−").on_hover_text("Lower the order (fixes it)").clicked() {
             self.lsystem.fixed_order = Some(now.saturating_sub(1));
         }

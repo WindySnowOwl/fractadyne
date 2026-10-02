@@ -145,7 +145,8 @@ fn level_of_detail_bounds_the_segments_by_the_pixels() {
         let t = Tables::new(&s);
         let px = 600.0;
         let home = framing(&t, crate::lsystem::framing_order(&t, 20_000.0), px);
-        let order = t.auto_order(1.0 / home.upp, 1.5).unwrap_or_else(|| s.order.unwrap_or(6)).min(t.max_depth);
+        // At the app's step (3 px: a step no wider than the lines draws a plane-filler solid).
+        let order = t.auto_order(1.0 / home.upp, 3.0).unwrap_or_else(|| s.order.unwrap_or(6)).min(t.max_depth);
         let (_, stats) = collect(&t, &home, &WalkOptions { order, lod_px: 1.5, budget: u64::MAX });
         let pixels = home.size[0] * home.size[1];
         assert!(

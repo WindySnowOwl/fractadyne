@@ -71,10 +71,12 @@ Changes after 0.3.0-beta.1:
   supported: draw and move, turns, turn-around, swapped turns, brackets, step factors, turns by any
   angle, colour indices. The angle has a slider; the line width, and colouring by position along
   the curve, branch depth, heading or colour index, are in the panel; the toolbar raises and
-  lowers the order. A view carries its system and writes format_version 4; the session keeps it.
-  Not yet: image export of an L-system view (refused with a message), zoom past about 1e12× (the
-  positions are double precision), and the stochastic, parametric and context-sensitive systems,
-  filled shapes and SVG export (design/lsystems.md).
+  lowers the order. Zoom has no limit: past what double precision places, the top of the drawing
+  is computed in arbitrary precision with exact headings, so the Koch snowflake's corner at 1e100×
+  is as sharp, and as quick, as at 1×. A view carries its system and writes format_version 4; the
+  session keeps it. Not yet: image export of an L-system view (refused with a message), and the
+  stochastic, parametric and context-sensitive systems, filled shapes and SVG export
+  (design/lsystems.md).
 - **Conway's Game of Life and its relatives (not yet in a beta).** A new family under Fractal ▸
   Automata: Life-like cellular automata on an unbounded plane, stepped on the graphics card.
   Rules in B/S notation (Life, HighLife, Seeds and 19 more built in), Generations rules with

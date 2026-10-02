@@ -60,8 +60,10 @@ fn each_curve_grows_by_its_own_factor() {
 
 #[test]
 fn a_picture_that_alternates_steps_its_order_by_two() {
+    // (The Sierpinski arrowhead mirrors from order to order when measured by one of its two
+    // symbols and not by the other — which one measures it depends on a tie, so it is not pinned;
+    // its picture staying in place is `a_picture_stays_in_place_as_the_order_rises`.)
     for (name, p) in [
-        ("Sierpinski arrowhead", 2),
         ("Weed", 2),
         ("Koch curve", 1),
         ("Hilbert curve", 1),
@@ -218,8 +220,9 @@ fn the_step_shrinks_with_every_order_from_the_first() {
         let p = t.period;
         for n in 0..t.max_depth.min(120).saturating_sub(p) {
             let (a, b) = (norm(t.step(n)), norm(t.step(n + p)));
-            // Never growing (the dragon's orders 0 and 1 both step 1: its X draws nothing at 0)…
-            assert!(b <= a * (1.0 + 1e-12), "{} order {n}: step {a} then {b}", e.name);
+            // Never growing (the dragon's orders 0 and 1 both step about 1: its X draws nothing at
+            // 0, where the growth law sizes the step, to a few parts in a billion)…
+            assert!(b <= a * (1.0 + 1e-6), "{} order {n}: step {a} then {b}", e.name);
             // …and by about the growth factor: never a collapse.
             let ratio = a / b;
             let g = t.growth.powi(p as i32);

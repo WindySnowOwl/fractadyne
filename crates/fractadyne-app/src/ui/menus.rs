@@ -1539,9 +1539,8 @@ impl FractadyneApp {
                 if self.fractal == FractalKind::LSystem {
                     // A drawing's readouts: the zoom, then the order and the segments drawn, in the
                     // same three slots at fixed widths.
-                    let upp = self.viewport.units_per_pixel.to_f64().max(1e-300);
                     let segs = self.lsystem.last_walk().map(|w| w.1);
-                    let (order, segments) = crate::lsystem_view::status_readouts(self.lsystem.order_for(upp), segs);
+                    let (order, segments) = crate::lsystem_view::status_readouts(self.lsystem.order_at(&self.viewport), segs);
                     mono(ui, crate::zoom_readout(false, self.viewport.log2_magnification(), self.julia_viewport.log2_magnification()));
                     ui.separator();
                     mono(ui, order);

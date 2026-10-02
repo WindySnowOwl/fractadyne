@@ -15,6 +15,9 @@ pub use tables::*;
 mod walk;
 pub use walk::*;
 
+mod deep;
+pub use deep::*;
+
 pub mod reference;
 
 pub mod library;

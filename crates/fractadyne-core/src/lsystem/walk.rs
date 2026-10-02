@@ -96,12 +96,35 @@ struct Frame {
     child_depth: u32,
 }
 
+/// The single-symbol word a [`walk_from`] starts with.
+const ONE: u16 = NONE - 1;
+
+/// Where a [`walk_from`] starts: one symbol rewritten `depth` times, with the turtle as given (in
+/// the view's pixels, y up, from its centre). The deep walk hands each subtree small enough for
+/// `f64` to one of these.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SubStart {
+    pub sym: u8,
+    pub depth: u32,
+    pub pos: [f64; 2],
+    /// The turtle's heading, radians.
+    pub heading: f64,
+    pub flip: bool,
+    /// The step, pixels.
+    pub scale: f64,
+    pub colour: i32,
+    /// How many brackets the subtree sits inside.
+    pub brackets: u16,
+    /// The index along the curve of its first segment.
+    pub index: f64,
+}
+
 /// Walks `t` at `opts.order` over `view`, handing each segment to `sink` in curve order.
 pub fn walk(t: &Tables, view: &View, opts: &WalkOptions, sink: &mut dyn FnMut(&Segment)) -> WalkStats {
     let order = opts.order.min(t.max_depth);
     let u = t.step(order);
     let free = u[1].atan2(u[0]).rem_euclid(TAU);
-    let mut s = State {
+    let s = State {
         pos: [-view.centre[0] / view.upp, -view.centre[1] / view.upp],
         turns: 0,
         free,
@@ -111,16 +134,51 @@ pub fn walk(t: &Tables, view: &View, opts: &WalkOptions, sink: &mut dyn FnMut(&S
         colour: 1,
         depth: 0,
     };
+    run(t, view, opts, s, Frame { rule: AXIOM, i: 0, child_depth: order }, 0, 0.0, sink)
+}
+
+/// Walks one subtree, from a turtle already placed (see [`SubStart`]).
+pub fn walk_from(t: &Tables, view: &View, opts: &WalkOptions, start: &SubStart, sink: &mut dyn FnMut(&Segment)) -> WalkStats {
+    let free = start.heading.rem_euclid(TAU);
+    let s = State {
+        pos: start.pos,
+        turns: 0,
+        free,
+        fr: unit(free),
+        flip: start.flip,
+        scale: start.scale,
+        colour: start.colour,
+        depth: start.brackets,
+    };
+    let depth = start.depth.min(t.max_depth);
+    run(t, view, opts, s, Frame { rule: ONE, i: 0, child_depth: depth }, start.sym, start.index, sink)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run(
+    t: &Tables,
+    view: &View,
+    opts: &WalkOptions,
+    mut s: State,
+    first: Frame,
+    one: u8,
+    mut index: f64,
+    sink: &mut dyn FnMut(&Segment),
+) -> WalkStats {
     let mut stats = WalkStats::default();
-    let mut index = 0.0f64;
     let mut stack: Vec<State> = Vec::new();
-    let mut frames = vec![Frame { rule: AXIOM, i: 0, child_depth: order }];
+    let mut frames = vec![first];
+    let single = [Op::Sym(one)];
     let heading = |s: &State| -> f64 {
         let a = s.turns as f64 * t.delta + s.free;
         (a / TAU).rem_euclid(1.0)
     };
     while let Some(f) = frames.last_mut() {
-        let ops = if f.rule == AXIOM { &t.axiom } else { &t.rules[f.rule as usize] };
+        let ops: &[Op] = match f.rule {
+            AXIOM => &t.axiom,
+            ONE => &single,
+            r => &t.rules[r as usize],
+        };
         let Some(&op) = ops.get(f.i as usize) else {
             frames.pop();
             continue;

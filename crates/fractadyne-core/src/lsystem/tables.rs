@@ -127,8 +127,23 @@ pub struct Tables {
     pub max_depth: u32,
     /// The first heading, radians.
     pub(crate) heading: f64,
-    /// The picture's size measure at each depth (see [`Tables::step`]), as a vector.
+    /// The picture's size measure at each depth up to [`Tables::along_depth`] (see
+    /// [`Tables::step`]), as a vector…
     measure: Vec<[f64; 2]>,
+    /// …the displacement of this symbol (`None`: the axiom's reach measures it instead).
+    pub(crate) measure_sym: Option<u8>,
+    /// Bits of a table entry's precision lost per level of depth: a subtree's displacement is a
+    /// sum of its children's that cancel (the Sierpinski triangle's `F` advances 2 steps with 5
+    /// steps of children), so rounding grows by the ratio a level. 0 when the arithmetic is exact
+    /// (every turn a quarter turn, no step factors). The tables are good to `2^(d·loss − 52)` at
+    /// depth `d`: past the depth where that matters, the deep walk takes over.
+    pub loss: f64,
+    /// The depth the picture's orientation and growth are taken from — moderate, so its value is
+    /// reliable — and the direction of the measure there, exact (computed in `BigFloat`).
+    pub along_depth: u32,
+    along: [f64; 2],
+    /// The measure's turn per order, radians (the dragon's is 45°): the step past `along_depth`.
+    turn_per_order: f64,
     /// How much the picture grows per order (1: it does not).
     pub growth: f64,
     /// 2 for a picture that mirrors from one order to the next (the Sierpinski arrowhead lies on
@@ -171,9 +186,12 @@ impl Tables {
     pub fn with_depth(sys: &LSystem, depth: u32) -> Tables {
         let division = sys.angle.division();
         let delta = sys.angle.degrees().to_radians();
+        // Exact where the value is exact (cos 90° is 0, not 6e-17; cos 60° is 0.5, not
+        // 0.5000000000000001): the 90° and 60° curves then sum exactly, as the deep walk does.
+        let snap = |v: [f64; 2]| v.map(|c| [0.0, 0.5, -0.5, 1.0, -1.0].into_iter().find(|&e| (c - e).abs() < 1e-15).unwrap_or(c));
         let dirs: Vec<[f64; 2]> = match division {
-            Some(n) => (0..n as i64).map(|k| unit(TAU * k as f64 / n as f64)).collect(),
-            None => (-DIRS..=DIRS).map(|k| unit(k as f64 * delta)).collect(),
+            Some(n) => (0..n as i64).map(|k| snap(unit(TAU * k as f64 / n as f64))).collect(),
+            None => (-DIRS..=DIRS).map(|k| snap(unit(k as f64 * delta))).collect(),
         };
         let compile = |w: &[Tok]| -> Vec<Op> {
             w.iter()
@@ -236,6 +254,11 @@ impl Tables {
             max_depth: 0,
             heading: sys.heading.to_radians(),
             measure: Vec::new(),
+            measure_sym: None,
+            loss: 0.0,
+            along_depth: 0,
+            along: [1.0, 0.0],
+            turn_per_order: 0.0,
             growth: 1.0,
             period: 1,
             box_area: 0.0,
@@ -370,33 +393,101 @@ impl Tables {
                 }
             }
         }
-        // The reached symbol that travels furthest at the deepest row measures the picture: its
-        // displacement, as a vector, carries the curve's growth AND its turn per order (the dragon
-        // turns 45° an order). A picture whose symbols all return to their start (closed loops) is
-        // measured by how far the axiom draws instead.
+        self.loss = self.precision_loss(sys, &reach);
+        // A moderate depth, where the tables still hold ~22 good bits (and the BigFloat measure
+        // below is cheap): the picture's measure, orientation and growth are taken there. The
+        // deepest row is no place for them — at depth 415 the Sierpinski triangle's tables had
+        // lost everything (its `F` measured vertical, its growth 3 for 2).
+        let dm = if self.loss > 0.0 { ((30.0 / self.loss) as u32).clamp(8, 64) } else { 64 }.min(top);
+        self.along_depth = dm;
+        // The reached symbol that travels furthest there measures the picture: its displacement,
+        // as a vector, carries the curve's growth AND its turn per order (the dragon turns 45° an
+        // order). A picture whose symbols all return to their start (closed loops) is measured by
+        // how far the axiom draws instead.
         let best = (0..256)
             .filter(|&c| reach[c] && self.id[c] != NONE)
-            .map(|c| (c as u8, norm(self.entry(c as u8, top).fx.d)))
+            .map(|c| (c as u8, norm(self.entry(c as u8, dm).fx.d)))
             .filter(|&(_, m)| m > 0.0)
             .max_by(|a, b| a.1.total_cmp(&b.1));
-        self.measure = (0..=top)
+        self.measure_sym = best.map(|b| b.0);
+        self.measure = (0..=dm)
             .map(|d| match best {
                 Some((c, _)) => self.entry(c, d).fx.d,
                 None => [self.axiom_entry(d).r.max(0.0), 0.0],
             })
             .collect();
-        // Growth from two orders apart, so a picture that alternates between two shapes measures
-        // its true rate.
-        self.growth = if top >= 2 {
-            let (a, b) = (norm(self.measure[top as usize]), norm(self.measure[top as usize - 2]));
-            if a > 0.0 && b > 0.0 {
-                (a / b).sqrt()
-            } else {
-                1.0
+        // The measure there, exact: its direction (the orientation — the deep walk computes the
+        // same direction at its own precision, so the two walks agree), its growth from two orders
+        // apart (so a picture that alternates between two shapes measures its true rate), and its
+        // turn per order.
+        let exact = best.filter(|_| dm >= 2).and_then(|(c, _)| {
+            let prec = 128 + (f64::from(dm) * self.loss).ceil() as usize;
+            super::deep::exact_measure(sys, c, dm, prec)
+        });
+        let m = |d: u32| self.measure[d as usize];
+        match exact {
+            Some(e) => {
+                self.along = e.along;
+                self.growth = ((e.log2_norm[0] - e.log2_norm[2]) / 2.0).exp2();
+                self.turn_per_order = e.turn;
             }
-        } else {
-            1.0
-        };
+            None if dm >= 2 && norm(m(dm)) > 0.0 && norm(m(dm - 2)) > 0.0 => {
+                let n = norm(m(dm));
+                self.along = [m(dm)[0] / n, m(dm)[1] / n];
+                self.growth = (n / norm(m(dm - 2))).sqrt();
+                let r = div(m(dm), m(dm - 1));
+                self.turn_per_order = r[1].atan2(r[0]);
+            }
+            None => self.growth = 1.0,
+        }
+        // Growth by a factor, or by a step a generation? A stem that lengthens by one segment an
+        // order (Saupe's bush) measures 1.06 at depth 32 and 1.03 at 64 — falling towards 1 — where
+        // a factor measures the same at both. Only a factor lets the order follow the zoom.
+        let half = dm / 2;
+        if half >= 2 && norm(m(half)) > 0.0 && norm(m(half - 2)) > 0.0 {
+            let g_half = (norm(m(half)) / norm(m(half - 2))).sqrt();
+            if (g_half - self.growth).abs() > 0.25 * (self.growth - 1.0).abs() + 1e-9 {
+                self.growth = 1.0;
+            }
+        }
+    }
+
+    /// Bits lost per level (see [`Tables::loss`]): the most any production's children reach, over
+    /// what it reaches, at a moderate depth — 0 when every turn is a quarter turn and there are no
+    /// step factors (then the sums are of integers, exact in `f64`).
+    fn precision_loss(&self, sys: &LSystem, reach: &[bool; 256]) -> f64 {
+        let quarter = |deg: f64| (deg / 90.0 - (deg / 90.0).round()).abs() < 1e-12;
+        let words = || std::iter::once(&sys.axiom).chain(sys.rules.iter().flatten());
+        let exact = quarter(sys.angle.degrees())
+            && words().flatten().all(|t| match t {
+                Tok::TurnBy(a) => quarter(*a),
+                Tok::Scale(_) => false,
+                _ => true,
+            });
+        if exact || self.max_depth == 0 {
+            return 0.0;
+        }
+        let d0 = self.max_depth.min(12);
+        let mut worst = 0.0f64;
+        for c in (0..256).filter(|&c| reach[c] && self.id[c] != NONE) {
+            let r = self.entry(c as u8, d0).r;
+            if r <= 0.0 {
+                continue;
+            }
+            // The children's reach, each at the step factor it is drawn with.
+            let (mut scale, mut stack, mut sum) = (1.0f64, Vec::new(), 0.0f64);
+            for &op in &self.rules[self.id[c] as usize] {
+                match op {
+                    Op::Sym(y) => sum += self.entry(y, d0 - 1).r.max(0.0) * scale,
+                    Op::Scale(f) => scale *= f,
+                    Op::Push => stack.push(scale),
+                    Op::Pop => scale = stack.pop().unwrap_or(scale),
+                    _ => {}
+                }
+            }
+            worst = worst.max((sum / r).log2());
+        }
+        worst.clamp(0.0, 8.0)
     }
 
     /// Whether the picture grows by a factor per order (so the order can follow the zoom). A
@@ -418,20 +509,67 @@ impl Tables {
         if !self.grows() {
             return h;
         }
-        let top = self.measure[self.max_depth as usize];
-        let o = order.min(self.max_depth) as usize;
-        let m = self.measure[o];
-        let along = [top[0] / norm(top), top[1] / norm(top)];
-        // What the growth law says the measure is at this order: |m(top)| / g^(top − o).
-        let expect = (norm(top).ln() - (self.max_depth as usize - o) as f64 * self.growth.ln()).exp();
+        let dm = self.along_depth;
+        let top = self.measure[dm as usize];
+        if order > dm {
+            // Past the moderate depth, the growth law (and the measure's turn per order): this is
+            // for choosing an order and framing; the deep walk draws there, from exact tables.
+            let k = f64::from(order - dm);
+            let s = self.growth.powf(-k);
+            let base = self.step(dm);
+            let r = unit(-self.turn_per_order * k);
+            return mul(base, [r[0] * s, r[1] * s]);
+        }
+        let m = self.measure[order as usize];
+        // What the growth law says the measure is at this order: |m(dm)| / g^(dm − order).
+        let expect = (norm(top).ln() - f64::from(dm - order) * self.growth.ln()).exp();
         if norm(m) >= 0.25 * expect {
-            mul(h, div(along, m))
+            mul(h, div(self.along, m))
         } else {
             // The measured symbol draws nothing yet (the dragon's X at order 0), or next to
             // nothing: the growth law sizes the step instead.
             let s = 1.0 / expect;
-            [h[0] * s, h[1] * s]
+            mul(h, [self.along[0] * s, self.along[1] * s])
         }
+    }
+
+    /// `log₂` of the step's length at `order`, at any order up to [`MAX_ORDER`].
+    pub fn step_log2(&self, order: u32) -> f64 {
+        if order <= self.along_depth || !self.grows() {
+            return norm(self.step(order)).log2();
+        }
+        norm(self.step(self.along_depth)).log2() - f64::from(order - self.along_depth) * self.growth.log2()
+    }
+
+    /// How large (`log₂` pixels) a subtree the `f64` walk may place to ~2⁻¹² px: the deeper the
+    /// subtree, the more of `f64`'s bits its tables have lost ([`Tables::loss`]). The app walks in
+    /// `f64` while the whole picture is under this, and the deep walk hands subtrees under it to
+    /// the `f64` walk.
+    pub fn f64_reach_log2(&self) -> f64 {
+        if !self.grows() {
+            return 40.0;
+        }
+        (40.0 / (1.0 + self.loss / self.growth.log2())).clamp(8.0, 40.0)
+    }
+
+    /// [`Tables::auto_order`] for any zoom: `log2_px_per_unit` may be far past `f64` (a view at
+    /// 1e1000×), and the order past the tables' depth (up to [`MAX_ORDER`]), where the deep walk
+    /// draws it.
+    pub fn auto_order_log2(&self, log2_px_per_unit: f64, step_px: f64) -> Option<u32> {
+        if !self.grows() {
+            return None;
+        }
+        let want = step_px.log2() - log2_px_per_unit;
+        if self.step_log2(self.max_depth) <= want {
+            return self.auto_order(log2_px_per_unit.exp2(), step_px);
+        }
+        // The growth law: each order shrinks the step by the growth factor.
+        let past = ((self.step_log2(self.max_depth) - want) / self.growth.log2()).ceil() as u32;
+        let n = self.max_depth.saturating_add(past).min(MAX_ORDER);
+        let n = n - (n - self.max_depth) % self.period;
+        // Past the tables, an overlapping curve was capped long before: the cap's order stands.
+        let cap = self.auto_order(f64::MAX, step_px).unwrap_or(n);
+        Some(if cap < self.max_depth { cap } else { n })
     }
 
     /// The order at which the step is at most `step_px` pixels, at `px_per_unit` pixels per world
