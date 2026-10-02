@@ -1,8 +1,9 @@
 # L-systems — turtle-drawn curves and plants, with deep zoom
 
-Status: **phases 0–3 built** (2026-10-02, branch `feat/lsystems`); phase 4 under way — filled
-shapes, stochastic, parametric and context-sensitive productions and SVG export built; the
-animations to come (the user: "run the radeon tests and do phase 4"). The user:
+Status: **phases 0–4 built** (2026-10-02, branch `feat/lsystems`) — phase 4: filled shapes,
+stochastic, parametric and context-sensitive productions, SVG export, draw-on and angle animation
+(the user: "run the radeon tests and do phase 4"). Still to do: raster export of an L-system view,
+and tours with order, angle and draw-on tracks (they render through it). The user:
 "Work on the design doc" (after "Are L-systems implemented" — no). Integration facts in §2 are from
 this tree at `21e2bd7` (Life merged). The user's decisions on the open questions are in §9 (all six:
 yes).
@@ -144,6 +145,20 @@ Phase 4, SVG export, settled (`lsystem_view/svg.rs`):
   SVG has a polygon per shape and a line per segment; Inkscape renders of the mango leaf, the
   stochastic plant and the filled snowflake (`--shot … --svg`) match the app's screenshots.
 - File ▸ Export SVG… and the panel's SVG… button; `--shot LOC --svg FILE` for unattended runs.
+
+Phase 4, animation, settled:
+
+- **Draw on, on the GPU**: each segment carries where along the curve it starts and ends (0–1, its
+  index over the walk's total) and each fill where its shape starts; a `progress` uniform hides
+  what is past it and shortens the segment it falls in. So the curve draws itself at the frame
+  rate with no walk (a slider, or play: 8 s end to end). The device check gains "drawn on to 60%"
+  (texel-exact against the model); a shader that stops shortening fails it (16 texels).
+- **Angle sweep**: play beside the angle slider sweeps δ at 4°/s between 1° and 179°, there and
+  back. Each step rebuilds the tables, so every walk lands a step behind the angle: a walk is now
+  kept unless the SYSTEM changed (`system_id`, new per system opened), not dropped when the tables
+  did — the picture would otherwise blink out on every step.
+- Neither is saved with a view; tours with order, angle and draw-on tracks wait for raster export
+  (a tour renders through it).
 
 ## 1. Goal
 

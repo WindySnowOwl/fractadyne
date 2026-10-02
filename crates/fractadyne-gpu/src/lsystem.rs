@@ -11,16 +11,19 @@ use egui_wgpu::wgpu;
 use std::sync::Arc;
 
 /// One segment as the shader reads it: its ends in pixels of the walked view, from its centre
-/// (y up), and its colour value (≥ 0; the palette coordinate before the cycle and offset).
+/// (y up), its colour value (≥ 0; the palette coordinate before the cycle and offset), and where
+/// along the curve it starts and ends (0 to 1: what the draw-on animation reveals it by).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct SegmentInstance {
     pub a: [f32; 2],
     pub b: [f32; 2],
     pub value: f32,
+    pub t: [f32; 2],
 }
 
-/// One triangle of a filled polygon: its corners in pixels of the walked view, and its value.
+/// One triangle of a filled polygon: its corners in pixels of the walked view, its value, and
+/// where along the curve its polygon starts.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct TriangleInstance {
@@ -28,6 +31,7 @@ pub struct TriangleInstance {
     pub b: [f32; 2],
     pub c: [f32; 2],
     pub value: f32,
+    pub t: f32,
 }
 
 /// What the app asks of the segment pass on a frame (`MandelbrotParams::lsystem`).
@@ -44,6 +48,9 @@ pub struct LSystemFrame {
     pub offset: [f32; 2],
     /// The line width, pixels.
     pub width: f32,
+    /// How much of the curve is drawn (1: all of it): the draw-on animation. A segment past it is
+    /// hidden, the one it falls in shortened to it, and a filled shape appears once it is passed.
+    pub progress: f32,
 }
 
 #[repr(C)]
@@ -54,12 +61,12 @@ struct LViewU {
     half: f32,
     size: [f32; 2],
     ss: f32,
-    _pad: f32,
+    progress: f32,
 }
 
 const SOURCE: &str = include_str!("lsystem.wgsl");
 
-/// The most segments one frame draws (20 bytes each): the app's walk budget stays under it.
+/// The most segments one frame draws (28 bytes each): the app's walk budget stays under it.
 pub const MAX_SEGMENTS: usize = 1 << 23;
 
 pub(crate) struct LSystemRenderer {
@@ -110,7 +117,7 @@ impl LSystemRenderer {
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<SegmentInstance>() as u64,
                     step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32, 3 => Float32x2],
                 }],
                 compilation_options: Default::default(),
             },
@@ -136,7 +143,7 @@ impl LSystemRenderer {
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<TriangleInstance>() as u64,
                     step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x2, 3 => Float32],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x2, 3 => Float32, 4 => Float32],
                 }],
                 compilation_options: Default::default(),
             },
@@ -227,12 +234,13 @@ impl LSystemRenderer {
             half,
             size: [size[0] as f32, size[1] as f32],
             ss,
-            _pad: 0.0,
+            progress: frame.progress,
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
         let mut h = std::collections::hash_map::DefaultHasher::new();
         use std::hash::{Hash, Hasher};
-        (frame.segments_id, frame.scale.to_bits(), frame.offset.map(f32::to_bits), frame.width.to_bits(), size, ss.to_bits()).hash(&mut h);
+        let view = (frame.scale.to_bits(), frame.offset.map(f32::to_bits), frame.width.to_bits(), frame.progress.to_bits());
+        (frame.segments_id, view, size, ss.to_bits()).hash(&mut h);
         h.finish() | 1
     }
 

@@ -113,9 +113,25 @@ pub fn model(frame: &LSystemFrame, size: [u32; 2], ss: u32) -> Vec<Option<f32>> 
         let q = [(f64::from(p[0]) * f64::from(frame.scale) + f64::from(frame.offset[0])) * ss, (f64::from(p[1]) * f64::from(frame.scale) + f64::from(frame.offset[1])) * ss];
         [0.5 * f64::from(size[0]) + q[0], 0.5 * f64::from(size[1]) - q[1]]
     };
-    let segs: Vec<([f64; 2], [f64; 2], f32)> = frame.segments.iter().map(|s| (to_texel(s.a), to_texel(s.b), s.value)).collect();
+    // Drawn on as far as `progress`: a segment past it hidden, the one it falls in shortened (in
+    // f32, as the shader shortens it), a filled shape shown once it is passed.
+    let p = frame.progress;
+    let segs: Vec<([f64; 2], [f64; 2], f32)> = frame
+        .segments
+        .iter()
+        .filter(|s| s.t[0] < p)
+        .map(|s| {
+            let b = if s.t[1] > p {
+                let f = ((p - s.t[0]) / (s.t[1] - s.t[0])).clamp(0.0, 1.0);
+                [s.a[0] + (s.b[0] - s.a[0]) * f, s.a[1] + (s.b[1] - s.a[1]) * f]
+            } else {
+                s.b
+            };
+            (to_texel(s.a), to_texel(b), s.value)
+        })
+        .collect();
     let tris: Vec<([[f64; 2]; 3], f32)> =
-        frame.triangles.iter().map(|t| ([to_texel(t.a), to_texel(t.b), to_texel(t.c)], t.value)).collect();
+        frame.triangles.iter().filter(|t| t.t < p).map(|t| ([to_texel(t.a), to_texel(t.b), to_texel(t.c)], t.value)).collect();
     let dist = |p: [f64; 2], a: [f64; 2], b: [f64; 2]| {
         let ab = [b[0] - a[0], b[1] - a[1]];
         let l2 = ab[0] * ab[0] + ab[1] * ab[1];
@@ -173,7 +189,8 @@ pub fn sample_triangles(seed: u64, n: usize, w: f32, h: f32) -> Vec<TriangleInst
             let p = |a: f32| [c[0] + r * a.cos(), c[1] + r * a.sin()];
             let a0 = next() * std::f32::consts::TAU;
             let (a1, a2) = (a0 + 1.0 + next() * 2.0, a0 + 3.5 + next());
-            TriangleInstance { a: p(a0), b: p(a1), c: p(a2), value: 0.01 + (k as f32 + 0.5) / n as f32 * 0.98 }
+            let value = 0.01 + (k as f32 + 0.5) / n as f32 * 0.98;
+            TriangleInstance { a: p(a0), b: p(a1), c: p(a2), value, t: k as f32 / n as f32 }
         })
         .collect()
 }
@@ -193,26 +210,31 @@ pub fn sample_segments(seed: u64, n: usize, w: f32, h: f32) -> Vec<SegmentInstan
             let a = [(next() - 0.5) * 1.2 * w, (next() - 0.5) * 1.2 * h];
             let len = if k % 7 == 0 { 0.0 } else { next().powi(2) * 0.5 * w };
             let ang = next() * std::f32::consts::TAU;
-            SegmentInstance { a, b: [a[0] + len * ang.cos(), a[1] + len * ang.sin()], value: (k as f32 + 0.5) / n as f32 }
+            // Along the curve: the k-th of n.
+            let t = [k as f32 / n as f32, (k + 1) as f32 / n as f32];
+            SegmentInstance { a, b: [a[0] + len * ang.cos(), a[1] + len * ang.sin()], value: (k as f32 + 0.5) / n as f32, t }
         })
         .collect()
 }
 
 /// The pass covers what the model says, texel for texel: thin and thick lines, at 1 and 2 texels a
-/// pixel, drawn where their walk was and moved under a view that zoomed and panned since.
+/// pixel, drawn where their walk was and moved under a view that zoomed and panned since, and
+/// drawn on part of the way.
 pub fn coverage(device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<Outcome> {
     let mut out = Vec::new();
-    for (width, ss, scale, offset, tris, label) in [
-        (1.0f32, 1u32, 1.0f32, [0.0f32, 0.0f32], 0usize, "1 px lines"),
-        (3.0, 1, 1.0, [0.0, 0.0], 0, "3 px lines"),
-        (1.5, 2, 1.0, [0.0, 0.0], 0, "1.5 px lines at 2 texels a pixel"),
-        (2.0, 1, 1.37, [6.25, -3.5], 0, "a walk moved and scaled under the view"),
-        (1.5, 1, 1.0, [0.0, 0.0], 40, "filled triangles under lines"),
+    for (width, ss, scale, offset, tris, progress, label) in [
+        (1.0f32, 1u32, 1.0f32, [0.0f32, 0.0f32], 0usize, 1.0f32, "1 px lines"),
+        (3.0, 1, 1.0, [0.0, 0.0], 0, 1.0, "3 px lines"),
+        (1.5, 2, 1.0, [0.0, 0.0], 0, 1.0, "1.5 px lines at 2 texels a pixel"),
+        (2.0, 1, 1.37, [6.25, -3.5], 0, 1.0, "a walk moved and scaled under the view"),
+        (1.5, 1, 1.0, [0.0, 0.0], 40, 1.0, "filled triangles under lines"),
+        // Through the 97th segment (of 160), a third of the way along it; 24 of the 40 shapes.
+        (2.0, 1, 1.0, [0.0, 0.0], 40, 96.33 / 160.0, "drawn on to 60%"),
     ] {
         let size = [97u32 * ss, 61 * ss];
         let segs = sample_segments(0x5EED + u64::from(ss) * 31 + width.to_bits() as u64, 160, 97.0, 61.0);
         let triangles = sample_triangles(0x7A1 + tris as u64, tris, 97.0, 61.0);
-        let frame = LSystemFrame { segments: Arc::new(segs), triangles: Arc::new(triangles), segments_id: 1, scale, offset, width };
+        let frame = LSystemFrame { segments: Arc::new(segs), triangles: Arc::new(triangles), segments_id: 1, scale, offset, width, progress };
         let result = render_segments(device, queue, &frame, size, ss).and_then(|got| {
             let want = model(&frame, size, ss);
             let (mut bad, mut unsure, mut lit) = (0usize, 0usize, 0usize);

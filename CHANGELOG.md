@@ -81,7 +81,9 @@ Changes after 0.3.0-beta.1:
   context skips). These are drawn at a fixed order, by building the word (up to two million
   modules) in double precision; Hogeweg and Hesper's plants, the book's row of trees and its
   branching pattern are built in. The angle
-  has a slider; the line width, and colouring by position along
+  has a slider, and a play button that sweeps it there and back (the curve morphing as it turns);
+  Draw on reveals the curve in the order the turtle draws it — a slider, or play to watch it draw
+  itself. The line width, and colouring by position along
   the curve, branch depth, heading or colour index, are in the panel; the toolbar raises and
   lowers the order. Zoom has no limit: past what double precision places, the top of the drawing
   is computed in arbitrary precision with exact headings, so the Koch snowflake's corner at 1e100×

@@ -37,6 +37,8 @@ pub(crate) const MAX_VIEW_SYSTEM: usize = 64 * 1024;
 /// What a walk was for: when the view's key differs from the shown walk's, a new walk is due.
 #[derive(Clone, Debug, PartialEq)]
 struct WalkKey {
+    /// The system shown (its tables change with its angle; it does not).
+    system: u64,
     tables: u64,
     order: u32,
     /// The view's centre, exact.
@@ -116,7 +118,22 @@ pub(crate) struct LSystemState {
     framed: Option<Framed>,
     /// A parametric or context-sensitive system's last word: the tables it is for, its order.
     expansion: Option<(u64, u32, Arc<Expansion>)>,
+    /// Which system this is: a new one for each system opened, the same through angle and seed
+    /// changes — so a walk of the angle a moment ago is drawn while the next one runs.
+    system_id: u64,
+    /// How much of the curve is drawn (1: all of it), and whether it is drawing itself on: the
+    /// time of the last step.
+    pub(crate) progress: f32,
+    draw_anim: Option<std::time::Instant>,
+    /// The angle sweeping: the last step's time and the direction (+1 or −1).
+    angle_anim: Option<(std::time::Instant, f64)>,
 }
+
+/// How long the curve takes to draw itself on, whole.
+const DRAW_SECONDS: f64 = 8.0;
+/// How fast the angle sweeps, degrees a second (between its bounds, there and back).
+const ANGLE_SPEED: f64 = 4.0;
+const ANGLE_RANGE: [f64; 2] = [1.0, 179.0];
 
 /// A home view's framing: the picture's box (`None`: it draws nothing), and the canvas size and
 /// view it set. A canvas that changes size before the user moves — the first layout after a file
@@ -160,6 +177,10 @@ impl Default for LSystemState {
             big: None,
             framed: None,
             expansion: None,
+            system_id: 1,
+            progress: 1.0,
+            draw_anim: None,
+            angle_anim: None,
         }
     }
 }
@@ -201,7 +222,58 @@ impl LSystemState {
         self.system = system;
         self.angle = None;
         self.fixed_order = None;
+        self.system_id += 1;
+        self.progress = 1.0;
+        self.draw_anim = None;
+        self.angle_anim = None;
         self.rebuild();
+    }
+
+    /// Whether the curve is drawing itself on, or its angle sweeping.
+    pub(crate) fn animating(&self) -> bool {
+        self.draw_anim.is_some() || self.angle_anim.is_some()
+    }
+
+    /// Start (from the beginning, if it was all drawn) or stop the curve drawing itself on.
+    pub(crate) fn toggle_draw_on(&mut self) {
+        if self.draw_anim.take().is_none() {
+            if self.progress >= 1.0 {
+                self.progress = 0.0;
+            }
+            self.draw_anim = Some(std::time::Instant::now());
+        }
+    }
+
+    /// Start or stop the angle sweeping (from wherever it is).
+    pub(crate) fn toggle_angle_sweep(&mut self) {
+        if self.angle_anim.take().is_none() {
+            self.angle_anim = Some((std::time::Instant::now(), 1.0));
+        }
+    }
+
+    /// Advance the animations to now.
+    fn animate(&mut self) {
+        let now = std::time::Instant::now();
+        if let Some(last) = self.draw_anim {
+            let dt = now.duration_since(last).as_secs_f64();
+            self.progress = (f64::from(self.progress) + dt / DRAW_SECONDS).min(1.0) as f32;
+            self.draw_anim = (self.progress < 1.0).then_some(now);
+        }
+        if let Some((last, dir)) = self.angle_anim {
+            let dt = now.duration_since(last).as_secs_f64().min(0.25);
+            let mut a = self.angle.unwrap_or_else(|| self.system.angle.degrees()) + dir * ANGLE_SPEED * dt;
+            let mut dir = dir;
+            // There and back between the bounds.
+            if a > ANGLE_RANGE[1] {
+                a = 2.0 * ANGLE_RANGE[1] - a;
+                dir = -1.0;
+            } else if a < ANGLE_RANGE[0] {
+                a = 2.0 * ANGLE_RANGE[0] - a;
+                dir = 1.0;
+            }
+            self.angle_anim = Some((now, dir));
+            self.set_angle(Some(a));
+        }
     }
 
     /// Set a stochastic system's seed (the view stays where it is: the plant is about the same
@@ -264,9 +336,16 @@ impl LSystemState {
         f64::from(nesting(&self.system.axiom) + order * deepest).max(1.0)
     }
 
-    /// Whether a walk is running (the view should keep repainting until it lands).
+    /// Whether a walk is running or an animation playing (the view should keep repainting).
     pub(crate) fn busy(&self) -> bool {
-        self.job.is_some()
+        self.job.is_some() || self.animating()
+    }
+
+    /// The last walk's segments, those the draw-on progress has reached and those it has not.
+    pub(crate) fn drawn_split(&self) -> Option<(usize, usize)> {
+        let w = self.shown.as_ref()?;
+        let drawn = w.segments.iter().filter(|s| s.t[0] < self.progress).count();
+        Some((drawn, w.segments.len() - drawn))
     }
 
     /// The last walk's numbers.
@@ -287,13 +366,16 @@ impl LSystemState {
             if job.done.load(Ordering::Acquire) {
                 let job = self.job.take().expect("a job");
                 if let Some(w) = job.result.lock().ok().and_then(|mut r| r.take()) {
-                    // A walk of tables since replaced is not this system's picture.
-                    if w.key.tables == self.tables_id {
-                        if let Some(b) = &w.big {
-                            self.big = Some((w.key.tables, b.clone()));
-                        }
-                        if let Some(x) = &w.ex {
-                            self.expansion = Some((w.key.tables, w.key.order, x.clone()));
+                    // Another system's walk is not this one's picture; a walk at the angle a
+                    // moment ago is (while the angle sweeps, every walk lands a step behind it).
+                    if w.key.system == self.system_id {
+                        if w.key.tables == self.tables_id {
+                            if let Some(b) = &w.big {
+                                self.big = Some((w.key.tables, b.clone()));
+                            }
+                            if let Some(x) = &w.ex {
+                                self.expansion = Some((w.key.tables, w.key.order, x.clone()));
+                            }
                         }
                         self.shown = Some(w);
                     }
@@ -304,7 +386,7 @@ impl LSystemState {
             self.start(want);
         }
         // A system changed under the shown walk: drop it rather than draw another system's picture.
-        if self.shown.as_ref().is_some_and(|w| w.key.tables != self.tables_id) {
+        if self.shown.as_ref().is_some_and(|w| w.key.system != self.system_id) {
             self.shown = None;
         }
     }
@@ -383,18 +465,25 @@ fn walk_segments(
     // A polygon is clipped to a little beyond the view (it may reach 1e30 pixels past it), then cut
     // into triangles.
     let clip = [0.5 * size[0] + margin + 4.0, 0.5 * size[1] + margin + 4.0];
+    // Where along the curve, 0 to 1 (what the draw-on animation reveals by).
+    let along = |index: f64, total: f64| {
+        let t = index / total;
+        (if t.is_finite() { t.clamp(0.0, 1.0) } else { 0.0 }) as f32
+    };
     let mut take = |d: Drawn, total: f64| match d {
         Drawn::Segment(s) => segments.push(SegmentInstance {
             a: [s.a[0] as f32, s.a[1] as f32],
             b: [s.b[0] as f32, s.b[1] as f32],
             value: value_of(s.index, s.span, s.depth, s.heading, s.colour, total),
+            t: [along(s.index, total), along(s.index + s.span, total)],
         }),
         Drawn::Polygon(p) => {
             let value = value_of(p.index, 0.0, p.depth, p.heading, p.colour, total);
             let pts = lsystem::polygon::clip_to_rect(&p.pts, clip);
             let f = |q: [f64; 2]| [q[0] as f32, q[1] as f32];
+            let t = along(p.index, total);
             for [i, j, k] in lsystem::polygon::triangulate(&pts) {
-                triangles.push(TriangleInstance { a: f(pts[i]), b: f(pts[j]), c: f(pts[k]), value });
+                triangles.push(TriangleInstance { a: f(pts[i]), b: f(pts[j]), c: f(pts[k]), value, t });
             }
             // The outline too, for SVG (a filled polygon, where triangles would show seams).
             outlines.push((pts.iter().map(|&q| f(q)).collect(), value));
@@ -454,6 +543,7 @@ impl FractadyneApp {
         let upp_log2 = self.viewport.units_per_pixel.log2();
         let order = self.lsystem.order_for(upp_log2);
         WalkKey {
+            system: self.lsystem.system_id,
             tables: self.lsystem.tables_id,
             order,
             centre: [self.viewport.center_x.clone(), self.viewport.center_y.clone()],
@@ -466,6 +556,7 @@ impl FractadyneApp {
     }
 
     pub(crate) fn build_lsystem_params(&mut self, resolution: [u32; 2], ss: u32) -> fractadyne_gpu::MandelbrotParams {
+        self.lsystem.animate();
         let want = self.lsystem_walk_key(resolution);
         let (centre, upp_log2) = (want.centre.clone(), want.upp_log2);
         self.lsystem.drive(want);
@@ -482,6 +573,7 @@ impl FractadyneApp {
                     ratio_f64(&fractadyne_core::bf_sub(&w.key.centre[1], &centre[1], p), upp_log2) as f32,
                 ],
                 width: self.lsystem.width,
+                progress: self.lsystem.progress,
             },
             None => LSystemFrame {
                 segments: Arc::new(Vec::new()),
@@ -490,6 +582,7 @@ impl FractadyneApp {
                 scale: 1.0,
                 offset: [0.0, 0.0],
                 width: self.lsystem.width,
+                progress: 1.0,
             },
         };
         let (lut, lut_smooth) = self.active_lut();
@@ -785,6 +878,11 @@ impl FractadyneApp {
             if r.changed() {
                 self.lsystem.set_angle(Some(a));
             }
+            let sweeping = self.lsystem.angle_anim.is_some();
+            let icon = if sweeping { crate::icons::PAUSE } else { crate::icons::PLAY };
+            if ui.button(icon).on_hover_text("Sweep the angle, there and back: the curve morphing as it turns").clicked() {
+                self.lsystem.toggle_angle_sweep();
+            }
             r
         });
         if self.lsystem.angle.is_some() && ui.small_button("System's angle").clicked() {
@@ -802,6 +900,18 @@ impl FractadyneApp {
             });
         }
         crate::ui::labelled(ui, "Line width", |ui| ui.add(egui::Slider::new(&mut self.lsystem.width, 0.5..=8.0).suffix(" px")));
+        crate::ui::labelled(ui, "Draw on", |ui| {
+            let mut pct = f64::from(self.lsystem.progress) * 100.0;
+            if ui.add(egui::Slider::new(&mut pct, 0.0..=100.0).suffix("%").max_decimals(0)).on_hover_text("How much of the curve is drawn, in the order the turtle draws it").changed() {
+                self.lsystem.progress = (pct / 100.0) as f32;
+                self.lsystem.draw_anim = None;
+            }
+            let drawing = self.lsystem.draw_anim.is_some();
+            let icon = if drawing { crate::icons::PAUSE } else { crate::icons::PLAY };
+            if ui.button(icon).on_hover_text("The curve drawing itself on").clicked() {
+                self.lsystem.toggle_draw_on();
+            }
+        });
         crate::ui::labelled(ui, "Colour by", |ui| {
             let label = |c: Colouring| match c {
                 Colouring::Position => "position along the curve",

@@ -14,8 +14,13 @@ struct LView {
     // The target, texels; texels a pixel.
     size: vec2<f32>,
     ss: f32,
-    _pad: f32,
+    // How much of the curve is drawn (1: all): a segment past it is hidden, the one it falls in
+    // shortened to it, a filled shape shown once it is passed.
+    progress: f32,
 };
+
+// A vertex no fragment lands on (every corner of a hidden instance is this one point).
+const HIDDEN: vec4<f32> = vec4<f32>(-2.0, -2.0, 0.0, 1.0);
 
 @group(1) @binding(0) var<uniform> V: LView;
 
@@ -46,9 +51,23 @@ fn to_texel(p: vec2<f32>) -> vec2<f32> {
 fn vs_segment(
     @builtin(vertex_index) vi: u32,
     @location(0) pa: vec2<f32>,
-    @location(1) pb: vec2<f32>,
+    @location(1) pb_in: vec2<f32>,
     @location(2) value: f32,
+    @location(3) t: vec2<f32>,
 ) -> VsOut {
+    var out: VsOut;
+    if (t.x >= V.progress) {
+        out.pos = HIDDEN;
+        out.a = vec2<f32>(0.0);
+        out.b = vec2<f32>(0.0);
+        out.value = value;
+        return out;
+    }
+    // The segment the drawing has reached: as far along it as the drawing has got.
+    var pb = pb_in;
+    if (t.y > V.progress) {
+        pb = pa + (pb_in - pa) * clamp((V.progress - t.x) / (t.y - t.x), 0.0, 1.0);
+    }
     let a = to_texel(pa);
     let b = to_texel(pb);
     let ab = b - a;
@@ -67,7 +86,6 @@ fn vs_segment(
     let c = corner[vi];
     let along = select(-h, len + h, c.x > 0.5);
     let p = a + d * along + n * (c.y * h);
-    var out: VsOut;
     out.pos = vec4<f32>(p.x / V.size.x * 2.0 - 1.0, 1.0 - p.y / V.size.y * 2.0, 0.0, 1.0);
     out.a = a;
     out.b = b;
@@ -93,11 +111,15 @@ fn vs_triangle(
     @location(1) pb: vec2<f32>,
     @location(2) pc: vec2<f32>,
     @location(3) value: f32,
+    @location(4) t: f32,
 ) -> TriOut {
     var corners = array<vec2<f32>, 3>(pa, pb, pc);
     let p = to_texel(corners[vi]);
     var out: TriOut;
     out.pos = vec4<f32>(p.x / V.size.x * 2.0 - 1.0, 1.0 - p.y / V.size.y * 2.0, 0.0, 1.0);
+    if (t >= V.progress) {
+        out.pos = HIDDEN;
+    }
     out.value = value;
     return out;
 }

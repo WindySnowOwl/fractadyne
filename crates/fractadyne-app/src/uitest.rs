@@ -99,6 +99,9 @@ enum Screen {
     /// An L-system (the dragon) with its panel open: the toolbar's L-system group, the walk drawn
     /// through the segment pass, the status bar's order and segment readouts.
     LSystem,
+    /// A plant drawn on 45% of the way (the draw-on animation, paused there): the trunk and the
+    /// branches the turtle reaches first, the rest not yet drawn.
+    LSystemDrawOn,
     /// The Custom formula dialog in Textbook view: several statements aligned at `=`, a comment, a
     /// fraction, functions in their notation, and a line that does not read.
     FormulaTextbook,
@@ -780,6 +783,7 @@ fn build_steps() -> Vec<Step> {
         screen("fractal-dropdown", Screen::FractalDropdown),
         screen("life-draw", Screen::LifeDraw),
         screen("lsystem", Screen::LSystem),
+        screen("lsystem-draw-on", Screen::LSystemDrawOn),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
         live("live-direct-1e2", 2.0),
         live("live-df32-1e6", 6.0),
@@ -1627,6 +1631,12 @@ impl FractadyneApp {
                 self.lsystem_open_library("Heighway dragon");
                 self.dialogs.right_panel_open = true;
             }
+            Screen::LSystemDrawOn => {
+                // ABOP's fractal plant, drawn on to 45% (paused there: a still to judge).
+                self.lsystem_open_library("Plant (ABOP 1.24f)");
+                self.lsystem.progress = 0.45;
+                self.dialogs.right_panel_open = true;
+            }
             Screen::FormulaClassicApplied => {
                 let e = crate::formula_library::collection().iter().find(|e| e.name == "Magnet I").cloned();
                 match e.map(|e| (crate::custom_formula::CustomFormula::compile(&e.source, &[]), e.view)) {
@@ -1785,6 +1795,21 @@ impl FractadyneApp {
                 name: "the dragon is walked and drawn".into(),
                 verdict: if ok { Verdict::Pass } else { Verdict::Fail },
                 detail: format!("last walk {:?}; the view's order {want_order}", self.lsystem.last_walk()),
+            });
+        }
+
+        if matches!(step.kind, StepKind::Screen(Screen::LSystemDrawOn)) {
+            // Drawn on part of the way: the walk holds segments on both sides of the progress (the
+            // pass hides those past it), and roughly in proportion.
+            let split = self.lsystem.drawn_split();
+            let ok = split.is_some_and(|(drawn, hidden)| {
+                let f = drawn as f64 / (drawn + hidden).max(1) as f64;
+                drawn > 100 && hidden > 100 && (0.25..0.65).contains(&f)
+            });
+            checks.push(Check {
+                name: "the plant is drawn on to 45%".into(),
+                verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+                detail: format!("(drawn, not yet) segments {split:?} at progress {}", self.lsystem.progress),
             });
         }
 

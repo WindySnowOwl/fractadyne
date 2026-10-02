@@ -20,7 +20,7 @@ fn read_back(svg: &str) -> Vec<([f64; 2], [f64; 2], String)> {
 }
 
 fn seg(a: [f32; 2], b: [f32; 2], value: f32) -> SegmentInstance {
-    SegmentInstance { a, b, value }
+    SegmentInstance { a, b, value, t: [0.0, 1.0] }
 }
 
 /// Two colours by palette value: below ½ red, else blue.

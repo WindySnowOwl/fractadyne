@@ -37,7 +37,7 @@ fn walk_values_stay_in_the_palette_range() {
         let mut big = None;
         for colouring in Colouring::ALL {
             let key = WalkKey {
-                tables: 1,
+                system: 1, tables: 1,
                 order,
                 centre: [zero(), zero()],
                 upp_log2,
@@ -72,7 +72,7 @@ fn a_stochastic_plant_reseeds_and_zooms_deep() {
     assert!(st.needs_deep(upp_log2, order));
     let zero = || BigFloat::from_f64(0.0, 128);
     let key = WalkKey {
-        tables: 1,
+        system: 1, tables: 1,
         order,
         centre: [zero(), zero()],
         upp_log2,
@@ -96,7 +96,7 @@ fn a_parametric_system_is_built_once_at_its_order_and_drawn() {
     assert!(!st.needs_deep(-300.0, 13));
     let zero = || BigFloat::from_f64(0.0, 128);
     let key = WalkKey {
-        tables: 1,
+        system: 1, tables: 1,
         order: 13,
         centre: [zero(), zero()],
         upp_log2: -8.0,
@@ -125,7 +125,7 @@ fn an_svg_holds_the_walk_of_its_view() {
     let order = st.order_for(0.0);
     let zero = || BigFloat::from_f64(0.0, 128);
     let key = WalkKey {
-        tables: 1,
+        system: 1, tables: 1,
         order,
         centre: [zero(), BigFloat::from_f64(20.0, 128)],
         upp_log2: -1.0,
@@ -151,6 +151,81 @@ fn an_svg_holds_the_walk_of_its_view() {
 }
 
 #[test]
+fn the_curve_draws_itself_on_and_stops_at_the_end() {
+    let mut st = LSystemState::default();
+    st.toggle_draw_on();
+    assert_eq!(st.progress, 0.0, "from the start, when it was all drawn");
+    assert!(st.animating());
+    // A second in: an eighth of the way.
+    st.draw_anim = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+    st.animate();
+    assert!((f64::from(st.progress) - 1.0 / DRAW_SECONDS).abs() < 0.01, "{}", st.progress);
+    // Long past the end: all of it, and stopped.
+    st.draw_anim = Some(std::time::Instant::now() - std::time::Duration::from_secs(100));
+    st.animate();
+    assert_eq!(st.progress, 1.0);
+    assert!(!st.animating());
+    // Paused part of the way, it resumes from there.
+    st.progress = 0.3;
+    st.toggle_draw_on();
+    assert_eq!(st.progress, 0.3);
+    st.toggle_draw_on();
+    assert!(!st.animating());
+}
+
+#[test]
+fn the_angle_sweeps_there_and_back() {
+    let mut st = LSystemState::default();
+    st.set_angle(Some(100.0));
+    let tables = st.tables_id;
+    st.toggle_angle_sweep();
+    st.angle_anim = Some((std::time::Instant::now() - std::time::Duration::from_millis(200), 1.0));
+    st.animate();
+    let a = st.angle.unwrap();
+    assert!((a - (100.0 + 0.2 * ANGLE_SPEED)).abs() < 0.05, "{a}");
+    assert_ne!(st.tables_id, tables, "the tables follow the angle");
+    // At the top of its range it turns back.
+    st.set_angle(Some(ANGLE_RANGE[1] - 0.1));
+    st.angle_anim = Some((std::time::Instant::now() - std::time::Duration::from_millis(100), 1.0));
+    st.animate();
+    assert!(st.angle.unwrap() < ANGLE_RANGE[1] && st.angle_anim.is_some_and(|(_, d)| d < 0.0), "{:?}", st.angle);
+}
+
+/// While the angle sweeps, every walk lands a step behind it: it is still drawn (the picture would
+/// otherwise blink out on every step); another system's walk is not.
+#[test]
+fn a_walk_at_the_angle_a_moment_ago_is_drawn_and_another_systems_is_not() {
+    let mut st = LSystemState::default();
+    let key = |st: &LSystemState| WalkKey {
+        system: st.system_id,
+        tables: st.tables_id,
+        order: 4,
+        centre: [BigFloat::from_f64(0.0, 128), BigFloat::from_f64(0.0, 128)],
+        upp_log2: -6.0,
+        size: [200, 200],
+        colouring: Colouring::Plain,
+        margin: 1.0,
+        deep: false,
+    };
+    let landed = |st: &LSystemState, k: WalkKey| {
+        let out = walk_segments(&st.drawn_system(), &st.tables, None, None, &k, 1.0);
+        let w = Walked { key: k, segments: Arc::new(out.segments), triangles: Arc::new(out.triangles), id: 9, stats: out.stats, ms: 0.0, big: None, ex: None };
+        Job { result: Arc::new(Mutex::new(Some(w))), done: Arc::new(AtomicBool::new(true)) }
+    };
+    let k0 = key(&st);
+    st.job = Some(landed(&st, k0));
+    st.set_angle(Some(91.0));
+    st.drive(key(&st));
+    assert!(st.shown.as_ref().is_some_and(|w| w.key.tables != st.tables_id && w.id == 9), "the walk at the old angle is drawn");
+    // Another system: its walk is dropped.
+    let old = key(&st);
+    st.job = Some(landed(&st, old));
+    st.set_system(library::find("Koch curve").unwrap().system().unwrap());
+    st.drive(key(&st));
+    assert!(st.shown.is_none());
+}
+
+#[test]
 fn a_centre_difference_divides_at_any_scale() {
     let p = 4096;
     let d = fractadyne_core::bf_sub(&BigFloat::from_f64(1.0, p), &BigFloat::from_f64(1.0 - 2f64.powi(-40), p), p);
@@ -172,7 +247,7 @@ fn a_filled_shape_becomes_triangles_inside_the_view() {
     let b = lsystem::bounds(&t, 4, 1 << 20).unwrap();
     let upp = ((b[2] - b[0]) / 300.0).max((b[3] - b[1]) / 300.0);
     let centre = [BigFloat::from_f64(0.5 * (b[0] + b[2]), 128), BigFloat::from_f64(0.5 * (b[1] + b[3]), 128)];
-    let key = WalkKey { tables: 1, order: 4, centre, upp_log2: upp.log2(), size: [320, 320], colouring: Colouring::Plain, margin: 1.0, deep: false };
+    let key = WalkKey { system: 1, tables: 1, order: 4, centre, upp_log2: upp.log2(), size: [320, 320], colouring: Colouring::Plain, margin: 1.0, deep: false };
     let out = walk_segments(&st.drawn_system(), &t, None, None, &key, 1.0);
     assert!(out.segments.is_empty(), "inside braces the turtle draws no lines");
     assert!(!out.triangles.is_empty());
