@@ -31,6 +31,14 @@ fn formula_caps_answer_as_the_id_ranges_they_replaced() {
     assert!(custom.resumable_passes);
     assert!(!custom.series_approximation && !custom.bla && !custom.nucleus_finder);
     assert!(!custom.feature_solvers && !custom.export_glitch_correction && !custom.convergent);
+    // Life is not an escape-time formula: no capability at all — glitch correction included, which
+    // would build references for a picture that has none.
+    let life = formula::caps(formula::LIFE);
+    assert_eq!(
+        (life.series_approximation, life.bla, life.resumable_passes, life.nucleus_finder),
+        (false, false, false, false)
+    );
+    assert!(!life.feature_solvers && !life.export_glitch_correction && !life.convergent);
 }
 
 /// `formula_dwell` must be the same oracle as `naive_dwell_bf` where both apply (Mandelbrot): the

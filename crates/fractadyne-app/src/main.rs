@@ -73,6 +73,7 @@ mod bench_matrix;
 mod custom_formula;
 mod formula_library;
 mod fractal;
+mod life_view;
 mod chunksweep;
 mod glitchaudit;
 mod deviceloss_repro;
@@ -5622,6 +5623,9 @@ struct FractadyneApp {
     /// another family is shown, so switching back finds it; `fractal` is never `Custom` while this
     /// is `None`.
     custom: Option<std::sync::Arc<custom_formula::CustomFormula>>,
+    /// The Life universe `FractalKind::Life` shows, its playback and tools (`life_view.rs`). Kept
+    /// while another family is shown, so switching back finds it where it was.
+    life: life_view::LifeState,
     /// The "Custom formula" dialog's state (`ui/formula_dialog.rs`).
     formula_dialog: ui::formula_dialog::FormulaDialog,
     /// The formula library window's state (`ui/formula_library.rs`).
@@ -6587,11 +6591,14 @@ impl FractadyneApp {
         if let Some(c) = &custom {
             calibration::set_custom_factor(c.shader.cost_factor);
         }
+        // The Life universe, restored after the app exists (it is applied through the app).
+        let life_text = s.life.clone();
 
         let mut app = Self {
             viewport,
             fractal,
             custom,
+            life: Default::default(),
             formula_dialog: ui::formula_dialog::FormulaDialog { textbook: s.formula_textbook, ..Default::default() },
             formula_library: Default::default(),
             // Loaded below, where a file that cannot be read can queue its toast.
@@ -7001,6 +7008,12 @@ impl FractadyneApp {
             last_state: s,
             dirty_since: None,
         };
+        if !life_text.trim().is_empty() {
+            // Not shown here: the session's own `fractal` and view say what is on screen.
+            if let Err(e) = app.apply_life_lines(&life_text, false) {
+                diag::log_line("start", &format!("saved Life universe dropped: {e}"));
+            }
+        }
         let (formulas, unreadable) = formula_library::load();
         app.saved_formulas = formulas;
         if let Some(note) = unreadable {
@@ -7558,6 +7571,7 @@ impl FractadyneApp {
                 .map(|c| c.params[..c.params_used()].iter().map(|p| [p.0, p.1]).collect())
                 .unwrap_or_default(),
             formula_textbook: self.formula_dialog.textbook,
+            life: self.life_lines(),
             julia_mode: self.julia_mode,
             julia_c_re: self.julia_c.0,
             julia_c_im: self.julia_c.1,
@@ -8056,6 +8070,9 @@ impl FractadyneApp {
         self.viewport.center_y = fractadyne_core::BigFloat::from_f64(cy, 64);
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs(); // dynamics changed → drop the cached reference orbits
+        if kind == FractalKind::Life {
+            self.life_home(); // a universe's home frames its pattern, not the Mandelbrot 1×
+        }
     }
 
     /// Drop both per-view reference caches (call when the formula/mode/center changes
@@ -8329,6 +8346,9 @@ impl FractadyneApp {
     fn reset_view(&mut self) {
         let (cx, cy) = self.fractal.default_center();
         self.viewport.reset_to(cx, cy);
+        if self.fractal == FractalKind::Life {
+            self.life_home();
+        }
         if self.dual {
             self.julia_viewport.reset_to(0.0, 0.0);
         }
@@ -8341,6 +8361,11 @@ impl FractadyneApp {
     /// Begin a smooth zoom-out back to the home view. If already at (or near) home,
     /// just snaps via `reset_view`. `now` is the current app time (`ctx.input.time`).
     fn zoom_home(&mut self, now: f64) {
+        // A universe has no 1× to glide back to: Home frames the pattern.
+        if self.fractal == FractalKind::Life {
+            self.reset_view();
+            return;
+        }
         let m_logmag = self.viewport.magnification().max(1.0).ln();
         let j_logmag = if self.dual {
             self.julia_viewport.magnification().max(1.0).ln()
@@ -12805,8 +12830,8 @@ impl FractadyneApp {
     ) {
         // Shown for single Mandelbrot-family views and in dual view (the left panel is the
         // Mandelbrot map); hidden only for a single Julia view, where a Mandelbrot overview
-        // wouldn't correspond to the shown set.
-        if !self.dialogs.minimap || (self.julia_mode && !self.dual) {
+        // wouldn't correspond to the shown set — and for a Life universe, which has none.
+        if !self.dialogs.minimap || (self.julia_mode && !self.dual) || !self.fractal.is_escape_time() {
             return;
         }
         // Key includes the palette identity (preset index or a sentinel) and a revision so
@@ -15387,6 +15412,7 @@ impl eframe::App for FractadyneApp {
         self.draw_goto_dialog(ctx);
         self.draw_formula_dialog(ctx);
         self.draw_formula_library(ctx);
+        self.life_text_dialog(ctx);
         self.draw_snapshot_choice_dialog(ctx);
         self.draw_misiurewicz_explorer(ctx);
         self.draw_share_dialog(ctx);

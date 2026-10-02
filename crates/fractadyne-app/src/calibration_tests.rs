@@ -46,7 +46,8 @@ fn the_default_is_at_least_as_conservative_as_every_calibrated_card() {
 #[test]
 fn every_formula_has_a_factor_row_and_every_row_is_a_formula() {
     let t = table();
-    for spec in FractalKind::SPECS.iter().filter(|s| s.kind != FractalKind::Custom) {
+    // The automata dispatch no escape-time pass, so they have no cost row either.
+    for spec in FractalKind::SPECS.iter().filter(|s| s.kind != FractalKind::Custom && s.kind.is_escape_time()) {
         assert!(
             t.formula.iter().any(|f| f.name == spec.name),
             "no [[formula]] row for {:?} in validation/calibration/ceilings.toml",

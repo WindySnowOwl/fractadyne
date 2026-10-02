@@ -17,3 +17,6 @@ mod formats;
 pub use formats::*;
 
 pub mod library;
+
+mod window;
+pub use window::*;

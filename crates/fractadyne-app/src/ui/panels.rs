@@ -15,7 +15,7 @@ const PANEL_LABEL_W: f32 = 104.0;
 ///
 /// Checkboxes deliberately do NOT use this: a trailing label is the convention for a checkbox,
 /// and the panel's seventeen already read correctly.
-fn labelled<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+pub(crate) fn labelled<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.horizontal(|ui| {
         // PAD to the column rather than laying the label out inside a fixed-size child: a
         // child `Ui` shrinks to its content, so the controls still began wherever each label
@@ -122,6 +122,9 @@ impl FractadyneApp {
                 // Scroll the sections when they don't fit the window height (header stays pinned).
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
 
+                if self.fractal == FractalKind::Life {
+                    egui::CollapsingHeader::new("Life").default_open(true).show(ui, |ui| self.life_panel(ui));
+                }
                 egui::CollapsingHeader::new("Navigate").default_open(true).show(ui, |ui| {
                 labelled(ui, "Zoom speed", |ui| {
                     ui.add(
@@ -391,6 +394,9 @@ impl FractadyneApp {
                     self.anim.random_palette.reshuffle();
                 }
                 });
+                // Iterations, supersampling, relief and glow are escape-time settings: a Life
+                // universe has none of them.
+                if self.fractal.is_escape_time() {
                 egui::CollapsingHeader::new("Quality").default_open(true).show(ui, |ui| {
                 ui.checkbox(&mut self.render_cfg.auto_iter, "Auto-scale iterations with zoom");
                 let label = if self.render_cfg.auto_iter { "Iterations (base)" } else { "Iterations" };
@@ -512,6 +518,7 @@ impl FractadyneApp {
                         .on_hover_text("Flow the glow bands over time (uses the Speed slider).");
                 });
                 });
+                } // escape-time sections
                 // The orbit overlay's options lived as an indented block inside the View MENU
                 // until 2026-08-13 (UI review: a panel's worth of controls in a dropdown). The
                 // toggle is mirrored in Tools ▸ Orbit overlay.

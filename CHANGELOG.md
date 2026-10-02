@@ -59,6 +59,18 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Conway's Game of Life and its relatives (not yet in a beta).** A new family under Fractal ▸
+  Automata: Life-like cellular automata on an unbounded plane, stepped on the graphics card.
+  Rules in B/S notation (Life, HighLife, Seeds and 19 more built in), Generations rules with
+  dying states (Brian's Brain, Star Wars), von Neumann rules, Hensel's non-totalistic notation
+  (B2-a/S12, tlife) and MAP rules. Play and pause, step one generation or a stride of up to
+  65,536, set the speed, draw and erase cells, fill the view at random. Patterns open from RLE,
+  plaintext (.cells) and Life 1.05/1.06 files or pasted text, 18 classics are built in, and the
+  universe saves as RLE. Zoomed out, a pixel shows the fraction of live cells under it, in the
+  current palette. A view of a universe (a .fdn, a bookmark) carries it and writes
+  format_version 3; the session keeps it whichever family is on screen. Not yet: image export of
+  a Life view (refused with a message), Hashlife for very large and very long runs, the
+  Sierpinski-type digit automata and 1-D automata (design/automata.md).
 - **Fifteen more fractal families (0.3.0-beta.13 and beta.14).** Multibrot 6, 7 and 8, and Burning Ship, Tricorn,
   Celtic and Buffalo at powers 3, 4 and 5, each built in and deep-zooming as its power-2 sibling
   does (perturbation in df32 and extended-range floatexp, distance estimation for the Multibrot

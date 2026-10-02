@@ -498,7 +498,7 @@ impl FractadyneApp {
         // `@response-file` expansion is honored (raw args would silently drop them).
         let filter: Option<String> = self.selftest.filter.clone();
         const GROUPS: &[&str] = &[
-            "numeric", "symmetry", "abs-family", "custom-formula", "multibrot-sa", "bla", "aux-bla",
+            "numeric", "symmetry", "abs-family", "custom-formula", "life", "multibrot-sa", "bla", "aux-bla",
             "consistency", "counters", "iter-budget", "iter-chunk", "live-split", "nr-zoom", "coords",
             "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
@@ -4518,6 +4518,43 @@ impl FractadyneApp {
             self.fractal = FractalKind::Mandelbrot;
         }
 
+        // ---- Life (design/automata.md): the GPU tile stepper equals the CPU one cell for cell
+        // (10 rule kinds × plane / torus / bounded), the tile set follows a glider, a full pool
+        // stops instead of dropping cells, LifeWiki's long-run facts hold on the GPU, and the
+        // display pass writes the values it is defined to. Integer automata: every check exact. ----
+        if want("life") {
+            if fractadyne_gpu::life::life_available(device) {
+                use fractadyne_gpu::life::check;
+                let mut outcomes = check::stepper_matches_cpu(device, queue);
+                outcomes.extend(check::tile_set_and_pool(device, queue));
+                outcomes.extend(check::known_facts(device, queue));
+                outcomes.extend(check::display(device, queue));
+                for o in outcomes {
+                    let (pass, result) = match o.result {
+                        Ok(s) => (true, s),
+                        Err(e) => (false, e),
+                    };
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Life",
+                        name: o.name,
+                        params: o.params,
+                        result,
+                        threshold: "exact",
+                        pass,
+                    });
+                }
+            } else {
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Life",
+                    name: "the device runs the Life stepper".into(),
+                    params: "compute shaders, 7 storage buffers".into(),
+                    result: "this adapter has no compute shaders (a GL backend?)".into(),
+                    threshold: "available",
+                    pass: false,
+                });
+            }
+        }
+
         // ---- series approximation engages for the Multibrot families ----
         // The order-3 coefficient recurrence for z^d is validated exactly in fractadyne-core;
         // here we confirm the app actually selects SA for these formulas (skip > 0) and the
@@ -7065,6 +7102,57 @@ zoom = \"1e94\"
                     result: format!("round trip {round_trip}, broken one refused {refused}"),
                     threshold: "formula, parameters and shader key restored; broken formula reported, view not switched",
                     pass: round_trip && refused,
+                });
+                self.fractal = FractalKind::Mandelbrot;
+            }
+
+            // A Life view carries its universe: the rule, every cell (Generations states and negative
+            // coordinates included) at the generation it holds, and the generation to run on to.
+            {
+                let pattern = fractadyne_core::life::parse_rle("#CXRLE Pos=-70,-3\nA2.BC$3.A$CBA!").expect("parses");
+                let opened = self.life_open_view(pattern, "B2/S345/C4", "round trip".into(), 37, 37, true);
+                let want = self.life.loaded.cells();
+                let blob = self.view_metadata();
+                let format3 = blob.lines().any(|l| l == "format_version=3");
+                // Scramble: another pattern and rule, another family.
+                self.life_open_library("Glider");
+                self.fractal = FractalKind::Mandelbrot;
+                let rt = self.load_view_metadata(&blob);
+                let round_trip = rt.note().is_none()
+                    && self.fractal == FractalKind::Life
+                    && self.life.loaded.cells() == want
+                    && self.life.loaded.generation() == 37
+                    && self.life.loaded.rule().canonical() == "B2/S345/C4"
+                    && self.life.pattern_name == "round trip";
+                // A view asking for a later generation runs on to it.
+                let later = blob.lines().map(|l| if l.starts_with("generation=") { "generation=500" } else { l }).collect::<Vec<_>>().join("\n");
+                let rl = self.load_view_metadata(&later);
+                let runs_on = rl.note().is_none() && self.life.target == 500 && self.life.loaded.generation() == 37;
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "View format",
+                    name: "a_life_view_round_trips_its_universe".into(),
+                    params: "Life view (Star Wars, 3 states, x < 0) → scramble → load; then generation=500".into(),
+                    result: format!("opened {}, format 3 {format3}, round trip {round_trip}, runs on {runs_on}", opened.is_ok()),
+                    threshold: "rule, cells, generation and name restored; format 3; target generation 500",
+                    pass: opened.is_ok() && format3 && round_trip && runs_on,
+                });
+                // The session keeps the universe whichever family is on screen, and restoring it
+                // does not switch to it.
+                let saved = self.life_lines();
+                self.life_open_library("Glider");
+                self.fractal = FractalKind::Mandelbrot;
+                let restored = self.apply_life_lines(&saved, false);
+                let kept = restored.is_ok()
+                    && self.fractal == FractalKind::Mandelbrot
+                    && self.life.loaded.cells() == want
+                    && self.life.loaded.rule().canonical() == "B2/S345/C4";
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "View format",
+                    name: "the session keeps the Life universe".into(),
+                    params: "life_lines → scramble → apply (not shown)".into(),
+                    result: format!("restored {restored:?}, cells/rule kept and view not switched: {kept}"),
+                    threshold: "cells and rule restored; family unchanged",
+                    pass: kept,
                 });
                 self.fractal = FractalKind::Mandelbrot;
             }

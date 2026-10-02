@@ -193,9 +193,18 @@ pub(crate) fn stamp_watermark(pixels: &mut [f32], w: u32, h: u32, ov: &WmOverlay
 /// coordinates, with only an "unknown key: formula" note. Format 2 makes it say "saved by a newer
 /// Fractadyne" instead. A view of a power family ("Burning Ship 3", design/power-families.md)
 /// writes it for the same reason: a build without that family keeps showing another.
-pub(crate) const VIEW_FORMAT_VERSION: u32 = 2;
+///
+/// 3 — `fractal=Life` (design/automata.md), with `rule=`, `pattern=`, `pattern_generation=`,
+/// `generation=`, `pattern_name=`. Written only by a Life view, for the same reason as 2: an older
+/// build would show some escape-time family at the coordinates of a universe.
+pub(crate) const VIEW_FORMAT_VERSION: u32 = 3;
+/// What a custom-formula or power-family view writes (format 2, unchanged by format 3).
+pub(crate) const VIEW_FORMAT_CUSTOM: u32 = 2;
 /// The format a view that is not a custom formula writes: nothing in it needs format 2.
 pub(crate) const VIEW_FORMAT_PLAIN: u32 = 1;
+/// The largest pattern a view file carries inline (RLE characters), inside the 256 KiB a location
+/// text may be (`SHARE_MAX`); a larger universe is saved as a pattern file instead.
+pub(crate) const MAX_VIEW_PATTERN: usize = 128 * 1024;
 
 /// Largest zoom depth (octaves = log2 of magnification) accepted from an untrusted view
 /// file. Past this the bignum working precision (∝ octaves) would balloon into a memory
@@ -290,6 +299,10 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     // A custom formula's source text (one line, `\n`/`\\` escaped) and its parameters p1…p5 as
     // `re,im;re,im;…`. Written only with `fractal=Custom`, so a built-in view is unchanged.
     "formula", "formula_params",
+    // A Life universe (format 3): the rule, the cells as one line of RLE runs at
+    // `pattern_generation` (their top-left at `pattern_origin`), and the generation on screen —
+    // reached again by running the difference, which Life's determinism makes exact.
+    "rule", "pattern", "pattern_origin", "pattern_generation", "generation", "pattern_name",
 ];
 
 /// Without these a "view" is not a view. Their absence is reported by NAME, so a paste that
@@ -793,12 +806,14 @@ impl FractadyneApp {
             "app=Fractadyne\nversion={}\nformat_version={}\nsaved_unix={}\nsaved={}\n\
              notes={}\nfractal={}\njulia={}\njulia_c_re={:.17e}\njulia_c_im={:.17e}\n\
              center_re={}\ncenter_im={}\nupp={:.17e}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n\
-             palette={}\ncycle={}\noffset={}\naa={}\n{}{}{}",
+             palette={}\ncycle={}\noffset={}\naa={}\n{}{}{}{}",
             version_string(),
-            if self.custom_formula_metadata().is_empty() && self.fractal.power_family().is_none() {
+            if self.fractal == FractalKind::Life {
+                VIEW_FORMAT_VERSION
+            } else if self.custom_formula_metadata().is_empty() && self.fractal.power_family().is_none() {
                 VIEW_FORMAT_PLAIN
             } else {
-                VIEW_FORMAT_VERSION
+                VIEW_FORMAT_CUSTOM
             },
             secs,
             Self::utc_date_string(secs),
@@ -847,6 +862,72 @@ impl FractadyneApp {
             self.center_expr_metadata(),
             // The custom formula, for a Custom view (empty otherwise, likewise).
             self.custom_formula_metadata(),
+            // The universe, for a Life view (empty otherwise, likewise).
+            self.life_metadata(),
+        )
+    }
+
+    /// `rule=`, `pattern=` … for a Life view; empty for every other family.
+    fn life_metadata(&self) -> String {
+        if self.fractal != FractalKind::Life {
+            return String::new();
+        }
+        self.life_lines()
+    }
+
+    /// Restore the universe from [`Self::life_lines`] text — the session's `life` — and, with
+    /// `show`, switch to it.
+    pub(crate) fn apply_life_lines(&mut self, text: &str, show: bool) -> Result<(), String> {
+        let get = |k: &str| {
+            let v = crate::meta_get(text, k);
+            (!v.is_empty()).then_some(v)
+        };
+        self.apply_life_fields(get, show)
+    }
+
+    /// The universe from a Life view's fields: `pattern` (runs, top-left at `pattern_origin`, at
+    /// generation `pattern_generation`) under `rule`, to be run on to `generation`.
+    fn apply_life_fields(&mut self, get: impl Fn(&str) -> Option<String>, show: bool) -> Result<(), String> {
+        let rule = get("rule").unwrap_or_else(|| "B3/S23".into());
+        let Some(pattern) = get("pattern") else {
+            return Err("the Life view carries no pattern (a universe too large to embed is saved as a pattern file)".into());
+        };
+        let origin = get("pattern_origin")
+            .and_then(|s| s.split_once(',').and_then(|(a, b)| Some((a.trim().parse::<i64>().ok()?, b.trim().parse::<i64>().ok()?))))
+            .unwrap_or((0, 0));
+        let at = get("pattern_generation").and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+        let shown = get("generation").and_then(|s| s.parse::<u64>().ok()).unwrap_or(at);
+        let name = get("pattern_name").unwrap_or_else(|| "view".into());
+        let text = format!("#CXRLE Pos={},{}\nx = 0, y = 0, rule = {rule}\n{pattern}!", origin.0, origin.1);
+        let p = fractadyne_core::life::parse_rle(&text).map_err(|e| format!("the Life pattern does not read: {e}"))?;
+        self.life_open_view(p, &rule, name, at, shown, show)
+    }
+
+    /// The universe as the lines a Life view carries — what was last loaded on the GPU, at its
+    /// generation, and the generation on screen. Also the session's `life`.
+    pub(crate) fn life_lines(&self) -> String {
+        let u = &self.life.loaded;
+        let cells = u.cells();
+        let (x0, y0) = cells.iter().fold((i64::MAX, i64::MAX), |(a, b), &(x, y, _)| (a.min(x), b.min(y)));
+        let rle = fractadyne_core::life::write_rle(&cells, &u.rule().canonical(), u.rule().states() > 2, None, None);
+        // The runs alone, on one line: everything after the header (`x = …`), without line breaks.
+        let runs: String = rle.lines().skip_while(|l| !l.starts_with('x')).skip(1).collect();
+        let name: String = self.life.pattern_name.chars().filter(|c| !c.is_control()).take(120).collect();
+        if runs.len() > MAX_VIEW_PATTERN {
+            return format!(
+                "rule={}\ngeneration={}\npattern_name={name}\n",
+                u.rule().canonical(),
+                self.life.generation()
+            );
+        }
+        format!(
+            "rule={}\npattern={}\npattern_origin={},{}\npattern_generation={}\ngeneration={}\npattern_name={name}\n",
+            u.rule().canonical(),
+            runs,
+            if cells.is_empty() { 0 } else { x0 },
+            if cells.is_empty() { 0 } else { y0 },
+            u.generation(),
+            self.life.generation(),
         )
     }
 
@@ -930,6 +1011,12 @@ impl FractadyneApp {
                     }
                     (Some(_), None) => report.problems.push("formula_params is not a list of re,im pairs".into()),
                     (None, _) => report.problems.push("fractal=Custom, but the view carries no formula".into()),
+                }
+            }
+            // A Life view carries its universe: the rule, the cells, the generations to run.
+            Some(FractalKind::Life) => {
+                if let Err(e) = self.apply_life_fields(get, true) {
+                    report.problems.push(e);
                 }
             }
             Some(f) => self.fractal = f,
@@ -1222,6 +1309,10 @@ impl FractadyneApp {
     pub(crate) fn start_export(&mut self, ctx: &egui::Context, device: eframe::wgpu::Device, queue: eframe::wgpu::Queue) {
         if self.export.task.is_some() || self.export.prep.is_some() {
             return;
+        }
+        if !self.fractal.is_escape_time() {
+            // Before the file dialog, not after it (see `start_export_to`).
+            return self.start_export_to(ctx, device, queue, std::path::PathBuf::new());
         }
         let ext = self.export_ext();
         let start_dir = self
@@ -1761,6 +1852,13 @@ impl FractadyneApp {
         path: std::path::PathBuf,
     ) {
         if self.export.task.is_some() || self.export.prep.is_some() {
+            return;
+        }
+        // The export renderer iterates escape-time formulas; a Life universe goes through its own
+        // display pass, which the export path does not have yet (design/automata.md, phase 2).
+        // Refused in words rather than rendered as some formula under Life's name.
+        if !self.fractal.is_escape_time() {
+            self.set_toast("Image export of a Life view is not available yet — use a screenshot, or File ▸ Save Life pattern.".to_string(), ctx);
             return;
         }
         // Start the export clock now — for a deep export this includes the (long) off-thread

@@ -339,6 +339,11 @@ pub struct SessionState {
     /// so a session from before the toggle opens the editor as it always did.
     #[serde(default)]
     pub formula_textbook: bool,
+    /// The Life universe (design/automata.md), as the lines a Life view file carries (`rule=`,
+    /// `pattern=`, `pattern_origin=`, `pattern_generation=`, `generation=`, `pattern_name=`). Kept
+    /// whichever family is shown, so switching back finds it; empty in a session from before Life.
+    #[serde(default)]
+    pub life: String,
     /// Julia mode + parameter `c` (the view state that pairs with center/zoom).
     #[serde(default)]
     pub julia_mode: bool,
@@ -635,6 +640,7 @@ impl Default for SessionState {
             custom_formula: String::new(),
             custom_params: Vec::new(),
             formula_textbook: false,
+            life: String::new(),
             julia_mode: false,
             julia_c_re: default_julia_c_re(),
             julia_c_im: default_julia_c_im(),

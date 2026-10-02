@@ -12,6 +12,7 @@
 use egui_wgpu::wgpu;
 use fractadyne_core::life::{Rule, Topology, Universe, TILE, TILE_CELLS};
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 const SOURCE: &str = include_str!("life.wgsl");
 const TILE_BYTES: u64 = TILE_CELLS as u64;
@@ -518,6 +519,301 @@ impl LifeGpu {
     }
 }
 
+impl LifeGpu {
+    /// The slot of the tile at `key` — wrapped on a torus — or `None` when it is not stored.
+    fn slot_for_tile(&self, key: (i64, i64)) -> Option<u32> {
+        let key = match self.topology {
+            Topology::Torus { width, height } => {
+                (key.0.rem_euclid(i64::from(width) / TILE), key.1.rem_euclid(i64::from(height) / TILE))
+            }
+            _ => key,
+        };
+        self.slot_of.get(&key).copied()
+    }
+
+    /// Each stored tile with its count of cells that differ from the background.
+    fn tile_populations(&self) -> impl Iterator<Item = ((i64, i64), u32)> + '_ {
+        self.active
+            .iter()
+            .zip(&self.population)
+            .map(|(&s, &p)| (self.coord_of[s as usize].expect("an active slot has a tile"), p))
+    }
+}
+
+/// What the app asks of the GPU universe on a frame (`MandelbrotParams::life`).
+#[derive(Clone)]
+pub struct LifeFrame {
+    /// Replace the GPU universe with [`LifeFrame::load`] when this changes: a new pattern, an edit,
+    /// a reset. The app bumps it; the GPU side applies each id once.
+    pub load_id: u64,
+    pub load: Arc<Universe>,
+    /// The generation the app wants on screen: the GPU steps towards it, at most
+    /// [`LifeFrame::max_steps`] a frame. A TARGET rather than a count, so a frame egui lays out
+    /// twice (and paints once) cannot lose or double the generations it asked for.
+    pub target: u64,
+    pub max_steps: u64,
+    /// Which cells the view shows.
+    pub window: fractadyne_core::life::CellWindow,
+    /// Where the GPU universe reports back.
+    pub status: Arc<Mutex<LifeStatus>>,
+    /// Download the universe into [`LifeStatus::downloaded`] this frame (saving, editing).
+    pub download: bool,
+}
+
+/// What the GPU universe reports to the app.
+#[derive(Clone, Default)]
+pub struct LifeStatus {
+    /// The device runs compute shaders; `false` (a GL adapter) means Life cannot run here.
+    pub available: bool,
+    /// The last [`LifeFrame::load_id`] applied.
+    pub load_id: u64,
+    pub generation: u64,
+    pub population: u64,
+    pub tiles: usize,
+    pub capacity: u32,
+    pub breaches: u64,
+    /// Why stepping stopped (the pool is full); the app pauses and shows it.
+    pub error: Option<String>,
+    /// The universe, when a download was asked for.
+    pub downloaded: Option<Universe>,
+}
+
+/// The `LifeView` uniform of `life_display.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct LifeViewU {
+    origin: [f32; 2],
+    step: f32,
+    coarse: u32,
+    grid: [u32; 2],
+    bin: f32,
+    background: u32,
+    states: u32,
+    _pad: [u32; 3],
+}
+
+/// Fine grids (a slot per tile) up to this many entries; past it the display bins densities.
+const MAX_FINE_GRID: u64 = 1 << 16;
+/// Coarse grids hold at most this many bins.
+const MAX_COARSE_GRID: u64 = 1 << 16;
+
+const DISPLAY_SOURCE: &str = include_str!("life_display.wgsl");
+
+/// The GPU universe plus its display pass, owned by the renderer (created on the first Life frame).
+pub(crate) struct LifeRenderer {
+    gpu: LifeGpu,
+    pipeline: wgpu::RenderPipeline,
+    bgl: wgpu::BindGroupLayout,
+    uniform: wgpu::Buffer,
+    grid: wgpu::Buffer,
+    grid_cap: u64,
+    /// Display bind groups, one per pool (indexed like `LifeGpu::pools`).
+    groups: [wgpu::BindGroup; 2],
+    load_id: Option<u64>,
+    /// Bumped whenever the cells change: part of the display key.
+    changes: u64,
+}
+
+/// Whether this device can run the Life stepper: compute shaders with seven storage buffers.
+pub fn life_available(device: &wgpu::Device) -> bool {
+    let l = device.limits();
+    l.max_compute_workgroups_per_dimension >= MAX_TILES
+        && l.max_compute_invocations_per_workgroup >= 64
+        && l.max_storage_buffers_per_shader_stage >= 7
+}
+
+/// The tile pool a live view asks for: 256 MiB a pool, within the device's limits.
+const LIVE_POOL_BYTES: u64 = 256 << 20;
+
+impl LifeRenderer {
+    pub(crate) fn new(device: &wgpu::Device, iter_bgl: &wgpu::BindGroupLayout) -> LifeRenderer {
+        Self::with_capacity(device, iter_bgl, pool_capacity(device, LIVE_POOL_BYTES))
+    }
+
+    /// With a pool of `capacity` tiles (the checks use small ones).
+    pub(crate) fn with_capacity(device: &wgpu::Device, iter_bgl: &wgpu::BindGroupLayout, capacity: u32) -> LifeRenderer {
+        let gpu = LifeGpu::new(device, capacity);
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("life_display.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(DISPLAY_SOURCE.into()),
+        });
+        let frag = |binding, ty| wgpu::BindGroupLayoutEntry { binding, visibility: wgpu::ShaderStages::FRAGMENT, ty, count: None };
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("life.display.layout"),
+            entries: &[
+                frag(0, wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }),
+                frag(1, storage(true)),
+                frag(2, storage(true)),
+            ],
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("life.display"),
+            bind_group_layouts: &[iter_bgl, &bgl],
+            push_constant_ranges: &[],
+        });
+        let pipeline =
+            crate::fullscreen_pipeline(device, &module, &layout, "fs_life", &[crate::ITER_FORMAT, crate::ITER_FORMAT], "life.display");
+        use wgpu::BufferUsages as U;
+        let uniform = buffer(device, "life.view", std::mem::size_of::<LifeViewU>() as u64, U::UNIFORM | U::COPY_DST);
+        let grid_cap = 1024;
+        let grid = buffer(device, "life.grid", 4 * grid_cap, U::STORAGE | U::COPY_DST);
+        let groups = Self::make_groups(device, &bgl, &uniform, &gpu, &grid);
+        LifeRenderer { gpu, pipeline, bgl, uniform, grid, grid_cap, groups, load_id: None, changes: 0 }
+    }
+
+    fn make_groups(
+        device: &wgpu::Device,
+        bgl: &wgpu::BindGroupLayout,
+        uniform: &wgpu::Buffer,
+        gpu: &LifeGpu,
+        grid: &wgpu::Buffer,
+    ) -> [wgpu::BindGroup; 2] {
+        [0, 1].map(|i| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("life.display.group"),
+                layout: bgl,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: gpu.pools[i].as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: grid.as_entire_binding() },
+                ],
+            })
+        })
+    }
+
+    /// Apply this frame's commands — load, step, download — publish the status, and prepare the
+    /// display of `size` texels at `ss` texels a pixel. Returns the display key: it changes
+    /// whenever what the display pass would draw changes.
+    pub(crate) fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame: &LifeFrame, size: [u32; 2], ss: u32) -> u64 {
+        let mut error = None;
+        if self.load_id != Some(frame.load_id) {
+            if let Err(e) = self.gpu.load(queue, &frame.load) {
+                error = Some(e.to_string());
+            }
+            self.load_id = Some(frame.load_id);
+            self.changes += 1;
+        }
+        let steps = frame.target.saturating_sub(self.gpu.generation()).min(frame.max_steps);
+        if steps > 0 && error.is_none() {
+            match self.gpu.step(device, queue, steps) {
+                Ok(r) => self.changes += u64::from(r.generations > 0),
+                Err(e) => {
+                    self.changes += 1;
+                    error = Some(e.to_string());
+                }
+            }
+        }
+        let downloaded = if frame.download { self.gpu.download(device, queue).ok() } else { None };
+        if let Ok(mut s) = frame.status.lock() {
+            s.available = true;
+            s.load_id = frame.load_id;
+            s.generation = self.gpu.generation();
+            s.population = self.gpu.population();
+            s.tiles = self.gpu.tile_count();
+            s.capacity = self.gpu.capacity();
+            s.breaches = self.gpu.breaches();
+            if error.is_some() {
+                s.error = error;
+            }
+            if downloaded.is_some() {
+                s.downloaded = downloaded;
+            }
+        }
+        self.prepare_display(device, queue, frame, size, ss)
+    }
+
+    fn prepare_display(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame: &LifeFrame, size: [u32; 2], ss: u32) -> u64 {
+        let w = &frame.window;
+        let step = w.cells_per_px / f64::from(ss.max(1));
+        let span = [f64::from(size[0]) * step, f64::from(size[1]) * step];
+        let tiles = |o: f64, s: f64| ((o + s) / TILE as f64).ceil().max(1.0) as u64;
+        let (gx, gy) = (tiles(w.origin[0], span[0]), tiles(w.origin[1], span[1]));
+        let bg = self.gpu.background();
+        let mut u = LifeViewU {
+            origin: [w.origin[0] as f32, w.origin[1] as f32],
+            step: step as f32,
+            coarse: 0,
+            grid: [gx as u32, gy as u32],
+            bin: TILE as f32,
+            background: u32::from(bg),
+            states: u32::from(self.gpu.rule().states()),
+            _pad: [0; 3],
+        };
+        let entries: Vec<i32> = if step <= 8.0 && gx * gy <= MAX_FINE_GRID {
+            let mut v = vec![-1i32; (gx * gy) as usize];
+            for j in 0..gy {
+                for i in 0..gx {
+                    if let Some(s) = self.gpu.slot_for_tile((w.tile_x0 + i as i64, w.tile_y0 + j as i64)) {
+                        v[(j * gx + i) as usize] = s as i32;
+                    }
+                }
+            }
+            v
+        } else {
+            // Bins of 64·2^k cells, few enough to fill from the stored tiles' populations.
+            let mut k = 0u32;
+            let bins = |k: u32| {
+                let b = (TILE as f64) * f64::from(1u32 << k);
+                (((w.origin[0] + span[0]) / b).ceil() as u64, ((w.origin[1] + span[1]) / b).ceil() as u64)
+            };
+            while k < 30 && {
+                let (bx, by) = bins(k);
+                bx * by > MAX_COARSE_GRID
+            } {
+                k += 1;
+            }
+            let (bx, by) = bins(k);
+            let per = 1i64 << k; // tiles a bin side
+            let empty = if bg == 1 { 1.0f32 } else { 0.0 };
+            let mut sum = vec![0f64; (bx * by) as usize];
+            let mut stored = vec![0u32; (bx * by) as usize];
+            for ((tx, ty), pop) in self.gpu.tile_populations() {
+                let (i, j) = ((tx - w.tile_x0).div_euclid(per), (ty - w.tile_y0).div_euclid(per));
+                if i < 0 || j < 0 || i as u64 >= bx || j as u64 >= by {
+                    continue;
+                }
+                let at = (j as u64 * bx + i as u64) as usize;
+                let live = if bg == 1 { TILE_CELLS as u32 - pop } else { pop };
+                sum[at] += f64::from(live);
+                stored[at] += 1;
+            }
+            let cells = (TILE_CELLS as f64) * (per * per) as f64;
+            u.coarse = 1;
+            u.grid = [bx as u32, by as u32];
+            u.bin = (TILE * per) as f32;
+            sum.iter()
+                .zip(&stored)
+                .map(|(&s, &n)| {
+                    // Unstored tiles in the bin are all background.
+                    let unstored = (per * per) as f64 - f64::from(n);
+                    let d = (s + unstored * f64::from(empty) * TILE_CELLS as f64) / cells;
+                    (d as f32).to_bits() as i32
+                })
+                .collect()
+        };
+        if entries.len() as u64 > self.grid_cap {
+            self.grid_cap = (entries.len() as u64).next_power_of_two();
+            self.grid = buffer(device, "life.grid", 4 * self.grid_cap, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST);
+            self.groups = Self::make_groups(device, &self.bgl, &self.uniform, &self.gpu, &self.grid);
+        }
+        queue.write_buffer(&self.grid, 0, bytemuck::cast_slice(&entries));
+        queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+        // The key: the cells, the mapping, the texture.
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        use std::hash::{Hash, Hasher};
+        (self.changes, w.tile_x0, w.tile_y0, w.origin[0].to_bits(), w.origin[1].to_bits(), step.to_bits(), size, ss).hash(&mut h);
+        h.finish()
+    }
+
+    /// Draw the display pass: bind group 0 is the view's iterate group (for the counters).
+    pub(crate) fn draw<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, iter_bg: &'a wgpu::BindGroup) {
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, iter_bg, &[]);
+        pass.set_bind_group(1, &self.groups[self.gpu.cur], &[]);
+        pass.draw(0..3, 0..1);
+    }
+}
+
 /// Map `buffer`'s first `len` bytes and copy them out as words.
 fn read_back(device: &wgpu::Device, buffer: &wgpu::Buffer, len: u64) -> Result<Vec<u32>, LifeGpuError> {
     let slice = buffer.slice(..len);
@@ -535,6 +831,9 @@ fn read_back(device: &wgpu::Device, buffer: &wgpu::Buffer, len: u64) -> Result<V
     buffer.unmap();
     Ok(words)
 }
+
+/// Device checks (the self-test's `life` rows).
+pub mod check;
 
 #[cfg(test)]
 mod tests;

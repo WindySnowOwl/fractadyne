@@ -145,6 +145,10 @@ pub mod formula {
     /// built-in branch of the shader skips it and [`caps`] grants it none of the built-in
     /// capabilities; its step comes from its own generated shader module instead.
     pub const CUSTOM: u32 = 1000;
+    /// The id a Life-like automaton renders under (design/automata.md §3): not an escape-time
+    /// formula at all, so outside every range the shader and [`caps`] know. Its picture comes
+    /// from the Life stepper and display pass.
+    pub const LIFE: u32 = 1100;
 
     /// The escape degree `d` (`|z'| ≈ |z|^d` far out): the smooth count's log base, as the
     /// shader's `power_f`. 2 for every family that is not a higher power (Phoenix and Newton
@@ -211,7 +215,7 @@ pub mod formula {
             resumable_passes: polynomial || formula == CUSTOM,
             nucleus_finder: polynomial,
             feature_solvers: formula == MANDELBROT,
-            export_glitch_correction: !polynomial && formula != CUSTOM,
+            export_glitch_correction: !polynomial && formula != CUSTOM && formula != LIFE,
             convergent: formula == NEWTON,
         }
     }

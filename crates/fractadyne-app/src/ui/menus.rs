@@ -152,6 +152,14 @@ impl FractadyneApp {
                 ui.end_row();
             }
         });
+        // The automata: not escape-time formulas, but pictures of the same app (design/automata.md).
+        ui.separator();
+        ui.label(egui::RichText::new("Automata").weak().small());
+        for kind in FractalKind::AUTOMATA {
+            if ui.selectable_label(self.fractal == kind, kind.name()).on_hover_text(kind.menu_hint()).clicked() {
+                picked = Some(kind);
+            }
+        }
         picked
     }
 
@@ -244,6 +252,33 @@ impl FractadyneApp {
                             .clicked()
                         {
                             self.snapshot(ctx);
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        // Life patterns (design/automata.md): opening one shows it as a universe.
+                        if ui
+                            .button(format!("{}  Open Life pattern…", crate::icons::IMPORT))
+                            .on_hover_text("An RLE, .cells or Life 1.05/1.06 file, shown as a Life universe.")
+                            .clicked()
+                        {
+                            self.life_open_file();
+                            ui.close_menu();
+                        }
+                        if ui
+                            .button(format!("{}  Life pattern text…", crate::icons::PASTE))
+                            .on_hover_text("Paste a pattern as text (RLE as LifeWiki gives it).")
+                            .clicked()
+                        {
+                            self.life.text_open = true;
+                            ui.close_menu();
+                        }
+                        if self.fractal == FractalKind::Life
+                            && ui
+                                .button(format!("{}  Save Life pattern…", crate::icons::SAVE))
+                                .on_hover_text("The universe as it is now, as RLE.")
+                                .clicked()
+                        {
+                            self.life_save_file();
                             ui.close_menu();
                         }
                         ui.separator();
@@ -1460,12 +1495,30 @@ impl FractadyneApp {
                 //
                 // Right-aligned into a fixed slot: monospace, so equal char counts are equal
                 // pixels by construction (`zoom_slot_width` is pinned by a test).
+                let life_bar = self.fractal == FractalKind::Life;
+                if life_bar {
+                    // A universe's readouts, in the same three slots and at their own fixed
+                    // widths: the scale, the generation, the population.
+                    let (scale, generation, population) = crate::life_view::status_readouts(
+                        self.viewport.units_per_pixel.to_f64(),
+                        self.life.generation(),
+                        self.life.population(),
+                    );
+                    mono(ui, scale);
+                    ui.separator();
+                    mono(ui, generation);
+                    ui.separator();
+                    mono(ui, population);
+                } else {
                 mono(ui, crate::zoom_readout(
                     self.dual,
                     self.viewport.log2_magnification(),
                     self.julia_viewport.log2_magnification(),
                 ));
-                ui.separator();
+                }
+                if !life_bar {
+                    ui.separator();
+                }
                 // Show the count actually rendered last frame (coarse while moving, full when
                 // settled) — matches the Performance panel's "eff iter".
                 let eff_iter = if self.perf.last_eff_iter > 0 {
@@ -1479,12 +1532,15 @@ impl FractadyneApp {
                     want_iter.min(zoom_iter_cap(self.viewport.log2_magnification()).max(256))
                 };
                 // Widest is `MAX_ITER_LIMIT` grouped — see the reservation note on `zoom` above.
-                mono(ui, crate::iter_readout(eff_iter));
+                if !life_bar {
+                    mono(ui, crate::iter_readout(eff_iter));
+                }
                 // Ambient minibrot period (§3.1): the finder result stays on screen instead of
                 // fading with its toast. RESERVED WIDTH, and drawn TRANSPARENT when no period
                 // applies (none solved yet, or the view has moved off the feature), so the slot's
                 // presence never reflows the bar — the device the diagnostic slot below also uses.
                 // `mono`'s last call is the iter readout above, so `drawn.push` here is free of it.
+                if !life_bar {
                 ui.separator();
                 {
                     let ptext = crate::period_readout(period_now);
@@ -1506,6 +1562,7 @@ impl FractadyneApp {
                         );
                     }
                 }
+                } // not a Life view
                 // Rendering-limit diagnostics: when a cap is genuinely binding, say so where the
                 // user is already looking, instead of leaving a black/flat view unexplained (the
                 // Misiurewicz-spar reports arrived as mystery screenshots precisely because the
@@ -1515,7 +1572,8 @@ impl FractadyneApp {
                 let mag = vp.magnification();
                 let upp = vp.units_per_pixel.to_f64();
                 let direct = self.render_mode(self.fractal, self.julia_mode, mag).is_direct();
-                let limit = Self::direct_precision_status(
+                // (A Life view has no escape-time limits: the slot stays transparent.)
+                let limit = if life_bar { None } else { Self::direct_precision_status(
                     direct,
                     vp.center_f64(),
                     (upp * vp.width_px * 0.5, upp * vp.height_px * 0.5),
@@ -1535,7 +1593,7 @@ impl FractadyneApp {
                         self.perf.iter_plateau[0],
                         self.perf.iter_exhausted[0],
                     )
-                });
+                }) };
                 // ⭐The diagnostic slot is ALWAYS the SAME WIDGET with the SAME METRICS — like the
                 // cursor readout above, but stricter. The label comes and goes with live counters;
                 // on a width where the bar just fits, its arrival wrapped the bar to two lines,
@@ -1549,7 +1607,9 @@ impl FractadyneApp {
                 // variant drawn fully TRANSPARENT when none does. Same glyph count, same ⚠, same
                 // row metrics: the bar's layout is invariant by construction.
                 const SLOT: &str = "⚠ iter exhausted"; // the widest label variant
-                ui.separator();
+                if !life_bar {
+                    ui.separator();
+                }
                 let (text, color, detail) = match limit {
                     Some((label, detail, severe)) => (
                         format!("{label:<width$}", width = SLOT.chars().count()),
@@ -1567,13 +1627,16 @@ impl FractadyneApp {
                 // next. Extend makes the label move (or overflow) as ONE unit, in both states.
                 // The diagnostic slot is recorded too, so `--uitest` sees the same reserved
                 // width the reflow fix depends on rather than only the readouts above it.
-                drawn.push(text.clone());
-                let r = ui.add(
-                    egui::Label::new(egui::RichText::new(text).monospace().color(color))
-                        .wrap_mode(egui::TextWrapMode::Extend),
-                );
-                if let Some(detail) = detail {
-                    r.on_hover_text(detail);
+                // (A Life view never shows a diagnostic, so it reserves no slot for one.)
+                if !life_bar {
+                    drawn.push(text.clone());
+                    let r = ui.add(
+                        egui::Label::new(egui::RichText::new(text).monospace().color(color))
+                            .wrap_mode(egui::TextWrapMode::Extend),
+                    );
+                    if let Some(detail) = detail {
+                        r.on_hover_text(detail);
+                    }
                 }
                 drawn
             })

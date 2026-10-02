@@ -65,9 +65,24 @@ pub(crate) enum FractalKind {
     Buffalo4,
     Buffalo5,
     /// The session's custom formula (`FractadyneApp::custom`, design/custom-formulas.md): its step
-    /// comes from a generated shader module. Last, and outside [`FractalKind::ALL`], which lists the
-    /// built-in families.
+    /// comes from a generated shader module. Outside [`FractalKind::ALL`], which lists the built-in
+    /// escape-time families.
     Custom,
+    /// A Life-like cellular automaton (`FractadyneApp::life`, design/automata.md): not escape time —
+    /// [`FractalClass::Life`]. Outside [`FractalKind::ALL`]; the pickers list it under
+    /// [`FractalKind::AUTOMATA`].
+    Life,
+}
+
+/// What kind of picture a family makes (design/automata.md §3). Everything that only makes sense
+/// for an escape-time formula — iterations, perturbation, Julia, the finders, the autopilot — asks
+/// this before it applies.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum FractalClass {
+    /// Iterate a formula per pixel: every family but the automata, `Custom` included.
+    EscapeTime,
+    /// A Life-like cellular automaton on the GPU tile stepper.
+    Life,
 }
 
 /// All the app-side metadata for one family, gathered in one place so adding a formula is a
@@ -85,6 +100,8 @@ pub(crate) struct FractalSpec {
     /// Whether deep zoom (CPU reference + GPU perturbation, df32 and extended-range floatexp) is
     /// implemented. Families without it run on the direct path only (~1e6×).
     pub(crate) supports_perturbation: bool,
+    /// Escape time, or an automaton.
+    pub(crate) class: FractalClass,
     pub(crate) info: FractalInfo,
 }
 
@@ -110,6 +127,7 @@ const fn power_spec(
         default_center,
         supports_julia: true,
         supports_perturbation: true,
+        class: FractalClass::EscapeTime,
         info: FractalInfo { formula, about, reference },
     }
 }
@@ -156,6 +174,7 @@ impl FractalKind {
             default_center: (-0.5, 0.0),
             supports_julia: true,
             supports_perturbation: true,
+            class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "z -> z^2 + c    (z0 = 0)",
                 about: "The canonical escape-time fractal: the set of c for which the \
@@ -170,6 +189,7 @@ impl FractalKind {
             default_center: (0.0, 0.0),
             supports_julia: true,
             supports_perturbation: true,
+            class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "z -> z^3 + c",
                 about: "A Multibrot set - the Mandelbrot construction at a higher power. \
@@ -184,6 +204,7 @@ impl FractalKind {
             default_center: (0.0, 0.0),
             supports_julia: true,
             supports_perturbation: true,
+            class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "z -> z^4 + c",
                 about: "Multibrot at power 4: threefold symmetry, broad bulbs.",
@@ -197,6 +218,7 @@ impl FractalKind {
             default_center: (0.0, 0.0),
             supports_julia: true,
             supports_perturbation: true,
+            class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "z -> z^5 + c",
                 about: "Multibrot at power 5: fourfold symmetry.",
@@ -210,6 +232,7 @@ impl FractalKind {
             default_center: (0.0, 0.0),
             supports_julia: true,
             supports_perturbation: true,
+            class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "z -> conj(z)^2 + c",
                 about: "The Tricorn (Mandelbar): conjugates z each step. This \
@@ -224,6 +247,7 @@ impl FractalKind {
             default_center: (-0.5, -0.5),
             supports_julia: true,
             supports_perturbation: true,
+            class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "z -> (|Re z| + i|Im z|)^2 + c",
                 about: "Absolute values of z's parts are taken before squaring; the \
@@ -238,6 +262,7 @@ impl FractalKind {
             default_center: (-0.5, 0.0),
             supports_julia: true,
             supports_perturbation: true,
+            class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "Re -> |Re(z^2)| + cx;  Im -> Im(z^2) + cy",
                 about: "A Burning-Ship relative that takes the absolute value of only \
@@ -252,6 +277,7 @@ impl FractalKind {
             default_center: (-0.5, -0.5),
             supports_julia: true,
             supports_perturbation: true,
+            class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "Re -> |Re(z^2)| + cx;  Im -> |Im(z^2)| + cy",
                 about: "An abs-variant taking absolute values of both components of z^2.",
@@ -265,6 +291,7 @@ impl FractalKind {
             default_center: (0.0, 0.0),
             supports_julia: true,
             supports_perturbation: true,
+            class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "z' = z^2 + c + p*z_prev    (p = -0.5)",
                 about: "The Phoenix uses the previous iterate too, giving flame-like \
@@ -279,6 +306,7 @@ impl FractalKind {
             default_center: (0.0, 0.0),
             supports_julia: false,
             supports_perturbation: false,
+            class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "z -> z - (z^3 - 1)/(3 z^2)",
                 about: "Newton's root-finding iteration for z^3 = 1, colored by how fast \
@@ -326,6 +354,7 @@ impl FractalKind {
             default_center: (-0.5, 0.0),
             supports_julia: true,
             supports_perturbation: false,
+            class: FractalClass::EscapeTime,
             info: FractalInfo {
                 formula: "z -> the formula you write",
                 about: "A formula written in Fractint-style expressions (Fractal > Custom \
@@ -333,11 +362,41 @@ impl FractalKind {
                 reference: "",
             },
         },
+        // The automata (design/automata.md): ids outside the escape-time range, like Custom's.
+        FractalSpec {
+            kind: FractalKind::Life,
+            name: "Life",
+            formula_id: fractadyne_core::formula::LIFE,
+            // The middle of cell (0, 0): cells are unit squares, rows growing downward.
+            default_center: (0.5, -0.5),
+            supports_julia: false,
+            supports_perturbation: false,
+            class: FractalClass::Life,
+            info: FractalInfo {
+                formula: "B3/S23: born with 3 live neighbours, survives with 2 or 3",
+                about: "Conway's Game of Life and its relatives on an unbounded plane: Generations \
+                        rules, non-totalistic (Hensel) rules, pattern files. Play, step, draw.",
+                reference: "https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life",
+            },
+        },
     ];
+
+    /// The automata, as the pickers list them (after the escape-time families).
+    pub(crate) const AUTOMATA: [FractalKind; 1] = [FractalKind::Life];
 
     /// This family's metadata row. O(1): rows are ordered to match the enum (test-enforced).
     pub(crate) fn spec(self) -> &'static FractalSpec {
         &Self::SPECS[self as usize]
+    }
+
+    /// Escape time, or an automaton.
+    pub(crate) fn class(self) -> FractalClass {
+        self.spec().class
+    }
+
+    /// Whether this is an escape-time family (everything but the automata).
+    pub(crate) fn is_escape_time(self) -> bool {
+        self.class() == FractalClass::EscapeTime
     }
 
     pub(crate) fn name(self) -> &'static str {
@@ -421,17 +480,28 @@ mod tests {
     fn specs_cover_all_kinds_in_order() {
         assert_eq!(
             FractalKind::SPECS.len(),
-            FractalKind::ALL.len() + 1,
-            "every FractalKind needs exactly one SPECS row (the built-ins, then Custom)"
+            FractalKind::ALL.len() + 1 + FractalKind::AUTOMATA.len(),
+            "every FractalKind needs exactly one SPECS row (the built-ins, Custom, the automata)"
         );
-        let custom = FractalKind::SPECS.last().unwrap();
+        let custom = &FractalKind::SPECS[FractalKind::ALL.len()];
         assert_eq!(custom.kind, FractalKind::Custom);
-        assert_eq!(FractalKind::Custom as usize, FractalKind::SPECS.len() - 1, "spec() indexes by variant");
+        assert_eq!(FractalKind::Custom as usize, FractalKind::ALL.len(), "spec() indexes by variant");
         assert_eq!(custom.formula_id, fractadyne_core::formula::CUSTOM);
         assert!(!custom.supports_perturbation, "a custom formula renders on the direct path");
+        assert_eq!(custom.class, FractalClass::EscapeTime);
+        for (k, kind) in FractalKind::AUTOMATA.iter().enumerate() {
+            let spec = &FractalKind::SPECS[FractalKind::ALL.len() + 1 + k];
+            assert_eq!(spec.kind, *kind, "the automata's rows follow Custom's, in AUTOMATA order");
+            assert_eq!(*kind as usize, FractalKind::ALL.len() + 1 + k);
+            assert_ne!(spec.class, FractalClass::EscapeTime);
+            assert!(!spec.supports_julia && !spec.supports_perturbation);
+            assert!(!fractadyne_core::is_valid_formula(spec.formula_id), "outside the escape-time ids");
+        }
+        assert_eq!(FractalKind::Life.formula_id(), fractadyne_core::formula::LIFE);
         for (i, kind) in FractalKind::ALL.iter().enumerate() {
             let spec = &FractalKind::SPECS[i];
             assert_eq!(spec.kind, *kind, "SPECS row {i} is out of declaration order");
+            assert_eq!(spec.class, FractalClass::EscapeTime, "{}", spec.name);
             assert_eq!(
                 spec.formula_id as usize, i,
                 "{}: formula_id must equal its index",
@@ -484,7 +554,7 @@ mod tests {
     /// Names are used as stable tokens in view files; they must round-trip and be unique.
     #[test]
     fn names_round_trip_and_are_unique() {
-        for k in FractalKind::ALL.into_iter().chain([FractalKind::Custom]) {
+        for k in FractalKind::ALL.into_iter().chain([FractalKind::Custom]).chain(FractalKind::AUTOMATA) {
             assert_eq!(FractalKind::from_name(k.name()), Some(k));
         }
         let mut names: Vec<&str> = FractalKind::SPECS.iter().map(|s| s.name).collect();

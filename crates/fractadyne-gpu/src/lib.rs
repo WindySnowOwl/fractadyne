@@ -202,6 +202,9 @@ struct IterKey {
     /// Sub-pixel jitter (progressive SSAA): a changed jitter is a new sample and must re-iterate,
     /// so it participates in the key even though it only shifts `px_offset`.
     jitter: [f32; 2],
+    /// A Life frame's display key (`LifeRenderer::update`): the cells, the mapping, the texture.
+    /// 0 for every escape-time frame.
+    life: u64,
 }
 
 /// GPU-timestamp capture around the LIVE `iterate_pass`, so the app can size deep frames against what
@@ -965,6 +968,9 @@ struct Renderer {
     /// first use and kept until another formula replaces them. Built on the render thread: ~0.1 s
     /// cold on the RTX 3080 (design/custom-formulas.md §4.5), paid once per formula.
     custom: Option<CustomPipelines>,
+    /// The Life universe and its display pass, created on the first Life frame on a device that
+    /// runs compute shaders (`life::life_available`).
+    life: Option<life::LifeRenderer>,
 }
 
 /// A custom formula's iterate pipelines, from its generated module (`custom::build`) and the fixed
@@ -1917,6 +1923,7 @@ impl Renderer {
             target_format,
             views: std::collections::HashMap::new(),
             custom: None,
+            life: None,
         }
     }
 }
@@ -2365,6 +2372,9 @@ pub struct MandelbrotParams {
     /// A custom formula's generated module (`formula` = `fractadyne_core::formula::CUSTOM`, direct
     /// mode only); `None` for the built-ins. Its `key` joins the iterate key.
     pub custom: Option<Arc<custom::CustomShader>>,
+    /// A Life frame (design/automata.md): `Some` replaces the iterate pass with the Life universe's
+    /// step and display passes, which write the same iteration texture the colour pass reads.
+    pub life: Option<Arc<life::LifeFrame>>,
     /// 0 = Mandelbrot mode (z0=0, c=pixel), 1 = Julia mode (z0=pixel, c=const).
     pub julia: u32,
     /// Complex span *mantissa* (`span · 2^-delta_exp`, O(1)) — see [`fractadyne_core::GpuScale`].
@@ -2442,6 +2452,103 @@ pub struct MandelbrotParams {
     pub accum_reset: bool,
 }
 
+/// A frame that asks for nothing: no sinks, no reference, the direct mode, one sample a pixel, no
+/// tile, chunk, split, hold, reprojection or accumulation. What a Life frame starts from (it sets
+/// the colouring, the size and `life`); the escape-time frames set every field themselves.
+impl Default for MandelbrotParams {
+    fn default() -> Self {
+        MandelbrotParams {
+            iterate_ms: None,
+            iterate_steps: None,
+            iterate_frame: None,
+            iterate_armed_us: None,
+            live_timing: false,
+            live_ms: None,
+            live_steps: None,
+            live_frame: None,
+            split: [1, 0],
+            now_us: None,
+            nominal_steps: 0,
+            pass_clock: None,
+            pass_frame: 0,
+            maxiter_count: None,
+            norm_range: None,
+            grad_range: None,
+            grad_hist: None,
+            work_counters: None,
+            norm_sig_out: None,
+            norm_sig: 0,
+            norm_complete: true,
+            norm_complete_out: None,
+            content_tag: 0,
+            content_out: None,
+            view_stamp: 0,
+            content_stamp_out: None,
+            tile: None,
+            chunk_range: None,
+            chunk_idx: 0,
+            probe_nonce: 0,
+            hold_copy: false,
+            display_hold: false,
+            orbit: Arc::new(Vec::new()),
+            orbit_id: 0,
+            orbit_len: 0,
+            bla: Arc::new(Vec::new()),
+            bla_on: 0,
+            ref_offset: RefOffset::ZERO,
+            delta_exp: 0,
+            sa_skip: 0,
+            sa_a: [0.0; 4],
+            sa_a_exp: 0,
+            sa_b: [0.0; 4],
+            sa_b_exp: 0,
+            sa_c: [0.0; 4],
+            sa_c_exp: 0,
+            center: [0.0; 4],
+            julia_c: [0.0; 4],
+            mode: 1,
+            formula: 0,
+            custom: None,
+            life: None,
+            julia: 0,
+            span_mantissa: fractadyne_core::SpanMantissa::new(4.0, 4.0),
+            max_iter: 1,
+            cycle: 1.0,
+            offset: 0.0,
+            norm_mode: 0,
+            norm_lo: 0.0,
+            aa_palette: false,
+            lut: Arc::new(Vec::new()),
+            lut_smooth: true,
+            light: 0,
+            light_angle: 0.0,
+            light_height: 0.0,
+            de_on: 0,
+            de_strength: 0.0,
+            de_width: 0.0,
+            de_phase: 0.0,
+            color_method: 0,
+            stripe_freq: 0.0,
+            stripe_tail: false,
+            stripe_tail_len: 1,
+            trap_type: 0,
+            aa_filter: 1,
+            interior_col: [0.0, 0.0, 0.0, 1.0],
+            resolution: [1, 1],
+            ss: 1,
+            reproject: 0,
+            uv_offset: [0.0, 0.0],
+            uv_scale: 1.0,
+            vignette: Vignette::default(),
+            view_id: 0,
+            jitter: [0.0, 0.0],
+            accum_present: false,
+            accum_commit: false,
+            accum_reset: false,
+        }
+    }
+}
+
 /// The iterate uniform's `aux_on` word: bit 0 = accumulate orbit statistics, bit 1 = stripe
 /// average over an exponential tail window, bits 2.. = that window's length in iterations
 /// (clamped to `1..=2^20`; the shader reads `aux_on >> 2`). One word, so the uniform layout —
@@ -2484,6 +2591,19 @@ impl CallbackTrait for MandelbrotParams {
                 r.custom = Some(CustomPipelines::new(device, &r.iter_bgl, &r.state_bgl, &r.state_bgl4, c));
             }
         }
+        // A Life frame steps and draws through the Life renderer, built on first use — where the
+        // device runs compute shaders; elsewhere the frame says so and draws nothing new.
+        if let Some(f) = self.life.as_deref() {
+            if r.life.is_none() {
+                if life::life_available(device) {
+                    r.life = Some(life::LifeRenderer::new(device, &r.iter_bgl));
+                } else if let Ok(mut s) = f.status.lock() {
+                    s.available = false;
+                    s.load_id = f.load_id;
+                }
+            }
+        }
+        let life_r = &mut r.life;
         let iter_bgl = &r.iter_bgl;
         let color_bgl = &r.color_bgl;
         let (iter_pipeline, iter_split_pipeline) = match (self.custom.as_ref(), r.custom.as_ref()) {
@@ -2576,6 +2696,13 @@ impl CallbackTrait for MandelbrotParams {
             ss -= 1;
         }
         let size = [(base[0] * ss).min(max_dim), (base[1] * ss).min(max_dim)];
+        // Life: load / step / download now (the stepper submits its own work and waits for its
+        // read-backs), and key the display on what it will draw.
+        let life_key = match (self.life.as_deref(), life_r.as_mut()) {
+            (Some(f), Some(l)) => l.update(device, queue, f, size, ss),
+            _ => 0,
+        };
+        let life_on = self.life.is_some() && life_r.is_some();
         // Pan reprojection: keep the frozen iteration texture (only valid once something has
         // been rendered into it). Skip the resize so the texture isn't cleared, and color it
         // with the ss it was built at.
@@ -2769,6 +2896,7 @@ impl CallbackTrait for MandelbrotParams {
             sa_skip: self.sa_skip,
             bla_on: self.bla_on,
             jitter: self.jitter,
+            life: life_key,
         };
         // Re-render when the key changed (new view/orbit/size) OR when a tiled settle advanced to a
         // new rect under an unchanged key — OR when a chunked progression advanced its iteration
@@ -2860,18 +2988,18 @@ impl CallbackTrait for MandelbrotParams {
             // cost to measure, and on the RX 6800 XT its timestamps were the only readings the
             // app's timing witness proved impossible (2 of 1,505, 2026-09-27: 42.6 ms inside an
             // 18.9 ms window, 118.8 inside 104). Leaving it unarmed frees the timer for real work.
-            let arm_ts = view
-                .timing
-                .as_ref()
-                .is_some_and(|t| t.state == TimingState::Idle)
+            // (A Life display pass is not an iterate: it arms no iterate timer.)
+            let arm_ts = !life_on
+                && view.timing.as_ref().is_some_and(|t| t.state == TimingState::Idle)
                 && !matches!(chunk, Some([s, e]) if s >= e);
             // A live refresh's own timer (see `MandelbrotParams::live_timing`): single passes only.
-            let arm_live = self.live_timing
+            let arm_live = !life_on
+                && self.live_timing
                 && chunk.is_none()
                 && view.live_timing.as_ref().is_some_and(|t| t.state == TimingState::Idle);
             // The diagnostic pass clock, when asked for, brackets EVERY pass (its own ring); an
             // armed pricer then takes its reading from the clock's ticks for this same pass.
-            let clock_k = if self.pass_clock.is_some() {
+            let clock_k = if self.pass_clock.is_some() && !life_on {
                 view.pass_clock.as_mut().and_then(PassClock::take)
             } else {
                 None
@@ -2907,7 +3035,26 @@ impl CallbackTrait for MandelbrotParams {
             if let Some(k) = clock_k {
                 view.pass_clock.as_ref().unwrap().marker_pass(encoder, PASS_CLOCK_Q * k as u32 + 2);
             }
-            if let Some([_, _]) = chunk {
+            if let (true, Some(l)) = (life_on, life_r.as_ref()) {
+                // -------- Life: the universe's cells into the G-buffer --------
+                view.chunk_state = None;
+                let attach = |v| Some(wgpu::RenderPassColorAttachment {
+                    view: v,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                });
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("fractadyne.life_display"),
+                    color_attachments: &[attach(&view.tex_view), attach(&view.aux_view)],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                l.draw(&mut pass, &view.iter_bg);
+            } else if let Some([_, _]) = chunk {
                 // -------- chunked resumable iterate (iteration-range tiling) --------
                 // One bounded pass over [start_iter, end_iter) into the ping-pong state, then a
                 // cheap resolve of the settled state into the display G-buffer. Full-frame only

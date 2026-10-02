@@ -1,8 +1,11 @@
 # Automata — Life-like cellular automata and Sierpinski-type digit automata
 
-Status: **phase 1 built** (2026-10-01, §6.1): the Life core in `fractadyne-core::life`, CPU only;
-nothing in the app yet. Phase 1 went before phase 0 — the two are independent, and the class layer's
-state wants the engine's types. The user: "design it and plan on handling both things
+Status: **phases 1, 0 and most of 2 built** (2026-10-01, §6.1–6.2): the Life core in
+`fractadyne-core::life`; the GPU tile stepper and display pass in `fractadyne-gpu::life`; Life in
+the app (`life_view.rs`) with panel, menus, status bar, drawing, pattern files, view files and the
+session. Not yet: image export of a Life view, the age colouring, tours with generations, the
+Radeon battery. Phase 1 went before phase 0 — the two are independent, and the class layer's
+state wanted the engine's types. The user: "design it and plan on handling both things
 like Life and Sierpinski". §9 records the user's answers to the first draft's open questions (`988f20c`):
 an unbounded plane by default on a sparse structure that scales to extremely large grids; standard
 sets first, custom definitions too; Fractint `.par` files open directly; non-totalistic (Hensel)
@@ -359,6 +362,33 @@ the core suite's time.
   its halo (10).
 - Not yet done from §8's Hensel risk: a published pattern in a published Hensel rule (no offline
   source; the page-text checks stand in).
+
+### 6.2 Phases 0 and 2 results (2026-10-01)
+
+- **Class layer**: `FractalClass` on every `FractalSpec` row; `FractalKind::Life` (id
+  `formula::LIFE` = 1100, no capabilities — export glitch correction included); `AUTOMATA` list in
+  the pickers; Quality/Effects panels, the minimap and the escape-time status readouts hidden for
+  Life. The centre-precision item (a view 2^100 cells out) is not done: `life::cell_window` floors
+  the BigFloat centre exactly (tested 2^60 out), but `Viewport::refresh_precision` still sizes the
+  centre by magnification only.
+- **GPU stepper** (`life.wgsl`, `LifeGpu`): 64×64-byte tiles, one dispatch a generation, batches of
+  16, `cs_stats` populations, host-side halo and freeing, `PoolFull` stops, breach counter.
+- **Display** (`life_display.wgsl`, `LifeRenderer`): writes the iteration texture — 1 for a live
+  cell, a fade for Generations' dying states, interior for dead; up to 8×8 samples a texel when a
+  pixel covers several cells; density bins from tile populations when it covers tiles. Commits the
+  escape-range counters on the iterate shader's slots (test-pinned). Colour pass unchanged.
+- **App**: a Life frame skips `build_params` (no settle grid, accumulation, reprojection);
+  `MandelbrotParams::life` carries the universe; `IterKey.life` keys the display. ⭐The frame asks
+  for a TARGET generation, not a step count: egui may lay a frame out twice and paint once, and a
+  count consumed by the discarded pass was lost (seen: a view's 300 generations never ran).
+- **Files**: views write `format_version` 3 with `rule`, `pattern` (one line of RLE runs, up to
+  128 KiB), `pattern_origin`, `pattern_generation`, `generation`, `pattern_name`; the session keeps
+  the same lines (`life`) whichever family is shown.
+- **Gates**: self-test 482/482 (19 new: GPU = CPU for 10 rule kinds × 3 topologies, tile set, full
+  pool, R-pentomino/acorn/Gosper on the GPU, display values, view and session round trips), goldens
+  31/31 unchanged, uitest 65/65, core 240 / gpu 56 (+1 device test) / app 683 / state 20. A shader
+  mutation (rule bit off by one) turns the device check red. RTX 3080 only — the Radeon battery is
+  still to run.
 
 ## 7. Validation
 
