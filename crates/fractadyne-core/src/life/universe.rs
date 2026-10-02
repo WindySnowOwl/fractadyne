@@ -12,7 +12,9 @@ pub const TILE_BITS: u32 = 6;
 /// A tile's side in cells.
 pub const TILE: i64 = 1 << TILE_BITS;
 const SIDE: usize = TILE as usize;
-const CELLS: usize = SIDE * SIDE;
+/// Cells in a tile.
+pub const TILE_CELLS: usize = SIDE * SIDE;
+const CELLS: usize = TILE_CELLS;
 /// The padded window a tile is stepped from: the tile and a one-cell ring of its neighbours.
 const PAD: usize = SIDE + 2;
 /// The plane's extent: cell coordinates stay within ±`LIMIT`, so a tile's neighbours never overflow.
@@ -140,6 +142,34 @@ impl Universe {
     /// Stored tiles: the memory a universe uses is this × 4 KiB.
     pub fn tile_count(&self) -> usize {
         self.tiles.len()
+    }
+
+    /// The stored tiles: `(tile x, tile y)` (cell coordinates ÷ 64, rounded down) and the tile's
+    /// 4,096 states, row by row. What the GPU stepper uploads.
+    pub fn tiles(&self) -> impl Iterator<Item = ((i64, i64), &[u8; TILE_CELLS])> + '_ {
+        self.tiles.iter().map(|(&k, t)| (k, &**t))
+    }
+
+    /// Replace one tile's cells (what the GPU stepper downloads). A plane drops a tile that equals
+    /// the background; a torus or bounded plane ignores a tile outside its area, and a bounded
+    /// plane's cells outside its rectangle stay dead.
+    pub fn put_tile(&mut self, key: (i64, i64), cells: &[u8; TILE_CELLS]) {
+        match self.topology {
+            Topology::Plane => {
+                if cells.iter().all(|&c| c == self.background) {
+                    self.tiles.remove(&key);
+                } else {
+                    self.tiles.insert(key, Box::new(*cells));
+                }
+            }
+            Topology::Torus { .. } | Topology::Bounded { .. } => {
+                let Some(t) = self.tiles.get_mut(&key) else { return };
+                **t = *cells;
+                if let Topology::Bounded { x, y, width, height } = self.topology {
+                    mask_outside(key, t, x, y, width, height);
+                }
+            }
+        }
     }
 
     /// The cell `(x, y)` in universe coordinates: a torus wraps, a bounded plane's outside is dead.

@@ -18,6 +18,8 @@ pub use export::*;
 pub mod timing;
 /// Custom formulas: WGSL generated from the formula IR and spliced into the fixed shader.
 pub mod custom;
+/// Life-like automata: the tile stepper, the app's first compute pipeline (design/automata.md).
+pub mod life;
 
 /// The Rust/WGSL uniform-layout gate — see the module's own docs.
 #[cfg(test)]
