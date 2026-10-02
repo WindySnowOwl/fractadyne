@@ -117,10 +117,10 @@ fn entry_system(name: &str, first: usize, body: &[BodyLine]) -> Result<LSystem, 
             if !super::system::is_symbol(c) {
                 return fail(line, col, format!("'{}' cannot have a production", c as char));
             }
-            if sys.rules[c as usize].is_some() {
+            if sys.rule(c).is_some() {
                 return fail(line, col, format!("a second production for '{}'", c as char));
             }
-            sys.rules[c as usize] = Some(parse_word(&t[eq + 1..], line, col + eq + 1, true)?);
+            sys.set_rule(c, parse_word(&t[eq + 1..], line, col + eq + 1, true)?);
         } else {
             return fail(line, col, "expected Angle, Axiom or a production 'X=word'");
         }

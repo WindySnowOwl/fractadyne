@@ -81,7 +81,7 @@ fn odd_values_round_trip_exactly() {
     s.angle = Angle::Degrees(25.7);
     s.heading = -12.5;
     s.axiom = vec![Tok::Scale(1.0 / 3.0), Tok::TurnBy(-0.1), Tok::AddColour(-7), Tok::Sym(b'F')];
-    s.rules[b'F' as usize] = Some(vec![Tok::Scale(std::f64::consts::SQRT_2), Tok::Sym(b'F')]);
+    s.set_rule(b'F', vec![Tok::Scale(std::f64::consts::SQRT_2), Tok::Sym(b'F')]);
     s.roles[b'F' as usize] = Role::Move;
     s.roles[b'A' as usize] = Role::Draw;
     assert_eq!(LSystem::parse(&s.to_text()).unwrap(), s, "{}", s.to_text());
@@ -141,6 +141,47 @@ fn refusals_say_what_and_where() {
     assert!(e.message.contains("order"), "{e}");
     let long = format!("angle 90\naxiom {}\n", "F".repeat(MAX_WORD + 1));
     assert!(err(&long).message.contains("at most"));
+}
+
+#[test]
+fn weighted_alternatives_make_a_stochastic_system() {
+    let s = LSystem::parse("angle 25.7\nseed 42\naxiom F\nF (0.33) = F[+F]F[-F]F\nF(0.33) = F[+F]F\nF ( 0.34 ) = F[-F]F\nX = F\n").unwrap();
+    assert!(s.is_stochastic());
+    assert_eq!(s.seed, 42);
+    let ps = s.productions(b'F');
+    assert_eq!(ps.iter().map(|p| p.weight).collect::<Vec<_>>(), [0.33, 0.33, 0.34]);
+    assert_eq!(ps[1].word.len(), 6);
+    assert_eq!(s.productions(b'X').len(), 1);
+    // Back through its text, exactly — weights, seed and all.
+    let back = LSystem::parse(&s.to_text()).unwrap();
+    assert_eq!(back, s, "{}", s.to_text());
+    assert!(s.to_text().contains("F (0.33) = F[+F]F[-F]F"), "{}", s.to_text());
+    // A deterministic system names no seed, and a weight alone is a deterministic production.
+    let d = LSystem::parse("angle 60\naxiom F\nF (2) = F+F\n").unwrap();
+    assert!(!d.is_stochastic());
+    assert_eq!(LSystem::parse(&d.to_text()).unwrap(), d);
+    assert!(!LSystem::parse("angle 60\naxiom F\nF = F\n").unwrap().to_text().contains("seed"));
+}
+
+#[test]
+fn alternatives_are_refused_where_they_are_wrong() {
+    // A weight on some alternatives and not others, either way round.
+    let e = err("angle 90\naxiom F\nF = F\nF (1) = FF\n");
+    assert_eq!(e.line, 4);
+    assert!(e.message.contains("second production") && e.message.contains("weight"), "{e}");
+    let e = err("angle 90\naxiom F\nF (1) = F\nF = FF\n");
+    assert_eq!(e.line, 4);
+    for bad in ["0", "-1", "x", "", "1e9", "inf"] {
+        let e = err(&format!("angle 90\naxiom F\nF ({bad}) = F\n"));
+        assert!(e.message.contains("weight"), "({bad}): {e}");
+    }
+    let many: String = (0..=MAX_ALTERNATIVES).map(|_| "F (1) = FF\n").collect();
+    let e = err(&format!("angle 90\naxiom F\n{many}"));
+    assert!(e.message.contains("at most"), "{e}");
+    let e = err("angle 90\nseed -3\naxiom F\n");
+    assert!(e.message.contains("seed"), "{e}");
+    // A key line with an `=` in it is still a key line.
+    assert_eq!(LSystem::parse("name A = B\nangle 90\naxiom F\n").unwrap().name, "A = B");
 }
 
 #[test]

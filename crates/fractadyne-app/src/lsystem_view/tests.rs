@@ -58,6 +58,35 @@ fn walk_values_stay_in_the_palette_range() {
 }
 
 #[test]
+fn a_stochastic_plant_reseeds_and_zooms_deep() {
+    let mut st = LSystemState::default();
+    st.set_system(library::find("Stochastic plant").unwrap().system().unwrap());
+    assert!(st.tables.grows());
+    let (id, n) = (st.tables_id, st.tables.axiom_entry(6).n);
+    st.set_seed(st.system.seed + 1);
+    assert_ne!(st.tables_id, id, "a new seed rebuilds the tables");
+    assert_ne!(st.tables.axiom_entry(6).n, n, "another seed, another plant");
+    // At its base, 2^60 px a unit: deep, and the stem is there.
+    let upp_log2 = -60.0;
+    let order = st.order_for(upp_log2);
+    assert!(st.needs_deep(upp_log2, order));
+    let zero = || BigFloat::from_f64(0.0, 128);
+    let key = WalkKey {
+        tables: 1,
+        order,
+        centre: [zero(), zero()],
+        upp_log2,
+        size: [400, 300],
+        colouring: Colouring::Depth,
+        margin: 1.0,
+        deep: true,
+    };
+    let out = walk_segments(&st.drawn_system(), &st.tables, None, &key, 4.0);
+    assert!(out.big.is_some());
+    assert!(out.stats.segments > 0 && !out.stats.stopped, "{:?}", out.stats);
+}
+
+#[test]
 fn a_centre_difference_divides_at_any_scale() {
     let p = 4096;
     let d = fractadyne_core::bf_sub(&BigFloat::from_f64(1.0, p), &BigFloat::from_f64(1.0 - 2f64.powi(-40), p), p);

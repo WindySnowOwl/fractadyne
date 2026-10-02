@@ -64,20 +64,24 @@ Changes after 0.3.0-beta.1:
   order follows the zoom — zoom in by a curve's growth factor and it gains an order — so the detail
   never runs out, and a view costs what its pixels cost whatever the order: the word is never
   built, and the parts of the drawing off the view or under a pixel are stepped over or drawn as
-  one segment. 35 systems are built in (Koch, Lévy, the dragons, Sierpinski's curves, Hilbert,
+  one segment. 36 systems are built in (Koch, Lévy, the dragons, Sierpinski's curves, Hilbert,
   Moore, Peano, Gosper, islands and tilings, and the plants of *The Algorithmic Beauty of Plants*),
   Fractint .l files open directly (a file with several entries lists them), and a system can be
   edited as text, with errors placed at their line and column. Fractint's turtle commands are
   supported: draw and move, turns, turn-around, swapped turns, brackets, step factors, turns by any
   angle, colour indices. Filled shapes: the turtle's path between `{` and `}` is a polygon, filled
   (a `.` adds a vertex without moving), so the snowflake can be drawn as a shape and a plant can
-  have leaves. The angle has a slider; the line width, and colouring by position along
+  have leaves. Stochastic systems: a symbol can have alternatives with weights
+  (`F (0.33) = F[+F]F`), one chosen at random for each branch, so no two branches are alike; a
+  seed decides the plant, and the panel has a New seed button. Zooming in refines the same plant
+  rather than drawing another, and stochastic plants zoom without limit like the rest. The angle
+  has a slider; the line width, and colouring by position along
   the curve, branch depth, heading or colour index, are in the panel; the toolbar raises and
   lowers the order. Zoom has no limit: past what double precision places, the top of the drawing
   is computed in arbitrary precision with exact headings, so the Koch snowflake's corner at 1e100×
   is as sharp, and as quick, as at 1×. A view carries its system and writes format_version 4; the
   session keeps it. Not yet: image export of an L-system view (refused with a message), and the
-  stochastic, parametric and context-sensitive systems and SVG export (design/lsystems.md).
+  parametric and context-sensitive systems and SVG export (design/lsystems.md).
 - **Conway's Game of Life and its relatives (not yet in a beta).** A new family under Fractal ▸
   Automata: Life-like cellular automata on an unbounded plane, stepped on the graphics card.
   Rules in B/S notation (Life, HighLife, Seeds and 19 more built in), Generations rules with

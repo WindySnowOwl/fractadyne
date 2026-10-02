@@ -243,6 +243,13 @@ pub const SYSTEMS: &[NamedSystem] = &[
         about: "The fractal plant: a leaning frond.",
     },
     NamedSystem {
+        name: "Stochastic plant",
+        category: Category::Plant,
+        text: "angle 25.7\nheading 90\nseed 1\naxiom F\nF (1) = F[+F]F[-F]F\nF (1) = F[+F]F\nF (1) = F[-F]F\n",
+        about: "Each segment grows by one of three productions, at random (The Algorithmic Beauty of Plants §1.7): \
+                no two branches alike. The seed decides the plant; another seed, another plant.",
+    },
+    NamedSystem {
         name: "Weed",
         category: Category::Plant,
         text: "angle 22.5\nheading 90\naxiom F\nF = FF-[XY]+[XY]\nX = +FY\nY = -FX\n",

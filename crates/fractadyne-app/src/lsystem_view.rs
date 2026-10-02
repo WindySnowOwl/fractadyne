@@ -194,6 +194,15 @@ impl LSystemState {
         self.rebuild();
     }
 
+    /// Set a stochastic system's seed (the view stays where it is: the plant is about the same
+    /// size whatever its seed).
+    pub(crate) fn set_seed(&mut self, seed: u64) {
+        if self.system.seed != seed {
+            self.system.seed = seed;
+            self.rebuild();
+        }
+    }
+
     /// Set the angle override (`None`: the system's own).
     pub(crate) fn set_angle(&mut self, angle: Option<f64>) {
         if self.angle != angle {
@@ -284,7 +293,7 @@ impl LSystemState {
         self.next_id += 1;
         let depth_scale = f64::from(
             nesting(&self.system.axiom)
-                + key.order * self.system.rules.iter().flatten().map(|w| nesting(w)).max().unwrap_or(0),
+                + key.order * self.system.rules.iter().flatten().map(|p| nesting(&p.word)).max().unwrap_or(0),
         )
         .max(1.0);
         let (r, d) = (result.clone(), done.clone());
@@ -656,6 +665,17 @@ impl FractadyneApp {
         if self.lsystem.angle.is_some() && ui.small_button("System's angle").clicked() {
             self.lsystem.set_angle(None);
         }
+        if self.lsystem.system.is_stochastic() {
+            crate::ui::labelled(ui, "Seed", |ui| {
+                let mut seed = self.lsystem.system.seed;
+                if ui.add(egui::DragValue::new(&mut seed)).on_hover_text("What the random choices follow: the same seed, the same plant.").changed() {
+                    self.lsystem.set_seed(seed);
+                }
+                if ui.button("New").on_hover_text("Another plant: a new seed.").clicked() {
+                    self.lsystem.set_seed(fresh_seed());
+                }
+            });
+        }
         crate::ui::labelled(ui, "Line width", |ui| ui.add(egui::Slider::new(&mut self.lsystem.width, 0.5..=8.0).suffix(" px")));
         crate::ui::labelled(ui, "Colour by", |ui| {
             let label = |c: Colouring| match c {
@@ -742,7 +762,9 @@ impl FractadyneApp {
                 ui.label(
                     "One key a line: angle (degrees, or /n for a division of the circle), axiom, \
                      productions 'X = word', and optionally heading, draw / move / variables, colour, \
-                     order. A Fractint .l entry can be pasted as it is.",
+                     order. A symbol with alternatives chosen at random has one line for each, with \
+                     its weight: 'X (0.3) = word'; 'seed n' picks the plant. In a word, { } fills the \
+                     turtle's path and . adds a vertex. A Fractint .l entry can be pasted as it is.",
                 );
                 egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                     ui.add(egui::TextEdit::multiline(&mut self.lsystem.editor_text).code_editor().desired_rows(12).desired_width(f32::INFINITY));
@@ -849,6 +871,12 @@ impl FractadyneApp {
         };
         self.apply_lsystem_fields(get, show)
     }
+}
+
+/// A new seed for a stochastic system: from the clock, kept to six digits so it is easy to note.
+fn fresh_seed() -> u64 {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64);
+    (nanos ^ (nanos >> 20)) % 1_000_000
 }
 
 /// The panel's count of what a walk drew: "12 segments", "1 filled shape", "8 segments, 3 filled

@@ -112,10 +112,13 @@ const AXIOM: u16 = NONE;
 
 #[derive(Clone, Copy)]
 struct Frame {
+    /// The word (an index into the tables' words, or `AXIOM` / `ONE`).
     rule: u16,
     i: u32,
     /// The depth of this word's symbols (how many more times each rewrites).
     child_depth: u32,
+    /// The variant of the node the word was rewritten from (the `ONE` word's: its symbol's own).
+    v: u32,
 }
 
 /// The single-symbol word a [`walk_from`] starts with.
@@ -128,6 +131,8 @@ const ONE: u16 = NONE - 1;
 pub struct SubStart {
     pub sym: u8,
     pub depth: u32,
+    /// Its variant (0 for a deterministic system).
+    pub variant: u32,
     pub pos: [f64; 2],
     /// The turtle's heading, radians.
     pub heading: f64,
@@ -166,7 +171,7 @@ pub fn walk_all(t: &Tables, view: &View, opts: &WalkOptions, sink: &mut dyn FnMu
         colour: 1,
         depth: 0,
     };
-    run(t, view, opts, s, Frame { rule: AXIOM, i: 0, child_depth: order }, 0, 0.0, &mut Vec::new(), sink)
+    run(t, view, opts, s, Frame { rule: AXIOM, i: 0, child_depth: order, v: t.variants.root }, 0, 0.0, &mut Vec::new(), sink)
 }
 
 /// Walks one subtree, from a turtle already placed (see [`SubStart`]). `open`: the polygons open
@@ -192,7 +197,8 @@ pub fn walk_from(
         depth: start.brackets,
     };
     let depth = start.depth.min(t.max_depth);
-    run(t, view, opts, s, Frame { rule: ONE, i: 0, child_depth: depth }, start.sym, start.index, open, sink)
+    let first = Frame { rule: ONE, i: 0, child_depth: depth, v: start.variant };
+    run(t, view, opts, s, first, start.sym, start.index, open, sink)
 }
 
 /// Whether a polygon's box meets the view (with its margin).
@@ -238,14 +244,18 @@ fn run(
             frames.pop();
             continue;
         };
+        let j = f.i as usize;
         f.i += 1;
         let d = f.child_depth;
+        // The variant of a symbol at place `j` (the `ONE` word's symbol has its own).
+        let (fv, one_word) = (f.v, f.rule == ONE);
         match op {
             Op::Sym(c) => {
                 let id = t.id[c as usize];
                 let in_poly = !open.is_empty();
                 if id != NONE && d > 0 {
-                    let e = t.entry(c, d);
+                    let cv = if one_word { fv } else { t.variants.child(fv, j) };
+                    let e = t.entry(c, d, cv);
                     stats.nodes += 1;
                     // Inside a polygon every position is a vertex: the subtree's reach is all of it.
                     let r = if in_poly { e.ra } else { e.r };
@@ -253,7 +263,7 @@ fn run(
                         let r_px = s.scale * r;
                         let seen = view.meets(s.pos, r_px + view.margin);
                         if seen && r_px > opts.lod_px {
-                            frames.push(Frame { rule: id, i: 0, child_depth: d - 1 });
+                            frames.push(Frame { rule: t.word_of(id, cv), i: 0, child_depth: d - 1, v: cv });
                             continue;
                         }
                         if seen && !in_poly {

@@ -13,7 +13,7 @@ fn close(a: [f64; 2], b: [f64; 2], tol: f64) -> bool {
 fn the_koch_tables_are_the_koch_numbers() {
     let t = Tables::new(&sys("Koch curve"));
     for d in 0..=30u32 {
-        let e = t.entry(b'F', d);
+        let e = t.entry(b'F', d, 0);
         let three = 3f64.powi(d as i32);
         assert!(close(e.fx.d, [three, 0.0], three * 1e-12), "d={d}: {:?}", e.fx.d);
         assert_eq!(e.n, 4f64.powi(d as i32), "d={d}");
@@ -28,7 +28,7 @@ fn the_hilbert_curve_ends_a_row_along() {
     let t = Tables::new(&sys("Hilbert curve"));
     for d in 1..=30u32 {
         let want = 2f64.powi(d as i32) - 1.0;
-        let e = t.entry(b'X', d);
+        let e = t.entry(b'X', d, 0);
         assert!(close(e.fx.d, [want, 0.0], want * 1e-12), "d={d}: {:?}", e.fx.d);
         assert_eq!(e.n, 4f64.powi(d as i32) - 1.0);
     }

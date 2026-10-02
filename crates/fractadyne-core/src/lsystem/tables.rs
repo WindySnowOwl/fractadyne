@@ -11,6 +11,7 @@
 //! and the order can follow the zoom ([`Tables::auto_order`]).
 
 use super::system::{LSystem, Role, Tok, MAX_ORDER};
+use super::variant::Variants;
 use std::f64::consts::{PI, TAU};
 
 /// A turtle operation, resolved against the system's angle.
@@ -118,6 +119,10 @@ const DIRS: i64 = 256;
 /// is a solid blob, and more order is cost with nothing to show.
 pub const MAX_DENSITY: f64 = 3.0;
 
+/// The most memory a system's `f64` tables take (a stochastic system's rows hold a variant of every
+/// symbol); past it the deep walk's tables go deeper.
+const TABLE_BYTES: usize = 64 << 20;
+
 /// A system's tables, to [`Tables::max_depth`].
 #[derive(Clone, Debug)]
 pub struct Tables {
@@ -128,12 +133,18 @@ pub struct Tables {
     /// Unit vectors: with a division, step k at `dirs[k]`; without, step k at `dirs[k + DIRS]`.
     dirs: Vec<[f64; 2]>,
     pub(crate) axiom: Vec<Op>,
+    /// Every production's word (a stochastic symbol has several).
     pub(crate) rules: Vec<Vec<Op>>,
+    /// Each rewriting symbol's index (`NONE`: it does not rewrite).
     pub(crate) id: [u16; 256],
+    /// How nodes get their variants ([`super::variant`]): one, for a deterministic system.
+    pub(crate) variants: Variants,
+    /// `choice[id · k + v]`: the word a node of that symbol and variant rewrites by.
+    choice: Vec<u16>,
     pub(crate) roles: [Role; 256],
     /// What each symbol does when read, not rewritten.
     constant: [Entry; 256],
-    /// `rows[d][id]` for `d` in `1..=max_depth` (`rows[0]` is empty).
+    /// `rows[d][id · k + v]` for `d` in `1..=max_depth` (`rows[0]` is empty).
     rows: Vec<Vec<Entry>>,
     /// The deepest table row.
     pub max_depth: u32,
@@ -142,8 +153,10 @@ pub struct Tables {
     /// The picture's size measure at each depth up to [`Tables::along_depth`] (see
     /// [`Tables::step`]), as a vector…
     measure: Vec<[f64; 2]>,
-    /// …the displacement of this symbol (`None`: the axiom's reach measures it instead).
+    /// …the displacement of this symbol (`None`: the axiom's reach measures it instead), in this
+    /// variant (the one its first place in the axiom gives it, else 0).
     pub(crate) measure_sym: Option<u8>,
+    pub(crate) measure_variant: u32,
     /// Bits of a table entry's precision lost per level of depth: a subtree's displacement is a
     /// sum of its children's that cancel (the Sierpinski triangle's `F` advances 2 steps with 5
     /// steps of children), so rounding grows by the ratio a level. 0 when the arithmetic is exact
@@ -243,13 +256,25 @@ impl Tables {
                 })
                 .collect()
         };
+        // Every production's word, and for each rewriting symbol (its id) and variant, the one it
+        // rewrites by.
+        let variants = Variants::of(sys);
+        let k = variants.k as usize;
         let mut id = [NONE; 256];
         let mut rules = Vec::new();
+        let mut choice = Vec::new();
+        let mut syms = 0u16;
         for c in 0..=255u8 {
-            if let Some(w) = sys.rule(c) {
-                id[c as usize] = rules.len() as u16;
-                rules.push(compile(w));
+            let ps = sys.productions(c);
+            if ps.is_empty() {
+                continue;
             }
+            id[c as usize] = syms;
+            syms += 1;
+            let first = rules.len() as u16;
+            rules.extend(ps.iter().map(|p| compile(&p.word)));
+            let weights: Vec<f64> = ps.iter().map(|p| p.weight).collect();
+            choice.extend((0..k as u32).map(|v| first + variants.choose(c, v, &weights) as u16));
         }
         let mut roles = [Role::None; 256];
         let mut constant = [Entry::NOTHING; 256];
@@ -268,6 +293,8 @@ impl Tables {
             axiom: compile(&sys.axiom),
             rules,
             id,
+            variants,
+            choice,
             roles,
             constant,
             rows: vec![Vec::new()],
@@ -275,6 +302,7 @@ impl Tables {
             heading: sys.heading.to_radians(),
             measure: Vec::new(),
             measure_sym: None,
+            measure_variant: 0,
             loss: 0.0,
             along_depth: 0,
             along: [1.0, 0.0],
@@ -284,8 +312,17 @@ impl Tables {
             box_areas: Vec::new(),
             box_size: 0.0,
         };
+        // A stochastic system's rows are a variant per symbol wide: past this many bytes, the deep
+        // walk's tables take over.
+        let row_bytes = (usize::from(syms) * k * std::mem::size_of::<Entry>()).max(1);
+        let depth = depth.min((TABLE_BYTES / row_bytes).max(16) as u32);
         for d in 1..=depth.min(MAX_ORDER) {
-            let row: Vec<Entry> = (0..t.rules.len()).map(|k| t.fold(&t.rules[k], d - 1)).collect();
+            let row: Vec<Entry> = (0..usize::from(syms) * k)
+                .map(|i| {
+                    let v = (i % k) as u32;
+                    t.fold(&t.rules[t.choice[i] as usize], d - 1, v)
+                })
+                .collect();
             let sane = row.iter().all(|e| {
                 norm(e.fx.d) < LIMIT && e.ra < LIMIT && e.wp < LIMIT && e.fx.scale < LIMIT && e.fx.scale > 1.0 / LIMIT
             });
@@ -311,19 +348,26 @@ impl Tables {
         }
     }
 
-    /// The entry for symbol `c` rewritten `d` times.
-    pub fn entry(&self, c: u8, d: u32) -> Entry {
+    /// The entry for symbol `c`, variant `v`, rewritten `d` times.
+    pub fn entry(&self, c: u8, d: u32, v: u32) -> Entry {
         let id = self.id[c as usize];
         if id == NONE || d == 0 {
             self.constant[c as usize]
         } else {
-            self.rows[d as usize][id as usize]
+            self.rows[d as usize][id as usize * self.variants.k as usize + v as usize]
         }
+    }
+
+    /// The word a node of rewriting symbol `id` and variant `v` rewrites by (an index into
+    /// `rules`).
+    #[inline]
+    pub(crate) fn word_of(&self, id: u16, v: u32) -> u16 {
+        self.choice[id as usize * self.variants.k as usize + v as usize]
     }
 
     /// The axiom rewritten `order` times.
     pub fn axiom_entry(&self, order: u32) -> Entry {
-        self.fold(&self.axiom, order)
+        self.fold(&self.axiom, order, self.variants.root)
     }
 
     /// The unit vector of a heading.
@@ -367,17 +411,17 @@ impl Tables {
         }
     }
 
-    /// A word whose symbols are rewritten `d` times, summarised.
-    fn fold(&self, ops: &[Op], d: u32) -> Entry {
+    /// A word rewritten from a node of variant `v`, its symbols rewritten `d` times, summarised.
+    fn fold(&self, ops: &[Op], d: u32, v: u32) -> Entry {
         let mut st = Effect::IDENTITY;
         let mut stack: Vec<Effect> = Vec::new();
         let (mut r, mut ra, mut n, mut wp, mut w) = (-1.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64);
         // Inside `{ }` (braces close in the word that opens them).
         let mut poly = false;
-        for &op in ops {
+        for (j, &op) in ops.iter().enumerate() {
             match op {
                 Op::Sym(c) => {
-                    let e = self.entry(c, d);
+                    let e = self.entry(c, d, self.variants.child(v, j));
                     let from = norm(st.d);
                     ra = ra.max(from + st.scale * e.ra);
                     wp += e.wp;
@@ -436,7 +480,7 @@ impl Tables {
             if std::mem::replace(&mut reach[c as usize], true) {
                 continue;
             }
-            for t in sys.rule(c).unwrap_or(&[]) {
+            for t in sys.productions(c).iter().flat_map(|p| &p.word) {
                 if let Tok::Sym(x) = t {
                     todo.push(*x);
                 }
@@ -447,21 +491,31 @@ impl Tables {
         // below is cheap): the picture's measure, orientation and growth are taken there. The
         // deepest row is no place for them — at depth 415 the Sierpinski triangle's tables had
         // lost everything (its `F` measured vertical, its growth 3 for 2).
-        let dm = if self.loss > 0.0 { ((30.0 / self.loss) as u32).clamp(8, 64) } else { 64 }.min(top);
+        // (A stochastic system's exact measure costs a table row per variant: it is taken at 24 at
+        // most, where its thousands of leaves already average its growth.)
+        let most = if self.variants.k > 1 { 24 } else { 64 };
+        let dm = if self.loss > 0.0 { ((30.0 / self.loss) as u32).clamp(8, most) } else { most }.min(top);
         self.along_depth = dm;
         // The reached symbol that travels furthest there measures the picture: its displacement,
         // as a vector, carries the curve's growth AND its turn per order (the dragon turns 45° an
         // order). A picture whose symbols all return to their start (closed loops) is measured by
         // how far the axiom draws instead.
+        // A stochastic symbol is measured in the variant its first place in the axiom gives it —
+        // the subtree the picture is drawn with (any other variant, if the axiom has none).
+        let variant_of = |c: u8| {
+            sys.axiom.iter().position(|t| *t == Tok::Sym(c)).map_or(0, |j| self.variants.child(self.variants.root, j))
+        };
         let best = (0..256)
             .filter(|&c| reach[c] && self.id[c] != NONE)
-            .map(|c| (c as u8, norm(self.entry(c as u8, dm).fx.d)))
+            .map(|c| (c as u8, norm(self.entry(c as u8, dm, variant_of(c as u8)).fx.d)))
             .filter(|&(_, m)| m > 0.0)
             .max_by(|a, b| a.1.total_cmp(&b.1));
         self.measure_sym = best.map(|b| b.0);
+        let mv = best.map_or(0, |b| variant_of(b.0));
+        self.measure_variant = mv;
         self.measure = (0..=dm)
             .map(|d| match best {
-                Some((c, _)) => self.entry(c, d).fx.d,
+                Some((c, _)) => self.entry(c, d, mv).fx.d,
                 None => [self.axiom_entry(d).r.max(0.0), 0.0],
             })
             .collect();
@@ -471,7 +525,7 @@ impl Tables {
         // turn per order.
         let exact = best.filter(|_| dm >= 2).and_then(|(c, _)| {
             let prec = 128 + (f64::from(dm) * self.loss).ceil() as usize;
-            super::deep::exact_measure(sys, c, dm, prec)
+            super::deep::exact_measure(sys, c, mv, dm, prec)
         });
         let m = |d: u32| self.measure[d as usize];
         match exact {
@@ -506,9 +560,8 @@ impl Tables {
     /// step factors (then the sums are of integers, exact in `f64`).
     fn precision_loss(&self, sys: &LSystem, reach: &[bool; 256]) -> f64 {
         let quarter = |deg: f64| (deg / 90.0 - (deg / 90.0).round()).abs() < 1e-12;
-        let words = || std::iter::once(&sys.axiom).chain(sys.rules.iter().flatten());
         let exact = quarter(sys.angle.degrees())
-            && words().flatten().all(|t| match t {
+            && sys.words().flatten().all(|t| match t {
                 Tok::TurnBy(a) => quarter(*a),
                 Tok::Scale(_) => false,
                 _ => true,
@@ -519,22 +572,24 @@ impl Tables {
         let d0 = self.max_depth.min(12);
         let mut worst = 0.0f64;
         for c in (0..256).filter(|&c| reach[c] && self.id[c] != NONE) {
-            let r = self.entry(c as u8, d0).r;
-            if r <= 0.0 {
-                continue;
-            }
-            // The children's reach, each at the step factor it is drawn with.
-            let (mut scale, mut stack, mut sum) = (1.0f64, Vec::new(), 0.0f64);
-            for &op in &self.rules[self.id[c] as usize] {
-                match op {
-                    Op::Sym(y) => sum += self.entry(y, d0 - 1).r.max(0.0) * scale,
-                    Op::Scale(f) => scale *= f,
-                    Op::Push => stack.push(scale),
-                    Op::Pop => scale = stack.pop().unwrap_or(scale),
-                    _ => {}
+            for v in 0..self.variants.k {
+                let r = self.entry(c as u8, d0, v).r;
+                if r <= 0.0 {
+                    continue;
                 }
+                // The children's reach, each at the step factor it is drawn with.
+                let (mut scale, mut stack, mut sum) = (1.0f64, Vec::new(), 0.0f64);
+                for (j, &op) in self.rules[self.word_of(self.id[c], v) as usize].iter().enumerate() {
+                    match op {
+                        Op::Sym(y) => sum += self.entry(y, d0 - 1, self.variants.child(v, j)).r.max(0.0) * scale,
+                        Op::Scale(f) => scale *= f,
+                        Op::Push => stack.push(scale),
+                        Op::Pop => scale = stack.pop().unwrap_or(scale),
+                        _ => {}
+                    }
+                }
+                worst = worst.max((sum / r).log2());
             }
-            worst = worst.max((sum / r).log2());
         }
         worst.clamp(0.0, 8.0)
     }

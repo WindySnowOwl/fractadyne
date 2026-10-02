@@ -20,6 +20,7 @@
 
 use super::system::{Angle, LSystem, Role, Tok};
 use super::tables::{ColourFx, Tables, NONE};
+use super::variant::Variants;
 use super::walk::{walk_from, Drawn, Polygon, Segment, SubStart, View, WalkOptions, WalkStats};
 use crate::bignum::{arg_bf, log2_abs, to_f64, RM};
 use astro_float::{BigFloat, Consts};
@@ -157,7 +158,7 @@ impl Units {
             None => (1, 2),
         };
         let mut fractions = vec![step, around, turn_of_degrees(sys.heading)?];
-        for w in std::iter::once(&sys.axiom).chain(sys.rules.iter().flatten()) {
+        for w in sys.words() {
             for t in w {
                 if let Tok::TurnBy(a) = t {
                     fractions.push(turn_of_degrees(*a)?);
@@ -223,11 +224,15 @@ pub struct BigTables {
     pub depth: u32,
     modulus: i128,
     axiom: Vec<BigOp>,
+    /// Every production's word, and which one a node of each rewriting symbol and variant takes
+    /// (as [`Tables`]).
     rules: Vec<Vec<BigOp>>,
     id: [u16; 256],
+    variants: Variants,
+    choice: Vec<u16>,
     roles: [Role; 256],
     constant: Vec<BigEntry>,
-    /// `rows[d][id]` for `d` in `1..=depth`.
+    /// `rows[d][id · k + v]` for `d` in `1..=depth`.
     rows: Vec<Vec<BigEntry>>,
     /// The system's first heading, in units.
     heading: i128,
@@ -246,7 +251,7 @@ impl BigTables {
     pub fn new(sys: &LSystem, t: &Tables, prec: usize, depth: u32) -> Option<BigTables> {
         let mut bt = Self::raw(sys, prec, depth.max(t.along_depth))?;
         if let (true, Some(c)) = (t.grows(), t.measure_sym) {
-            if let Some(a) = cnormalise(&bt.entry(c, t.along_depth).fx.d, bt.prec) {
+            if let Some(a) = cnormalise(&bt.entry(c, t.along_depth, t.measure_variant).fx.d, bt.prec) {
                 bt.along = a;
             }
         }
@@ -276,13 +281,23 @@ impl BigTables {
                 })
                 .collect()
         };
+        let variants = Variants::of(sys);
+        let k = variants.k as usize;
         let mut id = [NONE; 256];
         let mut rules = Vec::new();
+        let mut choice = Vec::new();
+        let mut syms = 0usize;
         for c in 0..=255u8 {
-            if let Some(w) = sys.rule(c) {
-                id[c as usize] = rules.len() as u16;
-                rules.push(compile(w));
+            let ps = sys.productions(c);
+            if ps.is_empty() {
+                continue;
             }
+            id[c as usize] = syms as u16;
+            syms += 1;
+            let first = rules.len() as u16;
+            rules.extend(ps.iter().map(|pr| compile(&pr.word)));
+            let weights: Vec<f64> = ps.iter().map(|pr| pr.weight).collect();
+            choice.extend((0..k as u32).map(|v| first + variants.choose(c, v, &weights) as u16));
         }
         let mut roles = [Role::None; 256];
         let identity = BigEffect { d: czero(p), turns: 0, flip: false, scale: BigFloat::from_f64(1.0, p), colour: ColourFx::default() };
@@ -304,6 +319,8 @@ impl BigTables {
             axiom: compile(&sys.axiom),
             rules,
             id,
+            variants,
+            choice,
             roles,
             constant,
             rows: vec![Vec::new()],
@@ -312,7 +329,8 @@ impl BigTables {
             rots: Mutex::new((Consts::new().expect("astro-float constants"), HashMap::new())),
         };
         for d in 1..=depth {
-            let row: Vec<BigEntry> = (0..bt.rules.len()).map(|k| bt.fold(&bt.rules[k], d - 1)).collect();
+            let row: Vec<BigEntry> =
+                (0..syms * k).map(|i| bt.fold(&bt.rules[bt.choice[i] as usize], d - 1, (i % k) as u32)).collect();
             bt.rows.push(row);
             bt.depth = d;
         }
@@ -348,16 +366,26 @@ impl BigTables {
     /// How many segments the axiom draws at `order` (≤ `depth`): what position along the curve
     /// is a fraction of.
     pub fn axiom_count(&self, order: u32) -> f64 {
-        self.axiom.iter().map(|op| if let BigOp::Sym(c) = op { self.entry(*c, order.min(self.depth)).n } else { 0.0 }).sum()
+        let (d, root) = (order.min(self.depth), self.variants.root);
+        self.axiom
+            .iter()
+            .enumerate()
+            .map(|(j, op)| if let BigOp::Sym(c) = op { self.entry(*c, d, self.variants.child(root, j)).n } else { 0.0 })
+            .sum()
     }
 
-    fn entry(&self, c: u8, d: u32) -> &BigEntry {
+    fn entry(&self, c: u8, d: u32, v: u32) -> &BigEntry {
         let id = self.id[c as usize];
         if id == NONE || d == 0 {
             &self.constant[c as usize]
         } else {
-            &self.rows[d as usize][id as usize]
+            &self.rows[d as usize][id as usize * self.variants.k as usize + v as usize]
         }
+    }
+
+    /// The word a node of rewriting symbol `id` and variant `v` rewrites by.
+    fn word_of(&self, id: u16, v: u32) -> u16 {
+        self.choice[id as usize * self.variants.k as usize + v as usize]
     }
 
     /// `a`, then `b` in the frame `a` leaves the turtle in.
@@ -374,17 +402,17 @@ impl BigTables {
         }
     }
 
-    fn fold(&self, ops: &[BigOp], d: u32) -> BigEntry {
+    fn fold(&self, ops: &[BigOp], d: u32, v: u32) -> BigEntry {
         let p = self.prec;
         let mut st = BigEffect { d: czero(p), turns: 0, flip: false, scale: BigFloat::from_f64(1.0, p), colour: ColourFx::default() };
         let mut stack: Vec<BigEffect> = Vec::new();
         let (mut reach, mut reach_all, mut n) = (f64::NEG_INFINITY, f64::NEG_INFINITY, 0.0f64);
         // Inside `{ }`: every position a vertex, no lines (as `Tables::fold`).
         let mut poly = false;
-        for op in ops {
+        for (j, op) in ops.iter().enumerate() {
             match op {
                 BigOp::Sym(c) => {
-                    let e = self.entry(*c, d);
+                    let e = self.entry(*c, d, self.variants.child(v, j));
                     let from = norm_log2(&st.d, p);
                     let scale = log2_abs(&st.scale);
                     if e.reach_all > f64::NEG_INFINITY {
@@ -433,7 +461,7 @@ impl BigTables {
         }
         let base = cmul(&heading, &self.along, p);
         let m = match t.measure_sym {
-            Some(c) => self.entry(c, order).fx.d.clone(),
+            Some(c) => self.entry(c, order, t.measure_variant).fx.d.clone(),
             None => cone(p),
         };
         if m[0].is_zero() && m[1].is_zero() {
@@ -458,10 +486,10 @@ pub(crate) struct ExactMeasure {
     pub turn: f64,
 }
 
-pub(crate) fn exact_measure(sys: &LSystem, sym: u8, d: u32, prec: usize) -> Option<ExactMeasure> {
+pub(crate) fn exact_measure(sys: &LSystem, sym: u8, variant: u32, d: u32, prec: usize) -> Option<ExactMeasure> {
     let bt = BigTables::raw(sys, prec, d)?;
     let p = bt.prec;
-    let m = |k: u32| bt.entry(sym, k).fx.d.clone();
+    let m = |k: u32| bt.entry(sym, k, variant).fx.d.clone();
     let (a, b, c) = (m(d), m(d - 1), m(d - 2));
     let along = cnormalise(&a, p)?;
     // a / b = a · conj(b) / |b|²: only its direction matters.
@@ -524,6 +552,8 @@ struct Frame {
     rule: u16,
     i: u32,
     child_depth: u32,
+    /// The variant of the node the word was rewritten from.
+    v: u32,
 }
 
 /// Walks `t` at `opts.order` over a deep `view`, through `bt` (built to at least that order), and
@@ -581,7 +611,7 @@ pub fn deep_walk_all(
     let mut stack: Vec<DeepState> = Vec::new();
     // The polygons open, innermost last, their vertices in view pixels.
     let mut open: Vec<Polygon> = Vec::new();
-    let mut frames = vec![Frame { rule: NONE, i: 0, child_depth: order }];
+    let mut frames = vec![Frame { rule: NONE, i: 0, child_depth: order, v: bt.variants.root }];
     let advance = |s: &mut DeepState, e: &BigEffect| {
         let v = if s.flip { conj(&e.d) } else { e.d.clone() };
         let w = cmul(&dir(s.turns), &v, p);
@@ -601,15 +631,18 @@ pub fn deep_walk_all(
             frames.pop();
             continue;
         };
+        let j = f.i as usize;
         f.i += 1;
         let d = f.child_depth;
+        let fv = f.v;
         match op {
             BigOp::Sym(c) => {
                 let c = *c;
                 let id = bt.id[c as usize];
                 let in_poly = !open.is_empty();
                 if id != NONE && d > 0 {
-                    let e = bt.entry(c, d);
+                    let cv = bt.variants.child(fv, j);
+                    let e = bt.entry(c, d, cv);
                     stats.nodes += 1;
                     // Inside a polygon every position is a vertex: the subtree's reach is all of it.
                     let reach = if in_poly { e.reach_all } else { e.reach };
@@ -624,7 +657,7 @@ pub fn deep_walk_all(
                         let slack = 1e-9 * (r + q[0].abs() + q[1].abs());
                         let seen = r_log2 > 900.0 || meets(q, r + slack + view.margin);
                         if seen && r_log2 > switch_log2 {
-                            frames.push(Frame { rule: id, i: 0, child_depth: d - 1 });
+                            frames.push(Frame { rule: bt.word_of(id, cv), i: 0, child_depth: d - 1, v: cv });
                             continue;
                         }
                         if seen {
@@ -632,6 +665,7 @@ pub fn deep_walk_all(
                             let start = SubStart {
                                 sym: c,
                                 depth: d,
+                                variant: cv,
                                 pos: q,
                                 heading: heading(&s),
                                 flip: s.flip,

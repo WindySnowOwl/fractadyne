@@ -1,8 +1,8 @@
 # L-systems — turtle-drawn curves and plants, with deep zoom
 
 Status: **phases 0–3 built** (2026-10-02, branch `feat/lsystems`); phase 4 under way — filled
-shapes built; stochastic, parametric and context-sensitive productions, SVG export and the
-animations to come (the user: "run the radeon tests and do phase 4"). The user:
+shapes and stochastic productions built; parametric and context-sensitive productions, SVG export
+and the animations to come (the user: "run the radeon tests and do phase 4"). The user:
 "Work on the design doc" (after "Are L-systems implemented" — no). Integration facts in §2 are from
 this tree at `21e2bd7` (Life merged). The user's decisions on the open questions are in §9 (all six:
 yes).
@@ -74,6 +74,32 @@ Phase 4, filled shapes, settled:
   corner of itself at order 300), and a home view the user has not moved is framed again when the
   canvas changes size (the first layout after a file opens the app).
 - The status bar's count is everything drawn (segments and filled shapes); the panel says which.
+
+Phase 4, stochastic productions, settled:
+
+- **Syntax**: one line per alternative with its weight, `X (0.33) = word` (ABOP's `X →(.33)`);
+  weights are relative; a symbol's lines are all weighted or it has one; `seed n`. `|` was not
+  available as a separator — it is Fractint's turn-around.
+- **The choice does not depend on the depth.** A node keeps its variant as the order rises (only its
+  depth changes), so it keeps its production: order n + 1 is order n with one more level of detail.
+  A choice by depth would redraw the plant every time the zoom gained an order.
+- **A child's variant is a permutation of its parent's for each place in the word**
+  (`perm[(v + shift[j]) mod K]`). A hash of (v, j) is a random map, and a line of descent through
+  the same place — a stem — falls into a cycle of about √(πK/8) ≈ 5 variants under one: the stem
+  would repeat itself every five levels.
+- **K = 64.** The `f64` tables are rows × symbols × K entries (≈ 18 ms for the stochastic plant,
+  depth 429); the exact measure (`BigFloat`) is a row per variant, so a stochastic system takes it
+  at depth 24 at most, where thousands of leaves already average its growth (×2.41 for seed 1,
+  ×2.29 for seed 2); the deep tables at 1,100 bits to order 300 build in ~160 ms. A weight under
+  1/64 may never be drawn.
+- **Measured in the variant the axiom gives it**: the picture's measure is its own first subtree,
+  so it sits still as the order rises, as a deterministic one does.
+- Checked: the walk, the culled walk and the deep walk against a reference that rewrites the whole
+  word a generation at a time carrying each symbol's variant (four stochastic exercises: a plant,
+  a curve, a dragon whose `X` folds either way, leaves on either side); two mutations of the
+  walk's variant bookkeeping each fail those tests.
+- **Seen**: branch-depth colouring is depth over (order × nesting), so at a deep zoom every visible
+  branch is a dark shade — for every plant, not only stochastic ones. To revisit.
 
 ## 1. Goal
 
@@ -310,11 +336,12 @@ The user: "Yes to 1-6".
 2. **Beyond bracketed D0L**: yes to all three → phase 4 (§4.1). The walk of §4.3–4.5 skips a
    subtree because its effect is a function of (symbol, depth) alone; each extension keeps that or
    says where it stops:
-   - **Stochastic**: a node carries a **variant** v ∈ 0..K (K = 256); its production is chosen by a
-     hash of (seed, symbol, depth, v), and its k-th child's variant is a hash of (v, k). Everything
+   - **Stochastic**: a node carries a **variant** v ∈ 0..K (K = 64, as built — see "Phase 4,
+     stochastic, settled"); its production is chosen by a hash of (seed, symbol, v) — not the depth
+     — and its k-th child's variant follows from (v, k). Everything
      about a node is then a function of (symbol, depth, v), so the tables are kept per variant
      (|alphabet| × depth × K entries) and the walk skips, culls and zooms as before. Two subtrees
-     with the same (symbol, depth, v) are the same picture; with 256 variants mixed at every level
+     with the same (symbol, depth, v) are the same picture; with the variants mixed at every level
      that is not visible. The seed is part of the system, so a picture reproduces.
    - **Parametric**: the tables are memoised per (symbol, depth, parameter values) while the
      distinct values stay within a budget, which holds for the common geometric forms

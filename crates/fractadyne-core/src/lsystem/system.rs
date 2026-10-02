@@ -131,7 +131,23 @@ pub fn default_role(c: u8) -> Role {
     }
 }
 
-/// A bracketed D0L system with turtle commands.
+/// One of a symbol's productions: the word it rewrites to, and its weight among the symbol's
+/// alternatives (1 for a symbol with one).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Production {
+    pub weight: f64,
+    pub word: Vec<Tok>,
+}
+
+/// The seed a system's random choices follow when it names none.
+pub const DEFAULT_SEED: u64 = 1;
+
+/// The most alternatives a symbol may have: one for each variant a node can take
+/// ([`super::variant::VARIANTS`]) — more could never all be drawn.
+pub const MAX_ALTERNATIVES: usize = super::variant::VARIANTS as usize;
+
+/// A bracketed 0L system with turtle commands: deterministic (D0L), or stochastic where a symbol
+/// has weighted alternatives.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LSystem {
     pub name: String,
@@ -139,14 +155,18 @@ pub struct LSystem {
     /// The turtle's first heading, in degrees anticlockwise from +x (a plant grows up: 90).
     pub heading: f64,
     pub axiom: Vec<Tok>,
-    /// What each symbol rewrites to (`None`: itself). 256 entries.
-    pub rules: Vec<Option<Vec<Tok>>>,
+    /// What each symbol rewrites to (empty: itself) — one production, or several weighted
+    /// alternatives. 256 entries.
+    pub rules: Vec<Vec<Production>>,
     /// What each symbol does when read. 256 entries.
     pub roles: Vec<Role>,
     /// The colouring the system asks for (`None`: the default, [`LSystem::colouring`]).
     pub colour: Option<Colouring>,
     /// A fixed order to draw at (`None`: the order follows the zoom).
     pub order: Option<u32>,
+    /// What a stochastic system's choices follow ([`super::variant`]): the same seed, the same
+    /// picture.
+    pub seed: u64,
 }
 
 /// Why a system was refused: what and where (1-based line and column; column 0 = the whole line).
@@ -365,16 +385,33 @@ impl LSystem {
             angle: Angle::Degrees(90.0),
             heading: 0.0,
             axiom: Vec::new(),
-            rules: vec![None; 256],
+            rules: vec![Vec::new(); 256],
             roles: (0..=255u8).map(default_role).collect(),
             colour: None,
             order: None,
+            seed: DEFAULT_SEED,
         }
     }
 
-    /// The production for `c`, if it rewrites.
+    /// The word `c` rewrites to, if it rewrites — its first alternative, if it has several (see
+    /// [`LSystem::productions`]).
     pub fn rule(&self, c: u8) -> Option<&[Tok]> {
-        self.rules[c as usize].as_deref()
+        self.rules[c as usize].first().map(|p| p.word.as_slice())
+    }
+
+    /// Every production of `c` (empty: it does not rewrite).
+    pub fn productions(&self, c: u8) -> &[Production] {
+        &self.rules[c as usize]
+    }
+
+    /// Gives `c` the one production `word`.
+    pub fn set_rule(&mut self, c: u8, word: Vec<Tok>) {
+        self.rules[c as usize] = vec![Production { weight: 1.0, word }];
+    }
+
+    /// Whether any symbol chooses among alternatives.
+    pub fn is_stochastic(&self) -> bool {
+        self.rules.iter().any(|r| r.len() > 1)
     }
 
     /// Whether any word uses a bracket.
@@ -387,8 +424,9 @@ impl LSystem {
         self.words().any(|w| w.iter().any(|t| matches!(t, Tok::SetColour(_) | Tok::AddColour(_))))
     }
 
-    fn words(&self) -> impl Iterator<Item = &Vec<Tok>> {
-        std::iter::once(&self.axiom).chain(self.rules.iter().flatten())
+    /// The axiom and every production's word.
+    pub fn words(&self) -> impl Iterator<Item = &Vec<Tok>> {
+        std::iter::once(&self.axiom).chain(self.rules.iter().flatten().map(|p| &p.word))
     }
 
     /// The colouring to draw with (design/lsystems.md §9.4): the system's own; else the colour
@@ -413,12 +451,15 @@ impl LSystem {
     /// ```
     ///
     /// Keys: `name`, `angle` (degrees, or `/n` for a division of the circle), `heading`, `axiom`,
-    /// `draw` / `move` / `variables` (symbols given that role), `colour`, `order`; a production is
-    /// `X = word`; `#` starts a comment line.
+    /// `draw` / `move` / `variables` (symbols given that role), `colour`, `order`, `seed`; a
+    /// production is `X = word`, or, for a symbol that chooses among alternatives at random,
+    /// `X (weight) = word` once for each (ABOP's `F →(.33) F[+F]F`); `#` starts a comment line.
     pub fn parse(text: &str) -> Result<LSystem, ParseError> {
         let mut sys = LSystem::new("");
         let mut have_axiom = false;
         let mut have_angle = false;
+        // Which symbols' productions were written with a weight.
+        let mut weighted = [false; 256];
         // Pasted text: a lone CR ends a line, and a Unicode minus (as books print `F−F`) is '-'.
         let cleaned = fractadyne_text::clean(text);
         for (k, raw) in cleaned.text.lines().enumerate() {
@@ -428,21 +469,34 @@ impl LSystem {
             if body.is_empty() || body.starts_with('#') {
                 continue;
             }
-            // A production: one symbol, then '='.
-            if let Some(eq) = body.find('=') {
-                let lhs = body[..eq].trim();
-                if lhs.len() == 1 {
-                    let c = lhs.as_bytes()[0];
-                    if !is_symbol(c) {
-                        return fail(line, lead + 1, format!("'{}' cannot have a production", c as char));
-                    }
-                    if sys.rules[c as usize].is_some() {
-                        return fail(line, lead + 1, format!("a second production for '{}'", c as char));
-                    }
-                    let word = parse_word(&body[eq + 1..], line, lead + eq + 2, false)?;
-                    sys.rules[c as usize] = Some(word);
-                    continue;
+            // A production: one symbol (and a weight), then '='.
+            if let Some((c, weight)) = body.find('=').and_then(|eq| production_lhs(&body[..eq])) {
+                let eq = body.find('=').expect("found above");
+                if !is_symbol(c) {
+                    return fail(line, lead + 1, format!("'{}' cannot have a production", c as char));
                 }
+                let w = match weight {
+                    None => 1.0,
+                    Some(text) => match text.parse::<f64>() {
+                        Ok(w) if w.is_finite() && w > 0.0 && w <= 1e6 => w,
+                        _ => return fail(line, lead + 1, "a weight is a number above 0 ('X (0.3) = word')"),
+                    },
+                };
+                let have = &sys.rules[c as usize];
+                if !have.is_empty() && (weight.is_none() || !weighted[c as usize]) {
+                    return fail(
+                        line,
+                        lead + 1,
+                        format!("a second production for '{}' (alternatives each carry a weight: '{} (0.5) = word')", c as char, c as char),
+                    );
+                }
+                if have.len() >= MAX_ALTERNATIVES {
+                    return fail(line, lead + 1, format!("at most {MAX_ALTERNATIVES} alternatives for '{}'", c as char));
+                }
+                weighted[c as usize] = weight.is_some();
+                let word = parse_word(&body[eq + 1..], line, lead + eq + 2, false)?;
+                sys.rules[c as usize].push(Production { weight: w, word });
+                continue;
             }
             let (key, value) = match body.find(char::is_whitespace) {
                 Some(sp) => (&body[..sp], body[sp..].trim_start()),
@@ -501,6 +555,13 @@ impl LSystem {
                         ParseError { line, col: vcol, message: format!("an order is a whole number up to {MAX_ORDER}") }
                     })?);
                 }
+                "seed" => {
+                    sys.seed = value.parse::<u64>().map_err(|_| ParseError {
+                        line,
+                        col: vcol,
+                        message: "a seed is a whole number, 0 or more".into(),
+                    })?;
+                }
                 _ => return fail(line, lead + 1, format!("unknown key '{key}' (a production is 'X = word')")),
             }
         }
@@ -541,14 +602,37 @@ impl LSystem {
         if let Some(n) = self.order {
             s.push_str(&format!("order {n}\n"));
         }
+        if self.seed != DEFAULT_SEED || self.is_stochastic() {
+            s.push_str(&format!("seed {}\n", self.seed));
+        }
         s.push_str(&format!("axiom {}\n", word_text(&self.axiom)));
         for c in 0..=255u8 {
-            if let Some(w) = self.rule(c) {
-                s.push_str(&format!("{} = {}\n", c as char, word_text(w)));
+            let ps = self.productions(c);
+            for p in ps {
+                if ps.len() > 1 || p.weight != 1.0 {
+                    s.push_str(&format!("{} ({}) = {}\n", c as char, p.weight, word_text(&p.word)));
+                } else {
+                    s.push_str(&format!("{} = {}\n", c as char, word_text(&p.word)));
+                }
             }
         }
         s
     }
+}
+
+/// A production's left side — a symbol, or a symbol and a weight in parentheses (`X (0.3)`) — as
+/// the symbol and the weight's text. `None`: not a production's (a key line with an `=` in it).
+fn production_lhs(lhs: &str) -> Option<(u8, Option<&str>)> {
+    let lhs = lhs.trim();
+    let c = *lhs.as_bytes().first()?;
+    if !c.is_ascii() {
+        return None;
+    }
+    if lhs.len() == 1 {
+        return Some((c, None));
+    }
+    let inner = lhs[1..].trim_start().strip_prefix('(')?.strip_suffix(')')?;
+    Some((c, Some(inner.trim())))
 }
 
 /// The highest order a system may be drawn at.

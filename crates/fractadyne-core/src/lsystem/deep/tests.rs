@@ -291,7 +291,7 @@ fn the_big_tables_hold_their_values_to_the_deepest_row() {
     let p = 256;
     let bt = BigTables::new(&s, &t, p, 415).unwrap();
     for d in [1u32, 2, 6, 100, 415] {
-        let e = bt.entry(b'F', d);
+        let e = bt.entry(b'F', d, 0);
         assert_eq!(e.fx.turns, 0, "depth {d}: the Koch curve's net turn is none");
         let want = BigFloat::from_f64(3.0, p).powi(d as usize, p, RM);
         let rel = to_f64(&e.fx.d[0].sub(&want, p, RM).div(&want, p, RM)).abs();

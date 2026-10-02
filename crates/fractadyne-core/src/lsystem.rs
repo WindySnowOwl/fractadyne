@@ -6,6 +6,9 @@
 mod system;
 pub use system::*;
 
+pub mod variant;
+pub use variant::{Variants, VARIANTS};
+
 mod fractint;
 pub use fractint::*;
 

@@ -4,21 +4,27 @@
 //! effect — so the two agreeing says something.
 
 use super::system::{LSystem, Role, Tok};
+use super::variant::Variants;
 use super::walk::{Polygon, Segment};
 use std::f64::consts::{PI, TAU};
 
-/// The word after `order` rewrites, or `None` past `limit` tokens.
+/// The word after `order` rewrites, or `None` past `limit` tokens. A stochastic system's symbols
+/// carry their variants through the rewrites ([`super::variant`]): each rewrites by the alternative
+/// its symbol and variant choose, and passes its children theirs — rewriting the word a whole
+/// generation at a time, where the walk descends a subtree at a time.
 pub fn expand(sys: &LSystem, order: u32, limit: usize) -> Option<Vec<Tok>> {
-    let mut w = sys.axiom.clone();
+    let vs = Variants::of(sys);
+    let weights: Vec<Vec<f64>> = (0..=255u8).map(|c| sys.productions(c).iter().map(|p| p.weight).collect()).collect();
+    let mut w: Vec<(Tok, u32)> = sys.axiom.iter().enumerate().map(|(j, &t)| (t, vs.child(vs.root, j))).collect();
     for _ in 0..order {
         let mut next = Vec::with_capacity(w.len() * 2);
-        for &t in &w {
+        for &(t, v) in &w {
             match t {
-                Tok::Sym(c) => match sys.rule(c) {
-                    Some(r) => next.extend_from_slice(r),
-                    None => next.push(t),
-                },
-                _ => next.push(t),
+                Tok::Sym(c) if !sys.productions(c).is_empty() => {
+                    let p = &sys.productions(c)[vs.choose(c, v, &weights[c as usize])];
+                    next.extend(p.word.iter().enumerate().map(|(j, &u)| (u, vs.child(v, j))));
+                }
+                _ => next.push((t, v)),
             }
             if next.len() > limit {
                 return None;
@@ -26,7 +32,7 @@ pub fn expand(sys: &LSystem, order: u32, limit: usize) -> Option<Vec<Tok>> {
         }
         w = next;
     }
-    Some(w)
+    Some(w.into_iter().map(|(t, _)| t).collect())
 }
 
 /// The segments a turtle draws reading `word`, starting at `start` with first step `step` (both
