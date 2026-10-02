@@ -72,6 +72,10 @@ pub(crate) enum FractalKind {
     /// [`FractalClass::Life`]. Outside [`FractalKind::ALL`]; the pickers list it under
     /// [`FractalKind::AUTOMATA`].
     Life,
+    /// An L-system (`FractadyneApp::lsystem`, design/lsystems.md): turtle-drawn segments —
+    /// [`FractalClass::LSystem`]. Outside [`FractalKind::ALL`]; the pickers list it under
+    /// [`FractalKind::LSYSTEMS`].
+    LSystem,
 }
 
 /// What kind of picture a family makes (design/automata.md §3). Everything that only makes sense
@@ -83,6 +87,8 @@ pub(crate) enum FractalClass {
     EscapeTime,
     /// A Life-like cellular automaton on the GPU tile stepper.
     Life,
+    /// An L-system: a grammar's turtle drawing, walked for the view and drawn as segments.
+    LSystem,
 }
 
 /// All the app-side metadata for one family, gathered in one place so adding a formula is a
@@ -379,10 +385,30 @@ impl FractalKind {
                 reference: "https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life",
             },
         },
+        // L-systems (design/lsystems.md): an id outside the escape-time range too.
+        FractalSpec {
+            kind: FractalKind::LSystem,
+            name: "L-system",
+            formula_id: fractadyne_core::formula::LSYSTEM,
+            default_center: (0.0, 0.0),
+            supports_julia: false,
+            supports_perturbation: false,
+            class: FractalClass::LSystem,
+            info: FractalInfo {
+                formula: "F = F+F--F+F: each symbol rewritten, then drawn by a turtle",
+                about: "Lindenmayer systems: curves, space-filling curves, islands and plants drawn \
+                        by a turtle from a rewriting grammar. The order follows the zoom, so the \
+                        detail never runs out. Fractint .l files open directly.",
+                reference: "https://en.wikipedia.org/wiki/L-system",
+            },
+        },
     ];
 
     /// The automata, as the pickers list them (after the escape-time families).
     pub(crate) const AUTOMATA: [FractalKind; 1] = [FractalKind::Life];
+
+    /// The L-systems, as the pickers list them (after the automata).
+    pub(crate) const LSYSTEMS: [FractalKind; 1] = [FractalKind::LSystem];
 
     /// This family's metadata row. O(1): rows are ordered to match the enum (test-enforced).
     pub(crate) fn spec(self) -> &'static FractalSpec {
@@ -480,8 +506,8 @@ mod tests {
     fn specs_cover_all_kinds_in_order() {
         assert_eq!(
             FractalKind::SPECS.len(),
-            FractalKind::ALL.len() + 1 + FractalKind::AUTOMATA.len(),
-            "every FractalKind needs exactly one SPECS row (the built-ins, Custom, the automata)"
+            FractalKind::ALL.len() + 1 + FractalKind::AUTOMATA.len() + FractalKind::LSYSTEMS.len(),
+            "every FractalKind needs exactly one SPECS row (the built-ins, Custom, the automata, the L-systems)"
         );
         let custom = &FractalKind::SPECS[FractalKind::ALL.len()];
         assert_eq!(custom.kind, FractalKind::Custom);
@@ -489,15 +515,17 @@ mod tests {
         assert_eq!(custom.formula_id, fractadyne_core::formula::CUSTOM);
         assert!(!custom.supports_perturbation, "a custom formula renders on the direct path");
         assert_eq!(custom.class, FractalClass::EscapeTime);
-        for (k, kind) in FractalKind::AUTOMATA.iter().enumerate() {
+        for (k, kind) in FractalKind::AUTOMATA.iter().chain(&FractalKind::LSYSTEMS).enumerate() {
             let spec = &FractalKind::SPECS[FractalKind::ALL.len() + 1 + k];
-            assert_eq!(spec.kind, *kind, "the automata's rows follow Custom's, in AUTOMATA order");
+            assert_eq!(spec.kind, *kind, "the automata's then the L-systems' rows follow Custom's, in list order");
             assert_eq!(*kind as usize, FractalKind::ALL.len() + 1 + k);
             assert_ne!(spec.class, FractalClass::EscapeTime);
             assert!(!spec.supports_julia && !spec.supports_perturbation);
             assert!(!fractadyne_core::is_valid_formula(spec.formula_id), "outside the escape-time ids");
         }
         assert_eq!(FractalKind::Life.formula_id(), fractadyne_core::formula::LIFE);
+        assert_eq!(FractalKind::LSystem.formula_id(), fractadyne_core::formula::LSYSTEM);
+        assert_eq!(FractalKind::LSystem.class(), FractalClass::LSystem);
         for (i, kind) in FractalKind::ALL.iter().enumerate() {
             let spec = &FractalKind::SPECS[i];
             assert_eq!(spec.kind, *kind, "SPECS row {i} is out of declaration order");
@@ -554,7 +582,7 @@ mod tests {
     /// Names are used as stable tokens in view files; they must round-trip and be unique.
     #[test]
     fn names_round_trip_and_are_unique() {
-        for k in FractalKind::ALL.into_iter().chain([FractalKind::Custom]).chain(FractalKind::AUTOMATA) {
+        for k in FractalKind::ALL.into_iter().chain([FractalKind::Custom]).chain(FractalKind::AUTOMATA).chain(FractalKind::LSYSTEMS) {
             assert_eq!(FractalKind::from_name(k.name()), Some(k));
         }
         let mut names: Vec<&str> = FractalKind::SPECS.iter().map(|s| s.name).collect();

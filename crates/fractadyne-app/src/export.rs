@@ -197,7 +197,13 @@ pub(crate) fn stamp_watermark(pixels: &mut [f32], w: u32, h: u32, ov: &WmOverlay
 /// 3 — `fractal=Life` (design/automata.md), with `rule=`, `pattern=`, `pattern_generation=`,
 /// `generation=`, `pattern_name=`. Written only by a Life view, for the same reason as 2: an older
 /// build would show some escape-time family at the coordinates of a universe.
-pub(crate) const VIEW_FORMAT_VERSION: u32 = 3;
+///
+/// 4 — `fractal=L-system` (design/lsystems.md), with `lsystem=` (the system's text, one escaped
+/// line), `lsystem_order=`, `lsystem_angle=`, `lsystem_width=`, `lsystem_colour=`. Written only by
+/// an L-system view, for the same reason again.
+pub(crate) const VIEW_FORMAT_VERSION: u32 = 4;
+/// What a Life view writes (format 3, unchanged by format 4).
+pub(crate) const VIEW_FORMAT_LIFE: u32 = 3;
 /// What a custom-formula or power-family view writes (format 2, unchanged by format 3).
 pub(crate) const VIEW_FORMAT_CUSTOM: u32 = 2;
 /// The format a view that is not a custom formula writes: nothing in it needs format 2.
@@ -303,6 +309,9 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     // `pattern_generation` (their top-left at `pattern_origin`), and the generation on screen —
     // reached again by running the difference, which Life's determinism makes exact.
     "rule", "pattern", "pattern_origin", "pattern_generation", "generation", "pattern_name",
+    // An L-system (format 4): the system's text (one line, `\n`/`\\` escaped), the order (`auto` or
+    // fixed), the angle slider's override, the line width, the colouring.
+    "lsystem", "lsystem_order", "lsystem_angle", "lsystem_width", "lsystem_colour",
 ];
 
 /// Without these a "view" is not a view. Their absence is reported by NAME, so a paste that
@@ -808,8 +817,10 @@ impl FractadyneApp {
              center_re={}\ncenter_im={}\nupp={:.17e}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n\
              palette={}\ncycle={}\noffset={}\naa={}\n{}{}{}{}",
             version_string(),
-            if self.fractal == FractalKind::Life {
+            if self.fractal == FractalKind::LSystem {
                 VIEW_FORMAT_VERSION
+            } else if self.fractal == FractalKind::Life {
+                VIEW_FORMAT_LIFE
             } else if self.custom_formula_metadata().is_empty() && self.fractal.power_family().is_none() {
                 VIEW_FORMAT_PLAIN
             } else {
@@ -867,12 +878,14 @@ impl FractadyneApp {
         )
     }
 
-    /// `rule=`, `pattern=` … for a Life view; empty for every other family.
+    /// `rule=`, `pattern=` … for a Life view, `lsystem=` … for an L-system view; empty for every
+    /// other family.
     fn life_metadata(&self) -> String {
-        if self.fractal != FractalKind::Life {
-            return String::new();
+        match self.fractal {
+            FractalKind::Life => self.life_lines(),
+            FractalKind::LSystem => self.lsystem_lines(),
+            _ => String::new(),
         }
-        self.life_lines()
     }
 
     /// Restore the universe from [`Self::life_lines`] text — the session's `life` — and, with
@@ -1016,6 +1029,12 @@ impl FractadyneApp {
             // A Life view carries its universe: the rule, the cells, the generations to run.
             Some(FractalKind::Life) => {
                 if let Err(e) = self.apply_life_fields(get, true) {
+                    report.problems.push(e);
+                }
+            }
+            // An L-system view carries its system, order, angle, width and colouring.
+            Some(FractalKind::LSystem) => {
+                if let Err(e) = self.apply_lsystem_fields(get, true) {
                     report.problems.push(e);
                 }
             }
@@ -1858,7 +1877,12 @@ impl FractadyneApp {
         // display pass, which the export path does not have yet (design/automata.md, phase 2).
         // Refused in words rather than rendered as some formula under Life's name.
         if !self.fractal.is_escape_time() {
-            self.set_toast("Image export of a Life view is not available yet — use a screenshot, or File ▸ Save Life pattern.".to_string(), ctx);
+            let msg = if self.fractal == FractalKind::LSystem {
+                "Image export of an L-system view is not available yet — use a screenshot, or File ▸ Save L-system."
+            } else {
+                "Image export of a Life view is not available yet — use a screenshot, or File ▸ Save Life pattern."
+            };
+            self.set_toast(msg.to_string(), ctx);
             return;
         }
         // Start the export clock now — for a deep export this includes the (long) off-thread

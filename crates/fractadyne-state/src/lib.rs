@@ -344,6 +344,11 @@ pub struct SessionState {
     /// whichever family is shown, so switching back finds it; empty in a session from before Life.
     #[serde(default)]
     pub life: String,
+    /// The L-system (design/lsystems.md), as the lines an L-system view file carries (`lsystem=`,
+    /// `lsystem_order=`, …). Kept whichever family is shown; empty in a session from before
+    /// L-systems.
+    #[serde(default)]
+    pub lsystem: String,
     /// Julia mode + parameter `c` (the view state that pairs with center/zoom).
     #[serde(default)]
     pub julia_mode: bool,
@@ -641,6 +646,7 @@ impl Default for SessionState {
             custom_params: Vec::new(),
             formula_textbook: false,
             life: String::new(),
+            lsystem: String::new(),
             julia_mode: false,
             julia_c_re: default_julia_c_re(),
             julia_c_im: default_julia_c_im(),

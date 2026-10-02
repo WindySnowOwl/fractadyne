@@ -20,6 +20,8 @@ pub mod timing;
 pub mod custom;
 /// Life-like automata: the tile stepper, the app's first compute pipeline (design/automata.md).
 pub mod life;
+/// L-systems: the segment pass (design/lsystems.md).
+pub mod lsystem;
 
 /// The Rust/WGSL uniform-layout gate — see the module's own docs.
 #[cfg(test)]
@@ -205,6 +207,8 @@ struct IterKey {
     /// A Life frame's display key (`LifeRenderer::update`): the cells, the mapping, the texture.
     /// 0 for every escape-time frame.
     life: u64,
+    /// An L-system frame's display key (`LSystemRenderer::update`). 0 for every other frame.
+    lsystem: u64,
 }
 
 /// GPU-timestamp capture around the LIVE `iterate_pass`, so the app can size deep frames against what
@@ -971,6 +975,8 @@ struct Renderer {
     /// The Life universe and its display pass, created on the first Life frame on a device that
     /// runs compute shaders (`life::life_available`).
     life: Option<life::LifeRenderer>,
+    /// The L-system segment pass, created on the first L-system frame.
+    lsystem: Option<lsystem::LSystemRenderer>,
 }
 
 /// A custom formula's iterate pipelines, from its generated module (`custom::build`) and the fixed
@@ -1924,6 +1930,7 @@ impl Renderer {
             views: std::collections::HashMap::new(),
             custom: None,
             life: None,
+            lsystem: None,
         }
     }
 }
@@ -2375,6 +2382,9 @@ pub struct MandelbrotParams {
     /// A Life frame (design/automata.md): `Some` replaces the iterate pass with the Life universe's
     /// step and display passes, which write the same iteration texture the colour pass reads.
     pub life: Option<Arc<life::LifeFrame>>,
+    /// An L-system frame (design/lsystems.md): `Some` replaces the iterate pass with the segment
+    /// pass, which writes the same iteration texture the colour pass reads.
+    pub lsystem: Option<Arc<lsystem::LSystemFrame>>,
     /// 0 = Mandelbrot mode (z0=0, c=pixel), 1 = Julia mode (z0=pixel, c=const).
     pub julia: u32,
     /// Complex span *mantissa* (`span · 2^-delta_exp`, O(1)) — see [`fractadyne_core::GpuScale`].
@@ -2510,6 +2520,7 @@ impl Default for MandelbrotParams {
             formula: 0,
             custom: None,
             life: None,
+            lsystem: None,
             julia: 0,
             span_mantissa: fractadyne_core::SpanMantissa::new(4.0, 4.0),
             max_iter: 1,
@@ -2603,7 +2614,11 @@ impl CallbackTrait for MandelbrotParams {
                 }
             }
         }
+        if self.lsystem.is_some() && r.lsystem.is_none() {
+            r.lsystem = Some(lsystem::LSystemRenderer::new(device, &r.iter_bgl));
+        }
         let life_r = &mut r.life;
+        let lsystem_r = &mut r.lsystem;
         let iter_bgl = &r.iter_bgl;
         let color_bgl = &r.color_bgl;
         let (iter_pipeline, iter_split_pipeline) = match (self.custom.as_ref(), r.custom.as_ref()) {
@@ -2702,7 +2717,13 @@ impl CallbackTrait for MandelbrotParams {
             (Some(f), Some(l)) => l.update(device, queue, f, size, ss),
             _ => 0,
         };
-        let life_on = self.life.is_some() && life_r.is_some();
+        let lsystem_key = match (self.lsystem.as_deref(), lsystem_r.as_mut()) {
+            (Some(f), Some(l)) => l.update(device, queue, f, size, ss),
+            _ => 0,
+        };
+        let lsystem_on = self.lsystem.is_some() && lsystem_r.is_some();
+        // Life or an L-system: a class whose picture is not an iterate (no iterate timers).
+        let life_on = (self.life.is_some() && life_r.is_some()) || lsystem_on;
         // Pan reprojection: keep the frozen iteration texture (only valid once something has
         // been rendered into it). Skip the resize so the texture isn't cleared, and color it
         // with the ss it was built at.
@@ -2897,6 +2918,7 @@ impl CallbackTrait for MandelbrotParams {
             bla_on: self.bla_on,
             jitter: self.jitter,
             life: life_key,
+            lsystem: lsystem_key,
         };
         // Re-render when the key changed (new view/orbit/size) OR when a tiled settle advanced to a
         // new rect under an unchanged key — OR when a chunked progression advanced its iteration
@@ -3035,7 +3057,26 @@ impl CallbackTrait for MandelbrotParams {
             if let Some(k) = clock_k {
                 view.pass_clock.as_ref().unwrap().marker_pass(encoder, PASS_CLOCK_Q * k as u32 + 2);
             }
-            if let (true, Some(l)) = (life_on, life_r.as_ref()) {
+            if let (true, Some(l)) = (lsystem_on, lsystem_r.as_ref()) {
+                // -------- L-system: the segments into the G-buffer, over "interior" --------
+                view.chunk_state = None;
+                let attach = |v, clear| Some(wgpu::RenderPassColorAttachment {
+                    view: v,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store: wgpu::StoreOp::Store },
+                });
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("fractadyne.lsystem_segments"),
+                    color_attachments: &[
+                        attach(&view.tex_view, lsystem::CLEAR_MAIN),
+                        attach(&view.aux_view, lsystem::CLEAR_AUX),
+                    ],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                l.draw(&mut pass, &view.iter_bg);
+            } else if let (true, Some(l)) = (life_on, life_r.as_ref()) {
                 // -------- Life: the universe's cells into the G-buffer --------
                 view.chunk_state = None;
                 let attach = |v| Some(wgpu::RenderPassColorAttachment {

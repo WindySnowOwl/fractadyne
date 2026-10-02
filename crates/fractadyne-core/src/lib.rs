@@ -45,6 +45,9 @@ pub mod ir;
 /// Life-like cellular automata: rules, the sparse universe, pattern files (design/automata.md).
 pub mod life;
 
+/// L-systems: grammars, the turtle, the culling walk (design/lsystems.md).
+pub mod lsystem;
+
 mod backend;
 #[cfg(feature = "rug")]
 mod backend_rug;
@@ -149,6 +152,9 @@ pub mod formula {
     /// formula at all, so outside every range the shader and [`caps`] know. Its picture comes
     /// from the Life stepper and display pass.
     pub const LIFE: u32 = 1100;
+    /// The id an L-system renders under (design/lsystems.md §3): no escape-time formula either.
+    /// Its picture comes from the segment walk and pass.
+    pub const LSYSTEM: u32 = 1200;
 
     /// The escape degree `d` (`|z'| ≈ |z|^d` far out): the smooth count's log base, as the
     /// shader's `power_f`. 2 for every family that is not a higher power (Phoenix and Newton
@@ -215,7 +221,7 @@ pub mod formula {
             resumable_passes: polynomial || formula == CUSTOM,
             nucleus_finder: polynomial,
             feature_solvers: formula == MANDELBROT,
-            export_glitch_correction: !polynomial && formula != CUSTOM && formula != LIFE,
+            export_glitch_correction: !polynomial && formula != CUSTOM && formula != LIFE && formula != LSYSTEM,
             convergent: formula == NEWTON,
         }
     }

@@ -992,6 +992,9 @@ impl FractadyneApp {
                     }
                 }
                 self.viewport.set_size(nw, nh);
+                if self.fractal == FractalKind::LSystem {
+                    self.lsystem_keep_framed();
+                }
                 // Life's Draw / Erase tool owns the left button: a drag paints cells, not the view.
                 let life_draw = self.life_draws();
 
@@ -1299,6 +1302,15 @@ impl FractadyneApp {
                     add_mandelbrot(ui.painter(), rect, params);
                     // Cell borders and the cell under a drawing cursor, over the cells.
                     self.life_overlay(ui.painter(), rect, ppp as f32, response.hover_pos());
+                } else if self.fractal == crate::FractalKind::LSystem {
+                    // An L-system draws the last walk placed under the view, and repaints until the
+                    // walk the view needs has landed.
+                    let _ = (center_bf, center, span_fe, mag, eff_iter, aa_target, reproject);
+                    let params = self.build_lsystem_params(resolution, 1);
+                    if self.lsystem.busy() {
+                        self.schedule_repaint(ctx);
+                    }
+                    add_mandelbrot(ui.painter(), rect, params);
                 } else {
                     // Progressive on-settle supersampling (deep-zoom despeckle) — the single-view
                     // counterpart of the call in `nav_and_draw`. ⚠Until 2026-09-15 only the

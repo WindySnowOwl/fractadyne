@@ -125,6 +125,9 @@ impl FractadyneApp {
                 if self.fractal == FractalKind::Life {
                     egui::CollapsingHeader::new("Life").default_open(true).show(ui, |ui| self.life_panel(ui));
                 }
+                if self.fractal == FractalKind::LSystem {
+                    egui::CollapsingHeader::new("L-system").default_open(true).show(ui, |ui| self.lsystem_panel(ui));
+                }
                 egui::CollapsingHeader::new("Navigate").default_open(true).show(ui, |ui| {
                 labelled(ui, "Zoom speed", |ui| {
                     ui.add(
