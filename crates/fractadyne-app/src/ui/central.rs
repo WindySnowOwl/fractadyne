@@ -992,6 +992,9 @@ impl FractadyneApp {
                     }
                 }
                 self.viewport.set_size(nw, nh);
+                if self.fractal == FractalKind::LSystem {
+                    self.lsystem_keep_framed();
+                }
                 // Life's Draw / Erase tool owns the left button: a drag paints cells, not the view.
                 let life_draw = self.life_draws();
 

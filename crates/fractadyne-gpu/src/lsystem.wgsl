@@ -80,6 +80,40 @@ struct FragOut {
     @location(1) aux: vec4<f32>,
 };
 
+// A filled polygon's triangles (drawn before the lines, so lines lie over fills).
+struct TriOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) @interpolate(flat) value: f32,
+};
+
+@vertex
+fn vs_triangle(
+    @builtin(vertex_index) vi: u32,
+    @location(0) pa: vec2<f32>,
+    @location(1) pb: vec2<f32>,
+    @location(2) pc: vec2<f32>,
+    @location(3) value: f32,
+) -> TriOut {
+    var corners = array<vec2<f32>, 3>(pa, pb, pc);
+    let p = to_texel(corners[vi]);
+    var out: TriOut;
+    out.pos = vec4<f32>(p.x / V.size.x * 2.0 - 1.0, 1.0 - p.y / V.size.y * 2.0, 0.0, 1.0);
+    out.value = value;
+    return out;
+}
+
+@fragment
+fn fs_triangle(in: TriOut) -> FragOut {
+    let tx = vec2<i32>(in.pos.xy);
+    if ((tx.x & 3) == 0 && (tx.y & 3) == 0) {
+        let bits = bitcast<u32>(in.value);
+        atomicMin(&counters[CTR_ESC_MIN], bits);
+        atomicMax(&counters[CTR_ESC_MAX], bits);
+        atomicAdd(&counters[CTR_ESC_COUNT], 1u);
+    }
+    return FragOut(vec4<f32>(in.value, 0.0, 0.0, 1.0e30), AUX_NONE);
+}
+
 @fragment
 fn fs_segment(in: VsOut) -> FragOut {
     let p = in.pos.xy; // the texel centre

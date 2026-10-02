@@ -60,7 +60,8 @@ fn every_command_reads_as_fractint_documents_it() {
 #[test]
 fn a_number_ends_at_a_space_so_digit_symbols_survive_the_round_trip() {
     // Penrose-style systems use digits as symbols: `@2` then the symbol `7`.
-    let w = vec![Tok::Scale(2.0), Tok::Sym(b'7'), Tok::Sym(b'C'), Tok::Sym(b'5'), Tok::SetColour(3), Tok::Sym(b'.')];
+    // And a number then a `.` vertex would read as `3.`.
+    let w = vec![Tok::Scale(2.0), Tok::Sym(b'7'), Tok::Sym(b'C'), Tok::Sym(b'5'), Tok::SetColour(3), Tok::Vertex];
     let text = word_text(&w);
     assert_eq!(parse_word(&text, 1, 1, false).unwrap(), w, "{text}");
 }

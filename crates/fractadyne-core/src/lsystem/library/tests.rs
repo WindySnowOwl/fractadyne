@@ -46,7 +46,7 @@ fn every_entry_parses_and_names_are_unique() {
         assert!(names.insert(e.name.to_ascii_lowercase()), "{} twice", e.name);
         assert!(!e.about.is_empty());
         let t = Tables::new(&s);
-        assert!(t.axiom_entry(3.min(t.max_depth)).n > 0.0, "{} draws nothing", e.name);
+        assert!(t.axiom_entry(3.min(t.max_depth)).w > 0.0, "{} draws nothing (no lines, no polygons)", e.name);
         // Everything in the set either grows by a factor or names the order to draw at.
         assert!(t.grows() || s.order.is_some(), "{} neither grows nor has an order", e.name);
     }
@@ -133,5 +133,21 @@ fn the_closed_curves_close() {
             let e = run(name, n).end;
             assert!(e[0].abs() < 1e-9 && e[1].abs() < 1e-9, "{name} order {n} ends at {e:?}");
         }
+    }
+}
+
+/// The filled snowflake's polygon is the snowflake's outline: its area at order n is the
+/// textbook's A0·(1 + ⅓·Σ_{k<n} (4/9)^k), A0 the starting triangle's.
+#[test]
+fn the_filled_snowflake_has_the_snowflakes_area() {
+    for n in 0..=5u32 {
+        let run = run("Koch snowflake (filled)", n);
+        assert!(run.segments.is_empty());
+        assert_eq!(run.polygons.len(), 1);
+        let area = 0.5 * crate::lsystem::polygon::signed_area2(&run.polygons[0].pts).abs();
+        let side = 3f64.powi(n as i32);
+        let sum: f64 = (0..n).map(|k| (4.0f64 / 9.0).powi(k as i32)).sum();
+        let want = 3f64.sqrt() / 4.0 * side * side * (1.0 + sum / 3.0);
+        assert!((area - want).abs() < 1e-9 * want, "order {n}: {area} vs {want}");
     }
 }

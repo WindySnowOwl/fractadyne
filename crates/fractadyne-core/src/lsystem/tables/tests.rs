@@ -110,6 +110,21 @@ fn an_overlapping_curve_stops_refining_where_it_saturates() {
     }
 }
 
+/// A plant whose leaves keep their size while its stem doubles is wide at a low order and a line
+/// at a high one. Measured by the high order's box (a line), every low order was "dense": the
+/// leaves exercise was held at order 0, which draws nothing (its first screenshot, blank). Each
+/// order's own box holds it nowhere.
+#[test]
+fn leaves_of_a_fixed_size_do_not_hold_the_order_back() {
+    let s = crate::lsystem::exercises::all().into_iter().find(|s| s.name == "leaves").unwrap();
+    let t = Tables::new(&s);
+    assert!(t.grows());
+    for px in [300.0, 1e4, 1e6] {
+        let n = t.auto_order(px, 1.5).unwrap();
+        assert!(norm(t.step(n)) * px <= 1.5, "at {px} px a unit: order {n}, a step of {} px", norm(t.step(n)) * px);
+    }
+}
+
 #[test]
 fn the_tables_go_as_deep_as_f64_allows() {
     let t = Tables::new(&sys("Koch curve"));
@@ -159,12 +174,11 @@ fn composing_effects_is_associative() {
 
 /// The reference's end point and segments for the axiom at `order`, from the origin with step 1
 /// along +x and no heading.
-fn reference_run(s: &LSystem, order: u32) -> Option<([f64; 2], Vec<crate::lsystem::Segment>)> {
+fn reference_run(s: &LSystem, order: u32) -> Option<reference::Run> {
     let mut s = s.clone();
     s.heading = 0.0;
     let word = reference::expand(&s, order, 400_000)?;
-    let run = reference::run(&s, &word, [0.0, 0.0], [1.0, 0.0]);
-    Some((run.end, run.segments))
+    Some(reference::run(&s, &word, [0.0, 0.0], [1.0, 0.0]))
 }
 
 #[test]
@@ -173,14 +187,18 @@ fn every_table_entry_matches_the_reference() {
         let e = &s;
         let t = Tables::new(&s);
         for order in 0..=8 {
-            let Some((end, segs)) = reference_run(&s, order) else { break };
+            let Some(run) = reference_run(&s, order) else { break };
             let a = t.axiom_entry(order);
-            assert_eq!(a.n, segs.len() as f64, "{} order {order}: segment count", e.name);
+            assert_eq!(a.n, run.segments.len() as f64, "{} order {order}: segment count", e.name);
+            let vertices: usize = run.polygons.iter().map(|p| p.pts.len()).sum();
+            assert_eq!(a.w, (run.segments.len() + vertices) as f64, "{} order {order}: work", e.name);
             let tol = 1e-9 * (1.0 + a.r.abs());
-            assert!(close(a.fx.d, end, tol), "{} order {order}: end {:?} vs {:?}", e.name, a.fx.d, end);
-            // The reach bounds every point drawn, and is reached (it is a maximum, not a guess).
-            let far = segs.iter().flat_map(|g| [g.a, g.b]).map(norm).fold(-1.0f64, f64::max);
-            if segs.is_empty() {
+            assert!(close(a.fx.d, run.end, tol), "{} order {order}: end {:?} vs {:?}", e.name, a.fx.d, run.end);
+            // The reach bounds every point drawn — lines and polygon vertices. (A bound by the
+            // triangle inequality, not the furthest point: the snowflake's order 0 reaches 1 of 2.)
+            let points = run.segments.iter().flat_map(|g| [g.a, g.b]).chain(run.polygons.iter().flat_map(|p| p.pts.iter().copied()));
+            let far = points.map(norm).fold(-1.0f64, f64::max);
+            if run.segments.is_empty() && run.polygons.is_empty() {
                 assert_eq!(a.r, -1.0, "{} order {order}", e.name);
             } else {
                 assert!(far <= a.r + tol, "{} order {order}: drew at {far}, reach {}", e.name, a.r);

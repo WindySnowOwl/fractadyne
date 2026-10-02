@@ -21,6 +21,12 @@ const TEXTS: &[(&str, &str)] = &[
     ("colours", "angle 60\naxiom F\nF = C2F<1+F>2--F[C7+F]+F\n"),
     ("not a division", "angle 25.7\naxiom F\nF = F+F+F-F[++F]\n"),
     ("moves and variables", "angle 90\nvariables D\naxiom FD\nD = fG+F-D\nF = F+G\n"),
+    // Filled polygons: leaves on a branching stem (steps and `.` vertices, inside brackets), a
+    // filled snowflake (its outline rewritten inside the braces), and a polygon whose outline holds
+    // a symbol that opens polygons of its own.
+    ("leaves", "angle 30\nheading 90\naxiom X\nX = F[+{.f-f-f.}]F[-{.f+f+f.}]X\nF = FF\n"),
+    ("filled snowflake", "angle 60\naxiom {F++F++F}\nF = F-F++F-F\n"),
+    ("nested polygons", "angle 90\naxiom {FAFAFAF}\nA = +[{f-f-f-f}]F\nF = F+F-F\n"),
 ];
 
 /// The library and the exercises.

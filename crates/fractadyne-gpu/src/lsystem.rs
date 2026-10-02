@@ -20,11 +20,23 @@ pub struct SegmentInstance {
     pub value: f32,
 }
 
+/// One triangle of a filled polygon: its corners in pixels of the walked view, and its value.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct TriangleInstance {
+    pub a: [f32; 2],
+    pub b: [f32; 2],
+    pub c: [f32; 2],
+    pub value: f32,
+}
+
 /// What the app asks of the segment pass on a frame (`MandelbrotParams::lsystem`).
 #[derive(Clone, Debug)]
 pub struct LSystemFrame {
-    /// The last walk's segments.
+    /// The last walk's segments…
     pub segments: Arc<Vec<SegmentInstance>>,
+    /// …and its filled polygons, as triangles (drawn first, under the lines).
+    pub triangles: Arc<Vec<TriangleInstance>>,
     /// Changes whenever `segments` does: the upload's key.
     pub segments_id: u64,
     /// A walked pixel `p` shows at `p * scale + offset` pixels from this view's centre (y up).
@@ -52,11 +64,15 @@ pub const MAX_SEGMENTS: usize = 1 << 23;
 
 pub(crate) struct LSystemRenderer {
     pipeline: wgpu::RenderPipeline,
+    tri_pipeline: wgpu::RenderPipeline,
     uniform: wgpu::Buffer,
     group: wgpu::BindGroup,
     instances: wgpu::Buffer,
     capacity: usize,
     count: u32,
+    triangles: wgpu::Buffer,
+    tri_capacity: usize,
+    tri_count: u32,
     uploaded: Option<u64>,
 }
 
@@ -110,6 +126,33 @@ impl LSystemRenderer {
             multiview: None,
             cache: None,
         });
+        let target = Some(wgpu::ColorTargetState { format: crate::ITER_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL });
+        let tri_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("lsystem.triangles"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs_triangle"),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<TriangleInstance>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x2, 3 => Float32],
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs_triangle"),
+                targets: &[target.clone(), target],
+                compilation_options: Default::default(),
+            }),
+            // Either winding: a polygon's triangles come out as the turtle went round it.
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
         use wgpu::BufferUsages as U;
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("lsystem.view"),
@@ -123,14 +166,28 @@ impl LSystemRenderer {
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() }],
         });
         let capacity = 1024;
-        let instances = Self::instance_buffer(device, capacity);
-        LSystemRenderer { pipeline, uniform, group, instances, capacity, count: 0, uploaded: None }
+        let instances = Self::instance_buffer(device, capacity, std::mem::size_of::<SegmentInstance>());
+        let tri_capacity = 256;
+        let triangles = Self::instance_buffer(device, tri_capacity, std::mem::size_of::<TriangleInstance>());
+        LSystemRenderer {
+            pipeline,
+            tri_pipeline,
+            uniform,
+            group,
+            instances,
+            capacity,
+            count: 0,
+            triangles,
+            tri_capacity,
+            tri_count: 0,
+            uploaded: None,
+        }
     }
 
-    fn instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
+    fn instance_buffer(device: &wgpu::Device, capacity: usize, stride: usize) -> wgpu::Buffer {
         device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("lsystem.segments"),
-            size: (capacity * std::mem::size_of::<SegmentInstance>()) as u64,
+            label: Some("lsystem.instances"),
+            size: (capacity * stride) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         })
@@ -144,12 +201,21 @@ impl LSystemRenderer {
             let n = frame.segments.len().min(MAX_SEGMENTS);
             if n > self.capacity {
                 self.capacity = n.next_power_of_two();
-                self.instances = Self::instance_buffer(device, self.capacity);
+                self.instances = Self::instance_buffer(device, self.capacity, std::mem::size_of::<SegmentInstance>());
             }
             if n > 0 {
                 queue.write_buffer(&self.instances, 0, bytemuck::cast_slice(&frame.segments[..n]));
             }
             self.count = n as u32;
+            let m = frame.triangles.len().min(MAX_SEGMENTS);
+            if m > self.tri_capacity {
+                self.tri_capacity = m.next_power_of_two();
+                self.triangles = Self::instance_buffer(device, self.tri_capacity, std::mem::size_of::<TriangleInstance>());
+            }
+            if m > 0 {
+                queue.write_buffer(&self.triangles, 0, bytemuck::cast_slice(&frame.triangles[..m]));
+            }
+            self.tri_count = m as u32;
             self.uploaded = Some(frame.segments_id);
         }
         let ss = ss.max(1) as f32;
@@ -171,14 +237,19 @@ impl LSystemRenderer {
     }
 
     pub(crate) fn draw<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, iter_bg: &'a wgpu::BindGroup) {
-        if self.count == 0 {
-            return;
-        }
-        pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, iter_bg, &[]);
         pass.set_bind_group(1, &self.group, &[]);
-        pass.set_vertex_buffer(0, self.instances.slice(..));
-        pass.draw(0..6, 0..self.count);
+        // Fills first, then the lines over them.
+        if self.tri_count > 0 {
+            pass.set_pipeline(&self.tri_pipeline);
+            pass.set_vertex_buffer(0, self.triangles.slice(..));
+            pass.draw(0..3, 0..self.tri_count);
+        }
+        if self.count > 0 {
+            pass.set_pipeline(&self.pipeline);
+            pass.set_vertex_buffer(0, self.instances.slice(..));
+            pass.draw(0..6, 0..self.count);
+        }
     }
 }
 

@@ -10,7 +10,7 @@ fn the_segment_shader_validates_and_shares_the_counter_slots() {
         .validate(&module)
         .unwrap_or_else(|e| panic!("{}", e.emit_to_string(SOURCE)));
     let names: Vec<&str> = module.entry_points.iter().map(|e| e.name.as_str()).collect();
-    assert_eq!(names, ["vs_segment", "fs_segment"]);
+    assert_eq!(names, ["vs_segment", "vs_triangle", "fs_triangle", "fs_segment"]);
     for (name, slot) in
         [("CTR_ESC_MIN", crate::CTR_ESC_MIN), ("CTR_ESC_MAX", crate::CTR_ESC_MAX), ("CTR_ESC_COUNT", crate::CTR_ESC_COUNT)]
     {
@@ -71,7 +71,7 @@ fn the_device_checks_pass() {
     let failed: Vec<String> =
         all.iter().filter_map(|o| o.result.as_ref().err().map(|e| format!("{} ({}): {e}", o.name, o.params))).collect();
     assert!(failed.is_empty(), "{}", failed.join("\n"));
-    assert_eq!(all.len(), 4);
+    assert_eq!(all.len(), 5);
 }
 
 /// The CPU model is the rule it says: a texel on a segment takes its value, one far from every
@@ -81,6 +81,8 @@ fn the_model_is_the_rule() {
     let seg = |a: [f32; 2], b: [f32; 2], value| SegmentInstance { a, b, value };
     let frame = LSystemFrame {
         segments: Arc::new(vec![seg([-10.0, 0.0], [10.0, 0.0], 0.25), seg([0.0, -10.0], [0.0, 10.0], 0.75)]),
+        // A triangle under the lines, in the lower-left: (−15,−15), (−5,−15), (−15,−5).
+        triangles: Arc::new(vec![TriangleInstance { a: [-15.0, -15.0], b: [-5.0, -15.0], c: [-15.0, -5.0], value: 0.5 }]),
         segments_id: 1,
         scale: 1.0,
         offset: [0.0, 0.0],
@@ -96,4 +98,8 @@ fn the_model_is_the_rule() {
     // Texel (25, 21): centre at view (5.5, −1.5), exactly a half-width from the line — on its
     // edge, left to rounding.
     assert_eq!(at(25, 21), None);
+    // Texel (8, 31): centre at view (−11.5, −11.5), inside the triangle; (13, 25): view
+    // (−6.5, −5.5), outside it.
+    assert_eq!(at(8, 31), Some(0.5));
+    assert_eq!(at(13, 25), Some(-1.0));
 }

@@ -67,6 +67,13 @@ pub enum Tok {
     SetColour(i32),
     /// `<n` (+n) / `>n` (−n): raise or lower the colour index.
     AddColour(i32),
+    /// `{`: start a filled polygon at the turtle (ABOP's leaves). Every step taken inside it —
+    /// drawing or not — adds its end as a vertex, and draws no line.
+    PolyStart,
+    /// `}`: fill the polygon.
+    PolyEnd,
+    /// `.`: add the turtle's position to the polygon as a vertex.
+    Vertex,
 }
 
 /// What a symbol does when the turtle reads it.
@@ -168,7 +175,7 @@ pub(crate) fn fail<T>(line: usize, col: usize, message: impl Into<String>) -> Re
 
 /// Whether `c` is a command character (one that can never be a symbol).
 fn is_command(c: u8) -> bool {
-    matches!(c, b'+' | b'-' | b'|' | b'!' | b'[' | b']' | b'@' | b'\\' | b'/' | b'<' | b'>')
+    matches!(c, b'+' | b'-' | b'|' | b'!' | b'[' | b']' | b'@' | b'\\' | b'/' | b'<' | b'>' | b'{' | b'}' | b'.')
 }
 
 /// Whether `c` may be a symbol (and so have a production).
@@ -207,7 +214,8 @@ pub(crate) fn parse_word(s: &str, line: usize, col0: usize, fold: bool) -> Resul
         return fail(line, col0 + at, "only ASCII symbols are allowed");
     }
     let mut out = Vec::new();
-    let mut depth = 0usize;
+    // The open brackets and braces, innermost last: each closes in the word that opens it.
+    let mut open: Vec<u8> = Vec::new();
     let mut i = 0;
     while i < b.len() {
         let c = b[i];
@@ -220,16 +228,33 @@ pub(crate) fn parse_word(s: &str, line: usize, col0: usize, fold: bool) -> Resul
             b'|' => Tok::Around,
             b'!' => Tok::Reverse,
             b'[' => {
-                depth += 1;
+                open.push(b'[');
                 Tok::Push
             }
             b']' => {
-                if depth == 0 {
-                    return fail(line, col, "']' without a '[' before it");
+                match open.pop() {
+                    Some(b'[') => {}
+                    Some(_) => return fail(line, col, "']' closes a '{' (close the polygon first)"),
+                    None => return fail(line, col, "']' without a '[' before it"),
                 }
-                depth -= 1;
                 Tok::Pop
             }
+            b'{' => {
+                if open.contains(&b'{') {
+                    return fail(line, col, "a '{' inside a polygon (polygons do not nest)");
+                }
+                open.push(b'{');
+                Tok::PolyStart
+            }
+            b'}' => {
+                match open.pop() {
+                    Some(b'{') => {}
+                    Some(_) => return fail(line, col, "'}' closes a '[' (close the branch first)"),
+                    None => return fail(line, col, "'}' without a '{' before it"),
+                }
+                Tok::PolyEnd
+            }
+            b'.' => Tok::Vertex,
             b'@' => {
                 let (mut inverse, mut root) = (false, false);
                 while i < b.len() && matches!(b[i], b'I' | b'i' | b'Q' | b'q') {
@@ -290,10 +315,11 @@ pub(crate) fn parse_word(s: &str, line: usize, col0: usize, fold: bool) -> Resul
             return fail(line, col, format!("a word may hold at most {MAX_WORD} symbols"));
         }
     }
-    if depth > 0 {
-        return fail(line, col0 + b.len(), "a '[' is never closed");
+    match open.last() {
+        Some(b'{') => fail(line, col0 + b.len(), "a '{' is never closed"),
+        Some(_) => fail(line, col0 + b.len(), "a '[' is never closed"),
+        None => Ok(out),
     }
-    Ok(out)
 }
 
 /// Writes a word back as text that [`parse_word`] reads to the same tokens.
@@ -314,10 +340,13 @@ pub fn word_text(word: &[Tok]) -> String {
             Tok::SetColour(n) => s.push_str(&format!("C{n}")),
             Tok::AddColour(n) if n >= 0 => s.push_str(&format!("<{n}")),
             Tok::AddColour(n) => s.push_str(&format!(">{}", -(n as i64))),
+            Tok::PolyStart => s.push('{'),
+            Tok::PolyEnd => s.push('}'),
+            Tok::Vertex => s.push('.'),
         }
-        // A number followed by a digit or point symbol would read as one longer number.
+        // A number followed by a digit symbol or a `.` would read as one longer number.
         let numeric = matches!(t, Tok::Scale(_) | Tok::TurnBy(_) | Tok::SetColour(_) | Tok::AddColour(_));
-        let next_digit = matches!(word.get(k + 1), Some(Tok::Sym(c)) if c.is_ascii_digit() || *c == b'.');
+        let next_digit = matches!(word.get(k + 1), Some(Tok::Sym(c)) if c.is_ascii_digit()) || matches!(word.get(k + 1), Some(Tok::Vertex));
         // `C` then a digit symbol would read as a colour.
         let c_then_digit =
             matches!(t, Tok::Sym(b'C')) && matches!(word.get(k + 1), Some(Tok::Sym(c)) if c.is_ascii_digit());

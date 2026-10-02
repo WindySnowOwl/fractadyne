@@ -46,7 +46,7 @@ fn walk_values_stay_in_the_palette_range() {
                 margin: 1.0,
                 deep,
             };
-            let (segs, stats, used) = walk_segments(&st.drawn_system(), &st.tables, big.clone(), &key, 4.0);
+            let WalkOut { segments: segs, stats, big: used, .. } = walk_segments(&st.drawn_system(), &st.tables, big.clone(), &key, 4.0);
             assert_eq!(used.is_some(), deep);
             big = used;
             assert!(stats.segments > 0 && segs.len() as u64 == stats.segments, "{colouring:?} deep {deep}: {stats:?}");
@@ -67,4 +67,38 @@ fn a_centre_difference_divides_at_any_scale() {
     tiny.set_exponent(tiny.exponent().unwrap() - 1100);
     assert_eq!(ratio_f64(&tiny, -1102.0), -4.0);
     assert_eq!(ratio_f64(&BigFloat::from_f64(0.0, p), -5.0), 0.0);
+}
+
+#[test]
+fn a_filled_shape_becomes_triangles_inside_the_view() {
+    // A filled snowflake framed: its triangles cover about the snowflake's area, and every corner
+    // is within the clip rectangle around the view.
+    let mut st = LSystemState::default();
+    st.set_system(LSystem::parse("angle 60\naxiom {F++F++F}\nF = F-F++F-F\n").unwrap());
+    let t = st.tables.clone();
+    let b = lsystem::bounds(&t, 4, 1 << 20).unwrap();
+    let upp = ((b[2] - b[0]) / 300.0).max((b[3] - b[1]) / 300.0);
+    let centre = [BigFloat::from_f64(0.5 * (b[0] + b[2]), 128), BigFloat::from_f64(0.5 * (b[1] + b[3]), 128)];
+    let key = WalkKey { tables: 1, order: 4, centre, upp_log2: upp.log2(), size: [320, 320], colouring: Colouring::Plain, margin: 1.0, deep: false };
+    let out = walk_segments(&st.drawn_system(), &t, None, &key, 1.0);
+    assert!(out.segments.is_empty(), "inside braces the turtle draws no lines");
+    assert!(!out.triangles.is_empty());
+    let area: f64 = out
+        .triangles
+        .iter()
+        .map(|tr| {
+            let (a, b, c) = (tr.a, tr.b, tr.c);
+            0.5 * f64::from(((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs())
+        })
+        .sum();
+    // The order-n snowflake's area is A0·(1 + ⅓·Σ_{k<n} (4/9)^k), A0 its triangle's (side 3^n
+    // steps): at order 4, A0·3448/2187. The triangles must cover exactly that.
+    let side = (t.step(4)[0].hypot(t.step(4)[1])) * 81.0 / upp;
+    let want = 3f64.sqrt() / 4.0 * side * side * 3448.0 / 2187.0;
+    assert!((area - want).abs() < 1e-4 * want, "fill {area} px², the snowflake {want} px²");
+    for tr in &out.triangles {
+        for p in [tr.a, tr.b, tr.c] {
+            assert!(p[0].abs() <= 166.0 && p[1].abs() <= 166.0, "{p:?} outside the clip");
+        }
+    }
 }

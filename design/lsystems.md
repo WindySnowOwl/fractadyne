@@ -1,6 +1,8 @@
 # L-systems — turtle-drawn curves and plants, with deep zoom
 
-Status: **phases 0–3 built** (2026-10-02, branch `feat/lsystems`); phase 4 to come. The user:
+Status: **phases 0–3 built** (2026-10-02, branch `feat/lsystems`); phase 4 under way — filled
+shapes built; stochastic, parametric and context-sensitive productions, SVG export and the
+animations to come (the user: "run the radeon tests and do phase 4"). The user:
 "Work on the design doc" (after "Are L-systems implemented" — no). Integration facts in §2 are from
 this tree at `21e2bd7` (Life merged). The user's decisions on the open questions are in §9 (all six:
 yes).
@@ -52,6 +54,26 @@ Phase 3 (unlimited zoom) settled:
   and any floating precision holds them (that test passed with the tables cut to 64 bits). About
   the END, (1, 0), they are 1 − 3^-k: that test fails at 64 bits and passes at the computed
   precision, at 3⁴⁰ and 3²⁰⁰ (and 3¹⁰⁰ in the self-test).
+
+Phase 4, filled shapes, settled:
+
+- **A polygon is the turtle's path between `{` and `}`**, closed in the word that opens it; inside,
+  a step adds a vertex and draws no line, and `.` adds one without moving. A `{` inside an open
+  polygon is an error, placed like any other.
+- **The tables carry two reaches**: the lines' (for culling lines), and every point a subtree
+  visits, drawn or not (a polygon's vertices are its moves). The work count includes vertices, so a
+  picture of shapes alone frames, and the budget counts them.
+- **A subtree inside a polygon that is off the view or under a pixel gives its end point**: a
+  chord of the outline, as a line under a pixel is drawn as one segment. The polygon is clipped to
+  the view (plus the line margin) before it is cut into triangles: zoomed into the filled
+  snowflake's edge, its polygon reaches 1e30 px past the view. Triangles are drawn under the lines.
+- **The overlap cap reads each order's own bounding box.** Measured by one order's box, a plant
+  whose leaves keep their size while its stem doubles was "dense" at every low order (its box at
+  order 13 is a line): it was held at order 0, which draws nothing.
+- **A system drawn at a fixed order frames at that order** (Bourke's mango leaf at order 18 is a
+  corner of itself at order 300), and a home view the user has not moved is framed again when the
+  canvas changes size (the first layout after a file opens the app).
+- The status bar's count is everything drawn (segments and filled shapes); the panel says which.
 
 ## 1. Goal
 
@@ -254,7 +276,7 @@ position along the curve (§5) stays meaningful at any depth.
   (the formula library's model).
 - **Toolbar**: an L-system has no Julia or dual view; the slot shows the order (− / +) and a "draw on"
   toggle (§7).
-- **Status bar**: scale, order, segments — fixed widths.
+- **Status bar**: scale, order, drawn (segments and filled shapes) — fixed widths.
 
 ## 7. Persistence, tours, export, animation
 

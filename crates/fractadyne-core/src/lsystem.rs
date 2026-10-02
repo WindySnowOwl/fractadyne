@@ -20,6 +20,8 @@ pub use deep::*;
 
 pub mod reference;
 
+pub mod polygon;
+
 pub mod library;
 
 #[cfg(test)]

@@ -41,17 +41,34 @@ fn the_walk_is_the_reference_when_nothing_is_culled() {
         let e = &s;
         let t = Tables::new(&s);
         for order in 0..=7 {
-            if t.axiom_entry(order).n == 0.0 {
+            if t.axiom_entry(order).w == 0.0 {
                 continue; // Hilbert's `X` draws nothing until it has rewritten once.
             }
             let view = framing(&t, order, 1000.0);
             let everything = View { size: [f64::INFINITY; 2], ..view };
-            let Some(want) = reference_segments(&s, &t, order, &everything, 200_000) else { break };
-            let (got, stats) = collect(&t, &everything, &WalkOptions { order, lod_px: 0.0, budget: u64::MAX });
+            let Some(word) = reference::expand(&s, order, 200_000) else { break };
+            let u = t.step(order);
+            let start = [-view.centre[0] / view.upp, -view.centre[1] / view.upp];
+            let run = reference::run(&s, &word, start, [u[0] / view.upp, u[1] / view.upp]);
+            let (mut got, mut polys) = (Vec::new(), Vec::new());
+            let stats = walk_all(&t, &everything, &WalkOptions { order, lod_px: 0.0, budget: u64::MAX }, &mut |d| match d {
+                Drawn::Segment(g) => got.push(*g),
+                Drawn::Polygon(p) => polys.push(p.clone()),
+            });
             assert!(!stats.stopped);
-            assert_eq!(got.len(), want.len(), "{} order {order}", e.name);
-            for (k, (g, w)) in got.iter().zip(&want).enumerate() {
+            assert_eq!(got.len(), run.segments.len(), "{} order {order}", e.name);
+            for (k, (g, w)) in got.iter().zip(&run.segments).enumerate() {
                 assert!(same(g, w, 1e-7), "{} order {order} segment {k}:\n walk {g:?}\n  ref {w:?}", e.name);
+            }
+            // The polygons: the same ones, vertex for vertex (those of three or more).
+            let want: Vec<&Polygon> = run.polygons.iter().filter(|p| p.pts.len() >= 3).collect();
+            assert_eq!(polys.len(), want.len(), "{} order {order}: polygons", e.name);
+            for (g, w) in polys.iter().zip(&want) {
+                assert_eq!(g.pts.len(), w.pts.len(), "{} order {order}", e.name);
+                assert_eq!((g.index, g.depth, g.colour), (w.index, w.depth, w.colour), "{} order {order}", e.name);
+                for (p, q) in g.pts.iter().zip(&w.pts) {
+                    assert!((p[0] - q[0]).abs() < 1e-7 && (p[1] - q[1]).abs() < 1e-7, "{} order {order}: {p:?} vs {q:?}", e.name);
+                }
             }
         }
     }

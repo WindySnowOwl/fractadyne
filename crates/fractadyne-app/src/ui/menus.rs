@@ -1537,10 +1537,10 @@ impl FractadyneApp {
                 // pixels by construction (`zoom_slot_width` is pinned by a test).
                 let life_bar = matches!(self.fractal, FractalKind::Life | FractalKind::LSystem);
                 if self.fractal == FractalKind::LSystem {
-                    // A drawing's readouts: the zoom, then the order and the segments drawn, in the
-                    // same three slots at fixed widths.
-                    let segs = self.lsystem.last_walk().map(|w| w.1);
-                    let (order, segments) = crate::lsystem_view::status_readouts(self.lsystem.order_at(&self.viewport), segs);
+                    // A drawing's readouts: the zoom, then the order and what was drawn (segments
+                    // and filled shapes), in the same three slots at fixed widths.
+                    let drawn = self.lsystem.last_walk().map(|w| w.segments + w.polygons);
+                    let (order, segments) = crate::lsystem_view::status_readouts(self.lsystem.order_at(&self.viewport), drawn);
                     mono(ui, crate::zoom_readout(false, self.viewport.log2_magnification(), self.julia_viewport.log2_magnification()));
                     ui.separator();
                     mono(ui, order);

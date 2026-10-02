@@ -66,10 +66,32 @@ pub struct WalkOptions {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WalkStats {
     pub segments: u64,
+    /// Filled polygons drawn, and their vertices (the budget counts these with the segments).
+    pub polygons: u64,
+    pub vertices: u64,
     /// Subtrees looked at (descended into, stepped over or drawn as a chord).
     pub nodes: u64,
     /// Whether it stopped at the budget, with segments left to draw.
     pub stopped: bool,
+}
+
+/// A filled polygon (`{ … }`): its vertices in the view's pixels (y up, from its centre), and
+/// what colours it, as of where it started.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Polygon {
+    pub pts: Vec<[f64; 2]>,
+    /// The number of lines drawn before it (its place along the curve).
+    pub index: f64,
+    pub depth: u16,
+    pub heading: f64,
+    pub colour: i32,
+}
+
+/// What a walk draws.
+#[derive(Clone, Copy, Debug)]
+pub enum Drawn<'a> {
+    Segment(&'a Segment),
+    Polygon(&'a Polygon),
 }
 
 #[derive(Clone, Copy)]
@@ -119,8 +141,18 @@ pub struct SubStart {
     pub index: f64,
 }
 
-/// Walks `t` at `opts.order` over `view`, handing each segment to `sink` in curve order.
+/// Walks `t` at `opts.order` over `view`, handing each segment to `sink` in curve order (filled
+/// polygons are left out: [`walk_all`] has them).
 pub fn walk(t: &Tables, view: &View, opts: &WalkOptions, sink: &mut dyn FnMut(&Segment)) -> WalkStats {
+    walk_all(t, view, opts, &mut |d| {
+        if let Drawn::Segment(s) = d {
+            sink(s)
+        }
+    })
+}
+
+/// [`walk`], with the filled polygons: each handed over when it closes.
+pub fn walk_all(t: &Tables, view: &View, opts: &WalkOptions, sink: &mut dyn FnMut(Drawn)) -> WalkStats {
     let order = opts.order.min(t.max_depth);
     let u = t.step(order);
     let free = u[1].atan2(u[0]).rem_euclid(TAU);
@@ -134,11 +166,20 @@ pub fn walk(t: &Tables, view: &View, opts: &WalkOptions, sink: &mut dyn FnMut(&S
         colour: 1,
         depth: 0,
     };
-    run(t, view, opts, s, Frame { rule: AXIOM, i: 0, child_depth: order }, 0, 0.0, sink)
+    run(t, view, opts, s, Frame { rule: AXIOM, i: 0, child_depth: order }, 0, 0.0, &mut Vec::new(), sink)
 }
 
-/// Walks one subtree, from a turtle already placed (see [`SubStart`]).
-pub fn walk_from(t: &Tables, view: &View, opts: &WalkOptions, start: &SubStart, sink: &mut dyn FnMut(&Segment)) -> WalkStats {
+/// Walks one subtree, from a turtle already placed (see [`SubStart`]). `open`: the polygons open
+/// where the subtree starts — its steps add their vertices (and it leaves them open, since braces
+/// close in the word that opens them).
+pub fn walk_from(
+    t: &Tables,
+    view: &View,
+    opts: &WalkOptions,
+    start: &SubStart,
+    open: &mut Vec<Polygon>,
+    sink: &mut dyn FnMut(Drawn),
+) -> WalkStats {
     let free = start.heading.rem_euclid(TAU);
     let s = State {
         pos: start.pos,
@@ -151,7 +192,18 @@ pub fn walk_from(t: &Tables, view: &View, opts: &WalkOptions, start: &SubStart, 
         depth: start.brackets,
     };
     let depth = start.depth.min(t.max_depth);
-    run(t, view, opts, s, Frame { rule: ONE, i: 0, child_depth: depth }, start.sym, start.index, sink)
+    run(t, view, opts, s, Frame { rule: ONE, i: 0, child_depth: depth }, start.sym, start.index, open, sink)
+}
+
+/// Whether a polygon's box meets the view (with its margin).
+fn polygon_seen(view: &View, pts: &[[f64; 2]]) -> bool {
+    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for p in pts {
+        lo = [lo[0].min(p[0]), lo[1].min(p[1])];
+        hi = [hi[0].max(p[0]), hi[1].max(p[1])];
+    }
+    let (hw, hh) = (0.5 * view.size[0] + view.margin, 0.5 * view.size[1] + view.margin);
+    lo[0] <= hw && hi[0] >= -hw && lo[1] <= hh && hi[1] >= -hh
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -163,9 +215,12 @@ fn run(
     first: Frame,
     one: u8,
     mut index: f64,
-    sink: &mut dyn FnMut(&Segment),
+    open: &mut Vec<Polygon>,
+    sink: &mut dyn FnMut(Drawn),
 ) -> WalkStats {
     let mut stats = WalkStats::default();
+    // How deep `open` was when this walk began: polygons below it belong to the caller.
+    let base = open.len();
     let mut stack: Vec<State> = Vec::new();
     let mut frames = vec![first];
     let single = [Op::Sym(one)];
@@ -188,32 +243,42 @@ fn run(
         match op {
             Op::Sym(c) => {
                 let id = t.id[c as usize];
+                let in_poly = !open.is_empty();
                 if id != NONE && d > 0 {
                     let e = t.entry(c, d);
                     stats.nodes += 1;
-                    if e.r >= 0.0 {
-                        let r_px = s.scale * e.r;
+                    // Inside a polygon every position is a vertex: the subtree's reach is all of it.
+                    let r = if in_poly { e.ra } else { e.r };
+                    if r >= 0.0 {
+                        let r_px = s.scale * r;
                         let seen = view.meets(s.pos, r_px + view.margin);
                         if seen && r_px > opts.lod_px {
                             frames.push(Frame { rule: id, i: 0, child_depth: d - 1 });
                             continue;
                         }
-                        if seen {
+                        if seen && !in_poly {
                             let a = s.pos;
                             let (h, colour, depth) = (heading(&s), s.colour, s.depth);
                             apply(t, &mut s, &e.fx);
-                            if stats.segments >= opts.budget {
+                            if stats.segments + stats.vertices >= opts.budget {
                                 stats.stopped = true;
                                 return stats;
                             }
-                            sink(&Segment { a, b: s.pos, index, span: e.n, depth, heading: h, colour });
+                            sink(Drawn::Segment(&Segment { a, b: s.pos, index, span: e.n, depth, heading: h, colour }));
                             stats.segments += 1;
                             index += e.n;
                             continue;
                         }
                     }
                     apply(t, &mut s, &e.fx);
-                    index += e.n;
+                    if let Some(p) = open.last_mut() {
+                        // Off the view or under a pixel, inside a polygon: its chord. (Off the
+                        // view, the chord and the path it stands for lie in a disc that misses the
+                        // view, so the fill inside the view is the same.)
+                        p.pts.push(s.pos);
+                    } else {
+                        index += e.n;
+                    }
                 } else {
                     match t.roles[c as usize] {
                         Role::None => {}
@@ -222,14 +287,17 @@ fn run(
                             let v = [dir[0] * s.scale, dir[1] * s.scale];
                             let a = s.pos;
                             s.pos = [a[0] + v[0], a[1] + v[1]];
-                            if role == Role::Draw {
+                            if let Some(p) = open.last_mut() {
+                                // Inside a polygon a step is a vertex, drawn or not, and no line.
+                                p.pts.push(s.pos);
+                            } else if role == Role::Draw {
                                 let mid = [a[0] + 0.5 * v[0], a[1] + 0.5 * v[1]];
                                 if view.meets(mid, 0.5 * s.scale + view.margin) {
-                                    if stats.segments >= opts.budget {
+                                    if stats.segments + stats.vertices >= opts.budget {
                                         stats.stopped = true;
                                         return stats;
                                     }
-                                    sink(&Segment {
+                                    sink(Drawn::Segment(&Segment {
                                         a,
                                         b: s.pos,
                                         index,
@@ -237,12 +305,32 @@ fn run(
                                         depth: s.depth,
                                         heading: heading(&s),
                                         colour: s.colour,
-                                    });
+                                    }));
                                     stats.segments += 1;
                                 }
                                 index += 1.0;
                             }
                         }
+                    }
+                }
+            }
+            Op::PolyStart => open.push(Polygon { pts: vec![s.pos], index, depth: s.depth, heading: heading(&s), colour: s.colour }),
+            Op::Vertex => {
+                if let Some(p) = open.last_mut() {
+                    p.pts.push(s.pos);
+                }
+            }
+            Op::PolyEnd => {
+                if open.len() > base {
+                    let p = open.pop().expect("an open polygon");
+                    if p.pts.len() >= 3 && polygon_seen(view, &p.pts) {
+                        if stats.segments + stats.vertices >= opts.budget {
+                            stats.stopped = true;
+                            return stats;
+                        }
+                        stats.polygons += 1;
+                        stats.vertices += p.pts.len() as u64;
+                        sink(Drawn::Polygon(&p));
                     }
                 }
             }
@@ -290,10 +378,13 @@ fn apply(t: &Tables, s: &mut State, e: &super::tables::Effect) {
 pub fn bounds(t: &Tables, order: u32, budget: u64) -> Option<[f64; 4]> {
     let mut b = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
     let opts = WalkOptions { order, lod_px: 0.0, budget };
-    walk(t, &View::EVERYTHING, &opts, &mut |s| {
-        for p in [s.a, s.b] {
-            b = [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])];
+    let mut add = |p: [f64; 2]| b = [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])];
+    walk_all(t, &View::EVERYTHING, &opts, &mut |d| match d {
+        Drawn::Segment(s) => {
+            add(s.a);
+            add(s.b);
         }
+        Drawn::Polygon(p) => p.pts.iter().for_each(|&q| add(q)),
     });
     (b[0] <= b[2]).then_some(b)
 }
@@ -305,31 +396,40 @@ pub fn framing_order(t: &Tables, budget: f64) -> u32 {
 }
 
 fn raw_framing_order(t: &Tables, budget: f64) -> u32 {
-    (0..=t.max_depth).take_while(|&n| t.axiom_entry(n).n <= budget).last().unwrap_or(0)
+    // By the work — lines and polygon vertices — so a picture of filled shapes alone frames too.
+    (0..=t.max_depth).take_while(|&n| t.axiom_entry(n).w <= budget).last().unwrap_or(0)
 }
 
-/// A growing picture's period and box area (see [`Tables::period`], [`Tables::box_area`]), from
-/// its boxes at the highest order of at most 20,000 segments and the two below. Period 2 when the
-/// box differs from the order below by more than 2% of its size, and by over three times what it
-/// differs from the order two below (the Sierpinski arrowhead mirrors outright; Paul Bourke's weed
-/// sways 8% from side to side).
-pub(crate) fn shape(t: &Tables) -> (u32, f64) {
+/// A growing picture's period, box areas and size (see [`Tables::period`], [`Tables::box_areas`],
+/// [`Tables::box_size`]), from its boxes at the highest order of at most 20,000 segments and the
+/// orders below — down to order 0 while the walks stay cheap (an order below the last walked takes
+/// its box). Period 2 when the top box differs from the order below by more than 2% of its size,
+/// and by over three times what it differs from the order two below (the Sierpinski arrowhead
+/// mirrors outright; Paul Bourke's weed sways 8% from side to side).
+pub(crate) fn shape(t: &Tables) -> (u32, Vec<f64>, f64) {
     if !t.grows() {
-        return (1, 0.0);
+        return (1, Vec::new(), 0.0);
     }
-    let m = raw_framing_order(t, 20_000.0);
-    let Some(a) = bounds(t, m, 1 << 20) else { return (1, 0.0) };
-    let area = (a[2] - a[0]) * (a[3] - a[1]);
-    if m < 3 {
-        return (1, area);
+    let m = raw_framing_order(t, 20_000.0) as usize;
+    let mut boxes: Vec<Option<[f64; 4]>> = vec![None; m + 1];
+    let (mut work, mut lowest) = (0.0, m);
+    for n in (0..=m).rev() {
+        if work > 100_000.0 && n + 2 < m {
+            break;
+        }
+        work += t.axiom_entry(n as u32).w.max(1.0);
+        boxes[n] = bounds(t, n as u32, 1 << 20);
+        lowest = n;
     }
-    let (Some(b), Some(c)) = (bounds(t, m - 1, 1 << 20), bounds(t, m - 2, 1 << 20)) else {
-        return (1, area);
-    };
+    let Some(a) = boxes[m] else { return (1, Vec::new(), 0.0) };
+    let areas = (0..=m).map(|n| boxes[n.max(lowest)].map_or(0.0, |b| (b[2] - b[0]) * (b[3] - b[1]))).collect();
     let size = (a[2] - a[0]).max(a[3] - a[1]);
     let diff = |x: [f64; 4], y: [f64; 4]| (0..4).map(|k| (x[k] - y[k]).abs()).fold(0.0, f64::max);
-    let period = if diff(a, b) > 0.02 * size && diff(a, b) > 3.0 * diff(a, c) { 2 } else { 1 };
-    (period, area)
+    let period = match (m >= 3).then(|| (boxes[m - 1], boxes[m - 2])) {
+        Some((Some(b), Some(c))) if diff(a, b) > 0.02 * size && diff(a, b) > 3.0 * diff(a, c) => 2,
+        _ => 1,
+    };
+    (period, areas, size)
 }
 
 #[cfg(test)]

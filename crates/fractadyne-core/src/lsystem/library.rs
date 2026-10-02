@@ -193,6 +193,18 @@ pub const SYSTEMS: &[NamedSystem] = &[
         text: "angle 90\naxiom F+F+F+F\nF = F+FF++F+F\n",
         about: "Crosses within crosses.",
     },
+    NamedSystem {
+        name: "Koch snowflake (filled)",
+        category: Category::Tiling,
+        text: "angle 60\naxiom {F++F++F}\nF = F-F++F-F\n",
+        about: "The snowflake as a shape: its outline inside braces is a polygon, filled.",
+    },
+    NamedSystem {
+        name: "Snake kolam",
+        category: Category::Tiling,
+        text: "angle 90\naxiom F+XF+F+XF\nX = X{F-F-F}+XF+F+X{F-F-F}+X\n",
+        about: "A kolam (from Paul Bourke's collection), with filled squares along its path.",
+    },
     // ---- plants (The Algorithmic Beauty of Plants, figure 1.24 a-f; then Paul Bourke's)
     NamedSystem {
         name: "Plant (ABOP 1.24a)",
@@ -241,6 +253,12 @@ pub const SYSTEMS: &[NamedSystem] = &[
         category: Category::Plant,
         text: "angle 25.7\nheading 90\naxiom Y\nX = X[-FFF][+FFF]FX\nY = YFX[+Y][-Y]\n",
         about: "A bush with straight side shoots (from Paul Bourke's collection).",
+    },
+    NamedSystem {
+        name: "Mango leaf",
+        category: Category::Plant,
+        text: "angle 60\nheading 90\norder 18\naxiom Y---Y\nX = {F-F}{F-F}--[--X]{F-F}{F-F}--{F-F}{F-F}--\nY = f-F+X+F-fY\n",
+        about: "A leaf of filled diamonds (from Paul Bourke's collection). It grows by a step an order, so it is drawn at a fixed one.",
     },
     NamedSystem {
         name: "Saupe's bush",

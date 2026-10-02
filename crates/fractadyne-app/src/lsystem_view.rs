@@ -9,9 +9,9 @@
 //! at the walk's rate, never a blank.
 
 use crate::{FractadyneApp, FractalKind};
-use fractadyne_core::lsystem::{self, library, BigTables, Colouring, DeepView, LEntry, LSystem, Tables, View, WalkOptions, WalkStats};
+use fractadyne_core::lsystem::{self, library, BigTables, Colouring, DeepView, Drawn, LEntry, LSystem, Tables, View, WalkOptions, WalkStats};
 use fractadyne_core::BigFloat;
-use fractadyne_gpu::lsystem::{LSystemFrame, SegmentInstance};
+use fractadyne_gpu::lsystem::{LSystemFrame, SegmentInstance, TriangleInstance};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -52,11 +52,24 @@ struct WalkKey {
 struct Walked {
     key: WalkKey,
     segments: Arc<Vec<SegmentInstance>>,
+    triangles: Arc<Vec<TriangleInstance>>,
     id: u64,
     stats: WalkStats,
     ms: f64,
     /// The deep tables it used, to reuse for the next deep walk.
     big: Option<Arc<BigTables>>,
+}
+
+/// The last walk's numbers, for the readouts.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LastWalk {
+    pub(crate) order: u32,
+    pub(crate) segments: u64,
+    /// Filled shapes.
+    pub(crate) polygons: u64,
+    /// It stopped at the budget.
+    pub(crate) stopped: bool,
+    pub(crate) ms: f64,
 }
 
 /// A walk in progress on its own thread.
@@ -92,6 +105,19 @@ pub(crate) struct LSystemState {
     next_id: u64,
     /// The deep tables of the last deep walk, and the tables they belong to.
     big: Option<(u64, Arc<BigTables>)>,
+    /// What the home view framed, while the view is still exactly that.
+    framed: Option<Framed>,
+}
+
+/// A home view's framing: the picture's box (`None`: it draws nothing), and the canvas size and
+/// view it set. A canvas that changes size before the user moves — the first layout after a file
+/// opens the app, before the side panel took its width — is framed again for its new size.
+#[derive(Clone, Copy, Debug)]
+struct Framed {
+    bounds: Option<[f64; 4]>,
+    size: [f64; 2],
+    centre: [f64; 2],
+    upp: f64,
 }
 
 /// The library system called `name`, or the default.
@@ -123,6 +149,7 @@ impl Default for LSystemState {
             job: None,
             next_id: 1,
             big: None,
+            framed: None,
         }
     }
 }
@@ -201,8 +228,7 @@ impl LSystemState {
     /// past the `f64` tables.
     fn needs_deep(&self, upp_log2: f64, order: u32) -> bool {
         let t = &self.tables;
-        let extent = 0.5 * t.box_area.max(1e-300).log2();
-        let picture_px = if t.box_area > 0.0 { extent - upp_log2 } else { -upp_log2 };
+        let picture_px = if t.box_size > 0.0 { t.box_size.log2() - upp_log2 } else { -upp_log2 };
         order > t.max_depth || picture_px > t.f64_reach_log2()
     }
 
@@ -211,9 +237,15 @@ impl LSystemState {
         self.job.is_some()
     }
 
-    /// The last walk's numbers: order, segments, whether it stopped at the budget, milliseconds.
-    pub(crate) fn last_walk(&self) -> Option<(u32, u64, bool, f64)> {
-        self.shown.as_ref().map(|w| (w.key.order, w.stats.segments, w.stats.stopped, w.ms))
+    /// The last walk's numbers.
+    pub(crate) fn last_walk(&self) -> Option<LastWalk> {
+        self.shown.as_ref().map(|w| LastWalk {
+            order: w.key.order,
+            segments: w.stats.segments,
+            polygons: w.stats.polygons,
+            stopped: w.stats.stopped,
+            ms: w.ms,
+        })
     }
 
     /// Take a finished walk; start the next one when the view needs it.
@@ -260,10 +292,10 @@ impl LSystemState {
             .name("lsystem-walk".into())
             .spawn(move || {
                 let t0 = std::time::Instant::now();
-                let (segments, stats, big) = walk_segments(&system, &tables, big, &key, depth_scale);
+                let WalkOut { segments, triangles, stats, big } = walk_segments(&system, &tables, big, &key, depth_scale);
                 let ms = t0.elapsed().as_secs_f64() * 1e3;
                 if let Ok(mut slot) = r.lock() {
-                    *slot = Some(Walked { key, segments: Arc::new(segments), id, stats, ms, big });
+                    *slot = Some(Walked { key, segments: Arc::new(segments), triangles: Arc::new(triangles), id, stats, ms, big });
                 }
                 d.store(true, Ordering::Release);
             })
@@ -274,32 +306,51 @@ impl LSystemState {
 
 /// Walks `key`'s view — in `f64`, or deep through `BigTables` (reusing `big` when it is precise
 /// and deep enough) — and colours each segment. Returns the deep tables it used.
-fn walk_segments(
-    sys: &LSystem,
-    t: &Tables,
+/// What a walk hands the GPU.
+struct WalkOut {
+    segments: Vec<SegmentInstance>,
+    triangles: Vec<TriangleInstance>,
+    stats: WalkStats,
     big: Option<Arc<BigTables>>,
-    key: &WalkKey,
-    depth_scale: f64,
-) -> (Vec<SegmentInstance>, WalkStats, Option<Arc<BigTables>>) {
+}
+
+fn walk_segments(sys: &LSystem, t: &Tables, big: Option<Arc<BigTables>>, key: &WalkKey, depth_scale: f64) -> WalkOut {
     let size = [f64::from(key.size[0]), f64::from(key.size[1])];
     let margin = f64::from(key.margin);
     let opts = WalkOptions { order: key.order, lod_px: LOD_PX, budget: BUDGET };
-    let mut out = Vec::new();
-    let mut colour = |s: &lsystem::Segment, total: f64| {
+    let (mut segments, mut triangles) = (Vec::new(), Vec::new());
+    let value_of = |index: f64, span: f64, depth: u16, heading: f64, colour: i32, total: f64| {
         let value = match key.colouring {
-            Colouring::Position => (s.index + 0.5 * s.span) / total,
-            Colouring::Depth => (f64::from(s.depth) / depth_scale).min(1.0),
-            Colouring::Heading => s.heading,
-            Colouring::Index => (f64::from(s.colour.rem_euclid(16)) + 0.5) / 16.0,
+            Colouring::Position => (index + 0.5 * span) / total,
+            Colouring::Depth => (f64::from(depth) / depth_scale).min(1.0),
+            Colouring::Heading => heading,
+            Colouring::Index => (f64::from(colour.rem_euclid(16)) + 0.5) / 16.0,
             Colouring::Plain => 0.5,
         };
         // Past f64's integers an index is approximate, and past its range not a number: the
         // value must stay a palette position (the shader reads < 0 as "no line").
-        let value = if value.is_finite() { value.clamp(0.0, 1.0) } else { 0.5 };
-        out.push(SegmentInstance { a: [s.a[0] as f32, s.a[1] as f32], b: [s.b[0] as f32, s.b[1] as f32], value: value as f32 });
+        (if value.is_finite() { value.clamp(0.0, 1.0) } else { 0.5 }) as f32
+    };
+    // A polygon is clipped to a little beyond the view (it may reach 1e30 pixels past it), then cut
+    // into triangles.
+    let clip = [0.5 * size[0] + margin + 4.0, 0.5 * size[1] + margin + 4.0];
+    let mut take = |d: Drawn, total: f64| match d {
+        Drawn::Segment(s) => segments.push(SegmentInstance {
+            a: [s.a[0] as f32, s.a[1] as f32],
+            b: [s.b[0] as f32, s.b[1] as f32],
+            value: value_of(s.index, s.span, s.depth, s.heading, s.colour, total),
+        }),
+        Drawn::Polygon(p) => {
+            let value = value_of(p.index, 0.0, p.depth, p.heading, p.colour, total);
+            let pts = lsystem::polygon::clip_to_rect(&p.pts, clip);
+            let f = |q: [f64; 2]| [q[0] as f32, q[1] as f32];
+            for [i, j, k] in lsystem::polygon::triangulate(&pts) {
+                triangles.push(TriangleInstance { a: f(pts[i]), b: f(pts[j]), c: f(pts[k]), value });
+            }
+        }
     };
     if key.deep {
-        let extent = if t.box_area > 0.0 { 0.5 * t.box_area.log2() } else { 0.0 };
+        let extent = if t.box_size > 0.0 { t.box_size.log2() } else { 0.0 };
         // Rounded up to 64 bits, so a slowly deepening zoom reuses its tables.
         let p = lsystem::deep_precision(t, key.order, key.upp_log2, extent).div_ceil(64) * 64;
         let bt = match big.filter(|b| b.prec >= p && b.depth >= key.order) {
@@ -310,8 +361,8 @@ fn walk_segments(
         if let Some(bt) = bt {
             let view = DeepView { centre: key.centre.clone(), upp_log2: key.upp_log2, size, margin };
             let total = bt.axiom_count(key.order).max(1.0);
-            let stats = lsystem::deep_walk(t, &bt, &view, &opts, lsystem::switch_px(t), &mut |s| colour(s, total));
-            return (out, stats, Some(bt));
+            let stats = lsystem::deep_walk_all(t, &bt, &view, &opts, lsystem::switch_px(t), &mut |d| take(d, total));
+            return WalkOut { segments, triangles, stats, big: Some(bt) };
         }
         // Angles with no common unit (a decimal of more than 18 places): f64, as far as it goes.
     }
@@ -322,8 +373,8 @@ fn walk_segments(
         margin,
     };
     let total = t.axiom_entry(key.order.min(t.max_depth)).n.max(1.0);
-    let stats = lsystem::walk(t, &view, &opts, &mut |s| colour(s, total));
-    (out, stats, None)
+    let stats = lsystem::walk_all(t, &view, &opts, &mut |d| take(d, total));
+    WalkOut { segments, triangles, stats, big: None }
 }
 
 /// `d / 2^log2_den` as an `f64`, for any magnitudes (a centre difference at 1e400×).
@@ -361,6 +412,7 @@ impl FractadyneApp {
         let frame = match &self.lsystem.shown {
             Some(w) => LSystemFrame {
                 segments: w.segments.clone(),
+                triangles: w.triangles.clone(),
                 segments_id: w.id,
                 // A walked pixel is at world `p·upp_w + c_w`; in this view, `(world − c)/upp`.
                 scale: (w.key.upp_log2 - upp_log2).exp2() as f32,
@@ -370,7 +422,14 @@ impl FractadyneApp {
                 ],
                 width: self.lsystem.width,
             },
-            None => LSystemFrame { segments: Arc::new(Vec::new()), segments_id: 0, scale: 1.0, offset: [0.0, 0.0], width: self.lsystem.width },
+            None => LSystemFrame {
+                segments: Arc::new(Vec::new()),
+                triangles: Arc::new(Vec::new()),
+                segments_id: 0,
+                scale: 1.0,
+                offset: [0.0, 0.0],
+                width: self.lsystem.width,
+            },
         };
         let (lut, lut_smooth) = self.active_lut();
         fractadyne_gpu::MandelbrotParams {
@@ -394,12 +453,23 @@ impl FractadyneApp {
     /// Frame the picture: its bounding box (at an order cheap to walk whole) with a margin.
     pub(crate) fn lsystem_home(&mut self) {
         let t = self.lsystem.tables.clone();
-        let order = match self.lsystem.fixed_order {
-            Some(n) => t.in_phase(n.min(lsystem::framing_order(&t, 200_000.0))),
-            None => lsystem::framing_order(&t, 200_000.0),
+        // A growing picture frames the same at any order; one drawn at a fixed order (its own, or
+        // the user's) frames at that order — Bourke's mango leaf at order 18 is a corner of
+        // itself at order 300.
+        let frame = lsystem::framing_order(&t, 200_000.0);
+        let order = if self.lsystem.fixed_order.is_some() || !t.grows() {
+            t.in_phase(self.lsystem.order_for(0.0).min(frame))
+        } else {
+            frame
         };
-        let (w, h) = (self.viewport.width_px.max(1.0), self.viewport.height_px.max(1.0));
-        let (cx, cy, upp) = match lsystem::bounds(&t, order, 1 << 21) {
+        self.lsystem_frame(lsystem::bounds(&t, order, 1 << 21));
+    }
+
+    /// Fit `bounds` (world units) to the canvas, with a margin.
+    fn lsystem_frame(&mut self, bounds: Option<[f64; 4]>) {
+        let size = [self.viewport.width_px, self.viewport.height_px];
+        let (w, h) = (size[0].max(1.0), size[1].max(1.0));
+        let (cx, cy, upp) = match bounds {
             Some(b) => {
                 let span = ((b[2] - b[0]) / w).max((b[3] - b[1]) / h).max(1e-9) * 1.15;
                 ((b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5, span)
@@ -409,6 +479,24 @@ impl FractadyneApp {
         self.viewport.reset_to(cx, cy);
         self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(upp);
         self.pointer.zoom_vel = 0.0;
+        self.lsystem.framed = Some(Framed { bounds, size, centre: [cx, cy], upp });
+    }
+
+    /// After the canvas is sized: a view still exactly as the home view framed it, on a canvas of
+    /// another size, is framed again for this one (see [`Framed`]); a view the user moved stays.
+    pub(crate) fn lsystem_keep_framed(&mut self) {
+        let Some(f) = self.lsystem.framed else { return };
+        if [self.viewport.width_px, self.viewport.height_px] == f.size {
+            return;
+        }
+        let untouched = self.viewport.units_per_pixel.to_f64() == f.upp
+            && fractadyne_core::to_f64(&self.viewport.center_x) == f.centre[0]
+            && fractadyne_core::to_f64(&self.viewport.center_y) == f.centre[1];
+        if untouched {
+            self.lsystem_frame(f.bounds);
+        } else {
+            self.lsystem.framed = None;
+        }
     }
 
     /// Show `system`, framed.
@@ -604,10 +692,10 @@ impl FractadyneApp {
                 "none (fixed order)".into()
             });
             ui.end_row();
-            if let Some((order, segments, stopped, ms)) = self.lsystem.last_walk() {
+            if let Some(w) = self.lsystem.last_walk() {
                 ui.label("Drawn");
-                ui.label(format!("{} segments at order {order}{}", crate::life_view::grouped(segments), if stopped { " (budget)" } else { "" }))
-                    .on_hover_text(format!("walked in {ms:.1} ms; subtrees off the view are skipped, those under a pixel drawn as one segment"));
+                ui.label(format!("{} at order {}{}", drawn_text(w.segments, w.polygons), w.order, if w.stopped { " (budget)" } else { "" }))
+                    .on_hover_text(format!("walked in {:.1} ms; subtrees off the view are skipped, those under a pixel drawn as one segment", w.ms));
                 ui.end_row();
             }
         });
@@ -763,13 +851,24 @@ impl FractadyneApp {
     }
 }
 
-/// The status bar's L-system readouts after the zoom — order, segments drawn — each padded to a
-/// fixed width (a growing count never wraps the bar).
-pub(crate) fn status_readouts(order: u32, segments: Option<u64>) -> (String, String) {
+/// The panel's count of what a walk drew: "12 segments", "1 filled shape", "8 segments, 3 filled
+/// shapes".
+fn drawn_text(segments: u64, polygons: u64) -> String {
+    let n = |k: u64, one: &str, many: &str| format!("{} {}", crate::life_view::grouped(k), if k == 1 { one } else { many });
+    match (segments, polygons) {
+        (_, 0) => n(segments, "segment", "segments"),
+        (0, _) => n(polygons, "filled shape", "filled shapes"),
+        _ => format!("{}, {}", n(segments, "segment", "segments"), n(polygons, "filled shape", "filled shapes")),
+    }
+}
+
+/// The status bar's L-system readouts after the zoom — order, and what was drawn (segments and
+/// filled shapes) — each padded to a fixed width (a growing count never wraps the bar).
+pub(crate) fn status_readouts(order: u32, drawn: Option<u64>) -> (String, String) {
     // Up to 999,999,999 grouped (11 characters); the walk's budget keeps it there.
     const COUNT_W: usize = 11;
-    let segs = segments.map_or_else(|| "…".to_string(), |n| if n < 1_000_000_000 { crate::life_view::grouped(n) } else { format!("{:.3e}", n as f64) });
-    (format!("order {order:>4}"), format!("segments {segs:>COUNT_W$}"))
+    let count = drawn.map_or_else(|| "…".to_string(), |n| if n < 1_000_000_000 { crate::life_view::grouped(n) } else { format!("{:.3e}", n as f64) });
+    (format!("order {order:>4}"), format!("drawn {count:>COUNT_W$}"))
 }
 
 #[cfg(test)]

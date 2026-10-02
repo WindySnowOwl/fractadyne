@@ -28,6 +28,9 @@ pub(crate) enum Op {
     Scale(f64),
     SetColour(i32),
     AddColour(i32),
+    PolyStart,
+    PolyEnd,
+    Vertex,
 }
 
 /// The change a subtree makes to the colour index: set it (or not), then add.
@@ -78,14 +81,23 @@ impl Effect {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Entry {
     pub fx: Effect,
-    /// How far from its start the subtree draws, in its own steps (−1: it draws nothing).
+    /// How far from its start the subtree draws — lines and polygons — in its own steps (−1: it
+    /// draws nothing).
     pub r: f64,
-    /// How many segments it draws.
+    /// How far from its start the turtle goes at all, drawing or not (≥ 0): inside a polygon every
+    /// position is a vertex, so this is the reach a subtree has there.
+    pub ra: f64,
+    /// How many segments (lines) it draws.
     pub n: f64,
+    /// The work of drawing it whole inside a polygon: every step a vertex, and its own polygons'
+    /// start vertices and `.` vertices besides.
+    pub wp: f64,
+    /// The work of drawing it whole: lines and polygon vertices.
+    pub w: f64,
 }
 
 impl Entry {
-    const NOTHING: Entry = Entry { fx: Effect::IDENTITY, r: -1.0, n: 0.0 };
+    const NOTHING: Entry = Entry { fx: Effect::IDENTITY, r: -1.0, ra: 0.0, n: 0.0, wp: 0.0, w: 0.0 };
 }
 
 /// No production (a symbol's id).
@@ -149,9 +161,14 @@ pub struct Tables {
     /// 2 for a picture that mirrors from one order to the next (the Sierpinski arrowhead lies on
     /// alternate sides of its base): its order steps by two, keeping the deepest row's phase.
     pub period: u32,
-    /// The area of the picture's bounding box, world units (at an order cheap to walk whole);
-    /// 0 for a picture that does not grow.
-    pub box_area: f64,
+    /// The area of the picture's bounding box at each order up to one cheap to walk whole, world
+    /// units (a later order takes the last); empty for a picture that does not grow. Each order's
+    /// own: a plant whose leaves keep their size while its stem doubles is wide at order 3 and a
+    /// line at order 13, and measured by the line it was capped at order 0 ([`Tables::density`]).
+    pub box_areas: Vec<f64>,
+    /// The longer side of the last of those boxes, world units (0 for a picture that does not
+    /// grow): how large the picture is.
+    pub box_size: f64,
 }
 
 fn mul(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
@@ -220,6 +237,9 @@ impl Tables {
                     Tok::Scale(f) => Op::Scale(f),
                     Tok::SetColour(c) => Op::SetColour(c),
                     Tok::AddColour(c) => Op::AddColour(c),
+                    Tok::PolyStart => Op::PolyStart,
+                    Tok::PolyEnd => Op::PolyEnd,
+                    Tok::Vertex => Op::Vertex,
                 })
                 .collect()
         };
@@ -236,8 +256,8 @@ impl Tables {
         for c in 0..256 {
             roles[c] = sys.roles[c];
             constant[c] = match sys.roles[c] {
-                Role::Draw => Entry { fx: Effect { d: [1.0, 0.0], ..Effect::IDENTITY }, r: 1.0, n: 1.0 },
-                Role::Move => Entry { fx: Effect { d: [1.0, 0.0], ..Effect::IDENTITY }, r: -1.0, n: 0.0 },
+                Role::Draw => Entry { fx: Effect { d: [1.0, 0.0], ..Effect::IDENTITY }, r: 1.0, ra: 1.0, n: 1.0, wp: 1.0, w: 1.0 },
+                Role::Move => Entry { fx: Effect { d: [1.0, 0.0], ..Effect::IDENTITY }, r: -1.0, ra: 1.0, n: 0.0, wp: 1.0, w: 0.0 },
                 Role::None => Entry::NOTHING,
             };
         }
@@ -261,12 +281,13 @@ impl Tables {
             turn_per_order: 0.0,
             growth: 1.0,
             period: 1,
-            box_area: 0.0,
+            box_areas: Vec::new(),
+            box_size: 0.0,
         };
         for d in 1..=depth.min(MAX_ORDER) {
             let row: Vec<Entry> = (0..t.rules.len()).map(|k| t.fold(&t.rules[k], d - 1)).collect();
             let sane = row.iter().all(|e| {
-                norm(e.fx.d) < LIMIT && e.r < LIMIT && e.n < LIMIT && e.fx.scale < LIMIT && e.fx.scale > 1.0 / LIMIT
+                norm(e.fx.d) < LIMIT && e.ra < LIMIT && e.wp < LIMIT && e.fx.scale < LIMIT && e.fx.scale > 1.0 / LIMIT
             });
             if !sane {
                 break;
@@ -275,7 +296,7 @@ impl Tables {
             t.max_depth = d;
         }
         t.size_the_picture(sys);
-        (t.period, t.box_area) = super::walk::shape(&t);
+        (t.period, t.box_areas, t.box_size) = super::walk::shape(&t);
         t
     }
 
@@ -350,16 +371,44 @@ impl Tables {
     fn fold(&self, ops: &[Op], d: u32) -> Entry {
         let mut st = Effect::IDENTITY;
         let mut stack: Vec<Effect> = Vec::new();
-        let (mut r, mut n) = (-1.0f64, 0.0f64);
+        let (mut r, mut ra, mut n, mut wp, mut w) = (-1.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        // Inside `{ }` (braces close in the word that opens them).
+        let mut poly = false;
         for &op in ops {
             match op {
                 Op::Sym(c) => {
                     let e = self.entry(c, d);
-                    if e.r >= 0.0 {
-                        r = r.max(norm(st.d) + st.scale * e.r);
-                        n += e.n;
+                    let from = norm(st.d);
+                    ra = ra.max(from + st.scale * e.ra);
+                    wp += e.wp;
+                    if poly {
+                        // Every position a vertex; no lines.
+                        r = r.max(from + st.scale * e.ra);
+                        w += e.wp;
+                    } else {
+                        if e.r >= 0.0 {
+                            r = r.max(from + st.scale * e.r);
+                            n += e.n;
+                        }
+                        w += e.w;
                     }
                     st = self.then(&st, &e.fx);
+                }
+                Op::PolyStart => {
+                    poly = true;
+                    r = r.max(norm(st.d));
+                    w += 1.0;
+                    wp += 1.0;
+                }
+                Op::PolyEnd => poly = false,
+                Op::Vertex => {
+                    // A `.` adds a vertex to whichever polygon is open — this word's, or, when the
+                    // word itself sits inside a polygon, that one.
+                    wp += 1.0;
+                    if poly {
+                        r = r.max(norm(st.d));
+                        w += 1.0;
+                    }
                 }
                 Op::Turn(k) => {
                     let k = if st.flip { -(k as i64) } else { k as i64 };
@@ -374,7 +423,7 @@ impl Tables {
                 Op::AddColour(c) => st.colour = st.colour.then(ColourFx { set: None, add: c }),
             }
         }
-        Entry { fx: st, r, n }
+        Entry { fx: st, r, ra, n, wp, w }
     }
 
     /// Picks the picture's size measure and growth (see [`Tables::step`]).
@@ -594,11 +643,12 @@ impl Tables {
 
     /// Segments per square step of the picture's bounding box at `order` (0 without a box).
     pub fn density(&self, order: u32) -> f64 {
-        if self.box_area <= 0.0 {
+        let area = self.box_areas.get(order as usize).or(self.box_areas.last()).copied().unwrap_or(0.0);
+        if area <= 0.0 {
             return 0.0;
         }
         let s = norm(self.step(order));
-        self.axiom_entry(order).n * s * s / self.box_area
+        self.axiom_entry(order).n * s * s / area
     }
 }
 

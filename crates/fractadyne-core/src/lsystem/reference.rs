@@ -4,7 +4,7 @@
 //! effect — so the two agreeing says something.
 
 use super::system::{LSystem, Role, Tok};
-use super::walk::Segment;
+use super::walk::{Polygon, Segment};
 use std::f64::consts::{PI, TAU};
 
 /// The word after `order` rewrites, or `None` past `limit` tokens.
@@ -38,6 +38,8 @@ pub fn draw(sys: &LSystem, word: &[Tok], start: [f64; 2], step: [f64; 2]) -> Vec
 /// What a turtle run produced.
 pub struct Run {
     pub segments: Vec<Segment>,
+    /// The filled polygons (`{ … }`), in the order they close.
+    pub polygons: Vec<Polygon>,
     /// Where the turtle ended.
     pub end: [f64; 2],
 }
@@ -61,6 +63,9 @@ pub fn run(sys: &LSystem, word: &[Tok], start: [f64; 2], step: [f64; 2]) -> Run 
     let mut s = S { pos: start, angle: step[1].atan2(step[0]), len: step[0].hypot(step[1]), flip: false, colour: 1, depth: 0 };
     let mut stack = Vec::new();
     let mut out = Vec::new();
+    let mut polygons = Vec::new();
+    // The polygons open, innermost last (a leaf's `{ }` may sit inside an outline's).
+    let mut open: Vec<Polygon> = Vec::new();
     let mut index = 0.0;
     let sign = |s: &S| if s.flip { -1.0 } else { 1.0 };
     for &t in word {
@@ -74,6 +79,11 @@ pub fn run(sys: &LSystem, word: &[Tok], start: [f64; 2], step: [f64; 2]) -> Run 
                 }
                 let a = s.pos;
                 s.pos = [a[0] + s.len * s.angle.cos(), a[1] + s.len * s.angle.sin()];
+                // Inside a polygon a step is a vertex, drawn or not, and no line.
+                if let Some(p) = open.last_mut() {
+                    p.pts.push(s.pos);
+                    continue;
+                }
                 if role == Role::Draw {
                     out.push(Segment {
                         a,
@@ -99,7 +109,24 @@ pub fn run(sys: &LSystem, word: &[Tok], start: [f64; 2], step: [f64; 2]) -> Run 
             Tok::Scale(f) => s.len *= f,
             Tok::SetColour(c) => s.colour = c,
             Tok::AddColour(c) => s.colour = s.colour.wrapping_add(c),
+            Tok::PolyStart => open.push(Polygon {
+                pts: vec![s.pos],
+                index,
+                depth: s.depth,
+                heading: (s.angle / TAU).rem_euclid(1.0),
+                colour: s.colour,
+            }),
+            Tok::Vertex => {
+                if let Some(p) = open.last_mut() {
+                    p.pts.push(s.pos);
+                }
+            }
+            Tok::PolyEnd => {
+                if let Some(p) = open.pop() {
+                    polygons.push(p);
+                }
+            }
         }
     }
-    Run { segments: out, end: s.pos }
+    Run { segments: out, polygons, end: s.pos }
 }

@@ -1778,13 +1778,13 @@ impl FractadyneApp {
             // The walk for the view landed and drew: segments, at the order that follows the zoom.
             let want_order = self.lsystem.order_at(&self.viewport);
             let ok = match self.lsystem.last_walk() {
-                Some((order, segments, stopped, _)) => order == want_order && segments > 1000 && !stopped,
+                Some(w) => w.order == want_order && w.segments > 1000 && !w.stopped,
                 None => false,
             };
             checks.push(Check {
                 name: "the dragon is walked and drawn".into(),
                 verdict: if ok { Verdict::Pass } else { Verdict::Fail },
-                detail: format!("last walk {:?} (order, segments, stopped, ms); the view's order {want_order}", self.lsystem.last_walk()),
+                detail: format!("last walk {:?}; the view's order {want_order}", self.lsystem.last_walk()),
             });
         }
 
@@ -1942,7 +1942,7 @@ impl FractadyneApp {
         let wants: &[&str] = if life_bar {
             &["center ", "cursor ", "scale ", "gen ", "pop "]
         } else if self.fractal == crate::FractalKind::LSystem {
-            &["center ", "cursor ", "zoom", "order ", "segments "]
+            &["center ", "cursor ", "zoom", "order ", "drawn "]
         } else {
             &["center ", "cursor ", "zoom", "iter ", "period "]
         };
@@ -1982,8 +1982,8 @@ impl FractadyneApp {
                 }
             }
         } else if self.fractal == crate::FractalKind::LSystem {
-            // A drawing has no iteration count: its zoom, order and segments drawn.
-            for want in ["zoom", "order ", "segments "] {
+            // A drawing has no iteration count: its zoom, order and what it drew.
+            for want in ["zoom", "order ", "drawn "] {
                 if find(want).and_then(|t| num(t)).is_none() {
                     sb_problems.push(format!("{want:?} does not read as a number"));
                 }

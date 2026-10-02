@@ -20,7 +20,7 @@
 
 use super::system::{Angle, LSystem, Role, Tok};
 use super::tables::{ColourFx, Tables, NONE};
-use super::walk::{walk_from, Segment, SubStart, View, WalkOptions, WalkStats};
+use super::walk::{walk_from, Drawn, Polygon, Segment, SubStart, View, WalkOptions, WalkStats};
 use crate::bignum::{arg_bf, log2_abs, to_f64, RM};
 use astro_float::{BigFloat, Consts};
 use std::collections::HashMap;
@@ -196,6 +196,8 @@ struct BigEntry {
     fx: BigEffect,
     /// `log₂` of the reach, in the subtree's own steps (−∞: it draws nothing).
     reach: f64,
+    /// `log₂` of how far the turtle goes at all (see `Entry::ra`).
+    reach_all: f64,
     n: f64,
 }
 
@@ -210,6 +212,9 @@ enum BigOp {
     Scale(BigFloat),
     SetColour(i32),
     AddColour(i32),
+    PolyStart,
+    PolyEnd,
+    Vertex,
 }
 
 /// A system's tables in `BigFloat`, at a precision, to a depth.
@@ -265,6 +270,9 @@ impl BigTables {
                     Tok::Scale(f) => BigOp::Scale(decimal(f, p)),
                     Tok::SetColour(c) => BigOp::SetColour(c),
                     Tok::AddColour(c) => BigOp::AddColour(c),
+                    Tok::PolyStart => BigOp::PolyStart,
+                    Tok::PolyEnd => BigOp::PolyEnd,
+                    Tok::Vertex => BigOp::Vertex,
                 })
                 .collect()
         };
@@ -283,9 +291,9 @@ impl BigTables {
                 roles[c] = sys.roles[c];
                 let step = BigEffect { d: cone(p), ..identity.clone() };
                 match sys.roles[c] {
-                    Role::Draw => BigEntry { fx: step, reach: 0.0, n: 1.0 },
-                    Role::Move => BigEntry { fx: step, reach: f64::NEG_INFINITY, n: 0.0 },
-                    Role::None => BigEntry { fx: identity.clone(), reach: f64::NEG_INFINITY, n: 0.0 },
+                    Role::Draw => BigEntry { fx: step, reach: 0.0, reach_all: 0.0, n: 1.0 },
+                    Role::Move => BigEntry { fx: step, reach: f64::NEG_INFINITY, reach_all: 0.0, n: 0.0 },
+                    Role::None => BigEntry { fx: identity.clone(), reach: f64::NEG_INFINITY, reach_all: f64::NEG_INFINITY, n: 0.0 },
                 }
             })
             .collect();
@@ -370,17 +378,37 @@ impl BigTables {
         let p = self.prec;
         let mut st = BigEffect { d: czero(p), turns: 0, flip: false, scale: BigFloat::from_f64(1.0, p), colour: ColourFx::default() };
         let mut stack: Vec<BigEffect> = Vec::new();
-        let (mut reach, mut n) = (f64::NEG_INFINITY, 0.0f64);
+        let (mut reach, mut reach_all, mut n) = (f64::NEG_INFINITY, f64::NEG_INFINITY, 0.0f64);
+        // Inside `{ }`: every position a vertex, no lines (as `Tables::fold`).
+        let mut poly = false;
         for op in ops {
             match op {
                 BigOp::Sym(c) => {
                     let e = self.entry(*c, d);
-                    if e.reach > f64::NEG_INFINITY {
-                        let r = log2_add(norm_log2(&st.d, p), log2_abs(&st.scale) + e.reach);
-                        reach = reach.max(r);
+                    let from = norm_log2(&st.d, p);
+                    let scale = log2_abs(&st.scale);
+                    if e.reach_all > f64::NEG_INFINITY {
+                        reach_all = reach_all.max(log2_add(from, scale + e.reach_all));
+                    }
+                    if poly {
+                        if e.reach_all > f64::NEG_INFINITY {
+                            reach = reach.max(log2_add(from, scale + e.reach_all));
+                        }
+                    } else if e.reach > f64::NEG_INFINITY {
+                        reach = reach.max(log2_add(from, scale + e.reach));
                         n += e.n;
                     }
                     st = self.then(&st, &e.fx);
+                }
+                BigOp::PolyStart => {
+                    poly = true;
+                    reach = reach.max(norm_log2(&st.d, p));
+                }
+                BigOp::PolyEnd => poly = false,
+                BigOp::Vertex => {
+                    if poly {
+                        reach = reach.max(norm_log2(&st.d, p));
+                    }
                 }
                 BigOp::Turn(k) => st.turns = (st.turns + if st.flip { -k } else { *k }).rem_euclid(self.modulus),
                 BigOp::Reverse => st.flip = !st.flip,
@@ -391,7 +419,7 @@ impl BigTables {
                 BigOp::AddColour(c) => st.colour = st.colour.then(ColourFx { set: None, add: *c }),
             }
         }
-        BigEntry { fx: st, reach, n }
+        BigEntry { fx: st, reach, reach_all, n }
     }
 
     /// The world step at `order` (≤ `depth`), as the `f64` [`Tables::step`] defines it: the system's
@@ -464,6 +492,17 @@ pub fn deep_precision(t: &Tables, order: u32, upp_log2: f64, extent_log2: f64) -
     view + lost + 96
 }
 
+/// Whether a polygon's box (view pixels) meets the view.
+fn polygon_meets(pts: &[[f64; 2]], view: &DeepView) -> bool {
+    let (hw, hh) = (0.5 * view.size[0] + view.margin, 0.5 * view.size[1] + view.margin);
+    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for p in pts {
+        lo = [lo[0].min(p[0]), lo[1].min(p[1])];
+        hi = [hi[0].max(p[0]), hi[1].max(p[1])];
+    }
+    lo[0] <= hw && hi[0] >= -hw && lo[1] <= hh && hi[1] >= -hh
+}
+
 /// The size (pixels) under which the deep walk hands a subtree to the `f64` walk: see
 /// [`Tables::f64_reach_log2`].
 pub fn switch_px(t: &Tables) -> f64 {
@@ -498,6 +537,22 @@ pub fn deep_walk(
     switch_px: f64,
     sink: &mut dyn FnMut(&Segment),
 ) -> WalkStats {
+    deep_walk_all(t, bt, view, opts, switch_px, &mut |d| {
+        if let Drawn::Segment(s) = d {
+            sink(s)
+        }
+    })
+}
+
+/// [`deep_walk`], with the filled polygons.
+pub fn deep_walk_all(
+    t: &Tables,
+    bt: &BigTables,
+    view: &DeepView,
+    opts: &WalkOptions,
+    switch_px: f64,
+    sink: &mut dyn FnMut(Drawn),
+) -> WalkStats {
     let p = bt.prec;
     let order = opts.order.min(bt.depth);
     let inv_upp = pow2(-view.upp_log2, p);
@@ -524,6 +579,8 @@ pub fn deep_walk(
     let mut stats = WalkStats::default();
     let mut index = 0.0f64;
     let mut stack: Vec<DeepState> = Vec::new();
+    // The polygons open, innermost last, their vertices in view pixels.
+    let mut open: Vec<Polygon> = Vec::new();
     let mut frames = vec![Frame { rule: NONE, i: 0, child_depth: order }];
     let advance = |s: &mut DeepState, e: &BigEffect| {
         let v = if s.flip { conj(&e.d) } else { e.d.clone() };
@@ -550,11 +607,14 @@ pub fn deep_walk(
             BigOp::Sym(c) => {
                 let c = *c;
                 let id = bt.id[c as usize];
+                let in_poly = !open.is_empty();
                 if id != NONE && d > 0 {
                     let e = bt.entry(c, d);
                     stats.nodes += 1;
-                    if e.reach > f64::NEG_INFINITY {
-                        let r_log2 = log2_abs(&s.scale) + e.reach - view.upp_log2;
+                    // Inside a polygon every position is a vertex: the subtree's reach is all of it.
+                    let reach = if in_poly { e.reach_all } else { e.reach };
+                    if reach > f64::NEG_INFINITY {
+                        let r_log2 = log2_abs(&s.scale) + reach - view.upp_log2;
                         let q = to_px(&s.pos);
                         // The disc test in f64 at 2⁷³ px rounds by hundreds of pixels; near a
                         // subtree's far end its reach is exactly the distance to the view, and the
@@ -580,40 +640,77 @@ pub fn deep_walk(
                                 brackets: s.depth,
                                 index,
                             };
-                            let left = opts.budget.saturating_sub(stats.segments);
-                            let sub = walk_from(t, &px_view, &WalkOptions { order: d, lod_px: opts.lod_px, budget: left }, &start, sink);
+                            let left = opts.budget.saturating_sub(stats.segments + stats.vertices);
+                            let sub = walk_from(t, &px_view, &WalkOptions { order: d, lod_px: opts.lod_px, budget: left }, &start, &mut open, sink);
                             stats.segments += sub.segments;
+                            stats.polygons += sub.polygons;
+                            stats.vertices += sub.vertices;
                             stats.nodes += sub.nodes;
                             if sub.stopped {
                                 stats.stopped = true;
                                 return stats;
                             }
+                            // The f64 walk added the subtree's vertices; the end is the exact one.
+                            advance(&mut s, &e.fx);
+                            if !in_poly {
+                                index += e.n;
+                            }
+                            continue;
                         }
                     }
                     advance(&mut s, &e.fx);
-                    index += e.n;
+                    if let Some(poly) = open.last_mut() {
+                        // Off the view, inside a polygon: its chord (as the f64 walk).
+                        poly.pts.push(to_px(&s.pos));
+                    } else {
+                        index += e.n;
+                    }
                 } else {
                     match bt.roles[c as usize] {
                         Role::None => {}
                         role => {
                             let a = s.pos.clone();
                             s.pos = cadd(&s.pos, &cscale(&dir(s.turns), &s.scale, p), p);
-                            if role == Role::Draw {
+                            if let Some(poly) = open.last_mut() {
+                                poly.pts.push(to_px(&s.pos));
+                            } else if role == Role::Draw {
                                 let (qa, qb) = (to_px(&a), to_px(&s.pos));
                                 let mid = [0.5 * (qa[0] + qb[0]), 0.5 * (qa[1] + qb[1])];
                                 let half = 0.5 * (qb[0] - qa[0]).hypot(qb[1] - qa[1]);
                                 if half.is_finite() && meets(mid, half + view.margin) {
-                                    if stats.segments >= opts.budget {
+                                    if stats.segments + stats.vertices >= opts.budget {
                                         stats.stopped = true;
                                         return stats;
                                     }
                                     let h = (heading(&s) / std::f64::consts::TAU).rem_euclid(1.0);
-                                    sink(&Segment { a: qa, b: qb, index, span: 1.0, depth: s.depth, heading: h, colour: s.colour });
+                                    sink(Drawn::Segment(&Segment { a: qa, b: qb, index, span: 1.0, depth: s.depth, heading: h, colour: s.colour }));
                                     stats.segments += 1;
                                 }
                                 index += 1.0;
                             }
                         }
+                    }
+                }
+            }
+            BigOp::PolyStart => open.push(Polygon {
+                pts: vec![to_px(&s.pos)],
+                index,
+                depth: s.depth,
+                heading: (heading(&s) / std::f64::consts::TAU).rem_euclid(1.0),
+                colour: s.colour,
+            }),
+            BigOp::Vertex => {
+                if let Some(poly) = open.last_mut() {
+                    poly.pts.push(to_px(&s.pos));
+                }
+            }
+            BigOp::PolyEnd => {
+                if let Some(poly) = open.pop() {
+                    let finite = poly.pts.iter().all(|q| q[0].is_finite() && q[1].is_finite());
+                    if poly.pts.len() >= 3 && finite && polygon_meets(&poly.pts, view) {
+                        stats.polygons += 1;
+                        stats.vertices += poly.pts.len() as u64;
+                        sink(Drawn::Polygon(&poly));
                     }
                 }
             }
