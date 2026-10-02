@@ -1,8 +1,8 @@
 # L-systems — turtle-drawn curves and plants, with deep zoom
 
 Status: **design** (2026-10-02), nothing built. The user: "Work on the design doc" (after "Are L-systems
-implemented" — no). Integration facts in §2 are from this tree at `21e2bd7` (Life merged). Open
-questions for the user are in §9.
+implemented" — no). Integration facts in §2 are from this tree at `21e2bd7` (Life merged). The
+user's decisions on the open questions are in §9 (all six: yes).
 
 ## 1. Goal
 
@@ -97,7 +97,7 @@ Fractint's exact command semantics — case handling, what `|` does when the div
 of `@` — are taken from Fractint's documentation when the parser is written, and pinned by tests
 against systems whose pictures are known.
 
-**Later extensions** (§9 asks which): stochastic productions (`X → a (0.3) | b (0.7)`, seeded so a
+**Extensions** (phase 4, all wanted — §9 says how each meets the walk): stochastic productions (`X → a (0.3) | b (0.7)`, seeded so a
 picture reproduces), parametric productions (ABOP ch. 1.10: `F(l) → F(l/3) + …`), context-sensitive
 productions, filled polygons (ABOP's `{` `}`, for leaves and a filled Koch snowflake).
 
@@ -229,17 +229,38 @@ position along the curve (§5) stays meaningful at any depth.
 | **1** | Core: parser (native + Fractint `.l`), the tables of §4.3, the culling / LOD walk, auto order, the standard set; a naive reference expander (builds the string, runs the turtle) | walk = reference segment for segment at small orders (every library system); R bounds hold; culled ⊇ reference ∩ view; LOD segment count ≤ C × pixels; facts (§10) |
 | **2** | The app: segment pass into the iteration texture, colour modes, panel + editor + library + custom, files, session, tours, raster export | GPU coverage = a CPU quad rasteriser (top-left rule, no AA) on fixed views; goldens; uitest screen; Radeon |
 | **3** | Unlimited zoom: BigFloat roots, exact headings, exact indices | self-similarity exact: Koch zoomed 3⁴⁰ about its start = Koch, dragon 2³⁰ about a fixed point; BigFloat roots = rational arithmetic for 90° systems; a 1e100× view at 1× cost |
-| **4** | Per §9: stochastic / parametric / context-sensitive productions, filled polygons, SVG export, draw-on and angle animation | each against its definition and reference expander |
+| **4** | Per §9: stochastic (variants) / parametric / context-sensitive productions, filled polygons, SVG export, draw-on and angle animation | each against its definition and the reference expander; stochastic: the variant walk = a reference that expands the same hashed choices; SVG re-read = the segment list |
 
-## 9. Open questions (the user's)
+## 9. Decisions (the user's, 2026-10-02)
 
-1. **Unlimited zoom** (phase 3): worth the effort? It is what no other L-system viewer does, and the
-   reason the walk is shaped as it is; but phases 1–2 already zoom far (f64 to ~1e12×).
-2. **Which systems beyond bracketed D0L**: stochastic, parametric, context-sensitive — any, all?
-3. **Fractint `.l` files** opening directly (as `.frm` and `.par`) — assumed yes.
-4. **Default colouring**: position along the curve, branch depth, or plain (one colour)?
-5. **SVG export** — wanted?
-6. **Filled shapes** (ABOP's polygons; filled Koch snowflakes) — wanted?
+The user: "Yes to 1-6".
+
+1. **Unlimited zoom**: yes → phase 3 (§4.6).
+2. **Beyond bracketed D0L**: yes to all three → phase 4 (§4.1). The walk of §4.3–4.5 skips a
+   subtree because its effect is a function of (symbol, depth) alone; each extension keeps that or
+   says where it stops:
+   - **Stochastic**: a node carries a **variant** v ∈ 0..K (K = 256); its production is chosen by a
+     hash of (seed, symbol, depth, v), and its k-th child's variant is a hash of (v, k). Everything
+     about a node is then a function of (symbol, depth, v), so the tables are kept per variant
+     (|alphabet| × depth × K entries) and the walk skips, culls and zooms as before. Two subtrees
+     with the same (symbol, depth, v) are the same picture; with 256 variants mixed at every level
+     that is not visible. The seed is part of the system, so a picture reproduces.
+   - **Parametric**: the tables are memoised per (symbol, depth, parameter values) while the
+     distinct values stay within a budget, which holds for the common geometric forms
+     (`F(l) → F(l/3)…`); beyond the budget the system draws at a bounded order by plain expansion,
+     and says so.
+   - **Context-sensitive**: a node's rewrite depends on its neighbours in the string, so the tables
+     do not apply: these draw at a bounded order by expanding the string, culled only at the
+     segments, and say so (as free-angle systems do, §11).
+3. **Fractint `.l` files**: yes, open directly (§4.2).
+4. **Colouring**: not a yes/no question; taken as "offer all of them" (as automata's Hensel rules):
+   position along the curve, branch depth, heading, Fractint's colour index, and plain. Default: a
+   library entry names its own; otherwise the Fractint colour index for an `.l` entry that uses `C`,
+   `<` or `>`, branch depth for a system with brackets, position along the curve for one without.
+5. **SVG export**: yes → phase 4 (§7).
+6. **Filled shapes**: yes → phase 4: ABOP's `{` `}` — the turtle's positions between the braces
+   are a polygon, triangulated on the CPU and drawn into the iteration texture under the lines;
+   culled with the subtree that draws it.
 
 ## 10. Validation
 
