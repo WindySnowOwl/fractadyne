@@ -45,6 +45,9 @@ pub mod ir;
 /// Life-like cellular automata: rules, the sparse universe, pattern files (design/automata.md).
 pub mod life;
 
+/// L-systems: grammars, the turtle, the culling walk (design/lsystems.md).
+pub mod lsystem;
+
 mod backend;
 #[cfg(feature = "rug")]
 mod backend_rug;
