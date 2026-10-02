@@ -33,6 +33,11 @@ fn known_long_flags() -> std::collections::HashSet<String> {
 /// numbers (`-0.5` for `--center`) are excluded by the numeric parse in the classifier.
 const SHORT_FLAGS: &[&str] = &["-h", "-?", "-V", "-o", "-y"];
 
+/// Options whose values are free-form text that may begin with a minus sign and still not read as
+/// one number — an expression (`--center -3/4 0`), a formula (`--formula "-z^2 + c"`), a parameter
+/// list (`--formula-params -0.5,0`) — with how many values follow. Those values are not options.
+const VALUE_FLAGS: &[(&str, usize)] = &[("--center", 2), ("--julia-c", 2), ("--formula", 1), ("--formula-params", 1)];
+
 /// What is wrong with a command line, if anything. Pure, so the rules are pinned by test —
 /// a mis-typed option must never silently launch the GUI (field case 2026-08-20: `-play tour`
 /// booted the saved session instead of the tour, and a validation run measured the wrong thing).
@@ -48,8 +53,17 @@ enum BadOption {
 
 fn first_bad_option(args: &[String]) -> Option<BadOption> {
     let known = known_long_flags();
+    let mut values = 0usize;
     for s in args.iter().skip(1) {
         let a = s.as_str();
+        if values > 0 {
+            values -= 1;
+            continue;
+        }
+        if let Some(&(_, n)) = VALUE_FLAGS.iter().find(|(f, _)| *f == a) {
+            values = n;
+            continue;
+        }
         if a.starts_with("--") && a.len() > 2 {
             if !known.contains(a) {
                 return Some(BadOption::UnknownLong(a.to_string()));
@@ -1229,6 +1243,12 @@ pub(crate) struct HarnessModes {
     /// the layout actually did rather than against the panel's nominal width.
     pub(crate) uitest_central_w: Option<f32>,
     pub(crate) uitest_panel_w: Option<f32>,
+    /// The shader key the `formula-apply-async` step applied, so its record can check that the
+    /// view switched to exactly that formula.
+    pub(crate) uitest_async_key: Option<u64>,
+    /// Pointer events the `life-draw` step feeds the app, one a frame, at CELLS of the Life view
+    /// (turned into positions as they are fed, so they land on the cell whatever the layout).
+    pub(crate) uitest_pointer: std::collections::VecDeque<crate::UiPointer>,
     pub(crate) soak: Option<crate::soak::Soak>,
     /// `--recordtest [FRAMES]`: the frame record's own gate — does it record every frame, fill
     /// every required field, and survive an abort? See `mod recordtest`.

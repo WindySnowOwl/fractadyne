@@ -10,7 +10,7 @@ use crate::formula;
 use astro_float::BigFloat;
 
 /// Split an `f64` into a `(hi, lo)` `f32` pair (df64, ~14 digits).
-fn split_df64(v: f64) -> (f32, f32) {
+pub(crate) fn split_df64(v: f64) -> (f32, f32) {
     let hi = v as f32;
     let lo = (v - hi as f64) as f32;
     (hi, lo)
@@ -34,6 +34,23 @@ const EXT_SAMPLE_THRESHOLD: f64 = 1.0e-36;
 /// scaled by 2^-exponent (the leading one normalized to [1,2)); the shader decodes via `orbit_fe`.
 /// NaN can never occur in a normal sample (the bignum pipeline yields finite values), so the marker
 /// is unambiguous.
+/// The reference orbit ends at its first sample past this `|Z|²` (that sample kept). 1e12 for every
+/// family but the powers from 7 (design/power-families.md §4.4): their next sample, up to
+/// `(1e6)^d`, would overflow the f32 lanes the GPU reads it in ([`pack_sample`]); at 1e9 it is at
+/// most `(10^4.5)^8 = 1e36`. Every walk that measures a reference's length asks this, so they agree.
+pub(crate) fn ref_escape2(formula: u32) -> f64 {
+    ref_escape2_of_degree(f64::from(formula::power(formula)))
+}
+
+/// [`ref_escape2`] by the escape degree `d` (a custom formula's comes from its program).
+pub(crate) fn ref_escape2_of_degree(d: f64) -> f64 {
+    if d >= 7.0 {
+        1.0e9
+    } else {
+        1.0e12
+    }
+}
+
 pub(crate) fn pack_sample(xv: f64, yv: f64) -> [f32; 4] {
     let mag = xv.abs().max(yv.abs());
     if mag != 0.0 && mag < EXT_SAMPLE_THRESHOLD {
@@ -388,6 +405,7 @@ fn run_orbit_gen<B: RefBackend>(
     ctx: B::Ctx,
 ) -> (B, B, B, B, bool) {
     let mut escaped = false;
+    let escape2 = ref_escape2(formula);
     while n < max_iter {
         let (nzx, nzy) = if formula == formula::PHOENIX {
             phoenix_step_gen(&zx, &zy, &zpx, &zpy, cx, cy, ctx)
@@ -406,7 +424,7 @@ fn run_orbit_gen<B: RefBackend>(
         let yv = zy.to_f64_trunc();
         out.push(pack_sample(xv, yv));
         n += 1;
-        if xv * xv + yv * yv > 1.0e12 {
+        if xv * xv + yv * yv > escape2 {
             escaped = true;
             break;
         }
@@ -573,6 +591,19 @@ fn log2_cmag(re: &BigFloat, im: &BigFloat) -> f64 {
 pub(crate) const SA_EPS_LOG2: f64 = -16.0;
 /// Below this skip the bookkeeping isn't worth it (shared likewise).
 pub(crate) const SA_MIN_SKIP: u32 = 8;
+
+/// The largest |Z_n|² a series seed may start from, for `z^d + c`: 2^(120/d). The walk stops at
+/// the REFERENCE's escape (|Z|² > 1e12, or 1e9), far outside a pixel's 256, so a skip can land
+/// where every pixel has already escaped; the GPU tests a seeded pixel only after its next step,
+/// where |z|² ≈ |Z_n|^(2d) must stay inside f32 (2^128; 2^8 spared for δz and c). For z² and z³
+/// that late test is harmless — the smooth count is the same a step on, and (1e6)^(2d) ≤ 1e36 —
+/// and the bound never binds below the reference's own stop (2^60, 2^40 ≈ 1.1e12). From z⁴ the
+/// step overflows: |z|² = ∞, the smooth value −∞, and the pixel reads as interior — Multibrot 5
+/// at 1e40× (a skip of 4,466 on a reference of 4,468) rendered every pixel so (found 2026-10-01,
+/// design/power-families.md phase 2). A seed past the bound is treated as an invalid step.
+pub(crate) fn sa_seed_max2(d: u32) -> f64 {
+    2f64.powf(120.0 / f64::from(d))
+}
 /// Width (bits) the walk carries the series COEFFICIENTS at; the reference `Z` stays at the
 /// working precision `p` (shared likewise). `Z` needs `p`: it IS the orbit, and an error in it is
 /// a different `c`. The coefficients do not. They leave the walk only through `coeff_to_fe` (the
@@ -668,7 +699,8 @@ fn series_best_to_skip(best: Option<(u32, [BigFloat; 6])>) -> SeriesSkip {
 }
 
 /// Compute the [`SeriesSkip`] for a reference at `c = (cx, cy)` of the polynomial family
-/// `formula` (Mandelbrot `z²+c` = 0, Multibrot `z³/z⁴/z⁵+c` = 1/2/3). Iterates the reference
+/// `formula` (Mandelbrot `z²+c` = 0, Multibrot `z³/z⁴/z⁵+c` = 1/2/3, `z⁶/z⁷/z⁸+c` = 10/11/12).
+/// Iterates the reference
 /// together with the order-3 series coefficients in arbitrary precision, and skips while the
 /// cubic term stays below `2^EPS_LOG2` of the linear term at the worst-case corner `|δc|`
 /// (given as `log2_max_dc`) — which guarantees validity, and that no pixel escapes, before
@@ -729,12 +761,8 @@ pub(crate) fn series_skip_astro_piped(
     // build for the same frame.
     let limit = max_iter.min(orbit_len.saturating_sub(2)).min(sa_step_budget(p));
     // Degree d of z^d + c, and the binomial weights that appear in the order-3 recurrence.
-    let deg: u32 = match formula {
-        formula::MULTIBROT3 => 3,
-        formula::MULTIBROT4 => 4,
-        formula::MULTIBROT5 => 5,
-        _ => 2,
-    };
+    // (`formula_power`, 2 for an id outside the `z^d + c` families, as before.)
+    let deg: u32 = formula_power(formula).unwrap_or(2);
     let one = bf(1.0, pc);
     // Recurrence factors — all small exact integers, applied via `mul_u32_bf` (shift-and-add).
     let d_u = deg;
@@ -754,17 +782,19 @@ pub(crate) fn series_skip_astro_piped(
         }
         t
     };
-    let z_step = |zx: &mut BigFloat, zy: &mut BigFloat| -> (BigFloat, BigFloat, bool) {
+    // Z_n's |Z|² past which no seed may start (`sa_seed_max2`).
+    let seed_max2 = sa_seed_max2(deg);
+    let z_step = |zx: &mut BigFloat, zy: &mut BigFloat| -> (BigFloat, BigFloat, bool, bool) {
         let (zcx, zcy) = (cut(zx), cut(zy));
         let (nzx, nzy) = step_bf(zx, zy, cx, cy, formula, p);
         *zx = nzx;
         *zy = nzy;
-        let escaped = to_f64(zx) * to_f64(zx) + to_f64(zy) * to_f64(zy) > 1.0e12;
-        (zcx, zcy, escaped)
+        let m2 = to_f64(zx) * to_f64(zx) + to_f64(zy) * to_f64(zy);
+        (zcx, zcy, m2 > ref_escape2(formula), m2 <= seed_max2)
     };
     // The coefficient chain, fed one Z-chain step per iteration. `Err` = cancelled.
     type Walked = Result<Option<(u32, [BigFloat; 6])>, ()>;
-    let walk = |next: &mut dyn FnMut() -> Option<(BigFloat, BigFloat, bool)>| -> Walked {
+    let walk = |next: &mut dyn FnMut() -> Option<(BigFloat, BigFloat, bool, bool)>| -> Walked {
         let (mut ax, mut ay) = (bf(0.0, pc), bf(0.0, pc));
         let (mut bx, mut by) = (bf(0.0, pc), bf(0.0, pc));
         let (mut cxx, mut cyy) = (bf(0.0, pc), bf(0.0, pc));
@@ -775,7 +805,7 @@ pub(crate) fn series_skip_astro_piped(
             }
             // (The pipelined Z chain ends at the escape; the walk below breaks there first — a
             // `continue` past it needs a non-finite A, and a non-finite A stays so, `best` frozen.)
-            let Some((zcx, zcy, z_escaped)) = next() else { break };
+            let Some((zcx, zcy, z_escaped, z_seedable)) = next() else { break };
             let (zcx, zcy) = (&zcx, &zcy);
             // Advance the order-3 coefficients for z^d + c, using Z_{n-1} (current z):
             //   A' = d·Z^{d-1}·A + 1
@@ -832,10 +862,12 @@ pub(crate) fn series_skip_astro_piped(
             }
             let valid = lc + 2.0 * log2_max_dc < la + SA_EPS_LOG2;
             if n >= SA_MIN_SKIP {
-                if valid {
+                if valid && z_seedable {
                     best = Some((n, [ax.clone(), ay.clone(), bx.clone(), by.clone(), cxx.clone(), cyy.clone()]));
                 } else {
-                    break; // coefficients only grow ⇒ once invalid, stays invalid
+                    // Coefficients only grow ⇒ once invalid, stays invalid; and a reference past
+                    // the seed bound is past the bailout, so it escapes from there on.
+                    break;
                 }
             }
             // Stop if the reference itself escaped.
@@ -1023,11 +1055,26 @@ fn bla_level0_node(
     eps: f64,
     aux: AuxAggParams,
     one: CFloatExp,
+    d: u32,
 ) -> BlaNode {
     // `sample_xy`, not lane sums: an extended-range dip sample carries a NaN marker.
     let (zr, zi) = sample_xy(&orbit[n]);
-    let a = CFloatExp { re: FloatExp::from_f64(2.0 * zr), im: FloatExp::from_f64(2.0 * zi) };
-    let r = a.abs().mul_f64(eps); // |2Z|·eps : drops δz² with rel error ≤ eps
+    let (a, r) = if d == 2 {
+        let a = CFloatExp { re: FloatExp::from_f64(2.0 * zr), im: FloatExp::from_f64(2.0 * zi) };
+        (a, a.abs().mul_f64(eps)) // |2Z|·eps : drops δz² with rel error ≤ eps
+    } else {
+        // z^d + c (design/power-families.md §4.5): A = d·Z^(d−1); the first dropped term is
+        // C(d,2)·Z^(d−2)·δz², under eps·|A·δz| while |δz| ≤ eps·2|Z|/(d−1) — |2Z|·eps at d = 2.
+        // The rest, C(d,k)·Z^(d−k)·δz^k, shrink by a further (2·eps/(d−1))^(k−2) each.
+        // In floatexp: a dip |Z| ~ 1e-71 to the 7th is past f64.
+        let z = CFloatExp { re: FloatExp::from_f64(zr), im: FloatExp::from_f64(zi) };
+        let mut w = z;
+        for _ in 2..d {
+            w = w * z;
+        }
+        let a = CFloatExp { re: w.re.mul_f64(f64::from(d)), im: w.im.mul_f64(f64::from(d)) };
+        (a, z.abs().mul_f64(2.0 * eps / f64::from(d - 1)))
+    };
     // Aux aggregate for this node's single landing iterate Z_{n+1} (the shader accumulates the
     // POST-step value). TIA's `prev` is |Z_n|; node 0 lands on the global first iterate z_1,
     // whose TIA is skipped by the `n>=1` guard, so its TIA seed is 0.
@@ -1054,7 +1101,13 @@ pub fn build_bla_mandel(
     eps: f64,
     aux: AuxAggParams,
 ) -> Vec<Vec<BlaNode>> {
-    build_bla_mandel_impl(orbit, dc_max, eps, aux, BLA_PAR_THRESHOLD)
+    build_bla_mandel_impl(orbit, dc_max, eps, aux, BLA_PAR_THRESHOLD, 2)
+}
+
+/// [`build_bla_mandel`] for the `z^d + c` family of degree `d` (2..=8: Mandelbrot, Multibrot 3–8).
+/// Only level 0 knows the degree (its A and radius); merging is the same composition for every d.
+pub fn build_bla(orbit: &[[f32; 4]], dc_max: FloatExp, eps: f64, aux: AuxAggParams, d: u32) -> Vec<Vec<BlaNode>> {
+    build_bla_mandel_impl(orbit, dc_max, eps, aux, BLA_PAR_THRESHOLD, d)
 }
 
 /// The body of [`build_bla_mandel`], with the parallel-fill threshold exposed so a test can force
@@ -1065,6 +1118,7 @@ fn build_bla_mandel_impl(
     eps: f64,
     aux: AuxAggParams,
     par_threshold: usize,
+    d: u32,
 ) -> Vec<Vec<BlaNode>> {
     let nstep = orbit.len().saturating_sub(1);
     if nstep == 0 {
@@ -1084,7 +1138,7 @@ fn build_bla_mandel_impl(
     // Level 0 — every node is an independent pure function of the orbit + aux, so build them in
     // parallel over scoped threads (byte-identical to the serial loop; see `par_fill`).
     let mut lvl0 = vec![placeholder; nstep];
-    par_fill(&mut lvl0, par_threshold, |n| bla_level0_node(n, orbit, eps, aux, one));
+    par_fill(&mut lvl0, par_threshold, |n| bla_level0_node(n, orbit, eps, aux, one, d));
     let mut levels = vec![lvl0];
     // Each higher level merges disjoint adjacent pairs of the level below — `next[k]` depends only
     // on `prev[2k]` and `prev[2k+1]`, so a level is also independent per output index. Levels stay
@@ -1251,6 +1305,20 @@ pub fn bla_iterate(
     bailout2: f64,
     max_iter: u32,
 ) -> Option<f64> {
+    bla_iterate_power(orbit, levels, dc, bailout2, max_iter, 2)
+}
+
+/// [`bla_iterate`] for `z^d + c`: the same traversal; the full step is the binomial
+/// `Σₖ C(d,k)·Z^(d−k)·δz^k + δc` (d = 2: [`bla_iterate`]'s `2Zδz + δz² + δc`, unchanged), and the
+/// smooth count's log base is d.
+pub fn bla_iterate_power(
+    orbit: &[[f32; 4]],
+    levels: &[Vec<BlaNode>],
+    dc: (f64, f64),
+    bailout2: f64,
+    max_iter: u32,
+    d: u32,
+) -> Option<f64> {
     let dc_c = CFloatExp { re: FloatExp::from_f64(dc.0), im: FloatExp::from_f64(dc.1) };
     let mut dz = CFloatExp { re: FloatExp::ZERO, im: FloatExp::ZERO };
     let mut m: u32 = 0;
@@ -1288,17 +1356,38 @@ pub fn bla_iterate(
         }
         // Full perturbation step at Zₘ: δz' = 2Zδz + δz² + δc (exact — used near the escape).
         let z = orbit[m as usize];
-        let two_z = CFloatExp {
-            re: FloatExp::from_f64(2.0 * (z[0] as f64 + z[2] as f64)),
-            im: FloatExp::from_f64(2.0 * (z[1] as f64 + z[3] as f64)),
-        };
-        dz = two_z * dz + dz * dz + dc_c;
+        if d == 2 {
+            let two_z = CFloatExp {
+                re: FloatExp::from_f64(2.0 * (z[0] as f64 + z[2] as f64)),
+                im: FloatExp::from_f64(2.0 * (z[1] as f64 + z[3] as f64)),
+            };
+            dz = two_z * dz + dz * dz + dc_c;
+        } else {
+            // Σₖ C(d,k)·Z^(d−k)·δz^k, k = 1..d, by Horner in δz: ((C(d,d)·δz + C(d,d−1)·Z)·δz + …)
+            let zc = CFloatExp {
+                re: FloatExp::from_f64(z[0] as f64 + z[2] as f64),
+                im: FloatExp::from_f64(z[1] as f64 + z[3] as f64),
+            };
+            let mut zpow = vec![CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO }];
+            for _ in 1..d {
+                let next = *zpow.last().unwrap() * zc;
+                zpow.push(next);
+            }
+            let mut acc = CFloatExp { re: FloatExp::ZERO, im: FloatExp::ZERO };
+            for k in (1..=d).rev() {
+                let c = binom(d as usize, k as usize);
+                let t = zpow[(d - k) as usize];
+                acc = acc * dz + CFloatExp { re: t.re.mul_f64(c), im: t.im.mul_f64(c) };
+            }
+            dz = acc * dz + dc_c;
+        }
         m += 1;
         let (zx, zy) = bla_full_z(orbit, m, &dz);
         let mag2 = zx * zx + zy * zy;
         if mag2 > bailout2 {
-            // Smooth escape count (power 2), matching the shader's formula.
-            let nu = (mag2.ln() * 0.5 / std::f64::consts::LN_2).ln() / std::f64::consts::LN_2;
+            // Smooth escape count, matching the shader's formula (log base d).
+            let ln_d = if d == 2 { std::f64::consts::LN_2 } else { f64::from(d).ln() };
+            let nu = (mag2.ln() * 0.5 / std::f64::consts::LN_2).ln() / ln_d;
             return Some(m as f64 + 1.0 - nu);
         }
     }
@@ -1445,7 +1534,7 @@ fn orbit_length_gen<B: RefBackend>(
             s.push(CFloatExp { re: zx.to_floatexp(), im: zy.to_floatexp() });
         }
         let (xv, yv) = (zx.to_f64_trunc(), zy.to_f64_trunc());
-        if xv * xv + yv * yv > 1.0e12 {
+        if xv * xv + yv * yv > ref_escape2(formula) {
             break;
         }
     }
@@ -1485,15 +1574,13 @@ fn orbit_length_bf_recorded(
     (n, samples)
 }
 
-/// Binomial rows for the `z^k + c` δ-step, `k = 2..=5` (`BINOM[k][j]` = C(k, j)).
-const BINOM: [[f64; 6]; 6] = [
-    [0., 0., 0., 0., 0., 0.],
-    [0., 0., 0., 0., 0., 0.],
-    [1., 2., 1., 0., 0., 0.],
-    [1., 3., 3., 1., 0., 0.],
-    [1., 4., 6., 4., 1., 0.],
-    [1., 5., 10., 10., 5., 1.],
-];
+/// The highest power the δ-step scorer takes (the Multibrot powers run to 8).
+const SCORE_POWER_MAX: usize = 8;
+
+/// `C(k, j)` for the `z^k + c` δ-step, `k ≤` [`SCORE_POWER_MAX`]: small integers, exact in `f64`.
+fn binom(k: usize, j: usize) -> f64 {
+    (0..j).fold(1.0, |acc, i| acc * (k - i) as f64 / (i + 1) as f64)
+}
 
 /// How many steps past its FIRST REBASE a perturbation-scored candidate may keep walking
 /// before its score is DISTRUSTED and the candidate falls back to a full bignum walk. In
@@ -1548,7 +1635,8 @@ fn perturb_orbit_length(
     rebases: &mut u32,
 ) -> Option<u32> {
     let k = power as usize;
-    debug_assert!((2..=5).contains(&k), "δ-step table covers z^2..z^5");
+    debug_assert!((2..=SCORE_POWER_MAX).contains(&k), "δ-step covers z^2..z^8");
+    let escape2 = ref_escape2_of_degree(f64::from(power));
     let last = orbit.len() - 1; // index of the reference's final (escaping or capped) sample
     debug_assert!(last >= 1, "a phase-1 survivor's orbit has at least one step");
     let one = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
@@ -1564,14 +1652,14 @@ fn perturb_orbit_length(
         }
         // δ-step at Zₘ: (Z+δ)^k − Z^k + δc = Σ_{j=1..k} C(k,j)·Z^{k−j}·δ^j + δc.
         let z = orbit[m];
-        let mut zp = [one; 5]; // Z^0 .. Z^{k−1}
+        let mut zp = [one; SCORE_POWER_MAX]; // Z^0 .. Z^{k−1}
         for j in 1..k {
             zp[j] = zp[j - 1] * z;
         }
         let mut acc = CFloatExp::ZERO;
         let mut dpow = dz; // δ^j
         for j in 1..=k {
-            acc = acc + (zp[k - j] * dpow).mul_f64(BINOM[k][j]);
+            acc = acc + (zp[k - j] * dpow).mul_f64(binom(k, j));
             if j < k {
                 dpow = dpow * dz;
             }
@@ -1581,7 +1669,7 @@ fn perturb_orbit_length(
         n += 1;
         let zf = orbit[m] + dz;
         let (xf, yf) = (zf.re.to_f64(), zf.im.to_f64());
-        if xf * xf + yf * yf > 1.0e12 {
+        if xf * xf + yf * yf > escape2 {
             return Some(n);
         }
         let z2 = zf.re * zf.re + zf.im * zf.im;
@@ -2295,8 +2383,7 @@ pub fn naive_dwell_bf(
 /// `Z₀ = 0`, `c` = the point). It is the point's OWN orbit in arbitrary precision
 /// ([`reference_orbit`]), scanned for the first sample past `bailout2` — no perturbation, no
 /// rebasing, no BLA, so it can judge a perturbation render of any family. The smooth count takes
-/// the formula's degree as its log base, as the shader's `power_f` does (Multibrot 3/4/5 = 3/4/5,
-/// every other family 2).
+/// the formula's degree as its log base, as the shader's `power_f` does ([`formula::power`]).
 pub fn formula_dwell(
     cx: &BigFloat,
     cy: &BigFloat,
@@ -2307,12 +2394,7 @@ pub fn formula_dwell(
 ) -> Option<(u32, f32)> {
     let zero = bf(0.0, p);
     let (orbit, len) = reference_orbit(&zero, &zero, cx, cy, formula, max, p);
-    let power: f64 = match formula {
-        1 => 3.0,
-        2 => 4.0,
-        3 => 5.0,
-        _ => 2.0,
-    };
+    let power = f64::from(formula::power(formula));
     for (n, s) in orbit.iter().enumerate().take(len as usize).skip(1) {
         let (x, y) = sample_xy(s);
         let m2 = x * x + y * y;
@@ -2344,6 +2426,7 @@ fn formula_power(formula: u32) -> Option<u32> {
         formula::MULTIBROT3 => Some(3),
         formula::MULTIBROT4 => Some(4),
         formula::MULTIBROT5 => Some(5),
+        formula::MULTIBROT6 | formula::MULTIBROT7 | formula::MULTIBROT8 => Some(formula::power(formula)),
         _ => None,
     }
 }
@@ -3534,6 +3617,10 @@ pub fn render_multiref_mandel(
 // (vs exact per-iteration accumulation), so we know BEFORE any GPU work whether the aux coloring
 // stats can safely ride BLA/SA iteration-skipping. Trap is the canary: a min over ~the same values,
 // so its error must be tiny; a large trap error means the ORACLE is buggy, not the method.
+// The fold families' 2×2 BLA (design/power-families.md, phase 4).
+mod bla_fold;
+pub use bla_fold::*;
+
 #[cfg(test)]
 mod pick_deep_scoring;
 

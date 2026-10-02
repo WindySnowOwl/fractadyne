@@ -72,6 +72,67 @@ enum Screen {
     PaletteEditorRing,
     /// The colour picker popup, which no walk can reach by clicking.
     ColorPicker,
+    /// The Custom formula dialog with a formula APPLIED — the dialog, its parameter row and depth
+    /// note, and the custom formula rendering behind it.
+    Formula,
+    /// The same dialog holding a formula with a syntax error: the positioned message, Apply off.
+    FormulaError,
+    /// The dialog's keypad on its functions tab (the `123` tab shows on the Formula screen).
+    FormulaFunctions,
+    /// Apply a formula no earlier step compiled, through the dialog's path: its pipelines compile
+    /// off the render thread while the view keeps rendering, then the view switches. Checked: it
+    /// switched to exactly that formula, and no frame of the step took anywhere near the ~0.8 s the
+    /// compile costs on the render thread.
+    FormulaApplyAsync,
+    /// The formula field's parentheses: three depths, one inside a comment (dimmed, not counted), one
+    /// unmatched (error colour), and the pair at the cursor highlighted.
+    FormulaParens,
+    /// The formula field completing a name: `co` typed at the end, its list open.
+    FormulaComplete,
+    /// The textbook layout's type specimen: one formula per construct, in Fractadyne Math.
+    TextbookSpecimen,
+    /// A Life universe edited with the Draw tool through egui's own input: a drag draws a line of
+    /// cells, a click on its first cell flips it back. Synthetic pointer events, fed into the app's
+    /// own input (`raw_input_hook`) — nothing reaches the desktop. The toolbar's Life group, the
+    /// grid lines and the outlined cell under the pointer are in the screenshot.
+    LifeDraw,
+    /// The Custom formula dialog in Textbook view: several statements aligned at `=`, a comment, a
+    /// fraction, functions in their notation, and a line that does not read.
+    FormulaTextbook,
+    /// Textbook editing: an exponent just typed on a parenthesised denominator, its empty box
+    /// holding the caret; `p1` before it typeset as 𝑝₁ again now the caret has left it.
+    FormulaTextbookCaret,
+    /// Textbook editing: a fraction selected (Shift+←), the selection behind it, and the name being
+    /// typed (`pix`) shown as typed.
+    FormulaTextbookSelect,
+    /// Textbook editing: `co` typed after `t*`, the completion list open under the caret.
+    FormulaTextbookComplete,
+    /// A formula written with `ln` and `cot`: the syntax check names `log`, and a button offers to
+    /// rewrite both.
+    FormulaRespell,
+    /// The formula library with the formula dialog in Textbook mode: its rows typeset, one that
+    /// does not read as text.
+    FormulaLibraryTypeset,
+    /// The formula library's Collection tab: the formulas that come with the app, by category.
+    FormulaCollection,
+    /// A collection formula applied at its starting view (the Celtic Julia set): rendered on the
+    /// GPU where the collection's CPU gate judged it.
+    FormulaCollectionApplied,
+    /// A Fractint classic with sections applied at its view (Magnet I: its own bailout test,
+    /// escape or the fixed point 1), on the GPU's init and bailout slots.
+    FormulaClassicApplied,
+    /// The library after a `.frm` import: each entry's note of what the reading changed, and past
+    /// the row cap, how many more the filter finds.
+    FormulaLibraryFrm,
+    /// The same list filtered.
+    FormulaLibraryFiltered,
+    /// The toolbar's family dropdown open, Burning Ship 4 showing: the power families one family to
+    /// a row ("Burning Ship  3 4 5"), the showing family's label strong and its power selected.
+    FractalDropdown,
+    /// The formula library window, seeded in memory: a parameterized formula SHOWING (its row
+    /// marked), a two-statement one, one that does not read in this version (its reason in red), and
+    /// a name long enough to need truncating.
+    FormulaLibrary,
     /// Dual view on one formula, then the SAME dual view on another — checklist steps 45-46, and
     /// the field report behind them: switching formula while dual left the parameter pane showing
     /// the previous formula. The pair is the check; neither screen means anything alone.
@@ -184,6 +245,9 @@ struct StepResult {
     /// one before it. Whole-frame statistics are too coarse for that: two different fractals can
     /// share a mean and a spread, and the panel chrome dominates either way.
     left_fp: Vec<u8>,
+    /// The same over the middle band (45–75% across), which the formula dialog — docked left —
+    /// does not cover, so two formula steps can be told apart by their pictures.
+    mid_fp: Vec<u8>,
     /// Whether view 0 held a tiled settle grid when this step was captured.
     ///
     /// ⭐Recorded so a check whose PRECONDITION is "a grid completed" can assert it rather than
@@ -196,7 +260,11 @@ struct StepResult {
 /// status bar. That region is the dual view's PARAMETER pane — the half the field report was
 /// about — and cropping to it keeps the Julia pane and the chrome out of the comparison.
 fn left_pane_fingerprint(px: &[egui::Color32], w: usize, h: usize) -> Vec<u8> {
-    let (x0, x1) = (w / 40, (w * 45) / 100);
+    band_fingerprint(px, w, h, w / 40, (w * 45) / 100)
+}
+
+/// The same thumbnail over the columns `x0..x1`.
+fn band_fingerprint(px: &[egui::Color32], w: usize, h: usize, x0: usize, x1: usize) -> Vec<u8> {
     let (y0, y1) = (h / 8, (h * 7) / 8);
     if x1 <= x0 + 16 || y1 <= y0 + 16 {
         return Vec::new();
@@ -278,6 +346,10 @@ pub(crate) struct UiTest {
     crashes_at_start: Vec<String>,
     /// Control-panel width measured during the toggle step's OPEN phase (`None` until then).
     panel_w: Option<f32>,
+    /// The longest gap between two harness ticks (= frames) in the current step, and the last
+    /// tick — a frozen frame shows here whatever froze it.
+    max_gap_ms: f64,
+    last_tick: Instant,
     /// Whether the session BEFORE this one left its unclean-exit marker armed — i.e. it did not
     /// shut down through `crate::exit`. Read at construction, because reporting clears the marker.
     prev_unclean: bool,
@@ -335,6 +407,8 @@ impl UiTest {
             quiet_since: Instant::now(),
             crashes_at_start: crate::diag::crash_report_names(),
             panel_w: None,
+            max_gap_ms: 0.0,
+            last_tick: Instant::now(),
             prev_unclean: crate::diag::previous_session_unclean(),
             prev_walk_clean: {
                 // Read the previous walk's verdict, then claim the marker for this one.
@@ -681,6 +755,27 @@ fn build_steps() -> Vec<Step> {
         screen("palette-editor", Screen::PaletteEditor),
         screen("palette-editor-ring", Screen::PaletteEditorRing),
         screen("color-picker", Screen::ColorPicker),
+        screen("formula", Screen::Formula),
+        screen("formula-error", Screen::FormulaError),
+        screen("formula-functions", Screen::FormulaFunctions),
+        screen("formula-apply-async", Screen::FormulaApplyAsync),
+        screen("formula-parens", Screen::FormulaParens),
+        screen("formula-complete", Screen::FormulaComplete),
+        screen("textbook-specimen", Screen::TextbookSpecimen),
+        screen("formula-textbook", Screen::FormulaTextbook),
+        screen("formula-textbook-caret", Screen::FormulaTextbookCaret),
+        screen("formula-textbook-select", Screen::FormulaTextbookSelect),
+        screen("formula-textbook-complete", Screen::FormulaTextbookComplete),
+        screen("formula-respell", Screen::FormulaRespell),
+        screen("formula-library", Screen::FormulaLibrary),
+        screen("formula-library-typeset", Screen::FormulaLibraryTypeset),
+        screen("formula-collection", Screen::FormulaCollection),
+        screen("formula-collection-applied", Screen::FormulaCollectionApplied),
+        screen("formula-classic-applied", Screen::FormulaClassicApplied),
+        screen("formula-library-frm", Screen::FormulaLibraryFrm),
+        screen("formula-library-filtered", Screen::FormulaLibraryFiltered),
+        screen("fractal-dropdown", Screen::FractalDropdown),
+        screen("life-draw", Screen::LifeDraw),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
         live("live-direct-1e2", 2.0),
         live("live-df32-1e6", 6.0),
@@ -790,10 +885,14 @@ impl FractadyneApp {
                 ut.ref_changed_at = ut.step_start;
                 ut.quiet_since = ut.step_start;
                 ut.panel_w = None;
+                ut.max_gap_ms = 0.0;
+                ut.last_tick = ut.step_start;
                 ut.phase = Phase::Settle;
             }
             Phase::Settle => {
                 let now = Instant::now();
+                ut.max_gap_ms = ut.max_gap_ms.max(now.duration_since(ut.last_tick).as_secs_f64() * 1000.0);
+                ut.last_tick = now;
                 // Track the status-bar height range, but ONLY after a transition guard: a window
                 // resize legitimately changes the height for a frame or two while winit applies the
                 // new size, and that must not count as a waver. Past the guard, the width is fixed,
@@ -884,7 +983,9 @@ impl FractadyneApp {
                     || !ramp_done(0)
                     || (self.dual && !ramp_done(1))
                     || !self.misi_gallery_ready()
-                    || self.misi_jump_busy();
+                    || self.misi_jump_busy()
+                    || self.formula_dialog.pending.is_some()
+                    || !self.harness.uitest_pointer.is_empty();
                 if busy {
                     ut.quiet_since = now;
                 }
@@ -945,6 +1046,13 @@ impl FractadyneApp {
 
     /// Put the app into the state a step wants to capture.
     fn uitest_apply(&mut self, ctx: &egui::Context, step: &Step) {
+        // ⚠A POPUP IS NOT A WINDOW: `uitest_close_all` shuts the app's windows, but egui keeps a
+        // combo box's popup open on its own, and the fractal-dropdown step's stayed open over every
+        // step after it — the five live bands included. Its chrome is what let the 1e30 band's
+        // black, iteration-capped frame grade "not blank" (stddev 20.6 from the menu, 0.0 without
+        // it; the same flat frame graded WARN in every bundle where the popup had closed, back to
+        // 2026-09-08). Close it here, so each screenshot shows one thing.
+        ctx.memory_mut(|m| m.close_popup());
         self.uitest_close_all();
         match &step.kind {
             StepKind::Screen(s) => self.uitest_open_screen(ctx, *s),
@@ -1031,6 +1139,28 @@ impl FractadyneApp {
         // The Reference cache screen turns the (task-invocation-disabled) orbit cache on against a
         // scratch store; no later step may render from it, so it goes back off with the window.
         crate::refcache_persist::set_enabled(false);
+        // The Formula screen SHOWS a custom formula; the steps after it assert Mandelbrot's render
+        // modes, which a custom formula (direct only) would fail. Leave it with the window.
+        self.formula_dialog.open = false;
+        self.formula_dialog.tab = Default::default();
+        self.formula_dialog.completion = Default::default();
+        self.formula_dialog.specimen = false;
+        self.formula_dialog.textbook = false;
+        self.formula_dialog.editor = Default::default();
+        self.formula_library = Default::default();
+        // So does a power family (the dropdown screen shows Burning Ship 4): the live steps render
+        // Mandelbrot's deep point and read a flat frame as a failure (measured: both df32 bands).
+        // …and so does a Life universe (the life-draw screen).
+        if self.fractal == crate::FractalKind::Custom
+            || self.fractal.power_family().is_some()
+            || self.fractal == crate::FractalKind::Life
+        {
+            // A collection formula may have been shown as a Julia set, at its own view.
+            self.julia_mode = false;
+            self.set_fractal(crate::FractalKind::Mandelbrot);
+        }
+        self.life.tool = crate::life_view::LifeTool::Pan;
+        self.harness.uitest_pointer.clear();
     }
 
     fn uitest_open_screen(&mut self, ctx: &egui::Context, s: Screen) {
@@ -1319,6 +1449,225 @@ impl FractadyneApp {
                     m.open_popup(egui::Id::new("stop_color").with("popup"));
                 });
             }
+            Screen::Formula => {
+                // Applied the direct way (as a session, a view file or `--formula` does), with a
+                // per-run nonce as `formula-apply-async` has, so its pipelines compile COLD on
+                // every run: with the driver's own shader cache warm this step compiled in ~20 ms,
+                // and only the first run of a build showed the 1.6 s compile the live stall guards
+                // then read as a GPU pass in the lethal band (`Perf::ui_compile_ms`).
+                let nonce = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.subsec_nanos() % 1_000_000) as f64
+                    * 1.0e-12;
+                let src = "z = z^3 - p1*z + c";
+                self.open_formula_dialog();
+                self.formula_dialog.source = src.into();
+                self.formula_dialog.params[0] = ("0.5".into(), "0".into());
+                match crate::custom_formula::CustomFormula::compile(src, &[(0.5 + nonce, 0.0)]) {
+                    Ok(c) => self.apply_custom_formula(c),
+                    Err(e) => self.formula_dialog.error = Some(e),
+                }
+            }
+            Screen::FormulaError => {
+                self.open_formula_dialog();
+                self.formula_dialog.source = "z = z^3 - p1*z +\nfn1(z)".into();
+            }
+            Screen::FormulaFunctions => {
+                self.open_formula_dialog();
+                self.formula_dialog.source = "z = sin(z) + cos(z)*cos(z) + c".into();
+                self.formula_dialog.tab = crate::ui::formula_keypad::Tab::Functions;
+            }
+            Screen::FormulaApplyAsync => {
+                // A parameter no step and NO EARLIER RUN used, so this module has never been
+                // compiled: the driver keeps its own on-disk shader cache, and with a fixed
+                // parameter a second walk recompiled the module in ~20 ms — measured when a
+                // planted render-thread compile passed the freeze check below. A per-run nonce
+                // (sub-1e-6, invisible) changes the baked literal, hence the module.
+                let nonce = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.subsec_nanos() % 1_000_000) as f64
+                    * 1.0e-12;
+                let (src, p) = ("z = z^4 - p1*z + c", [(0.3125 + nonce, -0.0625)]);
+                self.open_formula_dialog();
+                self.formula_dialog.source = src.into();
+                self.formula_dialog.params[0] = (p[0].0.to_string(), p[0].1.to_string());
+                match crate::custom_formula::CustomFormula::compile(src, &p) {
+                    Ok(c) => {
+                        self.harness.uitest_async_key = Some(c.shader.key);
+                        self.apply_custom_formula_async(c, None);
+                    }
+                    Err(e) => self.formula_dialog.error = Some(e),
+                }
+            }
+            Screen::FormulaParens | Screen::FormulaComplete => {
+                let parens = matches!(s, Screen::FormulaParens);
+                let src = if parens {
+                    "t = sqr((z + p1)*(z - c)) ; a (comment)\nz = flip(abs(t)) + (c"
+                } else {
+                    "t = sqr(z)\nz = t*co"
+                };
+                self.open_formula_dialog();
+                self.formula_dialog.source = src.into();
+                // The cursor just past `sqr(…)`'s closing parenthesis, or at the end after `co`.
+                let at = if parens { src.find("))").map_or(0, |i| i + 2) } else { src.chars().count() };
+                let id = egui::Id::new("formula_source");
+                crate::ui::formula_editor::store_cursor(ctx, id, at);
+                ctx.memory_mut(|m| m.request_focus(id));
+            }
+            Screen::TextbookSpecimen => self.formula_dialog.specimen = true,
+            Screen::FormulaTextbook => {
+                self.open_formula_dialog();
+                self.formula_dialog.source = "; a hybrid, typeset\nt = sqr(z), w = (t - p1*conj(t))/(t^2 + 1)\n\
+                     z = w + sqrt(|t| + cabs(z)) - exp(-z/2) + (0.25, -0.1)*c\nz = z + ("
+                    .into();
+                self.formula_dialog.textbook = true;
+            }
+            Screen::FormulaTextbookCaret | Screen::FormulaTextbookSelect => {
+                use crate::ui::textbook::edit::{Dir, Editor};
+                self.open_formula_dialog();
+                let src = "t = sqr(z) ; square\nz = t + c";
+                let mut ed = Editor::new(src);
+                ed.place_at(src.len());
+                if matches!(s, Screen::FormulaTextbookCaret) {
+                    // c/(1 + p1), out of the parentheses, then ^: the caret in the empty exponent.
+                    for ch in "/(1+p1".chars() {
+                        ed.type_char(ch);
+                    }
+                    ed.step(Dir::Right, false);
+                    ed.type_char('^');
+                } else {
+                    for ch in "/(1+p1".chars() {
+                        ed.type_char(ch);
+                    }
+                    ed.step(Dir::Right, false);
+                    ed.step(Dir::Right, false);
+                    for ch in "+pix".chars() {
+                        ed.type_char(ch);
+                    }
+                    // Back over `pix` and the `+`, then the fraction whole.
+                    for _ in 0..5 {
+                        ed.step(Dir::Left, true);
+                    }
+                }
+                self.formula_dialog.source = ed.synced.clone();
+                self.formula_dialog.editor = ed;
+                self.formula_dialog.textbook = true;
+                ctx.memory_mut(|m| m.request_focus(egui::Id::new("formula_textbook")));
+            }
+            Screen::FormulaTextbookComplete => {
+                self.open_formula_dialog();
+                let src = "t = sqr(z)\nz = t*co";
+                let mut ed = crate::ui::textbook::edit::Editor::new(src);
+                ed.place_at(src.len());
+                self.formula_dialog.source = ed.synced.clone();
+                self.formula_dialog.editor = ed;
+                self.formula_dialog.textbook = true;
+                ctx.memory_mut(|m| m.request_focus(egui::Id::new("formula_textbook")));
+            }
+            Screen::FormulaCollection => {
+                self.saved_formulas = Vec::new();
+                self.formula_library.shelf = Some(crate::ui::formula_library::Shelf::Collection);
+                self.formula_library.open = true;
+            }
+            Screen::FormulaLibraryFrm | Screen::FormulaLibraryFiltered => {
+                // A `.frm` file of our own, imported as Import does, then 150 more entries: past the
+                // row cap. In memory only: nothing is saved.
+                let frm = b"; a sample, written for this screen\n\
+                    Mandel (XAXIS) { z = 0: z = sqr(z) + pixel, |z| <= 4 }\n\
+                    Trig { z = pixel: z = fn1(z)*fn2(z) + pixel, |z| < 64 }\n\
+                    Newt { z = pixel: f1 = z^3 - 1, z = z - f1/(3*z^2 - f3*f1), |f1| > 1e-10 }\n\
+                    Screen { z = pixel: z = z*z + whitesq, |z| <= 4 }\n";
+                let got = crate::formula_library::from_frm(frm, "sample.frm");
+                self.saved_formulas = Vec::new();
+                crate::formula_library::merge(&mut self.saved_formulas, got.formulas.clone());
+                let many: Vec<_> = (1..=150)
+                    .map(|k| crate::formula_library::SavedFormula {
+                        name: format!("Power {k:03}"),
+                        source: format!("z = z^{} + c", k + 1),
+                        ..Default::default()
+                    })
+                    .collect();
+                crate::formula_library::merge(&mut self.saved_formulas, many);
+                self.pending_toast = got.sentence();
+                self.formula_dialog.textbook = false;
+                self.formula_library.shelf = Some(crate::ui::formula_library::Shelf::Mine);
+                if matches!(s, Screen::FormulaLibraryFiltered) {
+                    self.formula_library.set_filter("power 12");
+                }
+                self.formula_library.open = true;
+            }
+            Screen::FractalDropdown => {
+                self.set_fractal(crate::FractalKind::BurningShip4);
+                self.dialogs.open_fractal_dropdown = true;
+            }
+            Screen::LifeDraw => {
+                // The gun at generation 0, 12 px a cell, the Draw tool on, the panel open.
+                self.life_open_library("Gosper glider gun");
+                self.life.tool = crate::life_view::LifeTool::Draw;
+                self.dialogs.right_panel_open = true;
+                self.viewport.reset_to(14.5, 3.5);
+                self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0 / 12.0);
+                // A drag from cell (2, −6) to (6, −6), then a click on (2, −6). One event a frame.
+                // Then it leaves: every later step was written for a harness with no pointer.
+                use crate::UiPointer::{Gone, Move, Press, Release};
+                self.harness.uitest_pointer =
+                    [Move(2, -6), Press(2, -6), Move(4, -6), Move(6, -6), Release(6, -6), Move(2, -6), Press(2, -6), Release(2, -6), Gone]
+                        .into_iter()
+                        .collect();
+            }
+            Screen::FormulaClassicApplied => {
+                let e = crate::formula_library::collection().iter().find(|e| e.name == "Magnet I").cloned();
+                match e.map(|e| (crate::custom_formula::CustomFormula::compile(&e.source, &[]), e.view)) {
+                    Some((Ok(c), Some(view))) => {
+                        self.apply_custom_formula(c);
+                        self.apply_start_view(&view);
+                    }
+                    other => self.pending_toast = Some(format!("formula-classic-applied: {:?}", other.map(|o| o.0.err()))),
+                }
+            }
+            Screen::FormulaCollectionApplied => {
+                // At once, not off the render thread as Apply does: the step's settle then waits on
+                // the render as for any view.
+                let e = crate::formula_library::collection().iter().find(|e| e.name == "Celtic Julia").cloned();
+                match e.map(|e| (crate::custom_formula::CustomFormula::compile(&e.source, &[]), e.view)) {
+                    Some((Ok(c), Some(view))) => {
+                        self.apply_custom_formula(c);
+                        self.apply_start_view(&view);
+                    }
+                    other => self.pending_toast = Some(format!("formula-collection-applied: {:?}", other.map(|o| o.0.err()))),
+                }
+            }
+            Screen::FormulaRespell => {
+                self.open_formula_dialog();
+                self.formula_dialog.source = "; ln as a textbook writes it\nz = ln(z^2 + c) + cot(z)*p1".into();
+            }
+            Screen::FormulaLibrary | Screen::FormulaLibraryTypeset => {
+                self.formula_dialog.textbook = matches!(s, Screen::FormulaLibraryTypeset);
+                // In memory only, as the gradient screen seeds its library: nothing is saved.
+                let entry = |name: &str, source: &str, params: &[(&str, &str)]| crate::formula_library::SavedFormula {
+                    name: name.into(),
+                    source: source.into(),
+                    params: params.iter().map(|(re, im)| [re.to_string(), im.to_string()]).collect(),
+                    ..Default::default()
+                };
+                self.saved_formulas = vec![
+                    entry("Cubic with a parameter", "z = z^3 - p1*z + c", &[("0.5", "0")]),
+                    entry("From a newer build", "z = z^2 + fn9(z) + c", &[]),
+                    entry("Hybrid square", "t = sqr(z)\nz = t + p1*conj(t) + c ; hybrid", &[("0.25", "-0.125")]),
+                    entry(
+                        "Perpendicular Burning Ship, the variant with the flipped imaginary part and a long name",
+                        "z = (real(z) - flip(abs(imag(z))))^2 + c",
+                        &[],
+                    ),
+                    entry("Sine", "z = sin(z) + c", &[]),
+                ];
+                crate::formula_library::sort(&mut self.saved_formulas);
+                match crate::custom_formula::CustomFormula::compile("z = z^3 - p1*z + c", &[(0.5, 0.0)]) {
+                    Ok(c) => self.apply_custom_formula(c),
+                    Err(e) => self.formula_dialog.error = Some(e),
+                }
+                self.formula_library.open = true;
+            }
         }
     }
 
@@ -1371,6 +1720,7 @@ impl FractadyneApp {
         // Content-region stats: the central 60%, so menu/status chrome doesn't mask a blank view.
         let (mean_luma, luma_stddev, buckets) = centre_stats(&image.pixels, w as usize, h as usize);
         let left_fp = left_pane_fingerprint(&image.pixels, w as usize, h as usize);
+        let mid_fp = band_fingerprint(&image.pixels, w as usize, h as usize, (w as usize * 45) / 100, (w as usize * 75) / 100);
         let tiled = self.tile_state_present(0);
 
         let is_live = matches!(step.kind, StepKind::Live(_));
@@ -1390,6 +1740,65 @@ impl FractadyneApp {
             });
         } else {
             checks.push(pass("frame not blank", format!("stddev {luma_stddev:.1}, {buckets} buckets")));
+        }
+
+        if matches!(step.kind, StepKind::Screen(Screen::LifeDraw)) {
+            // The two strokes, through egui's real input path: a drag drew cells 2–6 of row −6
+            // (empty space above the gun), and a click on cell 2 — the press seen once, however
+            // many layout passes saw it — flipped it back. The gun itself is untouched.
+            let u = &self.life.loaded;
+            let row: Vec<u8> = (1..=7).map(|x| u.get(x, -6)).collect();
+            let ok = row == [0, 0, 1, 1, 1, 1, 0] && u.population() == 36 + 4 && u.generation() == 0 && !self.life.playing;
+            checks.push(Check {
+                name: "drawing edits the cells under the pointer".into(),
+                verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+                detail: format!(
+                    "row −6, cells 1–7: {row:?} (want [0, 0, 1, 1, 1, 1, 0]); population {} (want 40); generation {}, playing {}; {} pointer events left",
+                    u.population(),
+                    u.generation(),
+                    self.life.playing,
+                    self.harness.uitest_pointer.len()
+                ),
+            });
+        }
+
+        if matches!(step.kind, StepKind::Screen(Screen::FormulaApplyAsync)) {
+            // The formula took — exactly the one applied, the compile no longer pending.
+            let want = self.harness.uitest_async_key;
+            let got = self.custom.as_ref().map(|c| c.shader.key);
+            let switched = self.fractal == crate::FractalKind::Custom
+                && want.is_some()
+                && got == want
+                && self.formula_dialog.pending.is_none();
+            checks.push(Check {
+                name: "formula applied after an off-thread compile".into(),
+                verdict: if switched { Verdict::Pass } else { Verdict::Fail },
+                detail: format!("want key {want:x?}, showing {got:x?} ({:?}), pending {}", self.fractal, self.formula_dialog.pending.is_some()),
+            });
+            // ~0.8 s is what the compile costs on the render thread (design/custom-formulas.md §5.1);
+            // a frame anywhere near it means the window froze for it.
+            let gap = ut.max_gap_ms;
+            checks.push(Check {
+                name: "no frame froze for the compile".into(),
+                verdict: if gap < 300.0 { Verdict::Pass } else { Verdict::Fail },
+                detail: format!("longest frame gap {gap:.0} ms (a render-thread compile is ~800)"),
+            });
+            // ⭐And the PICTURE is the new formula's. The two checks above passed on a frame that
+            // still showed the `formula` step's z³ − 0.5z + c: the chunk walk's signature did not
+            // cover the formula, so at the same home view the finished walk of the earlier formula
+            // was resumed, not redone. Compared on the band right of the dialog, which covers the
+            // left side of both screenshots. Measured: 0.0 for the stale frame (the same texture),
+            // 5.4 for z⁴ − 0.3125z + c against it.
+            let earlier = ut.results.iter().rev().find(|r| r.name == "formula");
+            let d = earlier.map_or(255.0, |r| fp_distance(&r.mid_fp, &mid_fp));
+            checks.push(Check {
+                name: "the view shows the new formula".into(),
+                verdict: if earlier.is_some() && d > 1.5 { Verdict::Pass } else { Verdict::Fail },
+                detail: format!(
+                    "picture differs from the z³ step's by {d:.1} (mean luma, middle band){}",
+                    if earlier.is_none() { " — no z³ step to compare" } else { "" }
+                ),
+            });
         }
 
         let mut mode = None;
@@ -1502,7 +1911,14 @@ impl FractadyneApp {
         // `period ` is the ambient minibrot-period slot: always drawn (transparent when no period
         // applies), so its RESERVED presence is itself the reflow invariant to assert — the harness
         // has no pointer or M-key, so it is exercised in exactly that empty-but-present state.
-        for want in ["center ", "cursor ", "zoom", "iter ", "period "] {
+        // A Life universe has its own three readouts in the zoom / iteration / period slots.
+        let life_bar = self.fractal == crate::FractalKind::Life;
+        let wants: &[&str] = if life_bar {
+            &["center ", "cursor ", "scale ", "gen ", "pop "]
+        } else {
+            &["center ", "cursor ", "zoom", "iter ", "period "]
+        };
+        for want in wants {
             if find(want).is_none() {
                 sb_problems.push(format!("no {want:?} readout"));
             }
@@ -1531,13 +1947,21 @@ impl FractadyneApp {
                 .collect();
             digits.parse().ok()
         };
-        match find("zoom").and_then(|t| num(t)) {
-            Some(z) if z > 0.0 => {}
-            other => sb_problems.push(format!("zoom does not read as a number: {other:?}")),
-        }
-        match find("iter ").and_then(|t| num(t)) {
-            Some(i) if i >= 1.0 => {}
-            other => sb_problems.push(format!("iteration count does not read as a number: {other:?}")),
+        if life_bar {
+            for want in ["gen ", "pop "] {
+                if find(want).and_then(|t| num(t)).is_none() {
+                    sb_problems.push(format!("{want:?} does not read as a number"));
+                }
+            }
+        } else {
+            match find("zoom").and_then(|t| num(t)) {
+                Some(z) if z > 0.0 => {}
+                other => sb_problems.push(format!("zoom does not read as a number: {other:?}")),
+            }
+            match find("iter ").and_then(|t| num(t)) {
+                Some(i) if i >= 1.0 => {}
+                other => sb_problems.push(format!("iteration count does not read as a number: {other:?}")),
+            }
         }
         if sb_problems.is_empty() {
             checks.push(pass("status-bar-populated", format!("{} readouts, all parse", texts.len())));
@@ -1843,6 +2267,7 @@ impl FractadyneApp {
             luma_stddev,
             buckets,
             left_fp,
+            mid_fp,
             tiled,
         }
     }
@@ -1920,6 +2345,7 @@ impl FractadyneApp {
             luma_stddev: 0.0,
             buckets: 0,
             left_fp: Vec::new(),
+            mid_fp: Vec::new(),
             tiled: false,
         }
     }
@@ -2059,6 +2485,7 @@ fn timeout_result(step: &Step) -> StepResult {
         luma_stddev: 0.0,
         buckets: 0,
         left_fp: Vec::new(),
+        mid_fp: Vec::new(),
         tiled: false,
     }
 }

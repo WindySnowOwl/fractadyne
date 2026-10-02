@@ -89,6 +89,7 @@ and fails if one is missing from this table.
 | `[fd-cache]` | always | The on-disk orbit cache: size at startup, evictions, clears |
 | `[fd-export]` | always | Tour export writes that waited on a slow destination |
 | `[fd-console]` | always | Console output switched on or off from the Diagnostics window |
+| `[fd-formula]` | always | A custom formula applied — its source, parameters, precision tier and the dispatch ceiling's cost-factor estimate — or a switch to Custom refused because none has been applied |
 | `[fd-perf]` | always | Per-export GPU iterate/colour ms and event counters (every export path since beta.149, the normalized and glitch-corrected ones included), `tiles=`/`passes=` (beta.150); `file-write:` the CLI render's PNG/EXR encode + write ms and bytes |
 | `[fd-progress]` | always (CLI) | CLI render progress, ~2 s cadence (`[progress]` in the log file) |
 | `[fd-autodive]` `[fd-motiontest]` `[fd-zoomtest]` | harness | Each harness's own progress and verdict lines |

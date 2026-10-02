@@ -127,10 +127,10 @@ pub(crate) fn stable(answers: &[Option<(u32, f32)>]) -> bool {
 
 /// The export policy this audit produced (`FractadyneApp::correction_wanted` has the evidence):
 /// glitch correction runs when the user's `setting` asks for it, EXCEPT for the holomorphic
-/// families (formula ids 0–3: Mandelbrot, Multibrot 3–5) outside Julia mode, where it repaired
-/// nothing and blackened what it gave up on.
+/// families (Mandelbrot, Multibrot 3–5 — `FormulaCaps::export_glitch_correction` false) outside
+/// Julia mode, where it repaired nothing and blackened what it gave up on.
 pub(crate) fn correction_applies(setting: bool, formula_id: u32, julia: bool) -> bool {
-    setting && (julia || formula_id > 3)
+    setting && (julia || fractadyne_core::formula::caps(formula_id).export_glitch_correction)
 }
 
 /// `count` indices spread evenly over `pool` (all of it when it is smaller).
@@ -272,7 +272,7 @@ impl crate::FractadyneApp {
             let cx = fractadyne_core::add_floatexp(cx0, step_x.mul_f64(x + 0.5 + dx - w as f64 * 0.5), p);
             let cy = fractadyne_core::add_floatexp(cy0, step_y.mul_f64(h as f64 * 0.5 - (y + 0.5 + dy)), p);
             // Mandelbrot keeps the plain z²+c oracle; every other family iterates its own formula.
-            if formula == 0 {
+            if formula == fractadyne_core::formula::MANDELBROT {
                 fractadyne_core::naive_dwell_bf(&cx, &cy, max_iter, 256.0 * 256.0, p)
             } else {
                 fractadyne_core::formula_dwell(&cx, &cy, formula, max_iter, 256.0 * 256.0, p)

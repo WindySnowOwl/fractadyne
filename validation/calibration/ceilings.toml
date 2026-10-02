@@ -116,3 +116,89 @@ df32_pert = 1.37
 name = "Newton"
 direct = 0.24
 df32_pert = 1.00
+
+# The power families (design/power-families.md), RTX 3080, 2026-10-01, 0.3.0-beta.12 local build.
+# NOT the live readings above: an all-interior zoomtest yielded one or two qualifying readings a
+# family in direct mode and none in df32 (series approximation skips the interior's nominal steps).
+# Instead one 1920x1080 `--render` per family, three times interleaved, every pixel interior so
+# nominal == real, GPU-timed: direct at 0.05+0.05i x100 with `--ss 1` (a glitch-corrected export
+# never supersamples, so Mandelbrot would otherwise run at 2x and its throughput differ); df32 in
+# Julia mode, c = 0.05+0.05i, at 0 x1e9 (series approximation is off in Julia mode, for every
+# family alike). Factor = the family's worst run / Mandelbrot's median, then a margin from the
+# controls measured the same way: direct read 1.14-1.21x LOW against the rows above (Multibrot 5
+# 1.55 for 1.77, Burning Ship 0.71 for 0.81, Tricorn 0.71 for 0.86), so x1.25; df32 read HIGH
+# (1.63 for 1.48, 0.74 for 0.49, 0.59 for 0.39), so x1.1.
+[[formula]]
+name = "Multibrot 6"
+direct = 2.72
+df32_pert = 1.70
+
+[[formula]]
+name = "Multibrot 7"
+direct = 2.85
+df32_pert = 1.94
+
+[[formula]]
+name = "Multibrot 8"
+direct = 2.77
+df32_pert = 1.75
+
+[[formula]]
+name = "Burning Ship 3"
+direct = 1.65
+df32_pert = 1.30
+
+[[formula]]
+name = "Burning Ship 4"
+direct = 1.68
+df32_pert = 1.32
+
+[[formula]]
+name = "Burning Ship 5"
+direct = 1.84
+df32_pert = 1.51
+
+[[formula]]
+name = "Tricorn 3"
+direct = 1.72
+df32_pert = 1.19
+
+[[formula]]
+name = "Tricorn 4"
+direct = 1.69
+df32_pert = 1.15
+
+[[formula]]
+name = "Tricorn 5"
+direct = 1.78
+df32_pert = 1.38
+
+[[formula]]
+name = "Celtic 3"
+direct = 1.72
+df32_pert = 1.40
+
+[[formula]]
+name = "Celtic 4"
+direct = 1.68
+df32_pert = 1.37
+
+[[formula]]
+name = "Celtic 5"
+direct = 1.85
+df32_pert = 1.63
+
+[[formula]]
+name = "Buffalo 3"
+direct = 1.72
+df32_pert = 1.48
+
+[[formula]]
+name = "Buffalo 4"
+direct = 1.69
+df32_pert = 1.45
+
+[[formula]]
+name = "Buffalo 5"
+direct = 1.84
+df32_pert = 1.70

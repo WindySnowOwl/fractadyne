@@ -426,6 +426,145 @@ fn deriv_factor(formula: u32, z: vec2<f32>) -> vec2<f32> {
     return 5.0 * z4; // formula 3
 }
 
+// ---------------- the power families (ids 10..24, design/power-families.md) ----------------
+// One id per (shape, power), as fractadyne_core::formula::family numbers them: shape 0 Multibrot
+// (z^d), 1 Burning Ship (|x| + i|y|, then the power), 2 Tricorn (conj, then the power), 3 Celtic
+// (the power, then |Re|), 4 Buffalo (the power, then |Re| and |Im|); d = 6..8 for Multibrot, 3..5
+// for the folds. Every path tests `is_fam` explicitly: the older families' arms are untouched.
+fn is_fam(f: u32) -> bool { return f >= 10u && f <= 24u; }
+// The holomorphic ones (Multibrot d): a derivative, so a distance estimate.
+fn fam_holo(f: u32) -> bool { return f >= 10u && f <= 12u; }
+// The families a BLA tree is built for — the `z^d + c` ones (Mandelbrot, Multibrot 3–8) and the
+// folds (Tricorn, Burning Ship, Celtic, Buffalo at every power): the host's `FormulaCaps::bla`,
+// tested here too so `bla_on` alone never walks a tree for another formula.
+fn bla_formula(f: u32) -> bool { return f <= 7u || is_fam(f); }
+// The folds, whose tree is a real 2×2 one (`fractadyne_core::build_bla_fold`): the node's first two
+// vec4s are each a matrix's four f32 mantissas, row-major, under the exponent in the third.
+fn bla_fold(f: u32) -> bool { return (f >= 4u && f <= 7u) || (is_fam(f) && !fam_holo(f)); }
+// The 2×2 matrix `m`·2^me applied to a floatexp complex `v` (as the column (re, im)).
+fn fe_mat(m: vec4<f32>, me: i32, v: Fe) -> Fe {
+    let re = df_add(df_mul_f32(v.m.re, m.x), df_mul_f32(v.m.im, m.y));
+    let im = df_add(df_mul_f32(v.m.re, m.z), df_mul_f32(v.m.im, m.w));
+    return fe_norm(cset(re, im), v.e + me);
+}
+fn fam_shape(f: u32) -> u32 { return (f - 10u) / 3u; }
+fn fam_power(f: u32) -> u32 {
+    let k = f - 10u;
+    return select(3u + k % 3u, 6u + k, k < 3u);
+}
+// The escape test's |z|²: 256² for every family but Multibrot 8, whose escaping step from |z| = 256
+// would square past f32 (|z|² up to 256^16 = 2^128): it escapes at 128.
+fn bail2_of(f: u32) -> f32 { return select(256.0 * 256.0, 128.0 * 128.0, f == 12u); }
+// b^d (d = 3..8) as the generated module chains it — square, and multiply by b on each set bit
+// below the top one, most significant first — with the same helper calls, so a family's direct
+// step is its generated module's bit for bit (self-test "generated … = built-in").
+fn fam_pow_df(b: Cdf, d: u32) -> Cdf {
+    switch (d) {
+        case 3u: { return c_mul(c_sqr(b), b); }
+        case 4u: { return c_sqr(c_sqr(b)); }
+        case 5u: { return c_mul(c_sqr(c_sqr(b)), b); }
+        case 6u: { return c_sqr(c_mul(c_sqr(b), b)); }
+        case 7u: { return c_mul(c_sqr(c_mul(c_sqr(b), b)), b); }
+        default: { return c_sqr(c_sqr(c_sqr(b))); } // 8
+    }
+}
+// A family's direct step without its `+ c`: the fold, the power, the fold.
+fn fam_direct(f: u32, z: Cdf) -> Cdf {
+    let shape = fam_shape(f);
+    var b = z;
+    if (shape == 1u) { b = cset(df_abs(z.re), df_abs(z.im)); }
+    if (shape == 2u) { b = c_conj(z); }
+    var w = fam_pow_df(b, fam_power(f));
+    if (shape == 3u) { w = cset(df_abs(w.re), w.im); }
+    if (shape == 4u) { w = cset(df_abs(w.re), df_abs(w.im)); }
+    return w;
+}
+// Multibrot d's f'(z) = d·z^(d−1), plain f32 as deriv_factor.
+fn fam_deriv(f: u32, z: vec2<f32>) -> vec2<f32> {
+    let d = fam_power(f);
+    var r = z;
+    for (var k = 2u; k < d; k = k + 1u) {
+        r = vec2<f32>(r.x * z.x - r.y * z.y, r.x * z.y + r.y * z.x);
+    }
+    return f32(d) * r;
+}
+// (Z + δ)^d − Z^d along the power's own chain (square; multiply by the base on each set bit below
+// the top one), one perturbation rule per link — P(sqr f) = (2·B + P)·P, P(f·g) = P(f)·W(g) +
+// B(f)·P(g) with W = B + P — as the generated module's rule table (`ir::perturb`) derives it. Every
+// term carries a P, so nothing cancels against Z^d, and the error grows with the chain's log₂ d
+// links: a table of Z's powers built by d − 2 sequential products (a binomial in Horner form) was
+// measured 1.6–2.3× further from the CPU for Multibrot 6–8.
+fn fam_dpow_df(Z: Cdf, dz: Cdf, d: u32) -> Cdf {
+    var B = Z;
+    var P = dz;
+    let W0 = c_add(Z, dz);
+    var bit = 31u - countLeadingZeros(d);
+    loop {
+        if (bit == 0u) { break; }
+        bit = bit - 1u;
+        P = c_mul(c_add(c_two(B), P), P);
+        B = c_sqr(B);
+        if (((d >> bit) & 1u) == 1u) {
+            P = c_add(c_mul(P, W0), c_mul(B, dz));
+            B = c_mul(B, Z);
+        }
+    }
+    return P;
+}
+// The same in floatexp (mode 2): every P in floatexp, so nothing underflows; B and the full-size
+// values (B + P, Z + δ) in df32, which holds them — a perturbation's digits below df32's reach are
+// negligible beside B (the generated module's `Class::Full`).
+fn fam_dpow_fe(Z: Cdf, dz: Fe, d: u32) -> Fe {
+    var B = Z;
+    var P = dz;
+    let W0 = c_add(Z, fe_to_cdf(dz));
+    var bit = 31u - countLeadingZeros(d);
+    loop {
+        if (bit == 0u) { break; }
+        bit = bit - 1u;
+        P = fe_mul_cdf(P, c_add(c_two(B), fe_to_cdf(P)));
+        B = c_sqr(B);
+        if (((d >> bit) & 1u) == 1u) {
+            P = fe_add(fe_mul_cdf(P, W0), fe_mul_cdf(dz, B));
+            B = c_mul(B, Z);
+        }
+    }
+    return P;
+}
+// A family's perturbed step without its `+ δc` (df32, mode 0). A fold perturbs by diffabs: on Z and
+// δ before the power (Burning Ship), on Z^d and δ(z^d) after it (Celtic, Buffalo).
+fn fam_pert_df(f: u32, Z: Cdf, dz: Cdf) -> Cdf {
+    let shape = fam_shape(f);
+    let d = fam_power(f);
+    if (shape == 1u) {
+        let bz = cset(df_abs(Z.re), df_abs(Z.im));
+        let bd = cset(df_diffabs(Z.re, dz.re), df_diffabs(Z.im, dz.im));
+        return fam_dpow_df(bz, bd, d);
+    }
+    if (shape == 2u) { return fam_dpow_df(c_conj(Z), c_conj(dz), d); }
+    let dw = fam_dpow_df(Z, dz, d);
+    if (shape == 0u) { return dw; }
+    let W = fam_pow_df(Z, d);
+    if (shape == 3u) { return cset(df_diffabs(W.re, dw.re), dw.im); }
+    return cset(df_diffabs(W.re, dw.re), df_diffabs(W.im, dw.im));
+}
+// The same in floatexp (mode 2).
+fn fam_pert_fe(f: u32, Z: Cdf, dz: Fe) -> Fe {
+    let shape = fam_shape(f);
+    let d = fam_power(f);
+    if (shape == 1u) {
+        let bz = cset(df_abs(Z.re), df_abs(Z.im));
+        let bd = fe_from_sf(sf_diffabs(sf_from_df(Z.re), sf_re(dz)), sf_diffabs(sf_from_df(Z.im), sf_im(dz)));
+        return fam_dpow_fe(bz, bd, d);
+    }
+    if (shape == 2u) { return fam_dpow_fe(c_conj(Z), fe_conj(dz), d); }
+    let dw = fam_dpow_fe(Z, dz, d);
+    if (shape == 0u) { return dw; }
+    let W = fam_pow_df(Z, d);
+    if (shape == 3u) { return fe_from_sf(sf_diffabs(sf_from_df(W.re), sf_re(dw)), sf_im(dw)); }
+    return fe_from_sf(sf_diffabs(sf_from_df(W.re), sf_re(dw)), sf_diffabs(sf_from_df(W.im), sf_im(dw)));
+}
+
 // ---------------- iteration pass (perturbation; writes smooth escape value) -----
 // Per pixel: c = c0 + δc, z_n = Z_n + δz_n where Z_n is the reference orbit.
 //   δz_{n+1} = 2·Z_n·δz_n + δz_n² + δc      (δz, δc carried in df32 → deep zoom)
@@ -757,7 +896,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
     let off_re = df_mul_f32(step_re, coord_re);
     let off_im = df_mul_f32(step_im, coord_im);
 
-    let bail2 = 256.0 * 256.0;
+    let bail2 = bail2_of(iu.formula);
     var iter: u32 = 0u;  // true iteration count
     var zf = vec2<f32>(0.0, 0.0);
     var escaped = false;
@@ -804,6 +943,8 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         var dprev = cset(zero, zero); // Phoenix derivative D_{n-1} (two-term)
         let cmag = length(vec2<f32>(c.re.x, c.im.x));
         var aux = aux_init(vec2<f32>(z.re.x, z.im.x));
+        // @@CUSTOM_INIT_BEGIN — a custom formula's init section, run once from z₀ (`custom.rs`).
+        // @@CUSTOM_INIT_END
         loop {
             if (iter >= iu.max_iter) { break; }
             if (newton) {
@@ -816,6 +957,8 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 zf = vec2<f32>(z.re.x, z.im.x);
                 if (c_mag2(f) < 1.0e-12) { escaped = true; break; }
             } else {
+                // @@CUSTOM_STEP_BEGIN — a custom formula's module replaces everything from here to
+                // the matching END marker with its generated step (`custom.rs`). Comments only here.
                 var zn: Cdf;
                 if (iu.formula == 0u) {
                     zn = c_sqr(z);
@@ -853,6 +996,9 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                         df_add(s.re, df_mul_f32(zprev.re, -0.5)),
                         df_add(s.im, df_mul_f32(zprev.im, -0.5)),
                     );
+                } else if (is_fam(iu.formula)) {
+                    zn = fam_direct(iu.formula, z);
+                    power_f = f32(fam_power(iu.formula));
                 } else {
                     zn = c_sqr(z);
                 }
@@ -877,14 +1023,23 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     dn = c_sub(dn, c_scale(dprev, 0.5));
                     dprev = dz;
                     dz = dn;
+                } else if (fam_holo(iu.formula)) {
+                    // Multibrot d: D' = d·z^(d−1)·D (+1 in Mandelbrot mode), in df32 as Multibrot
+                    // 3–5's. (Plain f32 here was measured no faster: 2.71× Mandelbrot either way.)
+                    let d = fam_power(iu.formula);
+                    dz = c_mul(c_scale(fam_pow_df(z, d - 1u), f32(d)), dz);
+                    if (iu.julia == 0u) { dz = c_add(dz, one); }
                 }
                 zn = c_add(zn, c);
+                // @@CUSTOM_STEP_END
                 zprev = z;
                 z = zn;
                 iter = iter + 1u;
                 zf = vec2<f32>(z.re.x, z.im.x);
                 if ((iu.aux_on & 1u) == 1u) { aux_step(&aux, zf, cmag, power_f); }
+                // @@CUSTOM_BAILOUT_BEGIN — a custom formula's own bailout replaces this test (`custom.rs`).
                 if (dot(zf, zf) > bail2) { escaped = true; break; }
+                // @@CUSTOM_BAILOUT_END
             }
         }
         if (!escaped) {
@@ -900,10 +1055,12 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         }
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
+        // @@CUSTOM_SMOOTH_BEGIN — a custom formula's module clamps this line at 0 (`custom.rs`).
         let smit = f32(iter) + 1.0 - nu;
+        // @@CUSTOM_SMOOTH_END
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
-        if (iu.formula <= 3u || iu.formula == 8u) {
+        if (iu.formula <= 3u || iu.formula == 8u || fam_holo(iu.formula)) {
             nrm = slope_normal(zf, vec2<f32>(dz.re.x, dz.im.x));
             de = de_log2(mag2, dz.re.x * dz.re.x + dz.im.x * dz.im.x, 0.0);
         }
@@ -911,7 +1068,11 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
-    } else if (iu.mode == 2u) {
+    }
+    // @@CUSTOM_FE_BEGIN — a custom formula's module replaces mode 2 from here to the matching END
+    // marker with its own, leaner floatexp loop (`custom.rs`): no BLA, SA, glitch detection or
+    // derivative, which are most of this pipeline's compile time.
+    else if (iu.mode == 2u) {
         // Floatexp perturbation (mode 2): δz/δc carried as floatexp (df32 mantissa +
         // i32 exponent), so the deviation never underflows f32 → extreme depth. ~1.7×
         // costlier per iteration than mode 0, so it's used only past df32's reach. In
@@ -950,7 +1111,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         var bla_off: array<u32, 32>;
         var bla_len: array<u32, 32>;
         var bla_levels = 0u;
-        if (iu.bla_on == 1u && iu.formula == 0u && iu.orbit_len > 1u) {
+        if (iu.bla_on == 1u && bla_formula(iu.formula) && iu.orbit_len > 1u) {
             var blen = iu.orbit_len - 1u;
             var boff = 0u;
             loop {
@@ -964,8 +1125,8 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         }
         // Series approximation: seed δz (and the derivative D) from the order-3 polynomial
         // δz ≈ A·δc + B·δc² + C·δc³ and start at iteration `sa_skip`, skipping that many
-        // perturbation steps. Mandelbrot only (the CPU gates this: formula 0, no Julia, no
-        // aux-accumulating coloring method).
+        // perturbation steps. The `z^d + c` families only (the CPU gates this: the formula's
+        // `series_approximation`, no Julia, no aux-accumulating coloring method).
         if (iu.sa_skip > 0u && iu.julia == 0u) {
             let A = fe_norm(cset(iu.sa_a.xy, iu.sa_a.zw), iu.sa_a_exp);
             let B = fe_norm(cset(iu.sa_b.xy, iu.sa_b.zw), iu.sa_b_exp);
@@ -1021,7 +1182,13 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     let v1 = reference[node + 1u];
                     let A = fe_norm(cset(v0.xy, v0.zw), i32(v2.x));
                     let B = fe_norm(cset(v1.xy, v1.zw), i32(v2.y));
-                    let ndz = fe_add(fe_mul(A, dz), fe_mul(B, dc));
+                    var ndz: Fe;
+                    let fold = bla_fold(iu.formula);
+                    if (fold) {
+                        ndz = fe_add(fe_mat(v0, i32(v2.x), dz), fe_mat(v1, i32(v2.y), dc));
+                    } else {
+                        ndz = fe_add(fe_mul(A, dz), fe_mul(B, dc));
+                    }
                     let nref = ref_n + span;
                     // orbit_cdf: the landing sample may be an extended-range dip (NaN-marked).
                     let rn = orbit_cdf(reference[nref]);
@@ -1029,7 +1196,8 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     let zx = rn.re.x + ndzf.x;
                     let zy = rn.im.x + ndzf.y;
                     if (zx * zx + zy * zy > bail2) { continue; } // overshoot → drop a level
-                    if (iu.formula <= 3u) { D = fe_add(fe_mul(A, D), B); }
+                    // (The folds carry no derivative: they have no distance estimate.)
+                    if (bla_formula(iu.formula) && !fold) { D = fe_add(fe_mul(A, D), B); }
                     dz = ndz;
                     ref_n = nref;
                     iter = iter + span;
@@ -1127,6 +1295,11 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 dn = fe_sub(dn, fe_scale(Dprev, 0.5));
                 Dprev = D;
                 D = dn;
+            } else if (fam_holo(iu.formula)) {
+                let dzc = fe_lo_f32(dz);
+                let fp = fam_deriv(iu.formula, vec2<f32>(Z.re.x + dzc.x, Z.im.x + dzc.y));
+                D = fe_mul_c(D, fp.x, fp.y);
+                if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
             }
 
             if (iu.formula == 1u) {
@@ -1199,6 +1372,9 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                         sf_add(sf_diffabs(Wim, sf_im(dw)), sf_im(dc)),
                     );
                 }
+            } else if (is_fam(iu.formula)) {
+                power_f = f32(fam_power(iu.formula));
+                dz = fe_add(fam_pert_fe(iu.formula, Z, dz), dc);
             } else if (iu.formula == 8u) {
                 // Phoenix: δz' = 2Z·δz + δz² + δc − 0.5·δz_{n-1}
                 var t: Fe;
@@ -1294,7 +1470,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         let smit = f32(iter) + 1.0 - nu;
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
-        if (iu.formula <= 3u || iu.formula == 8u) {
+        if (iu.formula <= 3u || iu.formula == 8u || fam_holo(iu.formula)) {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
@@ -1302,7 +1478,9 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         return FragOut(vec4<f32>(smit, nrm.x, nrm.y, de), aux_out);
-    } else {
+    }
+    // @@CUSTOM_FE_END
+    else {
         // df32 perturbation (mode 0): the fast path for the common deep range. Valid
         // until the df32 δ's f32 exponent underflows (~1e30×); deeper zoom uses mode 2.
         // `off_*`/`ref_offset` are mantissas scaled by 2^-delta_exp → restore the real δ.
@@ -1365,7 +1543,13 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 dn = fe_sub(dn, fe_scale(Dprev, 0.5));
                 Dprev = D;
                 D = dn;
+            } else if (fam_holo(iu.formula)) {
+                let fp = fam_deriv(iu.formula, vec2<f32>(z.re.x + dz.re.x, z.im.x + dz.im.x));
+                D = fe_mul_c(D, fp.x, fp.y);
+                if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
             }
+            // @@CUSTOM_PSTEP_BEGIN — a custom formula's module replaces the perturbed step from
+            // here to the matching END marker with its generated one (`custom.rs`).
             if (iu.formula == 1u) {
                 power_f = 3.0;
                 let z2 = c_sqr(z); let dz2 = c_sqr(dz); let dz3 = c_mul(dz2, dz);
@@ -1409,6 +1593,9 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     dz = cset(df_add(df_diffabs(W.re, dw.re), dc.re),
                               df_add(df_diffabs(W.im, dw.im), dc.im));
                 }
+            } else if (is_fam(iu.formula)) {
+                power_f = f32(fam_power(iu.formula));
+                dz = c_add(fam_pert_df(iu.formula, z, dz), dc);
             } else if (iu.formula == 8u) {
                 // Phoenix: δz' = 2Z·δz + δz² + δc − 0.5·δz_{n-1}
                 let base = c_add(c_add(c_two(c_mul(z, dz)), c_sqr(dz)), dc);
@@ -1418,6 +1605,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             } else {
                 dz = c_add(c_add(c_two(c_mul(z, dz)), c_sqr(dz)), dc);
             }
+            // @@CUSTOM_PSTEP_END
             ref_n = ref_n + 1u;
             iter = iter + 1u;
             // orbit_cdf: an extended-range dip sample (NaN-marked) reads as (0,0) here.
@@ -1470,6 +1658,8 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 let dl = vec2<f32>(dz.re.x * LIFT, dz.im.x * LIFT);
                 rebase_now = dot(zl, zl) < dot(dl, dl);
             }
+            // @@CUSTOM_REBASE_BEGIN — a custom formula's module rebases PHASE-ALIGNED from here to
+            // the matching END marker (a hybrid's reference index must stay ≡ iter mod phases).
             if (rebase_now || ref_n + 1u >= iu.orbit_len) {
                 n_rebase = n_rebase + 1u;
                 let r0 = orbit_cdf(reference[0]);
@@ -1488,6 +1678,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 );
                 ref_n = 0u;
             }
+            // @@CUSTOM_REBASE_END
         }
         ctr_commit(n_rebase, n_ext, n_bla);
         step_commit(gx, gy, n_bla + n_full, n_full, n_big, iter);
@@ -1498,10 +1689,12 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         }
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
+        // @@CUSTOM_SMOOTH0_BEGIN — as the direct path's: a custom module clamps this line at 0.
         let smit = f32(iter) + 1.0 - nu;
+        // @@CUSTOM_SMOOTH0_END
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
-        if (iu.formula <= 3u || iu.formula == 8u) {
+        if (iu.formula <= 3u || iu.formula == 8u || fam_holo(iu.formula)) {
             nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
             de = de_log2(mag2, D.m.re.x * D.m.re.x + D.m.im.x * D.m.im.x, f32(D.e));
         }
@@ -1596,7 +1789,7 @@ fn fs_iterate_gather(in: VsOut) -> FragOut {
 // `[start_iter, min(end_iter, max_iter))` per dispatch, carrying per-pixel state between passes in
 // three ping-pong textures; `fs_resolve` converts settled state into the normal iteration
 // G-buffer that the color pass consumes. Scope: DIRECT mode (1) and DF32-PERTURBATION mode (0),
-// holomorphic formulas 0..3, aux off (glitch detection IS supported — see ST_GLITCHED);
+// holomorphic formulas 0..3 and 10..12, aux off (glitch detection IS supported — see ST_GLITCHED);
 // everything else keeps single-pass `fs_iterate`,
 // whose behaviour is untouched. Mode 0 carries δz + the floatexp derivative + ref_n between
 // passes, rebasing across chunk boundaries exactly as the single pass would.
@@ -1679,7 +1872,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
     let off_re = df_mul_f32(step_re, coord_re);
     let off_im = df_mul_f32(step_im, coord_im);
 
-    let bail2 = 256.0 * 256.0;
+    let bail2 = bail2_of(iu.formula);
     let zero = vec2<f32>(0.0, 0.0);
     let one = cset(vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 0.0));
     let dsc = exp2(f32(iu.delta_exp));
@@ -1727,6 +1920,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
         if (iu.formula == 1u) { power_f = 3.0; }
         else if (iu.formula == 2u) { power_f = 4.0; }
         else if (iu.formula == 3u) { power_f = 5.0; }
+        else if (fam_holo(iu.formula)) { power_f = f32(fam_power(iu.formula)); }
         var zf = vec2<f32>(z.re.x, z.im.x);
         var escaped = false;
         loop {
@@ -1734,6 +1928,8 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             // Formula step + derivative update — the exact arithmetic and ORDER of the direct
             // branch in fs_iterate (derivative uses the CURRENT z, before z advances), so a
             // chunked render is bit-identical to the single-pass one.
+            // @@CUSTOM_CHUNK_STEP_BEGIN — a custom formula's module replaces the step from here to
+            // the matching END marker; it carries z_{n-1} where the derivative is (no DE there).
             var zn: Cdf;
             if (iu.formula == 0u) {
                 zn = c_sqr(z);
@@ -1741,6 +1937,8 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
                 zn = c_mul(c_sqr(z), z);
             } else if (iu.formula == 2u) {
                 zn = c_sqr(c_sqr(z));
+            } else if (fam_holo(iu.formula)) {
+                zn = fam_direct(iu.formula, z); // Multibrot 6–8, as fs_iterate's family arm
             } else {
                 zn = c_mul(c_sqr(c_sqr(z)), z);
             }
@@ -1751,6 +1949,9 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
                 fp = c_scale(c_sqr(z), 3.0);
             } else if (iu.formula == 2u) {
                 fp = c_scale(c_mul(c_sqr(z), z), 4.0);
+            } else if (fam_holo(iu.formula)) {
+                let d = fam_power(iu.formula);
+                fp = c_scale(fam_pow_df(z, d - 1u), f32(d));
             } else {
                 fp = c_scale(c_sqr(c_sqr(z)), 5.0);
             }
@@ -1758,6 +1959,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             if (iu.julia == 0u) { dz = c_add(dz, one); }
             zn = c_add(zn, c);
             z = zn;
+            // @@CUSTOM_CHUNK_STEP_END
             iter = iter + 1u;
             zf = vec2<f32>(z.re.x, z.im.x);
             if (dot(zf, zf) > bail2) { escaped = true; break; }
@@ -1767,7 +1969,9 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             status = ST_ESCAPED;
             let mag2 = dot(zf, zf);
             let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
+            // @@CUSTOM_CHUNK_SMOOTH_BEGIN — clamped at 0 in a custom module, as fs_iterate's.
             smit_out = f32(iter) + 1.0 - nu;
+            // @@CUSTOM_CHUNK_SMOOTH_END
             esc_range_commit(smit_out);
         } else if (iter >= iu.max_iter) {
             status = ST_INTERIOR;
@@ -1781,7 +1985,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
         // ---------------- df32 perturbation (mode 0): δz vs the reference orbit ----------------
         // The exact arithmetic and ORDER of fs_iterate's mode-0 branch (derivative first, using
         // Z[ref_n] + δz; then the formula δ-update; then advance and rebase-check), restricted to
-        // the holomorphic formulas 0..3 with aux/glitch off — the app gates activation to that
+        // the holomorphic formulas 0..3 and 10..12 with aux/glitch off — the app gates activation to that
         // scope. State: δz (df32) in st_z, the floatexp derivative's MANTISSA in st_dz and its
         // EXPONENT in info ch3, the reference position ref_n in info ch2 while running.
         let pert = cset(
@@ -1829,6 +2033,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
         if (iu.formula == 1u) { power_f = 3.0; }
         else if (iu.formula == 2u) { power_f = 4.0; }
         else if (iu.formula == 3u) { power_f = 5.0; }
+        else if (fam_holo(iu.formula)) { power_f = f32(fam_power(iu.formula)); }
         var zf = vec2<f32>(0.0, 0.0);
         var z_full_re = vec2<f32>(0.0, 0.0); // full z, df32 — stored at escape for the resolve
         var z_full_im = vec2<f32>(0.0, 0.0);
@@ -1839,13 +2044,19 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             if (iter >= stop) { break; }
             n_full = n_full + 1u;
             let z = orbit_cdf(reference[ref_n]);
+            // @@CUSTOM_CHUNK_PSTEP_BEGIN — a custom module replaces the derivative and the δ-update
+            // from here to the matching END marker with its generated perturbed step.
             // Derivative update using the CURRENT full z (before the δ advances).
             let zfn = vec2<f32>(z.re.x + dz.re.x, z.im.x + dz.im.x);
-            let fp = deriv_factor(iu.formula, zfn);
+            var fp: vec2<f32>;
+            if (fam_holo(iu.formula)) { fp = fam_deriv(iu.formula, zfn); } else { fp = deriv_factor(iu.formula, zfn); }
             D = fe_mul_c(D, fp.x, fp.y);
             if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
-            // Formula δ-update (holomorphic families only — the app gates to formula ≤ 3).
-            if (iu.formula == 1u) {
+            // Formula δ-update (holomorphic families only — the app gates to `resumable_passes`:
+            // Mandelbrot, Multibrot 3–8).
+            if (fam_holo(iu.formula)) {
+                dz = c_add(fam_pert_df(iu.formula, z, dz), dc); // as fs_iterate's family arm
+            } else if (iu.formula == 1u) {
                 let z2 = c_sqr(z); let dz2 = c_sqr(dz); let dz3 = c_mul(dz2, dz);
                 var t = c_add(c_scale(c_mul(z2, dz), 3.0), c_scale(c_mul(z, dz2), 3.0));
                 t = c_add(t, dz3); dz = c_add(t, dc);
@@ -1867,6 +2078,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             } else {
                 dz = c_add(c_add(c_two(c_mul(z, dz)), c_sqr(dz)), dc);
             }
+            // @@CUSTOM_CHUNK_PSTEP_END
             ref_n = ref_n + 1u;
             iter = iter + 1u;
             let rn = orbit_cdf(reference[ref_n]);
@@ -1901,6 +2113,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
                 let dl = vec2<f32>(dz.re.x * LIFT, dz.im.x * LIFT);
                 rebase_now = dot(zl, zl) < dot(dl, dl);
             }
+            // @@CUSTOM_CHUNK_REBASE_BEGIN — rebased PHASE-ALIGNED in a custom module, as fs_iterate's.
             if (rebase_now || ref_n + 1u >= iu.orbit_len) {
                 n_rebase = n_rebase + 1u;
                 let r0 = orbit_cdf(reference[0]);
@@ -1910,6 +2123,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
                 );
                 ref_n = 0u;
             }
+            // @@CUSTOM_CHUNK_REBASE_END
         }
         ctr_commit(n_rebase, 0u, 0u);
         step_commit(gx, gy, n_full, n_full, 0u, iter - iter0);
@@ -1926,7 +2140,9 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             status = ST_ESCAPED;
             let mag2 = dot(zf, zf);
             let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
+            // @@CUSTOM_CHUNK_SMOOTH0_BEGIN — clamped at 0 in a custom module, as fs_iterate's.
             smit = f32(iter) + 1.0 - nu;
+            // @@CUSTOM_CHUNK_SMOOTH0_END
             esc_range_commit(smit);
             // At escape the δ is no longer needed — store the FULL z so the resolve can shade
             // without knowing the reference, plus the derivative mantissa/exponent for DE.
@@ -1980,7 +2196,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
 //   st_exp  RUNNING ch0 D.e, ch1..3 spare                     | ESCAPE unused
 //
 // Scope, inherited from the app's `chunk_over` gate exactly as mode 0's chunk body is: the
-// HOLOMORPHIC formulas 0..3 only, aux coloring off. That is what keeps the 13-float budget
+// HOLOMORPHIC formulas 0..3 and 10..12 only, aux coloring off. That is what keeps the 13-float budget
 // honest — Phoenix (formula 8) additionally carries δz_{n-1} AND D_{n-1} (ten more values,
 // which alone would blow four targets), and aux coloring carries a five-float orbit
 // accumulator. Tricorn (4) and the abs families (5..7) are out of scope, so their δ-updates are
@@ -2004,6 +2220,8 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
 // it and passes the state through. Bit-identity is unaffected because the skip sequence is the
 // same one the unchunked loop takes; but the host's `steps = px * delta_iter` cost model
 // over-counts whenever BLA is live, which mode 0 never had to account for.
+// @@CUSTOM_CHUNK_FE_BEGIN — a custom formula's module replaces this whole entry point, to the
+// matching END marker, with its own (`custom.rs`): same state layout, its generated step.
 @fragment
 fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
     // Pixel coordinate mapping — identical to fs_iterate's prologue.
@@ -2016,7 +2234,7 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
     let off_re = df_mul_f32(step_re, coord_re);
     let off_im = df_mul_f32(step_im, coord_im);
 
-    let bail2 = 256.0 * 256.0;
+    let bail2 = bail2_of(iu.formula);
     let stop = min(iu.end_iter, iu.max_iter);
 
     // Prior state, when resuming.
@@ -2061,11 +2279,12 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
     var n_ext: u32 = 0u;
     var n_bla: u32 = 0u;
 
-    // BLA level layout, rebuilt per pass from the reference length — see the note above.
+    // BLA level layout, rebuilt per pass from the reference length — see the note above. Never a
+    // fold's 2×2 tree: the folds are not resumable, and this pass reads a node as complex.
     var bla_off: array<u32, 32>;
     var bla_len: array<u32, 32>;
     var bla_levels = 0u;
-    if (iu.bla_on == 1u && iu.formula == 0u && iu.orbit_len > 1u) {
+    if (iu.bla_on == 1u && bla_formula(iu.formula) && !bla_fold(iu.formula) && iu.orbit_len > 1u) {
         var blen = iu.orbit_len - 1u;
         var boff = 0u;
         loop {
@@ -2099,12 +2318,13 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
     }
 
     // Fixed up front from the formula (the single-pass loop assigns it inside each branch, which
-    // is the same value for formulas 0..3 — but only if the loop body runs, and a resumed pass
+    // is the same value for each formula in scope — but only if the loop body runs, and a resumed pass
     // may escape on its first iteration).
     var power_f = 2.0;
     if (iu.formula == 1u) { power_f = 3.0; }
     else if (iu.formula == 2u) { power_f = 4.0; }
     else if (iu.formula == 3u) { power_f = 5.0; }
+    else if (fam_holo(iu.formula)) { power_f = f32(fam_power(iu.formula)); }
 
     var zf = vec2<f32>(0.0, 0.0);
     var z_full: Fe = fe_zero(); // full z = Z_{n+1} + δz, kept for the escape store
@@ -2167,7 +2387,7 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
                 let zx = rn.re.x + ndzf.x;
                 let zy = rn.im.x + ndzf.y;
                 if (zx * zx + zy * zy > bail2) { continue; } // overshoot → drop a level
-                D = fe_add(fe_mul(A, D), B); // formula <= 3 by scope
+                D = fe_add(fe_mul(A, D), B); // a `z^d + c` family by `bla_levels` above
                 dz = ndz;
                 ref_n = nref;
                 iter = iter + span;
@@ -2229,11 +2449,15 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
         // BEFORE the δ advances — the same order as the single-pass loop.
         let dzc = fe_lo_f32(dz);
         let zfn = vec2<f32>(Z.re.x + dzc.x, Z.im.x + dzc.y);
-        let fp = deriv_factor(iu.formula, zfn);
+        var fp: vec2<f32>;
+        if (fam_holo(iu.formula)) { fp = fam_deriv(iu.formula, zfn); } else { fp = deriv_factor(iu.formula, zfn); }
         D = fe_mul_c(D, fp.x, fp.y);
         if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
 
-        if (iu.formula == 1u) {
+        if (fam_holo(iu.formula)) {
+            // Multibrot 6–8, as fs_iterate's family arm (no extended-range dip handling, as 3–5).
+            dz = fe_add(fam_pert_fe(iu.formula, Z, dz), dc);
+        } else if (iu.formula == 1u) {
             // z^3: δz' = 3Z²δz + 3Z δz² + δz³ + δc
             let Z2 = c_sqr(Z);
             let dz2 = fe_sqr(dz);
@@ -2364,6 +2588,7 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
         vec4<f32>(f32(D.e), 0.0, 0.0, 0.0),
     );
 }
+// @@CUSTOM_CHUNK_FE_END
 
 // State → the normal iteration G-buffer (smooth/normal/DE + aux), same contract as fs_iterate's
 // output, so the untouched color pass shades a chunked render identically. Pixels still RUNNING
@@ -2430,8 +2655,11 @@ fn fs_resolve(in: VsOut) -> FragOut {
     let zf = vec2<f32>(sz.x, sz.z);
     let d = vec2<f32>(sdz.x, sdz.z);
     let mag2 = dot(zf, zf);
+    // @@CUSTOM_RESOLVE_DE_BEGIN — a custom module has no derivative (st_dz carries z_{n-1}), so
+    // it writes fs_iterate's no-DE values here instead.
     let nrm = slope_normal(zf, d);
     let de = de_log2(mag2, d.x * d.x + d.y * d.y, sm.w);
+    // @@CUSTOM_RESOLVE_DE_END
     // ⭐⭐WHOLE-FRAME ESCAPE RANGE FOR LIVE AUTO-NORMALIZATION. The iterate passes commit the range
     // at each pixel's SETTLE TRANSITION, which on a chunked walk means only the pixels that
     // happened to settle inside THIS pass's iteration window — so the reading a chunked frame

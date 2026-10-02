@@ -41,6 +41,36 @@ pub enum ExportError {
     /// any full-resolution allocation, so a crafted or corrupt file cannot drive an OOM (F-01).
     #[error("image too large: {what} {value} exceeds limit {limit}")]
     TooLarge { what: &'static str, value: u64, limit: u64 },
+    /// View text with a character past U+00FF, which an EXR text attribute cannot hold. Returned,
+    /// not panicked: `exr::Text::from` PANICS on one (a custom formula's `√` comment crashed the
+    /// app's EXR export). The app escapes its view text to ASCII, so this means a writer bug.
+    #[error("the view text has a character an EXR attribute cannot hold: {0:?}")]
+    MetadataNotLatin1(char),
+}
+
+/// A view text's first character past Latin-1 (U+00FF), if any: what PNG `tEXt` and EXR text
+/// attributes cannot store.
+fn first_non_latin1(meta: &str) -> Option<char> {
+    meta.chars().find(|&c| c as u32 > 0xFF)
+}
+
+/// Attach the view text to a PNG as `tEXt` — Latin-1, and what every Fractadyne build reads — or,
+/// if it holds a character Latin-1 has not, as `iTXt` (UTF-8), which [`read_png_metadata`] also
+/// reads. A `tEXt` chunk of such text FAILED the whole export ("cannot be encoded into valid ISO
+/// 8859-1") after the pixels were rendered; the view text must never cost the picture.
+fn add_png_meta<W: std::io::Write>(encoder: &mut png::Encoder<'_, W>, meta: &str) -> Result<(), ExportError> {
+    if first_non_latin1(meta).is_none() {
+        encoder.add_text_chunk(META_KEYWORD.to_string(), meta.to_string())?;
+    } else {
+        encoder.add_itxt_chunk(META_KEYWORD.to_string(), meta.to_string())?;
+    }
+    Ok(())
+}
+
+/// The EXR attribute for the view text, or [`ExportError::MetadataNotLatin1`] — never a panic.
+fn exr_meta_text(meta: &str) -> Result<exr::prelude::Text, ExportError> {
+    exr::prelude::Text::new_or_none(meta)
+        .ok_or_else(|| ExportError::MetadataNotLatin1(first_non_latin1(meta).unwrap_or('\u{fffd}')))
 }
 
 /// Resource limits applied from an image **header** before the decoders allocate full-resolution
@@ -489,7 +519,7 @@ pub fn write_png(
     encoder.set_depth(png::BitDepth::Eight);
     encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
     if let Some(meta) = metadata {
-        encoder.add_text_chunk(META_KEYWORD.to_string(), meta.to_string())?;
+        add_png_meta(&mut encoder, meta)?;
     }
     let mut writer = encoder.write_header()?;
     writer.write_image_data(&bytes)?;
@@ -517,7 +547,7 @@ pub fn write_png_rgba8(
     encoder.set_depth(png::BitDepth::Eight);
     encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
     if let Some(meta) = metadata {
-        encoder.add_text_chunk(META_KEYWORD.to_string(), meta.to_string())?;
+        add_png_meta(&mut encoder, meta)?;
     }
     let mut writer = encoder.write_header()?;
     writer.write_image_data(&rgba8[..expected])?;
@@ -737,15 +767,19 @@ pub fn box_thumbnail_rgba8(w: u32, h: u32, rgba: &[u8], max: u32) -> (u32, u32, 
     (ow, oh, out)
 }
 
+/// The embedded view text: the `tEXt` chunk every build writes, else the `iTXt` one written for
+/// text past Latin-1 (see [`add_png_meta`]).
 pub fn read_png_metadata(path: &Path) -> Result<Option<String>, ExportError> {
     let file = std::fs::File::open(path)?;
     let reader = png::Decoder::new(std::io::BufReader::new(file)).read_info()?;
-    Ok(reader
-        .info()
-        .uncompressed_latin1_text
-        .iter()
-        .find(|c| c.keyword == META_KEYWORD)
-        .map(|c| c.text.clone()))
+    let info = reader.info();
+    if let Some(c) = info.uncompressed_latin1_text.iter().find(|c| c.keyword == META_KEYWORD) {
+        return Ok(Some(c.text.clone()));
+    }
+    match info.utf8_text.iter().find(|c| c.keyword == META_KEYWORD) {
+        Some(c) => Ok(Some(c.get_text()?)),
+        None => Ok(None),
+    }
 }
 
 /// Write a 32-bit float **linear** OpenEXR from the renderer's display-space (sRGB) RGBA `f32`
@@ -776,10 +810,7 @@ pub fn write_exr(
     });
     let mut image = Image::from_channels((width as usize, height as usize), channels);
     if let Some(meta) = metadata {
-        image
-            .attributes
-            .other
-            .insert(Text::from(META_KEYWORD), AttributeValue::Text(Text::from(meta)));
+        image.attributes.other.insert(Text::from(META_KEYWORD), AttributeValue::Text(exr_meta_text(meta)?));
     }
     image.write().to_file(path)?;
     Ok(())
@@ -820,10 +851,7 @@ pub fn write_exr_raw(
     });
     let mut image = Image::from_channels((width as usize, height as usize), channels);
     if let Some(meta) = metadata {
-        image
-            .attributes
-            .other
-            .insert(Text::from(META_KEYWORD), AttributeValue::Text(Text::from(meta)));
+        image.attributes.other.insert(Text::from(META_KEYWORD), AttributeValue::Text(exr_meta_text(meta)?));
     }
     image.write().to_file(path)?;
     Ok(())

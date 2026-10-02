@@ -16,6 +16,10 @@ use std::sync::Arc;
 mod export;
 pub use export::*;
 pub mod timing;
+/// Custom formulas: WGSL generated from the formula IR and spliced into the fixed shader.
+pub mod custom;
+/// Life-like automata: the tile stepper, the app's first compute pipeline (design/automata.md).
+pub mod life;
 
 /// The Rust/WGSL uniform-layout gate — see the module's own docs.
 #[cfg(test)]
@@ -186,6 +190,8 @@ struct IterKey {
     orbit_id: u64,
     mode: u32,
     formula: u32,
+    /// The custom formula's shader key (0 for a built-in): every custom formula is `formula` 1000.
+    custom: u64,
     julia: u32,
     delta_exp: i32,
     color_method: u32,
@@ -196,6 +202,9 @@ struct IterKey {
     /// Sub-pixel jitter (progressive SSAA): a changed jitter is a new sample and must re-iterate,
     /// so it participates in the key even though it only shifts `px_offset`.
     jitter: [f32; 2],
+    /// A Life frame's display key (`LifeRenderer::update`): the cells, the mapping, the texture.
+    /// 0 for every escape-time frame.
+    life: u64,
 }
 
 /// GPU-timestamp capture around the LIVE `iterate_pass`, so the app can size deep frames against what
@@ -955,6 +964,87 @@ struct Renderer {
     present_bgl: wgpu::BindGroupLayout,
     target_format: wgpu::TextureFormat,
     views: std::collections::HashMap<u32, ViewResources>,
+    /// The iterate pipelines of the custom formula last drawn (`MandelbrotParams::custom`), built on
+    /// first use and kept until another formula replaces them. Built on the render thread: ~0.1 s
+    /// cold on the RTX 3080 (design/custom-formulas.md §4.5), paid once per formula.
+    custom: Option<CustomPipelines>,
+    /// The Life universe and its display pass, created on the first Life frame on a device that
+    /// runs compute shaders (`life::life_available`).
+    life: Option<life::LifeRenderer>,
+}
+
+/// A custom formula's iterate pipelines, from its generated module (`custom::build`) and the fixed
+/// layouts: the `fs_iterate` pair (full-screen and split-tile), the resumable chunk pass with its
+/// resolve, and — for a perturbable formula — the four-target mode-2 (floatexp) pair (each `None`
+/// where the device lacks the state targets, as for the built-ins).
+struct CustomPipelines {
+    key: u64,
+    iter: wgpu::RenderPipeline,
+    iter_split: wgpu::RenderPipeline,
+    chunk: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
+    chunk_fe: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
+}
+
+impl CustomPipelines {
+    fn new(
+        device: &wgpu::Device,
+        iter_bgl: &wgpu::BindGroupLayout,
+        state_bgl: &wgpu::BindGroupLayout,
+        state_bgl4: &wgpu::BindGroupLayout,
+        shader: &custom::CustomShader,
+    ) -> Self {
+        let module = shader_module_for(device, Some(shader));
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("fractadyne.custom.iter_layout"),
+            bind_group_layouts: &[iter_bgl],
+            push_constant_ranges: &[],
+        });
+        let iter = fullscreen_pipeline(
+            device, &module, &layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+            "fractadyne.custom.iter_pipeline",
+        );
+        let iter_split = raster_pipeline(
+            device, &module, &layout, "vs_split_tiles", "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+            "fractadyne.custom.iter_split_pipeline",
+        );
+        let chunk = (device.limits().max_color_attachment_bytes_per_sample >= 48).then(|| {
+            let chunk_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("fractadyne.custom.chunk_layout"),
+                bind_group_layouts: &[iter_bgl, state_bgl],
+                push_constant_ranges: &[],
+            });
+            (
+                fullscreen_pipeline(
+                    device, &module, &chunk_layout, "fs_iterate_chunk",
+                    &[ITER_FORMAT, ITER_FORMAT, ITER_FORMAT], "fractadyne.custom.chunk_pipeline",
+                ),
+                fullscreen_pipeline(
+                    device, &module, &chunk_layout, "fs_resolve", &[ITER_FORMAT, ITER_FORMAT],
+                    "fractadyne.custom.resolve_pipeline",
+                ),
+            )
+        });
+        // Mode 2 only ever runs a perturbable formula (the app's `render_mode`).
+        let chunk_fe = (shader.perturbation.is_ok() && device.limits().max_color_attachment_bytes_per_sample >= 64)
+            .then(|| {
+                let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("fractadyne.custom.chunk_fe_layout"),
+                    bind_group_layouts: &[iter_bgl, state_bgl4],
+                    push_constant_ranges: &[],
+                });
+                (
+                    fullscreen_pipeline(
+                        device, &module, &layout, "fs_iterate_chunk_fe",
+                        &[ITER_FORMAT, ITER_FORMAT, ITER_FORMAT, ITER_FORMAT], "fractadyne.custom.chunk_fe_pipeline",
+                    ),
+                    fullscreen_pipeline(
+                        device, &module, &layout, "fs_resolve", &[ITER_FORMAT, ITER_FORMAT],
+                        "fractadyne.custom.resolve_fe_pipeline",
+                    ),
+                )
+            });
+        CustomPipelines { key: shader.key, iter, iter_split, chunk, chunk_fe }
+    }
 }
 
 pub(crate) fn make_iter_texture(device: &wgpu::Device, size: [u32; 2]) -> wgpu::TextureView {
@@ -1351,6 +1441,22 @@ pub(crate) fn shader_module(device: &wgpu::Device) -> wgpu::ShaderModule {
         label: Some("fractadyne.shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("mandelbrot.wgsl").into()),
     })
+}
+
+/// [`shader_module`], or a custom formula's generated module ([`custom::build`]) when given. The
+/// generated module keeps every entry point but the perturbation paths, so the colour and resolve
+/// pipelines build from it unchanged.
+pub(crate) fn shader_module_for(
+    device: &wgpu::Device,
+    custom: Option<&custom::CustomShader>,
+) -> wgpu::ShaderModule {
+    match custom {
+        None => shader_module(device),
+        Some(c) => device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("fractadyne.custom"),
+            source: wgpu::ShaderSource::Wgsl(c.source.as_str().into()),
+        }),
+    }
 }
 
 /// A fragment-visible uniform buffer at `binding` 0 — shared by both bind-group layouts.
@@ -1816,6 +1922,8 @@ impl Renderer {
             present_bgl,
             target_format,
             views: std::collections::HashMap::new(),
+            custom: None,
+            life: None,
         }
     }
 }
@@ -2261,6 +2369,12 @@ pub struct MandelbrotParams {
     pub mode: u32,
     /// Escape-time formula id (see the shader's `fs_iterate`).
     pub formula: u32,
+    /// A custom formula's generated module (`formula` = `fractadyne_core::formula::CUSTOM`, direct
+    /// mode only); `None` for the built-ins. Its `key` joins the iterate key.
+    pub custom: Option<Arc<custom::CustomShader>>,
+    /// A Life frame (design/automata.md): `Some` replaces the iterate pass with the Life universe's
+    /// step and display passes, which write the same iteration texture the colour pass reads.
+    pub life: Option<Arc<life::LifeFrame>>,
     /// 0 = Mandelbrot mode (z0=0, c=pixel), 1 = Julia mode (z0=pixel, c=const).
     pub julia: u32,
     /// Complex span *mantissa* (`span · 2^-delta_exp`, O(1)) — see [`fractadyne_core::GpuScale`].
@@ -2338,6 +2452,103 @@ pub struct MandelbrotParams {
     pub accum_reset: bool,
 }
 
+/// A frame that asks for nothing: no sinks, no reference, the direct mode, one sample a pixel, no
+/// tile, chunk, split, hold, reprojection or accumulation. What a Life frame starts from (it sets
+/// the colouring, the size and `life`); the escape-time frames set every field themselves.
+impl Default for MandelbrotParams {
+    fn default() -> Self {
+        MandelbrotParams {
+            iterate_ms: None,
+            iterate_steps: None,
+            iterate_frame: None,
+            iterate_armed_us: None,
+            live_timing: false,
+            live_ms: None,
+            live_steps: None,
+            live_frame: None,
+            split: [1, 0],
+            now_us: None,
+            nominal_steps: 0,
+            pass_clock: None,
+            pass_frame: 0,
+            maxiter_count: None,
+            norm_range: None,
+            grad_range: None,
+            grad_hist: None,
+            work_counters: None,
+            norm_sig_out: None,
+            norm_sig: 0,
+            norm_complete: true,
+            norm_complete_out: None,
+            content_tag: 0,
+            content_out: None,
+            view_stamp: 0,
+            content_stamp_out: None,
+            tile: None,
+            chunk_range: None,
+            chunk_idx: 0,
+            probe_nonce: 0,
+            hold_copy: false,
+            display_hold: false,
+            orbit: Arc::new(Vec::new()),
+            orbit_id: 0,
+            orbit_len: 0,
+            bla: Arc::new(Vec::new()),
+            bla_on: 0,
+            ref_offset: RefOffset::ZERO,
+            delta_exp: 0,
+            sa_skip: 0,
+            sa_a: [0.0; 4],
+            sa_a_exp: 0,
+            sa_b: [0.0; 4],
+            sa_b_exp: 0,
+            sa_c: [0.0; 4],
+            sa_c_exp: 0,
+            center: [0.0; 4],
+            julia_c: [0.0; 4],
+            mode: 1,
+            formula: 0,
+            custom: None,
+            life: None,
+            julia: 0,
+            span_mantissa: fractadyne_core::SpanMantissa::new(4.0, 4.0),
+            max_iter: 1,
+            cycle: 1.0,
+            offset: 0.0,
+            norm_mode: 0,
+            norm_lo: 0.0,
+            aa_palette: false,
+            lut: Arc::new(Vec::new()),
+            lut_smooth: true,
+            light: 0,
+            light_angle: 0.0,
+            light_height: 0.0,
+            de_on: 0,
+            de_strength: 0.0,
+            de_width: 0.0,
+            de_phase: 0.0,
+            color_method: 0,
+            stripe_freq: 0.0,
+            stripe_tail: false,
+            stripe_tail_len: 1,
+            trap_type: 0,
+            aa_filter: 1,
+            interior_col: [0.0, 0.0, 0.0, 1.0],
+            resolution: [1, 1],
+            ss: 1,
+            reproject: 0,
+            uv_offset: [0.0, 0.0],
+            uv_scale: 1.0,
+            vignette: Vignette::default(),
+            view_id: 0,
+            jitter: [0.0, 0.0],
+            accum_present: false,
+            accum_commit: false,
+            accum_reset: false,
+        }
+    }
+}
+
 /// The iterate uniform's `aux_on` word: bit 0 = accumulate orbit statistics, bit 1 = stripe
 /// average over an exponential tail window, bits 2.. = that window's length in iterations
 /// (clamped to `1..=2^20`; the shader reads `aux_on >> 2`). One word, so the uniform layout —
@@ -2374,19 +2585,51 @@ impl CallbackTrait for MandelbrotParams {
             let vr = ViewResources::new(device, &r.iter_bgl, &r.color_bgl);
             r.views.insert(self.view_id, vr);
         }
+        // A custom formula iterates through its own module's pipelines (everything else is shared).
+        if let Some(c) = self.custom.as_deref() {
+            if r.custom.as_ref().map(|p| p.key) != Some(c.key) {
+                r.custom = Some(CustomPipelines::new(device, &r.iter_bgl, &r.state_bgl, &r.state_bgl4, c));
+            }
+        }
+        // A Life frame steps and draws through the Life renderer, built on first use — where the
+        // device runs compute shaders; elsewhere the frame says so and draws nothing new.
+        if let Some(f) = self.life.as_deref() {
+            if r.life.is_none() {
+                if life::life_available(device) {
+                    r.life = Some(life::LifeRenderer::new(device, &r.iter_bgl));
+                } else if let Ok(mut s) = f.status.lock() {
+                    s.available = false;
+                    s.load_id = f.load_id;
+                }
+            }
+        }
+        let life_r = &mut r.life;
         let iter_bgl = &r.iter_bgl;
         let color_bgl = &r.color_bgl;
-        let iter_pipeline = &r.iter_pipeline;
-        let iter_split_pipeline = &r.iter_split_pipeline;
+        let (iter_pipeline, iter_split_pipeline) = match (self.custom.as_ref(), r.custom.as_ref()) {
+            (Some(_), Some(p)) => (&p.iter, &p.iter_split),
+            _ => (&r.iter_pipeline, &r.iter_split_pipeline),
+        };
         let seed_pipeline = &r.seed_pipeline;
         // Mode 2 (floatexp) chunks through its OWN four-target pipelines; every other mode uses
         // the three-target pair. Resolved once here so the chunk block below stays mode-agnostic —
         // and note the fallback is the same one a 48-byte device already takes: if the mode-2 pair
         // is `None`, `chunk` resolves to `None` and this dispatch is clamped instead of split.
-        let (chunk_pipeline, resolve_pipeline, state_bgl, chunk_targets) = if self.mode == 2 {
-            (r.chunk_fe_pipeline.as_ref(), r.resolve_fe_pipeline.as_ref(), &r.state_bgl4, 4usize)
-        } else {
-            (r.chunk_pipeline.as_ref(), r.resolve_pipeline.as_ref(), &r.state_bgl, 3usize)
+        // A custom formula chunks through its own module's pairs; the fixed module's would read
+        // formula id 1000 and iterate the Mandelbrot step.
+        let (chunk_pipeline, resolve_pipeline, state_bgl, chunk_targets) = match (self.custom.as_ref(), r.custom.as_ref()) {
+            (Some(_), Some(p)) if self.mode == 2 => {
+                let pair = p.chunk_fe.as_ref();
+                (pair.map(|c| &c.0), pair.map(|c| &c.1), &r.state_bgl4, 4usize)
+            }
+            (Some(_), Some(p)) => {
+                let pair = p.chunk.as_ref();
+                (pair.map(|c| &c.0), pair.map(|c| &c.1), &r.state_bgl, 3usize)
+            }
+            _ if self.mode == 2 => {
+                (r.chunk_fe_pipeline.as_ref(), r.resolve_fe_pipeline.as_ref(), &r.state_bgl4, 4usize)
+            }
+            _ => (r.chunk_pipeline.as_ref(), r.resolve_pipeline.as_ref(), &r.state_bgl, 3usize),
         };
         let esc_min_seed = &r.esc_min_seed;
         // Progressive-SSAA passes (disjoint fields, borrowed alongside the per-view resources).
@@ -2453,6 +2696,13 @@ impl CallbackTrait for MandelbrotParams {
             ss -= 1;
         }
         let size = [(base[0] * ss).min(max_dim), (base[1] * ss).min(max_dim)];
+        // Life: load / step / download now (the stepper submits its own work and waits for its
+        // read-backs), and key the display on what it will draw.
+        let life_key = match (self.life.as_deref(), life_r.as_mut()) {
+            (Some(f), Some(l)) => l.update(device, queue, f, size, ss),
+            _ => 0,
+        };
+        let life_on = self.life.is_some() && life_r.is_some();
         // Pan reprojection: keep the frozen iteration texture (only valid once something has
         // been rendered into it). Skip the resize so the texture isn't cleared, and color it
         // with the ss it was built at.
@@ -2637,6 +2887,7 @@ impl CallbackTrait for MandelbrotParams {
             orbit_id: self.orbit_id,
             mode: self.mode,
             formula: self.formula,
+            custom: self.custom.as_ref().map_or(0, |c| c.key),
             julia: self.julia,
             delta_exp: self.delta_exp,
             color_method: self.color_method,
@@ -2645,6 +2896,7 @@ impl CallbackTrait for MandelbrotParams {
             sa_skip: self.sa_skip,
             bla_on: self.bla_on,
             jitter: self.jitter,
+            life: life_key,
         };
         // Re-render when the key changed (new view/orbit/size) OR when a tiled settle advanced to a
         // new rect under an unchanged key — OR when a chunked progression advanced its iteration
@@ -2736,18 +2988,18 @@ impl CallbackTrait for MandelbrotParams {
             // cost to measure, and on the RX 6800 XT its timestamps were the only readings the
             // app's timing witness proved impossible (2 of 1,505, 2026-09-27: 42.6 ms inside an
             // 18.9 ms window, 118.8 inside 104). Leaving it unarmed frees the timer for real work.
-            let arm_ts = view
-                .timing
-                .as_ref()
-                .is_some_and(|t| t.state == TimingState::Idle)
+            // (A Life display pass is not an iterate: it arms no iterate timer.)
+            let arm_ts = !life_on
+                && view.timing.as_ref().is_some_and(|t| t.state == TimingState::Idle)
                 && !matches!(chunk, Some([s, e]) if s >= e);
             // A live refresh's own timer (see `MandelbrotParams::live_timing`): single passes only.
-            let arm_live = self.live_timing
+            let arm_live = !life_on
+                && self.live_timing
                 && chunk.is_none()
                 && view.live_timing.as_ref().is_some_and(|t| t.state == TimingState::Idle);
             // The diagnostic pass clock, when asked for, brackets EVERY pass (its own ring); an
             // armed pricer then takes its reading from the clock's ticks for this same pass.
-            let clock_k = if self.pass_clock.is_some() {
+            let clock_k = if self.pass_clock.is_some() && !life_on {
                 view.pass_clock.as_mut().and_then(PassClock::take)
             } else {
                 None
@@ -2783,7 +3035,26 @@ impl CallbackTrait for MandelbrotParams {
             if let Some(k) = clock_k {
                 view.pass_clock.as_ref().unwrap().marker_pass(encoder, PASS_CLOCK_Q * k as u32 + 2);
             }
-            if let Some([_, _]) = chunk {
+            if let (true, Some(l)) = (life_on, life_r.as_ref()) {
+                // -------- Life: the universe's cells into the G-buffer --------
+                view.chunk_state = None;
+                let attach = |v| Some(wgpu::RenderPassColorAttachment {
+                    view: v,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                });
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("fractadyne.life_display"),
+                    color_attachments: &[attach(&view.tex_view), attach(&view.aux_view)],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                l.draw(&mut pass, &view.iter_bg);
+            } else if let Some([_, _]) = chunk {
                 // -------- chunked resumable iterate (iteration-range tiling) --------
                 // One bounded pass over [start_iter, end_iter) into the ping-pong state, then a
                 // cheap resolve of the settled state into the display G-buffer. Full-frame only
@@ -3182,6 +3453,73 @@ pub fn install_renderer(render_state: &egui_wgpu::RenderState) {
         .write()
         .callback_resources
         .insert(renderer);
+}
+
+/// A custom formula's pipelines, compiled off the render thread by [`compile_custom_async`].
+pub struct PreparedCustom(CustomPipelines);
+
+impl PreparedCustom {
+    /// The shader key the pipelines were built from (`CustomShader::key`).
+    pub fn key(&self) -> u64 {
+        self.0.key
+    }
+}
+
+/// Compile `shader`'s pipelines on a worker thread, against the live renderer's own bind-group
+/// layouts, and deliver them on the returned channel. The render thread otherwise builds them on
+/// the first frame that draws the formula — ~0.8 s on the RTX 3080 before mode 2 (`fs_iterate`,
+/// the chunk pass and its resolve; design/custom-formulas.md §5.1), more with the floatexp chunk
+/// pair, a frozen window on every Apply, and every
+/// parameter change is a new module. `None` when the renderer is not installed yet or the thread
+/// could not start (the render thread's own build still covers it).
+pub fn compile_custom_async(
+    render_state: &egui_wgpu::RenderState,
+    shader: std::sync::Arc<custom::CustomShader>,
+) -> Option<std::sync::mpsc::Receiver<PreparedCustom>> {
+    let (iter_bgl, state_bgl, state_bgl4) = {
+        let guard = render_state.renderer.read();
+        let r = guard.callback_resources.get::<Renderer>()?;
+        (r.iter_bgl.clone(), r.state_bgl.clone(), r.state_bgl4.clone())
+    };
+    let device = render_state.device.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("fd-custom-compile".into())
+        .spawn(move || {
+            let _ = tx.send(PreparedCustom(CustomPipelines::new(&device, &iter_bgl, &state_bgl, &state_bgl4, &shader)));
+        })
+        .ok()?;
+    Some(rx)
+}
+
+/// Make sure the renderer holds `shader`'s pipelines, compiling them HERE, on the caller's thread,
+/// if it does not — `true` when it compiled. For the ways into a custom formula that switch the
+/// view at once (a saved session, a view file, `--formula`): the app calls this in its update and
+/// knows the time was a compile, where the paint callback's own fallback build is an unexplained
+/// ~1.4 s frame that the live renderer's stall guards read as a GPU pass in the lethal band.
+pub fn prepare_custom_now(render_state: &egui_wgpu::RenderState, shader: &custom::CustomShader) -> bool {
+    let layouts = {
+        let guard = render_state.renderer.read();
+        let Some(r) = guard.callback_resources.get::<Renderer>() else { return false };
+        if r.custom.as_ref().map(|p| p.key) == Some(shader.key) {
+            return false;
+        }
+        (r.iter_bgl.clone(), r.state_bgl.clone(), r.state_bgl4.clone())
+    };
+    let built = CustomPipelines::new(&render_state.device, &layouts.0, &layouts.1, &layouts.2, shader);
+    if let Some(r) = render_state.renderer.write().callback_resources.get_mut::<Renderer>() {
+        r.custom = Some(built);
+    }
+    true
+}
+
+/// Hand pipelines from [`compile_custom_async`] to the renderer: the next frame that draws that
+/// formula uses them instead of compiling. They replace the renderer's current custom pipelines,
+/// so install them in the same update that switches the view to their formula.
+pub fn install_custom(render_state: &egui_wgpu::RenderState, prepared: PreparedCustom) {
+    if let Some(r) = render_state.renderer.write().callback_resources.get_mut::<Renderer>() {
+        r.custom = Some(prepared.0);
+    }
 }
 
 pub fn add_mandelbrot(painter: &egui::Painter, rect: egui::Rect, params: MandelbrotParams) {

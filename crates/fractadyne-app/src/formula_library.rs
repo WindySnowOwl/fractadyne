@@ -1,0 +1,479 @@
+//! The custom-formula library: formulas saved by name in `formulas.toml` in the config dir (beside
+//! the bookmarks and the gradient library), and the file format Export writes and Import reads. A
+//! library file IS an export: sharing one formula is exporting a library of one, and a copy of
+//! `formulas.toml` imports as it stands.
+//!
+//! An entry is TEXT, as typed: the step's source and each parameter's re and im. A formula's
+//! identity is its text (`custom_formula.rs`), and a number stays as the user wrote it ("0.1", not
+//! the double nearest it), so nothing is lost if constants are ever read more exactly than f64.
+//!
+//! Two things the bookmark and gradient files do not do, which a library of typed-in work needs:
+//! the write is atomic (temp + rename), and a file that cannot be read is moved aside and reported
+//! instead of being replaced, silently, by the next save.
+
+use fractadyne_core::ir::parse::MAX_PARAMS;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+
+/// What a formula file says it is, so Import can turn away some other TOML with a sentence.
+pub(crate) const FORMAT: &str = "fractadyne-formulas";
+/// The file's schema. Additive: an unknown field is ignored, so a newer file imports best-effort.
+pub(crate) const VERSION: u32 = 1;
+/// The largest file Import reads: a library of thousands of formulas is a few hundred KiB.
+pub(crate) const FILE_MAX: u64 = 4 * 1024 * 1024;
+/// A longer name is cut; a longer source is not a formula and is skipped.
+const NAME_MAX: usize = 120;
+const SOURCE_MAX: usize = 16 * 1024;
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct SavedFormula {
+    pub(crate) name: String,
+    /// The step as written; statements on separate lines.
+    pub(crate) source: String,
+    /// `p1`… as typed, `[re, im]` — only the ones the formula reads.
+    #[serde(default)]
+    pub(crate) params: Vec<[String; 2]>,
+    /// Where Apply shows it: without one, a formula opens on the home view, which for many is not
+    /// where the picture is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) view: Option<StartView>,
+    /// A line on what it is (the collection's entries have one).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) about: String,
+    /// The collection's grouping ("Powers and folds", "Julia sets", …).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) category: String,
+}
+
+/// A formula's starting view, as TEXT so a deep one keeps every digit: the centre, the
+/// magnification (1 = the home view; height-anchored, so the same at any window size), the
+/// iteration count, and — for a Julia set — Julia mode with its constant.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct StartView {
+    /// `[re, im]` as decimals.
+    pub(crate) center: [String; 2],
+    /// As the go-to field reads it: "4", "2.5e12", "1e500".
+    pub(crate) zoom: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) iterations: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) julia: Option<[String; 2]>,
+}
+
+/// The most iterations a starting view may ask for (a view file's limit).
+const VIEW_ITER_MAX: u32 = 10_000_000;
+/// The deepest starting view, in octaves (a view file's limit).
+const VIEW_OCTAVES_MAX: f64 = 3.4e7;
+
+impl StartView {
+    /// `log2` of the magnification, if the zoom reads and is within the limit.
+    pub(crate) fn log2_zoom(&self) -> Option<f64> {
+        crate::parse_zoom_to_log2(&self.zoom).filter(|l| l.abs() <= VIEW_OCTAVES_MAX)
+    }
+
+    /// The Julia constant, if this is a Julia set and it reads.
+    pub(crate) fn julia_c(&self) -> Option<(f64, f64)> {
+        let [re, im] = self.julia.as_ref()?;
+        let (re, im) = (re.trim().parse::<f64>().ok()?, im.trim().parse::<f64>().ok()?);
+        (re.is_finite() && im.is_finite()).then_some((re, im))
+    }
+
+    /// The view as it may be used: untrusted (an imported file), so a centre that does not read as
+    /// a finite number, a zoom that does not read or is out of range, or a Julia constant that does
+    /// not read makes no view at all; the iteration count is clamped.
+    fn tidy(self) -> Option<StartView> {
+        let finite = |s: &str| fractadyne_core::parse_bf(s.trim()).is_some();
+        let short = |s: &str| s.trim().chars().take(20_000).collect::<String>();
+        let v = StartView {
+            center: [short(&self.center[0]), short(&self.center[1])],
+            zoom: self.zoom.trim().chars().take(64).collect(),
+            iterations: self.iterations.map(|n| n.clamp(16, VIEW_ITER_MAX)),
+            julia: self.julia.map(|[re, im]| [re.trim().to_string(), im.trim().to_string()]),
+        };
+        let ok = finite(&v.center[0]) && finite(&v.center[1]) && v.log2_zoom().is_some();
+        (ok && (v.julia.is_none() || v.julia_c().is_some())).then_some(v)
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct FormulaFile {
+    #[serde(default)]
+    format: String,
+    #[serde(default)]
+    version: u32,
+    #[serde(default)]
+    formula: Vec<SavedFormula>,
+}
+
+impl SavedFormula {
+    /// The entry as stored: line breaks as `\n` (a CR LF or lone CR from another editor becomes one
+    /// — `str::lines` would miss the lone CR), other control characters dropped, the name trimmed
+    /// and cut to [`NAME_MAX`] (a blank one named after the source), at most [`MAX_PARAMS`]
+    /// parameters. `None` for an empty source or one past [`SOURCE_MAX`]. Repair, don't reject:
+    /// everything else stays as written, including a source that no longer parses (the list says
+    /// why; it may be a newer build's formula, and it can still be edited).
+    pub(crate) fn tidy(self) -> Option<SavedFormula> {
+        let mut source = String::with_capacity(self.source.len());
+        let mut chars = self.source.chars().peekable();
+        while let Some(ch) = chars.next() {
+            match ch {
+                '\r' => {
+                    if chars.peek() == Some(&'\n') {
+                        chars.next();
+                    }
+                    source.push('\n');
+                }
+                '\n' | '\t' => source.push(ch),
+                c if c.is_control() => {}
+                c => source.push(c),
+            }
+        }
+        let source = source.trim().to_string();
+        if source.is_empty() || source.len() > SOURCE_MAX {
+            return None;
+        }
+        let one_line = |s: &str| -> String { s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect() };
+        let mut name: String = one_line(&self.name).trim().chars().take(NAME_MAX).collect();
+        if name.is_empty() {
+            name = first_statement(&source).chars().take(40).collect();
+        }
+        let params = self
+            .params
+            .into_iter()
+            .take(MAX_PARAMS)
+            .map(|[re, im]| [one_line(&re).trim().to_string(), one_line(&im).trim().to_string()])
+            .collect();
+        let line = |s: &str, max: usize| one_line(s).trim().chars().take(max).collect::<String>();
+        Some(SavedFormula {
+            name,
+            source,
+            params,
+            view: self.view.and_then(StartView::tidy),
+            about: line(&self.about, 400),
+            category: line(&self.category, 60),
+        })
+    }
+
+    /// The same formula, whatever the names: the same source and parameter values (a parameter
+    /// missing on one side is 0, as the formula reads it; "0.50" is "0.5").
+    pub(crate) fn same_formula(&self, other: &SavedFormula) -> bool {
+        let same_number = |a: &str, b: &str| match (a.trim().parse::<f64>(), b.trim().parse::<f64>()) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => a.trim() == b.trim(),
+        };
+        let zero = ["0".to_string(), "0".to_string()];
+        let n = self.params.len().max(other.params.len());
+        self.source.trim() == other.source.trim()
+            && (0..n).all(|i| {
+                let (a, b) = (self.params.get(i).unwrap_or(&zero), other.params.get(i).unwrap_or(&zero));
+                same_number(&a[0], &b[0]) && same_number(&a[1], &b[1])
+            })
+    }
+
+    /// The source on one line for a list row: statements joined by the language's own `, `.
+    pub(crate) fn one_line(&self) -> String {
+        self.source.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(", ")
+    }
+}
+
+/// The collection that comes with the app, a formula file of our own (written from the
+/// mathematics: no formula corpus is bundled, design/custom-formulas.md §10).
+const COLLECTION: &str = include_str!("../assets/formulas/collection.toml");
+
+/// The collection, in the file's order (grouped by category), each entry with its starting view.
+/// Read once. An entry `tidy` would drop, or a view it would refuse, is a test failure.
+pub(crate) fn collection() -> &'static [SavedFormula] {
+    static ALL: std::sync::OnceLock<Vec<SavedFormula>> = std::sync::OnceLock::new();
+    ALL.get_or_init(|| {
+        parse_file(COLLECTION).map(|list| list.into_iter().filter_map(SavedFormula::tidy).collect()).unwrap_or_default()
+    })
+}
+
+/// A magnification as text, from its `log2`: plainly while it is a modest number ("2.5", "4096"),
+/// in scientific form past that ("1.2346e500") — `parse_zoom_to_log2` reads both, at any depth.
+pub(crate) fn zoom_text(log2: f64) -> String {
+    if log2.abs() < 40.0 {
+        let s = format!("{:.6}", log2.exp2());
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    } else {
+        let l10 = log2 * std::f64::consts::LOG10_2;
+        let e = l10.floor();
+        format!("{:.4}e{}", 10f64.powf(l10 - e), e as i64)
+    }
+}
+
+/// The first statement that is not a comment, for naming an unnamed entry.
+fn first_statement(source: &str) -> &str {
+    source
+        .lines()
+        .map(|l| l.split(';').next().unwrap_or("").trim())
+        .find(|l| !l.is_empty())
+        .unwrap_or("formula")
+}
+
+/// Alphabetical, ignoring case — the order the gradient library keeps.
+pub(crate) fn sort(list: &mut [SavedFormula]) {
+    list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.name.cmp(&b.name)));
+}
+
+/// Save `entry` under its name, REPLACING an entry of that name: saving twice under one name means
+/// "update it" (as in the gradient library). Returns whether an entry was replaced, or `None` if
+/// the entry is empty (see [`SavedFormula::tidy`]).
+pub(crate) fn upsert(list: &mut Vec<SavedFormula>, entry: SavedFormula) -> Option<bool> {
+    let entry = entry.tidy()?;
+    let replaced = match list.iter().position(|f| f.name == entry.name) {
+        Some(i) => {
+            list[i] = entry;
+            true
+        }
+        None => {
+            list.push(entry);
+            false
+        }
+    };
+    sort(list);
+    Some(replaced)
+}
+
+/// What an import did, for the sentence that reports it.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct MergeReport {
+    pub(crate) added: usize,
+    /// Formulas the library already holds (under any name): skipped.
+    pub(crate) duplicates: usize,
+    /// `(name in the file, name given)`: a DIFFERENT formula whose name was taken.
+    pub(crate) renamed: Vec<(String, String)>,
+    /// Empty or oversized sources: skipped.
+    pub(crate) skipped: usize,
+}
+
+/// Add `incoming` to `list` without losing anything already there: a formula the library already
+/// holds is skipped, and a new formula whose name is taken is added as "name (2)" rather than
+/// replacing the entry of that name — an import must never overwrite the user's own work.
+pub(crate) fn merge(list: &mut Vec<SavedFormula>, incoming: Vec<SavedFormula>) -> MergeReport {
+    use std::collections::HashSet;
+    let mut report = MergeReport::default();
+    // Indexed, as a `.frm` file brings thousands: a source not among these is no duplicate, and a
+    // name not among these is free.
+    let mut sources: HashSet<String> = list.iter().map(|f| f.source.trim().to_string()).collect();
+    let mut names: HashSet<String> = list.iter().map(|f| f.name.clone()).collect();
+    for entry in incoming {
+        let Some(entry) = entry.tidy() else {
+            report.skipped += 1;
+            continue;
+        };
+        if sources.contains(entry.source.trim()) && list.iter().any(|f| f.same_formula(&entry)) {
+            report.duplicates += 1;
+            continue;
+        }
+        let mut name = entry.name.clone();
+        if names.contains(&name) {
+            name = (2..).map(|k| format!("{} ({k})", entry.name)).find(|n| !names.contains(n)).expect("unbounded");
+            report.renamed.push((entry.name.clone(), name.clone()));
+        }
+        sources.insert(entry.source.trim().to_string());
+        names.insert(name.clone());
+        list.push(SavedFormula { name, ..entry });
+        report.added += 1;
+    }
+    sort(list);
+    report
+}
+
+/// What a Fractint `.frm` file holds for the library: its entries that read, as library entries
+/// (each parameter it reads at 0, as Fractint's are without a `.par`; what the translation changed
+/// in `about`), and those that do not, counted by why.
+#[derive(Debug, Default)]
+pub(crate) struct FrmImport {
+    pub(crate) formulas: Vec<SavedFormula>,
+    /// `(why, how many)`, the commonest first.
+    pub(crate) unread: Vec<(String, usize)>,
+}
+
+impl FrmImport {
+    pub(crate) fn unread_total(&self) -> usize {
+        self.unread.iter().map(|(_, n)| n).sum()
+    }
+
+    /// The sentence the import's toast adds: how many did not read, and the commonest reason.
+    pub(crate) fn sentence(&self) -> Option<String> {
+        let n = self.unread_total();
+        let (why, _) = self.unread.first()?;
+        let some = if n == 1 { "1 entry doesn't".to_string() } else { format!("{} entries don't", crate::commas(&n.to_string())) };
+        Some(format!("{some} read in this version (most often: {why})."))
+    }
+}
+
+/// Read a `.frm` file (bytes: the DOS-era ones are Latin-1) named `file`.
+pub(crate) fn from_frm(bytes: &[u8], file: &str) -> FrmImport {
+    let mut out = FrmImport::default();
+    let mut why: Vec<(String, usize)> = Vec::new();
+    for e in fractadyne_core::ir::frm::read_frm_bytes(bytes) {
+        match (e.reads, fractadyne_core::ir::parse::parse(&e.source)) {
+            (Ok(()), Ok(f)) => {
+                // The notes start with a name (`fn1`, `f3`) as often as not: joined, not capitalised.
+                let about = if e.notes.is_empty() {
+                    format!("From {file}.")
+                } else {
+                    format!("From {file}: {}.", e.notes.join("; "))
+                };
+                out.formulas.push(SavedFormula {
+                    name: e.name,
+                    source: e.source,
+                    params: vec![["0".to_string(), "0".to_string()]; f.param_count()],
+                    about,
+                    ..Default::default()
+                });
+            }
+            (Err(m), _) | (_, Err(fractadyne_core::ir::parse::ParseError { message: m, .. })) => {
+                // "`whitesq`: screen and view variables…" and "`scrnpix`: …" are one reason.
+                let m = match m.strip_prefix('`').and_then(|r| r.split_once("`: ")) {
+                    Some((_, reason)) => reason.to_string(),
+                    None => m,
+                };
+                match why.iter_mut().find(|(w, _)| *w == m) {
+                    Some(slot) => slot.1 += 1,
+                    None => why.push((m, 1)),
+                }
+            }
+        }
+    }
+    why.sort_by(|a, b| b.1.cmp(&a.1));
+    out.unread = why;
+    out
+}
+
+impl MergeReport {
+    /// One sentence (or two) for the toast. `file` is the file's name.
+    pub(crate) fn sentence(&self, file: &str) -> String {
+        let plural = |n: usize, one: &str, many: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {many}") };
+        let mut s = if self.added == 0 {
+            format!("Nothing new in \"{file}\"")
+        } else {
+            format!("Imported {} from \"{file}\"", plural(self.added, "formula", "formulas"))
+        };
+        let mut notes = Vec::new();
+        if self.duplicates > 0 {
+            notes.push(format!(
+                "{} already in the library",
+                plural(self.duplicates, "formula was", "formulas were")
+            ));
+        }
+        match self.renamed.as_slice() {
+            [] => {}
+            [(from, to)] => notes.push(format!("\"{from}\" was taken, so it is \"{to}\"")),
+            many => notes.push(format!("{} renamed where the name was taken", many.len())),
+        }
+        if self.skipped > 0 {
+            notes.push(format!("{} empty or too long, skipped", plural(self.skipped, "entry was", "entries were")));
+        }
+        if notes.is_empty() {
+            s.push('.');
+        } else {
+            s.push_str(": ");
+            s.push_str(&notes.join("; "));
+            s.push('.');
+        }
+        s
+    }
+}
+
+/// The formulas in a formula file, or why it is not one.
+pub(crate) fn parse_file(text: &str) -> Result<Vec<SavedFormula>, String> {
+    let file: FormulaFile = toml::from_str(text).map_err(|e| {
+        // The toml crate's message carries a source snippet over several lines; the first says it.
+        let e = e.to_string();
+        format!("not a formula file ({})", e.lines().next().unwrap_or("unreadable").trim())
+    })?;
+    if !file.format.is_empty() && file.format != FORMAT {
+        return Err(format!("a \"{}\" file, not a formula file", file.format));
+    }
+    if file.formula.is_empty() {
+        return Err("no formulas in it (a formula file lists them as [[formula]] tables)".to_string());
+    }
+    Ok(file.formula)
+}
+
+/// A formula file holding `list`.
+pub(crate) fn file_text(list: &[SavedFormula]) -> String {
+    let file = FormulaFile { format: FORMAT.to_string(), version: VERSION, formula: list.to_vec() };
+    let body = toml::to_string_pretty(&file).expect("strings and arrays of strings always serialize");
+    format!(
+        "# Fractadyne custom formulas. Import them with Fractal > Formula library > Import.\n\
+         # Each [[formula]] has a name, the step's source and p1, p2, ... as [re, im] text.\n\n{body}"
+    )
+}
+
+/// `formulas.toml` in the config dir (which honours `FRACTADYNE_CONFIG_DIR`).
+pub(crate) fn library_path() -> Option<PathBuf> {
+    fractadyne_state::config_dir().map(|d| d.join("formulas.toml"))
+}
+
+/// The saved library, and a sentence for the user if the file exists but could not be used.
+pub(crate) fn load() -> (Vec<SavedFormula>, Option<String>) {
+    match library_path() {
+        Some(p) => load_from(&p),
+        None => (Vec::new(), None),
+    }
+}
+
+/// [`load`] from `path`. A missing file is an empty library. A file that cannot be read or parsed
+/// is MOVED ASIDE (`formulas.unreadable.toml`, or `…-2`…) so the next save cannot destroy it.
+pub(crate) fn load_from(path: &Path) -> (Vec<SavedFormula>, Option<String>) {
+    let problem = match std::fs::read_to_string(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Vec::new(), None),
+        Err(e) => e.to_string(),
+        Ok(text) => match toml::from_str::<FormulaFile>(&text) {
+            Ok(file) => {
+                let mut list: Vec<SavedFormula> = file.formula.into_iter().filter_map(SavedFormula::tidy).collect();
+                sort(&mut list);
+                return (list, None);
+            }
+            Err(e) => e.to_string().lines().next().unwrap_or("unreadable").trim().to_string(),
+        },
+    };
+    let aside = (1..100)
+        .map(|k| {
+            let name = if k == 1 { "formulas.unreadable.toml".to_string() } else { format!("formulas.unreadable-{k}.toml") };
+            path.with_file_name(name)
+        })
+        .find(|p| !p.exists());
+    let moved = aside.as_ref().filter(|a| std::fs::rename(path, a).is_ok());
+    let note = match moved {
+        Some(a) => format!(
+            "The formula library could not be read ({problem}). It was kept as {} and a new, empty library started.",
+            a.display()
+        ),
+        None => format!(
+            "The formula library could not be read ({problem}), nor moved aside: copy {} somewhere safe \
+             before saving a formula, which replaces it.",
+            path.display()
+        ),
+    };
+    crate::diag::log_line("formula", &note);
+    (Vec::new(), Some(note))
+}
+
+/// Write the library to [`library_path`].
+pub(crate) fn save(list: &[SavedFormula]) -> Result<(), String> {
+    let path = library_path().ok_or("no config directory")?;
+    save_to(&path, list)
+}
+
+/// Write the library to `path`, atomically: a temp file beside it, then a rename over it, so a
+/// crash mid-write leaves the old library, not half of the new one.
+pub(crate) fn save_to(path: &Path, list: &[SavedFormula]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, file_text(list)).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        e.to_string()
+    })
+}
+
+#[cfg(test)]
+#[path = "formula_library_tests.rs"]
+mod tests;

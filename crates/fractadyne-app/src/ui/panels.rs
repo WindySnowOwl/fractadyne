@@ -15,7 +15,7 @@ const PANEL_LABEL_W: f32 = 104.0;
 ///
 /// Checkboxes deliberately do NOT use this: a trailing label is the convention for a checkbox,
 /// and the panel's seventeen already read correctly.
-fn labelled<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+pub(crate) fn labelled<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.horizontal(|ui| {
         // PAD to the column rather than laying the label out inside a fixed-size child: a
         // child `Ui` shrinks to its content, so the controls still began wherever each label
@@ -122,6 +122,9 @@ impl FractadyneApp {
                 // Scroll the sections when they don't fit the window height (header stays pinned).
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
 
+                if self.fractal == FractalKind::Life {
+                    egui::CollapsingHeader::new("Life").default_open(true).show(ui, |ui| self.life_panel(ui));
+                }
                 egui::CollapsingHeader::new("Navigate").default_open(true).show(ui, |ui| {
                 labelled(ui, "Zoom speed", |ui| {
                     ui.add(
@@ -391,6 +394,9 @@ impl FractadyneApp {
                     self.anim.random_palette.reshuffle();
                 }
                 });
+                // Iterations, supersampling, relief and glow are escape-time settings: a Life
+                // universe has none of them.
+                if self.fractal.is_escape_time() {
                 egui::CollapsingHeader::new("Quality").default_open(true).show(ui, |ui| {
                 ui.checkbox(&mut self.render_cfg.auto_iter, "Auto-scale iterations with zoom");
                 let label = if self.render_cfg.auto_iter { "Iterations (base)" } else { "Iterations" };
@@ -512,6 +518,7 @@ impl FractadyneApp {
                         .on_hover_text("Flow the glow bands over time (uses the Speed slider).");
                 });
                 });
+                } // escape-time sections
                 // The orbit overlay's options lived as an indented block inside the View MENU
                 // until 2026-08-13 (UI review: a panel's worth of controls in a dropdown). The
                 // toggle is mirrored in Tools ▸ Orbit overlay.
@@ -692,14 +699,22 @@ impl FractadyneApp {
                 // i.e. literally "Mandelbrot", which reads as a formula SELECTOR next to the toolbar
                 // dropdown that actually is one.
                 let info = self.fractal.info();
+                let custom_src = (self.fractal == FractalKind::Custom)
+                    .then(|| self.custom.as_ref().map(|c| c.source.clone()))
+                    .flatten();
                 egui::CollapsingHeader::new(format!("About {}", self.fractal.name()))
                     .default_open(false)
                     .show(ui, |ui| {
-                        ui.monospace(info.formula);
+                        match &custom_src {
+                            Some(src) => ui.monospace(src),
+                            None => ui.monospace(info.formula),
+                        };
                         ui.add_space(4.0);
                         ui.label(info.about);
-                        ui.add_space(4.0);
-                        ui.hyperlink_to("Reference \u{2197}", info.reference);
+                        if !info.reference.is_empty() {
+                            ui.add_space(4.0);
+                            ui.hyperlink_to("Reference \u{2197}", info.reference);
+                        }
                     });
                 // Performance section, docked at the bottom of this same panel
                 // (toggle via the Perf button or the View menu).

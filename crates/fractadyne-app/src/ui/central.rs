@@ -355,6 +355,7 @@ impl FractadyneApp {
             upp: vp.units_per_pixel.to_f64(),
             julia: is_julia,
             formula,
+            custom: self.custom_key_for(self.fractal),
             jcx: self.julia_c.0,
             jcy: self.julia_c.1,
         };
@@ -390,7 +391,7 @@ impl FractadyneApp {
                     .collect()
             } else {
                 let point = vp.complex_at_pixel_f64(cursor_px.0, cursor_px.1);
-                let newton = formula == 9;
+                let newton = fractadyne_core::formula::caps(formula).convergent;
                 let (z0, c) = if is_julia {
                     (point, self.julia_c)
                 } else if newton {
@@ -398,7 +399,13 @@ impl FractadyneApp {
                 } else {
                     ((0.0, 0.0), point)
                 };
-                fractadyne_core::orbit_points(z0, c, formula, ORBIT_MAX, 1.0e8)
+                match self.custom.as_ref().filter(|_| self.fractal == FractalKind::Custom) {
+                    // The core's id-keyed step would fall back to Mandelbrot for id 1000; the IR
+                    // interpreter iterates the formula itself.
+                    Some(cf) => fractadyne_core::ir::orbit_points(&cf.formula, z0, c, &cf.params, ORBIT_MAX, 1.0e8)
+                        .unwrap_or_default(),
+                    None => fractadyne_core::orbit_points(z0, c, formula, ORBIT_MAX, 1.0e8),
+                }
             };
             // Trim the final escape to infinity so the normalized fit / racing dot reflect
             // the real |z|≲4 trajectory rather than one huge blown-up iterate.
@@ -738,7 +745,8 @@ impl FractadyneApp {
     }
 
     pub(crate) fn draw_minimap(&mut self, ctx: &egui::Context) {
-        if !self.dialogs.minimap || (self.julia_mode && !self.dual) {
+        // (A Life universe has no fixed overview to place itself on.)
+        if !self.dialogs.minimap || (self.julia_mode && !self.dual) || !self.fractal.is_escape_time() {
             return;
         }
         let Some(tex) = self.minimap_tex.clone() else { return };
@@ -908,6 +916,22 @@ impl FractadyneApp {
     /// orbit overlay, plus the watermark, guided-tour annotations, minimap, gradient editor,
     /// and help overlay drawn on top of it.
     pub(crate) fn draw_central(&mut self, ctx: &egui::Context) {
+        // A custom formula entered without the dialog's off-thread compile (a saved session, a view
+        // file, `--formula`) has no pipelines yet: build them here, timed, rather than in the paint
+        // callback, so the next frame interval leaves the compile out (`Perf::ui_compile_ms`).
+        if self.fractal == crate::FractalKind::Custom {
+            if let (Some(rs), Some(c)) = (self.render_state.as_ref(), self.custom.as_ref()) {
+                let t = std::time::Instant::now();
+                if fractadyne_gpu::prepare_custom_now(rs, &c.shader) {
+                    let ms = t.elapsed().as_secs_f64() * 1000.0;
+                    self.perf.ui_compile_ms += ms;
+                    crate::diag::log_line(
+                        "formula",
+                        &format!("custom formula pipelines compiled on the UI thread in {ms:.0} ms (not priced as GPU work)"),
+                    );
+                }
+            }
+        }
         let central = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
@@ -968,6 +992,8 @@ impl FractadyneApp {
                     }
                 }
                 self.viewport.set_size(nw, nh);
+                // Life's Draw / Erase tool owns the left button: a drag paints cells, not the view.
+                let life_draw = self.life_draws();
 
                 // Zoom box (Shift+drag): rubber-band a rectangle, then zoom so it fills the
                 // view. Deep-zoom-correct (recenter + scale via the bignum viewport methods).
@@ -1023,10 +1049,39 @@ impl FractadyneApp {
                         .complex_at_pixel_f64(l.x as f64 * ppp, l.y as f64 * ppp)
                 });
 
-                // Pan with left-drag (unless dragging a zoom box).
-                if !zoom_boxing && response.dragged_by(egui::PointerButton::Primary) {
+                // Pan with left-drag (unless dragging a zoom box, or drawing Life cells).
+                if !zoom_boxing && !life_draw && response.dragged_by(egui::PointerButton::Primary) {
                     let d = response.drag_delta();
                     self.viewport.pan_pixels(d.x as f64 * ppp, d.y as f64 * ppp);
+                }
+                if life_draw && !zoom_boxing && !shift {
+                    // The stroke starts on the PRESS (not when egui decides a drag began, a few
+                    // pixels later), so the first cell is the one under the press.
+                    let primary = egui::PointerButton::Primary;
+                    let (held, pressed, released, frame) = ctx.input(|i| {
+                        (
+                            i.pointer.button_down(primary),
+                            i.pointer.button_pressed(primary),
+                            i.pointer.button_released(primary),
+                            i.time,
+                        )
+                    });
+                    // Pressed ON the view and still held: a stroke, starting on the press frame. A
+                    // click (released without dragging) continues the stroke its press began, or
+                    // is a stroke of one cell when the press and release share a frame.
+                    let click = response.clicked_by(primary);
+                    if (held && response.is_pointer_button_down_on()) || click {
+                        if let Some(p) = response.interact_pointer_pos() {
+                            let l = p - rect.min;
+                            self.life_stroke(l.x as f64 * ppp, l.y as f64 * ppp, pressed, click, frame);
+                        }
+                    }
+                    if released {
+                        self.life_stroke_end();
+                    }
+                    if response.hovered() {
+                        ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+                    }
                 }
 
                 // Cursor-centered wheel zoom (scroll up = zoom in).
@@ -1115,7 +1170,7 @@ impl FractadyneApp {
                 // wasn't a drag, so this coexists with left-drag pan and Shift/right-drag box-zoom
                 // (both drags). Shift is reserved for box-zoom, so a Shift+click never dives. The
                 // magnifier cursor advertises the armed tool while hovering.
-                if self.click_zoom && !shift {
+                if self.click_zoom && !shift && !life_draw {
                     if response.hovered() && !response.dragged() {
                         ctx.set_cursor_icon(egui::CursorIcon::ZoomIn);
                     }
@@ -1155,7 +1210,7 @@ impl FractadyneApp {
                 // count as "active" — otherwise the render drops to the coarse moving preview
                 // while you're framing the box. The zoom is applied on release.
                 let active = self.pointer.zoom_vel.abs() > 1e-3
-                    || (response.dragged() && !zoom_boxing && self.pointer.box_start.is_none())
+                    || (response.dragged() && !zoom_boxing && self.pointer.box_start.is_none() && !life_draw)
                     || scroll_y != 0.0
                     || space;
                 if active {
@@ -1209,7 +1264,7 @@ impl FractadyneApp {
                 ];
                 // Pan reprojection: while dragging, translate the last detailed frame instead
                 // of re-rendering coarse (see `nav_and_draw` for the full rationale).
-                let panning = !zoom_boxing && self.pointer.box_start.is_none();
+                let panning = !zoom_boxing && self.pointer.box_start.is_none() && !life_draw;
                 if response.drag_started_by(egui::PointerButton::Primary) && panning {
                     self.pointer.pan_px = egui::Vec2::ZERO;
                     self.pointer.pan_view = Some(0);
@@ -1233,42 +1288,56 @@ impl FractadyneApp {
                     }
                     None
                 };
-                // Progressive on-settle supersampling (deep-zoom despeckle) — the single-view
-                // counterpart of the call in `nav_and_draw`. ⚠Until 2026-09-15 only the dual-view
-                // path drove it, so the feature never ran in the ordinary single view it was built
-                // for. `busy` = a settle grid / chunk progression / reference build in flight.
-                let accum_busy = self.perf.tile_pending[0]
-                    || self.perf.chunk_pending[0]
-                    || self.recompute_rx[0].is_some();
-                self.track_view_jump(0, ctx);
-                self.drive_accumulation(ctx, 0, interacting, accum_busy, log2mag);
-                // Only the live view may start a tiled settle (the profiling/benchmark callers of
-                // `build_params` time single dispatches).
-                self.allow_tiled_settle = true;
-                let mut params = self.build_params(
-                    center_bf,
-                    center,
-                    span_fe,
-                    mag,
-                    log2mag,
-                    self.fractal,
-                    self.julia_mode,
-                    eff_iter,
-                    interacting,
-                    aa_target,
-                    resolution,
-                    0,
-                    reproject,
-                );
-                self.allow_tiled_settle = false;
-                // Rule on the proposed fold against the frame just built (see `accum_confirm`).
-                self.accum_confirm(ctx, 0, &mut params);
-                // A settle grid (or a chunked iteration progression) in progress needs the next
-                // frame promptly — one tile / one iteration range per frame.
-                if self.perf.tile_pending[0] || self.perf.chunk_pending[0] {
-                    self.schedule_repaint(ctx);
+                if self.fractal == crate::FractalKind::Life {
+                    // Life draws a frame whenever the universe or the view changes — no settle
+                    // grid, accumulation or reprojection: a running universe never converges.
+                    if self.life.running() {
+                        self.schedule_repaint(ctx);
+                    }
+                    let _ = (center_bf, center, span_fe, mag, eff_iter, aa_target, reproject);
+                    let params = self.build_life_params(now, resolution, 1);
+                    add_mandelbrot(ui.painter(), rect, params);
+                    // Cell borders and the cell under a drawing cursor, over the cells.
+                    self.life_overlay(ui.painter(), rect, ppp as f32, response.hover_pos());
+                } else {
+                    // Progressive on-settle supersampling (deep-zoom despeckle) — the single-view
+                    // counterpart of the call in `nav_and_draw`. ⚠Until 2026-09-15 only the
+                    // dual-view path drove it, so the feature never ran in the ordinary single view
+                    // it was built for. `busy` = a settle grid / chunk progression / reference
+                    // build in flight.
+                    let accum_busy = self.perf.tile_pending[0]
+                        || self.perf.chunk_pending[0]
+                        || self.recompute_rx[0].is_some();
+                    self.track_view_jump(0, ctx);
+                    self.drive_accumulation(ctx, 0, interacting, accum_busy, log2mag);
+                    // Only the live view may start a tiled settle (the profiling/benchmark callers
+                    // of `build_params` time single dispatches).
+                    self.allow_tiled_settle = true;
+                    let mut params = self.build_params(
+                        center_bf,
+                        center,
+                        span_fe,
+                        mag,
+                        log2mag,
+                        self.fractal,
+                        self.julia_mode,
+                        eff_iter,
+                        interacting,
+                        aa_target,
+                        resolution,
+                        0,
+                        reproject,
+                    );
+                    self.allow_tiled_settle = false;
+                    // Rule on the proposed fold against the frame just built (see `accum_confirm`).
+                    self.accum_confirm(ctx, 0, &mut params);
+                    // A settle grid (or a chunked iteration progression) in progress needs the
+                    // next frame promptly — one tile / one iteration range per frame.
+                    if self.perf.tile_pending[0] || self.perf.chunk_pending[0] {
+                        self.schedule_repaint(ctx);
+                    }
+                    add_mandelbrot(ui.painter(), rect, params);
                 }
-                add_mandelbrot(ui.painter(), rect, params);
 
                 // Orbit overlay for the point under the cursor — or, during a tour, a scripted point.
                 if self.anim.show_orbits {

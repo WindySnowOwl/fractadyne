@@ -54,6 +54,39 @@ period = 998
 nucleus_x = "-0.74364388703715887077806454349323251348"
 nucleus_y = "0.131825904205312292821097354874199108694"
 
+# Multibrot z^d + c: a period-2 nucleus has z1 = c, z2 = c^d + c = 0, so c^(d-1) = -1 — exact by
+# hand: c = -1 for d = 6 and 8 (odd d - 1), c = i for d = 7 (i^6 = -1).
+
+[[nucleus]]
+name = "Multibrot 6 period-2 nucleus (c = -1)"
+fractal = "Multibrot 6"
+center_x = "-1.001"
+center_y = "0.001"
+zoom = 50.0
+period = 2
+nucleus_x = "-1.0"
+nucleus_y = "0.0"
+
+[[nucleus]]
+name = "Multibrot 7 period-2 nucleus (c = i)"
+fractal = "Multibrot 7"
+center_x = "0.001"
+center_y = "1.001"
+zoom = 50.0
+period = 2
+nucleus_x = "0.0"
+nucleus_y = "1.0"
+
+[[nucleus]]
+name = "Multibrot 8 period-2 nucleus (c = -1)"
+fractal = "Multibrot 8"
+center_x = "-1.001"
+center_y = "0.001"
+zoom = 50.0
+period = 2
+nucleus_x = "-1.0"
+nucleus_y = "0.0"
+
 # --- set membership: is the point inside the Mandelbrot set? (interior = bounded orbit) ---
 # Verified independently by the arbitrary-precision oracle AND a 1x1 GPU render.
 

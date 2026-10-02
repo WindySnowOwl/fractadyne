@@ -431,6 +431,12 @@ impl crate::FractadyneApp {
                 cur_group = s.group;
                 println!("  — {cur_group} —");
             }
+            // Liveness per segment, and the segment's name for the watchdog's breadcrumb. A direct
+            // segment builds no reference, so nothing else stamps it: the fractal group grew to 25
+            // segments with the power families, and on the RX 6800 XT its ~12 s of direct renders
+            // tripped "possible hang … last activity: reference built" (beta.13 battery, 2026-10-01)
+            // though every segment took under 0.8 s. One segment silent for 10 s still trips it.
+            crate::diag::breadcrumb(format!("bench-matrix segment {}", s.name));
             let r = self.measure_segment(s, device, queue, reps);
             println!(
                 "  {:<22} {:>4} {:>8} {:>8} {:>8.2} {:>8.2} {:>8.2} {:>10} {:>10} {:>10} {:>10}",

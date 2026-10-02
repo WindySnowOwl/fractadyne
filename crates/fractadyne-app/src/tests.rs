@@ -334,9 +334,16 @@ palette_custom=0,0.25,0.5,0,0,0,1,1,0.2,0.1,1,0,0,0,0,0,0;\
 /// - `center_re_expr` / `center_im_expr` / `center_re_offset` / `center_im_offset` appear ONLY when
 ///   the centre was entered as a re-derivable expression (see `center_expr_metadata`); an ordinary
 ///   view — which the sample is — carries none of them, and their round-trip has its own selftest.
+/// - `formula` / `formula_params` appear ONLY in a Custom view (see `custom_formula_metadata`); the
+///   sample is a built-in view, and their round trip is `a_custom_view_round_trips_its_formula`.
+/// - `rule` / `pattern` / `pattern_origin` / `pattern_generation` / `generation` / `pattern_name`
+///   appear ONLY in a Life view (see `life_metadata`); their round trip is
+///   `a_life_view_round_trips_its_universe`.
 const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "thumb", "checksum",
     "center_re_expr", "center_im_expr", "center_re_offset", "center_im_offset",
+    "formula", "formula_params",
+    "rule", "pattern", "pattern_origin", "pattern_generation", "generation", "pattern_name",
 ];
 
 #[test]
@@ -1268,6 +1275,9 @@ fn stopping_playback_restores_interaction() {
         "im",
         "zoom",
         "fractal",
+        // A tour that shows a custom formula leaves you on it, as it leaves you on its family.
+        "formula",
+        "formula_params",
         "julia",
         "dual",
         "julia_re",

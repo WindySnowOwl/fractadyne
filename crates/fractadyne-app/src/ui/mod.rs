@@ -7,8 +7,15 @@
 
 pub(crate) mod central;
 mod dialogs;
+pub(crate) mod formula_dialog;
+pub(crate) mod formula_editor;
+pub(crate) mod formula_keypad;
+pub(crate) mod formula_library;
+pub(crate) mod textbook;
 mod menus;
 mod panels;
+/// The panel's labelled-row helper, for sections drawn outside `panels` (the Life section).
+pub(crate) use panels::labelled;
 pub(crate) mod diagnostics;
 mod orbit_cache;
 pub(crate) mod autopilot_overlay;

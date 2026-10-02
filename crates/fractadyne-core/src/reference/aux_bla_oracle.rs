@@ -376,8 +376,8 @@ fn build_bla_parallel_matches_serial() {
         cmag: mag(to_f64(&cx), to_f64(&cy)),
         power: POWER,
     };
-    let serial = build_bla_mandel_impl(&orbit, dc_max, 1.0e-6, aux_p, usize::MAX);
-    let parallel = build_bla_mandel_impl(&orbit, dc_max, 1.0e-6, aux_p, 0);
+    let serial = build_bla_mandel_impl(&orbit, dc_max, 1.0e-6, aux_p, usize::MAX, 2);
+    let parallel = build_bla_mandel_impl(&orbit, dc_max, 1.0e-6, aux_p, 0, 2);
     let (gs, gp) = (bla_to_gpu(&serial), bla_to_gpu(&parallel));
     assert_eq!(gs.len(), gp.len(), "flattened node count differs (level/merge shape changed)");
     for (i, (a, b)) in gs.iter().zip(&gp).enumerate() {

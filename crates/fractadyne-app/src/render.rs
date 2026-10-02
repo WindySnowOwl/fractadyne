@@ -398,6 +398,9 @@ pub(crate) struct RecomputeInputs {
     precision: usize,
     julia: bool,
     formula: u32,
+    /// The custom formula the orbit is built from when `formula` is `formula::CUSTOM` (the id
+    /// alone names no step). Such a build takes its own path — see [`custom_reference`].
+    custom: Option<std::sync::Arc<crate::custom_formula::CustomFormula>>,
     julia_c: (f64, f64),
     do_sa: bool,
     bla_dc_max: Option<fractadyne_core::FloatExp>,
@@ -424,7 +427,7 @@ pub(crate) struct RecomputeInputs {
 /// BLA is Mandelbrot-only) — both reference-intrinsic, so the tree caches per reference with no live
 /// dependency. Point-trap uses the default trap aggregate (trap_type 0). `stripe_freq` stays default
 /// (stripe's per-node aggregate isn't folded yet — it would need a rebuild on the freq slider).
-fn aux_agg_from_orbit(orbit: &[[f32; 4]], stripe_freq: f64, trap_type: u32) -> fractadyne_core::AuxAggParams {
+fn aux_agg_from_orbit(orbit: &[[f32; 4]], stripe_freq: f64, trap_type: u32, power: u32) -> fractadyne_core::AuxAggParams {
     let cmag = orbit
         .get(1)
         .map(|z| {
@@ -437,8 +440,9 @@ fn aux_agg_from_orbit(orbit: &[[f32; 4]], stripe_freq: f64, trap_type: u32) -> f
     // `stripe_freq` and `trap_type` must be the LIVE values: the aux aggregates they select
     // (stripe's Σ(0.5+0.5·sin(freq·arg Z)); trap's running min of aux_trap_dist(Z, trap_type)) are
     // parameter-specific, so a stripe/cross/circle-trap BLA tree rebuilds when its slider changes
-    // (see the live rebuild in build_params). `power` stays 2 (BLA is Mandelbrot-only).
-    fractadyne_core::AuxAggParams { trap_type, stripe_freq, cmag, power: 2.0 }
+    // (see the live rebuild in build_params). `power` is the formula's degree, the
+    // triangle-inequality term's (BLA runs for every `z^d + c` family).
+    fractadyne_core::AuxAggParams { trap_type, stripe_freq, cmag, power: f64::from(power) }
 }
 
 /// Device-derived ceiling on the stored reference-orbit LENGTH (in samples), set once at startup
@@ -568,6 +572,9 @@ pub(crate) fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
         inp.precision,
         crate::diag::memory_summary()
     ));
+    if inp.custom.is_some() {
+        return custom_reference(&inp);
+    }
     // Deep-dive reuse: when the prior reference is still valid for this (deeper) frame, EXTEND its
     // orbit instead of recomputing every bignum step (the orbit build dominates a deep frame). Falls
     // back to a fresh pick + full build when there's no reusable orbit or it no longer qualifies.
@@ -595,6 +602,41 @@ pub(crate) fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
     let res = pick_and_build(&inp, crate::tunables::cost().ref_overlap == 1);
     offer_to_orbit_cache(&res, key, inp.origin);
     res
+}
+
+/// A custom formula's reference: its orbit from the IR interpreter in bignum (`ir::reference_orbit`),
+/// with none of the built-ins' machinery — no candidate pick (`best_reference` iterates the
+/// built-in steps), no extension of a previous orbit, no disk cache (keyed on the formula id), no
+/// series approximation or BLA (neither is derived for a custom step; `do_sa` and `bla_dc_max`
+/// arrive off from the capabilities). The reference is the view centre; when the centre escapes
+/// early, a 3×3 grid of points a quarter-span apart is tried and the longest orbit kept (the first
+/// to reach the cap wins). Pixels past a short reference's end rebase, so the choice is speed and
+/// fewer rebases, not correctness.
+fn custom_reference(inp: &RecomputeInputs) -> RecomputeResult {
+    use fractadyne_core as fc;
+    let cap = build_cap(inp.gpu_iter, inp);
+    let mut best = (inp.center_bf.clone(), build_orbit(&inp.center_bf, inp.gpu_iter, inp));
+    if best.1.tail.escaped && best.1.len.saturating_mul(2) < cap {
+        let prec = inp.precision + REF_PREC_HEADROOM;
+        'grid: for (i, j) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
+            let p = [
+                fc::add_floatexp(&inp.center_bf[0], inp.span.0.mul_f64(0.25 * i as f64), prec),
+                fc::add_floatexp(&inp.center_bf[1], inp.span.1.mul_f64(0.25 * j as f64), prec),
+            ];
+            let b = build_orbit(&p, inp.gpu_iter, inp);
+            let done = !b.tail.escaped;
+            if b.len > best.1.len {
+                best = (p, b);
+            }
+            if done {
+                break 'grid;
+            }
+        }
+    }
+    let (rp, mut b) = best;
+    // An explosive formula's escaping sample can be past what the GPU holds (`trim_reference`).
+    let len = fractadyne_gpu::custom::trim_reference(&mut b.o);
+    finish_reference(rp, b.o, len, b.tail, b.orbit_prec, inp.gpu_iter, false, inp, b.ref_ms, None)
 }
 
 /// A FRESH pick + build of `inp` (no reuse, no disk cache), with or without the overlap of
@@ -647,7 +689,10 @@ fn pick_and_build(inp: &RecomputeInputs, overlap: bool) -> RecomputeResult {
     }
     let centre = &inp.center_bf;
     // `finish_reference` runs SA for `do_sa`, or for a short escaper, which needs a BLA view.
-    let sa_may_run = inp.do_sa || inp.bla_dc_max.is_some();
+    // (A BLA view may want SA back for a short escaper — only a formula that HAS one: the folds take
+    // a BLA tree but have no series.)
+    let sa_may_run = inp.do_sa
+        || (inp.bla_dc_max.is_some() && fractadyne_core::formula::caps(inp.formula).series_approximation);
     let cancel_sa = AtomicBool::new(false);
     std::thread::scope(|s| {
         let (tx, rx) = std::sync::mpsc::channel();
@@ -817,7 +862,7 @@ impl FractadyneApp {
     /// direct-mode view (no reference).
     fn export_fresh_reference_inputs(&self, vp: &Viewport, julia: bool) -> Option<RecomputeInputs> {
         let eff_iter = self.export_eff_iter(vp, julia);
-        let mode = RenderMode::select(self.fractal.supports_perturbation(), julia, vp.magnification());
+        let mode = self.render_mode(self.fractal, julia, vp.magnification());
         if mode.is_direct() {
             return None;
         }
@@ -1064,8 +1109,14 @@ fn build_orbit(rp: &[fractadyne_core::BigFloat; 2], orbit_iter: u32, inp: &Recom
     } else {
         (zero.clone(), zero, rp[0].clone(), rp[1].clone())
     };
-    let (o, len, tail) =
-        fc::reference_orbit_t(&z0x, &z0y, &cx0, &cy0, inp.formula, build_cap(orbit_iter, inp), orbit_prec);
+    let cap = build_cap(orbit_iter, inp);
+    let (o, len, tail) = match &inp.custom {
+        // Only a formula with a perturbed step reaches here, and those evaluate in bignum (no
+        // division or functions) with every parameter supplied.
+        Some(c) => fc::ir::reference_orbit(&c.formula, &z0x, &z0y, &cx0, &cy0, &c.params, cap, orbit_prec)
+            .expect("a perturbable custom formula evaluates in bignum"),
+        None => fc::reference_orbit_t(&z0x, &z0y, &cx0, &cy0, inp.formula, cap, orbit_prec),
+    };
     BuiltOrbit { o, len, tail, orbit_prec, ref_ms: t.elapsed().as_secs_f64() * 1000.0 }
 }
 
@@ -1101,8 +1152,13 @@ fn sa_log2_max_dc(inp: &RecomputeInputs, rp: &[fractadyne_core::BigFloat; 2]) ->
 /// un-accelerated (slow, and a capped stand-in gives a hard borderless minibrot). Surviving
 /// references (partial: reached the cap without escaping) already run SA-or-BLA correctly. Gate on
 /// the escape being well short of the budget so this only touches genuine short escapers.
+/// ⚠Only for a formula with a series: since the power families' phase 4 the folds take a BLA tree
+/// too, and none has a series (forcing one would walk z²'s for a Burning Ship reference).
 fn sa_short_escaper(inp: &RecomputeInputs, len: u32, partial: bool) -> bool {
-    inp.bla_dc_max.is_some() && !partial && (len as u64).saturating_mul(2) < inp.gpu_iter.max(1) as u64
+    inp.bla_dc_max.is_some()
+        && fractadyne_core::formula::caps(inp.formula).series_approximation
+        && !partial
+        && (len as u64).saturating_mul(2) < inp.gpu_iter.max(1) as u64
 }
 
 /// Assemble a `RecomputeResult` from an already-built (fresh or extended) orbit: derive the
@@ -1162,7 +1218,7 @@ fn finish_reference(
         fc::SeriesSkip::NONE
     };
     let series_ms = pre_ms.unwrap_or_else(|| t_sa.elapsed().as_secs_f64() * 1000.0);
-    // BLA tree (Mandelbrot deep only; empty otherwise). Built with the same conservative dc_max the
+    // BLA tree (deep `z^d + c` only — `FormulaCaps::bla`; empty otherwise). Built with the same conservative dc_max the
     // live path uses so the main thread reuses it across pans.
     //
     // SKIP the BLA for a SHORT ESCAPED reference (deep EXTERIOR). At such a spot every candidate
@@ -1177,18 +1233,15 @@ fn finish_reference(
     let t_bla = Instant::now();
     let (bla, bla_dc_max_log2) = match inp.bla_dc_max {
         Some(dc_max) => {
-            let levels = fc::build_bla_mandel(
+            let power = fc::formula::power(inp.formula);
+            let tree = fc::bla_tree_gpu(
                 &orbit,
                 dc_max,
                 crate::tunables::cost().bla_eps,
-                aux_agg_from_orbit(&orbit, inp.stripe_freq, inp.trap_type),
+                aux_agg_from_orbit(&orbit, inp.stripe_freq, inp.trap_type, power),
+                inp.formula,
             );
-            let arc = if levels.is_empty() {
-                std::sync::Arc::new(Vec::new())
-            } else {
-                std::sync::Arc::new(fc::bla_to_gpu(&levels))
-            };
-            (arc, dc_max.log2())
+            (std::sync::Arc::new(tree), dc_max.log2())
         }
         _ => (std::sync::Arc::new(Vec::new()), f64::NEG_INFINITY),
     };
@@ -1336,7 +1389,7 @@ fn recompute_worker_staged(
     // `gpu_iter` is already below it at shallow depth (until ~1e17×), so this naturally no-ops for
     // normal views → a single full build.
     const COARSE_ITER: u32 = 16384;
-    if progressive && COARSE_ITER < inp.gpu_iter {
+    if progressive && COARSE_ITER < inp.gpu_iter && inp.custom.is_none() {
         // ⭐A cold start at a location the on-disk cache holds is not cold: the full orbit is
         // there, and a coarse preview would only put a capped frame on screen for the instant
         // it takes to load. Same lookup as `recompute_worker`, and for the same reason it comes
@@ -2250,7 +2303,7 @@ impl FractadyneApp {
                 fractadyne_core::Viewport::new(self.viewport.width_px, self.viewport.height_px);
             vp.set_center_log2mag(s.cx, s.cy, target_l2);
             let mag = vp.magnification();
-            let mode = RenderMode::select(self.fractal.supports_perturbation(), false, mag);
+            let mode = self.render_mode(self.fractal, false, mag);
             if mode.is_direct() {
                 break; // shallow frames rebuild in microseconds — nothing to prefetch
             }
@@ -2267,7 +2320,7 @@ impl FractadyneApp {
             let scale = vp.gpu_scale();
             let (span_mantissa, delta_exp) = (scale.span_mantissa, scale.delta_exp);
             let bla_will_build = self.bla_eligible(mode, false);
-            let do_sa = self.fractal.formula_id() <= 3
+            let do_sa = self.fractal.caps().series_approximation
                 && !self.coloring.color_method.blocks_iter_skip()
                 && self.render_cfg.series_approx
                 && !bla_will_build;
@@ -2299,6 +2352,7 @@ impl FractadyneApp {
                 precision,
                 julia: false,
                 formula: self.fractal.formula_id(),
+                custom: self.custom_reference_formula_for(self.fractal),
                 julia_c: self.julia_c,
                 do_sa,
                 bla_dc_max: bla_will_build
@@ -2522,7 +2576,7 @@ impl FractadyneApp {
         let mut vp = fractadyne_core::Viewport::new(self.viewport.width_px, self.viewport.height_px);
         vp.set_center_log2mag(s.cx, s.cy, target_l2);
         let mag = vp.magnification();
-        let mode = RenderMode::select(self.fractal.supports_perturbation(), false, mag);
+        let mode = self.render_mode(self.fractal, false, mag);
         if mode.is_direct() {
             return;
         }
@@ -2532,7 +2586,7 @@ impl FractadyneApp {
         let scale = vp.gpu_scale();
         let (span_mantissa, delta_exp) = (scale.span_mantissa, scale.delta_exp);
         let bla_will_build = self.bla_eligible(mode, false);
-        let do_sa = self.fractal.formula_id() <= 3
+        let do_sa = self.fractal.caps().series_approximation
             && !self.coloring.color_method.blocks_iter_skip()
             && self.render_cfg.series_approx
             && !bla_will_build;
@@ -2575,6 +2629,7 @@ impl FractadyneApp {
             precision,
             julia: false,
             formula: self.fractal.formula_id(),
+            custom: self.custom_reference_formula_for(self.fractal),
             julia_c: self.julia_c,
             do_sa,
             bla_dc_max: bla_will_build
@@ -2746,7 +2801,7 @@ impl FractadyneApp {
     /// doesn't apply (disabled, not floatexp/Mandelbrot/non-Julia, or an aux coloring method
     /// that BLA would skip). `dx`/`dy` are the reference-offset mantissas and `span_mantissa`
     /// the view span — both scaled by `2^delta_exp` — used for the worst-case `|δc|`.
-    /// Whether BLA applies to this render (deep floatexp Mandelbrot, non-Julia, non-aux coloring).
+    /// Whether BLA applies to this render (deep floatexp `z^d + c`, non-Julia, non-aux coloring).
     fn bla_eligible(&self, mode: RenderMode, julia: bool) -> bool {
         // Aux coloring blocks iteration-skipping — EXCEPT the methods whose per-BLA-node aggregate is
         // folded on each skip (GPU-validated: the fold render matches the full render), which ride BLA
@@ -2763,7 +2818,7 @@ impl FractadyneApp {
         self.render_cfg.use_bla
             && mode.is_floatexp()
             && !julia
-            && self.fractal.formula_id() == 0
+            && self.fractal.caps().bla
             && (!method.blocks_iter_skip() || aux_bla_ok)
     }
 
@@ -2786,16 +2841,19 @@ impl FractadyneApp {
         orbit: &[[f32; 4]],
         dc_max: fractadyne_core::FloatExp,
     ) -> Option<std::sync::Arc<Vec<[f32; 4]>>> {
-        let levels = fractadyne_core::build_bla_mandel(
+        let formula = self.fractal.formula_id();
+        let power = fractadyne_core::formula::power(formula);
+        let tree = fractadyne_core::bla_tree_gpu(
             orbit,
             dc_max,
             crate::tunables::cost().bla_eps,
-            aux_agg_from_orbit(orbit, self.coloring.stripe_freq as f64, self.coloring.trap_type as u32),
+            aux_agg_from_orbit(orbit, self.coloring.stripe_freq as f64, self.coloring.trap_type as u32, power),
+            formula,
         );
-        if levels.is_empty() {
+        if tree.is_empty() {
             return None;
         }
-        Some(std::sync::Arc::new(fractadyne_core::bla_to_gpu(&levels)))
+        Some(std::sync::Arc::new(tree))
     }
 }
 
@@ -2810,7 +2868,7 @@ impl FractadyneApp {
     /// choices: the orbit is built to exactly `eff_iter` (no live-style spare headroom), and the BLA
     /// `dc_max` is the per-frame-tight bound (no `×2` pan-reuse margin). `None` for the direct path
     /// (`mode == 1`), which iterates from 0 with no reference. Series approximation applies to the
-    /// holomorphic polynomial families (Mandelbrot / Multibrot 3-5) with a non-aux coloring method.
+    /// holomorphic polynomial families (Mandelbrot / Multibrot 3-8) with a non-aux coloring method.
     #[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 2/4: fold into a reference-inputs struct
     fn export_reference_inputs(
         &self,
@@ -2832,7 +2890,7 @@ impl FractadyneApp {
         // (df32-pert mode 0, Multibrot, BLA off/aux-gated) — there it remains the only skip.
         let do_sa = (!mode.is_direct())
             && !julia
-            && self.fractal.formula_id() <= 3
+            && self.fractal.caps().series_approximation
             && !self.coloring.color_method.blocks_iter_skip()
             && self.render_cfg.series_approx
             && bla_dc_max.is_none();
@@ -2847,6 +2905,7 @@ impl FractadyneApp {
             precision,
             julia,
             formula: self.fractal.formula_id(),
+            custom: self.custom_reference_formula_for(self.fractal),
             julia_c: self.julia_c,
             do_sa,
             bla_dc_max,
@@ -3179,11 +3238,7 @@ impl FractadyneApp {
         let vp = self.viewport.clone();
         let julia = self.julia_mode;
         // Direct mode needs no reference at all; perturbation modes need one we can borrow.
-        let mode = RenderMode::select(
-            self.fractal.supports_perturbation(),
-            julia,
-            vp.magnification(),
-        );
+        let mode = self.render_mode(self.fractal, julia, vp.magnification());
         if !mode.is_direct() && !self.live_ref_can_serve(&vp, julia) {
             crate::diag::log_line(
                 "view",
@@ -3383,7 +3438,7 @@ impl FractadyneApp {
     ) -> Option<RecomputeInputs> {
         let log2mag = vp.log2_magnification();
         let mag = vp.magnification();
-        let mode = RenderMode::select(self.fractal.supports_perturbation(), julia, mag);
+        let mode = self.render_mode(self.fractal, julia, mag);
         if mode.is_direct() {
             return None;
         }
@@ -3526,7 +3581,7 @@ impl FractadyneApp {
         let height = ((width as f64) * vp.height_px / vp.width_px).round().max(1.0) as u32;
         let mag = vp.magnification(); // saturates to ∞ past 1e308×; fine for the mode compares
         let eff_iter = self.export_eff_iter(vp, julia);
-        let mode = RenderMode::select(self.fractal.supports_perturbation(), julia, mag);
+        let mode = self.render_mode(self.fractal, julia, mag);
         let precision = vp.precision; // maintained by the viewport; valid at any depth
         let (cx, cy) = vp.center_f64();
         let scale = vp.gpu_scale();
@@ -3640,6 +3695,7 @@ impl FractadyneApp {
             max_iter: req_max_iter,
             mode: mode.to_u32(),
             formula: self.fractal.formula_id(),
+            custom: self.custom_shader_for(self.fractal),
             julia: julia as u32,
             // WYSIWYG: a GUI export bakes in the live view's auto-normalized palette mapping when
             // it's active (headless CLI runs have no live range → always classic; `--normalize`
@@ -3877,7 +3933,8 @@ impl FractadyneApp {
                 .then(|| Self::bla_dc_max(req.span_mantissa, delta_exp));
             let (bla, bla_on) = match bla_dc_max {
                 Some(dc_max) => {
-                    let levels = fractadyne_core::build_bla_mandel(
+                    let power = fractadyne_core::formula::power(req.formula);
+                    let tree = fractadyne_core::bla_tree_gpu(
                         &orbit,
                         dc_max,
                         crate::tunables::cost().bla_eps,
@@ -3885,13 +3942,12 @@ impl FractadyneApp {
                             &orbit,
                             self.coloring.stripe_freq as f64,
                             self.coloring.trap_type as u32,
+                            power,
                         ),
+                        req.formula,
                     );
-                    if levels.is_empty() {
-                        (std::sync::Arc::new(Vec::new()), 0)
-                    } else {
-                        (std::sync::Arc::new(fractadyne_core::bla_to_gpu(&levels)), 1)
-                    }
+                    let on = u32::from(!tree.is_empty());
+                    (std::sync::Arc::new(tree), on)
                 }
                 None => (std::sync::Arc::new(Vec::new()), 0),
             };
@@ -4575,7 +4631,7 @@ impl FractadyneApp {
             self.effective_work_budget(),
             magnification,
             julia,
-            fractal.supports_perturbation(),
+            self.perturbs(fractal),
             interacting,
         );
         // ADAPTIVE LIVE ITERATION BUDGET (settled frames only). `zoom_iter_cap`'s 256/octave slope
@@ -5460,13 +5516,21 @@ impl FractadyneApp {
             // under the new one — a translucent copy of another location (field report
             // 2026-09-16). Restarting the walk is output-neutral (bit-identity contract); only
             // its cost is paid, and only when the view really moved.
+            // ⚠And WHAT is iterated: the settings hash (`view_key.4` — formula id, custom shader
+            // key, Julia and its c, the iterate-affecting colour inputs). It was missing, so a
+            // formula switch at an unchanged view resumed the previous formula's finished walk and
+            // re-showed its image: measured when custom formulas gained resumable passes — the
+            // uitest's Custom step at home (−0.5+0i, Mandelbrot's home too) kept showing the
+            // formula applied three steps earlier. The tiled settle's key had the same hole once
+            // (`settings_hash`'s own note).
             let sig = (
                 center.0.to_bits()
                     ^ center.1.to_bits().rotate_left(17)
                     ^ magnification.to_bits().rotate_left(34)
                     ^ (self.ref_cache[vidx].orbit_len as u64).rotate_left(51)
                     ^ jbits.rotate_left(7)
-                    ^ pos_sig.rotate_left(41),
+                    ^ pos_sig.rotate_left(41)
+                    ^ view_key.4.rotate_left(29),
                 gpu_iter,
                 resolution,
                 ss,
@@ -5964,6 +6028,60 @@ impl FractadyneApp {
         PresentGate { hold_copy, display_hold, pin_gate, aa_filter }
     }
 
+    /// The generated shader module `fractal` renders with: the custom formula's for
+    /// `FractalKind::Custom`, none for a built-in.
+    pub(crate) fn custom_shader_for(
+        &self,
+        fractal: FractalKind,
+    ) -> Option<std::sync::Arc<fractadyne_gpu::custom::CustomShader>> {
+        (fractal == FractalKind::Custom).then(|| self.custom.as_ref().map(|c| c.shader.clone())).flatten()
+    }
+
+    /// The key that tells two renders of `fractal` apart where `formula_id` cannot: every custom
+    /// formula is id 1000, so caches keyed on the id alone would serve one formula's frame for
+    /// another's. 0 for a built-in.
+    pub(crate) fn custom_key_for(&self, fractal: FractalKind) -> u64 {
+        self.custom_shader_for(fractal).map_or(0, |s| s.key)
+    }
+
+    /// The custom formula a reference orbit for `fractal` is built from: `Some` only for a
+    /// `FractalKind::Custom` whose step has a perturbed form (otherwise it renders direct, with
+    /// no reference).
+    pub(crate) fn custom_reference_formula_for(
+        &self,
+        fractal: FractalKind,
+    ) -> Option<std::sync::Arc<crate::custom_formula::CustomFormula>> {
+        (fractal == FractalKind::Custom)
+            .then(|| self.custom.clone().filter(|c| c.shader.perturbation.is_ok()))
+            .flatten()
+    }
+
+    /// Whether `fractal` renders by perturbation past the direct range: a built-in by its spec, a
+    /// custom formula when `ir::perturb` derived its perturbed step.
+    pub(crate) fn perturbs(&self, fractal: FractalKind) -> bool {
+        if fractal == FractalKind::Custom {
+            self.custom_reference_formula_for(fractal).is_some()
+        } else {
+            fractal.supports_perturbation()
+        }
+    }
+
+    /// ⭐The arithmetic mode for `fractal` at `mag` — [`RenderMode::select`] with what the family
+    /// can do. Every mode decision goes through here, so a custom formula can never be handed a
+    /// mode its generated module lacks: one without a perturbed step renders direct at any depth;
+    /// one with it has both perturbation paths (df32, and floatexp past `PERT_FE_THRESHOLD`).
+    pub(crate) fn render_mode(&self, fractal: FractalKind, julia: bool, mag: f64) -> RenderMode {
+        RenderMode::select(self.perturbs(fractal), julia, mag)
+    }
+
+    /// Whether `fractal`'s frames may be spread over chunked passes: the family's capability, and
+    /// for a custom formula its module's — not one with Fractint's sections, whose init and
+    /// persistent variables live only in the single-pass loop.
+    pub(crate) fn resumable(&self, fractal: FractalKind) -> bool {
+        fractal.caps().resumable_passes
+            && (fractal != FractalKind::Custom || self.custom.as_ref().is_none_or(|c| c.shader.resumable))
+    }
+
     /// `build_params` epilogue: the no-reference placeholder guard on the iteration ask,
     /// the LIVE manifest + per-frame cost stamps + motion-jam accounting, and the final
     /// [`MandelbrotParams`] assembly. Body moved verbatim from `build_params`.
@@ -6321,6 +6439,8 @@ impl FractadyneApp {
             julia_c,
             mode: mode.to_u32(),
             formula: fractal.formula_id(),
+            custom: self.custom_shader_for(fractal),
+            life: None, // Life frames are built by `build_life_params`, not here
             julia: julia as u32,
             span_mantissa,
             max_iter: shader_iter,
@@ -6882,11 +7002,11 @@ impl FractadyneApp {
             // colouring, a formula past the chunk shaders' scope or a device without the state
             // targets renders each refresh as ONE dispatch, and then one pass is all there is.
             let chunk_mode =
-                RenderMode::select(fractal.supports_perturbation(), julia, magnification);
+                self.render_mode(fractal, julia, magnification);
             let can_chunk = (chunk_mode.is_direct()
                 || chunk_mode == RenderMode::Df32Pert
                 || (chunk_mode == RenderMode::Floatexp && self.perf.chunk_fe_ok))
-                && fractal.formula_id() <= 3
+                && self.resumable(fractal)
                 && !self.coloring.color_method.needs_aux()
                 && self.perf.chunk_ok;
             // A PINNED refresh spans many frames, so no single frame interval prices it; an
@@ -7137,7 +7257,7 @@ impl FractadyneApp {
         // frame's own nominal steps (moving frames run at ss 1), at the resolution the motion scale
         // will give it, fitted under the calibrated dispatch ceiling. df32 only: the shallow
         // perturbation mode, and one with a ceiling to keep (floatexp has none — `calibration`).
-        let live_mode = RenderMode::select(fractal.supports_perturbation(), julia, magnification);
+        let live_mode = self.render_mode(fractal, julia, magnification);
         let (live_verdict, live_cap, live_probe_cap) = if interacting
             && live_mode == RenderMode::Df32Pert
             && !pin_frame
@@ -7381,7 +7501,7 @@ impl FractadyneApp {
         // overshoot-safe by design, so the cost is one or two coarser frames after the crossover.
         if !offscreen {
             // `mode` itself is selected further down; it is a pure function of these two.
-            let sel = RenderMode::select(fractal.supports_perturbation(), julia, magnification);
+            let sel = self.render_mode(fractal, julia, magnification);
             let m = sel.to_u32();
             if self.perf.budget_mode[vidx] != m {
                 let prev = self.perf.budget_mode[vidx];
@@ -7519,7 +7639,7 @@ impl FractadyneApp {
             // ceiling-sized dispatch takes ~400 ms there. `resolution` is a LOWER bound on the
             // dispatch's pixels (ss ≥ 1), so its knee term errs on the safe side.
             let ceiling = crate::calibration::ceiling_for(
-                RenderMode::select(fractal.supports_perturbation(), julia, magnification),
+                self.render_mode(fractal, julia, magnification),
                 fractal,
                 (resolution[0] as u64) * (resolution[1] as u64),
             );
@@ -7683,6 +7803,8 @@ impl FractadyneApp {
             // it did NOT reproduce in the harness, so this is the rule being restored, not a
             // confirmed fix for that report.)
             fractal.formula_id().hash(&mut h);
+            // Every custom formula is id 1000: its shader key tells them apart.
+            self.custom_key_for(fractal).hash(&mut h);
             julia.hash(&mut h);
             self.coloring.color_method.to_u32().hash(&mut h);
             self.coloring.stripe_freq.to_bits().hash(&mut h);
@@ -7799,7 +7921,7 @@ impl FractadyneApp {
         // the resumable CHUNKED path instead (the block after the tile decision): full resolution,
         // one bounded pass over an iteration RANGE per frame — so skip the shrink (it would defeat
         // the full-res payoff) and the settle tiling (wrong axis). Gated to the chunk shaders'
-        // scope: holomorphic formulas 0..3, aux coloring off (a chunk pass carries no orbit
+        // scope: the holomorphic formulas (`resumable_passes`), aux coloring off (a chunk pass carries no orbit
         // statistics), and the perturbation modes additionally glitch-free (live never runs glitch
         // detection).
         //
@@ -7818,11 +7940,11 @@ impl FractadyneApp {
         // conservative rather than exact. The error is in the safe direction — a pixel that skips
         // past the requested `end` idles in later passes until the cursor catches up, costing some
         // wasted passes, never an over-budget dispatch.
-        let chunk_mode = RenderMode::select(fractal.supports_perturbation(), julia, magnification);
+        let chunk_mode = self.render_mode(fractal, julia, magnification);
         let chunk_over = (chunk_mode.is_direct()
             || chunk_mode == RenderMode::Df32Pert
             || (chunk_mode == RenderMode::Floatexp && self.perf.chunk_fe_ok))
-            && fractal.formula_id() <= 3
+            && self.resumable(fractal)
             && !self.coloring.color_method.needs_aux()
             && self.perf.chunk_ok
             && !offscreen
@@ -8125,7 +8247,7 @@ impl FractadyneApp {
         // Render path: 1 = direct df32 (shallow / unsupported formulas), 0 = df32
         // perturbation (fast, common deep range), 2 = floatexp perturbation (past df32's
         // ~1e30× exponent limit → extreme depth, ~1.7× costlier so only when needed).
-        let mode = RenderMode::select(fractal.supports_perturbation(), julia, magnification);
+        let mode = self.render_mode(fractal, julia, magnification);
         let precision = fractadyne_core::precision_for_octaves(log2mag.max(0.0).ceil() as u64);
         let vi = view_id as usize;
 
@@ -8291,7 +8413,7 @@ impl FractadyneApp {
             let bla_will_build = self.bla_eligible(mode, julia);
             let do_sa = (!mode.is_direct())
                 && !julia
-                && fractal.formula_id() <= 3
+                && fractal.caps().series_approximation
                 && !self.coloring.color_method.blocks_iter_skip()
                 && self.render_cfg.series_approx
                 && !bla_will_build;
@@ -8333,6 +8455,7 @@ impl FractadyneApp {
                     precision,
                     julia,
                     formula: self.fractal.formula_id(),
+                    custom: self.custom_reference_formula_for(self.fractal),
                     julia_c: self.julia_c,
                     do_sa,
                     bla_dc_max: bla_will_build
@@ -8807,6 +8930,7 @@ impl FractadyneApp {
             // BLA eligibility `do_sa` is false, so without this the (off-thread-computed) SA would sit
             // unused. Same predicate as `finish_reference` keeps the two paths in lock-step.
             let short_escaper = self.bla_eligible(mode, julia)
+                && self.fractal.caps().series_approximation
                 && !self.ref_cache[vi].partial
                 && (self.ref_cache[vi].orbit_len as u64).saturating_mul(2) < ref_build_iter.max(1) as u64;
             // Series approximation travels with the reference (computed off-thread); read it back.
@@ -8858,6 +8982,7 @@ impl FractadyneApp {
                         &orbit,
                         self.coloring.stripe_freq as f64,
                         self.coloring.trap_type as u32,
+                        fractadyne_core::formula::power(self.fractal.formula_id()),
                     );
                     let vc = &mut self.ref_cache[vi];
                     let mut buf = (*vc.bla).clone();

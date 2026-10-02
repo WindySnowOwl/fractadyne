@@ -91,6 +91,38 @@ fn png_metadata_roundtrips_verbatim() {
     assert_eq!(read_png_metadata(&q).expect("read meta"), None);
 }
 
+/// A view text past Latin-1 (a custom formula's `√` comment) FAILED the PNG export as a `tEXt`
+/// chunk and PANICKED the EXR one. The PNG now carries it as `iTXt` and reads it back verbatim;
+/// Latin-1 text stays in `tEXt`, the chunk every earlier build reads; the EXR refuses with an error.
+#[test]
+fn view_text_past_latin1_never_costs_the_picture() {
+    let (w, h) = (3u32, 3u32);
+    let t = Tmp::new("meta_unicode");
+    let wide = "fractal=Custom\nformula=z = z^2 + c ; √ variant 😀\n";
+    let p = t.path("wide.png");
+    write_png(&p, w, h, &sample(w, h), Some(wide)).expect("a PNG is written whatever the text");
+    assert_eq!(read_png_metadata(&p).unwrap().as_deref(), Some(wide));
+    let q = t.path("wide8.png");
+    write_png_rgba8(&q, w, h, &vec![128u8; (w * h * 4) as usize], Some(wide)).expect("and by the 8-bit writer");
+    assert_eq!(read_png_metadata(&q).unwrap().as_deref(), Some(wide));
+    // Latin-1 (é included) stays tEXt: an older build, which reads only tEXt, still finds it.
+    let latin = "notes=café\n";
+    let r = t.path("latin.png");
+    write_png(&r, w, h, &sample(w, h), Some(latin)).unwrap();
+    let file = std::fs::File::open(&r).unwrap();
+    let reader = png::Decoder::new(std::io::BufReader::new(file)).read_info().unwrap();
+    assert_eq!(reader.info().uncompressed_latin1_text.len(), 1);
+    assert!(reader.info().utf8_text.is_empty());
+    assert_eq!(read_png_metadata(&r).unwrap().as_deref(), Some(latin));
+    // EXR: an error naming the character, not a panic inside the exr crate.
+    for writer in [write_exr, write_exr_raw] {
+        let e = writer(&t.path("wide.exr"), w, h, &sample(w, h), Some(wide)).unwrap_err();
+        assert!(matches!(e, ExportError::MetadataNotLatin1('√')), "{e}");
+    }
+    write_exr(&t.path("latin.exr"), w, h, &sample(w, h), Some(latin)).unwrap();
+    assert_eq!(read_exr_metadata(&t.path("latin.exr")).unwrap().as_deref(), Some(latin));
+}
+
 /// ⭐**The raw writer must not touch a single value.** `--render-iter` used the COLOUR writer,
 /// whose `srgb_to_linear` clamps to [0,1]: the smooth-iteration channel holds counts in the
 /// hundreds of thousands, so every pixel clamped to 1.0 and the whole channel read back as a

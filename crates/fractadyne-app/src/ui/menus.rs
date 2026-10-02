@@ -125,6 +125,44 @@ impl FractadyneApp {
     /// That is the whole teaching device: a new user sees the thing they came for, named, and
     /// sees the Julia set offered as its sibling rather than as a mode — and the third option
     /// shows them the relation instead of describing it.
+    /// The family picker's list, drawn identically in the Fractal menu and the toolbar dropdown:
+    /// each family that is not a power family on its own row, then one row per power family
+    /// ("Burning Ship  3 4 5"), so fifteen families cost five rows. Returns the family picked.
+    fn family_list(&self, ui: &mut egui::Ui) -> Option<FractalKind> {
+        let mut picked = None;
+        for kind in FractalKind::ALL.into_iter().filter(|k| k.power_family().is_none()) {
+            if ui.selectable_label(self.fractal == kind, kind.name()).on_hover_text(kind.menu_hint()).clicked() {
+                picked = Some(kind);
+            }
+        }
+        ui.separator();
+        ui.label(egui::RichText::new("Higher powers").weak().small());
+        egui::Grid::new(ui.next_auto_id()).num_columns(2).spacing([10.0, 2.0]).show(ui, |ui| {
+            for (label, kinds) in FractalKind::POWER_GROUPS {
+                let showing = kinds.contains(&self.fractal);
+                ui.label(if showing { egui::RichText::new(label).strong() } else { egui::RichText::new(label) });
+                ui.horizontal(|ui| {
+                    for k in kinds {
+                        let d = k.power_family().expect("a power family");
+                        if ui.selectable_label(self.fractal == k, d.to_string()).on_hover_text(k.menu_hint()).clicked() {
+                            picked = Some(k);
+                        }
+                    }
+                });
+                ui.end_row();
+            }
+        });
+        // The automata: not escape-time formulas, but pictures of the same app (design/automata.md).
+        ui.separator();
+        ui.label(egui::RichText::new("Automata").weak().small());
+        for kind in FractalKind::AUTOMATA {
+            if ui.selectable_label(self.fractal == kind, kind.name()).on_hover_text(kind.menu_hint()).clicked() {
+                picked = Some(kind);
+            }
+        }
+        picked
+    }
+
     pub(crate) fn show_mode_group(&mut self, ui: &mut egui::Ui) {
         let can_julia = self.fractal.supports_julia();
         let name = self.fractal.name();
@@ -214,6 +252,33 @@ impl FractadyneApp {
                             .clicked()
                         {
                             self.snapshot(ctx);
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        // Life patterns (design/automata.md): opening one shows it as a universe.
+                        if ui
+                            .button(format!("{}  Open Life pattern…", crate::icons::IMPORT))
+                            .on_hover_text("An RLE, .cells or Life 1.05/1.06 file, shown as a Life universe.")
+                            .clicked()
+                        {
+                            self.life_open_file();
+                            ui.close_menu();
+                        }
+                        if ui
+                            .button(format!("{}  Life pattern text…", crate::icons::PASTE))
+                            .on_hover_text("Paste a pattern as text (RLE as LifeWiki gives it).")
+                            .clicked()
+                        {
+                            self.life.text_open = true;
+                            ui.close_menu();
+                        }
+                        if self.fractal == FractalKind::Life
+                            && ui
+                                .button(format!("{}  Save Life pattern…", crate::icons::SAVE))
+                                .on_hover_text("The universe as it is now, as RLE.")
+                                .clicked()
+                        {
+                            self.life_save_file();
                             ui.close_menu();
                         }
                         ui.separator();
@@ -328,15 +393,26 @@ impl FractadyneApp {
                         // the dropdown is the fast way to switch once you know what you
                         // want, and this is where you find that out. Hence the hints -
                         // without them the two really would be the same control twice.
-                        for kind in FractalKind::ALL {
-                            if ui
-                                .selectable_label(self.fractal == kind, kind.name())
-                                .on_hover_text(kind.menu_hint())
-                                .clicked()
-                            {
-                                self.set_fractal(kind);
-                                ui.close_menu();
-                            }
+                        if let Some(kind) = self.family_list(ui) {
+                            self.set_fractal(kind);
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        if ui
+                            .selectable_label(self.fractal == FractalKind::Custom, "Custom formula…")
+                            .on_hover_text(FractalKind::Custom.menu_hint())
+                            .clicked()
+                        {
+                            self.open_formula_dialog();
+                            ui.close_menu();
+                        }
+                        if ui
+                            .button("Formula library…")
+                            .on_hover_text("Saved custom formulas: apply, edit, import and export them")
+                            .clicked()
+                        {
+                            self.formula_library.open = true;
+                            ui.close_menu();
                         }
                         ui.separator();
                         // Was two checkboxes ("Julia mode", "Dual view") of which only three
@@ -548,7 +624,7 @@ impl FractadyneApp {
                         // The mathematical tools lead: they are what distinguishes this app from
                         // every other deep-zoom explorer, and until 2026-08-13 they were filed
                         // under Locations / buried in a dialog tooltip (UI review).
-                        ui.add_enabled_ui(matches!(self.fractal.formula_id(), 0..=3), |ui| {
+                        ui.add_enabled_ui(self.fractal.caps().nucleus_finder, |ui| {
                             if ui
                                 .button("Find minibrot + zoom to it  (M)")
                                 .on_hover_text(
@@ -911,21 +987,43 @@ impl FractadyneApp {
                 // button text plus padding, ~17 px at the default 12.5 px button font, which is why
                 // ten of them land within a few pixels of the 200 px cap.)
                 //
-                // ⚠The popup now also carries the "Show" group, so the row count is the formulas
-                // PLUS that group — a separator, its heading and three radios. Counting only the
-                // formulas is what would silently put the scrollbar back, which is the exact
-                // failure this computation exists to prevent.
-                const SHOW_GROUP_ROWS: f32 = 5.0; // separator + "Show" + three options
-                let sp = ui.spacing();
-                let popup_h = (sp.interact_size.y + sp.item_spacing.y)
-                    * (FractalKind::ALL.len() as f32 + SHOW_GROUP_ROWS)
-                    + sp.item_spacing.y * 4.0;
+                // ⚠The popup now also carries the "Show" group and, since the power families
+                // (design/power-families.md), a grid of them under a heading — taller than 400 px,
+                // and 400 is a SECOND cap that `height` cannot lift: egui lays a new popup's area
+                // out within `spacing.default_area_size` (600×400) on its first frame, the area
+                // remembers that size for the session, and the ScrollArea inside never grows past
+                // it. (The uitest's `fractal-dropdown` showed the list cut off at the "Show"
+                // heading with any `height`, the window's own included.) So the bound is the room
+                // below the button, and the area default is raised to it for this one call — the
+                // style is the context's, so it is put back straight after.
+                let popup_h = (ui.ctx().screen_rect().bottom()
+                    - ui.next_widget_position().y
+                    - 2.0 * ui.spacing().interact_size.y)
+                    .max(ui.spacing().combo_height);
+                let area_default = ui.ctx().style().spacing.default_area_size;
+                ui.ctx().style_mut(|s| s.spacing.default_area_size.y = popup_h);
+                let mut open_formula = false;
+                if std::mem::take(&mut self.dialogs.open_fractal_dropdown) {
+                    // The combo box's own id rule (egui 0.31): `from_id_salt` wraps the salt in an
+                    // `Id`, the button is the parent's persistent id of THAT, and the popup sits
+                    // beside it ("popup"). (Of the bare string it is another id: nothing opened.)
+                    let popup = ui.make_persistent_id(egui::Id::new("fractal_dropdown")).with("popup");
+                    ui.memory_mut(|m| m.open_popup(popup));
+                }
                 egui::ComboBox::from_id_salt("fractal_dropdown")
                     .height(popup_h)
                     .selected_text(self.fractal.name())
                     .show_ui(ui, |ui| {
-                        for k in FractalKind::ALL {
-                            ui.selectable_value(&mut sel, k, k.name());
+                        if let Some(k) = self.family_list(ui) {
+                            sel = k;
+                        }
+                        ui.separator();
+                        if ui
+                            .selectable_label(self.fractal == FractalKind::Custom, "Custom formula…")
+                            .on_hover_text(FractalKind::Custom.menu_hint())
+                            .clicked()
+                        {
+                            open_formula = true;
                         }
                         // The picker is where someone goes looking for "Julia", so this is where
                         // it has to be — next to the formula it belongs to, not in a menu they
@@ -933,8 +1031,12 @@ impl FractadyneApp {
                         ui.separator();
                         self.show_mode_group(ui);
                     });
+                ui.ctx().style_mut(|s| s.spacing.default_area_size = area_default);
                 if sel != prev {
                     self.set_fractal(sel);
+                }
+                if open_formula {
+                    self.open_formula_dialog();
                 }
                 ui.separator();
                 // The two toolbar toggles are the FAST path for someone who already knows what a
@@ -948,6 +1050,12 @@ impl FractadyneApp {
                 // fits, it is CLIPPED at the window edge instead of wrapping to the next line
                 // (user-reported, 2026-09-07). `add_enabled` adds one widget to the row that is
                 // doing the wrapping, so it wraps like everything beside it.
+                // A Life universe has no Julia set and no dual view; its own controls take their
+                // slot — beside the picker, as what the picture is doing, and apart from the tour
+                // ▶ further along, which plays something else.
+                if self.fractal == FractalKind::Life {
+                    self.life_toolbar(ui);
+                } else {
                 if ui
                     .add_enabled(
                         self.fractal.supports_julia(),
@@ -971,6 +1079,7 @@ impl FractadyneApp {
                 {
                     let m = if self.dual { crate::ShowMode::Set } else { crate::ShowMode::Both };
                     self.set_show_mode(m);
+                }
                 }
                 ui.separator();
                 // ── File / I-O: open & browse, then save ──────────────────────────────
@@ -1126,6 +1235,54 @@ impl FractadyneApp {
             });
         });
         self.perf.layout.top_bar = Some(top.response.rect);
+    }
+
+    /// The DIRECT path's precision wall, for the status-bar diagnostic (design/custom-formulas.md
+    /// §5.1). Current GPU compilers fold the error-free transforms double-single arithmetic relies
+    /// on (`--gputest`), so a pixel's coordinate is single precision: once one f32 step of it spans
+    /// more than a pixel, neighbouring pixels compute the same point and the image breaks into
+    /// blocks. Measured per component, at the pixel coordinate's own magnitude — the orbit passing
+    /// |z| ≈ 1 does not merge pixels (at 0.286+0.012i the blocks were 1.98 px across, the real
+    /// part's step, and 1.00 down) — and on a field view (−1.64+0.36i, 549,309×) as 17×4-px
+    /// blocks, one f32 step each way. `cx`/`cy` are the view centre, `half_w`/`half_h` its
+    /// half-extent (the step is taken at the largest magnitude in view), `upp` the pixel size.
+    /// Only the direct path has this wall; perturbation iterates small offsets.
+    pub(crate) fn direct_precision_status(
+        direct: bool,
+        (cx, cy): (f64, f64),
+        (half_w, half_h): (f64, f64),
+        upp: f64,
+        mag: f64,
+    ) -> Option<(&'static str, String, bool)> {
+        if !direct || !(upp > 0.0) || !upp.is_finite() {
+            return None;
+        }
+        // One f32 step at |v|: the gap to the next representable value.
+        let f32_step = |v: f64| {
+            let a = v.abs() as f32;
+            if !a.is_finite() {
+                return f64::INFINITY;
+            }
+            (f32::from_bits(a.to_bits() + 1) - a) as f64
+        };
+        let step = f32_step(cx.abs() + half_w).max(f32_step(cy.abs() + half_h));
+        if step <= upp {
+            return None;
+        }
+        let blocks = step / upp;
+        Some((
+            "⚠ depth limit",
+            format!(
+                "This view renders directly on the GPU in single precision, where one step of the \
+                 coordinates is {} pixels wide here: neighbouring pixels compute the same point, \
+                 so the image breaks into blocks. At this location it is sharp to about {}×. This \
+                 formula has no deep-zoom (perturbation) path yet, so zooming further shows no \
+                 more detail.",
+                commas(&format!("{blocks:.0}")),
+                commas(&format!("{:.0}", mag / blocks))
+            ),
+            true,
+        ))
     }
 
     /// Bottom status bar — center coordinate, cursor, zoom, effective iteration count, and the
@@ -1323,6 +1480,10 @@ impl FractadyneApp {
                 // elsewhere. (21 chars holds a grouped 15-dp coord: sign + up-to-1 int digit + `.`
                 // + 15 fractional + 2 group spaces ≈ 20.)
                 let (cx_s, cy_s) = match self.pointer.pointer_complex {
+                    // A universe's cursor is a CELL: column, row (rows grow downward).
+                    Some((mx, my)) if self.fractal == FractalKind::Life => {
+                        (format!("{}", mx.floor() as i64), format!("{}", (-my).floor() as i64))
+                    }
                     Some((mx, my)) => (fmt_coord(mx), fmt_coord(my)),
                     None => ("—".to_string(), "—".to_string()),
                 };
@@ -1345,12 +1506,30 @@ impl FractadyneApp {
                 //
                 // Right-aligned into a fixed slot: monospace, so equal char counts are equal
                 // pixels by construction (`zoom_slot_width` is pinned by a test).
+                let life_bar = self.fractal == FractalKind::Life;
+                if life_bar {
+                    // A universe's readouts, in the same three slots and at their own fixed
+                    // widths: the scale, the generation, the population.
+                    let (scale, generation, population) = crate::life_view::status_readouts(
+                        self.viewport.units_per_pixel.to_f64(),
+                        self.life.generation(),
+                        self.life.population(),
+                    );
+                    mono(ui, scale);
+                    ui.separator();
+                    mono(ui, generation);
+                    ui.separator();
+                    mono(ui, population);
+                } else {
                 mono(ui, crate::zoom_readout(
                     self.dual,
                     self.viewport.log2_magnification(),
                     self.julia_viewport.log2_magnification(),
                 ));
-                ui.separator();
+                }
+                if !life_bar {
+                    ui.separator();
+                }
                 // Show the count actually rendered last frame (coarse while moving, full when
                 // settled) — matches the Performance panel's "eff iter".
                 let eff_iter = if self.perf.last_eff_iter > 0 {
@@ -1364,12 +1543,15 @@ impl FractadyneApp {
                     want_iter.min(zoom_iter_cap(self.viewport.log2_magnification()).max(256))
                 };
                 // Widest is `MAX_ITER_LIMIT` grouped — see the reservation note on `zoom` above.
-                mono(ui, crate::iter_readout(eff_iter));
+                if !life_bar {
+                    mono(ui, crate::iter_readout(eff_iter));
+                }
                 // Ambient minibrot period (§3.1): the finder result stays on screen instead of
                 // fading with its toast. RESERVED WIDTH, and drawn TRANSPARENT when no period
                 // applies (none solved yet, or the view has moved off the feature), so the slot's
                 // presence never reflows the bar — the device the diagnostic slot below also uses.
                 // `mono`'s last call is the iter readout above, so `drawn.push` here is free of it.
+                if !life_bar {
                 ui.separator();
                 {
                     let ptext = crate::period_readout(period_now);
@@ -1391,23 +1573,38 @@ impl FractadyneApp {
                         );
                     }
                 }
+                } // not a Life view
                 // Rendering-limit diagnostics: when a cap is genuinely binding, say so where the
                 // user is already looking, instead of leaving a black/flat view unexplained (the
                 // Misiurewicz-spar reports arrived as mystery screenshots precisely because the
                 // app knew it was clamped and said nothing).
                 let vc = &self.ref_cache[0];
-                let limit = Self::limit_status(
-                    vc.partial,
-                    vc.orbit_len,
-                    crate::render::orbit_len_cap(),
-                    eff_iter,
-                    self.perf.capped_frac[0],
-                    self.perf.budget_measured[0],
-                    self.perf.budget_maxed[0],
-                    self.perf.norm_range[0].map(|(_, mx)| mx as f64),
-                    self.perf.iter_plateau[0],
-                    self.perf.iter_exhausted[0],
-                );
+                let vp = &self.viewport;
+                let mag = vp.magnification();
+                let upp = vp.units_per_pixel.to_f64();
+                let direct = self.render_mode(self.fractal, self.julia_mode, mag).is_direct();
+                // (A Life view has no escape-time limits: the slot stays transparent.)
+                let limit = if life_bar { None } else { Self::direct_precision_status(
+                    direct,
+                    vp.center_f64(),
+                    (upp * vp.width_px * 0.5, upp * vp.height_px * 0.5),
+                    upp,
+                    mag,
+                )
+                .or_else(|| {
+                    Self::limit_status(
+                        vc.partial,
+                        vc.orbit_len,
+                        crate::render::orbit_len_cap(),
+                        eff_iter,
+                        self.perf.capped_frac[0],
+                        self.perf.budget_measured[0],
+                        self.perf.budget_maxed[0],
+                        self.perf.norm_range[0].map(|(_, mx)| mx as f64),
+                        self.perf.iter_plateau[0],
+                        self.perf.iter_exhausted[0],
+                    )
+                }) };
                 // ⭐The diagnostic slot is ALWAYS the SAME WIDGET with the SAME METRICS — like the
                 // cursor readout above, but stricter. The label comes and goes with live counters;
                 // on a width where the bar just fits, its arrival wrapped the bar to two lines,
@@ -1421,7 +1618,9 @@ impl FractadyneApp {
                 // variant drawn fully TRANSPARENT when none does. Same glyph count, same ⚠, same
                 // row metrics: the bar's layout is invariant by construction.
                 const SLOT: &str = "⚠ iter exhausted"; // the widest label variant
-                ui.separator();
+                if !life_bar {
+                    ui.separator();
+                }
                 let (text, color, detail) = match limit {
                     Some((label, detail, severe)) => (
                         format!("{label:<width$}", width = SLOT.chars().count()),
@@ -1439,13 +1638,16 @@ impl FractadyneApp {
                 // next. Extend makes the label move (or overflow) as ONE unit, in both states.
                 // The diagnostic slot is recorded too, so `--uitest` sees the same reserved
                 // width the reflow fix depends on rather than only the readouts above it.
-                drawn.push(text.clone());
-                let r = ui.add(
-                    egui::Label::new(egui::RichText::new(text).monospace().color(color))
-                        .wrap_mode(egui::TextWrapMode::Extend),
-                );
-                if let Some(detail) = detail {
-                    r.on_hover_text(detail);
+                // (A Life view never shows a diagnostic, so it reserves no slot for one.)
+                if !life_bar {
+                    drawn.push(text.clone());
+                    let r = ui.add(
+                        egui::Label::new(egui::RichText::new(text).monospace().color(color))
+                            .wrap_mode(egui::TextWrapMode::Extend),
+                    );
+                    if let Some(detail) = detail {
+                        r.on_hover_text(detail);
+                    }
                 }
                 drawn
             })
@@ -1812,6 +2014,35 @@ impl FractadyneApp {
 #[cfg(test)]
 mod tests {
     use crate::FractadyneApp;
+
+    /// The direct-path precision wall fires where blocks were MEASURED and stays quiet where the
+    /// image was sharp. The panel is 1,340 px tall (the field report's), home span 4.
+    #[test]
+    fn direct_precision_status_matches_the_measured_views() {
+        let h = 1340.0;
+        let w = 2160.0;
+        let at = |mag: f64, c: (f64, f64), direct: bool| {
+            let upp = 4.0 / mag / h;
+            FractadyneApp::direct_precision_status(direct, c, (upp * w * 0.5, upp * h * 0.5), upp, mag)
+        };
+        let field = (-1.637_805_920_305_324, 0.358_468_406_943_270);
+        // 549,309×: bricked, 21×5 px measured in the screenshot.
+        let s = at(549_309.0, field, true).expect("the bricked view must warn");
+        assert!(s.0.contains("depth limit") && s.2, "{s:?}");
+        assert!(s.1.contains("22 pixels wide"), "one f32 step at |x| = 1.64 is ~22 px here: {}", s.1);
+        // 21,077×: sharp in the screenshot (0.84 px per step).
+        assert!(at(21_077.0, field, true).is_none());
+        // The same bricked view on a perturbation path has no such wall.
+        assert!(at(549_309.0, field, false).is_none());
+        // Near the origin the step is the coordinate's own, not |z| ≈ 1's: 0.286+0.012i at a
+        // 5e-8 pixel (1.00-px runs measured) is quiet; at 1.5e-8 (1.98-px runs) it warns.
+        let upp_mag = |upp: f64| 4.0 / (upp * h);
+        let near = (0.2860, 0.0118);
+        let quiet = FractadyneApp::direct_precision_status(true, near, (5e-8 * w / 2.0, 5e-8 * h / 2.0), 5e-8, upp_mag(5e-8));
+        assert!(quiet.is_none(), "{quiet:?}");
+        let warns = FractadyneApp::direct_precision_status(true, near, (1.5e-8 * w / 2.0, 1.5e-8 * h / 2.0), 1.5e-8, upp_mag(1.5e-8));
+        assert!(warns.is_some());
+    }
 
     /// The measured limit regimes classify correctly, and ordinary states stay quiet.
     /// Every case here is a real view measured this week, not an invented one.

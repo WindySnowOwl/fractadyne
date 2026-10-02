@@ -426,6 +426,18 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
         "Absolute value of both parts of z²: real = |x²−y²| + cx, imag = |2xy| + cy — a cross \
          between Celtic and Burning Ship.",
     );
+    help_sub(ui, "Higher powers");
+    help_p(
+        ui,
+        "Multibrot 6, 7 and 8 (z^d + c), and Burning Ship, Tricorn, Celtic and Buffalo at powers \
+         3, 4 and 5: the same folds at a higher power. Burning Ship d takes the absolute values of \
+         z's parts and then the power; Tricorn d conjugates first; Celtic d and Buffalo d fold the \
+         real part (and, for Buffalo, the imaginary part) of z^d. The Fractal menu and the \
+         dropdown list them one family to a row (\"Burning Ship  3 4 5\"). Each deep-zooms as its \
+         power-2 sibling does, and Multibrot 6, 7 and 8 also take series approximation and the \
+         minibrot finder (M), as Multibrot 3–5 do. Multibrot 8 escapes at radius 128 instead of \
+         256, where its next step would leave single-precision range.",
+    );
     help_sub(ui, "Phoenix");
     help_p(
         ui,
@@ -455,8 +467,121 @@ pub(crate) fn help_fractals(ui: &mut egui::Ui) {
          they use a sign-aware perturbation; this now runs at floatexp range too, deep-zooming far \
          past the old ~1e28× df32 limit (rare speckle near the abs folds awaits multi-reference \
          glitch correction). Phoenix uses a two-term perturbation and also deep-zooms at floatexp \
-         range (without SA/BLA, so heavier than Mandelbrot). Only Newton uses the direct path, \
-         sharp to ~1e6×.",
+         range (without SA/BLA, so heavier than Mandelbrot). The higher powers deep-zoom the same \
+         way, each power's perturbation following its own chain of squarings; Multibrot 3–8 also \
+         take series approximation and BLA, as Mandelbrot does, and Tricorn, Burning Ship, Celtic \
+         and Buffalo at every power take BLA (no series), which carries a deep view's interior \
+         instead of iterating it step by step. Only Newton uses the direct path, \
+         sharp to ~1e6×; custom \
+         formulas deep-zoom unless the Custom formulas section below says otherwise.",
+    );
+    help_sub(ui, "Custom formulas");
+    help_p(
+        ui,
+        "Fractal > Custom formula... takes a formula's step in Fractint-style expressions: \
+         z = z^3 - p1*z + c, or several statements (t = sqr(z), then z = t*t + c). z is the \
+         iterate, c the pixel (the Julia constant in Julia mode), p1-p5 parameters; |z| is the \
+         squared modulus, as in Fractint, and the usual functions are available (sqr, abs, conj, \
+         real, imag, cabs, flip, recip, ident, exp, log, sqrt, sin, cos, tan, cotan, sinh, cosh, \
+         tanh, cotanh, asin, acos, atan, asinh, acosh, atanh, cosxx, and floor, ceil, trunc and \
+         round, which round each part). log is the natural logarithm, as in Fractint and in complex analysis: \
+         what many textbooks write ln (there is no base-10 logarithm). A formula written with \
+         ln, cot, coth, Re or Im does not read; the syntax check names the function to use, a \
+         button rewrites it, and typing ln offers log. Every \
+         step deep-zooms by perturbation, with the same extended-range arithmetic past 1e28x as \
+         the built-in fractals, except one with a power whose exponent varies with z or c (such \
+         as z^c): that renders on the direct path, sharp until one single-precision step of c \
+         spans a pixel, about 1e4x to 1e5x, less far from the origin. The formula dialog says \
+         which applies. log, sqrt and non-integer powers take their principal values, which jump \
+         across the negative real axis. Perturbation follows the jump exactly, but a pixel whose \
+         orbit crosses where the reference's does not is carried on at about single precision \
+         from then on, so deep views whose orbits straddle a cut show noise there (measured: \
+         clean at 1e5x on the real axis for sqrt(z^4 + c), noisy for log formulas even at \
+         1e4x). Every step is iterated in full (no series approximation), so a deep view \
+         with a high iteration count renders more slowly than a built-in fractal's. Near its \
+         boundary a formula with functions orbits chaotically, and a long orbit there is followed \
+         only loosely in single precision: at 2,000 iterations a third of sin(z) + c's pixels \
+         differ from the exact orbit's, at 60 almost none. Views, sessions and exported images \
+         keep the formula's text.",
+    );
+    help_p(
+        ui,
+        "Fractint's sections work too. Statements before a ':' are the init section, run once \
+         per pixel; a comparison as the last statement is the formula's own bailout test, \
+         iterating while it holds (|z| <= 100 && |z - 1| > 0.000001 stops an orbit that escapes \
+         or settles on 1); if (...), elseif (...), else and endif choose statements; and a \
+         variable read before it is set in a step has its value from the step before (from the \
+         init section, or 0). Comparisons compare real parts and give 1 or 0, && and || combine \
+         them, and an assignment is a value too (a = b = pixel). pixel, p1-p5, pi and e may be \
+         assigned, keeping their own value until they are; maxit is the iteration count and \
+         ismand is 1 (the formula's Mandelbrot form). A formula with any of these, or with \
+         rounding, renders on the direct path, without deep zoom. Formula library > Import reads \
+         Fractint .frm files as well. Each entry that reads becomes a formula, and its row says \
+         what the reading changed: fn1-fn4 take Fractint's defaults (sin, sqr, sinh, cosh); \
+         Fractint's variable c is renamed c_, as c is the pixel here; a name nothing sets is 0, \
+         as in Fractint; blanks inside a name are dropped (end if is endif), as Fractint drops \
+         them. The import's message counts the entries that do not read and gives the commonest \
+         reason: the screen and view variables (whitesq, scrnpix, scrnmax, center, magxmag, \
+         rotskew), lastsqr and random numbers are not supported. The Collection's Fractint \
+         classics (Magnet, Nova, Spider, Manowar and others) are written with these sections.",
+    );
+    help_p(
+        ui,
+        "In the formula field, parentheses take a colour per nesting level; the pair next to the \
+         cursor is highlighted, and one without a partner is shown in red (a comment's do not \
+         count, as the parser ignores them). Names complete as you type: after two letters a \
+         list offers the functions, names and your own variables that begin so. Up and Down \
+         choose, Tab or Enter takes one (a function comes with its opening parenthesis), Esc \
+         closes the list, and Enter after a name typed in full still starts a new line.",
+    );
+    help_p(
+        ui,
+        "Textbook (the switch above the formula) shows it typeset as a textbook sets it, and edits \
+         it in place. Type as in the text: / makes a fraction of the term before it, ^ an \
+         exponent (+, - or = typed at an exponent's end steps out of it), ( parentheses, or a \
+         call after a function's name, | bars, and a comma inside parentheses a complex constant. \
+         The arrows move through the formula, Up and Down between a numerator and its \
+         denominator, Tab to the next empty box; Backspace at the start of a fraction or a pair of \
+         parentheses selects it, and a second press removes it and keeps what it held. Copy, \
+         paste and undo work as in a text field, names complete as they do there, and the keypad \
+         types into the typeset formula (□² squares what is before the caret, a function key \
+         wraps the selection). Every edit is written back to the text, so the two views always \
+         hold the same formula; a line you have not edited keeps its spacing and comment. The \
+         notation never changes what is computed: |z| is the squared modulus and shows as |z|², \
+         cabs(z) shows as |z|, and exp(z) stays exp(z). A line that does not read shows in red; \
+         click it to edit it as text. LaTeX copies the formula as LaTeX source, as it is typeset, \
+         and while Textbook is on the formula library shows its formulas typeset too.",
+    );
+    help_p(
+        ui,
+        "Numbers in a formula (0.1, 1/3, pi, the parameters) are read as double-precision values, \
+         about 16 digits, and the deep reference orbit iterates with exactly those values. Two \
+         formulas that are equal on paper can therefore differ deep down: 0.1*z multiplies by the \
+         double nearest 0.1, while z/10 divides by an exact 10, and the two pictures part past \
+         about 1e15x (measured: 5% of pixels at 1e15x, a third at 1e17x, all of them at 1e20x). \
+         Either picture is correct for its own formula; write the one you mean to share.",
+    );
+    help_p(
+        ui,
+        "The dialog's Save to library keeps a formula and its parameters under a name (saving under \
+         a name the library has updates that entry). Fractal > Formula library... lists them to \
+         apply, edit, export or delete; Import adds the formulas in a formula file without \
+         replacing any: one the library already has is skipped, and a new one whose name is taken \
+         becomes \"name (2)\". The library is formulas.toml in the folder named under Files & \
+         data (About), itself a formula file. A tour keyframe carries a formula as \
+         formula = \"...\" with formula_params = [[re, im], ...], and Tools > Tour from current \
+         view writes them for a custom view.",
+    );
+    help_p(
+        ui,
+        "A collection of 45 formulas comes with Fractadyne, written for it: higher powers and the \
+         folded variants of the Burning Ship and Celtic families, blends and two-step hybrids, the \
+         Mandelbrot set seen through another map (inverted, log-polar, through sine), \
+         transcendental and rational formulas, and Julia sets. They are the dialog's Examples and \
+         the Collection tab of the formula library, where Copy to mine adds one to your formulas. \
+         Each has a starting view, and Apply goes there: a formula opened on the home view is \
+         often not where its picture is. A formula you save while it is showing keeps the view you \
+         are at in the same way, and Apply returns to it.",
     );
 }
 
@@ -591,6 +716,8 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--resume", "Restart an interrupted render: keep frames already on disk and render only the missing ones. The newest frame is verified first and discarded if incomplete (a render dies on the frame it is writing), stepping back until a good one is found; a folder holding frames at a different size is refused rather than mixed into the sequence."),
         Section("View (with --render / --find-minibrot)"),
         Flag("--fractal NAME", "Family, e.g. \"Mandelbrot\" or \"Burning Ship\"."),
+        Flag("--formula STEP", "A custom formula's step in Fractint-style expressions, e.g. \"z = z^3 - p1*z + c\" (implies --fractal Custom; deep zoom unless a power's exponent varies with z or c, direct rendering then)."),
+        Flag("--formula-params LIST", "The custom formula's parameters p1…p5 as re,im;re,im;…"),
         Flag("--center X Y", "View center (full-precision decimals or expressions: -3/4, -0.5 + 0.25*cos(pi/4))."),
         Flag("--zoom M", "Magnification, e.g. 2e7 or 1.0e23.9 (any depth; a bad value is fatal)."),
         Flag("--zoom-log2 L", "Magnification = 2^L — for depths past f64 range (>= ~1e308x)."),
@@ -619,7 +746,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--autopilot-priority speed|quality", "What the auto-zoom puts first (the \"Auto-zoom priority\" switch in the right panel; overrides the saved preference). speed: zoom at the set rate and refresh the screen as soon as a frame with detail is ready. quality: only fully resolved full-resolution frames reach the screen, and the zoom slows as needed so the picture never magnifies far before the next one lands."),
         Flag("--autopilot-target detail|misiurewicz", "What the auto-zoom aims at (the \"Auto-zoom target\" switch; overrides the saved preference). detail: the richest edge in view, re-chosen as the dive goes. misiurewicz: the nearest Misiurewicz point, solved to the dive limit's depth first (the dive holds still meanwhile), then dived into exactly — Mandelbrot set only."),
         Flag("--show-timestamp / --no-show-timestamp", "Force the elapsed-time overlay on / off (View > Show timestamp; overrides the saved preference). Draws a large clock over the view reading the same \"+12.345s\" the log stamps every line with, plus the frame number, so a screen recording of a problem that only appears in motion can be lined up against the log frame by frame."),
-        Flag("--bla / --no-bla", "Force bilinear approximation (BLA) on / off for deep floatexp Mandelbrot."),
+        Flag("--bla / --no-bla", "Force bilinear approximation (BLA) on / off for deep floatexp Mandelbrot, Multibrot and the fold families (Tricorn, Burning Ship, Celtic, Buffalo)."),
         Flag("--glitch / --no-glitch", "Force multi-reference glitch correction on / off for the export (default on). It never runs for Mandelbrot or Multibrot views outside Julia mode, where --glitch-audit found it repairs nothing."),
         Flag("--orbit-cache / --no-orbit-cache", "Force the on-disk reference-orbit cache on / off. By default it is ON for an ordinary launch and OFF for every task invocation (--render, --selftest, --bench-matrix, tours, …), because a cached orbit makes a timed run look faster than the code is and a gate must build what it measures. A CLI render of a location you have visited in the app can opt in with --orbit-cache. File > Settings > Reference cache… shows where it is, how big, and clears it."),
         Flag("--sound / --no-sound", "Play or silence the tone that marks a finished render (default on). The FRACTADYNE_NO_SOUND environment variable does the same and is what batch runs want, because it is inherited by child processes -- --torture launches each rung as its own exe and the corpus harness shells out per location, neither of which sees a flag passed to the parent. An explicit --sound wins over the variable."),
@@ -729,6 +856,17 @@ pub(crate) fn help_shortcuts(ui: &mut egui::Ui) {
          changes it.",
     );
     help_kv(ui, "F1 / ?", "Open this help");
+    help_sub(ui, "Life (Fractal → Automata → Life)");
+    help_kv(ui, "Enter", "Run / pause the universe");
+    help_kv(ui, "N / Shift+N", "Step one generation / step the stride (set in the Life panel)");
+    help_kv(ui, "D", "Draw tool on / off (the pencil on the toolbar)");
+    help_kv(
+        ui,
+        "Click / drag (Draw on)",
+        "Flip a cell / paint: a stroke that starts on a dead cell draws, one that starts on a live \
+         cell erases. A running universe pauses while you draw and runs on when you let go.",
+    );
+    help_kv(ui, "Ctrl+Z (Draw on)", "Undo the last edit, fill, clear or rule change");
 }
 
 /// A cited entry: bold title, a wrapped description, and a source link.
@@ -1035,8 +1173,9 @@ pub(crate) fn help_about(ui: &mut egui::Ui) {
     help_sub(ui, "Files & data");
     help_p(
         ui,
-        "Your session (current view, coloring, and preferences), bookmarks, and their \
-         thumbnails are stored in this per-user folder, and reloaded on the next launch:",
+        "Your session (current view, coloring, and preferences), bookmarks and their \
+         thumbnails, saved gradients and saved formulas are stored in this per-user folder, and \
+         reloaded on the next launch:",
     );
     ui.horizontal(|ui| {
         ui.label(

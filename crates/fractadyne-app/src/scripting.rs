@@ -513,6 +513,16 @@ struct KeyframeFile {
     palette: Option<String>,
     #[serde(default)]
     fractal: Option<String>,
+    /// A custom formula's step, as the Custom formula dialog takes it (`z = z^3 - p1*z + c`; a
+    /// multi-line TOML string for several statements). Implies `fractal = "Custom"`; inherited
+    /// forward like `fractal`. Each distinct formula is compiled once, when the script is read.
+    #[serde(default)]
+    formula: Option<String>,
+    /// The formula's parameters p1, p2, … as `[re, im]` pairs. Stepped at the keyframe, NOT
+    /// interpolated: every parameter value is its own shader module, which a glide cannot compile
+    /// per frame.
+    #[serde(default)]
+    formula_params: Option<Vec<[f64; 2]>>,
     #[serde(default)]
     julia: Option<bool>,
     /// Easing for the glide arriving at this keyframe: `smooth` (default), `linear`, `smoother`,
@@ -691,7 +701,9 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
             SchemaField { name: "zoom", ty: "float | string", default: "(inherit, else 1)", doc: "Magnification here, e.g. 2667 or \"6.5e94\". Strings carry depths past f64's ~1e308 ceiling." },
             SchemaField { name: "max_iter", ty: "int", default: "(inherit, else [render])", doc: "Exact iteration budget at this keyframe, interpolated geometrically along the glide. One script-wide number cannot serve both a 1.33x home view and a 1e94x dive." },
             SchemaField { name: "palette", ty: "string", default: "(inherit)", doc: "Palette id, preset name, or preset index; interpolated between keyframes." },
-            SchemaField { name: "fractal", ty: "string", default: "(inherit)", doc: "Fractal family name (e.g. \"Mandelbrot\", \"Burning Ship\")." },
+            SchemaField { name: "fractal", ty: "string", default: "(inherit)", doc: "Fractal family name (e.g. \"Mandelbrot\", \"Burning Ship\"), or \"Custom\" with a formula." },
+            SchemaField { name: "formula", ty: "string", default: "(inherit)", doc: "A custom formula's step, as the Custom formula dialog takes it (\"z = z^3 - p1*z + c\"; a multi-line string for several statements). Implies fractal = \"Custom\". Each distinct formula is compiled once, when the script is read." },
+            SchemaField { name: "formula_params", ty: "array of [re, im]", default: "(inherit)", doc: "The formula's parameters p1, p2, ... e.g. [[0.5, 0.0]]. Given alone, they re-parameterize the inherited formula. Stepped at the keyframe, not interpolated: each value is its own shader module." },
             SchemaField { name: "julia", ty: "bool", default: "(inherit)", doc: "Julia mode for the family." },
             SchemaField { name: "dual", ty: "bool", default: "(inherit)", doc: "Show the linked dual view (Mandelbrot + its Julia set side by side)." },
             SchemaField { name: "dual_split", ty: "float", default: "(inherit)", doc: "Fraction of the width given to the LEFT (Mandelbrot) panel of the dual view, 0.15..0.85 — what dragging the divider sets. Interpolated between keyframes; the viewer's own split is restored when the tour ends." },
@@ -1200,6 +1212,8 @@ struct Kf {
     cy: fractadyne_core::BigFloat,
     logmag: f64,
     fractal: FractalKind,
+    /// The custom formula in force here (`fractal` is `Custom` while it is shown), inherited forward.
+    custom: Option<std::sync::Arc<crate::custom_formula::CustomFormula>>,
     julia: bool,
     // Discrete (non-interpolated) state, inherited forward.
     dual: bool,
@@ -1375,6 +1389,8 @@ pub(crate) struct Sampled {
     pub(crate) cy: fractadyne_core::BigFloat,
     pub(crate) logmag: f64,
     pub(crate) fractal: FractalKind,
+    /// The custom formula this frame shows when `fractal` is `Custom`.
+    pub(crate) custom: Option<std::sync::Arc<crate::custom_formula::CustomFormula>>,
     pub(crate) julia: bool,
     pub(crate) dual: bool,
     /// Dual-view split (left-panel fraction) when the script states one; `None` = leave the
@@ -1553,6 +1569,7 @@ impl Playback {
             cy,
             logmag: lm,
             fractal: a.fractal,
+            custom: a.custom.clone(),
             julia: a.julia,
             dual: a.dual,
             dual_split,
@@ -2245,6 +2262,10 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
     let mut zoom: Option<String> = None;
     // State inherited forward until a keyframe changes it.
     let mut fractal = FractalKind::Mandelbrot;
+    let mut custom: Option<std::sync::Arc<crate::custom_formula::CustomFormula>> = None;
+    // Each distinct (formula, parameters) compiled once: a keyframe that restates the formula in
+    // force must not generate and validate its shader again.
+    let mut compiled: Vec<std::sync::Arc<crate::custom_formula::CustomFormula>> = Vec::new();
     let (mut julia, mut dual, mut julia_c, mut orbits, mut orbit) = (false, false, None, false, None);
     let mut dual_split: Option<f32> = None;
     let mut minimap = false;
@@ -2316,6 +2337,60 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
             fractal = FractalKind::from_name(name)
                 .ok_or_else(|| format!("keyframe {id}: unknown fractal \"{name}\""))?;
         }
+        // A custom formula: its text (or new parameters for the one in force), compiled once.
+        if k.formula.is_some() || k.formula_params.is_some() {
+            if k.fractal.is_some() && fractal != FractalKind::Custom {
+                return Err(format!(
+                    "keyframe {id}: `formula` is a custom formula, but fractal = \"{}\"; \
+                     write fractal = \"Custom\" or leave `fractal` out",
+                    fractal.name()
+                ));
+            }
+            let source = match (&k.formula, &custom) {
+                (Some(src), _) => src.clone(),
+                (None, Some(c)) => c.source.clone(),
+                (None, None) => {
+                    return Err(format!("keyframe {id}: `formula_params` with no `formula` to apply them to"))
+                }
+            };
+            let params: Vec<(f64, f64)> = match &k.formula_params {
+                Some(ps) => ps.iter().map(|[re, im]| (*re, *im)).collect(),
+                // New text without parameters: the ones it reads are 0, as in the dialog.
+                None if k.formula.is_some() => Vec::new(),
+                None => custom.as_ref().map(|c| c.params.clone()).unwrap_or_default(),
+            };
+            if params.len() > fractadyne_core::ir::parse::MAX_PARAMS {
+                return Err(format!(
+                    "keyframe {id}: {} formula parameters; a formula has at most {}",
+                    params.len(),
+                    fractadyne_core::ir::parse::MAX_PARAMS
+                ));
+            }
+            if params.iter().any(|(re, im)| !(re.is_finite() && im.is_finite())) {
+                return Err(format!("keyframe {id}: a formula parameter is not a finite number"));
+            }
+            let mut padded = params.clone();
+            padded.resize(fractadyne_core::ir::parse::MAX_PARAMS, (0.0, 0.0));
+            let c = match compiled.iter().find(|c| c.source == source && c.params == padded) {
+                Some(c) => c.clone(),
+                None => {
+                    let c = std::sync::Arc::new(
+                        crate::custom_formula::CustomFormula::compile(&source, &params)
+                            .map_err(|e| format!("keyframe {id}: the formula does not compile: {e}"))?,
+                    );
+                    compiled.push(c.clone());
+                    c
+                }
+            };
+            custom = Some(c);
+            fractal = FractalKind::Custom;
+        }
+        if fractal == FractalKind::Custom && custom.is_none() {
+            return Err(format!(
+                "keyframe {id}: fractal = \"Custom\" needs a `formula` — the step, as the Custom \
+                 formula dialog takes it"
+            ));
+        }
         if let Some(j) = k.julia {
             julia = j;
         }
@@ -2374,6 +2449,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
             cy,
             logmag,
             fractal,
+            custom: custom.clone(),
             julia,
             dual,
             dual_split,
@@ -3205,6 +3281,7 @@ impl FractadyneApp {
             for &kfi in &kf_frames {
                 let t = if pb.total <= 0.0 { 0.0 } else { (kfi as f64 / fps).min(pb.total) };
                 let s = pb.sample(t);
+                self.install_tour_formula(&s);
                 self.fractal = s.fractal;
                 self.julia_mode = s.julia && s.fractal.supports_julia();
                 self.dual = s.dual;
@@ -3246,6 +3323,7 @@ impl FractadyneApp {
         for (pos, &fi) in order.iter().enumerate() {
             let t = if pb.total <= 0.0 { 0.0 } else { (fi as f64 / fps).min(pb.total) };
             let s = pb.sample(t);
+            self.install_tour_formula(&s);
             self.fractal = s.fractal;
             self.julia_mode = s.julia && s.fractal.supports_julia();
             self.dual = s.dual;
@@ -3761,6 +3839,7 @@ impl FractadyneApp {
         let e = pb.cur_t.clamp(0.0, pb.total);
         pb.cur_t = e;
         let s = pb.sample(e);
+        self.install_tour_formula(&s);
         if s.fractal != self.fractal || s.julia != self.julia_mode {
             self.fractal = s.fractal;
             self.julia_mode = s.julia && s.fractal.supports_julia();
@@ -4250,6 +4329,19 @@ impl FractadyneApp {
         }
     }
 
+    /// Install the custom formula a tour frame shows, as Apply would — only when it differs from
+    /// the one installed, so every frame of a stretch reuses one module; references built for
+    /// another formula are dropped. Nothing to do for a frame of a built-in family.
+    pub(crate) fn install_tour_formula(&mut self, s: &Sampled) {
+        let Some(c) = &s.custom else { return };
+        if self.custom.as_ref().is_some_and(|cur| cur.shader.key == c.shader.key && cur.source == c.source) {
+            return;
+        }
+        crate::calibration::set_custom_factor(c.shader.cost_factor);
+        self.custom = Some(c.clone());
+        self.invalidate_refs();
+    }
+
     /// Restore the live settings a standardized benchmark overrode.
     pub(crate) fn restore_from_bench(&mut self, s: BenchSnapshot) {
         self.set_fractal(s.fractal);
@@ -4512,6 +4604,9 @@ mod bench_depth_tests;
 
 #[cfg(test)]
 mod transition_tests;
+
+#[cfg(test)]
+mod formula_tests;
 
 #[cfg(test)]
 mod schema_tests;

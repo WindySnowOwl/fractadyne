@@ -234,6 +234,9 @@ pub struct ExportRequest {
     pub max_iter: u32,
     pub mode: u32,
     pub formula: u32,
+    /// A custom formula's generated shader module ([`crate::custom::build`]), rendered with
+    /// `formula == fractadyne_core::formula::CUSTOM` in direct mode (1). `None` for the built-ins.
+    pub custom: Option<Arc<crate::custom::CustomShader>>,
     pub julia: u32,
     pub cycle: f32,
     pub offset: f32,
@@ -275,6 +278,15 @@ pub struct ExportRequest {
     /// The selftest's tile-loop cases pin the pre-occupancy tile with it, so a 220-px frame still
     /// runs several tiles — a single tile cannot exercise cross-tile state or mix entry points.
     pub tile_px_max: Option<u32>,
+}
+
+impl ExportRequest {
+    /// Whether the resumable chunk pass may iterate this frame: the formula family's capability,
+    /// and for a custom formula its own shader's — one with Fractint's sections (an init section,
+    /// variables kept from step to step) has state the chunk pass neither starts nor carries.
+    pub fn resumable(&self) -> bool {
+        fractadyne_core::formula::caps(self.formula).resumable_passes && self.custom.as_ref().is_none_or(|s| s.resumable)
+    }
 }
 
 /// The actual `(width, height)` an export produced after clamping to the GPU's
@@ -915,7 +927,7 @@ fn render_export_impl(
     let fe = req.mode == 2;
     let chunk_scope = allow_chunking
         && (req.mode == 1 || req.mode == 0 || req.mode == 2)
-        && req.formula <= 3
+        && req.resumable()
         && !method_needs_aux(req.color_method)
         && device.limits().max_color_attachment_bytes_per_sample >= if fe { 64 } else { 48 };
     // Mode 2 in chunk scope: occupancy-sized tiles run as step-bounded passes (see
@@ -928,7 +940,7 @@ fn render_export_impl(
         .min(req.tile_px_max.unwrap_or(u32::MAX))
         .clamp(1, 2048);
 
-    let shader = shader_module(device);
+    let shader = crate::shader_module_for(device, req.custom.as_deref());
     let iter_bgl = iter_bind_group_layout(device);
     let color_bgl = color_bind_group_layout(device);
     let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1464,7 +1476,12 @@ pub struct IterScaffold {
 
 impl IterScaffold {
     pub fn new(device: &wgpu::Device) -> Self {
-        let shader = shader_module(device);
+        Self::new_for(device, None)
+    }
+
+    /// For a custom formula's module (`None` = the fixed one).
+    fn new_for(device: &wgpu::Device, custom: Option<&crate::custom::CustomShader>) -> Self {
+        let shader = crate::shader_module_for(device, custom);
         let iter_bgl = iter_bind_group_layout(device);
         let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("itertiled.layout"),
@@ -1517,7 +1534,7 @@ pub fn render_iter_tiled(
     // latency-bound dispatches the app issues, and its 120 s deadline is only checked BETWEEN
     // tiles — so before chunking, one such tile could still overrun the watchdog inside it.
     let chunk_scope = (req.mode == 1 || req.mode == 0 || req.mode == 2)
-        && req.formula <= 3
+        && req.resumable()
         && device.limits().max_color_attachment_bytes_per_sample
             >= if req.mode == 2 { 64 } else { 48 };
     // Occupancy-sized, step-bounded tiles (see `OCC_TILE_SAMPLES`), mode 2 only as in
@@ -1534,12 +1551,13 @@ pub fn render_iter_tiled(
 
     let t_setup = std::time::Instant::now();
     // Reuse the caller's scaffold (the corrector hoists one across its up-to-64 passes) or build a
-    // private one — same shader/layout/pipeline either way, so output is byte-identical.
+    // private one — same shader/layout/pipeline either way, so output is byte-identical. A caller's
+    // scaffold holds the FIXED module, so a custom formula always builds its own.
     let local_scaffold;
-    let sc = match scaffold {
+    let sc = match scaffold.filter(|_| req.custom.is_none()) {
         Some(s) => s,
         None => {
-            local_scaffold = IterScaffold::new(device);
+            local_scaffold = IterScaffold::new_for(device, req.custom.as_deref());
             &local_scaffold
         }
     };
@@ -2051,6 +2069,9 @@ impl GatherPass {
         work_budget: u64,
         deadline: Option<std::time::Instant>,
     ) -> Result<GatherResult, GpuError> {
+        // Glitch correction is a perturbation-mode repair; custom formulas render direct-only, and
+        // this pass's pipeline is built from the fixed module.
+        debug_assert!(req.custom.is_none(), "gather pass asked to render a custom formula");
         let n_total = coords.len();
         let mut out = GatherResult {
             // Pre-filled with the GLITCH sentinel, not zero. Every entry is overwritten on the success
@@ -2426,7 +2447,7 @@ fn render_iter_passes(
     let w = req.width.clamp(1, max_dim);
     let h = req.height.clamp(1, max_dim);
 
-    let shader = shader_module(device);
+    let shader = crate::shader_module_for(device, req.custom.as_deref());
     let iter_bgl = iter_bind_group_layout(device);
     let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("selftest.iter_layout"),
@@ -2786,10 +2807,10 @@ fn render_iter_passes(
 /// run as a single watchdog-tripping dispatch. Output is bit-identical to `render_iter` for the
 /// supported scope (the resumable shader replicates the direct branch's arithmetic and order
 /// exactly, and the state carries full df32 precision). Scope: DIRECT (`mode == 1`), df32
-/// perturbation (`mode == 0`) and floatexp perturbation (`mode == 2`), holomorphic formulas 0..=3,
-/// aux coloring off (glitch detection is supported since beta.124 — a glitched pixel settles as
-/// `ST_GLITCHED` and resolves to the same `-2` sentinel the single pass emits); anything else
-/// falls back to plain `render_iter`.
+/// perturbation (`mode == 0`) and floatexp perturbation (`mode == 2`), formulas whose
+/// `FormulaCaps::resumable_passes` is set, aux coloring off (glitch detection is supported since
+/// beta.124 — a glitched pixel settles as `ST_GLITCHED` and resolves to the same `-2` sentinel the
+/// single pass emits); anything else falls back to plain `render_iter`.
 /// Always `ss = 1`, like `render_iter`. `iterate_ms` is not measured on this path (0.0).
 ///
 /// Mode 2 runs the four-target `fs_iterate_chunk_fe` entry point instead — floatexp state does not
@@ -2829,7 +2850,8 @@ pub struct ChunkPassTiming {
 /// to a loop that already blocks on `poll(Wait)`.
 ///
 /// ⚠An `Ok` result with `passes` still EMPTY means the unsupported-scope fallback to `render_iter`
-/// fired (wrong mode, formula > 3, `chunk_iters == 0`, or too few color-attachment bytes) — i.e.
+/// fired (wrong mode, a formula without `resumable_passes`, `chunk_iters == 0`, or too few
+/// color-attachment bytes) — i.e.
 /// one unbounded dispatch ran instead of the windows you asked for. A caller measuring windows
 /// must treat that as "not measured", never as "one fast window".
 pub fn render_iter_chunked_timed(
@@ -2844,13 +2866,14 @@ pub fn render_iter_chunked_timed(
     // mode 0, four (64) for mode 2. A device that granted less can't run it: fall back to the
     // single-pass render (the caller's TDR exposure is then what it always was; the app requests
     // min(adapter, 64) at device creation). Scope: direct (1), df32 perturbation (0) and floatexp
-    // perturbation (2) with aux off, holomorphic formulas 0..3 — the same scope the chunk shaders
-    // are written to, which is narrower than `fs_iterate`'s.
+    // perturbation (2) with aux off, formulas with `FormulaCaps::resumable_passes` (Mandelbrot,
+    // Multibrot 3–5) — the same scope the chunk shaders are written to, which is narrower than
+    // `fs_iterate`'s.
     let fe = req.mode == 2; // floatexp: the four-target entry point
     let mode_ok = req.mode == 1 || req.mode == 0 || req.mode == 2;
     let attach_need = if fe { 64 } else { 48 };
     if !mode_ok
-        || req.formula > 3
+        || !req.resumable()
         || chunk_iters == 0
         || device.limits().max_color_attachment_bytes_per_sample < attach_need
     {
@@ -2860,7 +2883,9 @@ pub fn render_iter_chunked_timed(
     let w = req.width.clamp(1, max_dim);
     let h = req.height.clamp(1, max_dim);
 
-    let shader = shader_module(device);
+    // A custom formula chunks through its OWN module's chunk pass: the fixed module's would read
+    // formula id 1000 and iterate the Mandelbrot step.
+    let shader = crate::shader_module_for(device, req.custom.as_deref());
     let iter_bgl = iter_bind_group_layout(device);
     let targets: usize = if fe { 4 } else { 3 };
     let state_bgl = crate::state_bind_group_layout_n(device, targets as u32);

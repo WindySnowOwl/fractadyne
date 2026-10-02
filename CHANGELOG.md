@@ -59,6 +59,143 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Conway's Game of Life and its relatives (not yet in a beta).** A new family under Fractal ▸
+  Automata: Life-like cellular automata on an unbounded plane, stepped on the graphics card.
+  Rules in B/S notation (Life, HighLife, Seeds and 19 more built in), Generations rules with
+  dying states (Brian's Brain, Star Wars), von Neumann rules, Hensel's non-totalistic notation
+  (B2-a/S12, tlife) and MAP rules. Play and pause, step one generation or a stride of up to
+  65,536, set the speed, fill the view at random. Edit on screen with the Draw tool (the pencil
+  on the toolbar, or D): a click flips a cell, a drag paints — over a dead cell it draws, over a
+  live one it erases — and a running universe pauses for the stroke and runs on after it; Undo
+  (Ctrl+Z while drawing) steps back through edits, fills, clears and rule changes. Zoomed in,
+  faint grid lines mark the cells and the cell under the pencil is outlined; the status bar's
+  cursor names the cell. While Life is showing, its run, step and reset buttons take the toolbar
+  slot Julia and the dual view use for the formulas (Enter runs and pauses, N steps). Patterns open from RLE,
+  plaintext (.cells) and Life 1.05/1.06 files or pasted text, 18 classics are built in, and the
+  universe saves as RLE. Zoomed out, a pixel shows the fraction of live cells under it, in the
+  current palette. A view of a universe (a .fdn, a bookmark) carries it and writes
+  format_version 3; the session keeps it whichever family is on screen. Not yet: image export of
+  a Life view (refused with a message), Hashlife for very large and very long runs, the
+  Sierpinski-type digit automata and 1-D automata (design/automata.md).
+- **Fifteen more fractal families (0.3.0-beta.13 and beta.14).** Multibrot 6, 7 and 8, and Burning Ship, Tricorn,
+  Celtic and Buffalo at powers 3, 4 and 5, each built in and deep-zooming as its power-2 sibling
+  does (perturbation in df32 and extended-range floatexp, distance estimation for the Multibrot
+  powers, glitch correction for the folds' exports). Multibrot 6, 7 and 8 also have what Multibrot
+  3–5 have: series approximation, frames split into resumable passes, the minibrot finder (M), and
+  exports without glitch correction, which at their deep views changed under 0.03% of the pixels
+  and corrected none of them. The Fractal menu and the toolbar dropdown list them one
+  family to a row ("Burning Ship  3 4 5"). A view of one writes format_version 2, so an older
+  Fractadyne says it comes from a newer build instead of showing another family at its
+  coordinates. Multibrot 8 escapes at radius 128 rather than 256, and Multibrot 7 and 8 end the
+  reference orbit at |Z|² > 1e9 rather than 1e12, where the next step would leave single-precision
+  range; a custom formula of degree 7 or more now does the same (its reference's last sample could
+  overflow). BLA (bilinear approximation) now covers Multibrot 3–8 as well as Mandelbrot: at the
+  interior of a deep Multibrot 6 minibrot (1e30×, 200,000 iterations) a render takes 1.3 s instead
+  of 4.5 s; a deep view whose reference escapes early pays for it as Mandelbrot's do (4.4 s instead
+  of 2.9 s at the same depth), the trade-off Mandelbrot's policy already makes there. Burning Ship,
+  Tricorn, Celtic and Buffalo, at power 2 and at powers 3–5, take BLA too, through a real 2×2 map
+  per step that knows where each fold lies. They have no series approximation, so a deep view's
+  interior used to iterate every step: inside Burning Ship's main body at 1e30× with 30,000
+  iterations, the GPU now takes 4 ms instead of 5.1 s (the render 1.0 s instead of 6.2 s).
+  - **Tested:** each family's CPU step is its formula-language program bit for bit (what one types
+    as `abs(z)^3 + c` computes Burning Ship 3 exactly); on the GPU, the direct render matches the
+    generated module bit for bit up to power 6 and the CPU within 0.4% for powers 7 and 8; the
+    perturbation matches the CPU at 1e5× (mean difference under 0.0002 iterations) and at 1e6×,
+    floatexp matches df32 at 1e10×, and every family stays finite at 1e35×. For Multibrot 6–8, a
+    frame split into passes is the single-pass frame bit for bit in all three modes, down to 1e30×;
+    the series coefficients are the formula's own Taylor coefficients; and a render with series
+    approximation is as close to the CPU as one without, at views where pixels escape (the
+    Multibrot 3–5 check had none). BLA matches the render without it at every smooth pixel of a
+    deep chaotic view of each of Multibrot 3–8 (1e30×, thousands of escape counts), and a split
+    frame with BLA is the single pass bit for bit. For the folds, each skip lands where the exact
+    steps go (to 1e-4 of the offset, all 16 families at deep views), and a deep view with BLA
+    differs from one without no more than the same view shifted a thousandth of a pixel does.
+    Self-test 463 checks, goldens 31 (five new, one per shape). The
+    dispatch ceiling's cost factors for them are measured, with the method beside them in
+    `validation/calibration/ceilings.toml`.
+- **Fixed: a deep Multibrot 4 or 5 view could render black (0.3.0-beta.13).** Where the series
+  approximation skipped to within a step or two of the end of an escaping reference orbit (a view
+  with no structure, every pixel escaping together), the first test of each pixel overflowed
+  single precision, and every pixel read as inside the set: Multibrot 5 at 1e40× was all black.
+  The skip now stops where the next step stays in range.
+- **Custom formulas** (0.3.0-beta.10 to beta.12).
+  - **What:** Fractal ▸ Custom formula… takes a formula's step in Fractint-style expressions
+    (`z = z^3 - p1*z + c`, several statements, parameters p1–p5, the usual functions), with an
+    on-screen keypad and a syntax check as you type. Views, sessions and exported images keep the
+    formula's text; `--formula` renders one from the command line.
+  - **Deep zoom:** every formula deep-zooms, with the same extended-range arithmetic past 1e28× as
+    the built-in fractals, except one with a power whose exponent varies with z or c (such as
+    `z^c`), which renders directly and is sharp to about 1e4×–1e5×. Custom `z² + c` matches the
+    built-in Mandelbrot on the deepest corpus spiral through 1e100×.
+  - **Limits:** every step is iterated in full, with no series approximation or BLA, so a deep view
+    is slower than a built-in's (at 1e100× with 60,000 iterations, 60 ms of GPU time against
+    13 ms). Near its boundary a formula with functions orbits chaotically, and single precision
+    follows a long orbit there only loosely. log, sqrt and non-integer powers jump across the
+    negative real axis; a pixel whose orbit crosses there when the reference's does not carries
+    on at about single precision, so deep views straddling that line show noise along it.
+    Numbers in a formula are doubles (about 16 digits), so `0.1*z` and `z/10` are different
+    fractals past about 1e15×; Help says which is which.
+  - **Editor (0.3.0-beta.13):** in the formula field, parentheses are coloured by nesting level,
+    the pair at the cursor is highlighted and an unmatched one is red; after two letters a list
+    completes the language's names and the formula's own variables (Tab or Enter; Esc closes it).
+    `log` is the natural logarithm, as in Fractint; a call written `ln(…)` (or `cot`, `coth`,
+    `Re`, `Im`) still does not read, but the syntax check names the function to write instead,
+    a button rewrites every such call, and typing `ln` offers `log`.
+  - **Textbook mode (0.3.0-beta.13):** a Text | Textbook switch in the formula dialog shows the
+    formula typeset as LaTeX sets it, in Latin Modern Math: fractions stacked, exponents raised,
+    parentheses that grow with what they hold, statements aligned at their `=`. It edits in
+    place: `/` makes a fraction of the term before it, `^` an exponent, `(` parentheses or a
+    call; the arrows move through the formula and Tab goes to the next empty box. Names
+    complete, and the keypad types into the typeset formula. Every edit is written back to the
+    text, and a line nobody edited keeps its spacing and comment. The notation never changes the
+    computation: `|z|`, the squared modulus, shows as |z|², and `exp(z)` stays exp(z). A line
+    that does not read shows in red, to be edited as text. A LaTeX button copies the formula as
+    LaTeX source, and the formula library shows its formulas typeset while Textbook is on.
+  - **Collection (0.3.0-beta.13):** 53 formulas come with the app, written for it (no formula
+    corpus is bundled): higher powers and folded variants of the Burning Ship and Celtic
+    families, blends and hybrids, the Mandelbrot set through another map, transcendental and
+    rational formulas, Julia sets, and Fractint classics. They are the dialog's Examples and the
+    formula library's new Collection tab. Each opens at a starting view where its picture is,
+    and a formula saved while it shows keeps the view it was saved at. A test renders every one
+    at its view and checks that a picture is there; the GPU renders were compared with it by eye.
+  - **Library (0.3.0-beta.13):** the formula dialog's Save to library keeps a formula and its
+    parameters under a name, and Fractal ▸ Formula library… applies, edits, exports and deletes
+    them. Import adds a formula file's formulas without replacing any: one already saved is
+    skipped, and a new one whose name is taken becomes "name (2)". The library is written
+    atomically, and a library file that cannot be read is set aside rather than overwritten.
+  - **Fractint's formulas (0.3.0-beta.13):** a formula may use Fractint's sections: an init section
+    before a `:`, run once per pixel; a final comparison as its own bailout test (Magnet's
+    `|z| <= 100 && |z - 1| > 0.000001` stops at escape or at the fixed point 1);
+    `if`/`elseif`/`else`/`endif`; and variables kept from step to step. Comparisons, `&&` and `||`,
+    the inverse functions (`asin` to `atanh`), `cosxx`, `floor`, `ceil`, `trunc` and `round`,
+    `maxit` and `ismand` read too, and an assignment is a value (`a = b = pixel`). Such a formula
+    renders on the direct path, without deep zoom. Formula library ▸ Import reads Fractint `.frm`
+    files: each entry that reads becomes a formula, and its row says what the reading changed
+    (`fn1`–`fn4` take Fractint's defaults sin, sqr, sinh and cosh; Fractint's variable `c` is
+    renamed `c_`, as `c` is the pixel here; a name nothing sets is 0, as in Fractint). The import's
+    message counts the entries that do not read and names the commonest reason. Of the 20,758
+    distinct formula bodies in the Orgform collection (read locally, not bundled), 88.6% read; most
+    of the rest use Fractint's screen and view variables (`whitesq`, `rotskew`, `center`,
+    `scrnpix`) or `lastsqr`. The collection gains eight Fractint classics written with sections:
+    Magnet I and II, the Lambda parameter plane, Nova, Barnsley M1, Spider, Manowar, and Phoenix
+    with its parameter free. The library's list has a filter and draws at most 100 rows at a time.
+    On the command line, a value beginning with a minus sign that is not a single number was
+    refused as an unknown option: `--center -3/4 0` (the expression form Help gives as an
+    example), `--formula-params -0.5,0`, a formula beginning with `-`.
+  - **Files (0.3.0-beta.13):** a tour keyframe can carry a formula (`formula`, `formula_params`), and
+    Tools ▸ Tour from current view writes them; before, a tour of a custom view was refused. A
+    formula with a character past Latin-1 in a comment (such as √) made a PNG export fail and an
+    EXR export crash the app; the view text now writes such characters as `\u{221a}`, and the
+    image writers can no longer fail or crash on the view text. A custom view's file is marked
+    format 2, so a build without custom formulas warns that it comes from a newer Fractadyne
+    instead of silently showing another fractal at those coordinates.
+  - **Tested:** 85 self-test checks against the CPU and exact arithmetic, and seven new golden
+    images. In beta.11 the single-precision `sin z + c` stress check judges only the pixels whose
+    orbit is not chaotic (it had failed on the Radeon RX 6800 XT with 7.1% of all pixels differing,
+    against a bound fitted to the RTX 3080's 3.0%). Judged that way, it found a real difference on
+    the Radeon, fixed in beta.12: a pixel escaping by overflowing single precision (as `sin z`
+    does) came out 0.014 of a colour band off on 4.4% of the non-chaotic pixels.
+
 - **Live refresh stays out of the way where it cannot help** (0.3.0-beta.8 and beta.9).
   - **The problem:** on the RX 6800 XT at 1280×800 no frame can be drawn in cheaper pieces: every
     piece would be under the size at which that card is fully busy. The live refresh still took

@@ -209,6 +209,185 @@ pub(crate) fn anchored(rel: &str) -> std::path::PathBuf {
 /// `render_iter` that PRINTS a GPU error instead of swallowing it (design/diagnostics.md
 /// D2.5/F11): the suite's checks skip on `None`, so without this a device-level failure
 /// silently shrank the check count instead of naming itself.
+/// A built-in family's boundary point between `c = 0` (inside) and the first of `outside`·{1, 2, 4}
+/// that escapes, by 48 bisections of the f64 orbit (`fractadyne_core::orbit_points`) — a view rich
+/// in escaping pixels for a family nobody hand-picked one for.
+fn family_boundary(formula: u32, outside: (f64, f64), budget: u32) -> Option<(f64, f64)> {
+    let bail2 = 256.0 * 256.0;
+    let escapes = |c: (f64, f64)| {
+        let pts = fractadyne_core::orbit_points((0.0, 0.0), c, formula, budget as usize, bail2);
+        pts.last().is_some_and(|z| z.0 * z.0 + z.1 * z.1 > bail2)
+    };
+    let mut inside = (0.0, 0.0);
+    let mut outside = [1.0, 2.0, 4.0].iter().map(|k| (outside.0 * k, outside.1 * k)).find(|&o| escapes(o))?;
+    if escapes(inside) {
+        return None;
+    }
+    for _ in 0..48 {
+        let mid = ((inside.0 + outside.0) * 0.5, (inside.1 + outside.1) * 0.5);
+        if escapes(mid) {
+            outside = mid
+        } else {
+            inside = mid
+        }
+    }
+    Some(inside)
+}
+
+/// A view for the abs-family checks: a boundary point ([`family_boundary`] along a ray from 0)
+/// whose view at `mag` (3/mag wide) has smooth escaping pixels to compare. A boundary can be dust
+/// there — Burning Ship 3's third-quadrant ray lands in a stretch that is noise at 30×, every pixel
+/// "steep" — so the rays are tried in turn, third quadrant first (where the |Im| folds engage), and
+/// the first is taken whose view, sampled 24 × 24 on the CPU, has at least 15% samples that escape
+/// within 2 iterations of their neighbours ONE CHECK PIXEL away (`px` of the view's width), the
+/// test the check's own "steep" applies. Where no ray reaches that (a hairy boundary — Multibrot 7,
+/// the Tricorns), the ray with the most such samples, if 2% or more.
+fn family_view(formula: u32, mag: f64, px: u32, budget: u32) -> Option<(f64, f64)> {
+    const G: usize = 24;
+    let bail2 = 256.0 * 256.0;
+    let dwell = |c: (f64, f64)| {
+        let pts = fractadyne_core::orbit_points((0.0, 0.0), c, formula, budget as usize, bail2);
+        pts.last().filter(|z| z.0 * z.0 + z.1 * z.1 > bail2).map(|_| pts.len() as i64)
+    };
+    let mut best: Option<(usize, (f64, f64))> = None;
+    // Never along a symmetry axis: on the real axis an orbit stays real, so the |Im| folds never
+    // engage, and a Tricorn's axes end in parabolic points (Tricorn 3 at 0.3849, and at 0.3849i by
+    // its fourfold symmetry: interior beside stripes of escape time diverging, every pixel "steep").
+    // The families' axes lie at whole multiples of 30°, 36° or 45°; rays at 3.75° past a multiple
+    // of 7.5° meet none of them. Forty-eight of them: Tricorn 3's best of 24 was a view of 625
+    // comparable pixels, where the direct path's f32-quantised c (two ulps a pixel at |c| ≈ 1, the
+    // shader compiler folds df32 to f32) moved the mean past the bound.
+    for t in (0..48).map(|k| (183.75 + 7.5 * k as f64).to_radians()) {
+        let Some(at) = family_boundary(formula, (t.cos(), t.sin()), budget) else { continue };
+        let span = 3.0 / mag;
+        let step = span / f64::from(px);
+        let smooth = (0..G * G)
+            .filter(|&k| {
+                let (i, j) = ((k % G) as f64, (k / G) as f64);
+                let p = (at.0 + span * ((i + 0.5) / G as f64 - 0.5), at.1 + span * (0.5 - (j + 0.5) / G as f64));
+                let Some(v) = dwell(p) else { return false };
+                [(step, 0.0), (0.0, step)].iter().all(|&(dx, dy)| dwell((p.0 + dx, p.1 + dy)).is_some_and(|w| (w - v).abs() <= 2))
+            })
+            .count();
+        if smooth * 100 >= G * G * 15 {
+            return Some(at);
+        }
+        if best.is_none_or(|(n, _)| smooth > n) {
+            best = Some((smooth, at));
+        }
+    }
+    best.filter(|(n, _)| n * 100 >= G * G * 2).map(|(_, at)| at)
+}
+
+/// Deep points of the fold families, good to ~2^-112, whose 1e-30 neighbourhood is mostly STABLE
+/// (a sub-pixel nudge leaves a pixel's count alone) — the core's `FOLD_DEEP_FIXTURES`, which record
+/// how they were found. A fold's chaotic boundary is noise at any depth (bisected points first tried
+/// had no stable pixel at all), and a check there would compare noise with noise.
+const FOLD_DEEP: [(FractalKind, &str, &str); 16] = [
+    (FractalKind::Celtic, "-7.523183301672266119158619702700220349889660622278404512203e-1", "-2.14835958763750446308384443362044395573177458962387293481e-1"),
+    (FractalKind::Celtic3, "-1.390111097603047035481381903268406231192188759277730469272e-1", "-1.208364211005726539769261155232087101766648293103934130593e+0"),
+    (FractalKind::Buffalo3, "4.608237148512231691928989032718950631004591668346324319821e-1", "1.154303315171477277006095095403463761887149114811342024179e-1"),
+    (FractalKind::Buffalo5, "4.029273516218120856749052413703955216672657505935849857889e-1", "-5.821723262584372350783097339293223693418500863674671803413e-1"),
+    (FractalKind::BurningShip, "1.510426975372399155276004915912049480568178198670688953146e-1", "4.221360602684940155668847406639261668137033173647796363826e-1"),
+    (FractalKind::Tricorn, "-1.245181750030167260019164378722004235435653851940847122794e+0", "-2.037605720180463320107795585296334647328774720528326395773e-2"),
+    (FractalKind::Buffalo, "-1.510426975372401197787866671960570444323379772291351660331e-1", "4.221360602684941728921263977360891137815433991908003217154e-1"),
+    (FractalKind::BurningShip3, "-9.15383227746129862363246806792022038019889900108861939843e-1", "-1.665596356636845051404128728242821066413195064087217571441e-1"),
+    (FractalKind::BurningShip4, "-1.059059912399875949806604684756823369616419345477182022818e+0", "-6.941445398749050928167618993678418040977879789587693625044e-2"),
+    (FractalKind::BurningShip5, "-1.069304830077022750409631353845070556935692686852387744345e+0", "-7.008594136830775532707863552269324262159198773198077894119e-2"),
+    (FractalKind::Tricorn3, "-8.301165086600040786410117965340966101130685955529819862755e-1", "-7.279926396365465868944042532991377115141048551447173006979e-1"),
+    (FractalKind::Tricorn4, "-2.596843675593252253654911553479302337079929899170186367197e-1", "-5.265878052427495866136872211038079448051950717593488419814e-1"),
+    (FractalKind::Tricorn5, "-9.033536580960661097439171803785319140128294786602977017732e-1", "-4.272544604520101032739291828337394992900827230127916689602e-1"),
+    (FractalKind::Celtic4, "-4.234565860024477641147504048357300264219746679250861041278e-1", "-4.09820898134915444566944199392919060263917505185772053164e-1"),
+    (FractalKind::Celtic5, "-2.281553024011103909013555011760308970573078526808823516802e-1", "-5.773582579137733907699085669559048183803546885637493650668e-1"),
+    (FractalKind::Buffalo4, "-3.071721506556603906348160925396570822822053282996192416967e-1", "4.14173699729186134054547251993249825273527878456300080967e-1"),
+];
+
+/// Deep boundary points of Multibrot 3–8, good to ~2^-112 — the core's fixtures
+/// (`MULTIBROT_DEEP_FIXTURES` in its tests, and `scorer_matches_oracle_multibrot_6_to_8`, which
+/// records how they were found). A [`family_boundary`] point is f64, good to ~1e-15 and garbage
+/// past that: at 1e30× its reference escapes early and every pixel with it, so a chunked render
+/// agrees trivially (the corpus-07 note in "iter-chunk"). These keep their digits, and their 1e-30
+/// neighbours escape hundreds to thousands of steps apart.
+const MULTIBROT_DEEP: [(FractalKind, &str, &str); 6] = [
+    (
+        FractalKind::Multibrot3,
+        "-7.542988421659047012682575462407727648742957195599927956575e-2",
+        "1.150837642332408274574812674609472971463521952952769779238e+0",
+    ),
+    (
+        FractalKind::Multibrot4,
+        "6.332712744727028788597360205303212675970690061507204539421e-1",
+        "2.149666311355967986884147897121404542351347657064834463711e-1",
+    ),
+    (
+        FractalKind::Multibrot5,
+        "6.077504591516768732823798182613786336218861548355426472285e-1",
+        "3.983406962035189108405800236915385332818636675353539031671e-2",
+    ),
+    (
+        FractalKind::Multibrot6,
+        "6.857394901829179081616429758180505352925479174432123629563e-1",
+        "4.494574077574449791211463579695434838514006741731437234958e-2",
+    ),
+    (
+        FractalKind::Multibrot7,
+        "8.476326589810416770591545692023465481479590290010075317289e-1",
+        "1.686046188662333201185254044899073603644196631087163205889e-1",
+    ),
+    (
+        FractalKind::Multibrot8,
+        "7.83482963062576633425633295165828974709342271037759608728e-1",
+        "2.659566285584885991743283420348254644023437952052363285336e-1",
+    ),
+];
+
+/// A power family's iteration texture at `req`'s view as the CPU computes it — the f64 orbit of
+/// each pixel centre by the built-in's own step and policy (escape at 256, at 128 for Multibrot 8;
+/// the smooth value unclamped, as the shader's) — in `render_iter`'s layout (the smooth value at
+/// every fourth float, −1 for interior). The truth a deep check judges a perturbation render by
+/// where the direct path's f32 c is too coarse.
+fn cpu_family_iter(req: &fractadyne_gpu::ExportRequest, formula: u32, n: u32) -> Vec<f32> {
+    let nn = n as usize;
+    let d = f64::from(fractadyne_core::formula::power(formula));
+    let bail2 = if formula == fractadyne_core::formula::MULTIBROT8 { 128.0 * 128.0 } else { 256.0 * 256.0 };
+    let centre = (req.center[0] as f64 + req.center[2] as f64, req.center[1] as f64 + req.center[3] as f64);
+    let scale = 2f64.powi(req.delta_exp);
+    let (sx, sy) = (req.span_mantissa.x / n as f64, req.span_mantissa.y / n as f64);
+    let budget = req.max_iter as usize;
+    let rows: Vec<usize> = (0..nn).collect();
+    let threads = std::thread::available_parallelism().map_or(4, |t| t.get());
+    let parts: Vec<Vec<f32>> = std::thread::scope(|s| {
+        let handles: Vec<_> = rows
+            .chunks(nn.div_ceil(threads).max(1))
+            .map(|part| {
+                s.spawn(move || {
+                    let mut out = Vec::with_capacity(part.len() * nn * 4);
+                    for &j in part {
+                        for i in 0..nn {
+                            let c = (
+                                centre.0 + sx * ((i as f64 + 0.5) - n as f64 * 0.5) * scale,
+                                centre.1 + sy * (n as f64 * 0.5 - (j as f64 + 0.5)) * scale,
+                            );
+                            let pts = fractadyne_core::orbit_points((0.0, 0.0), c, formula, budget, bail2);
+                            let (x, y) = *pts.last().unwrap();
+                            let m2 = x * x + y * y;
+                            let v = if m2 > bail2 {
+                                (pts.len() - 1) as f64 + 1.0 - (m2.ln() * 0.5 / 2f64.ln()).ln() / d.ln()
+                            } else {
+                                -1.0
+                            };
+                            out.extend_from_slice(&[v as f32, 0.0, 0.0, 0.0]);
+                        }
+                    }
+                    out
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().expect("a CPU thread panicked")).collect()
+    });
+    parts.concat()
+}
+
 fn st_render_iter(
     device: &eframe::wgpu::Device,
     queue: &eframe::wgpu::Queue,
@@ -319,7 +498,7 @@ impl FractadyneApp {
         // `@response-file` expansion is honored (raw args would silently drop them).
         let filter: Option<String> = self.selftest.filter.clone();
         const GROUPS: &[&str] = &[
-            "numeric", "symmetry", "abs-family", "multibrot-sa", "bla", "aux-bla",
+            "numeric", "symmetry", "abs-family", "custom-formula", "life", "multibrot-sa", "bla", "aux-bla",
             "consistency", "counters", "iter-budget", "iter-chunk", "live-split", "nr-zoom", "coords",
             "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
@@ -534,7 +713,8 @@ impl FractadyneApp {
             const CRY: &str = "0.1853420232408490265512092752061929308714979";
             const NX: &str = "-0.74364388703715887077806454349323251348";
             const NY: &str = "0.131825904205312292821097354874199108694";
-            let cases: &[(&str, &str, f64, u32, u32, bool, u32, &str)] = &[
+            const CHUNK_FAMILY_COUNTS_MIN: usize = 20;
+            let mandel: &[(&str, &str, f64, u32, u32, bool, u32, &str)] = &[
                 ("-0.5", "0.0", 1.0, 2_000, 137, false, 1, "home 1×, 2000 iter, chunk 137"),
                 (SX, SY, 2.0e3, 2_000, 137, false, 1, "seahorse 2e3×, 2000 iter, chunk 137"),
                 ("-0.5", "0.0", 1.0, 50_000, 7_000, false, 1, "home 1×, 50k iter, chunk 7000"),
@@ -546,7 +726,39 @@ impl FractadyneApp {
                 (NX, NY, 1.0e30, 21_000, 3_000, false, 2, "mode2 nucleus 1.3e30× (interior), 21k iter, 7 passes"),
                 (CRX, CRY, 1.0e30, 21_000, 2_600, true, 2, "mode2 97-sample ref (orbit wraps), 21k iter, chunk 2600"),
             ];
-            for (cx, cy, mag, max_iter, chunk, truncate, want_mode, desc) in cases {
+            type ChunkCase = (FractalKind, String, String, f64, u32, u32, bool, u32, String);
+            let mut cases: Vec<ChunkCase> = mandel
+                .iter()
+                .map(|&(x, y, m, it, ch, tr, md, d)| (FractalKind::Mandelbrot, x.into(), y.into(), m, it, ch, tr, md, d.into()))
+                .collect();
+            // ⭐Multibrot 3–8 (design/power-families.md, phases 2–3): the chunk passes carry their
+            // arms, which must be fs_iterate's to the bit in every mode — direct and df32 at a
+            // `family_view` boundary (an f64 centre is exact enough there), the rebase storm, and
+            // floatexp at 1e30× on a `MULTIBROT_DEEP` point, where their mode-2 row must show BLA
+            // skips as Mandelbrot's do AND escapes spread over many counts (below).
+            for (kind, dx, dy) in MULTIBROT_DEEP {
+                let f = kind.formula_id();
+                let name = kind.name();
+                let Some(at) = family_view(f, 2.0e4, N, 3_000) else {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "IterChunk",
+                        name: "chunked render is bit-identical".into(),
+                        params: format!("{name}: a view"),
+                        result: "no ray from 0 reaches a boundary with smooth escaping pixels at 2e4×".into(),
+                        threshold: "a view to test at",
+                        pass: false,
+                    });
+                    continue;
+                };
+                let (ax, ay) = (format!("{:.17}", at.0), format!("{:.17}", at.1));
+                cases.push((kind, ax.clone(), ay.clone(), 2.0e3, 2_000, 137, false, 1, format!("{name} 2e3×, 2000 iter, chunk 137")));
+                cases.push((kind, ax.clone(), ay.clone(), 2.0e4, 3_000, 517, false, 0, format!("mode0 {name} 2e4×, 3000 iter, chunk 517")));
+                cases.push((kind, ax, ay, 2.0e4, 20_000, 700, true, 0, format!("mode0 {name} 97-sample ref (rebase storm), 20k iter, chunk 700")));
+                cases.push((kind, dx.into(), dy.into(), 1.0e30, 21_000, 7_000, false, 2, format!("mode2 {name} deep boundary 1.3e30×, 21k iter, 3 passes")));
+            }
+            let prev_fractal = self.fractal;
+            for (kind, cx, cy, mag, max_iter, chunk, truncate, want_mode, desc) in &cases {
+                self.fractal = *kind;
                 let mut req = make(self, cx, cy, *mag);
                 req.max_iter = *max_iter;
                 if *truncate {
@@ -580,12 +792,26 @@ impl FractadyneApp {
                             // if BLA silently switched off in BOTH renders they would still agree,
                             // and the chunked path would be running the beta.101 e100 pathology
                             // (0.04 Gsteps/s against 174 in the same frame) with a green gate.
+                            // A Multibrot's deep row also shows the other thing a trivial agreement
+                            // lacks: orbits that part — escapes over many counts.
+                            let family = *kind != FractalKind::Mandelbrot;
                             let bla_ok = *want_mode != 2 || *truncate || bla > 0;
+                            let mut counts: Vec<u32> =
+                                a.iter().step_by(4).filter(|v| **v >= 0.0).map(|v| *v as u32).collect();
+                            let escaped = counts.len();
+                            counts.sort_unstable();
+                            counts.dedup();
+                            let spread_ok = !family || *want_mode != 2 || counts.len() >= CHUNK_FAMILY_COUNTS_MIN;
                             (
-                                diffs == 0 && bla_ok,
+                                diffs == 0 && bla_ok && spread_ok,
                                 format!(
-                                    "mode {} — {diffs} texels differ (max Δ {maxd:.3e}), bla_skip {bla}, rebase {reb}",
-                                    req.mode
+                                    "mode {} — {diffs} texels differ (max Δ {maxd:.3e}), bla_skip {bla}, rebase {reb}{}",
+                                    req.mode,
+                                    if family {
+                                        format!(", {escaped} escaped over {} counts, sa_skip {}", counts.len(), req.sa_skip)
+                                    } else {
+                                        String::new()
+                                    }
                                 ),
                             )
                         }
@@ -595,12 +821,13 @@ impl FractadyneApp {
                 push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "IterChunk",
                     name: "chunked render is bit-identical".into(),
-                    params: (*desc).into(),
+                    params: desc.clone(),
                     result,
-                    threshold: "0 texels differ (mode 2: and BLA engaged)",
+                    threshold: "0 texels differ (mode 2: and BLA engaged; a Multibrot's escapes over ≥ 20 counts)",
                     pass,
                 });
             }
+            self.fractal = prev_fractal;
         }
 
         // ⭐⭐(0.3.0-beta.3) THE SPLIT LIVE REFRESH. A moving df32 frame dearer than one displayed
@@ -2609,17 +2836,32 @@ impl FractadyneApp {
                 }
                 false
             };
-            // (family, center, mag) — boundary-detail regions rich in escaping pixels.
-            let abs_cases: &[(FractalKind, &str, &str, f64)] = &[
-                (FractalKind::BurningShip, "-1.7548", "-0.0312", 1.0e5),
-                (FractalKind::Celtic, "-1.2566", "0.0480", 1.0e5),
-                (FractalKind::Buffalo, "-1.7548", "-0.0312", 1.0e5),
+            // (family, center, mag) — boundary-detail regions rich in escaping pixels. The power
+            // families (design/power-families.md B3) each on its own boundary, at a view with smooth
+            // escaping pixels to compare (`family_view`).
+            let mut abs_cases: Vec<(FractalKind, String, String, f64)> = vec![
+                (FractalKind::BurningShip, "-1.7548".into(), "-0.0312".into(), 1.0e5),
+                (FractalKind::Celtic, "-1.2566".into(), "0.0480".into(), 1.0e5),
+                (FractalKind::Buffalo, "-1.7548".into(), "-0.0312".into(), 1.0e5),
             ];
-            for &(fractal, cx, cy, mag) in abs_cases {
+            for kind in FractalKind::ALL.into_iter().filter(|k| k.power_family().is_some()) {
+                match family_view(kind.formula_id(), 1.0e5, N, self.render_cfg.max_iter) {
+                    Some(at) => abs_cases.push((kind, format!("{:.17}", at.0), format!("{:.17}", at.1), 1.0e5)),
+                    None => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Abs-family deep zoom",
+                        name: format!("{} perturbation vs CPU", kind.name()),
+                        params: String::new(),
+                        result: "no ray from 0 reaches a boundary with smooth escaping pixels at 1e5×".into(),
+                        threshold: "a view to test at",
+                        pass: false,
+                    }),
+                }
+            }
+            for (fractal, cx, cy, mag) in abs_cases {
                 self.fractal = fractal;
                 let mut vp = Viewport::new(N as f64, N as f64);
-                vp.center_x = fractadyne_core::parse_bf(cx).unwrap();
-                vp.center_y = fractadyne_core::parse_bf(cy).unwrap();
+                vp.center_x = fractadyne_core::parse_bf(&cx).unwrap();
+                vp.center_y = fractadyne_core::parse_bf(&cy).unwrap();
                 vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
                 vp.precision = fractadyne_core::precision_for_magnification(mag);
                 let mut pert = self.current_export_request_for(&vp, false);
@@ -2628,10 +2870,18 @@ impl FractadyneApp {
                 pert.ss = 1;
                 let mut direct = pert.clone();
                 direct.mode = 1; // force the trusted direct df32 path
-                if let (Some(a), Some(b)) = (
-                    st_render_iter(device, queue, &pert),
-                    st_render_iter(device, queue, &direct),
-                ) {
+                // A power family against the CPU's f64 orbit instead: the direct path's c is
+                // f32-quantised here (the compiler folds df32; two ulps a pixel at |c| ≈ 1), and at
+                // power 8 that quarter pixel moved the mean dwell past the bound (0.89 on a view
+                // where the 1e6× twins check matched the CPU to a median 0.0002).
+                let power_family = fractal.power_family().is_some();
+                let truth = if power_family {
+                    Some(cpu_family_iter(&pert, fractal.formula_id(), N))
+                } else {
+                    st_render_iter(device, queue, &direct)
+                };
+                let against = if power_family { "CPU" } else { "direct" };
+                if let (Some(a), Some(b)) = (st_render_iter(device, queue, &pert), truth) {
                     let (mut sum, mut n, mut big) = (0.0f64, 0u64, 0u64);
                     for j in 0..nn {
                         for i in 0..nn {
@@ -2654,8 +2904,8 @@ impl FractadyneApp {
                     let frac = if n == 0 { 1.0 } else { big as f64 / n as f64 };
                     push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Abs-family deep zoom",
-                        name: format!("{} perturbation vs direct", fractal.name()),
-                        params: format!("{mag:.0e}×, mode {} vs 1, n={n}", pert.mode),
+                        name: format!("{} perturbation vs {against}", fractal.name()),
+                        params: format!("{mag:.0e}× at {cx}, {cy}, mode {} vs {against}, n={n}", pert.mode),
                         result: format!("mean Δ={mean:.4} iter, >2iter {:.3}%", frac * 100.0),
                         threshold: "mode 0, mean<0.5, <2% differ, n>0",
                         pass: pert.mode == 0 && n > 0 && mean < 0.5 && frac < 0.02,
@@ -2820,11 +3070,1563 @@ impl FractadyneApp {
             }
         }
 
+        // ---- custom formulas: generated shader modules (design/custom-formulas.md phase 2) ----
+        // (1) A built-in's step generated from the formula IR must render BIT FOR BIT as the
+        //     built-in (direct mode, smooth-iteration channel) — the generated code is the built-in's
+        //     own helper calls, so any difference is a splice or codegen bug.
+        // (2) Formulas with no built-in: the GPU against the IR's f64 interpreter (which the core
+        //     tests hold bit-identical to every built-in), pixel by pixel at the shader's own pixel
+        //     centres.
+        if want("custom-formula") {
+            use fractadyne_core::ir;
+            self.julia_mode = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.use_custom_palette = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 1000;
+            let nn = N as usize;
+            let view = |cx: f64, cy: f64, span: f64| {
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = fractadyne_core::BigFloat::from_f64(cx, 64);
+                vp.center_y = fractadyne_core::BigFloat::from_f64(cy, 64);
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(span / N as f64);
+                vp.precision = 64;
+                vp
+            };
+            // The power families each over the whole set (design/power-families.md B1): the
+            // built-in's chain is the generated module's, helper for helper.
+            let twins: Vec<(FractalKind, f64, f64, f64)> = [
+                (FractalKind::Mandelbrot, -0.745, 0.112, 0.02),
+                (FractalKind::Multibrot3, 0.0, 0.0, 3.0),
+                (FractalKind::Tricorn, -0.2, 0.0, 3.5),
+                (FractalKind::BurningShip, -1.7548, -0.0312, 0.05),
+            ]
+            .into_iter()
+            .chain(FractalKind::ALL.into_iter().filter(|k| k.power_family().is_some()).map(|k| (k, 0.0, 0.0, 3.0)))
+            .collect();
+            for (fractal, cx, cy, span) in twins {
+                self.fractal = fractal;
+                let mut base = self.current_export_request_for(&view(cx, cy, span), false);
+                base.width = N;
+                base.height = N;
+                base.ss = 1;
+                base.mode = 1;
+                let step = ir::builtin_step(fractal.formula_id()).expect("every built-in has a step");
+                let built = fractadyne_gpu::custom::build(&ir::Formula::single(step), &[]);
+                let mut gen = base.clone();
+                gen.formula = fractadyne_core::formula::CUSTOM;
+                gen.custom = built.as_ref().ok().map(|s| std::sync::Arc::new(s.clone()));
+                let name = format!("generated {} = built-in", fractal.name());
+                if let Err(e) = &built {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Custom formula (GPU)",
+                        name,
+                        params: format!("direct, span {span}"),
+                        result: format!("build failed: {e}"),
+                        threshold: "builds",
+                        pass: false,
+                    });
+                    continue;
+                }
+                let d = fractadyne_core::formula::power(fractal.formula_id());
+                if fractal.power_family().is_some() && d >= 7 {
+                    // From power 7 the two part by POLICY, not by step: a generated module tames an
+                    // escaping value past 1e15 (`custom_tame`), which z⁷ from |z| = 256 reaches, and
+                    // Multibrot 8 escapes at 128 (`bail2_of`) where the module escapes at 256. Leaving
+                    // those pixels out by the CPU orbit failed on chaotic ones (the GPU's orbit is not
+                    // the CPU's there), so the built-in is judged against the CPU interpreter with ITS
+                    // policy instead, as the iterated formulas below are: under 1% disagree (|Δ| > 0.01
+                    // or status) and none of the escapes within 20 steps. Powers to 6 stay bit for bit.
+                    let Some(a) = st_render_iter(device, queue, &base) else { continue };
+                    let bail2 = if d == 8 { 128.0 * 128.0 } else { 256.0 * 256.0 };
+                    let centre = (base.center[0] as f64 + base.center[2] as f64, base.center[1] as f64 + base.center[3] as f64);
+                    let scale = 2f64.powi(base.delta_exp);
+                    let (sx, sy) = (base.span_mantissa.x / N as f64, base.span_mantissa.y / N as f64);
+                    // The CPU's smooth value at c (−∞ = interior) and its step count.
+                    let cpu_at = |c: (f64, f64)| {
+                        let pts = fractadyne_core::orbit_points((0.0, 0.0), c, fractal.formula_id(), base.max_iter as usize, bail2);
+                        let (x, y) = *pts.last().unwrap();
+                        let mag2 = x * x + y * y;
+                        let steps = pts.len() - 1;
+                        let v = if mag2 > bail2 {
+                            steps as f64 + 1.0 - (mag2.ln() * 0.5 / 2f64.ln()).ln() / f64::from(d).ln()
+                        } else {
+                            f64::NEG_INFINITY
+                        };
+                        (v, steps)
+                    };
+                    let agree = |g: f64, cpu: f64| if cpu.is_finite() { g >= 0.0 && (g - cpu).abs() < 0.01 } else { g < 0.0 };
+                    const PROBE: f64 = 1.0e-5;
+                    let (mut escaped, mut disagree, mut early, mut early_bad) = (0u64, 0u64, 0u64, 0u64);
+                    for k in 0..nn * nn {
+                        let (i, j) = ((k % nn) as f64, (k / nn) as f64);
+                        let c = (
+                            centre.0 + sx * ((i + 0.5) - N as f64 * 0.5) * scale,
+                            centre.1 + sy * (N as f64 * 0.5 - (j + 0.5)) * scale,
+                        );
+                        let (cpu, steps) = cpu_at(c);
+                        let g = a[k * 4] as f64;
+                        let same = agree(g, cpu);
+                        escaped += cpu.is_finite() as u64;
+                        disagree += (!same) as u64;
+                        // An early escape must agree — unless the CPU's own value does not survive
+                        // c ± PROBE: at power 8 an f32 error grows ~1,000× a step, and an orbit landing
+                        // by the bailout radius escapes a step apart on the two (an escape-step tie,
+                        // as the Chaotic kind below judges).
+                        if cpu.is_finite()
+                            && steps <= 20
+                            && [(PROBE, 0.0), (-PROBE, 0.0), (0.0, PROBE), (0.0, -PROBE)]
+                                .iter()
+                                .all(|p| (cpu_at((c.0 + p.0, c.1 + p.1)).0 - cpu).abs() < 0.01)
+                        {
+                            early += 1;
+                            early_bad += (!same) as u64;
+                        }
+                    }
+                    let px = (nn * nn) as u64;
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Custom formula (GPU)",
+                        name: format!("{}: direct built-in = CPU interpreter", fractal.name()),
+                        params: format!("direct, span {span}, {escaped} escaped px, {early} stable within 20 it"),
+                        result: format!(
+                            "{disagree} px disagree ({:.3}%), {early_bad} of the stable early escapes",
+                            disagree as f64 * 100.0 / px as f64
+                        ),
+                        threshold: "<1% disagree, 0 stable early, >10% escaped",
+                        pass: disagree * 100 < px && early_bad == 0 && early > 0 && escaped * 10 > px,
+                    });
+                    continue;
+                }
+                if let (Some(a), Some(b)) = (st_render_iter(device, queue, &base), st_render_iter(device, queue, &gen)) {
+                    let (mut escaped, mut differ) = (0u64, 0u64);
+                    for k in 0..nn * nn {
+                        escaped += (a[k * 4] >= 0.0) as u64;
+                        differ += (a[k * 4].to_bits() != b[k * 4].to_bits()) as u64;
+                    }
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Custom formula (GPU)",
+                        name,
+                        params: format!("direct, span {span}, {escaped} escaped px"),
+                        result: format!("{differ} px differ"),
+                        threshold: "0 differ, >10% escaped",
+                        pass: differ == 0 && escaped * 10 > (nn * nn) as u64,
+                    });
+                }
+            }
+
+            // (2) GPU vs the CPU interpreter at the shader's own pixel centres. A pixel DISAGREES when
+            // its escape status differs or its smooth values are more than `tol` apart. Three kinds:
+            //  - Iterated df32 formulas: only the boundary's chaotic pixels may part company (<1%), and
+            //    none that escape within EARLY iterations — too few steps for df32 rounding to grow.
+            //  - Each f32-tier function EVALUATED ONCE per pixel: `z' = z + 8·(f(c) + 1 + 2i)` grows
+            //    linearly, escapes after a few steps, and its smooth value encodes |f(c) + 1 + 2i|
+            //    (the offset makes a sign error in either component change it). Nothing is amplified,
+            //    so only f32-vs-f64 rounding separates the two. (A first cut, `z' = 100·f(c)`, escaped
+            //    at n = 1, where the smooth value is negative: 0 of 484,000 pixels escaped on either
+            //    side, and the check could not have seen a wrong function.)
+            //  - `sin z + c` iterated, a stress test of the overflow guard. The family expands by
+            //    |cos z| ≈ cosh(Im z) per step, so f32 rounding reaches O(1) within ~10 iterations
+            //    (measured: a pixel's GPU and CPU orbits escaped at |z| ≈ 2.7e3 and 6e23) and only
+            //    loose agreement is possible. Its gate is that NO smooth value is non-finite: before
+            //    `custom_tame`, 3,044 pixels escaped as −∞, which the colour pass paints as interior.
+            //    Agreement is judged only where the CPU's own value survives c ± 1e-5 (an error per
+            //    step about f32 range reduction's at |z| ≈ 256); elsewhere the orbit is chaos on any
+            //    GPU. A bound on ALL pixels (<5%) was one GPU's calibration: the RTX 3080 disagreed on
+            //    3.0% and the RX 6800 XT on 7.1%, while the 3080 disagreed on 0 of 43,692 stable pixels
+            //    (90%). A sin off by 1e-4 (1e-5) relative fails it: 5.9% (0.17%) of stable pixels.
+            //  - Formulas whose own dynamics amplify rounding even in early escapes, judged like the
+            //    stress test on the pixels stable under c ± PROBE: Magnet I lingers by the repelling
+            //    point |z| ≈ 4 of its far map z²/4 (×2 per step: GPU and CPU orbits escaping at
+            //    steps 14–20 measured 0.01–0.6 apart; 0 of 44,160 stable pixels disagree), and
+            //    Barnsley M1 branches on the sign of Re z. Its stable pixels still part company at
+            //    the rim of its oval (RTX 3080: 32 of 47,156, every one CPU-interior and GPU-escaped
+            //    after 110–297 steps, mirror-symmetric in the four quadrants): there each step
+            //    multiplies by |c| > 1, and an orbit kept bounded in exact arithmetic is kicked off
+            //    by rounding injected EVERY step — which a one-time move of c does not model.
+            enum Kind {
+                Iterated,
+                Once,
+                Stress,
+                Chaotic,
+            }
+            let hybrid = ir::Formula::new(vec![
+                ir::builtin_step(fractadyne_core::formula::MANDELBROT).unwrap(),
+                ir::builtin_step(fractadyne_core::formula::BURNING_SHIP).unwrap(),
+            ])
+            .unwrap();
+            let quad_param = {
+                let mut b = ir::Builder::new();
+                let z = b.push(ir::Op::Z);
+                let s = b.push(ir::Op::Sqr(z));
+                let p = b.push(ir::Op::Param(0));
+                let pz = b.push(ir::Op::Mul(p, z));
+                let t = b.push(ir::Op::Add(s, pz));
+                let c = b.push(ir::Op::C);
+                let out = b.push(ir::Op::Add(t, c));
+                ir::Formula::single(b.finish(out).unwrap())
+            };
+            let sine = {
+                let mut b = ir::Builder::new();
+                let z = b.push(ir::Op::Z);
+                let s = b.push(ir::Op::Func(ir::Func::Sin, z));
+                let c = b.push(ir::Op::C);
+                let out = b.push(ir::Op::Add(s, c));
+                ir::Formula::single(b.finish(out).unwrap())
+            };
+            // Each f32-tier function once: z' = z + 8·(f(c) + 1 + 2i) (a complex power takes the
+            // exponent 1.5+0.5i).
+            let once = |f: Option<ir::Func>| {
+                let mut b = ir::Builder::new();
+                let z = b.push(ir::Op::Z);
+                let c = b.push(ir::Op::C);
+                let v = match f {
+                    Some(f) => b.push(ir::Op::Func(f, c)),
+                    None => {
+                        let w = b.push(ir::Op::Const(1.5, 0.5));
+                        b.push(ir::Op::Pow(c, w))
+                    }
+                };
+                let k = b.push(ir::Op::Const(1.0, 2.0));
+                let s = b.push(ir::Op::Add(v, k));
+                let t = b.push(ir::Op::Scale(s, 8.0));
+                let out = b.push(ir::Op::Add(z, t));
+                ir::Formula::single(b.finish(out).unwrap())
+            };
+            use ir::Func as F;
+            let mut cpu_cases: Vec<(String, ir::Formula, Vec<(f64, f64)>, (f64, f64, f64), Kind)> = vec![
+                ("hybrid Mandelbrot/Burning Ship".into(), hybrid, vec![], (-0.5, 0.0, 3.5), Kind::Iterated),
+                ("z² + p·z + c (parameter)".into(), quad_param, vec![(0.25, -0.1)], (-0.3, 0.0, 3.5), Kind::Iterated),
+                ("sin z + c, iterated (f32 tier)".into(), sine, vec![], (0.0, 0.0, 6.0), Kind::Stress),
+            ];
+            for f in [F::Exp, F::Log, F::Sqrt, F::Sin, F::Cos, F::Tan, F::Sinh, F::Cosh, F::Tanh] {
+                cpu_cases.push((format!("{f:?}"), once(Some(f)), vec![], (0.0, 0.0, 12.0), Kind::Once));
+            }
+            cpu_cases.push(("c^(1.5+0.5i)".into(), once(None), vec![], (0.0, 0.0, 12.0), Kind::Once));
+            // Fractint's sections (phase 3), on the shader's init and bailout slots: an init section
+            // and a variable kept from step to step (Manowar), an if block (Barnsley M1), the
+            // formula's own test ending an orbit at escape or at a fixed point (Magnet I), and
+            // `maxit` (the uniform: read as 0, nothing would escape) with the four roundings.
+            for (label, src, view_at, kind) in [
+                ("Manowar (init, variables, bailout)", "z = c, z1 = c:\nt = z\nz = z*z + z1 + c\nz1 = t\n|z| <= 4", (-0.15, 0.0, 0.8), Kind::Iterated),
+                (
+                    "Barnsley M1 (if block)",
+                    "z = c:\nif (real(z) >= 0)\n z = (z - 1)*c\nelse\n z = (z + 1)*c\nendif\n|z| <= 4",
+                    (0.0, 0.0, 4.0),
+                    Kind::Chaotic,
+                ),
+                (
+                    "Magnet I (escape or converge)",
+                    "z = sqr((z^2 + c - 1)/(2*z + c - 2))\n|z| <= 100 && |z - 1| > 0.000001",
+                    (1.3, 0.0, 4.4),
+                    Kind::Chaotic,
+                ),
+                (
+                    "maxit and rounding",
+                    "z = z^2 + c*(maxit/1000) + floor(c*3)/16 + ceil(c*2)/32 + trunc(c*5)/64 + round(c*7)/128",
+                    (-0.5, 0.0, 3.5),
+                    Kind::Iterated,
+                ),
+            ] {
+                match ir::parse::parse(src) {
+                    Ok(f) => cpu_cases.push((label.into(), f, vec![], view_at, kind)),
+                    Err(e) => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Custom formula (GPU)",
+                        name: format!("{label}: GPU = CPU interpreter"),
+                        params: String::new(),
+                        result: format!("does not read: {e}"),
+                        threshold: "reads",
+                        pass: false,
+                    }),
+                }
+            }
+            // The functions-once cases report as ONE check (their total, and the worst function).
+            let (mut once_n, mut once_bad, mut once_escaped, mut once_worst) = (0u64, 0u64, 0u64, (0u64, String::new()));
+            for (label, formula, params, (cx, cy, span), kind) in cpu_cases {
+                self.fractal = FractalKind::Mandelbrot;
+                let mut req = self.current_export_request_for(&view(cx, cy, span), false);
+                req.width = N;
+                req.height = N;
+                req.ss = 1;
+                req.mode = 1;
+                req.formula = fractadyne_core::formula::CUSTOM;
+                if matches!(kind, Kind::Once) {
+                    req.max_iter = 64; // linear growth: n ≈ 32/|f(c) + 1 + 2i|
+                }
+                if matches!(kind, Kind::Chaotic) {
+                    req.max_iter = 300; // the probe runs five orbits a pixel; the interior runs to the cap
+                }
+                let shader = match fractadyne_gpu::custom::build(&formula, &params) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Custom formula (GPU)",
+                            name: format!("{label}: GPU = CPU interpreter"),
+                            params: String::new(),
+                            result: format!("build failed: {e}"),
+                            threshold: "builds",
+                            pass: false,
+                        });
+                        continue;
+                    }
+                };
+                let power = shader.power as f64;
+                let precision = shader.precision;
+                req.custom = Some(std::sync::Arc::new(shader));
+                let Some(gpu) = st_render_iter(device, queue, &req) else { continue };
+                // The shader's pixel centre: centre + step·((i + ½) − N/2)·2^delta_exp (y flipped).
+                let centre = (req.center[0] as f64 + req.center[2] as f64, req.center[1] as f64 + req.center[3] as f64);
+                let scale = 2f64.powi(req.delta_exp);
+                let (sx, sy) = (req.span_mantissa.x / N as f64, req.span_mantissa.y / N as f64);
+                let bail2 = 256.0 * 256.0;
+                let tol = if matches!(kind, Kind::Once) { 1.0e-3 } else { 0.01 };
+                const EARLY: usize = 20;
+                let (mut escaped, mut disagree, mut early, mut early_bad, mut nonfinite) = (0u64, 0u64, 0u64, 0u64, 0u64);
+                // Escaped with a smooth value the clamp did not flatten: the pixels that can show a
+                // wrong value at all.
+                let mut informative = 0u64;
+                // The disagreements by kind: escape status, the escape step (|Δ| ≥ ½), or the value
+                // at the same step (a last point 1% apart in log|z|: an orbit that parted earlier).
+                let (mut bad_status, mut bad_step, mut bad_value) = (0u64, 0u64, 0u64);
+                // Stress only: the pixels whose CPU value survives c ± PROBE and c ± PROBE·i — an
+                // error per step about the size of f32 range reduction at |z| ≈ 256 — and how many
+                // of those the GPU gets wrong. A pixel that fails the probe is chaos on any GPU.
+                const PROBE: f64 = 1.0e-5;
+                let (mut stable, mut stable_bad) = (0u64, 0u64);
+                // The CPU's smooth value at c (−1 = interior) and its step count.
+                let own_test = formula.has_bailout();
+                let cpu_at = |c: (f64, f64)| {
+                    let pts = ir::orbit_points(&formula, (0.0, 0.0), c, &params, req.max_iter as usize, bail2)
+                        .expect("parameters supplied");
+                    // The generated step's overflow guard, mirrored (it can only touch the last point).
+                    let (x, y) = fractadyne_gpu::custom::tame_f64(*pts.last().unwrap());
+                    let mag2 = x * x + y * y;
+                    let steps = pts.len() - 1;
+                    let nu = |mag2: f64| (mag2.ln() * 0.5 / 2f64.ln()).ln() / power.ln();
+                    // …and its smooth value, clamped at 0 as the generated module clamps it. A formula's
+                    // own test ends the orbit where it says (escaped, unless it ran to the cap); the
+                    // module's log-log term applies only past |z| = 2, the step count below.
+                    let v = if own_test {
+                        match (steps < req.max_iter as usize, mag2 > 4.0) {
+                            (false, _) => -1.0,
+                            (true, true) => (steps as f64 + 1.0 - nu(mag2)).max(0.0),
+                            (true, false) => steps as f64,
+                        }
+                    } else if mag2 > bail2 {
+                        (steps as f64 + 1.0 - nu(mag2)).max(0.0)
+                    } else {
+                        -1.0
+                    };
+                    (v, steps)
+                };
+                let agree = |a: f64, b: f64| if a < 0.0 || b < 0.0 { (a < 0.0) == (b < 0.0) } else { (a - b).abs() < tol };
+                for j in 0..nn {
+                    for i in 0..nn {
+                        let c = (
+                            centre.0 + sx * ((i as f64 + 0.5) - N as f64 * 0.5) * scale,
+                            centre.1 + sy * (N as f64 * 0.5 - (j as f64 + 0.5)) * scale,
+                        );
+                        let (cpu, steps) = cpu_at(c);
+                        let g = gpu[(j * nn + i) * 4] as f64;
+                        nonfinite += (!g.is_finite()) as u64;
+                        escaped += (cpu >= 0.0) as u64;
+                        informative += (cpu > 0.5) as u64;
+                        let same = agree(cpu, g);
+                        disagree += (!same) as u64;
+                        if matches!(kind, Kind::Stress | Kind::Chaotic)
+                            && [(PROBE, 0.0), (-PROBE, 0.0), (0.0, PROBE), (0.0, -PROBE)]
+                                .iter()
+                                .all(|d| agree(cpu, cpu_at((c.0 + d.0, c.1 + d.1)).0))
+                        {
+                            stable += 1;
+                            stable_bad += (!same) as u64;
+                        }
+                        if !same {
+                            if cpu < 0.0 || g < 0.0 {
+                                bad_status += 1;
+                            } else if (cpu - g).abs() >= 0.5 {
+                                bad_step += 1;
+                            } else {
+                                bad_value += 1;
+                            }
+                        }
+                        if cpu >= 0.0 && steps <= EARLY {
+                            early += 1;
+                            early_bad += (!same) as u64;
+                        }
+                    }
+                }
+                let px = (nn * nn) as u64;
+                let frac = disagree as f64 / px as f64;
+                match kind {
+                    Kind::Once => {
+                        once_n += px;
+                        once_bad += disagree;
+                        once_escaped += informative;
+                        if disagree >= once_worst.0 {
+                            once_worst = (disagree, label);
+                        }
+                    }
+                    Kind::Iterated => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Custom formula (GPU)",
+                        name: format!("{label}: GPU = CPU interpreter"),
+                        params: format!("direct, span {span}, {precision:?}, {escaped} escaped px, {early} within {EARLY} it"),
+                        result: format!(
+                            "{disagree} px disagree ({:.3}%): status {bad_status}, step {bad_step}, value {bad_value}; \
+                             {early_bad} of the early escapes",
+                            frac * 100.0
+                        ),
+                        threshold: "<1% disagree, 0 early, >10% escaped",
+                        pass: frac < 0.01 && early_bad == 0 && early > 0 && escaped * 10 > px,
+                    }),
+                    Kind::Stress => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Custom formula (GPU)",
+                        name: format!("{label}: overflow guard"),
+                        params: format!("direct, span {span}, {precision:?}, {escaped} escaped px"),
+                        result: format!(
+                            "{nonfinite} non-finite, {disagree} px disagree ({:.3}%): status {bad_status}, step {bad_step}, \
+                             value {bad_value}; {early_bad} of {early} escaping within {EARLY} it; \
+                             {stable_bad} of {stable} stable under c ± {PROBE:e}",
+                            frac * 100.0
+                        ),
+                        threshold: "0 non-finite, <0.1% of stable px disagree, ≥75% stable, >10% escaped",
+                        pass: nonfinite == 0 && stable_bad * 1000 < stable && stable * 4 >= px * 3 && escaped * 10 > px,
+                    }),
+                    Kind::Chaotic => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Custom formula (GPU)",
+                        name: format!("{label}: GPU = CPU interpreter"),
+                        params: format!("direct, span {span}, {precision:?}, {escaped} escaped px"),
+                        result: format!(
+                            "{stable_bad} of {stable} px stable under c ± {PROBE:e} disagree; all px: {disagree} ({:.3}%): \
+                             status {bad_status}, step {bad_step}, value {bad_value}; {nonfinite} non-finite",
+                            frac * 100.0
+                        ),
+                        threshold: "<0.1% of stable px disagree, ≥75% stable, >10% escaped, 0 non-finite",
+                        pass: nonfinite == 0 && stable_bad * 1000 < stable && stable * 4 >= px * 3 && escaped * 10 > px,
+                    }),
+                }
+            }
+            let once_frac = once_bad as f64 / once_n.max(1) as f64;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Custom formula (GPU)",
+                name: "f32-tier functions, each once: GPU = CPU interpreter".into(),
+                params: format!("10 functions, span 12, {once_escaped} of {once_n} px escaped with smooth > 0.5"),
+                result: format!(
+                    "{once_bad} px disagree ({:.4}%), worst {} ({})",
+                    once_frac * 100.0,
+                    once_worst.1,
+                    once_worst.0
+                ),
+                threshold: "<0.1% disagree (|Δ| > 1e-3), >25% informative",
+                pass: once_frac < 0.001 && once_escaped * 4 > once_n,
+            });
+
+            // A formula with sections is not resumable: the chunk pass neither runs its init section
+            // nor carries its variables, so a chunked path must fall back to the single pass for it.
+            // The export path once did not (`--render` drew the Lambda parameter plane black and
+            // Spider blank), and the checks above, single passes, could not see it. The control, a
+            // formula without sections, must chunk — or "did not chunk" would prove nothing.
+            for (label, src, (cx, cy, span), want_chunked) in [
+                ("z² + c (control)", "z = z^2 + c", (-0.5, 0.0, 3.0), true),
+                ("Manowar (sections)", "z = c, z1 = c:\nt = z\nz = z*z + z1 + c\nz1 = t\n|z| <= 4", (-0.15, 0.0, 0.8), false),
+            ] {
+                self.fractal = FractalKind::Mandelbrot;
+                let mut req = self.current_export_request_for(&view(cx, cy, span), false);
+                req.width = N;
+                req.height = N;
+                req.ss = 1;
+                req.mode = 1;
+                req.max_iter = 400;
+                req.formula = fractadyne_core::formula::CUSTOM;
+                let built = ir::parse::parse(src).map_err(|e| e.to_string()).and_then(|f| {
+                    fractadyne_gpu::custom::build(&f, &[]).map_err(|e| e.to_string())
+                });
+                let name = format!("{label}: chunked render = single pass");
+                let shader = match built {
+                    Ok(s) => s,
+                    Err(e) => {
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Custom formula (GPU)",
+                            name,
+                            params: String::new(),
+                            result: format!("build failed: {e}"),
+                            threshold: "builds",
+                            pass: false,
+                        });
+                        continue;
+                    }
+                };
+                req.custom = Some(std::sync::Arc::new(shader));
+                let single = st_render_iter(device, queue, &req);
+                let mut passes = Vec::new();
+                let chunked = fractadyne_gpu::render_iter_chunked_timed(device, queue, &req, 64, &mut passes)
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_chunked_timed): {e}"))
+                    .ok();
+                let (pass, result) = match (&single, &chunked) {
+                    (Some(a), Some(r)) if a.len() == r.pixels.len() => {
+                        let differ = a.iter().zip(&r.pixels).filter(|(x, y)| x.to_bits() != y.to_bits()).count();
+                        let escaped = a.chunks(4).filter(|p| p[0] >= 0.0).count();
+                        (
+                            differ == 0 && passes.is_empty() != want_chunked && escaped * 10 > a.len() / 4,
+                            format!("{} chunk passes, {differ} texels differ, {escaped} escaped px", passes.len()),
+                        )
+                    }
+                    _ => (false, "render failed".into()),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Custom formula (GPU)",
+                    name,
+                    params: format!("direct, span {span}, 400 iterations, 64 a pass"),
+                    result,
+                    threshold: if want_chunked { "chunked, 0 differ, >10% escaped" } else { "not chunked, 0 differ, >10% escaped" },
+                    pass,
+                });
+            }
+
+            // (3) PERTURBATION (mode 0), which takes a custom formula past the f32 wall.
+            // (a) The generated perturbed step (`ir::perturb`) against each built-in's hand-written
+            //     one, on the SAME reference orbit — the built-in's own request with only the formula
+            //     and module swapped, SA and BLA off in both. The rule table orders the arithmetic
+            //     differently ((2Z + δ)·δ against 2Z·δ + δ²), so the renders need not be identical:
+            //     on a main component's boundary (where bisection lands) escape by `max_iter` is
+            //     chaotic, and 2–14% of pixels flip between the two — evenly, the CPU interpreter
+            //     siding with each about half the time (measured). So the CPU interpreter in f64
+            //     settles every pixel, and the generated step must be right no less often than the
+            //     hand-written one (beyond the ±3σ of a fair coin), and its smooth value no further
+            //     off.
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 2000;
+            let max_iter = 2000u32;
+            let bail2 = 256.0 * 256.0;
+            // Every helper below takes the iteration BUDGET: the ring formulas run 2,000, while the
+            // functions and division run 60 (see (b)), where single precision can follow them.
+            let cpu_smooth = |formula: &ir::Formula, params: &[(f64, f64)], c: (f64, f64), power: f64, budget: u32| -> f64 {
+                let pts = ir::orbit_points(formula, (0.0, 0.0), c, params, budget as usize, bail2).unwrap();
+                let (x, y) = fractadyne_gpu::custom::tame_f64(*pts.last().unwrap());
+                let mag2 = x * x + y * y;
+                if mag2 > bail2 {
+                    ((pts.len() - 1) as f64 + 1.0 - (mag2.ln() * 0.5 / 2f64.ln()).ln() / power.ln()).max(0.0)
+                } else {
+                    -1.0
+                }
+            };
+            // Over a set of pixels, split across threads: a 2000-iteration frame on one core takes
+            // long enough (10 s) to trip the hang watchdog.
+            let cpu_pixels = |formula: &ir::Formula, params: &[(f64, f64)], power: f64, cs: &[(f64, f64)], budget: u32| -> Vec<f64> {
+                let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+                std::thread::scope(|s| {
+                    let parts: Vec<_> = cs
+                        .chunks(cs.len().div_ceil(threads).max(1))
+                        .map(|part| s.spawn(move || part.iter().map(|&c| cpu_smooth(formula, params, c, power, budget)).collect::<Vec<_>>()))
+                        .collect();
+                    parts.into_iter().flat_map(|h| h.join().expect("a CPU interpreter thread panicked")).collect()
+                })
+            };
+            // Every view sits ON its formula's boundary, found by bisecting between an interior
+            // point (c = 0) and an escaping one. Hand-picking a point for a formula nobody has
+            // explored is how a check ends up comparing a flat frame — hand-picked views here were
+            // all interior (Tricorn) or had a reference escaping in under 20 steps (three others).
+            let boundary = |formula: &ir::Formula, params: &[(f64, f64)], outside: (f64, f64), budget: u32| -> Option<(f64, f64)> {
+                // Escaped = the last point is past the bailout, an escape ON the last step included,
+                // as the GPU, the CPU interpreter and the bignum oracle all count it. (`pts.len() <=
+                // budget` missed the last step: for `√(z⁴ + c)` the bisection then settled on the
+                // curve between escape at step 59 and at 60, whose "inside" end the bignum oracle
+                // calls escaped — no deep bracket along any ray.)
+                let escapes = |c: (f64, f64)| {
+                    let pts = ir::orbit_points(formula, (0.0, 0.0), c, params, budget as usize, bail2).unwrap();
+                    pts.last().is_some_and(|z| z.0 * z.0 + z.1 * z.1 > bail2)
+                };
+                // The escaping end: the direction's first multiple that escapes (the Buffalo set
+                // still holds −0.9−0.7i).
+                let mut inside = (0.0, 0.0);
+                let mut outside = [1.0, 2.0, 4.0].iter().map(|k| (outside.0 * k, outside.1 * k)).find(|&o| escapes(o))?;
+                if escapes(inside) {
+                    return None;
+                }
+                for _ in 0..48 {
+                    let mid = ((inside.0 + outside.0) * 0.5, (inside.1 + outside.1) * 0.5);
+                    if escapes(mid) { outside = mid } else { inside = mid }
+                }
+                Some(inside)
+            };
+            let no_boundary = |name: String, outside: (f64, f64)| SelfCheck {
+                category: "Custom formula (GPU)",
+                name,
+                params: String::new(),
+                result: format!("no boundary between 0 and 4×({}{:+}i)", outside.0, outside.1),
+                threshold: "a boundary to test at",
+                pass: false,
+            };
+            let bf = |v: f64| fractadyne_core::BigFloat::from_f64(v, 64);
+            // Each family at 1e6× on its own boundary, and Mandelbrot's seahorse valley at 1e8×.
+            // The built-ins bisect into the THIRD quadrant: with Im c > 0 the Burning Ship's |Im|
+            // fold never engages (Im z' = 2|x||y| + Im c stays positive), and a mutant dropping
+            // that fold from the generated step passed every first-quadrant view (measured).
+            let third = (-0.9, -0.7);
+            let mut pert_twins = vec![(
+                FractalKind::Mandelbrot,
+                fractadyne_core::parse_bf("-0.743643887037158704752191506114774").unwrap(),
+                fractadyne_core::parse_bf("0.131825904205311970493132056385139").unwrap(),
+                1.0e8,
+            )];
+            // The power families too (design/power-families.md B2, B3): the built-in's generic
+            // binomial perturbation and its folds against the generated module and the CPU.
+            let power_families = FractalKind::ALL.into_iter().filter(|k| k.power_family().is_some());
+            for fractal in [
+                FractalKind::Mandelbrot,
+                FractalKind::Multibrot3,
+                FractalKind::Multibrot4,
+                FractalKind::Multibrot5,
+                FractalKind::Tricorn,
+                FractalKind::BurningShip,
+                FractalKind::Celtic,
+                FractalKind::Buffalo,
+            ]
+            .into_iter()
+            .chain(power_families)
+            {
+                let step = ir::builtin_step(fractal.formula_id()).expect("every built-in has a step");
+                match boundary(&ir::Formula::single(step), &[], third, max_iter) {
+                    Some(at) => pert_twins.push((fractal, bf(at.0), bf(at.1), 1.0e6)),
+                    None => push_check(
+                        &mut checks,
+                        &mut last_check_t,
+                        no_boundary(format!("generated {} perturbation = built-in", fractal.name()), third),
+                    ),
+                }
+            }
+            for (fractal, cx, cy, mag) in pert_twins {
+                self.fractal = fractal;
+                let at = (fractadyne_core::to_f64(&cx), fractadyne_core::to_f64(&cy));
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = cx;
+                vp.center_y = cy;
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
+                vp.precision = fractadyne_core::precision_for_magnification(mag).max(64);
+                let mut base = self.current_export_request_for(&vp, false);
+                base.width = N;
+                base.height = N;
+                base.ss = 1;
+                base.sa_skip = 0;
+                base.bla_on = 0;
+                let formula = ir::Formula::single(ir::builtin_step(fractal.formula_id()).expect("every built-in has a step"));
+                let Ok(shader) = fractadyne_gpu::custom::build(&formula, &[]) else { continue };
+                let power = shader.power as f64;
+                let mut gen = base.clone();
+                gen.formula = fractadyne_core::formula::CUSTOM;
+                gen.custom = Some(std::sync::Arc::new(shader));
+                let (Some(a), Some(b)) = (st_render_iter(device, queue, &base), st_render_iter(device, queue, &gen)) else {
+                    continue;
+                };
+                let scale = 2f64.powi(base.delta_exp);
+                let (sx, sy) = (base.span_mantissa.x / N as f64, base.span_mantissa.y / N as f64);
+                // Both renders against the CPU, pixel by pixel: right = the same status and within 2
+                // iterations; and among pixels both get right, how far each smooth value is off (an
+                // error in the smooth value moves every pixel, so its median shows it; chaos moves
+                // both renders alike).
+                let cs: Vec<(f64, f64)> = (0..nn * nn)
+                    .map(|k| {
+                        let (i, j) = (k % nn, k / nn);
+                        (
+                            at.0 + sx * ((i as f64 + 0.5) - N as f64 * 0.5) * scale,
+                            at.1 + sy * (N as f64 * 0.5 - (j as f64 + 0.5)) * scale,
+                        )
+                    })
+                    .collect();
+                let close = |v: f32, cpu: f64| if v < 0.0 || cpu < 0.0 { (v < 0.0) == (cpu < 0.0) } else { (v as f64 - cpu).abs() <= 2.0 };
+                let (mut escaped, mut base_only, mut gen_only) = (0u64, 0u64, 0u64);
+                let (mut err_base, mut err_gen) = (Vec::new(), Vec::new());
+                let cpu_gen = cpu_pixels(&formula, &[], power, &cs, max_iter);
+                // Each side against the CPU under ITS OWN policy. A generated module tames an escaping
+                // value past 1e15 and escapes at 256; a power family's built-in does neither from power
+                // 7 (z⁷ needs no tame; Multibrot 8 escapes at 128): judged by the module's policy, the
+                // built-in looked 1.6–3.6× worse in the smooth value where it was the more exact one.
+                let cpu_base = if fractal.power_family().is_some() {
+                    let id = fractal.formula_id();
+                    let b2 = if id == fractadyne_core::formula::MULTIBROT8 { 128.0 * 128.0 } else { bail2 };
+                    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+                    std::thread::scope(|s| {
+                        let parts: Vec<_> = cs
+                            .chunks(cs.len().div_ceil(threads).max(1))
+                            .map(|part| {
+                                s.spawn(move || {
+                                    part.iter()
+                                        .map(|&c| {
+                                            let pts = fractadyne_core::orbit_points((0.0, 0.0), c, id, max_iter as usize, b2);
+                                            let (x, y) = *pts.last().unwrap();
+                                            let m2 = x * x + y * y;
+                                            if m2 > b2 {
+                                                (pts.len() - 1) as f64 + 1.0 - (m2.ln() * 0.5 / 2f64.ln()).ln() / power.ln()
+                                            } else {
+                                                -1.0
+                                            }
+                                        })
+                                        .collect::<Vec<_>>()
+                                })
+                            })
+                            .collect();
+                        parts.into_iter().flat_map(|h| h.join().expect("a CPU thread panicked")).collect::<Vec<f64>>()
+                    })
+                } else {
+                    cpu_gen.clone()
+                };
+                for (k, (cb, cg)) in cpu_base.into_iter().zip(cpu_gen).enumerate() {
+                    let (x, y) = (a[k * 4], b[k * 4]);
+                    escaped += (x >= 0.0) as u64;
+                    let (bx, gy) = (close(x, cb), close(y, cg));
+                    base_only += (bx && !gy) as u64;
+                    gen_only += (gy && !bx) as u64;
+                    if bx && gy && cb >= 0.0 && cg >= 0.0 {
+                        err_base.push((x as f64 - cb).abs());
+                        err_gen.push((y as f64 - cg).abs());
+                    }
+                }
+                let median = |v: &mut Vec<f64>| {
+                    if v.is_empty() {
+                        return f64::INFINITY;
+                    }
+                    let mid = v.len() / 2;
+                    *v.select_nth_unstable_by(mid, f64::total_cmp).1
+                };
+                let (med_base, med_gen) = (median(&mut err_base), median(&mut err_gen));
+                let px = (nn * nn) as u64;
+                let allowance = 3.0 * ((base_only + gen_only) as f64).sqrt() + 3.0;
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Custom formula (GPU)",
+                    name: format!("generated {} perturbation = built-in", fractal.name()),
+                    params: format!(
+                        "{mag:.0e}× at {:.9}{:+.9}i, mode {}, ref {}, {:.1}% escaped",
+                        at.0,
+                        at.1,
+                        base.mode,
+                        base.orbit_len,
+                        escaped as f64 * 100.0 / px as f64
+                    ),
+                    result: format!(
+                        "right only in built-in {base_only} / only in generated {gen_only} px; median |Δ| to CPU {med_base:.5} / {med_gen:.5} over {} px",
+                        err_base.len()
+                    ),
+                    // Which side is under test: the generated module, against a built-in of long
+                    // standing — or, for a power family (design/power-families.md B2), the new
+                    // built-in, against the generated module that passed its own gates.
+                    threshold: if fractal.power_family().is_some() {
+                        "mode 0, ref >100, 10–99% escaped; built-in no worse (3σ; median ×1.25 + 1e-4)"
+                    } else {
+                        "mode 0, ref >100, 10–99% escaped; generated no worse (3σ; median ×1.25 + 1e-4)"
+                    },
+                    pass: base.mode == 0
+                        && base.orbit_len > 100
+                        && escaped * 10 > px
+                        && escaped * 100 < px * 99
+                        && if fractal.power_family().is_some() {
+                            (gen_only as f64) <= base_only as f64 + allowance && med_base <= med_gen * 1.25 + 1.0e-4
+                        } else {
+                            (base_only as f64) <= gen_only as f64 + allowance && med_gen <= med_base * 1.25 + 1.0e-4
+                        },
+                });
+            }
+
+            // (b) Formulas no built-in covers, at 1e6× — past the f32 wall, where the direct path is
+            //     blocks — on the GPU's perturbation path against the CPU interpreter in f64 (which
+            //     resolves this view's 1.4e-8 pixel easily). The reference orbit is the IR's own
+            //     bignum one at the view centre, which sits on the formula's boundary as above.
+            //     ⚠The BUDGET differs by class, and the tolerance with it. The ring formulas run
+            //     2,000 iterations to 0.01 of the smooth value. Functions and division run 60, on
+            //     status and within 2 iterations: on a boundary view their long orbits are chaotic
+            //     transients that no single-precision path follows (measured at 2,000: direct f32
+            //     iteration at 1e2× missed 50% of `sin z + c`'s smooth values, perturbation at 1e6×
+            //     33%, the f64 perturbed step on the CPU none of the sampled ones), and an explosive
+            //     escape (sin z jumping past f32's range) leaves a smooth value that moves ~0.1
+            //     between f32 and f64. At 60, perturbation's status disagreed on 10 of 48,400.
+            let mag = 1.0e6;
+            let pert_cases: Vec<(&str, ir::Formula, Vec<(f64, f64)>, u32)> = vec![
+                (
+                    "hybrid Mandelbrot/Burning Ship",
+                    ir::Formula::new(vec![
+                        ir::builtin_step(fractadyne_core::formula::MANDELBROT).unwrap(),
+                        ir::builtin_step(fractadyne_core::formula::BURNING_SHIP).unwrap(),
+                    ])
+                    .unwrap(),
+                    vec![],
+                    2000,
+                ),
+                ("z² + p·z + c", ir::parse::parse("z^2 + p1*z + c").unwrap(), vec![(0.25, -0.1)], 2000),
+                ("|z|·z + conj(z)² + c", ir::parse::parse("|z|*z*0.3 + conj(z)^2 + c").unwrap(), vec![], 2000),
+                // Functions and division: their perturbed forms run the small-argument helpers
+                // and the δ-quotient on the GPU.
+                ("sin z + c", ir::parse::parse("sin(z) + c").unwrap(), vec![], 60),
+                ("sin z + cos z·cos z + c", ir::parse::parse("z = sin(z) + cos(z)*cos(z) + c").unwrap(), vec![], 60),
+                // ½·exp z − ½ and ½·sinh z have attracting fixed points at c = 0 (plain exp z + c
+                // escapes there, sinh z + c is parabolic) — each exercises a small-argument helper.
+                ("½·exp z − ½ + c", ir::parse::parse("0.5*exp(z) - 0.5 + c").unwrap(), vec![], 60),
+                ("½·sinh z + c", ir::parse::parse("0.5*sinh(z) + c").unwrap(), vec![], 60),
+                ("z²·tanh z + c", ir::parse::parse("z*z*tanh(z) + c").unwrap(), vec![], 60),
+                ("z² + c/(z + 2)", ir::parse::parse("z^2 + c/(z + 2)").unwrap(), vec![], 60),
+                // The branch-cut functions and fixed-exponent powers (`DiffLog`, `DiffSqrt`,
+                // `DiffPow`): principal values, which jump across the negative real axis. At the
+                // functions' budget: their log, exp and pow run in f32 on the GPU, and at 2,000
+                // iterations 8–18% of these pixels disagreed with f64 (250–400 early escapers
+                // called interior) — the chaos of long orbits that single precision cannot follow,
+                // not the rules: the same formulas' deep bignum checks showed 0 of 1,024.
+                // `log(z + 0.5)`: 0 must be interior to bisect from (with `+ 2` the real orbit of
+                // c = 0 climbs without a fixed point), and the argument must go NEGATIVE on the real
+                // axis for the cut view below to cross log's own cut — with `log(z + 1)` it never
+                // did there (a crossing test that ignored crossings passed it). `√(z⁴ + c)`, not
+                // `z² + c·√(z + 1)`: that one's bisected point sat in an interior sliver thinner
+                // than a 1e6× pixel (all 48,400 escaped, in f64 and on the GPU alike).
+                ("z^2.5 + c", ir::parse::parse("z^2.5 + c").unwrap(), vec![], 60),
+                ("z² + 0.1·log(z + ½) + c", ir::parse::parse("z^2 + 0.1*log(z + 0.5) + c").unwrap(), vec![], 60),
+                ("√(z⁴ + c)", ir::parse::parse("sqrt(z^4 + c)").unwrap(), vec![], 60),
+                ("z^p + c, p = 2.2 + 0.3i", ir::parse::parse("z^p1 + c").unwrap(), vec![(2.2, 0.3)], 60),
+            ];
+            let first = (0.9, 0.7);
+            // The rays a boundary is looked for along, in order: exp-type sets escape to the right
+            // and fold back elsewhere, so one ray does not serve every formula.
+            let rays = [first, (-0.9, -0.7), (-0.9, 0.7), (0.9, -0.7), (1.2, 0.2)];
+            for (label, formula, params, budget) in &pert_cases {
+                let budget = *budget;
+                // The ring formulas' tight tolerance; the others' status-and-2-iterations (above).
+                let tol = if budget > 60 { 0.01 } else { 2.0 };
+                let Some(at) = rays.iter().find_map(|&r| boundary(formula, params, r, budget)) else {
+                    push_check(&mut checks, &mut last_check_t, no_boundary(format!("{label}: perturbed GPU = CPU interpreter"), first));
+                    continue;
+                };
+                self.fractal = FractalKind::Mandelbrot;
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = bf(at.0);
+                vp.center_y = bf(at.1);
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
+                vp.precision = fractadyne_core::precision_for_magnification(mag).max(64);
+                let mut req = self.current_export_request_for(&vp, false);
+                let zero = fractadyne_core::BigFloat::from_f64(0.0, vp.precision);
+                let Ok((mut orbit, _, _)) =
+                    ir::reference_orbit(formula, &zero, &zero, &vp.center_x, &vp.center_y, params, budget, vp.precision)
+                else {
+                    continue;
+                };
+                let len = fractadyne_gpu::custom::trim_reference(&mut orbit);
+                let Ok(shader) = fractadyne_gpu::custom::build(formula, params) else { continue };
+                let power = shader.power as f64;
+                req.width = N;
+                req.height = N;
+                req.ss = 1;
+                req.mode = 0;
+                req.sa_skip = 0;
+                req.bla_on = 0;
+                req.max_iter = budget;
+                req.orbit = std::sync::Arc::new(orbit);
+                req.orbit_len = len;
+                req.ref_offset = fractadyne_gpu::RefOffset::ZERO;
+                req.formula = fractadyne_core::formula::CUSTOM;
+                req.custom = Some(std::sync::Arc::new(shader));
+                let Some(gpu) = st_render_iter(device, queue, &req) else { continue };
+                // The floatexp step on the same view: mode 2 forced, the df32 tail off (it would run
+                // every step at 1e6×). Its explosive escapes are the ones the deep views of (c),
+                // ~1e-11 wide, never meet: an untamed floatexp step passed every (c) check.
+                let mut fe_req = req.clone();
+                fe_req.mode = 2;
+                fractadyne_gpu::set_tail_df32(false);
+                let gpu_fe = st_render_iter(device, queue, &fe_req);
+                fractadyne_gpu::set_tail_df32(true);
+                let Some(gpu_fe) = gpu_fe else { continue };
+                let scale = 2f64.powi(req.delta_exp);
+                let (sx, sy) = (req.span_mantissa.x / N as f64, req.span_mantissa.y / N as f64);
+                let cs: Vec<(f64, f64)> = (0..nn * nn)
+                    .map(|k| {
+                        let (i, j) = (k % nn, k / nn);
+                        (
+                            at.0 + sx * ((i as f64 + 0.5) - N as f64 * 0.5) * scale,
+                            at.1 + sy * (N as f64 * 0.5 - (j as f64 + 0.5)) * scale,
+                        )
+                    })
+                    .collect();
+                let cpu = cpu_pixels(formula, params, power, &cs, budget);
+                let px = (nn * nn) as u64;
+                for (gpu, mode_text) in [(&gpu, "mode 0"), (&gpu_fe, "mode 2 forced, df32 tail off")] {
+                    let (mut escaped, mut disagree, mut missed) = (0u64, 0u64, 0u64);
+                    for (k, &cpu) in cpu.iter().enumerate() {
+                        let g = gpu[k * 4] as f64;
+                        escaped += (cpu >= 0.0) as u64;
+                        let same = if cpu < 0.0 || g < 0.0 { (cpu < 0.0) == (g < 0.0) } else { (cpu - g).abs() < tol };
+                        disagree += (!same) as u64;
+                        missed += (cpu >= 0.0 && cpu < budget as f64 - 10.0 && g < 0.0) as u64;
+                    }
+                    let frac = disagree as f64 / px as f64;
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Custom formula (GPU)",
+                        name: if mode_text == "mode 0" {
+                            format!("{label}: perturbed GPU = CPU interpreter")
+                        } else {
+                            format!("{label}: floatexp perturbed GPU = CPU interpreter")
+                        },
+                        params: format!("1e6× at {:.9}{:+.9}i, {budget} iter, {mode_text}, ref {len}, {escaped} escaped px", at.0, at.1),
+                        result: format!("{disagree} px disagree ({:.3}%), {missed} early escapes called interior", frac * 100.0),
+                        // ⚠The 2% bound alone let through a NaN that froze escaping orbits:
+                        // `z²·tanh z`'s perturbed step as sinh(δ)·sech·sech is inf·0 once δ is large,
+                        // and 72 pixels escaping by iteration 43 rendered interior (0.149%). Pixels
+                        // escaping 10 or more iterations before the budget are far from any rounding
+                        // edge — measured 0–3 called interior per case with the step correct — so
+                        // those get a bound of their own.
+                        threshold: if budget > 60 {
+                            "<2% disagree (status, or |Δ| ≥ 0.01); ≤10 escaping 10+ iter early called interior; >10% escaped, some interior"
+                        } else {
+                            "<2% disagree (status, or > 2 iter); ≤10 escaping 10+ iter early called interior; >10% escaped, some interior"
+                        },
+                        pass: frac < 0.02 && missed <= 10 && escaped * 10 > px && escaped < px,
+                    });
+                }
+            }
+
+            // (c) The APP's deep pipeline, end to end: the custom formula applied as the app holds
+            //     it, and the export request built exactly as for any view — mode selection
+            //     (`render_mode`), the reference from the IR (`render::custom_reference`), no SA, BLA
+            //     or glitch correction — at 1e12×, 1e20× (past f64) and 1e40× (past f32's exponent
+            //     floor, where the app picks floatexp perturbation; the short-budget formulas
+            //     shallower, see below). The truth is the IR interpreter in bignum at each sampled
+            //     pixel's own c (a 32×32 grid). The view is on the formula's boundary: the f64
+            //     bisection above, continued in bignum along the same ray, since an f64 point is
+            //     only good to ~1e-16.
+            //     Every view is rendered three ways against that one truth: as the app picks the
+            //     mode; with the floatexp path (mode 2) FORCED and its df32 tail OFF, so the
+            //     generated floatexp step runs every step — at these depths the tail would take
+            //     over at once (|δz| ≥ 2^-60) and the floatexp step of a function or quotient
+            //     formula would never run; and that forced render again in resumable passes,
+            //     which must match it bit for bit.
+            let deep_prec = fractadyne_core::precision_for_magnification(1.0e40).max(64) + 32;
+            let big = |v: f64| fractadyne_core::BigFloat::from_f64(v, deep_prec);
+            // The escape is read off the orbit's samples at the GPU's bailout (256²): the reference
+            // walk itself runs on to |z|² > 1e12. Also returned: how close any deciding sample came
+            // to the bailout (relative, in |z|²) — a pixel within 1e-4 of it is decided by rounding
+            // in ANY single-precision escape test, and is no test of the perturbation. (Measured: a
+            // view bisected onto the curve |z₂₀₀₀| = 256 had every pixel within 1e-8 of it at
+            // 1e20×; f64 perturbation and bignum split them, the GPU's f32 test called all interior.)
+            let big_eval = |formula: &ir::Formula, params: &[(f64, f64)], c: &[fractadyne_core::BigFloat; 2], power: f64, budget: u32| {
+                let z = big(0.0);
+                let (orbit, _, _) = ir::reference_orbit(formula, &z, &z, &c[0], &c[1], params, budget, deep_prec)
+                    .expect("a perturbable formula evaluates in bignum");
+                let mut margin = f64::INFINITY;
+                for (n, s) in orbit.iter().enumerate().skip(1) {
+                    // Tamed as the GPU and the f64 interpreter tame an escaping value (an explosive
+                    // step can pass f32's range, where the packed sample holds inf or NaN).
+                    let (x, y) = fractadyne_gpu::custom::tame_f64(fractadyne_core::sample_xy(s));
+                    let mag2 = x * x + y * y;
+                    margin = margin.min((mag2 / bail2 - 1.0).abs());
+                    if mag2 > bail2 {
+                        let smooth = (n as f64 + 1.0 - (mag2.ln() * 0.5 / 2f64.ln()).ln() / power.ln()).max(0.0);
+                        return (smooth, margin);
+                    }
+                }
+                (-1.0, margin)
+            };
+            let big_smooth = |formula: &ir::Formula, params: &[(f64, f64)], c: &[fractadyne_core::BigFloat; 2], power: f64, budget: u32| {
+                big_eval(formula, params, c, power, budget).0
+            };
+            // The boundary point along `toward`, in bignum, to within 1e-3 of a view at `mag`: the
+            // f64 bisection, then a bracket in bignum (the f64 verdict need not hold there — on
+            // `|z|·z + conj(z)² + c` the two disagreed for 1e-12 around it), then halvings of a
+            // ≤1e-6 bracket. An f64 offset from one base point resolves only ~2e-22 of a 1e-6
+            // bracket, so the base moves to the inside end whenever the halvings stall, and the
+            // next round bisects the remaining bracket afresh — ~50 bits a round.
+            let deep_boundary = |formula: &ir::Formula, padded: &[(f64, f64)], power: f64, toward: (f64, f64), budget: u32, mag: f64| {
+                let at = boundary(formula, padded, toward, budget)?;
+                let hyp = toward.0.hypot(toward.1);
+                let dir = (toward.0 / hyp, toward.1 / hyp);
+                let point = |base: &[fractadyne_core::BigFloat; 2], d: f64| {
+                    [
+                        fractadyne_core::add_f64(&base[0], d * dir.0, deep_prec),
+                        fractadyne_core::add_f64(&base[1], d * dir.1, deep_prec),
+                    ]
+                };
+                let mut base = [big(at.0), big(at.1)];
+                let escapes = |base: &[fractadyne_core::BigFloat; 2], d: f64| {
+                    big_smooth(formula, padded, &point(base, d), power, budget) >= 0.0
+                };
+                let steps = (6..=15).rev().map(|k| 10f64.powi(-k));
+                let mut d_in = std::iter::once(0.0).chain(steps.clone().map(|d| -d)).find(|&d| !escapes(&base, d))?;
+                let mut d_out = steps.clone().find(|&d| escapes(&base, d))?;
+                let target = 1.0e-3 * 3.0 / mag;
+                loop {
+                    for _ in 0..64 {
+                        let mid = 0.5 * (d_in + d_out);
+                        if mid <= d_in || mid >= d_out {
+                            break;
+                        }
+                        if escapes(&base, mid) { d_out = mid } else { d_in = mid }
+                    }
+                    base = point(&base, d_in);
+                    let w = d_out - d_in;
+                    if w <= target {
+                        return Some(base);
+                    }
+                    (d_in, d_out) = (0.0, w);
+                }
+            };
+            // Whether a 1e20× view at `centre` can be judged at all: a 3×3 probe, each point
+            // decidable in f32 (see `big_eval`). A boundary piece where the escape time varies
+            // smoothly is, at that depth, all one level curve of |z_n| — measured on the first
+            // quadrant of `|z|·z + conj(z)² + c`: 0 of 1,024 samples decidable.
+            // And MIXED: both statuses among the nine. A bisected point can be the edge of an
+            // escaping sliver thinner than the sample spacing — measured, the Mandelbrot/Burning
+            // Ship hybrid's at 1e40×: every one of 1,024 samples interior in bignum.
+            // And STABLE: each keeps its status and escape (±2) with c moved 1e-12 of a pixel. The
+            // same hybrid's third-quadrant view is chaotic — at 1e12× six sampled pixels escaped at
+            // 470–1,714 in bignum, and at c ± 1e-12 px changed status or moved by 90–1,300
+            // iterations; f64 perturbation and the GPU each gave other values again (83% of samples
+            // "disagreed"). No finite precision can follow such a view, so it tests nothing.
+            let decidable_at = |formula: &ir::Formula,
+                                padded: &[(f64, f64)],
+                                power: f64,
+                                centre: &[fractadyne_core::BigFloat; 2],
+                                budget: u32,
+                                mag: f64,
+                                need_mixed: bool| {
+                let w = 3.0 / mag;
+                let nudge = 1.0e-12 * w / N as f64;
+                let pairs: Vec<((f64, f64), (f64, f64))> = (0..9)
+                    .map(|k| {
+                        let (i, j) = ((k % 3) as f64 - 1.0, (k / 3) as f64 - 1.0);
+                        let at = |d: f64| {
+                            [
+                                fractadyne_core::add_f64(&centre[0], 0.4 * w * i + d, deep_prec),
+                                fractadyne_core::add_f64(&centre[1], 0.4 * w * j + d, deep_prec),
+                            ]
+                        };
+                        (big_eval(formula, padded, &at(0.0), power, budget), big_eval(formula, padded, &at(nudge), power, budget))
+                    })
+                    .collect();
+                let ok = pairs.iter().filter(|(e, _)| e.1 >= 1.0e-4).count();
+                let escaped = pairs.iter().filter(|(e, _)| e.0 >= 0.0).count();
+                let stable = pairs
+                    .iter()
+                    .filter(|((a, _), (b, _))| if *a < 0.0 || *b < 0.0 { (*a < 0.0) == (*b < 0.0) } else { (a - b).abs() <= 2.0 })
+                    .count();
+                ok >= 8 && stable >= 8 && (!need_mixed || (escaped >= 1 && escaped <= 8))
+            };
+            // (b)'s ring cases, except that `|z|·z + conj(z)² + c` has no such view along any of the
+            // four rays (its boundary is smooth there, measured), so conj comes in through a
+            // Mandelbrot/Tricorn hybrid instead; and functions and division at (b)'s short budget,
+            // where the bignum oracle is also affordable (sin and cos cost 110–560 µs a bignum
+            // iteration, measured at 128–512 bits — 1,000× a ring step).
+            let deep_cases: Vec<(&str, ir::Formula, Vec<(f64, f64)>, u32)> = vec![
+                pert_cases[0].clone(),
+                pert_cases[1].clone(),
+                (
+                    "hybrid Mandelbrot/Tricorn",
+                    ir::Formula::new(vec![
+                        ir::builtin_step(fractadyne_core::formula::MANDELBROT).unwrap(),
+                        ir::builtin_step(fractadyne_core::formula::TRICORN).unwrap(),
+                    ])
+                    .unwrap(),
+                    vec![],
+                    2000,
+                ),
+                pert_cases[3].clone(),
+                pert_cases[4].clone(),
+                pert_cases[8].clone(),
+            ];
+            // The branch-cut functions and powers (at the short budget: a bignum `log`, `sqrt` or
+            // power also costs ~1 ms an iteration at 1e40×'s precision — atan, ln, exp — and a
+            // 2,000-iteration bisection took minutes a ray; measured, the group ran past 10 min).
+            // (label, formula, params, budget, the rays a view is looked for along)
+            let mut deep_cases: Vec<(String, ir::Formula, Vec<(f64, f64)>, u32, Vec<(f64, f64)>)> = deep_cases
+                .into_iter()
+                .chain(pert_cases[9..].iter().cloned())
+                .map(|(l, f, p, b)| (l.to_string(), f, p, b, rays.to_vec()))
+                .collect();
+            // ⭐ACROSS THE CUT: formulas again, bisected along the NEGATIVE REAL AXIS, so the view's
+            // centre — the reference — sits ON the branch cut (its upper side) with half the pixels
+            // below it, and the orbit keeps returning to the axes. The views above missed sqrt's
+            // cut: a sqrt that never took the difference branch passed them all (planted,
+            // measured). A log whose crossings were never seen failed only the complex power's —
+            // with `log(z + 1)`, whose argument stays positive on the axis; with `log(z + 0.5)` its
+            // own deep view fails too (50%).
+            // ⚠A crossing's jump is O(1) (`−2i√x` for sqrt, `2πi` for log), unlike a fold's, which
+            // is as small as the reference's distance from the fold. In single precision it
+            // swallows the pixel's own offset, so every pixel below then follows the same
+            // conjugate-of-reference orbit: measured at 1e12×, exactly half of `√(z⁴ + c)`'s and
+            // `z^2.5 + c`'s samples wrong (512 of 1,024, 493 of 986). The rule is exact (core's
+            // `the_branch_cut_functions_jump_where_their_principal_values_do`); what fails is the
+            // precision a single reference leaves. So these views test the crossing where a pixel
+            // survives it — 1e5× and shallower, still perturbed (the direct path gives way at
+            // ~1e4–1e5×) — and the limit is stated in Help.
+            // Not `z^2.5 + c` nor the log formula: with the reference ON the cut, their orbits pass
+            // near later crossings, where a pixel carries an O(1) δ and is then iterated at f32's
+            // precision — 10–15% of samples off at 1e4–1e5×, while the f64 perturbation of the same
+            // reference agreed with bignum on every one sampled. That is the single reference's
+            // limit (a pixel on the other branch wants a reference of its own), not the rule's:
+            // the log formula's ordinary deep view crosses too, and the planted "never a crossing"
+            // broke it at 50%. The complex power covers the same `cf_pow_diff`.
+            deep_cases.extend(
+                pert_cases[11..]
+                    .iter()
+                    .map(|(l, f, p, b)| (format!("{l} across the cut"), f.clone(), p.clone(), *b, vec![(-1.0, 0.0)])),
+            );
+            let mut fe_depth_cases: Vec<String> = Vec::new();
+            for (label, formula, params, budget, rays) in &deep_cases {
+                let budget = *budget;
+                self.render_cfg.max_iter = budget;
+                let mut padded = params.clone();
+                padded.resize(fractadyne_core::ir::parse::MAX_PARAMS, (0.0, 0.0));
+                let Ok(shader) = fractadyne_gpu::custom::build(formula, &padded) else { continue };
+                let power = shader.power as f64;
+                // The depths. The ring formulas at 1e12×, 1e20× and the deepest of 1e40× and 1e32×
+                // (both floatexp as the app picks it) where the view can be judged, else 1e20×
+                // alone. At the short budget the view sits on the level curve |z₆₀| = bailout,
+                // smooth at these scales, and the band of pixels within 1e-4 of it (in |z|², see
+                // `big_eval`) has a FIXED width in c: 27% of a 1e12× view of `sin z + c`
+                // (measured: probe margins 6e-5–4e-4 at 1.2e-12 off the curve), more of the
+                // quotient's (8e-6–4e-5). Those test at the deepest of 1e12…1e9× where the view can
+                // be judged — chosen by the bignum oracle alone, never by what the GPU renders, and
+                // every one 1e4× past the f32 wall. The boundaries are found lazily, ray by ray (a
+                // bignum sin bisection costs ~1.5 s).
+                // Across the cut, only where single precision can still hold a pixel past the jump
+                // (see the note at `deep_cases`): 1e5× or 1e4×, the shallowest perturbed depth.
+                // After a crossing the pixel carries an O(1) δ and each later step evaluates its
+                // function on full-size values in f32: the pixel is iterated at about the DIRECT
+                // path's precision. And the view need not hold both statuses: every smooth value on
+                // the far side depends on the branch (the planted sqrt broke an ALL-escaping view at
+                // 50%).
+                let across = label.ends_with("across the cut");
+                let candidates: &[f64] = if across {
+                    &[1.0e5, 1.0e4]
+                } else if budget > 60 {
+                    &[1.0e40, 1.0e32, 1.0e20]
+                } else {
+                    &[1.0e12, 1.0e11, 1.0e10, 1.0e9, 1.0e8, 1.0e7]
+                };
+                let mut boundaries: Vec<Option<Option<[fractadyne_core::BigFloat; 2]>>> = vec![None; rays.len()];
+                let mut found = None;
+                'depth: for &mag in candidates {
+                    for (r, &toward) in rays.iter().enumerate() {
+                        let c = boundaries[r]
+                            .get_or_insert_with(|| deep_boundary(formula, &padded, power, toward, budget, candidates[0]));
+                        if let Some(c) = c.as_ref().filter(|c| decidable_at(formula, &padded, power, c, budget, mag, !across)) {
+                            found = Some((c.clone(), toward, mag));
+                            break 'depth;
+                        }
+                    }
+                }
+                let Some((centre, toward, deepest)) = found else {
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Custom formula (GPU)",
+                        name: format!("{label}: deep app pipeline = bignum"),
+                        params: String::new(),
+                        result: format!(
+                            "no boundary view decidable in f32 at {:.0e}×–{:.0e}× along {} rays",
+                            candidates[0],
+                            candidates[candidates.len() - 1],
+                            rays.len()
+                        ),
+                        threshold: "a boundary to test at",
+                        pass: false,
+                    });
+                    continue;
+                };
+                let mut mags: Vec<f64> = if budget > 60 { vec![1.0e12, 1.0e20, deepest] } else { vec![deepest] };
+                mags.dedup();
+                if deepest >= crate::tunables::PERT_FE_THRESHOLD {
+                    fe_depth_cases.push(format!("{label} at {deepest:.0e}×"));
+                }
+                self.fractal = FractalKind::Custom;
+                self.julia_mode = false;
+                self.custom = Some(std::sync::Arc::new(crate::custom_formula::CustomFormula {
+                    source: label.to_string(),
+                    params: padded.clone(),
+                    formula: formula.clone(),
+                    shader: std::sync::Arc::new(shader),
+                }));
+                for &mag in &mags {
+                    let mut vp = Viewport::new(N as f64, N as f64);
+                    vp.center_x = centre[0].clone();
+                    vp.center_y = centre[1].clone();
+                    vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
+                    vp.precision = fractadyne_core::precision_for_magnification(mag).max(64);
+                    let mut req = self.current_export_request_for(&vp, false);
+                    req.width = N;
+                    req.height = N;
+                    req.ss = 1;
+                    let (mode, orbit_len, has_custom) = (req.mode, req.orbit_len, req.custom.is_some());
+                    let want_mode = if mag >= crate::tunables::PERT_FE_THRESHOLD { 2 } else { 0 };
+                    let Some(gpu) = st_render_iter(device, queue, &req) else { continue };
+                    // The floatexp step on every step: mode 2 forced, the df32 tail off (a
+                    // process-wide switch, restored at once), single pass and in passes. A mode-0
+                    // request carries everything mode 2 reads (the offsets are mantissas at
+                    // `delta_exp` on both paths).
+                    let mut fe_req = req.clone();
+                    fe_req.mode = 2;
+                    fractadyne_gpu::set_tail_df32(false);
+                    let fe_single = st_render_iter(device, queue, &fe_req);
+                    // Odd windows, several per render at either budget.
+                    let window = if budget > 60 { 517 } else { 17 };
+                    let mut passes = Vec::new();
+                    let fe_chunked = fractadyne_gpu::render_iter_chunked_timed(device, queue, &fe_req, window, &mut passes)
+                        .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_chunked, custom floatexp): {e}"))
+                        .ok();
+                    fractadyne_gpu::set_tail_df32(true);
+                    let (Some(fe_single), Some(fe_chunked)) = (fe_single, fe_chunked) else { continue };
+                    let bit_diffs = |a: &[f32], b: &[f32]| {
+                        if a.len() == b.len() {
+                            a.iter().zip(b).filter(|(x, y)| x.to_bits() != y.to_bits()).count()
+                        } else {
+                            usize::MAX
+                        }
+                    };
+                    let chunk_diffs = bit_diffs(&fe_single, &fe_chunked.pixels);
+                    // In mode 2 as the app runs it (the tail on), the floatexp steps hand over to
+                    // the df32 tail mid-orbit — in passes too, where a pass can end on either side.
+                    let mut app_passes = Vec::new();
+                    let app_chunk_diffs = if mode == 2 {
+                        fractadyne_gpu::render_iter_chunked_timed(device, queue, &req, window, &mut app_passes)
+                            .map(|r| bit_diffs(&gpu, &r.pixels))
+                            .unwrap_or(usize::MAX)
+                    } else {
+                        0
+                    };
+                    let scale = 2f64.powi(req.delta_exp);
+                    let (sx, sy) = (req.span_mantissa.x / N as f64, req.span_mantissa.y / N as f64);
+                    const G: usize = 32;
+                    let samples: Vec<(usize, [fractadyne_core::BigFloat; 2])> = (0..G * G)
+                        .map(|k| {
+                            let (i, j) = ((k % G) * nn / G + nn / (2 * G), (k / G) * nn / G + nn / (2 * G));
+                            let c = [
+                                fractadyne_core::add_f64(&centre[0], sx * ((i as f64 + 0.5) - N as f64 * 0.5) * scale, deep_prec),
+                                fractadyne_core::add_f64(&centre[1], sy * (N as f64 * 0.5 - (j as f64 + 0.5)) * scale, deep_prec),
+                            ];
+                            (j * nn + i, c)
+                        })
+                        .collect();
+                    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+                    let evals: Vec<(f64, f64)> = std::thread::scope(|s| {
+                        let parts: Vec<_> = samples
+                            .chunks(samples.len().div_ceil(threads))
+                            .map(|part| {
+                                let padded = &padded;
+                                s.spawn(move || part.iter().map(|(_, c)| big_eval(formula, padded, c, power, budget)).collect::<Vec<_>>())
+                            })
+                            .collect();
+                        parts.into_iter().flat_map(|h| h.join().expect("a bignum oracle thread panicked")).collect()
+                    });
+                    // An explosive escape's smooth value moves ~0.1 between f32 and exact (see
+                    // (b)), so the median bound is the ring formulas' 0.01 only for them.
+                    let med_tol = if budget > 60 { 0.01 } else { 0.25 };
+                    // Judged as the twin check judges: the same status and within 2 iterations.
+                    // Single-precision perturbation drifts from the exact value on pixels escaping
+                    // late in a chaotic region (Mandelbrot/Tricorn at 1e12×: 0.01–11 iterations on
+                    // 47 of 1,024, all escaping past iteration 1,860), as the built-ins do there;
+                    // what this check exists for — the pipeline's mode, reference and module — gets
+                    // most pixels wrong when it breaks. An offset in the smooth value moves every
+                    // pixel, so the median error over pixels escaped in both is held to 0.01.
+                    // → (disagree, judged, escaped, median |Δ|) of one render against the truth.
+                    let judge = |gpu: &[f32]| {
+                        let (mut escaped, mut disagree, mut judged, mut errs) = (0usize, 0usize, 0usize, Vec::new());
+                        for ((k, _), &(cpu, margin)) in samples.iter().zip(&evals) {
+                            if margin < 1.0e-4 {
+                                continue;
+                            }
+                            judged += 1;
+                            let g = gpu[k * 4] as f64;
+                            escaped += (cpu >= 0.0) as usize;
+                            let same = if cpu < 0.0 || g < 0.0 { (cpu < 0.0) == (g < 0.0) } else { (cpu - g).abs() <= 2.0 };
+                            disagree += (!same) as usize;
+                            if cpu >= 0.0 && g >= 0.0 {
+                                errs.push((cpu - g).abs());
+                            }
+                        }
+                        let median = if errs.is_empty() {
+                            f64::INFINITY
+                        } else {
+                            let mid = errs.len() / 2;
+                            *errs.select_nth_unstable_by(mid, f64::total_cmp).1
+                        };
+                        (disagree, judged, escaped, median)
+                    };
+                    let n = samples.len();
+                    // ≥3/4 of the samples decidable, for enough of them to judge by: a view on the
+                    // budget's own level curve (as the bisection puts it, since it counts an escape
+                    // on the last step) keeps a band around it that no f32 escape test decides, a
+                    // fixed width in c — measured 16–20% of the short-budget views of `√(z⁴ + c)`
+                    // at 1e10× and the sin/cos formula at 1e12× (822 and 855 of 1,024 judged).
+                    let judged_ok = |(disagree, judged, escaped, median): (usize, usize, usize, f64)| {
+                        judged * 4 >= n * 3
+                            && disagree * 50 < judged
+                            && median < med_tol
+                            && if across { escaped > 0 } else { escaped * 10 > judged && escaped < judged }
+                    };
+                    let tol_text = if budget > 60 { "0.01" } else { "0.25" };
+                    let app = judge(&gpu);
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Custom formula (GPU)",
+                        name: format!("{label}: deep app pipeline = bignum at {mag:.0e}×"),
+                        params: format!(
+                            "boundary toward {}{:+}i, {budget} iter, mode {mode}, ref {orbit_len}, {} of {n} sampled px decidable in f32, {} of them escaped",
+                            toward.0, toward.1, app.1, app.2
+                        ),
+                        result: format!(
+                            "{} of {} disagree ({:.2}%), median |Δ| {:.5}{}",
+                            app.0,
+                            app.1,
+                            app.0 as f64 * 100.0 / app.1.max(1) as f64,
+                            app.3,
+                            if mode == 2 {
+                                format!("; in {} passes {app_chunk_diffs} texels differ", app_passes.len())
+                            } else {
+                                String::new()
+                            }
+                        ),
+                        threshold: format!(
+                            "mode {want_mode} with the custom module; ≥75% decidable; <2% differ in status or by >2 iter; median |Δ| < {tol_text}; {}{}",
+                            if across { "some escaped (either side of the cut)" } else { ">10% escaped, some interior" },
+                            if want_mode == 2 { "; in ≥2 passes 0 texels differ" } else { "" }
+                        )
+                        .leak(),
+                        pass: mode == want_mode
+                            && has_custom
+                            && judged_ok(app)
+                            && (mode != 2 || (app_passes.len() >= 2 && app_chunk_diffs == 0)),
+                    });
+                    let fe = judge(&fe_single);
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Custom formula (GPU)",
+                        name: format!("{label}: floatexp step (mode 2 forced, df32 tail off) = bignum at {mag:.0e}×"),
+                        params: format!(
+                            "{budget} iter, ref {orbit_len}, the same samples ({} decidable, {} escaped), and the render in passes of {window}",
+                            fe.1, fe.2
+                        ),
+                        result: format!(
+                            "{} of {} disagree ({:.2}%), median |Δ| {:.5}; in {} passes {} texels differ",
+                            fe.0,
+                            fe.1,
+                            fe.0 as f64 * 100.0 / fe.1.max(1) as f64,
+                            fe.3,
+                            passes.len(),
+                            chunk_diffs
+                        ),
+                        threshold: format!(
+                            "as the app pipeline's (median |Δ| < {tol_text}); ≥2 passes, 0 texels differ"
+                        )
+                        .leak(),
+                        pass: judged_ok(fe) && passes.len() >= 2 && chunk_diffs == 0,
+                    });
+                }
+            }
+            // The fallback above must not quietly drop the floatexp depth for every formula.
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Custom formula (GPU)",
+                name: "deep app pipeline reaches the floatexp depth".into(),
+                params: String::new(),
+                result: if fe_depth_cases.is_empty() { "none".into() } else { fe_depth_cases.join(", ") },
+                threshold: "at least one formula tested where the app picks floatexp (≥1e28×)",
+                pass: !fe_depth_cases.is_empty(),
+            });
+            self.render_cfg.max_iter = max_iter;
+
+            // (d) RESUMABLE PASSES: a custom module carries its own chunk pass (`fs_iterate_chunk`
+            //     with the generated step spliced in), so a custom view splits its iterations
+            //     across passes like a built-in. As for the built-ins ("chunked render is
+            //     bit-identical"): odd window sizes, so boundaries land mid-phase for a hybrid, and a
+            //     rebase storm (a 97-sample reference) so they land on rebases. Also covered: z_{n-1}
+            //     carried across passes (Phoenix's step reads it; the chunk pass keeps it where a
+            //     built-in keeps its derivative) and Julia mode (where that slot starts at 1, not 0).
+            //     ⚠Each render must SHOW passes: `render_iter_chunked_timed` falls back to one
+            //     unbounded dispatch out of scope, which would agree trivially.
+            let phoenix = ir::Formula::single(ir::builtin_step(fractadyne_core::formula::PHOENIX).unwrap());
+            let hybrid = pert_cases[0].1.clone();
+            let chunk_cases: Vec<(&str, ir::Formula, Vec<(f64, f64)>, bool, f64, u32, u32, bool, u32)> = vec![
+                // (label, formula, params, julia, magnification, max_iter, window, truncate, mode)
+                ("Phoenix step (reads z_{n-1}), direct", phoenix.clone(), vec![], false, 1.0, 2_000, 137, false, 1),
+                ("sin z + c (f32 functions), direct", ir::parse::parse("sin(z) + c").unwrap(), vec![], false, 1.0, 600, 37, false, 1),
+                ("hybrid Mandelbrot/Burning Ship, direct", hybrid.clone(), vec![], false, 1.0, 2_000, 137, false, 1),
+                ("z³ − p·z + c (a parameter), direct", ir::parse::parse("z^3 - p1*z + c").unwrap(), vec![(0.4, 0.0)], false, 1.0, 2_000, 137, false, 1),
+                // Julia mode with a step that reads z_{n-1}: the slot carrying it starts at 1 there.
+                ("Phoenix step, Julia, direct", phoenix, vec![], true, 1.0, 2_000, 137, false, 1),
+                ("hybrid Mandelbrot/Burning Ship, perturbed 1e6×", hybrid.clone(), vec![], false, 1.0e6, 3_000, 517, false, 0),
+                ("hybrid Mandelbrot/Burning Ship, 7-sample reference (rebase storm)", hybrid, vec![], false, 1.0e6, 3_000, 517, true, 0),
+            ];
+            for (label, formula, params, julia, mag, max_iter, window, truncate, want_mode) in chunk_cases {
+                let mut padded = params.clone();
+                padded.resize(fractadyne_core::ir::parse::MAX_PARAMS, (0.0, 0.0));
+                let Ok(shader) = fractadyne_gpu::custom::build(&formula, &padded) else { continue };
+                // Perturbed cases sit on the formula's boundary (as (b)); direct ones at home.
+                let at = if mag > 1.0e4 { boundary(&formula, &padded, first, max_iter) } else { Some((-0.5, 0.0)) };
+                let Some(at) = at else {
+                    push_check(&mut checks, &mut last_check_t, no_boundary(format!("{label}: chunked = single pass"), first));
+                    continue;
+                };
+                self.fractal = FractalKind::Custom;
+                self.julia_mode = julia;
+                self.julia_c = (0.56667, 0.0); // the classic Phoenix Julia constant (p = −0.5)
+                self.custom = Some(std::sync::Arc::new(crate::custom_formula::CustomFormula {
+                    source: label.to_string(),
+                    params: padded.clone(),
+                    formula: formula.clone(),
+                    shader: std::sync::Arc::new(shader),
+                }));
+                self.render_cfg.max_iter = max_iter;
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = bf(at.0);
+                vp.center_y = bf(at.1);
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
+                vp.precision = fractadyne_core::precision_for_magnification(mag).max(64);
+                let mut req = self.current_export_request_for(&vp, julia);
+                req.width = N;
+                req.height = N;
+                req.ss = 1;
+                let built_len = req.orbit_len;
+                if truncate {
+                    // 7 samples, not the built-ins' 97: here pixels Zhuoran-rebase about every ten
+                    // iterations, so a 97-sample cut was never reached (measured: the same 14.9M
+                    // rebases, the same image). Odd, so the end-of-orbit rebase alternates phase.
+                    let short: Vec<[f32; 4]> = req.orbit.iter().take(7).copied().collect();
+                    req.orbit = std::sync::Arc::new(short);
+                    req.orbit_len = 7;
+                }
+                let single = st_render_iter(device, queue, &req);
+                let mut passes = Vec::new();
+                let chunked = fractadyne_gpu::render_iter_chunked_timed(device, queue, &req, window, &mut passes)
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter_chunked, custom): {e}"))
+                    .ok();
+                let (pass, result) = match (&single, &chunked) {
+                    _ if req.mode != want_mode || req.custom.is_none() => {
+                        (false, format!("ran in mode {} (custom module {}), not mode {want_mode}", req.mode, req.custom.is_some()))
+                    }
+                    (Some(a), Some(r)) if a.len() == r.pixels.len() => {
+                        let diffs = a.iter().zip(&r.pixels).filter(|(x, y)| x.to_bits() != y.to_bits()).count();
+                        let px = a.len() / 4;
+                        let escaped = (0..px).filter(|&k| a[k * 4] >= 0.0).count();
+                        let reb = r.counters[fractadyne_gpu::CTR_REBASE];
+                        (
+                            diffs == 0 && passes.len() >= 2 && escaped * 10 > px && escaped < px,
+                            format!(
+                                "mode {}, ref {built_len}→{}, {} passes — {diffs} texels differ; {escaped} of {px} px escaped, rebase {reb}",
+                                req.mode,
+                                req.orbit_len,
+                                passes.len()
+                            ),
+                        )
+                    }
+                    _ => (false, "render failed".into()),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Custom formula (GPU)",
+                    name: format!("{label}: chunked = single pass"),
+                    params: format!("{mag:.0e}×, {max_iter} iter, window {window}"),
+                    result,
+                    threshold: "0 texels differ, ≥2 passes, >10% escaped, some interior",
+                    pass,
+                });
+            }
+            self.julia_mode = false;
+            self.fractal = FractalKind::Mandelbrot;
+        }
+
+        // ---- Life (design/automata.md): the GPU tile stepper equals the CPU one cell for cell
+        // (10 rule kinds × plane / torus / bounded), the tile set follows a glider, a full pool
+        // stops instead of dropping cells, LifeWiki's long-run facts hold on the GPU, and the
+        // display pass writes the values it is defined to. Integer automata: every check exact. ----
+        if want("life") {
+            if fractadyne_gpu::life::life_available(device) {
+                use fractadyne_gpu::life::check;
+                let mut outcomes = check::stepper_matches_cpu(device, queue);
+                outcomes.extend(check::tile_set_and_pool(device, queue));
+                outcomes.extend(check::known_facts(device, queue));
+                outcomes.extend(check::display(device, queue));
+                for o in outcomes {
+                    let (pass, result) = match o.result {
+                        Ok(s) => (true, s),
+                        Err(e) => (false, e),
+                    };
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Life",
+                        name: o.name,
+                        params: o.params,
+                        result,
+                        threshold: "exact",
+                        pass,
+                    });
+                }
+            } else {
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Life",
+                    name: "the device runs the Life stepper".into(),
+                    params: "compute shaders, 7 storage buffers".into(),
+                    result: "this adapter has no compute shaders (a GL backend?)".into(),
+                    threshold: "available",
+                    pass: false,
+                });
+            }
+        }
+
         // ---- series approximation engages for the Multibrot families ----
         // The order-3 coefficient recurrence for z^d is validated exactly in fractadyne-core;
         // here we confirm the app actually selects SA for these formulas (skip > 0) and the
         // GPU render is finite and bit-consistent with an SA-off render (the seed shader code
         // is formula-agnostic, already validated for Mandelbrot in modes 0 and 2).
+        // ⛔A SEED PAST THE BAILOUT (found 2026-10-01, design/power-families.md phase 2). The walk
+        // stops at the REFERENCE's escape, |Z|² > 1e12, so a skip could land two samples before
+        // the reference's end with |Z| far past 256; the GPU's first test of the seeded pixel, a
+        // step later, squared |z| past f32: |z|² = ∞, every smooth value −∞, a black frame —
+        // Multibrot 5 at its first row's view here (a released family), Multibrot 6 at its deep
+        // point at 1e45×. `sa_seed_max2` bounds the seed. These views are featureless, every pixel
+        // escaping on the reference's own step, so ONE interior or non-finite pixel is the bug.
+        if want("multibrot-sa") {
+            let prev = self.fractal;
+            self.julia_mode = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.use_custom_palette = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 30_000;
+            self.render_cfg.series_approx = true;
+            // BLA subsumes SA in floatexp: with a tree built no seed is walked (phase 3). The
+            // seed is what this asks about, so the tree is kept out of these views.
+            let saved_bla = self.render_cfg.use_bla;
+            self.render_cfg.use_bla = false;
+            let mut rows: Vec<(FractalKind, String, String, f64)> = Vec::new();
+            for kind in [
+                FractalKind::Multibrot4,
+                FractalKind::Multibrot5,
+                FractalKind::Multibrot6,
+                FractalKind::Multibrot7,
+                FractalKind::Multibrot8,
+            ] {
+                if let Some(at) = family_view(kind.formula_id(), 1.0e5, N, 3_000) {
+                    rows.push((kind, format!("{:.17}", at.0), format!("{:.17}", at.1), 1.0e40));
+                }
+            }
+            let (k6, x6, y6) = MULTIBROT_DEEP[3];
+            debug_assert!(k6 == FractalKind::Multibrot6);
+            rows.push((k6, x6.into(), y6.into(), 7.5e44));
+            for (kind, x, y, mag) in rows {
+                self.fractal = kind;
+                let mut req = make(self, &x, &y, mag);
+                req.max_iter = 30_000;
+                let name = format!("{} SA seed stays in f32 range ({mag:.1e}×, featureless)", kind.name());
+                let params = format!("mode {}, skip {} of a {}-sample reference", req.mode, req.sa_skip, req.orbit_len);
+                match render(&req) {
+                    Some(px) => {
+                        let v: Vec<f32> = px.iter().step_by(4).copied().collect();
+                        let bad = v.iter().filter(|x| !(x.is_finite() && **x >= 0.0)).count();
+                        let engaged = req.sa_skip > 0 && req.orbit_len < req.max_iter;
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Series approximation",
+                            name,
+                            params,
+                            result: format!("{bad} of {} pixels interior or non-finite", v.len()),
+                            threshold: "SA engaged, the reference escapes, every pixel escapes finite",
+                            pass: engaged && bad == 0,
+                        });
+                    }
+                    None => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Series approximation",
+                        name,
+                        params,
+                        result: "render failed".into(),
+                        threshold: "SA engaged, the reference escapes, every pixel escapes finite",
+                        pass: false,
+                    }),
+                }
+            }
+            self.render_cfg.use_bla = saved_bla;
+            self.fractal = prev;
+        }
         if want("multibrot-sa") {
             self.julia_mode = false;
             self.coloring.color_method = crate::ColorMethod::Smooth;
@@ -2836,15 +4638,53 @@ impl FractadyneApp {
             // SA disabled (e.g. by tooling that stages the session file) made all three checks
             // report "SA did not engage" with no code defect present. Pin it like `color_method`.
             self.render_cfg.series_approx = true;
-            for (fractal, cx, cy) in [
-                (FractalKind::Multibrot3, "0.2", "0.1"),
-                (FractalKind::Multibrot4, "0.2", "0.1"),
-                (FractalKind::Multibrot5, "0.2", "0.1"),
+            // (fractal, centre, a boundary view). The INTERIOR view (0.2, 0.1) is the original
+            // three rows: every pixel stays interior through a skip of 3,999, and SA on and off
+            // must agree exactly. ⚠It has no escaping pixel, so it could not see an SA that
+            // misplaces an escape (found 2026-10-01, design/power-families.md phase 2, when
+            // Multibrot 6–8 joined). So every power also gets a BOUNDARY view (`family_view`).
+            // There SA on and off part on thousands of pixels — 4,555 of Multibrot 3's, 13,078 of
+            // 4's — nearly all steep, and by the CPU's f64 orbit EQUALLY right: at the pixels
+            // smooth by the CPU's own neighbours, SA on was wrong at 182 / 81 / 242 / 31 / 0 / 3
+            // (Multibrot 3–8), SA off at 190 / 76 / 226 / 32 / 0 / 3. A 4,000-step boundary view is
+            // chaotic, and a seed within 2^EPS of the stepped δ is one rounding more. So the
+            // boundary row asks the question that has an answer: is SA any worse than no SA,
+            // against an independent truth, where that truth is sure of itself.
+            let mut sa_cases: Vec<(FractalKind, String, String, bool)> = vec![
+                (FractalKind::Multibrot3, "0.2".into(), "0.1".into(), false),
+                (FractalKind::Multibrot4, "0.2".into(), "0.1".into(), false),
+                (FractalKind::Multibrot5, "0.2".into(), "0.1".into(), false),
+            ];
+            for kind in [
+                FractalKind::Multibrot3,
+                FractalKind::Multibrot4,
+                FractalKind::Multibrot5,
+                FractalKind::Multibrot6,
+                FractalKind::Multibrot7,
+                FractalKind::Multibrot8,
             ] {
+                match family_view(kind.formula_id(), 1.0e7, N, self.render_cfg.max_iter) {
+                    Some(at) => sa_cases.push((kind, format!("{:.17}", at.0), format!("{:.17}", at.1), true)),
+                    None => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Series approximation",
+                        name: format!("{} SA no worse than SA-off vs CPU @1e7× (boundary)", kind.name()),
+                        params: String::new(),
+                        result: "no ray from 0 reaches a boundary with smooth escaping pixels at 1e7×".into(),
+                        threshold: "a view to test at",
+                        pass: false,
+                    }),
+                }
+            }
+            for (fractal, cx, cy, boundary) in sa_cases {
+                let name = if boundary {
+                    format!("{} SA no worse than SA-off vs CPU @1e7× (boundary)", fractal.name())
+                } else {
+                    format!("{} SA engages + matches SA-off @1e7×", fractal.name())
+                };
                 self.fractal = fractal;
                 let mut vp = Viewport::new(N as f64, N as f64);
-                vp.center_x = fractadyne_core::parse_bf(cx).unwrap();
-                vp.center_y = fractadyne_core::parse_bf(cy).unwrap();
+                vp.center_x = fractadyne_core::parse_bf(&cx).unwrap();
+                vp.center_y = fractadyne_core::parse_bf(&cy).unwrap();
                 vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * 1.0e7));
                 vp.precision = fractadyne_core::precision_for_magnification(1.0e7);
                 let mut on = self.current_export_request_for(&vp, false);
@@ -2858,7 +4698,7 @@ impl FractadyneApp {
                     st_render_iter(device, queue, &on),
                     st_render_iter(device, queue, &off),
                 ) {
-                    (Some(a), Some(b)) if skip > 0 && mode == 0 => {
+                    (Some(a), Some(b)) if skip > 0 && mode == 0 && !boundary => {
                         let finite = a.iter().step_by(4).all(|v| v.is_finite());
                         let (mut mism, mut esc) = (0u64, 0u64);
                         for i in 0..(a.len() / 4) {
@@ -2875,16 +4715,63 @@ impl FractadyneApp {
                         }
                         push_check(&mut checks, &mut last_check_t, SelfCheck {
                             category: "Series approximation",
-                            name: format!("{} SA engages + matches SA-off @1e7×", fractal.name()),
+                            name,
                             params: format!("mode {mode}, skip {skip} of {} iter, {esc} escaped", on.max_iter),
                             result: format!("{mism} mismatch, {}", if finite { "finite" } else { "NON-FINITE!" }),
                             threshold: "skip>0, mode 0, finite, 0 mismatch",
                             pass: finite && mism == 0,
                         });
                     }
+                    (Some(a), Some(b)) if skip > 0 && mode == 0 => {
+                        let finite = a.iter().step_by(4).all(|v| v.is_finite());
+                        let esc = a.iter().step_by(4).filter(|v| **v >= 0.0).count();
+                        let nn = N as usize;
+                        let t = cpu_family_iter(&on, fractal.formula_id(), N);
+                        // The truth is sure of a pixel whose CPU neighbours agree with it (same
+                        // class, within 2 iterations: the BLA check's "steep", inverted).
+                        let sure = |k: usize| -> bool {
+                            let (i, j) = (k % nn, k / nn);
+                            let g = t[k * 4];
+                            [(1isize, 0isize), (-1, 0), (0, 1), (0, -1)].iter().all(|&(di, dj)| {
+                                let (ni, nj) = (i as isize + di, j as isize + dj);
+                                if ni < 0 || nj < 0 || ni as usize >= nn || nj as usize >= nn {
+                                    return true;
+                                }
+                                let gn = t[(nj as usize * nn + ni as usize) * 4];
+                                (g < 0.0) == (gn < 0.0) && (g < 0.0 || (g - gn).abs() <= 2.0)
+                            })
+                        };
+                        let wrong = |px: &[f32], k: usize| {
+                            let (p, q) = (px[k * 4], t[k * 4]);
+                            (p < 0.0) != (q < 0.0) || (p >= 0.0 && (p - q).abs() > 0.5)
+                        };
+                        let (mut n_sure, mut on_wrong, mut off_wrong) = (0u64, 0u64, 0u64);
+                        for k in (0..nn * nn).filter(|&k| sure(k)) {
+                            n_sure += 1;
+                            on_wrong += u64::from(wrong(&a, k));
+                            off_wrong += u64::from(wrong(&b, k));
+                        }
+                        // Two draws of the same sensitive set differ by tens (226 against 242);
+                        // a seed that is wrong is wrong at thousands of pixels.
+                        let bound = off_wrong + off_wrong / 4 + 10;
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Series approximation",
+                            name,
+                            params: format!(
+                                "mode {mode}, skip {skip} of {} iter, {esc} escaped, CPU sure of {n_sure} px",
+                                on.max_iter
+                            ),
+                            result: format!(
+                                "wrong vs CPU: SA on {on_wrong}, SA off {off_wrong}, {}",
+                                if finite { "finite" } else { "NON-FINITE!" }
+                            ),
+                            threshold: "skip>0, mode 0, finite, escapes, CPU sure of ≥ 2,000 px, SA on ≤ 1.25 × SA off + 10",
+                            pass: finite && esc > 0 && n_sure >= 2_000 && on_wrong <= bound,
+                        });
+                    }
                     _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Series approximation",
-                        name: format!("{} SA engages + matches SA-off @1e7×", fractal.name()),
+                        name,
                         params: format!("mode {mode}, skip {skip}"),
                         result: if skip == 0 { "SA did not engage (skip=0)".into() } else { "render failed / wrong mode".into() },
                         threshold: "skip>0, mode 0, finite, 0 mismatch",
@@ -3031,6 +4918,161 @@ impl FractadyneApp {
                     });
                 }
             }
+            // Multibrot 3–8 (design/power-families.md phase 3, B6): the same question at each
+            // power's deep chaotic point, whose pixels escape hundreds to thousands of steps apart —
+            // level 0's A = d·Z^(d−1) and radius 2·eps·|Z|/(d−1), and the merge every power shares.
+            // And every fold family (phase 4, B7) at a deep point whose pixels are mostly stable,
+            // through its real 2×2 tree. A BLA that is no faster proves nothing, so the skips must
+            // SHOW (`CTR_BLA_SKIP`). Glitch detection off in both renders: the fold families'
+            // requests carry it for the export's corrector, and the question is plain BLA against
+            // plain perturbation.
+            let prev = self.fractal;
+            self.render_cfg.max_iter = 30_000;
+            for (kind, x, y) in MULTIBROT_DEEP.iter().chain(FOLD_DEEP.iter()).copied() {
+                self.fractal = kind;
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = fractadyne_core::parse_bf(x).unwrap();
+                vp.center_y = fractadyne_core::parse_bf(y).unwrap();
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * 1.0e30));
+                vp.precision = fractadyne_core::precision_for_magnification(1.0e30);
+                let mut on = self.current_export_request_for(&vp, false);
+                on.width = N;
+                on.height = N;
+                on.ss = 1;
+                on.glitch_on = 0;
+                let mut off = on.clone();
+                off.bla_on = 0;
+                let (bon, mode) = (on.bla_on, on.mode);
+                let name = format!("{} BLA == non-BLA @1e30× (deep boundary)", kind.name());
+                // A fold row's CHAOS FLOOR: the render without BLA, shifted a thousandth of a pixel.
+                let fold = fractadyne_core::fold_shape(kind.formula_id()).is_some();
+                let shifted = fold.then(|| {
+                    let mut s = off.clone();
+                    let [rh, ih, rl, il] = s.ref_offset.to_array();
+                    let px = s.span_mantissa.x / N as f64;
+                    s.ref_offset = fractadyne_gpu::RefOffset::from_df32(rh as f64 + rl as f64 + 1.0e-3 * px, ih as f64 + il as f64);
+                    s
+                });
+                match (
+                    fractadyne_gpu::render_iter(device, queue, &on)
+                        .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter): {e}"))
+                        .ok(),
+                    st_render_iter(device, queue, &off),
+                ) {
+                    (Some(ra), Some(b)) => {
+                        let a = &ra.pixels;
+                        let skips = ra.counters[fractadyne_gpu::CTR_BLA_SKIP];
+                        let count = |a: &[f32]| {
+                            let (mut mism, mut esc) = (0u64, 0u64);
+                            for j in 0..nn {
+                                for i in 0..nn {
+                                    if steep(&b, i, j) {
+                                        continue;
+                                    }
+                                    let k = j * nn + i;
+                                    let (va, vb) = (a[k * 4], b[k * 4]);
+                                    match (va < 0.0, vb < 0.0) {
+                                        (false, false) => {
+                                            esc += 1;
+                                            if (va - vb).abs() > 0.5 {
+                                                mism += 1;
+                                            }
+                                        }
+                                        (true, true) => {}
+                                        _ => mism += 1,
+                                    }
+                                }
+                            }
+                            (mism, esc)
+                        };
+                        let (mism, esc) = count(a);
+                        // ⚠A fold's pixel can be "smooth" (its neighbours within 2 iterations) and still
+                        // turn on the DIRECTION of an error far below a pixel — the core traced one
+                        // where BLA's state was 4e-12 off and a δc nudge moving it 7e-11 changed
+                        // nothing. So a fold row is held to its CHAOS FLOOR, the mismatches of the
+                        // same render shifted a thousandth of a pixel: measured 2026-10-01, BLA's
+                        // 95 / 1 / 2 / 1 against the shift's 178 / 1 / 6 / 4 (Celtic, Burning Ship
+                        // 3, 4, Celtic 5), and 0 wherever the shift gave 0.
+                        let floor = shifted.as_ref().and_then(|s| st_render_iter(device, queue, s)).map(|p| count(&p).0);
+                        let (ok, threshold) = match floor {
+                            Some(fl) => (mism <= fl + fl / 4, "bla engaged and skipping, escapers>100, mismatch ≤ 1.25 × a 0.001-px shift's"),
+                            None => (mism == 0, "bla engaged and skipping, escapers>100, 0 mismatch"),
+                        };
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "BLA",
+                            name,
+                            params: format!("mode {mode}, bla_on {bon}, {skips} skips, {esc} smooth escapers"),
+                            result: match floor {
+                                Some(fl) => format!("{mism} mismatch (a 0.001-px shift: {fl})"),
+                                None => format!("{mism} mismatch"),
+                            },
+                            threshold,
+                            pass: bon == 1 && mode == 2 && skips > 0 && esc > 100 && ok,
+                        });
+                    }
+                    _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "BLA",
+                        name,
+                        params: format!("mode {mode}, bla_on {bon}"),
+                        result: "render failed".into(),
+                        threshold: "bla engaged and skipping, escapers>100, 0 mismatch",
+                        pass: false,
+                    }),
+                }
+            }
+            // ⭐The folds have no series approximation, so a deep view's INTERIOR ground through every
+            // iteration until the 2×2 tree (Burning Ship inside its main body at 1e30×, 30,000
+            // iterations: 5.1 s of GPU without it, 4 ms with). Inside each fold's main body (c =
+            // 0.1 − 0.05i: off both axes, and off Re z² = 0, where Celtic's fold radius would be 0),
+            // every pixel interior in both renders, and the tree carrying them: ≥ 5 skips a pixel.
+            for kind in FractalKind::ALL.into_iter().filter(|k| fractadyne_core::fold_shape(k.formula_id()).is_some()) {
+                self.fractal = kind;
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = fractadyne_core::parse_bf("0.1").unwrap();
+                vp.center_y = fractadyne_core::parse_bf("-0.05").unwrap();
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * 1.0e30));
+                vp.precision = fractadyne_core::precision_for_magnification(1.0e30);
+                let mut on = self.current_export_request_for(&vp, false);
+                on.width = N;
+                on.height = N;
+                on.ss = 1;
+                on.glitch_on = 0;
+                let mut off = on.clone();
+                off.bla_on = 0;
+                let name = format!("{} BLA carries a deep interior @1e30×", kind.name());
+                let threshold = "bla engaged, every pixel interior in both, ≥ 5 skips a pixel";
+                match (
+                    fractadyne_gpu::render_iter(device, queue, &on)
+                        .map_err(|e| eprintln!("[selftest] GPU ERROR (render_iter): {e}"))
+                        .ok(),
+                    st_render_iter(device, queue, &off),
+                ) {
+                    (Some(ra), Some(b)) => {
+                        let n = (nn * nn) as u64;
+                        let int_a = ra.pixels.iter().step_by(4).filter(|v| **v < 0.0).count() as u64;
+                        let int_b = b.iter().step_by(4).filter(|v| **v < 0.0).count() as u64;
+                        let skips = ra.counters[fractadyne_gpu::CTR_BLA_SKIP];
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "BLA",
+                            name,
+                            params: format!("mode {}, bla_on {}, {skips} skips over {n} px", on.mode, on.bla_on),
+                            result: format!("interior {int_a} with BLA, {int_b} without"),
+                            threshold,
+                            pass: on.bla_on == 1 && on.mode == 2 && int_a == n && int_b == n && skips >= 5 * n,
+                        });
+                    }
+                    _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "BLA",
+                        name,
+                        params: format!("mode {}, bla_on {}", on.mode, on.bla_on),
+                        result: "render failed".into(),
+                        threshold,
+                        pass: false,
+                    }),
+                }
+            }
+            self.fractal = prev;
+            self.render_cfg.max_iter = 5000;
             self.render_cfg.use_bla = false;
             self.render_cfg.series_approx = true;
         }
@@ -5025,6 +7067,162 @@ zoom = \"1e94\"
                 pass: rt_ok,
             });
 
+            // A Custom view carries its formula — a multi-line source with a comment, and its
+            // parameters — through the real writer and reader; and a view whose formula no longer
+            // compiles says so and is NOT shown under whatever formula happened to be loaded.
+            {
+                let src = "t = sqr(z)\nz = t + p1*conj(t) + c ; hybrid";
+                let made = crate::custom_formula::CustomFormula::compile(src, &[(0.25, -0.125)]).expect("compiles");
+                let key = made.shader.key;
+                self.custom = Some(std::sync::Arc::new(made));
+                self.fractal = FractalKind::Custom;
+                let blob = self.view_metadata();
+                // Scramble: another formula, another family.
+                self.custom =
+                    Some(std::sync::Arc::new(crate::custom_formula::CustomFormula::compile("z^3 + c", &[]).expect("compiles")));
+                self.fractal = FractalKind::Mandelbrot;
+                let rt = self.load_view_metadata(&blob);
+                let back = self.custom.as_ref().map(|c| (c.source.clone(), c.params[0], c.shader.key));
+                let round_trip = rt.note().is_none()
+                    && self.fractal == FractalKind::Custom
+                    && back == Some((src.to_string(), (0.25, -0.125), key));
+                let broken = blob
+                    .lines()
+                    .map(|l| if l.starts_with("formula=") { "formula=z = z^2 +" } else { l })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                self.fractal = FractalKind::Mandelbrot;
+                let rb = self.load_view_metadata(&broken);
+                let refused = self.fractal == FractalKind::Mandelbrot
+                    && rb.problems.iter().any(|p| p.contains("does not compile"));
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "View format",
+                    name: "a_custom_view_round_trips_its_formula".into(),
+                    params: "Custom view → scramble → load; then a broken formula line".into(),
+                    result: format!("round trip {round_trip}, broken one refused {refused}"),
+                    threshold: "formula, parameters and shader key restored; broken formula reported, view not switched",
+                    pass: round_trip && refused,
+                });
+                self.fractal = FractalKind::Mandelbrot;
+            }
+
+            // A Life view carries its universe: the rule, every cell (Generations states and negative
+            // coordinates included) at the generation it holds, and the generation to run on to.
+            {
+                let pattern = fractadyne_core::life::parse_rle("#CXRLE Pos=-70,-3\nA2.BC$3.A$CBA!").expect("parses");
+                let opened = self.life_open_view(pattern, "B2/S345/C4", "round trip".into(), 37, 37, true);
+                let want = self.life.loaded.cells();
+                let blob = self.view_metadata();
+                let format3 = blob.lines().any(|l| l == "format_version=3");
+                // Scramble: another pattern and rule, another family.
+                self.life_open_library("Glider");
+                self.fractal = FractalKind::Mandelbrot;
+                let rt = self.load_view_metadata(&blob);
+                let round_trip = rt.note().is_none()
+                    && self.fractal == FractalKind::Life
+                    && self.life.loaded.cells() == want
+                    && self.life.loaded.generation() == 37
+                    && self.life.loaded.rule().canonical() == "B2/S345/C4"
+                    && self.life.pattern_name == "round trip";
+                // A view asking for a later generation runs on to it.
+                let later = blob.lines().map(|l| if l.starts_with("generation=") { "generation=500" } else { l }).collect::<Vec<_>>().join("\n");
+                let rl = self.load_view_metadata(&later);
+                let runs_on = rl.note().is_none() && self.life.target == 500 && self.life.loaded.generation() == 37;
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "View format",
+                    name: "a_life_view_round_trips_its_universe".into(),
+                    params: "Life view (Star Wars, 3 states, x < 0) → scramble → load; then generation=500".into(),
+                    result: format!("opened {}, format 3 {format3}, round trip {round_trip}, runs on {runs_on}", opened.is_ok()),
+                    threshold: "rule, cells, generation and name restored; format 3; target generation 500",
+                    pass: opened.is_ok() && format3 && round_trip && runs_on,
+                });
+                // The session keeps the universe whichever family is on screen, and restoring it
+                // does not switch to it.
+                let saved = self.life_lines();
+                self.life_open_library("Glider");
+                self.fractal = FractalKind::Mandelbrot;
+                let restored = self.apply_life_lines(&saved, false);
+                let kept = restored.is_ok()
+                    && self.fractal == FractalKind::Mandelbrot
+                    && self.life.loaded.cells() == want
+                    && self.life.loaded.rule().canonical() == "B2/S345/C4";
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "View format",
+                    name: "the session keeps the Life universe".into(),
+                    params: "life_lines → scramble → apply (not shown)".into(),
+                    result: format!("restored {restored:?}, cells/rule kept and view not switched: {kept}"),
+                    threshold: "cells and rule restored; family unchanged",
+                    pass: kept,
+                });
+                self.fractal = FractalKind::Mandelbrot;
+            }
+
+            // ⭐A custom view travels in EVERY format that carries a view, with a comment past
+            // Latin-1 in its formula: that made the PNG export FAIL and the EXR export PANIC (both
+            // containers are Latin-1), and "Tour from current view" wrote a tour the parser refused.
+            // The view text must be ASCII (the formula escaped), come back verbatim from the real
+            // PNG and EXR writers, and the generated tour must show the same formula; a built-in
+            // view still writes format 1, so older builds read it as they always did.
+            {
+                let src = "t = sqr(z)\nz = t + p1*conj(t) + c ; √ hybrid, café 😀";
+                let params = (0.25, -0.125);
+                let made = crate::custom_formula::CustomFormula::compile(src, &[params]).expect("compiles");
+                self.custom = Some(std::sync::Arc::new(made));
+                self.fractal = FractalKind::Custom;
+                let blob = self.view_metadata();
+                // The formula lines (the notes field may hold Latin-1, which both containers take).
+                let ascii = blob
+                    .lines()
+                    .filter(|l| l.starts_with("formula"))
+                    .all(|l| l.chars().all(|c| c.is_ascii() && !c.is_ascii_control()));
+                let format2 = blob.lines().any(|l| l == "format_version=2");
+                let restores = |app: &mut Self, text: Option<String>| -> bool {
+                    let Some(text) = text else { return false };
+                    app.custom = None;
+                    app.fractal = FractalKind::Mandelbrot;
+                    let r = app.load_view_metadata(&text);
+                    r.note().is_none()
+                        && app.fractal == FractalKind::Custom
+                        && app.custom.as_ref().is_some_and(|c| c.source == src && c.params[0] == params)
+                };
+                let dir = std::env::temp_dir().join(format!("fd-selftest-formats-{}", std::process::id()));
+                let _ = std::fs::create_dir_all(&dir);
+                let (png, exr) = (dir.join("custom.png"), dir.join("custom.exr"));
+                let pixels = vec![0.5f32; 4 * 4 * 4];
+                let png_ok = fractadyne_export::write_png(&png, 4, 4, &pixels, Some(&blob)).is_ok()
+                    && restores(self, fractadyne_export::read_png_metadata(&png).ok().flatten());
+                let exr_ok = fractadyne_export::write_exr(&exr, 4, 4, &pixels, Some(&blob)).is_ok()
+                    && restores(self, fractadyne_export::read_exr_metadata(&exr).ok().flatten());
+                let _ = std::fs::remove_dir_all(&dir);
+                // The tour: "Tour from current view", parsed back by the tour reader.
+                let tour_ok = restores(self, Some(blob.clone())) && {
+                    let text = self.build_dive_script("", 5.0);
+                    match crate::scripting::parse_tour_text(&text) {
+                        Ok(pb) => {
+                            let s = pb.sample(0.0);
+                            s.fractal == FractalKind::Custom
+                                && s.custom.as_ref().is_some_and(|c| c.source == src && c.params[0] == params)
+                        }
+                        Err(e) => {
+                            eprintln!("[selftest] the generated tour does not parse: {e}");
+                            false
+                        }
+                    }
+                };
+                self.fractal = FractalKind::Mandelbrot;
+                let plain1 = self.view_metadata().lines().any(|l| l == "format_version=1");
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "View format",
+                    name: "a_custom_view_travels_in_every_format".into(),
+                    params: "formula with a √ / é / emoji comment: view text, PNG, EXR, tour".into(),
+                    result: format!(
+                        "ASCII {ascii}, format 2 {format2}; PNG {png_ok}, EXR {exr_ok}, tour {tour_ok}; built-in view format 1 {plain1}"
+                    ),
+                    threshold: "all true",
+                    pass: ascii && format2 && png_ok && exr_ok && tour_ok && plain1,
+                });
+            }
+
             // ⭐A coordinate ENTERED AS AN EXPRESSION travels with the view and is re-derived on
             // load, so a reopened file can be zoomed deeper than it was saved without the centre
             // freezing at the digits a plain decimal would carry. Round-tripped through the real
@@ -6421,6 +8619,15 @@ zoom = \"1e94\"
             ("buffalo", FractalKind::Buffalo, "-0.5", "-0.5", 0.7, 800, 0, 0, false),
             ("phoenix", FractalKind::Phoenix, "0.0", "0.0", 0.7, 800, 0, 0, false),
             ("newton", FractalKind::Newton, "0.0", "0.0", 0.7, 400, 0, 0, false),
+            // The power families (design/power-families.md), one overview per shape: every power is
+            // the same generic code with its own (shape, d), and each is held to its generated module
+            // and the CPU by the custom-formula and abs-family groups, so a golden apiece would add
+            // ~33 MB of history for no case those checks do not already make.
+            ("multibrot7", FractalKind::Multibrot7, "0.0", "0.0", 1.2, 800, 0, 0, false),
+            ("burning-ship3", FractalKind::BurningShip3, "0.0", "0.0", 1.2, 800, 0, 0, false),
+            ("tricorn4", FractalKind::Tricorn4, "0.0", "0.0", 1.2, 800, 0, 0, false),
+            ("celtic5", FractalKind::Celtic5, "0.0", "0.0", 1.2, 800, 0, 0, false),
+            ("buffalo3", FractalKind::Buffalo3, "0.0", "0.0", 1.2, 800, 0, 0, false),
             // Deep mode-0 (df32 perturbation, 1e6×) views at a bisected boundary coordinate (see
             // core's dump_deep_boundary_coords). These exercise the bignum reference orbit (step_bf)
             // + series approximation + the df32-perturbation shader branch — the deep pipeline the
@@ -6442,6 +8649,39 @@ zoom = \"1e94\"
             // flooding black (the adaptive appetite here is ~12k — see the black-minibrot arc).
             ("seahorse-998", FractalKind::Mandelbrot, "-0.7436438870371588707780645434936425750476099623212550602141", "0.1318259042053122928210973548747672652629885996790429749374", 1.597e15, 25000, 0, 1, false),
         ];
+        // ⭐CUSTOM FORMULAS (design/custom-formulas.md), one per path a generated module can take:
+        // the direct step with f32 functions; the df32 perturbed step with functions, `log`
+        // (`DiffLog`), a complex power (`DiffPow`) and `sqrt` (`DiffSqrt`); the floatexp step at
+        // 1e40× and at 1e100×. Deep views are the custom-formula group's own: bisected in bignum,
+        // checked decidable and stable. The "cut" view sits ON the negative real axis, so half its
+        // pixels take the other branch of the power; `z^p1`'s seam there is the formula's own
+        // discontinuity (a complex exponent has no conjugate symmetry), matched by bignum at 0 of
+        // 1,024 samples, and a power that never saw the crossing broke this golden (meanΔ 43).
+        // `√(z⁴ + c)` IS the Mandelbrot set in w = z² — its seahorse renders as the built-in's
+        // does, through a sqrt with the cut crossed at every turn. The log view is `log(z + 1)`'s,
+        // whose argument stays off the cut: the group's crossing log (`log(z + 0.5)`) is chaos at
+        // any structured depth, which a golden must not be. Short iteration counts where functions
+        // run: their long orbits are chaos no single-precision GPU follows alike, and a golden must
+        // hold on another card.
+        // (name, source, params, center_x, center_y, zoom, max_iter, palette_idx)
+        type CustomGoldenSpec =
+            (&'static str, &'static str, &'static [(f64, f64)], &'static str, &'static str, f64, u32, usize);
+        let custom_specs: &[CustomGoldenSpec] = &[
+            ("custom-sincos", "z = sin(z) + cos(z)*cos(z + pi) + c", &[], "0.0", "0.0", 0.45, 100, 0),
+            ("custom-sincos-1e6", "z = sin(z) + cos(z)*cos(z + pi) + c", &[], "0.8433651341985982", "0.6559506599322431", 1.0e6, 150, 0),
+            ("custom-log-1e6", "z = z^2 + 0.3*log(z + 1) + c", &[], "3.12358602939656217655721264291684642451682702136906079104549174840776970540901e-1", "2.4294558006417705509271924826816340358332255239354372640620070150641041095696e-1", 1.0e6, 200, 1),
+            ("custom-cpow-cut-1e5", "z = z^p1 + c", &[(2.2, 0.3)], "-8.74282550499493813679694360896665518897154704382566209070609675180207887024153e-1", "0.0", 1.0e5, 200, 0),
+            ("custom-sqrt-seahorse-1e6", "z = sqrt(z^4 + c)", &[], SX, SY, 1.0e6, 1500, 0),
+            ("custom-zpc-1e40", "z = z^2 + p1*z + c", &[(0.25, -0.1)], "2.5825378554724790808958856226538137436477114325577125141614518618614686040981e-1", "2.00864055425637292686986232460580778294541444653850380864716747871520178888717e-1", 1.0e40, 2000, 2),
+            ("custom-zsq-spiral-1e100", "z = z^2 + c", &[], "-2.8041054305504546698407770028983979273643258419006230007410381499044388400475119315630293940283589087269554184451138185325406436e-2", "6.94892753899652385892994339498967288039114990163797857613653087250435024223067409755982283759024506296110477464801459921366328420e-1", 1.0e100, 60000, 0),
+        ];
+        let all_specs: Vec<(GoldenSpec, Option<(&'static str, &'static [(f64, f64)])>)> = specs
+            .iter()
+            .map(|s| (*s, None))
+            .chain(custom_specs.iter().map(|&(name, src, params, cx, cy, zoom, iter, palette)| {
+                ((name, FractalKind::Custom, cx, cy, zoom, iter, 0, palette, false), Some((src, params)))
+            }))
+            .collect();
         // 1920x1080, raised from 320x240 (2026-08-22). 27x the pixels: a rendering
         // regression that survives 2M pixels is not one worth calling a golden, and the
         // old 76,800-pixel frames were coarse enough that fine filament structure fell
@@ -6484,13 +8724,22 @@ zoom = \"1e94\"
                 }
             }
         }
-        for &(name, fractal, cx, cy, zoom, iter, method, palette, relief) in specs {
+        for &((name, fractal, cx, cy, zoom, iter, method, palette, relief), custom) in &all_specs {
             // A filter matches goldens by group tag or by individual spec name
             // (`--selftest-filter multibrot3-1e6` re-renders one golden in seconds).
             if !(want("goldens") || filter.as_ref().is_some_and(|f| name.contains(f.as_str()))) {
                 continue;
             }
             self.fractal = fractal;
+            if let Some((src, params)) = custom {
+                match crate::custom_formula::CustomFormula::compile(src, params) {
+                    Ok(c) => self.custom = Some(std::sync::Arc::new(c)),
+                    Err(e) => {
+                        goldens.push((name.to_string(), 0, 0.0, 0, false, format!("formula does not compile: {e}"), "RENDER ERROR"));
+                        continue;
+                    }
+                }
+            }
             self.julia_mode = false;
             self.coloring.color_method = crate::ColorMethod::from_u32(method);
             self.coloring.palette_idx = palette;
@@ -6526,11 +8775,18 @@ zoom = \"1e94\"
             req.width = gw;
             req.height = gh;
             req.ss = 1;
+            let family = match custom {
+                Some((src, params)) if params.is_empty() => format!("--formula \"{src}\""),
+                Some((src, params)) => format!(
+                    "--formula \"{src}\" --formula-params \"{}\"",
+                    params.iter().map(|(re, im)| format!("{re},{im}")).collect::<Vec<_>>().join(";")
+                ),
+                None => format!("--fractal \"{}\"", fractal.name()),
+            };
             let reproduce = format!(
-                "fractadyne --render --out {name}.png --fractal \"{}\" --center {cx} {cy} \
+                "fractadyne --render --out {name}.png {family} --center {cx} {cy} \
                  --zoom {zoom} --size {gw} --iter {iter} --ss 1 --method {} --palette {palette} \
                  --no-watermark",
-                fractal.name(),
                 crate::ColorMethod::from_u32(method).key()
             );
             let progress = std::sync::atomic::AtomicU32::new(0);
@@ -6584,6 +8840,9 @@ zoom = \"1e94\"
                 Err(e) => goldens.push((name.to_string(), 0, 0.0, 0, false, format!("render failed: {e}"), "RENDER ERROR")),
             }
         }
+        // The custom goldens leave a custom formula selected; nothing after them should inherit it.
+        self.custom = None;
+        self.fractal = FractalKind::Mandelbrot;
 
         // bench-matrix rendering-pipeline sanity check (design/bench-matrix.md): assert each
         // deterministic path's EXACT signature (mode / skip / orbit-len / eff-iter / GPU event
@@ -6650,10 +8909,16 @@ zoom = \"1e94\"
         md.push_str("## Numeric, deep-zoom & invariant checks\n\n");
         md.push_str("| Category | Check | Parameters | Result | Threshold | Verdict |\n");
         md.push_str("|---|---|---|---|---|---|\n");
+        // A `|` in a cell (a formula's `|z|`) would split the row: escape it.
+        let cell = |s: &str| s.replace('|', "\\|");
         for c in &checks {
             md.push_str(&format!(
                 "| {} | {} | {} | {} | {} | {} |\n",
-                c.category, c.name, c.params, c.result, c.threshold,
+                cell(c.category),
+                cell(&c.name),
+                cell(&c.params),
+                cell(&c.result),
+                cell(c.threshold),
                 if c.pass { "✅ PASS" } else { "❌ FAIL" }
             ));
         }

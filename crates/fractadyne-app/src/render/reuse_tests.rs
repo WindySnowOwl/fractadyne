@@ -21,6 +21,7 @@ fn inputs_for(cx: &str, cy: &str, log2mag: f64, gpu_iter: u32, reuse: Option<Reu
         precision: vp.precision,
         julia: false,
         formula: 0,
+        custom: None,
         julia_c: (0.0, 0.0),
         do_sa: false,
         bla_dc_max: None,

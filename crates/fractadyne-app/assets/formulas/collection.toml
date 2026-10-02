@@ -1,0 +1,567 @@
+# The formula collection that comes with Fractadyne: Fractal > Custom formula > Examples, and the
+# Collection tab of Fractal > Formula library. Written for Fractadyne from the mathematics; every
+# entry has a starting view, and a test renders each one there and checks the picture is there.
+#
+# zoom is the magnification (1 = the home view, 4 units tall); julia, when present, shows the
+# Julia set for that constant.
+
+format = "fractadyne-formulas"
+version = 1
+
+# ---- Powers and folds ----
+
+[[formula]]
+name = "Multibrot 6"
+category = "Powers and folds"
+about = "z⁶ + c: the Mandelbrot construction at power 6, with fivefold symmetry."
+source = "z = z^6 + c"
+[formula.view]
+center = ["0", "0"]
+zoom = "1.6"
+iterations = 300
+
+[[formula]]
+name = "Multibrot 8"
+category = "Powers and folds"
+about = "z⁸ + c: sevenfold symmetry, the bulbs thinning towards a circle."
+source = "z = z^8 + c"
+[formula.view]
+center = ["0", "0"]
+zoom = "1.6"
+iterations = 300
+
+[[formula]]
+name = "Cubic Burning Ship"
+category = "Powers and folds"
+about = "The Burning Ship at power 3: both parts made positive, then cubed."
+source = "z = abs(z)^3 + c"
+[formula.view]
+center = ["0", "0"]
+zoom = "1.4"
+iterations = 300
+
+[[formula]]
+name = "Quartic Burning Ship"
+category = "Powers and folds"
+about = "The Burning Ship at power 4."
+source = "z = abs(z)^4 + c"
+[formula.view]
+center = ["0", "0"]
+zoom = "1.4"
+iterations = 300
+
+[[formula]]
+name = "Cubic Tricorn"
+category = "Powers and folds"
+about = "The Tricorn (Mandelbar) at power 3: the conjugate cubed, fourfold symmetric."
+source = "z = conj(z)^3 + c"
+[formula.view]
+center = ["0", "0"]
+zoom = "1.4"
+iterations = 300
+
+[[formula]]
+name = "Perpendicular Mandelbrot"
+category = "Powers and folds"
+about = "The real part folded before squaring: (|x| − iy)² + c."
+source = "z = (abs(real(z)) - flip(imag(z)))^2 + c"
+[formula.view]
+center = ["-0.6", "0"]
+zoom = "1.2"
+iterations = 300
+
+[[formula]]
+name = "Perpendicular Burning Ship"
+category = "Powers and folds"
+about = "The imaginary part folded before squaring: (x − i|y|)² + c."
+source = "z = (real(z) - flip(abs(imag(z))))^2 + c"
+[formula.view]
+center = ["-0.6", "0"]
+zoom = "1.2"
+iterations = 300
+
+[[formula]]
+name = "Heart"
+category = "Powers and folds"
+about = "(|x| + iy)² + c: the real part folded, the imaginary kept."
+source = "z = (abs(real(z)) + flip(imag(z)))^2 + c"
+[formula.view]
+center = ["-0.6", "0"]
+zoom = "1.3"
+iterations = 300
+
+[[formula]]
+name = "Partial Burning Ship"
+category = "Powers and folds"
+about = "(x + i|y|)² + c: only the imaginary part folded."
+source = "z = (real(z) + flip(abs(imag(z))))^2 + c"
+[formula.view]
+center = ["-0.6", "0"]
+zoom = "1.2"
+iterations = 300
+
+[[formula]]
+name = "Mandelbar Celtic"
+category = "Powers and folds"
+about = "The Celtic fold on the conjugate's square: |Re z²| − i·Im z² + c."
+source = "z = abs(real(z^2)) - flip(imag(z^2)) + c"
+[formula.view]
+center = ["-0.6", "0"]
+zoom = "1.2"
+iterations = 300
+
+[[formula]]
+name = "Perpendicular Celtic"
+category = "Powers and folds"
+about = "|x² − y²| − 2i|x|y + c."
+source = "z = abs(real(z^2)) - flip(2*abs(real(z))*imag(z)) + c"
+[formula.view]
+center = ["-0.6", "0"]
+zoom = "1.2"
+iterations = 300
+
+[[formula]]
+name = "Cubic Celtic"
+category = "Powers and folds"
+about = "The Celtic fold at power 3: |Re z³| + i·Im z³ + c."
+source = "z = abs(real(z^3)) + flip(imag(z^3)) + c"
+[formula.view]
+center = ["0", "0"]
+zoom = "1.3"
+iterations = 300
+
+[[formula]]
+name = "Cubic Buffalo"
+category = "Powers and folds"
+about = "The Buffalo at power 3: both parts of z³ made positive."
+source = "z = abs(z^3) + c"
+[formula.view]
+center = ["0", "0"]
+zoom = "1.3"
+iterations = 300
+
+# ---- Blends and hybrids ----
+
+[[formula]]
+name = "Cubic with a parameter"
+category = "Blends and hybrids"
+about = "z³ − p₁z + c: a slice of the cubic family, its two critical points pulled apart by p₁."
+source = "z = z^3 - p1*z + c"
+params = [["0.5", "0"]]
+[formula.view]
+center = ["0", "0"]
+zoom = "1.3"
+iterations = 300
+
+[[formula]]
+name = "Hybrid square"
+category = "Blends and hybrids"
+about = "z² plus a share of its conjugate: t = z², z = t + p₁·t̄ + c."
+source = "t = sqr(z)\nz = t + p1*conj(t) + c"
+params = [["0.25", "0"]]
+[formula.view]
+center = ["-0.5", "0"]
+zoom = "1"
+iterations = 300
+
+[[formula]]
+name = "Mandelbrot–Burning Ship blend"
+category = "Blends and hybrids"
+about = "Halfway between the two: (1 − p₁)z² + p₁·(|x| + i|y|)² + c."
+source = "z = (1 - p1)*z^2 + p1*abs(z)^2 + c"
+params = [["0.5", "0"]]
+[formula.view]
+center = ["0", "0"]
+zoom = "0.7"
+iterations = 300
+
+[[formula]]
+name = "Mandelbrot–Tricorn blend"
+category = "Blends and hybrids"
+about = "(1 − p₁)z² + p₁·z̄² + c: the Mandelbrot set losing its imaginary stretch."
+source = "z = (1 - p1)*z^2 + p1*conj(z)^2 + c"
+params = [["0.25", "0"]]
+[formula.view]
+center = ["-0.5", "0"]
+zoom = "1"
+iterations = 300
+
+[[formula]]
+name = "Conjugate term"
+category = "Blends and hybrids"
+about = "z² + p₁·z̄ + c."
+source = "z = z^2 + p1*conj(z) + c"
+params = [["0.5", "0"]]
+[formula.view]
+center = ["-0.5", "0"]
+zoom = "1"
+iterations = 300
+
+[[formula]]
+name = "Mandelbrot then Burning Ship"
+category = "Blends and hybrids"
+about = "Each step a Mandelbrot step, then a Burning Ship one: (|Re w| + i|Im w|)² + c with w = z² + c."
+source = "w = z^2 + c\nz = abs(w)^2 + c"
+[formula.view]
+center = ["-0.5", "0"]
+zoom = "1"
+iterations = 300
+
+[[formula]]
+name = "Mandelbrot then Tricorn"
+category = "Blends and hybrids"
+about = "A Mandelbrot step, then a Tricorn one: w̄² + c with w = z² + c."
+source = "w = z^2 + c\nz = conj(w)^2 + c"
+[formula.view]
+center = ["-0.5", "0"]
+zoom = "1"
+iterations = 300
+
+[[formula]]
+name = "Mandelbrot then cubic"
+category = "Blends and hybrids"
+about = "A Mandelbrot step, then a cubic one: w³ + c with w = z² + c."
+source = "w = z^2 + c\nz = w^3 + c"
+[formula.view]
+center = ["0", "0"]
+zoom = "1.3"
+iterations = 300
+
+[[formula]]
+name = "Quadratic plus cubic"
+category = "Blends and hybrids"
+about = "z³ + p₁z² + c."
+source = "z = z^3 + p1*z^2 + c"
+params = [["1", "0"]]
+[formula.view]
+center = ["0", "0"]
+zoom = "1.6"
+iterations = 300
+
+[[formula]]
+name = "Sine-perturbed Mandelbrot"
+category = "Blends and hybrids"
+about = "z² + c + p₁·sin z."
+source = "z = z^2 + c + p1*sin(z)"
+params = [["0.5", "0"]]
+[formula.view]
+center = ["-0.3", "0"]
+zoom = "1.4"
+iterations = 300
+
+[[formula]]
+name = "Square root of a quartic"
+category = "Blends and hybrids"
+about = "√(z⁴ + c): principal roots, so a cut runs through it."
+source = "z = sqrt(z^4 + c)"
+[formula.view]
+center = ["0", "0"]
+zoom = "1.8"
+iterations = 300
+
+# ---- Through another map ----
+
+[[formula]]
+name = "Inverted Mandelbrot"
+category = "Through another map"
+about = "z² + 1/c: the Mandelbrot set turned inside out, infinity brought to the middle."
+source = "z = z^2 + 1/c"
+[formula.view]
+center = ["0.4", "0"]
+zoom = "0.8"
+iterations = 300
+
+[[formula]]
+name = "Inverted at the cusp"
+category = "Through another map"
+about = "z² + 1/c + ¼: inverted about the cusp at ¼, which goes to infinity; the main cardioid becomes a parabola."
+source = "z = z^2 + 1/c + 0.25"
+[formula.view]
+center = ["1.5", "0"]
+zoom = "0.4"
+iterations = 300
+
+[[formula]]
+name = "Mercator Mandelbrot"
+category = "Through another map"
+about = "z² + eᶜ: the Mandelbrot set in log-polar form, repeating every 2π up the plane."
+source = "z = z^2 + exp(c)"
+[formula.view]
+center = ["-0.9", "0"]
+zoom = "1.5"
+iterations = 300
+
+[[formula]]
+name = "Mandelbrot through sine"
+category = "Through another map"
+about = "z² + sin c: copies of the Mandelbrot set along the real axis."
+source = "z = z^2 + sin(c)"
+[formula.view]
+center = ["0", "0"]
+zoom = "0.8"
+iterations = 300
+
+[[formula]]
+name = "Tetration"
+category = "Through another map"
+about = "cᶻ from z = 0: the power tower c^c^c^…, which converges inside."
+source = "z = c^z"
+[formula.view]
+center = ["0", "0"]
+zoom = "0.5"
+iterations = 300
+
+# ---- Transcendental ----
+
+[[formula]]
+name = "Sine"
+category = "Transcendental"
+about = "sin z + c."
+source = "z = sin(z) + c"
+[formula.view]
+center = ["0", "0"]
+zoom = "0.6"
+iterations = 200
+
+[[formula]]
+name = "Cosine"
+category = "Transcendental"
+about = "cos z + c."
+source = "z = cos(z) + c"
+[formula.view]
+center = ["0", "0"]
+zoom = "0.6"
+iterations = 200
+
+[[formula]]
+name = "Hyperbolic sine"
+category = "Transcendental"
+about = "sinh z + c."
+source = "z = sinh(z) + c"
+[formula.view]
+center = ["0", "0"]
+zoom = "0.6"
+iterations = 200
+
+[[formula]]
+name = "Hyperbolic cosine"
+category = "Transcendental"
+about = "cosh z + c."
+source = "z = cosh(z) + c"
+[formula.view]
+center = ["0", "0"]
+zoom = "0.6"
+iterations = 200
+
+[[formula]]
+name = "Exponential"
+category = "Transcendental"
+about = "eᶻ + c."
+source = "z = exp(z) + c"
+[formula.view]
+center = ["0.3", "0"]
+zoom = "0.8"
+iterations = 200
+
+[[formula]]
+name = "Exponential map"
+category = "Transcendental"
+about = "c·eᶻ: the parameter plane of the exponential family, as Devaney studied it."
+source = "z = c*exp(z)"
+[formula.view]
+center = ["0.5", "0"]
+zoom = "0.7"
+iterations = 200
+
+[[formula]]
+name = "Exponential of the square"
+category = "Transcendental"
+about = "e^(z²) + c."
+source = "z = exp(z^2) + c"
+[formula.view]
+center = ["0", "0"]
+zoom = "0.8"
+iterations = 200
+
+[[formula]]
+name = "Sine of the square"
+category = "Transcendental"
+about = "sin(z²) + c."
+source = "z = sin(z^2) + c"
+[formula.view]
+center = ["0", "0"]
+zoom = "0.8"
+iterations = 200
+
+[[formula]]
+name = "Sine times z"
+category = "Transcendental"
+about = "z·sin z + c."
+source = "z = z*sin(z) + c"
+[formula.view]
+center = ["0", "0"]
+zoom = "0.6"
+iterations = 200
+
+# ---- Rational ----
+
+[[formula]]
+name = "Pole beside the set"
+category = "Rational"
+about = "z² + c/(z + 2): a pole at −2 leaves its mark to the left of the set."
+source = "z = z^2 + c/(z + 2)"
+[formula.view]
+center = ["-0.5", "0"]
+zoom = "0.8"
+iterations = 300
+
+[[formula]]
+name = "Damped square"
+category = "Rational"
+about = "z² + c/(z² + 1)."
+source = "z = z^2 + c/(z^2 + 1)"
+[formula.view]
+center = ["-0.1", "0"]
+zoom = "2"
+iterations = 300
+
+# ---- Julia sets ----
+
+[[formula]]
+name = "Lambda"
+category = "Julia sets"
+about = "λz(1 − z), the logistic map, at λ = 0.85 + 0.6i (Fractint's default)."
+source = "z = c*z*(1 - z)"
+[formula.view]
+center = ["0.5", "0"]
+zoom = "1.6"
+iterations = 300
+julia = ["0.85", "0.6"]
+
+[[formula]]
+name = "Sine Julia"
+category = "Julia sets"
+about = "λ·sin z at λ = 1 + 0.4i."
+source = "z = c*sin(z)"
+[formula.view]
+center = ["0", "0"]
+zoom = "0.5"
+iterations = 200
+julia = ["1", "0.4"]
+
+[[formula]]
+name = "Burning Ship Julia"
+category = "Julia sets"
+about = "The Burning Ship's Julia set at c = −1.2 − 0.05i."
+source = "z = abs(z)^2 + c"
+[formula.view]
+center = ["0", "0"]
+zoom = "1.4"
+iterations = 300
+julia = ["-1.2", "-0.05"]
+
+[[formula]]
+name = "Tricorn Julia"
+category = "Julia sets"
+about = "The Tricorn's Julia set at c = 0.25 + 0.5i."
+source = "z = conj(z)^2 + c"
+[formula.view]
+center = ["0", "0"]
+zoom = "1.4"
+iterations = 300
+julia = ["0.25", "0.5"]
+
+[[formula]]
+name = "Celtic Julia"
+category = "Julia sets"
+about = "The Celtic fold's Julia set at c = −1.1 + 0.05i."
+source = "z = abs(real(z^2)) + flip(imag(z^2)) + c"
+[formula.view]
+center = ["0", "0"]
+zoom = "1.2"
+iterations = 300
+julia = ["-1.1", "0.05"]
+
+# ---- Fractint classics: an init section, a bailout test of their own, an if block ----
+
+[[formula]]
+name = "Magnet I"
+category = "Fractint classics"
+about = "((z² + c − 1)/(2z + c − 2))², from a model of magnetism. Its own test stops an orbit that escapes or settles on the fixed point 1."
+source = "z = sqr((z^2 + c - 1)/(2*z + c - 2))\n|z| <= 100 && |z - 1| > 0.000001"
+[formula.view]
+center = ["1.3", "0"]
+zoom = "0.9"
+iterations = 300
+
+[[formula]]
+name = "Magnet II"
+category = "Fractint classics"
+about = "Magnet I's cubic sibling from the same model; the same test, for escape or the fixed point 1."
+source = "z = sqr((z^3 + 3*(c - 1)*z + (c - 1)*(c - 2))/(3*z^2 + 3*(c - 2)*z + (c - 1)*(c - 2) + 1))\n|z| <= 100 && |z - 1| > 0.000001"
+[formula.view]
+center = ["1", "0"]
+zoom = "1.2"
+iterations = 300
+
+[[formula]]
+name = "Lambda parameter plane"
+category = "Fractint classics"
+about = "λz(1 − z) from its critical point ½ (the init section): the λ whose Lambda Julia set is connected, two Mandelbrot sets back to back."
+source = "z = 0.5:\nz = c*z*(1 - z)"
+[formula.view]
+center = ["1", "0"]
+zoom = "0.75"
+iterations = 300
+
+[[formula]]
+name = "Nova"
+category = "Fractint classics"
+about = "Newton's method for z³ = 1, plus c, from the critical point 1: Mandelbrot-like copies among Newton's basins. It stops where it settles."
+source = "z = 1:\nw = z\nz = z - (z^3 - 1)/(3*z^2) + c\n|z - w| > 0.000000001"
+[formula.view]
+center = ["-0.5", "0"]
+zoom = "3"
+iterations = 300
+
+[[formula]]
+name = "Barnsley M1"
+category = "Fractint classics"
+about = "Barnsley's map, z ↦ (z − 1)c or (z + 1)c by the sign of Re z, from z = c: an if block in every step."
+source = "z = c:\nif (real(z) >= 0)\n  z = (z - 1)*c\nelse\n  z = (z + 1)*c\nendif\n|z| <= 4"
+[formula.view]
+center = ["0", "0"]
+zoom = "1"
+iterations = 300
+
+[[formula]]
+name = "Spider"
+category = "Fractint classics"
+about = "z ↦ z² + s while s ↦ s/2 + z, both from c: a second variable carried from step to step."
+source = "z = c, s = c:\nz = z*z + s\ns = s/2 + z\n|z| <= 4"
+[formula.view]
+center = ["-0.5", "0"]
+zoom = "1.2"
+iterations = 300
+
+[[formula]]
+name = "Manowar"
+category = "Fractint classics"
+about = "z ↦ z² + z₋₁ + c, the step before's z carried along, from z = z₋₁ = c: a small jellyfish, tentacles trailing left."
+source = "z = c, z1 = c:\nt = z\nz = z*z + z1 + c\nz1 = t\n|z| <= 4"
+[formula.view]
+center = ["-0.15", "0"]
+zoom = "5"
+iterations = 300
+
+[[formula]]
+name = "Phoenix with a parameter"
+category = "Fractint classics"
+about = "z ↦ z² + c + p₁·y, y the step before's z (from 0): Ushiki's Phoenix Julia set at c = 0.56667, p₁ = −0.5, with p₁ free to change."
+source = "t = z\nz = z*z + c + p1*y\ny = t"
+params = [["-0.5", "0"]]
+[formula.view]
+center = ["0", "0"]
+zoom = "1.3"
+iterations = 300
+julia = ["0.56667", "0"]

@@ -39,6 +39,12 @@ pub use reference::*;
 
 mod fractal;
 
+/// The formula intermediate representation and its interpreters (design/custom-formulas.md).
+pub mod ir;
+
+/// Life-like cellular automata: rules, the sparse universe, pattern files (design/automata.md).
+pub mod life;
+
 mod backend;
 #[cfg(feature = "rug")]
 mod backend_rug;
@@ -63,6 +69,8 @@ pub use backend::{
 /// - [`series_skip`] — only for polynomial `z^d + c` families (see [`formula_power`]).
 /// - [`formula_power`] — the escape power, if the family is a Multibrot-style `z^d + c`.
 /// - `fractadyne-gpu/src/mandelbrot.wgsl` `fs_iterate` — one branch per active render mode.
+/// - [`formula::caps`] — what else it supports (series approximation, BLA, resumable passes, the
+///   finders, the export glitch-correction policy). Callers ask the capability, never the id.
 ///
 /// An unknown id falls back to Mandelbrot in [`step_bf`]/[`orbit_points`] (a safe default, not an
 /// error) — validate with [`is_valid_formula`] at UI/CLI boundaries if a hard reject is wanted.
@@ -77,8 +85,140 @@ pub mod formula {
     pub const BUFFALO: u32 = 7;
     pub const PHOENIX: u32 = 8;
     pub const NEWTON: u32 = 9;
+    /// The power and fold families (design/power-families.md): ids `FAMILY_FIRST..COUNT`, five
+    /// shapes in [`Shape`] order, three powers each — see [`family`].
+    pub const MULTIBROT6: u32 = 10;
+    pub const MULTIBROT7: u32 = 11;
+    pub const MULTIBROT8: u32 = 12;
+    pub const BURNING_SHIP3: u32 = 13;
+    pub const BURNING_SHIP4: u32 = 14;
+    pub const BURNING_SHIP5: u32 = 15;
+    pub const TRICORN3: u32 = 16;
+    pub const TRICORN4: u32 = 17;
+    pub const TRICORN5: u32 = 18;
+    pub const CELTIC3: u32 = 19;
+    pub const CELTIC4: u32 = 20;
+    pub const CELTIC5: u32 = 21;
+    pub const BUFFALO3: u32 = 22;
+    pub const BUFFALO4: u32 = 23;
+    pub const BUFFALO5: u32 = 24;
+    /// The first power-family id.
+    pub const FAMILY_FIRST: u32 = MULTIBROT6;
     /// Number of defined formula ids (ids are `0..COUNT`).
-    pub const COUNT: u32 = 10;
+    pub const COUNT: u32 = 25;
+
+    /// A power family's shape: where its fold sits relative to the power (design/power-families.md
+    /// §1). The WGSL twin numbers them in this order (`fam_shape`).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Shape {
+        /// `z^d + c`.
+        Multibrot,
+        /// `(|x| + i|y|)^d + c`: the fold before the power.
+        BurningShip,
+        /// `conj(z)^d + c`.
+        Tricorn,
+        /// `|Re w| + i·Im w + c`, `w = z^d`: the fold after.
+        Celtic,
+        /// `|Re w| + i·|Im w| + c`.
+        Buffalo,
+    }
+
+    /// A power family's shape and power, for ids `FAMILY_FIRST..COUNT` (`None` for every other id,
+    /// the older families included: their arms are their own).
+    pub const fn family(formula: u32) -> Option<(Shape, u32)> {
+        if formula < FAMILY_FIRST || formula >= COUNT {
+            return None;
+        }
+        let k = formula - FAMILY_FIRST;
+        let shape = match k / 3 {
+            0 => Shape::Multibrot,
+            1 => Shape::BurningShip,
+            2 => Shape::Tricorn,
+            3 => Shape::Celtic,
+            _ => Shape::Buffalo,
+        };
+        // Multibrot runs on from 5 (6, 7, 8); the fold families from their power-2 originals.
+        let d = if k < 3 { 6 + k } else { 3 + k % 3 };
+        Some((shape, d))
+    }
+    /// The id a custom formula ([`crate::ir`]) renders under. Outside `0..COUNT`, so every
+    /// built-in branch of the shader skips it and [`caps`] grants it none of the built-in
+    /// capabilities; its step comes from its own generated shader module instead.
+    pub const CUSTOM: u32 = 1000;
+    /// The id a Life-like automaton renders under (design/automata.md §3): not an escape-time
+    /// formula at all, so outside every range the shader and [`caps`] know. Its picture comes
+    /// from the Life stepper and display pass.
+    pub const LIFE: u32 = 1100;
+
+    /// The escape degree `d` (`|z'| ≈ |z|^d` far out): the smooth count's log base, as the
+    /// shader's `power_f`. 2 for every family that is not a higher power (Phoenix and Newton
+    /// included, as the shader has them).
+    pub const fn power(formula: u32) -> u32 {
+        match formula {
+            MULTIBROT3 => 3,
+            MULTIBROT4 => 4,
+            MULTIBROT5 => 5,
+            f => match family(f) {
+                Some((_, d)) => d,
+                None => 2,
+            },
+        }
+    }
+
+    /// What a formula supports beyond plain iteration (design/custom-formulas.md §4.3). These were
+    /// id ranges written out at each use (`formula_id() <= 3`, `== 0`, `> 3`); a custom formula
+    /// will compute its own from its definition, so every caller asks the capability instead.
+    /// (Julia and perturbation support are still the app's `FractalSpec` flags.)
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct FormulaCaps {
+        /// Series approximation can seed the perturbation (`series_skip`): the `z^d + c` families.
+        pub series_approximation: bool,
+        /// A BLA tree can be built for it (`bla_tree_gpu`): the `z^d + c` families (Multibrot 3–8
+        /// since the power families' phase 3; Mandelbrot before) and, with a 2×2 tree since phase 4,
+        /// the folds (Tricorn, Burning Ship, Celtic, Buffalo at every power).
+        pub bla: bool,
+        /// The resumable chunk shaders (`fs_iterate_chunk*`) implement it, so a live refresh or an
+        /// export tile can be split on the iteration axis.
+        pub resumable_passes: bool,
+        /// The minibrot (nucleus) finder applies (`find_nucleus`, via `formula_power`).
+        pub nucleus_finder: bool,
+        /// The Misiurewicz explorer, feature go-to, snap-to-nucleus and the autopilot's
+        /// Misiurewicz target: Mandelbrot only.
+        pub feature_solvers: bool,
+        /// Exports run multi-reference glitch correction (outside Julia mode): every family but the
+        /// `z^d + c` ones, where the glitch audit found it repaired nothing.
+        pub export_glitch_correction: bool,
+        /// Convergent (root finding) rather than escape time: the orbit starts at the point.
+        pub convergent: bool,
+    }
+
+    /// The built-in families' capabilities. An unknown id gets none of them, and glitch correction
+    /// on — what each gate gave an out-of-range id when it was written as an id range. Except
+    /// [`CUSTOM`]: glitch correction builds its extra references from the formula ID, which names
+    /// no custom step (a custom export ran 52 references of the wrong orbit before this); and a
+    /// custom formula's generated module carries its own resumable chunk pass (`custom.rs`), so
+    /// it has `resumable_passes` — ⚠which every chunk pipeline must then build from THAT module.
+    pub const fn caps(formula: u32) -> FormulaCaps {
+        let polynomial = matches!(
+            formula,
+            MANDELBROT | MULTIBROT3 | MULTIBROT4 | MULTIBROT5 | MULTIBROT6 | MULTIBROT7 | MULTIBROT8
+        );
+        // The folds at every power: a real 2×2 BLA tree (`build_bla_fold`).
+        let fold = matches!(formula, TRICORN | BURNING_SHIP | CELTIC | BUFFALO)
+            || matches!(
+                family(formula),
+                Some((Shape::BurningShip | Shape::Tricorn | Shape::Celtic | Shape::Buffalo, _))
+            );
+        FormulaCaps {
+            series_approximation: polynomial,
+            bla: polynomial || fold,
+            resumable_passes: polynomial || formula == CUSTOM,
+            nucleus_finder: polynomial,
+            feature_solvers: formula == MANDELBROT,
+            export_glitch_correction: !polynomial && formula != CUSTOM && formula != LIFE,
+            convergent: formula == NEWTON,
+        }
+    }
 }
 
 /// Whether `formula` is a defined id (`0..formula::COUNT`). Dispatch tolerates unknown ids by

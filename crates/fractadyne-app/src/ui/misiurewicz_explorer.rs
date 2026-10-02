@@ -458,7 +458,7 @@ impl crate::FractadyneApp {
             .default_height(460.0)
             .resizable(true)
             .show(ctx, |ui| {
-                if self.fractal.formula_id() != 0 {
+                if !self.fractal.caps().feature_solvers {
                     ui.label("Misiurewicz browsing is Mandelbrot-only — switch the fractal to use it.");
                     return;
                 }

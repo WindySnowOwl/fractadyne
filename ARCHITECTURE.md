@@ -76,9 +76,11 @@ Unit tests live in sibling files (`#[cfg(test)] mod name;` beside the code under
 ## 3. The fractal system (no trait, but a single metadata table)
 
 There is **no `Fractal`/`RenderStrategy` trait**. Instead, [`fractal.rs`](crates/fractadyne-app/src/fractal.rs)
-defines a `FractalKind` enum (10 families) with an integer **`formula_id()` (0–9)** that every layer
+defines a `FractalKind` enum (25 families) with an integer **`formula_id()` (0–24)** that every layer
 switches on. Families: Mandelbrot, Multibrot 3/4/5, Tricorn, Burning Ship, Celtic, Buffalo, Phoenix,
-Newton. Julia mode is an orthogonal flag on any family that supports it.
+Newton (0–9), and the power families 10–24 — Multibrot 6–8 and Burning Ship, Tricorn, Celtic and
+Buffalo at powers 3–5 — which every layer handles generically by `formula::family(id)` → (shape,
+power) (design/power-families.md). Julia mode is an orthogonal flag on any family that supports it.
 
 All the app-side per-family metadata — `name`, `formula_id`, `default_center`, `supports_julia`,
 `supports_perturbation`, `info` — lives in **one `FractalKind::SPECS` table** (one row per family);
