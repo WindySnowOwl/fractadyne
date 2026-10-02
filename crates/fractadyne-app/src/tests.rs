@@ -339,11 +339,15 @@ palette_custom=0,0.25,0.5,0,0,0,1,1,0.2,0.1,1,0,0,0,0,0,0;\
 /// - `rule` / `pattern` / `pattern_origin` / `pattern_generation` / `generation` / `pattern_name`
 ///   appear ONLY in a Life view (see `life_metadata`); their round trip is
 ///   `a_life_view_round_trips_its_universe`.
+/// - `lsystem` / `lsystem_order` / `lsystem_angle` / `lsystem_width` / `lsystem_colour` appear ONLY
+///   in an L-system view (see `lsystem_lines`); their round trip is
+///   `an_lsystem_view_round_trips_its_system`.
 const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "thumb", "checksum",
     "center_re_expr", "center_im_expr", "center_re_offset", "center_im_offset",
     "formula", "formula_params",
     "rule", "pattern", "pattern_origin", "pattern_generation", "generation", "pattern_name",
+    "lsystem", "lsystem_order", "lsystem_angle", "lsystem_width", "lsystem_colour",
 ];
 
 #[test]

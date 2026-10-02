@@ -6441,6 +6441,7 @@ impl FractadyneApp {
             formula: fractal.formula_id(),
             custom: self.custom_shader_for(fractal),
             life: None, // Life frames are built by `build_life_params`, not here
+            lsystem: None, // nor L-system frames (`build_lsystem_params`)
             julia: julia as u32,
             span_mantissa,
             max_iter: shader_iter,

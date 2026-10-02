@@ -59,6 +59,22 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **L-systems (not yet in a beta).** A new family under Fractal ▸ L-systems: curves, space-filling
+  curves, islands and plants drawn by a turtle from a rewriting grammar (Lindenmayer systems). The
+  order follows the zoom — zoom in by a curve's growth factor and it gains an order — so the detail
+  never runs out, and a view costs what its pixels cost whatever the order: the word is never
+  built, and the parts of the drawing off the view or under a pixel are stepped over or drawn as
+  one segment. 32 systems are built in (Koch, Lévy, the dragons, Sierpinski's curves, Hilbert,
+  Moore, Peano, Gosper, islands and tilings, and the plants of *The Algorithmic Beauty of Plants*),
+  Fractint .l files open directly (a file with several entries lists them), and a system can be
+  edited as text, with errors placed at their line and column. Fractint's turtle commands are
+  supported: draw and move, turns, turn-around, swapped turns, brackets, step factors, turns by any
+  angle, colour indices. The angle has a slider; the line width, and colouring by position along
+  the curve, branch depth, heading or colour index, are in the panel; the toolbar raises and
+  lowers the order. A view carries its system and writes format_version 4; the session keeps it.
+  Not yet: image export of an L-system view (refused with a message), zoom past about 1e12× (the
+  positions are double precision), and the stochastic, parametric and context-sensitive systems,
+  filled shapes and SVG export (design/lsystems.md).
 - **Conway's Game of Life and its relatives (not yet in a beta).** A new family under Fractal ▸
   Automata: Life-like cellular automata on an unbounded plane, stepped on the graphics card.
   Rules in B/S notation (Life, HighLife, Seeds and 19 more built in), Generations rules with

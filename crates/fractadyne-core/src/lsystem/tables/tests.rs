@@ -79,18 +79,27 @@ fn a_picture_that_alternates_steps_its_order_by_two() {
 
 #[test]
 fn an_overlapping_curve_stops_refining_where_it_saturates() {
-    // Tiles overlaps itself: at a step of 1.5 px it would draw ~9 segments over every pixel.
+    // Tiles overlaps itself: 1.6, 3.1, 12, 46 segments a square step at orders 1, 3, 7, 11.
     let t = Tables::new(&sys("Tiles"));
-    let px = 250.0;
-    let by_step = (0..=t.max_depth)
-        .filter(|&n| (t.max_depth - n).is_multiple_of(t.period))
-        .find(|&n| norm(t.step(n)) * px <= 1.5)
-        .unwrap();
-    let n = t.auto_order(px, 1.5).unwrap();
-    assert!(n < by_step, "{n} vs {by_step}");
-    assert!(t.density(n, px) <= MAX_DENSITY);
-    // The plane-filling curves that do not overlap never meet the cap.
-    for name in ["Hilbert curve", "Peano curve", "Gosper curve", "Heighway dragon", "Koch snowflake"] {
+    for px in [250.0, 1e6] {
+        let by_step = (0..=t.max_depth)
+            .filter(|&n| (t.max_depth - n).is_multiple_of(t.period))
+            .find(|&n| norm(t.step(n)) * px <= 1.5)
+            .unwrap();
+        let n = t.auto_order(px, 1.5).unwrap();
+        assert!(n < by_step, "{n} vs {by_step}");
+        assert!(t.density(n) <= MAX_DENSITY);
+        assert!(t.density(n + t.period) > MAX_DENSITY, "held back no further than the cap");
+    }
+    // The plane-filling curves that do not overlap never meet the cap: about one segment a
+    // square step at every order.
+    for name in ["Hilbert curve", "Peano curve", "Moore curve", "Quadratic Gosper curve"] {
+        let t = Tables::new(&sys(name));
+        for n in [6, 12, 30] {
+            assert!((t.density(n) - 1.0).abs() < 0.1, "{name} order {n}: {}", t.density(n));
+        }
+    }
+    for name in ["Hilbert curve", "Peano curve", "Gosper curve", "Heighway dragon", "Koch snowflake", "Cross"] {
         let t = Tables::new(&sys(name));
         for px in [100.0, 1e4, 1e8] {
             let n = t.auto_order(px, 1.5).unwrap();
@@ -193,6 +202,39 @@ fn the_step_keeps_a_curve_in_place_as_the_order_rises() {
     let span = |n: u32| mul(t.step(n), t.axiom_entry(n).fx.d);
     for n in 45..100 {
         assert!(close(span(n), span(n + 1), 1e-6), "order {n}: {:?} vs {:?}", span(n), span(n + 1));
+    }
+}
+
+/// The step shrinks with every order (in phase), from order 0 — where a curve's measured symbol
+/// may draw nothing yet (the dragon's X): a step that collapsed there put the order that follows
+/// the zoom at 0 and drew a single segment (the uitest's first L-system screenshot).
+#[test]
+fn the_step_shrinks_with_every_order_from_the_first() {
+    for e in library::SYSTEMS {
+        let t = Tables::new(&e.system().unwrap());
+        if !t.grows() {
+            continue;
+        }
+        let p = t.period;
+        for n in 0..t.max_depth.min(120).saturating_sub(p) {
+            let (a, b) = (norm(t.step(n)), norm(t.step(n + p)));
+            // Never growing (the dragon's orders 0 and 1 both step 1: its X draws nothing at 0)…
+            assert!(b <= a * (1.0 + 1e-12), "{} order {n}: step {a} then {b}", e.name);
+            // …and by about the growth factor: never a collapse.
+            let ratio = a / b;
+            let g = t.growth.powi(p as i32);
+            assert!(ratio < 4.0 * g && ratio > 0.25 * g.min(4.0), "{} order {n}: steps {a} / {b} = {ratio} (growth {g})", e.name);
+        }
+        // So the order that follows the zoom is the first whose step is at most a pixel and a
+        // half — unless the density cap held it back, and then only as far as the cap.
+        for px in [300.0, 1e5] {
+            let n = t.auto_order(px, 1.5).unwrap();
+            if norm(t.step(n)) * px <= 1.5 {
+                assert!(n < p || norm(t.step(n - p)) * px > 1.5, "{}: order {n} at {px} is more than needed", e.name);
+            } else {
+                assert!(t.density(n + p) > MAX_DENSITY, "{}: order {n} at {px} held back below the cap", e.name);
+            }
+        }
     }
 }
 

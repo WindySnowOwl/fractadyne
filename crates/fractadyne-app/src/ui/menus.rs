@@ -160,6 +160,14 @@ impl FractadyneApp {
                 picked = Some(kind);
             }
         }
+        // L-systems: turtle drawings from a grammar (design/lsystems.md).
+        ui.separator();
+        ui.label(egui::RichText::new("L-systems").weak().small());
+        for kind in FractalKind::LSYSTEMS {
+            if ui.selectable_label(self.fractal == kind, kind.name()).on_hover_text(kind.menu_hint()).clicked() {
+                picked = Some(kind);
+            }
+        }
         picked
     }
 
@@ -279,6 +287,25 @@ impl FractadyneApp {
                                 .clicked()
                         {
                             self.life_save_file();
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        // L-systems (design/lsystems.md): a Fractint .l file opens directly.
+                        if ui
+                            .button(format!("{}  Open L-system…", crate::icons::IMPORT))
+                            .on_hover_text("A Fractint .l file (its entries to pick from) or a .lsys system.")
+                            .clicked()
+                        {
+                            self.lsystem_open_file();
+                            ui.close_menu();
+                        }
+                        if self.fractal == FractalKind::LSystem
+                            && ui
+                                .button(format!("{}  Save L-system…", crate::icons::SAVE))
+                                .on_hover_text("The system's text, as a .lsys file.")
+                                .clicked()
+                        {
+                            self.lsystem_save_file();
                             ui.close_menu();
                         }
                         ui.separator();
@@ -1055,6 +1082,8 @@ impl FractadyneApp {
                 // ▶ further along, which plays something else.
                 if self.fractal == FractalKind::Life {
                     self.life_toolbar(ui);
+                } else if self.fractal == FractalKind::LSystem {
+                    self.lsystem_toolbar(ui);
                 } else {
                 if ui
                     .add_enabled(
@@ -1506,8 +1535,19 @@ impl FractadyneApp {
                 //
                 // Right-aligned into a fixed slot: monospace, so equal char counts are equal
                 // pixels by construction (`zoom_slot_width` is pinned by a test).
-                let life_bar = self.fractal == FractalKind::Life;
-                if life_bar {
+                let life_bar = matches!(self.fractal, FractalKind::Life | FractalKind::LSystem);
+                if self.fractal == FractalKind::LSystem {
+                    // A drawing's readouts: the zoom, then the order and the segments drawn, in the
+                    // same three slots at fixed widths.
+                    let upp = self.viewport.units_per_pixel.to_f64().max(1e-300);
+                    let segs = self.lsystem.last_walk().map(|w| w.1);
+                    let (order, segments) = crate::lsystem_view::status_readouts(self.lsystem.order_for(upp), segs);
+                    mono(ui, crate::zoom_readout(false, self.viewport.log2_magnification(), self.julia_viewport.log2_magnification()));
+                    ui.separator();
+                    mono(ui, order);
+                    ui.separator();
+                    mono(ui, segments);
+                } else if life_bar {
                     // A universe's readouts, in the same three slots and at their own fixed
                     // widths: the scale, the generation, the population.
                     let (scale, generation, population) = crate::life_view::status_readouts(

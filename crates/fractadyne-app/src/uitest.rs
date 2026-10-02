@@ -96,6 +96,9 @@ enum Screen {
     /// own input (`raw_input_hook`) — nothing reaches the desktop. The toolbar's Life group, the
     /// grid lines and the outlined cell under the pointer are in the screenshot.
     LifeDraw,
+    /// An L-system (the dragon) with its panel open: the toolbar's L-system group, the walk drawn
+    /// through the segment pass, the status bar's order and segment readouts.
+    LSystem,
     /// The Custom formula dialog in Textbook view: several statements aligned at `=`, a comment, a
     /// fraction, functions in their notation, and a line that does not read.
     FormulaTextbook,
@@ -776,6 +779,7 @@ fn build_steps() -> Vec<Step> {
         screen("formula-library-filtered", Screen::FormulaLibraryFiltered),
         screen("fractal-dropdown", Screen::FractalDropdown),
         screen("life-draw", Screen::LifeDraw),
+        screen("lsystem", Screen::LSystem),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
         live("live-direct-1e2", 2.0),
         live("live-df32-1e6", 6.0),
@@ -985,7 +989,9 @@ impl FractadyneApp {
                     || !self.misi_gallery_ready()
                     || self.misi_jump_busy()
                     || self.formula_dialog.pending.is_some()
-                    || !self.harness.uitest_pointer.is_empty();
+                    || !self.harness.uitest_pointer.is_empty()
+                    // An L-system walk still on its thread: the picture is the last walk's.
+                    || (self.fractal == crate::FractalKind::LSystem && self.lsystem.busy());
                 if busy {
                     ut.quiet_since = now;
                 }
@@ -1154,6 +1160,7 @@ impl FractadyneApp {
         if self.fractal == crate::FractalKind::Custom
             || self.fractal.power_family().is_some()
             || self.fractal == crate::FractalKind::Life
+            || self.fractal == crate::FractalKind::LSystem
         {
             // A collection formula may have been shown as a Julia set, at its own view.
             self.julia_mode = false;
@@ -1615,6 +1622,11 @@ impl FractadyneApp {
                         .into_iter()
                         .collect();
             }
+            Screen::LSystem => {
+                // The dragon, framed, the order following the zoom; the panel open.
+                self.lsystem_open_library("Heighway dragon");
+                self.dialogs.right_panel_open = true;
+            }
             Screen::FormulaClassicApplied => {
                 let e = crate::formula_library::collection().iter().find(|e| e.name == "Magnet I").cloned();
                 match e.map(|e| (crate::custom_formula::CustomFormula::compile(&e.source, &[]), e.view)) {
@@ -1759,6 +1771,21 @@ impl FractadyneApp {
                     self.life.playing,
                     self.harness.uitest_pointer.len()
                 ),
+            });
+        }
+
+        if matches!(step.kind, StepKind::Screen(Screen::LSystem)) {
+            // The walk for the view landed and drew: segments, at the order that follows the zoom.
+            let upp = self.viewport.units_per_pixel.to_f64().max(1e-300);
+            let want_order = self.lsystem.order_for(upp);
+            let ok = match self.lsystem.last_walk() {
+                Some((order, segments, stopped, _)) => order == want_order && segments > 1000 && !stopped,
+                None => false,
+            };
+            checks.push(Check {
+                name: "the dragon is walked and drawn".into(),
+                verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+                detail: format!("last walk {:?} (order, segments, stopped, ms); the view's order {want_order}", self.lsystem.last_walk()),
             });
         }
 
@@ -1915,6 +1942,8 @@ impl FractadyneApp {
         let life_bar = self.fractal == crate::FractalKind::Life;
         let wants: &[&str] = if life_bar {
             &["center ", "cursor ", "scale ", "gen ", "pop "]
+        } else if self.fractal == crate::FractalKind::LSystem {
+            &["center ", "cursor ", "zoom", "order ", "segments "]
         } else {
             &["center ", "cursor ", "zoom", "iter ", "period "]
         };
@@ -1949,6 +1978,13 @@ impl FractadyneApp {
         };
         if life_bar {
             for want in ["gen ", "pop "] {
+                if find(want).and_then(|t| num(t)).is_none() {
+                    sb_problems.push(format!("{want:?} does not read as a number"));
+                }
+            }
+        } else if self.fractal == crate::FractalKind::LSystem {
+            // A drawing has no iteration count: its zoom, order and segments drawn.
+            for want in ["zoom", "order ", "segments "] {
                 if find(want).and_then(|t| num(t)).is_none() {
                     sb_problems.push(format!("{want:?} does not read as a number"));
                 }

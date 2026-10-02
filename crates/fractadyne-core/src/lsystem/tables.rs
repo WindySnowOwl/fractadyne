@@ -98,10 +98,13 @@ const LIMIT: f64 = 1e250;
 /// Turn counts kept exact without a division: `−DIRS..=DIRS` steps come from a table.
 const DIRS: i64 = 256;
 
-/// The most segments per square pixel (of the disc a picture reaches) the order follows the zoom
-/// to. Curves that fill the plane without overlapping sit near 0.1 (Hilbert, Peano, the dragon,
-/// Gosper); one that overlaps itself passes it as the order rises.
-pub const MAX_DENSITY: f64 = 0.25;
+/// The most segments per square step of the picture's bounding box the order follows the zoom to
+/// ([`Tables::density`]). Measured over the library: the plane-filling curves sit at about 1 at
+/// every order (Hilbert, Peano, Moore, the quadratic Gosper 1.00; Gosper 0.75; the terdragon
+/// 1.23; Cross 1.72), the others below; a curve that overlaps itself climbs with every order
+/// (Tiles 1.6, 3.1, 12, 46 at orders 1, 3, 7, 11; ABOP's plant c doubles an order) — past this it
+/// is a solid blob, and more order is cost with nothing to show.
+pub const MAX_DENSITY: f64 = 3.0;
 
 /// A system's tables, to [`Tables::max_depth`].
 #[derive(Clone, Debug)]
@@ -131,6 +134,9 @@ pub struct Tables {
     /// 2 for a picture that mirrors from one order to the next (the Sierpinski arrowhead lies on
     /// alternate sides of its base): its order steps by two, keeping the deepest row's phase.
     pub period: u32,
+    /// The area of the picture's bounding box, world units (at an order cheap to walk whole);
+    /// 0 for a picture that does not grow.
+    pub box_area: f64,
 }
 
 fn mul(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
@@ -232,6 +238,7 @@ impl Tables {
             measure: Vec::new(),
             growth: 1.0,
             period: 1,
+            box_area: 0.0,
         };
         for d in 1..=depth.min(MAX_ORDER) {
             let row: Vec<Entry> = (0..t.rules.len()).map(|k| t.fold(&t.rules[k], d - 1)).collect();
@@ -245,7 +252,7 @@ impl Tables {
             t.max_depth = d;
         }
         t.size_the_picture(sys);
-        t.period = super::walk::period(&t);
+        (t.period, t.box_area) = super::walk::shape(&t);
         t
     }
 
@@ -415,10 +422,14 @@ impl Tables {
         let o = order.min(self.max_depth) as usize;
         let m = self.measure[o];
         let along = [top[0] / norm(top), top[1] / norm(top)];
-        if norm(m) > 0.0 {
+        // What the growth law says the measure is at this order: |m(top)| / g^(top − o).
+        let expect = (norm(top).ln() - (self.max_depth as usize - o) as f64 * self.growth.ln()).exp();
+        if norm(m) >= 0.25 * expect {
             mul(h, div(along, m))
         } else {
-            let s = self.growth.powi(-(o as i32)) / norm(top);
+            // The measured symbol draws nothing yet (the dragon's X at order 0), or next to
+            // nothing: the growth law sizes the step instead.
+            let s = 1.0 / expect;
             [h[0] * s, h[1] * s]
         }
     }
@@ -427,8 +438,8 @@ impl Tables {
     /// unit: the order that follows the zoom. `None` for a picture that does not grow.
     ///
     /// A curve that overlaps itself gets denser with every order (Tiles: seven segments to a
-    /// factor of √5 in size): past [`MAX_DENSITY`] segments per pixel of its disc, more order adds
-    /// cost and no picture, so the order stops there.
+    /// factor of √5 in size): past [`MAX_DENSITY`], more order adds cost and no picture, so the
+    /// order stops there — at any zoom.
     pub fn auto_order(&self, px_per_unit: f64, step_px: f64) -> Option<u32> {
         if !self.grows() {
             return None;
@@ -437,17 +448,19 @@ impl Tables {
             .filter(|&n| (self.max_depth - n).is_multiple_of(self.period))
             .find(|&n| norm(self.step(n)) * px_per_unit <= step_px)
             .unwrap_or(self.max_depth);
-        while n >= self.period && self.density(n, px_per_unit) > MAX_DENSITY {
+        while n >= self.period && self.density(n) > MAX_DENSITY {
             n -= self.period;
         }
         Some(n)
     }
 
-    /// Segments per square pixel of the disc the picture reaches, at `order`.
-    pub fn density(&self, order: u32, px_per_unit: f64) -> f64 {
-        let a = self.axiom_entry(order);
-        let r = a.r.max(0.0) * norm(self.step(order)) * px_per_unit;
-        a.n / (PI * r * r).max(1.0)
+    /// Segments per square step of the picture's bounding box at `order` (0 without a box).
+    pub fn density(&self, order: u32) -> f64 {
+        if self.box_area <= 0.0 {
+            return 0.0;
+        }
+        let s = norm(self.step(order));
+        self.axiom_entry(order).n * s * s / self.box_area
     }
 }
 

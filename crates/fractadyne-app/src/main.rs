@@ -75,6 +75,7 @@ mod formula_library;
 mod fractal;
 mod life_view;
 pub(crate) use life_view::UiPointer;
+mod lsystem_view;
 mod chunksweep;
 mod glitchaudit;
 mod deviceloss_repro;
@@ -5627,6 +5628,9 @@ struct FractadyneApp {
     /// The Life universe `FractalKind::Life` shows, its playback and tools (`life_view.rs`). Kept
     /// while another family is shown, so switching back finds it where it was.
     life: life_view::LifeState,
+    /// The L-system `FractalKind::LSystem` shows, and how it is drawn (`lsystem_view.rs`). Kept
+    /// while another family is shown.
+    lsystem: lsystem_view::LSystemState,
     /// The "Custom formula" dialog's state (`ui/formula_dialog.rs`).
     formula_dialog: ui::formula_dialog::FormulaDialog,
     /// The formula library window's state (`ui/formula_library.rs`).
@@ -6592,14 +6596,17 @@ impl FractadyneApp {
         if let Some(c) = &custom {
             calibration::set_custom_factor(c.shader.cost_factor);
         }
-        // The Life universe, restored after the app exists (it is applied through the app).
+        // The Life universe and the L-system, restored after the app exists (they are applied
+        // through the app).
         let life_text = s.life.clone();
+        let lsystem_text = s.lsystem.clone();
 
         let mut app = Self {
             viewport,
             fractal,
             custom,
             life: Default::default(),
+            lsystem: Default::default(),
             formula_dialog: ui::formula_dialog::FormulaDialog { textbook: s.formula_textbook, ..Default::default() },
             formula_library: Default::default(),
             // Loaded below, where a file that cannot be read can queue its toast.
@@ -7014,6 +7021,11 @@ impl FractadyneApp {
             // Not shown here: the session's own `fractal` and view say what is on screen.
             if let Err(e) = app.apply_life_lines(&life_text, false) {
                 diag::log_line("start", &format!("saved Life universe dropped: {e}"));
+            }
+        }
+        if !lsystem_text.trim().is_empty() {
+            if let Err(e) = app.apply_lsystem_lines(&lsystem_text, false) {
+                diag::log_line("start", &format!("saved L-system dropped: {e}"));
             }
         }
         let (formulas, unreadable) = formula_library::load();
@@ -7574,6 +7586,7 @@ impl FractadyneApp {
                 .unwrap_or_default(),
             formula_textbook: self.formula_dialog.textbook,
             life: self.life_lines(),
+            lsystem: self.lsystem_lines(),
             julia_mode: self.julia_mode,
             julia_c_re: self.julia_c.0,
             julia_c_im: self.julia_c.1,
@@ -8075,6 +8088,9 @@ impl FractadyneApp {
         if kind == FractalKind::Life {
             self.life_home(); // a universe's home frames its pattern, not the Mandelbrot 1×
         }
+        if kind == FractalKind::LSystem {
+            self.lsystem_home(); // and a drawing's frames the drawing
+        }
     }
 
     /// Drop both per-view reference caches (call when the formula/mode/center changes
@@ -8351,6 +8367,9 @@ impl FractadyneApp {
         if self.fractal == FractalKind::Life {
             self.life_home();
         }
+        if self.fractal == FractalKind::LSystem {
+            self.lsystem_home();
+        }
         if self.dual {
             self.julia_viewport.reset_to(0.0, 0.0);
         }
@@ -8363,8 +8382,9 @@ impl FractadyneApp {
     /// Begin a smooth zoom-out back to the home view. If already at (or near) home,
     /// just snaps via `reset_view`. `now` is the current app time (`ctx.input.time`).
     fn zoom_home(&mut self, now: f64) {
-        // A universe has no 1× to glide back to: Home frames the pattern.
-        if self.fractal == FractalKind::Life {
+        // A universe has no 1× to glide back to: Home frames the pattern (and a drawing, the
+        // drawing).
+        if matches!(self.fractal, FractalKind::Life | FractalKind::LSystem) {
             self.reset_view();
             return;
         }
@@ -15429,6 +15449,7 @@ impl eframe::App for FractadyneApp {
         self.draw_formula_dialog(ctx);
         self.draw_formula_library(ctx);
         self.life_text_dialog(ctx);
+        self.lsystem_windows(ctx);
         self.draw_snapshot_choice_dialog(ctx);
         self.draw_misiurewicz_explorer(ctx);
         self.draw_share_dialog(ctx);

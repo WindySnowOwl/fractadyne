@@ -498,7 +498,7 @@ impl FractadyneApp {
         // `@response-file` expansion is honored (raw args would silently drop them).
         let filter: Option<String> = self.selftest.filter.clone();
         const GROUPS: &[&str] = &[
-            "numeric", "symmetry", "abs-family", "custom-formula", "life", "multibrot-sa", "bla", "aux-bla",
+            "numeric", "symmetry", "abs-family", "custom-formula", "life", "lsystem", "multibrot-sa", "bla", "aux-bla",
             "consistency", "counters", "iter-budget", "iter-chunk", "live-split", "nr-zoom", "coords",
             "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
@@ -4555,6 +4555,87 @@ impl FractadyneApp {
             }
         }
 
+        // ---- L-systems (design/lsystems.md): the culling walk draws what the naive way (build
+        // the word, run a turtle) draws, for every system in the library; at its home view it
+        // draws no more than its pixels allow; and the segment pass covers what its model says,
+        // texel for texel. ----
+        if want("lsystem") {
+            use fractadyne_core::lsystem::{self as ls, library, reference};
+            let (mut compared, mut bad, mut worst) = (0usize, Vec::new(), 0.0f64);
+            let mut heavy = Vec::new();
+            for e in library::SYSTEMS {
+                let Ok(s) = e.system() else {
+                    bad.push(format!("{}: does not parse", e.name));
+                    continue;
+                };
+                let t = ls::Tables::new(&s);
+                // The highest order up to 6 that draws, small enough to build the word for.
+                let Some(order) = (1..=6u32).rev().find(|&n| (1.0..=50_000.0).contains(&t.axiom_entry(n).n)) else { continue };
+                // A pixel a step, so the tolerance below is in steps.
+                let u = t.step(order);
+                let view = ls::View { centre: [0.0, 0.0], upp: u[0].hypot(u[1]), size: [f64::INFINITY; 2], margin: 0.0 };
+                let mut walked = Vec::new();
+                ls::walk(&t, &view, &ls::WalkOptions { order, lod_px: 0.0, budget: u64::MAX }, &mut |g| walked.push(*g));
+                let word = reference::expand(&s, order, 2_000_000).unwrap_or_default();
+                let want = reference::draw(&s, &word, [0.0, 0.0], [u[0] / view.upp, u[1] / view.upp]);
+                compared += want.len();
+                if walked.len() != want.len() {
+                    bad.push(format!("{} order {order}: {} segments, the reference {}", e.name, walked.len(), want.len()));
+                    continue;
+                }
+                for (g, w) in walked.iter().zip(&want) {
+                    let d = (g.a[0] - w.a[0]).abs().max((g.a[1] - w.a[1]).abs()).max((g.b[0] - w.b[0]).abs()).max((g.b[1] - w.b[1]).abs());
+                    worst = worst.max(d);
+                    if d > 1e-6 || g.index != w.index || g.depth != w.depth || g.colour != w.colour {
+                        bad.push(format!("{} order {order}: segment {} differs by {d:.2e}", e.name, g.index));
+                        break;
+                    }
+                }
+                // The home view at the order that follows the zoom: at most 4 segments a pixel.
+                let home = ls::framing_order(&t, 20_000.0);
+                if let Some(b) = ls::bounds(&t, home, 1 << 22) {
+                    let upp = ((b[2] - b[0]).max(b[3] - b[1]) / 600.0).max(1e-12);
+                    let size = [(b[2] - b[0]) / upp + 2.0, (b[3] - b[1]) / upp + 2.0];
+                    let v = ls::View { centre: [(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0], upp, size, margin: 1.0 };
+                    let order = t.auto_order(1.0 / upp, 1.5).unwrap_or_else(|| s.order.unwrap_or(6)).min(t.max_depth);
+                    let stats = ls::walk(&t, &v, &ls::WalkOptions { order, lod_px: 1.5, budget: 20_000_000 }, &mut |_| {});
+                    if stats.segments as f64 > 4.0 * size[0] * size[1] {
+                        heavy.push(format!("{}: {} segments for {:.0} pixels", e.name, stats.segments, size[0] * size[1]));
+                    }
+                }
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "L-system",
+                name: "the culling walk draws what the naive turtle draws".into(),
+                params: format!("{} library systems, order ≤ 6, {} segments", library::SYSTEMS.len(), crate::commas(&compared.to_string())),
+                result: if bad.is_empty() { format!("all equal; worst end-point difference {worst:.1e} px") } else { bad.join("; ") },
+                threshold: "same segments, in order, ends within 1e-6 px",
+                pass: bad.is_empty() && compared > 0,
+            });
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "L-system",
+                name: "a home view costs what its pixels cost".into(),
+                params: "every library system framed at 600 px, the order that follows the zoom".into(),
+                result: if heavy.is_empty() { "all within 4 segments a pixel".into() } else { heavy.join("; ") },
+                threshold: "≤ 4 segments a pixel",
+                pass: heavy.is_empty(),
+            });
+            for o in fractadyne_gpu::lsystem::check::coverage(device, queue) {
+                let (pass, result) = match o.result {
+                    Ok(s) => (true, s),
+                    Err(e) => (false, e),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "L-system",
+                    name: o.name,
+                    params: o.params,
+                    result,
+                    threshold: "exact, edge texels aside",
+                    pass,
+                });
+            }
+        }
+
         // ---- series approximation engages for the Multibrot families ----
         // The order-3 coefficient recurrence for z^d is validated exactly in fractadyne-core;
         // here we confirm the app actually selects SA for these formulas (skip > 0) and the
@@ -7154,6 +7235,57 @@ zoom = \"1e94\"
                     threshold: "cells and rule restored; family unchanged",
                     pass: kept,
                 });
+                self.fractal = FractalKind::Mandelbrot;
+            }
+
+            // An L-system view carries its system (text with every command, escaped onto one
+            // line), the fixed order, the angle override, the line width and the colouring.
+            {
+                let text = "name Round trip\nangle /7\nheading 12.5\ndraw G\naxiom F[+G]@IQ2\\30C3\nF = F-G<2+F\nG = GG\n";
+                let opened = self.lsystem_open_text(text, "unnamed");
+                self.lsystem.fixed_order = Some(5);
+                self.lsystem.set_angle(Some(61.5));
+                self.lsystem.width = 2.5;
+                self.lsystem.colour = Some(fractadyne_core::lsystem::Colouring::Heading);
+                let want = self.lsystem.system.clone();
+                let blob = self.view_metadata();
+                let format4 = blob.lines().any(|l| l == "format_version=4");
+                let one_line = blob.lines().filter(|l| l.starts_with("lsystem=")).count() == 1;
+                // Scramble: another system and settings, another family.
+                self.lsystem_open_library("Hilbert curve");
+                self.lsystem.width = 1.0;
+                self.fractal = FractalKind::Mandelbrot;
+                let rt = self.load_view_metadata(&blob);
+                let l = &self.lsystem;
+                let round_trip = rt.note().is_none()
+                    && self.fractal == FractalKind::LSystem
+                    && l.system == want
+                    && l.fixed_order == Some(5)
+                    && l.angle == Some(61.5)
+                    && l.width == 2.5
+                    && l.colour == Some(fractadyne_core::lsystem::Colouring::Heading);
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "View format",
+                    name: "an_lsystem_view_round_trips_its_system".into(),
+                    params: "L-system view (every command, order 5, angle 61.5°, width 2.5, heading colours) → scramble → load".into(),
+                    result: format!("opened {}, format 4 {format4}, one line {one_line}, round trip {round_trip}", opened.is_ok()),
+                    threshold: "system, order, angle, width, colouring restored; format 4",
+                    pass: opened.is_ok() && format4 && one_line && round_trip,
+                });
+                let saved = self.lsystem_lines();
+                self.lsystem_open_library("Koch curve");
+                self.fractal = FractalKind::Mandelbrot;
+                let restored = self.apply_lsystem_lines(&saved, false);
+                let kept = restored.is_ok() && self.fractal == FractalKind::Mandelbrot && self.lsystem.system == want;
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "View format",
+                    name: "the session keeps the L-system".into(),
+                    params: "lsystem_lines → scramble → apply (not shown)".into(),
+                    result: format!("restored {restored:?}, system kept and view not switched: {kept}"),
+                    threshold: "system restored; family unchanged",
+                    pass: kept,
+                });
+                self.lsystem = Default::default();
                 self.fractal = FractalKind::Mandelbrot;
             }
 

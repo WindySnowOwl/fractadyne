@@ -1,8 +1,28 @@
 # L-systems — turtle-drawn curves and plants, with deep zoom
 
-Status: **design** (2026-10-02), nothing built. The user: "Work on the design doc" (after "Are L-systems
-implemented" — no). Integration facts in §2 are from this tree at `21e2bd7` (Life merged). The
-user's decisions on the open questions are in §9 (all six: yes).
+Status: **phases 0–2 built** (2026-10-02, branch `feat/lsystems`); phases 3–4 to come. The user:
+"Work on the design doc" (after "Are L-systems implemented" — no). Integration facts in §2 are from
+this tree at `21e2bd7` (Life merged). The user's decisions on the open questions are in §9 (all six:
+yes).
+
+What building them settled, beyond the text below:
+
+- **The world step per order** is the reciprocal of a *measure* — the displacement of the reached
+  symbol that travels furthest at the deepest row — turned to that symbol's direction there, so the
+  picture neither grows nor spins (the dragon turns 45° an order). Where the measure is zero or near
+  it at a low order (the dragon's `X` draws nothing at order 0), the growth law sizes the step.
+- **Period 2**: a picture that alternates between two shapes from order to order (the arrowhead
+  mirrors; Bourke's weed sways 8%) is detected from its bounding boxes, and the order steps by two.
+- **Overlap cap**: segments per square step of the picture's bounding box sit near 1 for every
+  plane-filling curve at every order, and climb for a curve that overlaps itself (Tiles: 1.6, 3.1,
+  12, 46 at orders 1, 3, 7, 11). The order that follows the zoom stops at 3 — past it the picture is
+  a solid blob, and more order is cost only.
+- **The step target is 3 px (or 2.5 line widths)**, not 1.5: at a step no wider than its lines, a
+  space-filling curve draws as a solid block.
+- **The walk runs off the UI thread**, one at a time; a frame draws the last walk placed under the
+  current view (scale and offset), so a zoom follows at the walk's rate, never blank.
+- **Not in phase 2 after all**: image export (refused with a message, as for Life) and tours with an
+  order or angle track.
 
 ## 1. Goal
 

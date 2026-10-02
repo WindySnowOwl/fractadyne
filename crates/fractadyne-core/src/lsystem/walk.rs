@@ -250,29 +250,28 @@ fn raw_framing_order(t: &Tables, budget: f64) -> u32 {
     (0..=t.max_depth).take_while(|&n| t.axiom_entry(n).n <= budget).last().unwrap_or(0)
 }
 
-/// Whether a growing picture alternates between two shapes from one order to the next (see
-/// [`Tables::period`]): its box at the highest small order differs from the order below by more
-/// than 2% of its size, and by over three times what it differs from the order two below. (The
-/// Sierpinski arrowhead mirrors outright; Paul Bourke's weed sways 8% from side to side.)
-pub(crate) fn period(t: &Tables) -> u32 {
+/// A growing picture's period and box area (see [`Tables::period`], [`Tables::box_area`]), from
+/// its boxes at the highest order of at most 20,000 segments and the two below. Period 2 when the
+/// box differs from the order below by more than 2% of its size, and by over three times what it
+/// differs from the order two below (the Sierpinski arrowhead mirrors outright; Paul Bourke's weed
+/// sways 8% from side to side).
+pub(crate) fn shape(t: &Tables) -> (u32, f64) {
     if !t.grows() {
-        return 1;
+        return (1, 0.0);
     }
     let m = raw_framing_order(t, 20_000.0);
+    let Some(a) = bounds(t, m, 1 << 20) else { return (1, 0.0) };
+    let area = (a[2] - a[0]) * (a[3] - a[1]);
     if m < 3 {
-        return 1;
+        return (1, area);
     }
-    let (Some(a), Some(b), Some(c)) = (bounds(t, m, 1 << 20), bounds(t, m - 1, 1 << 20), bounds(t, m - 2, 1 << 20))
-    else {
-        return 1;
+    let (Some(b), Some(c)) = (bounds(t, m - 1, 1 << 20), bounds(t, m - 2, 1 << 20)) else {
+        return (1, area);
     };
     let size = (a[2] - a[0]).max(a[3] - a[1]);
     let diff = |x: [f64; 4], y: [f64; 4]| (0..4).map(|k| (x[k] - y[k]).abs()).fold(0.0, f64::max);
-    if diff(a, b) > 0.02 * size && diff(a, b) > 3.0 * diff(a, c) {
-        2
-    } else {
-        1
-    }
+    let period = if diff(a, b) > 0.02 * size && diff(a, b) > 3.0 * diff(a, c) { 2 } else { 1 };
+    (period, area)
 }
 
 #[cfg(test)]
