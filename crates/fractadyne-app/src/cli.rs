@@ -1246,6 +1246,9 @@ pub(crate) struct HarnessModes {
     /// The shader key the `formula-apply-async` step applied, so its record can check that the
     /// view switched to exactly that formula.
     pub(crate) uitest_async_key: Option<u64>,
+    /// Pointer events the `life-draw` step feeds the app, one a frame, at CELLS of the Life view
+    /// (turned into positions as they are fed, so they land on the cell whatever the layout).
+    pub(crate) uitest_pointer: std::collections::VecDeque<crate::UiPointer>,
     pub(crate) soak: Option<crate::soak::Soak>,
     /// `--recordtest [FRAMES]`: the frame record's own gate — does it record every frame, fill
     /// every required field, and survive an abort? See `mod recordtest`.

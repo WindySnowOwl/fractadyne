@@ -74,6 +74,7 @@ mod custom_formula;
 mod formula_library;
 mod fractal;
 mod life_view;
+pub(crate) use life_view::UiPointer;
 mod chunksweep;
 mod glitchaudit;
 mod deviceloss_repro;
@@ -6720,6 +6721,7 @@ impl FractadyneApp {
                 uitest_central_w: None,
                 uitest_panel_w: None,
                 uitest_async_key: None,
+                uitest_pointer: Default::default(),
                 soak,
                 recordtest,
                 juliadive,
@@ -14658,6 +14660,16 @@ impl FractadyneApp {
 // ================================================================================================
 
 impl eframe::App for FractadyneApp {
+    /// `--uitest`'s life-draw step: one queued pointer event a frame, into the app's OWN input —
+    /// egui then handles it exactly as a real mouse. Nothing is sent to the desktop.
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if let Some(p) = self.harness.uitest_pointer.pop_front() {
+            if let Some(e) = self.life_pointer_event(ctx, p) {
+                raw_input.events.push(e);
+            }
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let frame_start = Instant::now();
         diag::alive(); // heartbeat: a frame loop that stops arriving here is a hang (D1.4)
@@ -15118,6 +15130,8 @@ impl eframe::App for FractadyneApp {
         // Fraktaler convention; Ctrl+Z / Ctrl+Y (and Ctrl+Shift+Z) are what everyone tries
         // first (2026-08-13 UI review) — both work.
         if !ctx.wants_keyboard_input() {
+            // Life's keys first: while drawing, Ctrl+Z undoes the last edit rather than the view.
+            let life_took_undo = self.life_hotkeys(ctx);
             let (undo, redo) = ctx.input(|i| {
                 let bs = i.key_pressed(egui::Key::Backspace);
                 let z = i.modifiers.command && i.key_pressed(egui::Key::Z);
@@ -15128,7 +15142,9 @@ impl eframe::App for FractadyneApp {
                         || (i.modifiers.command && i.key_pressed(egui::Key::Y)),
                 )
             });
-            if undo {
+            if life_took_undo {
+                // (the edit was undone)
+            } else if undo {
                 self.undo_view();
             } else if redo {
                 self.redo_view();

@@ -856,6 +856,17 @@ pub(crate) fn help_shortcuts(ui: &mut egui::Ui) {
          changes it.",
     );
     help_kv(ui, "F1 / ?", "Open this help");
+    help_sub(ui, "Life (Fractal → Automata → Life)");
+    help_kv(ui, "Enter", "Run / pause the universe");
+    help_kv(ui, "N / Shift+N", "Step one generation / step the stride (set in the Life panel)");
+    help_kv(ui, "D", "Draw tool on / off (the pencil on the toolbar)");
+    help_kv(
+        ui,
+        "Click / drag (Draw on)",
+        "Flip a cell / paint: a stroke that starts on a dead cell draws, one that starts on a live \
+         cell erases. A running universe pauses while you draw and runs on when you let go.",
+    );
+    help_kv(ui, "Ctrl+Z (Draw on)", "Undo the last edit, fill, clear or rule change");
 }
 
 /// A cited entry: bold title, a wrapped description, and a source link.

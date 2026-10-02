@@ -64,7 +64,13 @@ Changes after 0.3.0-beta.1:
   Rules in B/S notation (Life, HighLife, Seeds and 19 more built in), Generations rules with
   dying states (Brian's Brain, Star Wars), von Neumann rules, Hensel's non-totalistic notation
   (B2-a/S12, tlife) and MAP rules. Play and pause, step one generation or a stride of up to
-  65,536, set the speed, draw and erase cells, fill the view at random. Patterns open from RLE,
+  65,536, set the speed, fill the view at random. Edit on screen with the Draw tool (the pencil
+  on the toolbar, or D): a click flips a cell, a drag paints — over a dead cell it draws, over a
+  live one it erases — and a running universe pauses for the stroke and runs on after it; Undo
+  (Ctrl+Z while drawing) steps back through edits, fills, clears and rule changes. Zoomed in,
+  faint grid lines mark the cells and the cell under the pencil is outlined; the status bar's
+  cursor names the cell. While Life is showing, its run, step and reset buttons take the toolbar
+  slot Julia and the dual view use for the formulas (Enter runs and pauses, N steps). Patterns open from RLE,
   plaintext (.cells) and Life 1.05/1.06 files or pasted text, 18 classics are built in, and the
   universe saves as RLE. Zoomed out, a pixel shows the fraction of live cells under it, in the
   current palette. A view of a universe (a .fdn, a bookmark) carries it and writes

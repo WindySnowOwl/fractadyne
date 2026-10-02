@@ -1055,16 +1055,29 @@ impl FractadyneApp {
                     self.viewport.pan_pixels(d.x as f64 * ppp, d.y as f64 * ppp);
                 }
                 if life_draw && !zoom_boxing && !shift {
-                    let stroke = if response.dragged_by(egui::PointerButton::Primary) {
-                        Some(response.drag_started_by(egui::PointerButton::Primary))
-                    } else if response.clicked_by(egui::PointerButton::Primary) {
-                        Some(true)
-                    } else {
-                        None
-                    };
-                    if let (Some(started), Some(p)) = (stroke, response.interact_pointer_pos()) {
-                        let l = p - rect.min;
-                        self.life_stroke(l.x as f64 * ppp, l.y as f64 * ppp, started);
+                    // The stroke starts on the PRESS (not when egui decides a drag began, a few
+                    // pixels later), so the first cell is the one under the press.
+                    let primary = egui::PointerButton::Primary;
+                    let (held, pressed, released, frame) = ctx.input(|i| {
+                        (
+                            i.pointer.button_down(primary),
+                            i.pointer.button_pressed(primary),
+                            i.pointer.button_released(primary),
+                            i.time,
+                        )
+                    });
+                    // Pressed ON the view and still held: a stroke, starting on the press frame. A
+                    // click (released without dragging) continues the stroke its press began, or
+                    // is a stroke of one cell when the press and release share a frame.
+                    let click = response.clicked_by(primary);
+                    if (held && response.is_pointer_button_down_on()) || click {
+                        if let Some(p) = response.interact_pointer_pos() {
+                            let l = p - rect.min;
+                            self.life_stroke(l.x as f64 * ppp, l.y as f64 * ppp, pressed, click, frame);
+                        }
+                    }
+                    if released {
+                        self.life_stroke_end();
                     }
                     if response.hovered() {
                         ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
@@ -1284,6 +1297,8 @@ impl FractadyneApp {
                     let _ = (center_bf, center, span_fe, mag, eff_iter, aa_target, reproject);
                     let params = self.build_life_params(now, resolution, 1);
                     add_mandelbrot(ui.painter(), rect, params);
+                    // Cell borders and the cell under a drawing cursor, over the cells.
+                    self.life_overlay(ui.painter(), rect, ppp as f32, response.hover_pos());
                 } else {
                     // Progressive on-settle supersampling (deep-zoom despeckle) — the single-view
                     // counterpart of the call in `nav_and_draw`. ⚠Until 2026-09-15 only the

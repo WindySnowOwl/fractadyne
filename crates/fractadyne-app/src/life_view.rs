@@ -16,18 +16,41 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum LifeTool {
     Pan,
+    /// Edit cells: a click flips a cell; a drag paints what its first cell became — alive over a
+    /// dead cell, dead over a live one — so one tool both draws and erases.
     Draw,
-    Erase,
+}
+
+/// A pointer event a harness feeds the app (`--uitest`'s life-draw step), at a CELL of the Life view.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum UiPointer {
+    Move(i64, i64),
+    Press(i64, i64),
+    Release(i64, i64),
+    /// The pointer leaves the window (as it was before the script: the harness has no pointer).
+    Gone,
 }
 
 /// A change to the universe, waiting for a current copy to be made to.
 #[derive(Clone, Debug)]
 enum Change {
-    Cells(Vec<(i64, i64, u8)>),
+    /// Part of a mouse stroke. `start`: its first cell decides the stroke's state (the opposite of
+    /// what that cell holds), resolved against the universe it is applied to — which may be a
+    /// download that arrived after the press, never a stale copy.
+    Stroke { cells: Vec<(i64, i64)>, start: bool },
     Rule(Rule),
     Clear,
     Fill { x: i64, y: i64, w: u32, h: u32, density: f64, seed: u64 },
 }
+
+/// What the Draw tool does, for its hover texts.
+const DRAW_HINT: &str = "click a cell to flip it; drag to paint — a stroke that starts on a dead cell \
+                         draws, one that starts on a live cell erases. A running universe pauses while \
+                         you draw and runs on when you let go.";
+
+/// Strokes undo at most this far back, and only universes up to `UNDO_MAX_TILES` tiles keep a copy.
+const UNDO_DEPTH: usize = 64;
+const UNDO_MAX_TILES: usize = 4096;
 
 /// Generations a frame may run at most: each batch of 16 waits for a read-back.
 const MAX_STEPS_PER_FRAME: u64 = 1024;
@@ -66,6 +89,20 @@ pub(crate) struct LifeState {
     last_t: Option<f64>,
     /// The cell the last drag point drew, so a fast stroke draws a line, not dots.
     last_cell: Option<(i64, i64)>,
+    /// The input time of the last frame a stroke point was taken from: egui may lay a frame out
+    /// twice, and the second pass must not take the same input again — under flip semantics a
+    /// replayed press undoes what the first pass drew.
+    stroke_frame: Option<f64>,
+    /// A stroke is in progress (pressed on the view and not yet released).
+    stroke_open: bool,
+    /// The state the current stroke paints, once its first cell has been resolved.
+    stroke_state: Option<u8>,
+    /// Playback was running when the stroke began: it resumes when the stroke ends.
+    resume_after_stroke: bool,
+    /// The universe before each stroke, newest last (cleared once the universe steps on).
+    undo: Vec<Arc<Universe>>,
+    /// Faint cell borders when zoomed in to 8 px a cell or more.
+    pub(crate) grid: bool,
     /// The "Pattern text" dialog.
     pub(crate) text_open: bool,
     pub(crate) text: String,
@@ -108,6 +145,12 @@ impl Default for LifeState {
             seed: 1,
             last_t: None,
             last_cell: None,
+            stroke_frame: None,
+            stroke_open: false,
+            stroke_state: None,
+            resume_after_stroke: false,
+            undo: Vec::new(),
+            grid: true,
             text_open: false,
             text: String::new(),
             text_error: None,
@@ -181,10 +224,19 @@ impl LifeState {
         let mut u = base.unwrap_or_else(|| (*self.loaded).clone());
         let at_start = u.generation() == 0;
         for c in std::mem::take(&mut self.pending) {
+            // Every change but a stroke's continuation can be undone: keep the universe before it.
+            if !matches!(c, Change::Stroke { start: false, .. }) || self.stroke_state.is_none() {
+                self.remember_for_undo(&u);
+            }
             match c {
-                Change::Cells(cells) => {
-                    for (x, y, s) in cells {
-                        u.set(x, y, s);
+                Change::Stroke { cells, start } => {
+                    if start || self.stroke_state.is_none() {
+                        let first = cells.first().map_or(0, |&(x, y)| u.get(x, y));
+                        self.stroke_state = Some(u8::from(first == 0));
+                    }
+                    let state = self.stroke_state.unwrap_or(1);
+                    for (x, y) in cells {
+                        u.set(x, y, state);
                     }
                 }
                 Change::Rule(r) => u = rebuild(&u, r),
@@ -196,6 +248,69 @@ impl LifeState {
             self.start = Arc::new(u.clone());
         }
         self.load(u);
+    }
+
+    /// A stroke point at `cell`, from the frame whose input time is `frame`: `pressed` on the press
+    /// frame, `click` on the release of a press that never became a drag.
+    fn stroke(&mut self, cell: (i64, i64), pressed: bool, click: bool, frame: f64) {
+        // The same frame laid out again: its input was taken already.
+        if self.stroke_frame == Some(frame) {
+            return;
+        }
+        self.stroke_frame = Some(frame);
+        // A click's release continues the stroke its press began (egui forgets the press time by
+        // then); a press and release within one frame start and end one.
+        let started = pressed || (click && !self.stroke_open);
+        if started {
+            self.stroke_open = true;
+            self.stroke_state = None;
+            if self.playing {
+                self.resume_after_stroke = true;
+            }
+            self.pause();
+        } else if self.last_cell == Some(cell) {
+            return; // held still: nothing new to paint
+        }
+        let from = if started { cell } else { self.last_cell.unwrap_or(cell) };
+        self.last_cell = Some(cell);
+        self.change(Change::Stroke { cells: line(from, cell), start: started });
+    }
+
+    /// The button is up: the stroke is over, and a universe it paused runs on.
+    fn stroke_end(&mut self) {
+        self.stroke_open = false;
+        if std::mem::take(&mut self.resume_after_stroke) {
+            self.playing = true;
+        }
+    }
+
+    /// Keep `u` as the state an Undo returns to (small universes only: a copy each).
+    fn remember_for_undo(&mut self, u: &Universe) {
+        if u.tile_count() <= UNDO_MAX_TILES {
+            self.undo.push(Arc::new(u.clone()));
+            if self.undo.len() > UNDO_DEPTH {
+                self.undo.remove(0);
+            }
+        }
+    }
+
+    /// Back to the universe before the last edit. `false` when there is none to go back to.
+    pub(crate) fn undo_edit(&mut self) -> bool {
+        let Some(u) = self.undo.pop() else { return false };
+        self.pending.clear();
+        self.want_download = false;
+        self.pause();
+        let u = (*u).clone();
+        if u.generation() == self.start.generation() {
+            self.start = Arc::new(u.clone());
+        }
+        self.load(u);
+        true
+    }
+
+    /// Whether an edit can be undone.
+    pub(crate) fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
     }
 
     /// Take a download the GPU delivered: apply waiting changes to it, or save it.
@@ -250,7 +365,8 @@ impl FractadyneApp {
         let dt = self.life.last_t.map_or(0.0, |t| (now - t).clamp(0.0, 0.25));
         self.life.last_t = Some(now);
         let cap = (MAX_TILE_STEPS_PER_FRAME / (status.tiles.max(1) as u64)).clamp(1, MAX_STEPS_PER_FRAME);
-        if self.life.playing {
+        // (Not while changes wait for a download: they must land where they were made.)
+        if self.life.playing && self.life.pending.is_empty() {
             self.life.owed += self.life.speed * dt;
             let n = self.life.owed.floor();
             self.life.owed -= n;
@@ -298,16 +414,50 @@ impl FractadyneApp {
         self.fractal == FractalKind::Life && self.life.tool != LifeTool::Pan
     }
 
-    /// A press or drag at pixel `(px, py)` of the view with the Draw or Erase tool.
-    pub(crate) fn life_stroke(&mut self, px: f64, py: f64, started: bool) {
-        let (x, y) = self.viewport.complex_at_pixel_f64(px, py);
-        let cell = (x.floor() as i64, (-y).floor() as i64);
-        let state = u8::from(self.life.tool == LifeTool::Draw);
-        let from = if started { cell } else { self.life.last_cell.unwrap_or(cell) };
-        let cells: Vec<(i64, i64, u8)> = line(from, cell).into_iter().map(|(x, y)| (x, y, state)).collect();
-        self.life.last_cell = Some(cell);
-        self.life.pause();
-        self.life.change(Change::Cells(cells));
+    /// The cell under pixel `(px, py)` of the view (physical pixels from its top-left) — from the
+    /// exact cell window, so it is right however far from the origin the view is.
+    pub(crate) fn life_cell_at(&self, px: f64, py: f64) -> Option<(i64, i64)> {
+        let w = life::cell_window(&self.viewport)?;
+        let at = |tile: i64, origin: f64, p: f64| tile.checked_mul(life::TILE)?.checked_add((origin + p * w.cells_per_px).floor() as i64);
+        Some((at(w.tile_x0, w.origin[0], px)?, at(w.tile_y0, w.origin[1], py)?))
+    }
+
+    /// A stroke point at pixel `(px, py)` with the Draw tool (see [`LifeState::stroke`]). A stroke
+    /// pauses a running universe and resumes it when it ends.
+    pub(crate) fn life_stroke(&mut self, px: f64, py: f64, pressed: bool, click: bool, frame: f64) {
+        if let Some(cell) = self.life_cell_at(px, py) {
+            self.life.stroke(cell, pressed, click, frame);
+        }
+    }
+
+    /// `p` as the egui event a real mouse would send: at the middle of its cell in the view, in
+    /// points (the view's rect from the last frame's layout). `None` before there is a layout.
+    pub(crate) fn life_pointer_event(&self, ctx: &egui::Context, p: UiPointer) -> Option<egui::Event> {
+        let rect = self.perf.layout.central?;
+        let w = life::cell_window(&self.viewport)?;
+        let ppp = f64::from(ctx.pixels_per_point());
+        let at = |cx: i64, cy: i64| {
+            let px = ((cx - w.tile_x0 * life::TILE) as f64 + 0.5 - w.origin[0]) / w.cells_per_px / ppp;
+            let py = ((cy - w.tile_y0 * life::TILE) as f64 + 0.5 - w.origin[1]) / w.cells_per_px / ppp;
+            rect.min + egui::vec2(px as f32, py as f32)
+        };
+        let button = |cx, cy, pressed| egui::Event::PointerButton {
+            pos: at(cx, cy),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        Some(match p {
+            UiPointer::Move(x, y) => egui::Event::PointerMoved(at(x, y)),
+            UiPointer::Press(x, y) => button(x, y, true),
+            UiPointer::Release(x, y) => button(x, y, false),
+            UiPointer::Gone => egui::Event::PointerGone,
+        })
+    }
+
+    /// The mouse was released: a universe the stroke paused runs on.
+    pub(crate) fn life_stroke_end(&mut self) {
+        self.life.stroke_end();
     }
 
     /// Frame the universe: its bounding box with a margin, or 128 cells around the origin.
@@ -521,25 +671,18 @@ impl FractadyneApp {
         // Transport.
         ui.horizontal(|ui| {
             let label = if self.life.playing { "\u{23F8} Pause" } else { "\u{25B6} Play" };
-            if ui.button(label).on_hover_text("Run the universe.").clicked() {
-                self.life.playing = !self.life.playing;
-                if !self.life.playing {
-                    self.life.pause();
-                }
+            if ui.button(label).on_hover_text("Run the universe (Enter).").clicked() {
+                self.life_toggle_play();
             }
-            if ui.button("Step").on_hover_text("Advance one generation.").clicked() {
+            if ui.button("Step").on_hover_text("Advance one generation (N).").clicked() {
                 self.life.step(1);
             }
             let stride = 1u64 << self.life.stride_log2;
-            if ui.button(format!("+{}", grouped(stride))).on_hover_text("Advance this many generations.").clicked() {
+            if ui.button(format!("+{}", grouped(stride))).on_hover_text("Advance this many generations (Shift+N).").clicked() {
                 self.life.step(stride);
             }
             if ui.button("Reset").on_hover_text("Back to the pattern as opened (generation 0).").clicked() {
-                self.life.playing = false;
-                self.life.pending.clear();
-                self.life.want_download = false;
-                let u = (*self.life.start).clone();
-                self.life.load(u);
+                self.life_reset();
             }
         });
         crate::ui::labelled(ui, "Speed", |ui| {
@@ -568,9 +711,16 @@ impl FractadyneApp {
         ui.horizontal(|ui| {
             ui.label("Mouse");
             ui.selectable_value(&mut self.life.tool, LifeTool::Pan, "Pan").on_hover_text("Drag to move the view.");
-            ui.selectable_value(&mut self.life.tool, LifeTool::Draw, "Draw").on_hover_text("Drag to set cells alive (pauses).");
-            ui.selectable_value(&mut self.life.tool, LifeTool::Erase, "Erase").on_hover_text("Drag to clear cells (pauses).");
+            ui.selectable_value(&mut self.life.tool, LifeTool::Draw, "Draw").on_hover_text(DRAW_HINT);
+            if ui
+                .add_enabled(self.life.can_undo(), egui::Button::new("Undo"))
+                .on_hover_text("Back to the universe before the last edit, fill, clear or rule change (Ctrl+Z while drawing).")
+                .clicked()
+            {
+                self.life.undo_edit();
+            }
         });
+        ui.checkbox(&mut self.life.grid, "Grid lines").on_hover_text("Cell borders when zoomed in to 8 pixels a cell or more.");
         ui.horizontal(|ui| {
             ui.label("Random");
             ui.add(egui::DragValue::new(&mut self.life.density).range(0.01..=1.0).speed(0.01).fixed_decimals(2))
@@ -581,9 +731,134 @@ impl FractadyneApp {
                 self.life_fill_view();
             }
         });
-        if ui.button("Clear").on_hover_text("Kill every cell.").clicked() {
-            self.life.playing = false;
+        if ui.button("Clear").on_hover_text("Kill every cell (Undo brings them back).").clicked() {
+            self.life.pause();
             self.life.change(Change::Clear);
+        }
+    }
+
+    /// The toolbar's Life group, in the slot Julia and the dual view take for an escape-time
+    /// family (neither applies to a universe): run / pause, step, back to the start, draw.
+    pub(crate) fn life_toolbar(&mut self, ui: &mut egui::Ui) {
+        let (icon, hint) = if self.life.playing {
+            (crate::icons::PAUSE, "Pause the universe (Enter)")
+        } else {
+            (crate::icons::PLAY, "Run the universe (Enter)")
+        };
+        if ui.button(icon).on_hover_text(hint).clicked() {
+            self.life_toggle_play();
+        }
+        let stride = 1u64 << self.life.stride_log2;
+        if ui
+            .button(crate::icons::FORWARD)
+            .on_hover_text(format!("Step one generation (N); Shift+click or Shift+N steps {}", grouped(stride)))
+            .clicked()
+        {
+            let n = if ui.input(|i| i.modifiers.shift) { stride } else { 1 };
+            self.life.step(n);
+        }
+        if ui.button(crate::icons::SKIP_BACK).on_hover_text("Back to the pattern as opened (generation 0)").clicked() {
+            self.life_reset();
+        }
+        if ui
+            .add(egui::SelectableLabel::new(self.life.tool == LifeTool::Draw, crate::icons::EDIT))
+            .on_hover_text(format!("Draw (D): {DRAW_HINT}"))
+            .clicked()
+        {
+            self.life_toggle_draw();
+        }
+    }
+
+    pub(crate) fn life_toggle_play(&mut self) {
+        if self.life.playing {
+            self.life.pause();
+        } else {
+            self.life.playing = true;
+        }
+    }
+
+    pub(crate) fn life_toggle_draw(&mut self) {
+        self.life.tool = if self.life.tool == LifeTool::Draw { LifeTool::Pan } else { LifeTool::Draw };
+    }
+
+    /// Back to the start pattern (generation 0, with the edits made there).
+    pub(crate) fn life_reset(&mut self) {
+        self.life.pause();
+        self.life.pending.clear();
+        self.life.want_download = false;
+        let u = (*self.life.loaded).clone();
+        self.life.remember_for_undo(&u);
+        let start = (*self.life.start).clone();
+        self.life.load(start);
+    }
+
+    /// Life's keys, while no text field has the keyboard: Enter runs and pauses, N steps one
+    /// generation (Shift+N a stride), D toggles drawing, and Ctrl+Z undoes an edit while drawing.
+    /// Returns whether it took Ctrl+Z (so navigation undo does not also run).
+    pub(crate) fn life_hotkeys(&mut self, ctx: &egui::Context) -> bool {
+        if self.fractal != FractalKind::Life {
+            return false;
+        }
+        // A focused button takes Enter itself (egui clicks it): leave Enter to it then.
+        let focused = ctx.memory(|m| m.focused().is_some());
+        let (enter, n, shift_n, d, undo) = ctx.input(|i| {
+            let plain = !i.modifiers.command && !i.modifiers.alt;
+            (
+                plain && !i.modifiers.shift && i.key_pressed(egui::Key::Enter),
+                plain && !i.modifiers.shift && i.key_pressed(egui::Key::N),
+                plain && i.modifiers.shift && i.key_pressed(egui::Key::N),
+                plain && !i.modifiers.shift && i.key_pressed(egui::Key::D),
+                i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::Z),
+            )
+        });
+        if enter && !focused {
+            self.life_toggle_play();
+        }
+        if n {
+            self.life.step(1);
+        }
+        if shift_n {
+            self.life.step(1u64 << self.life.stride_log2);
+        }
+        if d {
+            self.life_toggle_draw();
+        }
+        undo && self.life.tool == LifeTool::Draw && self.life.undo_edit()
+    }
+
+    /// Over the view: faint cell borders when zoomed in, and the cell under the cursor outlined
+    /// while drawing. `rect` is the view in points; `hover` the pointer, if over it.
+    pub(crate) fn life_overlay(&self, painter: &egui::Painter, rect: egui::Rect, ppp: f32, hover: Option<egui::Pos2>) {
+        let Some(w) = life::cell_window(&self.viewport) else { return };
+        // One cell, in points; the view's top-left corner sits `origin` cells into tile (x0, y0).
+        let cell = (1.0 / w.cells_per_px) as f32 / ppp;
+        let to_x = |cx: i64| rect.min.x + ((cx - w.tile_x0 * life::TILE) as f64 - w.origin[0]) as f32 * cell;
+        let to_y = |cy: i64| rect.min.y + ((cy - w.tile_y0 * life::TILE) as f64 - w.origin[1]) as f32 * cell;
+        let first = |tile: i64, origin: f64| tile * life::TILE + origin.ceil() as i64;
+        if self.life.grid && cell >= 8.0 / ppp {
+            let alpha = ((cell * ppp - 8.0) * 3.0).clamp(0.0, 28.0) as u8;
+            let stroke = egui::Stroke::new(1.0 / ppp, egui::Color32::from_white_alpha(alpha));
+            let mut x = first(w.tile_x0, w.origin[0]);
+            while to_x(x) <= rect.max.x {
+                painter.vline(to_x(x), rect.y_range(), stroke);
+                x += 1;
+            }
+            let mut y = first(w.tile_y0, w.origin[1]);
+            while to_y(y) <= rect.max.y {
+                painter.hline(rect.x_range(), to_y(y), stroke);
+                y += 1;
+            }
+        }
+        if self.life.tool == LifeTool::Draw {
+            if let Some(p) = hover {
+                let l = p - rect.min;
+                if let Some((cx, cy)) = self.life_cell_at(f64::from(l.x * ppp), f64::from(l.y * ppp)) {
+                    let r = egui::Rect::from_min_max(egui::pos2(to_x(cx), to_y(cy)), egui::pos2(to_x(cx + 1), to_y(cy + 1)));
+                    // At least a few points across, so the target shows when cells are tiny.
+                    let r = egui::Rect::from_center_size(r.center(), r.size().max(egui::vec2(5.0, 5.0)));
+                    painter.rect_stroke(r, egui::CornerRadius::ZERO, egui::Stroke::new(1.5_f32, crate::BRAND_ACCENT), egui::StrokeKind::Outside);
+                }
+            }
         }
     }
 

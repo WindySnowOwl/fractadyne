@@ -55,7 +55,7 @@ fn a_change_waits_for_a_current_copy() {
         st.load_id = s.load_id;
         st.generation = s.loaded.generation();
     }
-    s.change(Change::Cells(vec![(1000, 1000, 1)]));
+    s.change(Change::Stroke { cells: vec![(1000, 1000)], start: true });
     assert_eq!(s.load_id, start_id + 1);
     assert_eq!(s.loaded.get(1000, 1000), 1);
     assert!(!s.want_download);
@@ -68,7 +68,7 @@ fn a_change_waits_for_a_current_copy() {
         st.generation = 50;
     }
     s.playing = true;
-    s.change(Change::Cells(vec![(-5, -5, 1)]));
+    s.change(Change::Stroke { cells: vec![(-5, -5)], start: true });
     assert!(s.want_download && !s.playing, "pause and ask for the universe");
     assert_eq!(s.loaded.get(-5, -5), 0, "not made to the stale copy");
     // The download arrives (generation 50, the gun's own cells): the change is made to it.
@@ -82,4 +82,101 @@ fn a_change_waits_for_a_current_copy() {
     assert_eq!(s.loaded.population(), ran.population() + 1);
     assert_eq!(s.start.get(-5, -5), 0, "an edit after generation 0 leaves the start alone");
     assert!(!s.want_download);
+}
+
+/// A state whose GPU holds what was loaded, unstepped (so changes land at once).
+fn synced() -> LifeState {
+    let s = LifeState::default();
+    {
+        let mut st = s.status.lock().unwrap();
+        st.load_id = s.load_id;
+        st.generation = s.loaded.generation();
+    }
+    s
+}
+
+fn sync(s: &LifeState) {
+    let mut st = s.status.lock().unwrap();
+    st.load_id = s.load_id;
+    st.generation = s.loaded.generation();
+}
+
+/// One tool draws and erases: a stroke starting on a dead cell paints its cells alive, one starting
+/// on a live cell clears them — whatever those other cells were.
+#[test]
+fn a_stroke_paints_the_opposite_of_its_first_cell() {
+    let mut s = synced();
+    s.stroke((-10, -10), true, false, 1.0);
+    s.stroke((-7, -10), false, false, 1.1);
+    s.stroke_end();
+    sync(&s);
+    assert_eq!((-10..=-7).map(|x| s.loaded.get(x, -10)).collect::<Vec<_>>(), [1, 1, 1, 1], "a dead start draws a line");
+    // Start on a live cell (-8, -10), drag over a dead one: both end dead.
+    s.stroke((-8, -10), true, false, 2.0);
+    s.stroke((-8, -12), false, false, 2.1);
+    s.stroke_end();
+    sync(&s);
+    assert_eq!([s.loaded.get(-8, -10), s.loaded.get(-8, -11), s.loaded.get(-8, -12)], [0, 0, 0]);
+    assert_eq!([s.loaded.get(-10, -10), s.loaded.get(-9, -10), s.loaded.get(-7, -10)], [1, 1, 1], "the rest of the line stays");
+}
+
+/// A click flips its cell ONCE: not when egui lays the press frame out twice, and not again when
+/// the release arrives as a click (egui has forgotten the press time by then). The bug the
+/// uitest's life-draw step found: the click on a live cell left it alive.
+#[test]
+fn a_click_flips_its_cell_once() {
+    let mut s = synced();
+    s.stroke((3, 3), true, false, 5.0); // the press
+    sync(&s);
+    s.stroke((3, 3), true, false, 5.0); // the same frame, laid out again
+    sync(&s);
+    s.stroke((3, 3), false, true, 5.2); // the release, as a click
+    s.stroke_end();
+    sync(&s);
+    assert_eq!(s.loaded.get(3, 3), 1);
+    // A new click on the same cell flips it back; a press and release in ONE frame does too.
+    s.stroke((3, 3), true, false, 6.0);
+    s.stroke((3, 3), false, true, 6.1);
+    s.stroke_end();
+    sync(&s);
+    assert_eq!(s.loaded.get(3, 3), 0);
+    s.stroke((3, 3), true, true, 7.0);
+    s.stroke_end();
+    assert_eq!(s.loaded.get(3, 3), 1);
+}
+
+/// A stroke pauses a running universe and lets it run on when it ends; one that started paused
+/// leaves it paused.
+#[test]
+fn drawing_pauses_and_resumes_a_running_universe() {
+    let mut s = synced();
+    s.playing = true;
+    s.stroke((0, 50), true, false, 1.0);
+    assert!(!s.playing);
+    s.stroke_end();
+    assert!(s.playing);
+    s.playing = false;
+    s.stroke((1, 50), true, false, 2.0);
+    s.stroke_end();
+    assert!(!s.playing);
+}
+
+/// Undo returns to the universe before each edit, newest first — a stroke, a clear.
+#[test]
+fn undo_returns_to_before_each_edit() {
+    let mut s = synced();
+    let original = s.loaded.cells();
+    s.stroke((100, 100), true, false, 1.0);
+    s.stroke_end();
+    sync(&s);
+    let drawn = s.loaded.cells();
+    s.change(Change::Clear);
+    sync(&s);
+    assert_eq!(s.loaded.population(), 0);
+    assert!(s.undo_edit());
+    assert_eq!(s.loaded.cells(), drawn, "undo the clear");
+    sync(&s);
+    assert!(s.undo_edit());
+    assert_eq!(s.loaded.cells(), original, "undo the stroke");
+    assert!(!s.undo_edit() && !s.can_undo());
 }

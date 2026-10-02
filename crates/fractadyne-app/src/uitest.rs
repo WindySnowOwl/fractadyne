@@ -91,6 +91,11 @@ enum Screen {
     FormulaComplete,
     /// The textbook layout's type specimen: one formula per construct, in Fractadyne Math.
     TextbookSpecimen,
+    /// A Life universe edited with the Draw tool through egui's own input: a drag draws a line of
+    /// cells, a click on its first cell flips it back. Synthetic pointer events, fed into the app's
+    /// own input (`raw_input_hook`) — nothing reaches the desktop. The toolbar's Life group, the
+    /// grid lines and the outlined cell under the pointer are in the screenshot.
+    LifeDraw,
     /// The Custom formula dialog in Textbook view: several statements aligned at `=`, a comment, a
     /// fraction, functions in their notation, and a line that does not read.
     FormulaTextbook,
@@ -770,6 +775,7 @@ fn build_steps() -> Vec<Step> {
         screen("formula-library-frm", Screen::FormulaLibraryFrm),
         screen("formula-library-filtered", Screen::FormulaLibraryFiltered),
         screen("fractal-dropdown", Screen::FractalDropdown),
+        screen("life-draw", Screen::LifeDraw),
         // --- live render, one per mode (Direct <1e4, Df32Pert <1e28, Floatexp ≥1e28) ---
         live("live-direct-1e2", 2.0),
         live("live-df32-1e6", 6.0),
@@ -978,7 +984,8 @@ impl FractadyneApp {
                     || (self.dual && !ramp_done(1))
                     || !self.misi_gallery_ready()
                     || self.misi_jump_busy()
-                    || self.formula_dialog.pending.is_some();
+                    || self.formula_dialog.pending.is_some()
+                    || !self.harness.uitest_pointer.is_empty();
                 if busy {
                     ut.quiet_since = now;
                 }
@@ -1039,6 +1046,13 @@ impl FractadyneApp {
 
     /// Put the app into the state a step wants to capture.
     fn uitest_apply(&mut self, ctx: &egui::Context, step: &Step) {
+        // ⚠A POPUP IS NOT A WINDOW: `uitest_close_all` shuts the app's windows, but egui keeps a
+        // combo box's popup open on its own, and the fractal-dropdown step's stayed open over every
+        // step after it — the five live bands included. Its chrome is what let the 1e30 band's
+        // black, iteration-capped frame grade "not blank" (stddev 20.6 from the menu, 0.0 without
+        // it; the same flat frame graded WARN in every bundle where the popup had closed, back to
+        // 2026-09-08). Close it here, so each screenshot shows one thing.
+        ctx.memory_mut(|m| m.close_popup());
         self.uitest_close_all();
         match &step.kind {
             StepKind::Screen(s) => self.uitest_open_screen(ctx, *s),
@@ -1136,11 +1150,17 @@ impl FractadyneApp {
         self.formula_library = Default::default();
         // So does a power family (the dropdown screen shows Burning Ship 4): the live steps render
         // Mandelbrot's deep point and read a flat frame as a failure (measured: both df32 bands).
-        if self.fractal == crate::FractalKind::Custom || self.fractal.power_family().is_some() {
+        // …and so does a Life universe (the life-draw screen).
+        if self.fractal == crate::FractalKind::Custom
+            || self.fractal.power_family().is_some()
+            || self.fractal == crate::FractalKind::Life
+        {
             // A collection formula may have been shown as a Julia set, at its own view.
             self.julia_mode = false;
             self.set_fractal(crate::FractalKind::Mandelbrot);
         }
+        self.life.tool = crate::life_view::LifeTool::Pan;
+        self.harness.uitest_pointer.clear();
     }
 
     fn uitest_open_screen(&mut self, ctx: &egui::Context, s: Screen) {
@@ -1580,6 +1600,21 @@ impl FractadyneApp {
                 self.set_fractal(crate::FractalKind::BurningShip4);
                 self.dialogs.open_fractal_dropdown = true;
             }
+            Screen::LifeDraw => {
+                // The gun at generation 0, 12 px a cell, the Draw tool on, the panel open.
+                self.life_open_library("Gosper glider gun");
+                self.life.tool = crate::life_view::LifeTool::Draw;
+                self.dialogs.right_panel_open = true;
+                self.viewport.reset_to(14.5, 3.5);
+                self.viewport.units_per_pixel = fractadyne_core::FloatExp::from_f64(1.0 / 12.0);
+                // A drag from cell (2, −6) to (6, −6), then a click on (2, −6). One event a frame.
+                // Then it leaves: every later step was written for a harness with no pointer.
+                use crate::UiPointer::{Gone, Move, Press, Release};
+                self.harness.uitest_pointer =
+                    [Move(2, -6), Press(2, -6), Move(4, -6), Move(6, -6), Release(6, -6), Move(2, -6), Press(2, -6), Release(2, -6), Gone]
+                        .into_iter()
+                        .collect();
+            }
             Screen::FormulaClassicApplied => {
                 let e = crate::formula_library::collection().iter().find(|e| e.name == "Magnet I").cloned();
                 match e.map(|e| (crate::custom_formula::CustomFormula::compile(&e.source, &[]), e.view)) {
@@ -1705,6 +1740,26 @@ impl FractadyneApp {
             });
         } else {
             checks.push(pass("frame not blank", format!("stddev {luma_stddev:.1}, {buckets} buckets")));
+        }
+
+        if matches!(step.kind, StepKind::Screen(Screen::LifeDraw)) {
+            // The two strokes, through egui's real input path: a drag drew cells 2–6 of row −6
+            // (empty space above the gun), and a click on cell 2 — the press seen once, however
+            // many layout passes saw it — flipped it back. The gun itself is untouched.
+            let u = &self.life.loaded;
+            let row: Vec<u8> = (1..=7).map(|x| u.get(x, -6)).collect();
+            let ok = row == [0, 0, 1, 1, 1, 1, 0] && u.population() == 36 + 4 && u.generation() == 0 && !self.life.playing;
+            checks.push(Check {
+                name: "drawing edits the cells under the pointer".into(),
+                verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+                detail: format!(
+                    "row −6, cells 1–7: {row:?} (want [0, 0, 1, 1, 1, 1, 0]); population {} (want 40); generation {}, playing {}; {} pointer events left",
+                    u.population(),
+                    u.generation(),
+                    self.life.playing,
+                    self.harness.uitest_pointer.len()
+                ),
+            });
         }
 
         if matches!(step.kind, StepKind::Screen(Screen::FormulaApplyAsync)) {
@@ -1856,7 +1911,14 @@ impl FractadyneApp {
         // `period ` is the ambient minibrot-period slot: always drawn (transparent when no period
         // applies), so its RESERVED presence is itself the reflow invariant to assert — the harness
         // has no pointer or M-key, so it is exercised in exactly that empty-but-present state.
-        for want in ["center ", "cursor ", "zoom", "iter ", "period "] {
+        // A Life universe has its own three readouts in the zoom / iteration / period slots.
+        let life_bar = self.fractal == crate::FractalKind::Life;
+        let wants: &[&str] = if life_bar {
+            &["center ", "cursor ", "scale ", "gen ", "pop "]
+        } else {
+            &["center ", "cursor ", "zoom", "iter ", "period "]
+        };
+        for want in wants {
             if find(want).is_none() {
                 sb_problems.push(format!("no {want:?} readout"));
             }
@@ -1885,13 +1947,21 @@ impl FractadyneApp {
                 .collect();
             digits.parse().ok()
         };
-        match find("zoom").and_then(|t| num(t)) {
-            Some(z) if z > 0.0 => {}
-            other => sb_problems.push(format!("zoom does not read as a number: {other:?}")),
-        }
-        match find("iter ").and_then(|t| num(t)) {
-            Some(i) if i >= 1.0 => {}
-            other => sb_problems.push(format!("iteration count does not read as a number: {other:?}")),
+        if life_bar {
+            for want in ["gen ", "pop "] {
+                if find(want).and_then(|t| num(t)).is_none() {
+                    sb_problems.push(format!("{want:?} does not read as a number"));
+                }
+            }
+        } else {
+            match find("zoom").and_then(|t| num(t)) {
+                Some(z) if z > 0.0 => {}
+                other => sb_problems.push(format!("zoom does not read as a number: {other:?}")),
+            }
+            match find("iter ").and_then(|t| num(t)) {
+                Some(i) if i >= 1.0 => {}
+                other => sb_problems.push(format!("iteration count does not read as a number: {other:?}")),
+            }
         }
         if sb_problems.is_empty() {
             checks.push(pass("status-bar-populated", format!("{} readouts, all parse", texts.len())));

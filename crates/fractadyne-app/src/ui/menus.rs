@@ -1050,6 +1050,12 @@ impl FractadyneApp {
                 // fits, it is CLIPPED at the window edge instead of wrapping to the next line
                 // (user-reported, 2026-09-07). `add_enabled` adds one widget to the row that is
                 // doing the wrapping, so it wraps like everything beside it.
+                // A Life universe has no Julia set and no dual view; its own controls take their
+                // slot — beside the picker, as what the picture is doing, and apart from the tour
+                // ▶ further along, which plays something else.
+                if self.fractal == FractalKind::Life {
+                    self.life_toolbar(ui);
+                } else {
                 if ui
                     .add_enabled(
                         self.fractal.supports_julia(),
@@ -1073,6 +1079,7 @@ impl FractadyneApp {
                 {
                     let m = if self.dual { crate::ShowMode::Set } else { crate::ShowMode::Both };
                     self.set_show_mode(m);
+                }
                 }
                 ui.separator();
                 // ── File / I-O: open & browse, then save ──────────────────────────────
@@ -1473,6 +1480,10 @@ impl FractadyneApp {
                 // elsewhere. (21 chars holds a grouped 15-dp coord: sign + up-to-1 int digit + `.`
                 // + 15 fractional + 2 group spaces ≈ 20.)
                 let (cx_s, cy_s) = match self.pointer.pointer_complex {
+                    // A universe's cursor is a CELL: column, row (rows grow downward).
+                    Some((mx, my)) if self.fractal == FractalKind::Life => {
+                        (format!("{}", mx.floor() as i64), format!("{}", (-my).floor() as i64))
+                    }
                     Some((mx, my)) => (fmt_coord(mx), fmt_coord(my)),
                     None => ("—".to_string(), "—".to_string()),
                 };
