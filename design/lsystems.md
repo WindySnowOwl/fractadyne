@@ -2,8 +2,8 @@
 
 Status: **phases 0–4 built** (2026-10-02, branch `feat/lsystems`) — phase 4: filled shapes,
 stochastic, parametric and context-sensitive productions, SVG export, draw-on and angle animation
-(the user: "run the radeon tests and do phase 4"). Still to do: raster export of an L-system view,
-and tours with order, angle and draw-on tracks (they render through it). The user:
+(the user: "run the radeon tests and do phase 4"); raster export after (the user: "continue").
+Still to do: tours with order, angle and draw-on tracks. The user:
 "Work on the design doc" (after "Are L-systems implemented" — no). Integration facts in §2 are from
 this tree at `21e2bd7` (Life merged). The user's decisions on the open questions are in §9 (all six:
 yes).
@@ -159,6 +159,24 @@ Phase 4, animation, settled:
   did — the picture would otherwise blink out on every step.
 - Neither is saved with a view; tours with order, angle and draw-on tracks wait for raster export
   (a tour renders through it).
+
+Raster export, settled (`lsystem_view/export.rs`):
+
+- **The picture on screen at the export's size**: framed as every export is (contain: the smallest
+  rectangle of the export's aspect that holds the window's view); the screen's ORDER, and its line
+  width scaled by the export's pixels per screen pixel — so a 3840-wide export of a 926-wide
+  canvas has lines ~4× as wide in its pixels, and the same segments. (More order would be another
+  picture: the step target is in screen pixels.) The draw-on progress applies.
+- **Drawn offscreen by the segment pass, in tiles of 2048 texels** (a tile's view shifted by its
+  place), each texel coloured as the screen's colour pass colours it — `palette(value + offset)`
+  or the interior colour — and a pixel the mean of its ss² texels. On the export worker (progress,
+  cancel), and on `--render`'s path; the view is embedded as for any export, so the image reopens
+  as the view. `fractadyne_gpu::lsystem::Offscreen` is the one offscreen path (the device check
+  uses it too). A walk stopped at its 4M-segment budget is said in the status.
+- **Checked**: a self-test row renders the mango leaf at 333×221, 2× supersampled, in 64-texel
+  tiles and in one: the same but for edge pixels that f32 rounds the other way (≤ 0.5%). Exports of
+  the mango leaf, the stochastic plant and the filled snowflake at 3840 wide (`--shot … --image`)
+  looked at against the screen: framing, orientation, colours, watermark.
 
 ## 1. Goal
 

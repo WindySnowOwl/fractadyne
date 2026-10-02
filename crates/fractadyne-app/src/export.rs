@@ -1329,7 +1329,7 @@ impl FractadyneApp {
         if self.export.task.is_some() || self.export.prep.is_some() {
             return;
         }
-        if !self.fractal.is_escape_time() {
+        if !self.fractal.is_escape_time() && self.fractal != FractalKind::LSystem {
             // Before the file dialog, not after it (see `start_export_to`).
             return self.start_export_to(ctx, device, queue, std::path::PathBuf::new());
         }
@@ -1664,10 +1664,20 @@ impl FractadyneApp {
     ) -> Result<String, crate::error::AppError> {
         use std::sync::atomic::AtomicBool;
         use std::sync::atomic::AtomicU32;
-        crate::diag::log_line(
-            "render",
-            &self.cli_render_manifest(self.export.width, self.export_height(), path),
-        );
+        let manifest = if self.fractal == FractalKind::LSystem {
+            format!(
+                "L-system \"{}\" order {} size={}x{} ss={} out={}",
+                self.lsystem.system.name,
+                self.lsystem.order_at(&self.viewport),
+                self.export.width,
+                self.export_height(),
+                self.export.ss,
+                path.display()
+            )
+        } else {
+            self.cli_render_manifest(self.export.width, self.export_height(), path)
+        };
+        crate::diag::log_line("render", &manifest);
         crate::diag::breadcrumb(format!(
             "CLI render {}x{} → {}",
             self.export.width,
@@ -1704,6 +1714,15 @@ impl FractadyneApp {
             );
             r
         };
+        // An L-system draws through its segment pass (`lsystem_view::export`).
+        if self.fractal == FractalKind::LSystem {
+            let mut r = self.lsystem_export_job().render(device, queue, &progress, &cancel).map_err(crate::error::AppError::Message)?;
+            if self.show_location {
+                crate::scripting::stamp_location(ctx, &mut r.pixels, r.width, r.height, &self.viewport);
+            }
+            write(path, r.width, r.height, r.pixels)?;
+            return Ok(format!("Saved {}×{}{} → {}", r.width, r.height, lsystem_export_note(r.stopped), path.display()));
+        }
         // Each view is glitch-corrected when enabled + applicable (single and both dual panels).
         let view = |vp: &fractadyne_core::Viewport, julia: bool, req: &fractadyne_gpu::ExportRequest| {
             self.render_export_view(device, queue, vp, julia, req, &progress, &cancel)
@@ -1876,12 +1895,8 @@ impl FractadyneApp {
         // The export renderer iterates escape-time formulas; a Life universe goes through its own
         // display pass, which the export path does not have yet (design/automata.md, phase 2).
         // Refused in words rather than rendered as some formula under Life's name.
-        if !self.fractal.is_escape_time() {
-            let msg = if self.fractal == FractalKind::LSystem {
-                "Image export of an L-system view is not available yet — use a screenshot, or File ▸ Save L-system."
-            } else {
-                "Image export of a Life view is not available yet — use a screenshot, or File ▸ Save Life pattern."
-            };
+        if !self.fractal.is_escape_time() && self.fractal != FractalKind::LSystem {
+            let msg = "Image export of a Life view is not available yet — use a screenshot, or File ▸ Save Life pattern.";
             self.set_toast(msg.to_string(), ctx);
             return;
         }
@@ -1896,6 +1911,16 @@ impl FractadyneApp {
             self.export.last_dir = Some(parent.to_path_buf());
         }
         self.remember_dir(&path);
+        // An L-system draws through its segment pass, not the export renderer
+        // (`lsystem_view::export`).
+        if self.fractal == FractalKind::LSystem {
+            let hud = self
+                .show_location
+                .then(|| crate::scripting::build_location_overlay(ctx, &self.viewport, self.export_height()))
+                .flatten();
+            self.spawn_lsystem_export(device, queue, path, hud);
+            return;
+        }
         // Deep export: build the (slow, bignum) MAP reference orbit OFF the main thread so the UI
         // stays responsive instead of freezing (at extreme depth the reference build alone is
         // minutes). The render dispatches once it lands — see the `export_prep` poll in `update()`.
@@ -2003,6 +2028,54 @@ impl FractadyneApp {
     /// Render an already-assembled export job (references built) on a background worker and write it
     /// (watermark + HUD applied). Shares the export status channel + progress/cancel. Used by the
     /// deep-export path once the reference has been built off the main thread (`export_prep`).
+    /// An L-system view's export on a worker thread (`lsystem_view::export`): walked, drawn in tiles,
+    /// coloured, written — progress and cancel as for any export.
+    fn spawn_lsystem_export(
+        &mut self,
+        device: eframe::wgpu::Device,
+        queue: eframe::wgpu::Queue,
+        path: std::path::PathBuf,
+        hud: Option<crate::scripting::HudOverlay>,
+    ) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let job = self.lsystem_export_job();
+        let meta = self.view_metadata();
+        let format = self.export.format;
+        self.export.progress.store(0, Relaxed);
+        self.export.cancel.store(false, Relaxed);
+        let progress = self.export.progress.clone();
+        let cancel = self.export.cancel.clone();
+        let wm = self.watermark.then(|| self.watermark_overlay.clone()).flatten();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.export.task = Some(rx);
+        self.export.status = Some("Rendering…".to_string());
+        crate::diag::breadcrumb(format!("GUI L-system export → {}", path.display()));
+        std::thread::spawn(move || {
+            let msg = match job.render(&device, &queue, &progress, &cancel) {
+                Err(_) if cancel.load(Relaxed) => "Export canceled.".to_string(),
+                Err(e) => format!("Export failed: {e}"),
+                Ok(mut r) => {
+                    progress.store(2000, Relaxed);
+                    if let Some(ov) = &wm {
+                        stamp_watermark(&mut r.pixels, r.width, r.height, ov);
+                    }
+                    if let Some(ov) = &hud {
+                        crate::scripting::blit_location_overlay(&mut r.pixels, r.width, r.height, ov);
+                    }
+                    let written = match format {
+                        ExportFormat::Png => fractadyne_export::write_png(&path, r.width, r.height, &r.pixels, Some(&meta)),
+                        ExportFormat::Exr => fractadyne_export::write_exr(&path, r.width, r.height, &r.pixels, Some(&meta)),
+                    };
+                    match written {
+                        Ok(()) => format!("Saved {}×{}{} → {}", r.width, r.height, lsystem_export_note(r.stopped), path.display()),
+                        Err(e) => format!("Export failed: {e}"),
+                    }
+                }
+            };
+            let _ = tx.send(msg);
+        });
+    }
+
     pub(crate) fn spawn_export_worker(
         &mut self,
         device: eframe::wgpu::Device,
@@ -2076,6 +2149,15 @@ impl FractadyneApp {
                 Err(e) => format!("Export failed: {e}"),
             });
         });
+    }
+}
+
+/// What an L-system export's status adds when its walk stopped at the segment budget.
+fn lsystem_export_note(stopped: bool) -> &'static str {
+    if stopped {
+        " (incomplete: past the 4,000,000-segment budget — lower the order)"
+    } else {
+        ""
     }
 }
 

@@ -1315,8 +1315,8 @@ impl crate::FractadyneApp {
         // update(); it screenshots and exits itself once the walk is done. Gated on GPU being up.
         // --shot: load, settle, capture, exit. Before --uitest so the two can never both
         // drive a frame.
-        if self.harness.shot.is_some() && gpu.is_some() {
-            self.shot_frame(ctx);
+        if let (true, Some(gpu)) = (self.harness.shot.is_some(), gpu) {
+            self.shot_frame(ctx, gpu);
         }
         if self.harness.uitest.is_some() && gpu.is_some() {
             self.uitest_frame(ctx, gpu_name.as_deref());

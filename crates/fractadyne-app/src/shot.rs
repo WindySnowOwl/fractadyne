@@ -40,6 +40,8 @@ pub(crate) struct Shot {
     pending: bool,
     /// `--svg`: an L-system view's SVG drawing, written when the shot is taken.
     pub(crate) svg: Option<PathBuf>,
+    /// `--image`: the view's image export (File ▸ Export image), written when the shot is taken.
+    pub(crate) image: Option<PathBuf>,
 }
 
 impl Shot {
@@ -56,13 +58,14 @@ impl Shot {
             ref_changed_at: now,
             pending: false,
             svg: None,
+            image: None,
         }
     }
 }
 
 impl crate::FractadyneApp {
     /// One frame of the `--shot` state machine, driven from `update()`.
-    pub(crate) fn shot_frame(&mut self, ctx: &egui::Context) {
+    pub(crate) fn shot_frame(&mut self, ctx: &egui::Context, gpu: &(eframe::wgpu::Device, eframe::wgpu::Queue)) {
         ctx.request_repaint(); // unattended: there is no user input to wake the loop
 
         // ---- one-time setup -----------------------------------------------------------------
@@ -179,8 +182,23 @@ impl crate::FractadyneApp {
             );
         }
         s.pending = true;
-        let svg = s.svg.clone();
+        let (svg, image) = (s.svg.clone(), s.image.clone());
         ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        if let Some(path) = image {
+            // The view's image export, at the Export dialog's settings (as File ▸ Export image).
+            // Synchronous offscreen work, not a live dispatch: the frame tripwire must not read this
+            // frame's interval as a GPU frame (`render::tripwire_dt`).
+            let t0 = Instant::now();
+            let result = self.render_to_file(ctx, &gpu.0, &gpu.1, &path);
+            self.perf.offscreen_ms += t0.elapsed().as_secs_f64() * 1000.0;
+            match result {
+                Ok(m) => println!("--shot: {m}"),
+                Err(e) => {
+                    eprintln!("fractadyne: --shot: --image {}: {e}", path.display());
+                    crate::exit(2);
+                }
+            }
+        }
         if let Some(path) = svg {
             if self.fractal != crate::FractalKind::LSystem {
                 eprintln!("fractadyne: --shot: --svg is for an L-system view; this is {}", self.fractal.name());

@@ -4720,6 +4720,19 @@ impl FractadyneApp {
                     pass,
                 });
             }
+            // Image export draws the view offscreen in tiles: the tiles must make the one picture.
+            let (pass, result) = match crate::lsystem_view::export::tiling_check(device, queue) {
+                Ok(s) => (true, s),
+                Err(e) => (false, e),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "L-system",
+                name: "an image export is the same in tiles as whole".into(),
+                params: "mango leaf, 333×221, 2× supersampled, 64-texel tiles vs one".into(),
+                result,
+                threshold: "edge pixels only, ≤ 0.5%",
+                pass,
+            });
         }
 
         // ---- series approximation engages for the Multibrot families ----

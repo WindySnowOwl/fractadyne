@@ -90,8 +90,10 @@ Changes after 0.3.0-beta.1:
   is as sharp, and as quick, as at 1×. A view carries its system and writes format_version 4; the
   session keeps it. File ▸ Export SVG (or SVG… in the panel) writes the view as a vector drawing —
   its lines as paths and its filled shapes as polygons, in its colours — for print or a plotter;
-  `--shot … --svg FILE` writes one unattended. Not yet: image export of an L-system view (refused
-  with a message), and tours of L-systems (design/lsystems.md).
+  `--shot … --svg FILE` writes one unattended. File ▸ Export image works for an L-system view: the
+  picture on screen at the export's size — its order and line width the screen's, scaled — drawn
+  in tiles at any size, supersampled, with the view embedded as for any export; `--shot … --image
+  FILE` writes one unattended. Not yet: tours of L-systems (design/lsystems.md).
 - **Conway's Game of Life and its relatives (not yet in a beta).** A new family under Fractal ▸
   Automata: Life-like cellular automata on an unbounded plane, stepped on the graphics card.
   Rules in B/S notation (Life, HighLife, Seeds and 19 more built in), Generations rules with

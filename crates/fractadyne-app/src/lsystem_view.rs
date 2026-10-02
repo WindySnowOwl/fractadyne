@@ -1155,6 +1155,7 @@ pub(crate) fn status_readouts(order: u32, drawn: Option<u64>) -> (String, String
     (format!("order {order:>4}"), format!("drawn {count:>COUNT_W$}"))
 }
 
+pub(crate) mod export;
 mod svg;
 
 #[cfg(test)]
