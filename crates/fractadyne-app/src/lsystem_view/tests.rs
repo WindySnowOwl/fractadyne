@@ -46,7 +46,7 @@ fn walk_values_stay_in_the_palette_range() {
                 margin: 1.0,
                 deep,
             };
-            let WalkOut { segments: segs, stats, big: used, .. } = walk_segments(&st.drawn_system(), &st.tables, big.clone(), &key, 4.0);
+            let WalkOut { segments: segs, stats, big: used, .. } = walk_segments(&st.drawn_system(), &st.tables, big.clone(), None, &key, 4.0);
             assert_eq!(used.is_some(), deep);
             big = used;
             assert!(stats.segments > 0 && segs.len() as u64 == stats.segments, "{colouring:?} deep {deep}: {stats:?}");
@@ -81,9 +81,39 @@ fn a_stochastic_plant_reseeds_and_zooms_deep() {
         margin: 1.0,
         deep: true,
     };
-    let out = walk_segments(&st.drawn_system(), &st.tables, None, &key, 4.0);
+    let out = walk_segments(&st.drawn_system(), &st.tables, None, None, &key, 4.0);
     assert!(out.big.is_some());
     assert!(out.stats.segments > 0 && !out.stats.stopped, "{:?}", out.stats);
+}
+
+#[test]
+fn a_parametric_system_is_built_once_at_its_order_and_drawn() {
+    let mut st = LSystemState::default();
+    st.set_system(library::find("Branching pattern (ABOP 1.39)").unwrap().system().unwrap());
+    // Its own order at any zoom, and never deep.
+    assert_eq!(st.order_for(-5.0), 13);
+    assert_eq!(st.order_for(-300.0), 13);
+    assert!(!st.needs_deep(-300.0, 13));
+    let zero = || BigFloat::from_f64(0.0, 128);
+    let key = WalkKey {
+        tables: 1,
+        order: 13,
+        centre: [zero(), zero()],
+        upp_log2: -8.0,
+        size: [400, 300],
+        colouring: Colouring::Depth,
+        margin: 1.0,
+        deep: false,
+    };
+    let out = walk_segments(&st.drawn_system(), &st.tables, None, None, &key, 1.0);
+    let x = out.ex.expect("its word");
+    assert_eq!(x.order, 13);
+    assert!(out.stats.segments > 0, "{:?}", out.stats);
+    assert!(out.segments.iter().all(|s| (0.0..=1.0).contains(&s.value)));
+    // The word handed back is drawn again, not rebuilt.
+    let again = walk_segments(&st.drawn_system(), &st.tables, None, Some(x.clone()), &key, 1.0);
+    assert!(Arc::ptr_eq(&again.ex.unwrap(), &x));
+    assert_eq!(again.stats, out.stats);
 }
 
 #[test]
@@ -109,7 +139,7 @@ fn a_filled_shape_becomes_triangles_inside_the_view() {
     let upp = ((b[2] - b[0]) / 300.0).max((b[3] - b[1]) / 300.0);
     let centre = [BigFloat::from_f64(0.5 * (b[0] + b[2]), 128), BigFloat::from_f64(0.5 * (b[1] + b[3]), 128)];
     let key = WalkKey { tables: 1, order: 4, centre, upp_log2: upp.log2(), size: [320, 320], colouring: Colouring::Plain, margin: 1.0, deep: false };
-    let out = walk_segments(&st.drawn_system(), &t, None, &key, 1.0);
+    let out = walk_segments(&st.drawn_system(), &t, None, None, &key, 1.0);
     assert!(out.segments.is_empty(), "inside braces the turtle draws no lines");
     assert!(!out.triangles.is_empty());
     let area: f64 = out

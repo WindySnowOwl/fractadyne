@@ -1,8 +1,8 @@
 # L-systems — turtle-drawn curves and plants, with deep zoom
 
 Status: **phases 0–3 built** (2026-10-02, branch `feat/lsystems`); phase 4 under way — filled
-shapes and stochastic productions built; parametric and context-sensitive productions, SVG export
-and the animations to come (the user: "run the radeon tests and do phase 4"). The user:
+shapes, stochastic, parametric and context-sensitive productions built; SVG export and the
+animations to come (the user: "run the radeon tests and do phase 4"). The user:
 "Work on the design doc" (after "Are L-systems implemented" — no). Integration facts in §2 are from
 this tree at `21e2bd7` (Life merged). The user's decisions on the open questions are in §9 (all six:
 yes).
@@ -100,6 +100,36 @@ Phase 4, stochastic productions, settled:
   walk's variant bookkeeping each fail those tests.
 - **Seen**: branch-depth colouring is depth over (order × nesting), so at a deep zoom every visible
   branch is a dark shade — for every plant, not only stochastic ones. To revisit.
+
+Phase 4, parametric and context-sensitive productions, settled (`lsystem/expand.rs`, `expr.rs`):
+
+- **One engine for both: build the word.** As §9.2 said, neither keeps the tables, so these are
+  drawn at a fixed order (the system's `order`, or the toolbar's) by rewriting the whole word a
+  generation at a time — up to two million modules (the order is lowered to the last that fits,
+  and the panel says so) — and running the turtle over it in `f64`, culled segment by segment.
+  The memoised parametric tables of §9.2 were not built: the engine covers every system, and the
+  common geometric ones are no slower to look at this way at their orders.
+- **ABOP's semantics, from its text** (chapter 1, pdftotext of algorithmicbotany.org's PDF): a
+  production matches a module with its letter, as many parameters as it names, its contexts and a
+  true condition; the first in the order written applies; an unmatched module stays. In a
+  bracketed word the left context is the module before on the path to the root (a branch to the
+  left stepped over, the branch the module is in stepped out of), the right context the module
+  after on its branch (branches stepped over; none at a branch's end); `ignore` letters are
+  unseen. `*` is any context. Contexts may hold several modules but no brackets.
+- **Syntax**: `left < A(x, y) > right : condition = successor`, `define NAME expression`,
+  `ignore +-F` (ABOP's `#define`, `#ignore:` and `→` are read too). A condition compares with
+  `==` (a bare `=` would be the production's), unless the production uses `→`. Expressions:
+  `+ - * / % ^`, comparisons, `! & |`, and functions; trigonometry in degrees. Turtle commands take
+  arguments: `F(l)` steps l, `+(a)` turns a degrees, `@(f)` scales the step, `\(a)` and `/(a)`.
+  `A(2) = …` alone is a stochastic weight, as before; weights cannot be combined with parameters.
+- **Checked against the book**: equation 1.7's derivation as Figure 1.34 prints it; §1.10.2's
+  context production on `A(4)B(5)C(6)`; the signals of Figure 1.30 up and down a branching
+  structure; Hogeweg and Hesper's plant (Figure 1.31a) for five generations worked by hand; the row
+  of trees ends where its base does at every order; equations 1.9 and 1.10 agree to R^(n−1),
+  segment for segment. The self-test checks three of these words.
+- **Library**: Hogeweg–Hesper plants 1.31a and 1.31d, the row of trees (1.37b), the branching
+  pattern (1.39). ABOP's turtle starts facing up: the plants say `heading 90` (the first shots grew
+  sideways).
 
 ## 1. Goal
 

@@ -45,9 +45,17 @@ fn every_entry_parses_and_names_are_unique() {
         assert_eq!(s.name, e.name);
         assert!(names.insert(e.name.to_ascii_lowercase()), "{} twice", e.name);
         assert!(!e.about.is_empty());
+        // Everything in the set either grows by a factor or names the order to draw at.
+        if let Some(x) = &s.expanded {
+            // Parametric and context-sensitive: built at its order, within the budget, drawing.
+            let order = s.order.unwrap_or_else(|| panic!("{} names no order", e.name));
+            let built = crate::lsystem::expand::expand(&s, x, order, crate::lsystem::EXPAND_BUDGET);
+            assert!(!built.short(), "{}: order {order} is over the budget (stopped at {})", e.name, built.order);
+            assert!(built.segments > 0, "{} draws nothing", e.name);
+            continue;
+        }
         let t = Tables::new(&s);
         assert!(t.axiom_entry(3.min(t.max_depth)).w > 0.0, "{} draws nothing (no lines, no polygons)", e.name);
-        // Everything in the set either grows by a factor or names the order to draw at.
         assert!(t.grows() || s.order.is_some(), "{} neither grows nor has an order", e.name);
     }
     for c in Category::ALL {

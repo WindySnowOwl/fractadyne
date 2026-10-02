@@ -37,9 +37,11 @@ const TEXTS: &[(&str, &str)] = &[
     ("stochastic leaves", "angle 30\nheading 90\nseed 5\naxiom X\nX (1) = F[+{.f-f-f.}]X\nX (1) = F[-{.f+f+f.}]X\nX (0.5) = FX\nF = FF\n"),
 ];
 
-/// The library and the exercises.
+/// The library and the exercises: every system the walk draws (the parametric and
+/// context-sensitive ones are built as words instead, and checked in `expand/tests.rs`).
 pub(crate) fn all() -> Vec<LSystem> {
-    let mut v: Vec<LSystem> = library::SYSTEMS.iter().map(|e| e.system().unwrap()).collect();
+    let mut v: Vec<LSystem> =
+        library::SYSTEMS.iter().map(|e| e.system().unwrap()).filter(|s| s.expanded.is_none()).collect();
     for (name, text) in TEXTS {
         let mut s = LSystem::parse(text).unwrap_or_else(|e| panic!("{name}: {e}"));
         s.name = name.to_string();

@@ -112,6 +112,14 @@ pub const SYSTEMS: &[NamedSystem] = &[
         about: "A closed curve of squares within squares.",
     },
     NamedSystem {
+        name: "Row of trees (ABOP 1.37)",
+        category: Category::Curve,
+        text: "angle 86\norder 12\ndefine c 1\ndefine p 0.3\ndefine q c - p\ndefine h (p*q)^0.5\naxiom F(1,0)\n\
+               F(x,t) : t == 0 = F(x*p,2)+F(x*h,1)--F(x*h,1)+F(x*q,0)\nF(x,t) : t > 0 = F(x,t-1)\n",
+        about: "Parametric: a curve whose edges carry their lengths, the shorter ones rewritten later, so it \
+                fills its triangle evenly — a row of trees (The Algorithmic Beauty of Plants figure 1.37b).",
+    },
+    NamedSystem {
         name: "Krishna anklets",
         category: Category::Curve,
         text: "angle 45\naxiom -X--X\nX = XFX--XFX\n",
@@ -266,6 +274,32 @@ pub const SYSTEMS: &[NamedSystem] = &[
         category: Category::Plant,
         text: "angle 60\nheading 90\norder 18\naxiom Y---Y\nX = {F-F}{F-F}--[--X]{F-F}{F-F}--{F-F}{F-F}--\nY = f-F+X+F-fY\n",
         about: "A leaf of filled diamonds (from Paul Bourke's collection). It grows by a step an order, so it is drawn at a fixed one.",
+    },
+    NamedSystem {
+        name: "Hogeweg-Hesper plant (ABOP 1.31a)",
+        category: Category::Plant,
+        text: "angle 22.5\nheading 90\norder 30\nignore +-F\naxiom F1F1F1\n\
+               0 < 0 > 0 = 0\n0 < 0 > 1 = 1[+F1F1]\n0 < 1 > 0 = 1\n0 < 1 > 1 = 1\n\
+               1 < 0 > 0 = 0\n1 < 0 > 1 = 1F1\n1 < 1 > 0 = 0\n1 < 1 > 1 = 0\n\
+               * < + > * = -\n* < - > * = +\n",
+        about: "Context-sensitive: a 0 or 1 changes by its neighbours', as signals pass along the stem \
+                (Hogeweg and Hesper, 1974; The Algorithmic Beauty of Plants figure 1.31a). Drawn at its order, 30.",
+    },
+    NamedSystem {
+        name: "Hogeweg-Hesper plant (ABOP 1.31d)",
+        category: Category::Plant,
+        text: "angle 25.75\nheading 90\norder 24\nignore +-F\naxiom F0F1F1\n\
+               0 < 0 > 0 = 1\n0 < 0 > 1 = 0\n0 < 1 > 0 = 0\n0 < 1 > 1 = 1F1\n\
+               1 < 0 > 0 = 1\n1 < 0 > 1 = 1[+F1F1]\n1 < 1 > 0 = 1\n1 < 1 > 1 = 0\n\
+               * < + > * = -\n* < - > * = +\n",
+        about: "Another of Hogeweg and Hesper's context-sensitive plants (The Algorithmic Beauty of Plants figure 1.31d).",
+    },
+    NamedSystem {
+        name: "Branching pattern (ABOP 1.39)",
+        category: Category::Plant,
+        text: "angle 85\norder 13\ndefine R 1.456\naxiom A(1)\nA(s) = F(s)[+A(s/R)][-A(s/R)]\n",
+        about: "Parametric: each branch is the last divided by R = 1.456, a little over √2, so the branches \
+                tile a rectangle without touching (The Algorithmic Beauty of Plants equation 1.9).",
     },
     NamedSystem {
         name: "Saupe's bush",

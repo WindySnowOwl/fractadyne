@@ -9,7 +9,9 @@
 //! at the walk's rate, never a blank.
 
 use crate::{FractadyneApp, FractalKind};
-use fractadyne_core::lsystem::{self, library, BigTables, Colouring, DeepView, Drawn, LEntry, LSystem, Tables, View, WalkOptions, WalkStats};
+use fractadyne_core::lsystem::{
+    self, library, BigTables, Colouring, DeepView, Drawn, Expansion, LEntry, LSystem, Tables, View, WalkOptions, WalkStats,
+};
 use fractadyne_core::BigFloat;
 use fractadyne_gpu::lsystem::{LSystemFrame, SegmentInstance, TriangleInstance};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -58,6 +60,8 @@ struct Walked {
     ms: f64,
     /// The deep tables it used, to reuse for the next deep walk.
     big: Option<Arc<BigTables>>,
+    /// A parametric or context-sensitive system's word, to reuse at the same order.
+    ex: Option<Arc<Expansion>>,
 }
 
 /// The last walk's numbers, for the readouts.
@@ -70,6 +74,9 @@ pub(crate) struct LastWalk {
     /// It stopped at the budget.
     pub(crate) stopped: bool,
     pub(crate) ms: f64,
+    /// A word built short of its order (the next would pass the budget): the order built, and the
+    /// one asked for.
+    pub(crate) built: Option<(u32, u32)>,
 }
 
 /// A walk in progress on its own thread.
@@ -107,6 +114,8 @@ pub(crate) struct LSystemState {
     big: Option<(u64, Arc<BigTables>)>,
     /// What the home view framed, while the view is still exactly that.
     framed: Option<Framed>,
+    /// A parametric or context-sensitive system's last word: the tables it is for, its order.
+    expansion: Option<(u64, u32, Arc<Expansion>)>,
 }
 
 /// A home view's framing: the picture's box (`None`: it draws nothing), and the canvas size and
@@ -150,6 +159,7 @@ impl Default for LSystemState {
             next_id: 1,
             big: None,
             framed: None,
+            expansion: None,
         }
     }
 }
@@ -219,6 +229,10 @@ impl LSystemState {
     /// tables' depth, the deep walk draws it.
     pub(crate) fn order_for(&self, upp_log2: f64) -> u32 {
         let t = &self.tables;
+        // A parametric or context-sensitive system is built at a fixed order (its tables are empty).
+        if self.system.expanded.is_some() {
+            return self.fixed_order.unwrap_or(self.system.order.unwrap_or(DEFAULT_ORDER)).min(lsystem::MAX_ORDER);
+        }
         let step_px = STEP_PX.max(STEP_WIDTHS * f64::from(self.width));
         let n = match self.fixed_order {
             Some(n) => n.min(t.max_depth.max(lsystem::MAX_ORDER.min(n))),
@@ -236,6 +250,9 @@ impl LSystemState {
     /// `f64` walk places to a fraction of a pixel ([`Tables::f64_reach_log2`]), or the order is
     /// past the `f64` tables.
     fn needs_deep(&self, upp_log2: f64, order: u32) -> bool {
+        if self.system.expanded.is_some() {
+            return false; // built as a word, in f64
+        }
         let t = &self.tables;
         let picture_px = if t.box_size > 0.0 { t.box_size.log2() - upp_log2 } else { -upp_log2 };
         order > t.max_depth || picture_px > t.f64_reach_log2()
@@ -254,6 +271,7 @@ impl LSystemState {
             polygons: w.stats.polygons,
             stopped: w.stats.stopped,
             ms: w.ms,
+            built: w.ex.as_ref().filter(|x| x.short()).map(|x| (x.order, x.wanted)),
         })
     }
 
@@ -267,6 +285,9 @@ impl LSystemState {
                     if w.key.tables == self.tables_id {
                         if let Some(b) = &w.big {
                             self.big = Some((w.key.tables, b.clone()));
+                        }
+                        if let Some(x) = &w.ex {
+                            self.expansion = Some((w.key.tables, w.key.order, x.clone()));
                         }
                         self.shown = Some(w);
                     }
@@ -287,6 +308,8 @@ impl LSystemState {
         let system = self.drawn_system();
         // The last deep tables, if they are this system's.
         let big = self.big.as_ref().filter(|(id, _)| *id == key.tables).map(|(_, b)| b.clone());
+        // The last word, if it is this system's at this order.
+        let ex = self.expansion.as_ref().filter(|(id, o, _)| *id == key.tables && *o == key.order).map(|(_, _, x)| x.clone());
         let result = Arc::new(Mutex::new(None));
         let done = Arc::new(AtomicBool::new(false));
         let id = self.next_id;
@@ -301,10 +324,10 @@ impl LSystemState {
             .name("lsystem-walk".into())
             .spawn(move || {
                 let t0 = std::time::Instant::now();
-                let WalkOut { segments, triangles, stats, big } = walk_segments(&system, &tables, big, &key, depth_scale);
+                let WalkOut { segments, triangles, stats, big, ex } = walk_segments(&system, &tables, big, ex, &key, depth_scale);
                 let ms = t0.elapsed().as_secs_f64() * 1e3;
                 if let Ok(mut slot) = r.lock() {
-                    *slot = Some(Walked { key, segments: Arc::new(segments), triangles: Arc::new(triangles), id, stats, ms, big });
+                    *slot = Some(Walked { key, segments: Arc::new(segments), triangles: Arc::new(triangles), id, stats, ms, big, ex });
                 }
                 d.store(true, Ordering::Release);
             })
@@ -321,11 +344,24 @@ struct WalkOut {
     triangles: Vec<TriangleInstance>,
     stats: WalkStats,
     big: Option<Arc<BigTables>>,
+    /// A parametric or context-sensitive system's word (built, or `ex` handed back).
+    ex: Option<Arc<Expansion>>,
 }
 
-fn walk_segments(sys: &LSystem, t: &Tables, big: Option<Arc<BigTables>>, key: &WalkKey, depth_scale: f64) -> WalkOut {
+fn walk_segments(
+    sys: &LSystem,
+    t: &Tables,
+    big: Option<Arc<BigTables>>,
+    ex: Option<Arc<Expansion>>,
+    key: &WalkKey,
+    depth_scale: f64,
+) -> WalkOut {
     let size = [f64::from(key.size[0]), f64::from(key.size[1])];
     let margin = f64::from(key.margin);
+    // A parametric or context-sensitive system: its word at this order (the last one, if it was
+    // built for this order), its brackets the depth colouring's scale.
+    let ex = sys.expanded.as_ref().map(|e| ex.unwrap_or_else(|| Arc::new(lsystem::expand::expand(sys, e, key.order, lsystem::EXPAND_BUDGET))));
+    let depth_scale = ex.as_ref().map_or(depth_scale, |x| f64::from(x.max_brackets).max(1.0));
     let opts = WalkOptions { order: key.order, lod_px: LOD_PX, budget: BUDGET };
     let (mut segments, mut triangles) = (Vec::new(), Vec::new());
     let value_of = |index: f64, span: f64, depth: u16, heading: f64, colour: i32, total: f64| {
@@ -371,7 +407,7 @@ fn walk_segments(sys: &LSystem, t: &Tables, big: Option<Arc<BigTables>>, key: &W
             let view = DeepView { centre: key.centre.clone(), upp_log2: key.upp_log2, size, margin };
             let total = bt.axiom_count(key.order).max(1.0);
             let stats = lsystem::deep_walk_all(t, &bt, &view, &opts, lsystem::switch_px(t), &mut |d| take(d, total));
-            return WalkOut { segments, triangles, stats, big: Some(bt) };
+            return WalkOut { segments, triangles, stats, big: Some(bt), ex: None };
         }
         // Angles with no common unit (a decimal of more than 18 places): f64, as far as it goes.
     }
@@ -381,9 +417,14 @@ fn walk_segments(sys: &LSystem, t: &Tables, big: Option<Arc<BigTables>>, key: &W
         size,
         margin,
     };
+    if let Some(x) = ex {
+        let total = (x.segments as f64).max(1.0);
+        let stats = lsystem::expand::draw(sys, &x, &view, BUDGET, &mut |d| take(d, total));
+        return WalkOut { segments, triangles, stats, big: None, ex: Some(x) };
+    }
     let total = t.axiom_entry(key.order.min(t.max_depth)).n.max(1.0);
     let stats = lsystem::walk_all(t, &view, &opts, &mut |d| take(d, total));
-    WalkOut { segments, triangles, stats, big: None }
+    WalkOut { segments, triangles, stats, big: None, ex: None }
 }
 
 /// `d / 2^log2_den` as an `f64`, for any magnitudes (a centre difference at 1e400×).
@@ -461,6 +502,20 @@ impl FractadyneApp {
 
     /// Frame the picture: its bounding box (at an order cheap to walk whole) with a margin.
     pub(crate) fn lsystem_home(&mut self) {
+        // A parametric or context-sensitive system: its word at its order (kept for the walk).
+        if let Some(e) = self.lsystem.system.expanded.clone() {
+            let order = self.lsystem.order_for(0.0);
+            let sys = self.lsystem.drawn_system();
+            let id = self.lsystem.tables_id;
+            let x = match self.lsystem.expansion.as_ref().filter(|(i, o, _)| *i == id && *o == order) {
+                Some((_, _, x)) => x.clone(),
+                None => Arc::new(lsystem::expand::expand(&sys, &e, order, lsystem::EXPAND_BUDGET)),
+            };
+            let b = lsystem::expand::bounds(&sys, &x);
+            self.lsystem.expansion = Some((id, order, x));
+            self.lsystem_frame(b);
+            return;
+        }
         let t = self.lsystem.tables.clone();
         // A growing picture frames the same at any order; one drawn at a fixed order (its own, or
         // the user's) frames at that order — Bourke's mango leaf at order 18 is a corner of
@@ -647,7 +702,8 @@ impl FractadyneApp {
             }
         });
         crate::ui::labelled(ui, "Order", |ui| {
-            let max = self.lsystem.tables.max_depth;
+            // (A parametric system has no tables; its word's budget bounds its order.)
+            let max = if self.lsystem.system.expanded.is_some() { 64 } else { self.lsystem.tables.max_depth };
             match self.lsystem.fixed_order.as_mut() {
                 Some(n) => ui.add(egui::Slider::new(n, 0..=max.min(64))),
                 None => ui.label(format!("{now}")),
@@ -705,18 +761,36 @@ impl FractadyneApp {
         });
         egui::Grid::new("lsystem_status").num_columns(2).show(ui, |ui| {
             let t = &self.lsystem.tables;
+            let built = self.lsystem.system.expanded.is_some();
             ui.label("Growth");
-            ui.label(if t.grows() {
-                format!("×{:.4} an order{}", t.growth, if t.period == 2 { " (orders step by 2)" } else { "" })
+            if built {
+                ui.label("built as a word, at its order").on_hover_text(
+                    "Parametric or context-sensitive: a module's rewrite depends on its numbers or its neighbours, \
+                     so the word is built a generation at a time (up to two million modules) and drawn in double \
+                     precision — the order does not follow the zoom.",
+                );
             } else {
-                "none (fixed order)".into()
-            });
+                ui.label(if t.grows() {
+                    format!("×{:.4} an order{}", t.growth, if t.period == 2 { " (orders step by 2)" } else { "" })
+                } else {
+                    "none (fixed order)".into()
+                });
+            }
             ui.end_row();
             if let Some(w) = self.lsystem.last_walk() {
                 ui.label("Drawn");
-                ui.label(format!("{} at order {}{}", drawn_text(w.segments, w.polygons), w.order, if w.stopped { " (budget)" } else { "" }))
+                let order = match w.built {
+                    Some((got, _)) => got,
+                    None => w.order,
+                };
+                ui.label(format!("{} at order {order}{}", drawn_text(w.segments, w.polygons), if w.stopped { " (budget)" } else { "" }))
                     .on_hover_text(format!("walked in {:.1} ms; subtrees off the view are skipped, those under a pixel drawn as one segment", w.ms));
                 ui.end_row();
+                if let Some((got, want)) = w.built {
+                    ui.label("");
+                    ui.label(egui::RichText::new(format!("Order {want}'s word is over two million modules: drawn at {got}.")).small());
+                    ui.end_row();
+                }
             }
         });
         if now >= lsystem::MAX_ORDER && grows {
@@ -731,7 +805,7 @@ impl FractadyneApp {
     /// family: lower / raise the order (fixing it), follow the zoom again, edit.
     pub(crate) fn lsystem_toolbar(&mut self, ui: &mut egui::Ui) {
         let now = self.lsystem.order_at(&self.viewport);
-        let max = self.lsystem.tables.max_depth.max(now);
+        let max = if self.lsystem.system.expanded.is_some() { lsystem::MAX_ORDER } else { self.lsystem.tables.max_depth.max(now) };
         if ui.button("−").on_hover_text("Lower the order (fixes it)").clicked() {
             self.lsystem.fixed_order = Some(now.saturating_sub(1));
         }
@@ -764,7 +838,10 @@ impl FractadyneApp {
                      productions 'X = word', and optionally heading, draw / move / variables, colour, \
                      order. A symbol with alternatives chosen at random has one line for each, with \
                      its weight: 'X (0.3) = word'; 'seed n' picks the plant. In a word, { } fills the \
-                     turtle's path and . adds a vertex. A Fractint .l entry can be pasted as it is.",
+                     turtle's path and . adds a vertex. Parametric and context-sensitive productions \
+                     (The Algorithmic Beauty of Plants): 'A(s) : s > 1 = F(s)[+A(s/2)]', 'b < a > c = b', \
+                     with 'define R 1.456' and 'ignore +-F'; F(l) steps l, +(a) turns a degrees. A Fractint \
+                     .l entry can be pasted as it is.",
                 );
                 egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                     ui.add(egui::TextEdit::multiline(&mut self.lsystem.editor_text).code_editor().desired_rows(12).desired_width(f32::INFINITY));

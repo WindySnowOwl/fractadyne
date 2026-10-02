@@ -4563,14 +4563,20 @@ impl FractadyneApp {
             use fractadyne_core::lsystem::{self as ls, library, reference};
             let (mut compared, mut bad, mut worst) = (0usize, Vec::new(), 0.0f64);
             let mut heavy = Vec::new();
+            let mut systems = 0;
             for e in library::SYSTEMS {
                 let Ok(s) = e.system() else {
                     bad.push(format!("{}: does not parse", e.name));
                     continue;
                 };
+                // (Parametric and context-sensitive systems are built as words: the next check.)
+                if s.expanded.is_some() {
+                    continue;
+                }
                 let t = ls::Tables::new(&s);
                 // The highest order up to 6 that draws, small enough to build the word for.
                 let Some(order) = (1..=6u32).rev().find(|&n| (1.0..=50_000.0).contains(&t.axiom_entry(n).n)) else { continue };
+                systems += 1;
                 // A pixel a step, so the tolerance below is in steps.
                 let u = t.step(order);
                 let view = ls::View { centre: [0.0, 0.0], upp: u[0].hypot(u[1]), size: [f64::INFINITY; 2], margin: 0.0 };
@@ -4607,11 +4613,52 @@ impl FractadyneApp {
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "L-system",
                 name: "the culling walk draws what the naive turtle draws".into(),
-                params: format!("{} library systems, order ≤ 6, {} segments", library::SYSTEMS.len(), crate::commas(&compared.to_string())),
+                params: format!("{systems} library systems, order ≤ 6, {} segments", crate::commas(&compared.to_string())),
                 result: if bad.is_empty() { format!("all equal; worst end-point difference {worst:.1e} px") } else { bad.join("; ") },
                 threshold: "same segments, in order, ends within 1e-6 px",
                 pass: bad.is_empty() && compared > 0,
             });
+            // Parametric and context-sensitive systems: the words The Algorithmic Beauty of Plants
+            // prints (equation 1.7, Figure 1.34) and works through (the signal of Figure 1.30), and
+            // Hogeweg and Hesper's plant (Figure 1.31a) worked by hand from its productions.
+            {
+                let cases: [(&str, &str, u32, &str); 3] = [
+                    (
+                        "ABOP 1.7",
+                        "angle 90\naxiom B(2)A(4,4)\nA(x,y) : y <= 3 = A(x*2, x+y)\nA(x,y) : y > 3 = B(x)A(x/y, 0)\n\
+                         B(x) : x < 1 = C\nB(x) : x >= 1 = B(x-1)\n",
+                        4,
+                        "CB(1)A(8,7)",
+                    ),
+                    ("ABOP 1.30a", "angle 45\nignore +-\naxiom b[+a]a[-a]a[+a]a\nb < a = b\n", 2, "b[+b]b[-b]b[+a]a"),
+                    (
+                        "ABOP 1.31a",
+                        "angle 22.5\nignore +-F\naxiom F1F1F1\n0 < 0 > 0 = 0\n0 < 0 > 1 = 1[+F1F1]\n0 < 1 > 0 = 1\n\
+                         0 < 1 > 1 = 1\n1 < 0 > 0 = 0\n1 < 0 > 1 = 1F1\n1 < 1 > 0 = 0\n1 < 1 > 1 = 0\n\
+                         * < + > * = -\n* < - > * = +\n",
+                        5,
+                        "F1F1F1F1[-F0F1]F1",
+                    ),
+                ];
+                let mut wrong = Vec::new();
+                for (name, text, order, want) in cases {
+                    let got = ls::LSystem::parse(text).ok().and_then(|s| {
+                        let e = s.expanded.clone()?;
+                        Some(ls::expand::expand(&s, &e, order, ls::EXPAND_BUDGET).word.text())
+                    });
+                    if got.as_deref() != Some(want) {
+                        wrong.push(format!("{name} at {order}: {got:?}, not {want}"));
+                    }
+                }
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "L-system",
+                    name: "parametric and context-sensitive systems derive as ABOP prints them".into(),
+                    params: "equation 1.7 at 4, Figure 1.30a at 2, Figure 1.31a at 5".into(),
+                    result: if wrong.is_empty() { "all three words as printed".into() } else { wrong.join("; ") },
+                    threshold: "the same words, module for module",
+                    pass: wrong.is_empty(),
+                });
+            }
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "L-system",
                 name: "a home view costs what its pixels cost".into(),

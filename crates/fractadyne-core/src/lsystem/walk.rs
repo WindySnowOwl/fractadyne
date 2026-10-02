@@ -27,7 +27,7 @@ impl View {
     pub const EVERYTHING: View = View { centre: [0.0, 0.0], upp: 1.0, size: [f64::INFINITY; 2], margin: 0.0 };
 
     /// Whether a disc at `p` (pixels from the centre) of radius `r` meets the view.
-    fn meets(&self, p: [f64; 2], r: f64) -> bool {
+    pub(crate) fn meets(&self, p: [f64; 2], r: f64) -> bool {
         let dx = (p[0].abs() - 0.5 * self.size[0]).max(0.0);
         let dy = (p[1].abs() - 0.5 * self.size[1]).max(0.0);
         dx * dx + dy * dy <= r * r

@@ -21,6 +21,11 @@ pub use walk::*;
 mod deep;
 pub use deep::*;
 
+pub mod expr;
+
+pub mod expand;
+pub use expand::{Expanded, Expansion, EXPAND_BUDGET};
+
 pub mod reference;
 
 pub mod polygon;

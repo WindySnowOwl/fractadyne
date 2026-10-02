@@ -167,6 +167,9 @@ pub struct LSystem {
     /// What a stochastic system's choices follow ([`super::variant`]): the same seed, the same
     /// picture.
     pub seed: u64,
+    /// A parametric or context-sensitive system's grammar ([`super::expand`]): it is drawn by
+    /// building its word, and `axiom` and `rules` are empty.
+    pub expanded: Option<std::sync::Arc<super::expand::Expanded>>,
 }
 
 /// Why a system was refused: what and where (1-based line and column; column 0 = the whole line).
@@ -222,6 +225,81 @@ fn number(s: &[u8], mut i: usize) -> Option<(f64, usize)> {
 /// Parses a word: `col0` is the 1-based column of `s`'s first byte, for errors. With `fold`, letters
 /// are upper-cased first (Fractint ignores case).
 pub(crate) fn parse_word(s: &str, line: usize, col0: usize, fold: bool) -> Result<Vec<Tok>, ParseError> {
+    parse_word_spans(s, line, col0, fold).map(|(w, _)| w)
+}
+
+/// A parametric word's module: its command or symbol, and the text of each argument with the
+/// column it starts at (`F(x*2, 3)`: `x*2` and `3`).
+pub(crate) type ArgModule = (Tok, Vec<(String, usize)>);
+
+/// Parses a parametric word (ABOP §1.10): [`parse_word`]'s modules, each optionally followed by its
+/// arguments in parentheses — `A(x, y)`, `F(l*0.5)`, `+(30)`. The arguments' text is returned
+/// unparsed (they are expressions in the production's parameters).
+pub(crate) fn parse_word_args(s: &str, line: usize, col0: usize) -> Result<Vec<ArgModule>, ParseError> {
+    // Each `( … )` group, blanked out of the word (so the columns stay put), and where it starts.
+    let b = s.as_bytes();
+    let mut blank = b.to_vec();
+    let mut groups: Vec<(usize, Vec<(String, usize)>)> = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b')' {
+            return fail(line, col0 + i, "')' without a '(' before it");
+        }
+        if b[i] != b'(' {
+            i += 1;
+            continue;
+        }
+        let open = i;
+        let (mut depth, mut j, mut start) = (0usize, i, i + 1);
+        let mut args = Vec::new();
+        loop {
+            let Some(&c) = b.get(j) else { return fail(line, col0 + open, "a '(' is never closed") };
+            match c {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        args.push((s[start..j].to_string(), col0 + start));
+                        break;
+                    }
+                }
+                b',' if depth == 1 => {
+                    args.push((s[start..j].to_string(), col0 + start));
+                    start = j + 1;
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        if args.len() == 1 && args[0].0.trim().is_empty() {
+            args.clear();
+        }
+        blank[open..=j].fill(b' ');
+        // `\(a)`, `/(a)` and `@(f)` read as `\1`, `/1` and `@1`, their argument the factor.
+        if open > 0 && matches!(b[open - 1], b'\\' | b'/' | b'@') {
+            blank[open] = b'1';
+        }
+        groups.push((open, args));
+        i = j + 1;
+    }
+    let text = std::str::from_utf8(&blank).expect("ASCII blanks in valid UTF-8");
+    let (toks, starts) = parse_word_spans(text, line, col0, false)?;
+    let mut out: Vec<ArgModule> = toks.into_iter().map(|t| (t, Vec::new())).collect();
+    for (open, args) in groups {
+        // The module just before the group (ABOP sets them apart: `F (x)`).
+        let Some(k) = starts.iter().rposition(|&st| st < open) else {
+            return fail(line, col0 + open, "'(' must follow a symbol (its arguments)");
+        };
+        if !out[k].1.is_empty() || matches!(out[k].0, Tok::Push | Tok::Pop) {
+            return fail(line, col0 + open, "'(' must follow a symbol (its arguments)");
+        }
+        out[k].1 = args;
+    }
+    Ok(out)
+}
+
+/// [`parse_word`], with the byte offset each token starts at.
+fn parse_word_spans(s: &str, line: usize, col0: usize, fold: bool) -> Result<(Vec<Tok>, Vec<usize>), ParseError> {
     let owned;
     let b = if fold {
         owned = s.to_ascii_uppercase();
@@ -234,12 +312,14 @@ pub(crate) fn parse_word(s: &str, line: usize, col0: usize, fold: bool) -> Resul
         return fail(line, col0 + at, "only ASCII symbols are allowed");
     }
     let mut out = Vec::new();
+    let mut starts = Vec::new();
     // The open brackets and braces, innermost last: each closes in the word that opens it.
     let mut open: Vec<u8> = Vec::new();
     let mut i = 0;
     while i < b.len() {
         let c = b[i];
         let col = col0 + i;
+        let at = i;
         i += 1;
         let tok = match c {
             b' ' | b'\t' => continue,
@@ -331,6 +411,7 @@ pub(crate) fn parse_word(s: &str, line: usize, col0: usize, fold: bool) -> Resul
             c => return fail(line, col, format!("'{}' cannot be used in a word", c as char)),
         };
         out.push(tok);
+        starts.push(at);
         if out.len() > MAX_WORD {
             return fail(line, col, format!("a word may hold at most {MAX_WORD} symbols"));
         }
@@ -338,7 +419,7 @@ pub(crate) fn parse_word(s: &str, line: usize, col0: usize, fold: bool) -> Resul
     match open.last() {
         Some(b'{') => fail(line, col0 + b.len(), "a '{' is never closed"),
         Some(_) => fail(line, col0 + b.len(), "a '[' is never closed"),
-        None => Ok(out),
+        None => Ok((out, starts)),
     }
 }
 
@@ -390,6 +471,7 @@ impl LSystem {
             colour: None,
             order: None,
             seed: DEFAULT_SEED,
+            expanded: None,
         }
     }
 
@@ -416,12 +498,13 @@ impl LSystem {
 
     /// Whether any word uses a bracket.
     pub fn branches(&self) -> bool {
-        self.words().any(|w| w.contains(&Tok::Push))
+        self.expanded.as_ref().is_some_and(|e| e.branches) || self.words().any(|w| w.contains(&Tok::Push))
     }
 
     /// Whether any word sets or steps the colour index.
     pub fn uses_colour_index(&self) -> bool {
-        self.words().any(|w| w.iter().any(|t| matches!(t, Tok::SetColour(_) | Tok::AddColour(_))))
+        self.expanded.as_ref().is_some_and(|e| e.colour_index)
+            || self.words().any(|w| w.iter().any(|t| matches!(t, Tok::SetColour(_) | Tok::AddColour(_))))
     }
 
     /// The axiom and every production's word.
@@ -462,16 +545,41 @@ impl LSystem {
         let mut weighted = [false; 256];
         // Pasted text: a lone CR ends a line, and a Unicode minus (as books print `F−F`) is '-'.
         let cleaned = fractadyne_text::clean(text);
+        // A parametric or context-sensitive system (a `define`, an `ignore`, or a production with
+        // parameters, a condition or a context) is read whole as one (super::expand), its axiom
+        // and productions into `items`.
+        let expanded = cleaned.text.lines().any(|raw| expanded_line(raw.trim()));
+        let mut items: Vec<super::expand::Item> = Vec::new();
         for (k, raw) in cleaned.text.lines().enumerate() {
             let line = k + 1;
-            let lead = raw.len() - raw.trim_start().len();
-            let body = raw.trim();
+            let mut lead = raw.len() - raw.trim_start().len();
+            let mut body = raw.trim();
+            // ABOP's `#define` and `#ignore` (any other `#` line is a comment).
+            if let Some(rest) = body.strip_prefix('#').filter(|r| key_word(r).is_some_and(|k| k == "define" || k == "ignore")) {
+                body = rest;
+                lead += 1;
+            }
             if body.is_empty() || body.starts_with('#') {
                 continue;
             }
+            let sep = if key_word(body).is_some() { None } else { separator(body) };
+            if let (true, Some((at, len))) = (expanded, sep) {
+                let lhs = &body[..at];
+                if production_lhs(lhs).is_some_and(|(_, w)| w.is_some_and(|t| t.parse::<f64>().is_ok())) {
+                    return fail(line, lead + 1, "weighted alternatives cannot be combined with parameters or contexts");
+                }
+                items.push(super::expand::Item::Production {
+                    line,
+                    col: lead + 1,
+                    lhs: lhs.to_string(),
+                    rhs: body[at + len..].to_string(),
+                    rhs_col: lead + at + len + 1,
+                });
+                continue;
+            }
             // A production: one symbol (and a weight), then '='.
-            if let Some((c, weight)) = body.find('=').and_then(|eq| production_lhs(&body[..eq])) {
-                let eq = body.find('=').expect("found above");
+            if let Some((c, weight)) = sep.and_then(|(eq, _)| production_lhs(&body[..eq])) {
+                let eq = sep.expect("found above").0;
                 if !is_symbol(c) {
                     return fail(line, lead + 1, format!("'{}' cannot have a production", c as char));
                 }
@@ -503,6 +611,8 @@ impl LSystem {
                 None => (body, ""),
             };
             let vcol = lead + 1 + (body.len() - value.len());
+            // ABOP writes `#ignore: +-F`.
+            let key = key.trim_end_matches(':');
             match key.to_ascii_lowercase().as_str() {
                 "name" => sys.name = value.to_string(),
                 "angle" => {
@@ -520,6 +630,7 @@ impl LSystem {
                         .filter(|h| h.is_finite() && h.abs() <= 360.0)
                         .ok_or_else(|| ParseError { line, col: vcol, message: "a heading is degrees, −360 to 360".into() })?;
                 }
+                "axiom" if expanded => items.push(super::expand::Item::Axiom { line, col: vcol, text: value.to_string() }),
                 "axiom" => {
                     if have_axiom {
                         return fail(line, 0, "a second axiom");
@@ -527,6 +638,11 @@ impl LSystem {
                     sys.axiom = parse_word(value, line, vcol, false)?;
                     have_axiom = true;
                 }
+                "define" => {
+                    let (name, expr) = value.split_once(char::is_whitespace).unwrap_or((value, ""));
+                    items.push(super::expand::Item::Define { line, col: vcol, name: name.to_string(), value: expr.to_string() });
+                }
+                "ignore" => items.push(super::expand::Item::Ignore { line, col: vcol, chars: value.to_string() }),
                 "draw" | "move" | "variables" => {
                     let role = match key.to_ascii_lowercase().as_str() {
                         "draw" => Role::Draw,
@@ -565,7 +681,9 @@ impl LSystem {
                 _ => return fail(line, lead + 1, format!("unknown key '{key}' (a production is 'X = word')")),
             }
         }
-        if !have_axiom || sys.axiom.is_empty() {
+        if expanded {
+            sys.expanded = Some(std::sync::Arc::new(super::expand::build(&items)?));
+        } else if !have_axiom || sys.axiom.is_empty() {
             return fail(0, 0, "no axiom (the word the system starts from: 'axiom F')");
         }
         if !have_angle {
@@ -605,6 +723,14 @@ impl LSystem {
         if self.seed != DEFAULT_SEED || self.is_stochastic() {
             s.push_str(&format!("seed {}\n", self.seed));
         }
+        if let Some(e) = &self.expanded {
+            // Its definitions, axiom and productions as written.
+            for l in &e.lines {
+                s.push_str(l);
+                s.push('\n');
+            }
+            return s;
+        }
         s.push_str(&format!("axiom {}\n", word_text(&self.axiom)));
         for c in 0..=255u8 {
             let ps = self.productions(c);
@@ -617,6 +743,43 @@ impl LSystem {
             }
         }
         s
+    }
+}
+
+/// The keys a line can start with.
+const KEYS: [&str; 13] =
+    ["name", "angle", "heading", "axiom", "draw", "move", "variables", "colour", "color", "order", "seed", "define", "ignore"];
+
+/// The key a line starts with, if it starts with one (`ignore: +-F` included).
+fn key_word(body: &str) -> Option<&'static str> {
+    let w = body.split(|c: char| c.is_whitespace() || c == ':').next()?;
+    KEYS.iter().find(|k| k.eq_ignore_ascii_case(w)).copied()
+}
+
+/// Where a production's left side ends, and how long the separator is: at its `→` (as ABOP prints
+/// them), or else at its first `=` that is not part of a comparison (`==`, `<=`, `>=`, `!=` in a
+/// condition).
+fn separator(body: &str) -> Option<(usize, usize)> {
+    if let Some(i) = body.find('→') {
+        return Some((i, '→'.len_utf8()));
+    }
+    let b = body.as_bytes();
+    (0..b.len()).find(|&i| {
+        b[i] == b'='
+            && !matches!(i.checked_sub(1).map(|j| b[j]), Some(b'=' | b'<' | b'>' | b'!'))
+            && b.get(i + 1) != Some(&b'=')
+    })
+    .map(|i| (i, 1))
+}
+
+/// Whether a line makes its system parametric or context-sensitive (see [`super::expand`]).
+fn expanded_line(body: &str) -> bool {
+    if let Some(rest) = body.strip_prefix('#') {
+        return matches!(key_word(rest), Some("define" | "ignore"));
+    }
+    match key_word(body) {
+        Some(k) => k == "define" || k == "ignore",
+        None => separator(body).is_some_and(|(at, _)| super::expand::is_expanded_lhs(&body[..at])),
     }
 }
 

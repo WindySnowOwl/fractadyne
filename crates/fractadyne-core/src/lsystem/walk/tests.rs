@@ -159,6 +159,9 @@ fn a_mirrored_subtree_is_stepped_over_mirrored() {
 fn level_of_detail_bounds_the_segments_by_the_pixels() {
     for e in library::SYSTEMS {
         let s = e.system().unwrap();
+        if s.expanded.is_some() {
+            continue; // built as a word, segment by segment (no subtrees to draw as chords)
+        }
         let t = Tables::new(&s);
         let px = 600.0;
         let home = framing(&t, crate::lsystem::framing_order(&t, 20_000.0), px);

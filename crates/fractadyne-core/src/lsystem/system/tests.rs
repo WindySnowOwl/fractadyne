@@ -171,7 +171,8 @@ fn alternatives_are_refused_where_they_are_wrong() {
     assert!(e.message.contains("second production") && e.message.contains("weight"), "{e}");
     let e = err("angle 90\naxiom F\nF (1) = F\nF = FF\n");
     assert_eq!(e.line, 4);
-    for bad in ["0", "-1", "x", "", "1e9", "inf"] {
+    // (`F (x)` names a parameter: a parametric production, not a weight.)
+    for bad in ["0", "-1", "1e9", "inf"] {
         let e = err(&format!("angle 90\naxiom F\nF ({bad}) = F\n"));
         assert!(e.message.contains("weight"), "({bad}): {e}");
     }
