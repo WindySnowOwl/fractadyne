@@ -42,6 +42,9 @@ mod fractal;
 /// The formula intermediate representation and its interpreters (design/custom-formulas.md).
 pub mod ir;
 
+/// Life-like cellular automata: rules, the sparse universe, pattern files (design/automata.md).
+pub mod life;
+
 mod backend;
 #[cfg(feature = "rug")]
 mod backend_rug;

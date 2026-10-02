@@ -1,6 +1,8 @@
 # Automata — Life-like cellular automata and Sierpinski-type digit automata
 
-Status: **design** (2026-10-01), nothing built. The user: "design it and plan on handling both things
+Status: **phase 1 built** (2026-10-01, §6.1): the Life core in `fractadyne-core::life`, CPU only;
+nothing in the app yet. Phase 1 went before phase 0 — the two are independent, and the class layer's
+state wants the engine's types. The user: "design it and plan on handling both things
 like Life and Sierpinski". §9 records the user's answers to the first draft's open questions (`988f20c`):
 an unbounded plane by default on a sparse structure that scales to extremely large grids; standard
 sets first, custom definitions too; Fractint `.par` files open directly; non-totalistic (Hensel)
@@ -327,6 +329,36 @@ the config directory, and import/export as text.
 Order: Life first (the user's interest, and the class whose time axis shapes the layer most), with
 Hashlife straight after it (the user's "extremely large grids"), then digit automata (cheap, and the
 exact-deep-zoom story), then 1-D (reuses both).
+
+### 6.1 Phase 1 results (2026-10-01)
+
+`crates/fractadyne-core/src/life/`: `rule.rs` (the 512-bit table, every notation, canonical strings),
+`hensel.rs` (the letter chart), `universe.rs` (the tile map: plane / torus / bounded, background
+state, stepper), `dense.rs` (the reference stepper), `formats.rs` (RLE, plaintext, Life 1.05/1.06),
+`library.rs` (22 rules, 18 patterns). 40 tests; core 218 (was 178); release build, about 4 s of
+the core suite's time.
+
+- **Hensel chart** decoded from LifeWiki's 51 images, then checked against the page's *text*, which
+  the images do not determine: the complement rule (`(8−n)x` = complement of `nx`), the
+  von Neumann groups and the checkerboard-dual table (51 class-to-class mappings each way).
+- **MAP**: LifeWiki's Life string decodes to B3/S23 with the index order above — pinning the bit
+  order and the centre's place.
+- **Tile = reference**, cell for cell, every generation: 13 rules (totalistic, Generations, Hensel,
+  von Neumann, a random MAP table, B0 blinking and B0/S8) × plane / torus / bounded soups for 60
+  generations; a Life soup for 2,000; a glider across tile corners for 4,000 (tiles freed behind it)
+  and through negative coordinates; a glider round a 64² torus.
+- **Facts** (LifeWiki): periods of four still lifes and five oscillators (pulsar 3, pentadecathlon 15,
+  minimal); glider (1, 1)/4, LWSS/MWSS/HWSS 2/4 the same way; R-pentomino 116 cells at 1103 and
+  still 116 at 2000; diehard empty at 130 (129 not); acorn 633 at 5206 and 6006; Gosper and Simkin
+  guns +5 cells every 30 / 120 generations; B0/S single cell period 2 through a 3×3 hole; AntiLife
+  = Life with the colours swapped for 200 generations.
+- **Mutations, each red**: tile ignores its NW neighbour (10 tests); Hensel 3n ↔ 3q swapped (both
+  page-text checks); torus without wrap (3); Generations dying state off by one (the rule test — the
+  steppers share `Rule::next`, so only it can see this); bounded edge off by one (the soup test,
+  through Seeds only — the one rule whose soup reaches that wall in 60 generations); plane without
+  its halo (10).
+- Not yet done from §8's Hensel risk: a published pattern in a published Hensel rule (no offline
+  source; the page-text checks stand in).
 
 ## 7. Validation
 
