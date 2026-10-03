@@ -3144,8 +3144,31 @@ pub fn color_iter_buffer(
     req: &ExportRequest,
     iter_pixels: &[f32],
 ) -> Result<ExportResult, GpuError> {
+    color_iter_buffer_ss(device, queue, req, iter_pixels, 1)
+}
+
+/// [`color_iter_buffer`] for a SUPERSAMPLED iteration buffer: `iter_pixels` is
+/// `(req.width·ss) × (req.height·ss)` texels and the image comes back at `req.width × req.height`,
+/// coloured by the same `fs_color` taps as [`render_export`] — each output pixel shades its `ss×ss`
+/// texels with one palette footprint and averages them, and lighting reads the averaged slope.
+/// ⛔The glitch corrector used to colour at `ss = 1` and drop the export's supersampling without a
+/// word, for every view it corrects (the non-holomorphic families, and every Julia view): a
+/// `--ss 3` Burning Ship came out at one sample a pixel. A CPU box-average of a 1× colouring is not
+/// the same picture (the palette footprint and the relief neighbourhood are sized per OUTPUT
+/// pixel), which is why the supersampled buffer is coloured here rather than downsampled after.
+pub fn color_iter_buffer_ss(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+    iter_pixels: &[f32],
+    ss: u32,
+) -> Result<ExportResult, GpuError> {
     let w = req.width.max(1);
     let h = req.height.max(1);
+    let ss = ss.max(1);
+    // The iteration input, `ss` texels to an output pixel along each axis.
+    let (iw, ih) = (w * ss, h * ss);
+    assert_eq!(iter_pixels.len(), (iw as usize) * (ih as usize) * 4, "iteration buffer is not (w·ss)×(h·ss)");
     let shader = shader_module(device);
     let color_bgl = color_bind_group_layout(device);
     let color_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -3169,7 +3192,7 @@ pub fn color_iter_buffer(
         lut_len,
         cycle: req.cycle,
         offset: req.offset,
-        ss: 1,
+        ss,
         light: req.light,
         light_angle: req.light_angle,
         light_height: req.light_height,
@@ -3201,7 +3224,7 @@ pub fn color_iter_buffer(
     // supported non-aux methods) satisfies the color bind group.
     let make_input = |label| device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
-        size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d { width: iw, height: ih, depth_or_array_layers: 1 },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -3220,16 +3243,16 @@ pub fn color_iter_buffer(
             bytemuck::cast_slice(data),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(w * 16),
-                rows_per_image: Some(h),
+                bytes_per_row: Some(iw * 16),
+                rows_per_image: Some(ih),
             },
-            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            wgpu::Extent3d { width: iw, height: ih, depth_or_array_layers: 1 },
         );
     };
     let iter_tex = make_input("coloriter.iter");
     write(&iter_tex, iter_pixels);
     let aux_tex = make_input("coloriter.aux");
-    write(&aux_tex, &vec![0.0_f32; (w as usize) * (h as usize) * 4]);
+    write(&aux_tex, &vec![0.0_f32; (iw as usize) * (ih as usize) * 4]);
     let iter_view = iter_tex.create_view(&wgpu::TextureViewDescriptor::default());
     let aux_view = aux_tex.create_view(&wgpu::TextureViewDescriptor::default());
     let color_bg =
@@ -3371,7 +3394,7 @@ pub fn color_iter_buffer(
     Ok(ExportResult {
         width: w,
         height: h,
-        ss: 1,
+        ss,
         pixels,
         iterate_ms: 0.0,
         color_ms,

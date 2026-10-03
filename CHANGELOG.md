@@ -59,6 +59,18 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Fixed: exports of the folded families and of Julia views ignored anti-aliasing
+  (0.3.0-beta.18).** An export of Burning Ship, Tricorn, Celtic or Buffalo, at any power, or of
+  any Julia view, runs glitch correction, and that path rendered one sample a pixel whatever the
+  Anti-alias setting or `--ss` asked for, without saying so: a `--ss 2` export of Tricorn 3 was
+  byte-identical to `--ss 1`. The correction now runs on the supersampled frame, which is coloured
+  the way every other export is, and matches the uncorrected supersampled export wherever nothing
+  was corrected. A frame too large for the corrected path at that sampling renders uncorrected, and
+  the log says so.
+- **Fixed: `--shot` captured the wrong view when its location did not load (0.3.0-beta.18).** The
+  loader's problems were never printed, so a view that could not be applied (a Life pattern that
+  did not read, say) was captured as whatever was on screen and the run reported success. It now
+  prints each problem and exits without capturing.
 - **Fixed: an imported Kalles Fraktaler location could render black (0.3.0-beta.17).** A `.kfr`
   file's iteration count was capped at 50,000, and an Imagina location's at 1,000,000, so a deep
   location asking for more rendered with too few: at 1.2e148× a location asking 800,000 came out

@@ -2836,6 +2836,89 @@ impl FractadyneApp {
                 }
                 false
             };
+            // ⛔⭐A glitch-corrected export keeps its supersampling. Correction runs for every
+            // non-holomorphic family (and every Julia view), and it used to iterate and colour at ONE
+            // sample a pixel whatever the export asked for: a `--ss 2` Burning Ship came out at 1×,
+            // and nothing said so. The corrected export at ss=2 must match the plain export at ss=2
+            // (the same `fs_color` taps; correction only touches flagged pixels) far more closely
+            // than the plain export at ss=1 does — a corrected frame that ignored ss would sit on
+            // the ss=1 one instead. The ss=1→2 difference is also the proof the view has sub-pixel
+            // detail for supersampling to change.
+            // ⚠The view is the antenna's armada at 25×, structured detail in the direct path, where
+            // the corrected export is its supersampled base frame coloured — the code that lost
+            // `ss`. A deep Burning Ship view is chaotic dust (the abs-family view below is a flat
+            // field at 2,000 iterations, ss changes nothing), and the correction loop may move a
+            // chaotic pixel legitimately, so a deep view would test the noise, not the plumbing.
+            {
+                use std::sync::atomic::{AtomicBool, AtomicU32};
+                let saved_correct = self.render_cfg.glitch_correct;
+                self.render_cfg.glitch_correct = true;
+                self.fractal = FractalKind::BurningShip;
+                let mag = 25.0;
+                let mut vp = Viewport::new(N as f64, N as f64);
+                vp.center_x = fractadyne_core::parse_bf("-1.755").unwrap();
+                vp.center_y = fractadyne_core::parse_bf("-0.03").unwrap();
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
+                vp.precision = fractadyne_core::precision_for_magnification(mag);
+                let mut req2 = self.current_export_request_for(&vp, false);
+                req2.width = N;
+                req2.height = N;
+                req2.ss = 2;
+                let mut req1 = req2.clone();
+                req1.ss = 1;
+                let (progress, cancel) = (AtomicU32::new(0), AtomicBool::new(false));
+                let plain = |r: &fractadyne_gpu::ExportRequest| {
+                    fractadyne_gpu::render_export(device, queue, r, &progress, &cancel)
+                        .map_err(|e| eprintln!("[selftest] GPU ERROR (render_export): {e}"))
+                        .ok()
+                };
+                let applies = self.correction_wanted(false);
+                let corrected = self.render_export_corrected(
+                    device, queue, &vp, false, N, N, Some(&req2), crate::render::CorrectionBudget::UNBOUNDED,
+                );
+                let (p1, p2) = (plain(&req1), plain(&req2));
+                // Mean absolute RGB difference per pixel, linear 0–1.
+                let mean_d = |a: &[f32], b: &[f32]| -> f64 {
+                    let s: f64 = a
+                        .chunks_exact(4)
+                        .zip(b.chunks_exact(4))
+                        .map(|(x, y)| (0..3).map(|c| (x[c] - y[c]).abs() as f64).sum::<f64>() / 3.0)
+                        .sum();
+                    s / (a.len() / 4).max(1) as f64
+                };
+                let (pass, result) = match (&corrected, &p1, &p2) {
+                    (Some(c), Some(p1), Some(p2)) if c.pixels.len() == p2.pixels.len() && p1.pixels.len() == p2.pixels.len() => {
+                        let to_ss2 = mean_d(&c.pixels, &p2.pixels);
+                        let ss_effect = mean_d(&p1.pixels, &p2.pixels);
+                        (
+                            applies && c.ss == 2 && ss_effect > 1.0e-3 && to_ss2 < 0.1 * ss_effect,
+                            format!(
+                                "corrected vs plain ss=2: mean Δ {to_ss2:.5}; plain ss=1 vs ss=2: {ss_effect:.5}; corrected reports ss={}",
+                                c.ss
+                            ),
+                        )
+                    }
+                    _ => (
+                        false,
+                        format!(
+                            "a render failed or the sizes differ (corrected {}, plain ss=1 {}, plain ss=2 {})",
+                            corrected.is_some(),
+                            p1.is_some(),
+                            p2.is_some()
+                        ),
+                    ),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Glitch",
+                    name: "a corrected export keeps its supersampling".into(),
+                    params: format!("Burning Ship {mag}× at -1.755, -0.03, {N}×{N}, ss=2, mode {}, correction applies: {applies}", req2.mode),
+                    result,
+                    threshold: "corrected ss=2 within a tenth of the plain ss=1→2 difference of the plain ss=2 export, which must exceed 0.001",
+                    pass,
+                });
+                self.render_cfg.glitch_correct = saved_correct;
+            }
+
             // (family, center, mag) — boundary-detail regions rich in escaping pixels. The power
             // families (design/power-families.md B3) each on its own boundary, at a view with smooth
             // escaping pixels to compare (`family_view`).
