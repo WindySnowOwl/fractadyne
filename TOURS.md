@@ -122,6 +122,10 @@ A camera waypoint. The view eases from the previous keyframe to this one, ARRIVI
 | `minimap` | bool | (inherit) | Show the minimap overview overlay (live playback only; offline renders ignore it). The viewer's own setting is restored when the tour ends. |
 | `orbit_re` | float | (inherit) | The point whose orbit to draw, real part (both components required; interpolated). |
 | `orbit_im` | float | (inherit) | Orbit point imaginary part. |
+| `lsystem` | string | (inherit, else the one shown) | With fractal = "L-system": a library name ("Heighway dragon") or the system's text (a multi-line string). An L-system keyframe needs re, im and zoom in its own coordinates (any zoom, below 1x included) — Tools > Tour from current view writes them. |
+| `order` | int or "auto" | (inherit, else auto) | An L-system's order: a number fixes it; "auto" lets it follow the zoom. Stepped at the keyframe. |
+| `angle` | float | (inherit, else the system's) | An L-system's angle, degrees; interpolated, so the curve morphs as it turns. |
+| `draw` | float | (inherit, else 1) | How much of an L-system is drawn, 0 to 1, in the order the turtle draws it; interpolated, so the curve draws itself on. |
 
 ### `[[annotation]]` — repeatable
 

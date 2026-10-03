@@ -1369,7 +1369,11 @@ impl FractadyneApp {
             .viewport
             .recommended_max_iter(self.render_cfg.max_iter)
             .max(2_000);
-        let deep = target_mag > 8.0;
+        // An L-system's full view is its framed home, at a magnification of its own; an
+        // escape-time family's is 1×. "Deep" and the recentring zoom are measured from it.
+        let ls_home = (self.fractal == crate::FractalKind::LSystem).then(|| self.lsystem_home_view());
+        let home_l10 = ls_home.map_or(0.0, |(_, l10)| l10);
+        let deep = log10mag - home_l10 > 8f64.log10();
         const SWOOP_SECS: f64 = 4.0;
 
         let mut s = String::new();
@@ -1405,9 +1409,26 @@ impl FractadyneApp {
         if self.julia_mode {
             s.push_str("julia = true\n");
         }
-        s.push_str(&format!("re = \"{hx}\"\n"));
-        s.push_str(&format!("im = \"{hy}\"\n"));
-        s.push_str("zoom = 1.0\n");
+        if let Some(([x, y], l10)) = ls_home {
+            // An L-system's own coordinates: from its framed home view, with its system, order and
+            // angle (the tour leaves the order to follow the zoom unless it is fixed).
+            let st = &self.lsystem;
+            s.push_str(&format!("lsystem = {}\n", toml::Value::String(st.system.to_text())));
+            match st.fixed_order {
+                Some(n) => s.push_str(&format!("order = {n}\n")),
+                None => s.push_str("order = \"auto\"\n"),
+            }
+            if let Some(a) = st.angle {
+                s.push_str(&format!("angle = {a}\n"));
+            }
+            s.push_str(&format!("re = \"{x}\"\n"));
+            s.push_str(&format!("im = \"{y}\"\n"));
+            s.push_str(&format!("zoom = \"1e{l10:.9}\"\n"));
+        } else {
+            s.push_str(&format!("re = \"{hx}\"\n"));
+            s.push_str(&format!("im = \"{hy}\"\n"));
+            s.push_str("zoom = 1.0\n");
+        }
         s.push_str("max_iter = 2000\n");
         s.push_str("hold = 1.5\n\n");
 
@@ -1417,7 +1438,10 @@ impl FractadyneApp {
             s.push_str("id = \"recenter\"\n");
             s.push_str(&format!("t = {}\n", 1.5 + SWOOP_SECS));
             s.push_str("location = \"target\"\n");
-            s.push_str("zoom = 8.0\n");
+            match ls_home {
+                Some(_) => s.push_str(&format!("zoom = \"1e{:.9}\"\n", home_l10 + 8f64.log10())),
+                None => s.push_str("zoom = 8.0\n"),
+            }
             s.push_str("max_iter = 3000\n");
             s.push_str("ease = \"smooth\"\n");
             s.push_str("hold = 0.5\n\n");

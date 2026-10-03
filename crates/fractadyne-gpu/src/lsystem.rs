@@ -261,6 +261,112 @@ impl LSystemRenderer {
     }
 }
 
+/// The segment pass offscreen: a frame drawn into a target of its own and read back, value per
+/// texel — an image export draws an L-system view this way, tile by tile, and the device checks
+/// compare it with their model. The frame's segments upload once however many tiles draw them.
+pub struct Offscreen {
+    renderer: LSystemRenderer,
+    group0: wgpu::BindGroup,
+    // Kept alive for `group0`.
+    _counters: wgpu::Buffer,
+}
+
+impl Offscreen {
+    pub fn new(device: &wgpu::Device) -> Offscreen {
+        // Group 0 as the segment shader sees it: only the counters (binding 2).
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("lsystem.offscreen.counters"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let counters = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("lsystem.offscreen.counters"),
+            size: 4 * 64,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let group0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("lsystem.offscreen.group0"),
+            layout: &bgl,
+            entries: &[wgpu::BindGroupEntry { binding: 2, resource: counters.as_entire_binding() }],
+        });
+        Offscreen { renderer: LSystemRenderer::new(device, &bgl), group0, _counters: counters }
+    }
+
+    /// Draw `frame` into a `size`-texel target at `ss` texels a pixel and read back main.r per
+    /// texel, rows from the top (< 0: no line or shape there).
+    pub fn render(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame: &LSystemFrame, size: [u32; 2], ss: u32) -> Result<Vec<f32>, String> {
+        self.renderer.update(device, queue, frame, size, ss);
+        let texture = |label| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: crate::ITER_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            })
+        };
+        let (main, aux) = (texture("lsystem.offscreen.main"), texture("lsystem.offscreen.aux"));
+        let views = [main.create_view(&Default::default()), aux.create_view(&Default::default())];
+        let row = (u64::from(size[0]) * 16).div_ceil(256) * 256;
+        let read = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("lsystem.offscreen.read"),
+            size: row * u64::from(size[1]),
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut enc = device.create_command_encoder(&Default::default());
+        {
+            let attach = |v, clear| {
+                Some(wgpu::RenderPassColorAttachment {
+                    view: v,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store: wgpu::StoreOp::Store },
+                })
+            };
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("lsystem.offscreen.segments"),
+                color_attachments: &[attach(&views[0], CLEAR_MAIN), attach(&views[1], CLEAR_AUX)],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            self.renderer.draw(&mut pass, &self.group0);
+        }
+        enc.copy_texture_to_buffer(
+            main.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &read,
+                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row as u32), rows_per_image: None },
+            },
+            wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+        );
+        queue.submit([enc.finish()]);
+        let slice = read.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        let _ = device.poll(wgpu::Maintain::Wait);
+        rx.recv().map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
+        let floats: Vec<f32> = bytemuck::cast_slice(&slice.get_mapped_range()).to_vec();
+        read.unmap();
+        let per_row = (row / 4) as usize;
+        Ok((0..size[1] as usize).flat_map(|y| (0..size[0] as usize).map(move |x| (y, x))).map(|(y, x)| floats[y * per_row + x * 4]).collect())
+    }
+}
+
 /// What the pass clears the main target to: "interior" (no line here).
 pub(crate) const CLEAR_MAIN: wgpu::Color = wgpu::Color { r: -1.0, g: 0.0, b: 0.0, a: 1.0e30 };
 /// … and the aux target: no orbit statistics.

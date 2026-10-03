@@ -1288,6 +1288,11 @@ fn stopping_playback_restores_interaction() {
         "julia_im",
         "orbit_re",
         "orbit_im",
+        // An L-system tour leaves you on its system, as a formula tour leaves you on its formula.
+        "lsystem",
+        "order",
+        "angle",
+        "draw",
     ];
     let fields = crate::scripting::keyframe_field_names();
     for f in &fields {

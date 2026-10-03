@@ -59,7 +59,7 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
-- **L-systems (not yet in a beta).** A new family under Fractal ▸ L-systems: curves, space-filling
+- **L-systems (0.3.0-beta.16).** A new family under Fractal ▸ L-systems: curves, space-filling
   curves, islands and plants drawn by a turtle from a rewriting grammar (Lindenmayer systems). The
   order follows the zoom — zoom in by a curve's growth factor and it gains an order — so the detail
   never runs out, and a view costs what its pixels cost whatever the order: the word is never
@@ -90,9 +90,16 @@ Changes after 0.3.0-beta.1:
   is as sharp, and as quick, as at 1×. A view carries its system and writes format_version 4; the
   session keeps it. File ▸ Export SVG (or SVG… in the panel) writes the view as a vector drawing —
   its lines as paths and its filled shapes as polygons, in its colours — for print or a plotter;
-  `--shot … --svg FILE` writes one unattended. Not yet: image export of an L-system view (refused
-  with a message), and tours of L-systems (design/lsystems.md).
-- **Conway's Game of Life and its relatives (not yet in a beta).** A new family under Fractal ▸
+  `--shot … --svg FILE` writes one unattended. File ▸ Export image works for an L-system view: the
+  picture on screen at the export's size — its order and line width the screen's, scaled — drawn
+  in tiles at any size, supersampled, with the view embedded as for any export; `--shot … --image
+  FILE` writes one unattended. Tours show L-systems: a keyframe names the system (`lsystem`, a
+  library name or its text), its `order` (or "auto"), its `angle` and how much is `draw`n — the
+  angle and the drawing interpolate along a glide, so a tour can draw a curve on, morph it and
+  dive into it — and an L-system keyframe's zoom may go below 1× (its coordinates are its own).
+  Tools ▸ Tour from current view writes one from an L-system view, starting at its framed home;
+  `--render-tour` renders it, and it plays live.
+- **Conway's Game of Life and its relatives (0.3.0-beta.16).** A new family under Fractal ▸
   Automata: Life-like cellular automata on an unbounded plane, stepped on the graphics card.
   Rules in B/S notation (Life, HighLife, Seeds and 19 more built in), Generations rules with
   dying states (Brian's Brain, Star Wars), von Neumann rules, Hensel's non-totalistic notation

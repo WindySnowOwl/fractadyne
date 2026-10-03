@@ -6253,6 +6253,7 @@ impl FractadyneApp {
                 .unwrap_or(180);
             let mut s = shot::Shot::new(loc, out, (w, h), budget);
             s.svg = val("--svg").map(std::path::PathBuf::from);
+            s.image = val("--image").map(std::path::PathBuf::from);
             Some(s)
         } else {
             None

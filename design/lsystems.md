@@ -2,8 +2,8 @@
 
 Status: **phases 0–4 built** (2026-10-02, branch `feat/lsystems`) — phase 4: filled shapes,
 stochastic, parametric and context-sensitive productions, SVG export, draw-on and angle animation
-(the user: "run the radeon tests and do phase 4"). Still to do: raster export of an L-system view,
-and tours with order, angle and draw-on tracks (they render through it). The user:
+(the user: "run the radeon tests and do phase 4"); raster export and tours after (the user:
+"continue") — §7 is built. The user:
 "Work on the design doc" (after "Are L-systems implemented" — no). Integration facts in §2 are from
 this tree at `21e2bd7` (Life merged). The user's decisions on the open questions are in §9 (all six:
 yes).
@@ -159,6 +159,47 @@ Phase 4, animation, settled:
   did — the picture would otherwise blink out on every step.
 - Neither is saved with a view; tours with order, angle and draw-on tracks wait for raster export
   (a tour renders through it).
+
+Raster export, settled (`lsystem_view/export.rs`):
+
+- **The picture on screen at the export's size**: framed as every export is (contain: the smallest
+  rectangle of the export's aspect that holds the window's view); the screen's ORDER, and its line
+  width scaled by the export's pixels per screen pixel — so a 3840-wide export of a 926-wide
+  canvas has lines ~4× as wide in its pixels, and the same segments. (More order would be another
+  picture: the step target is in screen pixels.) The draw-on progress applies.
+- **Drawn offscreen by the segment pass, in tiles of 2048 texels** (a tile's view shifted by its
+  place), each texel coloured as the screen's colour pass colours it — `palette(value + offset)`
+  or the interior colour — and a pixel the mean of its ss² texels. On the export worker (progress,
+  cancel), and on `--render`'s path; the view is embedded as for any export, so the image reopens
+  as the view. `fractadyne_gpu::lsystem::Offscreen` is the one offscreen path (the device check
+  uses it too). A walk stopped at its 4M-segment budget is said in the status.
+- **Checked**: a self-test row renders the mango leaf at 333×221, 2× supersampled, in 64-texel
+  tiles and in one: the same but for edge pixels that f32 rounds the other way (≤ 0.5%). Exports of
+  the mango leaf, the stochastic plant and the filled snowflake at 3840 wide (`--shot … --image`)
+  looked at against the screen: framing, orientation, colours, watermark.
+
+Tours, settled (`scripting.rs`, TOURS.md):
+
+- **Keyframe fields** `lsystem` (a library name or the system's text), `order` (a number, or
+  "auto": follows the zoom), `angle` and `draw` (0–1), inherited forward. The angle and the drawing
+  interpolate along a glide with its easing (morph, draw-on); the system and order step at the
+  keyframe. A tour leaves you on its system, as a formula tour on its formula.
+- **Zoom below 1×** for an L-system keyframe: 1× (4 units tall) frames every escape-time family,
+  but an L-system's world is turtle steps (the dragon ~1 across, a plant hundreds), so its framing
+  shot needs any zoom; an L-system keyframe must give its own `re`, `im` and `zoom`.
+- **Rendering**: `--render-tour` draws an L-system frame through the export path
+  (`lsystem_tour_frame`, keeping the deep tables and built word for the next frame) — before this
+  the frame went through the escape-time renderer and came out wrong without a word. The
+  normalize anchors and the reference prefetch skip it; a family with no Julia set has no dual
+  view whatever an earlier keyframe said. Live playback applies the same state; the panel's own
+  animations stop while the tour drives them.
+- **Tools ▸ Tour from current view** starts an L-system tour at its framed home (with its system,
+  order and angle), "deep" measured from the home's magnification rather than 1×.
+- **Checked**: tour tests (fields, interpolation, stepping, refusals, the 1× clamp kept for the
+  escape-time families); a self-test row builds a tour from a zoomed plant, reads it back and draws
+  its end; a 111-frame Koch tour (draw on, morph 60°→85°→60°, dive to the tip at 2000×) rendered
+  at 106 fps and looked at — the frames blank mid-dive are the camera crossing empty space under
+  the peak, as the geometry says.
 
 ## 1. Goal
 
