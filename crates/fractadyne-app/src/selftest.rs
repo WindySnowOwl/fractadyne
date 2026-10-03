@@ -7447,14 +7447,15 @@ zoom = \"1e94\"
             // 1.2e148 .kfr, which asks 800,000, rendered every pixel at the cap (near-black) — and
             // the release check that compares the standard and accelerated builds on it compared two
             // black images. Both importers, through their real file readers: a count above the old
-            // cap is kept, and one below the floor of 64 is raised to it.
+            // cap is kept, and one below the floor of 64 is raised to it. 5,000,000 also passes the
+            // parsers' old 1,000,000 cap, under the app's own 10,000,000.
             {
                 let dir = std::env::temp_dir().join(format!("fd-selftest-imports-{}", std::process::id()));
                 let _ = std::fs::create_dir_all(&dir);
                 let (kfr, imagina) = (dir.join("asked.kfr"), dir.join("asked.txt"));
                 let mut seen = Vec::new();
                 let mut pass = true;
-                for (asked, want) in [(800_000u32, 800_000u32), (20, 64)] {
+                for (asked, want) in [(800_000u32, 800_000u32), (5_000_000, 5_000_000), (20, 64)] {
                     let wrote = std::fs::write(&kfr, format!("Re: -0.75\r\nIm: 0.1\r\nZoom: 1E30\r\nIterations: {asked}\r\n")).is_ok()
                         && std::fs::write(&imagina, format!("Location:\n\tSize: 2e-30\n\tRe: -0.75\n\tIm: 0.1\n\tIterations: {asked}\n")).is_ok();
                     for (name, path) in [(".kfr", &kfr), ("Imagina", &imagina)] {
@@ -7471,9 +7472,9 @@ zoom = \"1e94\"
                 push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "View format",
                     name: "an imported location keeps its iteration count".into(),
-                    params: ".kfr and Imagina text files asking 800,000 and 20 iterations".into(),
+                    params: ".kfr and Imagina text files asking 800,000, 5,000,000 and 20 iterations".into(),
                     result: seen.join(", "),
-                    threshold: "800,000 kept and 20 raised to 64 by both importers; automatic iterations off",
+                    threshold: "800,000 and 5,000,000 kept and 20 raised to 64 by both importers; automatic iterations off",
                     pass,
                 });
                 self.fractal = FractalKind::Mandelbrot;

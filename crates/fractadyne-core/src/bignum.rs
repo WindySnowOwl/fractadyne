@@ -1005,6 +1005,13 @@ fn parse_kfr_zoom(s: &str) -> Option<f64> {
     Some(z.min(1.0e300)) // inf.min ⇒ clamp; matches the viewport's f64 upp range
 }
 
+/// The most iterations a location file (`.kfr`, Imagina text) may ask for: the app's own ceiling
+/// (`MAX_ITER_LIMIT` in the app's tunables.rs, asserted at compile time to be no higher), so an
+/// imported location keeps any count the app could set by hand. ⛔It was 1,000,000 against the
+/// app's 10,000,000, and the `.kfr` importer then cut that to 50,000: a deep location lost its
+/// iterations on the way in.
+pub const LOCATION_MAX_ITERATIONS: u32 = 10_000_000;
+
 /// Parse a **Kalles Fraktaler `.kfr`** location (a simple `Key: value` text format) into a
 /// [`KfrView`]. **Hardened for untrusted input:** total size and line/value lengths are
 /// bounded, only the `Re`/`Im`/`Zoom`/`Iterations` keys are read (everything else ignored —
@@ -1038,7 +1045,7 @@ pub fn parse_kfr(text: &str) -> Option<KfrView> {
         } else if key.eq_ignore_ascii_case("Zoom") {
             zoom = parse_kfr_zoom(val);
         } else if key.eq_ignore_ascii_case("Iterations") {
-            iters = val.parse::<u64>().ok().map(|v| v.min(1_000_000) as u32);
+            iters = val.parse::<u64>().ok().map(|v| v.min(u64::from(LOCATION_MAX_ITERATIONS)) as u32);
         }
         // every other key is ignored by design
     }
@@ -1104,7 +1111,7 @@ pub fn parse_imagina_text(text: &str) -> Option<KfrView> {
             // value past f64 range is out of our viewport's reach anyway.
             size = val.parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0);
         } else if leaf.eq_ignore_ascii_case("Iterations") {
-            iters = val.parse::<u64>().ok().map(|v| v.min(1_000_000) as u32);
+            iters = val.parse::<u64>().ok().map(|v| v.min(u64::from(LOCATION_MAX_ITERATIONS)) as u32);
         }
         // every other key, `Formula` included, is ignored by design
     }

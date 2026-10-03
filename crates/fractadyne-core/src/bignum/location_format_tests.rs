@@ -120,6 +120,14 @@ Location:
 }
 
 #[test]
+fn an_imagina_iteration_count_is_kept_up_to_the_ceiling() {
+    let with = |n: &str| parse_imagina_text(&format!("Location:\n\tSize: 2e-30\n\tRe: -0.75\n\tIm: 0.1\n\tIterations: {n}\n"));
+    // 5,000,000 was cut to 1,000,000; anything past the ceiling still clamps to it.
+    assert_eq!(with("5000000").expect("parses").iterations, Some(5_000_000));
+    assert_eq!(with("99999999999").expect("parses").iterations, Some(super::LOCATION_MAX_ITERATIONS));
+}
+
+#[test]
 fn the_dotted_form_is_parsed_identically() {
     let nested = "Location:
   Size: 4

@@ -1275,6 +1275,10 @@ pub(crate) const PACE_LAG_HI: f64 = 2.8;
 /// `recommended_max_iter`.
 pub(crate) const MAX_ITER_LIMIT: u32 = 10_000_000;
 
+// A location file's parser (`.kfr`, Imagina text) must not cut a count the app would accept: it
+// once capped at 1,000,000 under this 10,000,000. Raise this, and that has to rise with it.
+const _: () = assert!(fractadyne_core::LOCATION_MAX_ITERATIONS >= MAX_ITER_LIMIT);
+
 /// Minimum fraction of a 56×56 coarse-preview probe that must ESCAPE for the preview to be worth
 /// installing over the reprojected previous frame. Measured poles: a deep Misiurewicz view at the
 /// preview's 16,384-iteration cap escapes NOTHING (0.0000 — solid black), while any view the

@@ -1628,7 +1628,10 @@ fn parse_kfr_valid_and_robust() {
     // Over-range zoom clamps; iterations clamp; case-insensitive keys.
     let v = parse_kfr("re: -1\nIM: 0\nZOOM: 1E1000\niterations: 99999999999\n").unwrap();
     assert_eq!(v.zoom, 1.0e300);
-    assert_eq!(v.iterations, Some(1_000_000));
+    assert_eq!(v.iterations, Some(crate::LOCATION_MAX_ITERATIONS));
+    // A deep location's count is kept up to the app's ceiling: 5,000,000 was cut to 1,000,000.
+    let v = parse_kfr("Re: -1\nIm: 0\nZoom: 1E100\nIterations: 5000000\n").unwrap();
+    assert_eq!(v.iterations, Some(5_000_000));
     // Missing required fields → None.
     assert!(parse_kfr("Re: 0\nIm: 0\n").is_none(), "missing Zoom accepted");
     assert!(parse_kfr("Im: 0\nZoom: 2\n").is_none(), "missing Re accepted");
