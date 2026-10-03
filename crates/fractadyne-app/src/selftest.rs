@@ -7442,6 +7442,44 @@ zoom = \"1e94\"
                 self.fractal = FractalKind::Mandelbrot;
             }
 
+            // ⛔A location imported from another renderer keeps the iteration count it asks for. The
+            // .kfr importer clamped it to 50,000 while the Imagina one did not, so the corpus's
+            // 1.2e148 .kfr, which asks 800,000, rendered every pixel at the cap (near-black) — and
+            // the release check that compares the standard and accelerated builds on it compared two
+            // black images. Both importers, through their real file readers: a count above the old
+            // cap is kept, and one below the floor of 64 is raised to it. 5,000,000 also passes the
+            // parsers' old 1,000,000 cap, under the app's own 10,000,000.
+            {
+                let dir = std::env::temp_dir().join(format!("fd-selftest-imports-{}", std::process::id()));
+                let _ = std::fs::create_dir_all(&dir);
+                let (kfr, imagina) = (dir.join("asked.kfr"), dir.join("asked.txt"));
+                let mut seen = Vec::new();
+                let mut pass = true;
+                for (asked, want) in [(800_000u32, 800_000u32), (5_000_000, 5_000_000), (20, 64)] {
+                    let wrote = std::fs::write(&kfr, format!("Re: -0.75\r\nIm: 0.1\r\nZoom: 1E30\r\nIterations: {asked}\r\n")).is_ok()
+                        && std::fs::write(&imagina, format!("Location:\n\tSize: 2e-30\n\tRe: -0.75\n\tIm: 0.1\n\tIterations: {asked}\n")).is_ok();
+                    for (name, path) in [(".kfr", &kfr), ("Imagina", &imagina)] {
+                        // Scramble first, so a load that leaves the count alone cannot pass.
+                        self.render_cfg.max_iter = 1234;
+                        self.render_cfg.auto_iter = true;
+                        let loaded = if name == ".kfr" { self.load_kfr_file(path) } else { self.load_imagina_file(path) };
+                        let ok = wrote && loaded.is_ok() && self.render_cfg.max_iter == want && !self.render_cfg.auto_iter;
+                        pass &= ok;
+                        seen.push(format!("{name} {}→{}", crate::grouped_count(f64::from(asked)), if loaded.is_ok() { crate::grouped_count(f64::from(self.render_cfg.max_iter)) } else { "refused".into() }));
+                    }
+                }
+                let _ = std::fs::remove_dir_all(&dir);
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "View format",
+                    name: "an imported location keeps its iteration count".into(),
+                    params: ".kfr and Imagina text files asking 800,000, 5,000,000 and 20 iterations".into(),
+                    result: seen.join(", "),
+                    threshold: "800,000 and 5,000,000 kept and 20 raised to 64 by both importers; automatic iterations off",
+                    pass,
+                });
+                self.fractal = FractalKind::Mandelbrot;
+            }
+
             // ⭐A custom view travels in EVERY format that carries a view, with a comment past
             // Latin-1 in its formula: that made the PNG export FAIL and the EXR export PANIC (both
             // containers are Latin-1), and "Tour from current view" wrote a tour the parser refused.

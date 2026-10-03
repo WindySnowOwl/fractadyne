@@ -9732,8 +9732,13 @@ impl FractadyneApp {
         let zoom = v.zoom;
         self.fractal = FractalKind::Mandelbrot;
         self.julia_mode = false;
+        // ⛔The count the file asks for, up to the app's own ceiling — as the Imagina importer does.
+        // This clamped to 50,000 (the slider's limit when the importer was written), so a deep
+        // location asking 800,000 rendered every pixel at the cap: the corpus's 1.2e148 .kfr came
+        // out near-black, and the release check comparing two builds on it compared two black
+        // images. Self-test row "an imported location keeps its iteration count".
         if let Some(it) = v.iterations {
-            self.render_cfg.max_iter = it.clamp(64, 50_000);
+            self.render_cfg.max_iter = it.clamp(64, MAX_ITER_LIMIT);
             self.render_cfg.auto_iter = false;
         }
         self.viewport.set_center_mag(v.cx, v.cy, zoom.max(1.0));
