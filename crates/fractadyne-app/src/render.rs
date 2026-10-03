@@ -4104,15 +4104,45 @@ impl FractadyneApp {
         // conservative area cap to avoid OOM. Above either, fall back to the tiled (uncorrected)
         // path. ~32 MP covers 4K/5K/6K comfortably. `budget` work-boxes the correction loop.
         const MAX_CORRECT_PX: u64 = 32_000_000;
+        // ⛔⭐The export's supersampling. This path used to iterate and colour at ONE sample a pixel
+        // whatever the export asked for, and said nothing: every view it corrects (the
+        // non-holomorphic families, and every Julia view) lost its `--ss` / Anti-alias setting. Now
+        // the correction runs on the supersampled frame — `ss` texels a pixel along each axis, the
+        // normalized export's shape — and the colour pass averages them as `render_export` does.
+        // (`None`, the selftest's correction checks, has no export settings: one sample, as before.)
+        let ss = req.map_or(1, |r| r.ss.max(1));
+        let (iw, ih) = (width * ss, height * ss);
         let max_dim = device.limits().max_texture_dimension_2d;
-        if width > max_dim
-            || height > max_dim
-            || (width as u64) * (height as u64) > MAX_CORRECT_PX
-            || self.coloring.color_method.needs_aux()
-        {
+        if self.coloring.color_method.needs_aux() {
             return None;
         }
-        let ci = self.render_corrected_iter(device, queue, vp, julia, width, height, 64, req, budget)?;
+        if iw > max_dim || ih > max_dim || (iw as u64) * (ih as u64) > MAX_CORRECT_PX {
+            // Said, not silent: the caller's fallback is the plain export, which keeps the
+            // supersampling and does not correct.
+            crate::diag::log_line(
+                "export",
+                &format!(
+                    "glitch correction: skipped — {width}x{height} at {ss}x{ss} samples is {iw}x{ih}, past the corrected path's {} Mpx; rendering uncorrected",
+                    MAX_CORRECT_PX / 1_000_000
+                ),
+            );
+            return None;
+        }
+        // The correction loop's request at the supersampled size (its reference is the caller's,
+        // cloned — only the frame grows). At `ss = 1` the caller's own request, as before.
+        let grown;
+        let iter_req = match req {
+            Some(r) if ss > 1 && r.width == width && r.height == height => {
+                let mut q = r.clone();
+                q.width = iw;
+                q.height = ih;
+                q.ss = 1;
+                grown = q;
+                Some(&grown)
+            }
+            other => other,
+        };
+        let ci = self.render_corrected_iter(device, queue, vp, julia, iw, ih, 64, iter_req, budget)?;
         // ⚠The size guard is load-bearing: a request built for a different frame size would colour
         // the merged buffer against the wrong dimensions. Both real callers pass their own
         // `req.width`/`req.height` as `width`/`height`, so it holds; anything else rebuilds.
@@ -4127,7 +4157,7 @@ impl FractadyneApp {
                 &built
             }
         };
-        let mut res = fractadyne_gpu::color_iter_buffer(device, queue, req, &ci.pixels).ok()?;
+        let mut res = fractadyne_gpu::color_iter_buffer_ss(device, queue, req, &ci.pixels, ss).ok()?;
         // color_iter_buffer only colors; carry the correction's accumulated counters/time so
         // the perf line and counters reflect what the multi-reference render actually did.
         res.counters = ci.counters;
