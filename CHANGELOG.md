@@ -59,7 +59,7 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
-- **L-systems (not yet in a beta).** A new family under Fractal ▸ L-systems: curves, space-filling
+- **L-systems (0.3.0-beta.16).** A new family under Fractal ▸ L-systems: curves, space-filling
   curves, islands and plants drawn by a turtle from a rewriting grammar (Lindenmayer systems). The
   order follows the zoom — zoom in by a curve's growth factor and it gains an order — so the detail
   never runs out, and a view costs what its pixels cost whatever the order: the word is never
@@ -99,7 +99,7 @@ Changes after 0.3.0-beta.1:
   dive into it — and an L-system keyframe's zoom may go below 1× (its coordinates are its own).
   Tools ▸ Tour from current view writes one from an L-system view, starting at its framed home;
   `--render-tour` renders it, and it plays live.
-- **Conway's Game of Life and its relatives (not yet in a beta).** A new family under Fractal ▸
+- **Conway's Game of Life and its relatives (0.3.0-beta.16).** A new family under Fractal ▸
   Automata: Life-like cellular automata on an unbounded plane, stepped on the graphics card.
   Rules in B/S notation (Life, HighLife, Seeds and 19 more built in), Generations rules with
   dying states (Brian's Brain, Star Wars), von Neumann rules, Hensel's non-totalistic notation
