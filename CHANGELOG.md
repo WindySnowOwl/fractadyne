@@ -59,6 +59,10 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Fixed: an imported Kalles Fraktaler location could render black (0.3.0-beta.17).** A `.kfr`
+  file's iteration count was capped at 50,000, so a deep location asking for more rendered with
+  too few: at 1.2e148× a location asking 800,000 came out almost entirely black. It now keeps the
+  count it asks for, up to the app's limit of 10,000,000, as an Imagina location already did.
 - **L-systems (0.3.0-beta.16).** A new family under Fractal ▸ L-systems: curves, space-filling
   curves, islands and plants drawn by a turtle from a rewriting grammar (Lindenmayer systems). The
   order follows the zoom — zoom in by a curve's growth factor and it gains an order — so the detail
