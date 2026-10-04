@@ -10,8 +10,9 @@
 //! Blobs — the job bundle, frames, the link-speed sample — are announced by a control message with
 //! their length and SHA-256, and are complete only when the digest matches.
 //!
-//! Orbit sharing (`OrbitOffer` / `OrbitQuery` / `OrbitReply`, design §8) arrives with Phase 3 and a
-//! protocol version bump.
+//! Orbit sharing (design §8, protocol 6): a client offers the controller each reference orbit its
+//! renders built (`OrbitOffer`), and the controller pushes its verified pool to every machine on the
+//! job (`OrbitPush`). There is no query: a render finds an admissible orbit in its own cache.
 
 use serde::{Deserialize, Serialize};
 

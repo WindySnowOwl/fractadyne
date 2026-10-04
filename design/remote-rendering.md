@@ -1,6 +1,6 @@
 # Remote rendering — design
 
-Status: **design only, nothing implemented; every decision in §13 taken by the user on 2026-10-03.**
+Status: **Phases 0–3 built (2026-10-04, branch `feat/remote-rendering`), each with its evidence in §12; Phase 4 not started. Every decision in §13 taken by the user on 2026-10-03.**
 Written 2026-10-03 at the user's request ("design an implementation that is secure, performant,
 scalable and friendly"). Integration facts are from this tree at `3201b74`; every cost figure is
 quoted from code, logs or an existing design doc, with its source. The user's decisions, and the
@@ -21,7 +21,7 @@ decided and spends its effort on **bounding the tax** the earlier analysis feare
   refactor);
 - the scheduler is a pure module with an injected clock, tested the way `segment_range` is
   (`scripting/segment_props.rs`, `scripting/order_tests.rs`), never against a GPU;
-- the protocol is a closed list of message kinds — 15 as built in Phase 1, 18 once Phase 3 adds
+- the protocol is a closed list of message kinds — 15 as built in Phase 1, 17 since Phase 3 added
   orbit sharing — all enumerated in §4, and nothing else.
 
 Everything the farm needs that is *already built* — reuse it, do not sit beside it:
@@ -216,7 +216,10 @@ The protocol version is checked once, in `Hello` / `HelloAck` (both ends run one
 per-message version would only repeat it). As built in Phase 1 the job's parameters — size, fps,
 ss, prefix, frame count, orbit cap — travel in the bundle, so `Assign` is just job, run and range;
 unknown fields are refused rather than ignored. K = client, C = controller; the client dials and
-speaks first. 15 kinds in Phase 1; the three orbit messages arrive with Phase 3 (protocol 2):
+speaks first. 15 kinds in Phase 1; Phase 3 added the two orbit messages (protocol 6 — 2 to 5
+carried the probe, the driver, `Cancel.from` and `FrameDone.on_share`). The orbit query designed
+here was not needed: a render finds an admissible orbit in its own cache, so the controller pushes
+its pool instead of answering for one view:
 
 | direction | kind | payload (all fields validated) | cap |
 |---|---|---|---|
@@ -227,12 +230,12 @@ speaks first. 15 kinds in Phase 1; the three orbit messages arrive with Phase 3 
 | C→K | `Assign` | `job_id`, `run: [start, end)`, `size`, `fps`, `ss`, `prefix`, output mode, `stall_timeout_s`, `deadline_s` | 4 KiB |
 | C→K | `Cancel` | `job_id`, `run` or `*`, reason (`Reassigned`, `Paused`, `Stopped`) | 1 KiB |
 | C→K | `JobClose` | `job_id` | 1 KiB |
-| C→K | `OrbitReply` | *(Phase 3)* answer to `OrbitQuery`: none, or blob announcement | 4 KiB + blob ≤ 256 MiB |
+| C→K | `OrbitPush` | *(Phase 3)* `job_id` + blob announcement: an orbit from the farm's verified pool, for the client's job cache | 4 KiB + blob ≤ 256 MiB |
 | K→C | `Heartbeat` | every 2 s: state, `job_id`, `run`, frames done in run, current frame index, frame started at, child pid alive, load, free bytes at output root / temp | 2 KiB |
-| K→C | `FrameDone` | `job_id`, `index`, `bytes`, `sha256`, `how: Streamed{blob_id} / OnShare`, `render_ms`, `ref_fresh: bool` | 1 KiB |
+| K→C | `FrameDone` | `job_id`, `run_id`, `index`, blob announcement (`bytes`, `sha256`), `on_share` (no chunks follow; the controller reads it on the share), `render_ms`, `reference` (`fresh` / `cache` / `reused` / `none`) | 1 KiB |
 | K→C | `FrameFailed` | `job_id`, `index`, class (`Encode`, `Storage`, `Deadline`, `Gpu`), message (≤ 1 KiB) | 2 KiB |
 | K→C | `RunAborted` | `job_id`, `run`, done-up-to, reason (`UserCancel`, `Paused`, `DeviceLost`, `ChildCrash{exit}`, `Policy{what}`, `Version`) | 2 KiB |
-| K→C | `OrbitOffer` / `OrbitQuery` | *(Phase 3)* §8: header fields of a blob the client has / the view the client is about to build for | 4 KiB |
+| K→C | `OrbitOffer` | *(Phase 3)* `job_id` + blob announcement: an orbit the client's renders built and cached (≥ 1 s to build) | 4 KiB + blob ≤ 256 MiB |
 | C→K | `DiagRequest` | items from a fixed list (`child_log_tail`, `handshake`, `heartbeats`) | 1 KiB |
 | K→C | `DiagReport` | the requested items, each truncated to its stated cap | 64 KiB |
 | C→K | `Keepalive` | every 5 s; a client whose read times out (30 s) knows the controller is gone, not quiet | — |
@@ -802,6 +805,59 @@ verification, run stealing, `OrbitOffer/Query/Reply`, controller pre-build of th
 (`tours/dive-to-view-3e1216.toml`) on two clients with sharing `off` vs `neighbourhood`: count
 fresh references (`ref:fresh` in `frame-done` lines) and wall time; report the differing-pixel
 count between the two runs rather than asserting zero (§8's honesty).
+
+✅**Built 2026-10-04** in three commits. *3a — stealing and run boundaries* (`5f14140`): a machine
+with nothing to do takes another's queued run whole, or else the second half of its running run
+(`Command::Trim`; the client stops its render at the cut, protocol 4 `Cancel.from`; a run with
+fewer than `steal_min` = 4 frames left after the one in progress is not cut); no run starts or is
+cut inside a dissolve (`no_start` frames: a start steps back to the frame the dissolve rises from,
+a cut steps forward past it); a held shot stays on one GPU class (`hold_owner`; the class can be known before the machine joins). An
+unstable machine is given work again after a crash window without a crash. *3b — share mode*
+(`9ab8445`): with a shared drive, a client writes each frame to
+`<root>/fractadyne-farm/<job_id>/<machine>/` (`names::share_dir` — no path crosses the wire,
+protocol 5 `FrameDone.on_share`), and the controller checks it there (length, SHA-256, a complete
+PNG of the job's size) before moving it into the output. *3c — shared computation* (`49458c4`): every farm render runs
+with `--orbit-cache` in the job's own folder; after each frame the client offers the controller the
+orbits its renders cached (`OrbitOffer`), the controller verifies each (`orbit_blob::decode`,
+named from its own header) into `<out>/farm/orbits/` and pushes the pool to every machine
+(`OrbitPush`, protocol 6); for a tour deeper than 1e300× the controller first renders the deepest
+keyframe itself, to pool its reference. Every frame says where its reference came from (`ref=` on
+the `frame-done` line → `FrameDone.reference` → `done.jsonl`), and the controller ends with a count.
+`--sharing off` is the control. Differences from §8: no `OrbitQuery` (a render looks in its own
+cache, so the controller pushes instead of answering per view), orbits go over the wire in share
+mode too, the transfer-beats-build estimate is a fixed "the link carries it in under two minutes",
+and `sharing` is on/off (`exact` is not built).
+
+**Gate** — the deeper `local/farm-runs/gate-e4000.toml` instead of the 3e1216 dive (references are
+cheap below ~1e1000×, under the cache's 1 s threshold, so a shallower tour measures little): 5
+frames at 160×90 from 1e3990× to 2.37e4000× on the e4000 Misiurewicz spiral, max_iter 2,008,192;
+each reference 443,144 iterations at 13,481 bits, 7.1 MB.
+
+| run | machines | wall | references | orbits shared | pixels vs the other run |
+|---|---|---|---|---|---|
+| sharing off | one local client (RTX 3080) | 321 s | 5 fresh | 0 | — |
+| sharing on | same, and the pre-build beside it | 130 s | 1 fresh, 4 cache | 2 | 0 differing, all 5 frames |
+| sharing off | local client + PLUTO (RX 6800 XT, LAN) | 203.2 s | 5 fresh | 0 | — |
+| sharing on | same | 112.2 s | 2 fresh, 3 cache | 1 | 0 differing, all 5 frames |
+
+The two PLUTO runs put every frame on the same machine (0–1 local, 2–4 PLUTO), so the comparison
+isolates sharing: frame 1 on the RTX 3080, rendered from the orbit PLUTO built for frame 4, is
+pixel-identical to the RTX 3080's own fresh-reference frame 1 (the orbit is the CPU's bignum
+arithmetic, not the GPU's). Also measured: PLUTO's CPU builds this reference in 30.8 s, this
+machine's in 48 s (the pre-build) to 91 s (frame 0's view); with sharing on, the wall time is
+this machine's frame 0, whose fresh build had started before PLUTO's orbit arrived at 31 s —
+a render does not pick up an orbit that arrives mid-build. The pre-build finished at 49 s with
+the same orbit PLUTO had shared at 31 s (PLUTO's first run was the deepest frame); the controller
+now says so instead of dropping the duplicate silently. Evidence besides the gate: `--farmtest`
+18/18 (a dissolve tour with `hold = 1.5` pixel-identical to the single-machine render — without
+the dissolve rule only 16–17 of 19 frames matched; share mode for two clients; every frame naming its
+reference source), 54 scheduler tests (chaos with dissolves, holds and classes; stealing).
+Found by the gate trial and fixed: a render waiting minutes on a reference build logged "possible
+hang", so its log check turned exit 0 into 1 and the client took it for a crash and parked a
+healthy machine — the wait now stamps liveness (`diag::recv_alive`), a run is judged by its frames,
+and a parked client's heartbeats count.
+**Not built (from §5, §7, §8):** `homogeneous`, `sharing = exact`, picking up an orbit mid-build,
+a per-client build-cost estimate, orbits through the share in share mode.
 
 **Phase 4 — friendliness.** mDNS (`_fractadyne._tcp`, advertised by a listening controller) so the
 client dialog offers *controllers on this network* instead of an address to type (the key is still

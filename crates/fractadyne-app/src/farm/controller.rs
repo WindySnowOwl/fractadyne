@@ -685,13 +685,19 @@ impl Controller<'_> {
                 self.compare_probe(conn);
                 self.blob_arrived(conn);
             }
-            CEv::OrbitIn { conn, tmp } => self.pool_add(Some(conn), &tmp),
+            CEv::OrbitIn { conn, tmp } => {
+                self.pool_add(Some(conn), &tmp);
+            }
             CEv::Prebuilt(paths) => {
                 if paths.is_empty() {
                     self.note("the pre-build of the deepest keyframe left no orbit worth sharing (a fast build is not cached)");
                 }
-                for p in paths {
-                    self.pool_add(None, &p);
+                let n = paths.len();
+                let added = paths.iter().filter(|p| self.pool_add(None, p)).count();
+                // Say so when a machine got there first: the pre-build's work was not needed, and
+                // a silent pool made that look like a pre-build that never finished.
+                if n > 0 && added == 0 {
+                    self.note("the pre-build of the deepest keyframe finished; a machine had already shared the same reference");
                 }
             }
             CEv::OwnProbe(r) => {
@@ -986,27 +992,27 @@ impl Controller<'_> {
 
     /// A reference orbit into the farm's pool (from a client, or the pre-build): verified by its
     /// own digest, named from its own header, kept in `farm/orbits/` unless a longer one of the same
-    /// identity is there, then sent to every other machine on the job.
-    fn pool_add(&mut self, from: Option<ClientId>, tmp: &Path) {
+    /// identity is there, then sent to every other machine on the job. True when it joined the pool.
+    fn pool_add(&mut self, from: Option<ClientId>, tmp: &Path) -> bool {
         let bytes = match std::fs::read(tmp) {
             Ok(b) => b,
-            Err(_) => return,
+            Err(_) => return false,
         };
         let who = from.and_then(|c| self.conns.get(&c)).map_or("this machine (the pre-build)".to_string(), |c| c.name.clone());
         let Some((name, h)) = orbit_file_name(&bytes) else {
             let _ = std::fs::remove_file(tmp);
             self.note(&format!("a reference orbit from {who} did not verify; ignored"));
-            return;
+            return false;
         };
         let id = h.key_id();
         if self.pool.iter().any(|(i, _, len)| *i == id && *len >= bytes.len() as u64) {
             let _ = std::fs::remove_file(tmp);
-            return;
+            return false;
         }
         let dir = self.out.join("farm").join("orbits");
         let dest = dir.join(&name);
         if std::fs::create_dir_all(&dir).and_then(|()| move_file(tmp, &dest)).is_err() {
-            return;
+            return false;
         }
         self.pool.retain(|(i, _, _)| *i != id);
         self.pool.push((id, dest, bytes.len() as u64));
@@ -1024,6 +1030,7 @@ impl Controller<'_> {
         for c in ids {
             self.push_pool(c);
         }
+        true
     }
 
     /// Send a client the pool's orbits it does not have — where the link carries one in under two
