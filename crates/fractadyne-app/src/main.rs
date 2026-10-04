@@ -5718,6 +5718,11 @@ struct FractadyneApp {
     last_dir: Option<std::path::PathBuf>,
     /// "Render script…" dialog + the child process doing the work (see `TourRenderUi`).
     tour_render: TourRenderUi,
+    /// Where the references used since the last tour frame came from (`render::note_ref_source`):
+    /// 3 fresh (picked and built), 2 from the on-disk orbit cache, 1 reused (extended from one in
+    /// memory), 0 none — the costliest wins. Atomic because the export path that builds a tour
+    /// frame's reference holds only `&self`. For the `ref=` field of a `--farm-child` frame line.
+    pub(crate) ref_source: std::sync::atomic::AtomicU8,
     /// File ▸ Render client…: this machine as a render-farm client (see `ui::farm_client`).
     farm_client: crate::ui::farm_client::FarmClientUi,
     /// Tools ▸ Render on farm…: the farm controller for a tour (see `ui::farm_controller`).
@@ -6725,6 +6730,7 @@ impl FractadyneApp {
             last_dir: s.last_dir.clone().map(std::path::PathBuf::from),
             playback_restore: None,
             tour_render: TourRenderUi::default(),
+            ref_source: std::sync::atomic::AtomicU8::new(0),
             farm_client: Default::default(),
             farm_controller: Default::default(),
             diagnostics: Default::default(),

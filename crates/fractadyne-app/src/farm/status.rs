@@ -181,6 +181,13 @@ pub(crate) struct ControllerStatus {
     pub(crate) elapsed_s: f64,
     /// `Scheduler::strip`: one character per cell, `d . a x`.
     pub(crate) strip: String,
+    /// Where the kept frames' references came from (design §8): picked and built, from the orbit
+    /// cache (the farm's shared orbits included), extended from one in memory.
+    pub(crate) refs_fresh: u64,
+    pub(crate) refs_cache: u64,
+    pub(crate) refs_reused: u64,
+    /// Reference orbits the farm holds to pass between machines.
+    pub(crate) orbits_shared: u64,
     pub(crate) clients: Vec<ClientRow>,
     /// Distinct probe images among the admitted machines (design §9): more than one means the job
     /// mixes GPUs whose pictures differ.

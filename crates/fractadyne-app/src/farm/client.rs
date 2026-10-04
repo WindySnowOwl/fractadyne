@@ -419,6 +419,7 @@ fn connect_once(cfg: &Cfg, pins: &mut PinStore, ui: &Arc<Ui>) -> Ended {
         next_blob: 2,
         jobs: HashMap::new(),
         pending_bundle: None,
+        pending_orbits: HashMap::new(),
         queue: VecDeque::new(),
         running: None,
         child_tail: Arc::new(Mutex::new(VecDeque::new())),
@@ -499,6 +500,8 @@ struct Job {
     /// Where its frames are written: the job's local folder, or its folder on the shared drive.
     frames: PathBuf,
     share: bool,
+    /// Orbit-cache files (name → size) already offered to the controller or received from it.
+    orbits: HashMap<String, u64>,
 }
 
 struct Running {
@@ -521,6 +524,8 @@ struct Session<'a> {
     next_blob: u64,
     jobs: HashMap<String, Job>,
     pending_bundle: Option<(JobOpen, BlobSink<Vec<u8>>)>,
+    /// Reference orbits on their way from the controller, by blob id.
+    pending_orbits: HashMap<u64, (String, BlobSink<Vec<u8>>)>,
     queue: VecDeque<Assign>,
     running: Option<Running>,
     child_tail: Arc<Mutex<VecDeque<String>>>,
@@ -671,6 +676,12 @@ impl Session<'_> {
                 return Some(Ended::Exit(3));
             }
             Msg::Keepalive => {}
+            Msg::OrbitPush(o) => {
+                if self.jobs.contains_key(&o.job_id) && !self.pending_orbits.contains_key(&o.blob.id) {
+                    let sink = BlobSink::new(o.blob.clone(), Vec::new());
+                    self.pending_orbits.insert(o.blob.id, (o.job_id, sink));
+                }
+            }
             other => {
                 return Some(Ended::Retry { connected: true, why: format!("the controller sent a {} message, which only a client sends", kind_name(&other)) });
             }
@@ -679,6 +690,15 @@ impl Session<'_> {
     }
 
     fn on_chunk(&mut self, id: u64, offset: u64, data: &[u8]) -> Result<(), String> {
+        if let Some((_, sink)) = self.pending_orbits.get_mut(&id) {
+            if sink.push(offset, data).map_err(|e| e.to_string())? == BlobProgress::More {
+                return Ok(());
+            }
+            if let Some((job_id, sink)) = self.pending_orbits.remove(&id) {
+                self.orbit_arrived(&job_id, sink.into_inner());
+            }
+            return Ok(());
+        }
         let Some((j, sink)) = self.pending_bundle.as_mut() else {
             return Err(format!("a chunk of unannounced blob {id}"));
         };
@@ -741,7 +761,7 @@ impl Session<'_> {
                 None => format!("Job \"{}\" — waiting for frames to render", bundle.name),
             };
         });
-        self.jobs.insert(j.job_id.clone(), Job { dir, bundle, refusal, frames, share });
+        self.jobs.insert(j.job_id.clone(), Job { dir, bundle, refusal, frames, share, orbits: HashMap::new() });
         Ok(())
     }
 
@@ -777,6 +797,11 @@ impl Session<'_> {
         if let Some(cap) = b.orbit_len_cap {
             args.push("--set".into());
             args.push(format!("ORBIT_LEN_CAP={cap}"));
+        }
+        // Shared computation: the render keeps (and finds) reference orbits in the job's own
+        // cache, which the farm's shared orbits are dropped into (`orbit_arrived`).
+        if b.sharing {
+            args.push("--orbit-cache".into());
         }
         self.child_tail.lock().unwrap_or_else(|e| e.into_inner()).clear();
         match spawn_child(&args, &job.dir.join("cfg")) {
@@ -826,7 +851,7 @@ impl Session<'_> {
     fn on_child_line(&mut self, run: u64, line: ChildLine) {
         let Some(r) = self.running.as_mut().filter(|r| r.assign.run_id == run) else { return };
         match line {
-            ChildLine::Done { index, bytes, sha256, ms } if self.jobs.get(&r.assign.job_id).is_some_and(|j| j.share) => {
+            ChildLine::Done { index, bytes, sha256, ms, reference } if self.jobs.get(&r.assign.job_id).is_some_and(|j| j.share) => {
                 // Share mode: the frame is in this machine's folder on the shared drive, its digest
                 // taken by the render as it read the file back. Announce it; the controller reads
                 // and checks it there.
@@ -843,7 +868,7 @@ impl Session<'_> {
                 }
                 let id = self.next_blob;
                 self.next_blob += 1;
-                let _ = self.out.send(Out::Msg(Msg::FrameDone(FrameDone { job_id: r.assign.job_id.clone(), run_id: run, index, render_ms: ms, blob: BlobAnnounce { id, len: bytes, sha256 }, on_share: true })));
+                let _ = self.out.send(Out::Msg(Msg::FrameDone(FrameDone { job_id: r.assign.job_id.clone(), run_id: run, index, render_ms: ms, blob: BlobAnnounce { id, len: bytes, sha256 }, on_share: true, reference })));
                 r.reported.insert(index);
                 r.last_done = Some(r.last_done.map_or(index, |d| d.max(index)));
                 r.frame_started = Instant::now();
@@ -867,7 +892,7 @@ impl Session<'_> {
                     let _ = r.child.kill();
                 }
             }
-            ChildLine::Done { index, bytes, sha256, ms } => {
+            ChildLine::Done { index, bytes, sha256, ms, reference } => {
                 let job = &self.jobs[&r.assign.job_id];
                 let path = job.frames.join(fractadyne_farm::names::frame_file_name(&job.bundle.prefix, index));
                 match std::fs::read(&path) {
@@ -881,7 +906,7 @@ impl Session<'_> {
                             data[last] ^= 0x55;
                             eprintln!("  (instrument {CORRUPT_INSTRUMENT}: frame {index} sent corrupted on purpose)");
                         }
-                        let _ = self.out.send(Out::Msg(Msg::FrameDone(FrameDone { job_id: r.assign.job_id.clone(), run_id: run, index, render_ms: ms, blob: announce, on_share: false })));
+                        let _ = self.out.send(Out::Msg(Msg::FrameDone(FrameDone { job_id: r.assign.job_id.clone(), run_id: run, index, render_ms: ms, blob: announce, on_share: false, reference })));
                         let _ = self.out.send(Out::Blob(id, data));
                         // Kept as the window's thumbnail of the latest frame (the next replaces it).
                         let last = self.cfg.control.join("last-frame.png");
@@ -927,14 +952,74 @@ impl Session<'_> {
         }
     }
 
+    /// Offer the controller the reference orbits this job's renders cached that it has not seen.
+    fn offer_orbits(&mut self, job_id: &str) {
+        let Some(job) = self.jobs.get_mut(job_id) else { return };
+        if !job.bundle.sharing {
+            return;
+        }
+        let dir = job.dir.join("cfg").join(crate::refcache_persist::DIR_NAME);
+        let Ok(rd) = std::fs::read_dir(&dir) else { return };
+        let mut offers = Vec::new();
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Some(len) = e.metadata().ok().map(|m| m.len()) else { continue };
+            if !name.ends_with(&format!(".{}", crate::refcache_persist::ENTRY_EXT)) || job.orbits.get(&name) == Some(&len) || len > MAX_ORBIT_BYTES {
+                continue;
+            }
+            job.orbits.insert(name.clone(), len);
+            if let Ok(bytes) = std::fs::read(e.path()) {
+                if orbit_file_name(&bytes).is_some_and(|(n, _)| n == name) {
+                    offers.push(bytes);
+                }
+            }
+        }
+        for bytes in offers {
+            let id = self.next_blob;
+            self.next_blob += 1;
+            println!("  offering the farm a reference orbit this machine built ({} MB)", bytes.len() / 1_000_000);
+            let blob = BlobAnnounce { id, len: bytes.len() as u64, sha256: fractadyne_farm::sha256_hex(&bytes) };
+            let _ = self.out.send(Out::Msg(Msg::OrbitOffer(OrbitBlob { job_id: job_id.to_string(), blob })));
+            let _ = self.out.send(Out::Blob(id, bytes));
+        }
+    }
+
+    /// A reference orbit from the farm: verified, then put where this job's renders look for one
+    /// (unless a longer one of the same identity is already there).
+    fn orbit_arrived(&mut self, job_id: &str, bytes: Vec<u8>) {
+        let Some(job) = self.jobs.get_mut(job_id) else { return };
+        let Some((name, h)) = orbit_file_name(&bytes) else {
+            println!("  a reference orbit from the controller did not verify; ignored");
+            return;
+        };
+        let dir = job.dir.join("cfg").join(crate::refcache_persist::DIR_NAME);
+        let dest = dir.join(&name);
+        if std::fs::metadata(&dest).is_ok_and(|m| m.len() >= bytes.len() as u64) {
+            return;
+        }
+        let tmp = dir.join(format!("{name}.tmp"));
+        let ok = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&tmp, &bytes)).and_then(|()| std::fs::rename(&tmp, &dest));
+        if ok.is_ok() {
+            job.orbits.insert(name, bytes.len() as u64);
+            println!("  received a reference orbit from the farm: {} iterations at {} bits ({} MB)", h.orbit_len, h.prec, bytes.len() / 1_000_000);
+        }
+    }
+
     fn on_child_closed(&mut self, run: u64) {
         let Some(mut r) = self.running.take_if(|r| r.assign.run_id == run) else { return };
         let code = r.child.wait().ok().and_then(|s| s.code());
         let end = r.stop_from.map_or(r.assign.end, |f| f.min(r.assign.end));
         let complete = (r.assign.start..end).all(|i| r.reported.contains(&i));
+        // Judged by its FRAMES: a render that reported every one of them is complete, whatever
+        // its exit code after (a log check, a teardown) — the controller verifies each frame
+        // itself. Counting those as crashes parked a healthy machine as unstable (2026-10-04).
         let reason = match (r.stop.take(), code) {
             (Some(why), _) => Some(why),
             (None, Some(0)) if complete => None,
+            (None, c) if complete => {
+                println!("  run {run}: every frame arrived; the render then exited {c:?} — counted as complete");
+                None
+            }
             (None, Some(c)) => Some(AbortReason::ChildCrash(c)),
             (None, None) => Some(AbortReason::ChildCrash(-1)),
         };
@@ -944,6 +1029,7 @@ impl Session<'_> {
             }
             self.send(Msg::RunAborted(RunAborted { job_id: r.assign.job_id.clone(), run_id: run, done_up_to: r.last_done, reason: why }));
         }
+        self.offer_orbits(&r.assign.job_id.clone());
         let paused = self.paused;
         self.ui.update(|s| {
             s.run = None;

@@ -42,7 +42,11 @@ enum CEv {
     Hello { conn: ClientId, hello: Hello, fingerprint: String, addr: String, out: mpsc::Sender<COut>, io: Arc<Io> },
     Msg { conn: ClientId, msg: Msg },
     LinkSample { conn: ClientId, bytes: u64, secs: f64 },
-    FrameIn { conn: ClientId, run: u64, index: u64, render_ms: u64, tmp: PathBuf, bytes: u64, sha256: String },
+    FrameIn { conn: ClientId, run: u64, index: u64, render_ms: u64, tmp: PathBuf, bytes: u64, sha256: String, reference: Option<String> },
+    /// A reference orbit a client offered, received to a temporary file (design §8).
+    OrbitIn { conn: ClientId, tmp: PathBuf },
+    /// The pre-build of the deepest keyframe's reference finished: the orbits it cached.
+    Prebuilt(Vec<PathBuf>),
     FrameBad { conn: ClientId, run: u64, index: u64, why: String, tmp: Option<PathBuf> },
     Closed { conn: ClientId, why: String },
     Note(String),
@@ -71,6 +75,9 @@ struct Conn {
     driver: String,
     /// It delivers frames through the shared drive.
     on_share: bool,
+    /// Pool orbits sent to it, and its next blob id for them.
+    orbits_sent: std::collections::HashSet<u64>,
+    next_blob: u64,
     /// How its GPU differs from this machine's, once both are known (said once, at that moment).
     gpu_note: Option<String>,
     gpu_compared: bool,
@@ -155,6 +162,16 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     }
     // Dissolves and held shots, for the scheduler (design §5).
     let layout = pb.farm_layout(r.fps, crate::scripting::tour_frame_count(pb.total, r.fps));
+    // Shared computation (design §8): on unless `--sharing off`.
+    let sharing = match value(args, "--sharing") {
+        None | Some("neighbourhood") | Some("neighborhood") => true,
+        Some("off") => false,
+        Some(other) => return Err(format!("--sharing takes neighbourhood or off, not {other:?}")),
+    };
+    // Pre-build the deepest keyframe's reference: on by default for tours past 1e300× (where a
+    // reference costs minutes to hours), with sharing on.
+    let deepest = pb.deepest_keyframe(r.fps, crate::scripting::tour_frame_count(pb.total, r.fps));
+    let prebuild = sharing && !args.iter().any(|a| a == "--no-prebuild") && (args.iter().any(|a| a == "--prebuild") || deepest.is_some_and(|(_, z)| z >= 300.0));
     fractadyne_farm::names::check_file_part("frame prefix", &r.prefix)?;
     let frames = crate::scripting::tour_frame_count(pb.total, r.fps);
 
@@ -237,6 +254,12 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
         pause_at_start: false,
         own_probe: None,
         own_gpu: None,
+        sharing,
+        prebuild,
+        deepest,
+        pool: Vec::new(),
+        refs: HashMap::new(),
+        push_pool_after: Vec::new(),
         early_notes: Default::default(),
         probes: HashMap::new(),
         gpus: HashMap::new(),
@@ -366,6 +389,7 @@ fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identi
         Frame { f: FrameDone, sink: BlobSink<std::io::BufWriter<std::fs::File>>, path: PathBuf },
         Sample { sink: BlobSink<std::io::Sink>, started: Instant },
         Probe { sink: BlobSink<Vec<u8>> },
+        Orbit { sink: BlobSink<std::io::BufWriter<std::fs::File>>, path: PathBuf },
     }
     let mut pending: HashMap<u64, Pending> = HashMap::new();
     let close = |why: String| {
@@ -377,6 +401,18 @@ fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identi
             Ok(Incoming::Control(m)) => {
                 io.bytes_in.fetch_add(64, Ordering::Relaxed);
                 match m {
+                    Msg::OrbitOffer(o) => {
+                        if pending.len() >= 8 || pending.contains_key(&o.blob.id) {
+                            break close("protocol error: too many blobs in flight".into());
+                        }
+                        let path = incoming.join(format!("orbit-{conn}-{}.part", o.blob.id));
+                        match std::fs::File::create(&path) {
+                            Ok(file) => {
+                                pending.insert(o.blob.id, Pending::Orbit { sink: BlobSink::new(o.blob.clone(), std::io::BufWriter::new(file)), path });
+                            }
+                            Err(e) => break close(format!("cannot store an incoming orbit: {e}")),
+                        }
+                    }
                     Msg::FrameDone(f) if f.on_share => {
                         if ev.send(CEv::Msg { conn, msg: Msg::FrameDone(f) }).is_err() {
                             break;
@@ -424,6 +460,7 @@ fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identi
                     Pending::Frame { sink, .. } => sink.push(offset, &data),
                     Pending::Sample { sink, .. } => sink.push(offset, &data),
                     Pending::Probe { sink } => sink.push(offset, &data),
+                    Pending::Orbit { sink, .. } => sink.push(offset, &data),
                 };
                 match (res, pending.remove(&id).expect("present")) {
                     (Ok(BlobProgress::More), p) => {
@@ -440,7 +477,7 @@ fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identi
                         // Structure and dimensions: a PNG of THIS job's size, complete to its IEND.
                         match crate::scripting::png_frame_size(&path) {
                             Some(d) if d == dims => {
-                                let _ = ev.send(CEv::FrameIn { conn, run: f.run_id, index: f.index, render_ms: f.render_ms, tmp: path, bytes: f.blob.len, sha256: f.blob.sha256 });
+                                let _ = ev.send(CEv::FrameIn { conn, run: f.run_id, index: f.index, render_ms: f.render_ms, tmp: path, bytes: f.blob.len, sha256: f.blob.sha256, reference: f.reference });
                             }
                             got => {
                                 let why = match got {
@@ -462,6 +499,15 @@ fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identi
                     }
                     (Err(e), Pending::Sample { .. }) => break close(format!("protocol error in the link sample: {e}")),
                     (Err(e), Pending::Probe { .. }) => break close(format!("protocol error in the probe: {e}")),
+                    (Ok(BlobProgress::Complete), Pending::Orbit { sink, path }) => {
+                        drop(sink.into_inner());
+                        let _ = ev.send(CEv::OrbitIn { conn, tmp: path });
+                    }
+                    (Err(e), Pending::Orbit { sink, path }) => {
+                        drop(sink.into_inner());
+                        let _ = std::fs::remove_file(&path);
+                        let _ = ev.send(CEv::Note(format!("a reference orbit from connection {conn} was not usable ({e}); ignored")));
+                    }
                 }
             }
             Err(RecvError::TimedOut) => break close("no message for 30 s".into()),
@@ -469,9 +515,16 @@ fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identi
         }
     }
     for (_, p) in pending {
-        if let Pending::Frame { sink, path, .. } = p {
-            drop(sink.into_inner());
-            let _ = std::fs::remove_file(path);
+        match p {
+            Pending::Frame { sink, path, .. } => {
+                drop(sink.into_inner());
+                let _ = std::fs::remove_file(path);
+            }
+            Pending::Orbit { sink, path } => {
+                drop(sink.into_inner());
+                let _ = std::fs::remove_file(path);
+            }
+            _ => {}
         }
     }
 }
@@ -505,6 +558,18 @@ struct Controller<'a> {
     pause_at_start: bool,
     /// This machine's probe render (`None` until it finishes).
     own_probe: Option<Result<Probe, String>>,
+    /// Shared computation on (design §8): renders cache orbits, and the farm passes them on.
+    sharing: bool,
+    /// Render the deepest keyframe here first, so its reference is in the pool early.
+    prebuild: bool,
+    /// The deepest keyframe: frame and zoom (log10).
+    deepest: Option<(u64, f64)>,
+    /// The farm's reference orbits: id, file in `farm/orbits/`, size.
+    pool: Vec<(u64, PathBuf, u64)>,
+    /// Kept frames by where their reference came from (`fresh`, `cache`, `reused`, `none`).
+    refs: HashMap<String, u64>,
+    /// Clients just sent their job: the pool goes to them once the commands are carried out.
+    push_pool_after: Vec<ClientId>,
     /// This machine's GPU, read from its probe render's log.
     own_gpu: Option<GpuInfo>,
     /// Notes from before the job started, for its event log.
@@ -620,6 +685,15 @@ impl Controller<'_> {
                 self.compare_probe(conn);
                 self.blob_arrived(conn);
             }
+            CEv::OrbitIn { conn, tmp } => self.pool_add(Some(conn), &tmp),
+            CEv::Prebuilt(paths) => {
+                if paths.is_empty() {
+                    self.note("the pre-build of the deepest keyframe left no orbit worth sharing (a fast build is not cached)");
+                }
+                for p in paths {
+                    self.pool_add(None, &p);
+                }
+            }
             CEv::OwnProbe(r) => {
                 if let Ok((_, log)) = &r {
                     let f = gpu_facts(log);
@@ -648,7 +722,7 @@ impl Controller<'_> {
                 }
             }
             CEv::Msg { conn, msg } => return self.on_msg(conn, msg),
-            CEv::FrameIn { conn, run, index, render_ms, tmp, bytes, sha256 } => {
+            CEv::FrameIn { conn, run, index, render_ms, tmp, bytes, sha256, reference } => {
                 let name = self.conns.get(&conn).map(|c| c.name.clone()).unwrap_or_default();
                 let Some(j) = self.job.as_mut() else {
                     let _ = std::fs::remove_file(&tmp);
@@ -664,7 +738,10 @@ impl Controller<'_> {
                             if let Err(e) = moved {
                                 eprintln!("fractadyne: frame {index}: could not move it into place: {e}");
                             } else {
-                                let _ = j.manifest.record_done(&DoneRecord { index, bytes, sha256: sha256.clone(), machine: name.clone(), ms: render_ms, at_unix: unix_ms() / 1000 });
+                                let _ = j.manifest.record_done(&DoneRecord { index, bytes, sha256: sha256.clone(), machine: name.clone(), ms: render_ms, at_unix: unix_ms() / 1000, reference: reference.clone() });
+                                if let Some(r) = &reference {
+                                    *self.refs.entry(r.clone()).or_insert(0) += 1;
+                                }
                                 j.frame_bytes_ewma = Some(j.frame_bytes_ewma.map_or(bytes as f64, |e| 0.8 * e + 0.2 * bytes as f64));
                             }
                         }
@@ -759,6 +836,8 @@ impl Controller<'_> {
                         adapter: String::new(),
                         driver: String::new(),
                         on_share: false,
+                        orbits_sent: Default::default(),
+                        next_blob: 1000,
                         gpu_note: None,
                         gpu_compared: false,
                         job_sent: false,
@@ -895,13 +974,140 @@ impl Controller<'_> {
                 }
             };
             let ev = match check() {
-                Ok(()) => CEv::FrameIn { conn, run: f.run_id, index: f.index, render_ms: f.render_ms, tmp: path, bytes: f.blob.len, sha256: f.blob.sha256 },
+                Ok(()) => CEv::FrameIn { conn, run: f.run_id, index: f.index, render_ms: f.render_ms, tmp: path, bytes: f.blob.len, sha256: f.blob.sha256, reference: f.reference },
                 Err(why) => {
                     let exists = path.exists();
                     CEv::FrameBad { conn, run: f.run_id, index: f.index, why, tmp: exists.then_some(path) }
                 }
             };
             let _ = tx.send(ev);
+        });
+    }
+
+    /// A reference orbit into the farm's pool (from a client, or the pre-build): verified by its
+    /// own digest, named from its own header, kept in `farm/orbits/` unless a longer one of the same
+    /// identity is there, then sent to every other machine on the job.
+    fn pool_add(&mut self, from: Option<ClientId>, tmp: &Path) {
+        let bytes = match std::fs::read(tmp) {
+            Ok(b) => b,
+            Err(_) => return,
+        };
+        let who = from.and_then(|c| self.conns.get(&c)).map_or("this machine (the pre-build)".to_string(), |c| c.name.clone());
+        let Some((name, h)) = orbit_file_name(&bytes) else {
+            let _ = std::fs::remove_file(tmp);
+            self.note(&format!("a reference orbit from {who} did not verify; ignored"));
+            return;
+        };
+        let id = h.key_id();
+        if self.pool.iter().any(|(i, _, len)| *i == id && *len >= bytes.len() as u64) {
+            let _ = std::fs::remove_file(tmp);
+            return;
+        }
+        let dir = self.out.join("farm").join("orbits");
+        let dest = dir.join(&name);
+        if std::fs::create_dir_all(&dir).and_then(|()| move_file(tmp, &dest)).is_err() {
+            return;
+        }
+        self.pool.retain(|(i, _, _)| *i != id);
+        self.pool.push((id, dest, bytes.len() as u64));
+        self.note(&format!("{who} shared a reference orbit: {} iterations at {} bits ({:.1} MB)", h.orbit_len, h.prec, bytes.len() as f64 / 1e6));
+        // A replaced (longer) orbit goes out again; everyone else gets it now.
+        for c in self.conns.values_mut() {
+            c.orbits_sent.remove(&id);
+        }
+        if let Some(f) = from {
+            if let Some(c) = self.conns.get_mut(&f) {
+                c.orbits_sent.insert(id);
+            }
+        }
+        let ids: Vec<ClientId> = self.conns.iter().filter(|(_, c)| c.job_sent && c.state == ConnState::Admitted).map(|(&i, _)| i).collect();
+        for c in ids {
+            self.push_pool(c);
+        }
+    }
+
+    /// Send a client the pool's orbits it does not have — where the link carries one in under two
+    /// minutes (design §8: transfer must beat building; every pooled orbit took over a second, and
+    /// the deep ones take minutes to hours).
+    fn push_pool(&mut self, conn: ClientId) {
+        let Some(job_id) = self.job.as_ref().map(|j| j.job_id.clone()) else { return };
+        if !self.sharing {
+            return;
+        }
+        let entries: Vec<(u64, PathBuf, u64)> = self.pool.clone();
+        let Some(c) = self.conns.get_mut(&conn) else { return };
+        for (id, path, len) in entries {
+            if c.orbits_sent.contains(&id) {
+                continue;
+            }
+            if c.link_mbps.is_some_and(|m| len as f64 * 8.0 / (m.max(0.1) * 1e6) > 120.0) {
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(&path) else { continue };
+            c.orbits_sent.insert(id);
+            let blob_id = c.next_blob;
+            c.next_blob += 1;
+            let blob = BlobAnnounce { id: blob_id, len: bytes.len() as u64, sha256: fractadyne_farm::sha256_hex(&bytes) };
+            let _ = c.out.send(COut::Msg(Msg::OrbitPush(OrbitBlob { job_id: job_id.clone(), blob })));
+            let _ = c.out.send(COut::Blob(blob_id, Arc::new(bytes)));
+        }
+    }
+
+    /// Render the deepest keyframe here, in a cache of its own, to put its reference in the pool
+    /// while the clients start at the shallow end (design §8: "the controller pre-builds the
+    /// deepest keyframe's reference and offers it first").
+    fn start_prebuild(&mut self, cfg_dir: &Path) {
+        let Some((frame, zoom)) = self.deepest else { return };
+        let (w, h, fps, ss, prefix, _) = self.res.clone();
+        let dir = self.out.join("farm").join("prebuild");
+        let _ = std::fs::remove_dir_all(&dir);
+        let cache = dir.join("cfg");
+        if std::fs::create_dir_all(&cache).is_err() || std::fs::copy(cfg_dir.join("session.toml"), cache.join("session.toml")).is_err() {
+            return;
+        }
+        let mut a: Vec<String> = vec![
+            "--render-tour".into(),
+            self.tour.to_string_lossy().into_owned(),
+            "--out".into(),
+            dir.join("frames").to_string_lossy().into_owned(),
+            "--frames".into(),
+            format!("{frame}..{}", frame + 1),
+            "--size".into(),
+            format!("{w}x{h}"),
+            "--fps".into(),
+            format!("{fps}"),
+            "--ss".into(),
+            ss.to_string(),
+            "--prefix".into(),
+            prefix,
+            "--farm-child".into(),
+            "--orbit-cache".into(),
+            "-y".into(),
+        ];
+        if let Some(cap) = self.job.as_ref().and_then(|j| j.orbit_len_cap) {
+            a.push("--set".into());
+            a.push(format!("ORBIT_LEN_CAP={cap}"));
+        }
+        let anchors = self.out.join("farm").join("anchors.toml");
+        if anchors.exists() {
+            a.push("--norm-anchors".into());
+            a.push(anchors.to_string_lossy().into_owned());
+        }
+        self.note(&format!("pre-building the reference of the deepest keyframe (frame {frame}, 1e{zoom:.0}×) on this machine, to share"));
+        let tx = self.ev_tx.clone();
+        std::thread::spawn(move || {
+            let paths = match spawn_child(&a, &cache) {
+                Ok(mut child) => {
+                    let tail = Arc::new(std::sync::Mutex::new(VecDeque::new()));
+                    pump_child(&mut child, |_| {}, tail, 20);
+                    let _ = child.wait();
+                    std::fs::read_dir(cache.join(crate::refcache_persist::DIR_NAME))
+                        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == crate::refcache_persist::ENTRY_EXT)).collect())
+                        .unwrap_or_default()
+                }
+                Err(_) => Vec::new(),
+            };
+            let _ = tx.send(CEv::Prebuilt(paths));
         });
     }
 
@@ -1071,6 +1277,7 @@ impl Controller<'_> {
             prefix: prefix.clone(),
             frames,
             share: self.share_root.is_some(),
+            sharing: self.sharing,
         };
         let bundle_bytes = serde_json::to_vec(&bundle).map_err(|e| e.to_string())?;
         let settings_key = format!("{}|cap={}", serde_json::to_string(&self.settings).map_err(|e| e.to_string())?, cap.map_or("-".into(), |c| c.to_string()));
@@ -1132,6 +1339,9 @@ impl Controller<'_> {
         }
         self.job = Some(Job { manifest, sched, bundle: Arc::new(bundle_bytes), bundle_sha, job_id: job_id.clone(), orbit_len_cap: cap, frame_bytes_ewma: None });
         self.note(&format!("job {job_id} started with {} client(s)", admitted.len()));
+        if self.prebuild {
+            self.start_prebuild(&cfg_dir);
+        }
         if self.exec(cmds).is_some() {
             // Already finished (a resume of a complete job); `periodic` reports it.
         }
@@ -1140,9 +1350,21 @@ impl Controller<'_> {
 
     /// Carry out the scheduler's commands. `Some(code)` = the job is over.
     fn exec(&mut self, cmds: Vec<Command>) -> Option<i32> {
+        let out = self.exec_inner(cmds);
+        for c in std::mem::take(&mut self.push_pool_after) {
+            self.push_pool(c);
+        }
+        out
+    }
+
+    fn exec_inner(&mut self, cmds: Vec<Command>) -> Option<i32> {
         for c in cmds {
             match c {
                 Command::Assign { client, run, start, end } => {
+                    if self.conns.get(&client).is_some_and(|c| !c.job_sent) {
+                        // Sent after its bundle (below), before anything else: the farm's orbits.
+                        self.push_pool_after.push(client);
+                    }
                     let Some(j) = &self.job else { continue };
                     let job_id = j.job_id.clone();
                     let (bundle, sha) = (j.bundle.clone(), j.bundle_sha.clone());
@@ -1267,6 +1489,15 @@ impl Controller<'_> {
         let elapsed = self.started.elapsed().as_secs_f64();
         self.write_status();
         let snap = j.sched.snapshot();
+        let r = |k: &str| self.refs.get(k).copied().unwrap_or(0);
+        self.note(&format!(
+            "references: {} built fresh, {} from the orbit cache (the farm's shared orbits included), {} reused, {} frames with none new; {} orbit(s) shared",
+            r("fresh"),
+            r("cache"),
+            r("reused"),
+            r("none"),
+            self.pool.len()
+        ));
         let msg = if failed.is_empty() {
             format!("Farm render complete: {} frames in {:.1}s → {}", snap.frames, elapsed, self.out.display())
         } else if self.stopped {
@@ -1604,6 +1835,10 @@ impl Controller<'_> {
             elapsed_s: self.started.elapsed().as_secs_f64(),
             strip: self.job.as_ref().map(|j| j.sched.strip(400)).unwrap_or_default(),
             gpu_classes,
+            refs_fresh: self.refs.get("fresh").copied().unwrap_or(0),
+            refs_cache: self.refs.get("cache").copied().unwrap_or(0),
+            refs_reused: self.refs.get("reused").copied().unwrap_or(0),
+            orbits_shared: self.pool.len() as u64,
             clients: rows,
             exit_code: exit,
         };

@@ -36,11 +36,17 @@ param(
     [string]$Tour = "",
     [string]$Size = "",
     [int]$Ss = 0,
+    # Frames per second to sample the tour at (a long tour at a low rate: the gate's deep dive).
+    [double]$Fps = 0,
     [int]$Port = 46733,
     # The address the test machine dials. Default: this machine's IPv4 on the default route.
     [string]$Address = "",
     [switch]$NoLocal,
     [switch]$ShareMode,
+    # Shared computation off: every machine builds its own references (the gate's control run).
+    [switch]$NoSharing,
+    # Skip the single-machine reference render and the comparison (for a long tour).
+    [switch]$NoReference,
     [switch]$Farmtest,
     [switch]$Check,
     [switch]$AddFirewallRule,
@@ -231,12 +237,14 @@ $Tour = (Resolve-Path $Tour).Path
 $extra = @()
 if ($Size) { $extra += @("--size", $Size) }
 if ($Ss -gt 0) { $extra += @("--ss", "$Ss") }
+if ($Fps -gt 0) { $extra += @("--fps", ([string]$Fps).Replace(",", ".")) }
 $keyFile = Join-Path $run "farm-key.txt"
 $out = Join-Path $run "farm-out"
 $ctlArgs = @("--farm-render", "`"$Tour`"", "--out", "`"$out`"", "--listen", "0.0.0.0:$Port", "--farm-key-file", "`"$keyFile`"", "--min-clients", $(if ($NoLocal) { "1" } else { "2" })) + $extra
 if (-not $NoLocal) { $ctlArgs += "--local" }
 # Share mode: this machine's path to the share; the test machine's agent passes its own.
 if ($ShareMode) { $ctlArgs += @("--share-root", "`"$Share`"") }
+if ($NoSharing) { $ctlArgs += @("--sharing", "off") }
 
 function Start-Fd([string]$name, [string[]]$argv, [string]$cfg) {
     if ($argv.Count -eq 0) { throw "refusing to start fractadyne with no arguments" }
@@ -303,6 +311,7 @@ try {
 finally { Stop-Mine $ctl }
 
 # --- the reference: the same tour, same settings, rendered here alone -------------------------------------
+if (-not $NoReference) {
 $ctlText = Get-Content -LiteralPath (Join-Path $run "controller.txt") -Raw -ErrorAction SilentlyContinue
 $refArgs = @("--render-tour", "`"$Tour`"", "--out", "`"$(Join-Path $run 'reference')`"", "--farm-child", "-y") + $extra
 $anchors = Join-Path $out "farm\anchors.toml"
@@ -320,6 +329,7 @@ if ($ref.ExitCode -ne 0) { Write-Host "The reference render failed (exit $($ref.
 # --- the comparison ------------------------------------------------------------------------------------------
 $prefix = [IO.Path]::GetFileNameWithoutExtension($Tour)
 & python (Join-Path $root "scripts\farm_compare.py") $out (Join-Path $run "reference") $prefix 2>&1 | Tee-Object -FilePath (Join-Path $run "compare.txt") | Out-Host
+}
 
 if ($reqId) {
     Write-Host ""

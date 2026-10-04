@@ -1777,7 +1777,17 @@ impl FractadyneApp {
         }
     }
 
+    /// Record where a reference about to be used came from — the costliest since the last tour
+    /// frame wins (fresh > cache > reused) — for that frame's `ref=` line (design §8).
+    pub(crate) fn note_ref_source(&self, res: &RecomputeResult) {
+        let rank = if res.from_disk { 2 } else if res.reused { 1 } else { 3 };
+        self.ref_source.fetch_max(rank, std::sync::atomic::Ordering::Relaxed);
+    }
+
     fn install_recompute_now(&mut self, vi: usize, mut res: RecomputeResult) {
+        if !res.coarse_stage {
+            self.note_ref_source(&res);
+        }
         // `orbit_len` counts SAMPLES (`iters + 1`): a build capped at exactly `LIVE_REF_CAP`
         // iterations stores `LIVE_REF_CAP + 1` samples and must install normally.
         //
@@ -3646,7 +3656,9 @@ impl FractadyneApp {
                                 .expect("a perturbation view has reference inputs");
                             // A `--render` may have started exactly this build before the window
                             // existed (`start_early_cli_reference`).
-                            take_early_reference(&inputs).unwrap_or_else(|| recompute_worker(inputs))
+                            // On a worker, waited for with liveness stamped: a deep build takes
+                            // minutes, and that is not a hang (`diag::recv_alive`).
+                            take_early_reference(&inputs).unwrap_or_else(|| crate::diag::run_alive("fd-ref-export", move || recompute_worker(inputs)))
                         }
                     };
                     self.prof.set(profile::ProfSetup {
@@ -3654,6 +3666,8 @@ impl FractadyneApp {
                         series_ms: res.series_ms,
                         bla_ms: res.bla_ms,
                     });
+                    // The tour's frame line says where this frame's reference came from.
+                    self.note_ref_source(&res);
                     assemble_ref_fields(vp, precision, delta_exp, res)
                 }
             }

@@ -186,6 +186,25 @@ fn a_user_pause_requeues_and_waits_for_the_client() {
 }
 
 #[test]
+fn a_parked_client_is_given_work_again_after_a_quiet_crash_window() {
+    let b = t0();
+    let mut s = Scheduler::new(Config::new(40), &[]);
+    let a = assigns(&s.step(b, Event::Joined { client: 1, name: "A".into() }));
+    s.step(secs(b, 1), Event::RunAborted { client: 1, run: a[0].1, why: AbortKind::Crashed });
+    let again = assigns(&s.step(secs(b, 2), Event::Tick));
+    let run = again.first().map(|x| x.1).or(a.get(1).map(|x| x.1)).expect("a run to crash");
+    s.step(secs(b, 3), Event::RunAborted { client: 1, run, why: AbortKind::Crashed });
+    assert_eq!(s.snapshot().clients[0].state, ClientState::Unstable);
+    // Within the window: still parked. After it, without another crash: working again.
+    s.step(secs(b, 300), Event::Heartbeat { client: 1, paused: false, frame: None, frame_ms: None });
+    assert!(assigns(&s.step(secs(b, 300), Event::Tick)).is_empty());
+    s.step(secs(b, 700), Event::Heartbeat { client: 1, paused: false, frame: None, frame_ms: None });
+    let back = s.step(secs(b, 700), Event::Tick);
+    assert_eq!(s.snapshot().clients[0].state, ClientState::Active, "{back:?}");
+    assert!(!assigns(&back).is_empty(), "{back:?}");
+}
+
+#[test]
 fn two_crashes_in_ten_minutes_park_a_client() {
     let b = t0();
     let mut s = Scheduler::new(Config::new(100), &[]);

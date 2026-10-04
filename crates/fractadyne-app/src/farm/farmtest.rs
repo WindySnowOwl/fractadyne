@@ -369,6 +369,13 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     idx.sort_unstable();
     idx.dedup();
     check(records == FRAMES as usize && idx.len() == FRAMES as usize, format!("done.jsonl records each frame once ({records} records, {} distinct)", idx.len()));
+    // Every kept frame says where its reference came from (design §8's measure).
+    let sources: Vec<Option<String>> = done.lines().filter_map(|l| serde_json::from_str::<fractadyne_farm::manifest::DoneRecord>(l).ok()).map(|d| d.reference).collect();
+    let fresh = sources.iter().filter(|r| r.as_deref() == Some("fresh")).count();
+    check(
+        !sources.is_empty() && sources.iter().all(|r| r.is_some()) && fresh >= 1,
+        format!("every frame says where its reference came from ({} of {}, {fresh} built fresh)", sources.iter().filter(|r| r.is_some()).count(), sources.len()),
+    );
     let bad: Vec<String> = std::fs::read_dir(out.join("farm").join("bad")).map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
     let bad_a = bad.iter().filter(|n| n.contains("farmtest-A")).count();
     check(bad_a >= 2, format!("client A's corrupted frames were caught and quarantined ({bad_a} in farm/bad)"));

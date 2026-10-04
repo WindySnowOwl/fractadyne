@@ -20,7 +20,7 @@ fn job(script: &str) -> JobIdentity {
 }
 
 fn rec(index: u64, bytes: u64) -> DoneRecord {
-    DoneRecord { index, bytes, sha256: "0".repeat(64), machine: "A".into(), ms: 10, at_unix: 1 }
+    DoneRecord { index, bytes, sha256: "0".repeat(64), machine: "A".into(), ms: 10, at_unix: 1, reference: None }
 }
 
 #[test]

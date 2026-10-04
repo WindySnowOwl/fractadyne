@@ -135,6 +135,10 @@ pub(crate) struct Bundle {
     /// (`names::share_dir`) instead of streaming them.
     #[serde(default)]
     pub(crate) share: bool,
+    /// Shared computation (design §8): renders use the orbit cache, and the farm passes cached
+    /// reference orbits between machines. Off: every machine builds its own.
+    #[serde(default)]
+    pub(crate) sharing: bool,
 }
 
 impl Bundle {
@@ -169,7 +173,8 @@ impl Bundle {
 /// A line a `--farm-child` render prints.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ChildLine {
-    Done { index: u64, bytes: u64, sha256: String, ms: u64 },
+    /// `reference`: where the frame's reference came from (`fresh`, `cache`, `reused`, `none`).
+    Done { index: u64, bytes: u64, sha256: String, ms: u64, reference: Option<String> },
     Failed { index: u64, reason: String },
     Other(String),
 }
@@ -183,7 +188,8 @@ pub(crate) fn parse_child_line(line: &str) -> ChildLine {
         if let (Some(i), Some(b), Some(h), Some(m)) = (field("index="), field("bytes="), field("sha256="), field("ms=")) {
             if let (Ok(index), Ok(bytes), Ok(ms)) = (i.parse(), b.parse(), m.parse()) {
                 if h.len() == 64 {
-                    return ChildLine::Done { index, bytes, sha256: h, ms };
+                    let reference = field("ref=").filter(|r| ["fresh", "cache", "reused", "none"].contains(&r.as_str()));
+                    return ChildLine::Done { index, bytes, sha256: h, ms, reference };
                 }
             }
         }
@@ -414,6 +420,13 @@ pub(crate) fn lan_address() -> Option<std::net::IpAddr> {
     let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
     s.connect("192.0.2.1:9").ok()?; // TEST-NET-1: routed like any public address, never answered
     s.local_addr().ok().map(|a| a.ip()).filter(|ip| !ip.is_unspecified() && !ip.is_loopback())
+}
+
+/// A reference orbit as the farm passes it on: its bytes verified (`orbit_blob::decode` checks the
+/// whole file's digest) and the file name the orbit cache gives it, from its own header.
+pub(crate) fn orbit_file_name(bytes: &[u8]) -> Option<(String, crate::render::orbit_blob::Header)> {
+    let d = crate::render::orbit_blob::decode(bytes)?;
+    Some((format!("{:016x}.{}", d.header.key_id(), crate::refcache_persist::ENTRY_EXT), d.header))
 }
 
 /// Move a file: a rename, or — across drives, where a rename cannot — a copy to `<dst>.part`, a

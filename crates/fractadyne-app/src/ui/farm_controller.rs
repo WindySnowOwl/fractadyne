@@ -28,6 +28,8 @@ pub(crate) struct FarmControllerUi {
     pub(crate) local: bool,
     /// This machine's path to the shared drive (share mode), or "" for streaming only.
     pub(crate) share_root: String,
+    /// Pass reference orbits between machines (design §8); off: each builds its own.
+    pub(crate) sharing: bool,
     pub(crate) link: Option<Link<ControllerStatus>>,
     /// The last status (and output) of a controller that has ended — or the UI walk's sample.
     pub(crate) last: Option<ControllerStatus>,
@@ -58,6 +60,7 @@ impl Default for FarmControllerUi {
             min_clients: 1,
             local: true,
             share_root: String::new(),
+            sharing: true,
             link: None,
             last: None,
             last_log: Vec::new(),
@@ -109,6 +112,10 @@ impl FarmControllerUi {
         if !self.share_root.trim().is_empty() {
             a.push("--share-root".into());
             a.push(self.share_root.trim().to_string());
+        }
+        if !self.sharing {
+            a.push("--sharing".into());
+            a.push("off".into());
         }
         a
     }
@@ -372,6 +379,9 @@ impl FractadyneApp {
                                 ui.add(egui::DragValue::new(&mut f.min_clients).range(1..=64).suffix(unit))
                                     .on_hover_text("The job starts once this many machines have connected and passed their self-check; others can join later.");
                                 ui.checkbox(&mut f.local, "Also render on this machine").on_hover_text("This machine counts as one client.");
+                                ui.checkbox(&mut f.sharing, "Share references").on_hover_text(
+                                    "A deep frame's reference orbit can take minutes to hours to build. Shared, it is built once and passed to the other machines. A shared reference is a different, equally valid one: at extreme depth a handful of pixels can differ from a frame that built its own.",
+                                );
                             });
                             ui.end_row();
                         });
@@ -449,6 +459,16 @@ impl FractadyneApp {
                             facts.push(format!("{} elapsed", duration(st.elapsed_s)));
                             if st.failed > 0 {
                                 facts.push(format!("{} not rendered", st.failed));
+                            }
+                            let refs = st.refs_fresh + st.refs_cache + st.refs_reused;
+                            if refs > 0 || st.orbits_shared > 0 {
+                                facts.push(format!(
+                                    "references: {} built, {} from the cache, {} reused · {} shared",
+                                    crate::grouped_count(st.refs_fresh as f64),
+                                    crate::grouped_count(st.refs_cache as f64),
+                                    crate::grouped_count(st.refs_reused as f64),
+                                    st.orbits_shared
+                                ));
                             }
                             ui.label(egui::RichText::new(facts.join(" · ")).weak().small());
                         }
@@ -677,6 +697,10 @@ impl FractadyneApp {
             pending: 4170,
             failed: 1,
             frames_per_s: 1.84,
+            refs_fresh: 41,
+            refs_cache: 4890,
+            refs_reused: 781,
+            orbits_shared: 6,
             kb_in_per_s: 2310.0,
             kb_out_per_s: 14.0,
             eta_s: Some(2290.0),

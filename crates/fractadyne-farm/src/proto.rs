@@ -25,6 +25,12 @@ pub const MAX_BUNDLE_BYTES: u64 = 16 << 20;
 pub const MAX_LINK_SAMPLE_BYTES: u64 = 4 << 20;
 /// Largest probe image (the self-check render, a small PNG).
 pub const MAX_PROBE_BYTES: u64 = 4 << 20;
+/// Largest reference orbit sent between machines (design §8: 16 bytes an iteration, so 16 M
+/// iterations; larger ones are rebuilt where they are needed).
+pub const MAX_ORBIT_BYTES: u64 = 256 << 20;
+/// What a frame's `reference` may say: picked and built here, from the orbit cache (which holds
+/// the farm's shared orbits), extended from one in memory, or none new (the previous one served).
+pub const REFERENCE_SOURCES: [&str; 4] = ["fresh", "cache", "reused", "none"];
 /// Data bytes per chunk: a Noise message holds 65,535 bytes including its 16-byte tag, and a chunk
 /// carries 17 bytes of header.
 pub const CHUNK_BYTES: usize = 60 * 1024;
@@ -68,6 +74,11 @@ pub enum Msg {
     DiagReport(DiagReport),
     /// Either way: the sender is closing the connection on purpose, and why.
     Bye(Bye),
+    /// Client → controller: a reference orbit its renders built and cached; the blob follows.
+    OrbitOffer(OrbitBlob),
+    /// Controller → client: a reference orbit from the farm's pool, for its renders' cache; the
+    /// blob follows.
+    OrbitPush(OrbitBlob),
     /// Controller → client, every few seconds, so a client can tell a quiet controller from a gone
     /// one (its read times out when these stop).
     Keepalive,
@@ -247,6 +258,17 @@ pub struct FrameDone {
     /// The frame is in the client's folder on the shared drive (`names::share_dir`), not streamed:
     /// no chunks follow; the controller reads and checks it there.
     pub on_share: bool,
+    /// Where its reference came from (one of [`REFERENCE_SOURCES`]), when the render said.
+    pub reference: Option<String>,
+}
+
+/// A reference orbit on its way (design §8). Its file name is not sent: the receiver names the
+/// file from the orbit's own verified header.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct OrbitBlob {
+    pub job_id: String,
+    pub blob: BlobAnnounce,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -395,6 +417,8 @@ pub fn kind_name(m: &Msg) -> &'static str {
         Msg::DiagRequest(_) => "DiagRequest",
         Msg::DiagReport(_) => "DiagReport",
         Msg::Bye(_) => "Bye",
+        Msg::OrbitOffer(_) => "OrbitOffer",
+        Msg::OrbitPush(_) => "OrbitPush",
         Msg::Keepalive => "Keepalive",
     }
 }
@@ -491,6 +515,10 @@ pub fn validate(m: &Msg) -> Result<(), String> {
                 return Err(format!("run [{}, {}) is out of range", a.start, a.end));
             }
         }
+        Msg::OrbitOffer(o) | Msg::OrbitPush(o) => {
+            job(&o.job_id)?;
+            blob("orbit", &o.blob, MAX_ORBIT_BYTES)?;
+        }
         Msg::Cancel(c) => {
             job(&c.job_id)?;
             if c.from.is_some() && c.run_id.is_none() {
@@ -509,6 +537,9 @@ pub fn validate(m: &Msg) -> Result<(), String> {
                 return Err("frame index out of range".into());
             }
             blob("frame", &f.blob, MAX_FRAME_BYTES)?;
+            if f.reference.as_deref().is_some_and(|r| !REFERENCE_SOURCES.contains(&r)) {
+                return Err("an unknown reference source".into());
+            }
         }
         Msg::FrameFailed(f) => {
             job(&f.job_id)?;

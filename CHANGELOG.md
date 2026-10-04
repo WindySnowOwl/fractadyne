@@ -96,7 +96,13 @@ Changes after 0.3.0-beta.1:
   classes, because their frames differ slightly too (an RTX 3080 and an RX 6800 XT differ on about
   2 % of a frame's pixels: hidden by the motion of a zoom, but able to show in a held shot). A
   machine whose GPU, graphics API or driver version differs from the controller's is named with a
-  warning, in the controller's window and in the client's.
+  warning, in the controller's window and in the client's. A machine that runs out of work takes
+  over the rest of another's, no run starts inside a dissolve (where it would render as a hard
+  cut), and a held shot stays on one GPU class. With a shared drive, clients can write their
+  frames there instead of sending them, each still checked before it is kept. Deep references are
+  built once and shared: renders keep them in a cache, the farm passes them between machines, and
+  for tours deeper than 1e300× the deepest keyframe's reference is built first (`--sharing off`
+  builds every reference where it is used).
 - **Fixed: deep frames of a normalized tour came out nearly flat (0.3.0-beta.18).** A normalized
   tour measures a palette range at each keyframe's view, and every one of those measurements was
   taken of the home view instead, at the keyframe's iteration budget. A deep frame's escape values

@@ -6,8 +6,13 @@ fn frame_done_lines_parse_exactly_as_the_renderer_prints_them() {
     let sha = "e54f3cb027ffc5ea707912eb948fe9cbaca0ea2eaa451afbcc4ebec674cd2ccc";
     assert_eq!(
         parse_child_line(&format!("frame-done index=12 bytes=74101 sha256={sha} ms=32")),
-        ChildLine::Done { index: 12, bytes: 74101, sha256: sha.into(), ms: 32 }
+        ChildLine::Done { index: 12, bytes: 74101, sha256: sha.into(), ms: 32, reference: None }
     );
+    // Where the frame's reference came from: one of the known words, else not said.
+    let with = |r: &str| parse_child_line(&format!("frame-done index=12 bytes=74101 sha256={sha} ms=32 ref={r}"));
+    assert!(matches!(with("fresh"), ChildLine::Done { reference: Some(ref r), .. } if r == "fresh"));
+    assert!(matches!(with("cache"), ChildLine::Done { reference: Some(ref r), .. } if r == "cache"));
+    assert!(matches!(with("../etc"), ChildLine::Done { reference: None, .. }));
     assert_eq!(
         parse_child_line("frame-failed index=3 reason=\"read back: denied\""),
         ChildLine::Failed { index: 3, reason: "read back: denied".into() }
@@ -59,6 +64,7 @@ fn bundle() -> Bundle {
         prefix: "gate".into(),
         frames: 1801,
         share: false,
+        sharing: true,
     }
 }
 

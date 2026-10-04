@@ -104,6 +104,9 @@ pub struct DoneRecord {
     pub machine: String,
     pub ms: u64,
     pub at_unix: u64,
+    /// Where the frame's reference came from (`fresh`, `cache`, `reused`, `none`), when known.
+    #[serde(default)]
+    pub reference: Option<String>,
 }
 
 /// What a resume found.

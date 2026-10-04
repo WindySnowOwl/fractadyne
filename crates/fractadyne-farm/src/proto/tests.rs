@@ -58,8 +58,10 @@ fn samples() -> Vec<Msg> {
             frames_done: 3,
             free_bytes: None,
         }),
-        Msg::FrameDone(FrameDone { job_id: "j".into(), run_id: 7, index: 123, render_ms: 812, blob: BlobAnnounce { id: 3, len: 74101, sha256: D.into() }, on_share: false }),
-        Msg::FrameDone(FrameDone { job_id: "j".into(), run_id: 7, index: 124, render_ms: 790, blob: BlobAnnounce { id: 4, len: 73010, sha256: D.into() }, on_share: true }),
+        Msg::FrameDone(FrameDone { job_id: "j".into(), run_id: 7, index: 123, render_ms: 812, blob: BlobAnnounce { id: 3, len: 74101, sha256: D.into() }, on_share: false, reference: Some("fresh".into()) }),
+        Msg::FrameDone(FrameDone { job_id: "j".into(), run_id: 7, index: 124, render_ms: 790, blob: BlobAnnounce { id: 4, len: 73010, sha256: D.into() }, on_share: true, reference: None }),
+        Msg::OrbitOffer(OrbitBlob { job_id: "j".into(), blob: BlobAnnounce { id: 9, len: 16_000_064, sha256: D.into() } }),
+        Msg::OrbitPush(OrbitBlob { job_id: "j".into(), blob: BlobAnnounce { id: 1001, len: 16_000_064, sha256: D.into() } }),
         Msg::FrameFailed(FrameFailed { job_id: "j".into(), run_id: 7, index: 124, class: FailClass::Storage, message: "disk full".into() }),
         Msg::RunAborted(RunAborted { job_id: "j".into(), run_id: 7, done_up_to: Some(123), reason: AbortReason::ChildCrash(-1) }),
         Msg::RunAborted(RunAborted { job_id: "j".into(), run_id: 8, done_up_to: None, reason: AbortReason::UserCancel }),
@@ -102,6 +104,9 @@ fn bad_fields_are_protocol_errors() {
         r#"{"kind":"bye","body":{"reason":"\u001b[2J"}}"#,
         // a diagnostics request for nothing, or for too much
         r#"{"kind":"diag_request","body":{"items":[]}}"#,
+        // a reference source that is not one; an orbit over its cap
+        r#"{"kind":"frame_done","body":{"job_id":"j","run_id":1,"index":0,"render_ms":1,"blob":{"id":1,"len":10,"sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"on_share":false,"reference":"../x"}}"#,
+        r#"{"kind":"orbit_offer","body":{"job_id":"j","blob":{"id":9,"len":999999999999,"sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}}"#,
         // a cut of no run in particular
         r#"{"kind":"cancel","body":{"job_id":"j","run_id":null,"reason":"reassigned","from":12}}"#,
         // a probe over its cap; a probe on the link sample's blob id

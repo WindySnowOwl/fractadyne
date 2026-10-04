@@ -398,6 +398,9 @@ struct EncodeJob {
     meta: String,
     /// Wall time from the frame's start to its hand-off here (reference wait + render + overlays).
     render_ms: u64,
+    /// Where this frame's reference came from (`fresh`, `cache`, `reused`), or `none` when no new
+    /// one was installed for it (the previous frame's served).
+    ref_src: &'static str,
 }
 
 /// The `--farm-child` report for a frame that is now on disk:
@@ -405,12 +408,12 @@ struct EncodeJob {
 /// process can forward it and the controller can verify the file it receives against the digest.
 /// The digest is of the file as READ BACK, not of the bytes meant to be written, so it vouches for
 /// what is actually there. A file that cannot be read back is reported as `frame-failed` instead.
-fn frame_done_line(path: &std::path::Path, fi: u64, render_ms: u64) -> String {
+fn frame_done_line(path: &std::path::Path, fi: u64, render_ms: u64, ref_src: &str) -> String {
     match std::fs::read(path) {
         Ok(bytes) => {
             let d = ring::digest::digest(&ring::digest::SHA256, &bytes);
             let hex: String = d.as_ref().iter().map(|b| format!("{b:02x}")).collect();
-            format!("frame-done index={fi} bytes={} sha256={hex} ms={render_ms}", bytes.len())
+            format!("frame-done index={fi} bytes={} sha256={hex} ms={render_ms} ref={ref_src}", bytes.len())
         }
         Err(e) => format!("frame-failed index={fi} reason=\"read back: {e}\""),
     }
@@ -1697,6 +1700,12 @@ impl Playback {
             TransitionKind::Fade => Some(Composite::Scale(a)),
             TransitionKind::Dissolve => Some(Composite::Blend(a)),
         }
+    }
+
+    /// The deepest keyframe: its frame at `fps` (within the tour's `frames`) and its zoom as log10.
+    pub(crate) fn deepest_keyframe(&self, fps: f64, frames: u64) -> Option<(u64, f64)> {
+        let k = self.kfs.iter().max_by(|a, b| a.logmag.total_cmp(&b.logmag))?;
+        Some((((k.at * fps).round() as u64).min(frames.saturating_sub(1)), k.logmag / std::f64::consts::LN_10))
     }
 
     /// What a render farm must know of a tour rendered at `fps` in `frames` frames (design §5): the
@@ -3566,7 +3575,7 @@ impl FractadyneApp {
                                     );
                                 }
                                 if farm_child {
-                                    say(&frame_done_line(&job.path, job.fi, job.render_ms));
+                                    say(&frame_done_line(&job.path, job.fi, job.render_ms, job.ref_src));
                                 }
                                 break;
                             }
@@ -3767,7 +3776,8 @@ impl FractadyneApp {
             let frame_t0 = std::time::Instant::now();
             // Claim frame `fi`'s precomputed reference if the previous iteration started one for it.
             let mut this_ref = match pending_ref.take() {
-                Some((idx, rx)) if idx == fi => rx.recv().ok(),
+                // A deep build can take minutes: wait with liveness stamped (`diag::recv_alive`).
+                Some((idx, rx)) if idx == fi => crate::diag::recv_alive(&rx),
                 _ => None,
             };
             // Kick off the NEXT frame's reference now (overlaps this frame's render + encode) —
@@ -3996,8 +4006,14 @@ impl FractadyneApp {
             let meta = self.view_metadata();
             // Hand the finished frame to the encoder pool; blocks if the queue is full (backpressure).
             let render_ms = frame_t0.elapsed().as_millis() as u64;
+            let ref_src = match self.ref_source.swap(0, std::sync::atomic::Ordering::Relaxed) {
+                3 => "fresh",
+                2 => "cache",
+                1 => "reused",
+                _ => "none",
+            };
             enc_tx
-                .send(EncodeJob { path: frame_path, w: rw, h: rh, px, fi, meta, render_ms })
+                .send(EncodeJob { path: frame_path, w: rw, h: rh, px, fi, meta, render_ms, ref_src })
                 .map_err(|_| format!("frame {fi}: encoder thread stopped"))?;
             // Position in the ORDER, not the frame index — under progressive order `fi` says
             // nothing about how much work is done.

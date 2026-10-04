@@ -361,9 +361,11 @@ impl Scheduler {
                 }
             }
             Event::Heartbeat { client, paused, frame, frame_ms } => {
-                // A connection the scheduler has written off cannot come back to life by talking:
-                // it is dropped, and returns as a new connection.
-                if let Some(c) = self.clients.get_mut(&client).filter(|c| matches!(c.state, ClientState::Active | ClientState::Paused)) {
+                // A connection the scheduler has written off (removed, gone) cannot come back to
+                // life by talking: it is dropped, and returns as a new connection. A PARKED one
+                // (unstable, refused this job) is still connected, and its heartbeats count —
+                // ignored, a parked client given work again looked silent and was dropped at once.
+                if let Some(c) = self.clients.get_mut(&client).filter(|c| !matches!(c.state, ClientState::Removed | ClientState::Gone)) {
                     c.last_heartbeat = now;
                     if frame.is_some() {
                         c.at_frame = frame;
@@ -520,6 +522,18 @@ impl Scheduler {
     }
 
     fn tick(&mut self, now: Instant, out: &mut Vec<Command>) {
+        // A client parked as unstable gets work again once a crash window has passed without a
+        // crash: parked for good, the only machine of a farm left the job waiting forever.
+        let window = self.cfg.crash_window;
+        for c in self.clients.values_mut().filter(|c| c.state == ClientState::Unstable) {
+            while c.crashes.front().is_some_and(|&t| now.duration_since(t) > window) {
+                c.crashes.pop_front();
+            }
+            if c.crashes.len() < 2 {
+                c.state = ClientState::Active;
+                out.push(Command::Note(format!("{}: no render crash for {} min — given work again", c.name, window.as_secs() / 60)));
+            }
+        }
         // Unreachable clients.
         let lost: Vec<ClientId> = self
             .clients
