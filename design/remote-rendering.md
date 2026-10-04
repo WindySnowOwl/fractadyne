@@ -742,6 +742,16 @@ inbound firewall rule for the port (`-AddFirewallRule`) — and `-Farmtest` runs
 test machine. What it measures that one machine cannot: real network paths, the pinning across
 machines, and frames from a different GPU vendor next to this one's (§9: expected to differ by the
 GPU's arithmetic, so the comparison reports per machine and does not gate on identity).
+First runs, 2026-10-04 (build `gaff96e1`; controller and a local client on an RTX 3080, PLUTO's
+RX 6800 XT a client over the LAN, the 19-frame gate tour at 640×360): `--farmtest` ON PLUTO passed
+(14.5 s); the two-machine run finished in 17.1 s (PLUTO 16 frames, the local client 3), the local
+client's frames pixel-identical to the single-machine reference and PLUTO's all different from it —
+0.09–1.3 % of pixels on frames 0–7, ON THE SET'S BOUNDARY (interior vs escaped, so deltas up to 255),
+then 0.9–4.4 % on frames 8–15, scattered along the filaments with small deltas (max 46–109). View,
+palette, caption and watermark all match. PLUTO alone (`-NoLocal`, 26.6 s) reproduced its 16
+earlier frames PIXEL FOR PIXEL: the cross-vendor difference is deterministic, i.e. the GPU's
+arithmetic, not the farm. Whether that is visible as flicker where a video's frames alternate
+between GPUs is not yet judged — §9's GPU classes and the `homogeneous` option are the answer if it is.
 
 **Phase 2 — UI.** Client dialog and controller panel per §10–11, probe frame and GPU classes,
 `--uitest` steps for both screens. **Gate:** `--uitest` passes and the screenshots are LOOKED at;
