@@ -1,0 +1,23 @@
+[package]
+name = "fractadyne-farm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Render farm: the encrypted channel, protocol, scheduler and job state behind rendering one tour on several machines (design/remote-rendering.md)."
+
+[dependencies]
+fractadyne-state.workspace = true
+serde.workspace = true
+serde_json = "1"
+toml.workspace = true
+# The channel: Noise_XXpsk3_25519_ChaChaPoly_SHA256. ring supplies the cipher, hash and RNG (it is
+# already linked, under the update check's TLS); ring has no static-key X25519, so curve25519-dalek
+# supplies the Diffie-Hellman. snow's default resolver refuses to build without a cipher and a hash
+# of its own, so ChaCha20-Poly1305 and SHA-2 are compiled in too — `channel::builder` puts ring
+# first, so at run time they are never chosen. The user accepted `snow` on 2026-10-03 (design §13.11).
+snow = { version = "0.10", default-features = false, features = ["ring-resolver", "use-curve25519", "use-chacha20poly1305", "use-sha2", "std"] }
+ring = { version = "0.17", default-features = false }
+zeroize = "1"
+
+[lints]
+workspace = true

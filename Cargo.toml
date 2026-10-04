@@ -60,6 +60,7 @@ fractadyne-gpu = { path = "crates/fractadyne-gpu" }
 fractadyne-color = { path = "crates/fractadyne-color" }
 fractadyne-state = { path = "crates/fractadyne-state" }
 fractadyne-export = { path = "crates/fractadyne-export" }
+fractadyne-farm = { path = "crates/fractadyne-farm" }
 
 # This environment has a very small page file (low commit limit). Full debuginfo
 # makes the wgpu/egui/eframe/naga rlibs huge (naga ~55 MB) and rustc then fails to
