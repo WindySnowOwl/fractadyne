@@ -499,13 +499,6 @@ function Invoke-FarmClient($r, [string]$dir, $status) {
     if ($controller -notmatch '^[A-Za-z0-9.-]{1,253}:[0-9]{1,5}$') { Stop-Refused "controller must be HOST:PORT" }
     $key = [string](Get-Field $r "farm_key" "")
     if ($key -notmatch '^fdn1-[a-z2-7-]{50,90}$') { Stop-Refused "farm_key is not a farm key (fdn1-...)" }
-    # The copy in the results must not keep the key.
-    $copy = Join-Path $dir "request.json"
-    if (Test-Path -LiteralPath $copy) {
-        $red = Get-Content -LiteralPath $copy -Raw | ConvertFrom-Json
-        $red.farm_key = "(redacted)"
-        Write-JsonFile $copy $red
-    }
     $timeout = [math]::Min([int](Get-Field $r "timeout_min" 60), 240)
     $root = Get-Package $tag $package
     $status.build = $tag; $status.package = $package
@@ -702,7 +695,10 @@ function Invoke-Poll {
     try { Move-Item -LiteralPath $f.FullName -Destination $claimed -ErrorAction Stop } catch { return }   # another agent took it
     $dir = Join-Path $ResDir $id
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    Copy-Item -LiteralPath $claimed -Destination (Join-Path $dir "request.json") -Force
+    # The results copy never carries a farm key (a farm-client request's secret), whether the request
+    # then runs, fails, or is refused - redacted in the text, so even a request that is not JSON.
+    $text = [IO.File]::ReadAllText($claimed)   # UTF-8 (Get-Content in 5.1 would read it as ANSI)
+    [IO.File]::WriteAllText((Join-Path $dir "request.json"), ($text -replace 'fdn1-[A-Za-z0-9-]+', '(redacted)'), $Utf8)
     $status = [ordered]@{ id = $id; state = "running"; agent = $Computer; agent_version = $AgentVersion; action = ""; detail = ""
         claimed_utc = Get-UtcStamp; finished_utc = ""; build = ""; package = ""; runs = @() }
     Write-Heartbeat "running" "" $id
