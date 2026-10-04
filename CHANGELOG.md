@@ -80,8 +80,14 @@ Changes after 0.3.0-beta.1:
   normalized tour are measured once for every machine, and the reference-orbit cap is the smallest
   among them, so the frames match a single-machine render: `--farmtest` runs a three-machine farm
   on one computer, with one machine sending corrupted frames and one killed mid-run, and its 19
-  frames are pixel-identical to the same tour rendered alone. Headless for now; the windows for it
-  come next.
+  frames are pixel-identical to the same tour rendered alone. From the app, Tools ▸ Render on
+  farm… renders the loaded tour this way — the farm key to copy, a table of the machines (what each
+  is doing, its speed, its GPU class), the frames' progress, pause, stop and resume — and File ▸
+  Render client… joins this machine to a farm, with pause, cancel-frame and disconnect; closing
+  either window leaves its work running. Each machine renders a probe frame when it joins, which
+  the controller compares with its own: GPUs that draw it differently are shown as different GPU
+  classes, because their frames differ slightly too (an RTX 3080 and an RX 6800 XT differ on about
+  2 % of a frame's pixels: hidden by the motion of a zoom, but able to show in a held shot).
 - **Fixed: deep frames of a normalized tour came out nearly flat (0.3.0-beta.18).** A normalized
   tour measures a palette range at each keyframe's view, and every one of those measurements was
   taken of the home view instead, at the keyframe's iteration budget. A deep frame's escape values

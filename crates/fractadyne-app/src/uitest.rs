@@ -59,6 +59,11 @@ enum Screen {
     Export,
     ScriptExport,
     TourRender,
+    /// File ▸ Render client… and Tools ▸ Render on farm…, ⚠SEEDED with a sample status (a client
+    /// mid-job; a job with machines of two GPU classes and one removed): no farm is started in the
+    /// walk, and the empty windows would photograph forms around no data.
+    FarmClient,
+    FarmController,
     ResetConfirm,
     /// File ▸ Settings ▸ Reference cache… — the on-disk orbit cache's controls. ⚠Seeded with
     /// one real entry first, so the usage bar, the rows and the Clear button all render
@@ -755,6 +760,8 @@ fn build_steps() -> Vec<Step> {
         screen("export", Screen::Export),
         screen("script-to-view", Screen::ScriptExport),
         screen("tour-render", Screen::TourRender),
+        screen("farm-client", Screen::FarmClient),
+        screen("farm-controller", Screen::FarmController),
         screen("reset-confirm", Screen::ResetConfirm),
         screen("reference-cache", Screen::OrbitCache),
         screen("notice", Screen::Notice),
@@ -1133,6 +1140,10 @@ impl FractadyneApp {
         self.report.open = false;
         self.export.open = false;
         self.tour_render.open = false;
+        self.farm_client.open = false;
+        self.farm_controller.open = false;
+        self.farm_client.uitest_live = false;
+        self.farm_controller.uitest_live = false;
         self.update_prompt_open = false;
         self.coloring.palette_editor_open = false;
         // ⚠**Three windows this list had missed**, found by narrowing the gradient editor in P3′:
@@ -1262,6 +1273,8 @@ impl FractadyneApp {
             Screen::Export => self.export.open = true,
             Screen::ScriptExport => self.dialogs.script_export_open = true,
             Screen::TourRender => self.tour_render.open = true,
+            Screen::FarmClient => self.uitest_seed_farm_client(),
+            Screen::FarmController => self.uitest_seed_farm_controller(),
             Screen::ResetConfirm => self.dialogs.reset_confirm_open = true,
             Screen::OrbitCache => {
                 // The walk runs as a task invocation, so the cache is OFF and empty. Point it at

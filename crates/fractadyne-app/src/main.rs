@@ -5706,6 +5706,10 @@ struct FractadyneApp {
     last_dir: Option<std::path::PathBuf>,
     /// "Render script…" dialog + the child process doing the work (see `TourRenderUi`).
     tour_render: TourRenderUi,
+    /// File ▸ Render client…: this machine as a render-farm client (see `ui::farm_client`).
+    farm_client: crate::ui::farm_client::FarmClientUi,
+    /// Tools ▸ Render on farm…: the farm controller for a tour (see `ui::farm_controller`).
+    farm_controller: crate::ui::farm_controller::FarmControllerUi,
     /// Help → Diagnostics…: run the user-safe tests from the UI (see `ui::diagnostics`).
     diagnostics: crate::ui::diagnostics::DiagnosticsUi,
     /// `--selftest` CLI mode: run/done plus the filter/list/bless flags (see [`cli::SelftestCli`]).
@@ -6709,6 +6713,8 @@ impl FractadyneApp {
             last_dir: s.last_dir.clone().map(std::path::PathBuf::from),
             playback_restore: None,
             tour_render: TourRenderUi::default(),
+            farm_client: Default::default(),
+            farm_controller: Default::default(),
             diagnostics: Default::default(),
             selftest: cli::SelftestCli {
                 run: selftest,
@@ -9057,7 +9063,9 @@ impl FractadyneApp {
         // Reuses the existing reproject path rather than inventing a suspend: `Some([0.0, 0.0])`
         // is exactly what a resize does — hold the last completed frame and re-sample it, no
         // iterate dispatch. Checked FIRST so it also wins over pan/zoom interaction.
-        let render_child_busy = self.tour_render.child.is_some();
+        // The same holds for farm frames rendered on this machine: a render client mid-frame, or a
+        // farm controller measuring its anchors or rendering through its own local client.
+        let render_child_busy = self.tour_render.child.is_some() || self.farm_client.rendering() || self.farm_controller.rendering_here();
         let reproject = if render_child_busy {
             Some([0.0, 0.0])
         } else if self.pointer.pan_view == Some(view_id) && interacting {
@@ -15486,6 +15494,11 @@ impl eframe::App for FractadyneApp {
         self.draw_playback_transport(ctx);
         self.poll_tour_render(ctx);
         self.draw_tour_render_dialog(ctx);
+        // The farm windows' processes are polled with the windows closed too: a job outlives them.
+        self.poll_farm_client(ctx);
+        self.draw_farm_client_window(ctx);
+        self.poll_farm_controller(ctx);
+        self.draw_farm_controller_window(ctx);
 
         // Right-hand control panel: fractal info, coloring, navigation, and the
         // optional performance section. Hidden entirely while in fullscreen.

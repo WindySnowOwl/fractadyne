@@ -196,7 +196,7 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 | 89 | A | **Tile-seam check**: the tiled export must equal a single-pass render of the same frame. This is the beta.136 chunker class, where pixels depended on the tile budget. Assert `tiles_chunked` is non-zero first, so the check cannot pass by never chunking. |
 | 90 | B | 6.6e43× (corpus location 08): coherent, a real reference orbit, and the depth recorded in the metadata equal to the viewport's to 1e-9. Whether the COLOURS match what was on screen stays human — the offline path has no screen. |
 
-### Tools (91–96)
+### Tools (91–97)
 
 | # | class | enforcer |
 |---|---|---|
@@ -206,47 +206,48 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 | 94 | A | COMPLETENESS, not a round trip: every `[[keyframe]]` field must be either restored by `PlaybackRestore` when the tour ends or on an explicit keep-list with a reason. Add a keyframe field without deciding, and a played tour silently edits the viewer's session — the test names the field. |
 | 95 | A | Tour-from-view writes a script that parses back to the same start view. |
 | 96 | A | `--benchmark-std` headless: exit 0 and a complete report. |
+| 97 | B | `--farmtest`: a controller and three clients on one machine finish a tour pixel-identical to a single-machine render, with a client sending corrupt frames removed and one killed mid-run, and drive the windows' status-and-command protocol (`--ui-status`) both ways; `--uitest` photographs both windows (`farm-client`, `farm-controller`). Not checked: a second machine joining over the network (`scripts/farm-pluto.ps1` does that, with the machine) and the windows' buttons wired to the commands. |
 
-### Help & settings (97–103)
-
-| # | class | enforcer |
-|---|---|---|
-| 97 | B | The contents list and the bodies are now ONE table, and the test holds them to equal length, unique names and no shared body. ⚠It replaced a `match` with a `_ => help_about(ui)` arm: a section added to the list and not the match rendered the About text under its own heading. Readability stays human. |
-| 98 | A | On the Diagnostics step: CPU brand non-blank, core counts non-zero, and the arithmetic line names a real backend. |
-| 99 | A | `about_arithmetic_line()` carries both halves, and in a unit test (no orbit) the RUN half must honestly say none — a line naming a backend there would be reading configuration, the exact failure the observation mask exists to prevent. |
-| 100 | A | `accelerated_asset_url` tests already assert the URL carries this version's tag; extend to the accelerated build's alternate text. |
-| 101 | A | Issue URL is well-formed and carries build details; the mailto fallback is reachable. |
-| 102 | A | The DECISION, not the network: `version_gt` in both directions including prereleases (a beta must never be offered over its stable), plus `FRACTADYNE_FAKE_VERSION` actually reaching the comparison. |
-| 103 | A | Nineteen non-view settings through the REAL `save`/`load` file path under a throwaway config dir, each differing from its default so a load that quietly returned defaults cannot pass. |
-
-### Accelerated build (114–123)
+### Help & settings (98–104)
 
 | # | class | enforcer |
 |---|---|---|
-| 114 | A | `scripts/build-accelerated.ps1` already verifies the packaged binary on a `System32`-only PATH. Promote it to a required release step. |
-| 115 | A | Branches on the RUNTIME backend list, not a cargo feature: `rug` is a feature of the core crate, so a `cfg` in the app would read false and turn the accelerated case into no test at all. |
-| 116 | A | `config_dir()` equals the OS per-user location and is NOT under the executable's folder — an exe-relative config would give the standard and accelerated builds separate sessions, and the user's locations would appear to have vanished. |
-| 117 | A | `backend_rug_identity` covers the orbits; add a rendered-image equality check at a deep location across both backends. |
-| 118 | A | `--bench-bignum` reports both backends; assert rug is faster on the reference orbit. |
-| 119 | C | Deleting a DLL and launching. Scriptable in PowerShell but it must run on a machine without MinGW on PATH to mean anything. |
+| 98 | B | The contents list and the bodies are now ONE table, and the test holds them to equal length, unique names and no shared body. ⚠It replaced a `match` with a `_ => help_about(ui)` arm: a section added to the list and not the match rendered the About text under its own heading. Readability stays human. |
+| 99 | A | On the Diagnostics step: CPU brand non-blank, core counts non-zero, and the arithmetic line names a real backend. |
+| 100 | A | `about_arithmetic_line()` carries both halves, and in a unit test (no orbit) the RUN half must honestly say none — a line naming a backend there would be reading configuration, the exact failure the observation mask exists to prevent. |
+| 101 | A | `accelerated_asset_url` tests already assert the URL carries this version's tag; extend to the accelerated build's alternate text. |
+| 102 | A | Issue URL is well-formed and carries build details; the mailto fallback is reachable. |
+| 103 | A | The DECISION, not the network: `version_gt` in both directions including prereleases (a beta must never be offered over its stable), plus `FRACTADYNE_FAKE_VERSION` actually reaching the comparison. |
+| 104 | A | Nineteen non-view settings through the REAL `save`/`load` file path under a throwaway config dir, each differing from its default so a load that quietly returned defaults cannot pass. |
 
-### Persistence (124–126)
-
-| # | class | enforcer |
-|---|---|---|
-| 124 | B | A harness cannot watch its own exit, so each walk writes `started` to its own marker and `finished` on the way out; the NEXT walk reads it. Three states, because "no marker" means "never ran here", not "exited cleanly". ⚠The app's general unclean-exit marker cannot answer this alone — `--uitest` suppresses the session autosave, so there is no session file to tell "clean" from "never ran" either. |
-| 125 | A | Session save/load round-trip restores view, fractal, palette and settings. |
-| 126 | A | The same census as row 1, and it fails the RUN rather than a step: every step can pass while the app panicked on a worker thread. |
-
-### Stability (127–130)
+### Accelerated build (115–124)
 
 | # | class | enforcer |
 |---|---|---|
-| 127 | A | `--soak SECONDS [--soak-depth DECADES]`: frames must advance in every 20 s window, resident set may not grow past 256 MB, no crash report may appear. ⚠⚠**The liveness judge runs on its own THREAD.** The first version counted frames inside the per-frame hook and failed a window that saw none — which cannot happen, because a window with no frames is one where the hook never ran. It would have reported nothing on the exact failure it was written for. Verified by wedging the UI thread: FAIL at +40 s, exit 1. |
-| 128 | A | `--torture` / `--autodive` sustained session; no device loss, no watchdog restart. |
-| 129 | B | 18 switches of formula × method × palette, then the frame must be IDENTICAL to a clean render of the final selection — and DIFFERENT from a render of another selection, so the equality cannot pass by everything looking alike (measured meanΔ 51.98 apart). ⚠Partial: this catches a stale app FIELD, not a stale GPU cache — the export path builds a fresh reference every time, so a `invalidate_refs`-is-a-no-op mutant passes. The live half stays human. |
+| 115 | A | `scripts/build-accelerated.ps1` already verifies the packaged binary on a `System32`-only PATH. Promote it to a required release step. |
+| 116 | A | Branches on the RUNTIME backend list, not a cargo feature: `rug` is a feature of the core crate, so a `cfg` in the app would read false and turn the accelerated case into no test at all. |
+| 117 | A | `config_dir()` equals the OS per-user location and is NOT under the executable's folder — an exe-relative config would give the standard and accelerated builds separate sessions, and the user's locations would appear to have vanished. |
+| 118 | A | `backend_rug_identity` covers the orbits; add a rendered-image equality check at a deep location across both backends. |
+| 119 | A | `--bench-bignum` reports both backends; assert rug is faster on the reference orbit. |
+| 120 | C | Deleting a DLL and launching. Scriptable in PowerShell but it must run on a machine without MinGW on PATH to mean anything. |
 
-### Palette interchange (131–138)
+### Persistence (125–127)
+
+| # | class | enforcer |
+|---|---|---|
+| 125 | B | A harness cannot watch its own exit, so each walk writes `started` to its own marker and `finished` on the way out; the NEXT walk reads it. Three states, because "no marker" means "never ran here", not "exited cleanly". ⚠The app's general unclean-exit marker cannot answer this alone — `--uitest` suppresses the session autosave, so there is no session file to tell "clean" from "never ran" either. |
+| 126 | A | Session save/load round-trip restores view, fractal, palette and settings. |
+| 127 | A | The same census as row 1, and it fails the RUN rather than a step: every step can pass while the app panicked on a worker thread. |
+
+### Stability (128–131)
+
+| # | class | enforcer |
+|---|---|---|
+| 128 | A | `--soak SECONDS [--soak-depth DECADES]`: frames must advance in every 20 s window, resident set may not grow past 256 MB, no crash report may appear. ⚠⚠**The liveness judge runs on its own THREAD.** The first version counted frames inside the per-frame hook and failed a window that saw none — which cannot happen, because a window with no frames is one where the hook never ran. It would have reported nothing on the exact failure it was written for. Verified by wedging the UI thread: FAIL at +40 s, exit 1. |
+| 129 | A | `--torture` / `--autodive` sustained session; no device loss, no watchdog restart. |
+| 130 | B | 18 switches of formula × method × palette, then the frame must be IDENTICAL to a clean render of the final selection — and DIFFERENT from a render of another selection, so the equality cannot pass by everything looking alike (measured meanΔ 51.98 apart). ⚠Partial: this catches a stale app FIELD, not a stale GPU cache — the export path builds a fresh reference every time, so a `invalidate_refs`-is-a-no-op mutant passes. The live half stays human. |
+
+### Palette interchange (132–139)
 
 ⭐⭐**Why a whole area of mostly-manual rows.** Every automated palette check in this repo closes a
 loop with ITSELF: the importers are gated against fixtures this repo wrote, and the `.ggr` round
@@ -257,16 +258,16 @@ another application can say whether the file means to it what it means to us. `p
 
 | # | class | enforcer |
 |---|---|---|
-| 131 | B | `a_ggr_written_here_reads_back_identically` — writes a gradient using every feature the format carries, re-parses it and compares the BAKE. ⚠Partial, and the limit is the point: it is our writer against our reader. |
-| 132 | M | Open the exported `.ggr` in **GIMP**. No machine here can hold another application's opinion of the file. |
-| 133 | M | Open it in a **second** reader (Krita / Inkscape). ⭐GIMP authored the format and forgives files shaped the way it writes them; a second implementation is where a tolerated quirk becomes a difference. |
-| 134 | B | `an_unbent_bezier_exports_as_linear_and_a_bent_one_is_reported` — pins that a bent curve is COUNTED as approximated and an unbent one is not. ⚠Partial: the count is enforced, that the message reaches the user's eye is not. |
-| 135 | M | Import a `.ggr` **authored in GIMP** carrying a curve, an HSV sweep and an off-centre midpoint. ⚠Every `.ggr` fixture in the suite was written by this repo, so a file from elsewhere is the only real test of the parser. |
-| 136 | M | `.ugr` `rotation=` **direction**, against Ultra Fractal. ⚠Applied but never checked against the source application — a sign error still yields a plausible palette. |
-| 137 | M | A **real** Adobe `.ase`. ⚠The one importer written from the published layout rather than against a real file; its fixtures share the parser's understanding, so they prove consistency only. |
-| 138 | B | `a_saved_gradient_round_trips_through_toml_without_flattening` — the library keeps segments, not stops. ⚠Partial: the restart itself is human. |
+| 132 | B | `a_ggr_written_here_reads_back_identically` — writes a gradient using every feature the format carries, re-parses it and compares the BAKE. ⚠Partial, and the limit is the point: it is our writer against our reader. |
+| 133 | M | Open the exported `.ggr` in **GIMP**. No machine here can hold another application's opinion of the file. |
+| 134 | M | Open it in a **second** reader (Krita / Inkscape). ⭐GIMP authored the format and forgives files shaped the way it writes them; a second implementation is where a tolerated quirk becomes a difference. |
+| 135 | B | `an_unbent_bezier_exports_as_linear_and_a_bent_one_is_reported` — pins that a bent curve is COUNTED as approximated and an unbent one is not. ⚠Partial: the count is enforced, that the message reaches the user's eye is not. |
+| 136 | M | Import a `.ggr` **authored in GIMP** carrying a curve, an HSV sweep and an off-centre midpoint. ⚠Every `.ggr` fixture in the suite was written by this repo, so a file from elsewhere is the only real test of the parser. |
+| 137 | M | `.ugr` `rotation=` **direction**, against Ultra Fractal. ⚠Applied but never checked against the source application — a sign error still yields a plausible palette. |
+| 138 | M | A **real** Adobe `.ase`. ⚠The one importer written from the published layout rather than against a real file; its fixtures share the parser's understanding, so they prove consistency only. |
+| 139 | B | `a_saved_gradient_round_trips_through_toml_without_flattening` — the library keeps segments, not stops. ⚠Partial: the restart itself is human. |
 
-### Reference cache (139–142)
+### Reference cache (140–143)
 
 The on-disk reference-orbit cache (beta.78, `orbit-cache.md`). What it saves is minutes to an hour
 of arbitrary-precision work; what it could get wrong is a plausible picture of the wrong place. The
@@ -277,22 +278,22 @@ fast at real depth, and that the controls tell the truth.
 
 | # | class | enforcer |
 |---|---|---|
-| 139 | B | `an orbit from the disk cache renders the same as a fresh pick` — identity + the unaided hit, at 1e30. ⚠Partial: the relaunch, and "seconds not minutes" at e60205, are human. |
-| 140 | A | `uitest:reference-cache` — the window photographed with one real entry seeded, so path, usage bar, rows and the Clear button all render populated. |
-| 141 | B | `eviction_drops_the_cheapest_orbit_not_the_oldest` — the budget change evicts at once and takes the cheapest, never the dearest. ⚠Partial: the drag gesture is human. |
-| 142 | B | `clear_removes_every_entry_and_stray_temp_files` — the store empties. ⚠Partial: that it ASKED first is the inline confirm, seen only by eye. |
+| 140 | B | `an orbit from the disk cache renders the same as a fresh pick` — identity + the unaided hit, at 1e30. ⚠Partial: the relaunch, and "seconds not minutes" at e60205, are human. |
+| 141 | A | `uitest:reference-cache` — the window photographed with one real entry seeded, so path, usage bar, rows and the Clear button all render populated. |
+| 142 | B | `eviction_drops_the_cheapest_orbit_not_the_oldest` — the budget change evicts at once and takes the cheapest, never the dearest. ⚠Partial: the drag gesture is human. |
+| 143 | B | `clear_removes_every_entry_and_stray_temp_files` — the store empties. ⚠Partial: that it ASKED first is the inline confirm, seen only by eye. |
 
-### Screen (143)
-
-| # | class | enforcer |
-|---|---|---|
-| 143 | A | `scripts/dive-capture/screengate.py` over `gpu-validate`'s step 08 (three `capdive.ps1` dives at `dive-2p800.kfr`): blank (and mid-dive blank episodes) / flat / flash / stale, median of three, exit 0 PASS, 1 RED, 2 VACUOUS — red on the build before the 2026-09-20 blank-frame fix, green on the fixed one in twelve runs on two cards; `--selftest` proves each criterion fires (design/live-render-robustness.md §7.6). PLANNED until the checklist has a `run:` class that requires a recorded exit code from this release's binary — a script that exists is not a gate that ran. |
-
-### Sign-off (144)
+### Screen (144)
 
 | # | class | enforcer |
 |---|---|---|
-| 144 | P | Not a behaviour. `checklist_coverage.py` can assert every row carries a verdict and no row is blank, which is the mechanical half. |
+| 144 | A | `scripts/dive-capture/screengate.py` over `gpu-validate`'s step 08 (three `capdive.ps1` dives at `dive-2p800.kfr`): blank (and mid-dive blank episodes) / flat / flash / stale, median of three, exit 0 PASS, 1 RED, 2 VACUOUS — red on the build before the 2026-09-20 blank-frame fix, green on the fixed one in twelve runs on two cards; `--selftest` proves each criterion fires (design/live-render-robustness.md §7.6). PLANNED until the checklist has a `run:` class that requires a recorded exit code from this release's binary — a script that exists is not a gate that ran. |
+
+### Sign-off (145)
+
+| # | class | enforcer |
+|---|---|---|
+| 145 | P | Not a behaviour. `checklist_coverage.py` can assert every row carries a verdict and no row is blank, which is the mechanical half. |
 
 ---
 
@@ -338,7 +339,7 @@ The two `process` rows — the release-page table and sign-off — are counted a
 ones on purpose: a person must do them, but what they check is the RELEASE, not the program, so no
 amount of work in this repo can ever enforce them.
 
-### Linux (104–113)
+### Linux (105–114)
 
 Added 2026-09-04. To be marked N-A on a Windows review. Linux has been a
 shipped platform since 0.2.40 and a second shipped *package* since beta.20, while the rest of this
@@ -347,16 +348,16 @@ platforms' paths, and everything below only exists on Linux:
 
 | Step | Checks | Enforcer |
 |---|---|---|
-| 104 | Profile lives at `~/.config/Fractadyne` (`ProjectDirs`, `$XDG_CONFIG_HOME`), not beside the binary | `test:config_lives_in_the_user_profile` |
-| 105 | `--selftest` from the tarball uses the **cross-GPU** golden tolerance, proving `BLESSED-GPU.txt` shipped | `harness:--selftest` |
-| 106 | ⭐The **no-`TIMESTAMP_QUERY`** path for real: absent on GL and several Mesa/RADV/ANV combinations, and until now only ever faked on NVIDIA via `FRACTADYNE_NO_TIMESTAMPS=1` | `selftest:live-res` |
-| 107 | Each swappable GPU: adapter, backend, deep-view correctness (the 3080-black / 3070-rich bug is open) | *manual* — the hardware |
-| 108 | Wayland **and** X11 | *manual* — two session types |
-| 109 | ⭐The four `/proc` + sysfs diagnostics (RSS, statvfs, cpuinfo, VRAM) report plausible values — they were verified only to COMPILE | `uitest:diagnostics-populated` |
-| 110 | Native GTK file dialogs | *manual* — a native dialog |
-| 111 | No audio server: the finish tone must not be able to take the app down | `harness:--no-sound` |
-| 112 | `--version` over SSH with no `DISPLAY` | `partial:test:title_string_matches_version` |
-| 113 | `~/.config/Fractadyne/logs/` holds no new `crash-*.txt` | `uitest:no-crash-files` |
+| 105 | Profile lives at `~/.config/Fractadyne` (`ProjectDirs`, `$XDG_CONFIG_HOME`), not beside the binary | `test:config_lives_in_the_user_profile` |
+| 106 | `--selftest` from the tarball uses the **cross-GPU** golden tolerance, proving `BLESSED-GPU.txt` shipped | `harness:--selftest` |
+| 107 | ⭐The **no-`TIMESTAMP_QUERY`** path for real: absent on GL and several Mesa/RADV/ANV combinations, and until now only ever faked on NVIDIA via `FRACTADYNE_NO_TIMESTAMPS=1` | `selftest:live-res` |
+| 108 | Each swappable GPU: adapter, backend, deep-view correctness (the 3080-black / 3070-rich bug is open) | *manual* — the hardware |
+| 109 | Wayland **and** X11 | *manual* — two session types |
+| 110 | ⭐The four `/proc` + sysfs diagnostics (RSS, statvfs, cpuinfo, VRAM) report plausible values — they were verified only to COMPILE | `uitest:diagnostics-populated` |
+| 111 | Native GTK file dialogs | *manual* — a native dialog |
+| 112 | No audio server: the finish tone must not be able to take the app down | `harness:--no-sound` |
+| 113 | `--version` over SSH with no `DISPLAY` | `partial:test:title_string_matches_version` |
+| 114 | `~/.config/Fractadyne/logs/` holds no new `crash-*.txt` | `uitest:no-crash-files` |
 
 The three new `manual` rows are honest ones: swappable cards, two display servers, and a native
 dialog cannot be stood in for by anything in this repo.

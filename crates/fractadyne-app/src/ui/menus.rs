@@ -318,6 +318,18 @@ impl FractadyneApp {
                             ui.close_menu();
                         }
                         ui.separator();
+                        if ui
+                            .button(if self.farm_client.active() { "Render client…  (connected)" } else { "Render client…" })
+                            .on_hover_text(
+                                "Lend this machine's GPU to a render farm: connect to a controller \
+                                 (Tools ▸ Render on farm… on another machine) and render frames for it.",
+                            )
+                            .clicked()
+                        {
+                            self.open_farm_client();
+                            ui.close_menu();
+                        }
+                        ui.separator();
                         // Settings live under File — the conventional home users reach for first
                         // (File → Preferences/Settings); they sat under View until 2026-08-13,
                         // where only display TOGGLES belong.
@@ -795,6 +807,20 @@ impl FractadyneApp {
                                 .clicked()
                             {
                                 self.stop_playback();
+                                ui.close_menu();
+                            }
+                        });
+                        // Enabled while a job runs even with no tour loaded: it is how to reach it.
+                        ui.add_enabled_ui(self.playback.is_some() || self.farm_controller.active(), |ui| {
+                            if ui
+                                .button(if self.farm_controller.active() { "Render on farm…  (running)" } else { "Render on farm…" })
+                                .on_hover_text(
+                                    "Render the loaded tour on several machines: this one controls the \
+                                     job, others join with File ▸ Render client….",
+                                )
+                                .clicked()
+                            {
+                                self.open_farm_controller();
                                 ui.close_menu();
                             }
                         });

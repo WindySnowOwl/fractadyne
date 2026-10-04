@@ -319,6 +319,8 @@ once. Export, Render tour, Benchmark and the Misiurewicz explorer all already di
 | Reset application state | Reset everything | Cancel | ⛔**deliberate exception**: Cancel is FIRST |
 | Reference cache (beta.78) | — | Close | the limit applies at once; the red **Clear cache…** takes the Reset layout (Close left, red button RIGHTMOST) and confirms INLINE the same way (Cancel first, red Delete second) — it costs time, never data |
 | Running benchmark… | — | Cancel | progress only ✅ |
+| Render client (beta.18) | Connect | Close | `Disconnect` replaces Connect while connected; Close leaves the client running (File ▸ Render client… reopens it), so nothing is abandoned — Close, not Cancel |
+| Render on farm (beta.18) | Render | Close | `Stop` replaces Render while a job runs (`Stop now` once a stop has had 10 s); Close leaves the job running (Tools ▸ Render on farm… reopens it) |
 | Notice | — | Close | ✅ |
 | Help · Welcome · Gallery · Bookmarks · Diagnostics · Benchmark results · Share · Report | — | *(title bar ✕)* | ✅present information; nothing to abandon |
 

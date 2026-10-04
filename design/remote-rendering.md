@@ -770,6 +770,33 @@ Phase 3: keep a held (or slow) segment on one GPU class, or offer `homogeneous`.
 `--uitest` steps for both screens. **Gate:** `--uitest` passes and the screenshots are LOOKED at;
 the dialog audit table in UI-DESIGN §8.2 gains both dialogs.
 
+✅**Built 2026-10-04.** The windows run the headless modes as child processes with `--ui-status`
+(`farm/status.rs`): a `farm-status {json}` line a second, commands on stdin (controller: pause,
+resume, stop, remove, readmit; client: pause, resume, cancel-frame, leave), and stdin's end — the
+app gone — stops the job or leaves the farm. *File ▸ Render client…* (`ui/farm_client.rs`):
+address, key (kept in `<config>/farm/client-key.txt`), name, limits; the phase in words, job, run,
+frames sent, self-check, a thumbnail of the last frame; Pause / Cancel frame / Disconnect. *Tools ▸
+Render on farm…* (`ui/farm_controller.rs`): output folder, size, fps, ss, port, start-with count,
+*also render on this machine*; the key (Show / Copy / Make a key) and the address clients dial;
+progress with ETA, the frame strip (`Scheduler::strip`), rates and free space, the GPU-class
+warning, the machine table with Remove / Re-admit, the event tail; Pause / Stop (a second Stop
+after 10 s kills), Copy command. Both windows survive being closed, and the live view stands aside
+while this machine renders farm frames. The probe (protocol 2): the self-check render, 256×144
+past 1e30×, sent as an image; machines with pixel-identical probes share a class letter.
+Evidence: `--farmtest` 15/15 (adds the controller's status lines, pause/resume through stdin, the
+probes and one class, client C started with the window's own command line and leaving on
+`leave`); hand checks of `leave` while connected (exit 0 in 0.4 s, "left: its user disconnected"
+at the controller) and of stdin closing (client exit 0, controller exit 4 "stopped"); `--uitest`
+steps `farm-client` and `farm-controller`, seeded with a mid-job state and LOOKED at — which
+caught an unreadable machine table (truncating labels collapsed the grid's columns) and a seeded
+window drawn as idle that showed this machine's real address. Found on the way: every process
+started while the app ran took the app's crash marker (fixed, `13c30e8`).
+**Not built (from §10–11):** approving new clients, per-client Pause and Diagnostics… from the
+controller, share mode, sharing / homogeneous / stall / deadline / spot-check settings in the
+window, the mp4 step, *Open folder…* for resume (running the same job resumes), Unpair, *only when
+idle*, adapter choice, the reference counters. The buttons' wiring to the commands is checked by
+hand, not by a machine (the walk photographs).
+
 **Phase 3 — share mode, stealing and shared computation.** Output root mapping, every-frame share
 verification, run stealing, `OrbitOffer/Query/Reply`, controller pre-build of the deepest keyframe. **Gate:** a deep tour
 (`tours/dive-to-view-3e1216.toml`) on two clients with sharing `off` vs `neighbourhood`: count

@@ -342,6 +342,14 @@ pub(crate) fn write_session(dir: &Path, settings: &RenderSettings) -> Result<(),
     std::fs::write(dir.join("session.toml"), text).map_err(|e| format!("{}: {e}", dir.display()))
 }
 
+/// This machine's address on the network it would reach the internet through: what to tell
+/// clients. A UDP "connect" picks the route without sending anything.
+pub(crate) fn lan_address() -> Option<std::net::IpAddr> {
+    let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    s.connect("192.0.2.1:9").ok()?; // TEST-NET-1: routed like any public address, never answered
+    s.local_addr().ok().map(|a| a.ip()).filter(|ip| !ip.is_unspecified() && !ip.is_loopback())
+}
+
 /// Unix time in milliseconds.
 pub(crate) fn unix_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)

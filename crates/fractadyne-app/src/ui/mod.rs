@@ -22,3 +22,5 @@ pub(crate) mod autopilot_overlay;
 pub(crate) mod misiurewicz_explorer;
 pub(crate) mod timestamp_overlay;
 pub(crate) mod tour_render;
+pub(crate) mod farm_client;
+pub(crate) mod farm_controller;

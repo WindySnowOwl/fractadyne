@@ -366,6 +366,11 @@ STEPS = [
     ("Tools",
      "Tools > Benchmark… and let it finish.",
      "Benchmark runs to completion and reports results; app remains usable afterwards."),
+    ("Tools",
+     "Tools > Render on farm… on a bundled tour with Also render on this machine; on a second "
+     "machine, File > Render client… with the address and farm key it shows.",
+     "Both windows show live status, frames come from both machines and the job completes; closing "
+     "either window leaves its work running. (scripts/farm-pluto.ps1 compares the frames.)"),
 
     # ---------------------------------------------------------------- help/settings
     ("Help & settings",
@@ -766,6 +771,7 @@ ENFORCERS = [
     ("Tools", "test:stopping_playback_restores_interaction"),
     ("Tools", "selftest:generated dive script round-trips"),
     ("Tools", "harness:--benchmark-std"),
+    ("Tools", "partial:harness:--farmtest"),
     ("Help & settings", "partial:test:help_sections_all_render"),
     ("Help & settings", "uitest:diagnostics-populated"),
     ("Help & settings", "test:about_names_the_running_backend"),

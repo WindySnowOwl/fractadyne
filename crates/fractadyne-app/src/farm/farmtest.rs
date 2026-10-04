@@ -225,15 +225,20 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
 
     // 3. The clients.
     let client = |name: &'static str, env: &[(&str, &str)], ui: bool| {
-        let mut args = vec![s("--render-client"), addr.clone(), s("--farm-key-file"), p(&key_file), s("--name"), format!("farmtest-{name}"), s("--farm-allow-dirty")];
-        if ui {
-            args.push(s(super::status::FLAG));
-        }
+        let mut args = if ui {
+            // Exactly the command line the app's Render client window starts.
+            let settings = crate::ui::farm_client::ClientSettings { controller: addr.clone(), name: format!("farmtest-{name}"), ..Default::default() };
+            crate::ui::farm_client::client_args(&settings, &key_file)
+        } else {
+            vec![s("--render-client"), addr.clone(), s("--farm-key-file"), p(&key_file), s("--name"), format!("farmtest-{name}")]
+        };
+        args.push(s("--farm-allow-dirty"));
         Proc::spawn(name, &args, &base.join(format!("cfg-{name}")), env)
     };
     let mut a = client("A", &[(super::client::CORRUPT_INSTRUMENT, "2")], false)?;
     let mut b = client("B", &[], false)?;
-    // C as the app's Render client window runs it: status lines out, commands in.
+    // C as the app's Render client window runs it — its very command line: status lines out,
+    // commands in.
     let mut c = client("C", &[], true)?;
 
     // 4. Run, killing B once it has sent a frame; pause the job from "the window" (stdin) as soon as

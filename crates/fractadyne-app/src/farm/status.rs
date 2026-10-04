@@ -239,5 +239,121 @@ impl ControllerCommand {
     }
 }
 
+// --- the window's side --------------------------------------------------------------------------
+
+/// The app's end of a farm process it started: the process, its stdin (closing it — dropping this,
+/// or the app ending — stops a controller's job or makes a client leave), the latest status, and a
+/// tail of what it said.
+pub(crate) struct Link<S> {
+    child: std::process::Child,
+    stdin: Option<std::process::ChildStdin>,
+    rx: mpsc::Receiver<String>,
+    pub(crate) status: Option<S>,
+    /// Its other output, newest last: stdout's human lines, and stderr's lines that explain a
+    /// failure, marked "! ".
+    pub(crate) log: std::collections::VecDeque<String>,
+    /// `Some(code)` once it has exited (`None` inside: killed by a signal).
+    pub(crate) exit: Option<Option<i32>>,
+}
+
+/// Lines of output a [`Link`] keeps.
+const LOG_KEEP: usize = 400;
+
+impl<S: DeserializeOwned> Link<S> {
+    /// Start this executable with `args` (which should include [`FLAG`]); `env` is added to its
+    /// environment.
+    pub(crate) fn spawn(args: &[String], env: &[(&str, std::ffi::OsString)]) -> Result<Self, String> {
+        let exe = std::env::current_exe().map_err(|e| format!("cannot find this executable: {e}"))?;
+        Self::spawn_program(&exe, args, env)
+    }
+
+    pub(crate) fn spawn_program(program: &std::path::Path, args: &[String], env: &[(&str, std::ffi::OsString)]) -> Result<Self, String> {
+        use std::io::BufRead;
+        let mut cmd = std::process::Command::new(program);
+        cmd.args(args).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let mut child = cmd.spawn().map_err(|e| format!("could not start it: {e}"))?;
+        let stdin = child.stdin.take();
+        let (tx, rx) = mpsc::channel();
+        if let Some(out) = child.stdout.take() {
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                for l in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+                    if tx.send(l).is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+        if let Some(err) = child.stderr.take() {
+            std::thread::spawn(move || {
+                for l in std::io::BufReader::new(err).lines().map_while(Result::ok) {
+                    // Only what explains a failure: stderr also carries every routine log line.
+                    let keep = l.starts_with("fractadyne:") || l.contains("FAILED") || l.contains("panic");
+                    if keep && tx.send(format!("! {l}")).is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+        Ok(Self { child, stdin, rx, status: None, log: Default::default(), exit: None })
+    }
+
+    /// Take in what it has said and whether it has exited; `true` when anything changed.
+    pub(crate) fn poll(&mut self) -> bool {
+        let mut changed = false;
+        for l in self.rx.try_iter() {
+            changed = true;
+            match parse::<S>(&l) {
+                Some(st) => self.status = Some(st),
+                None => {
+                    let l = l.trim_end();
+                    if !l.is_empty() {
+                        self.log.push_back(l.to_string());
+                        while self.log.len() > LOG_KEEP {
+                            self.log.pop_front();
+                        }
+                    }
+                }
+            }
+        }
+        if self.exit.is_none() {
+            if let Ok(Some(st)) = self.child.try_wait() {
+                self.exit = Some(st.code());
+                self.stdin = None;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    pub(crate) fn running(&self) -> bool {
+        self.exit.is_none()
+    }
+
+    /// Send a command line.
+    pub(crate) fn send(&mut self, cmd: &str) {
+        use std::io::Write;
+        if let Some(s) = self.stdin.as_mut() {
+            if writeln!(s, "{cmd}").and_then(|()| s.flush()).is_err() {
+                self.stdin = None;
+            }
+        }
+    }
+
+    /// End it now (a second Stop, when the graceful one is not enough).
+    pub(crate) fn kill(&mut self) {
+        let _ = self.child.kill();
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -114,13 +114,6 @@ pub(crate) fn run(args: &[String]) -> i32 {
     }
 }
 
-/// This machine's address on the network it would reach the internet through: what to tell
-/// clients. A UDP "connect" picks the route without sending anything.
-fn lan_address() -> Option<std::net::IpAddr> {
-    let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
-    s.connect("192.0.2.1:9").ok()?; // TEST-NET-1: routed like any public address, never answered
-    s.local_addr().ok().map(|a| a.ip()).filter(|ip| !ip.is_unspecified() && !ip.is_loopback())
-}
 
 fn run_inner(args: &[String]) -> Result<i32, String> {
     let tour = PathBuf::from(value(args, "--farm-render").ok_or("--farm-render needs a tour script")?);
