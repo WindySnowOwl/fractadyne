@@ -65,6 +65,31 @@ fn a_controller_answering_on_loopback_is_found() {
     assert!(sent >= 1);
 }
 
+/// A probe to a port where nothing listens must not end the wait for the others' replies. On
+/// Windows the "port unreachable" it draws surfaces as an error (`ConnectionReset`) from the
+/// socket's NEXT receive — and a loop that stopped at any error found nothing on a machine with no
+/// controller of its own: PLUTO's `--discover` over the LAN, 2026-10-04, while the controller's
+/// log showed it had answered.
+#[test]
+fn a_probe_to_a_closed_port_does_not_end_the_wait() {
+    let closed = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("a socket");
+    let closed_at = closed.local_addr().expect("its address");
+    drop(closed);
+    let sock = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("a socket");
+    let live = sock.local_addr().expect("its address");
+    let stop = Arc::new(AtomicBool::new(false));
+    let (b, s) = (beacon(), stop.clone());
+    let server = std::thread::spawn(move || {
+        // A moment late, so the closed port's error is already waiting at the client's socket.
+        std::thread::sleep(Duration::from_millis(150));
+        serve(&sock, &b, &s, |_, _| {})
+    });
+    let found = discover_to(&[closed_at, live], Duration::from_millis(900)).expect("discovery runs");
+    stop.store(true, Ordering::Relaxed);
+    let _ = server.join();
+    assert_eq!(found.len(), 1, "the live controller's reply was not read: {found:?}");
+}
+
 /// Probes past the rate limit go unanswered — a flood cannot make the controller a firehose.
 #[test]
 fn replies_are_rate_limited() {

@@ -142,14 +142,19 @@ pub fn serve(socket: &UdpSocket, beacon: &Beacon, stop: &AtomicBool, mut answere
 /// replies for `wait`. One entry per controller (identity and port), in the order they answered —
 /// at its network address when it answered on one as well as on loopback.
 pub fn discover_on(port: u16, wait: Duration) -> Result<Vec<Found>, String> {
+    // The broadcast reaches the network; loopback finds a controller on this machine (also one
+    // listening on 127.0.0.1 only, which no broadcast reaches).
+    discover_to(&[SocketAddr::from((Ipv4Addr::BROADCAST, port)), SocketAddr::from((Ipv4Addr::LOCALHOST, port))], wait)
+}
+
+/// Probe `targets` and collect the replies for `wait` (see [`discover_on`]).
+pub fn discover_to(targets: &[SocketAddr], wait: Duration) -> Result<Vec<Found>, String> {
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).map_err(|e| e.to_string())?;
     socket.set_broadcast(true).map_err(|e| e.to_string())?;
     let probe = probe_packet();
-    // The broadcast reaches the network; loopback finds a controller on this machine (also one
-    // listening on 127.0.0.1 only, which no broadcast reaches).
     let mut sent = false;
-    for to in [Ipv4Addr::BROADCAST, Ipv4Addr::LOCALHOST] {
-        sent |= socket.send_to(&probe, (to, port)).is_ok();
+    for to in targets {
+        sent |= socket.send_to(&probe, to).is_ok();
     }
     if !sent {
         return Err("could not send on this network".into());
@@ -159,7 +164,14 @@ pub fn discover_on(port: u16, wait: Duration) -> Result<Vec<Found>, String> {
     let mut buf = [0u8; PROBE_LEN + 1];
     while let Some(left) = deadline.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()) {
         socket.set_read_timeout(Some(left)).map_err(|e| e.to_string())?;
-        let Ok((n, from)) = socket.recv_from(&mut buf) else { break };
+        let (n, from) = match socket.recv_from(&mut buf) {
+            Ok(r) => r,
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => break,
+            // Anything else is one probe's trouble, not the end of the wait: on Windows a probe to
+            // a port where nothing listens (this machine's loopback, with no controller here) comes
+            // back as `ConnectionReset` from the next receive.
+            Err(_) => continue,
+        };
         if let Ok(beacon) = parse_reply(&buf[..n]) {
             let f = Found { from, beacon };
             match found.iter_mut().find(|g| g.beacon.identity == f.beacon.identity && g.beacon.port == f.beacon.port) {
