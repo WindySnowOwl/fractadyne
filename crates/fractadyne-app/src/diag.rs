@@ -182,6 +182,7 @@ pub(crate) fn init(args: &[String]) {
         std::env::var("FRACTADYNE_LOG_DIR").ok().as_deref(),
     );
     let mut start_notes: Vec<String> = Vec::new();
+    let explicit = over.is_some();
     let dir = if file_log_on {
         match over {
             // An explicitly requested dir that cannot be created must not SILENTLY become "no
@@ -205,6 +206,27 @@ pub(crate) fn init(args: &[String]) {
         None
     };
     let dir = dir.filter(|d| std::fs::create_dir_all(d).is_ok());
+    // ⚠A GUEST in a running session's log folder — a child the app started (a Render tour, a
+    // Diagnostics test), a second copy of the app, a script asking `--version` — logs to a folder
+    // of its own, `guests/<mode>`. Sharing the folder, a guest rotated the session's log out from
+    // under it, truncated its frame record (`frames.bin`: the evidence a hard crash leaves, which
+    // the session goes on writing into) and, before 2026-10-04, took its crash marker. An
+    // explicit `--log-dir` / FRACTADYNE_LOG_DIR is left as given.
+    let dir = match dir {
+        Some(d) if !explicit => match guest_of(&d) {
+            Some(pid) => {
+                let g = d.join("guests").join(crate::task_mode_of(args).unwrap_or("app"));
+                if std::fs::create_dir_all(&g).is_ok() {
+                    start_notes.push(format!("a Fractadyne session (pid {pid}) is running against {}; this process logs to {}", d.display(), g.display()));
+                    Some(g)
+                } else {
+                    Some(d)
+                }
+            }
+            None => Some(d),
+        },
+        d => d,
+    };
     let _ = LOG_DIR.set(dir.clone());
     if let Some(dir) = dir {
         let path = dir.join("fractadyne.log");
@@ -931,6 +953,12 @@ pub(crate) fn begin_gui_session() {
     }
 }
 
+/// The pid of a RUNNING Fractadyne session (not this process) that owns the log folder `dir`.
+pub(crate) fn guest_of(dir: &std::path::Path) -> Option<u32> {
+    let m = std::fs::read_to_string(dir.join("session.running")).ok()?;
+    marker_pid(&m).filter(|&pid| pid != std::process::id() && fractadyne_alive(pid))
+}
+
 /// The `pid N` line of a session marker (markers written before it carried one have none).
 pub(crate) fn marker_pid(marker: &str) -> Option<u32> {
     marker.lines().find_map(|l| l.strip_prefix("pid ")?.trim().parse().ok())
@@ -1263,6 +1291,18 @@ impl Drop for ProgressPump {
 #[cfg(test)]
 mod session_marker_tests {
     use super::*;
+
+    #[test]
+    fn a_folder_is_a_guests_only_while_another_session_runs_in_it() {
+        let d = std::env::temp_dir().join(format!("fd-guest-test-{}", std::process::id()));
+        std::fs::create_dir_all(&d).expect("temp dir");
+        assert_eq!(guest_of(&d), None, "no marker");
+        std::fs::write(d.join("session.running"), format!("x\nstarted now\npid {}\n", std::process::id())).expect("marker");
+        assert_eq!(guest_of(&d), None, "this process's own marker");
+        std::fs::write(d.join("session.running"), "x\nstarted then\npid 4294967290\n").expect("marker");
+        assert_eq!(guest_of(&d), None, "a dead session's marker");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn a_marker_names_its_pid_and_an_old_one_has_none() {

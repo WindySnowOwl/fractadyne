@@ -65,7 +65,14 @@ Changes after 0.3.0-beta.1:
   session that was alive, and removed the marker, so a real crash of that session later would have
   gone unnoticed. The same happened with any other Fractadyne process started while the app ran.
   The marker now names its process, and a process started while that one is running leaves it
-  alone; a session that really did end without shutting down is reported as before.
+  alone; a session that really did end without shutting down is reported as before. Such a process
+  also wrote into the running app's own log and frame record (the record a hard crash leaves
+  behind), overwriting it and rolling the log over under it; it now logs to its own folder,
+  `logs/guests/<what it is doing>`.
+- **Fixed: the Render tour window closed when the tour player did (0.3.0-beta.18).** Closing the
+  player while a tour was rendering closed the window too, and Tools ▸ Render tour… stayed
+  unavailable until a tour was played again, so a long render's progress could not be seen. The
+  window now keeps the tour it was opened for, and the menu item reopens it while a render runs.
 - **Render farm: render one tour on several machines (0.3.0-beta.18).** `--farm-render TOUR --out
   DIR` runs a controller that listens for render clients; `--render-client HOST:PORT` turns any
   machine with this exact build into one ([design](design/remote-rendering.md)). Clients dial in

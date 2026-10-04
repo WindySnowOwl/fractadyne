@@ -4826,6 +4826,14 @@ impl Default for BenchConfig {
 /// on record is losing the device. In a child, that kills the render and leaves the editor alive.
 pub(crate) struct TourRenderUi {
     pub(crate) open: bool,
+    /// The tour, captured when the dialog opens: its script, name, length in seconds and chapters.
+    /// ⚠Read from the player on every frame, the dialog closed itself the moment the player did
+    /// — with a render still running and its menu item disabled until a tour was played again —
+    /// and the UI walk, which plays no tour, photographed an empty screen and passed.
+    pub(crate) script: Option<std::path::PathBuf>,
+    pub(crate) tour_name: String,
+    pub(crate) total: f64,
+    pub(crate) chapters: Vec<(String, f64, f64)>,
     pub(crate) out: String,
     pub(crate) prefix: String,
     pub(crate) width: u32,
@@ -4860,6 +4868,10 @@ impl Default for TourRenderUi {
     fn default() -> Self {
         Self {
             open: false,
+            script: None,
+            tour_name: String::new(),
+            total: 0.0,
+            chapters: Vec::new(),
             out: "frames".to_string(),
             prefix: String::new(),
             width: 1920,

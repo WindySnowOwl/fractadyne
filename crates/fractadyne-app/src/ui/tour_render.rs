@@ -50,7 +50,18 @@ impl FractadyneApp {
     /// `[render]` block so the defaults are what the author intended rather than what this app
     /// happens to have in a field.
     pub(crate) fn open_tour_render(&mut self) {
+        // A render in progress: show it as it is.
+        if self.tour_render.child.is_some() {
+            self.tour_render.open = true;
+            return;
+        }
         let Some(pb) = &self.playback else { return };
+        // The built-in benchmark tour has no file to render from.
+        let Some(script) = pb.source.clone() else { return };
+        self.tour_render.script = Some(script);
+        self.tour_render.tour_name = pb.name.clone();
+        self.tour_render.total = pb.total;
+        self.tour_render.chapters = pb.segments.iter().map(|g| (g.title.clone(), g.start, g.end)).collect();
         let r = &pb.render;
         let (w, h) = match (r.width, r.height) {
             (Some(w), Some(h)) => (w, h),
@@ -142,22 +153,13 @@ impl FractadyneApp {
         if !self.tour_render.open {
             return;
         }
-        // The script being rendered, and its chapters (for the segment picker).
-        let Some((script, tour_name, total, chapters)) = self.playback.as_ref().and_then(|pb| {
-            pb.source.clone().map(|s| {
-                (
-                    s,
-                    pb.name.clone(),
-                    pb.total,
-                    pb.segments.iter().map(|g| (g.title.clone(), g.start, g.end)).collect::<Vec<_>>(),
-                )
-            })
-        }) else {
-            // Playback stopped (or it is the built-in benchmark, which has no file) — nothing to
-            // render, so don't leave a dialog pointing at nothing.
+        // The script being rendered, and its chapters (for the segment picker) — as captured when
+        // the dialog opened, so it outlives the tour player.
+        let Some(script) = self.tour_render.script.clone() else {
             self.tour_render.open = false;
             return;
         };
+        let (tour_name, total, chapters) = (self.tour_render.tour_name.clone(), self.tour_render.total, self.tour_render.chapters.clone());
         let running = self.tour_render.child.is_some();
         let mut open = self.tour_render.open;
         let (mut go, mut stop, mut browse, mut copy_cmd) = (false, false, false, false);
@@ -371,7 +373,8 @@ impl FractadyneApp {
                 ui.add_space(6.0);
                 ui.label(
                     egui::RichText::new(format!(
-                        "{frames} frames · {:.0}s of tour · {}×{} ss{}",
+                        "{} frames · {:.0}s of tour · {}×{} ss{}",
+                        crate::grouped_count(frames as f64),
                         t_to - t_from,
                         self.tour_render.width,
                         self.tour_render.height,
@@ -468,8 +471,27 @@ impl FractadyneApp {
                     ui.colored_label(crate::theme::BRAND_ACCENT, egui::RichText::new(st).small());
                 }
 
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
+                // The action row, last, after a separator (UI-DESIGN §8.2). `action_row` lays out
+                // right to left: Cancel is added first so it sits rightmost, Render last so it
+                // reads first.
+                ui.separator();
+                crate::theme::action_row(ui, |ui| {
+                    // ⚠Only when idle: while a render runs, "Stop render" IS the abandon action
+                    // and a second one beside it would be two words for one thing.
+                    if !running
+                        && crate::theme::cancel_button(ui, "Cancel")
+                            .on_hover_text("Close without rendering")
+                            .clicked()
+                    {
+                        close_dialog = true;
+                    }
+                    if ui
+                        .button(format!("{} Copy command", crate::icons::COPY))
+                        .on_hover_text("Copy the equivalent command line to the clipboard")
+                        .clicked()
+                    {
+                        copy_cmd = true;
+                    }
                     if running {
                         if ui.button("Stop render").clicked() {
                             stop = true;
@@ -479,22 +501,6 @@ impl FractadyneApp {
                         .clicked()
                     {
                         go = true;
-                    }
-                    if ui
-                        .button(format!("{} Copy command", crate::icons::COPY))
-                        .on_hover_text("Copy the equivalent command line to the clipboard")
-                        .clicked()
-                    {
-                        copy_cmd = true;
-                    }
-                    // ⚠Only when idle: while a render runs, "Stop render" IS the abandon action
-                    // and a second one beside it would be two words for one thing.
-                    if !running
-                        && crate::theme::cancel_button(ui, "Cancel")
-                            .on_hover_text("Close without rendering")
-                            .clicked()
-                    {
-                        close_dialog = true;
                     }
                 });
             });
@@ -567,6 +573,25 @@ impl FractadyneApp {
             a.push("-y".to_string());
         }
         a
+    }
+
+    /// The UI walk's view of this dialog: a tour with chapters, as if opened from its player —
+    /// the walk plays no tour, and reading the player made this step photograph an empty screen.
+    pub(crate) fn uitest_seed_tour_render(&mut self) {
+        let t = &mut self.tour_render;
+        t.script = Some(std::path::PathBuf::from("tours/grand-tour.toml"));
+        t.tour_name = "Grand tour".into();
+        t.total = 331.0;
+        t.chapters = vec![("Seahorse valley".into(), 0.0, 96.0), ("Into the spiral".into(), 96.0, 214.0), ("The deep end".into(), 214.0, 331.0)];
+        (t.width, t.height, t.custom_size, t.fps, t.ss, t.segment) = (1920, 1080, false, 30.0, 2, 0);
+        t.prefix = "grand-tour".into();
+        // An absolute sample path: the default "frames" resolves against the working directory,
+        // and the walk's screenshot then showed this machine's home folder.
+        t.out = "C:/Users/robin/Videos/grand-tour-frames".into();
+        t.progress.clear();
+        t.progress_frames = None;
+        t.status = None;
+        t.open = true;
     }
 
     /// Launch the render child and start streaming its progress.

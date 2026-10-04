@@ -1272,7 +1272,9 @@ impl FractadyneApp {
             Screen::Diagnostics => self.diagnostics.open = true,
             Screen::Export => self.export.open = true,
             Screen::ScriptExport => self.dialogs.script_export_open = true,
-            Screen::TourRender => self.tour_render.open = true,
+            // ⚠⚠Seeded: opening the flag alone photographed an EMPTY screen and passed — the
+            // dialog read its tour from the player, and the walk plays none (found 2026-10-04).
+            Screen::TourRender => self.uitest_seed_tour_render(),
             Screen::FarmClient => self.uitest_seed_farm_client(),
             Screen::FarmController => self.uitest_seed_farm_controller(),
             Screen::ResetConfirm => self.dialogs.reset_confirm_open = true,

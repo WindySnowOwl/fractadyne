@@ -785,9 +785,10 @@ impl FractadyneApp {
                             self.open_script_export();
                             ui.close_menu();
                         }
-                        ui.add_enabled_ui(self.playback.is_some(), |ui| {
+                        // Enabled while a render runs too: it is how to get back to its progress.
+                        ui.add_enabled_ui(self.playback.is_some() || self.tour_render.child.is_some(), |ui| {
                             if ui
-                                .button("Render tour…")
+                                .button(if self.tour_render.child.is_some() { "Render tour…  (rendering)" } else { "Render tour…" })
                                 .on_hover_text(
                                     "Render the loaded tour to a PNG frame sequence (and \
                                      optionally an mp4) in a separate process.",
@@ -797,6 +798,8 @@ impl FractadyneApp {
                                 self.open_tour_render();
                                 ui.close_menu();
                             }
+                        });
+                        ui.add_enabled_ui(self.playback.is_some(), |ui| {
                             // Same thing the player's ✖ does — the transport's own ⏹ only rewinds.
                             if ui
                                 .button("Close tour player")
