@@ -37,3 +37,19 @@ fn frame_names_match_the_tour_renderer() {
     assert_eq!(frame_file_name("tour", 7), "tour_00007.png");
     assert_eq!(frame_file_name("tour", 123_456), "tour_123456.png");
 }
+
+#[test]
+fn a_share_folder_is_built_from_checked_names_only() {
+    let root = std::path::Path::new("S:/renders");
+    assert_eq!(
+        share_dir(root, "a1b2c3d4e5f60718", "STUDIO PC (local)").unwrap(),
+        root.join("fractadyne-farm").join("a1b2c3d4e5f60718").join("STUDIO_PC__local_")
+    );
+    // A job id is a name, never a path.
+    for bad in ["../x", "a/b", "C:", ""] {
+        assert!(share_dir(root, bad, "PLUTO").is_err(), "accepted job id {bad:?}");
+    }
+    // A machine name that tries to climb is flattened into one component.
+    let d = share_dir(root, "j", "../../etc").unwrap();
+    assert_eq!(d.parent().unwrap(), root.join("fractadyne-farm").join("j"));
+}

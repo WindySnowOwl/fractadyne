@@ -6,6 +6,8 @@
 #                                              #   client) and PLUTO render it together; then every
 #                                              #   frame is compared with the tour rendered HERE alone
 #   .\scripts\farm-pluto.ps1 -NoLocal          # PLUTO renders every frame (a pure cross-GPU comparison)
+#   .\scripts\farm-pluto.ps1 -ShareMode        # share mode: the clients write frames to the share,
+#                                              #   this machine checks each one there
 #   .\scripts\farm-pluto.ps1 -Tour tours\grand-tour.toml -Size 1280x720 -Ss 1
 #   .\scripts\farm-pluto.ps1 -Farmtest         # only --farmtest ON PLUTO: a whole farm on that machine
 #   .\scripts\farm-pluto.ps1 -AddFirewallRule  # (asks for elevation) let the test machine reach the
@@ -38,6 +40,7 @@ param(
     # The address the test machine dials. Default: this machine's IPv4 on the default route.
     [string]$Address = "",
     [switch]$NoLocal,
+    [switch]$ShareMode,
     [switch]$Farmtest,
     [switch]$Check,
     [switch]$AddFirewallRule,
@@ -117,7 +120,7 @@ else {
     $age = [int]((Get-Date).ToUniversalTime() - $last).TotalSeconds
     if ($age -gt 3 * [int]$hb.poll_seconds) { Bad "$Agent's agent last polled $age s ago" "wake $Agent's display / check its session" }
     elseif ($hb.state -eq "paused") { Bad "$Agent's agent is paused" "remove the PAUSE file ($Share\field\PAUSE or on $Agent)" }
-    elseif ([int]$hb.agent_version -lt 14) { Bad "$Agent runs agent v$($hb.agent_version); the farm needs v14" "copy scripts\field-agent.ps1 to $Share\field\setup\ - the agent updates itself within 5 minutes" }
+    elseif ([int]$hb.agent_version -lt $(if ($ShareMode) { 15 } else { 14 })) { Bad "$Agent runs agent v$($hb.agent_version); this needs v$(if ($ShareMode) { 15 } else { 14 })" "copy scripts\field-agent.ps1 to $Share\field\setup\ - the agent updates itself within 5 minutes" }
     else { Ok "$Agent's agent v$($hb.agent_version) is $($hb.state) (last poll $age s ago)" }
 }
 
@@ -232,6 +235,8 @@ $keyFile = Join-Path $run "farm-key.txt"
 $out = Join-Path $run "farm-out"
 $ctlArgs = @("--farm-render", "`"$Tour`"", "--out", "`"$out`"", "--listen", "0.0.0.0:$Port", "--farm-key-file", "`"$keyFile`"", "--min-clients", $(if ($NoLocal) { "1" } else { "2" })) + $extra
 if (-not $NoLocal) { $ctlArgs += "--local" }
+# Share mode: this machine's path to the share; the test machine's agent passes its own.
+if ($ShareMode) { $ctlArgs += @("--share-root", "`"$Share`"") }
 
 function Start-Fd([string]$name, [string[]]$argv, [string]$cfg) {
     if ($argv.Count -eq 0) { throw "refusing to start fractadyne with no arguments" }
@@ -275,7 +280,9 @@ try {
         Start-Sleep -Milliseconds 300
     }
     Write-Host "Controller listening (pid $($ctl.Id)); asking $Agent to join..."
-    $reqId = Send-FieldRequest @("-Action", "farm-client", "-Controller", "$Address`:$Port", "-FarmKeyFile", $keyFile, "-Build", $tag, "-TimeoutMin", "$TimeoutMin")
+    $fr = @("-Action", "farm-client", "-Controller", "$Address`:$Port", "-FarmKeyFile", $keyFile, "-Build", $tag, "-TimeoutMin", "$TimeoutMin")
+    if ($ShareMode) { $fr += "-FarmShare" }
+    $reqId = Send-FieldRequest $fr
 
     # Follow the controller until the job ends.
     $seen = 0

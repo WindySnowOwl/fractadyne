@@ -58,6 +58,7 @@ fn bundle() -> Bundle {
         ss: 2,
         prefix: "gate".into(),
         frames: 1801,
+        share: false,
     }
 }
 

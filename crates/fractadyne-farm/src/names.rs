@@ -46,6 +46,15 @@ pub fn check_display_name(s: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Where a client puts a job's frames in share mode, under ITS OWN mapping of the shared drive:
+/// `<root>/fractadyne-farm/<job_id>/<machine>/`. The controller computes the same folder under its
+/// own mapping. Nothing here comes off the wire as a path: the job id is checked by
+/// [`check_file_part`] and the machine name is made safe with [`crate::manifest::safe_name`].
+pub fn share_dir(root: &std::path::Path, job_id: &str, machine: &str) -> Result<std::path::PathBuf, String> {
+    check_file_part("job id", job_id)?;
+    Ok(root.join("fractadyne-farm").join(job_id).join(crate::manifest::safe_name(machine)))
+}
+
 /// The file a frame of a job is written under: `<prefix>_NNNNN.png`, the `--render-tour` naming.
 /// Both sides compute it; neither accepts one from the other.
 pub fn frame_file_name(prefix: &str, index: u64) -> String {

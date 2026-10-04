@@ -26,6 +26,8 @@ pub(crate) struct FarmControllerUi {
     pub(crate) port: u16,
     pub(crate) min_clients: u32,
     pub(crate) local: bool,
+    /// This machine's path to the shared drive (share mode), or "" for streaming only.
+    pub(crate) share_root: String,
     pub(crate) link: Option<Link<ControllerStatus>>,
     /// The last status (and output) of a controller that has ended — or the UI walk's sample.
     pub(crate) last: Option<ControllerStatus>,
@@ -55,6 +57,7 @@ impl Default for FarmControllerUi {
             port: fractadyne_farm::DEFAULT_PORT,
             min_clients: 1,
             local: true,
+            share_root: String::new(),
             link: None,
             last: None,
             last_log: Vec::new(),
@@ -102,6 +105,10 @@ impl FarmControllerUi {
         ];
         if self.local {
             a.push("--local".into());
+        }
+        if !self.share_root.trim().is_empty() {
+            a.push("--share-root".into());
+            a.push(self.share_root.trim().to_string());
         }
         a
     }
@@ -353,6 +360,12 @@ impl FractadyneApp {
                             ui.add(egui::DragValue::new(&mut f.port).range(1024..=65535)).on_hover_text("Clients connect to this port. Allow it through the firewall for your local network.");
                             ui.end_row();
 
+                            ui.label("Shared drive");
+                            ui.add(egui::TextEdit::singleline(&mut f.share_root).hint_text("optional — this machine's path to it").desired_width(330.0)).on_hover_text(
+                                "Share mode: clients that have the same drive write their frames to it instead of sending them over the connection, and this machine checks every one there. Clients without it send theirs.",
+                            );
+                            ui.end_row();
+
                             ui.label("Start with");
                             ui.horizontal(|ui| {
                                 let unit = if f.min_clients == 1 { " client" } else { " clients" };
@@ -492,7 +505,7 @@ impl FractadyneApp {
                                     ui.label(g).on_hover_text(why);
                                     ui.label(crate::grouped_count(r.frames_done as f64));
                                     ui.label(r.ms_per_frame.map_or("—".into(), |ms| format!("{:.1} s", ms / 1000.0)));
-                                    ui.label(r.link_mbps.map_or("—".into(), |m| format!("{m:.0} Mb/s")));
+                                    ui.label(if r.share { "shared drive".to_string() } else { r.link_mbps.map_or("—".into(), |m| format!("{m:.0} Mb/s")) });
                                     ui.label(r.heartbeat_age_s.map_or("—".into(), |a| format!("{a:.0} s ago")));
                                     if active {
                                         if r.removed {
@@ -633,6 +646,7 @@ impl FractadyneApp {
             driver: if class == "A" { "NVIDIA 581.42".into() } else { "AMD proprietary driver 25.9.1".into() },
             gpu_note: (class != "A").then(|| "a different GPU".to_string()),
             link_mbps: Some(940.0),
+            share: false,
             frames_done: frames,
             ms_per_frame: Some(ms),
             strikes: 0,
@@ -645,6 +659,7 @@ impl FractadyneApp {
         let mut studio = row(2, "STUDIO-PC", "rendering 7310 (9/16)", "A", 0, 2380, 1330.0);
         studio.driver = "NVIDIA 576.02".into();
         studio.gpu_note = Some("the same GPU on a different driver".into());
+        studio.share = true;
         let mut gone = row(4, "OLD-LAPTOP", "removed: 2 bad frames", "A", 0, 3, 9100.0);
         gone.removed = true;
         gone.strikes = 2;

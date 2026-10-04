@@ -36,6 +36,8 @@ struct Cfg {
     /// `--one-job`: exit once the controller closes a job — how a test machine's field agent runs
     /// a client, so its run ends with the job instead of at its timeout.
     one_job: bool,
+    /// `--share-root`: this machine's path to the shared drive, for share mode.
+    share_root: Option<PathBuf>,
     work: PathBuf,
     control: PathBuf,
 }
@@ -186,7 +188,8 @@ pub(crate) fn run(args: &[String]) -> i32 {
         Err(e) => return fail(e),
     };
     let one_job = args.iter().any(|a| a == "--one-job");
-    let cfg = Cfg { addr, key, name, policy, allow_dirty, one_job, work: dir.join("jobs"), control: dir.clone(), id };
+    let share_root = value(args, "--share-root").map(PathBuf::from);
+    let cfg = Cfg { addr, key, name, policy, allow_dirty, one_job, share_root, work: dir.join("jobs"), control: dir.clone(), id };
     let ui = Ui::new(args.iter().any(|a| a == status::FLAG));
     ui.update(|s| {
         s.name = cfg.name.clone();
@@ -493,6 +496,9 @@ struct Job {
     dir: PathBuf,
     bundle: Bundle,
     refusal: Option<String>,
+    /// Where its frames are written: the job's local folder, or its folder on the shared drive.
+    frames: PathBuf,
+    share: bool,
 }
 
 struct Running {
@@ -622,6 +628,15 @@ impl Session<'_> {
                 // they are small).
                 if let Some(j) = self.jobs.remove(&c.job_id) {
                     let _ = std::fs::remove_dir_all(j.dir.join("frames"));
+                    // Its folder on the shared drive: the frames were moved out by the controller;
+                    // the render's status file is ours to remove, and the folders if empty.
+                    if j.share {
+                        let _ = std::fs::remove_file(j.frames.join("render-status.txt"));
+                        let _ = std::fs::remove_dir(&j.frames);
+                        if let Some(parent) = j.frames.parent() {
+                            let _ = std::fs::remove_dir(parent);
+                        }
+                    }
                 }
                 println!("Job {} closed by the controller", c.job_id);
                 self.ui.update(|s| {
@@ -695,6 +710,28 @@ impl Session<'_> {
             (None, Err(e)) => Some(format!("could not prepare the job folder: {e}")),
             (None, Ok(())) => None,
         };
+        // Share mode, when the job offers it and this machine has the shared drive: proved
+        // writable here before a frame is rendered into it, else this machine streams.
+        let mut frames = dir.join("frames");
+        let mut share = false;
+        if let (true, Some(root)) = (bundle.share, &self.cfg.share_root) {
+            let try_share = || -> Result<PathBuf, String> {
+                let d = fractadyne_farm::names::share_dir(root, &j.job_id, &self.cfg.name)?;
+                std::fs::create_dir_all(&d).map_err(|e| format!("{}: {e}", d.display()))?;
+                let probe = d.join(".write-test");
+                std::fs::write(&probe, b"ok").map_err(|e| format!("{}: {e}", d.display()))?;
+                let _ = std::fs::remove_file(&probe);
+                Ok(d)
+            };
+            match try_share() {
+                Ok(d) => {
+                    println!("  frames go to the shared drive: {}", d.display());
+                    frames = d;
+                    share = true;
+                }
+                Err(e) => println!("  the shared drive is not writable from here ({e}); streaming the frames instead"),
+            }
+        }
         let detail = format!("{}×{} ss{} at {} fps, {} frames", bundle.width, bundle.height, bundle.ss, bundle.fps, bundle.frames);
         println!("  job \"{}\": {detail}", bundle.name);
         self.ui.update(|s| {
@@ -704,7 +741,7 @@ impl Session<'_> {
                 None => format!("Job \"{}\" — waiting for frames to render", bundle.name),
             };
         });
-        self.jobs.insert(j.job_id.clone(), Job { dir, bundle, refusal });
+        self.jobs.insert(j.job_id.clone(), Job { dir, bundle, refusal, frames, share });
         Ok(())
     }
 
@@ -719,7 +756,7 @@ impl Session<'_> {
             "--render-tour".into(),
             job.dir.join("script.toml").to_string_lossy().into_owned(),
             "--out".into(),
-            job.dir.join("frames").to_string_lossy().into_owned(),
+            job.frames.to_string_lossy().into_owned(),
             "--frames".into(),
             format!("{}..{}", a.start, a.end),
             "--size".into(),
@@ -789,9 +826,50 @@ impl Session<'_> {
     fn on_child_line(&mut self, run: u64, line: ChildLine) {
         let Some(r) = self.running.as_mut().filter(|r| r.assign.run_id == run) else { return };
         match line {
+            ChildLine::Done { index, bytes, sha256, ms } if self.jobs.get(&r.assign.job_id).is_some_and(|j| j.share) => {
+                // Share mode: the frame is in this machine's folder on the shared drive, its digest
+                // taken by the render as it read the file back. Announce it; the controller reads
+                // and checks it there.
+                let job = &self.jobs[&r.assign.job_id];
+                let path = job.frames.join(fractadyne_farm::names::frame_file_name(&job.bundle.prefix, index));
+                if self.corrupt_left > 0 {
+                    self.corrupt_left -= 1;
+                    if let Ok(mut data) = std::fs::read(&path) {
+                        let mid = data.len() / 2;
+                        data[mid] ^= 0x55;
+                        let _ = std::fs::write(&path, &data);
+                        eprintln!("  (instrument {CORRUPT_INSTRUMENT}: frame {index} left corrupted on purpose)");
+                    }
+                }
+                let id = self.next_blob;
+                self.next_blob += 1;
+                let _ = self.out.send(Out::Msg(Msg::FrameDone(FrameDone { job_id: r.assign.job_id.clone(), run_id: run, index, render_ms: ms, blob: BlobAnnounce { id, len: bytes, sha256 }, on_share: true })));
+                r.reported.insert(index);
+                r.last_done = Some(r.last_done.map_or(index, |d| d.max(index)));
+                r.frame_started = Instant::now();
+                self.frames_done += 1;
+                self.ms_total += ms;
+                println!("  frame {index} on the shared drive ({} KB, {ms} ms)", bytes / 1024);
+                let (done, mean) = (self.frames_done, self.ms_total as f64 / self.frames_done as f64);
+                let end = r.assign.end;
+                self.ui.update(|s| {
+                    s.frames_done = done;
+                    s.mean_ms = Some(mean);
+                    s.frame = (index + 1 < end).then_some(index + 1);
+                    s.last_frame = Some(path.to_string_lossy().into_owned());
+                    s.last_frame_seq += 1;
+                });
+                if r.pause_after_frame {
+                    r.stop = Some(AbortReason::Paused);
+                    let _ = r.child.kill();
+                } else if r.stop_from.is_some_and(|f| index + 1 >= f) {
+                    r.stop = Some(AbortReason::Canceled);
+                    let _ = r.child.kill();
+                }
+            }
             ChildLine::Done { index, bytes, sha256, ms } => {
                 let job = &self.jobs[&r.assign.job_id];
-                let path = job.dir.join("frames").join(fractadyne_farm::names::frame_file_name(&job.bundle.prefix, index));
+                let path = job.frames.join(fractadyne_farm::names::frame_file_name(&job.bundle.prefix, index));
                 match std::fs::read(&path) {
                     Ok(mut data) if data.len() as u64 == bytes && fractadyne_farm::sha256_hex(&data) == sha256 => {
                         let id = self.next_blob;
@@ -803,7 +881,7 @@ impl Session<'_> {
                             data[last] ^= 0x55;
                             eprintln!("  (instrument {CORRUPT_INSTRUMENT}: frame {index} sent corrupted on purpose)");
                         }
-                        let _ = self.out.send(Out::Msg(Msg::FrameDone(FrameDone { job_id: r.assign.job_id.clone(), run_id: run, index, render_ms: ms, blob: announce })));
+                        let _ = self.out.send(Out::Msg(Msg::FrameDone(FrameDone { job_id: r.assign.job_id.clone(), run_id: run, index, render_ms: ms, blob: announce, on_share: false })));
                         let _ = self.out.send(Out::Blob(id, data));
                         // Kept as the window's thumbnail of the latest frame (the next replaces it).
                         let last = self.cfg.control.join("last-frame.png");

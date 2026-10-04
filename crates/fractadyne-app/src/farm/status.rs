@@ -202,6 +202,8 @@ pub(crate) struct ClientRow {
     /// driver", …), or `None`.
     pub(crate) gpu_note: Option<String>,
     pub(crate) link_mbps: Option<f64>,
+    /// It delivers its frames through the shared drive (share mode).
+    pub(crate) share: bool,
     pub(crate) frames_done: u64,
     pub(crate) ms_per_frame: Option<f64>,
     pub(crate) strikes: u32,

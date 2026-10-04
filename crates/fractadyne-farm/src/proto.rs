@@ -244,6 +244,9 @@ pub struct FrameDone {
     pub index: u64,
     pub render_ms: u64,
     pub blob: BlobAnnounce,
+    /// The frame is in the client's folder on the shared drive (`names::share_dir`), not streamed:
+    /// no chunks follow; the controller reads and checks it there.
+    pub on_share: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]

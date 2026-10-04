@@ -209,6 +209,9 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
             s("2"),
             s("--farm-allow-dirty"),
             s(super::status::FLAG),
+            // Share mode: client C has the same "shared drive" (a folder here) and writes there.
+            s("--share-root"),
+            p(&base.join("share")),
         ],
         &base.join("cfg-controller"),
         &[],
@@ -231,10 +234,17 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     let addr = format!("127.0.0.1:{port}");
 
     // 3. The clients.
+    // `ui`: started as the app's Render client window starts it (which also gives it the shared
+    // drive, so its frames go through share mode).
     let client = |name: &'static str, env: &[(&str, &str)], ui: bool| {
         let mut args = if ui {
             // Exactly the command line the app's Render client window starts.
-            let settings = crate::ui::farm_client::ClientSettings { controller: addr.clone(), name: format!("farmtest-{name}"), ..Default::default() };
+            let settings = crate::ui::farm_client::ClientSettings {
+                controller: addr.clone(),
+                name: format!("farmtest-{name}"),
+                share_root: base.join("share").to_string_lossy().into_owned(),
+                ..Default::default()
+            };
             crate::ui::farm_client::client_args(&settings, &key_file)
         } else {
             vec![s("--render-client"), addr.clone(), s("--farm-key-file"), p(&key_file), s("--name"), format!("farmtest-{name}")]
@@ -242,7 +252,8 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
         args.push(s("--farm-allow-dirty"));
         Proc::spawn(name, &args, &base.join(format!("cfg-{name}")), env)
     };
-    let mut a = client("A", &[(super::client::CORRUPT_INSTRUMENT, "2")], false)?;
+    // A corrupts its first two frames — on the shared drive, after their digests were announced.
+    let mut a = client("A", &[(super::client::CORRUPT_INSTRUMENT, "2")], true)?;
     let mut b = client("B", &[], false)?;
     // C as the app's Render client window runs it — its very command line: status lines out,
     // commands in.
@@ -403,6 +414,12 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
         this_gpu.is_some() && drivers.len() >= 3 && drivers.iter().all(|d| !d.is_empty()) && !called_different && with_rows.is_some_and(|s| s.clients.iter().all(|c| c.gpu_note.is_none())),
         format!("this machine's GPU ({}) and every client's driver ({drivers:?}) were read, and none was called different", this_gpu.as_deref().unwrap_or("not read")),
     );
+    // Share mode: C's frames came through the shared drive, and its folders there are gone.
+    let c_shared = ["farmtest-A", "farmtest-C"].iter().all(|n| ctl.log.iter().any(|l| !l.starts_with("! ") && l.contains(&format!("{n} writes its frames to the shared drive"))));
+    let leftovers: Vec<String> = std::fs::read_dir(base.join("share").join("fractadyne-farm"))
+        .map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+        .unwrap_or_default();
+    check(c_shared && leftovers.is_empty(), format!("clients A and C delivered through the shared drive (A's two bad copies caught there), and the job's folders there were removed (left: {leftovers:?})"));
     let cst: Vec<super::status::ClientStatus> = c.log.iter().filter_map(|l| super::status::parse(l)).collect();
     let rendered = cst.iter().any(|x| x.phase == super::status::ClientPhase::Rendering);
     let c_last = cst.last();
@@ -414,7 +431,8 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
             c_last.map_or(0, |x| x.frames_done)
         ),
     );
-    let a_corrupted = a.log.iter().any(|l| l.contains("sent corrupted on purpose"));
+    // "sent corrupted" when streamed, "left corrupted" on the shared drive.
+    let a_corrupted = a.log.iter().any(|l| l.contains("corrupted on purpose"));
     println!("farmtest: {:.1}s", t0.elapsed().as_secs_f64());
     if !b_killed || !a_corrupted {
         println!(

@@ -131,6 +131,10 @@ pub(crate) struct Bundle {
     pub(crate) ss: u32,
     pub(crate) prefix: String,
     pub(crate) frames: u64,
+    /// Share mode (design §7): a client with a shared folder writes its frames there
+    /// (`names::share_dir`) instead of streaming them.
+    #[serde(default)]
+    pub(crate) share: bool,
 }
 
 impl Bundle {
@@ -410,6 +414,19 @@ pub(crate) fn lan_address() -> Option<std::net::IpAddr> {
     let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
     s.connect("192.0.2.1:9").ok()?; // TEST-NET-1: routed like any public address, never answered
     s.local_addr().ok().map(|a| a.ip()).filter(|ip| !ip.is_unspecified() && !ip.is_loopback())
+}
+
+/// Move a file: a rename, or — across drives, where a rename cannot — a copy to `<dst>.part`, a
+/// rename into place, and the source removed.
+pub(crate) fn move_file(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if std::fs::rename(src, dst).is_ok() {
+        return Ok(());
+    }
+    let part = fractadyne_export::partial_path(dst);
+    std::fs::copy(src, &part)?;
+    std::fs::rename(&part, dst)?;
+    let _ = std::fs::remove_file(src);
+    Ok(())
 }
 
 /// Unix time in milliseconds.

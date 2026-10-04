@@ -69,6 +69,8 @@ struct Conn {
     gpu_cap: Option<u64>,
     adapter: String,
     driver: String,
+    /// It delivers frames through the shared drive.
+    on_share: bool,
     /// How its GPU differs from this machine's, once both are known (said once, at that moment).
     gpu_note: Option<String>,
     gpu_compared: bool,
@@ -145,6 +147,12 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
         ..Default::default()
     };
     let r = cli.resolve(&pb.render, &tour);
+    // Share mode (design §7): this machine's path to the shared drive the clients write to.
+    let share_root = value(args, "--share-root").map(PathBuf::from);
+    if let Some(root) = &share_root {
+        let d = root.join("fractadyne-farm");
+        std::fs::create_dir_all(&d).map_err(|e| format!("the shared drive {}: {e}", root.display()))?;
+    }
     // Dissolves and held shots, for the scheduler (design §5).
     let layout = pb.farm_layout(r.fps, crate::scripting::tour_frame_count(pb.total, r.fps));
     fractadyne_farm::names::check_file_part("frame prefix", &r.prefix)?;
@@ -212,6 +220,8 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     let mut ctl = Controller {
         args: args.to_vec(),
         layout,
+        share_root,
+        ev_tx: ev_tx.clone(),
         ui,
         identity: me.fingerprint(),
         key_file: key_path.clone(),
@@ -367,6 +377,11 @@ fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identi
             Ok(Incoming::Control(m)) => {
                 io.bytes_in.fetch_add(64, Ordering::Relaxed);
                 match m {
+                    Msg::FrameDone(f) if f.on_share => {
+                        if ev.send(CEv::Msg { conn, msg: Msg::FrameDone(f) }).is_err() {
+                            break;
+                        }
+                    }
                     Msg::FrameDone(f) => {
                         if pending.len() >= 4 || pending.contains_key(&f.blob.id) {
                             break close("protocol error: too many frames in flight".into());
@@ -463,6 +478,10 @@ fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identi
 
 struct Controller<'a> {
     args: Vec<String>,
+    /// `--share-root`: this machine's path to the shared drive, when the job runs in share mode.
+    share_root: Option<PathBuf>,
+    /// For the threads it starts (a share-mode frame's check).
+    ev_tx: mpsc::Sender<CEv>,
     /// The tour's mid-dissolve frames and held shots (`Playback::farm_layout`).
     layout: (Vec<bool>, Vec<(u64, u64)>),
     /// `--ui-status`: print status lines, take commands.
@@ -640,7 +659,8 @@ impl Controller<'_> {
                     match c {
                         Command::Accept { index: i } if *i == index => {
                             let dest = j.manifest.frame_path(index);
-                            let moved = std::fs::rename(&tmp, &dest);
+                            // From the incoming folder, or from the shared drive (perhaps another drive).
+                            let moved = move_file(&tmp, &dest);
                             if let Err(e) = moved {
                                 eprintln!("fractadyne: frame {index}: could not move it into place: {e}");
                             } else {
@@ -664,7 +684,7 @@ impl Controller<'_> {
                         if let Some(d) = q.parent() {
                             let _ = std::fs::create_dir_all(d);
                         }
-                        if std::fs::rename(&t, &q).is_err() {
+                        if move_file(&t, &q).is_err() {
                             let _ = std::fs::remove_file(&t);
                         }
                     }
@@ -738,6 +758,7 @@ impl Controller<'_> {
                         gpu_cap: None,
                         adapter: String::new(),
                         driver: String::new(),
+                        on_share: false,
                         gpu_note: None,
                         gpu_compared: false,
                         job_sent: false,
@@ -827,9 +848,61 @@ impl Controller<'_> {
                 let name = self.conns.get(&conn).map(|c| c.name.clone()).unwrap_or_default();
                 self.note(&format!("{name} left: {}", b.reason));
             }
+            Msg::FrameDone(f) if f.on_share => self.share_frame(conn, f),
             _ => {}
         }
         None
+    }
+
+    /// A frame a client wrote to the shared drive: checked where this machine sees it — size, the
+    /// full SHA-256, PNG structure and dimensions — on a thread of its own (a 4K frame is a read of
+    /// tens of MB), then handled exactly as a streamed one.
+    fn share_frame(&mut self, conn: ClientId, f: FrameDone) {
+        let Some(c) = self.conns.get_mut(&conn) else { return };
+        let name = c.name.clone();
+        let first = !c.on_share;
+        c.on_share = true;
+        let (Some(root), Some(j)) = (&self.share_root, &self.job) else {
+            let _ = self.ev_tx.send(CEv::FrameBad { conn, run: f.run_id, index: f.index, why: "a frame on a shared drive this job does not use".into(), tmp: None });
+            return;
+        };
+        let dir = match fractadyne_farm::names::share_dir(root, &j.job_id, &name) {
+            Ok(d) => d,
+            Err(e) => {
+                let _ = self.ev_tx.send(CEv::FrameBad { conn, run: f.run_id, index: f.index, why: e, tmp: None });
+                return;
+            }
+        };
+        if first {
+            self.note(&format!("{name} writes its frames to the shared drive ({})", dir.display()));
+        }
+        let path = dir.join(fractadyne_farm::names::frame_file_name(&self.res.4, f.index));
+        let dims = (self.res.0, self.res.1);
+        let tx = self.ev_tx.clone();
+        std::thread::spawn(move || {
+            let check = || -> Result<(), String> {
+                let data = std::fs::read(&path).map_err(|e| format!("cannot read it on the shared drive: {e}"))?;
+                if data.len() as u64 != f.blob.len {
+                    return Err(format!("{} bytes on the shared drive where the client announced {}", data.len(), f.blob.len));
+                }
+                if fractadyne_farm::sha256_hex(&data) != f.blob.sha256 {
+                    return Err("its SHA-256 on the shared drive does not match what the client announced".into());
+                }
+                match crate::scripting::png_frame_size(&path) {
+                    Some(d) if d == dims => Ok(()),
+                    Some((w, h)) => Err(format!("a {w}×{h} image where the job is {}×{}", dims.0, dims.1)),
+                    None => Err("not a complete PNG".into()),
+                }
+            };
+            let ev = match check() {
+                Ok(()) => CEv::FrameIn { conn, run: f.run_id, index: f.index, render_ms: f.render_ms, tmp: path, bytes: f.blob.len, sha256: f.blob.sha256 },
+                Err(why) => {
+                    let exists = path.exists();
+                    CEv::FrameBad { conn, run: f.run_id, index: f.index, why, tmp: exists.then_some(path) }
+                }
+            };
+            let _ = tx.send(ev);
+        });
     }
 
     /// A machine's GPU class for the scheduler: its probe's pixels, or failing that its adapter and
@@ -997,6 +1070,7 @@ impl Controller<'_> {
             ss,
             prefix: prefix.clone(),
             frames,
+            share: self.share_root.is_some(),
         };
         let bundle_bytes = serde_json::to_vec(&bundle).map_err(|e| e.to_string())?;
         let settings_key = format!("{}|cap={}", serde_json::to_string(&self.settings).map_err(|e| e.to_string())?, cap.map_or("-".into(), |c| c.to_string()));
@@ -1164,6 +1238,28 @@ impl Controller<'_> {
 
     fn finish(&mut self, failed: &[u64]) -> i32 {
         let Some(j) = &self.job else { return 2 };
+        // The job's folders on the shared drive, once empty (every frame moved into place).
+        if let Some(root) = &self.share_root {
+            let job_dir = root.join("fractadyne-farm").join(&j.job_id);
+            if let Ok(rd) = std::fs::read_dir(&job_dir) {
+                for e in rd.flatten() {
+                    // What a client folder still holds is not a frame of the deliverable — those
+                    // were moved out — but the render's status file, and copies never accepted (a
+                    // removed client's last frame, a late duplicate): this job's scratch space.
+                    let prefix = format!("{}_", self.res.4);
+                    if let Ok(files) = std::fs::read_dir(e.path()) {
+                        for f in files.flatten() {
+                            let n = f.file_name().to_string_lossy().into_owned();
+                            if n == "render-status.txt" || n == ".write-test" || (n.starts_with(&prefix) && (n.ends_with(".png") || n.ends_with(".part"))) {
+                                let _ = std::fs::remove_file(f.path());
+                            }
+                        }
+                    }
+                    let _ = std::fs::remove_dir(e.path());
+                }
+            }
+            let _ = std::fs::remove_dir(&job_dir);
+        }
         let ids: Vec<ClientId> = self.conns.keys().copied().collect();
         for id in ids {
             self.send(id, Msg::JobClose(JobClose { job_id: j.job_id.clone() }));
@@ -1546,6 +1642,7 @@ impl Controller<'_> {
             driver: self.gpus.get(name).map(|g| g.1.clone()).unwrap_or_default(),
             gpu_note: self.gpus.get(name).and_then(|g| g.2.clone()),
             link_mbps: c.and_then(|c| c.link_mbps),
+            share: c.is_some_and(|c| c.on_share),
             frames_done: v.map_or(0, |v| v.frames_done),
             ms_per_frame: v.and_then(|v| v.ewma_ms),
             strikes,

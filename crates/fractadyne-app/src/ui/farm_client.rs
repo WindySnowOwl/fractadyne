@@ -21,6 +21,8 @@ pub(crate) struct ClientSettings {
     pub(crate) max_height: u32,
     pub(crate) max_ss: u32,
     pub(crate) max_iter: u32,
+    /// This machine's path to the shared drive (share mode), or "" to stream every frame.
+    pub(crate) share_root: String,
 }
 
 impl Default for ClientSettings {
@@ -32,6 +34,7 @@ impl Default for ClientSettings {
             max_height: 16384,
             max_ss: 8,
             max_iter: 10_000_000,
+            share_root: String::new(),
         }
     }
 }
@@ -93,7 +96,7 @@ pub(crate) fn validate(s: &ClientSettings, key: &str) -> Result<(), String> {
 /// The command line the window starts its client with (`--farmtest` starts one the same way, so
 /// a flag this gets wrong fails the harness).
 pub(crate) fn client_args(s: &ClientSettings, key_file: &std::path::Path) -> Vec<String> {
-    vec![
+    let mut a = vec![
         "--render-client".into(),
         s.controller.clone(),
         "--farm-key-file".into(),
@@ -107,7 +110,12 @@ pub(crate) fn client_args(s: &ClientSettings, key_file: &std::path::Path) -> Vec
         "--max-iter".into(),
         s.max_iter.to_string(),
         FLAG.into(),
-    ]
+    ];
+    if !s.share_root.trim().is_empty() {
+        a.push("--share-root".into());
+        a.push(s.share_root.trim().to_string());
+    }
+    a
 }
 
 /// The phase in words, and whether it is a good (green), working (accent) or bad (red) state.
@@ -261,6 +269,11 @@ impl FractadyneApp {
                             ui.end_row();
                             ui.label("This machine");
                             ui.add(egui::TextEdit::singleline(&mut c.settings.name).desired_width(220.0)).on_hover_text("The name the controller shows for this machine.");
+                            ui.end_row();
+                            ui.label("Shared drive");
+                            ui.add(egui::TextEdit::singleline(&mut c.settings.share_root).hint_text("optional — e.g. \\\\fileserver\\share").desired_width(220.0)).on_hover_text(
+                                "This machine's path to the shared drive the controller uses (share mode): frames are written there instead of sent over the connection. Leave empty to send every frame.",
+                            );
                             ui.end_row();
                         });
                         egui::CollapsingHeader::new("Limits").id_salt("farm_client_limits").show(ui, |ui| {

@@ -47,6 +47,8 @@ param(
     # The key travels in the request on the share and is redacted from the results.
     [string]$Controller = "",
     [string]$FarmKeyFile = "",
+    # farm-client: share mode - the client writes its frames to the share (the agent's share root).
+    [switch]$FarmShare,
     [int]$TimeoutMin = 0,
     [string]$Note = "",
     [switch]$Wait,
@@ -168,6 +170,7 @@ switch ($Action) {
         $req.build = $Build
         $req.controller = $Controller
         $req.farm_key = $k
+        $req.share = [bool]$FarmShare
     }
 }
 if ($TimeoutMin -gt 0) { $req.timeout_min = $TimeoutMin }
