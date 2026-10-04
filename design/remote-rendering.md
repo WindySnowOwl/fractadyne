@@ -911,7 +911,19 @@ socket-pktinfo) to parse arbitrary DNS from the LAN. A found controller only fil
 them. Evidence: 5 unit tests (packet bounds, the longest valid beacon fits, every malformed reply
 refused, a loopback round trip, the rate limit under a flood), `--farmtest` 21/21 (discovery finds
 its controller), `--uitest` step `farm-client-find`, LOOKED at (the list read as plain text — a
-caption and selectable rows now; the seed carried another step's card choice).
+caption and selectable rows now; the seed carried another step's card choice). Across machines
+(`farm-pluto.ps1 -Discover`, agent v16: PLUTO runs `--discover` before joining): the first run
+found NOTHING although this machine's log showed both probes answered — ⛔on Windows a UDP probe
+to a port where nothing listens (PLUTO's own loopback: no controller there) comes back as
+`ConnectionReset` from the socket's NEXT receive, and the loop stopped at any error; on this
+machine the loopback probe always found a controller, so the error never arose. Fixed (only a
+timeout ends the wait; a test probes a closed port first, red before the fix); then PLUTO found
+`192.168.0.74:46733 "<this machine>" · 0.3.0-beta.18 5719ac1`, and a farm run with PLUTO dialling that
+discovered address finished (19 frames, exit 0). So a unicast reply to a broadcast does pass
+Windows' default firewall on the client. Noted: this machine has two cards on the LAN (.38 through
+a Hyper-V switch, .74 Intel); the probe arrives on both and the reply leaves from the routing
+table's choice — the address found is reachable, not necessarily the faster path (the link sample
+read 294 Mb/s through .74, 760–894 Mb/s through .38 on earlier runs).
 **Not built:** the QR code, the Linux client.
 
 Documentation per release: SECURITY.md threat-model paragraph, ARCHITECTURE.md §9/§13, TOURS.md
