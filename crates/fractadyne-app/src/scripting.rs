@@ -361,7 +361,7 @@ pub(crate) fn vignette_for(spots: &[Spotlight], vp: &fractadyne_core::Viewport, 
 /// the 12-byte `IEND` trailer that a writer emits last. That trailer is the point — a file cut off
 /// by a full disk or a killed process has everything except its ending, so its absence is the
 /// signal, and checking it costs two seeks rather than decoding a 4K image.
-fn png_frame_size(path: &std::path::Path) -> Option<(u32, u32)> {
+pub(crate) fn png_frame_size(path: &std::path::Path) -> Option<(u32, u32)> {
     use std::io::{Read, Seek, SeekFrom};
     const MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
     // 8 magic + 8 (IHDR length+type) + 8 (w,h) = 24, and a 12-byte IEND cannot overlap them.
@@ -1212,19 +1212,29 @@ pub(crate) fn segment_range(frames: u64, n: u64, k: u64) -> (u64, u64) {
 mod segment_props;
 
 /// Everything the tour renderer needs, after merging the CLI over the script's `[render]` block.
-struct ResolvedTourRender {
-    fps: f64,
-    width: u32,
-    height: u32,
-    ss: u32,
-    out: std::path::PathBuf,
-    prefix: String,
-    mp4: Option<std::path::PathBuf>,
+pub(crate) struct ResolvedTourRender {
+    pub(crate) fps: f64,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) ss: u32,
+    pub(crate) out: std::path::PathBuf,
+    pub(crate) prefix: String,
+    pub(crate) mp4: Option<std::path::PathBuf>,
+}
+
+/// A tour's frame count at `fps` — the SAME formula on every machine, which is what sharding and
+/// the render farm depend on (every host must agree on F for frame ranges to mean one thing).
+pub(crate) fn tour_frame_count(total: f64, fps: f64) -> u64 {
+    if total <= 0.0 {
+        1
+    } else {
+        (total * fps).round() as u64 + 1
+    }
 }
 
 impl TourRenderConfig {
     /// Merge: CLI flag > script `[render]` > built-in default.
-    fn resolve(&self, script: &TourRender, script_path: &std::path::Path) -> ResolvedTourRender {
+    pub(crate) fn resolve(&self, script: &TourRender, script_path: &std::path::Path) -> ResolvedTourRender {
         let width = self.width.or(script.width).unwrap_or(1280).clamp(16, 16384);
         let height = self
             .height
@@ -3302,7 +3312,7 @@ impl FractadyneApp {
         };
         // Total frame count — the SAME formula on every machine, which is what the sharding below
         // depends on (all hosts must agree on F for the ranges to tile).
-        let frames: u64 = if pb.total <= 0.0 { 1 } else { (pb.total * fps).round() as u64 + 1 };
+        let frames: u64 = tour_frame_count(pb.total, fps);
         let last_frame = last_frame.min(frames.saturating_sub(1));
         // --segments N --segment-index K: intersect the (possibly chapter-restricted) range with
         // this shard's half-open `[start, end)` — see `segment_range` for why the formula tiles.

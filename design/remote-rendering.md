@@ -21,7 +21,8 @@ decided and spends its effort on **bounding the tax** the earlier analysis feare
   refactor);
 - the scheduler is a pure module with an injected clock, tested the way `segment_range` is
   (`scripting/segment_props.rs`, `scripting/order_tests.rs`), never against a GPU;
-- the protocol has sixteen message kinds, all enumerated in §4, and nothing else.
+- the protocol is a closed list of message kinds — 15 as built in Phase 1, 18 once Phase 3 adds
+  orbit sharing — all enumerated in §4, and nothing else.
 
 Everything the farm needs that is *already built* — reuse it, do not sit beside it:
 
@@ -140,10 +141,19 @@ its own authenticated step bolted beside the certificates, and certificates on a
 paperwork with no issuer. The client is the Noise initiator (it dials); XX exchanges both sides'
 static keys inside the encrypted handshake;
 `psk3` mixes the farm key into the final message, so **a party without the farm key cannot
-complete the handshake, and a passive observer learns nothing, including the static keys**. After
-the first successful handshake each side **pins the other's static key** (fingerprint shown in both
-UIs); a later handshake from a known address with a different static key is refused and reported
-("the client at 192.168.1.31 changed identity"). Noise gives per-message authentication, nonces
+complete the handshake, and a passive observer learns nothing, including the static keys** (an
+ACTIVE party without the key does learn the controller's static public key from message two —
+public by definition — and nothing else). After the first successful handshake each side **pins the
+other's static key** (fingerprint shown in both UIs); a later handshake under the same name with a
+different static key is refused and reported ("PLUTO changed identity"). The controller pins a
+client by its NAME (clients dial from addresses that change); a client pins the controller by the
+address it dials.
+⛔**A client judges its pin only after the first authenticated message** — the controller's verdict,
+which only a holder of the farm key can produce. With `psk3` the controller's static key arrives in
+message two, before any proof; pinning there let a keyless impostor at the controller's address get
+ITS identity pinned, and the real controller was then refused as "changed identity". Found by a
+Phase 1 scenario test (an impostor controller, then the real one, at one address), fixed before any
+release. Noise gives per-message authentication, nonces
 (no replay), and forward secrecy from the ephemeral keys. Static keys are generated per install
 and stored with the farm key in `<config_dir>/farm/` (never logged; `zeroize` is already linked).
 
@@ -157,7 +167,7 @@ length (≤ 256 MiB) and SHA-256, and is complete only when the digest matches. 
 validation violation closes the connection and flags the peer *protocol error* — no partial trust.
 
 **Authorization = the protocol surface.** There is no command channel. A client can be asked to do
-exactly what §4 lists and nothing else; the sixteen kinds are the allow-list. Specific rules:
+exactly what §4 lists and nothing else; the message kinds are the allow-list. Specific rules:
 
 - ⛔**No path ever crosses the wire as a path.** The client's output root (share mode) and its
   config directory are local settings. The controller sends a `job_id` and a `prefix`, both
@@ -184,7 +194,8 @@ exactly what §4 lists and nothing else; the sixteen kinds are the allow-list. S
   share mode, optional *only when nobody is using this machine* (the field agent's idle rule).
   A request outside policy is refused with `RunAborted{Policy}` and the reason, not clamped.
 - **Resource limits** (all on the controller's one listener). One connection per pinned client;
-  handshake attempts rate-limited (3 per 10 s per source address, then a 60 s cooldown); 10 s
+  FAILED handshakes rate-limited (3 per 10 s per source address, then a 60 s cooldown — successful
+  ones never count, so several clients behind one address cannot lock each other out); 10 s
   handshake deadline; 30 s read timeout between messages; at most 2 runs assigned per client
   (current + next); a refused or dropped client redials with backoff (2 s → 60 s), never tighter.
 - **Diagnostics never widen the surface.** `DiagRequest` names items from a fixed list (child log
@@ -201,8 +212,11 @@ excludes.
 
 ## 4. Protocol (requirement 7 lives here too)
 
-Every message carries `v` (protocol version, integer) — the first message of a connection is
-refused if it differs. Sixteen kinds (K = client, C = controller; the client dials and speaks first):
+The protocol version is checked once, in `Hello` / `HelloAck` (both ends run one commit, so a
+per-message version would only repeat it). As built in Phase 1 the job's parameters — size, fps,
+ss, prefix, frame count, orbit cap — travel in the bundle, so `Assign` is just job, run and range;
+unknown fields are refused rather than ignored. K = client, C = controller; the client dials and
+speaks first. 15 kinds in Phase 1; the three orbit messages arrive with Phase 3 (protocol 2):
 
 | direction | kind | payload (all fields validated) | cap |
 |---|---|---|---|
@@ -213,14 +227,16 @@ refused if it differs. Sixteen kinds (K = client, C = controller; the client dia
 | C→K | `Assign` | `job_id`, `run: [start, end)`, `size`, `fps`, `ss`, `prefix`, output mode, `stall_timeout_s`, `deadline_s` | 4 KiB |
 | C→K | `Cancel` | `job_id`, `run` or `*`, reason (`Reassigned`, `Paused`, `Stopped`) | 1 KiB |
 | C→K | `JobClose` | `job_id` | 1 KiB |
-| C→K | `OrbitReply` | answer to `OrbitQuery`: none, or blob announcement | 4 KiB + blob ≤ 256 MiB |
+| C→K | `OrbitReply` | *(Phase 3)* answer to `OrbitQuery`: none, or blob announcement | 4 KiB + blob ≤ 256 MiB |
 | K→C | `Heartbeat` | every 2 s: state, `job_id`, `run`, frames done in run, current frame index, frame started at, child pid alive, load, free bytes at output root / temp | 2 KiB |
 | K→C | `FrameDone` | `job_id`, `index`, `bytes`, `sha256`, `how: Streamed{blob_id} / OnShare`, `render_ms`, `ref_fresh: bool` | 1 KiB |
 | K→C | `FrameFailed` | `job_id`, `index`, class (`Encode`, `Storage`, `Deadline`, `Gpu`), message (≤ 1 KiB) | 2 KiB |
 | K→C | `RunAborted` | `job_id`, `run`, done-up-to, reason (`UserCancel`, `Paused`, `DeviceLost`, `ChildCrash{exit}`, `Policy{what}`, `Version`) | 2 KiB |
-| K→C | `OrbitOffer` / `OrbitQuery` | §8: header fields of a blob the client has / the view the client is about to build for | 4 KiB |
-| C→K | `DiagRequest` | items from a fixed list (`child_log_tail`, `handshake`, `heartbeats`), `job_id`, `index` | 1 KiB |
+| K→C | `OrbitOffer` / `OrbitQuery` | *(Phase 3)* §8: header fields of a blob the client has / the view the client is about to build for | 4 KiB |
+| C→K | `DiagRequest` | items from a fixed list (`child_log_tail`, `handshake`, `heartbeats`) | 1 KiB |
 | K→C | `DiagReport` | the requested items, each truncated to its stated cap | 64 KiB |
+| C→K | `Keepalive` | every 5 s; a client whose read times out (30 s) knows the controller is gone, not quiet | — |
+| either | `Bye` | the sender is closing on purpose, and why (a removal, a refusal, a client leaving) — a client told `Bye` stops; one whose connection merely drops redials | 1 KiB |
 
 Blobs (bundle, frames, orbits) are the only large payloads and all go through the chunk kind with
 an announced length and digest.
@@ -504,8 +520,10 @@ and in the diagnostics.
 **Entering.** *File ▸ Render client…* opens a dialog with two fields — the controller's address and
 port, the farm key — and the client's policy (UI-DESIGN §8.2: affirmative first — *Connect* —
 Cancel second; while connected the slot becomes *Disconnect*). The client opens **no port**.
-Headless: `fractadyne --render-client HOST:PORT [--key-file F] [--output-root DIR] [--hidden]` for a
-box with no one at the keyboard — with the field agent's caveat intact: a wgpu device needs a desktop session; over
+Headless (built in Phase 1): `fractadyne --render-client HOST:PORT --farm-key-file F [--name N]
+[--max-size WxH] [--max-ss N] [--max-iter N]`; until the dialog exists, creating
+`<config>/farm/PAUSE` finishes the current frame and stops taking work (delete it to resume), and
+`CANCEL` stops at once and pauses. For a box with no one at the keyboard — with the field agent's caveat intact: a wgpu device needs a desktop session; over
 WinRM/SSH on Windows it may land on a software adapter (TODO.md:746–751), so a headless client is
 started by a logged-on session (scheduled task "run only when user is logged on"), as the field
 agent is.
@@ -690,6 +708,30 @@ changed static key, old protocol, `-dirty` build, self-check hard failure; (iv) 
 one client is killed mid-run and one frame is corrupted on the way → exactly 19 unique verified
 frames, pixel-identical to a plain `--render-tour` of the same build, the corrupt frame in
 `farm/bad/`, `done.jsonl` and `metrics.jsonl` consistent with the folder.
+
+✅**Built 2026-10-04** (crate `fractadyne-farm`; app `farm/`; headless `--farm-render`,
+`--render-client`, `--farmtest`). Evidence:
+- unit tests: farm crate 47 (keys incl. every single-letter typo caught; every message round-trips
+  and every bad field is refused; a real loopback Noise handshake, a wrong key refused, a 200 KB
+  blob across the channel; the scheduler's rules one by one and **every frame exactly once over 60
+  random farms**; manifest resume), app +7 (child-line parsing, bundle policy, the version gate);
+- `--farmtest` (a standalone harness rather than a self-test tag: it starts processes, which the
+  in-window self-test cannot): a controller and three loopback clients — A sends corrupted frames,
+  B is killed mid-run — finish the 19-frame normalized tour with all 19 frames PIXEL-identical to a
+  single-machine reference, each recorded once, A removed after two strikes with its bundle in
+  `farm/diag/` and its frames in `farm/bad/`, B's frames re-queued (19–28 s a run);
+- scenarios run by hand: the controller killed mid-job and restarted on the same folder resumed
+  ("8 of 19 done") while the client redialled by itself, and the result matched an uninterrupted
+  render pixel for pixel; a client's PAUSE finished its frame and handed back its runs, CANCEL
+  stopped at once, `--local` shared the work; a wrong-key client was refused with the reason; an
+  impostor controller, then the real one, at one address (below).
+Found and fixed while building it: the client pinned before the controller was proven (§3); the
+rate limiter counted successful handshakes (three clients on one address locked out a fourth);
+a client parked as unstable kept its prefetched run forever (the job never ended — a scenario
+test, red-checked); the link metrics summed live connections only, so the rate fell to zero
+whenever a machine left. **Not done from the gate above:** a fuzz pass over the control decoder
+(only targeted malformed-input tests), and the storage monitor's "waiting for space" exercised on a
+genuinely full disk (the scheduler's side is unit-tested).
 
 **Phase 2 — UI.** Client dialog and controller panel per §10–11, probe frame and GPU classes,
 `--uitest` steps for both screens. **Gate:** `--uitest` passes and the screenshots are LOOKED at;

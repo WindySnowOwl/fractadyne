@@ -151,17 +151,21 @@ fn chunks_round_trip_and_cover_a_blob_exactly() {
 fn a_blob_must_arrive_in_order_whole_and_unaltered() {
     let data = vec![42u8; 1000];
     let mut s = BlobSink::new(blob_of(1, &data), Vec::new());
-    assert!(s.push(10, &data[10..20]).is_err(), "out of order");
+    assert!(matches!(s.push(10, &data[10..20]), Err(BlobError::Protocol(_))), "out of order");
 
     let mut s = BlobSink::new(blob_of(1, &data), Vec::new());
     assert_eq!(s.push(0, &data[..500]), Ok(BlobProgress::More));
-    assert!(s.push(500, &[0u8; 600]).is_err(), "overrun");
+    assert!(matches!(s.push(500, &[0u8; 600]), Err(BlobError::Protocol(_))), "overrun");
 
+    // ⭐The tampered blob is a DIGEST error — the controller strikes the sender — not a protocol
+    // error, which would only close the connection.
     let mut tampered = data.clone();
     tampered[999] = 43;
     let mut s = BlobSink::new(blob_of(1, &data), Vec::new());
-    let e = s.push(0, &tampered).expect_err("digest mismatch");
-    assert!(e.contains("does not match"), "{e}");
+    match s.push(0, &tampered) {
+        Err(BlobError::Digest(e)) => assert!(e.contains("does not match"), "{e}"),
+        other => panic!("expected a digest error, got {other:?}"),
+    }
 }
 
 #[test]

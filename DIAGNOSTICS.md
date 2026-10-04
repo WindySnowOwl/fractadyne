@@ -88,6 +88,7 @@ and fails if one is missing from this table.
 | `[fd-view]` | always | `⚠JUMP view` — the view moved without a deliberate jump |
 | `[fd-cache]` | always | The on-disk orbit cache: size at startup, evictions, clears |
 | `[fd-export]` | always | Tour export writes that waited on a slow destination |
+| `[fd-farm]` | render farm | `--farm-render` / `--render-client`: connections, refusals and why, self-checks, admissions, assignments, strikes, removals, drops, resumes. The same lines go to the job's `<out>/farm/events.jsonl` (design/remote-rendering.md) |
 | `[fd-console]` | always | Console output switched on or off from the Diagnostics window |
 | `[fd-formula]` | always | A custom formula applied — its source, parameters, precision tier and the dispatch ceiling's cost-factor estimate — or a switch to Custom refused because none has been applied |
 | `[fd-perf]` | always | Per-export GPU iterate/colour ms and event counters (every export path since beta.149, the normalized and glitch-corrected ones included), `tiles=`/`passes=` (beta.150); `file-write:` the CLI render's PNG/EXR encode + write ms and bytes |

@@ -59,6 +59,22 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Render farm: render one tour on several machines (0.3.0-beta.18).** `--farm-render TOUR --out
+  DIR` runs a controller that listens for render clients; `--render-client HOST:PORT` turns any
+  machine with this exact build into one ([design](design/remote-rendering.md)). Clients dial in
+  over an encrypted, authenticated channel keyed by a farm key you paste into each (Noise, with
+  each side's identity pinned after the first proven connection), pass a self-check render, and
+  get runs of frames. Every frame that comes back is checked — its SHA-256, that it is a complete
+  PNG, its size — before it is kept; a bad one is quarantined and rendered elsewhere, and a machine
+  that sends two is removed, with its diagnostics saved and a notice printed. A machine that goes
+  quiet or is cancelled hands its frames back; a stalled run is reassigned. The job's state lives in
+  `DIR/farm/` — done log, events, status, metrics, quarantined frames — so running the same command
+  again resumes it. Builds must match exactly (version and commit), the palette ranges of a
+  normalized tour are measured once for every machine, and the reference-orbit cap is the smallest
+  among them, so the frames match a single-machine render: `--farmtest` runs a three-machine farm
+  on one computer, with one machine sending corrupted frames and one killed mid-run, and its 19
+  frames are pixel-identical to the same tour rendered alone. Headless for now; the windows for it
+  come next.
 - **Fixed: deep frames of a normalized tour came out nearly flat (0.3.0-beta.18).** A normalized
   tour measures a palette range at each keyframe's view, and every one of those measurements was
   taken of the home view instead, at the keyframe's iteration budget. A deep frame's escape values

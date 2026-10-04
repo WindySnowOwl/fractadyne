@@ -102,22 +102,27 @@ fn garbage_instead_of_a_handshake_is_an_error() {
 }
 
 #[test]
-fn the_rate_limiter_allows_a_burst_then_cools_down() {
+fn failed_handshakes_trigger_a_cooldown_and_successful_ones_never_do() {
     let mut rl = RateLimiter::new(3, Duration::from_secs(10), Duration::from_secs(60));
     let ip: std::net::IpAddr = Ipv4Addr::new(192, 168, 1, 31).into();
     let other: std::net::IpAddr = Ipv4Addr::new(192, 168, 1, 32).into();
     let t0 = Instant::now();
-    assert!(rl.admit(ip, t0));
-    assert!(rl.admit(ip, t0 + Duration::from_secs(1)));
-    assert!(rl.admit(ip, t0 + Duration::from_secs(2)));
-    assert!(!rl.admit(ip, t0 + Duration::from_secs(3)), "a fourth attempt in 10 s was admitted");
-    assert!(rl.admit(other, t0 + Duration::from_secs(3)), "one address's cooldown blocked another");
-    assert!(!rl.admit(ip, t0 + Duration::from_secs(50)), "admitted during the cooldown");
-    assert!(rl.admit(ip, t0 + Duration::from_secs(64)), "still refused after the cooldown");
-    // Spaced attempts never trip it.
+    // Any number of SUCCESSFUL connections from one address: never limited.
+    for i in 0..50 {
+        assert!(rl.allowed(ip, t0 + Duration::from_millis(i)), "a good connection {i} was refused");
+    }
+    assert!(!rl.failed(ip, t0));
+    assert!(!rl.failed(ip, t0 + Duration::from_secs(1)));
+    assert!(rl.failed(ip, t0 + Duration::from_secs(2)), "the third failure in 10 s did not start a cooldown");
+    assert!(!rl.allowed(ip, t0 + Duration::from_secs(3)));
+    assert!(rl.allowed(other, t0 + Duration::from_secs(3)), "one address's cooldown blocked another");
+    assert!(!rl.allowed(ip, t0 + Duration::from_secs(61)), "admitted during the cooldown");
+    assert!(rl.allowed(ip, t0 + Duration::from_secs(63)), "still refused after the cooldown");
+    // Failures spaced wider than the window never trip it.
     let mut rl = RateLimiter::default();
     for i in 0..20 {
-        assert!(rl.admit(ip, t0 + Duration::from_secs(6 * i)), "attempt {i}");
+        assert!(!rl.failed(ip, t0 + Duration::from_secs(11 * i)), "spaced failure {i} started a cooldown");
+        assert!(rl.allowed(ip, t0 + Duration::from_secs(11 * i + 1)));
     }
 }
 

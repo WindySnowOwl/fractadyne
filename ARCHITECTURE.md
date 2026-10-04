@@ -35,7 +35,7 @@ self-consistency-validated to 1e1000000×.
 
 ## 2. Crate layout
 
-A 6-crate Cargo workspace under `crates/`. (The earlier `-ui` / `-fractals` stubs, and later the
+A Cargo workspace under `crates/` (the table lists the crates with real responsibilities). (The earlier `-ui` / `-fractals` stubs, and later the
 `-render` stub, were retired; render orchestration can return as its own crate if that refactor
 lands — its intended responsibility currently lives in `fractadyne-app`.)
 
@@ -45,7 +45,8 @@ lands — its intended responsibility currently lives in `fractadyne-app`.)
 | `fractadyne-gpu` | ✅ | `wgpu` device, render pipelines, WGSL shaders (`mandelbrot.wgsl` — iterate + color), `render_export` (tiled), per-view resources. |
 | `fractadyne-color` | ✅ | Preset gradient palettes + interpolation. |
 | `fractadyne-state` | ✅ | Session persistence (`session.toml`), versioned state, `config_dir()` + `FRACTADYNE_CONFIG_DIR`, reset. |
-| `fractadyne-export` | ✅ | PNG/OpenEXR encode/decode + embedded view metadata. |
+| `fractadyne-export` | ✅ | PNG/OpenEXR encode/decode + embedded view metadata; atomic writes (`<name>.part` + rename). |
+| `fractadyne-farm` | ✅ | The render farm's pure half: farm key and identities, the closed protocol, the Noise_XXpsk3 channel over TCP (`snow`), the scheduler (a state machine with an injected clock), the job manifest in `<out>/farm/`, the job's render settings. No GPU or UI. See [`design/remote-rendering.md`](design/remote-rendering.md). |
 | `fractadyne-app` | ✅ | **Everything else** — app struct, UI, input, scripting, CLI, autopilot, coloring/mode logic, `FractalKind`. Split into modules (below). |
 
 **`fractadyne-app` modules:** `main.rs` (entry + app struct + `update()` frame loop, in
@@ -63,6 +64,7 @@ structs, and `update()`'s harness hooks + mode ladder), `export.rs` (view-metada
 `--bench-matrix` path-coverage perf/regression suite), `motiontest.rs` (`--motiontest`:
 the motion-presentation gate), `chunksweep.rs` (`--chunk-sweep`), `torture.rs` (`--torture`
 escalation suite), `soak.rs` (`--soak` liveness), `shot.rs` (`--shot` screenshot regen),
+`farm/` (the render farm's headless `--farm-render` controller, `--render-client` and `--farmtest`),
 `tone.rs` (finish sound), `icons.rs` (generated Lucide subset), `gputest.rs` (`--gputest`: the WGSL
 df32/floatexp primitives against CPU oracles, swept over every backend — the harness that found
 NVIDIA's shader compiler folding the error-free transforms), `uitest.rs` (`--uitest`: the scripted

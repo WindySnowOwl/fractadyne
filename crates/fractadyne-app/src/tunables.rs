@@ -182,6 +182,9 @@ pub(crate) const INSTRUMENTS: &[&str] = &[
     "FRACTADYNE_BLA_DROP_FRAMES",
     "FRACTADYNE_PASS_CLOCK",
     "FRACTADYNE_SEED_BUDGET",
+    // A render-farm client sends its first N frames corrupted, so `--farmtest` can prove the
+    // controller's verification catches them (`farm::client::CORRUPT_INSTRUMENT`).
+    "FRACTADYNE_FARM_CORRUPT_FRAMES",
 ];
 
 /// The armed instruments and their values: set, parseable and non-zero. Read once — they are

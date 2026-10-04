@@ -1467,6 +1467,7 @@ dependencies = [
  "fractadyne-color",
  "fractadyne-core",
  "fractadyne-export",
+ "fractadyne-farm",
  "fractadyne-gpu",
  "fractadyne-state",
  "fractadyne-text",

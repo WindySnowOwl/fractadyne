@@ -228,8 +228,10 @@ impl Writer {
     }
 }
 
-/// Handshake admission per source address: at most `burst` attempts in `window`, then refused for
-/// `cooldown`. Pure (the caller passes the time), so the policy is pinned by test.
+/// Handshake admission per source address: after `burst` FAILED handshakes within `window`, the
+/// address is refused for `cooldown`. Successful handshakes do not count — several real clients
+/// behind one address (loopback, a NAT) must never lock each other out by connecting together.
+/// Pure (the caller passes the time), so the policy is pinned by test.
 pub struct RateLimiter {
     burst: usize,
     window: Duration,
@@ -238,7 +240,7 @@ pub struct RateLimiter {
 }
 
 impl Default for RateLimiter {
-    /// The design's policy: 3 handshakes per 10 s per address, then 60 s refused.
+    /// The design's policy: 3 failed handshakes per 10 s per address, then 60 s refused.
     fn default() -> Self {
         Self::new(3, Duration::from_secs(10), Duration::from_secs(60))
     }
@@ -249,30 +251,39 @@ impl RateLimiter {
         Self { burst, window, cooldown, seen: Default::default() }
     }
 
-    /// May `ip` attempt a handshake at `now`?
-    pub fn admit(&mut self, ip: std::net::IpAddr, now: Instant) -> bool {
-        let (times, until) = self.seen.entry(ip).or_default();
-        if let Some(t) = *until {
-            if now < t {
-                return false;
-            }
-            *until = None;
-            times.clear();
+    /// May `ip` attempt a handshake at `now`? (False only while it is cooling down.)
+    pub fn allowed(&mut self, ip: std::net::IpAddr, now: Instant) -> bool {
+        match self.seen.get_mut(&ip) {
+            Some((times, until)) => match *until {
+                Some(t) if now < t => false,
+                Some(_) => {
+                    *until = None;
+                    times.clear();
+                    true
+                }
+                None => true,
+            },
+            None => true,
         }
-        while times.front().is_some_and(|&t| now.duration_since(t) > self.window) {
-            times.pop_front();
-        }
-        if times.len() >= self.burst {
-            *until = Some(now + self.cooldown);
-            return false;
-        }
-        times.push_back(now);
-        // Bound the table: forget addresses idle for a long time.
+    }
+
+    /// A handshake from `ip` failed at `now`. Returns true when this failure started a cooldown.
+    pub fn failed(&mut self, ip: std::net::IpAddr, now: Instant) -> bool {
         if self.seen.len() > 4096 {
             let horizon = self.window + self.cooldown;
             self.seen.retain(|_, (t, u)| u.is_some_and(|u| u > now) || t.back().is_some_and(|&b| now.duration_since(b) < horizon));
         }
-        true
+        let (times, until) = self.seen.entry(ip).or_default();
+        while times.front().is_some_and(|&t| now.duration_since(t) > self.window) {
+            times.pop_front();
+        }
+        times.push_back(now);
+        if times.len() >= self.burst {
+            *until = Some(now + self.cooldown);
+            times.clear();
+            return true;
+        }
+        false
     }
 }
 

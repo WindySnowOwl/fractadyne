@@ -540,6 +540,24 @@ pub enum BlobProgress {
     Complete,
 }
 
+/// Why a blob was not accepted. The two are handled differently: a protocol violation closes the
+/// connection; a digest mismatch on a frame is a BAD FRAME — re-queued elsewhere and a strike.
+#[derive(Debug, PartialEq, Eq)]
+pub enum BlobError {
+    /// Out of order, past its announced length, empty, or the sink failed.
+    Protocol(String),
+    /// Every byte arrived, and they are not the bytes announced.
+    Digest(String),
+}
+
+impl std::fmt::Display for BlobError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BlobError::Protocol(e) | BlobError::Digest(e) => f.write_str(e),
+        }
+    }
+}
+
 impl<W: std::io::Write> BlobSink<W> {
     pub fn new(announce: BlobAnnounce, out: W) -> Self {
         Self { announce, received: 0, hash: crate::Sha256::default(), out }
@@ -549,28 +567,29 @@ impl<W: std::io::Write> BlobSink<W> {
         self.received
     }
 
-    /// Feed one chunk. `Err` is either a protocol error (order, overrun) or a digest mismatch.
-    pub fn push(&mut self, offset: u64, data: &[u8]) -> Result<BlobProgress, String> {
+    /// Feed one chunk.
+    pub fn push(&mut self, offset: u64, data: &[u8]) -> Result<BlobProgress, BlobError> {
+        let id = self.announce.id;
         if offset != self.received {
-            return Err(format!("blob {}: chunk at {offset}, expected {}", self.announce.id, self.received));
+            return Err(BlobError::Protocol(format!("blob {id}: chunk at {offset}, expected {}", self.received)));
         }
         let end = self.received + data.len() as u64;
         if end > self.announce.len {
-            return Err(format!("blob {}: {end} bytes is past its announced {}", self.announce.id, self.announce.len));
+            return Err(BlobError::Protocol(format!("blob {id}: {end} bytes is past its announced {}", self.announce.len)));
         }
         if data.is_empty() && self.announce.len != 0 {
-            return Err(format!("blob {}: empty chunk", self.announce.id));
+            return Err(BlobError::Protocol(format!("blob {id}: empty chunk")));
         }
-        self.out.write_all(data).map_err(|e| format!("blob {}: {e}", self.announce.id))?;
+        self.out.write_all(data).map_err(|e| BlobError::Protocol(format!("blob {id}: {e}")))?;
         self.hash.update(data);
         self.received = end;
         if self.received < self.announce.len {
             return Ok(BlobProgress::More);
         }
-        self.out.flush().map_err(|e| format!("blob {}: {e}", self.announce.id))?;
+        self.out.flush().map_err(|e| BlobError::Protocol(format!("blob {id}: {e}")))?;
         let got = std::mem::take(&mut self.hash).finish_hex();
         if got != self.announce.sha256 {
-            return Err(format!("blob {}: SHA-256 {got} does not match the announced {}", self.announce.id, self.announce.sha256));
+            return Err(BlobError::Digest(format!("SHA-256 {got} does not match the announced {}", self.announce.sha256)));
         }
         Ok(BlobProgress::Complete)
     }

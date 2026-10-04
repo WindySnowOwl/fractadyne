@@ -16,6 +16,7 @@ fractadyne-gpu.workspace = true
 fractadyne-color.workspace = true
 fractadyne-state.workspace = true
 fractadyne-export.workspace = true
+fractadyne-farm.workspace = true
 eframe.workspace = true
 egui.workspace = true
 log.workspace = true

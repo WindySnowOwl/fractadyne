@@ -69,6 +69,7 @@ mod error;
 mod exec_resolve;
 mod eyedropper;
 mod export;
+mod farm;
 mod bench_matrix;
 mod custom_formula;
 mod formula_library;
@@ -723,7 +724,7 @@ const TASK_FLAGS: &[&str] = &[
     "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
     "--zoomtest",
     "--chunk-sweep", "--deviceloss-repro", "--bench-bignum", "--shot", "--soak", "--pickcheck",
-    "--recordtest",
+    "--recordtest", "--farm-render", "--render-client", "--farmtest",
 ];
 
 /// The task a command line runs, by name (`soak` for `--soak …`): the first task flag in it. The

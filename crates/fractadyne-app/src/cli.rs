@@ -143,6 +143,12 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
     if args.iter().any(|a| a == "--torture") {
         crate::exit(crate::torture::run(args));
     }
+    // The render farm (design/remote-rendering.md): the controller, a client, and their harness.
+    // Headless for the same reason as `--torture` — they render nothing themselves; every frame
+    // comes from a `--render-tour --farm-child` process they start.
+    if let Some(code) = crate::farm::run_headless(args) {
+        crate::exit(code);
+    }
     // `--logcheck [LOG]`: hold a log (default: this app's own) to validation/logcheck-rules.toml.
     // Headless and deviceless, so it can judge the log a killed or wedged run left behind.
     if args.iter().any(|a| a == "--logcheck") {
