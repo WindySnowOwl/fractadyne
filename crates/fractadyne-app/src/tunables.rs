@@ -185,6 +185,9 @@ pub(crate) const INSTRUMENTS: &[&str] = &[
     // A render-farm client sends its first N frames corrupted, so `--farmtest` can prove the
     // controller's verification catches them (`farm::client::CORRUPT_INSTRUMENT`).
     "FRACTADYNE_FARM_CORRUPT_FRAMES",
+    // A render-farm client with `--when-idle` counts as in use for the first N seconds of its first
+    // frame, so `--farmtest` can prove the frame goes back to the farm (`farm::client::IN_USE_INSTRUMENT`).
+    "FRACTADYNE_FARM_IN_USE_FOR",
 ];
 
 /// The armed instruments and their values: set, parseable and non-zero. Read once — they are

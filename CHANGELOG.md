@@ -85,9 +85,9 @@ Changes after 0.3.0-beta.1:
   `DIR/farm/` — done log, events, status, metrics, quarantined frames — so running the same command
   again resumes it. Builds must match exactly (version and commit), the palette ranges of a
   normalized tour are measured once for every machine, and the reference-orbit cap is the smallest
-  among them, so the frames match a single-machine render: `--farmtest` runs a three-machine farm
-  on one computer, with one machine sending corrupted frames and one killed mid-run, and its 19
-  frames are pixel-identical to the same tour rendered alone. From the app, Tools ▸ Render on
+  among them, so the frames match a single-machine render: `--farmtest` runs a farm of four clients
+  on one computer, with one sending corrupted frames, one killed mid-run and one taken over by a
+  (simulated) user, and its 19 frames are pixel-identical to the same tour rendered alone. From the app, Tools ▸ Render on
   farm… renders the loaded tour this way — the farm key to copy, a table of the machines (what each
   is doing, its speed, its GPU class), the frames' progress, pause, stop and resume — and File ▸
   Render client… joins this machine to a farm, with pause, cancel-frame and disconnect; closing
@@ -102,7 +102,11 @@ Changes after 0.3.0-beta.1:
   frames there instead of sending them, each still checked before it is kept. Deep references are
   built once and shared: renders keep them in a cache, the farm passes them between machines, and
   for tours deeper than 1e300× the deepest keyframe's reference is built first (`--sharing off`
-  builds every reference where it is used).
+  builds every reference where it is used). A machine with several graphics cards can join once
+  per card (*Graphics card* in the Render client window, `--adapters all`), and any render can be
+  pointed at one card (`--adapter`, listed by `--list-adapters`). A client can also take work only
+  when nobody is using the machine (*Only when idle*, `--when-idle`, Windows): when someone starts
+  using it, the frame in progress stops at once and goes back to the farm.
 - **Fixed: deep frames of a normalized tour came out nearly flat (0.3.0-beta.18).** A normalized
   tour measures a palette range at each keyframe's view, and every one of those measurements was
   taken of the home view instead, at the keyframe's iteration budget. A deep frame's escape values

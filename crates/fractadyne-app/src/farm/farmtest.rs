@@ -3,9 +3,12 @@
 //!
 //! 1. A reference: the gate tour rendered by one plain `--render-tour --farm-child` process.
 //! 2. A controller on a loopback port, waiting for three clients.
-//! 3. Three clients: A sends its first two frames corrupted (the `FRACTADYNE_FARM_CORRUPT_FRAMES`
+//! 3. Four clients: A sends its first two frames corrupted (the `FRACTADYNE_FARM_CORRUPT_FRAMES`
 //!    instrument) and must be removed with a diagnostics bundle; B is killed — by its own process
-//!    id — once it has sent a frame, and its frames must go back to the queue; C behaves.
+//!    id — once it has sent a frame, and its frames must go back to the queue; C behaves; D runs
+//!    two sessions on this machine's graphics card (`--adapters N,N`, as a two-GPU machine would)
+//!    under `--when-idle`, and someone "sits down" at it as each session's first frame starts (the
+//!    `FRACTADYNE_FARM_IN_USE_FOR` instrument): that frame must go back to the farm, no strike.
 //! 4. The verdict: the controller exits 0; the output holds exactly the tour's frames, each
 //!    PIXEL-identical to the reference; `done.jsonl` records each once; A's bad frames are in
 //!    `farm/bad/`, its bundle in `farm/diag/`, and the event log tells both stories.
@@ -92,6 +95,7 @@ impl Proc {
             .env("FRACTADYNE_CONFIG_DIR", cfg)
             .env("FRACTADYNE_NO_SOUND", "1")
             .env_remove(super::client::CORRUPT_INSTRUMENT)
+            .env_remove(super::client::IN_USE_INSTRUMENT)
             .stdin(if piped { std::process::Stdio::piped() } else { std::process::Stdio::null() })
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -200,7 +204,7 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
             s("--listen"),
             s("127.0.0.1:0"),
             s("--min-clients"),
-            s("3"),
+            s("5"),
             s("--farm-key-file"),
             p(&key_file),
             s("--first-run"),
@@ -258,6 +262,31 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     // C as the app's Render client window runs it — its very command line: status lines out,
     // commands in.
     let mut c = client("C", &[], true)?;
+    // D: two sessions on this machine's card, each in use for its first frame's first 3 s and
+    // waiting 3 s (0.05 min) of idle before taking work.
+    let card = crate::gpu_choice::list()
+        .iter()
+        .position(|r| r.is_hardware() && r.backend == eframe::wgpu::Backend::Vulkan)
+        .map_or(1, |i| i + 1);
+    let mut d = Proc::spawn(
+        "D",
+        &[
+            s("--render-client"),
+            addr.clone(),
+            s("--farm-key-file"),
+            p(&key_file),
+            s("--name"),
+            s("farmtest-D"),
+            s("--adapters"),
+            format!("{card},{card}"),
+            s("--when-idle"),
+            s("0.05"),
+            s("--farm-allow-dirty"),
+            s(super::status::FLAG),
+        ],
+        &base.join("cfg-D"),
+        &[(super::client::IN_USE_INSTRUMENT, "3")],
+    )?;
 
     // 4. Run, killing B once it has sent a frame; pause the job from "the window" (stdin) as soon as
     // it renders, and resume it once the status says paused.
@@ -292,6 +321,7 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
         }
         a.drain("");
         c.drain("");
+        d.drain("");
         if b.drain("frame ") && !b_killed && b.log.iter().any(|l| l.contains(" sent (")) {
             println!("  → killing client B (pid {}) mid-run", b.child.id());
             let _ = b.child.kill();
@@ -321,7 +351,7 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
         std::thread::sleep(Duration::from_millis(50));
     };
     let leave_s = leave_t.elapsed().as_secs_f64();
-    for pr in [&mut a, &mut b, &mut c] {
+    for pr in [&mut a, &mut b, &mut c, &mut d] {
         if pr.running() {
             let _ = pr.child.kill();
         }
@@ -404,21 +434,21 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     check(pause_step == 3, format!("pause and resume through stdin took effect (step {pause_step} of 3)"));
     // (stdout only: each note is echoed to stderr as a `[fd-farm]` log line too)
     let identical_probes = ctl.log.iter().filter(|l| !l.starts_with("! ") && l.contains("probe identical to this machine's")).count();
-    check(identical_probes == 3, format!("every client's probe matched this machine's ({identical_probes} of 3)"));
+    check(identical_probes == 5, format!("every client's probe matched this machine's ({identical_probes} of 5: A, B, C and D's two sessions)"));
     let probes: Vec<String> = std::fs::read_dir(out.join("farm").join("probes")).map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
-    check(probes.len() == 4 && probes.iter().any(|n| n == "this-machine.png"), format!("farm/probes holds this machine's probe and the clients' ({} files)", probes.len()));
-    let classes: Vec<Option<String>> = statuses.iter().rev().find(|s| s.clients.len() >= 3).map(|s| s.clients.iter().map(|c| c.gpu_class.clone()).collect()).unwrap_or_default();
-    check(classes.len() >= 3 && classes.iter().all(|c| c.as_deref() == Some("A")), format!("one GPU class, A, for every client ({classes:?})"));
+    check(probes.len() == 6 && probes.iter().any(|n| n == "this-machine.png"), format!("farm/probes holds this machine's probe and the clients' ({} files)", probes.len()));
+    let classes: Vec<Option<String>> = statuses.iter().rev().find(|s| s.clients.len() >= 5).map(|s| s.clients.iter().map(|c| c.gpu_class.clone()).collect()).unwrap_or_default();
+    check(classes.len() >= 5 && classes.iter().all(|c| c.as_deref() == Some("A")), format!("one GPU class, A, for every client ({classes:?})"));
     check(events.contains("probe identical"), "the event log kept the notes from before the job started (the probes)".into());
     // The GPU comparison READ something: this machine's GPU and every client's driver are known —
     // and, all on this one GPU, none was called different. (Without the reads, "no warning" would
     // pass by comparing nothing.)
-    let with_rows = statuses.iter().rev().find(|s| s.clients.len() >= 3);
+    let with_rows = statuses.iter().rev().find(|s| s.clients.len() >= 5);
     let this_gpu = with_rows.and_then(|s| s.this_gpu.clone());
     let drivers: Vec<String> = with_rows.map(|s| s.clients.iter().map(|c| c.driver.clone()).collect()).unwrap_or_default();
     let called_different = ctl.log.iter().any(|l| l.contains("differ slightly from this machine's") && l.contains("has a") || l.contains("has the same GPU"));
     check(
-        this_gpu.is_some() && drivers.len() >= 3 && drivers.iter().all(|d| !d.is_empty()) && !called_different && with_rows.is_some_and(|s| s.clients.iter().all(|c| c.gpu_note.is_none())),
+        this_gpu.is_some() && drivers.len() >= 5 && drivers.iter().all(|d| !d.is_empty()) && !called_different && with_rows.is_some_and(|s| s.clients.iter().all(|c| c.gpu_note.is_none())),
         format!("this machine's GPU ({}) and every client's driver ({drivers:?}) were read, and none was called different", this_gpu.as_deref().unwrap_or("not read")),
     );
     // Share mode: C's frames came through the shared drive, and its folders there are gone.
@@ -438,13 +468,38 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
             c_last.map_or(0, |x| x.frames_done)
         ),
     );
+    // D: two sessions, one machine's controls; someone sitting down hands the frame back.
+    let d_names = ["farmtest-D · GPU 1", "farmtest-D · GPU 2"];
+    let d_joined = d_names.iter().all(|n| events.contains(&format!("{n} joined")));
+    let d_tagged = ["[GPU 1] ", "[GPU 2] "].iter().all(|t| d.log.iter().any(|l| l.starts_with(t)));
+    let dst: Vec<super::status::ClientStatus> = d.log.iter().filter_map(|l| super::status::parse(l)).collect();
+    let d_slots = [1, 2].iter().all(|k| dst.iter().any(|x| x.slot == Some(*k) && x.name == d_names[*k as usize - 1]));
+    check(
+        d_joined && d_tagged && d_slots,
+        format!("client D joined as two sessions, \"farmtest-D · GPU 1\" and \"· GPU 2\" (joined {d_joined}, output tagged per session {d_tagged}, a status line per session {d_slots})"),
+    );
+    let d_stops = d.log.iter().filter(|l| l.contains("stopped the frame in progress; it goes back to the farm")).count();
+    let d_back = d.log.iter().filter(|l| l.contains("— taking work")).count();
+    let d_parked = d_names.iter().any(|n| events.contains(&format!("{n} was paused by its user")));
+    let d_struck = events.lines().any(|l| l.contains("farmtest-D") && (l.contains("REMOVED") || l.contains("strike") || l.contains("unstable")));
+    let d_in_use = dst.iter().any(|x| x.in_use);
+    check(
+        d_stops >= 1 && d_back >= 1 && d_parked && !d_struck && d_in_use,
+        format!("someone using D stopped its frame ({d_stops} stopped), the farm took it back without a strike (parked {d_parked}, struck {d_struck}), the window was told ({d_in_use}), and D took work again once idle ({d_back})"),
+    );
     // "sent corrupted" when streamed, "left corrupted" on the shared drive.
     let a_corrupted = a.log.iter().any(|l| l.contains("corrupted on purpose"));
     println!("farmtest: {:.1}s", t0.elapsed().as_secs_f64());
-    if !b_killed || !a_corrupted {
+    if !b_killed || !a_corrupted || d_stops == 0 {
         println!(
             "farmtest: VACUOUS — {}",
-            if !b_killed { "client B never sent a frame, so it was never killed mid-run" } else { "client A never sent a corrupted frame, so verification was never exercised" }
+            if !b_killed {
+                "client B never sent a frame, so it was never killed mid-run"
+            } else if !a_corrupted {
+                "client A never sent a corrupted frame, so verification was never exercised"
+            } else {
+                "client D was never given a frame, so the in-use rule never stopped one"
+            }
         );
         return Ok(2);
     }

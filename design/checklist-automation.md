@@ -206,7 +206,7 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 | 94 | A | COMPLETENESS, not a round trip: every `[[keyframe]]` field must be either restored by `PlaybackRestore` when the tour ends or on an explicit keep-list with a reason. Add a keyframe field without deciding, and a played tour silently edits the viewer's session — the test names the field. |
 | 95 | A | Tour-from-view writes a script that parses back to the same start view. |
 | 96 | A | `--benchmark-std` headless: exit 0 and a complete report. |
-| 97 | B | `--farmtest`: a controller and three clients on one machine finish a tour pixel-identical to a single-machine render, with a client sending corrupt frames removed and one killed mid-run, and drive the windows' status-and-command protocol (`--ui-status`) both ways; `--uitest` photographs both windows (`farm-client`, `farm-controller`). Not checked: a second machine joining over the network (`scripts/farm-pluto.ps1` does that, with the machine) and the windows' buttons wired to the commands. |
+| 97 | B | `--farmtest`: a controller and four clients on one machine finish a tour pixel-identical to a single-machine render, with a client sending corrupt frames removed, one killed mid-run, and one running a session per graphics card under *only when idle* whose frames go back to the farm when a (simulated) user sits down; they drive the windows' status-and-command protocol (`--ui-status`) both ways; `--uitest` photographs both windows (`farm-client`, `farm-client-gpus`, `farm-controller`). Not checked: a second machine joining over the network (`scripts/farm-pluto.ps1` does that, with the machine) and the windows' buttons wired to the commands. |
 
 ### Help & settings (98–104)
 

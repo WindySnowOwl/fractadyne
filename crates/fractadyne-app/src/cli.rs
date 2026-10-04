@@ -215,6 +215,11 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         let fails = crate::gputest::run_gputest_sweep(out.as_deref());
         crate::exit(if fails > 0 { 1 } else { 0 });
     }
+    // --list-adapters: the graphics adapters `--adapter` chooses among, numbered as it counts them.
+    if args.iter().any(|a| a == crate::gpu_choice::LIST_FLAG) {
+        print!("{}", crate::gpu_choice::listing(&crate::gpu_choice::list()));
+        crate::exit(0);
+    }
 
     // A bad option must never silently launch the GUI — report it and exit non-zero (like a
     // conventional CLI). The single-dash case gets a targeted one-liner instead of the full

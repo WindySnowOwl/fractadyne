@@ -870,6 +870,34 @@ required); QR for the farm key; *only when idle* policy; one slot per adapter on
 clients (needs an adapter-selection flag — the L-systems note "farm tour frames per adapter" lands
 here); Linux client on the RX 6800 XT box (via the field agent — ask before queueing).
 
+🟠**Partly built 2026-10-04: adapter choice, one session per card, only when idle.** *Adapter
+choice* (`gpu_choice.rs`): `--list-adapters` prints the adapters numbered as `--adapter N | NAME`
+counts them — the same `enumerate_adapters` over the same backends egui-wgpu makes, handed to it as
+its `native_adapter_selector`, so the number printed is the adapter taken; a number of three digits
+or more is a model number (`--adapter 6800`), a smaller one only a position (`--adapter 0` is an
+error, not "a name with a 0 in it" — both found by the unit tests). Checked on this machine's two
+entries for one card: `--adapter "rtx 3080"` rendered on Vulkan, `--adapter 2` reached the GL
+backend (which fails a validation check identically without the flag — the app does not render on
+GL today). *One session per card*: `--render-client … --adapters all | N,M` runs a session per
+card in one process — each its own name at the controller ("NAME · GPU k", which the controller
+pins and schedules by), its own work folder, `--adapter N` on its probe and every render, and its
+own status line (`ClientStatus::slot`; `Link::all` keeps one per slot) — while pause, cancel
+(a counter each session acts on once) and leave are the machine's. The window offers *Graphics
+card* from a `--list-adapters` child (the app never enumerates OpenGL beside its own device) and
+shows a row per card. *Only when idle* (`--when-idle MIN`, Windows): in use = input within MIN
+(`GetLastInputInfo`) and the screen unlocked (`OpenInputDesktop`); when someone starts using the
+machine, the frame in progress stops at once and its run goes back as `UserCancel` (no strike),
+a run waiting in the queue goes back too, new work is refused like a pause, and the heartbeat says
+paused until the machine has been idle MIN. Evidence: `--farmtest` 20/20 (29.7 s) — client D runs
+two sessions on this machine's card under `--when-idle 0.05` with the `FRACTADYNE_FARM_IN_USE_FOR`
+instrument (someone "sits down" as each session's first frame starts): both sessions joined and
+tagged their output, both frames were stopped and re-queued ("was paused by its user"), D
+resumed and rendered frames 0–3 and 13–15, and all 19 frames stayed pixel-identical; `--uitest`
+steps `farm-client` and the new `farm-client-gpus`, LOOKED at — which caught GPU rows cut before
+their counts and a status line naming one card's run as the machine's. Unit tests: the adapter
+spec, the listing read back, the idle rule, the merged status, the window's command line.
+**Not built:** mDNS, the QR code, the Linux client.
+
 Documentation per release: SECURITY.md threat-model paragraph, ARCHITECTURE.md §9/§13, TOURS.md
 is regenerated (the flags), CHANGELOG entry, `help.rs`.
 

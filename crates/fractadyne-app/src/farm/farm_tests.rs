@@ -2,6 +2,17 @@ use super::*;
 use fractadyne_farm::proto::Policy;
 
 #[test]
+fn a_machine_is_in_use_only_while_touched_recently_and_unlocked() {
+    use std::time::Duration;
+    let need = Duration::from_secs(300);
+    assert!(in_use(need, Some(Duration::from_secs(10)), false));
+    assert!(!in_use(need, Some(Duration::from_secs(300)), false), "idle for exactly the time asked is idle");
+    assert!(!in_use(need, Some(Duration::from_secs(10)), true), "a locked screen is nobody's");
+    assert!(!in_use(need, None, false), "an unreadable idle time counts as idle (the field agent's rule)");
+    assert!(!in_use(Duration::ZERO, Some(Duration::ZERO), false), "--when-idle 0 never waits");
+}
+
+#[test]
 fn frame_done_lines_parse_exactly_as_the_renderer_prints_them() {
     let sha = "e54f3cb027ffc5ea707912eb948fe9cbaca0ea2eaa451afbcc4ebec674cd2ccc";
     assert_eq!(

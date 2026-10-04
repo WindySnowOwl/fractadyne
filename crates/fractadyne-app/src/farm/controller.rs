@@ -215,7 +215,7 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
         let tx = ev_tx.clone();
         let dir = out.join("farm").join("probe");
         std::thread::spawn(move || {
-            let _ = tx.send(CEv::OwnProbe(render_probe(&dir)));
+            let _ = tx.send(CEv::OwnProbe(render_probe(&dir, None)));
         });
     }
     let key = Arc::new(key);

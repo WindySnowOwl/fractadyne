@@ -353,14 +353,18 @@ zoom = "1e30"
 
 /// Render the probe (`SELF_CHECK_TOUR`) in `dir` with a fresh configuration: its PNG bytes and the
 /// render's stderr (which names the adapter and the orbit cap). Blocking, at most 120 s.
-pub(crate) fn render_probe(dir: &Path) -> Result<(Vec<u8>, String), String> {
+pub(crate) fn render_probe(dir: &Path, adapter: Option<&str>) -> Result<(Vec<u8>, String), String> {
     use std::time::{Duration, Instant};
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let tour = dir.join("self-check.toml");
     std::fs::write(&tour, SELF_CHECK_TOUR).map_err(|e| e.to_string())?;
     let frames = dir.join("frames");
-    let args: Vec<String> = ["--render-tour", &tour.to_string_lossy(), "--out", &frames.to_string_lossy(), "--frames", "0..1", "--farm-child", "-y"].iter().map(|s| s.to_string()).collect();
+    let mut args: Vec<String> = ["--render-tour", &tour.to_string_lossy(), "--out", &frames.to_string_lossy(), "--frames", "0..1", "--farm-child", "-y"].iter().map(|s| s.to_string()).collect();
+    if let Some(a) = adapter {
+        args.push(crate::gpu_choice::FLAG.into());
+        args.push(a.into());
+    }
     let mut child = spawn_child(&args, &dir.join("cfg"))?;
     let tail = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
     let (tx, rx) = std::sync::mpsc::channel();
@@ -440,6 +444,13 @@ pub(crate) fn move_file(src: &Path, dst: &Path) -> std::io::Result<()> {
     std::fs::rename(&part, dst)?;
     let _ = std::fs::remove_file(src);
     Ok(())
+}
+
+/// `--when-idle`: this machine counts as in use when someone touched it within `need` and its
+/// screen is not locked — a locked machine is nobody's, whatever its input timer says. An idle time
+/// that cannot be read counts as idle, as in the field agent's rule.
+pub(crate) fn in_use(need: std::time::Duration, idle: Option<std::time::Duration>, locked: bool) -> bool {
+    !locked && idle.is_some_and(|i| i < need)
 }
 
 /// Unix time in milliseconds.

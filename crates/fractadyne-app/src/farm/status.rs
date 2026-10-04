@@ -100,7 +100,27 @@ pub(crate) struct ClientStatus {
     pub(crate) retry_in_s: Option<u64>,
     /// Set when `phase` is `Ended`: the process is about to exit with this code.
     pub(crate) exit_code: Option<i32>,
+    /// With one session per graphics card (`--adapters`): which one this line is about, from 1.
+    pub(crate) slot: Option<u32>,
+    /// `--when-idle`: someone is using this machine, so it takes no work.
+    pub(crate) in_use: bool,
 }
+
+/// Which session a status line is about: a client with one session per graphics card prints a
+/// line for each (`ClientStatus::slot`); a controller has one.
+pub(crate) trait StatusSlot {
+    fn slot(&self) -> u32 {
+        0
+    }
+}
+
+impl StatusSlot for ClientStatus {
+    fn slot(&self) -> u32 {
+        self.slot.unwrap_or(0)
+    }
+}
+
+impl StatusSlot for ControllerStatus {}
 
 /// Commands a client takes on stdin.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -270,6 +290,8 @@ pub(crate) struct Link<S> {
     stdin: Option<std::process::ChildStdin>,
     rx: mpsc::Receiver<String>,
     pub(crate) status: Option<S>,
+    /// The latest status of each session ([`StatusSlot`]), for a client with several.
+    pub(crate) all: std::collections::BTreeMap<u32, S>,
     /// Its other output, newest last: stdout's human lines, and stderr's lines that explain a
     /// failure, marked "! ".
     pub(crate) log: std::collections::VecDeque<String>,
@@ -280,7 +302,7 @@ pub(crate) struct Link<S> {
 /// Lines of output a [`Link`] keeps.
 const LOG_KEEP: usize = 400;
 
-impl<S: DeserializeOwned> Link<S> {
+impl<S: DeserializeOwned + Clone + StatusSlot> Link<S> {
     /// Start this executable with `args` (which should include [`FLAG`]); `env` is added to its
     /// environment.
     pub(crate) fn spawn(args: &[String], env: &[(&str, std::ffi::OsString)]) -> Result<Self, String> {
@@ -325,7 +347,7 @@ impl<S: DeserializeOwned> Link<S> {
                 }
             });
         }
-        Ok(Self { child, stdin, rx, status: None, log: Default::default(), exit: None })
+        Ok(Self { child, stdin, rx, status: None, all: Default::default(), log: Default::default(), exit: None })
     }
 
     /// Take in what it has said and whether it has exited; `true` when anything changed.
@@ -334,7 +356,10 @@ impl<S: DeserializeOwned> Link<S> {
         for l in self.rx.try_iter() {
             changed = true;
             match parse::<S>(&l) {
-                Some(st) => self.status = Some(st),
+                Some(st) => {
+                    self.all.insert(st.slot(), st.clone());
+                    self.status = Some(st);
+                }
                 None => {
                     let l = l.trim_end();
                     if !l.is_empty() {

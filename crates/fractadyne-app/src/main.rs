@@ -80,6 +80,7 @@ mod lsystem_view;
 mod chunksweep;
 mod glitchaudit;
 mod deviceloss_repro;
+mod gpu_choice;
 mod gputest;
 mod help;
 mod icons;
@@ -302,6 +303,25 @@ fn main() -> eframe::Result<()> {
         }
     };
 
+    // `--adapter`: render on the graphics adapter it names (`gpu_choice.rs`). Resolved here, before
+    // the window opens, so a spec that names none is an error that lists them, not a failed start.
+    let adapter_spec = match gpu_choice::spec(&args) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("fractadyne: {e}");
+            crate::exit(2);
+        }
+    };
+    if let Some(s) = &adapter_spec {
+        match gpu_choice::check(s) {
+            Ok(line) => diag::log_line("wgpu", &format!("--adapter {s}: {line}")),
+            Err(e) => {
+                eprintln!("fractadyne: {e}");
+                crate::exit(2);
+            }
+        }
+    }
+
     let native_options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         // Bound frames-in-flight to 1 so a slow deep-zoom frame can't accumulate a growing present
@@ -324,11 +344,11 @@ fn main() -> eframe::Result<()> {
                     // re-measured decision, not a side effect. `WGPU_BACKEND` still overrides for
                     // experiments, and `--gputest` grades every compiled-in backend regardless.
                     instance_descriptor: eframe::wgpu::InstanceDescriptor {
-                        backends: eframe::wgpu::Backends::from_env().unwrap_or(
-                            eframe::wgpu::Backends::VULKAN | eframe::wgpu::Backends::GL,
-                        ),
+                        backends: gpu_choice::backends(),
                         ..Default::default()
                     },
+                    // None (no `--adapter`) leaves the choice to wgpu, as always.
+                    native_adapter_selector: adapter_spec.map(gpu_choice::selector),
                     device_descriptor: std::sync::Arc::new(|adapter: &eframe::wgpu::Adapter| {
                         let base_limits =
                             if adapter.get_info().backend == eframe::wgpu::Backend::Gl {
@@ -724,7 +744,7 @@ const TASK_FLAGS: &[&str] = &[
     "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
     "--zoomtest",
     "--chunk-sweep", "--deviceloss-repro", "--bench-bignum", "--shot", "--soak", "--pickcheck",
-    "--recordtest", "--farm-render", "--render-client", "--farmtest",
+    "--recordtest", "--farm-render", "--render-client", "--farmtest", "--list-adapters",
 ];
 
 /// The task a command line runs, by name (`soak` for `--soak …`): the first task flag in it. The

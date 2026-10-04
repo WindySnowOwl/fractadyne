@@ -23,6 +23,12 @@ pub(crate) struct ClientSettings {
     pub(crate) max_iter: u32,
     /// This machine's path to the shared drive (share mode), or "" to stream every frame.
     pub(crate) share_root: String,
+    /// The graphics card(s) to render on: "" for the system's choice, "all", or `--list-adapters`
+    /// numbers ("2", "1,3").
+    pub(crate) adapters: String,
+    /// Take work only once nobody has used this machine for `idle_minutes` (Windows).
+    pub(crate) when_idle: bool,
+    pub(crate) idle_minutes: u32,
 }
 
 impl Default for ClientSettings {
@@ -35,6 +41,9 @@ impl Default for ClientSettings {
             max_ss: 8,
             max_iter: 10_000_000,
             share_root: String::new(),
+            adapters: String::new(),
+            when_idle: false,
+            idle_minutes: 5,
         }
     }
 }
@@ -55,6 +64,14 @@ pub(crate) struct FarmClientUi {
     /// The UI walk's seeded window draws as a connected one (Disconnect, Pause) with no process
     /// behind it. Drawing only: nothing else — the live view, the menu — takes it for a client.
     pub(crate) uitest_live: bool,
+    /// This machine's graphics cards (number, name), read by `--list-adapters` in a child process
+    /// when the window first opens; `None` until it answers.
+    cards: Option<Vec<(usize, String)>>,
+    cards_rx: Option<std::sync::mpsc::Receiver<Vec<(usize, String)>>>,
+    /// The last statuses of an ended client that had several sessions (one per graphics card).
+    last_all: Vec<ClientStatus>,
+    /// The UI walk's sample of a client with one session per graphics card.
+    pub(crate) uitest_sessions: Vec<ClientStatus>,
 }
 
 impl FarmClientUi {
@@ -63,14 +80,107 @@ impl FarmClientUi {
         self.link.as_ref().is_some_and(|l| l.running())
     }
 
-    /// Rendering farm frames on this GPU right now: the live view stands aside.
+    /// Rendering farm frames on this machine right now (on any of its cards): the live view
+    /// stands aside.
     pub(crate) fn rendering(&self) -> bool {
-        self.active() && self.link.as_ref().and_then(|l| l.status.as_ref()).is_some_and(|s| s.phase == ClientPhase::Rendering)
+        self.active() && self.link.as_ref().is_some_and(|l| l.all.values().any(|s| s.phase == ClientPhase::Rendering))
     }
 
-    fn status(&self) -> Option<&ClientStatus> {
-        self.link.as_ref().and_then(|l| l.status.as_ref()).or(self.last.as_ref())
+    /// What the window shows: the status — one session's, or several merged — and, when the
+    /// client runs one session per graphics card, each session's.
+    fn view(&self) -> (Option<ClientStatus>, Vec<ClientStatus>) {
+        let sessions: Vec<ClientStatus> = match &self.link {
+            Some(l) => l.all.values().cloned().collect(),
+            None if !self.uitest_sessions.is_empty() => self.uitest_sessions.clone(),
+            None => self.last_all.clone(),
+        };
+        if sessions.len() > 1 {
+            return (merged(&sessions), sessions);
+        }
+        (self.link.as_ref().and_then(|l| l.status.clone()).or_else(|| self.last.clone()), Vec::new())
     }
+}
+
+/// One status for a client with several sessions: the busiest session's phase and words, the
+/// frames all of them sent, the thumbnail of the session that sent the most, and the machine's
+/// own name (without " · GPU k").
+pub(crate) fn merged(sessions: &[ClientStatus]) -> Option<ClientStatus> {
+    let rank = |p: ClientPhase| match p {
+        ClientPhase::Rendering => 6,
+        ClientPhase::Checking => 5,
+        ClientPhase::Connecting => 4,
+        ClientPhase::Idle => 3,
+        ClientPhase::Paused => 2,
+        ClientPhase::Retrying => 1,
+        ClientPhase::Ended => 0,
+    };
+    let top = sessions.iter().max_by_key(|s| rank(s.phase))?;
+    let mut m = top.clone();
+    m.name = top.name.rsplit_once(" · GPU ").map_or_else(|| top.name.clone(), |(n, _)| n.to_string());
+    m.frames_done = sessions.iter().map(|s| s.frames_done).sum();
+    let ms: f64 = sessions.iter().filter_map(|s| s.mean_ms.map(|x| x * s.frames_done as f64)).sum();
+    m.mean_ms = (m.frames_done > 0).then(|| ms / m.frames_done as f64);
+    m.last_frame = sessions.iter().filter(|s| s.last_frame.is_some()).max_by_key(|s| s.last_frame_seq).and_then(|s| s.last_frame.clone());
+    m.last_frame_seq = sessions.iter().map(|s| s.last_frame_seq).sum();
+    m.in_use = sessions.iter().any(|s| s.in_use);
+    // The machine's words, not one card's run.
+    let rendering = sessions.iter().filter(|s| s.phase == ClientPhase::Rendering).count();
+    if rendering > 0 {
+        m.detail = format!("Rendering on {rendering} of {} graphics cards", sessions.len());
+    }
+    if sessions.iter().all(|s| s.phase == ClientPhase::Ended) {
+        m.exit_code = sessions.iter().filter_map(|s| s.exit_code).find(|&c| c != 0).or(Some(0));
+    }
+    (m.run, m.frame, m.frame_ms, m.gpu, m.slot) = (None, None, None, None, None);
+    Some(m)
+}
+
+/// The graphics cards `--list-adapters` names, read in a child process (see
+/// `gpu_choice::cards_in_listing`); none when it cannot run.
+fn list_cards() -> Vec<(usize, String)> {
+    let Ok(exe) = std::env::current_exe() else { return Vec::new() };
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg(crate::gpu_choice::LIST_FLAG).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    if let Some(d) = crate::diag::logs_dir() {
+        cmd.env("FRACTADYNE_LOG_DIR", d.join("farm-client"));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd.output().map(|o| crate::gpu_choice::cards_in_listing(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default()
+}
+
+/// The graphics-card choice: the system's, one card, or every card (one session each).
+fn gpu_combo(ui: &mut egui::Ui, value: &mut String, cards: Option<&[(usize, String)]>) {
+    let current = value.trim().to_string();
+    let text = match current.as_str() {
+        "" => "The system's choice".to_string(),
+        "all" => format!("Every graphics card{}", cards.map_or(String::new(), |c| format!(" ({})", c.len()))),
+        v => cards.and_then(|c| c.iter().find(|(n, _)| n.to_string() == v)).map_or_else(|| format!("Adapter {v}"), |(n, name)| format!("{n} · {name}")),
+    };
+    egui::ComboBox::from_id_salt("farm_client_gpu")
+        .width(220.0)
+        .selected_text(text)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(value, String::new(), "The system's choice");
+            match cards {
+                None => {
+                    ui.label(egui::RichText::new("Finding this machine's graphics cards…").weak());
+                }
+                Some(cs) => {
+                    for (n, name) in cs {
+                        ui.selectable_value(value, n.to_string(), format!("{n} · {name}"));
+                    }
+                    if cs.len() >= 2 {
+                        ui.selectable_value(value, "all".to_string(), format!("Every graphics card ({}) — one session each", cs.len()));
+                    }
+                }
+            }
+        })
+        .response
+        .on_hover_text("Which graphics card renders the farm's frames. With every card, each joins the farm as its own machine — \"NAME · GPU 1\", \"NAME · GPU 2\" — and Pause and Disconnect act on all of them.");
 }
 
 fn settings_path() -> Option<std::path::PathBuf> {
@@ -115,6 +225,14 @@ pub(crate) fn client_args(s: &ClientSettings, key_file: &std::path::Path) -> Vec
         a.push("--share-root".into());
         a.push(s.share_root.trim().to_string());
     }
+    if !s.adapters.trim().is_empty() {
+        a.push("--adapters".into());
+        a.push(s.adapters.trim().to_string());
+    }
+    if s.when_idle && cfg!(windows) {
+        a.push("--when-idle".into());
+        a.push(s.idle_minutes.max(1).to_string());
+    }
     a
 }
 
@@ -125,11 +243,20 @@ fn phase_words(st: &ClientStatus) -> (String, i8) {
         ClientPhase::Checking => ("Running the self-check…".into(), 0),
         ClientPhase::Idle => ("Connected — waiting for work".into(), 1),
         ClientPhase::Rendering => ("Rendering".into(), 1),
+        ClientPhase::Paused if st.in_use && !st.paused => ("Waiting — someone is using this machine".into(), 0),
         ClientPhase::Paused => ("Paused".into(), 0),
         ClientPhase::Retrying => (format!("Controller unreachable — retrying{}", st.retry_in_s.map_or(String::new(), |s| format!(" in {s} s"))), -1),
         ClientPhase::Ended if st.exit_code == Some(0) => ("Disconnected".into(), 0),
         ClientPhase::Ended => ("Ended".into(), -1),
     }
+}
+
+/// "frames 120–135 · frame 123 (4 of 16) · 2.1 s on this frame".
+fn run_words(st: &ClientStatus, a: u64, b: u64) -> String {
+    let at = st.frame.map_or(String::new(), |f| {
+        format!(" · frame {f} ({} of {}){}", f.saturating_sub(a) + 1, b - a, st.frame_ms.map_or(String::new(), |ms| format!(" · {} on this frame", secs(ms as f64))))
+    });
+    format!("frames {a}–{}{at}", b - 1)
 }
 
 fn secs(ms: f64) -> String {
@@ -152,6 +279,14 @@ impl FractadyneApp {
                 c.key = k.trim().to_string();
             }
         }
+        // The cards, once, off the UI thread (a child process enumerates them).
+        if c.cards.is_none() && c.cards_rx.is_none() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            c.cards_rx = Some(rx);
+            std::thread::spawn(move || {
+                let _ = tx.send(list_cards());
+            });
+        }
         c.open = true;
     }
 
@@ -164,6 +299,7 @@ impl FractadyneApp {
         }
         if !l.running() {
             let st = l.status.clone();
+            self.farm_client.last_all = if l.all.len() > 1 { l.all.values().cloned().collect() } else { Vec::new() };
             let exit = l.exit.flatten();
             let tail: Vec<String> = l.log.iter().rev().filter(|x| x.starts_with("! ")).take(1).cloned().collect();
             self.farm_client.link = None;
@@ -227,8 +363,19 @@ impl FractadyneApp {
         let mut open = true;
         let (mut connect, mut disconnect, mut close) = (false, false, false);
         let mut command: Option<ClientCommand> = None;
+        if let Some(rx) = &self.farm_client.cards_rx {
+            match rx.try_recv() {
+                Ok(v) => {
+                    self.farm_client.cards = Some(v);
+                    self.farm_client.cards_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint_after(std::time::Duration::from_millis(200)),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.farm_client.cards_rx = None,
+            }
+        }
+        let (view, sessions) = self.farm_client.view();
         // The thumbnail of the last frame sent, re-read when it changes.
-        if let Some(st) = self.farm_client.status() {
+        if let Some(st) = &view {
             let seq = st.last_frame_seq;
             if seq > 0 && self.farm_client.thumb.as_ref().is_none_or(|t| t.0 != seq) {
                 if let Some(Ok((w, h, rgba))) = st.last_frame.as_deref().map(|p| fractadyne_export::read_thumbnail(std::path::Path::new(p), 240)) {
@@ -275,6 +422,18 @@ impl FractadyneApp {
                                 "This machine's path to the shared drive the controller uses (share mode): frames are written there instead of sent over the connection. Leave empty to send every frame.",
                             );
                             ui.end_row();
+                            ui.label("Graphics card");
+                            gpu_combo(ui, &mut c.settings.adapters, c.cards.as_deref());
+                            ui.end_row();
+                            if cfg!(windows) {
+                                ui.label("When");
+                                ui.horizontal(|ui| {
+                                    let help = "Take work only once nobody has touched this machine's keyboard or mouse for this long, or while its screen is locked. When someone starts using it, the frame in progress stops at once and goes back to the farm.";
+                                    ui.checkbox(&mut c.settings.when_idle, "Only when idle for").on_hover_text(help);
+                                    ui.add_enabled(c.settings.when_idle, egui::DragValue::new(&mut c.settings.idle_minutes).range(1..=1440).suffix(" min")).on_hover_text(help);
+                                });
+                                ui.end_row();
+                            }
                         });
                         egui::CollapsingHeader::new("Limits").id_salt("farm_client_limits").show(ui, |ui| {
                             ui.label(egui::RichText::new("A job asking for more than these is refused, never cut down.").weak().small());
@@ -301,7 +460,7 @@ impl FractadyneApp {
                         });
                     });
 
-                    if let Some(st) = c.link.as_ref().and_then(|l| l.status.as_ref()).or(c.last.as_ref()) {
+                    if let Some(st) = &view {
                         ui.add_space(4.0);
                         ui.separator();
                         let (words, tone) = phase_words(st);
@@ -333,7 +492,7 @@ impl FractadyneApp {
                             if !st.identity.is_empty() {
                                 row(ui, "This machine", format!("\"{}\" · identity {}", st.name, st.identity));
                             }
-                            if let Some(g) = &st.gpu {
+                            if let Some(g) = st.gpu.as_ref().filter(|_| sessions.is_empty()) {
                                 row(ui, "GPU", g.clone());
                             }
                             if let Some(j) = &st.job {
@@ -343,13 +502,25 @@ impl FractadyneApp {
                                 });
                             }
                             if let Some((a, b)) = st.run {
-                                let at = st.frame.map_or(String::new(), |f| {
-                                    format!(" · frame {f} ({} of {}){}", f.saturating_sub(a) + 1, b - a, st.frame_ms.map_or(String::new(), |ms| format!(" · {} on this frame", secs(ms as f64))))
-                                });
-                                row(ui, "Run", format!("frames {a}–{}{at}", b - 1));
+                                row(ui, "Run", run_words(st, a, b));
+                            }
+                            // One session per graphics card: what each is doing.
+                            for s in &sessions {
+                                // "NVIDIA GeForce RTX 4090 — frame 123 of 120–135"; the rest on hover, the counts on Sent.
+                                let card = s.gpu.as_deref().and_then(|g| g.split(" · ").next()).unwrap_or("graphics card not known yet");
+                                let (what, more) = match s.run {
+                                    Some((a, b)) if s.phase == ClientPhase::Rendering => (format!("frame {} of {a}–{}", s.frame.unwrap_or(a), b - 1), run_words(s, a, b)),
+                                    _ => (phase_words(s).0, s.detail.clone()),
+                                };
+                                ui.label(egui::RichText::new(format!("GPU {}", s.slot.unwrap_or(0))).weak());
+                                ui.add(egui::Label::new(format!("{card} — {what}")).truncate()).on_hover_text(format!("{}
+{more}", s.gpu.as_deref().unwrap_or(card)));
+                                ui.end_row();
                             }
                             if st.frames_done > 0 {
-                                row(ui, "Sent", format!("{} frame{} · {} a frame", crate::grouped_count(st.frames_done as f64), if st.frames_done == 1 { "" } else { "s" }, st.mean_ms.map_or("—".into(), secs)));
+                                // With one session per card, each card's share: "1,234 frames (812 + 422)".
+                                let split = if sessions.is_empty() { String::new() } else { format!(" ({})", sessions.iter().map(|s| crate::grouped_count(s.frames_done as f64)).collect::<Vec<_>>().join(" + ")) };
+                                row(ui, "Sent", format!("{} frame{}{split} · {} a frame", crate::grouped_count(st.frames_done as f64), if st.frames_done == 1 { "" } else { "s" }, st.mean_ms.map_or("—".into(), secs)));
                             }
                         });
                         if let Some(n) = &st.gpu_note {
@@ -443,6 +614,11 @@ impl FractadyneApp {
         c.key = "fdn1-sample-sample-sample-sample-sample-sample-sample-sampl".into();
         c.error = None;
         c.uitest_live = true;
+        c.cards = Some(vec![(1, "AMD Radeon RX 6800 XT".into())]);
+        c.settings.adapters = String::new();
+        c.settings.when_idle = true;
+        c.settings.idle_minutes = 10;
+        c.uitest_sessions.clear();
         c.last = Some(ClientStatus {
             phase: ClientPhase::Rendering,
             detail: "Rendering frames 120–135".into(),
@@ -466,6 +642,29 @@ impl FractadyneApp {
         });
         c.open = true;
     }
+
+    /// The UI walk's view of a two-card machine running one session per card.
+    pub(crate) fn uitest_seed_farm_client_gpus(&mut self) {
+        self.uitest_seed_farm_client();
+        let c = &mut self.farm_client;
+        c.cards = Some(vec![(1, "NVIDIA GeForce RTX 4090".into()), (2, "NVIDIA GeForce RTX 3080".into())]);
+        c.settings.adapters = "all".into();
+        let base = c.last.clone().unwrap_or_default();
+        let session = |k: u32, gpu: &str, run: (u64, u64), frame: u64, done: u64| ClientStatus {
+            slot: Some(k),
+            name: format!("STUDIO-PC · GPU {k}"),
+            gpu: Some(format!("{gpu} · Vulkan, driver NVIDIA 581.42")),
+            gpu_note: None,
+            run: Some(run),
+            frame: Some(frame),
+            frame_ms: Some(1900 + 400 * u64::from(k)),
+            frames_done: done,
+            detail: format!("Rendering frames {}–{}", run.0, run.1 - 1),
+            ..base.clone()
+        };
+        c.uitest_sessions = vec![session(1, "NVIDIA GeForce RTX 4090", (120, 136), 123, 812), session(2, "NVIDIA GeForce RTX 3080", (200, 216), 207, 422)];
+        c.last = None;
+    }
 }
 
 #[cfg(test)]
@@ -483,6 +682,34 @@ mod tests {
         }
         assert!(validate(&ok, "fdn1-not-a-key").is_err());
         assert!(validate(&ClientSettings { name: "".into(), ..ok.clone() }, &key).is_err());
+    }
+
+    #[test]
+    fn the_window_s_choices_reach_the_command_line() {
+        let key = std::path::Path::new("k.txt");
+        let plain = client_args(&ClientSettings::default(), key);
+        assert!(!plain.iter().any(|a| a == "--adapters" || a == "--when-idle"), "{plain:?}");
+        let s = ClientSettings { adapters: "all".into(), when_idle: true, idle_minutes: 10, ..Default::default() };
+        let a = client_args(&s, key);
+        let after = |f: &str| a.iter().position(|x| x == f).and_then(|i| a.get(i + 1)).cloned();
+        assert_eq!(after("--adapters").as_deref(), Some("all"));
+        assert_eq!(after("--when-idle").as_deref(), if cfg!(windows) { Some("10") } else { None });
+    }
+
+    #[test]
+    fn several_sessions_read_as_one_machine() {
+        let s = |k: u32, phase, done, mean| ClientStatus { slot: Some(k), name: format!("PLUTO · GPU {k}"), phase, frames_done: done, mean_ms: mean, last_frame_seq: done, last_frame: Some(format!("gpu{k}.png")), ..Default::default() };
+        let m = merged(&[s(1, ClientPhase::Idle, 3, Some(1000.0)), s(2, ClientPhase::Rendering, 1, Some(2000.0))]).expect("merged");
+        assert_eq!(m.phase, ClientPhase::Rendering, "the busiest session's phase");
+        assert_eq!(m.detail, "Rendering on 1 of 2 graphics cards", "the machine's words, not one card's run");
+        assert_eq!(m.name, "PLUTO");
+        assert_eq!(m.frames_done, 4);
+        assert_eq!(m.mean_ms, Some(1250.0), "weighted by frames");
+        assert_eq!(m.last_frame.as_deref(), Some("gpu1.png"), "the thumbnail of the session that sent the most");
+        assert_eq!(m.slot, None);
+        let ended = |k, code| ClientStatus { slot: Some(k), phase: ClientPhase::Ended, exit_code: Some(code), ..Default::default() };
+        assert_eq!(merged(&[ended(1, 0), ended(2, 3)]).and_then(|m| m.exit_code), Some(3), "one session refused: the client did not end well");
+        assert!(merged(&[]).is_none());
     }
 
     #[test]

@@ -179,6 +179,55 @@ pub(crate) fn free_disk_bytes(_path: &std::path::Path) -> Option<u64> {
     None
 }
 
+/// How long since anyone touched this session's keyboard or mouse, or `None` where that cannot be
+/// read. For a render client's `--when-idle` (the field agent's idle rule, `GetLastInputInfo`).
+#[cfg(windows)]
+pub(crate) fn user_idle() -> Option<std::time::Duration> {
+    #[repr(C)]
+    struct LastInputInfo {
+        cb_size: u32,
+        dw_time: u32,
+    }
+    extern "system" {
+        fn GetLastInputInfo(plii: *mut LastInputInfo) -> i32;
+        fn GetTickCount() -> u32;
+    }
+    let mut l = LastInputInfo { cb_size: std::mem::size_of::<LastInputInfo>() as u32, dw_time: 0 };
+    // SAFETY: `LastInputInfo` is `#[repr(C)]` matching LASTINPUTINFO, its size field set as the
+    // call requires, and it is read only when the call reports success. `GetTickCount` takes nothing.
+    let (ok, now) = unsafe { (GetLastInputInfo(&mut l), GetTickCount()) };
+    // Both are milliseconds on one 32-bit clock that wraps every 49.7 days: subtract wrapping.
+    (ok != 0).then(|| std::time::Duration::from_millis(u64::from(now.wrapping_sub(l.dw_time))))
+}
+#[cfg(not(windows))]
+pub(crate) fn user_idle() -> Option<std::time::Duration> {
+    None
+}
+
+/// The screen is locked — or another secure desktop, a UAC prompt, has the input: this session
+/// cannot open the input desktop then.
+#[cfg(windows)]
+pub(crate) fn screen_locked() -> bool {
+    extern "system" {
+        fn OpenInputDesktop(flags: u32, inherit: i32, access: u32) -> isize;
+        fn CloseDesktop(desktop: isize) -> i32;
+    }
+    const DESKTOP_READOBJECTS: u32 = 0x0001;
+    // SAFETY: plain calls with no pointers; a desktop handle that opens is closed at once.
+    unsafe {
+        let h = OpenInputDesktop(0, 0, DESKTOP_READOBJECTS);
+        if h == 0 {
+            return true;
+        }
+        CloseDesktop(h);
+    }
+    false
+}
+#[cfg(not(windows))]
+pub(crate) fn screen_locked() -> bool {
+    false
+}
+
 /// Available PHYSICAL memory in bytes — memory that could be allocated right now without paging,
 /// or `None` when it can't be determined (the caller must treat `None` as "unknown", never as
 /// "plenty"). Used to gate the tour render's reference lookahead so it never builds a second

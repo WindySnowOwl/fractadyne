@@ -63,6 +63,8 @@ enum Screen {
     /// mid-job; a job with machines of two GPU classes and one removed): no farm is started in the
     /// walk, and the empty windows would photograph forms around no data.
     FarmClient,
+    /// The Render client of a two-card machine running one session per card (seeded).
+    FarmClientGpus,
     FarmController,
     ResetConfirm,
     /// File ▸ Settings ▸ Reference cache… — the on-disk orbit cache's controls. ⚠Seeded with
@@ -761,6 +763,7 @@ fn build_steps() -> Vec<Step> {
         screen("script-to-view", Screen::ScriptExport),
         screen("tour-render", Screen::TourRender),
         screen("farm-client", Screen::FarmClient),
+        screen("farm-client-gpus", Screen::FarmClientGpus),
         screen("farm-controller", Screen::FarmController),
         screen("reset-confirm", Screen::ResetConfirm),
         screen("reference-cache", Screen::OrbitCache),
@@ -1143,6 +1146,7 @@ impl FractadyneApp {
         self.farm_client.open = false;
         self.farm_controller.open = false;
         self.farm_client.uitest_live = false;
+        self.farm_client.uitest_sessions.clear();
         self.farm_controller.uitest_live = false;
         self.update_prompt_open = false;
         self.coloring.palette_editor_open = false;
@@ -1276,6 +1280,7 @@ impl FractadyneApp {
             // dialog read its tour from the player, and the walk plays none (found 2026-10-04).
             Screen::TourRender => self.uitest_seed_tour_render(),
             Screen::FarmClient => self.uitest_seed_farm_client(),
+            Screen::FarmClientGpus => self.uitest_seed_farm_client_gpus(),
             Screen::FarmController => self.uitest_seed_farm_controller(),
             Screen::ResetConfirm => self.dialogs.reset_confirm_open = true,
             Screen::OrbitCache => {
