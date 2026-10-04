@@ -733,6 +733,16 @@ whenever a machine left. **Not done from the gate above:** a fuzz pass over the 
 (only targeted malformed-input tests), and the storage monitor's "waiting for space" exercised on a
 genuinely full disk (the scheduler's side is unit-tested).
 
+**Across two machines** (the step after a single-machine gate; tooling built 2026-10-04):
+`scripts/farm-pluto.ps1` runs a controller here and a client on a test machine through its field
+agent (agent v14 action `farm-client`, which runs the PUBLISHED build with `--one-job`), then renders
+the same tour here alone and compares every frame per machine (`scripts/farm_compare.py`, decoded
+pixels). `-Check` lists the preconditions — published build = HEAD = `target\release`, agent v14, an
+inbound firewall rule for the port (`-AddFirewallRule`) — and `-Farmtest` runs `--farmtest` on the
+test machine. What it measures that one machine cannot: real network paths, the pinning across
+machines, and frames from a different GPU vendor next to this one's (§9: expected to differ by the
+GPU's arithmetic, so the comparison reports per machine and does not gate on identity).
+
 **Phase 2 — UI.** Client dialog and controller panel per §10–11, probe frame and GPU classes,
 `--uitest` steps for both screens. **Gate:** `--uitest` passes and the screenshots are LOOKED at;
 the dialog audit table in UI-DESIGN §8.2 gains both dialogs.
