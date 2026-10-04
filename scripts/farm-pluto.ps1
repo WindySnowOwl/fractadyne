@@ -13,8 +13,8 @@
 #                                              #   local subnet only
 #
 # WHAT RUNS WHERE. Here: the controller (--farm-render) and, unless -NoLocal, a local client, both
-# from target\release\fractadyne.exe, which must BE the build published on the share for HEAD (the
-# farm refuses any other: exact version and commit). There: one render client (agent action
+# from target\release\fractadyne.exe, which must BE the build published on the share (the farm
+# refuses any other: exact version and commit; publish-share.ps1). There: one render client (agent action
 # farm-client, agent v14+), from that published package, which dials this machine.
 #
 # NOTHING HERE TOUCHES YOUR REAL CONFIGURATION. Every process gets a throw-away config folder under
@@ -67,19 +67,11 @@ if ($AddFirewallRule) {
 
 Write-Host "Render farm with $Agent - preconditions" -ForegroundColor Cyan
 
-# --- the build: published for HEAD, and target\release IS it ---------------------------------------
-$line = Select-String -Path (Join-Path $root "Cargo.toml") -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
-$tag = "v" + $line.Matches[0].Groups[1].Value
+# --- the build: target\release (the controller) and the published package (the test machine's
+# client) must be the SAME clean build - the farm admits only an exact version-and-commit match.
+# Not necessarily HEAD: a later commit that touches no code (a script, a document) changes nothing.
 $head = (& git rev-parse HEAD).Trim()
-$short = (& git rev-parse --short HEAD).Trim()
-$idPath = Join-Path (Join-Path (Join-Path $Share "builds") $tag) "BUILD-ID.txt"
-if (Test-Path -LiteralPath $idPath) {
-    $commit = ((Get-Content -LiteralPath $idPath | Where-Object { $_ -match '^commit: ' } | Select-Object -First 1) -replace '^commit: ', '').Trim()
-    if ($commit -eq $head) { Ok "$tag is published on the share for HEAD ($short)" }
-    else { Bad "$tag on the share is commit $($commit.Substring(0, [math]::Min(9, $commit.Length))), not HEAD $short" "cargo build --release -j 1 -p fractadyne-app; pwsh -File scripts\publish-share.ps1" }
-}
-else { Bad "no published build $tag on the share" "cargo build --release -j 1 -p fractadyne-app; pwsh -File scripts\publish-share.ps1" }
-
+$rebuild = "cargo build --release -j 1 -p fractadyne-app; pwsh -File scripts\publish-share.ps1 -SkipSource"
 function Get-ExeVersion([string]$path) {
     $scratch = Join-Path ([IO.Path]::GetTempPath()) ("fd-version-" + [guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Force -Path $scratch | Out-Null
@@ -94,12 +86,27 @@ function Get-ExeVersion([string]$path) {
         Remove-Item -Recurse -Force $scratch -ErrorAction SilentlyContinue
     }
 }
+$tag = ""; $sha = ""
 if (Test-Path $exe) {
     $v = Get-ExeVersion $exe
-    if ($v -match "\(build [0-9]+, g$short\)$") { Ok "target\release\fractadyne.exe is a clean build of HEAD ($v)" }
-    else { Bad "target\release\fractadyne.exe is '$v', not a clean build of HEAD g$short" "commit, then cargo build --release -j 1 -p fractadyne-app (and publish that)" }
+    if ($v -match '^fractadyne (\S+) \(build [0-9]+, g([0-9a-f]{7,40})(-dirty)?\)$') {
+        $tag = "v" + $Matches[1]; $sha = $Matches[2]
+        if ($Matches[3]) { Bad "target\release\fractadyne.exe is a -dirty build ($v); the farm refuses one" "commit, then $rebuild" }
+        elseif (-not $head.StartsWith($sha)) { Ok "target\release\fractadyne.exe: $v (not HEAD - fine while the commits since touch no code)" }
+        else { Ok "target\release\fractadyne.exe: $v (HEAD)" }
+    }
+    else { Bad "target\release\fractadyne.exe reports '$v', which names no commit" $rebuild }
 }
-else { Bad "target\release\fractadyne.exe is missing" "cargo build --release -j 1 -p fractadyne-app" }
+else { Bad "target\release\fractadyne.exe is missing" $rebuild }
+if ($tag) {
+    $idPath = Join-Path (Join-Path (Join-Path $Share "builds") $tag) "BUILD-ID.txt"
+    if (Test-Path -LiteralPath $idPath) {
+        $commit = ((Get-Content -LiteralPath $idPath | Where-Object { $_ -match '^commit: ' } | Select-Object -First 1) -replace '^commit: ', '').Trim()
+        if ($commit.StartsWith($sha)) { Ok "$tag on the share is the same build (g$sha)" }
+        else { Bad "$tag on the share is commit $($commit.Substring(0, [math]::Min(9, $commit.Length))), target\release is g$sha" "pwsh -File scripts\publish-share.ps1 -SkipSource   (it publishes only a clean build of HEAD: rebuild first if HEAD moved)" }
+    }
+    else { Bad "no published build $tag on the share" $rebuild }
+}
 
 # --- the agent -------------------------------------------------------------------------------------
 $hb = $null
@@ -146,7 +153,8 @@ else { Bad "cannot tell which address $Agent should dial" "pass -Address <this m
 # or for fractadyne.exe itself; a BLOCK rule for the exe (a dismissed "allow access" prompt makes
 # one) beats any allow rule, so it is named.
 $allow = @(); $block = @()
-try {
+if ($Address -match '^127\.') { Ok "loopback address: no firewall rule needed (a rehearsal on this machine)" }
+else { try {
     foreach ($r in (New-Object -ComObject HNetCfg.FwPolicy2).Rules) {
         if ($r.Direction -ne 1 -or -not $r.Enabled) { continue }
         $tcp = $r.Protocol -eq 6 -or $r.Protocol -eq 256
@@ -159,7 +167,7 @@ try {
     elseif ($allow.Count -gt 0) { Ok "inbound TCP $Port is allowed ('$($allow[0].Name)')" }
     else { Bad "no firewall rule lets $Agent reach TCP $Port here" ".\scripts\farm-pluto.ps1 -AddFirewallRule   (asks for elevation; Private profile, local subnet only)" }
 }
-catch { Write-Host "  ?     could not read the firewall rules ($($_.Exception.Message)); if $Agent cannot connect, run -AddFirewallRule" }
+catch { Write-Host "  ?     could not read the firewall rules ($($_.Exception.Message)); if $Agent cannot connect, run -AddFirewallRule" } }
 
 if ($problems.Count -gt 0) { Write-Host ""; Write-Host "Not ready: $($problems.Count) thing(s) to fix." -ForegroundColor Yellow; exit 1 }
 if ($Check) { Write-Host ""; Write-Host "Ready."; return }
@@ -237,10 +245,23 @@ function Start-Fd([string]$name, [string[]]$argv, [string]$cfg) {
     finally { Remove-Item Env:FRACTADYNE_CONFIG_DIR -ErrorAction SilentlyContinue }
 }
 
+# Stop a process this script started and everything under it (the controller's local client and its
+# render children), by the process tree - never by name, so the user's own windows are untouched.
+# A child born before its parent is a recycled pid, not a child.
 function Stop-Mine($p) {
-    if ($null -eq $p -or $p.HasExited) { return }
-    foreach ($k in @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.Id)" -ErrorAction SilentlyContinue)) { Stop-Process -Id $k.ProcessId -Force -ErrorAction SilentlyContinue }
-    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    if ($null -eq $p) { return }
+    $all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    $tree = @(); $frontier = @(@{ Id = $p.Id; Born = $p.StartTime })
+    while ($frontier.Count -gt 0) {
+        $next = @()
+        foreach ($f in $frontier) {
+            foreach ($c in $all | Where-Object { $_.ParentProcessId -eq $f.Id -and $_.CreationDate -ge $f.Born }) {
+                $tree += $c.ProcessId; $next += @{ Id = $c.ProcessId; Born = $c.CreationDate }
+            }
+        }
+        $frontier = $next
+    }
+    foreach ($id in @($p.Id) + $tree) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
 }
 
 Write-Host ""
@@ -296,7 +317,13 @@ $prefix = [IO.Path]::GetFileNameWithoutExtension($Tour)
 if ($reqId) {
     Write-Host ""
     Write-Host "$Agent's side (field request $reqId):"
-    $deadline = (Get-Date).AddMinutes(3)
+    # A request never claimed still holds the (now useless) key on the share: withdraw it.
+    $pending = Join-Path $Share "field\requests\$reqId.json"
+    if (Test-Path -LiteralPath $pending) {
+        Remove-Item -LiteralPath $pending -Force
+        Write-Host "  $Agent never claimed the request; withdrawn (is its agent running, and not paused?)" -ForegroundColor Yellow
+    }
+    $deadline = if (Test-Path -LiteralPath (Join-Path $Share "field\results\$reqId")) { (Get-Date).AddMinutes(3) } else { Get-Date }
     do {
         $s = $null
         try { $s = Get-Content -LiteralPath (Join-Path $Share "field\results\$reqId\status.json") -Raw | ConvertFrom-Json } catch { }
