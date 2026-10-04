@@ -833,12 +833,16 @@ cheap below ~1e1000×, under the cache's 1 s threshold, so a shallower tour meas
 frames at 160×90 from 1e3990× to 2.37e4000× on the e4000 Misiurewicz spiral, max_iter 2,008,192;
 each reference 443,144 iterations at 13,481 bits, 7.1 MB.
 
-| run | machines | wall | references | orbits shared | pixels vs the other run |
-|---|---|---|---|---|---|
-| sharing off | one local client (RTX 3080) | 321 s | 5 fresh | 0 | — |
-| sharing on | same, and the pre-build beside it | 130 s | 1 fresh, 4 cache | 2 | 0 differing, all 5 frames |
-| sharing off | local client + PLUTO (RX 6800 XT, LAN) | 203.2 s | 5 fresh | 0 | — |
-| sharing on | same | 112.2 s | 2 fresh, 3 cache | 1 | 0 differing, all 5 frames |
+| run | machines | wall | job start → done | references | orbits shared | pixels vs the other run |
+|---|---|---|---|---|---|---|
+| sharing off | one local client (RTX 3080) | 321 s | — | 5 fresh | 0 | — |
+| sharing on | same, and the pre-build beside it | 130 s | — | 1 fresh, 4 cache | 2 | 0 differing, all 5 frames |
+| sharing off | local client + PLUTO (RX 6800 XT, LAN) | 203.2 s | 185.2 s | 5 fresh | 0 | — |
+| sharing on | same | 112.2 s | 100.0 s | 2 fresh, 3 cache | 1 | 0 differing, all 5 frames |
+| sharing on, repeat (`83876fb`) | same | 130.1 s | 101.6 s | 2 fresh, 3 cache | 1 | — |
+
+*Wall* includes waiting for every client (`--min-clients`): 12–28 s for PLUTO, whose field agent
+picks the request up on its next poll — so compare the job's own time: 1.8× with sharing.
 
 The two PLUTO runs put every frame on the same machine (0–1 local, 2–4 PLUTO), so the comparison
 isolates sharing: frame 1 on the RTX 3080, rendered from the orbit PLUTO built for frame 4, is
@@ -848,7 +852,8 @@ machine's in 48 s (the pre-build) to 91 s (frame 0's view); with sharing on, the
 this machine's frame 0, whose fresh build had started before PLUTO's orbit arrived at 31 s —
 a render does not pick up an orbit that arrives mid-build. The pre-build finished at 49 s with
 the same orbit PLUTO had shared at 31 s (PLUTO's first run was the deepest frame); the controller
-now says so instead of dropping the duplicate silently. Evidence besides the gate: `--farmtest`
+now says so instead of dropping the duplicate silently (seen on the repeat: "the pre-build of the
+deepest keyframe finished; a machine had already shared the same reference"). Evidence besides the gate: `--farmtest`
 18/18 (a dissolve tour with `hold = 1.5` pixel-identical to the single-machine render — without
 the dissolve rule only 16–17 of 19 frames matched; share mode for two clients; every frame naming its
 reference source), 54 scheduler tests (chaos with dissolves, holds and classes; stealing).
