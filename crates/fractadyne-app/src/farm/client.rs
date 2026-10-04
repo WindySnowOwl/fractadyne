@@ -6,15 +6,18 @@
 //! settings, never this machine's session. Every frame the child reports is re-read, checked against
 //! the digest the child printed, and streamed to the controller, which verifies it again.
 //!
-//! Headless controls until the Phase 2 dialog: create `<config>/farm/PAUSE` to finish the current
-//! frame and stop taking work (delete it to resume); create `CANCEL` to stop at once (it also
-//! pauses). A deliberate `Bye` from the controller — for instance a removal — ends the client; a
-//! connection that merely drops is redialled with back-off.
+//! Controls: the app's Render client window (through `--ui-status`, `status.rs`), or headless,
+//! create `<config>/farm/PAUSE` to finish the current frame and stop taking work (delete it to
+//! resume); create `CANCEL` to stop at once (it also pauses). A deliberate `Bye` from the controller
+//! — for instance a removal — ends the client; a connection that merely drops is redialled with
+//! back-off.
 
+use super::status::{self, ClientCommand, ClientPhase, ClientStatus};
 use super::*;
 use fractadyne_farm::channel::{self, Pin, PinStore};
 use fractadyne_farm::proto::*;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -53,6 +56,89 @@ enum Ev {
 enum Ended {
     Exit(i32),
     Retry { connected: bool, why: String },
+}
+
+/// The `--ui-status` side: the status the app's window reads, and the commands it sends. Inert
+/// without the flag. Pause and cancel from the window persist across reconnects, like the files.
+struct Ui {
+    on: bool,
+    st: Mutex<ClientStatus>,
+    cmds: Mutex<Option<mpsc::Receiver<Option<String>>>>,
+    paused: AtomicBool,
+    cancel: AtomicBool,
+    leave: AtomicBool,
+}
+
+impl Ui {
+    fn new(on: bool) -> Arc<Ui> {
+        let ui = Arc::new(Ui {
+            on,
+            st: Mutex::new(ClientStatus::default()),
+            cmds: Mutex::new(on.then(status::commands)),
+            paused: AtomicBool::new(false),
+            cancel: AtomicBool::new(false),
+            leave: AtomicBool::new(false),
+        });
+        if on {
+            let weak = Arc::downgrade(&ui);
+            std::thread::spawn(move || loop {
+                std::thread::sleep(Duration::from_secs(1));
+                let Some(ui) = weak.upgrade() else { return };
+                ui.print();
+            });
+        }
+        ui
+    }
+
+    /// Change the status; a change of phase is printed at once.
+    fn update(&self, f: impl FnOnce(&mut ClientStatus)) {
+        let mut s = self.st.lock().unwrap_or_else(|e| e.into_inner());
+        let before = s.phase;
+        f(&mut s);
+        if self.on && s.phase != before {
+            println!("{}", status::line(&*s));
+        }
+    }
+
+    fn print(&self) {
+        if self.on {
+            println!("{}", status::line(&*self.st.lock().unwrap_or_else(|e| e.into_inner())));
+        }
+    }
+
+    /// Apply the commands that arrived; the end of stdin (the window is gone) reads as Leave.
+    fn poll(&self) {
+        let guard = self.cmds.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(rx) = guard.as_ref() else { return };
+        for c in rx.try_iter() {
+            match c.as_deref().map(ClientCommand::parse) {
+                Some(Some(ClientCommand::Pause)) => self.paused.store(true, Ordering::Relaxed),
+                Some(Some(ClientCommand::Resume)) => self.paused.store(false, Ordering::Relaxed),
+                Some(Some(ClientCommand::CancelFrame)) => {
+                    self.cancel.store(true, Ordering::Relaxed);
+                    self.paused.store(true, Ordering::Relaxed);
+                }
+                Some(Some(ClientCommand::Leave)) | None => self.leave.store(true, Ordering::Relaxed),
+                Some(None) => eprintln!("fractadyne: render client: unknown command {:?}", c.unwrap_or_default()),
+            }
+        }
+    }
+
+    fn leaving(&self) -> bool {
+        self.leave.load(Ordering::Relaxed)
+    }
+
+    /// The process is about to exit with `code`.
+    fn end(&self, code: i32, why: &str) {
+        self.update(|s| {
+            s.phase = ClientPhase::Ended;
+            s.exit_code = Some(code);
+            if !why.is_empty() {
+                s.detail = why.to_string();
+            }
+        });
+        self.print();
+    }
 }
 
 pub(crate) fn run(args: &[String]) -> i32 {
@@ -101,26 +187,57 @@ pub(crate) fn run(args: &[String]) -> i32 {
     };
     let one_job = args.iter().any(|a| a == "--one-job");
     let cfg = Cfg { addr, key, name, policy, allow_dirty, one_job, work: dir.join("jobs"), control: dir.clone(), id };
+    let ui = Ui::new(args.iter().any(|a| a == status::FLAG));
+    ui.update(|s| {
+        s.name = cfg.name.clone();
+        s.identity = cfg.id.fingerprint();
+        s.controller = cfg.addr.clone();
+        s.detail = format!("Connecting to {}…", cfg.addr);
+    });
     println!("Render client \"{}\" (identity {}) — controller {}", cfg.name, cfg.id.fingerprint(), cfg.addr);
     println!("  pause: create {}  ·  cancel the frame in progress: create {}", cfg.control.join("PAUSE").display(), cfg.control.join("CANCEL").display());
     let mut backoff = Duration::from_secs(2);
     loop {
-        match connect_once(&cfg, &mut pins) {
-            Ended::Exit(code) => return code,
+        match connect_once(&cfg, &mut pins, &ui) {
+            Ended::Exit(code) => {
+                ui.end(code, "");
+                return code;
+            }
             Ended::Retry { connected, why } => {
                 if connected {
                     backoff = Duration::from_secs(2);
                 }
                 println!("{why} — retrying in {}s", backoff.as_secs());
                 crate::diag::log_line("farm", &format!("client: {why}"));
-                std::thread::sleep(backoff);
+                ui.update(|s| {
+                    s.phase = ClientPhase::Retrying;
+                    s.detail = why.clone();
+                    s.retry_in_s = Some(backoff.as_secs());
+                    s.run = None;
+                    s.frame = None;
+                });
+                // In short steps, so a Leave from the window ends the wait.
+                let until = Instant::now() + backoff;
+                while Instant::now() < until {
+                    ui.poll();
+                    if ui.leaving() {
+                        ui.end(0, "Disconnected");
+                        return 0;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                ui.update(|s| {
+                    s.phase = ClientPhase::Connecting;
+                    s.retry_in_s = None;
+                    s.detail = format!("Connecting to {}…", cfg.addr);
+                });
                 backoff = (backoff * 2).min(Duration::from_secs(60));
             }
         }
     }
 }
 
-fn connect_once(cfg: &Cfg, pins: &mut PinStore) -> Ended {
+fn connect_once(cfg: &Cfg, pins: &mut PinStore, ui: &Arc<Ui>) -> Ended {
     use std::net::ToSocketAddrs;
     let retry = |why: String| Ended::Retry { connected: false, why };
     let Some(sa) = cfg.addr.to_socket_addrs().ok().and_then(|mut a| a.next()) else {
@@ -209,11 +326,13 @@ fn connect_once(cfg: &Cfg, pins: &mut PinStore) -> Ended {
                 // (Authenticated: only a holder of the farm key can produce this message.)
                 _ if matches!(pin, Pin::Changed { .. }) => {
                     let Pin::Changed { pinned } = &pin else { unreachable!() };
-                    eprintln!(
-                        "fractadyne: the controller at {} changed identity (pinned {pinned}, now {fp}). If that is expected — it was reinstalled — delete its line from {} and start again.",
+                    let why = format!(
+                        "The controller at {} changed identity (pinned {pinned}, now {fp}). If that is expected — it was reinstalled — delete its line from {} and connect again.",
                         cfg.addr,
                         cfg.control.join("known-controllers.toml").display()
                     );
+                    eprintln!("fractadyne: {why}");
+                    ui.end(2, &why);
                     return Ended::Exit(2);
                 }
                 Verdict::Admitted => {
@@ -224,16 +343,27 @@ fn connect_once(cfg: &Cfg, pins: &mut PinStore) -> Ended {
                         }
                     }
                     println!("Connected to \"{}\" ({fp}) — running the self-check", a.name);
+                    ui.update(|s| {
+                        s.phase = ClientPhase::Checking;
+                        s.controller_name = a.name.clone();
+                        s.controller_fingerprint = fp.clone();
+                        s.detail = format!("Connected to \"{}\" — running the self-check", a.name);
+                    });
                     break a.link_sample_bytes;
                 }
-                Verdict::WaitingForApproval => println!("Connected to \"{}\" — waiting for its user to approve this machine", a.name),
+                Verdict::WaitingForApproval => {
+                    println!("Connected to \"{}\" — waiting for its user to approve this machine", a.name);
+                    ui.update(|s| s.detail = format!("Connected to \"{}\" — waiting for its user to approve this machine", a.name));
+                }
                 Verdict::Refused(r) => {
                     eprintln!("fractadyne: the controller refused this machine: {r}");
+                    ui.end(3, &format!("Refused by the controller: {r}"));
                     return Ended::Exit(3);
                 }
             },
             Ok(Ev::Net(Incoming::Control(Msg::Bye(b)))) => {
                 eprintln!("fractadyne: the controller closed the connection: {}", b.reason);
+                ui.end(3, &format!("The controller closed the connection: {}", b.reason));
                 return Ended::Exit(3);
             }
             Ok(Ev::NetDown(e)) => return retry(format!("the controller closed the connection during the handshake ({e}) — most often a different farm key")),
@@ -243,17 +373,29 @@ fn connect_once(cfg: &Cfg, pins: &mut PinStore) -> Ended {
             Err(_) => return retry("the controller gave no verdict in time".into()),
         }
     };
-    let (check, sample, gpu_cap, handshake) = self_check(cfg, link_bytes);
+    let (check, sample, probe, gpu_cap, handshake) = self_check(cfg, link_bytes);
     let failed_hard = check.items.iter().find(|i| i.hard && !i.ok).map(|i| format!("{}: {}", i.name, i.detail));
     let _ = out_tx.send(Out::Msg(Msg::SelfCheck(check)));
     if let Some(blob) = sample {
         let _ = out_tx.send(Out::Blob(1, blob));
     }
-    if let Some(f) = failed_hard {
+    if let Some(blob) = probe {
+        let _ = out_tx.send(Out::Blob(2, blob));
+    }
+    if let Some(f) = &failed_hard {
         eprintln!("fractadyne: the self-check failed: {f}");
     }
+    ui.update(|s| {
+        s.self_check = handshake.lines().map(str::to_string).collect();
+        s.phase = ClientPhase::Idle;
+        s.detail = match &failed_hard {
+            Some(f) => format!("The self-check failed — {f}"),
+            None => format!("Connected to \"{}\" — idle", s.controller_name),
+        };
+    });
     let mut s = Session {
         cfg,
+        ui: ui.clone(),
         out: out_tx,
         ev_tx,
         next_blob: 2,
@@ -267,6 +409,7 @@ fn connect_once(cfg: &Cfg, pins: &mut PinStore) -> Ended {
         last_heartbeat: Instant::now() - Duration::from_secs(10),
         paused: false,
         frames_done: 0,
+        ms_total: 0,
         gpu_cap,
         corrupt_left: crate::tunables::instrument(CORRUPT_INSTRUMENT),
     };
@@ -275,48 +418,17 @@ fn connect_once(cfg: &Cfg, pins: &mut PinStore) -> Ended {
     ended
 }
 
-/// The handshake self-check (design §9.1): a one-frame render (device, render path, child launch,
-/// adapter, orbit cap), free space, and the link sample the controller asked for.
-fn self_check(cfg: &Cfg, link_bytes: u64) -> (SelfCheck, Option<Vec<u8>>, Option<u64>, String) {
+/// The handshake self-check (design §9.1): the probe render (device, render path, child launch,
+/// adapter, orbit cap — and the image the controller compares), free space, and the link sample the
+/// controller asked for. Returns the check, the link sample's bytes, the probe's PNG, the orbit cap
+/// and the record kept for diagnostics.
+#[allow(clippy::type_complexity)]
+fn self_check(cfg: &Cfg, link_bytes: u64) -> (SelfCheck, Option<Vec<u8>>, Option<Vec<u8>>, Option<u64>, String) {
     let mut items = Vec::new();
-    let dir = cfg.work.join("self-check");
-    let _ = std::fs::remove_dir_all(&dir);
-    let tour = dir.join("self-check.toml");
     let t0 = Instant::now();
-    let result = std::fs::create_dir_all(&dir)
-        .map_err(|e| e.to_string())
-        .and_then(|()| std::fs::write(&tour, SELF_CHECK_TOUR).map_err(|e| e.to_string()))
-        .and_then(|()| {
-            let args: Vec<String> = ["--render-tour", &tour.to_string_lossy(), "--out", &dir.join("frames").to_string_lossy(), "--frames", "0..1", "--farm-child", "-y"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
-            let mut child = spawn_child(&args, &dir.join("cfg"))?;
-            let tail = Arc::new(Mutex::new(VecDeque::new()));
-            let (tx, rx) = mpsc::channel();
-            pump_child(&mut child, move |l| { let _ = tx.send(l); }, tail.clone(), 400);
-            let deadline = Instant::now() + Duration::from_secs(120);
-            let status = loop {
-                if let Some(st) = child.try_wait().map_err(|e| e.to_string())? {
-                    break st;
-                }
-                if Instant::now() > deadline {
-                    let _ = child.kill();
-                    return Err("the test render did not finish within 120 s".into());
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            };
-            std::thread::sleep(Duration::from_millis(100)); // let the pumps drain
-            let done = rx.try_iter().any(|l| matches!(parse_child_line(&l), ChildLine::Done { .. }));
-            let err: String = tail.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect::<Vec<_>>().join("\n");
-            if status.success() && done {
-                Ok(err)
-            } else {
-                Err(format!("the test render failed (exit {:?}): {}", status.code(), tail_of(&err, 300)))
-            }
-        });
+    let result = render_probe(&cfg.work.join("self-check"));
     let (gpu, cap) = match &result {
-        Ok(stderr) => {
+        Ok((_, stderr)) => {
             let (adapter, cap) = gpu_facts(stderr);
             items.push(CheckItem {
                 name: "render".into(),
@@ -344,11 +456,13 @@ fn self_check(cfg: &Cfg, link_bytes: u64) -> (SelfCheck, Option<Vec<u8>>, Option
         b
     });
     let announce = sample.as_ref().map(|b| BlobAnnounce { id: 1, len: b.len() as u64, sha256: fractadyne_farm::sha256_hex(b) });
+    let probe = result.ok().map(|(png, _)| png).filter(|p| p.len() as u64 <= MAX_PROBE_BYTES);
+    let probe_announce = probe.as_ref().map(|b| BlobAnnounce { id: 2, len: b.len() as u64, sha256: fractadyne_farm::sha256_hex(b) });
     let record = items.iter().map(|i| format!("{} {}: {}", if i.ok { "ok  " } else { "FAIL" }, i.name, i.detail)).collect::<Vec<_>>().join("\n");
     for i in &items {
         println!("  self-check {} {}: {}", if i.ok { "ok  " } else { "FAIL" }, i.name, i.detail);
     }
-    (SelfCheck { items, gpu, free_bytes: free, link_sample: announce }, sample, cap, record)
+    (SelfCheck { items, gpu, free_bytes: free, link_sample: announce, probe: probe_announce }, sample, probe, cap, record)
 }
 
 fn tail_of(s: &str, n: usize) -> String {
@@ -373,6 +487,7 @@ struct Running {
 
 struct Session<'a> {
     cfg: &'a Cfg,
+    ui: Arc<Ui>,
     out: mpsc::Sender<Out>,
     ev_tx: mpsc::Sender<Ev>,
     next_blob: u64,
@@ -386,6 +501,8 @@ struct Session<'a> {
     last_heartbeat: Instant,
     paused: bool,
     frames_done: u64,
+    /// Render milliseconds of the frames sent this session, for the mean.
+    ms_total: u64,
     gpu_cap: Option<u64>,
     corrupt_left: u32,
 }
@@ -414,7 +531,11 @@ impl Session<'_> {
                 Ev::NetDown(e) => return Ended::Retry { connected: true, why: format!("lost the controller ({e})") },
                 Ev::Child { run, line } => self.on_child_line(run, line),
                 Ev::ChildClosed { run } => self.on_child_closed(run),
-                Ev::Tick => self.on_tick(),
+                Ev::Tick => {
+                    if let Some(end) = self.on_tick() {
+                        return end;
+                    }
+                }
             }
         }
     }
@@ -427,6 +548,10 @@ impl Session<'_> {
                 }
                 let sink = BlobSink::new(j.bundle.clone(), Vec::new());
                 println!("Job \"{}\" ({}) — receiving its bundle", j.name, j.job_id);
+                self.ui.update(|s| {
+                    s.job = Some(j.name.clone());
+                    s.detail = format!("Job \"{}\" — receiving its bundle", j.name);
+                });
                 self.pending_bundle = Some((j, sink));
             }
             Msg::Assign(a) => {
@@ -461,6 +586,14 @@ impl Session<'_> {
                     let _ = std::fs::remove_dir_all(j.dir.join("frames"));
                 }
                 println!("Job {} closed by the controller", c.job_id);
+                self.ui.update(|s| {
+                    s.detail = "The job is over".into();
+                    s.run = None;
+                    s.frame = None;
+                    if s.phase == ClientPhase::Rendering {
+                        s.phase = ClientPhase::Idle;
+                    }
+                });
                 if self.cfg.one_job {
                     println!("--one-job: the job is over; exiting");
                     return Some(Ended::Exit(0));
@@ -481,6 +614,7 @@ impl Session<'_> {
             }
             Msg::Bye(b) => {
                 eprintln!("fractadyne: the controller ended the connection: {}", b.reason);
+                self.ui.end(3, &format!("The controller ended the connection: {}", b.reason));
                 return Some(Ended::Exit(3));
             }
             Msg::Keepalive => {}
@@ -523,7 +657,15 @@ impl Session<'_> {
             (None, Err(e)) => Some(format!("could not prepare the job folder: {e}")),
             (None, Ok(())) => None,
         };
-        println!("  job \"{}\": {}×{} ss{} at {} fps, {} frames", bundle.name, bundle.width, bundle.height, bundle.ss, bundle.fps, bundle.frames);
+        let detail = format!("{}×{} ss{} at {} fps, {} frames", bundle.width, bundle.height, bundle.ss, bundle.fps, bundle.frames);
+        println!("  job \"{}\": {detail}", bundle.name);
+        self.ui.update(|s| {
+            s.job_detail = Some(detail);
+            s.detail = match &refusal {
+                Some(r) => format!("Refused this job: {r}"),
+                None => format!("Job \"{}\" — waiting for frames to render", bundle.name),
+            };
+        });
         self.jobs.insert(j.job_id.clone(), Job { dir, bundle, refusal });
         Ok(())
     }
@@ -581,6 +723,12 @@ impl Session<'_> {
                 }
                 pump_child(&mut child, |_| {}, self.child_tail.clone(), 400);
                 println!("  rendering frames {}..{} (run {})", a.start, a.end, a.run_id);
+                self.ui.update(|s| {
+                    s.phase = ClientPhase::Rendering;
+                    s.run = Some((a.start, a.end));
+                    s.frame = Some(a.start);
+                    s.detail = format!("Rendering frames {}–{}", a.start, a.end - 1);
+                });
                 self.running = Some(Running { assign: a, child, reported: HashSet::new(), last_done: None, frame_started: Instant::now(), stop: None, pause_after_frame: false });
             }
             Err(e) => {
@@ -619,12 +767,26 @@ impl Session<'_> {
                         }
                         let _ = self.out.send(Out::Msg(Msg::FrameDone(FrameDone { job_id: r.assign.job_id.clone(), run_id: run, index, render_ms: ms, blob: announce })));
                         let _ = self.out.send(Out::Blob(id, data));
-                        let _ = std::fs::remove_file(&path);
+                        // Kept as the window's thumbnail of the latest frame (the next replaces it).
+                        let last = self.cfg.control.join("last-frame.png");
+                        if std::fs::rename(&path, &last).is_err() {
+                            let _ = std::fs::remove_file(&path);
+                        }
                         r.reported.insert(index);
                         r.last_done = Some(r.last_done.map_or(index, |d| d.max(index)));
                         r.frame_started = Instant::now();
                         self.frames_done += 1;
+                        self.ms_total += ms;
                         println!("  frame {index} sent ({} KB, {ms} ms)", bytes / 1024);
+                        let (done, mean) = (self.frames_done, self.ms_total as f64 / self.frames_done as f64);
+                        let end = r.assign.end;
+                        self.ui.update(|s| {
+                            s.frames_done = done;
+                            s.mean_ms = Some(mean);
+                            s.frame = (index + 1 < end).then_some(index + 1);
+                            s.last_frame = Some(last.to_string_lossy().into_owned());
+                            s.last_frame_seq += 1;
+                        });
                         if r.pause_after_frame {
                             r.stop = Some(AbortReason::Paused);
                             let _ = r.child.kill();
@@ -662,32 +824,75 @@ impl Session<'_> {
             }
             self.send(Msg::RunAborted(RunAborted { job_id: r.assign.job_id.clone(), run_id: run, done_up_to: r.last_done, reason: why }));
         }
+        let paused = self.paused;
+        self.ui.update(|s| {
+            s.run = None;
+            s.frame = None;
+            s.phase = if paused { ClientPhase::Paused } else { ClientPhase::Idle };
+            s.detail = if paused { "Paused — the controller has been told".into() } else { format!("Connected to \"{}\" — idle", s.controller_name) };
+        });
         self.maybe_start();
     }
 
-    fn on_tick(&mut self) {
-        // The headless controls.
-        let pause = self.cfg.control.join("PAUSE").exists();
+    fn on_tick(&mut self) -> Option<Ended> {
+        // The window's commands, and the headless control files.
+        self.ui.poll();
+        if self.ui.leaving() {
+            println!("Disconnecting (its user left)");
+            self.stop_child(Some(AbortReason::UserCancel));
+            self.send(Msg::Bye(Bye { reason: "its user disconnected".into() }));
+            std::thread::sleep(Duration::from_millis(300)); // let the goodbye go out
+            self.ui.end(0, "Disconnected");
+            return Some(Ended::Exit(0));
+        }
+        let pause = self.cfg.control.join("PAUSE").exists() || self.ui.paused.load(Ordering::Relaxed);
         let cancel = self.cfg.control.join("CANCEL");
-        if cancel.exists() {
-            let _ = std::fs::remove_file(&cancel);
-            let _ = std::fs::write(self.cfg.control.join("PAUSE"), b"created by CANCEL; delete to resume\n");
+        let cancel_by_ui = self.ui.cancel.swap(false, Ordering::Relaxed);
+        if cancel.exists() || cancel_by_ui {
+            if cancel.exists() {
+                let _ = std::fs::remove_file(&cancel);
+                let _ = std::fs::write(self.cfg.control.join("PAUSE"), b"created by CANCEL; delete to resume\n");
+            }
             if self.running.is_some() {
-                println!("Cancelled the frame in progress; paused (delete PAUSE to resume)");
+                println!("Cancelled the frame in progress; paused");
                 self.stop_child(Some(AbortReason::UserCancel));
             }
             self.paused = true;
+            self.ui.update(|s| {
+                s.paused = true;
+                s.phase = ClientPhase::Paused;
+                s.detail = "Cancelled the frame in progress; paused".into();
+            });
         } else if pause != self.paused {
             self.paused = pause;
             if pause {
-                println!("Paused: finishing the current frame, then taking no work (delete PAUSE to resume)");
+                println!("Paused: finishing the current frame, then taking no work");
+                let running = self.running.is_some();
                 if let Some(r) = self.running.as_mut() {
                     r.pause_after_frame = true;
                 }
+                self.ui.update(|s| {
+                    s.paused = true;
+                    if !running {
+                        s.phase = ClientPhase::Paused;
+                    }
+                    s.detail = if running { "Pausing — finishing the frame in progress".into() } else { "Paused — the controller has been told".into() };
+                });
             } else {
                 println!("Resumed");
+                self.ui.update(|s| {
+                    s.paused = false;
+                    if s.phase == ClientPhase::Paused {
+                        s.phase = ClientPhase::Idle;
+                    }
+                    s.detail = format!("Connected to \"{}\" — idle", s.controller_name);
+                });
                 self.maybe_start();
             }
+        }
+        if let Some(r) = &self.running {
+            let ms = r.frame_started.elapsed().as_millis() as u64;
+            self.ui.update(|s| s.frame_ms = Some(ms));
         }
         if self.last_heartbeat.elapsed() >= Duration::from_secs(2) {
             self.last_heartbeat = Instant::now();
@@ -712,5 +917,6 @@ impl Session<'_> {
             }
             self.send(Msg::Heartbeat(hb));
         }
+        None
     }
 }

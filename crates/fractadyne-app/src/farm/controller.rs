@@ -13,7 +13,12 @@
 //!
 //! One thread per connection reads (and receives frames), one writes; the main loop owns the
 //! scheduler and the job state, so no lock guards either.
+//!
+//! With `--ui-status` (the app's Render on farm window, `status.rs`) it also prints a status line a
+//! second and takes commands on stdin: pause, resume, stop, remove a client, re-admit one. Stdin
+//! ending — the window is gone — stops the job, which resumes from the folder later.
 
+use super::status::{self, ClientRow, ControllerCommand, ControllerPhase, ControllerStatus};
 use super::*;
 use fractadyne_farm::channel::{self, Pin, PinStore, RateLimiter, RecvError};
 use fractadyne_farm::manifest::{DoneRecord, JobIdentity, Manifest};
@@ -41,6 +46,12 @@ enum CEv {
     FrameBad { conn: ClientId, run: u64, index: u64, why: String, tmp: Option<PathBuf> },
     Closed { conn: ClientId, why: String },
     Note(String),
+    /// A command from the window (`--ui-status`); `None` = its stdin ended.
+    Cmd(Option<String>),
+    /// A client's probe image arrived (design §9).
+    Probe { conn: ClientId, png: Vec<u8> },
+    /// This machine's own render of the probe.
+    OwnProbe(Result<Vec<u8>, String>),
 }
 
 /// Bytes moved on one connection, for the link metrics.
@@ -62,6 +73,12 @@ struct Conn {
     link_mbps: Option<f64>,
     self_check: String,
     diag: Option<(String, u32, Instant)>,
+    last_hb_at: Option<Instant>,
+    /// Blobs of the self-check still to arrive (link sample, probe) before it can be admitted.
+    awaiting: u8,
+    probe: Option<Probe>,
+    /// Pixels where its probe differs from this machine's.
+    probe_px: Option<u64>,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -89,9 +106,20 @@ pub(crate) fn run(args: &[String]) -> i32 {
         Ok(code) => code,
         Err(e) => {
             eprintln!("fractadyne: farm: {e}");
+            if args.iter().any(|a| a == status::FLAG) {
+                println!("{}", status::line(&ControllerStatus { phase: ControllerPhase::Finished, detail: e, exit_code: Some(2), ..Default::default() }));
+            }
             2
         }
     }
+}
+
+/// This machine's address on the network it would reach the internet through: what to tell
+/// clients. A UDP "connect" picks the route without sending anything.
+fn lan_address() -> Option<std::net::IpAddr> {
+    let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    s.connect("192.0.2.1:9").ok()?; // TEST-NET-1: routed like any public address, never answered
+    s.local_addr().ok().map(|a| a.ip()).filter(|ip| !ip.is_unspecified() && !ip.is_loopback())
 }
 
 fn run_inner(args: &[String]) -> Result<i32, String> {
@@ -146,6 +174,26 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     std::fs::create_dir_all(out.join("farm").join("incoming")).map_err(|e| format!("{}: {e}", out.display()))?;
 
     let (ev_tx, ev_rx) = mpsc::channel::<CEv>();
+    let ui = args.iter().any(|a| a == status::FLAG);
+    if ui {
+        let cmds = status::commands();
+        let tx = ev_tx.clone();
+        std::thread::spawn(move || {
+            for c in cmds {
+                let end = c.is_none();
+                if tx.send(CEv::Cmd(c)).is_err() || end {
+                    return;
+                }
+            }
+        });
+    }
+    {
+        let tx = ev_tx.clone();
+        let dir = out.join("farm").join("probe");
+        std::thread::spawn(move || {
+            let _ = tx.send(CEv::OwnProbe(render_probe(&dir).map(|(png, _)| png)));
+        });
+    }
     let key = Arc::new(key);
     spawn_listener(listener, key.clone(), me.clone(), ev_tx.clone(), (r.width, r.height), out.join("farm").join("incoming"));
 
@@ -164,6 +212,22 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
 
     let mut ctl = Controller {
         args: args.to_vec(),
+        ui,
+        identity: me.fingerprint(),
+        key_file: key_path.clone(),
+        listen: listen.clone(),
+        port: local_addr.port(),
+        lan: lan_address().map(|ip| format!("{ip}:{}", local_addr.port())),
+        last_ui: Instant::now() - Duration::from_secs(10),
+        last_phase: None,
+        ui_prev: (0, 0, 0, Instant::now()),
+        ui_rates: (0.0, 0.0, 0.0),
+        preparing: false,
+        stopped: false,
+        pause_at_start: false,
+        own_probe: None,
+        early_notes: Default::default(),
+        probes: HashMap::new(),
         name,
         tour,
         script_text,
@@ -190,6 +254,7 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     if let Some(mut c) = local_child {
         let _ = c.kill();
     }
+    ctl.print_status(Some(code));
     Ok(code)
 }
 
@@ -288,6 +353,7 @@ fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identi
     enum Pending {
         Frame { f: FrameDone, sink: BlobSink<std::io::BufWriter<std::fs::File>>, path: PathBuf },
         Sample { sink: BlobSink<std::io::Sink>, started: Instant },
+        Probe { sink: BlobSink<Vec<u8>> },
     }
     let mut pending: HashMap<u64, Pending> = HashMap::new();
     let close = |why: String| {
@@ -316,6 +382,12 @@ fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identi
                         if let Some(b) = &s.link_sample {
                             pending.insert(b.id, Pending::Sample { sink: BlobSink::new(b.clone(), std::io::sink()), started: Instant::now() });
                         }
+                        if let Some(b) = &s.probe {
+                            if pending.contains_key(&b.id) {
+                                break close("protocol error: the probe reuses a blob id".into());
+                            }
+                            pending.insert(b.id, Pending::Probe { sink: BlobSink::new(b.clone(), Vec::new()) });
+                        }
                         let _ = ev.send(CEv::Msg { conn, msg: Msg::SelfCheck(s) });
                     }
                     m @ (Msg::Heartbeat(_) | Msg::FrameFailed(_) | Msg::RunAborted(_) | Msg::DiagReport(_) | Msg::Bye(_)) => {
@@ -334,6 +406,7 @@ fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identi
                 let res = match p {
                     Pending::Frame { sink, .. } => sink.push(offset, &data),
                     Pending::Sample { sink, .. } => sink.push(offset, &data),
+                    Pending::Probe { sink } => sink.push(offset, &data),
                 };
                 match (res, pending.remove(&id).expect("present")) {
                     (Ok(BlobProgress::More), p) => {
@@ -341,6 +414,9 @@ fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identi
                     }
                     (Ok(BlobProgress::Complete), Pending::Sample { sink, started }) => {
                         let _ = ev.send(CEv::LinkSample { conn, bytes: sink.received(), secs: started.elapsed().as_secs_f64() });
+                    }
+                    (Ok(BlobProgress::Complete), Pending::Probe { sink }) => {
+                        let _ = ev.send(CEv::Probe { conn, png: sink.into_inner() });
                     }
                     (Ok(BlobProgress::Complete), Pending::Frame { f, sink, path }) => {
                         drop(sink.into_inner());
@@ -368,6 +444,7 @@ fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identi
                         break close(format!("protocol error: {e}"));
                     }
                     (Err(e), Pending::Sample { .. }) => break close(format!("protocol error in the link sample: {e}")),
+                    (Err(e), Pending::Probe { .. }) => break close(format!("protocol error in the probe: {e}")),
                 }
             }
             Err(RecvError::TimedOut) => break close("no message for 30 s".into()),
@@ -384,6 +461,33 @@ fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identi
 
 struct Controller<'a> {
     args: Vec<String>,
+    /// `--ui-status`: print status lines, take commands.
+    ui: bool,
+    identity: String,
+    key_file: PathBuf,
+    listen: String,
+    port: u16,
+    /// "192.168.1.20:46733": what a client on this network dials.
+    lan: Option<String>,
+    last_ui: Instant,
+    last_phase: Option<ControllerPhase>,
+    /// Frames done and bytes in/out at the last rate sample, for the window's rates.
+    ui_prev: (u64, u64, u64, Instant),
+    ui_rates: (f64, f64, f64),
+    /// Measuring the anchors (the main loop is busy, so this is said before).
+    preparing: bool,
+    /// The user stopped the job (it ends with what it has, exit 4).
+    stopped: bool,
+    /// Paused before the job started: it starts paused.
+    pause_at_start: bool,
+    /// This machine's probe render (`None` until it finishes).
+    own_probe: Option<Result<Probe, String>>,
+    /// Notes from before the job started, for its event log.
+    early_notes: std::cell::RefCell<Vec<(u64, String)>>,
+    /// Each machine's probe, by name: its pixels' digest and the pixels differing from this
+    /// machine's — kept after it disconnects, so a removed or departed machine's row still says
+    /// which GPU class it was.
+    probes: HashMap<String, (String, Option<u64>)>,
     name: String,
     tour: PathBuf,
     script_text: String,
@@ -413,8 +517,13 @@ impl Controller<'_> {
     fn note(&self, s: &str) {
         println!("{s}");
         crate::diag::log_line("farm", s);
-        if let Some(j) = &self.job {
-            let _ = j.manifest.record_event(unix_ms(), s);
+        match &self.job {
+            Some(j) => {
+                let _ = j.manifest.record_event(unix_ms(), s);
+            }
+            // Admissions, self-checks and probes happen before the job's folder state exists:
+            // kept, and written when it does.
+            None => self.early_notes.borrow_mut().push((unix_ms(), s.to_string())),
         }
     }
 
@@ -454,12 +563,52 @@ impl Controller<'_> {
     fn on_event(&mut self, e: CEv) -> Option<i32> {
         match e {
             CEv::Note(s) => self.note(&s),
+            CEv::Cmd(c) => return self.on_command(c),
             CEv::Hello { conn, hello, fingerprint, addr, out, io } => self.on_hello(conn, hello, fingerprint, addr, out, io),
             CEv::LinkSample { conn, bytes, secs } => {
                 if let Some(c) = self.conns.get_mut(&conn) {
                     c.link_mbps = Some(bytes as f64 * 8.0 / secs.max(1e-6) / 1e6);
                 }
-                self.try_admit(conn);
+                self.blob_arrived(conn);
+            }
+            CEv::Probe { conn, png } => {
+                let decoded = Probe::decode(&png);
+                if let Some(c) = self.conns.get_mut(&conn) {
+                    // Kept for a look: the farm's probes side by side in farm/probes/.
+                    let dir = self.out.join("farm").join("probes");
+                    let _ = std::fs::create_dir_all(&dir);
+                    let _ = std::fs::write(dir.join(format!("{}.png", fractadyne_farm::manifest::safe_name(&c.name))), &png);
+                    match decoded {
+                        Ok(p) => {
+                            self.probes.insert(c.name.clone(), (p.digest.clone(), None));
+                            c.probe = Some(p);
+                        }
+                        Err(e) => {
+                            let n = c.name.clone();
+                            self.note(&format!("{n}: {e}"));
+                        }
+                    }
+                }
+                self.compare_probe(conn);
+                self.blob_arrived(conn);
+            }
+            CEv::OwnProbe(r) => {
+                match r.and_then(|png| {
+                    let dir = self.out.join("farm").join("probes");
+                    let _ = std::fs::create_dir_all(&dir);
+                    let _ = std::fs::write(dir.join("this-machine.png"), &png);
+                    Probe::decode(&png)
+                }) {
+                    Ok(p) => self.own_probe = Some(Ok(p)),
+                    Err(e) => {
+                        self.note(&format!("this machine could not render the probe, so clients' pictures are not compared with it: {e}"));
+                        self.own_probe = Some(Err(e));
+                    }
+                }
+                let ids: Vec<ClientId> = self.conns.keys().copied().collect();
+                for id in ids {
+                    self.compare_probe(id);
+                }
             }
             CEv::Msg { conn, msg } => return self.on_msg(conn, msg),
             CEv::FrameIn { conn, run, index, render_ms, tmp, bytes, sha256 } => {
@@ -574,6 +723,10 @@ impl Controller<'_> {
                         link_mbps: None,
                         self_check: String::new(),
                         diag: None,
+                        last_hb_at: None,
+                        awaiting: 0,
+                        probe: None,
+                        probe_px: None,
                     },
                 );
             }
@@ -596,13 +749,18 @@ impl Controller<'_> {
                     return None;
                 }
                 self.note(&format!("{name} self-check: {summary}"));
-                if s.link_sample.is_none() {
+                let awaiting = s.link_sample.is_some() as u8 + s.probe.is_some() as u8;
+                if let Some(c) = self.conns.get_mut(&conn) {
+                    c.awaiting = awaiting;
+                }
+                if awaiting == 0 {
                     self.try_admit(conn);
                 }
             }
             Msg::Heartbeat(h) => {
                 if let Some(c) = self.conns.get_mut(&conn) {
                     c.last_hb = Some(h.clone());
+                    c.last_hb_at = Some(Instant::now());
                 }
                 if let Some(j) = self.job.as_mut() {
                     let cmds = j.sched.step(Instant::now(), sched::Event::Heartbeat { client: conn, paused: h.activity == ClientActivity::Paused, frame: h.frame, frame_ms: h.frame_ms });
@@ -648,6 +806,44 @@ impl Controller<'_> {
         None
     }
 
+    /// One of the self-check's blobs arrived; admit once none is outstanding.
+    fn blob_arrived(&mut self, conn: ClientId) {
+        let ready = self.conns.get_mut(&conn).is_some_and(|c| {
+            c.awaiting = c.awaiting.saturating_sub(1);
+            c.awaiting == 0
+        });
+        if ready {
+            self.try_admit(conn);
+        }
+    }
+
+    /// Compare a client's probe with this machine's, once both exist (design §9).
+    fn compare_probe(&mut self, conn: ClientId) {
+        let Some(Ok(own)) = &self.own_probe else { return };
+        let Some(c) = self.conns.get(&conn) else { return };
+        let (Some(p), None) = (&c.probe, c.probe_px) else { return };
+        let n = c.name.clone();
+        let total = own.w as u64 * own.h as u64;
+        let Some(px) = own.differing_px(p) else {
+            let why = format!("{n}: its probe is {}×{}, this machine's {}×{} — not compared", p.w, p.h, own.w, own.h);
+            self.note(&why);
+            return;
+        };
+        if let Some(c) = self.conns.get_mut(&conn) {
+            c.probe_px = Some(px);
+        }
+        if let Some(e) = self.probes.get_mut(&n) {
+            e.1 = Some(px);
+        }
+        if px == 0 {
+            self.note(&format!("{n}: probe identical to this machine's"));
+        } else {
+            self.note(&format!(
+                "{n}: probe differs from this machine's in {px} of {total} pixels — another GPU class; its frames will differ slightly from this machine's (design §9)"
+            ));
+        }
+    }
+
     fn try_admit(&mut self, conn: ClientId) {
         let Some(c) = self.conns.get(&conn) else { return };
         if c.state != ConnState::Checking {
@@ -689,6 +885,8 @@ impl Controller<'_> {
         let anchors = if self.normalize {
             let path = self.out.join("farm").join("anchors.toml");
             self.note("measuring the normalize anchors on this machine, once for every client…");
+            self.preparing = true;
+            self.print_status(None);
             let mut a: Vec<String> = vec![
                 "--render-tour".into(),
                 self.tour.to_string_lossy().into_owned(),
@@ -716,6 +914,7 @@ impl Controller<'_> {
                 let t: Vec<String> = tail.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect();
                 return Err(format!("measuring the normalize anchors failed: {}", t.join(" | ")));
             }
+            self.preparing = false;
             Some(std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?)
         } else {
             None
@@ -753,6 +952,9 @@ impl Controller<'_> {
         );
         let job_id = ident.job_id.clone();
         let (manifest, resume) = Manifest::open(&self.out, ident, &|p: &Path| crate::scripting::png_frame_size(p) == Some((w, h)))?;
+        for (at, s) in self.early_notes.borrow_mut().drain(..) {
+            let _ = manifest.record_event(at, &s);
+        }
         if !resume.done.is_empty() || !resume.lost.is_empty() || resume.partials_removed > 0 {
             self.note(&format!(
                 "resuming job {job_id}: {} of {frames} frames already done ({} adopted), {} to render again, {} unfinished write(s) removed",
@@ -776,6 +978,9 @@ impl Controller<'_> {
         let mut sched = Scheduler::new(cfg, &resume.done);
         let bundle_sha = fractadyne_farm::sha256_hex(&bundle_bytes);
         let mut cmds = Vec::new();
+        if self.pause_at_start {
+            cmds.extend(sched.step(Instant::now(), sched::Event::Pause));
+        }
         for id in &admitted {
             cmds.extend(sched.step(Instant::now(), sched::Event::Joined { client: *id, name: self.conns[id].name.clone() }));
         }
@@ -838,12 +1043,13 @@ impl Controller<'_> {
         let dir = j.manifest.diag_dir(&c.name, unix_ms() / 1000);
         let _ = std::fs::create_dir_all(&dir);
         let identity = format!(
-            "name = {:?}\naddress = {:?}\nadapter = {:?}\norbit_len_cap = {}\nlink_mbps = {}\nreason = {:?}\nstrikes = {strikes}\nself_check = {:?}\n",
+            "name = {:?}\naddress = {:?}\nadapter = {:?}\norbit_len_cap = {}\nlink_mbps = {}\nprobe_px = {}\nreason = {:?}\nstrikes = {strikes}\nself_check = {:?}\n",
             c.name,
             c.addr,
             c.adapter,
             c.gpu_cap.unwrap_or(0),
             c.link_mbps.map_or("unknown".into(), |m| format!("{m:.1}")),
+            c.probe_px.map_or("\"not compared\"".into(), |p| p.to_string()),
             reason,
             c.self_check
         );
@@ -889,6 +1095,8 @@ impl Controller<'_> {
         let snap = j.sched.snapshot();
         let msg = if failed.is_empty() {
             format!("Farm render complete: {} frames in {:.1}s → {}", snap.frames, elapsed, self.out.display())
+        } else if self.stopped {
+            format!("Stopped: {} of {} frames done — run again on the same folder to resume", snap.done, snap.frames)
         } else {
             format!(
                 "Farm render finished with {} frame(s) not rendered ({:?}{}) — run again on the same folder to resume",
@@ -902,6 +1110,8 @@ impl Controller<'_> {
         std::thread::sleep(Duration::from_millis(300));
         if failed.is_empty() {
             0
+        } else if self.stopped {
+            4
         } else {
             3
         }
@@ -910,6 +1120,9 @@ impl Controller<'_> {
     /// Ticks, keepalives, status, metrics, the storage monitor, diagnostics timeouts, job start.
     fn periodic(&mut self) -> Option<i32> {
         let now = Instant::now();
+        if self.ui && (now.duration_since(self.last_ui) >= Duration::from_secs(1) || self.last_phase != Some(self.phase())) {
+            self.print_status(None);
+        }
         if self.job.is_none() {
             let admitted = self.conns.values().filter(|c| c.state == ConnState::Admitted).count();
             if admitted >= self.min_clients {
@@ -1034,6 +1247,232 @@ impl Controller<'_> {
             }
         }
         None
+    }
+}
+
+impl Controller<'_> {
+    fn on_command(&mut self, c: Option<String>) -> Option<i32> {
+        let Some(text) = c else {
+            // The window that started this controller is gone: stop rather than run on unwatched.
+            self.note("the window that started this controller closed — stopping the job");
+            return self.user_stop();
+        };
+        let Some(cmd) = ControllerCommand::parse(&text) else {
+            self.note(&format!("unknown command {text:?}"));
+            return None;
+        };
+        let now = Instant::now();
+        match cmd {
+            ControllerCommand::Pause | ControllerCommand::Resume => {
+                let pause = cmd == ControllerCommand::Pause;
+                match self.job.as_mut() {
+                    Some(j) => {
+                        let cmds = j.sched.step(now, if pause { sched::Event::Pause } else { sched::Event::Resume });
+                        return self.exec(cmds);
+                    }
+                    None => {
+                        self.pause_at_start = pause;
+                        self.note(if pause { "paused: the job will start paused" } else { "resumed" });
+                    }
+                }
+            }
+            ControllerCommand::Stop => return self.user_stop(),
+            ControllerCommand::Remove(id) => {
+                let in_job = self.job.as_ref().is_some_and(|j| j.sched.snapshot().clients.iter().any(|c| c.id == id));
+                if in_job {
+                    let cmds = self.job.as_mut()?.sched.step(now, sched::Event::RemoveByUser { client: id });
+                    return self.exec(cmds);
+                }
+                if let Some(name) = self.conns.get(&id).map(|c| c.name.clone()) {
+                    self.note(&format!("{name} removed by the controller's user"));
+                    self.close(id, Some("removed by the controller's user".into()));
+                }
+            }
+            ControllerCommand::Readmit(name) => {
+                if let Some(j) = self.job.as_mut() {
+                    let cmds = j.sched.step(now, sched::Event::Readmit { name });
+                    return self.exec(cmds);
+                }
+            }
+        }
+        None
+    }
+
+    fn user_stop(&mut self) -> Option<i32> {
+        self.stopped = true;
+        match self.job.as_mut() {
+            Some(j) => {
+                let cmds = j.sched.step(Instant::now(), sched::Event::Stop);
+                self.exec(cmds)
+            }
+            None => {
+                self.note("stopped before the job started");
+                Some(4)
+            }
+        }
+    }
+
+    fn phase(&self) -> ControllerPhase {
+        match &self.job {
+            None if self.preparing => ControllerPhase::Preparing,
+            None => ControllerPhase::Waiting,
+            Some(j) if j.sched.is_finished() => ControllerPhase::Finished,
+            Some(j) => {
+                let s = j.sched.snapshot();
+                if s.paused || s.storage_low {
+                    ControllerPhase::Paused
+                } else {
+                    ControllerPhase::Rendering
+                }
+            }
+        }
+    }
+
+    /// Print a status line (`--ui-status` only); `exit` = the process is about to exit with it.
+    fn print_status(&mut self, exit: Option<i32>) {
+        if !self.ui {
+            return;
+        }
+        let now = Instant::now();
+        self.last_ui = now;
+        let phase = if exit.is_some() { ControllerPhase::Finished } else { self.phase() };
+        self.last_phase = Some(phase);
+        // Rates over at least two seconds, smoothed, so the numbers do not flicker.
+        let (bin, bout): (u64, u64) = self.io.values().fold((0, 0), |(a, b), (_, io)| (a + io.bytes_in.load(Ordering::Relaxed), b + io.bytes_out.load(Ordering::Relaxed)));
+        let snap = self.job.as_ref().map(|j| j.sched.snapshot());
+        let done = snap.as_ref().map_or(0, |s| s.done);
+        let (pd, pi, po, pt) = self.ui_prev;
+        let dt = now.duration_since(pt).as_secs_f64();
+        if dt >= 2.0 {
+            let r = (done.saturating_sub(pd) as f64 / dt, bin.saturating_sub(pi) as f64 / 1024.0 / dt, bout.saturating_sub(po) as f64 / 1024.0 / dt);
+            self.ui_rates = (0.5 * self.ui_rates.0 + 0.5 * r.0, 0.5 * self.ui_rates.1 + 0.5 * r.1, 0.5 * self.ui_rates.2 + 0.5 * r.2);
+            self.ui_prev = (done, bin, bout, now);
+        }
+        let admitted = self.conns.values().filter(|c| c.state == ConnState::Admitted).count();
+        let detail = match phase {
+            ControllerPhase::Waiting => format!("Waiting for render clients: {admitted} of {} connected", self.min_clients),
+            ControllerPhase::Preparing => "Measuring the normalize anchors on this machine, once for every client".into(),
+            ControllerPhase::Rendering => "Rendering".into(),
+            ControllerPhase::Paused if snap.as_ref().is_some_and(|s| s.storage_low) => "Waiting for space in the output folder".into(),
+            ControllerPhase::Paused => "Paused: no new work is handed out".into(),
+            ControllerPhase::Finished => match exit {
+                Some(0) => "Complete".into(),
+                Some(3) => "Finished with frames not rendered — run again on the same folder to resume".into(),
+                Some(4) => "Stopped — run again on the same folder to resume".into(),
+                Some(c) => format!("Ended (exit {c})"),
+                None => "Finishing".into(),
+            },
+        };
+        let mut rows: Vec<ClientRow> = Vec::new();
+        if let Some(s) = &snap {
+            for v in &s.clients {
+                rows.push(self.row(v.id, &v.name, Some(v), now));
+            }
+        }
+        for (&id, c) in &self.conns {
+            if !rows.iter().any(|r| r.id == id) {
+                rows.push(self.row(id, &c.name, None, now));
+            }
+        }
+        rows.sort_by_key(|r| r.id);
+        // GPU classes: machines whose probes are pixel-identical share a letter; this machine's own
+        // render is A when it has one.
+        let mut digests: Vec<&str> = Vec::new();
+        if let Some(Ok(own)) = &self.own_probe {
+            digests.push(&own.digest);
+        }
+        for r in &rows {
+            if let Some((d, _)) = self.probes.get(&r.name) {
+                if !digests.contains(&d.as_str()) {
+                    digests.push(d);
+                }
+            }
+        }
+        let mut classes_in_farm: Vec<usize> = Vec::new();
+        for r in rows.iter_mut() {
+            let Some((d, px)) = self.probes.get(&r.name) else { continue };
+            r.probe_px = *px;
+            if let Some(i) = digests.iter().position(|x| *x == d.as_str()) {
+                r.gpu_class = Some(((b'A' + (i as u8).min(25)) as char).to_string());
+                if self.conns.get(&r.id).is_some_and(|c| c.state == ConnState::Admitted) && !classes_in_farm.contains(&i) {
+                    classes_in_farm.push(i);
+                }
+            }
+        }
+        let gpu_classes = classes_in_farm.len();
+        let (frames, assigned, pending, failed) = snap.as_ref().map_or((self.res.5, 0, self.res.5, 0), |s| (s.frames, s.assigned, s.pending, s.failed));
+        let fps = self.ui_rates.0;
+        let st = ControllerStatus {
+            phase,
+            detail,
+            name: self.name.clone(),
+            identity: self.identity.clone(),
+            listen: self.lan.clone().unwrap_or_else(|| self.listen.clone()),
+            port: self.port,
+            key_file: self.key_file.to_string_lossy().into_owned(),
+            tour: self.tour.to_string_lossy().into_owned(),
+            out: self.out.to_string_lossy().into_owned(),
+            min_clients: self.min_clients,
+            job_id: self.job.as_ref().map(|j| j.job_id.clone()),
+            frames,
+            done,
+            assigned,
+            pending,
+            failed,
+            storage_low: snap.as_ref().is_some_and(|s| s.storage_low),
+            frames_per_s: fps,
+            kb_in_per_s: self.ui_rates.1,
+            kb_out_per_s: self.ui_rates.2,
+            eta_s: (fps > 0.0).then(|| (frames - done - failed) as f64 / fps),
+            free_bytes: crate::sysinfo::free_disk_bytes(&self.out),
+            elapsed_s: self.started.elapsed().as_secs_f64(),
+            strip: self.job.as_ref().map(|j| j.sched.strip(400)).unwrap_or_default(),
+            gpu_classes,
+            clients: rows,
+            exit_code: exit,
+        };
+        println!("{}", status::line(&st));
+    }
+
+    fn row(&self, id: ClientId, name: &str, v: Option<&sched::ClientView>, now: Instant) -> ClientRow {
+        let c = self.conns.get(&id);
+        let strikes = v.map_or(0, |v| v.strikes);
+        let state = match (c.map(|c| c.state), v.map(|v| v.state)) {
+            (_, Some(sched::ClientState::Removed)) if strikes > 0 => format!("removed: {strikes} bad frame{}", if strikes == 1 { "" } else { "s" }),
+            (_, Some(sched::ClientState::Removed)) => "removed by you".into(),
+            (Some(ConnState::Closing), _) if c.is_some_and(|c| c.diag.is_some()) => "removing — collecting its diagnostics".into(),
+            (None, _) | (_, Some(sched::ClientState::Gone)) => "gone".into(),
+            (Some(ConnState::Closing), _) => "leaving".into(),
+            (Some(ConnState::Checking), _) => "checking (self-check)".into(),
+            (_, Some(sched::ClientState::Paused)) => "paused by its user".into(),
+            (_, Some(sched::ClientState::Unstable)) => "parked: crashed twice — rejoins when it reconnects".into(),
+            (_, Some(sched::ClientState::PolicyRefused)) => "refused this job (its own limits)".into(),
+            (_, Some(sched::ClientState::Active)) => {
+                let hb = c.and_then(|c| c.last_hb.as_ref());
+                match (v.and_then(|v| v.runs.first()), hb.and_then(|h| h.frame).filter(|_| hb.is_some_and(|h| h.activity == ClientActivity::Rendering))) {
+                    (Some(&(_, start, end)), Some(f)) if (start..end).contains(&f) => format!("rendering {f} ({}/{})", f - start + 1, end - start),
+                    (Some(_), _) => "starting a run".into(),
+                    (None, _) => "idle".into(),
+                }
+            }
+            (Some(ConnState::Admitted), None) => "admitted — waiting for the job".into(),
+        };
+        ClientRow {
+            id,
+            name: name.to_string(),
+            addr: c.map(|c| c.addr.clone()).unwrap_or_default(),
+            state,
+            adapter: c.map(|c| c.adapter.clone()).unwrap_or_default(),
+            link_mbps: c.and_then(|c| c.link_mbps),
+            frames_done: v.map_or(0, |v| v.frames_done),
+            ms_per_frame: v.and_then(|v| v.ewma_ms),
+            strikes,
+            heartbeat_age_s: c.and_then(|c| c.last_hb_at).map(|t| now.duration_since(t).as_secs_f64()),
+            kb_in: self.io.get(&id).map_or(0, |(_, io)| io.bytes_in.load(Ordering::Relaxed) / 1024),
+            probe_px: None,
+            gpu_class: None,
+            removed: v.is_some_and(|v| v.state == sched::ClientState::Removed),
+        }
     }
 }
 

@@ -229,12 +229,12 @@ impl Manifest {
 
     /// Where a frame that failed verification is kept for inspection.
     pub fn quarantine_path(&self, index: u64, machine: &str) -> PathBuf {
-        self.dir.join("bad").join(format!("{}_{index:05}.{}.png", self.job.prefix, safe(machine)))
+        self.dir.join("bad").join(format!("{}_{index:05}.{}.png", self.job.prefix, safe_name(machine)))
     }
 
     /// A diagnostics bundle's folder for `machine`.
     pub fn diag_dir(&self, machine: &str, unix: u64) -> PathBuf {
-        self.dir.join("diag").join(format!("{}-{unix}", safe(machine)))
+        self.dir.join("diag").join(format!("{}-{unix}", safe_name(machine)))
     }
 
     fn append(&self, file: &str, line: &str) -> Result<(), String> {
@@ -267,7 +267,7 @@ impl Manifest {
 }
 
 /// A machine name as a file-name part: anything outside `A-Za-z0-9_-` becomes `_`, at most 40.
-fn safe(name: &str) -> String {
+pub fn safe_name(name: &str) -> String {
     let s: String = name.chars().take(40).map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
     if s.is_empty() { "machine".into() } else { s }
 }

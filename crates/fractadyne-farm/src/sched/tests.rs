@@ -441,3 +441,22 @@ fn chaos(seed: u64) {
         assert!(n == 1 || (n == 0 && failed.contains(&i)), "seed {seed}: frame {i} accepted {n} times, failed={}", failed.contains(&i));
     }
 }
+
+#[test]
+fn the_strip_shows_each_cells_worst_state_and_never_more_cells_than_frames() {
+    let b = t0();
+    let mut s = Scheduler::new(Config::new(10), &[0, 1, 2, 3]);
+    assert_eq!(s.strip(10), "dddd......");
+    assert_eq!(s.strip(100), "dddd......", "one cell per frame at most");
+    assert_eq!(s.strip(5), "dd...", "two frames a cell");
+    s.step(b, Event::Joined { client: 1, name: "A".into() });
+    // The first run starts at the gap (frame 4); one cell per frame agrees with the counts.
+    let snap = s.snapshot();
+    let full = s.strip(10);
+    assert!(full.starts_with("ddddaaaa"), "{full}");
+    assert_eq!(full.matches('a').count() as u64, snap.assigned);
+    assert_eq!(full.matches('.').count() as u64, snap.pending);
+    assert_eq!(s.strip(3), "daa", "a cell with a done and an assigned frame shows assigned");
+    assert_eq!(s.strip(0), "");
+    assert_eq!(Scheduler::new(Config::new(0), &[]).strip(8), "");
+}

@@ -12,6 +12,7 @@
 pub(crate) mod client;
 pub(crate) mod controller;
 pub(crate) mod farmtest;
+pub(crate) mod status;
 
 use fractadyne_farm::key::{FarmKey, Identity};
 use fractadyne_farm::settings::RenderSettings;
@@ -256,23 +257,83 @@ pub(crate) fn pump_child(
     }
 }
 
-/// The one-frame tour a client renders as its self-check: proves the GPU, the render path and the
-/// child launch together, and its log names the adapter and the orbit-length cap.
+/// The one-frame tour a client renders as its self-check — and the PROBE (design §9): the
+/// controller renders the same tour and counts differing pixels, which tells apart GPUs whose
+/// pictures differ. Past 1e30× so the perturbation path runs, where two GPU models measurably
+/// differ (an RX 6800 XT and an RTX 3080 on 2.7 % of a 640×360 frame of this view, 2026-10-04). It
+/// also proves the GPU, the render path and the child launch together, and its log names the
+/// adapter and the orbit-length cap.
 pub(crate) const SELF_CHECK_TOUR: &str = r#"format_version = 2
-name = "Render-farm self-check"
+name = "Render-farm probe"
 
 [render]
-size = "64x36"
+size = "256x144"
 fps = 1
-max_iter = 2000
+max_iter = 20000
 auto_iter = false
 
 [[keyframe]]
 t = 0
-re = "-0.743643887037158704752191506114774"
-im = "0.131825904205311970493132056385139"
-zoom = "1e6"
+re = "-5.62202621523037212744969596262961926232336058642000859332104071064648040651980117009368022864076665266819518615342205563126413961786451e-1"
+im = "6.42817149072775248899624656627830941472997397665282056405495715932366418738755172614822993656471501541311398325174287701850021449311247e-1"
+zoom = "1e30"
 "#;
+
+/// Render the probe (`SELF_CHECK_TOUR`) in `dir` with a fresh configuration: its PNG bytes and the
+/// render's stderr (which names the adapter and the orbit cap). Blocking, at most 120 s.
+pub(crate) fn render_probe(dir: &Path) -> Result<(Vec<u8>, String), String> {
+    use std::time::{Duration, Instant};
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let tour = dir.join("self-check.toml");
+    std::fs::write(&tour, SELF_CHECK_TOUR).map_err(|e| e.to_string())?;
+    let frames = dir.join("frames");
+    let args: Vec<String> = ["--render-tour", &tour.to_string_lossy(), "--out", &frames.to_string_lossy(), "--frames", "0..1", "--farm-child", "-y"].iter().map(|s| s.to_string()).collect();
+    let mut child = spawn_child(&args, &dir.join("cfg"))?;
+    let tail = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+    let (tx, rx) = std::sync::mpsc::channel();
+    pump_child(&mut child, move |l| { let _ = tx.send(l); }, tail.clone(), 400);
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let status = loop {
+        if let Some(st) = child.try_wait().map_err(|e| e.to_string())? {
+            break st;
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            return Err("the test render did not finish within 120 s".into());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    std::thread::sleep(Duration::from_millis(100)); // let the pumps drain
+    let done = rx.try_iter().any(|l| matches!(parse_child_line(&l), ChildLine::Done { .. }));
+    let err: String = tail.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect::<Vec<_>>().join("\n");
+    if !(status.success() && done) {
+        return Err(format!("the test render failed (exit {:?}): {}", status.code(), fractadyne_farm::proto::tail(&err, 300)));
+    }
+    let png = std::fs::read(frames.join(fractadyne_farm::names::frame_file_name("self-check", 0))).map_err(|e| format!("the test render's frame: {e}"))?;
+    Ok((png, err))
+}
+
+/// A probe as compared: its size, its pixels' digest (machines whose digests match render this
+/// view identically), and its RGBA.
+pub(crate) struct Probe {
+    pub(crate) w: u32,
+    pub(crate) h: u32,
+    pub(crate) digest: String,
+    pub(crate) rgba: Vec<u8>,
+}
+
+impl Probe {
+    pub(crate) fn decode(png: &[u8]) -> Result<Probe, String> {
+        let (w, h, rgba) = fractadyne_export::read_png_rgba8_bytes(png).map_err(|e| format!("the probe is not a readable PNG: {e}"))?;
+        Ok(Probe { w, h, digest: fractadyne_farm::sha256_hex(&rgba), rgba })
+    }
+
+    /// Pixels where `self` and `other` differ; `None` when their sizes do.
+    pub(crate) fn differing_px(&self, other: &Probe) -> Option<u64> {
+        ((self.w, self.h) == (other.w, other.h)).then(|| self.rgba.chunks_exact(4).zip(other.rgba.chunks_exact(4)).filter(|(a, b)| a != b).count() as u64)
+    }
+}
 
 /// Write a fresh session for render children from `settings` into `dir/session.toml`.
 pub(crate) fn write_session(dir: &Path, settings: &RenderSettings) -> Result<(), String> {

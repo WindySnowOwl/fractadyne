@@ -723,6 +723,29 @@ impl Scheduler {
             clients,
         }
     }
+
+    /// The frames folded into at most `width` cells for a progress strip, in frame order. A cell
+    /// shows the worst state among its frames — `x` one was given up, else `a` one is being
+    /// rendered, else `.` one is still to do, else `d` — so a cell reads "done" only when every
+    /// frame in it is.
+    pub fn strip(&self, width: usize) -> String {
+        let n = self.frames.len();
+        let cells = width.min(n);
+        (0..cells)
+            .map(|c| {
+                let cell = &self.frames[c * n / cells..(c + 1) * n / cells];
+                if cell.contains(&FrameState::Failed) {
+                    'x'
+                } else if cell.iter().any(|f| matches!(f, FrameState::Assigned { .. })) {
+                    'a'
+                } else if cell.contains(&FrameState::Pending) {
+                    '.'
+                } else {
+                    'd'
+                }
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]

@@ -23,6 +23,8 @@ pub const MAX_FRAME_BYTES: u64 = 256 << 20;
 pub const MAX_BUNDLE_BYTES: u64 = 16 << 20;
 /// Largest link-speed sample.
 pub const MAX_LINK_SAMPLE_BYTES: u64 = 4 << 20;
+/// Largest probe image (the self-check render, a small PNG).
+pub const MAX_PROBE_BYTES: u64 = 4 << 20;
 /// Data bytes per chunk: a Noise message holds 65,535 bytes including its 16-byte tag, and a chunk
 /// carries 17 bytes of header.
 pub const CHUNK_BYTES: usize = 60 * 1024;
@@ -151,6 +153,9 @@ pub struct SelfCheck {
     pub gpu: Option<GpuInfo>,
     pub free_bytes: Option<u64>,
     pub link_sample: Option<BlobAnnounce>,
+    /// The self-check render as a PNG: the controller compares it with its own render of the same
+    /// view, pixel by pixel, to tell GPUs whose pictures differ (design §9).
+    pub probe: Option<BlobAnnounce>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -451,6 +456,12 @@ pub fn validate(m: &Msg) -> Result<(), String> {
             }
             if let Some(b) = &s.link_sample {
                 blob("link sample", b, MAX_LINK_SAMPLE_BYTES)?;
+            }
+            if let Some(b) = &s.probe {
+                blob("probe", b, MAX_PROBE_BYTES)?;
+                if s.link_sample.as_ref().is_some_and(|l| l.id == b.id) {
+                    return Err("the probe and the link sample share a blob id".into());
+                }
             }
         }
         Msg::JobOpen(j) => {

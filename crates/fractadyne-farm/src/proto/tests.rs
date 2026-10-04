@@ -40,6 +40,7 @@ fn samples() -> Vec<Msg> {
             gpu: Some(GpuInfo { adapter: "NVIDIA GeForce RTX 3080".into(), orbit_len_cap: 7_452_444 }),
             free_bytes: Some(412 << 30),
             link_sample: Some(BlobAnnounce { id: 1, len: 1 << 20, sha256: D.into() }),
+            probe: Some(BlobAnnounce { id: 2, len: 48_000, sha256: D.into() }),
         }),
         Msg::JobOpen(JobOpen { job_id: "a1b2c3d4e5f60718".into(), name: "Grand tour".into(), bundle: BlobAnnounce { id: 2, len: 9000, sha256: D.into() } }),
         Msg::Assign(Assign { job_id: "j".into(), run_id: 7, start: 120, end: 136 }),
@@ -97,6 +98,9 @@ fn bad_fields_are_protocol_errors() {
         r#"{"kind":"bye","body":{"reason":"\u001b[2J"}}"#,
         // a diagnostics request for nothing, or for too much
         r#"{"kind":"diag_request","body":{"items":[]}}"#,
+        // a probe over its cap; a probe on the link sample's blob id
+        r#"{"kind":"self_check","body":{"items":[],"gpu":null,"free_bytes":null,"link_sample":null,"probe":{"id":2,"len":99999999,"sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}}"#,
+        r#"{"kind":"self_check","body":{"items":[],"gpu":null,"free_bytes":null,"link_sample":{"id":1,"len":10,"sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"probe":{"id":1,"len":10,"sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}}"#,
     ];
     for json in bad {
         let mut p = vec![KIND_CONTROL];

@@ -71,6 +71,8 @@ struct Proc {
     child: std::process::Child,
     lines: mpsc::Receiver<String>,
     log: Vec<String>,
+    /// Piped only for a process run under `--ui-status`.
+    stdin: Option<std::process::ChildStdin>,
 }
 
 impl Proc {
@@ -78,11 +80,12 @@ impl Proc {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         std::fs::create_dir_all(cfg).map_err(|e| e.to_string())?;
         let mut cmd = std::process::Command::new(exe);
+        let piped = args.iter().any(|a| a == super::status::FLAG);
         cmd.args(args)
             .env("FRACTADYNE_CONFIG_DIR", cfg)
             .env("FRACTADYNE_NO_SOUND", "1")
             .env_remove(super::client::CORRUPT_INSTRUMENT)
-            .stdin(std::process::Stdio::null())
+            .stdin(if piped { std::process::Stdio::piped() } else { std::process::Stdio::null() })
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
         for (k, v) in env {
@@ -94,6 +97,7 @@ impl Proc {
             cmd.creation_flags(0x0800_0000);
         }
         let mut child = cmd.spawn().map_err(|e| format!("{name}: {e}"))?;
+        let stdin = child.stdin.take();
         let (tx, rx) = mpsc::channel();
         // Both streams into one channel, stderr marked, so the record shows everything it said.
         for (stream, mark) in [(child.stdout.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>), ""), (child.stderr.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>), "! ")] {
@@ -108,7 +112,16 @@ impl Proc {
                 });
             }
         }
-        Ok(Self { name, child, lines: rx, log: Vec::new() })
+        Ok(Self { name, child, lines: rx, log: Vec::new(), stdin })
+    }
+
+    /// Send a `--ui-status` command.
+    fn send(&mut self, cmd: &str) {
+        use std::io::Write;
+        if let Some(s) = self.stdin.as_mut() {
+            let _ = writeln!(s, "{cmd}");
+            let _ = s.flush();
+        }
     }
 
     /// Drain what it has printed; `true` if any new line matched `pat`.
@@ -118,7 +131,10 @@ impl Proc {
             if l.contains(pat) {
                 hit = true;
             }
-            println!("    [{}] {}", self.name, l);
+            // Status lines are kept for the verdict, not shown: one a second, and long.
+            if !l.starts_with(super::status::PREFIX) {
+                println!("    [{}] {}", self.name, l);
+            }
             self.log.push(l);
         }
         hit
@@ -185,6 +201,7 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
             s("--strikes"),
             s("2"),
             s("--farm-allow-dirty"),
+            s(super::status::FLAG),
         ],
         &base.join("cfg-controller"),
         &[],
@@ -207,23 +224,49 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     let addr = format!("127.0.0.1:{port}");
 
     // 3. The clients.
-    let client = |name: &'static str, env: &[(&str, &str)]| {
-        Proc::spawn(
-            name,
-            &[s("--render-client"), addr.clone(), s("--farm-key-file"), p(&key_file), s("--name"), format!("farmtest-{name}"), s("--farm-allow-dirty")],
-            &base.join(format!("cfg-{name}")),
-            env,
-        )
+    let client = |name: &'static str, env: &[(&str, &str)], ui: bool| {
+        let mut args = vec![s("--render-client"), addr.clone(), s("--farm-key-file"), p(&key_file), s("--name"), format!("farmtest-{name}"), s("--farm-allow-dirty")];
+        if ui {
+            args.push(s(super::status::FLAG));
+        }
+        Proc::spawn(name, &args, &base.join(format!("cfg-{name}")), env)
     };
-    let mut a = client("A", &[(super::client::CORRUPT_INSTRUMENT, "2")])?;
-    let mut b = client("B", &[])?;
-    let mut c = client("C", &[])?;
+    let mut a = client("A", &[(super::client::CORRUPT_INSTRUMENT, "2")], false)?;
+    let mut b = client("B", &[], false)?;
+    // C as the app's Render client window runs it: status lines out, commands in.
+    let mut c = client("C", &[], true)?;
 
-    // 4. Run, killing B once it has sent a frame.
+    // 4. Run, killing B once it has sent a frame; pause the job from "the window" (stdin) as soon as
+    // it renders, and resume it once the status says paused.
     let mut b_killed = false;
+    let mut pause_step = 0; // 0 → pause sent (1) → paused seen, resume sent (2) → rendering again (3)
+    let mut seen = 0;
     let deadline = Instant::now() + Duration::from_secs(300);
     let code = loop {
         ctl.drain("");
+        for l in &ctl.log[seen..] {
+            if let Some(st) = super::status::parse::<super::status::ControllerStatus>(l) {
+                use super::status::ControllerPhase as P;
+                match (pause_step, st.phase) {
+                    (0, P::Rendering) => pause_step = 1,
+                    (1, P::Paused) => pause_step = 2,
+                    (2, P::Rendering | P::Finished) => pause_step = 3,
+                    _ => {}
+                }
+            }
+        }
+        seen = ctl.log.len();
+        match pause_step {
+            1 if !ctl.log.iter().any(|l| l.contains("job paused")) => {
+                println!("  → pausing the job through stdin");
+                ctl.send("pause");
+            }
+            2 if !ctl.log.iter().any(|l| l.contains("job resumed")) => {
+                println!("  → resuming it");
+                ctl.send("resume");
+            }
+            _ => {}
+        }
         a.drain("");
         c.drain("");
         if b.drain("frame ") && !b_killed && b.log.iter().any(|l| l.contains(" sent (")) {
@@ -242,11 +285,25 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
         }
         std::thread::sleep(Duration::from_millis(100));
     };
+    // C leaves when told, as the window's Disconnect does — not by being killed.
+    let leave_t = Instant::now();
+    c.send("leave");
+    let c_exit = loop {
+        if let Ok(Some(st)) = c.child.try_wait() {
+            break st.code();
+        }
+        if leave_t.elapsed() > Duration::from_secs(10) {
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let leave_s = leave_t.elapsed().as_secs_f64();
     for pr in [&mut a, &mut b, &mut c] {
         if pr.running() {
             let _ = pr.child.kill();
         }
         let _ = pr.child.wait();
+        std::thread::sleep(Duration::from_millis(100));
         pr.drain("");
     }
 
@@ -301,6 +358,38 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     check(
         b_killed && (events.contains("farmtest-B: connection closed") || events.contains("farmtest-B is unreachable")),
         "the event log records B's departure after it was killed".into(),
+    );
+    // The window's side: status lines, commands, the probes.
+    let statuses: Vec<super::status::ControllerStatus> = ctl.log.iter().filter_map(|l| super::status::parse(l)).collect();
+    let last = statuses.last();
+    check(
+        statuses.len() >= 5 && last.is_some_and(|s| s.phase == super::status::ControllerPhase::Finished && s.exit_code == Some(0) && s.done == FRAMES),
+        format!(
+            "the controller's status lines parse ({}), the last says finished, exit {:?}, {} of {FRAMES} done",
+            statuses.len(),
+            last.and_then(|s| s.exit_code),
+            last.map_or(0, |s| s.done)
+        ),
+    );
+    check(pause_step == 3, format!("pause and resume through stdin took effect (step {pause_step} of 3)"));
+    // (stdout only: each note is echoed to stderr as a `[fd-farm]` log line too)
+    let identical_probes = ctl.log.iter().filter(|l| !l.starts_with("! ") && l.contains("probe identical to this machine's")).count();
+    check(identical_probes == 3, format!("every client's probe matched this machine's ({identical_probes} of 3)"));
+    let probes: Vec<String> = std::fs::read_dir(out.join("farm").join("probes")).map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+    check(probes.len() == 4 && probes.iter().any(|n| n == "this-machine.png"), format!("farm/probes holds this machine's probe and the clients' ({} files)", probes.len()));
+    let classes: Vec<Option<String>> = statuses.iter().rev().find(|s| s.clients.len() >= 3).map(|s| s.clients.iter().map(|c| c.gpu_class.clone()).collect()).unwrap_or_default();
+    check(classes.len() >= 3 && classes.iter().all(|c| c.as_deref() == Some("A")), format!("one GPU class, A, for every client ({classes:?})"));
+    check(events.contains("probe identical"), "the event log kept the notes from before the job started (the probes)".into());
+    let cst: Vec<super::status::ClientStatus> = c.log.iter().filter_map(|l| super::status::parse(l)).collect();
+    let rendered = cst.iter().any(|x| x.phase == super::status::ClientPhase::Rendering);
+    let c_last = cst.last();
+    check(
+        c_exit == Some(0) && leave_s < 5.0 && rendered && c_last.is_some_and(|x| x.phase == super::status::ClientPhase::Ended && x.exit_code == Some(0) && x.frames_done > 0),
+        format!(
+            "client C (under --ui-status) reported rendering, left on \"leave\" in {leave_s:.1}s with exit {c_exit:?}, its last status {:?} after {} frame(s)",
+            c_last.map(|x| x.phase),
+            c_last.map_or(0, |x| x.frames_done)
+        ),
     );
     let a_corrupted = a.log.iter().any(|l| l.contains("sent corrupted on purpose"));
     println!("farmtest: {:.1}s", t0.elapsed().as_secs_f64());
