@@ -59,6 +59,13 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Fixed: rendering a tour from the app filed a crash report for the app (0.3.0-beta.18).** The
+  render process the Render tour window starts shares the app's log folder, and it took the running
+  session's "still running" marker for one left behind by a crash: it wrote a crash report for a
+  session that was alive, and removed the marker, so a real crash of that session later would have
+  gone unnoticed. The same happened with any other Fractadyne process started while the app ran.
+  The marker now names its process, and a process started while that one is running leaves it
+  alone; a session that really did end without shutting down is reported as before.
 - **Render farm: render one tour on several machines (0.3.0-beta.18).** `--farm-render TOUR --out
   DIR` runs a controller that listens for render clients; `--render-client HOST:PORT` turns any
   machine with this exact build into one ([design](design/remote-rendering.md)). Clients dial in

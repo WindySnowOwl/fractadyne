@@ -904,20 +904,89 @@ fn marker_path() -> Option<PathBuf> {
 /// Armed around the GUI ONLY, and every deliberate exit routes through [`crate::exit`] which
 /// disarms it, so a normal shutdown can never look like a crash. That matters more than
 /// coverage: a false crash report would teach everyone to ignore real ones.
+/// This process armed the marker: only it may disarm it (see [`end_session`]).
+static MARKER_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub(crate) fn begin_gui_session() {
     if let Some(p) = marker_path() {
+        // ⚠Not over a LIVE session's marker. A windowed task the GUI starts (`--render-tour` runs
+        // in an event loop too) shares its log folder; arming here overwrote the running
+        // session's marker with the task's own and then removed it at the task's exit (measured
+        // 2026-10-04) — leaving the session unwatched for the rest of its life.
+        if let Some(owner) = std::fs::read_to_string(&p).ok().as_deref().and_then(marker_pid).filter(|&pid| pid != std::process::id() && fractadyne_alive(pid)) {
+            log_line("start", &format!("the session marker belongs to the running pid {owner}; this process does not arm it"));
+            return;
+        }
+        MARKER_ARMED.store(true, Ordering::Relaxed);
+        // The pid lets any other process that starts against this log folder while the session is
+        // alive (a Render tour or farm child, a second instance, a script asking `--version`) see
+        // the marker is live, not left behind — see `report_unclean_previous_session`.
         let body = format!(
-            "{}\nstarted {}\n",
+            "{}\nstarted {}\npid {}\n",
             crate::sysinfo::version_string(),
-            crate::sysinfo::now_utc_string()
+            crate::sysinfo::now_utc_string(),
+            std::process::id()
         );
         let _ = std::fs::write(p, body);
     }
 }
 
+/// The `pid N` line of a session marker (markers written before it carried one have none).
+pub(crate) fn marker_pid(marker: &str) -> Option<u32> {
+    marker.lines().find_map(|l| l.strip_prefix("pid ")?.trim().parse().ok())
+}
+
+/// Is `pid` a running Fractadyne process? The name check keeps a dead session's recycled pid,
+/// now some other program, from passing for it. `false` where the platform cannot say.
+pub(crate) fn fractadyne_alive(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+        const STILL_ACTIVE: u32 = 259;
+        unsafe extern "system" {
+            fn OpenProcess(access: u32, inherit: i32, pid: u32) -> isize;
+            fn GetExitCodeProcess(h: isize, code: *mut u32) -> i32;
+            fn QueryFullProcessImageNameW(h: isize, flags: u32, name: *mut u16, size: *mut u32) -> i32;
+            fn CloseHandle(h: isize) -> i32;
+        }
+        // SAFETY: plain Win32 calls on a handle we open and close here; the name buffer and its
+        // length are ours and outlive the call.
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h == 0 {
+                return false;
+            }
+            let mut code = 0u32;
+            let running = GetExitCodeProcess(h, &mut code) != 0 && code == STILL_ACTIVE;
+            let mut buf = [0u16; 1024];
+            let mut len = buf.len() as u32;
+            let named = QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut len) != 0
+                && String::from_utf16_lossy(&buf[..len as usize])
+                    .rsplit(['\\', '/'])
+                    .next()
+                    .is_some_and(|n| n.to_ascii_lowercase().starts_with("fractadyne"));
+            CloseHandle(h);
+            running && named
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_to_string(format!("/proc/{pid}/comm")).is_ok_and(|c| c.trim().starts_with("fractadyne"))
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
 /// Disarm the marker. Idempotent; called from [`crate::exit`] and after the event loop returns.
 pub(crate) fn end_session() {
-    if let Some(p) = marker_path() {
+    // ⚠Only the process that ARMED it. Every process exits through here, and a child the GUI
+    // started (a Render tour, a farm process) shares its log folder: disarming unconditionally,
+    // that child deleted the running session's marker as it quit (measured 2026-10-04, after the
+    // start-up check had already been taught to leave a live marker alone).
+    if let Some(p) = marker_path().filter(|_| MARKER_ARMED.load(Ordering::Relaxed)) {
         let _ = std::fs::remove_file(p);
     }
     // `frames.jsonl` is written by its own thread, which `process::exit` does not wait for: give
@@ -944,6 +1013,14 @@ static PREV_UNCLEAN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 fn report_unclean_previous_session() {
     let Some(p) = marker_path() else { return };
     let Ok(prev) = std::fs::read_to_string(&p) else { return };
+    // ⚠A LIVE session's marker, not a dead one's: this process started against the log folder of
+    // a GUI that is still running. Every child the GUI starts did exactly that — a Render tour
+    // child (reproduced 2026-10-04) deleted the running session's marker, so its own later crash
+    // could no longer be noticed, and filed a crash report for a session that was alive.
+    if let Some(pid) = marker_pid(&prev).filter(|&pid| pid != std::process::id() && fractadyne_alive(pid)) {
+        log_line("start", &format!("a Fractadyne session (pid {pid}) is running against this log folder; its marker is left alone"));
+        return;
+    }
     let _ = std::fs::remove_file(&p);
     // The dead session's log: rotated into `.1` if this startup rotated it (see ROTATED_AT_START).
     let dead_log = if ROTATED_AT_START.load(Ordering::Relaxed) { "fractadyne.log.1" } else { "fractadyne.log" };
@@ -1179,6 +1256,40 @@ impl Drop for ProgressPump {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(t) = self.thread.take() {
             let _ = t.join();
+        }
+    }
+}
+
+#[cfg(test)]
+mod session_marker_tests {
+    use super::*;
+
+    #[test]
+    fn a_marker_names_its_pid_and_an_old_one_has_none() {
+        assert_eq!(marker_pid("fractadyne 0.3.0-beta.18 (build 1, gabc)\nstarted 2026-10-04\npid 4242\n"), Some(4242));
+        assert_eq!(marker_pid("fractadyne 0.3.0-beta.17 (build 1, gabc)\nstarted 2026-10-03\n"), None);
+        assert_eq!(marker_pid("pid x\n"), None);
+    }
+
+    #[test]
+    fn this_process_is_alive_and_a_finished_one_is_not() {
+        // The test binary is fractadyne-<hash>: alive, and named like the app.
+        assert!(fractadyne_alive(std::process::id()));
+        // A process that has exited — and was never Fractadyne.
+        #[cfg(windows)]
+        let mut c = std::process::Command::new("cmd").args(["/C", "exit 0"]).spawn().expect("cmd runs");
+        #[cfg(not(windows))]
+        let mut c = std::process::Command::new("true").spawn().expect("true runs");
+        let pid = c.id();
+        c.wait().expect("it ends");
+        assert!(!fractadyne_alive(pid));
+        // A RUNNING process that is not Fractadyne: what a dead session's recycled pid looks like.
+        #[cfg(windows)]
+        {
+            let mut other = std::process::Command::new("cmd").args(["/C", "ping -n 4 127.0.0.1 >nul"]).spawn().expect("cmd runs");
+            assert!(!fractadyne_alive(other.id()), "a live cmd.exe passed for a Fractadyne session");
+            let _ = other.kill();
+            let _ = other.wait();
         }
     }
 }
