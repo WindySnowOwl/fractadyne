@@ -59,6 +59,13 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Fixed: deep frames of a normalized tour came out nearly flat (0.3.0-beta.18).** A normalized
+  tour measures a palette range at each keyframe's view, and every one of those measurements was
+  taken of the home view instead, at the keyframe's iteration budget. A deep frame's escape values
+  then sat in a narrow band of a range meant for the whole set, and the palette flattened: in a
+  test dive the 1e30× frame had 100 distinct colours, and has 1,932 now. Keyframe holds of the
+  shipped `ultra-dive-e200` tour use 1.6 to 2.5 times as many colours. A normalized tour rendered
+  before this change will look different, with more contrast, when it is rendered again.
 - **Fixed: a tour rendered in parts coloured differently from the same tour rendered whole
   (0.3.0-beta.18).** A normalized tour maps its palette through ranges measured at its keyframes,
   and a `--segments` shard or `--segment` chapter that ended between two keyframes measured its

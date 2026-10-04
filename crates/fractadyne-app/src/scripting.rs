@@ -3236,6 +3236,15 @@ impl FractadyneApp {
         self.render_cfg.max_iter = frame_budget.max_iter;
         self.render_cfg.auto_iter = frame_budget.auto_iter;
         self.apply_sampled_settings(&s);
+        // ⭐THE KEYFRAME'S view, set exactly as the frame loop sets a frame's. This pass used to
+        // measure whatever the viewport held — the home view the render resets it to — so every
+        // anchor was the HOME view's range at that keyframe's budget (measured: anchors at 1×, 8× and
+        // 1e30× all had lo = 0.98594…, only hi growing with the budget), and a deep frame was mapped
+        // through a range its escape values sit far outside: the palette flattened to a narrow band.
+        // The span comes from the viewport, not the 480×270 measuring size, so the region measured
+        // is the frame's own whatever the output size.
+        self.viewport = fractadyne_core::Viewport::new(self.viewport.width_px, self.viewport.height_px);
+        self.viewport.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
         self.render_export_normalized(
             device,
             queue,

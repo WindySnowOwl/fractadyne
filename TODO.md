@@ -14,8 +14,8 @@ most editors; sections are the `##` headings the items live under.
 |-----|----|------|---------|------|
 | red | 2 | Deep full-quality export: fixed per-dispatch cost + a sustained-load device loss … | Open bugs | 897 |
 | red | 2 | FIELD DEVICE LOSS 2026-08-22, USER'S OWN DEEP ZOOM, beta.129 build 1837, RTX 3080, … | Open bugs | 2508 |
-| red |  | "Normalize deep colors" GETS NO READINGS AT FLOATEXP DEPTH, so it cannot engage on load … | Performance & throughput (M7) | 9407 |
-| red |  | `--uitest` step 43 `minimap-pan-verify` is a TIMING RACE, not a flake to wave through … | Performance & throughput (M7) | 9436 |
+| red |  | "Normalize deep colors" GETS NO READINGS AT FLOATEXP DEPTH, so it cannot engage on load … | Performance & throughput (M7) | 9408 |
+| red |  | `--uitest` step 43 `minimap-pan-verify` is a TIMING RACE, not a flake to wave through … | Performance & throughput (M7) | 9437 |
 | orange |  | MOVING THE WINDOW BETWEEN MONITORS WITH DIFFERENT SCALING RESIZES IT ERRATICALLY AND … | Open bugs | 1211 |
 | orange |  | DUAL-VIEW JULIA SOMETIMES STAYS BLURRY OR LANDS ON A FLAT PLANE AFTER MOTION … | Open bugs | 2484 |
 | orange |  | DEVICE LOSS in `--motiontest` at Home→Settle, MODE 1 (direct), NOT reproducible — one … | Open bugs | 3531 |
@@ -33,9 +33,9 @@ most editors; sections are the `##` headings the items live under.
 | - | 1 | RX 6800 XT under Linux (Mesa RADV): df32 and floatexp disagree on 4–6% of pixels — dig in … | Open bugs | 824 |
 | - | 1 | T2a. Derive BLA level-0 in-shader. `a = 2Z_n`, `b = one`, `r = |2Z_n|·eps`, `span = 1`, all … | Open bugs | 3759 |
 | - | 1 | Runtime EFT / fused-fma capability probe that derates mode thresholds. Buried in a … | Open bugs | 3829 |
-| - | 1 | Shippable reference files — ⭐now the farm design's §8 (P3): the orbit-cache blob is the … | Performance & throughput (M7) | 9114 |
-| - | 1 | Distributed normalize coherence — ⭐closed by the farm's P0 `--norm-anchors` (anchors … | Performance & throughput (M7) | 9121 |
-| - | 1 | Attempt a Fractadyne render of an ultradeep minibrot shared by the FractalShark author. | ▶ Render the ultradeep view34 location (someday) (2026-09-12) | 9475 |
+| - | 1 | Shippable reference files — ⭐now the farm design's §8 (P3): the orbit-cache blob is the … | Performance & throughput (M7) | 9115 |
+| - | 1 | Distributed normalize coherence — ⭐closed by the farm's P0 `--norm-anchors` (anchors … | Performance & throughput (M7) | 9122 |
+| - | 1 | Attempt a Fractadyne render of an ultradeep minibrot shared by the FractalShark author. | ▶ Render the ultradeep view34 location (someday) (2026-09-12) | 9476 |
 
 ### Unflagged backlog (100)
 
@@ -129,18 +129,18 @@ most editors; sections are the `##` headings the items live under.
 | Level 1: three-thread complex squaring — (x+iy)² = three independent bignum mults (or … | Performance & throughput (M7) | 9014 |
 | Level 3 (research): precision-cascade with parallel residuals — run the serial chain at … | Performance & throughput (M7) | 9031 |
 | Precision ramp-down along the orbit (research) — later iterations may tolerate less … | Performance & throughput (M7) | 9037 |
-| P1 — channel, protocol, scheduler, verification + strikes, metrics, CLI … | Performance & throughput (M7) | 9071 |
-| P2 — client dialog + controller panel, probe frame / GPU classes, `--uitest` steps. | Performance & throughput (M7) | 9073 |
-| P3 — share mode, run stealing, shared references (`OrbitOffer/Query/Reply`). | Performance & throughput (M7) | 9074 |
-| P4 — mDNS discovery of controllers, QR key, idle-only policy, per-adapter slots, PLUTO. | Performance & throughput (M7) | 9075 |
-| By-keyframe distribution once exponential-map export lands — one keyframe per factor … | Performance & throughput (M7) | 9111 |
-| GPU-assisted reference-candidate scoring (the practical "bignum on GPU"). Full GPU bignum … | Performance & throughput (M7) | 9130 |
-| Deep floatexp *settled* frames are slow in filament fields — a shader-speed fix, NOT multi-reference. | Performance & throughput (M7) | 9162 |
-| Tile-level export pipeline — overlap tile N+1 iterate with tile N async readback + … | Performance & throughput (M7) | 9259 |
-| Better single-GPU utilization — before adding GPUs, check the live dispatch actually … | Performance & throughput (M7) | 9272 |
-| `about_names_the_running_backend` is not isolated from the rest of its test binary — … | Performance & throughput (M7) | 9397 |
-| Multi-GPU — offline/export only (deferred) — a second GPU gives near-linear speedup for … | Performance & throughput (M7) | 9449 |
-| Multi-GPU — offline/export only (deferred) — a second GPU gives near-linear speedup for … | Performance & throughput (M7) | 9452 |
+| P1 — channel, protocol, scheduler, verification + strikes, metrics, CLI … | Performance & throughput (M7) | 9072 |
+| P2 — client dialog + controller panel, probe frame / GPU classes, `--uitest` steps. | Performance & throughput (M7) | 9074 |
+| P3 — share mode, run stealing, shared references (`OrbitOffer/Query/Reply`). | Performance & throughput (M7) | 9075 |
+| P4 — mDNS discovery of controllers, QR key, idle-only policy, per-adapter slots, PLUTO. | Performance & throughput (M7) | 9076 |
+| By-keyframe distribution once exponential-map export lands — one keyframe per factor … | Performance & throughput (M7) | 9112 |
+| GPU-assisted reference-candidate scoring (the practical "bignum on GPU"). Full GPU bignum … | Performance & throughput (M7) | 9131 |
+| Deep floatexp *settled* frames are slow in filament fields — a shader-speed fix, NOT multi-reference. | Performance & throughput (M7) | 9163 |
+| Tile-level export pipeline — overlap tile N+1 iterate with tile N async readback + … | Performance & throughput (M7) | 9260 |
+| Better single-GPU utilization — before adding GPUs, check the live dispatch actually … | Performance & throughput (M7) | 9273 |
+| `about_names_the_running_backend` is not isolated from the rest of its test binary — … | Performance & throughput (M7) | 9398 |
+| Multi-GPU — offline/export only (deferred) — a second GPU gives near-linear speedup for … | Performance & throughput (M7) | 9450 |
+| Multi-GPU — offline/export only (deferred) — a second GPU gives near-linear speedup for … | Performance & throughput (M7) | 9453 |
 <!-- TODO-INDEX:END -->
 
 ## ▶ Offline render path: the fixed cost in the shallow/mid band (2026-08-21)
@@ -9065,8 +9065,9 @@ decision in its §13 is taken. The struck item is kept for the reasoning, which 
     `feat/remote-rendering`: atomic frame writes (temp + rename), `--frames A..B`,
     `--dump-norm-anchors`/`--norm-anchors`, `--farm-child` preset, `--set ORBIT_LEN_CAP`, per-frame
     PNG metadata; fixed on the way: shards/chapters ending between keyframes coloured differently
-    from the whole render. Gate evidence in the design's §12. ⚠Found, fix pending as its own commit:
-    every normalize anchor measures the HOME view, not its keyframe's (design §12 / §15.6).
+    from the whole render. Gate evidence in the design's §12. Found and fixed in its own commit
+    after it: every normalize anchor measured the HOME view, not its keyframe's (design §12 /
+    §15.6) — deep normalized frames came out nearly flat.
   - [ ] P1 — channel, protocol, scheduler, verification + strikes, metrics, CLI
     (`--render-client`, `--farm-render`), `--farmtest`.
   - [ ] P2 — client dialog + controller panel, probe frame / GPU classes, `--uitest` steps.

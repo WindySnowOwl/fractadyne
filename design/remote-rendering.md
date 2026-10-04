@@ -665,12 +665,14 @@ the target → 1e30×, a caption, a palette blend) against the pre-change build 
 - atomic writes: three renders killed while a frame was being written left only complete frames
   plus one `.part`; `--resume` removed it and the finished sequences matched an uninterrupted render.
 
-Found along the way, not fixed in Phase 0 (byte-neutrality): **every normalize anchor measures the
-HOME view**, not its keyframe's — `measure_norm_anchor` (the old loop) never moves the viewport; the
-dumped anchors for 1×, 8× and 1e30× share `lo = 0.98594…` and differ only in `hi`, which grows with
-each keyframe's iteration budget. Deep normalized frames are mapped through the home view's range and
-come out nearly flat. A one-line fix with a visible change to every normalized tour, so it is its
-own commit with before/after frames.
+Found along the way, not fixed in Phase 0 (byte-neutrality): **every normalize anchor measured the
+HOME view**, not its keyframe's — `measure_norm_anchor` (the old loop) never moved the viewport; the
+dumped anchors for 1×, 8× and 1e30× shared `lo = 0.98594…` and differed only in `hi`, which grew
+with each keyframe's iteration budget. Deep normalized frames were mapped through the home view's
+range and came out nearly flat. ✅**Fixed in its own commit after Phase 0**: the anchors now read
+0.99–1,584 (1×), 3.5–2,958 (8×) and 507–698 (1e30×); the gate tour's 1e30× frame went from 100 to
+1,932 distinct colours, and the shipped `ultra-dive-e200` keyframe holds from 651–1,016 to
+1,505–1,663; shards still match the whole render exactly.
 
 **Phase 1 — channel, protocol, scheduler, CLI.** Pairing, Noise channel (client dials), pinning,
 version gate, handshake self-check (§9.1), bundle, runs (fixed length, shrinking at the tail),
@@ -847,8 +849,8 @@ Found while building Phase 0 (measured, not just read):
 5. ✅ *Fixed in Phase 0.* **A shard or chapter ending between keyframes coloured differently from the
    whole render**: the anchor pass clamped keyframe frames to the RANGE's last frame. Measured on the
    gate tour (see §12).
-6. **Every normalize anchor measures the home view** (see §12, Phase 0) — deep normalized frames are
-   mapped through the home view's range. Fix pending as its own commit.
+6. ✅ *Fixed after Phase 0.* **Every normalize anchor measured the home view** (see §12, Phase 0) —
+   deep normalized frames were mapped through the home view's range and came out nearly flat.
 7. **`--deviceloss-repro`'s window is visible after its first frame** — eframe 0.31 shows a window
    once its first frame is painted whatever the builder said (§10). Harmless, but its comment
    promised otherwise.
