@@ -48,6 +48,13 @@ t = 2
 location = "target"
 zoom = 8.0
 max_iter = 3000
+# A held shot (frames 6–10) that the picture arrives in by dissolving: frames 6–9 blend with frame
+# 5, rendered in the same process, so a run starting inside the dissolve would render them as a
+# hard cut and the identity check against the reference would fail. (A transition is clamped to
+# its keyframe's hold: without the hold, the dissolve is silently zero-length.)
+hold = 1.5
+transition = "dissolve"
+transition_secs = 1.0
 
 [[keyframe]]
 t = 6

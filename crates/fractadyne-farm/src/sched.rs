@@ -19,6 +19,16 @@
 //!   it. At `strikes_to_remove` the client is removed — by NAME, so reconnecting does not undo it;
 //!   only the user re-admits.
 //! - **Late results**: the first verified copy of a frame wins; later ones are discarded.
+//! - **Stealing.** A client with nothing left to take gets another client's queued next run whole
+//!   (no work lost), else the second half of the largest run being rendered: the owner is told to
+//!   stop at the cut (`Trim`).
+//! - **Dissolves.** A mid-dissolve frame blends with the frame before it, in the same process, so
+//!   no run starts on one: a run that would end inside a dissolve runs on through it, a stolen tail
+//!   is cut after it, and a run that must begin inside one (a re-queued frame) leads in from the
+//!   frame the dissolve rises through.
+//! - **Held shots** go to one GPU class: machines whose GPUs draw differently would make a still
+//!   picture jump. The first class to take a frame of a hold keeps it while a machine of that class
+//!   is there to.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
@@ -48,6 +58,13 @@ pub struct Config {
     pub max_failures_per_frame: u32,
     /// Two device losses or crashes within this window park a client as unstable.
     pub crash_window: Duration,
+    /// Frames a run may not START at (mid-dissolve frames); shorter than `frames` = none beyond.
+    pub no_start: Vec<bool>,
+    /// Held shots, as frame ranges `[first, end)`, kept to one GPU class.
+    pub holds: Vec<(u64, u64)>,
+    /// A run's unrendered tail is stolen only when at least this many frames would remain after the
+    /// frame being rendered.
+    pub steal_min: u64,
 }
 
 impl Config {
@@ -67,6 +84,9 @@ impl Config {
             strikes_to_remove: 2,
             max_failures_per_frame: 2,
             crash_window: Duration::from_secs(600),
+            no_start: Vec::new(),
+            holds: Vec::new(),
+            steal_min: 4,
         }
     }
 }
@@ -131,6 +151,9 @@ pub enum Command {
     /// Close this client's connection: it was declared unreachable. If it is in fact alive it
     /// reconnects, and starts clean as a new connection.
     Drop { client: ClientId, reason: String },
+    /// Stop the run at frame `from`: the frames from there on went to another client (stealing).
+    /// The client finishes the frames before it and then ends the run.
+    Trim { client: ClientId, run: RunId, from: u64 },
     /// A line for the event log and the panel.
     Note(String),
     /// Every frame is done or given up.
@@ -169,11 +192,18 @@ struct Client {
     ewma_ms: Option<f64>,
     frames_done: u64,
     crashes: VecDeque<Instant>,
+    /// Its GPU class (machines whose probe renders are pixel-identical share one); `None` unknown.
+    class: Option<String>,
+    /// The frame its heartbeat says it is rendering.
+    at_frame: Option<u64>,
 }
 
 struct Run {
     client: ClientId,
+    /// The first frame the run owns. The client is told to start at `lead` ≤ `start`: frames
+    /// rendered only so a dissolve at `start` has the frame it blends with.
     start: u64,
+    lead: u64,
     end: u64,
     last_progress: Instant,
 }
@@ -219,6 +249,10 @@ pub struct Scheduler {
     storage_low: bool,
     finished: bool,
     frame_ms: Vec<u64>,
+    /// Which GPU class holds each held shot (by index into `cfg.holds`).
+    hold_owner: HashMap<usize, String>,
+    /// Classes given before their client joined.
+    early_class: HashMap<ClientId, Option<String>>,
     /// The time of the event being processed.
     now: Instant,
 }
@@ -247,7 +281,20 @@ impl Scheduler {
             storage_low: false,
             finished: false,
             frame_ms: Vec::new(),
+            hold_owner: HashMap::new(),
+            early_class: HashMap::new(),
             now: Instant::now(),
+        }
+    }
+
+    /// Tell the scheduler a client's GPU class — before `Joined` (it is kept until then), so the
+    /// client's first run already counts toward the held shots it touches.
+    pub fn set_class(&mut self, client: ClientId, class: Option<String>) {
+        match self.clients.get_mut(&client) {
+            Some(c) => c.class = class,
+            None => {
+                self.early_class.insert(client, class);
+            }
         }
     }
 
@@ -293,6 +340,8 @@ impl Scheduler {
                             ewma_ms: None,
                             frames_done: 0,
                             crashes: VecDeque::new(),
+                            class: self.early_class.remove(&client).flatten(),
+                            at_frame: None,
                         },
                     );
                 }
@@ -316,6 +365,9 @@ impl Scheduler {
                 // it is dropped, and returns as a new connection.
                 if let Some(c) = self.clients.get_mut(&client).filter(|c| matches!(c.state, ClientState::Active | ClientState::Paused)) {
                     c.last_heartbeat = now;
+                    if frame.is_some() {
+                        c.at_frame = frame;
+                    }
                     if c.state == ClientState::Paused && !paused {
                         c.state = ClientState::Active;
                         out.push(Command::Note(format!("{} resumed", c.name)));
@@ -340,7 +392,10 @@ impl Scheduler {
                 };
                 if state == FrameState::Done {
                     out.push(Command::Discard { index });
-                    out.push(Command::Note(format!("frame {index}: a late copy arrived and was discarded")));
+                    // A lead-in frame (rendered for a dissolve to blend with) is expected twice.
+                    if !self.runs.get(&run).is_some_and(|r| (r.lead..r.start).contains(&index)) {
+                        out.push(Command::Note(format!("frame {index}: a late copy arrived and was discarded")));
+                    }
                 } else {
                     self.frames[index as usize] = FrameState::Done;
                     out.push(Command::Accept { index });
@@ -602,8 +657,25 @@ impl Scheduler {
         }
     }
 
-    fn assignable(&self, i: u64, name: &str) -> bool {
-        self.frames.get(i as usize) == Some(&FrameState::Pending) && !self.excluded.get(&i).is_some_and(|v| v.iter().any(|n| n == name))
+    /// May client `id` take frame `i` (whatever its state now)? Not if it sent a bad copy of it, nor
+    /// if it is in a held shot another GPU class holds while a machine of that class is there.
+    fn may_take(&self, i: u64, id: ClientId) -> bool {
+        let Some(c) = self.clients.get(&id) else { return false };
+        if self.excluded.get(&i).is_some_and(|v| v.iter().any(|n| *n == c.name)) {
+            return false;
+        }
+        let Some(h) = self.cfg.holds.iter().position(|&(a, e)| a <= i && i < e) else { return true };
+        let Some(owner) = self.hold_owner.get(&h) else { return true };
+        c.class.as_deref() == Some(owner.as_str())
+            || !self.clients.values().any(|o| o.state == ClientState::Active && o.class.as_deref() == Some(owner.as_str()))
+    }
+
+    fn assignable(&self, i: u64, id: ClientId) -> bool {
+        self.frames.get(i as usize) == Some(&FrameState::Pending) && self.may_take(i, id)
+    }
+
+    fn no_start(&self, i: u64) -> bool {
+        self.cfg.no_start.get(i as usize).copied().unwrap_or(false)
     }
 
     fn assign(&mut self, now: Instant, out: &mut Vec<Command>) {
@@ -612,69 +684,163 @@ impl Scheduler {
         }
         let mut ids: Vec<ClientId> = self.clients.iter().filter(|(_, c)| c.state == ClientState::Active).map(|(&id, _)| id).collect();
         ids.sort_unstable();
-        let active = ids.len().max(1) as u64;
         loop {
             let mut progressed = false;
             for &id in &ids {
-                let c = &self.clients[&id];
-                if c.runs.len() >= self.cfg.runs_per_client {
-                    continue;
+                if self.clients[&id].runs.len() < self.cfg.runs_per_client && self.assign_one(id, ids.len(), now, out, None) {
+                    progressed = true;
                 }
-                let name = c.name.clone();
-                let Some(start) = self.pick_start(id, &name) else { continue };
-                let pending = self.frames.iter().filter(|f| **f == FrameState::Pending).count() as u64;
-                let c = &self.clients[&id];
-                let mut len = match c.ewma_ms {
-                    None => self.cfg.first_run,
-                    Some(ms) => ((self.cfg.run_target.as_millis() as f64 / ms.max(1.0)) as u64).clamp(self.cfg.min_run, self.cfg.max_run),
-                };
-                // Toward the end, smaller runs so the last frames spread across machines.
-                len = len.min((pending / (2 * active)).max(1));
-                let mut end = start;
-                while end < self.cfg.frames && end - start < len && self.assignable(end, &name) {
-                    end += 1;
-                }
-                if end == start {
-                    continue;
-                }
-                let run = self.next_run;
-                self.next_run += 1;
-                for i in start..end {
-                    self.frames[i as usize] = FrameState::Assigned { client: id, run };
-                }
-                self.runs.insert(run, Run { client: id, start, end, last_progress: now });
-                let c = self.clients.get_mut(&id).unwrap();
-                if c.runs.is_empty() {
-                    c.front_since = now;
-                }
-                c.runs.push_back(run);
-                c.cursor = Some(end);
-                out.push(Command::Assign { client: id, run, start, end });
-                progressed = true;
             }
             if !progressed {
                 break;
             }
         }
+        // Stealing: a client with nothing to do and nothing it may take — it starts where it stole.
+        for &id in &ids {
+            if self.clients[&id].runs.is_empty() {
+                if let Some(at) = self.steal_for(id, out) {
+                    self.assign_one(id, ids.len(), now, out, Some(at));
+                }
+            }
+        }
+    }
+
+    /// Give client `id` its next run, if there is one it may take — at `at` when that is free.
+    fn assign_one(&mut self, id: ClientId, active: usize, now: Instant, out: &mut Vec<Command>, at: Option<u64>) -> bool {
+        let Some(first) = at.filter(|&a| self.assignable(a, id)).or_else(|| self.pick_start(id)) else { return false };
+        // No run starts on a dissolve frame: lead in from the frame the dissolve rises through.
+        let mut lead = first;
+        while lead > 0 && self.no_start(lead) {
+            lead -= 1;
+        }
+        let pending = self.frames.iter().filter(|f| **f == FrameState::Pending).count() as u64;
+        let c = &self.clients[&id];
+        let mut len = match c.ewma_ms {
+            None => self.cfg.first_run,
+            Some(ms) => ((self.cfg.run_target.as_millis() as f64 / ms.max(1.0)) as u64).clamp(self.cfg.min_run, self.cfg.max_run),
+        };
+        // Toward the end, smaller runs so the last frames spread across machines.
+        len = len.min((pending / (2 * active.max(1) as u64)).max(1));
+        let mut end = first;
+        while end < self.cfg.frames && end - first < len && self.assignable(end, id) {
+            end += 1;
+        }
+        // …and never ends where the next run would have to start on a dissolve frame.
+        while end < self.cfg.frames && self.no_start(end) && self.assignable(end, id) {
+            end += 1;
+        }
+        if end == first {
+            return false;
+        }
+        let run = self.next_run;
+        self.next_run += 1;
+        for i in first..end {
+            self.frames[i as usize] = FrameState::Assigned { client: id, run };
+        }
+        // A held shot belongs to the first GPU class that takes a frame of it.
+        if let Some(class) = self.clients[&id].class.clone() {
+            for (h, &(a, e)) in self.cfg.holds.iter().enumerate() {
+                if a < end && first < e {
+                    self.hold_owner.entry(h).or_insert_with(|| class.clone());
+                }
+            }
+        }
+        self.runs.insert(run, Run { client: id, start: first, lead, end, last_progress: now });
+        let c = self.clients.get_mut(&id).unwrap();
+        if c.runs.is_empty() {
+            c.front_since = now;
+        }
+        c.runs.push_back(run);
+        c.cursor = Some(end);
+        out.push(Command::Assign { client: id, run, start: lead, end });
+        true
+    }
+
+    /// Free work for idle client `thief`: another client's queued run whole, else the second half
+    /// of the largest run being rendered. Returns where the thief should start.
+    fn steal_for(&mut self, thief: ClientId, out: &mut Vec<Command>) -> Option<u64> {
+        let thief_name = self.clients[&thief].name.clone();
+        let owned = |s: &Self, run: RunId, r: &Run| (r.start..r.end).filter(|&i| s.frames[i as usize] == FrameState::Assigned { client: r.client, run }).count() as u64;
+        // 1. A queued run, not yet started: nothing is lost by moving it.
+        let queued = self
+            .clients
+            .iter()
+            .filter(|(&id, c)| id != thief && c.runs.len() >= 2)
+            .filter_map(|(&id, c)| {
+                let run = *c.runs.back()?;
+                let r = self.runs.get(&run)?;
+                let n = owned(self, run, r);
+                (n > 0 && self.may_take(r.start, thief)).then_some((id, run, n))
+            })
+            .max_by_key(|&(id, run, n)| (n, std::cmp::Reverse((id, run))));
+        if let Some((owner, run, n)) = queued {
+            let owner_name = self.clients[&owner].name.clone();
+            let at = self.runs[&run].start;
+            out.push(Command::Cancel { client: owner, run: Some(run), reason: CancelReason::Reassigned });
+            self.drop_run(run);
+            out.push(Command::Note(format!("{owner_name}'s next run ({n} frame(s)) handed to {thief_name}, which had nothing to do")));
+            return Some(at);
+        }
+        // 2. The tail of the largest run being rendered.
+        let mut best: Option<(ClientId, RunId, u64, u64)> = None; // (owner, run, cut, frames taken)
+        for (&id, c) in &self.clients {
+            if id == thief || c.state != ClientState::Active {
+                continue;
+            }
+            let Some(&run) = c.runs.front() else { continue };
+            let Some(r) = self.runs.get(&run) else { continue };
+            // The frame being rendered: the first not done (or later, if its heartbeat says so).
+            let cur = (r.start..r.end).find(|&i| self.frames[i as usize] == FrameState::Assigned { client: id, run }).unwrap_or(r.end);
+            let cur = cur.max(c.at_frame.filter(|f| (r.start..r.end).contains(f)).unwrap_or(0));
+            let rest = r.end.saturating_sub(cur + 1);
+            if rest < self.cfg.steal_min {
+                continue;
+            }
+            let mut cut = cur + 1 + rest / 2;
+            while cut < r.end && self.no_start(cut) {
+                cut += 1;
+            }
+            if cut >= r.end || !self.may_take(cut, thief) {
+                continue;
+            }
+            let taken = r.end - cut;
+            if best.is_none_or(|b| (taken, std::cmp::Reverse((id, run))) > (b.3, std::cmp::Reverse((b.0, b.1)))) {
+                best = Some((id, run, cut, taken));
+            }
+        }
+        let (owner, run, cut, taken) = best?;
+        let end = self.runs[&run].end;
+        for i in cut..end {
+            if self.frames[i as usize] == (FrameState::Assigned { client: owner, run }) {
+                self.frames[i as usize] = FrameState::Pending;
+            }
+        }
+        if let Some(r) = self.runs.get_mut(&run) {
+            r.end = cut;
+        }
+        let owner_name = self.clients[&owner].name.clone();
+        out.push(Command::Trim { client: owner, run, from: cut });
+        out.push(Command::Note(format!("{owner_name}'s run cut at frame {cut}: its last {taken} frame(s) go to {thief_name}, which had nothing to do")));
+        Some(cut)
     }
 
     /// Where a client's next run starts: where its last one ended, else the largest pending gap it
     /// may take — at the gap's start when nobody is working toward it, at its middle when somebody is.
-    fn pick_start(&self, id: ClientId, name: &str) -> Option<u64> {
+    fn pick_start(&self, id: ClientId) -> Option<u64> {
         if let Some(c) = self.clients[&id].cursor {
-            if self.assignable(c, name) {
+            if self.assignable(c, id) {
                 return Some(c);
             }
         }
         let mut best: Option<(u64, u64)> = None; // (start, len)
         let mut i = 0;
         while i < self.cfg.frames {
-            if !self.assignable(i, name) {
+            if !self.assignable(i, id) {
                 i += 1;
                 continue;
             }
             let s = i;
-            while i < self.cfg.frames && self.assignable(i, name) {
+            while i < self.cfg.frames && self.assignable(i, id) {
                 i += 1;
             }
             if best.is_none_or(|(_, l)| i - s > l) {
@@ -683,7 +849,12 @@ impl Scheduler {
         }
         let (s, l) = best?;
         let approached = s > 0 && matches!(self.frames[(s - 1) as usize], FrameState::Assigned { .. });
-        Some(if approached && l >= 2 { s + l / 2 } else { s })
+        let mut m = if approached && l >= 2 { s + l / 2 } else { s };
+        // Not inside a dissolve: back to the frame it rises through, which this run then owns.
+        while m > s && self.no_start(m) {
+            m -= 1;
+        }
+        Some(m)
     }
 
     fn check_done(&mut self, out: &mut Vec<Command>) {

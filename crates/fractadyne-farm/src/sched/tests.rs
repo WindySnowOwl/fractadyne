@@ -292,6 +292,19 @@ fn chaos(seed: u64) {
     let mut cfg = Config::new(frames);
     cfg.first_run = 1 + rand(8);
     cfg.stall_floor = Duration::from_secs(40);
+    // Dissolves (windows of frames no run may start at) and held shots.
+    let mut no_start = vec![false; frames as usize];
+    for _ in 0..rand(4) {
+        let a = 1 + rand(frames - 1);
+        for i in a..(a + 1 + rand(6)).min(frames) {
+            no_start[i as usize] = true;
+        }
+    }
+    cfg.no_start = no_start.clone();
+    for _ in 0..rand(3) {
+        let a = rand(frames);
+        cfg.holds.push((a, (a + 2 + rand(20)).min(frames)));
+    }
     let mut s = Scheduler::new(cfg, &[]);
     let base = t0();
     let mut t = 0u64;
@@ -306,8 +319,18 @@ fn chaos(seed: u64) {
         for c in cmds {
             match c {
                 Command::Assign { client, run, start, end } => {
+                    assert!(!no_start[start as usize], "seed {seed}: a run starts at frame {start}, mid-dissolve");
                     if let Some(sc) = clients.get_mut(&client) {
                         sc.queue.push_back((run, start, end));
+                    }
+                }
+                Command::Trim { client, run, from } => {
+                    assert!(!no_start.get(from as usize).copied().unwrap_or(false), "seed {seed}: a run cut at {from}, mid-dissolve");
+                    if let Some(sc) = clients.get_mut(&client) {
+                        for q in sc.queue.iter_mut().filter(|q| q.0 == run) {
+                            q.2 = q.2.min(from);
+                        }
+                        sc.queue.retain(|q| q.1 < q.2);
                     }
                 }
                 Command::Cancel { client, run, .. } => {
@@ -349,6 +372,8 @@ fn chaos(seed: u64) {
             let id = next_id;
             next_id += 1;
             clients.insert(id, SimClient { name: name.clone(), alive: true, silent_until: None, paused: false, queue: VecDeque::new(), steady });
+            // Two GPU classes; the steady machine is always A.
+            s.set_class(id, Some(if steady || rand(2) == 0 { "A".to_string() } else { "B".to_string() }));
             let out = s.step(secs(base, t), Event::Joined { client: id, name });
             apply(out, &mut clients, &mut accepted, &mut failed, &mut done);
         }
@@ -459,4 +484,118 @@ fn the_strip_shows_each_cells_worst_state_and_never_more_cells_than_frames() {
     assert_eq!(s.strip(3), "daa", "a cell with a done and an assigned frame shows assigned");
     assert_eq!(s.strip(0), "");
     assert_eq!(Scheduler::new(Config::new(0), &[]).strip(8), "");
+}
+
+#[test]
+fn no_run_starts_inside_a_dissolve_and_a_requeued_dissolve_frame_leads_in() {
+    let b = t0();
+    let mut cfg = Config::new(40);
+    // Frames 6..12 are mid-dissolve: each blends with frame 5, rendered in the same process.
+    cfg.no_start = (0..40).map(|i| (6..12).contains(&i)).collect();
+    let mut s = Scheduler::new(cfg, &[]);
+    let a = assigns(&s.step(b, Event::Joined { client: 1, name: "A".into() }));
+    assert_eq!(a[0], (1, 1, 0, 12), "the first run (8 frames) would end mid-dissolve: it runs on through it");
+    assert_eq!(a[1].2, 12);
+
+    // A short job, all one run; frame 9 comes back (a bad copy). The run that renders it again
+    // starts at frame 5, the frame the dissolve rises through, and owns only frame 9.
+    let mut cfg = Config::new(12);
+    cfg.no_start = (0..12).map(|i| (6..12).contains(&i)).collect();
+    let mut s = Scheduler::new(cfg, &[]);
+    assert_eq!(assigns(&s.step(b, Event::Joined { client: 1, name: "A".into() })), vec![(1, 1, 0, 12)]);
+    verify(&mut s, b, 1, 1, 0..9);
+    s.step(b, Event::FrameBad { client: 1, run: 1, index: 9, why: "x".into() });
+    let bb = assigns(&s.step(b, Event::Joined { client: 2, name: "B".into() }));
+    assert_eq!(bb, vec![(2, 2, 5, 10)]);
+    // Its copy of frame 5 is discarded without a "late copy" note; frame 9 is accepted.
+    let five = s.step(b, Event::FrameVerified { client: 2, run: 2, index: 5, render_ms: 10 });
+    assert!(five.contains(&Command::Discard { index: 5 }));
+    assert!(!five.iter().any(|c| matches!(c, Command::Note(n) if n.contains("late copy"))), "{five:?}");
+    assert!(s.step(b, Event::FrameVerified { client: 2, run: 2, index: 9, render_ms: 10 }).contains(&Command::Accept { index: 9 }));
+}
+
+/// Client `id` renders every frame it is given, and whatever it is given next, until it gets
+/// nothing more; the other clients render nothing. Every command along the way, in order.
+fn drain(s: &mut Scheduler, b: Instant, id: ClientId, mut out: Vec<Command>) -> Vec<Command> {
+    let mut log = out.clone();
+    for _ in 0..1000 {
+        let mine: Vec<(ClientId, RunId, u64, u64)> = assigns(&out).into_iter().filter(|a| a.0 == id).collect();
+        if mine.is_empty() {
+            break;
+        }
+        out = Vec::new();
+        for (_, run, s0, e) in mine {
+            out.extend(verify(s, b, id, run, s0..e));
+        }
+        log.extend(out.iter().cloned());
+    }
+    log
+}
+
+#[test]
+fn an_idle_client_takes_a_queued_run_whole_before_cutting_a_running_one() {
+    let b = t0();
+    let mut s = Scheduler::new(Config::new(16), &[]);
+    let a = assigns(&s.step(b, Event::Joined { client: 1, name: "A".into() }));
+    assert_eq!(a.len(), 2, "A renders one run and holds the next: {a:?}");
+    let queued = a[1];
+    // B renders everything it can; A renders nothing. Once nothing is pending, B first takes A's
+    // queued run whole (no work lost) — and only later cuts A's running one.
+    let out = s.step(b, Event::Joined { client: 2, name: "B".into() });
+    let log = drain(&mut s, b, 2, out);
+    let cancel = log.iter().position(|c| *c == Command::Cancel { client: 1, run: Some(queued.1), reason: CancelReason::Reassigned });
+    let trim = log.iter().position(|c| matches!(c, Command::Trim { client: 1, .. }));
+    assert!(cancel.is_some(), "A's queued run was never handed over: {log:?}");
+    assert!(trim.is_none_or(|t| t > cancel.unwrap()), "a running run was cut before the queued one moved: {log:?}");
+    assert!(assigns(&log).iter().any(|x| x.0 == 2 && x.2 == queued.2), "B did not start where A's queued run did: {log:?}");
+}
+
+#[test]
+fn an_idle_client_takes_the_second_half_of_the_largest_running_run() {
+    let b = t0();
+    let mut cfg = Config::new(16);
+    cfg.runs_per_client = 1;
+    let mut s = Scheduler::new(cfg, &[]);
+    assert_eq!(assigns(&s.step(b, Event::Joined { client: 1, name: "A".into() })), vec![(1, 1, 0, 8)]);
+    // A renders frame 0, then stalls on frame 1 (its heartbeat says so).
+    verify(&mut s, b, 1, 1, 0..1);
+    s.step(b, Event::Heartbeat { client: 1, paused: false, frame: Some(1), frame_ms: Some(10) });
+    let out = s.step(b, Event::Joined { client: 2, name: "B".into() });
+    let log = drain(&mut s, b, 2, out);
+    // When B has nothing left, it takes the second half of what A has not started: frames 5..8.
+    assert!(log.contains(&Command::Trim { client: 1, run: 1, from: 5 }), "{log:?}");
+    assert!(assigns(&log).iter().any(|x| x.0 == 2 && x.2 == 5), "B did not start at the cut: {log:?}");
+    // A's copy of a stolen frame, rendered before it heard, still counts once: first copy wins.
+    let late = s.step(b, Event::FrameVerified { client: 1, run: 1, index: 6, render_ms: 10 });
+    assert!(late.contains(&Command::Discard { index: 6 }) || late.contains(&Command::Accept { index: 6 }));
+    // Too little left to be worth a cut: nothing is stolen.
+    let mut cfg = Config::new(4);
+    cfg.runs_per_client = 1;
+    let mut s = Scheduler::new(cfg, &[]);
+    s.step(b, Event::Joined { client: 1, name: "A".into() });
+    let out = s.step(b, Event::Joined { client: 2, name: "B".into() });
+    let log = drain(&mut s, b, 2, out);
+    assert!(!log.iter().any(|c| matches!(c, Command::Trim { .. })), "{log:?}");
+}
+
+#[test]
+fn a_held_shot_stays_with_one_gpu_class_while_one_is_there() {
+    let b = t0();
+    let mut cfg = Config::new(20);
+    cfg.first_run = 4;
+    cfg.runs_per_client = 1;
+    cfg.holds = vec![(0, 20)];
+    let mut s = Scheduler::new(cfg, &[]);
+    s.set_class(1, Some("A".into()));
+    assert_eq!(assigns(&s.step(b, Event::Joined { client: 1, name: "A1".into() })), vec![(1, 1, 0, 4)]);
+    s.set_class(2, Some("B".into()));
+    let out = s.step(b, Event::Joined { client: 2, name: "B1".into() });
+    assert!(assigns(&out).is_empty() && !out.iter().any(|c| matches!(c, Command::Trim { .. } | Command::Cancel { .. })), "class B took part of A's held shot: {out:?}");
+    // Another class-A machine may share it.
+    s.set_class(3, Some("A".into()));
+    assert!(!assigns(&s.step(b, Event::Joined { client: 3, name: "A2".into() })).is_empty());
+    // With no class-A machine left, class B renders the rest rather than leave it undone.
+    s.step(b, Event::Left { client: 1, why: LeaveKind::Left });
+    let out = s.step(b, Event::Left { client: 3, why: LeaveKind::Left });
+    assert!(!assigns(&out).is_empty(), "the job stalled waiting for a class that left: {out:?}");
 }

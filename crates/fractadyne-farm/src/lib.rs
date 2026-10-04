@@ -24,8 +24,9 @@ pub mod settings;
 /// The protocol both ends must speak, exactly. Part of the version gate with the app version and
 /// commit: a client whose protocol differs is refused before any job is offered.
 /// 2: the self-check carries a probe image (design §9 GPU classes). 3: the GPU's driver, and the
-/// controller's own GPU in its verdict (so each side can say when the other's differs).
-pub const PROTOCOL_VERSION: u32 = 3;
+/// controller's own GPU in its verdict (so each side can say when the other's differs). 4: a
+/// cancel can cut a run at a frame (stealing).
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// The controller's default listening port (design §13.9). Any unassigned high port works; this one
 /// is shown in the controller and typed into each client.

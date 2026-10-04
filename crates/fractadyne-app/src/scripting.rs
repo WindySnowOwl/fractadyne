@@ -1699,6 +1699,23 @@ impl Playback {
         }
     }
 
+    /// What a render farm must know of a tour rendered at `fps` in `frames` frames (design §5): the
+    /// frames a run may not START at — mid-dissolve frames, which blend with the frame before them
+    /// in the same process — and the held shots `[first, end)`, where the camera is still and a
+    /// GPU of another class would show as a jump. Frame times as the renderer computes them.
+    pub(crate) fn farm_layout(&self, fps: f64, frames: u64) -> (Vec<bool>, Vec<(u64, u64)>) {
+        let t_of = |i: u64| if self.total <= 0.0 { 0.0 } else { (i as f64 / fps).min(self.total) };
+        let blend = (0..frames).map(|i| matches!(self.transition_at(t_of(i)), Some(Composite::Blend(_)))).collect();
+        let holds = self
+            .kfs
+            .iter()
+            .filter(|k| k.hold > 0.0)
+            .map(|k| (((k.at * fps).ceil() as u64).min(frames), ((((k.at + k.hold) * fps).floor() as u64) + 1).min(frames)))
+            .filter(|&(a, e)| e > a + 1)
+            .collect();
+        (blend, holds)
+    }
+
     /// Does any keyframe ask for a dissolve? The renderer needs to know up front, because a
     /// dissolve blends against the frame that preceded it and so requires SEQUENTIAL render order.
     pub(crate) fn has_dissolve(&self) -> bool {

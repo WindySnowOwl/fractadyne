@@ -46,7 +46,8 @@ fn samples() -> Vec<Msg> {
         }),
         Msg::JobOpen(JobOpen { job_id: "a1b2c3d4e5f60718".into(), name: "Grand tour".into(), bundle: BlobAnnounce { id: 2, len: 9000, sha256: D.into() } }),
         Msg::Assign(Assign { job_id: "j".into(), run_id: 7, start: 120, end: 136 }),
-        Msg::Cancel(Cancel { job_id: "j".into(), run_id: None, reason: CancelReason::Stalled }),
+        Msg::Cancel(Cancel { job_id: "j".into(), run_id: None, reason: CancelReason::Stalled, from: None }),
+        Msg::Cancel(Cancel { job_id: "j".into(), run_id: Some(4), reason: CancelReason::Reassigned, from: Some(130) }),
         Msg::JobClose(JobClose { job_id: "j".into() }),
         Msg::Heartbeat(Heartbeat {
             activity: ClientActivity::Rendering,
@@ -100,6 +101,8 @@ fn bad_fields_are_protocol_errors() {
         r#"{"kind":"bye","body":{"reason":"\u001b[2J"}}"#,
         // a diagnostics request for nothing, or for too much
         r#"{"kind":"diag_request","body":{"items":[]}}"#,
+        // a cut of no run in particular
+        r#"{"kind":"cancel","body":{"job_id":"j","run_id":null,"reason":"reassigned","from":12}}"#,
         // a probe over its cap; a probe on the link sample's blob id
         r#"{"kind":"self_check","body":{"items":[],"gpu":null,"free_bytes":null,"link_sample":null,"probe":{"id":2,"len":99999999,"sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}}"#,
         r#"{"kind":"self_check","body":{"items":[],"gpu":null,"free_bytes":null,"link_sample":{"id":1,"len":10,"sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"probe":{"id":1,"len":10,"sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}}"#,

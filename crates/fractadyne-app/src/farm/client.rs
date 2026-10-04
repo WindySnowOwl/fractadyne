@@ -503,6 +503,8 @@ struct Running {
     frame_started: Instant,
     stop: Option<AbortReason>,
     pause_after_frame: bool,
+    /// Cut here (stealing): stop once the frame before it is done.
+    stop_from: Option<u64>,
 }
 
 struct Session<'a> {
@@ -585,6 +587,22 @@ impl Session<'_> {
                 } else {
                     self.queue.push_back(a);
                     self.maybe_start();
+                }
+            }
+            Msg::Cancel(c) if c.from.is_some() => {
+                // A cut: the frames from `from` on went to another client.
+                let (from, run) = (c.from.unwrap_or(0), c.run_id.unwrap_or(0));
+                for q in self.queue.iter_mut().filter(|q| q.job_id == c.job_id && q.run_id == run) {
+                    q.end = q.end.min(from);
+                }
+                self.queue.retain(|q| q.start < q.end);
+                if let Some(r) = self.running.as_mut().filter(|r| r.assign.job_id == c.job_id && r.assign.run_id == run) {
+                    let at = r.last_done.map_or(r.assign.start, |d| d + 1);
+                    println!("  run {run} cut at frame {from}: another machine renders the rest");
+                    r.stop_from = Some(from);
+                    if at >= from {
+                        self.stop_child(Some(AbortReason::Canceled));
+                    }
                 }
             }
             Msg::Cancel(c) => {
@@ -749,7 +767,7 @@ impl Session<'_> {
                     s.frame = Some(a.start);
                     s.detail = format!("Rendering frames {}–{}", a.start, a.end - 1);
                 });
-                self.running = Some(Running { assign: a, child, reported: HashSet::new(), last_done: None, frame_started: Instant::now(), stop: None, pause_after_frame: false });
+                self.running = Some(Running { assign: a, child, reported: HashSet::new(), last_done: None, frame_started: Instant::now(), stop: None, pause_after_frame: false, stop_from: None });
             }
             Err(e) => {
                 eprintln!("fractadyne: {e}");
@@ -810,6 +828,9 @@ impl Session<'_> {
                         if r.pause_after_frame {
                             r.stop = Some(AbortReason::Paused);
                             let _ = r.child.kill();
+                        } else if r.stop_from.is_some_and(|f| index + 1 >= f) {
+                            r.stop = Some(AbortReason::Canceled);
+                            let _ = r.child.kill();
                         }
                     }
                     other => {
@@ -831,7 +852,8 @@ impl Session<'_> {
     fn on_child_closed(&mut self, run: u64) {
         let Some(mut r) = self.running.take_if(|r| r.assign.run_id == run) else { return };
         let code = r.child.wait().ok().and_then(|s| s.code());
-        let complete = (r.assign.start..r.assign.end).all(|i| r.reported.contains(&i));
+        let end = r.stop_from.map_or(r.assign.end, |f| f.min(r.assign.end));
+        let complete = (r.assign.start..end).all(|i| r.reported.contains(&i));
         let reason = match (r.stop.take(), code) {
             (Some(why), _) => Some(why),
             (None, Some(0)) if complete => None,

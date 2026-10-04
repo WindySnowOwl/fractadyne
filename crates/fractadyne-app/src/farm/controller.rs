@@ -145,6 +145,8 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
         ..Default::default()
     };
     let r = cli.resolve(&pb.render, &tour);
+    // Dissolves and held shots, for the scheduler (design §5).
+    let layout = pb.farm_layout(r.fps, crate::scripting::tour_frame_count(pb.total, r.fps));
     fractadyne_farm::names::check_file_part("frame prefix", &r.prefix)?;
     let frames = crate::scripting::tour_frame_count(pb.total, r.fps);
 
@@ -209,6 +211,7 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
 
     let mut ctl = Controller {
         args: args.to_vec(),
+        layout,
         ui,
         identity: me.fingerprint(),
         key_file: key_path.clone(),
@@ -460,6 +463,8 @@ fn serve(conn: ClientId, stream: std::net::TcpStream, key: &FarmKey, me: &Identi
 
 struct Controller<'a> {
     args: Vec<String>,
+    /// The tour's mid-dissolve frames and held shots (`Playback::farm_layout`).
+    layout: (Vec<bool>, Vec<(u64, u64)>),
     /// `--ui-status`: print status lines, take commands.
     ui: bool,
     identity: String,
@@ -827,6 +832,16 @@ impl Controller<'_> {
         None
     }
 
+    /// A machine's GPU class for the scheduler: its probe's pixels, or failing that its adapter and
+    /// driver (machines whose probes match render the same pixels).
+    fn gpu_class(&self, conn: ClientId) -> Option<String> {
+        let c = self.conns.get(&conn)?;
+        self.probes
+            .get(&c.name)
+            .map(|(digest, _)| digest.clone())
+            .or_else(|| (!c.adapter.is_empty()).then(|| format!("{} {}", c.adapter, c.driver)))
+    }
+
     /// One of the self-check's blobs arrived; admit once none is outstanding.
     fn blob_arrived(&mut self, conn: ClientId) {
         let ready = self.conns.get_mut(&conn).is_some_and(|c| {
@@ -912,7 +927,9 @@ impl Controller<'_> {
             c.state = ConnState::Admitted;
         }
         self.note(&format!("{name} admitted{}", mbps.map_or(String::new(), |m| format!(" (link {m:.0} Mb/s)"))));
+        let class = self.gpu_class(conn);
         if let Some(j) = self.job.as_mut() {
+            j.sched.set_class(conn, class);
             let cmds = j.sched.step(Instant::now(), sched::Event::Joined { client: conn, name });
             let _ = self.exec(cmds);
         }
@@ -1024,6 +1041,11 @@ impl Controller<'_> {
         if let Some(n) = number::<u64>(&self.args, "--first-run") {
             cfg.first_run = n.max(1);
         }
+        (cfg.no_start, cfg.holds) = self.layout.clone();
+        let (dissolve, held) = (cfg.no_start.iter().filter(|b| **b).count(), cfg.holds.len());
+        if dissolve > 0 || held > 0 {
+            self.note(&format!("{dissolve} mid-dissolve frame(s) no run starts at; {held} held shot(s) kept to one GPU class"));
+        }
         let mut sched = Scheduler::new(cfg, &resume.done);
         let bundle_sha = fractadyne_farm::sha256_hex(&bundle_bytes);
         let mut cmds = Vec::new();
@@ -1031,6 +1053,7 @@ impl Controller<'_> {
             cmds.extend(sched.step(Instant::now(), sched::Event::Pause));
         }
         for id in &admitted {
+            sched.set_class(*id, self.gpu_class(*id));
             cmds.extend(sched.step(Instant::now(), sched::Event::Joined { client: *id, name: self.conns[id].name.clone() }));
         }
         self.job = Some(Job { manifest, sched, bundle: Arc::new(bundle_bytes), bundle_sha, job_id: job_id.clone(), orbit_len_cap: cap, frame_bytes_ewma: None });
@@ -1060,7 +1083,12 @@ impl Controller<'_> {
                 }
                 Command::Cancel { client, run, reason } => {
                     if let Some(j) = &self.job {
-                        self.send(client, Msg::Cancel(Cancel { job_id: j.job_id.clone(), run_id: run, reason }));
+                        self.send(client, Msg::Cancel(Cancel { job_id: j.job_id.clone(), run_id: run, reason, from: None }));
+                    }
+                }
+                Command::Trim { client, run, from } => {
+                    if let Some(j) = &self.job {
+                        self.send(client, Msg::Cancel(Cancel { job_id: j.job_id.clone(), run_id: Some(run), reason: CancelReason::Reassigned, from: Some(from) }));
                     }
                 }
                 Command::Accept { .. } | Command::Discard { .. } => {}

@@ -204,6 +204,9 @@ pub struct Cancel {
     /// `None` = every run of the job.
     pub run_id: Option<u64>,
     pub reason: CancelReason,
+    /// Cut the run here rather than end it: the frames from `from` on went to another client.
+    /// The client finishes the frames before it, then ends the run.
+    pub from: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -485,7 +488,12 @@ pub fn validate(m: &Msg) -> Result<(), String> {
                 return Err(format!("run [{}, {}) is out of range", a.start, a.end));
             }
         }
-        Msg::Cancel(c) => job(&c.job_id)?,
+        Msg::Cancel(c) => {
+            job(&c.job_id)?;
+            if c.from.is_some() && c.run_id.is_none() {
+                return Err("a cut names no run".into());
+            }
+        }
         Msg::JobClose(c) => job(&c.job_id)?,
         Msg::Heartbeat(h) => {
             if let Some(j) = &h.job_id {
