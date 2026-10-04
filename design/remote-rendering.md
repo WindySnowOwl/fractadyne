@@ -750,8 +750,21 @@ client's frames pixel-identical to the single-machine reference and PLUTO's all 
 then 0.9–4.4 % on frames 8–15, scattered along the filaments with small deltas (max 46–109). View,
 palette, caption and watermark all match. PLUTO alone (`-NoLocal`, 26.6 s) reproduced its 16
 earlier frames PIXEL FOR PIXEL: the cross-vendor difference is deterministic, i.e. the GPU's
-arithmetic, not the farm. Whether that is visible as flicker where a video's frames alternate
-between GPUs is not yet judged — §9's GPU classes and the `homogeneous` option are the answer if it is.
+arithmetic, not the farm.
+
+**Flicker across GPUs** (same day; a 30 fps, 6 s, 4×→400× zoom at 960×540, ss 1, rendered whole on
+each machine; any mix of the two is then exact, both being deterministic). The GPU difference is
+1.8 % of pixels a frame, median delta 2 levels, 8 % of them by more than 48. *Moving:* switching GPU
+on EVERY frame adds 0.09 % of pixels a frame that change by more than 48 only because of the switch,
+against 1.57 % that change by that much from the motion itself; a 3× close-up of frames 86–88 is
+indistinguishable from the single-GPU sequence (a "jumps and returns" sparkle score was flat too —
+but it is masked by motion along the boundary, so it proves little; it does fire on injected random
+flicker). *Held:* a view rendered on each GPU differs in a dense band along the bright boundary halo
+(frame 87: 8,721 px, 1,203 by more than 48) — with nothing moving to mask it, a switch during a hold
+makes that band jump at once. Runs are contiguous, so a switch happens only at a run boundary, but
+a hold split between GPU classes would show it. ⇒ Phase 2's GPU classes, and a scheduler rule for
+Phase 3: keep a held (or slow) segment on one GPU class, or offer `homogeneous`. Not measured: ss ≥ 2
+(averaging may shrink the band), other formulas, other GPU pairs.
 
 **Phase 2 — UI.** Client dialog and controller panel per §10–11, probe frame and GPU classes,
 `--uitest` steps for both screens. **Gate:** `--uitest` passes and the screenshots are LOOKED at;
