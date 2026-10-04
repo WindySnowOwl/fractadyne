@@ -744,7 +744,7 @@ const TASK_FLAGS: &[&str] = &[
     "--find-minibrot", "--check-updates", "--crosscheck-f3", "--autodive", "--motiontest",
     "--zoomtest",
     "--chunk-sweep", "--deviceloss-repro", "--bench-bignum", "--shot", "--soak", "--pickcheck",
-    "--recordtest", "--farm-render", "--render-client", "--farmtest", "--list-adapters",
+    "--recordtest", "--farm-render", "--render-client", "--farmtest", "--list-adapters", "--discover",
 ];
 
 /// The task a command line runs, by name (`soak` for `--soak …`): the first task flag in it. The

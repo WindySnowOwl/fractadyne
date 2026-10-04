@@ -49,6 +49,8 @@ param(
     [string]$FarmKeyFile = "",
     # farm-client: share mode - the client writes its frames to the share (the agent's share root).
     [switch]$FarmShare,
+    # farm-client (agent v16+): run --discover first and return which controllers answered.
+    [switch]$FarmDiscover,
     [int]$TimeoutMin = 0,
     [string]$Note = "",
     [switch]$Wait,
@@ -171,6 +173,7 @@ switch ($Action) {
         $req.controller = $Controller
         $req.farm_key = $k
         $req.share = [bool]$FarmShare
+        if ($FarmDiscover) { $req.discover = $true }
     }
 }
 if ($TimeoutMin -gt 0) { $req.timeout_min = $TimeoutMin }

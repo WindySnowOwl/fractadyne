@@ -14,6 +14,7 @@
 //! The app (`fractadyne-app::farm`) drives these: sockets, threads, child processes, files.
 
 pub mod channel;
+pub mod discovery;
 pub mod key;
 pub mod manifest;
 pub mod names;

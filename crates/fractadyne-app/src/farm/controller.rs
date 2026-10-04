@@ -195,6 +195,24 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     }
     println!("listening on {local_addr}");
     println!("  on each render client:  fractadyne --render-client <this machine's address>:{} --farm-key-file <its copy of the key>", local_addr.port());
+    // Discovery: answer clients asking the network which controllers listen — on the listener's own
+    // address, so a farm listening on loopback answers only this machine. `--no-discovery` is off.
+    if !args.iter().any(|a| a == "--no-discovery") {
+        use fractadyne_farm::discovery::{self, Beacon, DISCOVERY_PORT};
+        let beacon = Beacon { name: name.clone(), port: local_addr.port(), app_version: ver.to_string(), git: git.to_string(), identity: me.fingerprint() };
+        match std::net::UdpSocket::bind((local_addr.ip(), DISCOVERY_PORT)) {
+            Ok(sock) => {
+                println!("answering discovery on UDP {DISCOVERY_PORT} — render clients on this network can find this machine");
+                let _ = std::thread::Builder::new().name("fd-discovery".into()).spawn(move || {
+                    let never = std::sync::atomic::AtomicBool::new(false);
+                    if let Err(e) = discovery::serve(&sock, &beacon, &never) {
+                        eprintln!("fractadyne: discovery: {e}");
+                    }
+                });
+            }
+            Err(e) => println!("not answering discovery on UDP {DISCOVERY_PORT} ({e}) — render clients type this machine's address"),
+        }
+    }
     std::fs::create_dir_all(out.join("farm").join("incoming")).map_err(|e| format!("{}: {e}", out.display()))?;
 
     let (ev_tx, ev_rx) = mpsc::channel::<CEv>();

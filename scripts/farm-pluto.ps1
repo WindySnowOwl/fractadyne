@@ -10,8 +10,11 @@
 #                                              #   this machine checks each one there
 #   .\scripts\farm-pluto.ps1 -Tour tours\grand-tour.toml -Size 1280x720 -Ss 1
 #   .\scripts\farm-pluto.ps1 -Farmtest         # only --farmtest ON PLUTO: a whole farm on that machine
+#   .\scripts\farm-pluto.ps1 -Discover         # also: the test machine first asks the network which
+#                                              #   controllers answer (UDP 46733), and reports it
 #   .\scripts\farm-pluto.ps1 -AddFirewallRule  # (asks for elevation) let the test machine reach the
-#                                              #   controller: inbound TCP <Port>, Private profile,
+#                                              #   controller: inbound TCP <Port> and UDP 46733
+#                                              #   (discovery), Private profile,
 #                                              #   local subnet only
 #
 # WHAT RUNS WHERE. Here: the controller (--farm-render) and, unless -NoLocal, a local client, both
@@ -47,6 +50,8 @@ param(
     [switch]$NoSharing,
     # Skip the single-machine reference render and the comparison (for a long tour).
     [switch]$NoReference,
+    # The test machine runs --discover first (agent v16): does this controller answer its broadcast?
+    [switch]$Discover,
     [switch]$Farmtest,
     [switch]$Check,
     [switch]$AddFirewallRule,
@@ -66,8 +71,10 @@ function Bad([string]$m, [string]$fix) { Write-Host "  FIX   $m" -ForegroundColo
 
 # --- the firewall rule, on request ----------------------------------------------------------------
 $ruleName = "Fractadyne render farm (TCP $Port, local subnet)"
+$udpRuleName = "Fractadyne render farm discovery (UDP 46733, local subnet)"
 if ($AddFirewallRule) {
-    $cmd = "New-NetFirewallRule -DisplayName '$ruleName' -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -Profile Private -RemoteAddress LocalSubnet"
+    $cmd = "New-NetFirewallRule -DisplayName '$ruleName' -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -Profile Private -RemoteAddress LocalSubnet; " +
+        "New-NetFirewallRule -DisplayName '$udpRuleName' -Direction Inbound -Protocol UDP -LocalPort 46733 -Action Allow -Profile Private -RemoteAddress LocalSubnet"
     Write-Host "Adding (elevated): $cmd"
     Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList "-NoProfile", "-Command", $cmd
     Write-Host "Done. Run -Check to confirm."
@@ -126,7 +133,7 @@ else {
     $age = [int]((Get-Date).ToUniversalTime() - $last).TotalSeconds
     if ($age -gt 3 * [int]$hb.poll_seconds) { Bad "$Agent's agent last polled $age s ago" "wake $Agent's display / check its session" }
     elseif ($hb.state -eq "paused") { Bad "$Agent's agent is paused" "remove the PAUSE file ($Share\field\PAUSE or on $Agent)" }
-    elseif ([int]$hb.agent_version -lt $(if ($ShareMode) { 15 } else { 14 })) { Bad "$Agent runs agent v$($hb.agent_version); this needs v$(if ($ShareMode) { 15 } else { 14 })" "copy scripts\field-agent.ps1 to $Share\field\setup\ - the agent updates itself within 5 minutes" }
+    elseif ([int]$hb.agent_version -lt $(if ($Discover) { 16 } elseif ($ShareMode) { 15 } else { 14 })) { Bad "$Agent runs agent v$($hb.agent_version); this needs v$(if ($Discover) { 16 } elseif ($ShareMode) { 15 } else { 14 })" "copy scripts\field-agent.ps1 to $Share\field\setup\ - the agent updates itself within 5 minutes" }
     else { Ok "$Agent's agent v$($hb.agent_version) is $($hb.state) (last poll $age s ago)" }
 }
 
@@ -161,7 +168,7 @@ else { Bad "cannot tell which address $Agent should dial" "pass -Address <this m
 # (and Get-NetFirewallPortFilter -Protocol is refused unelevated). An inbound rule for TCP <Port>,
 # or for fractadyne.exe itself; a BLOCK rule for the exe (a dismissed "allow access" prompt makes
 # one) beats any allow rule, so it is named.
-$allow = @(); $block = @()
+$allow = @(); $block = @(); $udp = @()
 if ($Address -match '^127\.') { Ok "loopback address: no firewall rule needed (a rehearsal on this machine)" }
 else { try {
     foreach ($r in (New-Object -ComObject HNetCfg.FwPolicy2).Rules) {
@@ -171,10 +178,17 @@ else { try {
         $byApp = $r.ApplicationName -and $r.ApplicationName -match 'fractadyne\.exe$'
         if ($byApp -and $r.Action -eq 0) { $block += $r }
         elseif ($r.Action -eq 1 -and (($byPort -and -not $r.ApplicationName) -or ($byApp -and $tcp -and $byPort))) { $allow += $r }
+        # Discovery: UDP 46733 in, by port or for the exe.
+        $isUdp = $r.Protocol -eq 17 -or $r.Protocol -eq 256
+        $udpPort = $isUdp -and ($r.LocalPorts -split ',' | Where-Object { $_ -eq "46733" -or $_ -eq "*" -or ($_ -match '^([0-9]+)-([0-9]+)$' -and [int]$Matches[1] -le 46733 -and 46733 -le [int]$Matches[2]) })
+        if ($r.Action -eq 1 -and $udpPort -and (-not $r.ApplicationName -or $byApp)) { $udp += $r }
     }
     if ($block.Count -gt 0) { Bad "a firewall rule BLOCKS fractadyne.exe inbound ('$($block[0].Name)')" "wf.msc -> Inbound Rules -> delete or allow '$($block[0].Name)'" }
     elseif ($allow.Count -gt 0) { Ok "inbound TCP $Port is allowed ('$($allow[0].Name)')" }
     else { Bad "no firewall rule lets $Agent reach TCP $Port here" ".\scripts\farm-pluto.ps1 -AddFirewallRule   (asks for elevation; Private profile, local subnet only)" }
+    if ($udp.Count -gt 0) { Ok "inbound UDP 46733 (discovery) is allowed ('$($udp[0].Name)')" }
+    elseif ($Discover) { Bad "no firewall rule lets $Agent's discovery reach UDP 46733 here" ".\scripts\farm-pluto.ps1 -AddFirewallRule" }
+    else { Write-Host "  -     inbound UDP 46733 (discovery) is not allowed: clients cannot find this machine, only dial it" }
 }
 catch { Write-Host "  ?     could not read the firewall rules ($($_.Exception.Message)); if $Agent cannot connect, run -AddFirewallRule" } }
 
@@ -290,6 +304,7 @@ try {
     Write-Host "Controller listening (pid $($ctl.Id)); asking $Agent to join..."
     $fr = @("-Action", "farm-client", "-Controller", "$Address`:$Port", "-FarmKeyFile", $keyFile, "-Build", $tag, "-TimeoutMin", "$TimeoutMin")
     if ($ShareMode) { $fr += "-FarmShare" }
+    if ($Discover) { $fr += "-FarmDiscover" }
     $reqId = Send-FieldRequest $fr
 
     # Follow the controller until the job ends.
@@ -348,6 +363,11 @@ if ($reqId) {
         Start-Sleep -Seconds 5
     } while ((Get-Date) -lt $deadline)
     if ($s) { Write-Host "  $($s.state): $($s.detail)" } else { Write-Host "  no result yet" }
+    if ($Discover) {
+        $dt = Get-ChildItem -LiteralPath (Join-Path $Share "field\results\$reqId") -Recurse -Filter "discover.txt" -ErrorAction SilentlyContinue | Select-Object -First 1
+        Write-Host "  $Agent's --discover (exit $($s.discover_exit)):"
+        if ($dt) { Get-Content -LiteralPath $dt.FullName | Where-Object { $_ -notmatch '^\[fd-' } | ForEach-Object { Write-Host "    $_" } } else { Write-Host "    (no discover.txt)" }
+    }
     Write-Host "  -> $Share\field\results\$reqId"
 }
 Write-Host ""

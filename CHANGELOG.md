@@ -104,7 +104,9 @@ Changes after 0.3.0-beta.1:
   for tours deeper than 1e300× the deepest keyframe's reference is built first (`--sharing off`
   builds every reference where it is used). A machine with several graphics cards can join once
   per card (*Graphics card* in the Render client window, `--adapters all`), and any render can be
-  pointed at one card (`--adapter`, listed by `--list-adapters`). A client can also take work only
+  pointed at one card (`--adapter`, listed by `--list-adapters`). The Render client window finds
+  the controllers on its network (*Find*, `--discover`), so their address need not be typed; the
+  farm key still is. A client can also take work only
   when nobody is using the machine (*Only when idle*, `--when-idle`, Windows): when someone starts
   using it, the frame in progress stops at once and goes back to the farm.
 - **Fixed: deep frames of a normalized tour came out nearly flat (0.3.0-beta.18).** A normalized

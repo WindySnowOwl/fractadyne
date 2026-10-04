@@ -28,6 +28,21 @@ unknown keys ignored, no paths or code executed) and fuzzed. Reports of a way to
 crash, hang, exhaust memory, or otherwise misbehave when opening one of these
 files are especially welcome.
 
+**The render farm** (Tools ▸ Render on farm…, File ▸ Render client…) is the app's
+only network service, and it exists only while a farm runs. The controller listens
+on one TCP port (46733 by default) and answers discovery probes on UDP 46733; a
+render client opens no port — it dials the controller. Every connection is
+encrypted and authenticated with the farm key (Noise `XXpsk3`): a party without the
+key cannot complete the handshake, and after the first one each side pins the
+other's identity. The protocol is a closed list of size-bounded messages with every
+field checked; no path or command crosses it, a job's script arrives as text and
+goes through the same hardened tour parser, and every frame a client returns is
+checked before it is kept. A discovery reply carries only what the handshake shows
+anyone who connects (the controller's name, port, build and identity fingerprint),
+is never larger than the probe that asked for it, and is rate-limited. Reports of a
+way past the handshake, or of a message or packet that crashes, hangs or misleads
+either side, are especially welcome.
+
 Out of scope: issues that require the attacker to already control the machine or
 to have you run a modified build; general crashes with no untrusted-input vector
 (please file those as ordinary bugs).

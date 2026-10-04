@@ -215,6 +215,25 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         let fails = crate::gputest::run_gputest_sweep(out.as_deref());
         crate::exit(if fails > 0 { 1 } else { 0 });
     }
+    // --discover: the render-farm controllers answering on this network (and this machine).
+    if args.iter().any(|a| a == "--discover") {
+        match fractadyne_farm::discovery::discover(std::time::Duration::from_millis(1500)) {
+            Ok(found) if found.is_empty() => println!(
+                "No render-farm controller answered. A controller answers while its farm is listening; a firewall at the controller must let UDP {} in.",
+                fractadyne_farm::discovery::DISCOVERY_PORT
+            ),
+            Ok(found) => {
+                for f in &found {
+                    println!("{}  \"{}\" · {} {} · identity {}", f.address(), f.beacon.name, f.beacon.app_version, f.beacon.git, f.beacon.identity);
+                }
+            }
+            Err(e) => {
+                eprintln!("fractadyne: --discover: {e}");
+                crate::exit(1);
+            }
+        }
+        crate::exit(0);
+    }
     // --list-adapters: the graphics adapters `--adapter` chooses among, numbered as it counts them.
     if args.iter().any(|a| a == crate::gpu_choice::LIST_FLAG) {
         print!("{}", crate::gpu_choice::listing(&crate::gpu_choice::list()));

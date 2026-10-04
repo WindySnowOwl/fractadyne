@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 15   # 15: farm-client in share mode (request "share": the client writes its frames to this agent's share). 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
+$AgentVersion = 16   # 16: farm-client "discover": first run --discover from the package and return what answered this machine's broadcast (the farm's network discovery). 15: farm-client in share mode (request "share": the client writes its frames to this agent's share). 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -518,6 +518,12 @@ function Invoke-FarmClient($r, [string]$dir, $status) {
     foreach ($k in $InstrumentEnv) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
     $screens = @(Get-Screens)
     try {
+        # On request, discovery first: which controllers answer this machine's broadcast. The client
+        # below still dials the address it was given.
+        if ([bool](Get-Field $r "discover" $false)) {
+            $d = Invoke-Bounded -File (Join-Path $root "fractadyne.exe") -Arguments @("--discover") -Cwd $local -Out (Join-Path $local "discover.txt") -Err (Join-Path $local "discover-err.txt") -TimeoutMin 2
+            $status.discover_exit = $d.exit
+        }
         $res = Invoke-Bounded -File (Join-Path $root "fractadyne.exe") -Arguments @($argv | ForEach-Object { Format-Arg $_ }) -Cwd $local -Out (Join-Path $local "stdout.txt") -Err (Join-Path $local "stderr.txt") -TimeoutMin $timeout
     }
     finally {
@@ -532,6 +538,7 @@ function Invoke-FarmClient($r, [string]$dir, $status) {
     Get-Content (Join-Path $local "stdout.txt") -Encoding utf8 -ErrorAction SilentlyContinue | Out-File $o -Encoding utf8
     "", "--- stderr ---" | Out-File $o -Encoding utf8 -Append
     Get-Content (Join-Path $local "stderr.txt") -Encoding utf8 -ErrorAction SilentlyContinue | Out-File $o -Encoding utf8 -Append
+    if (Test-Path (Join-Path $local "discover.txt")) { Copy-Item -LiteralPath (Join-Path $local "discover.txt") -Destination (Join-Path $to "discover.txt") -Force }
     if (Test-Path (Join-Path $cfgDir "logs")) { Copy-Item -Path (Join-Path $cfgDir "logs") -Destination (Join-Path $to "client-logs") -Recurse -Force -ErrorAction SilentlyContinue }
     foreach ($j in @(Get-ChildItem -LiteralPath (Join-Path $cfgDir "farm\jobs") -Directory -ErrorAction SilentlyContinue)) {
         $jl = Join-Path $j.FullName "cfg\logs"

@@ -896,7 +896,23 @@ resumed and rendered frames 0–3 and 13–15, and all 19 frames stayed pixel-id
 steps `farm-client` and the new `farm-client-gpus`, LOOKED at — which caught GPU rows cut before
 their counts and a status line naming one card's run as the machine's. Unit tests: the adapter
 spec, the listing read back, the idle rule, the merged status, the window's command line.
-**Not built:** mDNS, the QR code, the Linux client.
+*Finding a controller* — built instead of mDNS (`fractadyne-farm/discovery.rs`): a client sends a
+fixed-length probe (`FDFARM?1`, padded to 640 bytes) as a UDP broadcast to port 46733 (and to loopback) from a throw-away socket and collects unicast replies for 1.2 s; a
+listening controller answers on its listener's own address (a loopback farm answers only this
+machine) with `FDFARM!1` + a JSON beacon — name, TCP port, build, identity fingerprint, all public
+(the handshake shows them) and every field bounded and checked — never longer than the probe, at
+most 20 a second (`--no-discovery` turns it off). Why not mDNS: on Windows its answers come back
+as multicast to port 5353, so every CLIENT would need a listening socket and a firewall rule —
+against "the client opens no port" — while a unicast reply to a broadcast passes Windows'
+firewall by default; and `mdns-sd` would add five crates (mio, flume, if-addrs, socket2,
+socket-pktinfo) to parse arbitrary DNS from the LAN. A found controller only fills in the address
+(the key is still needed); one on another build is flagged ("it would refuse this machine").
+*File ▸ Render client…* searches when its address is empty, and has *Find*; `--discover` lists
+them. Evidence: 5 unit tests (packet bounds, the longest valid beacon fits, every malformed reply
+refused, a loopback round trip, the rate limit under a flood), `--farmtest` 21/21 (discovery finds
+its controller), `--uitest` step `farm-client-find`, LOOKED at (the list read as plain text — a
+caption and selectable rows now; the seed carried another step's card choice).
+**Not built:** the QR code, the Linux client.
 
 Documentation per release: SECURITY.md threat-model paragraph, ARCHITECTURE.md §9/§13, TOURS.md
 is regenerated (the flags), CHANGELOG entry, `help.rs`.

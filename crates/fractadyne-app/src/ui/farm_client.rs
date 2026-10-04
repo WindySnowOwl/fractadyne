@@ -72,6 +72,9 @@ pub(crate) struct FarmClientUi {
     last_all: Vec<ClientStatus>,
     /// The UI walk's sample of a client with one session per graphics card.
     pub(crate) uitest_sessions: Vec<ClientStatus>,
+    /// Controllers that answered the last Find; `None` before one ran.
+    found: Option<Vec<fractadyne_farm::discovery::Found>>,
+    found_rx: Option<std::sync::mpsc::Receiver<Vec<fractadyne_farm::discovery::Found>>>,
 }
 
 impl FarmClientUi {
@@ -133,6 +136,20 @@ pub(crate) fn merged(sessions: &[ClientStatus]) -> Option<ClientStatus> {
     }
     (m.run, m.frame, m.frame_ms, m.gpu, m.slot) = (None, None, None, None, None);
     Some(m)
+}
+
+impl FarmClientUi {
+    /// Ask the network which controllers listen, off the UI thread.
+    fn find(&mut self) {
+        if self.found_rx.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.found_rx = Some(rx);
+        std::thread::spawn(move || {
+            let _ = tx.send(fractadyne_farm::discovery::discover(std::time::Duration::from_millis(1200)).unwrap_or_default());
+        });
+    }
 }
 
 /// The graphics cards `--list-adapters` names, read in a child process (see
@@ -251,6 +268,57 @@ fn phase_words(st: &ClientStatus) -> (String, i8) {
     }
 }
 
+/// Under the Controller field: what Find found, one line each to pick (the farm key is still
+/// needed). Returns the address picked. Takes the two grid columns: a blank label, then the list.
+fn found_list(ui: &mut egui::Ui, finding: bool, found: Option<&[fractadyne_farm::discovery::Found]>, current: &str) -> Option<String> {
+    if !finding && found.is_none() {
+        return None;
+    }
+    let mut pick = None;
+    ui.label("");
+    ui.vertical(|ui| {
+        if finding {
+            ui.horizontal(|ui| {
+                ui.add(egui::Spinner::new().size(10.0));
+                ui.label(egui::RichText::new("Looking for controllers on this network…").weak().small());
+            });
+        }
+        match found {
+            Some([]) if !finding => {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "No controller answered. One answers while its farm is listening; its firewall must let UDP {} in.",
+                        fractadyne_farm::discovery::DISCOVERY_PORT
+                    ))
+                    .weak()
+                    .small(),
+                );
+            }
+            Some(list) => {
+                if !list.is_empty() {
+                    ui.label(egui::RichText::new("On this network — click one to use it:").weak().small());
+                }
+                let (ver, git) = crate::farm::build_identity();
+                for f in list {
+                    let same = f.beacon.app_version == ver && f.beacon.git == git;
+                    let text = format!("\"{}\" · {} · {} {}", f.beacon.name, f.address(), f.beacon.app_version, f.beacon.git);
+                    let r = ui.add(egui::SelectableLabel::new(f.address() == current, egui::RichText::new(text).small()));
+                    let r = r.on_hover_text(format!("Identity {} — use this controller (its farm key is still needed)", f.beacon.identity));
+                    if r.clicked() {
+                        pick = Some(f.address());
+                    }
+                    if !same {
+                        ui.label(egui::RichText::new(format!("⚠ A different build from this one ({ver} {git}): it would refuse this machine.")).color(ui.visuals().warn_fg_color).small());
+                    }
+                }
+            }
+            None => {}
+        }
+    });
+    ui.end_row();
+    pick
+}
+
 /// "frames 120–135 · frame 123 (4 of 16) · 2.1 s on this frame".
 fn run_words(st: &ClientStatus, a: u64, b: u64) -> String {
     let at = st.frame.map_or(String::new(), |f| {
@@ -278,6 +346,10 @@ impl FractadyneApp {
             if let Some(k) = key_path().and_then(|p| std::fs::read_to_string(p).ok()) {
                 c.key = k.trim().to_string();
             }
+        }
+        // No controller typed yet: look for one on the network.
+        if c.settings.controller.trim().is_empty() && !c.active() {
+            c.find();
         }
         // The cards, once, off the UI thread (a child process enumerates them).
         if c.cards.is_none() && c.cards_rx.is_none() {
@@ -373,6 +445,16 @@ impl FractadyneApp {
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => self.farm_client.cards_rx = None,
             }
         }
+        if let Some(rx) = &self.farm_client.found_rx {
+            match rx.try_recv() {
+                Ok(v) => {
+                    self.farm_client.found = Some(v);
+                    self.farm_client.found_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint_after(std::time::Duration::from_millis(200)),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.farm_client.found_rx = None,
+            }
+        }
         let (view, sessions) = self.farm_client.view();
         // The thumbnail of the last frame sent, re-read when it changes.
         if let Some(st) = &view {
@@ -406,8 +488,19 @@ impl FractadyneApp {
                     ui.add_enabled_ui(!active, |ui| {
                         egui::Grid::new("farm_client_grid").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
                             ui.label("Controller");
-                            ui.add(egui::TextEdit::singleline(&mut c.settings.controller).hint_text("192.168.1.20:46733").desired_width(220.0));
+                            ui.horizontal(|ui| {
+                                ui.add(egui::TextEdit::singleline(&mut c.settings.controller).hint_text("192.168.1.20:46733").desired_width(220.0));
+                                let finding = c.found_rx.is_some();
+                                if ui.add_enabled(!finding, egui::Button::new("Find")).on_hover_text("Look for controllers on this network (a controller answers while its farm is listening)").clicked() {
+                                    c.find();
+                                }
+                            });
                             ui.end_row();
+                            if !active {
+                                if let Some(pick) = found_list(ui, c.found_rx.is_some(), c.found.as_deref(), c.settings.controller.trim()) {
+                                    c.settings.controller = pick;
+                                }
+                            }
                             ui.label("Farm key");
                             ui.horizontal(|ui| {
                                 ui.add(egui::TextEdit::singleline(&mut c.key).password(!c.show_key).hint_text("fdn1-…").desired_width(220.0));
@@ -640,6 +733,27 @@ impl FractadyneApp {
             self_check: vec!["ok   render: test frame in 707 ms on AMD Radeon RX 6800 XT · Vulkan".into(), "ok   storage: 51.7 GB free for frames in progress".into()],
             ..Default::default()
         });
+        c.open = true;
+    }
+
+    /// The UI walk's view of the window before connecting, after Find answered: two controllers,
+    /// one of another build.
+    pub(crate) fn uitest_seed_farm_client_find(&mut self) {
+        let c = &mut self.farm_client;
+        c.loaded = true;
+        c.settings = ClientSettings { name: "STUDIO-PC".into(), ..Default::default() };
+        c.key = String::new();
+        c.error = None;
+        c.uitest_live = false;
+        c.uitest_sessions.clear();
+        c.last = None;
+        c.cards = Some(vec![(1, "AMD Radeon RX 6800 XT".into())]);
+        let (ver, git) = crate::farm::build_identity();
+        let at = |ip: [u8; 4], name: &str, ver: &str, git: &str, id: &str| fractadyne_farm::discovery::Found {
+            from: std::net::SocketAddr::from((ip, fractadyne_farm::discovery::DISCOVERY_PORT)),
+            beacon: fractadyne_farm::discovery::Beacon { name: name.into(), port: 46733, app_version: ver.into(), git: git.into(), identity: id.into() },
+        };
+        c.found = Some(vec![at([192, 168, 1, 20], "WORKSTATION", ver, git, "39a8-eba6-e9ff-5883"), at([192, 168, 1, 31], "OLD-LAPTOP", "0.3.0-beta.17", "g09f924b", "71c2-0f3e-aa10-4b9d")]);
         c.open = true;
     }
 

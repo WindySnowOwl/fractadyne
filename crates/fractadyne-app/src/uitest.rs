@@ -65,6 +65,8 @@ enum Screen {
     FarmClient,
     /// The Render client of a two-card machine running one session per card (seeded).
     FarmClientGpus,
+    /// The Render client before connecting, after Find answered (seeded: two controllers).
+    FarmClientFind,
     FarmController,
     ResetConfirm,
     /// File ▸ Settings ▸ Reference cache… — the on-disk orbit cache's controls. ⚠Seeded with
@@ -764,6 +766,7 @@ fn build_steps() -> Vec<Step> {
         screen("tour-render", Screen::TourRender),
         screen("farm-client", Screen::FarmClient),
         screen("farm-client-gpus", Screen::FarmClientGpus),
+        screen("farm-client-find", Screen::FarmClientFind),
         screen("farm-controller", Screen::FarmController),
         screen("reset-confirm", Screen::ResetConfirm),
         screen("reference-cache", Screen::OrbitCache),
@@ -1281,6 +1284,7 @@ impl FractadyneApp {
             Screen::TourRender => self.uitest_seed_tour_render(),
             Screen::FarmClient => self.uitest_seed_farm_client(),
             Screen::FarmClientGpus => self.uitest_seed_farm_client_gpus(),
+            Screen::FarmClientFind => self.uitest_seed_farm_client_find(),
             Screen::FarmController => self.uitest_seed_farm_controller(),
             Screen::ResetConfirm => self.dialogs.reset_confirm_open = true,
             Screen::OrbitCache => {

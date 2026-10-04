@@ -236,6 +236,16 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
         }
     };
     let addr = format!("127.0.0.1:{port}");
+    // Discovery: the controller, listening on loopback, answers this machine's probe — asked once it
+    // says it answers (a probe sent before its socket is bound is simply lost).
+    let asked = Instant::now();
+    while asked.elapsed() < Duration::from_secs(10) && !ctl.log.iter().any(|l| l.contains("answering discovery on UDP")) {
+        if let Ok(l) = ctl.lines.recv_timeout(Duration::from_millis(100)) {
+            println!("    [controller] {l}");
+            ctl.log.push(l);
+        }
+    }
+    let discovered = fractadyne_farm::discovery::discover(Duration::from_millis(800)).unwrap_or_default();
 
     // 3. The clients.
     // `ui`: started as the app's Render client window starts it (which also gives it the shared
@@ -466,6 +476,17 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
             "client C (under --ui-status) reported rendering, left on \"leave\" in {leave_s:.1}s with exit {c_exit:?}, its last status {:?} after {} frame(s)",
             c_last.map(|x| x.phase),
             c_last.map_or(0, |x| x.frames_done)
+        ),
+    );
+    let answering = ctl.log.iter().any(|l| l.starts_with("answering discovery on UDP"));
+    let ours = discovered.iter().find(|f| f.address() == addr);
+    check(
+        answering && ours.is_some_and(|f| f.beacon.app_version == crate::farm::build_identity().0),
+        format!(
+            "discovery found the controller at {addr} ({}; {} answered{})",
+            ours.map_or("not found".into(), |f| format!("\"{}\", {} {}", f.beacon.name, f.beacon.app_version, f.beacon.git)),
+            discovered.len(),
+            if answering { "" } else { "; the controller is not answering discovery — is UDP 46733 taken on this machine?" }
         ),
     );
     // D: two sessions, one machine's controls; someone sitting down hands the frame back.
