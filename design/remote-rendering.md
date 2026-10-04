@@ -455,7 +455,7 @@ four inputs are **not** carried by the script, and a farm turns each into a fram
 | **Version skew** | `version_string()`; `publish-share.ps1` refuses dirty builds | `Hello`/`HelloAck`: `APP_VERSION`, `FRACT_GIT` and `protocol` must be equal and `git` must not end in `-dirty` (decided, §13.4). Build sequence number is per machine and is *not* compared. Mismatch → client shown *version mismatch: has 0.3.0-beta.17 g3201b74, farm needs 0.3.0-beta.18 gabcdef0*, no work assigned. Dev override `--farm-allow-dirty`: both sides must pass it, it is logged, written to `job.toml`, and the panel shows *non-reproducible build*. |
 | **Tunables** | `--set`, `status_line()`; `--selftest` fails under any override | both sides `stock`, or the job carries the overrides explicitly and every client runs them. Instrument env vars (`FRACTADYNE_REF_ESCAPE_AT` …) count as off-stock and are refused. |
 | **Session-derived settings** | colour method, stripe/trap, light, DE, normalize/log palette, interior, SA/BLA/glitch toggles, watermark, animations — `session.toml` (`main.rs:6487–6493`); and `[render].max_iter` falls back to the *session's* `max_iter.max(500000)` when the script omits it (`scripting.rs:3167–3170`) | the controller resolves all of them into **`RenderSettings`** (typed, allow-listed) in the bundle; the client writes a fresh session from `SessionState::default()` + those fields into the job's config dir. Palette and light animation are pinned off (as `--shot` pins them, `shot.rs:120`). |
-| **GPU-dependent inputs** | (a) orbit length cap from the adapter's storage-binding limit — ~7.4 M vs ~928 k samples (`init_orbit_len_cap`, `render.rs:471`): a deep non-escaping reference truncates differently per GPU; (b) normalize anchors measured at 480×270 on the local GPU (`scripting.rs:3349–3414`): "cross-GPU escape values differ"; (c) overlays rasterised at the display's `pixels_per_point`; (d) FP32 itself: NVIDIA folds the df32 error-free transforms, AMD keeps them (`gputest.rs`, `design/bench-matrix.md:25–45`) | (a) the job's cap = the minimum over connected clients' `HelloAck.gpu.max_storage_binding`, passed to children (new `--set ORBIT_LEN_CAP`); (b) anchors measured **once** by the controller (`--dump-norm-anchors`) and shipped in the bundle (`--norm-anchors FILE`) — this also closes TODO.md:9086 "distributed normalize coherence"; (c) farm children run at a fixed `pixels_per_point` = 1; (d) **cannot be closed**, see below. |
+| **GPU-dependent inputs** | (a) orbit length cap from the adapter's storage-binding limit — ~7.4 M vs ~928 k samples (`init_orbit_len_cap`, `render.rs:471`): a deep non-escaping reference truncates differently per GPU; (b) normalize anchors measured at 480×270 on the local GPU (`scripting.rs:3349–3414`): "cross-GPU escape values differ"; (c) the burned-in watermark, rasterised at 40 points × the display's `pixels_per_point` (measured in Phase 0: captions, callouts and the HUD are NOT scale-dependent — they lay out at `size / ppp`, and a 1.5× and a pinned render were pixel-identical there); (d) FP32 itself: NVIDIA folds the df32 error-free transforms, AMD keeps them (`gputest.rs`, `design/bench-matrix.md:25–45`) | (a) the job's cap = the minimum over connected clients' `HelloAck.gpu.max_storage_binding`, passed to children (`--set ORBIT_LEN_CAP`, built in Phase 0) — ⚠which means the weakest card sets it for everyone: at corpus location 15 (918,520-sample reference) a 100,000 cap changed every pixel, so the panel must show the job's cap and which client set it; (b) anchors measured **once** by the controller (`--dump-norm-anchors`) and shipped in the bundle (`--norm-anchors FILE`) — this also closes TODO.md:9086 "distributed normalize coherence"; (c) farm children pin `pixels_per_point` = 2 (`cli::FARM_PIXELS_PER_POINT`; 2 keeps the mark a downscale up to 8K frames) and rebuild the mark at it; (d) **cannot be closed**, see below. |
 
 **FP32 across vendors.** Byte-identical goldens hold per GPU, not across GPUs (`selftest.rs:42–64`:
 strict on the blessing GPU, `GOLDEN_MEAN_CROSS_GPU` informational elsewhere; the "3080 all-black
@@ -534,10 +534,18 @@ agent is.
 --frames a..b --size WxH --fps F --ss S --prefix P --orbit-cache --norm-anchors <job>/anchors.toml
 --farm-child [--set …] -y`, with `FRACTADYNE_CONFIG_DIR=<client config>/farm/jobs/<job_id>/`
 (fresh session from `RenderSettings`; the job's orbit cache lives there), `FRACTADYNE_NO_SOUND=1`,
-`FRACTADYNE_LOG_DIR` inside the job dir. `--farm-child` is the preset "task invocation, animations
-off, `pixels_per_point` 1, hidden window (the mechanism `--deviceloss-repro` uses), one
-machine-readable line per finished frame on stdout: `frame-done <index> <bytes> <sha256> <ms>
-<ref:fresh|reused>`". The client's reader thread turns those into `FrameDone`; stderr lines
+`FRACTADYNE_LOG_DIR` inside the job dir. `--farm-child` (built in Phase 0) is the preset: task
+invocation, palette and light animation off, sound off, `pixels_per_point` pinned for the
+watermark, no visible window, a direct exit after the last frame, and one machine-readable line per
+frame once it is on disk: `frame-done index=N bytes=B sha256=HEX ms=M` (the digest is of the file as
+read back; a file that cannot be read back is reported `frame-failed index=N reason="…"`). A `ref=`
+field (reference built vs received) waits for Phase 3, where the orbit-cache hit is attributable.
+⚠Two eframe 0.31 behaviours shaped the preset, both measured: `ViewportBuilder::with_visible(false)`
+holds only until the first frame is painted (`post_rendering` then shows the window
+unconditionally — `--deviceloss-repro` relies on it and is visible after frame one), so the child
+re-hides with `ViewportCommand::Visible(false)`, applied after that show; and a hidden window gets no
+further frames, so the `ViewportCommand::Close` an ordinary tour ends with never lands — the child
+calls `refcache_persist::drain()` and exits instead. The client's reader thread turns those into `FrameDone`; stderr lines
 matching the existing *interesting* filter (`tour_render.rs:623`) become `FrameFailed`/`RunAborted`
 messages; a child exit code → `RunAborted{ChildCrash}` (device loss exits are already distinct —
 task invocations never relaunch). A new run is launched when `Assign` arrives, so the depth-1
@@ -635,6 +643,34 @@ temp-then-rename in `write_png`; `--frames A..B` on `TourRenderConfig` (intersec
 fix the stale per-frame metadata (§15). **Gate:** decoded pixels of a 19-frame tour identical
 before/after (the shard smoke tour, 19 frames × 3 shards → 6+6+7, TODO.md:9057); existing
 selftest unchanged in count (498/498, 31/31).
+
+✅**Built 2026-10-04 on `feat/remote-rendering`**, gated on a 19-frame normalized dive (1× → 8× on
+the target → 1e30×, a caption, a palette blend) against the pre-change build of the same tree:
+- full render: 19/19 frames pixel-identical to the old build (byte-neutral);
+- three shards: the OLD build's shards differed from its own full render on 10 frames (up to
+  57,592/57,600 px) — the anchor clamp bug below — the new build's matched it exactly;
+- `--frames` (half-open, inclusive, ∩ shard, dry run) rendered exactly the frames named,
+  pixel-identical to the full render; every malformed or out-of-range use was refused, exit ≠ 0,
+  nothing written;
+- an anchor file written once, applied to the full render and to the shards: pixel-identical;
+  a different fps, an edited script, an edited value, both flags, a non-normalized tour and a
+  missing file were each refused naming the difference; the same script with CRLF endings accepted;
+- `--farm-child`: hidden for the whole run (window-class probe, 3 runs), exits by itself,
+  `pixels_per_point 2` in its log, 19 `frame-done` lines whose sizes and SHA-256 matched the files
+  (checked independently); against a plain render the only differing pixels are the 21×18 mark;
+- per-frame metadata: zoom 1 → 2.8e5 → 1e30 and their budgets, where the old build wrote the home
+  view at 256 iterations into every frame;
+- `ORBIT_LEN_CAP`: applied and logged, refused above this GPU's 7,452,444 and below 4,096; it
+  truncates corpus location 15's 918,520-sample reference at the value given;
+- atomic writes: three renders killed while a frame was being written left only complete frames
+  plus one `.part`; `--resume` removed it and the finished sequences matched an uninterrupted render.
+
+Found along the way, not fixed in Phase 0 (byte-neutrality): **every normalize anchor measures the
+HOME view**, not its keyframe's — `measure_norm_anchor` (the old loop) never moves the viewport; the
+dumped anchors for 1×, 8× and 1e30× share `lo = 0.98594…` and differ only in `hi`, which grows with
+each keyframe's iteration budget. Deep normalized frames are mapped through the home view's range and
+come out nearly flat. A one-line fix with a visible change to every normalized tour, so it is its
+own commit with before/after frames.
 
 **Phase 1 — channel, protocol, scheduler, CLI.** Pairing, Noise channel (client dials), pinning,
 version gate, handshake self-check (§9.1), bundle, runs (fixed length, shrinking at the tail),
@@ -791,9 +827,9 @@ starts of 8 h 52 min at 9.98e60205× instead of one — and it is the right sett
 The code reading for this design turned up four things in the tour path that a farm would
 amplify, none of them verified by a reproduction here:
 
-1. **Every frame PNG embeds the home view's metadata**, not its own: `meta = self.view_metadata()`
-   is captured once at `scripting.rs:3179` after the viewport was reset. Resume vetting and any
-   per-frame provenance read it. Cheap to fix in Phase 0.
+1. ✅ *Fixed in Phase 0.* **Every frame PNG embedded the home view's metadata**, not its own:
+   `meta = self.view_metadata()` was captured once, after the viewport was reset (measured: every
+   frame said zoom 1, 256 iterations).
 2. **A session's saved custom gradient overrides a tour's palette stops**: `apply_script_palette`
    (`scripting.rs:2770`) sets `custom_palette`/`use_custom_palette` but never clears
    `custom_segments`, and `custom_gradient` prefers segments. This is the class the gradient work
@@ -805,3 +841,16 @@ amplify, none of them verified by a reproduction here:
    in the editor.
 4. `help.rs:705` says the default mp4 is `<out-dir>/tour.mp4`; the code uses `<out>/<prefix>.mp4`
    (`scripting.rs:1146`).
+
+Found while building Phase 0 (measured, not just read):
+
+5. ✅ *Fixed in Phase 0.* **A shard or chapter ending between keyframes coloured differently from the
+   whole render**: the anchor pass clamped keyframe frames to the RANGE's last frame. Measured on the
+   gate tour (see §12).
+6. **Every normalize anchor measures the home view** (see §12, Phase 0) — deep normalized frames are
+   mapped through the home view's range. Fix pending as its own commit.
+7. **`--deviceloss-repro`'s window is visible after its first frame** — eframe 0.31 shows a window
+   once its first frame is painted whatever the builder said (§10). Harmless, but its comment
+   promised otherwise.
+8. A resumed tour's summary says "Rendered 19 frame(s)" after rendering 18 (one was already on
+   disk) — it counts the frames planned, including those `--resume` skipped.

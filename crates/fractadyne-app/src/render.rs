@@ -470,11 +470,29 @@ static ORBIT_LEN_CAP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
 /// little above 8×. First value wins (idempotent).
 pub(crate) fn init_orbit_len_cap(max_storage_buffer_binding_size: u32) {
     let limit = max_storage_buffer_binding_size as u64;
-    let cap = (limit / 16 / 9).saturating_sub(4096).clamp(4096, u32::MAX as u64) as u32;
+    let device_cap = (limit / 16 / 9).saturating_sub(4096).clamp(4096, u32::MAX as u64) as u32;
+    // `--set ORBIT_LEN_CAP=N` pins the cap (a render farm passes its smallest machine's, so every
+    // machine truncates a deep reference at the same length). More than this GPU holds is refused:
+    // lowering it quietly would bring back the per-machine difference the setting exists to remove.
+    let requested = crate::tunables::cost().orbit_len_cap;
+    let cap = match requested {
+        0 => device_cap,
+        n if n > device_cap as u64 => {
+            eprintln!(
+                "fractadyne: --set ORBIT_LEN_CAP={n} is more than this GPU can hold ({device_cap} samples, storage-binding limit {limit} B)."
+            );
+            crate::exit(2);
+        }
+        n => n as u32,
+    };
     let _ = ORBIT_LEN_CAP.set(cap);
     crate::diag::log_line(
         "gpu",
-        &format!("reference-orbit length cap = {cap} samples (storage-binding limit {limit} B)"),
+        &if requested == 0 {
+            format!("reference-orbit length cap = {cap} samples (storage-binding limit {limit} B)")
+        } else {
+            format!("reference-orbit length cap = {cap} samples (--set ORBIT_LEN_CAP; this GPU allows {device_cap})")
+        },
     );
 }
 

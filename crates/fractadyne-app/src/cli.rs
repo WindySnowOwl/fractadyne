@@ -7,6 +7,12 @@ use crate::{version_string, FractalKind};
 /// Windows- and Unix-style ways to explicitly ask for help.
 const HELP_TOKENS: &[&str] = &["--help", "-h", "-?", "/?", "/h", "/help", "help"];
 
+/// The pixels-per-point every `--farm-child` render runs at, whatever the machine's display scale,
+/// so its burned-in watermark is rasterized identically on every machine of a farm. 2, not 1: the
+/// mark is drawn at 2.6% of the frame height and its raster is about 1.6 × 40 × this many pixels
+/// tall, so 2 keeps it a DOWNSCALE (sharp) up to 8K frames, where 1 would be enlarged past ~4K.
+pub(crate) const FARM_PIXELS_PER_POINT: f32 = 2.0;
+
 /// The set of known long options (`--xxx`), harvested from the shared CLI reference so it can never
 /// drift from what `--help` documents (scans both the flag column and descriptions, so options only
 /// mentioned in a parenthetical — e.g. `--zoom-f3`, `--er` — are still recognized).
@@ -1627,6 +1633,32 @@ impl crate::FractadyneApp {
 
         // CLI render-tour: render the keyframe script to a PNG frame sequence, then quit.
         if let Some(script) = self.render_cli.tour.clone() {
+            // `--farm-child`: the burned-in "Fd" watermark is rasterized at a fixed 40 points ×
+            // the display's pixels-per-point, then scaled to the frame — so the same frame's mark
+            // came out differently on a 1.5× laptop and a 1× workstation. (Captions, callouts and
+            // the HUD do not: they lay out at `size / ppp` and so rasterize at the same pixel size
+            // at any scale — measured, a 1.5× and a pinned render are identical there.) A farm pins
+            // FARM_PIXELS_PER_POINT and rebuilds the mark at it.
+            //
+            // It cannot be set before the first frame — egui converts it to a zoom factor through
+            // the NATIVE scale, unknown until a pass has run (measured: set at creation, the render
+            // still saw 1.5) — and it applies from the NEXT pass, while the whole tour renders
+            // inside one. So: set it, drop the mark built at the native scale, repaint, start then.
+            //
+            // ⚠That extra frame has a cost: eframe 0.31 shows the window once its FIRST frame is
+            // painted (`post_rendering`), whatever `with_visible` asked for — an ordinary tour stays
+            // hidden only because it renders inside frame one and never finishes it. So the window
+            // is hidden again here; eframe applies this frame's viewport commands after showing it.
+            if self.render_cli.tour_cfg.farm_child
+                && !self.render_cli.tour_done
+                && (ctx.pixels_per_point() - FARM_PIXELS_PER_POINT).abs() > 1e-6
+            {
+                ctx.set_pixels_per_point(FARM_PIXELS_PER_POINT);
+                self.watermark_overlay = None;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                ctx.request_repaint();
+                return;
+            }
             if !self.render_cli.tour_done {
                 if let Some((dev, q)) = gpu {
                     self.render_cli.tour_done = true;
@@ -1645,6 +1677,14 @@ impl crate::FractadyneApp {
                             diag::log_line("render", &format!("tour FAILED: {e}"));
                             crate::exit(1);
                         }
+                    }
+                    if self.render_cli.tour_cfg.farm_child {
+                        // `Close` is acted on in a LATER frame, and a hidden window gets none —
+                        // measured: the farm child rendered every frame, then waited forever. Exit
+                        // here, as `--render` does, once any orbit-cache write this run started is
+                        // on disk (a farm child keeps its references for the next run).
+                        crate::refcache_persist::drain();
+                        crate::exit(0);
                     }
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }

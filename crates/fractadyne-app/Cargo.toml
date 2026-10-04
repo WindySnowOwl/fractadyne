@@ -28,6 +28,10 @@ thiserror.workspace = true
 # Update check: a single blocking HTTPS GET to the GitHub Releases API (rustls, bundled roots).
 ureq = "2"
 serde_json = "1"
+# SHA-256 of each frame a render-farm run writes (`--farm-child`), for the controller to verify the
+# file it receives. Already linked — rustls, the update check's TLS above, is built on it — so this
+# adds no third-party code; the render farm's channel (design/remote-rendering.md) will use it too.
+ring = { version = "0.17", default-features = false }
 # The formula editor's textbook mode reads the math font's OpenType MATH table (layout constants,
 # stretchy-glyph variants). Already in the tree under egui's font stack (ab_glyph), so this adds no
 # third-party code; its default `opentype-layout` feature is what exposes the MATH table.

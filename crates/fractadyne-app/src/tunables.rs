@@ -97,6 +97,8 @@ pub(crate) struct Cost {
     pub tile_occupancy: u64,
     /// Cheap moving perturbation frames render live (`LIVE_REFRESH_DEFAULT`; 0 = off, 1 = on).
     pub live_refresh: u64,
+    /// Reference-orbit length cap in samples (`ORBIT_LEN_CAP_DEFAULT`; 0 = from the GPU's limit).
+    pub orbit_len_cap: u64,
     /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
     /// second override channel because duplicating the machinery for a single value would be worse.
     /// See the note above on what earns a place in this set.
@@ -132,6 +134,7 @@ impl Default for Cost {
             early_ref: EARLY_REF_DEFAULT,
             tile_occupancy: TILE_OCCUPANCY_DEFAULT,
             live_refresh: LIVE_REFRESH_DEFAULT,
+            orbit_len_cap: ORBIT_LEN_CAP_DEFAULT,
             bla_eps: BLA_EPS,
         }
     }
@@ -362,6 +365,11 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "ORBIT_LEN_CAP" => {
+                let p = c.orbit_len_cap;
+                c.orbit_len_cap = parse_orbit_len_cap(raw)?;
+                p.to_string()
+            }
             "MOTION_NEED_QUANTILE" => {
                 let p = c.motion_need_quantile;
                 let v = f()?;
@@ -401,7 +409,8 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     TDR_BOOTSTRAP_MS, MOTION_UNPRICED_MAX, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL, \
-    DEAD_MAN, DISPATCH_CEILING, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH";
+    DEAD_MAN, DISPATCH_CEILING, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
+    ORBIT_LEN_CAP";
 
 #[cfg(test)]
 mod override_tests;
@@ -872,6 +881,36 @@ pub(crate) const TILE_OCCUPANCY_DEFAULT: u64 = 1;
 /// the pinned chunk walk (`render::live_refresh_verdict`). 0 = the hold/pin path for every moving
 /// perturbation frame, for the before/after measurement.
 pub(crate) const LIVE_REFRESH_DEFAULT: u64 = 1;
+
+/// 0 = the reference-orbit length cap is derived from this GPU's storage-binding limit
+/// (`render::init_orbit_len_cap`) — ~7.4 M samples on a large adapter, ~928 k at 128 MB. Any other
+/// value pins the cap to exactly that many samples, and a value above what this GPU can hold is
+/// REFUSED at startup rather than quietly lowered.
+///
+/// ⭐Why it is a knob: the cap decides where a deep reference that never escapes is TRUNCATED, and
+/// a truncated reference renders differently from a longer one (pixels rebase past its end). Two
+/// machines with different GPUs therefore render the same deep-interior frame differently. A render
+/// farm passes the smallest cap among its machines to every one of them, so all truncate alike
+/// (design/remote-rendering.md §9). Refused rather than clamped because a clamp would reintroduce
+/// exactly the per-machine difference the knob exists to remove.
+pub(crate) const ORBIT_LEN_CAP_DEFAULT: u64 = 0;
+
+/// Smallest cap `--set ORBIT_LEN_CAP` accepts — the floor `init_orbit_len_cap` already applies.
+pub(crate) const ORBIT_LEN_CAP_MIN: u64 = 4096;
+
+/// Validate a `--set ORBIT_LEN_CAP` value: a whole number of samples in
+/// `ORBIT_LEN_CAP_MIN ..= u32::MAX`. Pure, so the range is pinned by test without touching the
+/// process-wide override state.
+pub(crate) fn parse_orbit_len_cap(raw: &str) -> Result<u64, String> {
+    match raw.trim().parse::<u64>() {
+        Ok(v) if (ORBIT_LEN_CAP_MIN..=u32::MAX as u64).contains(&v) => Ok(v),
+        Ok(v) => Err(format!(
+            "--set ORBIT_LEN_CAP={v}: must be between {ORBIT_LEN_CAP_MIN} and {} samples",
+            u32::MAX
+        )),
+        Err(_) => Err(format!("--set ORBIT_LEN_CAP: '{raw}' is not a whole number of samples")),
+    }
+}
 
 /// The most a held frame may MAGNIFY before its refresh lands, octaves — the zoom-rate-aware half
 /// of the refresh sizing. At `zoom_oct_s` octaves per second the refresh has `HELD_MAX_OCT /

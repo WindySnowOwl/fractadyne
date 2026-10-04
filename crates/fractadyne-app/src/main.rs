@@ -416,6 +416,9 @@ fn main() -> eframe::Result<()> {
             // `--deviceloss-repro` is a non-interactive measurement harness (it builds a reference
             // and times GPU submissions for minutes); keep its window off the user's desktop. It
             // still gets a real wgpu device — visibility is orthogonal to the surface/device.
+            // ⚠Measured 2026-10-04 (eframe 0.31): this holds only until the first frame is painted —
+            // eframe's `post_rendering` then calls `set_visible(true)` unconditionally. `--farm-child`
+            // re-hides its window with a viewport command instead (`cli_mode_ladder`).
             if args.iter().any(|a| a == "--deviceloss-repro") {
                 vp = vp.with_visible(false);
             }
@@ -6160,6 +6163,18 @@ impl FractadyneApp {
             || args.iter().any(|a| a == "--res" || a == "--depth");
         // --render-tour FILE [--fps N] [--size W] [--height H] [--ss N] [--out DIR] [--mp4 [PATH]]
         let render_tour = val("--render-tour").map(std::path::PathBuf::from);
+        // The value of a flag that must have one: `None` when the flag is absent, fatal when it is
+        // present but the next token is missing or is itself an option.
+        let required_value = |name: &str| -> Option<&String> {
+            let i = args.iter().position(|a| a == name)?;
+            match args.get(i + 1) {
+                Some(v) if !v.starts_with("--") => Some(v),
+                _ => {
+                    eprintln!("fractadyne: {name} needs a value.");
+                    crate::exit(2)
+                }
+            }
+        };
         // Each flag stays OPTIONAL here: unset means the script's [render] block decides
         // (see TourRenderConfig::resolve), so a tour renders as authored with no flags at all.
         // --size accepts a bare width (`1920`) or `WIDTHxHEIGHT` (`5120x2160`); explicit --height
@@ -6219,7 +6234,31 @@ impl FractadyneApp {
             overwrite: args.iter().any(|a| a == "--overwrite" || a == "-y"),
             // --resume: keep already-rendered frames and render only the missing ones (restart).
             resume: args.iter().any(|a| a == "--resume"),
+            // The render-farm flags (design/remote-rendering.md, Phase 0). Each takes a value, and
+            // present-without-one is FATAL rather than "not given": a trailing `--frames` read as
+            // absent would render the whole tour on every machine of the farm.
+            frames: required_value("--frames").map(|s| match scripting::parse_frame_range(s) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("fractadyne: {e}");
+                    crate::exit(2)
+                }
+            }),
+            norm_anchors: required_value("--norm-anchors").map(std::path::PathBuf::from),
+            dump_norm_anchors: required_value("--dump-norm-anchors").map(std::path::PathBuf::from),
+            farm_child: args.iter().any(|a| a == "--farm-child"),
         };
+        // Flags that only mean something to a tour render are refused without one, not ignored:
+        // `--frames 0..10` on a plain launch opening the GUI would look like it had worked.
+        if render_tour.is_none() {
+            let stray = ["--frames", "--norm-anchors", "--dump-norm-anchors", "--farm-child"]
+                .into_iter()
+                .find(|f| args.iter().any(|a| a == f));
+            if let Some(f) = stray {
+                eprintln!("fractadyne: {f} only applies to --render-tour FILE.");
+                crate::exit(2);
+            }
+        }
         let profile_reps = val("--reps").and_then(|s| s.parse().ok()).unwrap_or(5u32);
         let profile_regions = val("--regions").cloned();
         let divetest = val("--divetest").map(std::path::PathBuf::from);
@@ -7088,6 +7127,16 @@ impl FractadyneApp {
         }
         if args.iter().any(|a| a == "--sound") {
             crate::tone::set_muted(false); // outranks FRACTADYNE_NO_SOUND without unsetting it
+        }
+        // `--farm-child`: one run of a render farm, launched by a render client. Pin what would
+        // otherwise make the same frame differ between machines or runs — moving palette and light
+        // animation, as `--shot` pins them (the watermark's display scale is pinned in
+        // `cli_mode_ladder`, once egui knows the native one) — and
+        // keep a machine that is rendering for someone else quiet.
+        if app.render_cli.tour_cfg.farm_child {
+            app.anim.palette_anim = PaletteAnim::Off;
+            app.effects.light_anim = false;
+            crate::tone::set_muted(true);
         }
         if args.iter().any(|a| a == "--glitch") {
             app.render_cfg.glitch_correct = true;

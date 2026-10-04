@@ -59,6 +59,32 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Fixed: a tour rendered in parts coloured differently from the same tour rendered whole
+  (0.3.0-beta.18).** A normalized tour maps its palette through ranges measured at its keyframes,
+  and a `--segments` shard or `--segment` chapter that ended between two keyframes measured its
+  last range at its own last frame instead of at the next keyframe. Every frame after the previous
+  keyframe then took a different mapping: on a 19-frame test tour rendered as three shards, ten
+  frames differed from the whole render, up to 57,592 of their 57,600 pixels. The ranges now come
+  from the tour's keyframes whatever part of it is rendered, so the parts match the whole render
+  pixel for pixel, and a part measures only the keyframes that can affect it.
+- **Fixed: every frame of a rendered tour carried the home view in its metadata
+  (0.3.0-beta.18).** The view embedded in each frame's PNG was captured once, after the render had
+  reset to the home view, so opening any frame in the app went to the home view at 256
+  iterations. Each frame now carries its own view.
+- **Frames and images are never left half-written (0.3.0-beta.18).** A PNG is written as
+  `<name>.part` and renamed into place only once it is complete and flushed to disk, so a render
+  killed mid-write leaves only finished frames under frame names, and `--resume` removes the
+  leftover. Before, the file was created under its final name, a failed overwrite deleted the
+  previous complete frame, and a failure writing the last chunk reported success.
+- **Render-farm groundwork (0.3.0-beta.18).** The first phase of rendering one tour on several
+  machines ([design](design/remote-rendering.md)). `--frames A..B` renders one run of the tour's
+  frames. `--dump-norm-anchors FILE` measures a normalized tour's palette ranges once and
+  `--norm-anchors FILE` applies them, so every machine colours the tour identically; a file
+  measured for a different script, frame rate, frame count or iteration base is refused.
+  `--farm-child` runs with no window, pins the watermark's display scale, and prints a
+  `frame-done` line with each written frame's size and SHA-256. `--set ORBIT_LEN_CAP=N` pins the
+  reference-orbit length cap, which otherwise depends on the GPU and changes deep pictures: at
+  corpus location 15 a 100,000-sample cap changed every pixel.
 - **Fixed: exports of the folded families and of Julia views ignored anti-aliasing
   (0.3.0-beta.18).** An export of Burning Ship, Tricorn, Celtic or Buffalo, at any power, or of
   any Julia view, runs glitch correction, and that path rendered one sample a pixel whatever the

@@ -135,3 +135,27 @@ fn foreign_files_are_ignored() {
     let msg = FractadyneApp::prepare_resume(&t.0, "frame", 64, 36).expect("ok");
     assert!(msg.contains("1 frames on disk (through 7)"), "{msg}");
 }
+
+/// A write killed before its rename leaves `<frame>.png.part`. It is never a frame: resume removes
+/// it (only this prefix's), says so, and vets the real frames as before.
+#[test]
+fn unfinished_writes_are_removed_and_never_counted() {
+    let t = Tmp::new("partials");
+    for n in 0..2 {
+        frame(&t.0, n, 64, 36, 0);
+    }
+    std::fs::write(t.0.join("frame_00002.png.part"), b"half a frame").unwrap();
+    std::fs::write(t.0.join("frame_00005.png.part"), b"").unwrap();
+    std::fs::write(t.0.join("other_00002.png.part"), b"someone else's").unwrap();
+    let msg = FractadyneApp::prepare_resume(&t.0, "frame", 64, 36).expect("ok");
+    assert!(msg.contains("2 frames on disk (through 1)"), "{msg}");
+    assert!(msg.contains("removed 2 unfinished writes"), "{msg}");
+    assert!(!t.0.join("frame_00002.png.part").exists() && !t.0.join("frame_00005.png.part").exists());
+    assert!(t.0.join("other_00002.png.part").exists(), "another prefix's file was touched");
+
+    // A folder holding nothing but leftovers still says what it cleaned.
+    let u = Tmp::new("only_partials");
+    std::fs::write(u.0.join("frame_00000.png.part"), b"x").unwrap();
+    let msg = FractadyneApp::prepare_resume(&u.0, "frame", 64, 36).expect("ok");
+    assert!(msg.contains("removed 1 unfinished write") && !msg.contains("writes"), "{msg}");
+}

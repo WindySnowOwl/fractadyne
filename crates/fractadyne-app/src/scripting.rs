@@ -394,6 +394,26 @@ struct EncodeJob {
     h: u32,
     px: Vec<f32>,
     fi: u64,
+    /// This frame's view metadata, embedded in its PNG.
+    meta: String,
+    /// Wall time from the frame's start to its hand-off here (reference wait + render + overlays).
+    render_ms: u64,
+}
+
+/// The `--farm-child` report for a frame that is now on disk:
+/// `frame-done index=N bytes=B sha256=HEX ms=M` — one line, `key=value` fields, so the render-client
+/// process can forward it and the controller can verify the file it receives against the digest.
+/// The digest is of the file as READ BACK, not of the bytes meant to be written, so it vouches for
+/// what is actually there. A file that cannot be read back is reported as `frame-failed` instead.
+fn frame_done_line(path: &std::path::Path, fi: u64, render_ms: u64) -> String {
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            let d = ring::digest::digest(&ring::digest::SHA256, &bytes);
+            let hex: String = d.as_ref().iter().map(|b| format!("{b:02x}")).collect();
+            format!("frame-done index={fi} bytes={} sha256={hex} ms={render_ms}", bytes.len())
+        }
+        Err(e) => format!("frame-failed index={fi} reason=\"read back: {e}\""),
+    }
 }
 
 /// The user's answer to an overwrite prompt.
@@ -1008,6 +1028,18 @@ pub(crate) struct TourRenderConfig {
     pub(crate) progressive: bool,
     pub(crate) overwrite: bool,
     pub(crate) resume: bool,
+    /// `--frames A..B`: render only the global frames `[A, B)` (intersected with any `--segment`
+    /// chapter or shard). The render farm's unit of work — a run of contiguous frames.
+    pub(crate) frames: Option<(u64, u64)>,
+    /// `--norm-anchors FILE`: apply the normalize anchors in FILE instead of measuring them, so
+    /// every machine rendering the tour maps the palette identically (see `anchor_file`).
+    pub(crate) norm_anchors: Option<std::path::PathBuf>,
+    /// `--dump-norm-anchors FILE`: measure the whole tour's anchors, write them to FILE, and stop
+    /// without rendering a frame.
+    pub(crate) dump_norm_anchors: Option<std::path::PathBuf>,
+    /// `--farm-child`: this render is one run of a render farm — print a `frame-done` line per
+    /// written frame (index, bytes, SHA-256, milliseconds) for the client process to report.
+    pub(crate) farm_child: bool,
 }
 
 /// The half-open frame range `[start, end)` of shard `k` of `n` over `frames` total frames:
@@ -1087,6 +1119,88 @@ pub(crate) fn norm_anchor_range(anchors: &[(f64, (f32, f32))], t: f64) -> Option
 
 #[cfg(test)]
 mod norm_anchor_tests;
+
+/// The normalize-anchor file (`--dump-norm-anchors` / `--norm-anchors`).
+pub(crate) mod anchor_file;
+
+/// The frame indices a tour's normalize anchors are measured at: every keyframe's arrival snapped
+/// to a frame, clamped to the TOUR's last frame, deduplicated.
+///
+/// ⚠The clamp is to the tour, never to the part of it being rendered. It used to be the range's
+/// own last frame, so a `--segments` shard or `--segment` chapter ending between two keyframes
+/// measured its last anchor at its OWN last frame instead of at the next keyframe — a different
+/// view, a different range, and a palette mapping that disagreed with the full render's on every
+/// frame of the shard after the previous keyframe (the "identical across shards" promise broken
+/// by the shard's own end).
+pub(crate) fn anchor_keyframe_frames(arrivals: impl Iterator<Item = f64>, fps: f64, frames: u64) -> Vec<u64> {
+    let last = frames.saturating_sub(1);
+    let mut v: Vec<u64> = arrivals.map(|at| ((at * fps).round() as u64).min(last)).collect();
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
+/// Measure only the anchors the frames `first..=last` can use — and get exactly the mapping the
+/// whole tour's anchors give them.
+///
+/// [`norm_anchor_range`] interpolates between the two MEASURED anchors that bracket a frame's time
+/// and clamps beyond the ends; a keyframe whose view is all interior measures nothing (`None`). So
+/// a range needs every keyframe inside it, plus the nearest keyframe on each side that measured
+/// something — together a contiguous run of the full anchor list, which brackets every time in the
+/// range just as the full list does. For the whole tour this measures every keyframe, in order,
+/// exactly as before; for a shard it skips the keyframes that cannot affect it, each of which costs
+/// a reference build at its depth.
+pub(crate) fn anchors_for_range<A>(
+    kf_frames: &[u64],
+    first: u64,
+    last: u64,
+    measure: &mut dyn FnMut(u64) -> Option<A>,
+) -> Vec<A> {
+    let lo = kf_frames.partition_point(|&k| k < first);
+    let hi = kf_frames.partition_point(|&k| k <= last).max(lo);
+    let mut out = Vec::new();
+    if let Some(a) = kf_frames[..lo].iter().rev().find_map(|&k| measure(k)) {
+        out.push(a);
+    }
+    out.extend(kf_frames[lo..hi].iter().filter_map(|&k| measure(k)));
+    if let Some(a) = kf_frames[hi..].iter().find_map(|&k| measure(k)) {
+        out.push(a);
+    }
+    out
+}
+
+/// `--frames A..B` — frames `A` through `B−1`, Rust's half-open range notation, which is how the
+/// render farm hands out runs — or `A..=B`, inclusive of `B`. Returns the half-open `[start, end)`.
+/// An empty or reversed range is an error, never "render nothing" or "render everything": a farm
+/// run that silently rendered a different set of frames is the costliest way to get this wrong.
+pub(crate) fn parse_frame_range(s: &str) -> Result<(u64, u64), String> {
+    let t = s.trim();
+    let (a, b, inclusive) = if let Some((a, b)) = t.split_once("..=") {
+        (a, b, true)
+    } else if let Some((a, b)) = t.split_once("..") {
+        (a, b, false)
+    } else {
+        return Err(format!("--frames \"{s}\": expected START..END (END not rendered) or START..=END"));
+    };
+    let num = |v: &str| {
+        v.trim()
+            .parse::<u64>()
+            .map_err(|_| format!("--frames \"{s}\": \"{}\" is not a frame number", v.trim()))
+    };
+    let (a, b) = (num(a)?, num(b)?);
+    let end = if inclusive {
+        b.checked_add(1).ok_or_else(|| format!("--frames \"{s}\": end is out of range"))?
+    } else {
+        b
+    };
+    if end <= a {
+        return Err(format!("--frames \"{s}\": selects no frames (the end must come after the start)"));
+    }
+    Ok((a, end))
+}
+
+#[cfg(test)]
+mod frame_range_tests;
 
 pub(crate) fn segment_range(frames: u64, n: u64, k: u64) -> (u64, u64) {
     let n = n.max(1);
@@ -3019,18 +3133,34 @@ impl FractadyneApp {
         let Ok(rd) = std::fs::read_dir(out_dir) else {
             return Ok(String::new()); // nothing rendered yet
         };
+        // `<prefix>_NNNNN.png.part` files are writes that never finished (a frame is renamed into
+        // place only once complete — `fractadyne_export::write_png`). They are never frames; remove
+        // them so a killed render's leftovers do not pile up across restarts.
+        let mut partials = 0usize;
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             if let Some(rest) = name.strip_prefix(&format!("{prefix}_")) {
-                if let Some(num) = rest.strip_suffix(".png") {
+                if let Some(num) = rest.strip_suffix(".png.part") {
+                    if num.parse::<u64>().is_ok() && std::fs::remove_file(e.path()).is_ok() {
+                        partials += 1;
+                    }
+                } else if let Some(num) = rest.strip_suffix(".png") {
                     if let Ok(n) = num.parse::<u64>() {
                         idx.push(n);
                     }
                 }
             }
         }
+        let partial_note = match partials {
+            0 => String::new(),
+            n => format!(", removed {n} unfinished write{}", if n == 1 { "" } else { "s" }),
+        };
         if idx.is_empty() {
-            return Ok(String::new());
+            return Ok(if partials > 0 {
+                format!("Resuming: no frames on disk{partial_note}")
+            } else {
+                String::new()
+            });
         }
         idx.sort_unstable();
         let mut discarded = 0usize;
@@ -3039,7 +3169,7 @@ impl FractadyneApp {
             match png_frame_size(&path) {
                 Some((w, h)) if w == want_w && h == want_h => {
                     return Ok(format!(
-                        "Resuming: {} frames on disk (through {top}){}",
+                        "Resuming: {} frames on disk (through {top}){}{partial_note}",
                         idx.len(),
                         if discarded > 0 {
                             format!(", discarded {discarded} incomplete")
@@ -3066,7 +3196,60 @@ impl FractadyneApp {
                 }
             }
         }
-        Ok(format!("Resuming: no usable frames found, discarded {discarded} incomplete"))
+        Ok(format!("Resuming: no usable frames found, discarded {discarded} incomplete{partial_note}"))
+    }
+
+    /// Measure one normalize anchor: the escape-value range of keyframe frame `kfi`'s view at the
+    /// fixed 480×270 measuring size and the keyframe's own iteration budget. `None` when the view
+    /// has no range to measure (all interior, aux colouring, or not an escape-time family).
+    ///
+    /// Leaves the app holding that keyframe's fractal, budget and palette — the caller renders
+    /// frames afterwards, and each frame sets all of these again for itself.
+    #[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 3: a TourRenderConfig-owned context
+    fn measure_norm_anchor(
+        &mut self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        pb: &Playback,
+        fps: f64,
+        kfi: u64,
+        base_iter: u32,
+        base_auto: bool,
+        work_budget: u64,
+    ) -> Option<anchor_file::Anchor> {
+        const NORM_MEASURE_W: u32 = 480;
+        const NORM_MEASURE_H: u32 = 270;
+        let t = anchor_file::frame_time(kfi, fps, pb.total);
+        let s = pb.sample(t);
+        // (An L-system's values are positions along it, depths, headings: not a range.)
+        if !s.fractal.is_escape_time() {
+            return None;
+        }
+        self.install_tour_formula(&s);
+        self.fractal = s.fractal;
+        self.julia_mode = s.julia && s.fractal.supports_julia();
+        self.dual = s.dual;
+        if let Some(c) = s.julia_c {
+            self.julia_c = c;
+        }
+        let frame_budget = Self::sampled_iter_budget(&s, base_iter, base_auto);
+        self.render_cfg.max_iter = frame_budget.max_iter;
+        self.render_cfg.auto_iter = frame_budget.auto_iter;
+        self.apply_sampled_settings(&s);
+        self.render_export_normalized(
+            device,
+            queue,
+            &self.viewport,
+            self.julia_mode,
+            NORM_MEASURE_W,
+            NORM_MEASURE_H,
+            1,
+            crate::render::NormRange::OwnFrame,
+            None,
+            None,
+            work_budget,
+        )
+        .map(|(_, range)| anchor_file::Anchor { frame: kfi, t, range })
     }
 
     /// Render a keyframe-tour script (TOML) to a numbered PNG frame sequence — the headless
@@ -3081,7 +3264,14 @@ impl FractadyneApp {
         script_path: &std::path::Path,
         cli: &TourRenderConfig,
     ) -> Result<String, String> {
-        let pb = resolve_script(read_script(script_path)?, None)?;
+        // The text is kept (not just parsed, as `read_script` does) because the normalize-anchor
+        // file is keyed on it: anchors measured for one script must never colour another.
+        let script_text = std::fs::read_to_string(script_path)
+            .map_err(|e| format!("read {}: {e}", script_path.display()))?;
+        let pb = resolve_script(
+            parse_script_text(&script_text).map_err(|e| format!("{}: {e}", script_path.display()))?,
+            None,
+        )?;
         let cfg = cli.resolve(&pb.render, script_path);
         let (width, height, fps, out_dir, prefix) =
             (cfg.width, cfg.height, cfg.fps, cfg.out.clone(), cfg.prefix.clone());
@@ -3132,6 +3322,41 @@ impl FractadyneApp {
         } else {
             (first_frame, last_frame)
         };
+        // --frames A..B: intersect with the global frames [A, B) — a render farm's run. A range
+        // that starts past the end is an error (a farm that hands out frames a tour does not have
+        // is broken, and saying "nothing to render" would hide it); one that merely misses the
+        // chapter or shard renders nothing, as an empty shard does.
+        let (first_frame, last_frame) = match cli.frames {
+            Some((a, b)) => {
+                if a >= frames {
+                    return Err(format!(
+                        "--frames {a}..{b} starts past the end of this tour ({frames} frames: 0..{frames})"
+                    ));
+                }
+                let (s, e) = (first_frame.max(a), last_frame.min(b - 1));
+                if e < s {
+                    return Ok(format!(
+                        "--frames {a}..{b} selects none of frames {first_frame}..={last_frame} — nothing to render."
+                    ));
+                }
+                (s, e)
+            }
+            None => (first_frame, last_frame),
+        };
+        // The iteration base, read BEFORE anything below changes `render_cfg`. Explained where the
+        // frame loop applies it; needed this early because normalize anchors are keyed on it.
+        let (base_iter, base_auto) = (
+            pb.render.max_iter.unwrap_or_else(|| self.render_cfg.max_iter.max(500_000)),
+            pb.render.auto_iter.unwrap_or(true),
+        );
+        let anchor_ctx = anchor_file::AnchorContext {
+            script_digest: anchor_file::script_digest(&script_text),
+            fps,
+            frames,
+            base_iter,
+            base_auto,
+            total: pb.total,
+        };
         // --dry-run: report the plan and stop BEFORE touching the output directory, so a farm
         // script can verify its shards tile across hosts before committing hours of GPU.
         if cli.dry_run {
@@ -3143,6 +3368,76 @@ impl FractadyneApp {
                 out_dir.display()
             ));
         }
+        // Per-tile nominal-work cap for tour frames — conservatively below the interactive export's
+        // 2e10 so that even a shallow, all-interior frame (BLA skips nothing there, so nominal work
+        // ≈ real GPU steps) keeps each dispatch well under the ~2 s OS watchdog. It over-splits a
+        // deep frame (nominal ≫ real), but many short tiles are safe; one long dispatch is not.
+        const TOUR_WORK_BUDGET: u64 = 2_000_000_000;
+        // Normalize anchors from a file, or into one. Both are settled here, BEFORE the output
+        // folder is touched, so a refused file costs seconds and leaves no half-started render.
+        if cli.dump_norm_anchors.is_some() && cli.norm_anchors.is_some() {
+            return Err("--dump-norm-anchors and --norm-anchors cannot be combined: one writes the file the other reads".into());
+        }
+        if (cli.dump_norm_anchors.is_some() || cli.norm_anchors.is_some()) && !pb.render.normalize {
+            return Err(format!(
+                "{}: \"{}\" does not normalize ([render] normalize = true), so it has no normalize anchors",
+                if cli.dump_norm_anchors.is_some() { "--dump-norm-anchors" } else { "--norm-anchors" },
+                pb.name
+            ));
+        }
+        if let Some(dump) = &cli.dump_norm_anchors {
+            // The WHOLE tour's anchors whatever range was asked for: the file serves every machine
+            // and every run, so it must not depend on which frames this invocation would render.
+            self.dual = false;
+            self.viewport = fractadyne_core::Viewport::new(width as f64, height as f64);
+            let kf_frames = anchor_keyframe_frames(pb.kfs.iter().map(|k| k.at), fps, frames);
+            let anchors = anchors_for_range(&kf_frames, 0, frames - 1, &mut |kfi| {
+                self.measure_norm_anchor(device, queue, &pb, fps, kfi, base_iter, base_auto, TOUR_WORK_BUDGET)
+            });
+            let text = anchor_file::encode(&anchor_ctx, crate::sysinfo::APP_VERSION, crate::sysinfo::BUILD_GIT, &anchors);
+            // Temp-then-rename, like the frames: a reader never sees half a file.
+            let part = fractadyne_export::partial_path(dump);
+            std::fs::write(&part, text)
+                .and_then(|()| std::fs::rename(&part, dump))
+                .map_err(|e| {
+                    let _ = std::fs::remove_file(&part);
+                    format!("write {}: {e}", dump.display())
+                })?;
+            return Ok(format!(
+                "Wrote {} normalize anchor(s) from {} keyframe(s) of \"{}\" ({frames} frames at {fps} fps) to {}{}",
+                anchors.len(),
+                kf_frames.len(),
+                pb.name,
+                dump.display(),
+                if anchors.is_empty() {
+                    " — every keyframe view is all interior, so a render will fall back to render-order smoothing"
+                } else {
+                    ""
+                }
+            ));
+        }
+        let file_anchors: Option<Vec<(f64, (f32, f32))>> = match &cli.norm_anchors {
+            Some(p) => {
+                let d = anchor_file::read(p, &anchor_ctx)?;
+                if d.app_version != crate::sysinfo::APP_VERSION || d.git != crate::sysinfo::BUILD_GIT {
+                    say(&format!(
+                        "⚠ normalize: {} was measured by {} ({}), not this build ({} {}) — a different renderer may have measured different ranges",
+                        p.display(),
+                        d.app_version,
+                        d.git,
+                        crate::sysinfo::APP_VERSION,
+                        crate::sysinfo::BUILD_GIT
+                    ));
+                }
+                say(&format!(
+                    "normalize: {} time-keyed range anchor(s) read from {} (not measured on this machine)",
+                    d.anchors.len(),
+                    p.display()
+                ));
+                Some(d.anchors.iter().map(|a| (a.t, a.range)).collect())
+            }
+            None => None,
+        };
         std::fs::create_dir_all(&out_dir)
             .map_err(|e| format!("create {}: {e}", out_dir.display()))?;
         write_render_status(&out_dir, "running");
@@ -3159,15 +3454,12 @@ impl FractadyneApp {
         }
         // Single-view offscreen render at the requested frame size.
         self.dual = false;
-        // Iteration budget for frames whose keyframes don't state their own: the script's
-        // `[render]` block decides when it says so, otherwise auto-scale from a high base (a fixed
-        // low cap renders deep structure as blobs). The "match the on-screen budget" export cap
-        // does NOT apply to tours — see `export_auto_iter_cap`; without that exemption every deep
-        // frame here rendered flat. Per-keyframe `max_iter` overrides this per frame.
-        let (base_iter, base_auto) = (
-            pb.render.max_iter.unwrap_or_else(|| self.render_cfg.max_iter.max(500_000)),
-            pb.render.auto_iter.unwrap_or(true),
-        );
+        // Iteration budget for frames whose keyframes don't state their own (`base_iter`, read at
+        // the top): the script's `[render]` block decides when it says so, otherwise auto-scale
+        // from a high base (a fixed low cap renders deep structure as blobs). The "match the
+        // on-screen budget" export cap does NOT apply to tours — see `export_auto_iter_cap`;
+        // without that exemption every deep frame here rendered flat. Per-keyframe `max_iter`
+        // overrides this per frame.
         self.viewport = fractadyne_core::Viewport::new(width as f64, height as f64);
         self.export.width = width;
         self.export.ss = cfg.ss;
@@ -3176,7 +3468,17 @@ impl FractadyneApp {
             "Rendering tour \"{}\": {planned} frames at {width}×{height} ss{}, {fps} fps ({:.1}s)…",
             pb.name, self.export.ss, pb.total
         ));
-        let meta = std::sync::Arc::new(self.view_metadata());
+        let farm_child = cli.farm_child;
+        if farm_child {
+            // The watermark is rasterized at this scale; a farm pins it (`cli::FARM_PIXELS_PER_POINT`)
+            // so the mark does not depend on which machine's display rendered the frame. Printed so
+            // a run's log shows the pin took effect.
+            say(&format!(
+                "farm child: frames {first_frame}..{} of {frames}, pixels_per_point {}",
+                last_frame + 1,
+                ctx.pixels_per_point()
+            ));
+        }
         // Encode PNGs on a small worker pool so compression overlaps the next frame's GPU render
         // (rendering a frame is CPU-bignum + GPU; PNG deflate is pure CPU — they run concurrently).
         // A bounded channel caps how many big frame buffers sit in RAM at once (~1 GB budget), so the
@@ -3194,7 +3496,6 @@ impl FractadyneApp {
         let encoders: Vec<_> = (0..workers)
             .map(|_| {
                 let rx = enc_rx.clone();
-                let meta = meta.clone();
                 let err = enc_err.clone();
                 let retries = enc_retries.clone();
                 std::thread::spawn(move || loop {
@@ -3215,7 +3516,7 @@ impl FractadyneApp {
                     let mut attempt: u32 = 0;
                     let mut waited = std::time::Duration::ZERO;
                     loop {
-                        match fractadyne_export::write_png(&job.path, job.w, job.h, &job.px, Some(&meta)) {
+                        match fractadyne_export::write_png(&job.path, job.w, job.h, &job.px, Some(&job.meta)) {
                             Ok(()) => {
                                 if attempt > 0 {
                                     crate::diag::log_line(
@@ -3228,13 +3529,18 @@ impl FractadyneApp {
                                         ),
                                     );
                                 }
+                                if farm_child {
+                                    say(&frame_done_line(&job.path, job.fi, job.render_ms));
+                                }
                                 break;
                             }
                             Err(e) => {
-                                // ⚠Never leave a partial file: a PNG truncated by even one byte
-                                // can decode as complete (IEND's CRC is never verified), and
-                                // `--resume` would then skip a corrupt frame as done.
-                                let _ = std::fs::remove_file(&job.path);
+                                // No cleanup here: `write_png` writes `<frame>.part` and renames it
+                                // into place only once complete, removing the partial itself on any
+                                // failure — so a frame name never holds half a PNG (one truncated
+                                // by a single byte decodes as complete, and `--resume` would keep
+                                // it). Deleting `job.path` here, as this once did, would destroy the
+                                // previous COMPLETE frame when an overwrite failed.
                                 // A non-I/O failure is an encode bug, not a destination
                                 // problem — no amount of waiting fixes it.
                                 let verdict = match e.io_kind() {
@@ -3294,11 +3600,7 @@ impl FractadyneApp {
         let mut norm_range: Option<(f32, f32)> = None;
         let mut norm_oversize_warned = false;
         let want_normalize = pb.render.normalize;
-        // Per-tile nominal-work cap for tour frames — conservatively below the interactive export's
-        // 2e10 so that even a shallow, all-interior frame (BLA skips nothing there, so nominal work
-        // ≈ real GPU steps) keeps each dispatch well under the ~2 s OS watchdog. It over-splits a
-        // deep frame (nominal ≫ real), but many short tiles are safe; one long dispatch is not.
-        const TOUR_WORK_BUDGET: u64 = 2_000_000_000;
+        // (`TOUR_WORK_BUDGET`, the per-tile dispatch cap, is defined above the anchor handling.)
         // Headroom to leave free beyond the references — in-flight encode buffers (~1 GB), GPU
         // staging, general slack. The reference lookahead is skipped when the next one would eat in.
         const TOUR_MEM_MARGIN: u64 = 1_500_000_000;
@@ -3358,51 +3660,18 @@ impl FractadyneApp {
         // The measuring resolution is FIXED so the mapping is also output-size-independent
         // (a 720p preview and the 4K final share one palette). An all-interior or aux-colored
         // keyframe measures nothing and is skipped; if NO anchor measures, the legacy EMA
-        // fallback above still runs.
+        // fallback above still runs. With `--norm-anchors` the anchors come from the file
+        // instead, measured once for every machine (cross-GPU escape values differ, so per-machine
+        // measurement is exactly what a multi-machine render must not do).
         let mut norm_anchors: Vec<(f64, (f32, f32))> = Vec::new();
-        if want_normalize {
-            const NORM_MEASURE_W: u32 = 480;
-            const NORM_MEASURE_H: u32 = 270;
-            let mut kf_frames: Vec<u64> = pb
-                .kfs
-                .iter()
-                .map(|k| ((k.at * fps).round() as u64).min(last_frame))
-                .collect();
-            kf_frames.dedup();
-            for &kfi in &kf_frames {
-                let t = if pb.total <= 0.0 { 0.0 } else { (kfi as f64 / fps).min(pb.total) };
-                let s = pb.sample(t);
-                // (An L-system's values are positions along it, depths, headings: not a range.)
-                if !s.fractal.is_escape_time() {
-                    continue;
-                }
-                self.install_tour_formula(&s);
-                self.fractal = s.fractal;
-                self.julia_mode = s.julia && s.fractal.supports_julia();
-                self.dual = s.dual;
-                if let Some(c) = s.julia_c {
-                    self.julia_c = c;
-                }
-                let frame_budget = Self::sampled_iter_budget(&s, base_iter, base_auto);
-                self.render_cfg.max_iter = frame_budget.max_iter;
-                self.render_cfg.auto_iter = frame_budget.auto_iter;
-                self.apply_sampled_settings(&s);
-                if let Some((_, range)) = self.render_export_normalized(
-                    device,
-                    queue,
-                    &self.viewport,
-                    self.julia_mode,
-                    NORM_MEASURE_W,
-                    NORM_MEASURE_H,
-                    1,
-                    crate::render::NormRange::OwnFrame,
-                    None,
-                    None,
-                    TOUR_WORK_BUDGET,
-                ) {
-                    norm_anchors.push((t, range));
-                }
-            }
+        if let Some(a) = file_anchors {
+            norm_anchors = a;
+        } else if want_normalize {
+            let kf_frames = anchor_keyframe_frames(pb.kfs.iter().map(|k| k.at), fps, frames);
+            norm_anchors = anchors_for_range(&kf_frames, first_frame, last_frame, &mut |kfi| {
+                self.measure_norm_anchor(device, queue, &pb, fps, kfi, base_iter, base_auto, TOUR_WORK_BUDGET)
+                    .map(|a| (a.t, a.range))
+            });
             if !norm_anchors.is_empty() {
                 say(&format!(
                     "normalize: {} time-keyed range anchor(s) measured at the keyframes — the \
@@ -3459,6 +3728,7 @@ impl FractadyneApp {
                     }
                 }
             }
+            let frame_t0 = std::time::Instant::now();
             // Claim frame `fi`'s precomputed reference if the previous iteration started one for it.
             let mut this_ref = match pending_ref.take() {
                 Some((idx, rx)) if idx == fi => rx.recv().ok(),
@@ -3684,9 +3954,14 @@ impl FractadyneApp {
             if let Some(e) = enc_err.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
                 return Err(e.clone());
             }
+            // THIS frame's view, embedded in its PNG. It used to be captured once before the loop,
+            // after the viewport was reset to the home view — so every frame of every tour carried
+            // the home view's metadata, and dropping a frame into the app opened the wrong place.
+            let meta = self.view_metadata();
             // Hand the finished frame to the encoder pool; blocks if the queue is full (backpressure).
+            let render_ms = frame_t0.elapsed().as_millis() as u64;
             enc_tx
-                .send(EncodeJob { path: frame_path, w: rw, h: rh, px, fi })
+                .send(EncodeJob { path: frame_path, w: rw, h: rh, px, fi, meta, render_ms })
                 .map_err(|_| format!("frame {fi}: encoder thread stopped"))?;
             // Position in the ORDER, not the frame index — under progressive order `fi` says
             // nothing about how much work is done.

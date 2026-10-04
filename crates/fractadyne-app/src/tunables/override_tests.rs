@@ -42,3 +42,19 @@ fn status_says_stock_when_nothing_was_set() {
     let s = status_line();
     assert!(s == "stock" || s.contains("OVERRIDE(S)"), "unexpected status line: {s}");
 }
+
+#[test]
+fn orbit_len_cap_defaults_to_the_device_and_accepts_only_a_sample_count_in_range() {
+    // 0 = derive from the GPU; the stock app must not pin a cap.
+    assert_eq!(Cost::default().orbit_len_cap, ORBIT_LEN_CAP_DEFAULT);
+    assert_eq!(ORBIT_LEN_CAP_DEFAULT, 0);
+    // Through the pure validator, so no test here sets the process-wide override.
+    assert_eq!(parse_orbit_len_cap("928000"), Ok(928_000));
+    assert_eq!(parse_orbit_len_cap(&ORBIT_LEN_CAP_MIN.to_string()), Ok(ORBIT_LEN_CAP_MIN));
+    assert_eq!(parse_orbit_len_cap(&u32::MAX.to_string()), Ok(u32::MAX as u64));
+    for bad in ["0", "4095", "4294967296", "-5", "1e6", "lots", ""] {
+        assert!(parse_orbit_len_cap(bad).is_err(), "accepted ORBIT_LEN_CAP={bad:?}");
+    }
+    // And the name is one `--set` knows — an unknown name would be a fatal typo error instead.
+    assert!(OVERRIDABLE.contains("ORBIT_LEN_CAP"));
+}

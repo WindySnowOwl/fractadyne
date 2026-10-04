@@ -255,7 +255,12 @@ timed captions, coordinate-anchored callouts, and spotlight vignettes — render
 exported frames. `--render-tour` renders a tour to a numbered PNG sequence (reference/render/encode
 pipelined across frames), optionally assembled to an **mp4** via ffmpeg (`--mp4`), with an optional
 zoom/coordinate HUD (`--show-location`). Interrupted renders resume with **`--resume`** (keep frames
-on disk, render only the missing ones). Helper scripts: `scripts/{render-spiral-dive,render-deepest,
+on disk, render only the missing ones). Frames are written whole or not at all (`<name>.part`, then
+a rename — `fractadyne_export::write_png`). For rendering on several machines, `--segments N
+--segment-index K` and `--frames A..B` select frames by global index, `--dump-norm-anchors` /
+`--norm-anchors` carry a normalized tour's measured palette ranges between machines
+(`scripting/anchor_file.rs`), and `--farm-child` is the preset a render-farm client runs
+([`design/remote-rendering.md`](design/remote-rendering.md)). Helper scripts: `scripts/{render-spiral-dive,render-deepest,
 setup}.ps1`. **Tools → "Script to current view…"** generates a dive tour to the current view (deep
 targets get a pan-shallow-then-dive structure so every deep frame stays centered on the target).
 Live playback is **pipeline-paced** (clock dilation on reference lag) and feeds the reference

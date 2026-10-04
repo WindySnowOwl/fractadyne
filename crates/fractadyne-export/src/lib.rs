@@ -495,6 +495,49 @@ pub fn write_retry_policy(
 #[cfg(test)]
 mod write_retry;
 
+/// The name a PNG is written under until it is complete: `<path>.part`, beside it. Public so a
+/// reader that scans a folder (`--resume`'s vetting, the render farm) can recognise and discard
+/// the leftovers of a write that was killed — never mistake one for a frame.
+pub fn partial_path(path: &Path) -> std::path::PathBuf {
+    let mut s = path.as_os_str().to_owned();
+    s.push(".part");
+    std::path::PathBuf::from(s)
+}
+
+/// Write a file so that it exists under `path` only once it is COMPLETE: `encode` writes the
+/// whole file to [`partial_path`], which is flushed to the device and then renamed over `path`.
+///
+/// ⭐Why: `File::create(path)` made a half-written frame visible under its final name for the
+/// whole encode. A killed render left it there, and the PNG decoder accepts a file one byte short
+/// (IEND's CRC is never verified), so `--resume` could keep a corrupt frame; on a shared folder a
+/// second machine could see another's half-written frame as present (TODO.md, the farm item).
+/// Rename is atomic on NTFS, SMB and POSIX filesystems, and the `sync_all` before it is what makes
+/// "renamed" imply "on disk" across a power cut, not just a killed process.
+///
+/// On ANY failure the partial file is removed and whatever was at `path` before is left exactly as
+/// it was — a failed overwrite never costs the previous complete file.
+fn write_atomic<F>(path: &Path, encode: F) -> Result<(), ExportError>
+where
+    F: FnOnce(&mut dyn std::io::Write) -> Result<(), ExportError>,
+{
+    use std::io::Write;
+    let part = partial_path(path);
+    let written = (|| -> Result<(), ExportError> {
+        let file = std::fs::File::create(&part)?;
+        let mut w = std::io::BufWriter::new(&file);
+        encode(&mut w)?;
+        w.flush()?;
+        drop(w);
+        file.sync_all()?;
+        Ok(())
+    })()
+    .and_then(|()| std::fs::rename(&part, path).map_err(ExportError::from));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&part);
+    }
+    written
+}
+
 pub fn write_png(
     path: &Path,
     width: u32,
@@ -512,18 +555,21 @@ pub fn write_png(
     // — a mismatch there would make every golden fail for a reason that has nothing to do with
     // rendering.
     let bytes = to_srgb8_dithered(&rgba[..expected], width);
-    let file = std::fs::File::create(path)?;
-    let w = std::io::BufWriter::new(file);
-    let mut encoder = png::Encoder::new(w, width, height);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
-    if let Some(meta) = metadata {
-        add_png_meta(&mut encoder, meta)?;
-    }
-    let mut writer = encoder.write_header()?;
-    writer.write_image_data(&bytes)?;
-    Ok(())
+    write_atomic(path, |w| {
+        let mut encoder = png::Encoder::new(w, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
+        if let Some(meta) = metadata {
+            add_png_meta(&mut encoder, meta)?;
+        }
+        let mut writer = encoder.write_header()?;
+        writer.write_image_data(&bytes)?;
+        // `finish`, not drop: dropping the writer writes IEND too, but swallows the error — a
+        // destination that failed on the last chunk reported success with a truncated file.
+        writer.finish()?;
+        Ok(())
+    })
 }
 
 /// Write already-sRGB 8-bit RGBA pixels straight to a PNG (no linear→sRGB conversion). Use this
@@ -540,18 +586,19 @@ pub fn write_png_rgba8(
     if rgba8.len() < expected {
         return Err(ExportError::SizeMismatch { expected, got: rgba8.len() });
     }
-    let file = std::fs::File::create(path)?;
-    let w = std::io::BufWriter::new(file);
-    let mut encoder = png::Encoder::new(w, width, height);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
-    if let Some(meta) = metadata {
-        add_png_meta(&mut encoder, meta)?;
-    }
-    let mut writer = encoder.write_header()?;
-    writer.write_image_data(&rgba8[..expected])?;
-    Ok(())
+    write_atomic(path, |w| {
+        let mut encoder = png::Encoder::new(w, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
+        if let Some(meta) = metadata {
+            add_png_meta(&mut encoder, meta)?;
+        }
+        let mut writer = encoder.write_header()?;
+        writer.write_image_data(&rgba8[..expected])?;
+        writer.finish()?; // see `write_png`
+        Ok(())
+    })
 }
 
 /// Encode already-sRGB 8-bit RGBA pixels to PNG **in memory**, with no metadata chunk.
@@ -874,6 +921,9 @@ pub fn read_exr_metadata(path: &Path) -> Result<Option<String>, ExportError> {
 
 #[cfg(test)]
 mod writer_roundtrip_tests;
+
+#[cfg(test)]
+mod atomic_write_tests;
 
 #[cfg(test)]
 mod decode_limits;
