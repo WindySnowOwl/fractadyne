@@ -13,6 +13,10 @@
 #             (see $Allowed below); optionally several builds, interleaved A,B,A,B for an A/B;
 #             optionally at a given VIEW (staged as the run's session - see New-ViewSession)
 #   events    read-only: the Windows event log's display-driver resets and crash reports
+#   farm-client  fractadyne.exe from a PUBLISHED package as ONE render client of a farm controller
+#             (v14, design/remote-rendering.md): it dials out to the controller the request names
+#             (this machine opens no port), renders one job, and exits; the request's farm key is
+#             written to the run's local folder and redacted from the results
 # A "published package" is a zip in <share>\builds\<tag>\ whose sha256 matches that folder's
 # BUILD-ID.txt. It is copied to this machine, checked, extracted under %LOCALAPPDATA%, and run from
 # there - never straight off the share. Anything else in a request is refused, with the reason.
@@ -47,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 13   # 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
+$AgentVersion = 14   # 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -243,7 +247,7 @@ function Get-Package([string]$tag, [string]$package) {
 # --- the harness allow-list -------------------------------------------------------------------------
 # flag -> the values it takes. "?x" = optional. Values never contain spaces or quotes, and a file is
 # only ever one shipped inside the package.
-$Modes = @("--recordtest", "--zoomtest", "--motiontest", "--gputest", "--selftest", "--bench-matrix", "--livetest", "--chunk-sweep", "--soak", "--tail-audit", "--glitch-audit", "--render")
+$Modes = @("--recordtest", "--zoomtest", "--motiontest", "--gputest", "--selftest", "--bench-matrix", "--livetest", "--chunk-sweep", "--soak", "--tail-audit", "--glitch-audit", "--render", "--farmtest")
 $Allowed = @{
     # The audits render a view (--center/--zoom-log2/--iter/--size) twice and check the pixels that
     # differ against the arbitrary-precision oracle; they print a verdict and write no file. Send them
@@ -262,6 +266,10 @@ $Allowed = @{
     # For the step-bounded passes (beta.150) that is the case the per-pass bound exists for. It is
     # heavier than any default render, so send it only with a build whose passes are bounded.
     "--no-bla" = @()
+    # v14: a whole render farm on this machine (a controller and three loopback clients, one
+    # corrupting frames, one killed) against a single-machine reference. Writes to a temp folder;
+    # its verdict is in the output.
+    "--farmtest" = @()
 }
 $ValuePattern = @{
     "int" = '^[0-9]{1,9}$'; "num" = '^[-+0-9.eE]{1,2000}$'; "word" = '^[A-Za-z0-9_.-]{1,64}$'
@@ -479,6 +487,65 @@ function Invoke-Harness($r, [string]$dir, $status) {
     $status.detail = "$($status.runs.Count) run(s), exit codes: " + ((@($status.runs) | ForEach-Object { if ($_.timed_out) { "timeout" } else { $_.exit } }) -join " ")
 }
 
+# v14: be ONE render client of a farm controller for one job. The request names the controller
+# (HOST:PORT) and carries the farm key; the client dials out, so this machine opens no port. The key
+# goes to a file in the run's local folder (deleted with it) and is redacted from the request copy in
+# the results. --one-job makes the client exit when the controller closes the job; the timeout bounds
+# it otherwise (a controller that never starts the job, or never finishes it).
+function Invoke-FarmClient($r, [string]$dir, $status) {
+    $tag = Resolve-Tag ([string](Get-Field $r "build" "latest"))
+    $package = [string](Get-Field $r "package" "standard")
+    $controller = [string](Get-Field $r "controller" "")
+    if ($controller -notmatch '^[A-Za-z0-9.-]{1,253}:[0-9]{1,5}$') { Stop-Refused "controller must be HOST:PORT" }
+    $key = [string](Get-Field $r "farm_key" "")
+    if ($key -notmatch '^fdn1-[a-z2-7-]{50,90}$') { Stop-Refused "farm_key is not a farm key (fdn1-...)" }
+    # The copy in the results must not keep the key.
+    $copy = Join-Path $dir "request.json"
+    if (Test-Path -LiteralPath $copy) {
+        $red = Get-Content -LiteralPath $copy -Raw | ConvertFrom-Json
+        $red.farm_key = "(redacted)"
+        Write-JsonFile $copy $red
+    }
+    $timeout = [math]::Min([int](Get-Field $r "timeout_min" 60), 240)
+    $root = Get-Package $tag $package
+    $status.build = $tag; $status.package = $package
+    $local = Join-Path (Join-Path $Work $status.id) "client"
+    $cfgDir = Join-Path $local "config"
+    New-Item -ItemType Directory -Force -Path $cfgDir | Out-Null
+    $keyFile = Join-Path $local "farm-key.txt"
+    [IO.File]::WriteAllText($keyFile, "$key`n", [Text.Encoding]::ASCII)
+    $argv = @("--render-client", $controller, "--farm-key-file", $keyFile, "--name", $Computer, "--one-job")
+    $status.detail = "render client of $controller ($tag)"
+    Write-JsonFile (Join-Path $dir "status.json") $status
+    $env:FRACTADYNE_CONFIG_DIR = $cfgDir
+    $env:FRACTADYNE_NO_SOUND = "1"
+    foreach ($k in $InstrumentEnv) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
+    $screens = @(Get-Screens)
+    try {
+        $res = Invoke-Bounded -File (Join-Path $root "fractadyne.exe") -Arguments @($argv | ForEach-Object { Format-Arg $_ }) -Cwd $local -Out (Join-Path $local "stdout.txt") -Err (Join-Path $local "stderr.txt") -TimeoutMin $timeout
+    }
+    finally {
+        Remove-Item Env:FRACTADYNE_CONFIG_DIR -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $keyFile -Force -ErrorAction SilentlyContinue
+    }
+    # Deliver: the client's output, its own log, and each render process's log (the self-check's
+    # and every job's). Never the key, never frames (those went to the controller).
+    $to = Join-Path $dir "farm-client"
+    New-Item -ItemType Directory -Force -Path $to | Out-Null
+    $o = Join-Path $to "output.txt"
+    Get-Content (Join-Path $local "stdout.txt") -Encoding utf8 -ErrorAction SilentlyContinue | Out-File $o -Encoding utf8
+    "", "--- stderr ---" | Out-File $o -Encoding utf8 -Append
+    Get-Content (Join-Path $local "stderr.txt") -Encoding utf8 -ErrorAction SilentlyContinue | Out-File $o -Encoding utf8 -Append
+    if (Test-Path (Join-Path $cfgDir "logs")) { Copy-Item -Path (Join-Path $cfgDir "logs") -Destination (Join-Path $to "client-logs") -Recurse -Force -ErrorAction SilentlyContinue }
+    foreach ($j in @(Get-ChildItem -LiteralPath (Join-Path $cfgDir "farm\jobs") -Directory -ErrorAction SilentlyContinue)) {
+        $jl = Join-Path $j.FullName "cfg\logs"
+        if (Test-Path $jl) { Copy-Item -Path $jl -Destination (Join-Path $to ("job-" + $j.Name + "-logs")) -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    $status.runs = @([ordered]@{ run = "farm-client"; build = $tag; exit = $res.exit; seconds = $res.seconds; timed_out = $res.timed_out; screens = $screens })
+    if ($res.timed_out) { throw "the client did not finish its job within the $timeout min timeout and was stopped" }
+    $status.detail = "render client of $controller ($tag): exit $($res.exit)"
+}
+
 function Invoke-Events($r, [string]$dir, $status) {
     $days = [int](Get-Field $r "days" 30)
     if ($days -lt 1 -or $days -gt 365) { Stop-Refused "days must be 1..365" }
@@ -651,6 +718,7 @@ function Invoke-Poll {
             "battery" { Invoke-Battery $r $dir $status }
             "harness" { Invoke-Harness $r $dir $status }
             "events" { Invoke-Events $r $dir $status }
+            "farm-client" { Invoke-FarmClient $r $dir $status }
             default { Stop-Refused "unknown action '$($status.action)'" }
         }
         $status.state = "done"

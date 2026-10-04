@@ -12,6 +12,11 @@
 #                                                                 # at a view (windowed harnesses read the
 #                                                                 # SESSION's view, not --center/--zoom)
 #   .\scripts\field-request.ps1 -Action events -Days 30 -Wait     # display-driver resets, crash reports
+#   .\scripts\field-request.ps1 -Action harness -Run "--farmtest" -Wait   # a whole render farm on that machine
+#   .\scripts\field-request.ps1 -Action farm-client -Controller 192.168.1.20:46733 -FarmKeyFile key.txt
+#                                                                 # one render-farm job as a CLIENT of the
+#                                                                 # controller on this machine (agent v14;
+#                                                                 # scripts\farm-pluto.ps1 drives the whole run)
 #   .\scripts\field-request.ps1 -Cancel <id>                      # withdraw a request not yet started
 #
 # The agent is the authority on what it will run (field-agent.ps1 $Allowed); this only checks the
@@ -21,7 +26,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet("status", "battery", "harness", "events")][string]$Action = "status",
+    [ValidateSet("status", "battery", "harness", "events", "farm-client")][string]$Action = "status",
     [string]$Build = "latest",
     [string[]]$Builds = @(),
     [ValidateSet("standard", "accelerated")][string]$Package = "standard",
@@ -38,6 +43,10 @@ param(
     # WARNING: these exist to reach regimes that have caused device losses.
     [string]$Instrument = "",
     [int]$Days = 30,
+    # farm-client: the controller to dial (HOST:PORT) and the file holding the farm key (fdn1-...).
+    # The key travels in the request on the share and is redacted from the results.
+    [string]$Controller = "",
+    [string]$FarmKeyFile = "",
     [int]$TimeoutMin = 0,
     [string]$Note = "",
     [switch]$Wait,
@@ -151,6 +160,15 @@ switch ($Action) {
         }
     }
     "events" { $req.days = $Days }
+    "farm-client" {
+        if ($Controller -notmatch '^[A-Za-z0-9.-]{1,253}:[0-9]{1,5}$') { throw "-Controller must be HOST:PORT (the controller's address as the test machine reaches it)" }
+        if (-not $FarmKeyFile -or -not (Test-Path -LiteralPath $FarmKeyFile)) { throw "-FarmKeyFile must name the controller's farm-key file" }
+        $k = (Get-Content -LiteralPath $FarmKeyFile -Raw).Trim()
+        if ($k -notmatch '^fdn1-[a-z2-7-]{50,90}$') { throw "$FarmKeyFile does not hold a farm key (fdn1-...)" }
+        $req.build = $Build
+        $req.controller = $Controller
+        $req.farm_key = $k
+    }
 }
 if ($TimeoutMin -gt 0) { $req.timeout_min = $TimeoutMin }
 

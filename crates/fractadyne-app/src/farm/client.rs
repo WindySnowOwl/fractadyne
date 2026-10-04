@@ -30,6 +30,9 @@ struct Cfg {
     name: String,
     policy: Policy,
     allow_dirty: bool,
+    /// `--one-job`: exit once the controller closes a job — how a test machine's field agent runs
+    /// a client, so its run ends with the job instead of at its timeout.
+    one_job: bool,
     work: PathBuf,
     control: PathBuf,
 }
@@ -96,7 +99,8 @@ pub(crate) fn run(args: &[String]) -> i32 {
         Ok(p) => p,
         Err(e) => return fail(e),
     };
-    let cfg = Cfg { addr, key, name, policy, allow_dirty, work: dir.join("jobs"), control: dir.clone(), id };
+    let one_job = args.iter().any(|a| a == "--one-job");
+    let cfg = Cfg { addr, key, name, policy, allow_dirty, one_job, work: dir.join("jobs"), control: dir.clone(), id };
     println!("Render client \"{}\" (identity {}) — controller {}", cfg.name, cfg.id.fingerprint(), cfg.addr);
     println!("  pause: create {}  ·  cancel the frame in progress: create {}", cfg.control.join("PAUSE").display(), cfg.control.join("CANCEL").display());
     let mut backoff = Duration::from_secs(2);
@@ -451,10 +455,16 @@ impl Session<'_> {
                 if self.running.as_ref().is_some_and(|r| r.assign.job_id == c.job_id) {
                     self.stop_child(Some(AbortReason::Canceled));
                 }
+                // The frames go; the render processes' logs stay (a field run collects them, and
+                // they are small).
                 if let Some(j) = self.jobs.remove(&c.job_id) {
-                    let _ = std::fs::remove_dir_all(&j.dir);
+                    let _ = std::fs::remove_dir_all(j.dir.join("frames"));
                 }
                 println!("Job {} closed by the controller", c.job_id);
+                if self.cfg.one_job {
+                    println!("--one-job: the job is over; exiting");
+                    return Some(Ended::Exit(0));
+                }
             }
             Msg::DiagRequest(d) => {
                 let mut items = Vec::new();
