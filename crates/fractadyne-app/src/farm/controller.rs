@@ -50,8 +50,8 @@ enum CEv {
     Cmd(Option<String>),
     /// A client's probe image arrived (design §9).
     Probe { conn: ClientId, png: Vec<u8> },
-    /// This machine's own render of the probe.
-    OwnProbe(Result<Vec<u8>, String>),
+    /// This machine's own render of the probe: its PNG, and the render's log (its GPU).
+    OwnProbe(Result<(Vec<u8>, String), String>),
 }
 
 /// Bytes moved on one connection, for the link metrics.
@@ -68,6 +68,10 @@ struct Conn {
     state: ConnState,
     gpu_cap: Option<u64>,
     adapter: String,
+    driver: String,
+    /// How its GPU differs from this machine's, once both are known (said once, at that moment).
+    gpu_note: Option<String>,
+    gpu_compared: bool,
     job_sent: bool,
     last_hb: Option<Heartbeat>,
     link_mbps: Option<f64>,
@@ -184,7 +188,7 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
         let tx = ev_tx.clone();
         let dir = out.join("farm").join("probe");
         std::thread::spawn(move || {
-            let _ = tx.send(CEv::OwnProbe(render_probe(&dir).map(|(png, _)| png)));
+            let _ = tx.send(CEv::OwnProbe(render_probe(&dir)));
         });
     }
     let key = Arc::new(key);
@@ -219,8 +223,10 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
         stopped: false,
         pause_at_start: false,
         own_probe: None,
+        own_gpu: None,
         early_notes: Default::default(),
         probes: HashMap::new(),
+        gpus: HashMap::new(),
         name,
         tour,
         script_text,
@@ -475,12 +481,17 @@ struct Controller<'a> {
     pause_at_start: bool,
     /// This machine's probe render (`None` until it finishes).
     own_probe: Option<Result<Probe, String>>,
+    /// This machine's GPU, read from its probe render's log.
+    own_gpu: Option<GpuInfo>,
     /// Notes from before the job started, for its event log.
     early_notes: std::cell::RefCell<Vec<(u64, String)>>,
     /// Each machine's probe, by name: its pixels' digest and the pixels differing from this
     /// machine's — kept after it disconnects, so a removed or departed machine's row still says
     /// which GPU class it was.
     probes: HashMap<String, (String, Option<u64>)>,
+    /// Each machine's GPU by name — adapter, driver, and how it differs from this machine's — kept
+    /// past its connection for the same reason (a removed machine's row still says what it ran).
+    gpus: HashMap<String, (String, String, Option<String>)>,
     name: String,
     tour: PathBuf,
     script_text: String,
@@ -586,7 +597,14 @@ impl Controller<'_> {
                 self.blob_arrived(conn);
             }
             CEv::OwnProbe(r) => {
-                match r.and_then(|png| {
+                if let Ok((_, log)) = &r {
+                    let f = gpu_facts(log);
+                    self.own_gpu = f.adapter.map(|adapter| GpuInfo { adapter, driver: f.driver.unwrap_or_default(), orbit_len_cap: f.orbit_len_cap.unwrap_or(0) });
+                    if let Some(g) = &self.own_gpu {
+                        self.note(&format!("this machine: {}", gpu_text(g)));
+                    }
+                }
+                match r.and_then(|(png, _)| {
                     let dir = self.out.join("farm").join("probes");
                     let _ = std::fs::create_dir_all(&dir);
                     let _ = std::fs::write(dir.join("this-machine.png"), &png);
@@ -598,9 +616,11 @@ impl Controller<'_> {
                         self.own_probe = Some(Err(e));
                     }
                 }
-                let ids: Vec<ClientId> = self.conns.keys().copied().collect();
+                let mut ids: Vec<ClientId> = self.conns.keys().copied().collect();
+                ids.sort_unstable();
                 for id in ids {
                     self.compare_probe(id);
+                    self.compare_gpu(id);
                 }
             }
             CEv::Msg { conn, msg } => return self.on_msg(conn, msg),
@@ -687,6 +707,7 @@ impl Controller<'_> {
                 name: self.name.clone(),
                 verdict,
                 link_sample_bytes: LINK_SAMPLE,
+                gpu: self.own_gpu.clone(),
             })
         };
         if h.tunables != "stock" && refusal.is_none() {
@@ -711,6 +732,9 @@ impl Controller<'_> {
                         state: ConnState::Checking,
                         gpu_cap: None,
                         adapter: String::new(),
+                        driver: String::new(),
+                        gpu_note: None,
+                        gpu_compared: false,
                         job_sent: false,
                         last_hb: None,
                         link_mbps: None,
@@ -733,6 +757,9 @@ impl Controller<'_> {
                 c.self_check = s.items.iter().map(|i| format!("{} {}: {}", if i.ok { "ok  " } else { "FAIL" }, i.name, i.detail)).collect::<Vec<_>>().join("; ");
                 c.gpu_cap = s.gpu.as_ref().map(|g| g.orbit_len_cap).filter(|v| *v > 0);
                 c.adapter = s.gpu.as_ref().map(|g| g.adapter.clone()).unwrap_or_default();
+                c.driver = s.gpu.as_ref().map(|g| g.driver.clone()).unwrap_or_default();
+                let kept = (c.adapter.clone(), c.driver.clone(), None);
+                self.gpus.insert(c.name.clone(), kept);
                 let name = c.name.clone();
                 let summary = c.self_check.clone();
                 if let Some(f) = s.items.iter().find(|i| i.hard && !i.ok) {
@@ -742,6 +769,7 @@ impl Controller<'_> {
                     return None;
                 }
                 self.note(&format!("{name} self-check: {summary}"));
+                self.compare_gpu(conn);
                 let awaiting = s.link_sample.is_some() as u8 + s.probe.is_some() as u8;
                 if let Some(c) = self.conns.get_mut(&conn) {
                     c.awaiting = awaiting;
@@ -808,6 +836,34 @@ impl Controller<'_> {
         if ready {
             self.try_admit(conn);
         }
+    }
+
+    /// Say, once, how a machine's GPU differs from this machine's (model, API or driver), as soon as
+    /// both are known. This machine's own GPU is the reference — what a single-machine render of
+    /// the job would have used.
+    fn compare_gpu(&mut self, conn: ClientId) {
+        let Some(own) = self.own_gpu.clone() else { return };
+        let Some(c) = self.conns.get_mut(&conn) else { return };
+        if c.gpu_compared || c.adapter.is_empty() {
+            return;
+        }
+        c.gpu_compared = true;
+        let theirs = GpuInfo { adapter: c.adapter.clone(), driver: c.driver.clone(), orbit_len_cap: 0 };
+        let Some(d) = gpu_difference(&own, &theirs) else { return };
+        // The words only: the window puts this machine's GPU above the list, and each machine's
+        // own adapter and driver beside its note.
+        c.gpu_note = Some(d.words().to_string());
+        let n = c.name.clone();
+        if let Some(e) = self.gpus.get_mut(&n) {
+            e.2 = c.gpu_note.clone();
+        }
+        self.note(&format!(
+            "⚠ {n} has {} — {n}: {}; this machine: {}. Its frames {} differ slightly from this machine's.",
+            d.words(),
+            gpu_text(&theirs),
+            gpu_text(&own),
+            if d == GpuDiff::Driver { "may" } else { "will" }
+        ));
     }
 
     /// Compare a client's probe with this machine's, once both exist (design §9).
@@ -1036,10 +1092,11 @@ impl Controller<'_> {
         let dir = j.manifest.diag_dir(&c.name, unix_ms() / 1000);
         let _ = std::fs::create_dir_all(&dir);
         let identity = format!(
-            "name = {:?}\naddress = {:?}\nadapter = {:?}\norbit_len_cap = {}\nlink_mbps = {}\nprobe_px = {}\nreason = {:?}\nstrikes = {strikes}\nself_check = {:?}\n",
+            "name = {:?}\naddress = {:?}\nadapter = {:?}\ndriver = {:?}\norbit_len_cap = {}\nlink_mbps = {}\nprobe_px = {}\nreason = {:?}\nstrikes = {strikes}\nself_check = {:?}\n",
             c.name,
             c.addr,
             c.adapter,
+            c.driver,
             c.gpu_cap.unwrap_or(0),
             c.link_mbps.map_or("unknown".into(), |m| format!("{m:.1}")),
             c.probe_px.map_or("\"not compared\"".into(), |p| p.to_string()),
@@ -1177,14 +1234,15 @@ impl Controller<'_> {
         for c in &s.clients {
             let conn = self.conns.get(&c.id);
             t.push_str(&format!(
-                "\n[[machine]]\nname = {:?}\nstate = \"{:?}\"\nframes_done = {}\nstrikes = {}\nms_per_frame = {}\nruns = {:?}\nadapter = {:?}\n",
+                "\n[[machine]]\nname = {:?}\nstate = \"{:?}\"\nframes_done = {}\nstrikes = {}\nms_per_frame = {}\nruns = {:?}\nadapter = {:?}\ndriver = {:?}\n",
                 c.name,
                 c.state,
                 c.frames_done,
                 c.strikes,
                 c.ewma_ms.map_or(0.0, |m| m.round()),
                 c.runs.iter().map(|r| format!("{}..{}", r.1, r.2)).collect::<Vec<_>>(),
-                conn.map(|c| c.adapter.clone()).unwrap_or_default()
+                conn.map(|c| c.adapter.clone()).unwrap_or_default(),
+                conn.map(|c| c.driver.clone()).unwrap_or_default()
             ));
         }
         let _ = j.manifest.write_status(&t);
@@ -1401,6 +1459,7 @@ impl Controller<'_> {
             name: self.name.clone(),
             identity: self.identity.clone(),
             listen: self.lan.clone().unwrap_or_else(|| self.listen.clone()),
+            this_gpu: self.own_gpu.as_ref().map(gpu_text),
             port: self.port,
             key_file: self.key_file.to_string_lossy().into_owned(),
             tour: self.tour.to_string_lossy().into_owned(),
@@ -1455,7 +1514,9 @@ impl Controller<'_> {
             name: name.to_string(),
             addr: c.map(|c| c.addr.clone()).unwrap_or_default(),
             state,
-            adapter: c.map(|c| c.adapter.clone()).unwrap_or_default(),
+            adapter: self.gpus.get(name).map(|g| g.0.clone()).unwrap_or_default(),
+            driver: self.gpus.get(name).map(|g| g.1.clone()).unwrap_or_default(),
+            gpu_note: self.gpus.get(name).and_then(|g| g.2.clone()),
             link_mbps: c.and_then(|c| c.link_mbps),
             frames_done: v.map_or(0, |v| v.frames_done),
             ms_per_frame: v.and_then(|v| v.ewma_ms),

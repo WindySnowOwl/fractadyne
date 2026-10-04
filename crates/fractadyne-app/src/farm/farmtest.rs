@@ -385,6 +385,17 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     let classes: Vec<Option<String>> = statuses.iter().rev().find(|s| s.clients.len() >= 3).map(|s| s.clients.iter().map(|c| c.gpu_class.clone()).collect()).unwrap_or_default();
     check(classes.len() >= 3 && classes.iter().all(|c| c.as_deref() == Some("A")), format!("one GPU class, A, for every client ({classes:?})"));
     check(events.contains("probe identical"), "the event log kept the notes from before the job started (the probes)".into());
+    // The GPU comparison READ something: this machine's GPU and every client's driver are known —
+    // and, all on this one GPU, none was called different. (Without the reads, "no warning" would
+    // pass by comparing nothing.)
+    let with_rows = statuses.iter().rev().find(|s| s.clients.len() >= 3);
+    let this_gpu = with_rows.and_then(|s| s.this_gpu.clone());
+    let drivers: Vec<String> = with_rows.map(|s| s.clients.iter().map(|c| c.driver.clone()).collect()).unwrap_or_default();
+    let called_different = ctl.log.iter().any(|l| l.contains("differ slightly from this machine's") && l.contains("has a") || l.contains("has the same GPU"));
+    check(
+        this_gpu.is_some() && drivers.len() >= 3 && drivers.iter().all(|d| !d.is_empty()) && !called_different && with_rows.is_some_and(|s| s.clients.iter().all(|c| c.gpu_note.is_none())),
+        format!("this machine's GPU ({}) and every client's driver ({drivers:?}) were read, and none was called different", this_gpu.as_deref().unwrap_or("not read")),
+    );
     let cst: Vec<super::status::ClientStatus> = c.log.iter().filter_map(|l| super::status::parse(l)).collect();
     let rendered = cst.iter().any(|x| x.phase == super::status::ClientPhase::Rendering);
     let c_last = cst.last();

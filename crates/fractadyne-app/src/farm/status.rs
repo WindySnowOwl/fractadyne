@@ -90,6 +90,12 @@ pub(crate) struct ClientStatus {
     pub(crate) last_frame_seq: u64,
     /// The self-check's lines ("ok   render: test frame in 707 ms on …").
     pub(crate) self_check: Vec<String>,
+    /// This machine's GPU and the controller's, as "adapter, driver …" (when known).
+    pub(crate) gpu: Option<String>,
+    pub(crate) controller_gpu: Option<String>,
+    /// How this machine's GPU differs from the controller's ("a different GPU", …): its frames
+    /// will differ slightly from the controller's.
+    pub(crate) gpu_note: Option<String>,
     pub(crate) paused: bool,
     pub(crate) retry_in_s: Option<u64>,
     /// Set when `phase` is `Ended`: the process is about to exit with this code.
@@ -157,6 +163,8 @@ pub(crate) struct ControllerStatus {
     pub(crate) key_file: String,
     pub(crate) tour: String,
     pub(crate) out: String,
+    /// This machine's GPU, "adapter, driver …" (from its probe render).
+    pub(crate) this_gpu: Option<String>,
     pub(crate) min_clients: usize,
     pub(crate) job_id: Option<String>,
     pub(crate) frames: u64,
@@ -189,6 +197,10 @@ pub(crate) struct ClientRow {
     /// In words a person can act on ("rendering 123 (4/16)", "removed: 2 bad frames").
     pub(crate) state: String,
     pub(crate) adapter: String,
+    pub(crate) driver: String,
+    /// How its GPU differs from this machine's ("a different GPU", "the same GPU on a different
+    /// driver", …), or `None`.
+    pub(crate) gpu_note: Option<String>,
     pub(crate) link_mbps: Option<f64>,
     pub(crate) frames_done: u64,
     pub(crate) ms_per_frame: Option<f64>,

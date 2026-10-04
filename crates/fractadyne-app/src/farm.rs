@@ -192,17 +192,79 @@ pub(crate) fn parse_child_line(line: &str) -> ChildLine {
     ChildLine::Other(l.to_string())
 }
 
-/// What a render child's stderr says about its GPU: the adapter line and the orbit-length cap.
-pub(crate) fn gpu_facts(stderr: &str) -> (Option<String>, Option<u64>) {
-    let adapter = stderr.lines().find_map(|l| {
-        let rest = l.split_once("adapter: ")?.1;
-        Some(rest.split(" · capability").next().unwrap_or(rest).trim().to_string())
-    });
-    let cap = stderr.lines().find_map(|l| {
-        let rest = l.split_once("reference-orbit length cap = ")?.1;
-        rest.split_whitespace().next()?.parse().ok()
-    });
-    (adapter, cap)
+/// What a render child's log says about its GPU.
+#[derive(Debug, PartialEq, Default)]
+pub(crate) struct GpuFacts {
+    /// "NVIDIA GeForce RTX 3080 · Vulkan".
+    pub(crate) adapter: Option<String>,
+    /// "NVIDIA 581.42".
+    pub(crate) driver: Option<String>,
+    pub(crate) orbit_len_cap: Option<u64>,
+}
+
+/// Read the adapter, driver and orbit-length cap lines of a render child's stderr.
+pub(crate) fn gpu_facts(stderr: &str) -> GpuFacts {
+    let after = |key: &str| stderr.lines().find_map(|l| l.split_once(key).map(|(_, r)| r.trim().to_string()));
+    GpuFacts {
+        adapter: after("adapter: ").map(|r| r.split(" · capability").next().unwrap_or(&r).trim().to_string()),
+        driver: after("] driver: ").filter(|d| d != "unknown"),
+        orbit_len_cap: after("reference-orbit length cap = ").and_then(|r| r.split_whitespace().next()?.parse().ok()),
+    }
+}
+
+/// The driver as one phrase from wgpu's two fields (either may be empty): "NVIDIA 581.42".
+pub(crate) fn driver_text(driver: &str, info: &str) -> String {
+    let t = [driver.trim(), info.trim()].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join(" ");
+    if t.is_empty() { "unknown".into() } else { t }
+}
+
+/// How one machine's GPU differs from another's, worst first.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum GpuDiff {
+    /// Another GPU model.
+    Model,
+    /// The same GPU through another graphics API (another shader compiler).
+    Backend,
+    /// The same GPU and API on another driver version.
+    Driver,
+}
+
+impl GpuDiff {
+    pub(crate) fn words(self) -> &'static str {
+        match self {
+            GpuDiff::Model => "a different GPU",
+            GpuDiff::Backend => "the same GPU through a different graphics API",
+            GpuDiff::Driver => "the same GPU on a different driver",
+        }
+    }
+}
+
+/// `None` when `b` is the same GPU as `a`, through the same API, on the same driver. A driver
+/// either side does not know is not called a mismatch.
+pub(crate) fn gpu_difference(a: &fractadyne_farm::proto::GpuInfo, b: &fractadyne_farm::proto::GpuInfo) -> Option<GpuDiff> {
+    let split = |s: &str| {
+        let (m, api) = s.split_once(" · ").unwrap_or((s, ""));
+        (m.trim().to_ascii_lowercase(), api.trim().to_ascii_lowercase())
+    };
+    let ((ma, aa), (mb, ab)) = (split(&a.adapter), split(&b.adapter));
+    if ma != mb {
+        Some(GpuDiff::Model)
+    } else if aa != ab {
+        Some(GpuDiff::Backend)
+    } else if !a.driver.is_empty() && !b.driver.is_empty() && a.driver != b.driver {
+        Some(GpuDiff::Driver)
+    } else {
+        None
+    }
+}
+
+/// "NVIDIA GeForce RTX 3080 · Vulkan, driver NVIDIA 581.42".
+pub(crate) fn gpu_text(g: &fractadyne_farm::proto::GpuInfo) -> String {
+    if g.driver.is_empty() {
+        format!("{}, driver unknown", g.adapter)
+    } else {
+        format!("{}, driver {}", g.adapter, g.driver)
+    }
 }
 
 /// Start a render child of this executable: `args`, with `config_dir` as its configuration folder,

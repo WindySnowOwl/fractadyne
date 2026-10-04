@@ -126,6 +126,8 @@ pub struct HelloAck {
     pub verdict: Verdict,
     /// Bytes of link-speed sample to send with the self-check (0 = none).
     pub link_sample_bytes: u64,
+    /// The controller's own GPU, when it knows it: the client says when its own differs.
+    pub gpu: Option<GpuInfo>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -141,7 +143,10 @@ pub struct CheckItem {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct GpuInfo {
+    /// "NVIDIA GeForce RTX 3080 · Vulkan": the adapter and the graphics API it is driven through.
     pub adapter: String,
+    /// "NVIDIA 581.42": the driver and its version, as the graphics API reports them ("" unknown).
+    pub driver: String,
     /// The reference-orbit length cap this GPU allows (samples).
     pub orbit_len_cap: u64,
 }
@@ -442,6 +447,10 @@ pub fn validate(m: &Msg) -> Result<(), String> {
             if a.link_sample_bytes > MAX_LINK_SAMPLE_BYTES {
                 return Err("link sample too large".into());
             }
+            if let Some(g) = &a.gpu {
+                text("adapter", &g.adapter, 256)?;
+                text("driver", &g.driver, 256)?;
+            }
         }
         Msg::SelfCheck(s) => {
             if s.items.len() > 32 {
@@ -453,6 +462,7 @@ pub fn validate(m: &Msg) -> Result<(), String> {
             }
             if let Some(g) = &s.gpu {
                 text("adapter", &g.adapter, 256)?;
+                text("driver", &g.driver, 256)?;
             }
             if let Some(b) = &s.link_sample {
                 blob("link sample", b, MAX_LINK_SAMPLE_BYTES)?;

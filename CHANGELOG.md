@@ -87,7 +87,9 @@ Changes after 0.3.0-beta.1:
   either window leaves its work running. Each machine renders a probe frame when it joins, which
   the controller compares with its own: GPUs that draw it differently are shown as different GPU
   classes, because their frames differ slightly too (an RTX 3080 and an RX 6800 XT differ on about
-  2 % of a frame's pixels: hidden by the motion of a zoom, but able to show in a held shot).
+  2 % of a frame's pixels: hidden by the motion of a zoom, but able to show in a held shot). A
+  machine whose GPU, graphics API or driver version differs from the controller's is named with a
+  warning, in the controller's window and in the client's.
 - **Fixed: deep frames of a normalized tour came out nearly flat (0.3.0-beta.18).** A normalized
   tour measures a palette range at each keyframe's view, and every one of those measurements was
   taken of the home view instead, at the keyframe's iteration budget. A deep frame's escape values

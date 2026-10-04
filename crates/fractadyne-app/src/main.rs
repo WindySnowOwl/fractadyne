@@ -15002,6 +15002,13 @@ impl eframe::App for FractadyneApp {
                         self.attach_bytes_per_sample.1
                     ),
                 );
+                // The DRIVER, on a line of its own (the adapter line's shape is parsed elsewhere):
+                // the same GPU on two driver versions can render different pixels, and a render
+                // farm warns when its machines' drivers differ (`farm::gpu_facts`).
+                if let Some(rs) = frame.wgpu_render_state() {
+                    let i = rs.adapter.get_info();
+                    diag::log_line("wgpu", &format!("driver: {}", crate::farm::driver_text(&i.driver, &i.driver_info)));
+                }
                 // The per-adapter DISPATCH CEILING (`calibration`), resolved once by adapter name.
                 let cal = calibration::init(&self.gpu_name);
                 let at = |cost: f64| {

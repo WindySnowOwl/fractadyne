@@ -21,8 +21,28 @@ fn frame_done_lines_parse_exactly_as_the_renderer_prints_them() {
 #[test]
 fn gpu_facts_come_from_the_render_log() {
     let log = "[fd-start] [+ 0.001s] fractadyne …\n[fd-gpu] [+    0.979s] reference-orbit length cap = 7452444 samples (storage-binding limit 1073741824 B)\n[fd-wgpu] [+    0.985s] adapter: NVIDIA GeForce RTX 3080 · Vulkan · capability: TIMESTAMP_QUERY=true\n";
-    assert_eq!(gpu_facts(log), (Some("NVIDIA GeForce RTX 3080 · Vulkan".into()), Some(7_452_444)));
-    assert_eq!(gpu_facts("nothing useful"), (None, None));
+    let log = format!("{log}[fd-wgpu] [+    0.986s] driver: NVIDIA 581.42\n");
+    assert_eq!(
+        gpu_facts(&log),
+        GpuFacts { adapter: Some("NVIDIA GeForce RTX 3080 · Vulkan".into()), driver: Some("NVIDIA 581.42".into()), orbit_len_cap: Some(7_452_444) }
+    );
+    assert_eq!(gpu_facts("nothing useful"), GpuFacts::default());
+    assert_eq!(gpu_facts("[fd-wgpu] [+ 1s] driver: unknown\n").driver, None);
+    assert_eq!(driver_text("NVIDIA", "581.42"), "NVIDIA 581.42");
+    assert_eq!(driver_text("", " "), "unknown");
+}
+
+#[test]
+fn gpus_differ_by_model_then_api_then_driver() {
+    use fractadyne_farm::proto::GpuInfo;
+    let g = |adapter: &str, driver: &str| GpuInfo { adapter: adapter.into(), driver: driver.into(), orbit_len_cap: 0 };
+    let here = g("NVIDIA GeForce RTX 3080 · Vulkan", "NVIDIA 581.42");
+    assert_eq!(gpu_difference(&here, &here), None);
+    assert_eq!(gpu_difference(&here, &g("AMD Radeon RX 6800 XT · Vulkan", "AMD proprietary driver 25.9.1")), Some(GpuDiff::Model));
+    assert_eq!(gpu_difference(&here, &g("NVIDIA GeForce RTX 3080 · Dx12", "NVIDIA 581.42")), Some(GpuDiff::Backend));
+    assert_eq!(gpu_difference(&here, &g("NVIDIA GeForce RTX 3080 · Vulkan", "NVIDIA 576.02")), Some(GpuDiff::Driver));
+    assert_eq!(gpu_difference(&here, &g("NVIDIA GeForce RTX 3080 · Vulkan", "")), None, "an unknown driver is not a mismatch");
+    assert_eq!(gpu_text(&here), "NVIDIA GeForce RTX 3080 · Vulkan, driver NVIDIA 581.42");
 }
 
 fn bundle() -> Bundle {

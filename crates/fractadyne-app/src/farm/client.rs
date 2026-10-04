@@ -319,7 +319,7 @@ fn connect_once(cfg: &Cfg, pins: &mut PinStore, ui: &Arc<Ui>) -> Ended {
     let _ = out_tx.send(Out::Msg(Msg::Hello(hello)));
     // The verdict.
     let deadline = Instant::now() + Duration::from_secs(20);
-    let link_bytes = loop {
+    let (link_bytes, controller_gpu) = loop {
         let wait = deadline.saturating_duration_since(Instant::now()).max(Duration::from_millis(1));
         match ev_rx.recv_timeout(wait) {
             Ok(Ev::Net(Incoming::Control(Msg::HelloAck(a)))) => match a.verdict {
@@ -349,7 +349,7 @@ fn connect_once(cfg: &Cfg, pins: &mut PinStore, ui: &Arc<Ui>) -> Ended {
                         s.controller_fingerprint = fp.clone();
                         s.detail = format!("Connected to \"{}\" — running the self-check", a.name);
                     });
-                    break a.link_sample_bytes;
+                    break (a.link_sample_bytes, a.gpu.clone());
                 }
                 Verdict::WaitingForApproval => {
                     println!("Connected to \"{}\" — waiting for its user to approve this machine", a.name);
@@ -374,6 +374,21 @@ fn connect_once(cfg: &Cfg, pins: &mut PinStore, ui: &Arc<Ui>) -> Ended {
         }
     };
     let (check, sample, probe, gpu_cap, handshake) = self_check(cfg, link_bytes);
+    // Say so when this GPU differs from the controller's: its frames will not match the controller's
+    // pixel for pixel (design §9).
+    let gpu_note = match (&controller_gpu, &check.gpu) {
+        (Some(c), Some(m)) => gpu_difference(c, m).map(|d| format!("{} from the controller's — this machine: {}; the controller: {}", d.words(), gpu_text(m), gpu_text(c))),
+        _ => None,
+    };
+    if let Some(n) = &gpu_note {
+        println!("⚠ This machine has {n}. Its frames will differ slightly from the controller's.");
+    }
+    let (mine, theirs) = (check.gpu.as_ref().map(gpu_text), controller_gpu.as_ref().map(gpu_text));
+    ui.update(|s| {
+        s.gpu = mine;
+        s.controller_gpu = theirs;
+        s.gpu_note = gpu_note.clone();
+    });
     let failed_hard = check.items.iter().find(|i| i.hard && !i.ok).map(|i| format!("{}: {}", i.name, i.detail));
     let _ = out_tx.send(Out::Msg(Msg::SelfCheck(check)));
     if let Some(blob) = sample {
@@ -429,14 +444,19 @@ fn self_check(cfg: &Cfg, link_bytes: u64) -> (SelfCheck, Option<Vec<u8>>, Option
     let result = render_probe(&cfg.work.join("self-check"));
     let (gpu, cap) = match &result {
         Ok((_, stderr)) => {
-            let (adapter, cap) = gpu_facts(stderr);
+            let f = gpu_facts(stderr);
             items.push(CheckItem {
                 name: "render".into(),
                 ok: true,
                 hard: true,
-                detail: format!("test frame in {} ms on {}", t0.elapsed().as_millis(), adapter.as_deref().unwrap_or("an unnamed adapter")),
+                detail: format!(
+                    "test frame in {} ms on {}{}",
+                    t0.elapsed().as_millis(),
+                    f.adapter.as_deref().unwrap_or("an unnamed adapter"),
+                    f.driver.as_ref().map_or(String::new(), |d| format!(", driver {d}"))
+                ),
             });
-            (adapter.map(|a| GpuInfo { adapter: a, orbit_len_cap: cap.unwrap_or(0) }), cap)
+            (f.adapter.map(|a| GpuInfo { adapter: a, driver: f.driver.unwrap_or_default(), orbit_len_cap: f.orbit_len_cap.unwrap_or(0) }), f.orbit_len_cap)
         }
         Err(e) => {
             items.push(CheckItem { name: "render".into(), ok: false, hard: true, detail: tail_of(e, 900) });

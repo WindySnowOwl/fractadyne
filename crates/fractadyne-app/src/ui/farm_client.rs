@@ -320,6 +320,9 @@ impl FractadyneApp {
                             if !st.identity.is_empty() {
                                 row(ui, "This machine", format!("\"{}\" · identity {}", st.name, st.identity));
                             }
+                            if let Some(g) = &st.gpu {
+                                row(ui, "GPU", g.clone());
+                            }
                             if let Some(j) = &st.job {
                                 row(ui, "Job", match &st.job_detail {
                                     Some(d) => format!("{j} — {d}"),
@@ -336,6 +339,13 @@ impl FractadyneApp {
                                 row(ui, "Sent", format!("{} frame{} · {} a frame", crate::grouped_count(st.frames_done as f64), if st.frames_done == 1 { "" } else { "s" }, st.mean_ms.map_or("—".into(), secs)));
                             }
                         });
+                        if let Some(n) = &st.gpu_note {
+                            ui.label(
+                                egui::RichText::new(format!("⚠ This machine has {n}. Its frames will differ slightly from the controller's, which can show in a held shot."))
+                                    .color(ui.visuals().warn_fg_color)
+                                    .small(),
+                            );
+                        }
                         if !st.self_check.is_empty() {
                             egui::CollapsingHeader::new("Self-check").id_salt("farm_client_check").show(ui, |ui| {
                                 for l in &st.self_check {
@@ -435,6 +445,9 @@ impl FractadyneApp {
             frame_ms: Some(2140),
             frames_done: 1234,
             mean_ms: Some(2380.0),
+            gpu: Some("AMD Radeon RX 6800 XT · Vulkan, driver AMD proprietary driver 25.9.1".into()),
+            controller_gpu: Some("NVIDIA GeForce RTX 3080 · Vulkan, driver NVIDIA 581.42".into()),
+            gpu_note: Some("a different GPU from the controller's — this machine: AMD Radeon RX 6800 XT · Vulkan, driver AMD proprietary driver 25.9.1; the controller: NVIDIA GeForce RTX 3080 · Vulkan, driver NVIDIA 581.42".into()),
             self_check: vec!["ok   render: test frame in 707 ms on AMD Radeon RX 6800 XT · Vulkan".into(), "ok   storage: 51.7 GB free for frames in progress".into()],
             ..Default::default()
         });

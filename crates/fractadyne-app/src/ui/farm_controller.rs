@@ -172,7 +172,10 @@ fn gpu_cell(r: &ClientRow) -> (String, String) {
         None => "Its probe render has not been compared.".to_string(),
     };
     let adapter = if r.adapter.is_empty() { String::new() } else { format!("\n{}", r.adapter) };
-    (letter, format!("{why}{adapter}"))
+    let driver = if r.driver.is_empty() { String::new() } else { format!("\ndriver {}", r.driver) };
+    let note = r.gpu_note.as_ref().map_or(String::new(), |n| format!("\n⚠ {n} from this machine's"));
+    let letter = if r.gpu_note.is_some() { format!("{letter} ⚠") } else { letter };
+    (letter, format!("{why}{adapter}{driver}{note}"))
 }
 
 impl FractadyneApp {
@@ -439,15 +442,38 @@ impl FractadyneApp {
                         if st.storage_low {
                             ui.label(egui::RichText::new("⚠ The output folder is nearly full: no new work is handed out until there is room.").color(ui.visuals().warn_fg_color));
                         }
-                        if st.gpu_classes > 1 {
+                        // GPUs that differ from this machine's: model, graphics API or driver, and
+                        // whether their probes differed (the GPU classes).
+                        let differing: Vec<&ClientRow> = st.clients.iter().filter(|r| r.gpu_note.is_some()).collect();
+                        if !differing.is_empty() || st.gpu_classes > 1 {
+                            let warn = ui.visuals().warn_fg_color;
                             ui.label(
                                 egui::RichText::new(format!(
-                                    "⚠ {} GPU classes in this farm: machines of different classes render slightly different pixels, which can show in a held shot.",
-                                    st.gpu_classes
+                                    "⚠ GPUs differ in this farm{}. Their frames differ slightly, which can show in a held shot.",
+                                    if st.gpu_classes > 1 { format!(" ({} GPU classes: their probe frames differ)", st.gpu_classes) } else { String::new() }
                                 ))
-                                .color(ui.visuals().warn_fg_color)
+                                .color(warn)
                                 .small(),
                             );
+                            if let Some(g) = &st.this_gpu {
+                                ui.label(egui::RichText::new(format!("    This machine: {g}")).weak().small());
+                            }
+                            for r in differing {
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(format!(
+                                            "    {}: {} — {}{}",
+                                            r.name,
+                                            r.gpu_note.as_deref().unwrap_or_default(),
+                                            r.adapter,
+                                            if r.driver.is_empty() { String::new() } else { format!(", driver {}", r.driver) }
+                                        ))
+                                        .color(warn)
+                                        .small(),
+                                    )
+                                    .truncate(),
+                                );
+                            }
                         }
                         if !st.clients.is_empty() {
                             ui.add_space(4.0);
@@ -604,6 +630,8 @@ impl FractadyneApp {
             addr: format!("192.168.1.{}:5{id}012", 20 + id),
             state: state.into(),
             adapter: if class == "A" { "NVIDIA GeForce RTX 3080 · Vulkan".into() } else { "AMD Radeon RX 6800 XT · Vulkan".into() },
+            driver: if class == "A" { "NVIDIA 581.42".into() } else { "AMD proprietary driver 25.9.1".into() },
+            gpu_note: (class != "A").then(|| "a different GPU".to_string()),
             link_mbps: Some(940.0),
             frames_done: frames,
             ms_per_frame: Some(ms),
@@ -614,6 +642,9 @@ impl FractadyneApp {
             gpu_class: Some(class.into()),
             removed: false,
         };
+        let mut studio = row(2, "STUDIO-PC", "rendering 7310 (9/16)", "A", 0, 2380, 1330.0);
+        studio.driver = "NVIDIA 576.02".into();
+        studio.gpu_note = Some("the same GPU on a different driver".into());
         let mut gone = row(4, "OLD-LAPTOP", "removed: 2 bad frames", "A", 0, 3, 9100.0);
         gone.removed = true;
         gone.strikes = 2;
@@ -622,6 +653,7 @@ impl FractadyneApp {
             detail: "Rendering".into(),
             name: "WORKSTATION".into(),
             listen: "192.168.1.20:46733".into(),
+            this_gpu: Some("NVIDIA GeForce RTX 3080 · Vulkan, driver NVIDIA 581.42".into()),
             port: 46733,
             min_clients: 2,
             frames: 9931,
@@ -638,7 +670,7 @@ impl FractadyneApp {
             strip,
             clients: vec![
                 row(1, "WORKSTATION (local)", "rendering 5731 (4/16)", "A", 0, 2604, 1210.0),
-                row(2, "STUDIO-PC", "rendering 7310 (9/16)", "A", 0, 2380, 1330.0),
+                studio,
                 row(3, "PLUTO", "rendering 9022 (2/12)", "B", 812, 725, 2620.0),
                 gone,
             ],

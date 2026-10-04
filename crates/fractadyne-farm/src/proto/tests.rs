@@ -26,6 +26,7 @@ fn samples() -> Vec<Msg> {
             name: "studio".into(),
             verdict: Verdict::Refused("version mismatch".into()),
             link_sample_bytes: 1 << 20,
+            gpu: None,
         }),
         Msg::HelloAck(HelloAck {
             protocol: 1,
@@ -34,10 +35,11 @@ fn samples() -> Vec<Msg> {
             name: "studio".into(),
             verdict: Verdict::Admitted,
             link_sample_bytes: 0,
+            gpu: Some(GpuInfo { adapter: "NVIDIA GeForce RTX 3080 · Vulkan".into(), driver: "NVIDIA 581.42".into(), orbit_len_cap: 7_452_444 }),
         }),
         Msg::SelfCheck(SelfCheck {
             items: vec![CheckItem { name: "device".into(), ok: true, hard: true, detail: "RTX 3080".into() }],
-            gpu: Some(GpuInfo { adapter: "NVIDIA GeForce RTX 3080".into(), orbit_len_cap: 7_452_444 }),
+            gpu: Some(GpuInfo { adapter: "NVIDIA GeForce RTX 3080".into(), driver: "NVIDIA 581.42".into(), orbit_len_cap: 7_452_444 }),
             free_bytes: Some(412 << 30),
             link_sample: Some(BlobAnnounce { id: 1, len: 1 << 20, sha256: D.into() }),
             probe: Some(BlobAnnounce { id: 2, len: 48_000, sha256: D.into() }),
