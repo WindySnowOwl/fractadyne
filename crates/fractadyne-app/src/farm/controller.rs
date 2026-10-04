@@ -205,7 +205,9 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
                 println!("answering discovery on UDP {DISCOVERY_PORT} — render clients on this network can find this machine");
                 let _ = std::thread::Builder::new().name("fd-discovery".into()).spawn(move || {
                     let never = std::sync::atomic::AtomicBool::new(false);
-                    if let Err(e) = discovery::serve(&sock, &beacon, &never) {
+                    // Each answer in the log: whether a client's probe arrived is otherwise invisible.
+                    let logged = |to: std::net::SocketAddr, ok: bool| crate::diag::log_line("farm", &format!("discovery: answered a probe from {to}{}", if ok { "" } else { " (the reply could not be sent)" }));
+                    if let Err(e) = discovery::serve(&sock, &beacon, &never, logged) {
                         eprintln!("fractadyne: discovery: {e}");
                     }
                 });

@@ -55,7 +55,7 @@ fn a_controller_answering_on_loopback_is_found() {
     let port = sock.local_addr().expect("its address").port();
     let stop = Arc::new(AtomicBool::new(false));
     let (b, s) = (beacon(), stop.clone());
-    let server = std::thread::spawn(move || serve(&sock, &b, &s));
+    let server = std::thread::spawn(move || serve(&sock, &b, &s, |_, _| {}));
     let found = discover_on(port, Duration::from_millis(600)).expect("discovery runs");
     stop.store(true, Ordering::Relaxed);
     let sent = server.join().expect("the server thread").expect("it served");
@@ -72,7 +72,7 @@ fn replies_are_rate_limited() {
     let port = sock.local_addr().expect("its address").port();
     let stop = Arc::new(AtomicBool::new(false));
     let (b, s) = (beacon(), stop.clone());
-    let server = std::thread::spawn(move || serve(&sock, &b, &s));
+    let server = std::thread::spawn(move || serve(&sock, &b, &s, |_, _| {}));
     let flood = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("a socket");
     for _ in 0..(MAX_REPLIES_PER_S * 3) {
         let _ = flood.send_to(&probe_packet(), (Ipv4Addr::LOCALHOST, port));

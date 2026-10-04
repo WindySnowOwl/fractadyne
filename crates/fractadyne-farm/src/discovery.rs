@@ -112,8 +112,9 @@ pub fn parse_reply(buf: &[u8]) -> Result<Beacon, String> {
 }
 
 /// Answer probes on `socket` until `stop` is set: each with `beacon`, at most
-/// [`MAX_REPLIES_PER_S`] a second. Returns the replies sent.
-pub fn serve(socket: &UdpSocket, beacon: &Beacon, stop: &AtomicBool) -> Result<u64, String> {
+/// [`MAX_REPLIES_PER_S`] a second; `answered` hears of each reply (where it went, and whether it
+/// was sent). Returns the replies sent.
+pub fn serve(socket: &UdpSocket, beacon: &Beacon, stop: &AtomicBool, mut answered: impl FnMut(SocketAddr, bool)) -> Result<u64, String> {
     let reply = reply_packet(beacon)?;
     socket.set_read_timeout(Some(Duration::from_millis(250))).map_err(|e| e.to_string())?;
     let mut buf = [0u8; PROBE_LEN + 1];
@@ -130,9 +131,9 @@ pub fn serve(socket: &UdpSocket, beacon: &Beacon, stop: &AtomicBool) -> Result<u
             continue;
         }
         in_window += 1;
-        if socket.send_to(&reply, from).is_ok() {
-            sent += 1;
-        }
+        let ok = socket.send_to(&reply, from).is_ok();
+        sent += u64::from(ok);
+        answered(from, ok);
     }
     Ok(sent)
 }
