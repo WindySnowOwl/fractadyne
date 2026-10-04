@@ -924,7 +924,12 @@ Windows' default firewall on the client. Noted: this machine has two cards on th
 a Hyper-V switch, .74 Intel); the probe arrives on both and the reply leaves from the routing
 table's choice — the address found is reachable, not necessarily the faster path (the link sample
 read 294 Mb/s through .74, 760–894 Mb/s through .38 on earlier runs).
-**Not built:** the QR code, the Linux client.
+*The QR code — not built, on purpose (2026-10-04, for the user to overrule):* the farm key is the
+farm's one secret, and a QR code is made to be photographed — it would put the key in phone photo
+libraries and their cloud backups. Moving it is covered without that: the controller window's
+Copy, its key file (`<config>/farm/farm-key.txt`), and the client's paste field; and it would
+have added a crate. **Not built:** the Linux client on the RX 6800 XT box (needs the user's go-ahead
+to queue).
 
 Documentation per release: SECURITY.md threat-model paragraph, ARCHITECTURE.md §9/§13, TOURS.md
 is regenerated (the flags), CHANGELOG entry, `help.rs`.
