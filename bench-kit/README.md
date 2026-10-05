@@ -178,7 +178,15 @@ across 1e28, a deep field across 1e308). Two harnesses consume them:
 - **Two timing columns, deliberately:**
   - `wall_s` — process start to exit, measured by the script. Only meaningful for the two
     automated lanes; it includes reference building and encode for both, so it is the honest
-    end-to-end comparison between them.
+    end-to-end comparison between them. **FractalShark in server mode** has no process per image,
+    so its `wall_s` is the client call until **that image's PNG is complete on disk**, and the next
+    image starts only after it: the server encodes PNGs in the background and the next render
+    waits for the encode, so client calls timed back to back charged every image with the
+    PREVIOUS image's encode. Every FractalShark time this kit published up to 2026-10-03 has that
+    flaw (measured 2026-10-04: the spar scene's 69 ms render took 3.5 s, waiting for scene 17's
+    12.7 MB PNG). `fs-phases.csv` splits each wall into the client call and the encode, beside
+    FractalShark's own report (reference orbit, LA tables, per-pixel), printed because the lane no
+    longer passes `--quiet`.
   - `reported_s` — the renderer's own render-time figure. Fractadyne prints one, and FractalShark's
     client prints one that the lane records only for a row that already passed the exit code and
     the structure guard (a *refused* render prints one too). Self-reported figures exclude

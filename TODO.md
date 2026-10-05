@@ -2438,8 +2438,7 @@ Mockups: [design/mockups/](design/mockups/).
   dips remain possible during latched windows. Also noted: at this c the Julia's large
   interior basins make legitimate flat regions — distinguish before blaming the mapping.
   ⭐NEXT TIME IT HAPPENS: the user relaunches with FRACTADYNE_TRACE=gpu,tile
-  (PowerShell: $env:FRACTADYNE_TRACE="gpu,tile"; & .	arget
-eleaseractadyne.exe),
+  (PowerShell: $env:FRACTADYNE_TRACE="gpu,tile"; & .\target\release\fractadyne.exe),
   reproduces, and the log then carries view-tagged budget walks, res derates, norm
   decisions and pass timings at the moment of blur. Repro kit: local/idle-probe.py (copies
   the real config to a temp dir, boots idle, 20 s, kill), local/bookmark7-bulb-julia.fdn,
