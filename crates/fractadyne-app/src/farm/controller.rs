@@ -1232,7 +1232,14 @@ impl Controller<'_> {
         if let Some(e) = self.probes.get_mut(&n) {
             e.1 = Some(px);
         }
-        if px == 0 {
+        // A matching probe on another GPU or driver is still another class (`gpu_class`): say so,
+        // or the log reads as if the two render alike.
+        let other_gpu = self.gpu_class(conn).is_some_and(|k| self.own_class().is_some_and(|own| own != k));
+        if px == 0 && other_gpu {
+            self.note(&format!(
+                "{n}: probe identical to this machine's, but on a different GPU or driver — another GPU class: its frames can still differ slightly (a matching probe cannot show that two GPUs render alike at every depth)"
+            ));
+        } else if px == 0 {
             self.note(&format!("{n}: probe identical to this machine's"));
         } else {
             self.note(&format!(
