@@ -110,7 +110,6 @@ fn git_identity(root: &Path) -> Option<(String, Vec<PathBuf>)> {
             "--show-toplevel",
             "--git-dir",
             "--git-common-dir",
-            "--short",
             "HEAD",
         ])
         .output()
@@ -126,10 +125,14 @@ fn git_identity(root: &Path) -> Option<(String, Vec<PathBuf>)> {
     }
     let git_dir = abs(root, lines.next()?);
     let common = abs(root, lines.next()?);
-    let sha = lines.next()?;
-    if sha.is_empty() || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
+    // The FULL sha, cut to 7 here. `--short` abbreviates to whatever length is unique in THIS
+    // repository, so one commit was stamped "29988ec" on Windows and "29988ecf" in the Linux test
+    // machine's clone of a bundle - and a render farm, which admits only the same commit, refused it.
+    let full = lines.next()?;
+    if full.len() < 7 || !full.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
     }
+    let sha = &full[..7];
     // `--no-optional-locks`: a plain `git status` may refresh and REWRITE the index as a side
     // effect, which is exactly the kind of write a build script must not cause. Untracked files are
     // excluded (the `git describe --dirty` meaning): logs and scratch output are not sources.

@@ -321,7 +321,7 @@ pub(crate) fn admission_refusal(h: &Hello, ver: &str, git: &str, allow_dirty: bo
     let dev = allow_dirty && h.allow_dirty;
     if h.protocol != fractadyne_farm::PROTOCOL_VERSION {
         Some(format!("this farm speaks protocol {}; this client speaks {}", fractadyne_farm::PROTOCOL_VERSION, h.protocol))
-    } else if h.app_version != ver || h.git != git {
+    } else if h.app_version != ver || !same_commit(&h.git, git) {
         Some(format!("version mismatch: this farm runs {ver} {git}; this client is {} {} — install the same build", h.app_version, h.git))
     } else if is_dirty(&h.git) && !dev {
         Some("a build with uncommitted changes (-dirty) cannot join a farm".into())

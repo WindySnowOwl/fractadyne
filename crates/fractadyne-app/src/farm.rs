@@ -119,6 +119,21 @@ pub(crate) fn build_identity() -> (&'static str, &'static str) {
     (crate::sysinfo::APP_VERSION, crate::sysinfo::BUILD_GIT)
 }
 
+/// Two build stamps name one commit: equal, or the same suffix (`-dirty`, `-archive`) and one sha a
+/// prefix of the other, at least 7 digits. A stamp's length is not the commit: builds before the stamp was
+/// fixed at 7 abbreviated to whatever was unique in their own repository ("29988ec" on Windows,
+/// "29988ecf" in a Linux clone of the same commit), and an exact comparison refused the pair.
+pub(crate) fn same_commit(a: &str, b: &str) -> bool {
+    fn split(s: &str) -> (&str, &str) {
+        s.split_once('-').unwrap_or((s, ""))
+    }
+    if a == b {
+        return true;
+    }
+    let ((ha, ra), (hb, rb)) = (split(a), split(b));
+    ra == rb && ha.len() >= 7 && hb.len() >= 7 && (ha.starts_with(hb) || hb.starts_with(ha))
+}
+
 pub(crate) fn is_dirty(git: &str) -> bool {
     git.ends_with("-dirty")
 }

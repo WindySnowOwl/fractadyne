@@ -2,6 +2,18 @@ use super::*;
 use fractadyne_farm::proto::Policy;
 
 #[test]
+fn one_commit_is_one_commit_whatever_its_stamp_length() {
+    assert!(same_commit("29988ec", "29988ecf"), "Windows and a Linux clone of the same commit");
+    assert!(same_commit("29988ecf", "29988ec"));
+    assert!(same_commit("29988ec", "29988ec"));
+    assert!(!same_commit("29988ec", "29988ed"), "another commit");
+    assert!(!same_commit("29988ec", "29988ec-dirty"), "a dirty build is not the commit");
+    assert!(same_commit("29988ec-dirty", "29988ecf-dirty"));
+    assert!(!same_commit("29988ec-archive", "29988ec"), "an archive build cannot vouch for its tree");
+    assert!(!same_commit("2998", "29988ec"), "too short to name anything");
+}
+
+#[test]
 fn a_machine_is_in_use_only_while_touched_recently_and_unlocked() {
     use std::time::Duration;
     let need = Duration::from_secs(300);

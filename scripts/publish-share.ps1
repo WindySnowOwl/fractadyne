@@ -68,7 +68,9 @@ if (-not $Share) { throw "no share found; pass -Share" }
 # ---------------------------------------------------------------- identity, checked BEFORE copying
 $headFull = (& git rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $headFull -notmatch '^[0-9a-f]{40}$') { throw "git rev-parse HEAD failed" }
-$headShort = (& git rev-parse --short HEAD).Trim()
+# Seven digits, as build.rs stamps them: `--short` abbreviates to whatever is unique in THIS
+# repository, which is not what another machine's clone of the same commit prints.
+$headShort = $headFull.Substring(0, 7)
 
 # Ask a binary for its identity WITHOUT touching the real config dir. --version runs the unclean-exit
 # check, and against the real dir it can take a LIVE session for a crash and write a spurious crash

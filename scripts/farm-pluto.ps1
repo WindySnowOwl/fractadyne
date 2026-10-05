@@ -147,7 +147,7 @@ if ($Linux) {
         $last = if ($w.last_poll_utc -is [datetime]) { $w.last_poll_utc.ToUniversalTime() } else { [datetime]::Parse([string]$w.last_poll_utc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal) }
         $age = [int]((Get-Date).ToUniversalTime() - $last).TotalSeconds
         if ($age -gt 60) { Bad "$Agent's Linux watcher last polled $age s ago" "start it again on ${Agent}: bash farm-linux.sh watch" }
-        elseif ($sha -and ([string]$w.build) -notmatch "g$sha\)$") { Bad "$Agent's Linux build is '$($w.build)', not g$sha" "pwsh -File scripts\publish-share.ps1 -SkipSource -Bundle; then on ${Agent}: bash farm-linux.sh build, and restart watch" }
+        elseif ($sha -and ([string]$w.build) -notmatch "g$sha[0-9a-f]*\)$") { Bad "$Agent's Linux build is '$($w.build)', not g$sha" "pwsh -File scripts\publish-share.ps1 -SkipSource -Bundle; then on ${Agent}: bash farm-linux.sh build, and restart watch" }
         else { Ok "$Agent's Linux watcher is serving ($($lw.BaseName), last poll $age s ago): $($w.build)" }
     }
 }
