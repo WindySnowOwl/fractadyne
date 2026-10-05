@@ -81,7 +81,9 @@ cmd_check() {
         pkg="${m#*:}"
         if command -v pkg-config >/dev/null && pkg-config --exists "${m%%:*}" 2>/dev/null; then :; else missing_apt="$missing_apt $pkg"; fi
     done
-    if [ -n "$missing_apt" ]; then bad "missing packages:$missing_apt" "sudo apt-get install -y$missing_apt"
+    # With `apt-get update` first: on a machine whose package lists are old, the install asks the
+    # mirror for versions it has since replaced and fails with 404 (seen on the test machine).
+    if [ -n "$missing_apt" ]; then bad "missing packages:$missing_apt" "sudo apt-get update && sudo apt-get install -y$missing_apt"
     else ok "git, a C toolchain, pkg-config, python3 and the -dev libraries are installed"; fi
     if command -v cargo >/dev/null; then ok "Rust: $(rustc --version 2>/dev/null)"
     else bad "Rust is not installed (or not on PATH)" "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && . \"\$HOME/.cargo/env\""; fi
