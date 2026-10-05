@@ -879,7 +879,11 @@ build peaked at 0.47 GB — and refused every pickup on a machine with 1.9 GB fr
 build runs to its end (no cooperative cancel) and is discarded. Local e4000 gate (one local client
 + the pre-build): frame 0 took the pre-build's orbit 58 s into its wait, 58 s instead of 95 s; 0
 references built fresh (was 1); 92 s instead of 130 s; all 5 frames pixel-identical to the run
-where frame 0 built its own. Selftest groups orbit-cache, ref-reuse, ref-overlap pass.
+where frame 0 built its own. Selftest groups orbit-cache, ref-reuse, ref-overlap pass. With PLUTO
+(`e4707f1`, the same gate as above): this machine's frame 0 took PLUTO's orbit once it arrived and
+finished in 39.3 s instead of 91 s; 1 reference built fresh (PLUTO's), 4 from the cache; **50.2 s
+from job start, against 100.0 / 101.6 s before the pickup and 185.2 s with sharing off (3.7×)**;
+every frame pixel-identical to the earlier sharing-on run, same machine per frame.
 ⚠Side finding, not fixed: the same `est_ref_bytes` over-estimate turns the tour's reference
 LOOKAHEAD off on this machine for deep tours ("low memory (~1.9 GB free, next reference ~13.6 GB)")
 — it counts `max_iter` samples where the orbit had 443,144.
