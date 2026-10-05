@@ -95,6 +95,7 @@ Changes after 0.3.0-beta.1:
   the controller compares with its own: GPUs that draw it differently are shown as different GPU
   classes, because their frames differ slightly too (an RTX 3080 and an RX 6800 XT differ on about
   2 % of a frame's pixels: hidden by the motion of a zoom, but able to show in a held shot). A
+  different GPU or driver is always a class of its own, even when its probe frame matches. A
   machine whose GPU, graphics API or driver version differs from the controller's is named with a
   warning, in the controller's window and in the client's. A machine that runs out of work takes
   over the rest of another's, no run starts inside a dissolve (where it would render as a hard

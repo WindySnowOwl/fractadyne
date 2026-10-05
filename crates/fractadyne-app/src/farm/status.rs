@@ -238,7 +238,7 @@ pub(crate) struct ClientRow {
     pub(crate) kb_in: u64,
     /// Pixels where this machine's probe differs from the controller's own (`None`: not compared).
     pub(crate) probe_px: Option<u64>,
-    /// "A", "B", …: machines whose probes are identical share a letter.
+    /// "A", "B", …: machines with the same GPU, driver and probe render share a letter.
     pub(crate) gpu_class: Option<String>,
     /// Present in the table but no longer connected (removed, or gone); `readmit` takes its name.
     pub(crate) removed: bool,

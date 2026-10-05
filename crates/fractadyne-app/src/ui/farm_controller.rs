@@ -483,7 +483,7 @@ impl FractadyneApp {
                             ui.label(
                                 egui::RichText::new(format!(
                                     "⚠ GPUs differ in this farm{}. Their frames differ slightly, which can show in a held shot.",
-                                    if st.gpu_classes > 1 { format!(" ({} GPU classes: their probe frames differ)", st.gpu_classes) } else { String::new() }
+                                    if st.gpu_classes > 1 { format!(" ({} GPU classes: different GPUs, drivers or probe renders)", st.gpu_classes) } else { String::new() }
                                 ))
                                 .color(warn)
                                 .small(),
@@ -676,7 +676,9 @@ impl FractadyneApp {
             gpu_class: Some(class.into()),
             removed: false,
         };
-        let mut studio = row(2, "STUDIO-PC", "rendering 7310 (9/16)", "A", 0, 2380, 1330.0);
+        // The same GPU on another driver is another class (`Controller::gpu_class`), probe or not.
+        let mut studio = row(2, "STUDIO-PC", "rendering 7310 (9/16)", "B", 0, 2380, 1330.0);
+        studio.adapter = "NVIDIA GeForce RTX 3080 · Vulkan".into();
         studio.driver = "NVIDIA 576.02".into();
         studio.gpu_note = Some("the same GPU on a different driver".into());
         studio.share = true;
@@ -710,10 +712,10 @@ impl FractadyneApp {
             clients: vec![
                 row(1, "WORKSTATION (local)", "rendering 5731 (4/16)", "A", 0, 2604, 1210.0),
                 studio,
-                row(3, "PLUTO", "rendering 9022 (2/12)", "B", 812, 725, 2620.0),
+                row(3, "PLUTO", "rendering 9022 (2/12)", "C", 812, 725, 2620.0),
                 gone,
             ],
-            gpu_classes: 2,
+            gpu_classes: 3,
             ..Default::default()
         });
         f.last_log = vec![

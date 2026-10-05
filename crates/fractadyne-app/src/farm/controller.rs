@@ -332,6 +332,11 @@ pub(crate) fn admission_refusal(h: &Hello, ver: &str, git: &str, allow_dirty: bo
     }
 }
 
+/// What makes a GPU class: the probe's digest, the adapter and the driver ([`Controller::gpu_class`]).
+fn class_key(digest: &str, adapter: &str, driver: &str) -> String {
+    format!("{digest} | {adapter} | {driver}")
+}
+
 fn spawn_listener(listener: std::net::TcpListener, key: Arc<FarmKey>, me: Arc<Identity>, ev: mpsc::Sender<CEv>, dims: (u32, u32), incoming: PathBuf) {
     std::thread::spawn(move || {
         // Counts FAILED handshakes only (see `RateLimiter`): shared with the connection threads,
@@ -1138,14 +1143,36 @@ impl Controller<'_> {
         });
     }
 
-    /// A machine's GPU class for the scheduler: its probe's pixels, or failing that its adapter and
-    /// driver (machines whose probes match render the same pixels).
+    /// A machine's GPU class, for the scheduler (a held shot stays on one) and the window's letters:
+    /// its adapter, its driver AND its probe's pixels. ⛔A matching probe cannot show that two GPUs
+    /// render alike: the RX 6800 XT under Linux (RADV) matched an RTX 3080's probe exactly at 1e30,
+    /// and still differed on up to 6.6% of a frame at 2.37e4000 (2026-10-05). So a different adapter
+    /// or driver is always another class, and the probe only splits machines that look the same.
     fn gpu_class(&self, conn: ClientId) -> Option<String> {
         let c = self.conns.get(&conn)?;
-        self.probes
-            .get(&c.name)
-            .map(|(digest, _)| digest.clone())
-            .or_else(|| (!c.adapter.is_empty()).then(|| format!("{} {}", c.adapter, c.driver)))
+        self.class_by_name(&c.name, Some(c))
+    }
+
+    /// [`Self::gpu_class`] by machine name: the live connection's GPU while it is connected, and
+    /// what was kept of it by name once it has gone (a removed or departed machine keeps its letter).
+    fn class_by_name(&self, name: &str, live: Option<&Conn>) -> Option<String> {
+        let digest = self.probes.get(name).map(|(d, _)| d.as_str());
+        let (adapter, driver) = live
+            .filter(|c| !c.adapter.is_empty())
+            .map(|c| (c.adapter.clone(), c.driver.clone()))
+            .or_else(|| self.gpus.get(name).map(|g| (g.0.clone(), g.1.clone())))
+            .unwrap_or_default();
+        if digest.is_none() && adapter.is_empty() {
+            return None;
+        }
+        Some(class_key(digest.unwrap_or(""), &adapter, &driver))
+    }
+
+    /// This machine's own class ([`Self::gpu_class`]), once its probe and GPU are known.
+    fn own_class(&self) -> Option<String> {
+        let Some(Ok(own)) = &self.own_probe else { return None };
+        let g = self.own_gpu.as_ref()?;
+        Some(class_key(&own.digest, &g.adapter, &g.driver))
     }
 
     /// One of the self-check's blobs arrived; admit once none is outstanding.
@@ -1808,24 +1835,23 @@ impl Controller<'_> {
             }
         }
         rows.sort_by_key(|r| r.id);
-        // GPU classes: machines whose probes are pixel-identical share a letter; this machine's own
-        // render is A when it has one.
-        let mut digests: Vec<&str> = Vec::new();
-        if let Some(Ok(own)) = &self.own_probe {
-            digests.push(&own.digest);
-        }
+        // GPU classes (`gpu_class`): machines with the same adapter, driver and probe share a letter;
+        // this machine's own is A when it has one.
+        let mut keys: Vec<String> = self.own_class().into_iter().collect();
+        let class_of = |r: &ClientRow| self.class_by_name(&r.name, self.conns.get(&r.id));
         for r in &rows {
-            if let Some((d, _)) = self.probes.get(&r.name) {
-                if !digests.contains(&d.as_str()) {
-                    digests.push(d);
+            if let Some(k) = class_of(r) {
+                if !keys.contains(&k) {
+                    keys.push(k);
                 }
             }
         }
         let mut classes_in_farm: Vec<usize> = Vec::new();
         for r in rows.iter_mut() {
-            let Some((d, px)) = self.probes.get(&r.name) else { continue };
+            let Some((_, px)) = self.probes.get(&r.name) else { continue };
             r.probe_px = *px;
-            if let Some(i) = digests.iter().position(|x| *x == d.as_str()) {
+            let Some(k) = class_of(r) else { continue };
+            if let Some(i) = keys.iter().position(|x| *x == k) {
                 r.gpu_class = Some(((b'A' + (i as u8).min(25)) as char).to_string());
                 if self.conns.get(&r.id).is_some_and(|c| c.state == ConnState::Admitted) && !classes_in_farm.contains(&i) {
                     classes_in_farm.push(i);
