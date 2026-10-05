@@ -101,6 +101,15 @@ pub(crate) fn machine_name(args: &[String]) -> String {
         .map(str::to_string)
         .or_else(|| std::env::var("COMPUTERNAME").ok())
         .or_else(|| std::env::var("HOSTNAME").ok())
+        // Linux: HOSTNAME is a shell variable, not exported to a program the shell starts, so a
+        // farm on the test machine called itself "this machine" (2026-10-04). The kernel's own.
+        .or_else(|| {
+            ["/proc/sys/kernel/hostname", "/etc/hostname"]
+                .iter()
+                .find_map(|p| std::fs::read_to_string(p).ok())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
         .unwrap_or_else(|| "this machine".into())
 }
 

@@ -7,6 +7,8 @@
 #   bash farm-linux.sh farmtest   # --farmtest on this machine: a whole farm on Linux, results to the share
 #   bash farm-linux.sh discover   # --discover: which controllers answer on this network
 #   bash farm-linux.sh watch      # leave running: serve the requests scripts/farm-pluto.ps1 -Linux files
+#                                 #   (a render client, --farmtest, --discover, or a rebuild of the
+#                                 #   published commit: farm-pluto.ps1 -Linux -LinuxBuild)
 #
 # WHY A BUNDLE, NOT A TARBALL. The farm admits only an exact version-and-commit match, and a build
 # from a `git archive` tarball is stamped "<sha>-archive" (its tree cannot be checked), which no
@@ -147,6 +149,10 @@ EOF
     write_status running "" "$action"
     export FRACTADYNE_CONFIG_DIR="$local_dir/config" FRACTADYNE_NO_SOUND=1
     case "$action" in
+        build)
+            # The commit the share publishes, built here: what a code change on the Windows side
+            # needs before both ends can run one farm again. Nothing from the request is used.
+            cmd_build >"$out" 2>&1; code=$? ;;
         discover)
             "$EXE" --discover >"$out" 2>&1; code=$? ;;
         farmtest)
@@ -172,6 +178,7 @@ cmd_watch() {
     [ -x "$EXE" ] || { say "nothing built here yet - run: bash $0 build"; return 1; }
     [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] || { say "no display in this shell - start this from a terminal in the desktop session"; return 1; }
     mkdir -p "$LINUX_DIR/requests" "$LINUX_DIR/claimed" "$LINUX_DIR/results"
+    # A request's run reads `version_line` afresh, so a rebuild takes effect at the next request.
     say "Watching $LINUX_DIR/requests for render-farm requests (build: $(version_line)). Ctrl+C to stop."
     while true; do
         python3 - "$LINUX_DIR/watch-$HOST.json" "$(version_line)" <<'EOF'
@@ -193,7 +200,7 @@ EOF
 import json, re, sys
 r = json.load(open(sys.argv[1]))
 rid, action = str(r.get("id", "")), str(r.get("action", ""))
-ok = re.fullmatch(r"[0-9]{8}-[0-9]{6}-[a-z0-9]{4}", rid) and action in ("client", "farmtest", "discover")
+ok = re.fullmatch(r"[0-9]{8}-[0-9]{6}-[a-z0-9]{4}", rid) and action in ("client", "farmtest", "discover", "build")
 ctl, key = str(r.get("controller", "")), str(r.get("farm_key", ""))
 if action == "client":
     ok = ok and re.fullmatch(r"[A-Za-z0-9.-]{1,253}:[0-9]{1,5}", ctl) and re.fullmatch(r"fdn1-[a-z2-7-]{50,90}", key)

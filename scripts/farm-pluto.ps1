@@ -58,6 +58,9 @@ param(
     # The test machine runs LINUX: requests go to <share>\field\linux\ for scripts/farm-linux.sh
     # `watch`, which runs them from the build it made from the published git bundle.
     [switch]$Linux,
+    # With -Linux: ask the watcher to build the commit the share publishes (after a code change and
+    # publish-share.ps1 -Bundle), wait for it, and stop.
+    [switch]$LinuxBuild,
     [switch]$Farmtest,
     [switch]$Check,
     [switch]$AddFirewallRule,
@@ -197,6 +200,18 @@ function Send-FieldRequest([string[]]$argv) {
     return $m.Matches[0].Groups[1].Value
 }
 
+if ($Linux -and $LinuxBuild) {
+    # A build of another commit is the one problem a rebuild exists to fix; anything else stops it.
+    $others = @($problems | Where-Object { $_ -notmatch "Linux build is" })
+    if ($others.Count -gt 0) { Write-Host ""; Write-Host "Not ready: $($others.Count) thing(s) to fix." -ForegroundColor Yellow; exit 1 }
+    Write-Host "Asking $Agent's Linux watcher to build the published commit..." -ForegroundColor Cyan
+    $id = Send-LinuxRequest @{ action = "build" }
+    $s = Wait-LinuxResult $id 40
+    Write-Host "  $(if ($s) { "$($s.state), exit $($s.exit): $($s.detail) - $($s.build)" } else { 'no result in 40 min' })"
+    $o = Join-Path $Share "field\linux\results\$id\output.txt"
+    if (Test-Path -LiteralPath $o) { Get-Content -LiteralPath $o | Select-Object -Last 6 | ForEach-Object { "    $_" } }
+    exit $(if ($s -and $s.state -eq "done") { 0 } else { 1 })
+}
 if ($Farmtest) {
     if ($problems.Count -gt 0) { Write-Host ""; Write-Host "Not ready: $($problems.Count) thing(s) to fix." -ForegroundColor Yellow; exit 1 }
     if ($Check) { Write-Host ""; Write-Host "Ready to run --farmtest on $Agent."; return }

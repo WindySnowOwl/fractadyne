@@ -272,31 +272,22 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     // C as the app's Render client window runs it — its very command line: status lines out,
     // commands in.
     let mut c = client("C", &[], true)?;
-    // D: two sessions on this machine's card, each in use for its first frame's first 3 s and
-    // waiting 3 s (0.05 min) of idle before taking work.
+    // D: two sessions on this machine's card. On Windows each is also in use for its first frame's
+    // first 3 s and waits 3 s (0.05 min) of idle before taking work: `--when-idle` reads Windows'
+    // input timer and is refused elsewhere (a client that cannot tell must not pretend it is idle),
+    // and the first Linux run of this harness waited for a client that had exited on it.
     let card = crate::gpu_choice::list()
         .iter()
         .position(|r| r.is_hardware() && r.backend == eframe::wgpu::Backend::Vulkan)
         .map_or(1, |i| i + 1);
-    let mut d = Proc::spawn(
-        "D",
-        &[
-            s("--render-client"),
-            addr.clone(),
-            s("--farm-key-file"),
-            p(&key_file),
-            s("--name"),
-            s("farmtest-D"),
-            s("--adapters"),
-            format!("{card},{card}"),
-            s("--when-idle"),
-            s("0.05"),
-            s("--farm-allow-dirty"),
-            s(super::status::FLAG),
-        ],
-        &base.join("cfg-D"),
-        &[(super::client::IN_USE_INSTRUMENT, "3")],
-    )?;
+    let idle_rule = cfg!(windows);
+    let mut d_args = vec![s("--render-client"), addr.clone(), s("--farm-key-file"), p(&key_file), s("--name"), s("farmtest-D"), s("--adapters"), format!("{card},{card}")];
+    if idle_rule {
+        d_args.extend([s("--when-idle"), s("0.05")]);
+    }
+    d_args.extend([s("--farm-allow-dirty"), s(super::status::FLAG)]);
+    let in_use: &[(&str, &str)] = if idle_rule { &[(super::client::IN_USE_INSTRUMENT, "3")] } else { &[] };
+    let mut d = Proc::spawn("D", &d_args, &base.join("cfg-D"), in_use)?;
 
     // 4. Run, killing B once it has sent a frame; pause the job from "the window" (stdin) as soon as
     // it renders, and resume it once the status says paused.
@@ -504,14 +495,19 @@ fn run_inner(args: &[String]) -> Result<i32, String> {
     let d_parked = d_names.iter().any(|n| events.contains(&format!("{n} was paused by its user")));
     let d_struck = events.lines().any(|l| l.contains("farmtest-D") && (l.contains("REMOVED") || l.contains("strike") || l.contains("unstable")));
     let d_in_use = dst.iter().any(|x| x.in_use);
-    check(
-        d_stops >= 1 && d_back >= 1 && d_parked && !d_struck && d_in_use,
-        format!("someone using D stopped its frame ({d_stops} stopped), the farm took it back without a strike (parked {d_parked}, struck {d_struck}), the window was told ({d_in_use}), and D took work again once idle ({d_back})"),
-    );
+    if idle_rule {
+        check(
+            d_stops >= 1 && d_back >= 1 && d_parked && !d_struck && d_in_use,
+            format!("someone using D stopped its frame ({d_stops} stopped), the farm took it back without a strike (parked {d_parked}, struck {d_struck}), the window was told ({d_in_use}), and D took work again once idle ({d_back})"),
+        );
+    } else {
+        println!("  [----] someone using D: NOT JUDGED on this system (--when-idle reads Windows' input timer)");
+        check(!d_struck, format!("client D was never struck or removed (struck {d_struck})"));
+    }
     // "sent corrupted" when streamed, "left corrupted" on the shared drive.
     let a_corrupted = a.log.iter().any(|l| l.contains("corrupted on purpose"));
     println!("farmtest: {:.1}s", t0.elapsed().as_secs_f64());
-    if !b_killed || !a_corrupted || d_stops == 0 {
+    if !b_killed || !a_corrupted || (idle_rule && d_stops == 0) {
         println!(
             "farmtest: VACUOUS — {}",
             if !b_killed {
