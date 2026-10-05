@@ -10,6 +10,9 @@
 #                                              #   this machine checks each one there
 #   .\scripts\farm-pluto.ps1 -Tour tours\grand-tour.toml -Size 1280x720 -Ss 1
 #   .\scripts\farm-pluto.ps1 -Farmtest         # only --farmtest ON PLUTO: a whole farm on that machine
+#   .\scripts\farm-pluto.ps1 -Linux            # PLUTO booted into LINUX: its client is the build made
+#                                              #   there by scripts/farm-linux.sh (no field agent
+#                                              #   under Linux; that script's `watch` serves requests)
 #   .\scripts\farm-pluto.ps1 -Discover         # also: the test machine first asks the network which
 #                                              #   controllers answer (UDP 46733), and reports it
 #   .\scripts\farm-pluto.ps1 -AddFirewallRule  # (asks for elevation) let the test machine reach the
@@ -52,6 +55,9 @@ param(
     [switch]$NoReference,
     # The test machine runs --discover first (agent v16): does this controller answer its broadcast?
     [switch]$Discover,
+    # The test machine runs LINUX: requests go to <share>\field\linux\ for scripts/farm-linux.sh
+    # `watch`, which runs them from the build it made from the published git bundle.
+    [switch]$Linux,
     [switch]$Farmtest,
     [switch]$Check,
     [switch]$AddFirewallRule,
@@ -125,6 +131,24 @@ if ($tag) {
 }
 
 # --- the agent -------------------------------------------------------------------------------------
+if ($Linux) {
+    # Under Linux there is no field agent: scripts/farm-linux.sh `watch` serves requests, and says
+    # so in <share>\field\linux\watch-<host>.json, with the build it runs. That build must be this
+    # very commit (the farm admits nothing else), made from the bundle publish-share.ps1 -Bundle writes.
+    $lw = Get-ChildItem -LiteralPath (Join-Path $Share "field\linux") -Filter "watch-*.json" -ErrorAction SilentlyContinue |
+        Sort-Object { $_.BaseName -ieq "watch-$Agent" } -Descending | Select-Object -First 1
+    $w = $null
+    if ($lw) { try { $w = Get-Content -LiteralPath $lw.FullName -Raw | ConvertFrom-Json } catch { } }
+    if (-not $w) { Bad "no Linux watcher on the share ($Share\field\linux\watch-*.json)" "on $Agent, in a desktop terminal: bash $($Share -replace '\\', '/')/field/setup/farm-linux.sh watch   (there: <its mount of the share>/field/setup/farm-linux.sh)" }
+    else {
+        $last = if ($w.last_poll_utc -is [datetime]) { $w.last_poll_utc.ToUniversalTime() } else { [datetime]::Parse([string]$w.last_poll_utc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal) }
+        $age = [int]((Get-Date).ToUniversalTime() - $last).TotalSeconds
+        if ($age -gt 60) { Bad "$Agent's Linux watcher last polled $age s ago" "start it again on ${Agent}: bash farm-linux.sh watch" }
+        elseif ($sha -and ([string]$w.build) -notmatch "g$sha\)$") { Bad "$Agent's Linux build is '$($w.build)', not g$sha" "pwsh -File scripts\publish-share.ps1 -SkipSource -Bundle; then on ${Agent}: bash farm-linux.sh build, and restart watch" }
+        else { Ok "$Agent's Linux watcher is serving ($($lw.BaseName), last poll $age s ago): $($w.build)" }
+    }
+}
+else {
 $hb = $null
 try { $hb = Get-Content -LiteralPath (Join-Path $Share "field\agent\$Agent.json") -Raw | ConvertFrom-Json } catch { }
 if (-not $hb) { Bad "no heartbeat from $Agent's field agent" "is the agent installed there? (scripts\field-agent-setup.ps1)" }
@@ -135,6 +159,32 @@ else {
     elseif ($hb.state -eq "paused") { Bad "$Agent's agent is paused" "remove the PAUSE file ($Share\field\PAUSE or on $Agent)" }
     elseif ([int]$hb.agent_version -lt $(if ($Discover) { 16 } elseif ($ShareMode) { 15 } else { 14 })) { Bad "$Agent runs agent v$($hb.agent_version); this needs v$(if ($Discover) { 16 } elseif ($ShareMode) { 15 } else { 14 })" "copy scripts\field-agent.ps1 to $Share\field\setup\ - the agent updates itself within 5 minutes" }
     else { Ok "$Agent's agent v$($hb.agent_version) is $($hb.state) (last poll $age s ago)" }
+}
+}
+
+# A request for the Linux watcher: <share>\field\linux\requests\<id>.json, claimed by moving it.
+# Its farm key, like an agent request's, crosses on the share once; the watcher removes it from the
+# claimed copy before it runs anything.
+function Send-LinuxRequest([hashtable]$req) {
+    $id = (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + (-join ((97..122) + (48..57) | Get-Random -Count 4 | ForEach-Object { [char]$_ }))
+    $req.id = $id
+    $dir = Join-Path $Share "field\linux\requests"
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $tmp = Join-Path $dir "$id.tmp"
+    [IO.File]::WriteAllText($tmp, ($req | ConvertTo-Json -Depth 3), [Text.Encoding]::ASCII)
+    Move-Item -LiteralPath $tmp -Destination (Join-Path $dir "$id.json")
+    Write-Host "Filed $id ($($req.action)) for $Agent's Linux watcher"
+    return $id
+}
+function Wait-LinuxResult([string]$id, [int]$minutes) {
+    $deadline = (Get-Date).AddMinutes($minutes)
+    do {
+        $s = $null
+        try { $s = Get-Content -LiteralPath (Join-Path $Share "field\linux\results\$id\status.json") -Raw | ConvertFrom-Json } catch { }
+        if ($s -and $s.state -in @("done", "failed")) { return $s }
+        Start-Sleep -Seconds 5
+    } while ((Get-Date) -lt $deadline)
+    return $s
 }
 
 # field-request.ps1 in a child pwsh: its host output is our stdout, so the request id ("Filed <id>")
@@ -151,8 +201,16 @@ if ($Farmtest) {
     if ($problems.Count -gt 0) { Write-Host ""; Write-Host "Not ready: $($problems.Count) thing(s) to fix." -ForegroundColor Yellow; exit 1 }
     if ($Check) { Write-Host ""; Write-Host "Ready to run --farmtest on $Agent."; return }
     Write-Host "Queueing --farmtest on $Agent ($tag)..." -ForegroundColor Cyan
-    $id = Send-FieldRequest @("-Action", "harness", "-Run", "--farmtest", "-Build", $tag, "-TimeoutMin", "20", "-Wait", "-WaitMinutes", "30")
-    $o = Get-ChildItem -LiteralPath (Join-Path $Share "field\results\$id") -Recurse -Filter "output.txt" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($Linux) {
+        $id = Send-LinuxRequest @{ action = "farmtest" }
+        $s = Wait-LinuxResult $id 30
+        Write-Host "  $(if ($s) { "$($s.state), exit $($s.exit): $($s.detail)" } else { 'no result in 30 min' })"
+        $o = Get-Item -LiteralPath (Join-Path $Share "field\linux\results\$id\output.txt") -ErrorAction SilentlyContinue
+    }
+    else {
+        $id = Send-FieldRequest @("-Action", "harness", "-Run", "--farmtest", "-Build", $tag, "-TimeoutMin", "20", "-Wait", "-WaitMinutes", "30")
+        $o = Get-ChildItem -LiteralPath (Join-Path $Share "field\results\$id") -Recurse -Filter "output.txt" -ErrorAction SilentlyContinue | Select-Object -First 1
+    }
     if ($o) { Write-Host ""; Get-Content -LiteralPath $o.FullName | Where-Object { $_ -match '^\s*\[(PASS|FAIL)\]|^farmtest' } }
     return
 }
@@ -305,7 +363,9 @@ try {
     $fr = @("-Action", "farm-client", "-Controller", "$Address`:$Port", "-FarmKeyFile", $keyFile, "-Build", $tag, "-TimeoutMin", "$TimeoutMin")
     if ($ShareMode) { $fr += "-FarmShare" }
     if ($Discover) { $fr += "-FarmDiscover" }
-    $reqId = Send-FieldRequest $fr
+    $reqId = if ($Linux) {
+        Send-LinuxRequest @{ action = "client"; controller = "$Address`:$Port"; farm_key = (Get-Content -LiteralPath $keyFile -Raw).Trim(); share = [bool]$ShareMode; discover = [bool]$Discover }
+    } else { Send-FieldRequest $fr }
 
     # Follow the controller until the job ends.
     $seen = 0
@@ -346,7 +406,26 @@ $prefix = [IO.Path]::GetFileNameWithoutExtension($Tour)
 & python (Join-Path $root "scripts\farm_compare.py") $out (Join-Path $run "reference") $prefix 2>&1 | Tee-Object -FilePath (Join-Path $run "compare.txt") | Out-Host
 }
 
-if ($reqId) {
+if ($reqId -and $Linux) {
+    Write-Host ""
+    Write-Host "$Agent's side (Linux request $reqId):"
+    $pending = Join-Path $Share "field\linux\requests\$reqId.json"
+    if (Test-Path -LiteralPath $pending) {
+        Remove-Item -LiteralPath $pending -Force
+        Write-Host "  $Agent's watcher never claimed the request; withdrawn (is farm-linux.sh watch running?)" -ForegroundColor Yellow
+    }
+    else {
+        $s = Wait-LinuxResult $reqId 3
+        Write-Host "  $(if ($s) { "$($s.state), exit $($s.exit): $($s.detail) - $($s.build)" } else { 'no result yet' })"
+        $dt = Join-Path $Share "field\linux\results\$reqId\discover.txt"
+        if ($Discover -and (Test-Path -LiteralPath $dt)) {
+            Write-Host "  $Agent's --discover:"
+            Get-Content -LiteralPath $dt | Where-Object { $_ -notmatch '^\[fd-' } | ForEach-Object { Write-Host "    $_" }
+        }
+    }
+    Write-Host "  -> $Share\field\linux\results\$reqId"
+}
+elseif ($reqId) {
     Write-Host ""
     Write-Host "$Agent's side (field request $reqId):"
     # A request never claimed still holds the (now useless) key on the share: withdraw it.

@@ -4,6 +4,8 @@
 #   .\scripts\publish-share.ps1                       # version from Cargo.toml, share auto-detected
 #   .\scripts\publish-share.ps1 -Share D:\share\Fractadyne
 #   .\scripts\publish-share.ps1 -SkipSource           # Windows packages only
+#   .\scripts\publish-share.ps1 -SkipSource -Bundle   # ... plus a git bundle of HEAD, for a Linux
+#                                                     #   machine to build a farm client from
 #
 # WHAT IT MAKES, mirroring what `.github/workflows/release.yml` publishes on a tag, so a package
 # built here is laid out exactly like one a user downloads from a release:
@@ -29,6 +31,12 @@
 # the binary under test against it. The source tarball carries BUILD-COMMIT.txt so a build made from
 # it (no .git) still names its commit, as g<sha>-archive.
 #
+# -Bundle adds fractadyne-<tag>.bundle, a git bundle of HEAD (the whole history: ~430 MB). A render
+# farm admits only an exact commit, and a tarball build is stamped "<sha>-archive", which matches no
+# Windows build; a clone of the bundle is a real checkout, stamped with the commit itself.
+# scripts/farm-linux.sh builds from it. Without -Bundle, a bundle left from an earlier publish is
+# removed, so the folder never offers a commit other than the one BUILD-ID.txt names.
+#
 # ASCII-only (Windows PowerShell 5.1 reads a BOM-less .ps1 as ANSI).
 
 [CmdletBinding()]
@@ -37,6 +45,7 @@ param(
     [string]$Tag = "",
     [switch]$SkipSource,
     [switch]$SkipWindows,
+    [switch]$Bundle,
     [switch]$AllowDirty
 )
 
@@ -207,6 +216,18 @@ if (-not $SkipSource) {
     finally { Remove-Item -Recurse -Force $stampDir -ErrorAction SilentlyContinue }
     Publish $src
     $exeIds += "fractadyne-$Tag-src.tar.gz | builds as g$headShort-archive"
+}
+
+# ---------------------------------------------------------------- git bundle, for a Linux farm client
+Get-ChildItem -LiteralPath $dest -Filter "*.bundle*" -ErrorAction SilentlyContinue | Remove-Item -Force
+if ($Bundle) {
+    $bundlePath = Join-Path $root ("dist\fractadyne-$Tag.bundle")
+    New-Item -ItemType Directory -Force -Path (Split-Path $bundlePath) | Out-Null
+    if (Test-Path $bundlePath) { Remove-Item -Force $bundlePath }
+    & git bundle create $bundlePath HEAD
+    if ($LASTEXITCODE -ne 0) { throw "git bundle failed" }
+    Publish $bundlePath
+    $exeIds += "fractadyne-$Tag.bundle | HEAD = $headFull; a clone builds as g$headShort"
 }
 
 # ---------------------------------------------------------------- BUILD-ID.txt, written last
