@@ -25,6 +25,7 @@
 # Nothing here installs system packages: `check` prints the commands for you to run.
 
 set -u
+# Where this machine mounts the share: FRACTADYNE_SHARE, set where the mount is (e.g. ~/.bashrc).
 SHARE="${FRACTADYNE_SHARE:-/mnt/share/fractadyne}"
 WORK="${FARM_LINUX_WORK:-$HOME/fractadyne-farm}"
 HOST="$(hostname -s 2>/dev/null || hostname)"
