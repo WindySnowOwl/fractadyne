@@ -6,7 +6,7 @@
 use crate::{profile, zoom_iter_cap, FractadyneApp, FractalKind, RenderMode, PERT_FE_THRESHOLD};
 use fractadyne_core::Viewport;
 use fractadyne_gpu::{ContentReading, MandelbrotParams, RefOffset};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 // The cost/watchdog constants this file is built around now live in `crate::tunables` (one place,
 // each with the incident that set it). Re-exported so `crate::render::TDR_*` keeps resolving for
@@ -825,6 +825,144 @@ static EARLY_REF: std::sync::Mutex<Option<EarlyRef>> = std::sync::Mutex::new(Non
 /// cap that binds (the early build ran before the device reported it, with `orbit_len_cap()`
 /// still unbounded) — returns `None` and the caller builds as always; a discard is logged with
 /// the field that differed, since a silent miss would just look like a slower render.
+/// Headroom to leave free beyond the references — in-flight encode buffers (~1 GB), GPU staging,
+/// general slack. A tour's reference lookahead, and an orbit taken from the cache beside the build
+/// it abandons, are skipped when they would eat into it.
+pub(crate) const REF_MEM_MARGIN: u64 = 1_500_000_000;
+
+/// Conservative peak-build footprint of one reference: the CPU bignum orbit (length ≈ max_iter,
+/// ~prec bits/sample + Vec/enum overhead) plus its BLA table. Deliberately high — over-estimating
+/// only costs a little overlap, under-estimating risks an out-of-memory abort.
+pub(crate) fn est_ref_bytes(max_iter: u32, prec: usize) -> u64 {
+    let per_sample = (prec as u64 / 8) * 4 + 128;
+    (max_iter as u64).saturating_mul(per_sample)
+}
+
+/// How often a render waiting on a reference build looks in the orbit cache.
+const WATCH_EVERY: Duration = Duration::from_secs(2);
+
+/// A reference building on another thread, and the same request, kept to watch the orbit cache
+/// with while it builds ([`wait_reference_watching`]). A tour's lookahead.
+pub(crate) struct PendingReference {
+    rx: std::sync::mpsc::Receiver<RecomputeResult>,
+    watch: Option<RecomputeInputs>,
+    /// What the cache held for the request when its build began ([`cache_best`]).
+    known: Option<(std::path::PathBuf, u32)>,
+}
+
+impl PendingReference {
+    /// Its result — or an admissible orbit that lands in the cache first. The build began a frame
+    /// ago, so the cache is looked in at once.
+    pub(crate) fn wait(self) -> Option<RecomputeResult> {
+        wait_reference_watching(&self.rx, self.watch, self.known, Duration::ZERO)
+    }
+}
+
+/// The cache's best entry for `inp` right now (path and orbit length), as the build's own lookup
+/// would choose it — without reading the orbit.
+fn cache_best(inp: &RecomputeInputs) -> Option<(std::path::PathBuf, u32)> {
+    if !crate::refcache_persist::enabled() || inp.custom.is_some() {
+        return None;
+    }
+    let fits = |point: &[fractadyne_core::BigFloat; 2], prec: usize| reuse_drift(inp, point, prec);
+    crate::refcache_persist::find(&crate::refcache_persist::Query { key: orbit_key_for(inp), fits: &fits }).map(|h| (h.path, h.orbit_len))
+}
+
+/// Wait for a reference building on another thread, stamping liveness once a second (`diag::alive`):
+/// a deep build takes minutes, and that is not a hang. ⚠Without the stamp, a tour render that waited
+/// 46–90 s on a 2.37e4000× reference logged "possible hang" lines, and its log check turned a
+/// successful render's exit 0 into 1 (measured 2026-10-04, in a render farm, whose client then
+/// took the renders for crashes). And, with the orbit cache on, look in it
+/// every [`WATCH_EVERY`] for an orbit that serves `watch`'s view (the test the lookup before a
+/// build uses). ⭐A render farm drops other machines' orbits into a render's cache (design §8):
+/// measured 2026-10-04 on the 2.37e4000× gate tour, PLUTO's orbit arrived 31 s into this
+/// machine's 91 s build of a reference it would have served, and the build ran to its end. An
+/// orbit taken here is a cache hit like any other (`from_disk`, `ref=cache`). The abandoned build
+/// is not stopped — reference builds have no cooperative cancel — so it runs to its end on its
+/// own, offers its orbit to the cache, and is discarded; and an orbit is taken only with room in
+/// memory for it beside that build.
+fn wait_reference_watching(
+    rx: &std::sync::mpsc::Receiver<RecomputeResult>,
+    watch: Option<RecomputeInputs>,
+    known: Option<(std::path::PathBuf, u32)>,
+    first_look: Duration,
+) -> Option<RecomputeResult> {
+    use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
+    // Only a request the cache could serve: a built-in formula (a custom one's orbit is never
+    // cached), a fresh build (an extension is quick), the cache on.
+    let mut watch = watch.filter(|w| w.custom.is_none() && w.reuse.is_none() && crate::refcache_persist::enabled());
+    let key = watch.as_ref().map(orbit_key_for);
+    let started = Instant::now();
+    let mut next = started + first_look;
+    loop {
+        match rx.try_recv() {
+            Ok(v) => return Some(v),
+            Err(TryRecvError::Disconnected) => return None,
+            Err(TryRecvError::Empty) => {}
+        }
+        if let (Some(w), Some(key)) = (watch.as_mut(), key) {
+            if Instant::now() >= next {
+                next = Instant::now() + WATCH_EVERY;
+                // Room for the orbit and its BLA table beside the build it abandons (which keeps
+                // its memory until it ends): a few times the orbit's own 16 bytes a sample. ⚠Not
+                // `est_ref_bytes` — that sizes a second BIGNUM build at `max_iter`: 13.6 GB at
+                // the e4000 gate, whose build peaked at 0.47 GB, and it refused every pickup on a
+                // machine with 1.9 GB free.
+                let fits = |r: &ReuseRef| {
+                    let need = (r.prefix.len() as u64).saturating_mul(16 * 4);
+                    crate::sysinfo::available_memory().is_none_or(|a| need.saturating_add(REF_MEM_MARGIN) < a)
+                };
+                // ⚠Only an orbit that ARRIVED: one the cache already held when the build began is
+                // the build's own cache hit, being prepared on the worker — taking it again here
+                // did that work twice, side by side (frames of the e4000 gate went 6.7 → 10.5 s).
+                let arrived = cache_best(w).filter(|now| known.as_ref() != Some(now));
+                match arrived.and_then(|_| orbit_cache_lookup(w, key)) {
+                    // Said once, and the watch ends: looking again would only log the hit again.
+                    Some(reuse) if !fits(&reuse) => {
+                        crate::diag::log_line("ref", "an orbit for this view arrived in the cache, but there is no memory for it beside the build — the build continues");
+                        watch = None;
+                    }
+                    Some(reuse) => {
+                        w.reuse = Some(reuse);
+                        match try_reuse_reference(w) {
+                            Some(mut res) => {
+                                res.from_disk = true;
+                                crate::diag::log_line(
+                                    "ref",
+                                    &format!(
+                                        "an orbit for this view arrived in the cache {:.1} s into the wait for its build — taken; the build is abandoned and finishes on its own",
+                                        started.elapsed().as_secs_f64()
+                                    ),
+                                );
+                                return Some(res);
+                            }
+                            None => w.reuse = None,
+                        }
+                    }
+                    None => {}
+                }
+            }
+        }
+        match rx.recv_timeout(Duration::from_secs(1)) {
+            Ok(v) => return Some(v),
+            Err(RecvTimeoutError::Timeout) => crate::diag::alive(),
+            Err(RecvTimeoutError::Disconnected) => return None,
+        }
+    }
+}
+
+/// Build `inputs`' reference on a worker thread and wait for it ([`wait_reference_watching`],
+/// with `watch`, the same request). The worker's own lookup has just looked in the cache, so the
+/// first look here is a [`WATCH_EVERY`] later.
+fn build_reference_watching(name: &'static str, inputs: RecomputeInputs, watch: Option<RecomputeInputs>) -> RecomputeResult {
+    let known = cache_best(&inputs);
+    let (tx, rx) = std::sync::mpsc::channel();
+    spawn_named(name, move || {
+        let _ = tx.send(recompute_worker(inputs));
+    });
+    wait_reference_watching(&rx, watch, known, WATCH_EVERY).unwrap_or_else(|| panic!("{name}: the reference worker died"))
+}
+
 fn take_early_reference(inputs: &RecomputeInputs) -> Option<RecomputeResult> {
     let early = EARLY_REF.lock().ok()?.take()?;
     let why = early_inputs_differ(&early.inputs, inputs).or_else(|| {
@@ -3511,6 +3649,15 @@ impl FractadyneApp {
         Some(rx)
     }
 
+    /// [`Self::spawn_export_reference`], keeping the request to watch the orbit cache with while it
+    /// builds ([`PendingReference::wait`]). A tour's lookahead.
+    pub(crate) fn spawn_export_reference_watched(&self, vp: &Viewport, julia: bool, budget: IterBudget) -> Option<PendingReference> {
+        let watch = self.export_reference_inputs_for(vp, julia, budget);
+        let known = watch.as_ref().and_then(cache_best);
+        let rx = self.spawn_export_reference(vp, julia, budget)?;
+        Some(PendingReference { rx, watch, known })
+    }
+
     /// Build an export request for a given viewport + Julia flag at the export
     /// resolution. Recomputes a fresh reference orbit (deep) without touching the live
     /// cache. Height is derived from the viewport's aspect (square pixels).
@@ -3656,9 +3803,12 @@ impl FractadyneApp {
                                 .expect("a perturbation view has reference inputs");
                             // A `--render` may have started exactly this build before the window
                             // existed (`start_early_cli_reference`).
-                            // On a worker, waited for with liveness stamped: a deep build takes
-                            // minutes, and that is not a hang (`diag::recv_alive`).
-                            take_early_reference(&inputs).unwrap_or_else(|| crate::diag::run_alive("fd-ref-export", move || recompute_worker(inputs)))
+                            // Otherwise on a worker, waited for with liveness stamped (a deep build
+                            // takes minutes, and that is not a hang) — and an orbit for this view
+                            // that lands in the cache meanwhile, a render farm's, is taken
+                            // (`wait_reference_watching`, watching with the same request).
+                            let watch = self.export_fresh_reference_inputs(vp, julia);
+                            take_early_reference(&inputs).unwrap_or_else(|| build_reference_watching("fd-ref-export", inputs, watch))
                         }
                     };
                     self.prof.set(profile::ProfSetup {

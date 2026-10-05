@@ -210,6 +210,28 @@ fn a_scan_indexes_ours_deletes_our_unreadable_and_leaves_foreign_files_alone() {
     assert!(s.dir.join("readme.txt").exists());
 }
 
+/// An orbit another process puts in the directory AFTER this one scanned it is found; one it
+/// removes is forgotten. (A render farm's client drops other machines' orbits into a running
+/// render's cache; the index used to be the directory as it was at the first lookup.)
+#[test]
+fn an_entry_added_or_removed_by_another_process_is_seen() {
+    let s = Scratch::new("refresh");
+    assert!(find(&Query { key: key(), fits: &accept_all }).is_none(), "scanned, empty");
+    let path = s.dir.join("from-elsewhere.orbit");
+    std::fs::write(&path, blob(&sample_orbit(64), 512, 1000, key())).unwrap();
+    let hit = find(&Query { key: key(), fits: &accept_all }).expect("the new entry is found");
+    assert_eq!((hit.path.clone(), hit.orbit_len), (path.clone(), 64));
+    assert!(load(&hit.path).is_some());
+    // Replaced by a longer orbit under the same name: re-read, not the stale header.
+    std::fs::write(&path, blob(&sample_orbit(256), 512, 1000, key())).unwrap();
+    assert_eq!(find(&Query { key: key(), fits: &accept_all }).map(|h| h.orbit_len), Some(256));
+    std::fs::remove_file(&path).unwrap();
+    assert!(find(&Query { key: key(), fits: &accept_all }).is_none(), "a removed entry is forgotten");
+    // A file being written is a temp file: never indexed half-written.
+    std::fs::write(s.dir.join("half.orbit.tmp"), b"FDNORBIT...").unwrap();
+    assert!(find(&Query { key: key(), fits: &accept_all }).is_none());
+}
+
 #[test]
 fn clear_removes_every_entry_and_stray_temp_files() {
     let s = Scratch::new("clear");

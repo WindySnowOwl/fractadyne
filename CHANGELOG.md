@@ -102,7 +102,8 @@ Changes after 0.3.0-beta.1:
   frames there instead of sending them, each still checked before it is kept. Deep references are
   built once and shared: renders keep them in a cache, the farm passes them between machines, and
   for tours deeper than 1e300× the deepest keyframe's reference is built first (`--sharing off`
-  builds every reference where it is used). A machine with several graphics cards can join once
+  builds every reference where it is used). A render already building a reference switches to a
+  shared one the moment it arrives. A machine with several graphics cards can join once
   per card (*Graphics card* in the Render client window, `--adapters all`), and any render can be
   pointed at one card (`--adapter`, listed by `--list-adapters`). The Render client window finds
   the controllers on its network (*Find*, `--discover`), so their address need not be typed; the

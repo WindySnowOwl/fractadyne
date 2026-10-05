@@ -859,10 +859,30 @@ the dissolve rule only 16–17 of 19 frames matched; share mode for two clients;
 reference source), 54 scheduler tests (chaos with dissolves, holds and classes; stealing).
 Found by the gate trial and fixed: a render waiting minutes on a reference build logged "possible
 hang", so its log check turned exit 0 into 1 and the client took it for a crash and parked a
-healthy machine — the wait now stamps liveness (`diag::recv_alive`), a run is judged by its frames,
+healthy machine — the wait now stamps liveness (`render::wait_reference_watching`), a run is judged by its frames,
 and a parked client's heartbeats count.
-**Not built (from §5, §7, §8):** `homogeneous`, `sharing = exact`, picking up an orbit mid-build,
-a per-client build-cost estimate, orbits through the share in share mode.
+**Not built (from §5, §7, §8):** `homogeneous`, `sharing = exact`, a per-client build-cost
+estimate, orbits through the share in share mode.
+
+✅**Orbit pickup mid-build (2026-10-04, the user's yes).** Two gaps, the first bigger than the one
+asked about: ⛔the orbit cache's index was the directory as it was at the render's FIRST lookup —
+an orbit the farm dropped in later was invisible to that render for the rest of its run (so a
+shared orbit only took effect at the next run); `refcache_persist::find` now refreshes the index
+(one listing; headers read for new or replaced files; vanished ones forgotten). And a render
+waiting on a build (`render::wait_reference_watching`: the export's synchronous build and the
+tour's lookahead) looks in the cache every 2 s — with the build's own request and admissibility
+test — and takes an orbit that ARRIVED (not the one the cache held when the build began: taking
+that too did the build's own cache hit twice, side by side — frames 6.7 → 10.5 s, caught on the
+first run), with room in memory for it beside the abandoned build (sized by the orbit, ⚠not
+`est_ref_bytes`, which sizes a second bignum build at `max_iter` — 13.6 GB at the e4000 gate whose
+build peaked at 0.47 GB — and refused every pickup on a machine with 1.9 GB free). The abandoned
+build runs to its end (no cooperative cancel) and is discarded. Local e4000 gate (one local client
++ the pre-build): frame 0 took the pre-build's orbit 58 s into its wait, 58 s instead of 95 s; 0
+references built fresh (was 1); 92 s instead of 130 s; all 5 frames pixel-identical to the run
+where frame 0 built its own. Selftest groups orbit-cache, ref-reuse, ref-overlap pass.
+⚠Side finding, not fixed: the same `est_ref_bytes` over-estimate turns the tour's reference
+LOOKAHEAD off on this machine for deep tours ("low memory (~1.9 GB free, next reference ~13.6 GB)")
+— it counts `max_iter` samples where the orbit had 443,144.
 
 **Phase 4 — friendliness.** mDNS (`_fractadyne._tcp`, advertised by a listening controller) so the
 client dialog offers *controllers on this network* instead of an address to type (the key is still

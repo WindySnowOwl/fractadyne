@@ -720,33 +720,6 @@ pub(crate) fn alive() {
     }
 }
 
-/// Wait for `rx`, stamping liveness once a second meanwhile: a long phase running on another
-/// thread — a deep reference build — is work in progress, not a wedged loop. ⚠Without it, a tour
-/// render that waited 46–90 s on a 2.37e4000× reference logged "possible hang" lines, and its log
-/// check turned a successful render's exit 0 into 1 (measured 2026-10-04, in a render farm, whose
-/// client then took the renders for crashes).
-pub(crate) fn recv_alive<T>(rx: &std::sync::mpsc::Receiver<T>) -> Option<T> {
-    loop {
-        match rx.recv_timeout(std::time::Duration::from_secs(1)) {
-            Ok(v) => return Some(v),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => alive(),
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return None,
-        }
-    }
-}
-
-/// Run `f` on a thread of its own and wait for it with [`recv_alive`]. A panic in `f` panics here.
-pub(crate) fn run_alive<T: Send + 'static>(name: &str, f: impl FnOnce() -> T + Send + 'static) -> T {
-    let (tx, rx) = std::sync::mpsc::channel();
-    let spawned = std::thread::Builder::new().name(name.to_string()).spawn(move || {
-        let _ = tx.send(f());
-    });
-    match spawned {
-        Ok(_) => recv_alive(&rx).unwrap_or_else(|| panic!("{name}: the worker thread died")),
-        Err(e) => panic!("{name}: cannot start a worker thread: {e}"),
-    }
-}
-
 /// Record what the process is doing right now. Written at phase transitions; read by the
 /// panic hook and watchdog. Also stamps liveness and tees to the log file.
 ///

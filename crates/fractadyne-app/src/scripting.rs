@@ -3633,7 +3633,7 @@ impl FractadyneApp {
             .collect();
         // Reference pipeline: frame N+1's bignum reference (orbit + SA + BLA) is computed on a worker
         // while frame N renders on the GPU, so the deep-zoom reference stall overlaps the render.
-        let mut pending_ref: Option<(u64, std::sync::mpsc::Receiver<crate::render::RecomputeResult>)> = None;
+        let mut pending_ref: Option<(u64, crate::render::PendingReference)> = None;
         // Overwrite policy: `overwrite_all` skips the per-frame prompt; `canceled` breaks the render.
         let mut overwrite_all = overwrite;
         let mut canceled = false;
@@ -3646,16 +3646,9 @@ impl FractadyneApp {
         let mut norm_oversize_warned = false;
         let want_normalize = pb.render.normalize;
         // (`TOUR_WORK_BUDGET`, the per-tile dispatch cap, is defined above the anchor handling.)
-        // Headroom to leave free beyond the references — in-flight encode buffers (~1 GB), GPU
-        // staging, general slack. The reference lookahead is skipped when the next one would eat in.
-        const TOUR_MEM_MARGIN: u64 = 1_500_000_000;
-        // Conservative peak-build footprint of one reference: the CPU bignum orbit (length ≈
-        // max_iter, ~prec bits/sample + Vec/enum overhead) plus its BLA table. Deliberately high —
-        // over-estimating only costs a little pipelining, under-estimating risks the OOM this fixes.
-        fn est_ref_bytes(max_iter: u32, prec: usize) -> u64 {
-            let per_sample = (prec as u64 / 8) * 4 + 128;
-            (max_iter as u64).saturating_mul(per_sample)
-        }
+        // The reference lookahead is skipped when the next one would eat into the headroom
+        // (`render::est_ref_bytes`, `render::REF_MEM_MARGIN`).
+        use crate::render::{est_ref_bytes, REF_MEM_MARGIN as TOUR_MEM_MARGIN};
         let mut low_mem_warned = false;
         let mut ls_budget_warned = false;
         // Render ORDER. Sequential is the plain range; progressive is the temporal bisection
@@ -3776,8 +3769,9 @@ impl FractadyneApp {
             let frame_t0 = std::time::Instant::now();
             // Claim frame `fi`'s precomputed reference if the previous iteration started one for it.
             let mut this_ref = match pending_ref.take() {
-                // A deep build can take minutes: wait with liveness stamped (`diag::recv_alive`).
-                Some((idx, rx)) if idx == fi => crate::diag::recv_alive(&rx),
+                // A deep build can take minutes: waited for with liveness stamped — and an orbit
+                // for this frame that lands in the cache meanwhile (a render farm's) is taken.
+                Some((idx, p)) if idx == fi => p.wait(),
                 _ => None,
             };
             // Kick off the NEXT frame's reference now (overlaps this frame's render + encode) —
@@ -3809,8 +3803,8 @@ impl FractadyneApp {
                     let room = crate::sysinfo::available_memory()
                         .map_or(true, |avail| est.saturating_add(TOUR_MEM_MARGIN) < avail);
                     if room {
-                        if let Some(rx) = self.spawn_export_reference(&vp2, self.julia_mode, budget2) {
-                            pending_ref = Some((nfi, rx));
+                        if let Some(p) = self.spawn_export_reference_watched(&vp2, self.julia_mode, budget2) {
+                            pending_ref = Some((nfi, p));
                         }
                     } else if !low_mem_warned {
                         let avail = crate::sysinfo::available_memory().unwrap_or(0);

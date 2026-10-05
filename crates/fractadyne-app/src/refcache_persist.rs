@@ -253,6 +253,7 @@ pub(crate) fn find(q: &Query) -> Option<Hit> {
     }
     let dir = s.dir()?;
     s.ensure_scanned(&dir);
+    s.refresh(&dir);
     let entries = s.entries.as_deref()?;
     let mut best: Option<(&Entry, f64)> = None;
     let mut candidates = 0usize;
@@ -410,6 +411,34 @@ impl Store {
             return;
         }
         self.entries = Some(scan(dir));
+    }
+
+    /// Bring the index up to what is in the directory now: entries another process added since the
+    /// scan — a render farm's client drops other machines' orbits into a running render's cache
+    /// (design/remote-rendering.md §8) — and none whose file is gone or was replaced. ⚠Until this,
+    /// the index was the directory as it was at the first lookup: an orbit that arrived later was
+    /// invisible to that render for the rest of its run. One listing; a header is read only for a
+    /// file not indexed at that path and size. (Our unreadable files are the scan's to delete: a
+    /// file here may be another process's, so it is only skipped.)
+    fn refresh(&mut self, dir: &Path) {
+        let Some(entries) = self.entries.as_mut() else { return };
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let on_disk: Vec<(PathBuf, u64)> = rd
+            .flatten()
+            .filter_map(|f| {
+                let p = f.path();
+                let len = f.metadata().ok()?.len();
+                p.extension().is_some_and(|x| x == ENTRY_EXT).then_some((p, len))
+            })
+            .collect();
+        entries.retain(|e| on_disk.iter().any(|(p, n)| *p == e.path && *n == e.bytes));
+        for (p, _) in on_disk {
+            if !entries.iter().any(|e| e.path == p) {
+                if let Some(e) = index_entry(&p) {
+                    entries.push(e);
+                }
+            }
+        }
     }
 
     /// Would a candidate entry of this cost and size still be there after the eviction pass its
