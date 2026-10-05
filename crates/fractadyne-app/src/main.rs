@@ -153,6 +153,7 @@ fn main() -> eframe::Result<()> {
             crate::exit(2);
         }
     };
+    let _ = EFFECTIVE_ARGS.set(args.clone());
     // Crash/hang visibility (design/diagnostics.md D1): log file, panic hook, watchdog.
     // Before run_headless so even the pre-GUI CLI modes get crash reports.
     diag::init(&args);
@@ -694,6 +695,18 @@ fn expand_arg_files(raw: &[String]) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod arg_files;
 
+/// The command line after `@file` / `--args-file` expansion, set once at the top of `main`.
+static EFFECTIVE_ARGS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// This process's arguments AFTER args-file expansion (`argv[0]` first). Anything that asks what
+/// the process was launched to do reads this, never `std::env::args()`: the raw list of
+/// `fractadyne @args.txt` is the file name alone, so a `--render` launched that way was not a task
+/// — no log check ran at exit, the harness-only gates stayed on, and a lost device would have
+/// relaunched it. Falls back to the raw arguments where `main` did not run (unit tests).
+pub(crate) fn effective_args() -> &'static [String] {
+    EFFECTIVE_ARGS.get_or_init(|| std::env::args().collect())
+}
+
 /// Whether this process was launched to run a HARNESS or an offline job rather than to be sat in
 /// front of. Used only to decide that a lost device must NOT relaunch.
 ///
@@ -740,10 +753,7 @@ pub(crate) fn task_mode_names() -> impl Iterator<Item = &'static str> {
 /// [`task_mode_of`] over this process's own arguments, read once.
 pub(crate) fn task_mode() -> Option<&'static str> {
     static MODE: std::sync::OnceLock<Option<&'static str>> = std::sync::OnceLock::new();
-    *MODE.get_or_init(|| {
-        let argv: Vec<String> = std::env::args().skip(1).collect();
-        task_mode_of(&argv)
-    })
+    *MODE.get_or_init(|| task_mode_of(effective_args().get(1..).unwrap_or_default()))
 }
 
 /// Whether THIS process was launched for a task (`is_task_invocation` over its own arguments),
@@ -751,10 +761,7 @@ pub(crate) fn task_mode() -> Option<&'static str> {
 /// recorded baseline — the interactive reference lookahead, progressive supersampling.
 pub(crate) fn launched_as_task() -> bool {
     static TASK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *TASK.get_or_init(|| {
-        let argv: Vec<String> = std::env::args().skip(1).collect();
-        is_task_invocation(&argv)
-    })
+    *TASK.get_or_init(|| is_task_invocation(effective_args().get(1..).unwrap_or_default()))
 }
 
 /// Whether analytic palette anti-aliasing is on (box-filter the palette over each pixel's
@@ -5993,8 +6000,7 @@ impl FractadyneApp {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0);
-            let argv: Vec<String> = std::env::args().skip(1).collect();
-            if crate::is_task_invocation(&argv) {
+            if crate::launched_as_task() {
                 // Fail visibly instead. A harness or offline job that respawns itself hides the
                 // failure it exists to surface, and can leave a window nobody is supervising.
                 diag::log_line(
@@ -6955,7 +6961,7 @@ impl FractadyneApp {
                 // changing it — `--no-perf` for a screenshot, `--perf` for a harness that wants the
                 // diagnostics in frame, neither of which should redecide what the user prefers.
                 enabled: {
-                    let args: Vec<String> = std::env::args().collect();
+                    let args = crate::effective_args();
                     if args.iter().any(|a| a == "--no-perf") {
                         false
                     } else if args.iter().any(|a| a == "--perf") {

@@ -8977,9 +8977,11 @@ zoom = \"1e94\"
         // defaults. Fields gated off here (light/de/duotone/binary, orbit-trap) don't reach the
         // output, so their sub-parameters are left as-is.
         let bless = self.selftest.bless; // from new()'s expanded args (honors @response-file)
-        let report_path = std::env::args()
+        let args = crate::effective_args();
+        let report_path = args
+            .iter()
             .position(|a| a == "--out" || a == "-o")
-            .and_then(|i| std::env::args().nth(i + 1))
+            .and_then(|i| args.get(i + 1))
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| anchored("validation/report.md"));
         let out_base = report_path
