@@ -449,7 +449,7 @@ if ($have.fractalsharkcli) {
             $fsStartup = [string]$srv.startup_s
         }
     }
-    $fsShape = $(if ($useServer) { 'server-amortized (--server/--connect, startup paid once)' }
+    $fsShape = $(if ($useServer) { 'server-amortized (--server/--connect, startup paid once; each image timed to its own PNG on disk, the next started only after it)' }
                  else { 'one process per frame (startup folded into every frame)' })
     Write-Host ('FractalShark: automated via ' + (Split-Path $FractalSharkCliExe -Leaf) +
                 ', algorithm ' + $FractalSharkAlgo +
@@ -495,9 +495,32 @@ if ($have.fractalsharkcli) {
             # SAMPLING PARITY, restated rather than inherited: one sample per pixel, like every
             # other lane. This is the field that was silently 4x for Fraktaler-3 in every run this
             # kit ever published.
-            $renderArgs = ('--render-algorithm {0} --center-x {1} --center-y {2} --zoom {3} --iterations {4} --width {5} --height {6} --antialiasing 1 --out "{7}" --quiet' -f $FractalSharkAlgo, $kfr['Re'], $kfr['Im'], $zoom, $s.iterations, $wh[0], $wh[1], $stem)
+            # No --quiet: without it each image prints FractalShark's own report (reference orbit,
+            # LA tables, per-pixel), kept in fs-phases.csv. Its author asked for it, and it is the
+            # only way to see where FractalShark's time goes.
+            $renderArgs = ('--render-algorithm {0} --center-x {1} --center-y {2} --zoom {3} --iterations {4} --width {5} --height {6} --antialiasing 1 --out "{7}"' -f $FractalSharkAlgo, $kfr['Re'], $kfr['Im'], $zoom, $s.iterations, $wh[0], $wh[1], $stem)
             $argLine = if ($useServer) { ('--connect --endpoint {0} ' -f $endpoint) + $renderArgs } else { $renderArgs }
             $r = Invoke-TimedRender $FractalSharkCliExe $argLine $TimeoutS $outDir
+            # EACH IMAGE'S OWN ENCODE, AND NO OTHER. The client returns before its PNG is written,
+            # and the next render waits for that encode, so client calls timed back to back each
+            # carried the PREVIOUS image's encode - every FractalShark time this kit published up to
+            # 2026-10-03 (measured 2026-10-04: the spar scene's 69 ms render took 3.5 s, waiting for
+            # scene 17's 12.7 MB PNG). Wait for THIS image's PNG to be complete, and time the image
+            # to that point: its render plus its own encode, as every other lane's wall includes its
+            # own file write. The next image then starts with nothing queued.
+            $r.client_ms = $r.wall_ms
+            $r.png_ms = ''
+            if ($r.status -eq 'ok') {
+                $pw = Wait-PngComplete $png $TimeoutS
+                $r.png_ms = $pw.ms
+                if ($pw.ok) {
+                    $r.wall_ms = [math]::Round($r.client_ms + $pw.ms, 1)
+                    $r.wall_s = [math]::Round($r.wall_ms / 1000.0, 1)
+                } else {
+                    # No complete image, no time: a client-only number here would be the old flaw.
+                    $r.status = 'DNF-png-incomplete'
+                }
+            }
             $note = $(if ($useServer) { 'server-amortized' } else { 'process per frame' }) +
                     $(if ($FractalSharkAlgo -like 'Gpu*') { '; GPU path (CUDA)' } else { '; CPU path' })
             # The reported "Frame time" is worth HAVING - it is FractalShark's own render cost,
@@ -509,15 +532,16 @@ if ($have.fractalsharkcli) {
             # alongside, and stamp it into the CSV only for a row that survives BOTH the exit code
             # and the structure guard. Status is judged on the exit code and the image, never text.
             $fsReported = ''
-            if ($r.stdout -match 'Frame time:\s*([0-9.]+)\s*ms') {
-                $fsReported = [string][math]::Round([double]$Matches[1] / 1000.0, 3)
+            $fsPh = Read-SharkPhases $r.stdout
+            if ($fsPh.frame_time_ms -ne '') {
+                $fsReported = [string][math]::Round([double]$fsPh.frame_time_ms / 1000.0, 3)
             }
             if ($r.status -eq 'ok' -and ($r.stdout + $r.stderr) -match 'cannot represent') {
                 $r.status = 'DNF-algo-too-narrow'
                 $note += '; ' + $FractalSharkAlgo + ' cannot represent this depth - needs an HDR algorithm'
             }
             $pending += @{ scene = $s.slug; rep = $rep; png = $png; r = $r; note = $note
-                           reported = $fsReported; args = $argLine
+                           reported = $fsReported; args = $argLine; phases = $fsPh
                            inputs = @{ center_re = $kfr['Re']; center_im = $kfr['Im']
                                        zoom = $zoom; iterations = $s.iterations; size = $Size
                                        antialiasing = 1; algorithm = $FractalSharkAlgo
@@ -588,10 +612,16 @@ if ($have.fractalsharkcli) {
         # A self-reported time only survives on a row that EARNED it. On any DNF it is dropped,
         # because the whole trap is that a refusal still prints one.
         if ($status -ne 'ok') { $reported = '' }
-        elseif ($reported -and $q.r.wall_s) {
-            $note += ('; render ' + $reported + 's of ' + $q.r.wall_s + 's wall (rest is pipe + PNG encode)')
+        elseif ([string]$q.r.png_ms -ne '') {
+            $note += ('; client returned at ' + [math]::Round($q.r.client_ms / 1000.0, 2) + 's, its PNG complete ' +
+                      [math]::Round([double]$q.r.png_ms / 1000.0, 2) + 's later (the wall includes this image''s own encode, no other)')
         }
         Write-Result $csv 'fractalshark' $q.scene $q.rep $status $q.r.wall_s $reported $note
+        Write-FsPhases (Join-Path $outDir 'fs-phases.csv') @{
+            scene = $q.scene; rep = $q.rep; status = $status; wall_ms = $q.r.wall_ms; client_ms = $q.r.client_ms
+            png_ms = $q.r.png_ms; frame_time_ms = $q.phases.frame_time_ms; overall_ms = $q.phases.overall_ms
+            ref_orbit_ms = $q.phases.ref_orbit_ms; la_ms = $q.phases.la_ms; per_pixel_ms = $q.phases.per_pixel_ms
+        }
         Add-RunRecord @{
             renderer = 'fractalshark'; scene = $q.scene; rep = $q.rep
             exe = $FractalSharkCliExe; args = $q.args; cwd = $outDir
@@ -787,8 +817,10 @@ $md = @(('# Benchmark summary - ' + $env:COMPUTERNAME + ' - ' + $stamp), '',
         'wall_s and leaves reported_s empty, so printing `reported` here rendered every automated',
         'FractalShark result as a BLANK CELL while the numbers sat in results.csv. A summary that',
         'silently drops a lane it ran is worse than one that admits it skipped it.',
-        'In server mode that wall is the CLIENT call - the amortized per-frame cost, with CUDA and',
-        'process startup paid once for the whole run rather than folded into every frame.', '',
+        'In server mode that wall is the client call until THAT image''s PNG is complete on disk, with',
+        'CUDA and process startup paid once for the whole run. The next image starts only after it:',
+        'the server encodes in the background and the next render waits for the encode, so before',
+        '2026-10-04 each FractalShark time here carried the PREVIOUS image''s encode instead of its own.', '',
         'Rows run SHALLOWEST FIRST. scenes.csv is ordered by scene id, which is not depth order -',
         'it puts 1e1105 above 1e27.7 - and a benchmark whose whole axis is magnification should',
         'not be read in an order that hides it. Execution order is unchanged and stays in the',
@@ -857,6 +889,29 @@ if ($spread.Count) {
     $md += '| Scene | Renderer | Reps | Fastest | Median | Slowest | Spread |'
     $md += '|---|---|---|---|---|---|---|'
     $md += $spread
+    $md += ''
+}
+# ---- FractalShark: where the wall went (fs-phases.csv, from the report each client call prints) ----
+$fsPhCsv = Join-Path $outDir 'fs-phases.csv'
+if (Test-Path $fsPhCsv) {
+    $fph = @(Import-Csv $fsPhCsv | Where-Object { $_.status -eq 'ok' })
+    $fMed = { param($slug, $col) Get-Median @($fph | Where-Object { $_.scene -eq $slug } | ForEach-Object { $_.$col }) }
+    $md += '## FractalShark phases (ms, median over ok reps)'
+    $md += ''
+    $md += 'Wall = the client call until THIS image''s PNG is complete on disk (the next image starts only'
+    $md += 'after it). Client = until the client returned; PNG = the encode after that. Overall is'
+    $md += 'FractalShark''s own figure: reference orbit + LA tables + per-pixel.'
+    $md += ''
+    $md += '| Scene | Wall | Client | PNG | Frame time | Overall | Ref orbit | LA | Per pixel |'
+    $md += '|---|---|---|---|---|---|---|---|---|'
+    foreach ($s in $depthOrder) {
+        if (-not @($fph | Where-Object { $_.scene -eq $s.slug }).Count) { continue }
+        $md += ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} |' -f $s.slug,
+            (& $fmt (& $fMed $s.slug 'wall_ms') '{0:N0}'), (& $fmt (& $fMed $s.slug 'client_ms') '{0:N0}'),
+            (& $fmt (& $fMed $s.slug 'png_ms') '{0:N0}'), (& $fmt (& $fMed $s.slug 'frame_time_ms') '{0:N0}'),
+            (& $fmt (& $fMed $s.slug 'overall_ms') '{0:N0}'), (& $fmt (& $fMed $s.slug 'ref_orbit_ms') '{0:N0}'),
+            (& $fmt (& $fMed $s.slug 'la_ms') '{0:N0}'), (& $fmt (& $fMed $s.slug 'per_pixel_ms') '{0:N0}'))
+    }
     $md += ''
 }
 # ---- Fractadyne: where the wall went (fd-phases.csv, parsed from each render's kept log) ----

@@ -105,9 +105,10 @@ function Invoke-TimedRender($exe, $argLine, $timeoutS, $cwd) {
 # assumed (tools/fs-server-probe.sh reproduces them):
 #
 #  1. PNG ENCODING IS ASYNCHRONOUS. The client returns as soon as the frame is computed; the
-#     image reaches disk later, and --shutdown is what flushes it. A lane that checks the file
-#     straight after the render finds nothing and scores a DNF for a frame that rendered
-#     perfectly. Hence: render everything, shut the server down, THEN validate.
+#     image reaches disk later. A lane that checks the file straight after the render finds
+#     nothing and scores a DNF for a frame that rendered perfectly. And the NEXT render waits for
+#     that encode, so back-to-back client times each carry the previous image's encode: the lane
+#     waits for each PNG to be complete (Wait-PngComplete) and times the image to that point.
 #  2. AN ERROR STILL PRINTS "Frame time". Ask for an algorithm that cannot represent the
 #     viewport's pixel spacing and the client prints `error: ... cannot represent ...` AND
 #     `Frame time: 17.1 ms`, writing no image. Anything scraping the reported time records a
@@ -144,6 +145,59 @@ function Start-SharkServer($cli, $endpoint, $w, $h, $logDir) {
     $sw.Stop()
     @{ ok = $ready; proc = $p; stdout = $so; stderr = $se; log = $log
        startup_s = [math]::Round($sw.Elapsed.TotalSeconds, 1) }
+}
+
+# Wait until a PNG is COMPLETE on disk - its last chunk is IEND - and say how long that took.
+# FractalShark's server encodes each image in the background after the client returns, and the
+# NEXT render waits for that encode before it starts. Timing client calls back to back therefore
+# charged every image with the PREVIOUS image's encode (measured 2026-10-04 at its author's
+# request: the spar scene's 69 ms render took 3.5 s, waiting for scene 17's 12.7 MB PNG). The lane
+# waits here after each image, so each time is that image's render plus its OWN encode, and the
+# next image starts with nothing queued. Read with sharing, so a file still being written is read
+# as incomplete rather than locked.
+function Wait-PngComplete($png, $timeoutS) {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($sw.Elapsed.TotalSeconds -lt $timeoutS) {
+        if (Test-Path -LiteralPath $png) {
+            try {
+                $fs = [System.IO.File]::Open($png, 'Open', 'Read', 'ReadWrite, Delete')
+                try {
+                    if ($fs.Length -ge 20) {
+                        $null = $fs.Seek(-12, 'End')
+                        $b = New-Object byte[] 12
+                        $null = $fs.Read($b, 0, 12)
+                        if ([System.Text.Encoding]::ASCII.GetString($b, 4, 4) -eq 'IEND') {
+                            return @{ ok = $true; ms = [math]::Round($sw.Elapsed.TotalMilliseconds, 1) }
+                        }
+                    }
+                } finally { $fs.Dispose() }
+            } catch {}
+        }
+        Start-Sleep -Milliseconds 10
+    }
+    @{ ok = $false; ms = [math]::Round($sw.Elapsed.TotalMilliseconds, 1) }
+}
+
+# FractalShark's own figures for one image, from the report a client call prints without --quiet:
+# Overall = reference orbit + LA tables + per-pixel, all in ms, and "Frame time". Empty strings
+# when absent. Never used to judge a row (a REFUSED render prints a Frame time too).
+function Read-SharkPhases($text) {
+    $p = @{ frame_time_ms = ''; overall_ms = ''; per_pixel_ms = ''; ref_orbit_ms = ''; la_ms = '' }
+    $map = @{ overall_ms = 'Overall \(ms\) = ([0-9.]+)'; per_pixel_ms = 'Per pixel \(ms\) = ([0-9.]+)'
+              ref_orbit_ms = 'RefOrbit \(ms\) = ([0-9.]+)'; la_ms = 'LA generation time \(ms\) = ([0-9.]+)'
+              frame_time_ms = 'Frame time:\s*([0-9.]+)\s*ms' }
+    foreach ($k in $map.Keys) { if ($text -match $map[$k]) { $p[$k] = $Matches[1] } }
+    $p
+}
+
+$script:FsPhaseCols = @('scene', 'rep', 'status', 'wall_ms', 'client_ms', 'png_ms', 'frame_time_ms', 'overall_ms', 'ref_orbit_ms', 'la_ms', 'per_pixel_ms')
+
+function Write-FsPhases($csvPath, $row) {
+    if (-not (Test-Path $csvPath)) {
+        ($script:FsPhaseCols -join ',') | Out-File -FilePath $csvPath -Encoding ascii
+    }
+    $vals = foreach ($c in $script:FsPhaseCols) { [string]$row[$c] }
+    Add-Content -Path $csvPath -Value ($vals -join ',') -Encoding ascii
 }
 
 # Shut the server down and WAIT for it, because that is what flushes the pending PNG writes.
