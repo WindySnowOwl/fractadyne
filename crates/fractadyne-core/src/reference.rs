@@ -9,6 +9,29 @@ use crate::floatexp::*;
 use crate::formula;
 use astro_float::BigFloat;
 
+/// Bignum reference steps this process has taken: every reference-orbit build and every
+/// candidate-length walk adds [`REFERENCE_STEP_BATCH`] per that many steps. A deep build is one
+/// blocking call that finishes no tile for minutes, so this is its only sign of life: a headless
+/// render's progress pump reads it to tell a reference that is still advancing from a wedge (a
+/// 6-minute build at 1e10000 logged 12 `possible hang` lines, and the log check failed the run).
+pub static REFERENCE_STEPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many steps a reference loop takes between additions to [`REFERENCE_STEPS`].
+pub const REFERENCE_STEP_BATCH: u32 = 1024;
+
+/// [`REFERENCE_STEPS`]' current value.
+pub fn reference_steps() -> u64 {
+    REFERENCE_STEPS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Count one reference step `n` (1-based) toward [`REFERENCE_STEPS`], a batch at a time.
+#[inline]
+pub(crate) fn count_reference_step(n: u32) {
+    if n % REFERENCE_STEP_BATCH == 0 {
+        REFERENCE_STEPS.fetch_add(u64::from(REFERENCE_STEP_BATCH), std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// Split an `f64` into a `(hi, lo)` `f32` pair (df64, ~14 digits).
 pub(crate) fn split_df64(v: f64) -> (f32, f32) {
     let hi = v as f32;
@@ -424,6 +447,7 @@ fn run_orbit_gen<B: RefBackend>(
         let yv = zy.to_f64_trunc();
         out.push(pack_sample(xv, yv));
         n += 1;
+        count_reference_step(n);
         if xv * xv + yv * yv > escape2 {
             escaped = true;
             break;
@@ -1530,6 +1554,7 @@ fn orbit_length_gen<B: RefBackend>(
             zy = nzy;
         }
         n += 1;
+        count_reference_step(n);
         if let Some(s) = samples.as_deref_mut() {
             s.push(CFloatExp { re: zx.to_floatexp(), im: zy.to_floatexp() });
         }
@@ -1667,6 +1692,7 @@ fn perturb_orbit_length(
         dz = acc + dc;
         m += 1;
         n += 1;
+        count_reference_step(n);
         let zf = orbit[m] + dz;
         let (xf, yf) = (zf.re.to_f64(), zf.im.to_f64());
         if xf * xf + yf * yf > escape2 {

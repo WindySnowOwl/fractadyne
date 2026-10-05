@@ -1122,6 +1122,11 @@ pub(crate) fn start_watchdog() {
 /// Spawn a CLI progress pump: prints `\r<label> N%` to stderr every ~2 s from a permille
 /// progress atomic (the `render_export` contract), stamps liveness, and stops when the
 /// returned guard is dropped. Prints nothing for renders that finish inside the first tick.
+///
+/// Liveness comes from two kinds of progress: a tile finishing, and the reference build advancing
+/// ([`fractadyne_core::reference_steps`]). A deep reference is one blocking call that finishes no
+/// tile for minutes, and before the second kind counted, a 6-minute build at 1e10000 logged 12
+/// `possible hang` lines and the log check failed a render that was fine.
 pub(crate) struct ProgressPump {
     stop: std::sync::Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -1139,6 +1144,8 @@ pub(crate) fn progress_pump(
         .spawn(move || {
             let mut printed = false;
             let mut last_p = u32::MAX;
+            let mut last_ref = fractadyne_core::reference_steps();
+            let mut last_ref_line = std::time::Instant::now();
             'outer: while !stop2.load(Ordering::Relaxed) {
                 // ~2 s cadence, but check `stop` every 100 ms so Drop never stalls.
                 for _ in 0..20 {
@@ -1156,12 +1163,25 @@ pub(crate) fn progress_pump(
                 // "slow vs hung" signal DIAGNOSTICS.md tells the reader to look for). A slow
                 // single-tile render also freezes `p`; the watchdog's warning there is the
                 // documented, acceptable can't-tell-hang-from-long-compute ambiguity.
+                //
+                // The reference build is the other progress that counts: its steps are counted as
+                // they happen, so an advancing count is work, and a frozen one still lets the stall
+                // clock run out exactly as a frozen `p` does.
+                let r = fractadyne_core::reference_steps();
                 if p != last_p {
                     alive();
                     last_p = p;
                     // Tee to the log file so a post-mortem sees progression, not just stderr.
                     file_line(&format!("[progress] {label} {}%", p / 10));
+                } else if r != last_ref {
+                    alive();
+                    // Every 30 s, not every tick: a 30-minute build would otherwise write 900 lines.
+                    if last_ref_line.elapsed() >= Duration::from_secs(30) {
+                        last_ref_line = std::time::Instant::now();
+                        file_line(&format!("[progress] {label} {}% (reference: {r} steps)", p / 10));
+                    }
                 }
+                last_ref = r;
                 let _ = write!(std::io::stderr(), "\r[fd-progress] {} {label} {:3}%", stamp(), p / 10);
                 let _ = std::io::stderr().flush();
                 printed = true;

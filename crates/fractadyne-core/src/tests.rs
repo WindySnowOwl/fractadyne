@@ -2094,3 +2094,19 @@ fn fuzz_parse_complex_panic_free() {
         let _ = parse_complex_prec(&buf, 64);
     }
 }
+
+/// A reference build is counted as it runs: [`REFERENCE_STEPS`] is the only sign of life a deep
+/// build gives a headless render's progress pump (a 6-minute build otherwise read as a hang). A
+/// point inside the main cardioid never escapes, so a 5,000-step build takes all 5,000 steps and
+/// must add at least its four full batches. "At least": other tests may build orbits at the same
+/// time and add theirs.
+#[test]
+fn a_reference_build_is_counted_as_it_runs() {
+    let p = 128;
+    let (z0, c) = (bf(0.0, p), [bf(-0.1, p), bf(0.1, p)]);
+    let before = reference_steps();
+    let (_, len, _) = reference_orbit_t(&z0, &z0, &c[0], &c[1], 0, 5000, p);
+    assert_eq!(len, 5001, "an interior point runs to the cap");
+    let added = reference_steps() - before;
+    assert!(added >= 4 * u64::from(REFERENCE_STEP_BATCH), "a 5,000-step build added only {added} steps");
+}

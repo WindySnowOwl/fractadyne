@@ -376,3 +376,30 @@ fn the_sa_walk_is_backend_identical() {
         "the MPFR twin never actually ran — every Rug case silently fell back to astro"
     );
 }
+
+/// Both backends count their steps toward `REFERENCE_STEPS`, in the orbit build AND in the
+/// candidate walk. The counter is what tells a headless render's progress pump that a long
+/// reference is still advancing; it was first added to the astro-float loops only, the test for it
+/// ran on astro-float only, and an MPFR render of a 1e10000 minibrot still logged 13
+/// `possible hang` lines. Each backend has its own loops, so each is checked here. "At least": other
+/// tests may build orbits at the same time and add theirs.
+#[test]
+fn every_backend_counts_its_reference_steps() {
+    let p = 128;
+    let z0 = fc::BigFloat::from_f64(0.0, p);
+    let (cx, cy) = (fc::BigFloat::from_f64(-0.1, p), fc::BigFloat::from_f64(0.1, p)); // interior
+    let batch = u64::from(fc::REFERENCE_STEP_BATCH);
+    for backend in [BackendChoice::Astro, BackendChoice::Rug] {
+        let before = fc::reference_steps();
+        let (_, len, _) = fc::reference_orbit_t_in(backend, &z0, &z0, &cx, &cy, 0, 5000, p);
+        assert_eq!(len, 5001, "{backend:?}: an interior point runs to the cap");
+        let added = fc::reference_steps() - before;
+        assert!(added >= 4 * batch, "{backend:?} orbit build: a 5,000-step build added only {added}");
+
+        let before = fc::reference_steps();
+        let n = fc::orbit_length_in(backend, &z0, &z0, &cx, &cy, 0, 5000, p, None);
+        assert_eq!(n, 5000, "{backend:?}: the walk runs to the cap");
+        let added = fc::reference_steps() - before;
+        assert!(added >= 4 * batch, "{backend:?} candidate walk: 5,000 steps added only {added}");
+    }
+}

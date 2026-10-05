@@ -544,6 +544,7 @@ pub(crate) fn try_run_orbit_inplace(
         let yv = zy.to_f64_trunc();
         out.push(crate::reference::pack_sample(xv, yv));
         n += 1;
+        crate::reference::count_reference_step(n);
         if xv * xv + yv * yv > 1.0e12 {
             escaped = true;
             break;
@@ -613,6 +614,7 @@ pub(crate) fn try_orbit_length_inplace(
             t.set_prec(ctx);
         }
         n += 1;
+        crate::reference::count_reference_step(n);
         if let Some(s) = samples.as_deref_mut() {
             s.push(CFloatExp {
                 re: RefBackend::to_floatexp(&zx),
