@@ -32,6 +32,94 @@ pub(crate) fn count_reference_step(n: u32) {
     }
 }
 
+/// Where a Mandelbrot reference orbit closes on itself: `Z_period ≈ 0 = Z_0`, so
+/// `Z_{period+k} = Z_k` and the orbit to `period` IS the whole orbit. A pixel that reaches its end
+/// continues from `Z_0` with its δ unchanged — the shader's end-of-orbit rebase
+/// (`δz ← Z_n + δz − Z_0`) is then exact — so a minibrot-centred reference costs one period
+/// instead of the whole iteration cap (1e10000×: 137,396 steps instead of 4.12 million).
+///
+/// Whether the wrap is exact ENOUGH depends on the view ([`OrbitPeriod::valid_for`]): the error
+/// each wrap injects is `Z_period`, and it must stay far below the smallest pixel δ it lands on.
+/// Both magnitudes are kept as log₂ — a deep nucleus's `|Z|` is `~2^-33000`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OrbitPeriod {
+    pub period: u32,
+    /// log₂|Z_period|: the error each wrap injects.
+    pub log2_z: f64,
+    /// log₂|dZ_period/dc|: how far a pixel's δ has grown by then, per unit of δc.
+    pub log2_d: f64,
+}
+
+/// The whole view must still be linear at the period: `|D|·span ≤ 2^-8`. Without this, nuclei
+/// of every large period lie within a pixel of ANY point (they are dense), so a small Newton
+/// distance `|Z_n/D_n|` alone would "find" a period at almost every late step.
+pub const PERIOD_LINEAR_OCTAVES: f64 = 8.0;
+
+/// The wrap error `|Z_period|` must be this many octaves below `|D|·span`, the δ of a pixel a
+/// whole view away: 2^-38 of the view is 2^-26 of a pixel at 4096 px, so even ~30 wraps leave
+/// the accumulated error far below a pixel.
+pub const PERIOD_TOL_OCTAVES: f64 = 38.0;
+
+impl OrbitPeriod {
+    /// Whether wrapping at this period is exact enough for a view `2^log2_span` across.
+    pub fn valid_for(&self, log2_span: f64) -> bool {
+        let lin = self.log2_d + log2_span;
+        lin <= -PERIOD_LINEAR_OCTAVES && self.log2_z < lin - PERIOD_TOL_OCTAVES
+    }
+}
+
+/// Watches a Mandelbrot reference orbit (from `Z_0 = 0`) for the step that closes it, carrying
+/// `D_n = dZ_n/dc` in floatexp beside the bignum walk. Fed each new `Z_n` as the loop's own `f64`
+/// view; it asks for the exact extended-range value only when that view is too small to trust
+/// (a near-nucleus dip, which is exactly where the decision is made).
+pub(crate) struct PeriodProbe {
+    log2_span: f64,
+    z: CFloatExp,
+    d: CFloatExp,
+    n: u32,
+    pub(crate) found: Option<OrbitPeriod>,
+}
+
+impl PeriodProbe {
+    pub(crate) fn new(log2_span: f64) -> Self {
+        PeriodProbe { log2_span, z: CFloatExp::ZERO, d: CFloatExp::ZERO, n: 0, found: None }
+    }
+
+    /// One step: `Z_{n+1}` was just computed; `(xv, yv)` is its truncated `f64` view and `exact()`
+    /// gives it in extended range. Returns `true` when it closes the orbit (see [`OrbitPeriod`]).
+    #[inline]
+    pub(crate) fn step(&mut self, xv: f64, yv: f64, exact: impl FnOnce() -> CFloatExp) -> bool {
+        // D_{n+1} = 2·Z_n·D_n + 1, with Z_n the PREVIOUS value.
+        let one = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
+        self.d = (self.z * self.d).mul_f64(2.0) + one;
+        self.n += 1;
+        let big = xv.abs().max(yv.abs());
+        // A closing step needs |Z| < 2^-46 (linear ≤ -8, then 38 more octaves): anything larger
+        // is ruled out from the f64 view alone, which keeps the common step to the D update.
+        if big > 1e-14 || !big.is_finite() {
+            self.z = CFloatExp { re: FloatExp::from_f64(xv), im: FloatExp::from_f64(yv) };
+            return false;
+        }
+        // Small: below ~1e-150 the f64 view is denormal or zero, so read the exact value.
+        self.z = if big > 1e-150 {
+            CFloatExp { re: FloatExp::from_f64(xv), im: FloatExp::from_f64(yv) }
+        } else {
+            exact()
+        };
+        let log2_d = self.d.abs().log2();
+        let lin = log2_d + self.log2_span;
+        if lin > -PERIOD_LINEAR_OCTAVES {
+            return false;
+        }
+        let log2_z = self.z.abs().log2();
+        if log2_z < lin - PERIOD_TOL_OCTAVES {
+            self.found = Some(OrbitPeriod { period: self.n, log2_z, log2_d });
+            return true;
+        }
+        false
+    }
+}
+
 /// Split an `f64` into a `(hi, lo)` `f32` pair (df64, ~14 digits).
 pub(crate) fn split_df64(v: f64) -> (f32, f32) {
     let hi = v as f32;
@@ -280,6 +368,11 @@ pub struct OrbitTail {
     pub zpx: BigFloat,
     pub zpy: BigFloat,
     pub escaped: bool,
+    /// Where the orbit closed on itself, when the build watched for it
+    /// ([`reference_orbit_periodic`]): the samples then end at `Z_period ≈ 0` and ARE the whole
+    /// orbit for any view [`OrbitPeriod::valid_for`] accepts. The tail is still the true state at
+    /// that step, so a view the period is not valid for extends it like any other.
+    pub period: Option<OrbitPeriod>,
     /// Which [`crate::BackendChoice`] built this tail (its `RefBackend::BIT`).
     ///
     /// `extend_reference_orbit` resumes in THIS backend rather than the currently selected one.
@@ -305,8 +398,9 @@ fn run_orbit(
     n: u32,
     max_iter: u32,
     p: usize,
+    probe: Option<&mut PeriodProbe>,
 ) -> OrbitTail {
-    dispatch_orbit(bit, out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p)
+    dispatch_orbit(bit, out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe)
         .expect("a BackendChoice variant only exists when its backend is compiled in")
 }
 
@@ -331,16 +425,18 @@ fn dispatch_orbit(
     n: u32,
     max_iter: u32,
     p: usize,
+    probe: Option<&mut PeriodProbe>,
 ) -> Option<OrbitTail> {
     match bit {
-        0 => Some(run_orbit_carrier::<BigFloat>(out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p)),
+        0 => Some(run_orbit_carrier::<BigFloat>(out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe)),
         #[cfg(feature = "rug")]
         1 => {
             // Prefer the backend's allocation-free loop where it has one; fall back to the generic
             // path otherwise, which is still MPFR — just allocating per operation. The two are held
             // byte-identical by the cross-backend matrix, which covers every formula id.
+            let mut probe = probe;
             let fast = crate::backend_rug::try_run_orbit_inplace(
-                out, &zx, &zy, cx, cy, formula, n, max_iter, p,
+                out, &zx, &zy, cx, cy, formula, n, max_iter, p, probe.as_deref_mut(),
             );
             match fast {
                 Some((tzx, tzy, escaped)) => {
@@ -354,11 +450,12 @@ fn dispatch_orbit(
                     zpx,
                     zpy,
                     escaped,
+                    period: probe.and_then(|pr| pr.found),
                     backend: <rug::Float as RefBackend>::BIT,
                     })
                 }
                 None => Some(run_orbit_carrier::<rug::Float>(
-                    out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p,
+                    out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe,
                 )),
             }
         }
@@ -386,13 +483,15 @@ fn run_orbit_carrier<B: RefBackend>(
     n: u32,
     max_iter: u32,
     p: usize,
+    mut probe: Option<&mut PeriodProbe>,
 ) -> OrbitTail {
     let ctx = B::ctx_for(p);
     let (bzx, bzy) = (B::from_carrier(&zx, ctx), B::from_carrier(&zy, ctx));
     let (bzpx, bzpy) = (B::from_carrier(&zpx, ctx), B::from_carrier(&zpy, ctx));
     let (bcx, bcy) = (B::from_carrier(cx, ctx), B::from_carrier(cy, ctx));
-    let (zx, zy, zpx, zpy, escaped) =
-        run_orbit_gen::<B>(out, bzx, bzy, bzpx, bzpy, &bcx, &bcy, formula, n, max_iter, ctx);
+    let (zx, zy, zpx, zpy, escaped) = run_orbit_gen::<B>(
+        out, bzx, bzy, bzpx, bzpy, &bcx, &bcy, formula, n, max_iter, ctx, probe.as_deref_mut(),
+    );
     // Stamp AFTER the work, not before: `crate::backend::status_line` is quoted by the startup
     // log, crash reports and every gate, and must report what ran rather than what was asked for.
     crate::backend::note_observed::<B>();
@@ -402,6 +501,7 @@ fn run_orbit_carrier<B: RefBackend>(
         zpx: zpx.to_carrier(ctx),
         zpy: zpy.to_carrier(ctx),
         escaped,
+        period: probe.and_then(|pr| pr.found),
         backend: B::BIT,
     }
 }
@@ -426,6 +526,7 @@ fn run_orbit_gen<B: RefBackend>(
     mut n: u32,
     max_iter: u32,
     ctx: B::Ctx,
+    mut probe: Option<&mut PeriodProbe>,
 ) -> (B, B, B, B, bool) {
     let mut escaped = false;
     let escape2 = ref_escape2(formula);
@@ -451,6 +552,11 @@ fn run_orbit_gen<B: RefBackend>(
         if xv * xv + yv * yv > escape2 {
             escaped = true;
             break;
+        }
+        if let Some(pr) = probe.as_deref_mut() {
+            if pr.step(xv, yv, || CFloatExp { re: zx.to_floatexp(), im: zy.to_floatexp() }) {
+                break;
+            }
         }
     }
     (zx, zy, zpx, zpy, escaped)
@@ -499,7 +605,64 @@ pub fn reference_orbit_t_in(
     let (xh, xl) = split_df64(to_f64(&zx));
     let (yh, yl) = split_df64(to_f64(&zy));
     out.push([xh, yh, xl, yl]); // Z_0
-    let tail = run_orbit(&mut out, bit, zx, zy, zpx, zpy, cx, cy, formula, 0, max_iter, p);
+    let tail = run_orbit(&mut out, bit, zx, zy, zpx, zpy, cx, cy, formula, 0, max_iter, p, None);
+    let len = out.len() as u32;
+    (out, len, tail)
+}
+
+/// [`reference_orbit_t`] that stops where the orbit closes on itself ([`OrbitPeriod`]), for a
+/// view `2^log2_span` across: the returned samples are then `Z_0..=Z_period` and the tail
+/// carries the period. Mandelbrot from `Z_0 = 0` only (the derivative the probe carries is
+/// `d/dc` of `z² + c`); anything else is the plain build.
+#[allow(clippy::too_many_arguments)]
+pub fn reference_orbit_periodic(
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+    log2_span: f64,
+) -> (Vec<[f32; 4]>, u32, OrbitTail) {
+    reference_orbit_periodic_in(crate::backend::selected(), z0x, z0y, cx, cy, formula, max_iter, p, log2_span)
+}
+
+/// [`reference_orbit_periodic`] in an explicitly named backend (see [`reference_orbit_t_in`]).
+#[allow(clippy::too_many_arguments)]
+pub fn reference_orbit_periodic_in(
+    backend: crate::BackendChoice,
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+    log2_span: f64,
+) -> (Vec<[f32; 4]>, u32, OrbitTail) {
+    if formula != formula::MANDELBROT || !z0x.is_zero() || !z0y.is_zero() {
+        return reference_orbit_t_in(backend, z0x, z0y, cx, cy, formula, max_iter, p);
+    }
+    let mut probe = PeriodProbe::new(log2_span);
+    let mut out = Vec::new();
+    out.push([0.0f32; 4]); // Z_0 = 0
+    let zero = BigFloat::from_f64(0.0, p);
+    let tail = run_orbit(
+        &mut out,
+        backend.bit(),
+        zero.clone(),
+        zero.clone(),
+        zero.clone(),
+        zero,
+        cx,
+        cy,
+        formula,
+        0,
+        max_iter,
+        p,
+        Some(&mut probe),
+    );
     let len = out.len() as u32;
     (out, len, tail)
 }
@@ -520,7 +683,9 @@ pub fn extend_reference_orbit(
     p: usize,
 ) -> (Vec<[f32; 4]>, u32, OrbitTail) {
     let n = prefix.len().saturating_sub(1) as u32; // last cached sample is Z_n
-    if tail.escaped || prefix.is_empty() || n >= max_iter {
+    // A periodic orbit is the whole orbit. A caller whose view the period is NOT valid for
+    // clears `tail.period` first, and then this continues the true orbit like any other.
+    if tail.escaped || tail.period.is_some() || prefix.is_empty() || n >= max_iter {
         return (prefix.to_vec(), prefix.len() as u32, tail.clone());
     }
     let mut out = Vec::with_capacity(max_iter as usize + 1);
@@ -541,6 +706,7 @@ pub fn extend_reference_orbit(
         n,
         max_iter,
         p,
+        None,
     );
     let Some(new_tail) = extended else {
         // The prefix was built by a backend this binary does not have. Finishing it in a different
@@ -1458,6 +1624,11 @@ pub fn scoring_len_from_build(
     p: usize,
 ) -> Option<u32> {
     let steps = len.checked_sub(1)?;
+    // A periodic centre never escapes: it is interior to its own minibrot (the period is only
+    // accepted within 2^-38 of a view of the nucleus), which is what the walk would report too.
+    if tail.period.is_some() {
+        return Some(max_iter);
+    }
     if tail.escaped || steps >= max_iter {
         return Some(steps.min(max_iter));
     }
@@ -1484,13 +1655,32 @@ pub fn orbit_length_in(
     p: usize,
     samples: Option<&mut Vec<CFloatExp>>,
 ) -> u32 {
+    orbit_length_probed(backend, z0x, z0y, cx, cy, formula, max_iter, p, samples, None)
+}
+
+/// [`orbit_length_in`] with an optional [`PeriodProbe`]: a walk that finds the orbit closing on
+/// itself stops there and reports `max_iter` — a periodic point never escapes.
+#[allow(clippy::too_many_arguments)]
+fn orbit_length_probed(
+    backend: crate::BackendChoice,
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+    samples: Option<&mut Vec<CFloatExp>>,
+    probe: Option<&mut PeriodProbe>,
+) -> u32 {
     match backend {
         crate::BackendChoice::Astro => {
-            orbit_length_gen::<BigFloat>(z0x, z0y, cx, cy, formula, max_iter, p, samples)
+            orbit_length_gen::<BigFloat>(z0x, z0y, cx, cy, formula, max_iter, p, samples, probe)
         }
         #[cfg(feature = "rug")]
         crate::BackendChoice::Rug => {
             let mut samples = samples;
+            let mut probe = probe;
             match crate::backend_rug::try_orbit_length_inplace(
                 z0x,
                 z0y,
@@ -1500,15 +1690,51 @@ pub fn orbit_length_in(
                 max_iter,
                 p,
                 samples.as_deref_mut(),
+                probe.as_deref_mut(),
             ) {
                 Some(n) => n,
                 // Non-Mandelbrot: the generic loop — allocating per op, but still MPFR.
                 None => {
-                    orbit_length_gen::<rug::Float>(z0x, z0y, cx, cy, formula, max_iter, p, samples)
+                    orbit_length_gen::<rug::Float>(z0x, z0y, cx, cy, formula, max_iter, p, samples, probe)
                 }
             }
         }
     }
+}
+
+/// The centre's deep scoring walk, watching for the orbit to close on itself ([`OrbitPeriod`])
+/// for a view `2^log2_span` across — a minibrot-centred view then stops at one period instead of
+/// walking the whole budget (the pick's walk was 365 s of a 1e10000× render). Mandelbrot from
+/// `Z_0 = 0` only; otherwise the plain walk. Returns the length and whether a period was found.
+#[allow(clippy::too_many_arguments)]
+fn orbit_length_periodic(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+    log2_span: f64,
+    samples: Option<&mut Vec<CFloatExp>>,
+) -> (u32, Option<OrbitPeriod>) {
+    let zero = bf(0.0, p);
+    if formula != formula::MANDELBROT {
+        let n = orbit_length_probed(crate::backend::selected(), &zero, &zero, cx, cy, formula, max_iter, p, samples, None);
+        return (n, None);
+    }
+    let mut probe = PeriodProbe::new(log2_span);
+    let n = orbit_length_probed(
+        crate::backend::selected(),
+        &zero,
+        &zero,
+        cx,
+        cy,
+        formula,
+        max_iter,
+        p,
+        samples,
+        Some(&mut probe),
+    );
+    (n, probe.found)
 }
 
 /// The one scoring-walk loop, generic over the arithmetic backend. The body is the historical
@@ -1528,6 +1754,7 @@ fn orbit_length_gen<B: RefBackend>(
     max_iter: u32,
     p: usize,
     mut samples: Option<&mut Vec<CFloatExp>>,
+    mut probe: Option<&mut PeriodProbe>,
 ) -> u32 {
     let ctx = B::ctx_for(p);
     let mut zx = B::from_carrier(z0x, ctx);
@@ -1561,6 +1788,11 @@ fn orbit_length_gen<B: RefBackend>(
         let (xv, yv) = (zx.to_f64_trunc(), zy.to_f64_trunc());
         if xv * xv + yv * yv > ref_escape2(formula) {
             break;
+        }
+        if let Some(pr) = probe.as_deref_mut() {
+            if pr.step(xv, yv, || CFloatExp { re: zx.to_floatexp(), im: zy.to_floatexp() }) {
+                return max_iter;
+            }
         }
     }
     n
@@ -2107,14 +2339,22 @@ fn pick_pass(
     // 4.6e1105×, ~0.3 s of phase 1 ahead of a ~1.2 s deep walk). A centre that does NOT survive
     // phase 1 escaped inside `quick` steps, so its walk here was short. Results are unchanged:
     // the same walk, recorded by the same engine rule, used only where phase 2 would have run it.
+    //
+    // ⭐A centre whose orbit closes on itself ([`OrbitPeriod`], a minibrot-centred view) stops
+    // there and scores `max_iter`: a periodic point never escapes, so it wins outright, and the
+    // walk costs one period instead of the whole budget.
+    let log2_span = span[0].log2().max(span[1].log2());
     let (scores, centre_deep) = std::thread::scope(|s| {
         let centre = s.spawn(|| {
-            if use_perturb {
-                let (len, samples) =
-                    orbit_length_bf_recorded(&zero, &zero, &cands[0][0], &cands[0][1], formula, max_iter, p);
+            if julia {
+                (score(&cands[0][0], &cands[0][1], max_iter), None)
+            } else if use_perturb {
+                let mut samples = Vec::new();
+                let (len, _) =
+                    orbit_length_periodic(&cands[0][0], &cands[0][1], formula, max_iter, p, log2_span, Some(&mut samples));
                 (len, Some(samples))
             } else {
-                (score(&cands[0][0], &cands[0][1], max_iter), None)
+                (orbit_length_periodic(&cands[0][0], &cands[0][1], formula, max_iter, p, log2_span, None).0, None)
             }
         });
         let scores = par_orbit_scores(&cands, &idxs, quick, julia, &jcx, &jcy, formula, p);

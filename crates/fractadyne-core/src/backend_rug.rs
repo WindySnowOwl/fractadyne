@@ -458,6 +458,7 @@ pub(crate) fn try_run_orbit_inplace(
     mut n: u32,
     max_iter: u32,
     p: usize,
+    mut probe: Option<&mut crate::reference::PeriodProbe>,
 ) -> Option<(BigFloat, BigFloat, bool)> {
     use crate::formula as fam;
     use rug::ops::{AddAssignRound, AssignRound, SubAssignRound, SubFromRound};
@@ -549,6 +550,15 @@ pub(crate) fn try_run_orbit_inplace(
             escaped = true;
             break;
         }
+        if let Some(pr) = probe.as_deref_mut() {
+            let exact = || crate::floatexp::CFloatExp {
+                re: RefBackend::to_floatexp(&zx),
+                im: RefBackend::to_floatexp(&zy),
+            };
+            if pr.step(xv, yv, exact) {
+                break;
+            }
+        }
     }
     Some((zx.to_carrier(ctx), zy.to_carrier(ctx), escaped))
 }
@@ -570,6 +580,7 @@ pub(crate) fn try_orbit_length_inplace(
     max_iter: u32,
     p: usize,
     mut samples: Option<&mut Vec<crate::floatexp::CFloatExp>>,
+    mut probe: Option<&mut crate::reference::PeriodProbe>,
 ) -> Option<u32> {
     use crate::floatexp::CFloatExp;
     use rug::ops::{AddAssignRound, AssignRound, SubAssignRound};
@@ -625,6 +636,12 @@ pub(crate) fn try_orbit_length_inplace(
         let yv = zy.to_f64_trunc();
         if xv * xv + yv * yv > 1.0e12 {
             break;
+        }
+        if let Some(pr) = probe.as_deref_mut() {
+            let exact = || CFloatExp { re: RefBackend::to_floatexp(&zx), im: RefBackend::to_floatexp(&zy) };
+            if pr.step(xv, yv, exact) {
+                return Some(max_iter);
+            }
         }
     }
     Some(n)

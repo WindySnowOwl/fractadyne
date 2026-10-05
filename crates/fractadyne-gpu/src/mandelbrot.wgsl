@@ -1138,6 +1138,13 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             D = fe_add(fe_add(A, fe_scale(fe_mul(B, dc), 2.0)), fe_scale(fe_mul(C, dc2), 3.0));
             iter = iu.sa_skip;
             ref_n = iu.sa_skip;
+            // A PERIODIC reference may hand a skip of exactly its period (`orbit_len − 1`): the
+            // pixel then starts on the last sample, Z_period ≈ 0, and wraps before its first step —
+            // the same exact wrap the end-of-orbit rebase makes (see `OrbitPeriod`).
+            if (ref_n + 1u >= iu.orbit_len) {
+                dz = fe_sub(fe_add(orbit_fe(reference[ref_n]), dz), orbit_fe(reference[0]));
+                ref_n = 0u;
+            }
         }
         // The df32 tail phase (TAIL_DF32_MIN): while `d_now`, δz lives in `dzd` and `dz` is stale.
         var dzd = cset(vec2<f32>(0.0, 0.0), vec2<f32>(0.0, 0.0));
@@ -1229,9 +1236,15 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     // |zfull| < |δz| can hold. Corpus 15's deep dendrite pixels must rebase exactly
                     // at these dips; without the check a valid skip lands past them and the pixel
                     // marches to the reference END, escaping prematurely there (~orbit_len) instead
-                    // of deep — the dendrites vanish. Mirrors the full-step rebase below.
+                    // of deep — the dendrites vanish. Mirrors the full-step rebase below,
+                    // INCLUDING its end-of-orbit arm: a skip may land on the LAST sample
+                    // (`nref + span < orbit_len` allows it), and without the rebase there the next
+                    // full step reads `reference[orbit_len]` — the first BLA node, not an orbit
+                    // sample — into δz. Latent while every reference reaching its end was clamped
+                    // (`partial`) or escaped; a PERIODIC reference (`OrbitPeriod`) wraps at its end
+                    // every period, and every pixel then never escaped.
                     let zfe = fe_add(orbit_fe(reference[nref]), dz);
-                    if (sf_lt(fe_abs_sf(zfe), fe_abs_sf(dz))) {
+                    if (sf_lt(fe_abs_sf(zfe), fe_abs_sf(dz)) || nref + 1u >= iu.orbit_len) {
                         n_rebase = n_rebase + 1u;
                         dz = fe_sub(zfe, orbit_fe(reference[0]));
                         ref_n = 0u;
@@ -1523,6 +1536,12 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             D = fe_add(fe_add(A, fe_scale(fe_mul(B, dcf), 2.0)), fe_scale(fe_mul(C, dc2), 3.0));
             iter = iu.sa_skip;
             ref_n = iu.sa_skip;
+            // A PERIODIC reference may hand a skip of exactly its period: wrap before the first
+            // step (see the floatexp seeding above).
+            if (ref_n + 1u >= iu.orbit_len) {
+                dz = c_sub(c_add(orbit_cdf(reference[ref_n]), dz), orbit_cdf(reference[0]));
+                ref_n = 0u;
+            }
         }
         loop {
             if (iter >= iu.max_iter) { break; }
@@ -2025,6 +2044,12 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             D = fe_add(fe_add(A, fe_scale(fe_mul(B, dcf), 2.0)), fe_scale(fe_mul(C, dc2), 3.0));
             iter = iu.sa_skip;
             ref_n = iu.sa_skip;
+            // A PERIODIC reference may hand a skip of exactly its period: wrap before the first
+            // step (see the floatexp seeding above).
+            if (ref_n + 1u >= iu.orbit_len) {
+                dz = c_sub(c_add(orbit_cdf(reference[ref_n]), dz), orbit_cdf(reference[0]));
+                ref_n = 0u;
+            }
         }
         // Step accounting: this pass's own advance (a first pass counts its SA seed as advanced).
         let iter0 = select(0u, iter, iu.start_iter > 0u);
@@ -2315,6 +2340,11 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
         D = fe_add(fe_add(A, fe_scale(fe_mul(B, dc), 2.0)), fe_scale(fe_mul(C, dc2), 3.0));
         iter = iu.sa_skip;
         ref_n = iu.sa_skip;
+        // A periodic reference's skip may be its period: wrap before the first step.
+        if (ref_n + 1u >= iu.orbit_len) {
+            dz = fe_sub(fe_add(orbit_fe(reference[ref_n]), dz), orbit_fe(reference[0]));
+            ref_n = 0u;
+        }
     }
 
     // Fixed up front from the formula (the single-pass loop assigns it inside each branch, which
@@ -2395,9 +2425,10 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
                 n_bla = n_bla + 1u;
                 // Rebase at the BLA landing: a near-zero orbit dip makes |z_full| ~ |δz|, so the
                 // Zhuoran condition can hold even here. Mirrors the full-step rebase below — see
-                // the corpus-15 dendrite note in fs_iterate.
+                // the corpus-15 dendrite note in fs_iterate — and, as there, at the orbit's
+                // last sample too (a skip may land on it).
                 let zfe = fe_add(orbit_fe(reference[nref]), dz);
-                if (sf_lt(fe_abs_sf(zfe), fe_abs_sf(dz))) {
+                if (sf_lt(fe_abs_sf(zfe), fe_abs_sf(dz)) || nref + 1u >= iu.orbit_len) {
                     n_rebase = n_rebase + 1u;
                     dz = fe_sub(zfe, orbit_fe(reference[0]));
                     ref_n = 0u;

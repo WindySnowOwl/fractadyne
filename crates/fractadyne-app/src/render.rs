@@ -1091,6 +1091,12 @@ fn build_cap(orbit_iter: u32, inp: &RecomputeInputs) -> u32 {
     orbit_iter.min(inp.orbit_len_cap).min(orbit_len_cap())
 }
 
+/// log₂ of the view's larger extent — what a periodic reference is judged against
+/// ([`fractadyne_core::OrbitPeriod::valid_for`]).
+fn log2_view_span(inp: &RecomputeInputs) -> f64 {
+    inp.span.0.log2().max(inp.span.1.log2())
+}
+
 /// Build the orbit of `rp` (to `build_cap`, at reuse-headroom precision). Everything the fresh
 /// build path walks, in one place, so the speculative centre build in [`pick_and_build`] is the
 /// same build by construction.
@@ -1115,6 +1121,12 @@ fn build_orbit(rp: &[fractadyne_core::BigFloat; 2], orbit_iter: u32, inp: &Recom
         // division or functions) with every parameter supplied.
         Some(c) => fc::ir::reference_orbit(&c.formula, &z0x, &z0y, &cx0, &cy0, &c.params, cap, orbit_prec)
             .expect("a perturbable custom formula evaluates in bignum"),
+        // ⭐A minibrot-centred view's orbit closes on itself: the build stops at the period and
+        // the shader wraps (see `OrbitPeriod`), instead of walking the whole cap — at 1e10000×,
+        // 137,396 steps instead of 4.12 million. Julia's orbit starts at the centre, not 0.
+        None if !inp.julia => {
+            fc::reference_orbit_periodic(&z0x, &z0y, &cx0, &cy0, inp.formula, cap, orbit_prec, log2_view_span(inp))
+        }
         None => fc::reference_orbit_t(&z0x, &z0y, &cx0, &cy0, inp.formula, cap, orbit_prec),
     };
     BuiltOrbit { o, len, tail, orbit_prec, ref_ms: t.elapsed().as_secs_f64() * 1000.0 }
@@ -1180,7 +1192,10 @@ fn finish_reference(
     sa_pre: Option<SaPre>,
 ) -> RecomputeResult {
     use fractadyne_core as fc;
-    let partial = !tail.escaped;
+    // A periodic orbit valid for this view is the WHOLE orbit: not partial, so pixels are not
+    // clamped to its length — they wrap at its end, which the period makes exact.
+    let period = tail.period.filter(|pp| pp.valid_for(log2_view_span(inp)));
+    let partial = !tail.escaped && period.is_none();
     // ⚠The trace below used to print `orbit_tail.is_none() && !partial`, which has been
     // HARDCODED FALSE ever since the tail became unconditional (see `orbit_tail` below) — a dead
     // field that read as "this reference never escaped" for every reference in the log. It cost a
@@ -1188,7 +1203,7 @@ fn finish_reference(
     // when it is an orbit that ESCAPED at 626.
     let tail_escaped = tail.escaped;
     // SA is forced back on for a short escaper even in a BLA view — see `sa_short_escaper`.
-    let short_escaper = sa_short_escaper(inp, len, partial);
+    let short_escaper = sa_short_escaper(inp, len, !tail.escaped);
     // Keep the tail even for a COMPLETE (escaped) orbit: it can't be EXTENDED, but it can still be
     // REUSED as-is (same point + orbit) so a rebuild doesn't re-pick a fresh reference — which at
     // extreme depth renders a hair differently each time and makes the view "jump" on zoom.
@@ -1201,8 +1216,13 @@ fn finish_reference(
     let t_sa = Instant::now();
     let mut sa_from = "";
     let mut pre_ms = None;
+    // A periodic orbit repeats past its last sample, so the series may skip up to the period
+    // itself (one more than a truncated orbit allows): the shader wraps a pixel seeded there
+    // before its first step. Without it a nucleus view's skip came out one short (997 for period
+    // 998) and every pixel past it differed from the full-length render.
+    let sa_len = if period.is_some() { len + 1 } else { len };
     let sa = if do_sa || short_escaper {
-        match sa_pre.filter(|pre| pre.max_iter == orbit_iter && fc::series_skip_holds_for(&pre.skip, len)) {
+        match sa_pre.filter(|pre| pre.max_iter == orbit_iter && fc::series_skip_holds_for(&pre.skip, sa_len)) {
             Some(pre) => {
                 sa_from = "overlap";
                 pre_ms = Some(pre.ms);
@@ -1211,7 +1231,7 @@ fn finish_reference(
             None => {
                 sa_from = "walk";
                 let log2_max_dc = sa_log2_max_dc(inp, &rp);
-                fc::series_skip(&rp[0], &rp[1], log2_max_dc, orbit_iter, len, inp.formula, inp.precision)
+                fc::series_skip(&rp[0], &rp[1], log2_max_dc, orbit_iter, sa_len, inp.formula, inp.precision)
             }
         }
     } else {
@@ -1259,10 +1279,13 @@ fn finish_reference(
             "ref",
             format!(
                 "[{}] len={len} iter={orbit_iter} prec={orbit_prec} partial={partial} \
-                 escaped={} sa_skip={} bla_dc_max_log2={bla_dc_max_log2:.1} bla_nodes={} \
+                 escaped={}{} sa_skip={} bla_dc_max_log2={bla_dc_max_log2:.1} bla_nodes={} \
                  | orbit_ms={ref_ms:.0} sa_ms={series_ms:.0} bla_ms={bla_ms:.0}",
                 inp.origin,
                 tail_escaped,
+                period
+                    .map(|pp| format!(" periodic={} (|Z|=2^{:.0}, |D|=2^{:.0})", pp.period, pp.log2_z, pp.log2_d))
+                    .unwrap_or_default(),
                 sa.skip,
                 bla.len(),
             ),
@@ -1328,9 +1351,16 @@ fn try_reuse_reference(inp: &RecomputeInputs) -> Option<RecomputeResult> {
     // build's length cap (LIVE freeze safety) or the GPU buffer. `inp.gpu_iter` (the render
     // budget) still flows to `finish_reference` below unchanged — only the stored length is bounded.
     let target = inp.gpu_iter.min(inp.orbit_len_cap).min(orbit_len_cap());
+    // A period found for another view may not be exact enough for this one (a deeper view has
+    // smaller pixels): then it is not the whole orbit here, and the true orbit continues from the
+    // tail — which is the state at that step, so the extension is the fresh build's.
+    let mut reuse_tail = reuse.tail.clone();
+    if reuse_tail.period.is_some_and(|pp| !pp.valid_for(log2_view_span(inp))) {
+        reuse_tail.period = None;
+    }
     let (o, len, tail) = fc::extend_reference_orbit(
         &reuse.prefix,
-        &reuse.tail,
+        &reuse_tail,
         &cx0,
         &cy0,
         inp.formula,

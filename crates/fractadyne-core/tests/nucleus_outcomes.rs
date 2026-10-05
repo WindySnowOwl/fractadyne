@@ -177,3 +177,54 @@ fn the_ball_search_on_known_cases() {
     assert_eq!(n.period, 1);
     assert!(fc::find_nucleus_by(&at(-1.0, 0.0), 10f64.log2(), fc::formula::MULTIBROT3, 1000, fc::PeriodSearch::Ball).is_none());
 }
+
+/// The period-998 seahorse nucleus, re-solved to `p` bits, and its atom's log₂ size (2^-50.5).
+fn seahorse_nucleus(p: usize) -> ([fc::BigFloat; 2], f64) {
+    let seed = [fc::parse_bf("-0.743643887037151").unwrap(), fc::parse_bf("0.131825904205330").unwrap()];
+    let n = fc::find_nucleus(&seed, 30.0, 0, 100_000).expect("the seahorse nucleus");
+    assert_eq!(n.period, 998);
+    let (rx, ry) = fc::refine_nucleus(&n.cx, &n.cy, 998, 0, p).expect("refine");
+    let atom = fc::nucleus_size(&rx, &ry, 998, 0, p).expect("atom size");
+    ([rx, ry], atom.log2_size)
+}
+
+/// ⭐A reference centred on a nucleus closes on itself at the period: `Z_998 ≈ 0 = Z_0`, so the
+/// build stops there and the orbit to 998 IS the whole orbit (the shader wraps). Its samples are
+/// the plain build's, sample for sample — the period only decides where to stop.
+#[test]
+fn a_nucleus_centred_reference_stops_at_its_period() {
+    let p = 256;
+    let (c, log2_size) = seahorse_nucleus(p);
+    let zero = fc::BigFloat::from_f64(0.0, p);
+    let log2_span = log2_size + 1.3; // the frame the finder would put it in: ~2.5 atoms across
+    let (o, len, tail) = fc::reference_orbit_periodic(&zero, &zero, &c[0], &c[1], 0, 30_000, p, log2_span);
+    let period = tail.period.expect("the nucleus's orbit closes on itself");
+    assert_eq!((period.period, len), (998, 999), "stops at Z_998");
+    assert!(period.valid_for(log2_span));
+    assert!(!tail.escaped);
+    let (full, full_len, _) = fc::reference_orbit_t(&zero, &zero, &c[0], &c[1], 0, 30_000, p);
+    assert_eq!(full_len, 30_001, "the nucleus never escapes");
+    let bits = |s: &[[f32; 4]]| s.iter().map(|q| q.map(f32::to_bits)).collect::<Vec<_>>();
+    assert_eq!(bits(&o), bits(&full[..999]), "the periodic build is the plain build's prefix");
+    // And the 1000th sample of the plain build is Z_1 again, to f64: it really repeats.
+    assert_eq!(bits(&full[999..1000]), bits(&full[1..2]));
+}
+
+/// A point a millionth of the atom away from the nucleus does not close to 2^-38 of the view, so
+/// it is NOT periodic (a wrap there would shift every pixel visibly); nor is the exact nucleus
+/// seen from a view so wide that it is not linear at the period (|D|·span > 2^-8) — there, nuclei
+/// of every large period lie within a pixel of any point.
+#[test]
+fn only_a_close_enough_centre_in_a_narrow_enough_view_is_periodic() {
+    let p = 256;
+    let (c, log2_size) = seahorse_nucleus(p);
+    let zero = fc::BigFloat::from_f64(0.0, p);
+    let log2_span = log2_size + 1.3;
+    let off = fc::FloatExp::from_f64(1.0e-6).mul_pow2(log2_size).to_bf(p);
+    let cx_off = c[0].add(&off, p, astro_float::RoundingMode::ToEven);
+    let (_, len, tail) = fc::reference_orbit_periodic(&zero, &zero, &cx_off, &c[1], 0, 30_000, p, log2_span);
+    assert!(tail.period.is_none(), "1e-6 of an atom off the nucleus: {:?}", tail.period);
+    assert_eq!(len, 30_001, "an interior point runs to the cap");
+    let (_, _, tail) = fc::reference_orbit_periodic(&zero, &zero, &c[0], &c[1], 0, 30_000, p, 0.0);
+    assert!(tail.period.is_none(), "a whole-set view is not linear at period 998: {:?}", tail.period);
+}

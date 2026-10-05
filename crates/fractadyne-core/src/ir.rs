@@ -1916,6 +1916,7 @@ fn run_reference<B: RefBackend + IrField>(
         zpx: m.pool[ZP_RE].to_carrier(ctx),
         zpy: m.pool[ZP_IM].to_carrier(ctx),
         escaped,
+        period: None,
         backend: B::BIT,
     })
 }

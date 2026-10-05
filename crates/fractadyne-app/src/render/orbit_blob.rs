@@ -133,6 +133,12 @@ pub(crate) fn key_id(key: &OrbitKey, prec: usize, point: &[BigFloat; 2]) -> u64 
 /// for no gain. Rebuilding them on load is both simpler and more correct.
 pub(crate) fn encode(res: &RecomputeResult, key: OrbitKey) -> Option<Vec<u8>> {
     let tail = res.orbit_tail.as_ref()?;
+    // A periodic orbit (`OrbitTail::period`) is not written: the format has no field for the
+    // period, and read back without one it would be a partial orbit that clamps every pixel to
+    // one period. It is also the cheap case to rebuild — one period, not the iteration budget.
+    if tail.period.is_some() {
+        return None;
+    }
     // ⚠`orbit_len` is what the header promises and what decode reads back; it must be the
     // sample count actually written, or a decode would refuse its own writer's output.
     if res.orbit.is_empty() || res.orbit.len() != res.orbit_len as usize {
@@ -305,7 +311,7 @@ pub(crate) fn decode(buf: &[u8]) -> Option<DecodedOrbit> {
     let reuse = ReuseRef {
         point: header.point.clone(),
         prefix: std::sync::Arc::new(orbit),
-        tail: fractadyne_core::OrbitTail { zx, zy, zpx, zpy, escaped, backend: tail_backend },
+        tail: fractadyne_core::OrbitTail { zx, zy, zpx, zpy, escaped, period: None, backend: tail_backend },
         prec: header.prec,
     };
     Some(DecodedOrbit { header, reuse })

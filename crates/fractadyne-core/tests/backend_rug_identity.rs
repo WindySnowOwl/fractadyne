@@ -403,3 +403,23 @@ fn every_backend_counts_its_reference_steps() {
         assert!(added >= 4 * batch, "{backend:?} candidate walk: 5,000 steps added only {added}");
     }
 }
+
+/// A periodic build (`reference_orbit_periodic_in`) stops at the same step in both backends, with
+/// byte-identical samples: the probe watches each backend's own loop (the MPFR in-place loop is
+/// separate code), and a period found in one but not the other would make a render depend on
+/// which arithmetic built its reference. The period-998 seahorse nucleus, in a view ~2.5 atoms wide.
+#[test]
+fn a_periodic_build_is_backend_identical() {
+    let p = 256;
+    let seed = [fc::parse_bf("-0.743643887037151").unwrap(), fc::parse_bf("0.131825904205330").unwrap()];
+    let n = fc::find_nucleus(&seed, 30.0, 0, 100_000).expect("the seahorse nucleus");
+    let (cx, cy) = fc::refine_nucleus(&n.cx, &n.cy, n.period, 0, p).expect("refine");
+    let log2_span = fc::nucleus_size(&cx, &cy, n.period, 0, p).expect("atom").log2_size + 1.3;
+    let z0 = fc::BigFloat::from_f64(0.0, p);
+    let (a, la, ta) = fc::reference_orbit_periodic_in(BackendChoice::Astro, &z0, &z0, &cx, &cy, 0, 30_000, p, log2_span);
+    let (r, lr, tr) = fc::reference_orbit_periodic_in(BackendChoice::Rug, &z0, &z0, &cx, &cy, 0, 30_000, p, log2_span);
+    assert_eq!((la, lr), (999, 999), "both stop at Z_998");
+    assert_eq!(ta.period.map(|q| q.period), Some(998));
+    assert_eq!(tr.period.map(|q| q.period), Some(998));
+    assert_eq!(bits(&a), bits(&r), "byte-identical samples");
+}

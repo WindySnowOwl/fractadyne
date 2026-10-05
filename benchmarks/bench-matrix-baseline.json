@@ -6,10 +6,10 @@
     "color-decomposition": {
       "mode": 0,
       "sa_skip": 0,
-      "orbit_len": 15001,
+      "orbit_len": 8008,
       "eff_iter": 15000,
       "counters": [
-        1199455,
+        1346911,
         0,
         0,
         0,
@@ -21,10 +21,10 @@
     "color-smooth": {
       "mode": 0,
       "sa_skip": 7954,
-      "orbit_len": 15001,
+      "orbit_len": 8008,
       "eff_iter": 15000,
       "counters": [
-        1200237,
+        1347693,
         0,
         0,
         0,
@@ -36,10 +36,10 @@
     "color-stripe": {
       "mode": 0,
       "sa_skip": 0,
-      "orbit_len": 15001,
+      "orbit_len": 8008,
       "eff_iter": 15000,
       "counters": [
-        1199455,
+        1346911,
         0,
         0,
         0,
@@ -51,10 +51,10 @@
     "color-trap": {
       "mode": 0,
       "sa_skip": 0,
-      "orbit_len": 15001,
+      "orbit_len": 8008,
       "eff_iter": 15000,
       "counters": [
-        1199455,
+        1346911,
         0,
         0,
         0,
@@ -81,10 +81,10 @@
     "df32-1e20": {
       "mode": 0,
       "sa_skip": 7954,
-      "orbit_len": 15001,
+      "orbit_len": 8008,
       "eff_iter": 15000,
       "counters": [
-        1200237,
+        1347693,
         0,
         0,
         0,
@@ -144,7 +144,7 @@
       "orbit_len": 30001,
       "eff_iter": 30000,
       "counters": [
-        1016521,
+        1020516,
         0,
         0,
         39672413,
@@ -159,7 +159,7 @@
       "orbit_len": 30001,
       "eff_iter": 30000,
       "counters": [
-        1016521,
+        1020516,
         0,
         0,
         39672413,
