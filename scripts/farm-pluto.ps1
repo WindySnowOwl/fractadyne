@@ -210,6 +210,17 @@ if ($Linux -and $LinuxBuild) {
     Write-Host "  $(if ($s) { "$($s.state), exit $($s.exit): $($s.detail) - $($s.build)" } else { 'no result in 40 min' })"
     $o = Join-Path $Share "field\linux\results\$id\output.txt"
     if (Test-Path -LiteralPath $o) { Get-Content -LiteralPath $o | Select-Object -Last 6 | ForEach-Object { "    $_" } }
+    # The watcher names its build in its heartbeat at its NEXT poll (5 s): wait for that, or a run
+    # started straight after this one is refused by its own check for the build just replaced.
+    if ($s -and $s.state -eq "done" -and $lw) {
+        $until = (Get-Date).AddSeconds(30)
+        do {
+            Start-Sleep -Seconds 2
+            $w2 = $null
+            try { $w2 = Get-Content -LiteralPath $lw.FullName -Raw | ConvertFrom-Json } catch { }
+        } while ((Get-Date) -lt $until -and ([string]$w2.build) -notmatch "g$sha[0-9a-f]*\)$")
+        Write-Host "  the watcher now runs: $($w2.build)"
+    }
     exit $(if ($s -and $s.state -eq "done") { 0 } else { 1 })
 }
 if ($Farmtest) {

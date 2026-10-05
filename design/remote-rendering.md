@@ -1,6 +1,6 @@
 # Remote rendering — design
 
-Status: **Phases 0–3 built (2026-10-04, branch `feat/remote-rendering`), each with its evidence in §12; Phase 4 not started. Every decision in §13 taken by the user on 2026-10-03.**
+Status: **Phases 0–4 built (2026-10-04/05, branch `feat/remote-rendering`), each with its evidence in §12; Phase 4's QR code left out on purpose. Every decision in §13 taken by the user on 2026-10-03.**
 Written 2026-10-03 at the user's request ("design an implementation that is secure, performant,
 scalable and friendly"). Integration facts are from this tree at `3201b74`; every cost figure is
 quoted from code, logs or an existing design doc, with its source. The user's decisions, and the
@@ -952,8 +952,35 @@ read 294 Mb/s through .74, 760–894 Mb/s through .38 on earlier runs).
 farm's one secret, and a QR code is made to be photographed — it would put the key in phone photo
 libraries and their cloud backups. Moving it is covered without that: the controller window's
 Copy, its key file (`<config>/farm/farm-key.txt`), and the client's paste field; and it would
-have added a crate. **Not built:** the Linux client on the RX 6800 XT box (needs the user's go-ahead
-to queue).
+have added a crate.
+
+✅**The Linux client on the RX 6800 XT box (2026-10-05), built on the machine itself.** No field
+agent runs under Linux and this machine has no WSL, so `publish-share.ps1 -Bundle` puts a git bundle
+of HEAD on the share (⛔not the source tarball: its build is stamped `<sha>-archive`, which the
+exact-commit gate refuses), and `scripts/farm-linux.sh` on the Linux machine checks the
+prerequisites (printing the install commands), builds the published commit, and `watch` serves the
+requests `farm-pluto.ps1 -Linux` files: a render client, `--farmtest`, `--discover`, or a rebuild
+(`-LinuxBuild`, ~46 s incremental) — every field checked, a throw-away config per run, the key
+removed before anything runs. Found on the way, each fixed: ⛔git abbreviates a sha to what is
+unique in ITS repository — one commit was `29988ec` on Windows and `29988ecf` in the Linux clone, and
+the farm compared stamps exactly (stamps are now the full sha cut to 7, and the farm compares by
+prefix: `same_commit`); the controller called itself "this machine" (Linux does not export
+`HOSTNAME` to a program; the kernel's hostname now); the farmtest's client D ran `--when-idle`,
+which is Windows-only — refused elsewhere, rightly, as a client that cannot tell must not pretend
+to be idle — so D waited for nothing (the idle rule now runs on Windows only and is NOT JUDGED
+elsewhere); and the apt install failed on stale package lists (`check` now prints `apt-get update`
+first). Evidence: `--farmtest` on Linux 20 of 20 judged checks in 4.9 s (process start-up is cheap
+there); a Windows controller with a local client and the Linux client: the Linux client found the
+controller over the LAN with `--discover`, 19 frames in 9.2 s; the e4000 gate with sharing: an orbit
+built on Windows served a Linux render, taken mid-build, 57.9 s from job start.
+⭐⭐**A matching probe does not mean matching frames.** RADV's probe was pixel-identical to the RTX
+3080's at 1e30, yet its frames of the gate tour differed on up to 0.5% of the pixels, and at
+2.37e4000 on up to 6.6% (the same card under the Windows AMD driver: up to 26%, its probe 1,126 px
+apart). The probe can show that two GPUs differ, never that they agree. So a GPU class is now the
+adapter, the driver AND the probe (`gpu_class`, kept by machine name): another GPU or driver is
+always another class, the log says so when the probe matched, and with the farmtest's tour the held
+shot stayed on one class. Not built: `--when-idle` on Linux (no portable input-idle API; under
+Wayland it is the compositor's).
 
 Documentation per release: SECURITY.md threat-model paragraph, ARCHITECTURE.md §9/§13, TOURS.md
 is regenerated (the flags), CHANGELOG entry, `help.rs`.
