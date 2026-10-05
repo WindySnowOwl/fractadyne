@@ -551,7 +551,25 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
                 }
             },
         };
-        match fractadyne_core::find_nucleus(&center, mag_l2, formula, 100_000) {
+        let search = match val("--period-search").map(String::as_str) {
+            None | Some("closest") => fractadyne_core::PeriodSearch::ClosestApproach,
+            Some("ball") => fractadyne_core::PeriodSearch::Ball,
+            Some(other) => {
+                eprintln!("fractadyne: --period-search: \"{other}\" is not one of: closest, ball.");
+                crate::exit(2);
+            }
+        };
+        let max_period = match val("--max-period") {
+            None => 100_000,
+            Some(v) => match v.parse::<u32>() {
+                Ok(n) if n > 0 => n,
+                _ => {
+                    eprintln!("fractadyne: --max-period: cannot read \"{v}\" as a period.");
+                    crate::exit(2);
+                }
+            },
+        };
+        match fractadyne_core::find_nucleus_by(&center, mag_l2, formula, max_period, search) {
             Some(n) => {
                 println!(
                     "period {}\ncenter_x {}\ncenter_y {}",

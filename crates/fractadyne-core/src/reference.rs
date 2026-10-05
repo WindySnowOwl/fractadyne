@@ -2586,12 +2586,92 @@ pub fn find_nucleus(
     formula: u32,
     max_period: u32,
 ) -> Option<Nucleus> {
+    find_nucleus_by(center, log2_mag, formula, max_period, PeriodSearch::ClosestApproach)
+}
+
+/// How [`find_nucleus_by`] chooses the period it Newton-solves for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PeriodSearch {
+    /// The iteration at which the critical orbit from the view CENTRE comes closest to 0: the
+    /// atom domain that encloses the centre. What the in-app finder uses, since a user looking
+    /// at a minibrot is inside its domain.
+    ClosestApproach,
+    /// The first iteration at which a disc of the view's radius, carried forward with ball
+    /// arithmetic, can contain 0: the lowest period with a nucleus at or near the view.
+    /// ⭐On a deep zoom path the centre stays inside a shallow minibrot's atom domain long after
+    /// that nucleus has left the view, so the closest approach keeps naming it and the runaway
+    /// check rightly rejects it (measured: a path to 1e60206× named the same period-953
+    /// minibrot from 1e2× to 1e30× and nothing from 1e40×). The ball asks about the view
+    /// itself. ⚠"Near", not "in": ball arithmetic over-approximates, so the disc's image can
+    /// reach 0 for a nucleus a few view widths OUTSIDE it (measured on that path: 3.6 widths at
+    /// 1e50×, 12 widths at 1e10× — the latter past the runaway check, so `None`). Quadratic
+    /// Mandelbrot only.
+    Ball,
+}
+
+/// First `n ≤ max` at which the image of the disc `|c − center| ≤ 2^log2_radius` under the
+/// `n`-th iterate can contain 0 (the ball method): the lowest period that can have a nucleus in
+/// the disc. Ball arithmetic for `z² + c`: a disc of radius `R` about `Z` maps into one of
+/// radius `(2|Z| + R)·R + r` about `Z² + c`, which bounds `|2Zδ + δ² + ε|` for `|δ| ≤ R`,
+/// `|ε| ≤ r`. Radii are carried as log2, so a deep view's (2^-200,000) does not underflow, and
+/// `|Z|` is read with [`crate::bignum::log2_abs`], exact to f64 resolution at any depth: the test
+/// `|Z| ≤ R` decides the answer, and an octave of slop there would decide it wrongly. `None`
+/// once the whole disc has escaped, or at `max`.
+fn detect_period_ball(cx: &BigFloat, cy: &BigFloat, max: u32, log2_radius: f64, p: usize) -> Option<u32> {
+    // log2(2^a + 2^b), with -∞ as the log of 0.
+    fn log2_add(a: f64, b: f64) -> f64 {
+        let (hi, lo) = if a >= b { (a, b) } else { (b, a) };
+        if lo == f64::NEG_INFINITY {
+            return hi;
+        }
+        hi + (1.0 + (lo - hi).exp2()).log2()
+    }
+    fn log2_mag(x: &BigFloat, y: &BigFloat) -> f64 {
+        let (lx, ly) = (crate::bignum::log2_abs(x), crate::bignum::log2_abs(y));
+        0.5 * log2_add(2.0 * lx, 2.0 * ly)
+    }
+    let mut zx = bf(0.0, p);
+    let mut zy = bf(0.0, p);
+    let mut lz = f64::NEG_INFINITY; // log2|Z_0|
+    let mut lr = f64::NEG_INFINITY; // log2 R_0: the disc starts as the point 0
+    for n in 1..=max.max(1) {
+        lr = log2_add(log2_add(1.0 + lz, lr) + lr, log2_radius);
+        let (nx, ny) = step_bf(&zx, &zy, cx, cy, formula::MANDELBROT, p);
+        zx = nx;
+        zy = ny;
+        lz = log2_mag(&zx, &zy);
+        if lz <= lr {
+            return Some(n);
+        }
+        // Here R < |Z|; once |Z| − R > 2 every point of the disc has escaped.
+        if lz > 1.0 && lz.exp2() - lr.exp2() > 2.0 {
+            return None;
+        }
+    }
+    None
+}
+
+/// [`find_nucleus`], choosing how the period is found: see [`PeriodSearch`].
+pub fn find_nucleus_by(
+    center: &[BigFloat; 2],
+    log2_mag: f64,
+    formula: u32,
+    max_period: u32,
+    search: PeriodSearch,
+) -> Option<Nucleus> {
     let p = precision_for_octaves(log2_mag.max(0.0).ceil() as u64);
     let k = formula_power(formula)?;
-    let p_est = detect_period(&center[0], &center[1], formula, max_period, p)?;
 
     // Approx view width in complex units, as a log2 (`span = 3 / mag`).
     let log2_span = 3.0f64.log2() - log2_mag.max(0.0);
+    let p_est = match search {
+        PeriodSearch::ClosestApproach => detect_period(&center[0], &center[1], formula, max_period, p)?,
+        PeriodSearch::Ball if formula == formula::MANDELBROT => {
+            // The disc that covers the view: half the span.
+            detect_period_ball(&center[0], &center[1], max_period, log2_span - 1.0, p)?
+        }
+        PeriodSearch::Ball => return None,
+    };
     let tol_log2 = log2_span + 1.0e-9f64.log2();
     let one = bf(1.0, p);
     let kf = bf(k as f64, p);

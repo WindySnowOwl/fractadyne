@@ -133,3 +133,47 @@ fn shallow_behaviour_is_unchanged_and_a_perfect_seed_converges_in_place() {
         .expect("re-solving from the nucleus itself must not be rejected as a runaway");
     assert_eq!(again.period, 3);
 }
+
+/// ⭐`PeriodSearch::Ball` answers "which minibrot is at this view", which the closest-approach
+/// search cannot on a deep zoom path: the path to the 9.98e60205× spiral
+/// (`validation/spiral-9.98e60205.fdn`) keeps its centre inside the period-953 minibrot's atom
+/// domain long after that nucleus has left the view, so closest approach names 953 and the
+/// runaway check rejects it. Measured 2026-10-05 at this 1e50× view (the path's centre cut to
+/// 80 digits): closest approach → None; the ball → the period-2066 minibrot, 3.6 view widths
+/// from the centre (the ball over-approximates: "near the view", not "in it").
+#[test]
+fn the_ball_search_finds_the_minibrot_in_a_deep_path_view() {
+    let seed = [
+        fc::parse_bf("-2.8041054305504546698407770028983979273643258419006230007410381499044388400475119e-2").unwrap(),
+        fc::parse_bf("6.9489275389965238589299433949896728803911499016379785761365308725043502422306740e-1").unwrap(),
+    ];
+    let l2 = 50.0 * std::f64::consts::LOG2_10;
+    assert!(
+        fc::find_nucleus(&seed, l2, 0, 100_000).is_none(),
+        "closest approach at this view names the period-953 minibrot, whose nucleus is outside it"
+    );
+    let n = fc::find_nucleus_by(&seed, l2, 0, 100_000, fc::PeriodSearch::Ball)
+        .expect("the ball search finds the minibrot in the view");
+    assert_eq!(n.period, 2066, "the path's minibrot in this view has period 2066");
+    // Near the view: 3.6 spans (3/mag) from the centre, measured; the runaway bound is 8.
+    let p = fc::precision_for_octaves(l2.ceil() as u64);
+    let off = (fc::sub_f64(&n.cx, &seed[0], p).powi(2) + fc::sub_f64(&n.cy, &seed[1], p).powi(2)).sqrt();
+    let spans = off / (3.0 * (-l2).exp2());
+    assert!((3.0..4.5).contains(&spans), "the nucleus is {spans:.2} view widths from the centre (measured 3.6)");
+    // And it is a real nucleus at its own scale: the atom is 2^-320.7 wide (it frames at 1e96.5×).
+    let atom = fc::nucleus_size(&n.cx, &n.cy, n.period, 0, p).expect("atom size");
+    assert!((atom.log2_size + 320.67).abs() < 0.05, "atom 2^{:.3}", atom.log2_size);
+}
+
+/// The ball's own arithmetic on cases with a known answer: a view centred on the period-2 nucleus
+/// (-1) finds period 2, a view that contains 0 finds period 1, and the ball refuses a family it
+/// has no bound for (it is written for `z² + c`) rather than answer with the wrong one.
+#[test]
+fn the_ball_search_on_known_cases() {
+    let at = |x: f64, y: f64| [fc::BigFloat::from_f64(x, 128), fc::BigFloat::from_f64(y, 128)];
+    let n = fc::find_nucleus_by(&at(-1.0, 0.0), 10f64.log2(), 0, 1000, fc::PeriodSearch::Ball).expect("period 2");
+    assert_eq!(n.period, 2);
+    let n = fc::find_nucleus_by(&at(0.1, 0.05), 4f64.log2(), 0, 1000, fc::PeriodSearch::Ball).expect("period 1");
+    assert_eq!(n.period, 1);
+    assert!(fc::find_nucleus_by(&at(-1.0, 0.0), 10f64.log2(), fc::formula::MULTIBROT3, 1000, fc::PeriodSearch::Ball).is_none());
+}
