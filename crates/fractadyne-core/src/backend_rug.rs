@@ -251,9 +251,9 @@ mod tests {
     /// backend would hand a benchmark a different nucleus depending on the build.
     #[test]
     fn the_finder_passes_are_bit_identical_to_astro_float() {
-        // 320 bits runs the one-core passes; 9,000 is above `PAR_MIN_BITS`, where the Newton pass
+        // 320 bits runs the one-core passes; 17,000 is above `PAR_MIN_BITS`, where the Newton pass
         // runs its seven products on seven cores — the results must not move either way.
-        for p in [320usize, 9_000] {
+        for p in [320usize, 17_000] {
             finder_passes_identical_at(p);
         }
     }
@@ -504,10 +504,14 @@ mod tests {
 // between steps (a sleeping thread takes tens of microseconds to wake on Windows, a spinning one
 // well under one); the build is the only thing those cores are doing.
 
-/// Below this working width a product costs less than handing it to another core (measured: see
-/// `par_crossover` in the tests). `FRACTADYNE_ORBIT_THREADS=1` turns the split off (A/B runs);
-/// `FRACTADYNE_ORBIT_PAR_MIN_BITS` moves the threshold (measuring the crossover).
-const PAR_MIN_BITS: u32 = 8192;
+/// Below this working width splitting does not pay. In isolation (`par_crossover` in the tests) the
+/// crossover is between 4,096 bits (0.85x) and 8,192 (1.2x); in the app it is higher, because a
+/// render's build runs BESIDE the pick's walk of the same orbit and its all-core phase 1, and the
+/// workers then share cores: measured on a `--render` (kit lane, two reps each), the 1e3000
+/// minibrot at 10,158 bits built its orbit in 0.9-1.1 s split against 0.6-0.8 s not, while the
+/// 1e10000 one at 33,292 bits took 9.2-10.1 s against 13.8-14.2 s. `FRACTADYNE_ORBIT_THREADS=1`
+/// turns the split off (A/B runs); `FRACTADYNE_ORBIT_PAR_MIN_BITS` moves the threshold.
+const PAR_MIN_BITS: u32 = 16_384;
 
 fn par_enabled(ctx: u32) -> bool {
     static CFG: std::sync::OnceLock<(bool, u32)> = std::sync::OnceLock::new();

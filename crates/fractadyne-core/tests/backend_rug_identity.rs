@@ -429,7 +429,7 @@ fn a_periodic_build_is_backend_identical() {
 /// bits, below the threshold, so without this one the parallel path would never be compared.
 #[test]
 fn the_three_core_build_is_byte_identical_to_astro_float() {
-    let p = 9_000;
+    let p = 17_000;
     let z0 = fc::BigFloat::from_f64(0.0, p);
     for (sx, sy) in [("-0.7436438870371587", "0.1318259042053122"), ("-0.1", "0.65"), ("0.3", "0.5")] {
         let cx = fc::parse_bf_prec(sx, p).unwrap();
