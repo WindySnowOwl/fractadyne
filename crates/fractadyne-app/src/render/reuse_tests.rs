@@ -28,6 +28,7 @@ fn inputs_for(cx: &str, cy: &str, log2mag: f64, gpu_iter: u32, reuse: Option<Reu
         stripe_freq: 1.0,
         trap_type: 0,
         reuse,
+        stop_at: None,
         spawn_orbit_id: 0,
     }
 }

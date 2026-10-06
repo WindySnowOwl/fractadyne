@@ -413,6 +413,10 @@ pub(crate) struct RecomputeInputs {
     /// A prior reference the worker may extend instead of rebuilding (deeper zoom, same in-view
     /// point). `None` forces a fresh best-reference pick + full orbit build.
     reuse: Option<ReuseRef>,
+    /// A cap the build obeys if it is LOWERED while the build runs (Mandelbrot builds only; see
+    /// `fractadyne_core::reference_orbit_periodic_until`). Only the early `--render` reference
+    /// carries one: it starts before the device's orbit cap is known.
+    stop_at: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>,
     /// The view's `orbit_id` when this build was SPAWNED — its staleness stamp. A deep build runs
     /// for seconds while other builders (lookahead, hold prefetch) finish and install, so a result
     /// can land against a reference that is already BETTER than the one it started from. Measured
@@ -797,6 +801,9 @@ struct EarlyRef {
     inputs: RecomputeInputs,
     handle: std::thread::JoinHandle<RecomputeResult>,
     started: Instant,
+    /// The running build's cap, lowered when the device's turns out smaller (see
+    /// `take_early_reference`).
+    stop_at: std::sync::Arc<std::sync::atomic::AtomicU32>,
 }
 
 static EARLY_REF: std::sync::Mutex<Option<EarlyRef>> = std::sync::Mutex::new(None);
@@ -809,10 +816,18 @@ static EARLY_REF: std::sync::Mutex<Option<EarlyRef>> = std::sync::Mutex::new(Non
 /// the field that differed, since a silent miss would just look like a slower render.
 fn take_early_reference(inputs: &RecomputeInputs) -> Option<RecomputeResult> {
     let early = EARLY_REF.lock().ok()?.take()?;
-    let why = early_inputs_differ(&early.inputs, inputs).or_else(|| {
-        (build_cap(inputs.gpu_iter, inputs) != inputs.gpu_iter.min(inputs.orbit_len_cap))
-            .then_some("orbit-length cap (the device's binds)")
-    });
+    let why = early_inputs_differ(&early.inputs, inputs);
+    // The device's orbit cap was unknown when the early build started. If it binds, TELL the
+    // running build (it stops after that many steps, exactly where a build capped there stops)
+    // instead of discarding it: a periodic or escaping orbit usually ends long before either cap,
+    // and a discard built the same reference twice (a 1e30000 minibrot: 220 s, twice, in
+    // parallel). A build already past the cap, or a family the cap cannot reach (it is watched by
+    // the Mandelbrot probe), still comes back too long, and is discarded below.
+    let device_cap = build_cap(inputs.gpu_iter, inputs);
+    let device_binds = device_cap != inputs.gpu_iter.min(inputs.orbit_len_cap);
+    if why.is_none() && device_binds {
+        early.stop_at.store(device_cap, std::sync::atomic::Ordering::Relaxed);
+    }
     if let Some(what) = why {
         crate::diag::log_line(
             "ref",
@@ -823,6 +838,16 @@ fn take_early_reference(inputs: &RecomputeInputs) -> Option<RecomputeResult> {
     let asked = early.started.elapsed().as_secs_f64() * 1000.0;
     let t = Instant::now();
     let res = early.handle.join().ok()?;
+    if device_binds && res.orbit_len > device_cap.saturating_add(1) {
+        crate::diag::log_line(
+            "ref",
+            &format!(
+                "early reference DISCARDED — {} samples, past the device's orbit cap {device_cap}; building fresh",
+                res.orbit_len
+            ),
+        );
+        return None;
+    }
     crate::diag::log_line(
         "ref",
         &format!(
@@ -888,16 +913,18 @@ impl FractadyneApp {
             return;
         }
         let (vp, julia) = (&self.viewport, self.julia_mode);
-        let (Some(inputs), Some(copy)) =
+        let (Some(mut inputs), Some(copy)) =
             (self.export_fresh_reference_inputs(vp, julia), self.export_fresh_reference_inputs(vp, julia))
         else {
             return;
         };
+        let stop_at = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(u32::MAX));
+        inputs.stop_at = Some(stop_at.clone());
         let spawned = std::thread::Builder::new()
             .name("early-reference".into())
             .spawn(move || recompute_worker(inputs));
         if let (Ok(handle), Ok(mut slot)) = (spawned, EARLY_REF.lock()) {
-            *slot = Some(EarlyRef { inputs: copy, handle, started: Instant::now() });
+            *slot = Some(EarlyRef { inputs: copy, handle, started: Instant::now(), stop_at });
             crate::diag::log_line("ref", "early reference build started before the window and GPU (--render)");
         }
     }
@@ -1124,9 +1151,17 @@ fn build_orbit(rp: &[fractadyne_core::BigFloat; 2], orbit_iter: u32, inp: &Recom
         // ⭐A minibrot-centred view's orbit closes on itself: the build stops at the period and
         // the shader wraps (see `OrbitPeriod`), instead of walking the whole cap — at 1e10000×,
         // 137,396 steps instead of 4.12 million. Julia's orbit starts at the centre, not 0.
-        None if !inp.julia => {
-            fc::reference_orbit_periodic(&z0x, &z0y, &cx0, &cy0, inp.formula, cap, orbit_prec, log2_view_span(inp))
-        }
+        None if !inp.julia => fc::reference_orbit_periodic_until(
+            &z0x,
+            &z0y,
+            &cx0,
+            &cy0,
+            inp.formula,
+            cap,
+            orbit_prec,
+            log2_view_span(inp),
+            inp.stop_at.as_deref(),
+        ),
         None => fc::reference_orbit_t(&z0x, &z0y, &cx0, &cy0, inp.formula, cap, orbit_prec),
     };
     BuiltOrbit { o, len, tail, orbit_prec, ref_ms: t.elapsed().as_secs_f64() * 1000.0 }
@@ -2390,6 +2425,7 @@ impl FractadyneApp {
                 stripe_freq: self.coloring.stripe_freq as f64,
                 trap_type: self.coloring.trap_type as u32,
                 reuse,
+                stop_at: None,
                 spawn_orbit_id: self.ref_cache[0].orbit_id,
             };
             let (tx, rx) = std::sync::mpsc::channel();
@@ -2667,6 +2703,7 @@ impl FractadyneApp {
             stripe_freq: self.coloring.stripe_freq as f64,
             trap_type: self.coloring.trap_type as u32,
             reuse,
+            stop_at: None,
             spawn_orbit_id: self.ref_cache[0].orbit_id,
         };
         if crate::diag::trace_on("ref") {
@@ -2960,6 +2997,7 @@ impl FractadyneApp {
             // ⭐The plumbing and the gate both exist, so flipping this is a one-line experiment
             // with a check standing under it — see `selfcheck_reference_reuse`.
             reuse: None,
+            stop_at: None,
             spawn_orbit_id: 0, // export never installs into a live cache
         }
     }
@@ -8524,6 +8562,7 @@ impl FractadyneApp {
                     stripe_freq: self.coloring.stripe_freq as f64,
                     trap_type: self.coloring.trap_type as u32,
                     reuse,
+                    stop_at: None,
                     spawn_orbit_id: self.ref_cache[vi].orbit_id,
                 };
                 // Anti-churn backstop: never respawn more than ~60×/s (spaced ≥ 16 ms). The wider

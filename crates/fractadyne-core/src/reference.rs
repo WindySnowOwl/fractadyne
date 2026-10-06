@@ -72,17 +72,19 @@ impl OrbitPeriod {
 /// `D_n = dZ_n/dc` in floatexp beside the bignum walk. Fed each new `Z_n` as the loop's own `f64`
 /// view; it asks for the exact extended-range value only when that view is too small to trust
 /// (a near-nucleus dip, which is exactly where the decision is made).
-pub(crate) struct PeriodProbe {
+pub(crate) struct PeriodProbe<'a> {
     log2_span: f64,
     z: CFloatExp,
     d: CFloatExp,
     n: u32,
+    /// A cap that can be LOWERED while the build runs (see [`reference_orbit_periodic_until`]).
+    stop_at: Option<&'a std::sync::atomic::AtomicU32>,
     pub(crate) found: Option<OrbitPeriod>,
 }
 
-impl PeriodProbe {
+impl<'a> PeriodProbe<'a> {
     pub(crate) fn new(log2_span: f64) -> Self {
-        PeriodProbe { log2_span, z: CFloatExp::ZERO, d: CFloatExp::ZERO, n: 0, found: None }
+        PeriodProbe { log2_span, z: CFloatExp::ZERO, d: CFloatExp::ZERO, n: 0, stop_at: None, found: None }
     }
 
     /// One step: `Z_{n+1}` was just computed; `(xv, yv)` is its truncated `f64` view and `exact()`
@@ -93,6 +95,10 @@ impl PeriodProbe {
         let one = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
         self.d = (self.z * self.d).mul_f64(2.0) + one;
         self.n += 1;
+        // Told to stop here: exactly where a build with this cap would have stopped (no period).
+        if self.stop_at.is_some_and(|s| self.n >= s.load(std::sync::atomic::Ordering::Relaxed)) {
+            return true;
+        }
         let big = xv.abs().max(yv.abs());
         // A closing step needs |Z| < 2^-46 (linear ≤ -8, then 38 more octaves): anything larger
         // is ruled out from the f64 view alone, which keeps the common step to the D update.
@@ -398,7 +404,7 @@ fn run_orbit(
     n: u32,
     max_iter: u32,
     p: usize,
-    probe: Option<&mut PeriodProbe>,
+    probe: Option<&mut PeriodProbe<'_>>,
 ) -> OrbitTail {
     dispatch_orbit(bit, out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe)
         .expect("a BackendChoice variant only exists when its backend is compiled in")
@@ -425,7 +431,7 @@ fn dispatch_orbit(
     n: u32,
     max_iter: u32,
     p: usize,
-    probe: Option<&mut PeriodProbe>,
+    probe: Option<&mut PeriodProbe<'_>>,
 ) -> Option<OrbitTail> {
     match bit {
         0 => Some(run_orbit_carrier::<BigFloat>(out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe)),
@@ -483,7 +489,7 @@ fn run_orbit_carrier<B: RefBackend>(
     n: u32,
     max_iter: u32,
     p: usize,
-    mut probe: Option<&mut PeriodProbe>,
+    mut probe: Option<&mut PeriodProbe<'_>>,
 ) -> OrbitTail {
     let ctx = B::ctx_for(p);
     let (bzx, bzy) = (B::from_carrier(&zx, ctx), B::from_carrier(&zy, ctx));
@@ -526,7 +532,7 @@ fn run_orbit_gen<B: RefBackend>(
     mut n: u32,
     max_iter: u32,
     ctx: B::Ctx,
-    mut probe: Option<&mut PeriodProbe>,
+    mut probe: Option<&mut PeriodProbe<'_>>,
 ) -> (B, B, B, B, bool) {
     let mut escaped = false;
     let escape2 = ref_escape2(formula);
@@ -641,10 +647,49 @@ pub fn reference_orbit_periodic_in(
     p: usize,
     log2_span: f64,
 ) -> (Vec<[f32; 4]>, u32, OrbitTail) {
+    reference_orbit_periodic_until_in(backend, z0x, z0y, cx, cy, formula, max_iter, p, log2_span, None)
+}
+
+/// [`reference_orbit_periodic`] whose cap can be lowered WHILE it runs: the build stops after
+/// `stop_at` steps if that comes first, exactly where a build capped there stops. A `--render`
+/// starts its reference before the GPU exists and so before it knows the device's orbit cap; when
+/// that cap turns out smaller, the running build is told it rather than discarded and built again
+/// (a 1e30000 minibrot built its 220 s reference twice, in parallel). Mandelbrot from `Z_0 = 0`
+/// only — the probe is what watches the cap; other builds ignore it.
+#[allow(clippy::too_many_arguments)]
+pub fn reference_orbit_periodic_until(
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+    log2_span: f64,
+    stop_at: Option<&std::sync::atomic::AtomicU32>,
+) -> (Vec<[f32; 4]>, u32, OrbitTail) {
+    let backend = crate::backend::selected();
+    reference_orbit_periodic_until_in(backend, z0x, z0y, cx, cy, formula, max_iter, p, log2_span, stop_at)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reference_orbit_periodic_until_in(
+    backend: crate::BackendChoice,
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+    log2_span: f64,
+    stop_at: Option<&std::sync::atomic::AtomicU32>,
+) -> (Vec<[f32; 4]>, u32, OrbitTail) {
     if formula != formula::MANDELBROT || !z0x.is_zero() || !z0y.is_zero() {
         return reference_orbit_t_in(backend, z0x, z0y, cx, cy, formula, max_iter, p);
     }
     let mut probe = PeriodProbe::new(log2_span);
+    probe.stop_at = stop_at;
     let mut out = Vec::new();
     out.push([0.0f32; 4]); // Z_0 = 0
     let zero = BigFloat::from_f64(0.0, p);
@@ -1671,7 +1716,7 @@ fn orbit_length_probed(
     max_iter: u32,
     p: usize,
     samples: Option<&mut Vec<CFloatExp>>,
-    probe: Option<&mut PeriodProbe>,
+    probe: Option<&mut PeriodProbe<'_>>,
 ) -> u32 {
     match backend {
         crate::BackendChoice::Astro => {
@@ -1754,7 +1799,7 @@ fn orbit_length_gen<B: RefBackend>(
     max_iter: u32,
     p: usize,
     mut samples: Option<&mut Vec<CFloatExp>>,
-    mut probe: Option<&mut PeriodProbe>,
+    mut probe: Option<&mut PeriodProbe<'_>>,
 ) -> u32 {
     let ctx = B::ctx_for(p);
     let mut zx = B::from_carrier(z0x, ctx);

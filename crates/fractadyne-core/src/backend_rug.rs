@@ -251,9 +251,16 @@ mod tests {
     /// backend would hand a benchmark a different nucleus depending on the build.
     #[test]
     fn the_finder_passes_are_bit_identical_to_astro_float() {
+        // 320 bits runs the one-core passes; 9,000 is above `PAR_MIN_BITS`, where the Newton pass
+        // runs its seven products on seven cores — the results must not move either way.
+        for p in [320usize, 9_000] {
+            finder_passes_identical_at(p);
+        }
+    }
+
+    fn finder_passes_identical_at(p: usize) {
         use crate::reference::{cmul_bf, step_bf};
         use crate::bignum::RM;
-        let p = 320;
         let cx = crate::parse_bf_prec("-0.7436438870371587", p).unwrap();
         let cy = crate::parse_bf_prec("0.1318259042053122", p).unwrap();
         let bf = |v: f64| BigFloat::from_f64(v, p);
@@ -485,6 +492,188 @@ mod tests {
 ///
 /// astro-float has no destination-reuse arithmetic, so the generic loop allocates a fresh value per
 /// operation; MPFR does, and at shallow precision that allocation traffic is most of the cost.
+
+// ---- Products across cores --------------------------------------------------------------------
+//
+// A deep orbit step is a handful of INDEPENDENT full-width products: `z² + c` is x², y² and x·y,
+// and the finder's Newton step adds the four products of z·dz/dc. At 100,000 bits one product
+// costs ~0.15 ms and the step is strictly sequential from one to the next, so the only
+// parallelism is inside the step: each product on its own core. A worker owns a fixed list of
+// `inputs[a] × inputs[b]` products, computed with the very same rounded MPFR multiply the
+// sequential loop does — the results are byte-identical, only the wall time changes. Workers spin
+// between steps (a sleeping thread takes tens of microseconds to wake on Windows, a spinning one
+// well under one); the build is the only thing those cores are doing.
+
+/// Below this working width a product costs less than handing it to another core (measured: see
+/// `par_crossover` in the tests). `FRACTADYNE_ORBIT_THREADS=1` turns the split off (A/B runs);
+/// `FRACTADYNE_ORBIT_PAR_MIN_BITS` moves the threshold (measuring the crossover).
+const PAR_MIN_BITS: u32 = 8192;
+
+fn par_enabled(ctx: u32) -> bool {
+    static CFG: std::sync::OnceLock<(bool, u32)> = std::sync::OnceLock::new();
+    let (off, min) = *CFG.get_or_init(|| {
+        let off = std::env::var("FRACTADYNE_ORBIT_THREADS").is_ok_and(|v| v.trim() == "1");
+        let min = std::env::var("FRACTADYNE_ORBIT_PAR_MIN_BITS")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(PAR_MIN_BITS);
+        (off, min)
+    });
+    !off && ctx >= min
+}
+
+fn spin_until(mut ready: impl FnMut() -> bool) {
+    let mut spins = 0u32;
+    while !ready() {
+        spins = spins.wrapping_add(1);
+        if spins < 1 << 14 {
+            std::hint::spin_loop();
+        } else {
+            std::thread::yield_now(); // oversubscribed: give the core back rather than starve
+        }
+    }
+}
+
+/// The step's inputs, each worker's products, and the step handshake.
+struct ParProducts {
+    inputs: std::sync::RwLock<Vec<Float>>,
+    /// `outs[w][k]` = worker `w`'s `k`-th product; worker 0 is the calling thread.
+    outs: Vec<std::sync::Mutex<Vec<Float>>>,
+    jobs: Vec<Vec<(usize, usize)>>,
+    gen: std::sync::atomic::AtomicU64,
+    done: std::sync::atomic::AtomicU64,
+    stop: std::sync::atomic::AtomicBool,
+}
+
+impl ParProducts {
+    fn new(inputs: Vec<Float>, jobs: Vec<Vec<(usize, usize)>>, ctx: u32) -> Self {
+        let outs = jobs
+            .iter()
+            .map(|j| std::sync::Mutex::new(j.iter().map(|_| Float::with_val(ctx, 0)).collect()))
+            .collect();
+        ParProducts {
+            inputs: std::sync::RwLock::new(inputs),
+            outs,
+            jobs,
+            gen: std::sync::atomic::AtomicU64::new(0),
+            done: std::sync::atomic::AtomicU64::new(0),
+            stop: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn compute(&self, w: usize) {
+        use rug::ops::AssignRound;
+        let inp = self.inputs.read().expect("inputs");
+        let mut out = self.outs[w].lock().expect("outputs");
+        for (k, &(a, b)) in self.jobs[w].iter().enumerate() {
+            out[k].assign_round(&inp[a] * &inp[b], RZ);
+        }
+    }
+
+    /// One step's products: this thread computes worker 0's share, then waits for the rest.
+    fn step(&self) {
+        use std::sync::atomic::Ordering::{AcqRel, Acquire};
+        let g = self.gen.fetch_add(1, AcqRel) + 1;
+        self.compute(0);
+        let want = g * (self.jobs.len() as u64 - 1);
+        spin_until(|| self.done.load(Acquire) >= want);
+    }
+
+    fn worker(&self, w: usize) {
+        use std::sync::atomic::Ordering::{AcqRel, Acquire};
+        let mut seen = 0u64;
+        loop {
+            spin_until(|| self.gen.load(Acquire) != seen || self.stop.load(Acquire));
+            if self.stop.load(Acquire) {
+                return;
+            }
+            seen += 1; // the caller waits for every worker before the next step: exactly one
+            self.compute(w);
+            self.done.fetch_add(1, AcqRel);
+        }
+    }
+
+    /// Run `f` with workers `1..` live on scoped threads, stopping them however `f` ends.
+    fn with_workers<R>(&self, f: impl FnOnce(&Self) -> R) -> R {
+        struct Stop<'a>(&'a std::sync::atomic::AtomicBool);
+        impl Drop for Stop<'_> {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
+        std::thread::scope(|s| {
+            for w in 1..self.jobs.len() {
+                s.spawn(move || self.worker(w));
+            }
+            let _stop = Stop(&self.stop);
+            f(self)
+        })
+    }
+
+    /// After a step: the inputs to write the next values into, and every worker's products.
+    fn combine<R>(
+        &self,
+        f: impl FnOnce(&mut Vec<Float>, &mut [std::sync::MutexGuard<'_, Vec<Float>>]) -> R,
+    ) -> R {
+        let mut outs: Vec<_> = self.outs.iter().map(|m| m.lock().expect("outputs")).collect();
+        let mut inp = self.inputs.write().expect("inputs");
+        f(&mut inp, &mut outs)
+    }
+
+    fn read<R>(&self, f: impl FnOnce(&[Float]) -> R) -> R {
+        f(&self.inputs.read().expect("inputs"))
+    }
+}
+
+/// Move `v` into `slot`, leaving `v` as scratch pinned at `ctx` (see the swap note in
+/// `try_run_orbit_inplace`: an entry value can be wider than `ctx`, and a destination must not
+/// inherit that width).
+fn swap_in(slot: &mut Float, v: &mut Float, ctx: u32) {
+    core::mem::swap(slot, v);
+    if v.prec() != ctx {
+        v.set_prec(ctx);
+    }
+}
+
+/// `z ← z² + c` (Mandelbrot) for `n` steps from `(zx, zy)`, the three products on three cores:
+/// `x²` here, `y²` and `x·y` on two workers; the combination is `csqr`'s, op for op.
+/// `each(n, zx, zy) -> stop?` sees every new value. Returns the final `(zx, zy)`.
+fn par_mandel_walk(
+    zx: Float,
+    zy: Float,
+    rcx: &Float,
+    rcy: &Float,
+    ctx: u32,
+    mut each: impl FnMut(&Float, &Float) -> bool,
+    steps: u32,
+) -> (Float, Float) {
+    use rug::ops::{AddAssignRound, SubAssignRound};
+    let par = ParProducts::new(vec![zx, zy], vec![vec![(0, 0)], vec![(1, 1)], vec![(0, 1)]], ctx);
+    par.with_workers(|par| {
+        for _ in 0..steps {
+            par.step();
+            par.combine(|inp, outs| {
+                let (o0, rest) = outs.split_at_mut(1);
+                let (o1, o2) = rest.split_at_mut(1);
+                let (x2, y2, t) = (&mut o0[0][0], &o1[0][0], &mut o2[0][0]);
+                *t <<= 1; // exact
+                x2.sub_assign_round(y2, RZ);
+                x2.add_assign_round(rcx, RZ);
+                t.add_assign_round(rcy, RZ);
+                swap_in(&mut inp[0], x2, ctx);
+                swap_in(&mut inp[1], t, ctx);
+            });
+            if par.read(|z| each(&z[0], &z[1])) {
+                break;
+            }
+        }
+    });
+    let mut z = par.inputs.into_inner().expect("inputs");
+    let zy = z.pop().expect("zy");
+    let zx = z.pop().expect("zx");
+    (zx, zy)
+}
+
 /// Measured in the kernel probe: 438 ns/iteration allocating against 160 ns reusing, at 2 limbs.
 ///
 /// `None` for any formula this does not implement, and the caller falls back to the generic loop —
@@ -507,7 +696,7 @@ pub(crate) fn try_run_orbit_inplace(
     mut n: u32,
     max_iter: u32,
     p: usize,
-    mut probe: Option<&mut crate::reference::PeriodProbe>,
+    mut probe: Option<&mut crate::reference::PeriodProbe<'_>>,
 ) -> Option<(BigFloat, BigFloat, bool)> {
     use crate::formula as fam;
     use rug::ops::{AddAssignRound, AssignRound, SubAssignRound, SubFromRound};
@@ -524,6 +713,41 @@ pub(crate) fn try_run_orbit_inplace(
     let mut zy = <Float as RefBackend>::from_carrier(z0y, ctx);
     let rcx = <Float as RefBackend>::from_carrier(cx, ctx);
     let rcy = <Float as RefBackend>::from_carrier(cy, ctx);
+
+    if formula == fam::MANDELBROT && par_enabled(ctx) && n < max_iter {
+        let mut escaped = false;
+        let steps = max_iter - n;
+        let (fx, fy) = par_mandel_walk(
+            zx,
+            zy,
+            &rcx,
+            &rcy,
+            ctx,
+            |zx, zy| {
+                let xv = zx.to_f64_trunc();
+                let yv = zy.to_f64_trunc();
+                out.push(crate::reference::pack_sample(xv, yv));
+                n += 1;
+                crate::reference::count_reference_step(n);
+                if xv * xv + yv * yv > 1.0e12 {
+                    escaped = true;
+                    return true;
+                }
+                if let Some(pr) = probe.as_deref_mut() {
+                    let exact = || crate::floatexp::CFloatExp {
+                        re: RefBackend::to_floatexp(zx),
+                        im: RefBackend::to_floatexp(zy),
+                    };
+                    if pr.step(xv, yv, exact) {
+                        return true;
+                    }
+                }
+                false
+            },
+            steps,
+        );
+        return Some((fx.to_carrier(ctx), fy.to_carrier(ctx), escaped));
+    }
 
     // The whole point: allocated once, reused for every iteration.
     let mut x2 = Float::with_val(ctx, 0);
@@ -629,7 +853,7 @@ pub(crate) fn try_orbit_length_inplace(
     max_iter: u32,
     p: usize,
     mut samples: Option<&mut Vec<crate::floatexp::CFloatExp>>,
-    mut probe: Option<&mut crate::reference::PeriodProbe>,
+    mut probe: Option<&mut crate::reference::PeriodProbe<'_>>,
 ) -> Option<u32> {
     use crate::floatexp::CFloatExp;
     use rug::ops::{AddAssignRound, AssignRound, SubAssignRound};
@@ -654,6 +878,39 @@ pub(crate) fn try_orbit_length_inplace(
         });
     }
     let mut n = 0u32;
+    if par_enabled(ctx) && max_iter > 0 {
+        // The three products on three cores (see `par_mandel_walk`); same count semantics.
+        let mut periodic = false;
+        par_mandel_walk(
+            zx,
+            zy,
+            &rcx,
+            &rcy,
+            ctx,
+            |zx, zy| {
+                n += 1;
+                crate::reference::count_reference_step(n);
+                if let Some(s) = samples.as_deref_mut() {
+                    s.push(CFloatExp { re: RefBackend::to_floatexp(zx), im: RefBackend::to_floatexp(zy) });
+                }
+                let xv = zx.to_f64_trunc();
+                let yv = zy.to_f64_trunc();
+                if xv * xv + yv * yv > 1.0e12 {
+                    return true;
+                }
+                if let Some(pr) = probe.as_deref_mut() {
+                    let exact = || CFloatExp { re: RefBackend::to_floatexp(zx), im: RefBackend::to_floatexp(zy) };
+                    if pr.step(xv, yv, exact) {
+                        periodic = true;
+                        return true;
+                    }
+                }
+                false
+            },
+            max_iter,
+        );
+        return Some(if periodic { max_iter } else { n });
+    }
     while n < max_iter {
         // z² + c, in `csqr`'s exact op order (see try_run_orbit_inplace).
         x2.assign_round(&zx * &zx, RZ);
@@ -762,6 +1019,9 @@ fn zd_walk(
     let mut dx = Float::with_val(ctx, 0);
     let mut dy = Float::with_val(ctx, 0);
     let one = Float::with_val(ctx, 1);
+    if par_enabled(ctx) && n > 0 {
+        return zd_walk_par(zx, zy, dx, dy, &rcx, &rcy, &one, n, ctx, at);
+    }
     let (mut x2, mut y2, mut t) = (Float::with_val(ctx, 0), Float::with_val(ctx, 0), Float::with_val(ctx, 0));
     let (mut a, mut b, mut c, mut e) =
         (Float::with_val(ctx, 0), Float::with_val(ctx, 0), Float::with_val(ctx, 0), Float::with_val(ctx, 0));
@@ -774,6 +1034,64 @@ fn zd_walk(
         }
     }
     [zx.to_carrier(ctx), zy.to_carrier(ctx), dx.to_carrier(ctx), dy.to_carrier(ctx)]
+}
+
+/// [`zd_walk`] with its seven products on seven cores: `z² + c` needs x², y² and x·y, and
+/// `D ← 2·Z·D + 1` needs Zx·Dx, Zy·Dy, Zx·Dy and Zy·Dx — all of the OLD Z and D, so all
+/// independent. Combined exactly as `d_update` then `sq_add_c` do, op for op.
+#[allow(clippy::too_many_arguments)]
+fn zd_walk_par(
+    zx: Float,
+    zy: Float,
+    dx: Float,
+    dy: Float,
+    rcx: &Float,
+    rcy: &Float,
+    one: &Float,
+    n: u32,
+    ctx: u32,
+    mut at: impl FnMut(u32, &Float, &Float, &Float, &Float) -> bool,
+) -> [BigFloat; 4] {
+    use rug::ops::{AddAssignRound, SubAssignRound};
+    // inputs: 0 Zx, 1 Zy, 2 Dx, 3 Dy
+    let jobs = vec![vec![(0, 0)], vec![(1, 1)], vec![(0, 1)], vec![(0, 2)], vec![(1, 3)], vec![(0, 3)], vec![(1, 2)]];
+    let par = ParProducts::new(vec![zx, zy, dx, dy], jobs, ctx);
+    par.with_workers(|par| {
+        for step in 1..=n {
+            par.step();
+            par.combine(|inp, outs| {
+                let mut it = outs.iter_mut();
+                let x2 = &mut it.next().unwrap()[0];
+                let y2 = &it.next().unwrap()[0];
+                let t = &mut it.next().unwrap()[0];
+                let a = &mut it.next().unwrap()[0]; // Zx·Dx
+                let b = &it.next().unwrap()[0]; // Zy·Dy
+                let c = &mut it.next().unwrap()[0]; // Zx·Dy
+                let e = &it.next().unwrap()[0]; // Zy·Dx
+                // d_update: a − b, c + e, ×2, +1 on the real part.
+                a.sub_assign_round(b, RZ);
+                c.add_assign_round(e, RZ);
+                *a <<= 1;
+                a.add_assign_round(one, RZ);
+                *c <<= 1;
+                // sq_add_c
+                *t <<= 1;
+                x2.sub_assign_round(y2, RZ);
+                x2.add_assign_round(rcx, RZ);
+                t.add_assign_round(rcy, RZ);
+                swap_in(&mut inp[0], x2, ctx);
+                swap_in(&mut inp[1], t, ctx);
+                swap_in(&mut inp[2], a, ctx);
+                swap_in(&mut inp[3], c, ctx);
+            });
+            crate::reference::count_reference_step(step);
+            if par.read(|v| at(step, &v[0], &v[1], &v[2], &v[3])) {
+                break;
+            }
+        }
+    });
+    let v = par.inputs.into_inner().expect("inputs");
+    [v[0].to_carrier(ctx), v[1].to_carrier(ctx), v[2].to_carrier(ctx), v[3].to_carrier(ctx)]
 }
 
 /// [`zd_walk`] for exactly `n` steps — one Newton step's orbit.
@@ -833,6 +1151,31 @@ pub(crate) fn ball_period(cx: &BigFloat, cy: &BigFloat, max: u32, log2_radius: f
     let (mut x2, mut y2, mut t) = (Float::with_val(ctx, 0), Float::with_val(ctx, 0), Float::with_val(ctx, 0));
     let mut lz = f64::NEG_INFINITY;
     let mut lr = f64::NEG_INFINITY;
+    if par_enabled(ctx) {
+        let mut found = None;
+        let mut n = 0u32;
+        par_mandel_walk(
+            zx,
+            zy,
+            &rcx,
+            &rcy,
+            ctx,
+            |zx, zy| {
+                n += 1;
+                lr = log2_add(log2_add(1.0 + lz, lr) + lr, log2_radius);
+                crate::reference::count_reference_step(n);
+                let (lx, ly) = (RefBackend::to_floatexp(zx).log2(), RefBackend::to_floatexp(zy).log2());
+                lz = 0.5 * log2_add(2.0 * lx, 2.0 * ly);
+                if lz <= lr {
+                    found = Some(n);
+                    return true;
+                }
+                lz > 1.0 && lz.exp2() - lr.exp2() > 2.0
+            },
+            max.max(1),
+        );
+        return found;
+    }
     for n in 1..=max.max(1) {
         lr = log2_add(log2_add(1.0 + lz, lr) + lr, log2_radius);
         sq_add_c(&mut zx, &mut zy, &mut x2, &mut y2, &mut t, &rcx, &rcy, ctx);

@@ -423,3 +423,40 @@ fn a_periodic_build_is_backend_identical() {
     assert_eq!(tr.period.map(|q| q.period), Some(998));
     assert_eq!(bits(&a), bits(&r), "byte-identical samples");
 }
+
+/// Above `PAR_MIN_BITS` the MPFR build runs its three products on three cores; the samples and
+/// the tail must still be astro-float's, byte for byte. The other identity tests stop at 2,112
+/// bits, below the threshold, so without this one the parallel path would never be compared.
+#[test]
+fn the_three_core_build_is_byte_identical_to_astro_float() {
+    let p = 9_000;
+    let z0 = fc::BigFloat::from_f64(0.0, p);
+    for (sx, sy) in [("-0.7436438870371587", "0.1318259042053122"), ("-0.1", "0.65"), ("0.3", "0.5")] {
+        let cx = fc::parse_bf_prec(sx, p).unwrap();
+        let cy = fc::parse_bf_prec(sy, p).unwrap();
+        let (a, la, ta) = fc::reference_orbit_t_in(BackendChoice::Astro, &z0, &z0, &cx, &cy, 0, 1500, p);
+        let (r, lr, tr) = fc::reference_orbit_t_in(BackendChoice::Rug, &z0, &z0, &cx, &cy, 0, 1500, p);
+        assert_eq!(la, lr, "{sx}: length");
+        assert_eq!(bits(&a), bits(&r), "{sx}: samples");
+        assert!(tail_eq(&ta.zx, &tr.zx) && tail_eq(&ta.zy, &tr.zy), "{sx}: tail");
+        assert_eq!(ta.escaped, tr.escaped, "{sx}: escaped");
+    }
+}
+
+/// Where splitting a step's products across cores starts to pay: ns per step of the MPFR
+/// build at several widths. Run twice — `FRACTADYNE_ORBIT_PAR_MIN_BITS=1` (always split) and
+/// `FRACTADYNE_ORBIT_THREADS=1` (never) — with `--ignored --nocapture`, and compare.
+#[test]
+#[ignore]
+fn par_crossover() {
+    let z0 = fc::BigFloat::from_f64(0.0, 64);
+    for p in [1024usize, 2048, 4096, 8192, 16_384, 32_768, 65_536, 100_000] {
+        let cx = fc::parse_bf_prec("-0.7436438870371587", p).unwrap();
+        let cy = fc::parse_bf_prec("0.1318259042053122", p).unwrap();
+        let steps = (2.0e8 / (p as f64).powf(1.5)).clamp(200.0, 200_000.0) as u32;
+        let t = std::time::Instant::now();
+        let (_, len, _) = fc::reference_orbit_t_in(BackendChoice::Rug, &z0, &z0, &cx, &cy, 0, steps, p);
+        let ns = t.elapsed().as_nanos() as f64 / f64::from(len - 1);
+        println!("p={p:>6} steps={steps:>6} {ns:>12.0} ns/step");
+    }
+}
