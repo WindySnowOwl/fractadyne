@@ -4028,6 +4028,9 @@ pub fn render_multiref_mandel(
 mod bla_fold;
 pub use bla_fold::*;
 
+mod renorm;
+pub use renorm::*;
+
 #[cfg(test)]
 mod pick_deep_scoring;
 

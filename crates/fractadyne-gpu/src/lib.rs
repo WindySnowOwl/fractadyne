@@ -81,6 +81,73 @@ pub(crate) struct IterUniforms {
     /// ([`MandelbrotParams::split`]). A whole 16-byte row, so Rust's `#[repr(C)]` size keeps
     /// matching WGSL's. See [`tail_word`].
     pub(crate) tail: [u32; 4],
+    /// THE RENORMALIZED STEP (the shader's `rn_*`); `len` 0 = off.
+    pub(crate) rn: Renorm,
+}
+
+/// THE RENORMALIZED STEP's uniform (the shader's `rn_*`; `rn_enter`'s note): a pixel near the
+/// minibrot this reference sees takes `len` iterations per step as `u ↦ u² + c′` — see
+/// [`fractadyne_core::RenormStep`] for the derivation. `len == 0` (the default) turns it off and
+/// every pixel iterates as before.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Renorm {
+    /// `a = Π 2Z_k` as a shared-exponent df32 mantissa `[re_hi, re_lo, im_hi, im_lo]` (exponent
+    /// `a_exp`): the u-space reference is `a·Z_{k·len}`.
+    pub a: [f32; 4],
+    /// `a·b` (mantissa; exponent `ab_exp`).
+    pub ab: [f32; 4],
+    /// `RefC = a·Z_L` as plain df32 `[re_hi, re_lo, im_hi, im_lo]`.
+    pub ref_c: [f32; 4],
+    /// `1/a` (mantissa; exponent `inv_a_exp`).
+    pub inv_a: [f32; 4],
+    /// `b = dZ_L/dc` (mantissa; exponent `b_exp`).
+    pub b: [f32; 4],
+    pub a_exp: i32,
+    pub ab_exp: i32,
+    pub inv_a_exp: i32,
+    pub b_exp: i32,
+    pub len: u32,
+    /// The exit radius squared, `R²`.
+    pub r2: f32,
+    /// log₂ of the largest `|δc|` the model holds for.
+    pub dc_log2: f32,
+    pub pad: u32,
+}
+
+impl Renorm {
+    /// The uniform for `step`.
+    pub fn from_step(step: &fractadyne_core::RenormStep) -> Renorm {
+        use fractadyne_core::{CFloatExp, FloatExp};
+        let (a, a_exp) = step.a.to_mantissa_exp();
+        let (ab, ab_exp) = (step.a * step.b).to_mantissa_exp();
+        // 1/a = conj(a)/|a|².
+        let n2 = (step.a.re * step.a.re + step.a.im * step.a.im).recip();
+        let inv = CFloatExp { re: step.a.re * n2, im: FloatExp { m: -step.a.im.m, e: step.a.im.e } * n2 };
+        let (inv_a, inv_a_exp) = inv.to_mantissa_exp();
+        let (b, b_exp) = step.b.to_mantissa_exp();
+        let df = |v: f64| {
+            let hi = v as f32;
+            (hi, (v - hi as f64) as f32)
+        };
+        let (rh, rl) = df(step.ref_c.re.to_f64());
+        let (ih, il) = df(step.ref_c.im.to_f64());
+        Renorm {
+            a,
+            ab,
+            ref_c: [rh, rl, ih, il],
+            inv_a,
+            b,
+            a_exp,
+            ab_exp,
+            inv_a_exp,
+            b_exp,
+            len: step.len,
+            r2: (2.0 * step.log2_r).exp2() as f32,
+            dc_log2: step.log2_dc_max as f32,
+            pad: 0,
+        }
+    }
 }
 
 /// The mode-2 df32 tail phase switch (`TAIL_DF32`, a `--set` tunable in the app; on by default).
@@ -1128,7 +1195,7 @@ pub(crate) fn make_iter_bg(
 /// atomics per pixel — negligible next to the iteration loop. This is the "did the code
 /// path actually execute?" detector (the F4 dead-NaN-marker lesson): a render that claims
 /// to exercise rebasing/extended samples/BLA must show nonzero counts.
-pub const COUNTER_SLOTS: usize = CTR_CHUNK_RUNNING + 1;
+pub const COUNTER_SLOTS: usize = CTR_RENORM + 1;
 /// Slot indices (keep in sync with mandelbrot.wgsl's `CTR_*` constants).
 pub const CTR_REBASE: usize = 0; // Zhuoran rebases taken (mode 2)
 pub const CTR_EXT_SAMPLE: usize = 1; // extended-range orbit samples decoded (mode 2)
@@ -1210,6 +1277,9 @@ pub const CTR_STEP_BIG: usize = CTR_STEP_FULL + 2;
 /// Cleared before and read after every such pass by the export's step-bounded runner, which stops
 /// when it reads 0. Only ever nonzero under a cap.
 pub const CTR_CHUNK_RUNNING: usize = CTR_STEP_BIG + 2;
+/// Pixels that took THE RENORMALIZED STEP ([`Renorm`]), counted on the step-accounting grid — the
+/// proof it ran, comparable with `CTR_STEP_PX`.
+pub const CTR_RENORM: usize = CTR_CHUNK_RUNNING + 1;
 
 /// A counter readback's step accounting (see [`CTR_STEP_PX`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -1219,6 +1289,8 @@ pub struct StepStats {
     pub iterations: u64,
     pub full: u64,
     pub big: u64,
+    /// Sampled pixels that took THE RENORMALIZED STEP ([`CTR_RENORM`]).
+    pub renorm_px: u64,
 }
 
 impl StepStats {
@@ -1230,6 +1302,7 @@ impl StepStats {
             iterations: w(CTR_STEP_ITER),
             full: w(CTR_STEP_FULL),
             big: w(CTR_STEP_BIG),
+            renorm_px: s[CTR_RENORM] as u64,
         }
     }
     /// The same from u64 totals SUMMED over tiles or passes (the export path's `counters`): each
@@ -1242,6 +1315,7 @@ impl StepStats {
             iterations: w(CTR_STEP_ITER),
             full: w(CTR_STEP_FULL),
             big: w(CTR_STEP_BIG),
+            renorm_px: s[CTR_RENORM],
         }
     }
     /// Iterations advanced per executed loop trip (0 when nothing executed).
@@ -2368,6 +2442,8 @@ pub struct MandelbrotParams {
     pub sa_b_exp: i32,
     pub sa_c: [f32; 4],
     pub sa_c_exp: i32,
+    /// THE RENORMALIZED STEP for this reference and view ([`Renorm`]; default = off).
+    pub rn: Renorm,
     /// View center df32 (re_hi, im_hi, re_lo, im_lo) — used by the direct path.
     pub center: [f32; 4],
     /// Julia parameter df32 (re_hi, im_hi, re_lo, im_lo).
@@ -2514,6 +2590,7 @@ impl Default for MandelbrotParams {
             sa_b_exp: 0,
             sa_c: [0.0; 4],
             sa_c_exp: 0,
+            rn: Renorm::default(),
             center: [0.0; 4],
             julia_c: [0.0; 4],
             mode: 1,
@@ -2979,6 +3056,7 @@ impl CallbackTrait for MandelbrotParams {
                 end_iter: 0,
                 gather: [0; 2],
                 tail: tail_word(),
+                rn: self.rn,
             };
             // A split pass is a single full-frame pass by definition (`MandelbrotParams::split`).
             let split_on = self.split[0] > 1 && self.chunk_range.is_none() && self.tile.is_none();

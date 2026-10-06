@@ -225,6 +225,8 @@ pub struct ExportRequest {
     pub sa_b_exp: i32,
     pub sa_c: [f32; 4],
     pub sa_c_exp: i32,
+    /// THE RENORMALIZED STEP for this reference and view ([`crate::Renorm`]; default = off).
+    pub rn: crate::Renorm,
     pub julia_c: [f32; 4],
     pub orbit: Arc<Vec<[f32; 4]>>,
     pub orbit_len: u32,
@@ -1131,6 +1133,7 @@ fn render_export_impl(
                 end_iter: 0,
                 gather: [0; 2],
                 tail: crate::tail_word(),
+                rn: req.rn,
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -1707,6 +1710,7 @@ pub fn render_iter_tiled(
                 end_iter: 0,
                 gather: [0; 2],
                 tail: crate::tail_word(),
+                rn: req.rn,
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -2211,6 +2215,7 @@ impl GatherPass {
                 end_iter: 0,
                 gather: [gw, n as u32],
                 tail: crate::tail_word(),
+                rn: req.rn,
             };
             queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -2526,6 +2531,7 @@ fn render_iter_passes(
         end_iter: 0,
         gather: [0; 2],
         tail: crate::tail_word(),
+        rn: req.rn,
     };
     queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -2986,6 +2992,7 @@ pub fn render_iter_chunked_timed(
         end_iter: 0,
         gather: [0; 2],
         tail: crate::tail_word(),
+        rn: req.rn,
     };
 
     // One bounded submission per iteration range; poll-wait between them so each stays a short,

@@ -1571,7 +1571,7 @@ impl FractadyneApp {
                 "{kind}: {}x{} ss={} mode={} iter={} gpu_iterate={:.1}ms gpu_color={:.1}ms \
                  max_dispatch={:.0}ms tiles={} passes={} ~{gsps:.2} Gsteps/s (nominal) | counters: \
                  rebase={} ext={} glitch={} bla_skip={} maxiter={} | steps (1/64 px): px={} \
-                 executed={} iterations={} = {:.1} per step, full={} of which in df32 {big_pct:.1}%",
+                 executed={} iterations={} = {:.1} per step, full={} of which in df32 {big_pct:.1}%, renormalized px={}",
                 r.width,
                 r.height,
                 r.ss,
@@ -1592,6 +1592,7 @@ impl FractadyneApp {
                 st.iterations,
                 st.iters_per_step(),
                 st.full,
+                st.renorm_px,
             ),
         );
         crate::diag::perf_jsonl(&format!(
@@ -1599,7 +1600,7 @@ impl FractadyneApp {
              \"gpu_iterate_ms\":{:.3},\"gpu_color_ms\":{:.3},\"max_dispatch_ms\":{:.1},\
              \"tiles\":{},\"passes\":{},\"gsteps_nominal\":{gsps:.3},\
              \"ctr_rebase\":{},\"ctr_ext\":{},\"ctr_glitch\":{},\"ctr_bla\":{},\"ctr_maxiter\":{},\
-             \"step_px\":{},\"step_executed\":{},\"step_iterations\":{},\"step_full\":{},\"step_big\":{}",
+             \"step_px\":{},\"step_executed\":{},\"step_iterations\":{},\"step_full\":{},\"step_big\":{},\"step_renorm\":{}",
             r.width,
             r.height,
             r.ss,
@@ -1620,6 +1621,7 @@ impl FractadyneApp {
             st.iterations,
             st.full,
             st.big,
+            st.renorm_px,
         ));
     }
 

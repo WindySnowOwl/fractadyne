@@ -919,6 +919,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         sa_b_exp: p.sa_b_exp,
         sa_c: p.sa_c,
         sa_c_exp: p.sa_c_exp,
+        rn: p.rn,
         julia_c: p.julia_c,
         orbit: p.orbit.clone(),
         orbit_len: p.orbit_len,

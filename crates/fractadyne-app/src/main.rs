@@ -4916,6 +4916,8 @@ struct RefCache {
     /// bignum coefficient iteration is as costly as the reference orbit itself).
     sa: fractadyne_core::SeriesSkip,
     sa_key: (u64, u32),
+    /// THE RENORMALIZED STEP for this orbit (set with it at install; `None` = off).
+    rn: Option<fractadyne_core::RenormStep>,
     /// Cached BLA tree (GPU-packed) for this reference, the `orbit_id` it was built for, and the
     /// `log2` of the worst-case `|δc|` (`dc_max`) it was built with. Rebuilt only when the orbit
     /// changes or the view zooms out enough that a larger `dc_max` is needed — so BLA doesn't pay a
@@ -4964,6 +4966,7 @@ impl Default for RefCache {
             orbit_tail: None,
             last_recompute: None,
             sa: fractadyne_core::SeriesSkip::NONE,
+            rn: None,
             sa_key: (u64::MAX, u32::MAX),
             bla: std::sync::Arc::new(Vec::new()),
             bla_id: u64::MAX,
@@ -6119,14 +6122,19 @@ impl FractadyneApp {
                 Some(s) => crate::arg_parse::<usize>(flag, s, "a whole number of pixels").max(1),
             })
         };
-        let (glitch_audit, audit_kind) = match (audit_count("--glitch-audit"), audit_count("--tail-audit")) {
-            (Some(_), Some(_)) => {
-                eprintln!("fractadyne: --glitch-audit and --tail-audit compare different renders; pass one");
-                crate::exit(2)
-            }
-            (Some(n), None) => (Some(n), crate::glitchaudit::AuditKind::Correction),
-            (None, Some(n)) => (Some(n), crate::glitchaudit::AuditKind::Tail),
-            (None, None) => (None, crate::glitchaudit::AuditKind::Correction),
+        let audits = [
+            (audit_count("--glitch-audit"), crate::glitchaudit::AuditKind::Correction),
+            (audit_count("--tail-audit"), crate::glitchaudit::AuditKind::Tail),
+            (audit_count("--renorm-audit"), crate::glitchaudit::AuditKind::Renorm),
+        ];
+        let chosen: Vec<_> = audits.iter().filter_map(|(n, k)| n.map(|n| (n, *k))).collect();
+        if chosen.len() > 1 {
+            eprintln!("fractadyne: --glitch-audit, --tail-audit and --renorm-audit compare different renders; pass one");
+            crate::exit(2)
+        }
+        let (glitch_audit, audit_kind) = match chosen.first() {
+            Some(&(n, k)) => (Some(n), k),
+            None => (None, crate::glitchaudit::AuditKind::Correction),
         };
         let auto_render = args.iter().any(|a| a == "--render") || render_iter_mode || glitch_audit.is_some();
         let selftest = args.iter().any(|a| a == "--selftest" || a == "--selftest-list");

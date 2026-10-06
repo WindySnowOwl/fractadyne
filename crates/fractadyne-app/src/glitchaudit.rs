@@ -32,6 +32,8 @@ pub(crate) enum AuditKind {
     Correction,
     /// `--tail-audit`: the all-floatexp mode-2 loop (`TAIL_DF32=0`) against the df32 tail phase.
     Tail,
+    /// `--renorm-audit`: the perturbation loop alone (`RENORM=0`) against THE RENORMALIZED STEP.
+    Renorm,
 }
 
 impl AuditKind {
@@ -40,6 +42,7 @@ impl AuditKind {
         match self {
             AuditKind::Correction => ("uncorrected", "corrected"),
             AuditKind::Tail => ("floatexp", "df32 tail"),
+            AuditKind::Renorm => ("perturbation", "renormalized"),
         }
     }
 }
@@ -225,6 +228,21 @@ impl crate::FractadyneApp {
                 println!("  {la} {first_s:.1} s · {lb} {:.1} s", t1.elapsed().as_secs_f64());
                 (a?.pixels, b?.pixels)
             }
+            AuditKind::Renorm => {
+                // The same plain render without the step, then with the one this view's reference chose.
+                if plain_req.rn.len == 0 {
+                    return Ok("audit: VACUOUS — no renormalized step holds at this view".into());
+                }
+                println!("  step: {} iterations per renormalized step", plain_req.rn.len);
+                let mut off_req = plain_req.clone();
+                off_req.rn = fractadyne_gpu::Renorm::default();
+                let a = fractadyne_gpu::render_iter_tiled(device, queue, &off_req, crate::tunables::CORRECT_WORK_BUDGET, None, None, None)?.pixels;
+                let first_s = t0.elapsed().as_secs_f64();
+                let t1 = std::time::Instant::now();
+                let b = plain(device, queue)?.pixels;
+                println!("  {la} {first_s:.1} s · {lb} {:.1} s", t1.elapsed().as_secs_f64());
+                (a, b)
+            }
         };
 
         // Which pixels differ (bit for bit), and the pools to sample from.
@@ -244,8 +262,44 @@ impl crate::FractadyneApp {
             w * h,
             100.0 * differ.len() as f64 / (w * h) as f64
         );
+        // How far apart, over EVERY differing pixel (the oracle below sees a sample): escaped in both
+        // by |Δ smooth iteration|, or escaped in one and interior in the other.
+        {
+            let mut deltas: Vec<f32> = Vec::new();
+            let (mut only_a, mut only_b) = (0usize, 0usize);
+            for &i in &differ {
+                match (Value::from_channel(first[4 * i]), Value::from_channel(second[4 * i])) {
+                    (Value::Escaped(x), Value::Escaped(y)) => deltas.push((x - y).abs()),
+                    (Value::Escaped(_), Value::Interior) => only_a += 1,
+                    (Value::Interior, Value::Escaped(_)) => only_b += 1,
+                    _ => {}
+                }
+            }
+            deltas.sort_by(|x, y| x.total_cmp(y));
+            let q = |f: f64| deltas.get(((deltas.len() as f64 - 1.0) * f).round() as usize).copied().unwrap_or(0.0);
+            println!(
+                "  escaped in both: {} — |Δ smooth| median {:.3e}, 90% {:.3e}, 99% {:.3e}, max {:.3e}; \
+                 over 0.5: {}; escaped only in {la}: {only_a}, only in {lb}: {only_b}",
+                deltas.len(),
+                q(0.5),
+                q(0.9),
+                q(0.99),
+                deltas.last().copied().unwrap_or(0.0),
+                deltas.iter().filter(|&&d| d > MATCH_TOL).count(),
+            );
+        }
         if differ.is_empty() {
             return Ok(format!("audit: VACUOUS — {la} and {lb} agree bit for bit at every pixel of this view"));
+        }
+        // The step changes almost every pixel by a little (it is an approximation held to 2^-24 per
+        // step), so its audit samples the pixels it changes BEYOND the match tolerance: those are
+        // the ones a verdict is about.
+        if kind == AuditKind::Renorm {
+            differ.retain(|&i| !Value::from_channel(first[4 * i]).agrees(Value::from_channel(second[4 * i])));
+            println!("  sampling the {} pixels that differ by more than {MATCH_TOL}", differ.len());
+            if differ.is_empty() {
+                return Ok(format!("audit: no pixel differs between {la} and {lb} by more than {MATCH_TOL}"));
+            }
         }
         let mut picked: Vec<Sample> = Vec::new();
         for (pool, control) in [(&differ, false), (&agree, true)] {

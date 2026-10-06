@@ -142,6 +142,9 @@ pub(crate) struct RecomputeResult {
     pub(crate) orbit_len: u32,
     rp: [fractadyne_core::BigFloat; 2],
     sa: fractadyne_core::SeriesSkip,
+    /// THE RENORMALIZED STEP for this reference (`fractadyne_core::RenormStep`); `None` unless the
+    /// orbit is periodic, Mandelbrot, not Julia, and a step holds near it.
+    rn: Option<fractadyne_core::RenormStep>,
     bla: std::sync::Arc<Vec<[f32; 4]>>,
     bla_dc_max_log2: f64,
     /// Stripe frequency the BLA's `agg_stripe` lane was built with, so the live path can detect a
@@ -1301,6 +1304,15 @@ fn finish_reference(
         _ => (std::sync::Arc::new(Vec::new()), f64::NEG_INFINITY),
     };
     let bla_ms = t_bla.elapsed().as_secs_f64() * 1000.0;
+    // ⭐THE RENORMALIZED STEP (`fc::RenormStep`): near the minibrot a periodic reference is centred
+    // on, a pixel takes a whole period (or its parent's) per step as u ↦ u² + c′. One pass over the
+    // orbit in an extended-range accumulator; periodic orbits only, which bounds that pass.
+    let t_rn = Instant::now();
+    let rn = period
+        .filter(|_| crate::tunables::cost().renorm == 1)
+        .filter(|_| inp.formula == fc::formula::MANDELBROT && !inp.julia && inp.custom.is_none())
+        .and_then(|_| fc::renorm_step(&orbit));
+    let rn_ms = t_rn.elapsed().as_secs_f64() * 1000.0;
     crate::diag::breadcrumb(format!(
         "reference built [{}]: len={len} iter={orbit_iter} prec={orbit_prec}",
         inp.origin
@@ -1314,13 +1326,18 @@ fn finish_reference(
             "ref",
             format!(
                 "[{}] len={len} iter={orbit_iter} prec={orbit_prec} partial={partial} \
-                 escaped={}{} sa_skip={} bla_dc_max_log2={bla_dc_max_log2:.1} bla_nodes={} \
-                 | orbit_ms={ref_ms:.0} sa_ms={series_ms:.0} bla_ms={bla_ms:.0}",
+                 escaped={}{}{} sa_skip={} bla_dc_max_log2={bla_dc_max_log2:.1} bla_nodes={} \
+                 | orbit_ms={ref_ms:.0} sa_ms={series_ms:.0} bla_ms={bla_ms:.0} rn_ms={rn_ms:.0}",
                 inp.origin,
                 tail_escaped,
                 period
                     .map(|pp| format!(" periodic={} (|Z|=2^{:.0}, |D|=2^{:.0})", pp.period, pp.log2_z, pp.log2_d))
                     .unwrap_or_default(),
+                rn.map(|r| format!(
+                    " renorm={} (R=2^{:.0}, |dc|<=2^{:.0}, |kappa|=2^{:.0})",
+                    r.len, r.log2_r, r.log2_dc_max, r.log2_kappa,
+                ))
+                .unwrap_or_default(),
                 sa.skip,
                 bla.len(),
             ),
@@ -1331,6 +1348,7 @@ fn finish_reference(
         orbit_len: len,
         rp,
         sa,
+        rn,
         bla,
         bla_dc_max_log2,
         bla_stripe_freq: inp.stripe_freq,
@@ -1591,6 +1609,7 @@ struct RefFields {
     orbit: std::sync::Arc<Vec<[f32; 4]>>,
     orbit_len: u32,
     sa: fractadyne_core::SeriesSkip,
+    rn: Option<fractadyne_core::RenormStep>,
     bla: std::sync::Arc<Vec<[f32; 4]>>,
     bla_on: u32,
 }
@@ -1602,10 +1621,17 @@ impl Default for RefFields {
             orbit: std::sync::Arc::new(Vec::new()),
             orbit_len: 0,
             sa: fractadyne_core::SeriesSkip::NONE,
+            rn: None,
             bla: std::sync::Arc::new(Vec::new()),
             bla_on: 0,
         }
     }
+}
+
+/// THE RENORMALIZED STEP's uniform (off for `None`). Each pixel checks its own `|δc|` against the
+/// model in the shader, so a panned or zoomed view can keep the step its reference chose.
+fn renorm_uniform(step: Option<&fractadyne_core::RenormStep>) -> fractadyne_gpu::Renorm {
+    step.map(fractadyne_gpu::Renorm::from_step).unwrap_or_default()
 }
 
 /// Turn a completed reference recompute into the GPU request's reference fields: the δ-offset of the
@@ -1619,6 +1645,7 @@ fn assemble_ref_fields(vp: &Viewport, precision: usize, delta_exp: i32, res: Rec
         orbit: res.orbit,
         orbit_len: res.orbit_len,
         sa: res.sa,
+        rn: res.rn,
         bla: res.bla,
         bla_on,
     }
@@ -1929,6 +1956,7 @@ impl FractadyneApp {
             res.partial = false;
             res.orbit_tail = None;
             res.bla = std::sync::Arc::new(Vec::new());
+            res.rn = None; // no longer the periodic orbit
             if !keep_sa {
                 res.sa = fractadyne_core::SeriesSkip::NONE;
             }
@@ -2113,6 +2141,7 @@ impl FractadyneApp {
         vc.last_recompute = Some(Instant::now());
         vc.sa = res.sa;
         vc.sa_key = (vc.orbit_id, res.iter);
+        vc.rn = res.rn;
         vc.bla = res.bla;
         vc.bla_id = vc.orbit_id;
         vc.bla_dc_max_log2 = res.bla_dc_max_log2;
@@ -2857,6 +2886,7 @@ impl FractadyneApp {
                 orbit: vc.orbit.clone(),
                 orbit_len: vc.orbit_len,
                 sa: vc.sa,
+                rn: vc.rn,
                 bla,
                 bla_on,
             },
@@ -3660,7 +3690,7 @@ impl FractadyneApp {
         // three produce byte-identical references). Split timings recorded for `--profile`.
         // Iteration ceiling. Only the LIVE-borrowed reference can lower it — see `live_ref_fields`.
         let mut req_max_iter = eff_iter;
-        let RefFields { ref_offset, orbit, orbit_len, sa, bla, bla_on } = if !mode.is_direct() {
+        let RefFields { ref_offset, orbit, orbit_len, sa, rn, bla, bla_on } = if !mode.is_direct() {
             // ⭐Borrowed live reference: no bignum, and no `prof.set` (the probe fires many times a
             // second and would otherwise clobber the `--profile` breakdown of the real render).
             // `None` = the cache cannot serve this view, so fall through to a fresh build.
@@ -3755,6 +3785,7 @@ impl FractadyneApp {
             sa_b_exp: sa.b_exp,
             sa_c: sa.c,
             sa_c_exp: sa.c_exp,
+            rn: renorm_uniform(rn.as_ref()),
             julia_c,
             orbit,
             orbit_len,
@@ -4024,6 +4055,8 @@ impl FractadyneApp {
             r.orbit_len = len;
             r.ref_offset = RefOffset::from_df32(dx, dy);
             r.sa_skip = 0;
+            // The renormalized step described the PRIMARY reference's orbit, not this one's.
+            r.rn = fractadyne_gpu::Renorm::default();
             r.bla_on = bla_on;
             r.bla = bla;
             // ⭐⭐A correction pass exists to repair `glitch`, and the adoption below reads NOTHING
@@ -6520,6 +6553,7 @@ impl FractadyneApp {
             chunk_idx,
             probe_nonce: self.perf.probe_nonce[vs],
             orbit: self.ref_cache[vi].orbit.clone(),
+            rn: renorm_uniform(self.ref_cache[vi].rn.as_ref()),
             orbit_id: self.ref_cache[vi].orbit_id,
             orbit_len: self.ref_cache[vi].orbit_len,
             bla,

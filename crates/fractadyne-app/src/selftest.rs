@@ -499,7 +499,7 @@ impl FractadyneApp {
         let filter: Option<String> = self.selftest.filter.clone();
         const GROUPS: &[&str] = &[
             "numeric", "symmetry", "abs-family", "custom-formula", "life", "lsystem", "multibrot-sa", "bla", "aux-bla",
-            "consistency", "counters", "iter-budget", "iter-chunk", "live-split", "nr-zoom", "coords",
+            "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "nr-zoom", "coords",
             "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
             "checklist",
@@ -1191,6 +1191,96 @@ impl FractadyneApp {
                     pass,
                 });
             }
+        }
+
+        // ⭐⭐THE RENORMALIZED STEP (`fractadyne_core::RenormStep`) through every path that runs it. The
+        // step is not bit-identical to the perturbation loop (it is an approximation, judged against
+        // the oracle by `--renorm-audit`), but it must be bit-identical to ITSELF however a frame is
+        // split: the single dispatch runs it to the end, a chunked tile may pause a pixel inside it
+        // and resume it from state. At the ladder's period-15,248 minibrot (2.1e57×) the step is the
+        // parent's, 953 iterations, perturbed about a 16-step u-orbit — the case it exists for.
+        // Each claim asserts the step ENGAGED first: a view where it does not would pass vacuously.
+        if want("renorm") {
+            const RX: &str = "-2.804105430550454669840777002898397927204098765083452471337241940737508121866324414807243345475023e-2";
+            const RY: &str = "6.948927538996523858929943394989672880373767486737755673829879259356243644967862160620146096103277e-1";
+            const RN_N: u32 = 192;
+            let mag = 2.143e57;
+            let mut vp = Viewport::new(RN_N as f64, RN_N as f64);
+            vp.center_x = fractadyne_core::parse_bf(RX).unwrap();
+            vp.center_y = fractadyne_core::parse_bf(RY).unwrap();
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(4.0 / (RN_N as f64 * mag));
+            vp.precision = fractadyne_core::precision_for_magnification(mag);
+            let saved_iter = self.render_cfg.max_iter;
+            let saved_auto = self.render_cfg.auto_iter;
+            let saved_method = self.coloring.color_method;
+            self.render_cfg.max_iter = 457_440;
+            self.render_cfg.auto_iter = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            let mut req = self.current_export_request_for(&vp, false);
+            req.width = RN_N;
+            req.height = RN_N;
+            req.ss = 1;
+            self.render_cfg.max_iter = saved_iter;
+            self.render_cfg.auto_iter = saved_auto;
+            self.coloring.color_method = saved_method;
+            let bit_exact = |a: &[f32], b: &[f32]| -> usize {
+                a.iter().zip(b).filter(|(x, y)| x.to_bits() != y.to_bits()).count()
+            };
+            let engaged = req.mode == 2 && req.rn.len > 0;
+            use std::sync::atomic::{AtomicBool, AtomicU32};
+            let progress = AtomicU32::new(0);
+            let cancel = AtomicBool::new(false);
+            let a = engaged
+                .then(|| fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel).ok())
+                .flatten();
+            let b = engaged
+                .then(|| fractadyne_gpu::render_export_unchunked(device, queue, &req, &progress, &cancel).ok())
+                .flatten();
+            let took = a.as_ref().map_or(0, |r| r.counters[fractadyne_gpu::CTR_RENORM]);
+            let (pass, result) = match (&a, &b) {
+                (Some(a), Some(b)) if a.pixels.len() == b.pixels.len() => {
+                    let diffs = bit_exact(&a.pixels, &b.pixels);
+                    (
+                        diffs == 0 && took > 0,
+                        format!("{diffs} texels differ; step {} its, {took} sampled px took it", req.rn.len),
+                    )
+                }
+                _ if !engaged => (false, format!("the step did not engage (mode {}, step {})", req.mode, req.rn.len)),
+                _ => (false, "render failed".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Renorm",
+                name: "renormalized step: chunked export matches its single dispatch".into(),
+                params: "ladder p15248 2.1e57x, 457,440 iter, 192px".into(),
+                result,
+                threshold: "step engaged; 0 texels differ",
+                pass,
+            });
+            // Windows of 40,000 iterations (42 renormalized steps) end INSIDE the step for every
+            // pixel that takes more, so pixels pause there and resume from state.
+            let mut windows = Vec::new();
+            let w = if engaged {
+                fractadyne_gpu::render_iter_chunked_timed(device, queue, &req, 40_000, &mut windows).ok()
+            } else {
+                None
+            };
+            let u = engaged.then(|| fractadyne_gpu::render_iter(device, queue, &req).ok()).flatten();
+            let (pass, result) = match (&w, &u) {
+                (Some(w), Some(u)) if w.pixels.len() == u.pixels.len() => {
+                    let diffs = bit_exact(&w.pixels, &u.pixels);
+                    (diffs == 0 && windows.len() > 1, format!("{diffs} texels differ; {} windows", windows.len()))
+                }
+                _ if !engaged => (false, "the step did not engage".into()),
+                _ => (false, "render failed".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Renorm",
+                name: "renormalized step: pixels paused inside it resume bit-identically".into(),
+                params: "ladder p15248 2.1e57x, 40,000-iteration windows, raw".into(),
+                result,
+                threshold: "0 texels differ, more than one window",
+                pass,
+            });
         }
 
         // ⭐⭐ONE COMPILED ENTRY POINT PER RENDER — the gate the corpus red at `06-seahorse-1e24`
