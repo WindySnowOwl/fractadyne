@@ -958,6 +958,8 @@ struct ViewResources {
     /// keep showing it instead of falling through and re-iterating a stale reference (black frame).
     rendered: bool,
     last_orbit_id: u64,
+    /// The BLA tree in `orbit_buf` (its `Arc` address; 0 = none) — see the upload in `prepare`.
+    last_bla_ptr: usize,
     last_iter_key: Option<IterKey>,
     /// Iteration-range tiling: ping-pong per-pixel state (z / dz / info ×2) + bind groups, created
     /// lazily on the first chunked frame and dropped when a normal frame renders (they are ~96
@@ -2140,6 +2142,7 @@ impl ViewResources {
             last_ss: 1,
             rendered: false,
             last_orbit_id: u64::MAX,
+            last_bla_ptr: 0,
             last_iter_key: None,
             chunk_state: None,
             last_chunk: None,
@@ -3065,13 +3068,28 @@ impl CallbackTrait for MandelbrotParams {
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
 
-        // Upload the reference orbit only when it changed (app caches it). The BLA tree (if
-        // any) is appended right after it in the same buffer, starting at index `orbit_len`.
-        if self.orbit_id != view.last_orbit_id && !self.orbit.is_empty() {
+        // Upload the reference orbit when it changed (app caches it). The BLA tree (if any) is
+        // appended right after it in the same buffer, starting at index `orbit_len`.
+        //
+        // ⭐⭐**AND THE TREE WHEN IT CHANGED, under the same orbit.** The app rebuilds a reference's
+        // tree when the view zooms out past the `dc_max` it was built for (render.rs, the live BLA
+        // cache: `bla_id` keeps the orbit's id), and patches its aux lanes when a stripe or trap
+        // slider moves — both a NEW tree for an unchanged `orbit_id`. Keyed on the orbit alone,
+        // neither reached the buffer: the iterate kept a tree whose validity radii were reckoned for
+        // a smaller view than the one it drew (seen in `--zoomtest 10 --zoomtest-then-log2 100`:
+        // every frame of the second leg ran on the tree uploaded before the 13-octave jump out).
+        let bla_ptr = if self.bla.is_empty() { 0 } else { std::sync::Arc::as_ptr(&self.bla) as usize };
+        let new_orbit = self.orbit_id != view.last_orbit_id;
+        let new_tree = self.bla_on == 1 && bla_ptr != 0 && bla_ptr != view.last_bla_ptr;
+        if (new_orbit || new_tree) && !self.orbit.is_empty() {
             let rn_bla: &[[f32; 4]] = if self.rn_bla_k() > 0 { self.rn_bla.as_slice() } else { &[] };
             let total = self.orbit.len() + self.bla.len() + rn_bla.len();
+            // A grown buffer is a new, empty one: the orbit goes in again too.
+            let grows = total as u32 > view.orbit_cap;
             view.ensure_orbit_capacity(device, iter_bgl, total as u32);
-            queue.write_buffer(&view.orbit_buf, 0, bytemuck::cast_slice(self.orbit.as_slice()));
+            if new_orbit || grows {
+                queue.write_buffer(&view.orbit_buf, 0, bytemuck::cast_slice(self.orbit.as_slice()));
+            }
             if !self.bla.is_empty() {
                 let off = (self.orbit.len() * 16) as u64; // 16 B per [f32;4]
                 queue.write_buffer(&view.orbit_buf, off, bytemuck::cast_slice(self.bla.as_slice()));
@@ -3081,7 +3099,8 @@ impl CallbackTrait for MandelbrotParams {
                 queue.write_buffer(&view.orbit_buf, off, bytemuck::cast_slice(rn_bla));
             }
             view.last_orbit_id = self.orbit_id;
-            view.last_iter_key = None; // force re-iterate against the new orbit
+            view.last_bla_ptr = bla_ptr;
+            view.last_iter_key = None; // force re-iterate against the new orbit / tree
         }
 
         // Re-iterate only when the view / orbit changed.

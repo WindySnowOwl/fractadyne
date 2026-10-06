@@ -1360,10 +1360,15 @@ impl FractadyneApp {
             let exec = |r: &fractadyne_gpu::ExportResult| {
                 r.counters[fractadyne_gpu::CTR_STEP_EXEC] + (r.counters[fractadyne_gpu::CTR_STEP_EXEC + 1] << 32)
             };
+            // A breadcrumb between the three 1024² renders: each stamps liveness, so a GPU shared
+            // with another application (one full run took 19 s here, against 2.5) cannot read as a
+            // wedged frame loop to the watchdog.
             let a = tree.then(|| fractadyne_gpu::render_export(device, queue, &ureq, &progress, &cancel).ok()).flatten();
+            crate::diag::breadcrumb("selftest: u-space BLA, chunked render done".into());
             let b = tree
                 .then(|| fractadyne_gpu::render_export_unchunked(device, queue, &ureq, &progress, &cancel).ok())
                 .flatten();
+            crate::diag::breadcrumb("selftest: u-space BLA, single dispatch done".into());
             let mut plain_req = ureq.clone();
             plain_req.rn_bla = std::sync::Arc::new(Vec::new());
             let c = tree
