@@ -1,0 +1,19 @@
+[location]
+real = "-2.8041054305504546698407770028983979273643258419006230e-2"
+imag = "6.9489275389965238589299433949896728803911499016379785e-1"
+zoom = "1.000000e13"
+[image]
+width = 1280
+height = 720
+subframes = 1
+[bailout]
+iterations = 2859
+maximum_reference_iterations = 2859
+maximum_perturb_iterations = 2859
+maximum_bla_steps = 8192
+escape_radius = 256
+[transform]
+exponential_map = false
+[render]
+filename = "47-path-1e13-f3"
+save_png = true

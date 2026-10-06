@@ -13,13 +13,16 @@ $ErrorActionPreference = 'Stop'
 $kit = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repo = Split-Path -Parent $kit
 $scenes = (Import-Csv (Join-Path $kit 'scenes.csv')).slug
+# The ladder (scenes-ladder.csv) is the kit's own: its scenes are not corpus fixtures, so they live
+# in bench-kit\ladder\ and ship from there.
+$ladder = (Import-Csv (Join-Path $kit 'scenes-ladder.csv')).slug
 
 $stage = Join-Path $env:TEMP ('fd-bench-kit-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force $stage | Out-Null
 try {
     # zoom-seq.py is a LANE, not an extra: run-all.ps1 invokes it by name. Ship it or the
     # kit's sequence lane reports itself missing on every machine that unzips this file.
-    foreach ($f in 'README.md', 'scenes.csv', 'bench-lib.ps1', 'run-all.ps1',
+    foreach ($f in 'README.md', 'scenes.csv', 'scenes-ladder.csv', 'bench-lib.ps1', 'run-all.ps1',
                    'bench-latest.ps1', 'bench-latest.sh', 'zoom-seq.py') {
         Copy-Item (Join-Path $kit $f) $stage
     }
@@ -29,7 +32,9 @@ try {
     # first. Omitted, a distributed kit silently downgrades to "view NOT verified" with no report,
     # which is precisely the state that let a wrong-view benchmark run for months.
     New-Item -ItemType Directory -Force (Join-Path $stage 'tools') | Out-Null
-    foreach ($t in 'verify-views.py', 'make-report.py', 'redact-home.py', 'ppm-to-png.py') {
+    # make-fsloc.py: the FractalShark lane writes a locations file with it for a centre too long
+    # for a command line (the 1e30000x ladder scenes).
+    foreach ($t in 'verify-views.py', 'make-report.py', 'redact-home.py', 'ppm-to-png.py', 'make-fsloc.py') {
         Copy-Item (Join-Path $kit ('tools\' + $t)) (Join-Path $stage 'tools')
     }
     New-Item -ItemType Directory -Force (Join-Path $stage 'scenes') | Out-Null
@@ -44,6 +49,18 @@ try {
         # size into a per-run copy from -Size (4K by default), so this rewrite is only the sane
         # default for someone driving F3 by hand from the kit; the corpus originals must stay at
         # their blessed resolution either way.
+        $toml = Join-Path $stage ('scenes\' + $s + '.f3.toml')
+        (Get-Content $toml) `
+            -replace '^\s*width\s*=\s*\d+', 'width = 1920' `
+            -replace '^\s*height\s*=\s*\d+', 'height = 1080' `
+            -replace '^\s*subframes\s*=\s*\d+', 'subframes = 1' |
+            Set-Content $toml -Encoding ascii
+    }
+    foreach ($s in $ladder) {
+        foreach ($ext in '.kfr', '.f3.toml', '.fdn') {
+            Copy-Item (Join-Path $kit ('ladder\' + $s + $ext)) (Join-Path $stage 'scenes')
+        }
+        # The same by-hand default as the standard scenes above; run-all rewrites it per run anyway.
         $toml = Join-Path $stage ('scenes\' + $s + '.f3.toml')
         (Get-Content $toml) `
             -replace '^\s*width\s*=\s*\d+', 'width = 1920' `

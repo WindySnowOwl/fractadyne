@@ -1,0 +1,19 @@
+[location]
+real = "-2.804105430550454669840777002898397927204098765083451958014259277838710256889075333271267217529135e-2"
+imag = "6.948927538996523858929943394989672880373767486737755680968675269305405323393245987015207130043252e-1"
+zoom = "2.142891e57"
+[image]
+width = 1280
+height = 720
+subframes = 1
+[bailout]
+iterations = 457440
+maximum_reference_iterations = 457440
+maximum_perturb_iterations = 457440
+maximum_bla_steps = 8192
+escape_radius = 256
+[transform]
+exponential_map = false
+[render]
+filename = "57-iter-p15248-1e57-f3"
+save_png = true

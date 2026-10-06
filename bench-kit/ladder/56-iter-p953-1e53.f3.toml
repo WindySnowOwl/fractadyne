@@ -1,0 +1,19 @@
+[location]
+real = "-2.804105430550454669840777002898397927204098765083452471337241940737508121866324414807243345475023e-2"
+imag = "6.948927538996523858929943394989672880373767486737755673829879259356243644967862160620146096103277e-1"
+zoom = "1.342765e53"
+[image]
+width = 1280
+height = 720
+subframes = 1
+[bailout]
+iterations = 28590
+maximum_reference_iterations = 28590
+maximum_perturb_iterations = 28590
+maximum_bla_steps = 8192
+escape_radius = 256
+[transform]
+exponential_map = false
+[render]
+filename = "56-iter-p953-1e53-f3"
+save_png = true

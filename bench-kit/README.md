@@ -35,6 +35,62 @@ correctness fixtures first, so they carry the corpus's own resolution and sample
 (Fraktaler-3's `subframes = 4`, paired there with Fractadyne's `--ss 2`); `run-all.ps1` rewrites
 both into a per-run copy, and the corpus originals are never touched.
 
+### The ladder: depth to 1e30000x, iteration caps to 28.5 million (`-SceneSet ladder`)
+
+The ten scenes above stop at 6.1e1105x and 800,000 iterations. `scenes-ladder.csv` adds 21 that
+reach the deep and the long, in three rungs:
+
+- **Minibrots** from 1.3e13x to 1.5e30000x, each centred on its nucleus with an iteration cap of
+  30 times its period (a minibrot's own picture keeps changing up to about there; 30 against 300
+  periods still differed in 1.1% of pixels, so the cap is a choice, recorded here).
+- **Views along one spiral path** from 1e13x to 1e30000x (the path to `validation/spiral-9.98e60205.fdn`,
+  the deepest location in the repository), each capped at three times the period of the minibrot it leads to; on these the
+  picture no longer changes at 10 or 30 times.
+- **An iteration ladder**: four minibrots between 1.3e53x and 2.1e68x whose periods run from 953 to
+  951,094, so the cap climbs to 28.5 million at nearly the same depth.
+
+Every minibrot was located with Fractadyne's nucleus finder (`--find-minibrot --period-search ball`)
+and checked by Newton's method; the iteration ladder's are tuned copies inside the period-953
+minibrot (`c_A + s_A·c_B`, period `p_A·p_B`). The files live in `ladder\`, not the corpus: they are benchmark scenes, not cross-checked
+correctness fixtures. Run them with `-SceneSet ladder` (or `all`); expect hours, not minutes, of
+which the two 1e30000x scenes take several minutes per render in every lane.
+
+| Scene | Magnification | Iterations | Rung |
+|---|---|---|---|
+| 40-mini-p128-1e13 | 1.3e13 | 3,840 | minibrot, period 128 |
+| 41-mini-p448-1e34 | 5.2e33 | 13,440 | minibrot, period 448 |
+| 42-mini-p2066-1e97 | 3.4e96 | 61,980 | minibrot, period 2,066 |
+| 43-mini-p4796-1e296 | 2.3e296 | 143,880 | minibrot, period 4,796 |
+| 44-mini-p14416-1e1001 | 3.4e1000 | 432,480 | minibrot, period 14,416 |
+| 45-mini-p41722-1e3000 | 1.0e3000 | 1,251,660 | minibrot, period 41,722 |
+| 46-mini-p137396-1e10003 | 3.4e10002 | 4,121,880 | minibrot, period 137,396 |
+| 47-path-1e13 | 1.0e13 | 2,859 | spiral-path view |
+| 48-path-1e33 | 1.0e33 | 2,859 | spiral-path view |
+| 49-path-1e100 | 1.0e100 | 10,293 | spiral-path view |
+| 50-path-1e300 | 1.0e300 | 26,673 | spiral-path view |
+| 51-path-1e320 | 1.0e320 | 28,311 | spiral-path view |
+| 52-path-1e1000 | 1.0e1000 | 84,003 | spiral-path view |
+| 53-path-1e3000 | 1.0e3000 | 247,803 | spiral-path view |
+| 54-path-1e10000 | 1.0e10000 | 821,103 | spiral-path view |
+| 55-path-1e30000 | 1.0e30000 | 2,459,103 | spiral-path view |
+| 56-iter-p953-1e53 | 1.3e53 | 28,590 | minibrot, period 953 (iteration ladder) |
+| 57-iter-p15248-1e57 | 2.1e57 | 457,440 | minibrot, period 15,248 (iteration ladder) |
+| 58-iter-p121984-1e66 | 1.7e66 | 3,659,520 | minibrot, period 121,984 (iteration ladder) |
+| 59-iter-p951094-1e68 | 2.1e68 | 28,532,820 | minibrot, period 951,094 (iteration ladder) |
+| 60-mini-p410594-1e30000 | 1.5e30000 | 12,317,820 | minibrot, period 410,594 |
+
+Two scenes need their centre in a file, because a 1e30000x centre is 30,000 digits per coordinate
+and a Windows command line holds 32,767 characters. Each lane checks its line first: Fractadyne
+reads the same arguments from an `@file` (kept in `fd-args\`), FractalShark reads a locations file
+written by `tools\make-fsloc.py` (kept in `fs-loc\`; it needs Python), Fraktaler-3 already reads
+its scene file, and imagina-cli, which takes the centre only on its command line, records
+`NA-command-line` for that scene. On Linux (`bench-latest.sh --scene-set ladder`) an argument may
+be 128 KiB, so no lane needs a file.
+
+Known result, so nobody chases it: Fraktaler-3 3.1 reports every pixel of
+`59-iter-p951094-1e68` as never escaping and writes a black image, also with
+`maximum_bla_steps` raised to the cap; the other three render the minibrot.
+
 ## Prerequisites & quick start
 
 Prerequisites: **PowerShell** (Windows) or **bash** (Linux), and **Python 3 with Pillow**
@@ -186,7 +242,14 @@ across 1e28, a deep field across 1e308). Two harnesses consume them:
     flaw (measured 2026-10-04: the spar scene's 69 ms render took 3.5 s, waiting for scene 17's
     12.7 MB PNG). `fs-phases.csv` splits each wall into the client call and the encode, beside
     FractalShark's own report (reference orbit, LA tables, per-pixel), printed because the lane no
-    longer passes `--quiet`.
+    longer passes `--quiet`. **Each image gets a fresh server**, warmed by one untimed frame
+    entirely outside the set: a server KEEPS each scene's reference orbit, so with one server for
+    the whole lane, rounds 2 and 3 of a scene reused the orbit round 1 built, and "fastest of N"
+    picked a frame that skipped it (measured 2026-10-05: the 1e10000x path view took 17.1 s in
+    round 1, 2.4 s and 2.1 s after it). Every run of the other three lanes builds its own orbit.
+    The warm-up absorbs a server's one-off first-render setup (scene 03 at 4K: 1.2-1.3 s as a
+    server's first image, 0.36 s after the warm-up) and its orbit is one step long, so nothing in
+    it can be reused. Startup and warm-up stay outside every image's time.
   - `reported_s` — the renderer's own render-time figure. Fractadyne prints one, and FractalShark's
     client prints one that the lane records only for a row that already passed the exit code and
     the structure guard (a *refused* render prints one too). Self-reported figures exclude
