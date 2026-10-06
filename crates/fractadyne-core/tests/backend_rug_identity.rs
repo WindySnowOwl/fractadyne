@@ -460,3 +460,30 @@ fn par_crossover() {
         println!("p={p:>6} steps={steps:>6} {ns:>12.0} ns/step");
     }
 }
+
+/// THE PRECISION SCHEDULE (`fc::SchedState`) across backends, where it is certainly ENGAGED: points
+/// ~2^-900 and ~2^-16,600 from the Misiurewicz point `c = i`, whose orbits follow i's (~1.25 bits of
+/// derivative a step) until they escape, so most steps run far below full precision — in the
+/// sequential MPFR loop at 1,024 bits and the three-core one at 17,000. Each backend's samples and
+/// its tail's schedule state must match the other's, and the schedule must have gone low.
+#[test]
+fn a_scheduled_orbit_is_byte_identical_across_backends() {
+    for (p, zeros) in [(1_024usize, 271usize), (17_000, 5_000)] {
+        let cx = fc::parse_bf_prec(&format!("7.07e-{}", zeros + 1), p).unwrap();
+        let cy = fc::parse_bf_prec(&format!("1.{}95", "0".repeat(zeros)), p).unwrap();
+        let z0 = fc::BigFloat::from_f64(0.0, p);
+        let build = |backend| {
+            fc::with_orbit_schedule(true, || {
+                fc::reference_orbit_t_in(backend, &z0, &z0, &cx, &cy, fc::formula::MANDELBROT, 40_000, p)
+            })
+        };
+        let (a, al, at) = build(BackendChoice::Astro);
+        let (r, rl, rt) = build(BackendChoice::Rug);
+        assert_eq!(al, rl, "p={p}: lengths differ");
+        assert!(at.escaped, "p={p}: the test orbit should escape, so the whole run is compared");
+        assert_eq!(bits(&a), bits(&r), "p={p}: the scheduled samples differ between backends");
+        assert_eq!(at.sched, rt.sched, "p={p}: the schedule states differ");
+        let st = at.sched.expect("scheduled");
+        assert!((st.cur as usize) * 2 < p, "p={p}: the schedule never went low ({} bits)", st.cur);
+    }
+}

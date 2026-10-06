@@ -393,8 +393,10 @@ mod tests {
             crate::BackendChoice::Astro, &z0, &z0, &cx, &cy, crate::formula::MANDELBROT, 12, p,
         );
         let mut got = vec![want[0]];
+        // The same schedule state the fresh build above started from (on or off with the switch).
+        let sched = crate::reference::SchedState::fresh(p, crate::formula::MANDELBROT, true);
         let tail = super::try_run_orbit_inplace(
-            &mut got, &z0, &z0, &cx, &cy, crate::formula::MANDELBROT, 0, 12, p, None,
+            &mut got, &z0, &z0, &cx, &cy, crate::formula::MANDELBROT, 0, 12, p, None, sched,
         )
         .expect("Mandelbrot must take the in-place path");
         assert_eq!(want.len(), got.len());
@@ -629,6 +631,19 @@ impl ParProducts {
     }
 }
 
+/// [`par_mandel_walk`] at one precision throughout.
+fn par_mandel_walk_fixed(
+    zx: Float,
+    zy: Float,
+    rcx: &Float,
+    rcy: &Float,
+    ctx: u32,
+    mut each: impl FnMut(&Float, &Float) -> bool,
+    steps: u32,
+) -> (Float, Float) {
+    par_mandel_walk(zx, zy, rcx, rcy, ctx, |x, y| (each(x, y), ctx), steps)
+}
+
 /// Move `v` into `slot`, leaving `v` as scratch pinned at `ctx` (see the swap note in
 /// `try_run_orbit_inplace`: an entry value can be wider than `ctx`, and a destination must not
 /// inherit that width).
@@ -641,18 +656,20 @@ fn swap_in(slot: &mut Float, v: &mut Float, ctx: u32) {
 
 /// `z ← z² + c` (Mandelbrot) for `n` steps from `(zx, zy)`, the three products on three cores:
 /// `x²` here, `y²` and `x·y` on two workers; the combination is `csqr`'s, op for op.
-/// `each(n, zx, zy) -> stop?` sees every new value. Returns the final `(zx, zy)`.
+/// `each(zx, zy) -> (stop?, bits)` sees every new value and names the precision the next one is
+/// computed at (`ctx` is the first's; see `crate::reference::Schedule`). Returns the final `(zx, zy)`.
 fn par_mandel_walk(
     zx: Float,
     zy: Float,
     rcx: &Float,
     rcy: &Float,
     ctx: u32,
-    mut each: impl FnMut(&Float, &Float) -> bool,
+    mut each: impl FnMut(&Float, &Float) -> (bool, u32),
     steps: u32,
 ) -> (Float, Float) {
     use rug::ops::{AddAssignRound, SubAssignRound};
     let par = ParProducts::new(vec![zx, zy], vec![vec![(0, 0)], vec![(1, 1)], vec![(0, 1)]], ctx);
+    let mut cur = ctx;
     par.with_workers(|par| {
         for _ in 0..steps {
             par.step();
@@ -664,11 +681,23 @@ fn par_mandel_walk(
                 x2.sub_assign_round(y2, RZ);
                 x2.add_assign_round(rcx, RZ);
                 t.add_assign_round(rcy, RZ);
-                swap_in(&mut inp[0], x2, ctx);
-                swap_in(&mut inp[1], t, ctx);
+                swap_in(&mut inp[0], x2, cur);
+                swap_in(&mut inp[1], t, cur);
             });
-            if par.read(|z| each(&z[0], &z[1])) {
+            let (stop, next) = par.read(|z| each(&z[0], &z[1]));
+            if stop {
                 break;
+            }
+            if next != cur {
+                // The next step's products and sums round to `next` bits.
+                par.combine(|_, outs| {
+                    for o in outs.iter_mut() {
+                        for f in o.iter_mut() {
+                            f.set_prec(next);
+                        }
+                    }
+                });
+                cur = next;
             }
         }
     });
@@ -701,7 +730,8 @@ pub(crate) fn try_run_orbit_inplace(
     max_iter: u32,
     p: usize,
     mut probe: Option<&mut crate::reference::PeriodProbe<'_>>,
-) -> Option<(BigFloat, BigFloat, bool)> {
+    sched: Option<crate::reference::SchedState>,
+) -> Option<(BigFloat, BigFloat, bool, Option<crate::reference::SchedState>)> {
     use crate::formula as fam;
     use rug::ops::{AddAssignRound, AssignRound, SubAssignRound, SubFromRound};
 
@@ -717,6 +747,13 @@ pub(crate) fn try_run_orbit_inplace(
     let mut zy = <Float as RefBackend>::from_carrier(z0y, ctx);
     let rcx = <Float as RefBackend>::from_carrier(cx, ctx);
     let rcy = <Float as RefBackend>::from_carrier(cy, ctx);
+    // THE PRECISION SCHEDULE (`crate::reference::Schedule`): Mandelbrot only, as in the generic loop.
+    let mut sched = crate::reference::Schedule::new(
+        p,
+        crate::to_f64(cx),
+        crate::to_f64(cy),
+        sched.filter(|_| formula == fam::MANDELBROT),
+    );
 
     if formula == fam::MANDELBROT && par_enabled(ctx) && n < max_iter {
         let mut escaped = false;
@@ -726,7 +763,7 @@ pub(crate) fn try_run_orbit_inplace(
             zy,
             &rcx,
             &rcy,
-            ctx,
+            sched.bits(),
             |zx, zy| {
                 let xv = zx.to_f64_trunc();
                 let yv = zy.to_f64_trunc();
@@ -735,7 +772,15 @@ pub(crate) fn try_run_orbit_inplace(
                 crate::reference::count_reference_step(n);
                 if xv * xv + yv * yv > 1.0e12 {
                     escaped = true;
-                    return true;
+                    return (true, ctx);
+                }
+                // Before the probe, as in the generic loop: a stopped tail is ready for the next step.
+                if sched.active() {
+                    let z = crate::floatexp::CFloatExp {
+                        re: RefBackend::to_floatexp(zx),
+                        im: RefBackend::to_floatexp(zy),
+                    };
+                    sched.advance(z, xv, yv);
                 }
                 if let Some(pr) = probe.as_deref_mut() {
                     let exact = || crate::floatexp::CFloatExp {
@@ -743,14 +788,14 @@ pub(crate) fn try_run_orbit_inplace(
                         im: RefBackend::to_floatexp(zy),
                     };
                     if pr.step(xv, yv, exact) {
-                        return true;
+                        return (true, ctx);
                     }
                 }
-                false
+                (false, sched.bits())
             },
             steps,
         );
-        return Some((fx.to_carrier(ctx), fy.to_carrier(ctx), escaped));
+        return Some((fx.to_carrier(ctx), fy.to_carrier(ctx), escaped, sched.state()));
     }
 
     // The whole point: allocated once, reused for every iteration.
@@ -760,6 +805,17 @@ pub(crate) fn try_run_orbit_inplace(
 
     let mut escaped = false;
     while n < max_iter {
+        // The destinations at this step's bits (the schedule's, else `ctx`) — see the pin below.
+        let bits = sched.bits();
+        if x2.prec() != bits {
+            x2.set_prec(bits); // content is dead -- it is overwritten just below
+        }
+        if y2.prec() != bits {
+            y2.set_prec(bits);
+        }
+        if t.prec() != bits {
+            t.set_prec(bits);
+        }
         // z² — `csqr`'s order: each product rounded to `ctx`, then combined; the imaginary part
         // doubled by an exponent bump rather than a second multiply.
         x2.assign_round(&zx * &zx, RZ);
@@ -809,14 +865,9 @@ pub(crate) fn try_run_orbit_inplace(
         // would round to 128 bits where astro-float rounds to 64.
         //
         // The first iteration legitimately uses the wide entry values as OPERANDS (as the generic
-        // path does); only the destinations must be pinned. The guard costs one comparison per
-        // iteration and fires at most once, since everything is `ctx` from then on.
-        if x2.prec() != ctx {
-            x2.set_prec(ctx); // content is dead -- it is overwritten at the top of the next pass
-        }
-        if t.prec() != ctx {
-            t.set_prec(ctx);
-        }
+        // path does); only the destinations must be pinned. The pin is at the top of the loop, to
+        // the step's own bits: one comparison per destination per iteration, firing when the
+        // swap handed a scratch the entry width or the schedule moved.
 
         let xv = zx.to_f64_trunc();
         let yv = zy.to_f64_trunc();
@@ -826,6 +877,13 @@ pub(crate) fn try_run_orbit_inplace(
         if xv * xv + yv * yv > 1.0e12 {
             escaped = true;
             break;
+        }
+        if sched.active() {
+            let z = crate::floatexp::CFloatExp {
+                re: RefBackend::to_floatexp(&zx),
+                im: RefBackend::to_floatexp(&zy),
+            };
+            sched.advance(z, xv, yv);
         }
         if let Some(pr) = probe.as_deref_mut() {
             let exact = || crate::floatexp::CFloatExp {
@@ -837,7 +895,7 @@ pub(crate) fn try_run_orbit_inplace(
             }
         }
     }
-    Some((zx.to_carrier(ctx), zy.to_carrier(ctx), escaped))
+    Some((zx.to_carrier(ctx), zy.to_carrier(ctx), escaped, sched.state()))
 }
 
 /// Length-only / sample-recording twin of [`try_run_orbit_inplace`] for the PICK's scoring
@@ -874,6 +932,13 @@ pub(crate) fn try_orbit_length_inplace(
     let mut x2 = Float::with_val(ctx, 0);
     let mut y2 = Float::with_val(ctx, 0);
     let mut t = Float::with_val(ctx, 0);
+    // THE PRECISION SCHEDULE, as the build walks the same orbit (`crate::reference::Schedule`).
+    let mut sched = crate::reference::Schedule::new(
+        p,
+        crate::to_f64(cx),
+        crate::to_f64(cy),
+        crate::reference::SchedState::fresh(p, formula, z0x.is_zero() && z0y.is_zero()),
+    );
 
     if let Some(s) = samples.as_deref_mut() {
         s.push(CFloatExp {
@@ -890,7 +955,7 @@ pub(crate) fn try_orbit_length_inplace(
             zy,
             &rcx,
             &rcy,
-            ctx,
+            sched.bits(),
             |zx, zy| {
                 n += 1;
                 crate::reference::count_reference_step(n);
@@ -900,22 +965,37 @@ pub(crate) fn try_orbit_length_inplace(
                 let xv = zx.to_f64_trunc();
                 let yv = zy.to_f64_trunc();
                 if xv * xv + yv * yv > 1.0e12 {
-                    return true;
+                    return (true, ctx);
+                }
+                if sched.active() {
+                    sched.advance(CFloatExp { re: RefBackend::to_floatexp(zx), im: RefBackend::to_floatexp(zy) }, xv, yv);
                 }
                 if let Some(pr) = probe.as_deref_mut() {
                     let exact = || CFloatExp { re: RefBackend::to_floatexp(zx), im: RefBackend::to_floatexp(zy) };
                     if pr.step(xv, yv, exact) {
                         periodic = true;
-                        return true;
+                        return (true, ctx);
                     }
                 }
-                false
+                (false, sched.bits())
             },
             max_iter,
         );
         return Some(if periodic { max_iter } else { n });
     }
     while n < max_iter {
+        // Destinations at this step's bits — the schedule's, else `ctx`; the swap can also hand a
+        // scratch the (wider) entry width. Same pin, same reasoning as try_run_orbit_inplace.
+        let bits = sched.bits();
+        if x2.prec() != bits {
+            x2.set_prec(bits);
+        }
+        if y2.prec() != bits {
+            y2.set_prec(bits);
+        }
+        if t.prec() != bits {
+            t.set_prec(bits);
+        }
         // z² + c, in `csqr`'s exact op order (see try_run_orbit_inplace).
         x2.assign_round(&zx * &zx, RZ);
         y2.assign_round(&zy * &zy, RZ);
@@ -926,14 +1006,6 @@ pub(crate) fn try_orbit_length_inplace(
         t.add_assign_round(&rcy, RZ);
         core::mem::swap(&mut zx, &mut x2);
         core::mem::swap(&mut zy, &mut t);
-        // Scratch must stay at exactly `ctx` — the swap can hand it the (wider) entry width.
-        // Same guard, same reasoning as try_run_orbit_inplace.
-        if x2.prec() != ctx {
-            x2.set_prec(ctx);
-        }
-        if t.prec() != ctx {
-            t.set_prec(ctx);
-        }
         n += 1;
         crate::reference::count_reference_step(n);
         if let Some(s) = samples.as_deref_mut() {
@@ -946,6 +1018,9 @@ pub(crate) fn try_orbit_length_inplace(
         let yv = zy.to_f64_trunc();
         if xv * xv + yv * yv > 1.0e12 {
             break;
+        }
+        if sched.active() {
+            sched.advance(CFloatExp { re: RefBackend::to_floatexp(&zx), im: RefBackend::to_floatexp(&zy) }, xv, yv);
         }
         if let Some(pr) = probe.as_deref_mut() {
             let exact = || CFloatExp { re: RefBackend::to_floatexp(&zx), im: RefBackend::to_floatexp(&zy) };
@@ -1158,7 +1233,7 @@ pub(crate) fn ball_period(cx: &BigFloat, cy: &BigFloat, max: u32, log2_radius: f
     if par_enabled(ctx) {
         let mut found = None;
         let mut n = 0u32;
-        par_mandel_walk(
+        par_mandel_walk_fixed(
             zx,
             zy,
             &rcx,

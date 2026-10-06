@@ -385,6 +385,141 @@ pub struct OrbitTail {
     /// The extend contract is byte-identity with a fresh build, and the only way to keep that
     /// promise across a mid-session backend switch is to finish the orbit the way it started.
     pub backend: u32,
+    /// THE PRECISION SCHEDULE's state for the next step ([`SchedState`]), so an extension resumes
+    /// it where a fresh build would be; `None` = every step at full precision.
+    pub sched: Option<SchedState>,
+}
+
+// ---- THE PRECISION SCHEDULE --------------------------------------------------------------------
+//
+// ⭐⭐A deep orbit does not need its full precision at every step. A step rounded to `p` bits
+// injects an error of `2^-p` times its operands' scale (`max(|Z_n|², |c|)`: the products are
+// rounded before `c` is added, so a near-return's tiny result does not make it smaller), and the
+// perturbation formula carries it into every pixel's orbit exactly (`z_{n+1} = z_n² + c + e`): it
+// moves each pixel as moving its `c` by `e / |dZ_{n+1}/dc|`. The build's precision `p0` was chosen for the pixel spacing at the start, where
+// `dZ/dc = 1`; as the derivative grows the same pixel-relative accuracy needs fewer bits:
+//
+//   p_{n+1} = p0 + log2 max(|Z_n|², |c|) − log2|dZ_{n+1}/dc| + ORBIT_SCHED_MARGIN
+//
+// in whole 64-bit words (MPFR and astro-float then round alike), moving in steps of p0/64 and
+// rising at once when a near-return resets the derivative. The derivative is carried in floatexp
+// from each value's exact top bits (`to_floatexp`, byte-identical across backends), so both
+// backends schedule identically. At the ladder's 1e30000 path (99,722 bits, 821,554 steps) the
+// derivative grows steadily to the view's scale and the average step needs half the bits: the
+// orbit and the pick's walk of it both took 66 s against 138, and not one of the 821,554 stored
+// samples changed (see the margin). Mandelbrot from `Z_0 = 0` only; an extension resumes the
+// schedule from its tail.
+
+/// Bits the schedule keeps above the need: the injected error stays 2^-112 under a pixel's own δz,
+/// i.e. 64 bits under the finest sample a walk stores (the pick's 64-bit floatexp; the build's df32
+/// is 48), so a stored sample has a ~2^-48 chance of a different last bit, never a different value.
+pub const ORBIT_SCHED_MARGIN: f64 = 112.0;
+
+static ORBIT_SCHEDULE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+thread_local! {
+    static ORBIT_SCHEDULE_HERE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Turn the precision schedule on or off for every orbit built after (the app's `ORBIT_SCHEDULE`
+/// tunable). An extension keeps the schedule its tail was built with.
+pub fn set_orbit_schedule(on: bool) {
+    ORBIT_SCHEDULE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Run `f` with the schedule forced on or off for builds on THIS thread: a test or an A/B in one
+/// process, where flipping the process-wide switch would race every other thread.
+pub fn with_orbit_schedule<R>(on: bool, f: impl FnOnce() -> R) -> R {
+    struct Restore(Option<bool>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            ORBIT_SCHEDULE_HERE.with(|c| c.set(self.0));
+        }
+    }
+    let _restore = Restore(ORBIT_SCHEDULE_HERE.with(|c| c.replace(Some(on))));
+    f()
+}
+
+fn orbit_schedule_on() -> bool {
+    ORBIT_SCHEDULE_HERE
+        .with(|c| c.get())
+        .unwrap_or_else(|| ORBIT_SCHEDULE.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// The schedule's state for the NEXT step: `dZ/dc` of the value about to be computed and the bits
+/// it is computed at. Carried in [`OrbitTail`] so an extension is the fresh build's continuation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SchedState {
+    pub d: CFloatExp,
+    pub cur: u32,
+}
+
+impl SchedState {
+    /// The state before `Z_1` of a build at `p` bits (`dZ_1/dc = 1`, full precision), or `None`
+    /// when the schedule is off or does not apply (not Mandelbrot from `Z_0 = 0`).
+    pub(crate) fn fresh(p: usize, formula: u32, from_zero: bool) -> Option<SchedState> {
+        (formula == formula::MANDELBROT && from_zero && orbit_schedule_on()).then(|| SchedState {
+            d: CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO },
+            cur: (p.div_ceil(64) * 64) as u32,
+        })
+    }
+}
+
+/// One walk's schedule: [`SchedState`] plus what it is reckoned against. Inactive (`bits` = the
+/// full precision, `advance` a no-op) without a state.
+pub(crate) struct Schedule {
+    st: Option<SchedState>,
+    full: u32,
+    q: u32,
+    cxf: f64,
+    cyf: f64,
+    /// Steps computed below full precision (diagnostics).
+    pub(crate) reduced: u64,
+}
+
+impl Schedule {
+    /// For a walk at `p` bits of the point `c` (its `f64` view, `crate::to_f64` of the carrier).
+    pub(crate) fn new(p: usize, cxf: f64, cyf: f64, st: Option<SchedState>) -> Schedule {
+        let full = (p.div_ceil(64) * 64) as u32;
+        Schedule { st, full, q: (full / 64 / 64 * 64).max(64), cxf, cyf, reduced: 0 }
+    }
+
+    pub(crate) fn active(&self) -> bool {
+        self.st.is_some()
+    }
+
+    /// The bits the next value is computed at.
+    pub(crate) fn bits(&self) -> u32 {
+        self.st.map_or(self.full, |s| s.cur)
+    }
+
+    pub(crate) fn state(&self) -> Option<SchedState> {
+        self.st
+    }
+
+    /// `Z_n` was just computed (its exact top bits `z` and `f64` view `xv, yv`): reckon `Z_{n+1}`.
+    pub(crate) fn advance(&mut self, z: CFloatExp, xv: f64, yv: f64) {
+        let Some(st) = self.st.as_mut() else { return };
+        st.d = (z * st.d).mul_f64(2.0) + CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
+        // ⛔The step's error is its OPERANDS' scale, not its result's: x², y² and their difference
+        // are each rounded to the step's bits before `c` is added, so a near-return (Z_n² ≈ −c,
+        // the result ~1e-71) still carries 2^-p·|c| of absolute error. Reckoned from |Z_{n+1}| the
+        // first version gave such a step 64 bits — its f64 estimate cancelled to 0 — and at the
+        // 1.2e148 corpus centre the orbit lost its dip at step 4,383 and escaped at 6,780 where it
+        // survives 363,791.
+        let scale = (xv * xv + yv * yv).max(self.cxf.hypot(self.cyf));
+        let full = self.full as f64;
+        let need = full + scale.log2() - st.d.abs().log2() + ORBIT_SCHED_MARGIN;
+        let target = if need.is_nan() || need >= full {
+            self.full
+        } else {
+            ((need.max(64.0) / self.q as f64).ceil() as u32 * self.q).clamp(64, self.full)
+        };
+        if target > st.cur || target + self.q <= st.cur {
+            st.cur = target;
+        }
+        self.reduced += u64::from(st.cur < self.full);
+    }
 }
 
 /// Append `Z_{n+1..max_iter}` (df64 samples) to `out`, which already holds `Z_0..Z_n`, iterating from
@@ -406,7 +541,8 @@ fn run_orbit(
     p: usize,
     probe: Option<&mut PeriodProbe<'_>>,
 ) -> OrbitTail {
-    dispatch_orbit(bit, out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe)
+    let sched = SchedState::fresh(p, formula, n == 0 && zx.is_zero() && zy.is_zero());
+    dispatch_orbit(bit, out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe, sched)
         .expect("a BackendChoice variant only exists when its backend is compiled in")
 }
 
@@ -432,9 +568,10 @@ fn dispatch_orbit(
     max_iter: u32,
     p: usize,
     probe: Option<&mut PeriodProbe<'_>>,
+    sched: Option<SchedState>,
 ) -> Option<OrbitTail> {
     match bit {
-        0 => Some(run_orbit_carrier::<BigFloat>(out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe)),
+        0 => Some(run_orbit_carrier::<BigFloat>(out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe, sched)),
         #[cfg(feature = "rug")]
         1 => {
             // Prefer the backend's allocation-free loop where it has one; fall back to the generic
@@ -442,10 +579,10 @@ fn dispatch_orbit(
             // byte-identical by the cross-backend matrix, which covers every formula id.
             let mut probe = probe;
             let fast = crate::backend_rug::try_run_orbit_inplace(
-                out, &zx, &zy, cx, cy, formula, n, max_iter, p, probe.as_deref_mut(),
+                out, &zx, &zy, cx, cy, formula, n, max_iter, p, probe.as_deref_mut(), sched,
             );
             match fast {
-                Some((tzx, tzy, escaped)) => {
+                Some((tzx, tzy, escaped, sched)) => {
                     // The fast path bypasses `run_orbit_carrier`, which is where the observation
                     // is normally recorded -- so record it here, after the work, or the backend
                     // stamp silently under-reports whenever the fast path is the one that ran.
@@ -458,10 +595,11 @@ fn dispatch_orbit(
                     escaped,
                     period: probe.and_then(|pr| pr.found),
                     backend: <rug::Float as RefBackend>::BIT,
+                    sched,
                     })
                 }
                 None => Some(run_orbit_carrier::<rug::Float>(
-                    out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe,
+                    out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe, sched,
                 )),
             }
         }
@@ -490,13 +628,15 @@ fn run_orbit_carrier<B: RefBackend>(
     max_iter: u32,
     p: usize,
     mut probe: Option<&mut PeriodProbe<'_>>,
+    sched: Option<SchedState>,
 ) -> OrbitTail {
     let ctx = B::ctx_for(p);
     let (bzx, bzy) = (B::from_carrier(&zx, ctx), B::from_carrier(&zy, ctx));
     let (bzpx, bzpy) = (B::from_carrier(&zpx, ctx), B::from_carrier(&zpy, ctx));
     let (bcx, bcy) = (B::from_carrier(cx, ctx), B::from_carrier(cy, ctx));
+    let mut sched = Schedule::new(p, to_f64(cx), to_f64(cy), sched);
     let (zx, zy, zpx, zpy, escaped) = run_orbit_gen::<B>(
-        out, bzx, bzy, bzpx, bzpy, &bcx, &bcy, formula, n, max_iter, ctx, probe.as_deref_mut(),
+        out, bzx, bzy, bzpx, bzpy, &bcx, &bcy, formula, n, max_iter, ctx, probe.as_deref_mut(), &mut sched,
     );
     // Stamp AFTER the work, not before: `crate::backend::status_line` is quoted by the startup
     // log, crash reports and every gate, and must report what ran rather than what was asked for.
@@ -509,6 +649,7 @@ fn run_orbit_carrier<B: RefBackend>(
         escaped,
         period: probe.and_then(|pr| pr.found),
         backend: B::BIT,
+        sched: sched.state(),
     }
 }
 
@@ -533,10 +674,13 @@ fn run_orbit_gen<B: RefBackend>(
     max_iter: u32,
     ctx: B::Ctx,
     mut probe: Option<&mut PeriodProbe<'_>>,
+    sched: &mut Schedule,
 ) -> (B, B, B, B, bool) {
     let mut escaped = false;
     let escape2 = ref_escape2(formula);
     while n < max_iter {
+        // The precision schedule's bits for this step (only Mandelbrot from 0 schedules).
+        let ctx = if sched.active() { B::ctx_for(sched.bits() as usize) } else { ctx };
         let (nzx, nzy) = if formula == formula::PHOENIX {
             phoenix_step_gen(&zx, &zy, &zpx, &zpy, cx, cy, ctx)
         } else {
@@ -558,6 +702,10 @@ fn run_orbit_gen<B: RefBackend>(
         if xv * xv + yv * yv > escape2 {
             escaped = true;
             break;
+        }
+        // Before the probe: a tail the probe stops at must still be ready for the next step.
+        if sched.active() {
+            sched.advance(CFloatExp { re: zx.to_floatexp(), im: zy.to_floatexp() }, xv, yv);
         }
         if let Some(pr) = probe.as_deref_mut() {
             if pr.step(xv, yv, || CFloatExp { re: zx.to_floatexp(), im: zy.to_floatexp() }) {
@@ -752,6 +900,7 @@ pub fn extend_reference_orbit(
         max_iter,
         p,
         None,
+        tail.sched,
     );
     let Some(new_tail) = extended else {
         // The prefix was built by a backend this binary does not have. Finishing it in a different
@@ -1802,6 +1951,12 @@ fn orbit_length_gen<B: RefBackend>(
     mut probe: Option<&mut PeriodProbe<'_>>,
 ) -> u32 {
     let ctx = B::ctx_for(p);
+    let mut sched = Schedule::new(
+        p,
+        to_f64(cx),
+        to_f64(cy),
+        SchedState::fresh(p, formula, z0x.is_zero() && z0y.is_zero()),
+    );
     let mut zx = B::from_carrier(z0x, ctx);
     let mut zy = B::from_carrier(z0y, ctx);
     let mut zpx = B::from_f64(0.0, ctx); // previous iterate (Phoenix)
@@ -1813,6 +1968,7 @@ fn orbit_length_gen<B: RefBackend>(
     }
     let mut n = 0u32;
     while n < max_iter {
+        let ctx = if sched.active() { B::ctx_for(sched.bits() as usize) } else { ctx };
         let (nzx, nzy) = if formula == formula::PHOENIX {
             phoenix_step_gen(&zx, &zy, &zpx, &zpy, &cx, &cy, ctx)
         } else {
@@ -1833,6 +1989,9 @@ fn orbit_length_gen<B: RefBackend>(
         let (xv, yv) = (zx.to_f64_trunc(), zy.to_f64_trunc());
         if xv * xv + yv * yv > ref_escape2(formula) {
             break;
+        }
+        if sched.active() {
+            sched.advance(CFloatExp { re: zx.to_floatexp(), im: zy.to_floatexp() }, xv, yv);
         }
         if let Some(pr) = probe.as_deref_mut() {
             if pr.step(xv, yv, || CFloatExp { re: zx.to_floatexp(), im: zy.to_floatexp() }) {
@@ -4039,6 +4198,9 @@ mod misiurewicz_detection;
 
 #[cfg(test)]
 mod aux_bla_oracle;
+
+#[cfg(test)]
+mod sched_tests;
 
 #[cfg(test)]
 mod sa_budget_tests;

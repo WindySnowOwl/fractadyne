@@ -103,6 +103,8 @@ pub(crate) struct Cost {
     pub tile_pack: u64,
     /// The u-space BLA for the renormalized step (`RENORM_BLA_DEFAULT`; 0 = off, 1 = on).
     pub renorm_bla: u64,
+    /// The reference orbit's precision schedule (`ORBIT_SCHEDULE_DEFAULT`; 0 = off, 1 = on).
+    pub orbit_schedule: u64,
     /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
     /// second override channel because duplicating the machinery for a single value would be worse.
     /// See the note above on what earns a place in this set.
@@ -141,6 +143,7 @@ impl Default for Cost {
             renorm: RENORM_DEFAULT,
             tile_pack: TILE_PACK_DEFAULT,
             renorm_bla: RENORM_BLA_DEFAULT,
+            orbit_schedule: ORBIT_SCHEDULE_DEFAULT,
             bla_eps: BLA_EPS,
         }
     }
@@ -326,6 +329,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "ORBIT_SCHEDULE" => {
+                let p = c.orbit_schedule;
+                c.orbit_schedule = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set ORBIT_SCHEDULE: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "RENORM_BLA" => {
                 let p = c.renorm_bla;
                 c.renorm_bla = match raw.as_str() {
@@ -438,7 +450,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
-    RENORM, TILE_PACK, RENORM_BLA";
+    RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE";
 
 #[cfg(test)]
 mod override_tests;
@@ -903,6 +915,12 @@ pub(crate) const TILE_PACK_DEFAULT: u64 = 1;
 /// `BLA_EPS` per skip, like the z-space tree. 0 = one u-step per `len` iterations, for the
 /// before/after measurement.
 pub(crate) const RENORM_BLA_DEFAULT: u64 = 1;
+
+/// 1 = THE PRECISION SCHEDULE (`fractadyne_core::SchedState`): a Mandelbrot reference orbit computes
+/// each step at the bits it needs, `p0 + log2|Z| − log2|dZ/dc| + 64`, which falls as the derivative
+/// grows. Its samples were byte-identical to the full-precision build's at the ladder's 1e30000
+/// path, in half the time. 0 = every step at full precision, for the before/after measurement.
+pub(crate) const ORBIT_SCHEDULE_DEFAULT: u64 = 1;
 
 /// 1 = the OVERLAPPED pick + build (render.rs `pick_and_build`): the view centre's orbit build and
 /// series walk run beside the pick, and the pick's centre rescue reads its score off that build.

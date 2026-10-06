@@ -1918,6 +1918,7 @@ fn run_reference<B: RefBackend + IrField>(
         escaped,
         period: None,
         backend: B::BIT,
+        sched: None,
     })
 }
 
