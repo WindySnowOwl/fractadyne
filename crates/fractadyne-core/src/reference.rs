@@ -2787,6 +2787,10 @@ fn reduce_period(
     p: usize,
 ) -> Option<u32> {
     let k = formula_power(formula)?;
+    #[cfg(feature = "rug")]
+    if finder_in_mpfr(formula) {
+        return crate::backend_rug::period_scan(cx, cy, p_est, tol_log2, p);
+    }
     let one = bf(1.0, p);
     let kf = bf(k as f64, p);
     let mut zx = bf(0.0, p);
@@ -2884,6 +2888,10 @@ pub enum PeriodSearch {
 /// `|Z| ≤ R` decides the answer, and an octave of slop there would decide it wrongly. `None`
 /// once the whole disc has escaped, or at `max`.
 fn detect_period_ball(cx: &BigFloat, cy: &BigFloat, max: u32, log2_radius: f64, p: usize) -> Option<u32> {
+    #[cfg(feature = "rug")]
+    if finder_in_mpfr(formula::MANDELBROT) {
+        return crate::backend_rug::ball_period(cx, cy, max, log2_radius, p);
+    }
     // log2(2^a + 2^b), with -∞ as the log of 0.
     fn log2_add(a: f64, b: f64) -> f64 {
         let (hi, lo) = if a >= b { (a, b) } else { (b, a) };
@@ -2917,6 +2925,41 @@ fn detect_period_ball(cx: &BigFloat, cy: &BigFloat, max: u32, log2_radius: f64, 
     None
 }
 
+/// Whether the finder's passes run in MPFR: the Mandelbrot family under the MPFR backend. Its
+/// twins in `backend_rug.rs` mirror these astro-float loops op for op.
+#[cfg(feature = "rug")]
+fn finder_in_mpfr(formula: u32) -> bool {
+    formula == formula::MANDELBROT && crate::backend::selected() == crate::BackendChoice::Rug
+}
+
+/// The finder's Newton pass: `Z_n` and `D_n = dZ_n/dc` after `n` steps from `Z_0 = D_0 = 0`,
+/// `D_{n+1} = k·Z_n^{k-1}·D_n + 1`, `Z_{n+1} = Z_n^k + c` — in MPFR for Mandelbrot under that
+/// backend (a 1e30000 solve spends hours here), else in astro-float.
+fn zd_pass(cx: &BigFloat, cy: &BigFloat, n: u32, formula: u32, k: u32, p: usize) -> [BigFloat; 4] {
+    #[cfg(feature = "rug")]
+    if finder_in_mpfr(formula) {
+        return crate::backend_rug::zd_pass(cx, cy, n, p);
+    }
+    let one = bf(1.0, p);
+    let kf = bf(k as f64, p);
+    let mut zx = bf(0.0, p);
+    let mut zy = bf(0.0, p);
+    let mut dx = bf(0.0, p);
+    let mut dy = bf(0.0, p);
+    for _ in 0..n {
+        let (zk1x, zk1y) = if k == 2 { (zx.clone(), zy.clone()) } else { cpow_bf(&zx, &zy, k - 1, p) };
+        let (mzx, mzy) = cmul_bf(&zk1x, &zk1y, &dx, &dy, p); // Z^{k-1}·D
+        let ndx = mzx.mul(&kf, p, RM).add(&one, p, RM);
+        let ndy = mzy.mul(&kf, p, RM);
+        let (nzx, nzy) = step_bf(&zx, &zy, cx, cy, formula, p);
+        zx = nzx;
+        zy = nzy;
+        dx = ndx;
+        dy = ndy;
+    }
+    [zx, zy, dx, dy]
+}
+
 /// [`find_nucleus`], choosing how the period is found: see [`PeriodSearch`].
 pub fn find_nucleus_by(
     center: &[BigFloat; 2],
@@ -2939,30 +2982,13 @@ pub fn find_nucleus_by(
         PeriodSearch::Ball => return None,
     };
     let tol_log2 = log2_span + 1.0e-9f64.log2();
-    let one = bf(1.0, p);
-    let kf = bf(k as f64, p);
 
     let mut cx = center[0].clone();
     let mut cy = center[1].clone();
     let period = p_est;
     for _ in 0..64 {
-        // Z_period and its derivative D = dZ/dc, from Z_0 = 0, D_0 = 0:
-        //   D_{n+1} = k·Z_n^{k-1}·D_n + 1 ;  Z_{n+1} = Z_n^k + c
-        let mut zx = bf(0.0, p);
-        let mut zy = bf(0.0, p);
-        let mut dx = bf(0.0, p);
-        let mut dy = bf(0.0, p);
-        for _ in 0..period {
-            let (zk1x, zk1y) = if k == 2 { (zx.clone(), zy.clone()) } else { cpow_bf(&zx, &zy, k - 1, p) };
-            let (mzx, mzy) = cmul_bf(&zk1x, &zk1y, &dx, &dy, p); // Z^{k-1}·D
-            let ndx = mzx.mul(&kf, p, RM).add(&one, p, RM);
-            let ndy = mzy.mul(&kf, p, RM);
-            let (nzx, nzy) = step_bf(&zx, &zy, &cx, &cy, formula, p);
-            zx = nzx;
-            zy = nzy;
-            dx = ndx;
-            dy = ndy;
-        }
+        // Z_period and its derivative D = dZ/dc, from Z_0 = 0, D_0 = 0 (see `zd_pass`).
+        let [zx, zy, dx, dy] = zd_pass(&cx, &cy, period, formula, k, p);
         // Newton step: c -= Z / D = Z · conj(D) / |D|²
         let denom = dx.mul(&dx, p, RM).add(&dy.mul(&dy, p, RM), p, RM);
         if denom.is_zero() || denom.is_nan() || denom.is_inf() {
@@ -3038,6 +3064,14 @@ pub fn nucleus_size(
     let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
     let (mut lx, mut ly) = (bf(1.0, p), bf(0.0, p)); // Λ — running derivative product
     let (mut bx, mut by) = (bf(1.0, p), bf(0.0, p)); // B — running 1 + Σ 1/Λ
+    #[cfg(feature = "rug")]
+    let period = if finder_in_mpfr(formula) {
+        let [mlx, mly, mbx, mby] = crate::backend_rug::atom_size_pass(cx, cy, period, p)?;
+        (lx, ly, bx, by) = (mlx, mly, mbx, mby);
+        1 // the pass is done: the loop below runs no steps
+    } else {
+        period
+    };
     for _ in 1..period {
         let (nx, ny) = step_bf(&zx, &zy, cx, cy, formula, p);
         zx = nx;
@@ -3116,25 +3150,7 @@ fn nucleus_newton_step(
     p: usize,
 ) -> Option<(BigFloat, BigFloat)> {
     let k = formula_power(formula)?;
-    let one = bf(1.0, p);
-    let kf = bf(k as f64, p);
-    let mut zx = bf(0.0, p);
-    let mut zy = bf(0.0, p);
-    let mut dx = bf(0.0, p);
-    let mut dy = bf(0.0, p);
-    for _ in 0..period {
-        // D_{n+1} = k·Z_n^{k-1}·D_n + 1 ;  Z_{n+1} = Z_n^k + c
-        let (zk1x, zk1y) =
-            if k == 2 { (zx.clone(), zy.clone()) } else { cpow_bf(&zx, &zy, k - 1, p) };
-        let (mzx, mzy) = cmul_bf(&zk1x, &zk1y, &dx, &dy, p);
-        let ndx = mzx.mul(&kf, p, RM).add(&one, p, RM);
-        let ndy = mzy.mul(&kf, p, RM);
-        let (nzx, nzy) = step_bf(&zx, &zy, cx, cy, formula, p);
-        zx = nzx;
-        zy = nzy;
-        dx = ndx;
-        dy = ndy;
-    }
+    let [zx, zy, dx, dy] = zd_pass(cx, cy, period, formula, k, p);
     let denom = dx.mul(&dx, p, RM).add(&dy.mul(&dy, p, RM), p, RM);
     if denom.is_zero() || denom.is_nan() || denom.is_inf() {
         return None;

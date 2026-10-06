@@ -245,6 +245,55 @@ pub(crate) fn linked_versions() -> String {
 mod tests {
     use super::*;
 
+    /// The finder's MPFR passes reproduce astro-float BIT FOR BIT: the Newton pass (`Z`, `dZ/dc`)
+    /// and the atom-size pass against the astro recurrences (`cmul_bf`, `step_bf`, exact doubling,
+    /// `cinv_bf`'s order), at the period-998 seahorse point. A finder that answered differently per
+    /// backend would hand a benchmark a different nucleus depending on the build.
+    #[test]
+    fn the_finder_passes_are_bit_identical_to_astro_float() {
+        use crate::reference::{cmul_bf, step_bf};
+        use crate::bignum::RM;
+        let p = 320;
+        let cx = crate::parse_bf_prec("-0.7436438870371587", p).unwrap();
+        let cy = crate::parse_bf_prec("0.1318259042053122", p).unwrap();
+        let bf = |v: f64| BigFloat::from_f64(v, p);
+        let bits = |v: &BigFloat| canon(v);
+        // Newton pass, 998 steps.
+        let (mut zx, mut zy, mut dx, mut dy) = (bf(0.0), bf(0.0), bf(0.0), bf(0.0));
+        let (one, two) = (bf(1.0), bf(2.0));
+        for _ in 0..998 {
+            let (mx, my) = cmul_bf(&zx, &zy, &dx, &dy, p);
+            let ndx = mx.mul(&two, p, RM).add(&one, p, RM);
+            let ndy = my.mul(&two, p, RM);
+            let (nx, ny) = step_bf(&zx, &zy, &cx, &cy, 0, p);
+            (zx, zy, dx, dy) = (nx, ny, ndx, ndy);
+        }
+        let [rzx, rzy, rdx, rdy] = zd_pass(&cx, &cy, 998, p);
+        assert_eq!(
+            [bits(&rzx), bits(&rzy), bits(&rdx), bits(&rdy)],
+            [bits(&zx), bits(&zy), bits(&dx), bits(&dy)],
+            "Newton pass"
+        );
+        // Atom-size pass, 997 steps.
+        let (mut zx, mut zy) = (bf(0.0), bf(0.0));
+        let (mut lx, mut ly, mut bx, mut by) = (bf(1.0), bf(0.0), bf(1.0), bf(0.0));
+        for _ in 1..998 {
+            (zx, zy) = step_bf(&zx, &zy, &cx, &cy, 0, p);
+            let (mx, my) = cmul_bf(&zx, &zy, &lx, &ly, p);
+            lx = mx.add(&mx, p, RM);
+            ly = my.add(&my, p, RM);
+            let d = lx.mul(&lx, p, RM).add(&ly.mul(&ly, p, RM), p, RM);
+            bx = bx.add(&lx.div(&d, p, RM), p, RM);
+            by = by.add(&bf(0.0).sub(&ly, p, RM).div(&d, p, RM), p, RM);
+        }
+        let [rlx, rly, rbx, rby] = atom_size_pass(&cx, &cy, 998, p).expect("pass");
+        assert_eq!(
+            [bits(&rlx), bits(&rly), bits(&rbx), bits(&rby)],
+            [bits(&lx), bits(&ly), bits(&bx), bits(&by)],
+            "atom-size pass"
+        );
+    }
+
     /// Deterministic full-mantissa value: every limb populated, so multiplies do real carry work.
     fn sample(seed: u64, nwords: usize, exp: i32, neg: bool) -> BigFloat {
         let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
@@ -338,7 +387,7 @@ mod tests {
         );
         let mut got = vec![want[0]];
         let tail = super::try_run_orbit_inplace(
-            &mut got, &z0, &z0, &cx, &cy, crate::formula::MANDELBROT, 0, 12, p,
+            &mut got, &z0, &z0, &cx, &cy, crate::formula::MANDELBROT, 0, 12, p, None,
         )
         .expect("Mandelbrot must take the in-place path");
         assert_eq!(want.len(), got.len());
@@ -646,6 +695,205 @@ pub(crate) fn try_orbit_length_inplace(
     }
     Some(n)
 }
+
+// ---- The nucleus finder's passes (Mandelbrot), in MPFR --------------------------------------
+//
+// The finder walks the critical orbit in full precision several times per solve: the period
+// detection, every Newton step (Z and dZ/dc), the period reduction and the atom size. At a
+// 1e30000 view that is ~50,000-100,000 bits over ~820,000 steps per pass, and in astro-float one
+// solve took 9+ hours; the render's reference orbit at the same width runs 4.6x faster here.
+// Each pass mirrors its astro-float twin in `reference.rs` operation for operation, every op
+// rounded toward zero (astro-float's `RoundingMode::None` truncates), so the two backends agree.
+
+/// `Z ← Z² + c` in place, in `csqr`'s exact order (see `try_run_orbit_inplace`).
+#[inline]
+fn sq_add_c(zx: &mut Float, zy: &mut Float, x2: &mut Float, y2: &mut Float, t: &mut Float, rcx: &Float, rcy: &Float, ctx: u32) {
+    use rug::ops::{AddAssignRound, AssignRound, SubAssignRound};
+    x2.assign_round(&*zx * &*zx, RZ);
+    y2.assign_round(&*zy * &*zy, RZ);
+    t.assign_round(&*zx * &*zy, RZ);
+    *t <<= 1; // exact
+    x2.sub_assign_round(&*y2, RZ);
+    x2.add_assign_round(rcx, RZ);
+    t.add_assign_round(rcy, RZ);
+    core::mem::swap(zx, x2);
+    core::mem::swap(zy, t);
+    if x2.prec() != ctx {
+        x2.set_prec(ctx);
+    }
+    if t.prec() != ctx {
+        t.set_prec(ctx);
+    }
+}
+
+/// `D ← 2·Z·D + 1` in place — `cmul_bf(Z, D)` (4 rounded muls, a rounded sub, a rounded add),
+/// then `×2` (exact) and `+1` rounded, as the astro Newton loop does. Uses `Z` BEFORE its step.
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn d_update(dx: &mut Float, dy: &mut Float, zx: &Float, zy: &Float, a: &mut Float, b: &mut Float, c: &mut Float, e: &mut Float, one: &Float) {
+    use rug::ops::{AddAssignRound, AssignRound, SubAssignRound};
+    a.assign_round(zx * &*dx, RZ);
+    b.assign_round(zy * &*dy, RZ);
+    a.sub_assign_round(&*b, RZ); // Re(Z·D)
+    c.assign_round(zx * &*dy, RZ);
+    e.assign_round(zy * &*dx, RZ);
+    c.add_assign_round(&*e, RZ); // Im(Z·D)
+    *a <<= 1;
+    a.add_assign_round(one, RZ);
+    *c <<= 1;
+    core::mem::swap(dx, a);
+    core::mem::swap(dy, c);
+}
+
+/// The Newton pass: `Z_n` and `D_n = dZ_n/dc` after `n` steps from `Z_0 = D_0 = 0`, as carriers.
+/// `at(step, zx, zy, dx, dy)` sees every step and may stop the walk (the period reduction).
+fn zd_walk(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    n: u32,
+    p: usize,
+    mut at: impl FnMut(u32, &Float, &Float, &Float, &Float) -> bool,
+) -> [BigFloat; 4] {
+    let ctx = <Float as RefBackend>::ctx_for(p);
+    let rcx = <Float as RefBackend>::from_carrier(cx, ctx);
+    let rcy = <Float as RefBackend>::from_carrier(cy, ctx);
+    let mut zx = Float::with_val(ctx, 0);
+    let mut zy = Float::with_val(ctx, 0);
+    let mut dx = Float::with_val(ctx, 0);
+    let mut dy = Float::with_val(ctx, 0);
+    let one = Float::with_val(ctx, 1);
+    let (mut x2, mut y2, mut t) = (Float::with_val(ctx, 0), Float::with_val(ctx, 0), Float::with_val(ctx, 0));
+    let (mut a, mut b, mut c, mut e) =
+        (Float::with_val(ctx, 0), Float::with_val(ctx, 0), Float::with_val(ctx, 0), Float::with_val(ctx, 0));
+    for step in 1..=n {
+        d_update(&mut dx, &mut dy, &zx, &zy, &mut a, &mut b, &mut c, &mut e, &one);
+        sq_add_c(&mut zx, &mut zy, &mut x2, &mut y2, &mut t, &rcx, &rcy, ctx);
+        crate::reference::count_reference_step(step);
+        if at(step, &zx, &zy, &dx, &dy) {
+            break;
+        }
+    }
+    [zx.to_carrier(ctx), zy.to_carrier(ctx), dx.to_carrier(ctx), dy.to_carrier(ctx)]
+}
+
+/// [`zd_walk`] for exactly `n` steps — one Newton step's orbit.
+pub(crate) fn zd_pass(cx: &BigFloat, cy: &BigFloat, n: u32, p: usize) -> [BigFloat; 4] {
+    zd_walk(cx, cy, n, p, |_, _, _, _, _| false)
+}
+
+/// `log2|x|` to the octave, read off the exponent — astro-float's `log2_abs_bf` (same
+/// normalization: `0.m × 2^e`, `m ∈ [0.5, 1)`); `-∞` for zero.
+fn exp_l2(x: &Float) -> f64 {
+    if x.is_zero() {
+        return f64::NEG_INFINITY;
+    }
+    match x.get_exp() {
+        Some(e) => e as f64,
+        None => f64::INFINITY,
+    }
+}
+
+/// The period reduction (`reduce_period`'s twin): the first DIVISOR `n` of `p_est` whose
+/// `|Z_n| / |D_n|` is below `2^tol_log2`.
+pub(crate) fn period_scan(cx: &BigFloat, cy: &BigFloat, p_est: u32, tol_log2: f64, p: usize) -> Option<u32> {
+    let mut found = None;
+    zd_walk(cx, cy, p_est, p, |n, zx, zy, dx, dy| {
+        if p_est % n != 0 {
+            return false;
+        }
+        let d_l2 = exp_l2(dx).max(exp_l2(dy));
+        if !d_l2.is_finite() {
+            return false;
+        }
+        if exp_l2(zx).max(exp_l2(zy)) - d_l2 < tol_log2 {
+            found = Some(n);
+            return true;
+        }
+        false
+    });
+    found
+}
+
+/// The ball period detection (`detect_period_ball`'s twin): the first `n ≤ max` at which a disc of
+/// radius `2^log2_radius` about `c`, carried by ball arithmetic, can contain 0. `log2|Z|` through
+/// [`RefBackend::to_floatexp`], which reads exactly what astro-float's `bignum::log2_abs` reads.
+pub(crate) fn ball_period(cx: &BigFloat, cy: &BigFloat, max: u32, log2_radius: f64, p: usize) -> Option<u32> {
+    fn log2_add(a: f64, b: f64) -> f64 {
+        let (hi, lo) = if a >= b { (a, b) } else { (b, a) };
+        if lo == f64::NEG_INFINITY {
+            return hi;
+        }
+        hi + (1.0 + (lo - hi).exp2()).log2()
+    }
+    let ctx = <Float as RefBackend>::ctx_for(p);
+    let rcx = <Float as RefBackend>::from_carrier(cx, ctx);
+    let rcy = <Float as RefBackend>::from_carrier(cy, ctx);
+    let mut zx = Float::with_val(ctx, 0);
+    let mut zy = Float::with_val(ctx, 0);
+    let (mut x2, mut y2, mut t) = (Float::with_val(ctx, 0), Float::with_val(ctx, 0), Float::with_val(ctx, 0));
+    let mut lz = f64::NEG_INFINITY;
+    let mut lr = f64::NEG_INFINITY;
+    for n in 1..=max.max(1) {
+        lr = log2_add(log2_add(1.0 + lz, lr) + lr, log2_radius);
+        sq_add_c(&mut zx, &mut zy, &mut x2, &mut y2, &mut t, &rcx, &rcy, ctx);
+        crate::reference::count_reference_step(n);
+        let (lx, ly) = (RefBackend::to_floatexp(&zx).log2(), RefBackend::to_floatexp(&zy).log2());
+        lz = 0.5 * log2_add(2.0 * lx, 2.0 * ly);
+        if lz <= lr {
+            return Some(n);
+        }
+        if lz > 1.0 && lz.exp2() - lr.exp2() > 2.0 {
+            return None;
+        }
+    }
+    None
+}
+
+/// Munafo's atom-size pass (`nucleus_size`'s twin): `Λ = ∏ 2·z_i` and `B = 1 + Σ 1/Λ_i` over
+/// `period − 1` steps, returned as carriers `[Λx, Λy, Bx, By]` for the caller to finish.
+pub(crate) fn atom_size_pass(cx: &BigFloat, cy: &BigFloat, period: u32, p: usize) -> Option<[BigFloat; 4]> {
+    use rug::ops::{AddAssignRound, AssignRound, DivAssignRound, SubAssignRound};
+    let ctx = <Float as RefBackend>::ctx_for(p);
+    let rcx = <Float as RefBackend>::from_carrier(cx, ctx);
+    let rcy = <Float as RefBackend>::from_carrier(cy, ctx);
+    let mut zx = Float::with_val(ctx, 0);
+    let mut zy = Float::with_val(ctx, 0);
+    let (mut lx, mut ly) = (Float::with_val(ctx, 1), Float::with_val(ctx, 0));
+    let (mut bx, mut by) = (Float::with_val(ctx, 1), Float::with_val(ctx, 0));
+    let (mut x2, mut y2, mut t) = (Float::with_val(ctx, 0), Float::with_val(ctx, 0), Float::with_val(ctx, 0));
+    let (mut a, mut b, mut c, mut e) =
+        (Float::with_val(ctx, 0), Float::with_val(ctx, 0), Float::with_val(ctx, 0), Float::with_val(ctx, 0));
+    for n in 1..period {
+        sq_add_c(&mut zx, &mut zy, &mut x2, &mut y2, &mut t, &rcx, &rcy, ctx);
+        crate::reference::count_reference_step(n);
+        // Λ ← 2·z·Λ: cmul_bf(z, Λ), then `m + m` (exact doubling).
+        a.assign_round(&zx * &lx, RZ);
+        b.assign_round(&zy * &ly, RZ);
+        a.sub_assign_round(&b, RZ);
+        c.assign_round(&zx * &ly, RZ);
+        e.assign_round(&zy * &lx, RZ);
+        c.add_assign_round(&e, RZ);
+        a <<= 1;
+        c <<= 1;
+        core::mem::swap(&mut lx, &mut a);
+        core::mem::swap(&mut ly, &mut c);
+        // B ← B + 1/Λ: cinv_bf — d = x² + y² (rounded), then (x/d, (0 − y)/d).
+        a.assign_round(&lx * &lx, RZ);
+        b.assign_round(&ly * &ly, RZ);
+        a.add_assign_round(&b, RZ);
+        if a.is_zero() || !a.is_finite() {
+            return None;
+        }
+        c.assign_round(&lx / &a, RZ);
+        e.assign_round(0, RZ);
+        e.sub_assign_round(&ly, RZ);
+        e.div_assign_round(&a, RZ);
+        bx.add_assign_round(&c, RZ);
+        by.add_assign_round(&e, RZ);
+    }
+    Some([lx.to_carrier(ctx), ly.to_carrier(ctx), bx.to_carrier(ctx), by.to_carrier(ctx)])
+}
+
 
 
 
