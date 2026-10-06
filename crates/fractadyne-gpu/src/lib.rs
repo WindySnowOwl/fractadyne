@@ -178,6 +178,19 @@ pub(crate) fn tile_occupancy_on() -> bool {
     TILE_OCCUPANCY.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Packed tails in the step-bounded export tiles (`TILE_PACK`, a `--set` tunable in the app; on by
+/// default). See `Packer` in `export.rs`. Process-wide for the same reason as [`set_tail_df32`].
+static TILE_PACK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Set packed tails on or off for every export that follows.
+pub fn set_tile_pack(on: bool) {
+    TILE_PACK.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn tile_pack_on() -> bool {
+    TILE_PACK.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ColorUniforms {
@@ -1811,7 +1824,7 @@ pub(crate) fn make_state_textures(
     // 1442×1102 = 5.1 ms** — the odd-WIDTH penalty is the same driver fast-clear disqualification
     // as the odd-HEIGHT one. Padding width is safe for the same reason height is: the extra column
     // at x=w is written by the pad fragment but never read (the resolve reads only [0,w)).
-    let size = [size[0].max(1).next_multiple_of(2), size[1].max(1).next_multiple_of(2)];
+    let size = state_texture_size(size);
     let mk = |label: &str| {
         device
             .create_texture(&wgpu::TextureDescriptor {
@@ -1837,6 +1850,11 @@ pub(crate) fn make_state_textures(
         "fractadyne.state_exp",
     ];
     (0..targets.min(LABELS.len())).map(|i| mk(LABELS[i])).collect()
+}
+
+/// The size [`make_state_textures`] allocates for a `size` grid: both sides rounded up to even.
+pub(crate) fn state_texture_size(size: [u32; 2]) -> [u32; 2] {
+    [size[0].max(1).next_multiple_of(2), size[1].max(1).next_multiple_of(2)]
 }
 
 /// The bind group for one side of the ping-pong. `state.len()` must equal the `targets` the

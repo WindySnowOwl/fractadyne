@@ -253,6 +253,7 @@ fn main() -> eframe::Result<()> {
         // occupancy-sized export tiles (`TILE_OCCUPANCY`).
         fractadyne_gpu::set_tail_df32(tunables::cost().tail_df32 == 1);
         fractadyne_gpu::set_tile_occupancy(tunables::cost().tile_occupancy == 1);
+        fractadyne_gpu::set_tile_pack(tunables::cost().tile_pack == 1);
     }
     // `--oomtest`: force a real allocation failure, to prove the OOM path actually writes a crash
     // report. It cannot be verified any other way — an out-of-memory abort skips the panic hook,

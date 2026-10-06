@@ -99,6 +99,8 @@ pub(crate) struct Cost {
     pub live_refresh: u64,
     /// The renormalized step (`RENORM_DEFAULT`; 0 = off, 1 = on).
     pub renorm: u64,
+    /// Packed tails in the step-bounded export tiles (`TILE_PACK_DEFAULT`; 0 = off, 1 = on).
+    pub tile_pack: u64,
     /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
     /// second override channel because duplicating the machinery for a single value would be worse.
     /// See the note above on what earns a place in this set.
@@ -135,6 +137,7 @@ impl Default for Cost {
             tile_occupancy: TILE_OCCUPANCY_DEFAULT,
             live_refresh: LIVE_REFRESH_DEFAULT,
             renorm: RENORM_DEFAULT,
+            tile_pack: TILE_PACK_DEFAULT,
             bla_eps: BLA_EPS,
         }
     }
@@ -320,6 +323,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "TILE_PACK" => {
+                let p = c.tile_pack;
+                c.tile_pack = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set TILE_PACK: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "RENORM" => {
                 let p = c.renorm;
                 c.renorm = match raw.as_str() {
@@ -414,7 +426,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
-    RENORM";
+    RENORM, TILE_PACK";
 
 #[cfg(test)]
 mod override_tests;
@@ -867,6 +879,12 @@ pub(crate) const TAIL_DF32_DEFAULT: u64 = 1;
 /// per step, so not byte-identical to the perturbation loop. 0 = every pixel iterates as before,
 /// for the before/after measurement.
 pub(crate) const RENORM_DEFAULT: u64 = 1;
+
+/// 1 = PACKED TAILS (`Packer` in fractadyne-gpu's export.rs): once at most half of a step-bounded
+/// tile still runs, its running pixels move into a dense grid so their passes stop idling the lanes
+/// beside them. Byte-identical either way (selftest `iter-chunk`). 0 = every pass runs the whole
+/// tile, for the before/after measurement.
+pub(crate) const TILE_PACK_DEFAULT: u64 = 1;
 
 /// 1 = the OVERLAPPED pick + build (render.rs `pick_and_build`): the view centre's orbit build and
 /// series walk run beside the pick, and the pick's centre rescue reads its score off that build.

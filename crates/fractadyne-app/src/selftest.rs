@@ -1190,6 +1190,49 @@ impl FractadyneApp {
                     threshold: "0 texels differ, 1 tile, passes > tiles, pass <= ceiling",
                     pass,
                 });
+
+                // ⭐⭐PACKED TAILS (`Packer` in fractadyne-gpu's export.rs): once at most half of a
+                // step-bounded tile runs, its running pixels iterate in a dense grid, and when that
+                // grid thins out too they go back to the tile and pack again; the last grid is
+                // written back before the resolve. The same frame with packing switched off must
+                // match the packed render bit for bit, and the packed render must have packed
+                // TWICE in its one tile — once proves the gather and the final write-back, the
+                // second the repack between them; a tile that never thinned that far would pass
+                // vacuously. 1024² is still one tile, and its smaller step cap (the pixel-step
+                // ceiling over 1M samples) gives the slow pixels the passes to thin out over.
+                const PACK_N: u32 = 1024;
+                let mut pack_req = occ_req.clone();
+                pack_req.width = PACK_N;
+                pack_req.height = PACK_N;
+                let packed = fractadyne_gpu::render_export(device, queue, &pack_req, &progress, &cancel)
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (render_export, packed): {e}"))
+                    .ok();
+                fractadyne_gpu::set_tile_pack(false);
+                let flat = fractadyne_gpu::render_export(device, queue, &pack_req, &progress, &cancel)
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (render_export, unpacked): {e}"))
+                    .ok();
+                fractadyne_gpu::set_tile_pack(crate::tunables::cost().tile_pack == 1);
+                let (pass, result) = match (&packed, &flat) {
+                    (Some(p), Some(f)) if p.pixels.len() == f.pixels.len() => {
+                        let diffs = bit_exact(&p.pixels, &f.pixels);
+                        (
+                            diffs == 0 && p.tiles_total == 1 && p.packs >= 2 && f.packs == 0,
+                            format!(
+                                "{diffs} texels differ; {} tile(s), {} passes, packed {} times (unpacked twin: {})",
+                                p.tiles_total, p.chunk_passes, p.packs, f.packs
+                            ),
+                        )
+                    }
+                    _ => (false, "render failed".into()),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "IterChunk",
+                    name: "packed tails: a packed tile matches its unpacked twin".into(),
+                    params: "corpus07 1e30x, 4M iter, 1024px in one tile, TILE_PACK 1 vs 0".into(),
+                    result,
+                    threshold: "0 texels differ, 1 tile, packed at least twice",
+                    pass,
+                });
             }
         }
 

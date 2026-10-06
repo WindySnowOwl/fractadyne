@@ -2404,15 +2404,18 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
 // it and passes the state through. Bit-identity is unaffected because the skip sequence is the
 // same one the unchunked loop takes; but the host's `steps = px * delta_iter` cost model
 // over-counts whenever BLA is live, which mode 0 never had to account for.
-// @@CUSTOM_CHUNK_FE_BEGIN — a custom formula's module replaces this whole entry point, to the
+// The body of every floatexp chunk entry point (`fs_iterate_chunk_fe` and the export's packed pass
+// below): the pixel at texel centre `pos` of the tile, whose state is at texel `p` of the bound
+// state set — the same texel in a whole-tile pass, its slot in a packed one.
+// @@CUSTOM_CHUNK_FE_BEGIN — a custom formula's module replaces this whole function, to the
 // matching END marker, with its own (`custom.rs`): same state layout, its generated step.
-@fragment
-fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
+fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
+    chunk_slot = NO_SLOT;
     // Pixel coordinate mapping — identical to fs_iterate's prologue.
     let step_re = iu.step.xy;
     let step_im = iu.step.zw;
-    let gx = iu.px_offset.x + in.pos.x;
-    let gy = iu.px_offset.y + in.pos.y;
+    let gx = iu.px_offset.x + pos.x;
+    let gy = iu.px_offset.y + pos.y;
     let coord_re = gx - iu.res.x * 0.5;
     let coord_im = iu.res.y * 0.5 - gy;
     let off_re = df_mul_f32(step_re, coord_re);
@@ -2422,7 +2425,6 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
     let stop = min(iu.end_iter, iu.max_iter);
 
     // Prior state, when resuming.
-    let p = vec2<i32>(i32(in.pos.x), i32(in.pos.y));
     var sz = vec4<f32>(0.0);
     var sdz = vec4<f32>(0.0);
     var sm = vec4<f32>(0.0);
@@ -2556,7 +2558,7 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
                     // Paused inside: store it and leave this pass.
                     step_commit(gx, gy, n_rn, 0u, 0u, st.k * iu.rn_len - select(0u, iter_loaded, iu.start_iter > 0u));
                     if (rn_px) { rn_commit(gx, gy); }
-                    if (iu.step_cap > 0u) { atomicAdd(&counters[CTR_CHUNK_RUNNING], 1u); }
+                    if (iu.step_cap > 0u) { chunk_slot = atomicAdd(&counters[CTR_CHUNK_RUNNING], 1u); }
                     return ChunkOut4(
                         vec4<f32>(st.du.m.re.x, st.du.m.re.y, st.du.m.im.x, st.du.m.im.y),
                         vec4<f32>(st.ddu.m.re.x, st.ddu.m.re.y, st.ddu.m.im.x, st.ddu.m.im.y),
@@ -2829,7 +2831,7 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
         status = ST_INTERIOR;
     }
     if (status == ST_RUNNING && iu.step_cap > 0u) {
-        atomicAdd(&counters[CTR_CHUNK_RUNNING], 1u);
+        chunk_slot = atomicAdd(&counters[CTR_CHUNK_RUNNING], 1u);
     }
     // Still running: δz mantissa + its exponent in info ch3, derivative mantissa + its exponent
     // in st_exp ch0. FE_ZERO_E (-1e9) round-trips exactly through f32 (1e9 = 1953125 * 2^9, and
@@ -2842,6 +2844,95 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
     );
 }
 // @@CUSTOM_CHUNK_FE_END
+
+// What `chunk_fe_at` left for its caller: a pixel that a step cap stopped while still running gets
+// its index among this pass's running pixels (the `CTR_CHUNK_RUNNING` count it took, so the
+// indices are 0..running with no gaps), every other pixel NO_SLOT.
+var<private> chunk_slot: u32;
+const NO_SLOT: u32 = 0xffffffffu;
+
+@fragment
+fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {
+    return chunk_fe_at(in.pos.xy, vec2<i32>(i32(in.pos.x), i32(in.pos.y)));
+}
+
+// ---------------- packed tails (the export's step-bounded passes) ----------------
+// A step-bounded tile ends with a few pixels scattered across it: at 1.2e148 (4K) a pass with a
+// tenth of its pixels running cost a third of a full pass, 8× the busy rate per step, and a
+// hundredth 77×, because a warp shades a block of neighbouring pixels and runs while any one of
+// them does. So the export PACKS a thinning tile: every pass lists the pixels it leaves running
+// (`pk_next`, indexed by `chunk_slot`), and once few enough run, `fs_pack_gather` copies their
+// state into a small dense grid whose texel i iterates pixel `pk_cur[i]`. Passes then run over
+// that grid (`fs_iterate_chunk_fe_packed`), and `vs/fs_pack_scatter` write it back into the
+// tile's state, where `fs_resolve` finds every pixel as if the tile had never been packed.
+//
+// ⭐Bit-identical by construction: a packed texel runs `chunk_fe_at` on the same texel centre and
+// the same stored state as the whole-tile pass would (and the whole-tile passes use the same entry
+// point, so no second compiled program is involved), and where the passes split never changes a
+// pixel. Which slot a pixel lands in depends on atomic order and changes nothing.
+struct PackU {
+    packed: u32,  // 0 = a whole-tile pass (the pixel is the texel), 1 = texel i is pk_cur[i]
+    n: u32,       // packed texels in use
+    w: u32,       // the packed grid's width
+    pad0: u32,
+    tex: vec2<f32>, // the tile state textures' size (the scatter's point positions)
+    pad1: vec2<f32>,
+};
+@group(2) @binding(0) var<uniform> pk: PackU;
+@group(2) @binding(1) var<storage, read> pk_cur: array<vec2<u32>>;
+@group(2) @binding(2) var<storage, read_write> pk_next: array<vec2<u32>>;
+
+fn pack_pad() -> ChunkOut4 {
+    return ChunkOut4(vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0));
+}
+
+@fragment
+fn fs_iterate_chunk_fe_packed(in: VsOut) -> ChunkOut4 {
+    let p = vec2<i32>(i32(in.pos.x), i32(in.pos.y));
+    var c = vec2<u32>(u32(p.x), u32(p.y));
+    if (pk.packed == 1u) {
+        let i = u32(p.y) * pk.w + u32(p.x);
+        if (i >= pk.n) { return pack_pad(); }
+        c = pk_cur[i];
+    }
+    // `f32(c) + 0.5` is the rasterizer's texel centre exactly, so a whole-tile pass sees `in.pos`.
+    let out = chunk_fe_at(vec2<f32>(f32(c.x) + 0.5, f32(c.y) + 0.5), p);
+    if (chunk_slot != NO_SLOT) { pk_next[chunk_slot] = c; }
+    return out;
+}
+
+// Texel i of the packed grid takes the state of tile pixel `pk_cur[i]` (the state set bound is the
+// tile's).
+@fragment
+fn fs_pack_gather(in: VsOut) -> ChunkOut4 {
+    let i = u32(in.pos.y) * pk.w + u32(in.pos.x);
+    if (i >= pk.n) { return pack_pad(); }
+    let c = vec2<i32>(pk_cur[i]);
+    return ChunkOut4(textureLoad(st_z, c, 0), textureLoad(st_dz, c, 0), textureLoad(st_meta, c, 0), textureLoad(st_exp, c, 0));
+}
+
+// One point per packed texel, drawn at its tile pixel (the coordinate arrives as a vertex
+// attribute: the list is the vertex buffer), carrying the packed state back (the state set bound
+// is the packed grid's).
+struct PackScatter {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) @interpolate(flat) i: u32,
+};
+
+@vertex
+fn vs_pack_scatter(@builtin(vertex_index) i: u32, @location(0) c: vec2<u32>) -> PackScatter {
+    var o: PackScatter;
+    let q = (vec2<f32>(c) + 0.5) / pk.tex;
+    o.pos = vec4<f32>(q.x * 2.0 - 1.0, 1.0 - q.y * 2.0, 0.0, 1.0);
+    o.i = i;
+    return o;
+}
+
+@fragment
+fn fs_pack_scatter(v: PackScatter) -> ChunkOut4 {
+    let q = vec2<i32>(i32(v.i % pk.w), i32(v.i / pk.w));
+    return ChunkOut4(textureLoad(st_z, q, 0), textureLoad(st_dz, q, 0), textureLoad(st_meta, q, 0), textureLoad(st_exp, q, 0));
+}
 
 // State → the normal iteration G-buffer (smooth/normal/DE + aux), same contract as fs_iterate's
 // output, so the untouched color pass shades a chunked render identically. Pixels still RUNNING
