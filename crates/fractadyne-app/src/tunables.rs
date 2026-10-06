@@ -101,6 +101,8 @@ pub(crate) struct Cost {
     pub renorm: u64,
     /// Packed tails in the step-bounded export tiles (`TILE_PACK_DEFAULT`; 0 = off, 1 = on).
     pub tile_pack: u64,
+    /// The u-space BLA for the renormalized step (`RENORM_BLA_DEFAULT`; 0 = off, 1 = on).
+    pub renorm_bla: u64,
     /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
     /// second override channel because duplicating the machinery for a single value would be worse.
     /// See the note above on what earns a place in this set.
@@ -138,6 +140,7 @@ impl Default for Cost {
             live_refresh: LIVE_REFRESH_DEFAULT,
             renorm: RENORM_DEFAULT,
             tile_pack: TILE_PACK_DEFAULT,
+            renorm_bla: RENORM_BLA_DEFAULT,
             bla_eps: BLA_EPS,
         }
     }
@@ -323,6 +326,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "RENORM_BLA" => {
+                let p = c.renorm_bla;
+                c.renorm_bla = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set RENORM_BLA: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "TILE_PACK" => {
                 let p = c.tile_pack;
                 c.tile_pack = match raw.as_str() {
@@ -426,7 +438,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
-    RENORM, TILE_PACK";
+    RENORM, TILE_PACK, RENORM_BLA";
 
 #[cfg(test)]
 mod override_tests;
@@ -885,6 +897,12 @@ pub(crate) const RENORM_DEFAULT: u64 = 1;
 /// beside them. Byte-identical either way (selftest `iter-chunk`). 0 = every pass runs the whole
 /// tile, for the before/after measurement.
 pub(crate) const TILE_PACK_DEFAULT: u64 = 1;
+
+/// 1 = THE U-SPACE BLA (`fractadyne_core::renorm_bla_gpu`): the renormalized step skips along its
+/// own u-reference by a BLA tree, as the main loop skips along the orbit. An approximation held to
+/// `BLA_EPS` per skip, like the z-space tree. 0 = one u-step per `len` iterations, for the
+/// before/after measurement.
+pub(crate) const RENORM_BLA_DEFAULT: u64 = 1;
 
 /// 1 = the OVERLAPPED pick + build (render.rs `pick_and_build`): the view centre's orbit build and
 /// series walk run beside the pick, and the pick's centre rescue reads its score off that build.

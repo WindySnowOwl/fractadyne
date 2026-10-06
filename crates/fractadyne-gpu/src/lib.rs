@@ -112,7 +112,24 @@ pub struct Renorm {
     pub r2: f32,
     /// log₂ of the largest `|δc|` the model holds for.
     pub dc_log2: f32,
-    pub pad: u32,
+    /// THE U-SPACE BLA ([`fractadyne_core::renorm_bla_gpu`]): 1 + its first node's index past the
+    /// orbit (the shader reads it at `orbit_len + bla_off − 1`), 0 = none. Set at upload
+    /// ([`rn_bla_k`]), never by the caller.
+    pub bla_off: u32,
+    /// The u-steps the tree covers, `K = (orbit_len − 1)/len`.
+    pub bla_k: u32,
+    pub pad: [u32; 3],
+}
+
+/// The `K` of a u-space tree of `nodes4` `[f32; 4]`s for a step of `len` iterations over an orbit of
+/// `orbit_len` samples, or 0 when the tree is absent or was not built for this orbit (its node
+/// count gives it away) — the shader then takes plain u-steps.
+pub(crate) fn rn_bla_k(len: u32, orbit_len: u32, nodes4: usize) -> u32 {
+    if len == 0 || orbit_len == 0 || nodes4 == 0 {
+        return 0;
+    }
+    let k = (orbit_len - 1) / len;
+    if k >= 2 && nodes4 == fractadyne_core::renorm_bla_nodes(k) * 4 { k } else { 0 }
 }
 
 impl Renorm {
@@ -145,7 +162,9 @@ impl Renorm {
             len: step.len,
             r2: (2.0 * step.log2_r).exp2() as f32,
             dc_log2: step.log2_dc_max as f32,
-            pad: 0,
+            bla_off: 0,
+            bla_k: 0,
+            pad: [0; 3],
         }
     }
 }
@@ -1483,6 +1502,34 @@ pub(crate) fn fullscreen_pipeline(
     raster_pipeline(device, shader, layout, "vs_main", fs_entry, formats, label)
 }
 
+/// [`fullscreen_pipeline`] with its fragment stage specialized by `constants` (the shader's
+/// `override` declarations; see [`iter_constants`]).
+pub(crate) fn fullscreen_pipeline_c(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    fs_entry: &str,
+    formats: &[wgpu::TextureFormat],
+    label: &str,
+    constants: &std::collections::HashMap<String, f64>,
+) -> wgpu::RenderPipeline {
+    raster_pipeline_c(device, shader, layout, "vs_main", fs_entry, formats, label, constants)
+}
+
+/// The iterate pipelines' overridable constants: `RN_BLA` compiles the renormalized step's u-space
+/// BLA in (only for a render whose request carries a tree). Off is the shader's default, so the
+/// empty map — the pipelines every other render builds — is unchanged.
+pub(crate) fn iter_constants(rn_bla: bool) -> &'static std::collections::HashMap<String, f64> {
+    use std::collections::HashMap;
+    static ON: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::new();
+    static OFF: std::sync::OnceLock<HashMap<String, f64>> = std::sync::OnceLock::new();
+    if rn_bla {
+        ON.get_or_init(|| HashMap::from([("RN_BLA".to_string(), 1.0)]))
+    } else {
+        OFF.get_or_init(HashMap::new)
+    }
+}
+
 /// [`fullscreen_pipeline`] with its own vertex stage (`vs_split_tiles`: a split refresh's tiles).
 pub(crate) fn raster_pipeline(
     device: &wgpu::Device,
@@ -1492,6 +1539,21 @@ pub(crate) fn raster_pipeline(
     fs_entry: &str,
     formats: &[wgpu::TextureFormat],
     label: &str,
+) -> wgpu::RenderPipeline {
+    raster_pipeline_c(device, shader, layout, vs_entry, fs_entry, formats, label, iter_constants(false))
+}
+
+/// [`raster_pipeline`] with its fragment stage specialized by `constants`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn raster_pipeline_c(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    vs_entry: &str,
+    fs_entry: &str,
+    formats: &[wgpu::TextureFormat],
+    label: &str,
+    constants: &std::collections::HashMap<String, f64>,
 ) -> wgpu::RenderPipeline {
     let targets: Vec<Option<wgpu::ColorTargetState>> = formats
         .iter()
@@ -1516,7 +1578,7 @@ pub(crate) fn raster_pipeline(
             module: shader,
             entry_point: Some(fs_entry),
             targets: &targets,
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions { constants, ..Default::default() },
         }),
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: None,
@@ -2447,6 +2509,9 @@ pub struct MandelbrotParams {
     /// BLA is off. `bla_on = 1` activates the shader's BLA traversal (Mandelbrot mode 2).
     pub bla: Arc<Vec<[f32; 4]>>,
     pub bla_on: u32,
+    /// The u-space BLA for `rn` ([`fractadyne_core::renorm_bla_gpu`]), uploaded after `bla` with
+    /// the orbit (so it changes only with `orbit_id`); empty = plain u-steps.
+    pub rn_bla: Arc<Vec<[f32; 4]>>,
     /// (view center − reference) *mantissa* (scaled by 2^-delta_exp), df32.
     pub ref_offset: RefOffset,
     /// Shared base-2 exponent of the δ mantissas (ref_offset and the per-texel step).
@@ -2559,6 +2624,27 @@ pub struct MandelbrotParams {
 /// A frame that asks for nothing: no sinks, no reference, the direct mode, one sample a pixel, no
 /// tile, chunk, split, hold, reprojection or accumulation. What a Life frame starts from (it sets
 /// the colouring, the size and `life`); the escape-time frames set every field themselves.
+impl MandelbrotParams {
+    /// `K` of the u-space tree, or 0 when there is none for this orbit (see [`rn_bla_k`]).
+    fn rn_bla_k(&self) -> u32 {
+        rn_bla_k(self.rn.len, self.orbit_len, self.rn_bla.len())
+    }
+
+    /// The renormalized step's uniform, pointing at the u-space tree uploaded after the BLA tree
+    /// (as `ExportRequest::rn_uniform` does).
+    fn rn_uniform(&self) -> Renorm {
+        let mut rn = self.rn;
+        let k = self.rn_bla_k();
+        rn.bla_k = k;
+        rn.bla_off = if k > 0 {
+            1 + (self.orbit.len() + self.bla.len()).saturating_sub(self.orbit_len as usize) as u32
+        } else {
+            0
+        };
+        rn
+    }
+}
+
 impl Default for MandelbrotParams {
     fn default() -> Self {
         MandelbrotParams {
@@ -2599,6 +2685,7 @@ impl Default for MandelbrotParams {
             orbit_len: 0,
             bla: Arc::new(Vec::new()),
             bla_on: 0,
+            rn_bla: Arc::new(Vec::new()),
             ref_offset: RefOffset::ZERO,
             delta_exp: 0,
             sa_skip: 0,
@@ -2981,12 +3068,17 @@ impl CallbackTrait for MandelbrotParams {
         // Upload the reference orbit only when it changed (app caches it). The BLA tree (if
         // any) is appended right after it in the same buffer, starting at index `orbit_len`.
         if self.orbit_id != view.last_orbit_id && !self.orbit.is_empty() {
-            let total = self.orbit.len() + self.bla.len();
+            let rn_bla: &[[f32; 4]] = if self.rn_bla_k() > 0 { self.rn_bla.as_slice() } else { &[] };
+            let total = self.orbit.len() + self.bla.len() + rn_bla.len();
             view.ensure_orbit_capacity(device, iter_bgl, total as u32);
             queue.write_buffer(&view.orbit_buf, 0, bytemuck::cast_slice(self.orbit.as_slice()));
             if !self.bla.is_empty() {
                 let off = (self.orbit.len() * 16) as u64; // 16 B per [f32;4]
                 queue.write_buffer(&view.orbit_buf, off, bytemuck::cast_slice(self.bla.as_slice()));
+            }
+            if !rn_bla.is_empty() {
+                let off = ((self.orbit.len() + self.bla.len()) * 16) as u64;
+                queue.write_buffer(&view.orbit_buf, off, bytemuck::cast_slice(rn_bla));
             }
             view.last_orbit_id = self.orbit_id;
             view.last_iter_key = None; // force re-iterate against the new orbit
@@ -3074,7 +3166,7 @@ impl CallbackTrait for MandelbrotParams {
                 end_iter: 0,
                 gather: [0; 2],
                 tail: tail_word(),
-                rn: self.rn,
+                rn: self.rn_uniform(),
             };
             // A split pass is a single full-frame pass by definition (`MandelbrotParams::split`).
             let split_on = self.split[0] > 1 && self.chunk_range.is_none() && self.tile.is_none();

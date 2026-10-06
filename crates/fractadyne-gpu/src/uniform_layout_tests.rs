@@ -136,5 +136,5 @@ fn iter_uniform_matches_the_shader() {
         std::mem::offset_of!(super::IterUniforms, rn),
         "IterU.rn_a and IterUniforms.rn start at different offsets",
     );
-    assert_eq!(std::mem::size_of::<super::Renorm>(), 112, "Renorm is the shader's 28 words");
+    assert_eq!(std::mem::size_of::<super::Renorm>(), 128, "Renorm is the shader's 32 words");
 }

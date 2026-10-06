@@ -144,6 +144,26 @@ impl Xc {
         self.re.hypot(self.im).log2() + self.e as f64
     }
 
+    fn from_cfe(c: CFloatExp) -> Xc {
+        let e = match (c.re.m == 0.0, c.im.m == 0.0) {
+            (true, true) => return XC_ZERO,
+            (false, true) => c.re.e,
+            (true, false) => c.im.e,
+            (false, false) => c.re.e.max(c.im.e),
+        } as i64;
+        let part = |f: FloatExp| if f.m == 0.0 || f.e as i64 - e < -1000 { 0.0 } else { f.m * pow2(f.e as i64 - e) };
+        Xc { re: part(c.re), im: part(c.im), e }.norm()
+    }
+
+    /// The value as `f64`s (0 below their range; the u-orbit is O(1) apart from its returns).
+    fn to_f64s(self) -> (f64, f64) {
+        if self.e < -1000 {
+            return (0.0, 0.0);
+        }
+        let s = if self.e > 1000 { f64::INFINITY } else { pow2(self.e) };
+        (self.re * s, self.im * s)
+    }
+
     fn to_cfe(self) -> CFloatExp {
         let part = |m: f64| {
             if m == 0.0 {
@@ -250,6 +270,61 @@ fn candidate(n: u32, z: Xc, a: Xc, d: Xc, e: Xc, s: Xc, rho: Xc) -> Option<Renor
     })
 }
 
+/// ⭐⭐THE U-SPACE BLA: the BLA tree (GPU-flattened, [`super::bla_to_gpu`]) over this step's
+/// u-reference `U_k = a·Z_{k·L}`, `k = 0..=K`, `K = (orbit.len() − 1)/L` — the samples the
+/// shader's `rn_ref_u` reads. A renormalized step is still one step per `L` iterations, and near
+/// a tuned minibrot a pixel takes thousands of them: at the ladder's period 951,094 (= 953·998)
+/// the u-reference repeats every 998 steps and a pixel follows it for ~7 cycles, ~7,400 steps,
+/// 97% of that render. In u-space the parent's near-returns are gone (they are what the step
+/// absorbed), so the linear skip that cannot cross them in z-space merges across a u-cycle: the
+/// perturbed u-step `δu′ = 2U·δu + δu² + δc′` is the Mandelbrot one, with `c′`'s offset `δc′ =
+/// (a·b)·δc`, and its tree is [`super::build_bla_mandel`]'s over the u-samples. `dc_max` is the
+/// view's worst `|δc|` (as for the z-space tree); a pixel the step takes is also within the step's
+/// own limit, the smaller of the two is used. Empty when there is nothing to skip (`K < 2`).
+pub fn renorm_bla_gpu(orbit: &[[f32; 4]], step: &RenormStep, dc_max: FloatExp, eps: f64) -> Vec<[f32; 4]> {
+    let l = step.len as usize;
+    if l == 0 || orbit.is_empty() {
+        return Vec::new();
+    }
+    let k = (orbit.len() - 1) / l;
+    if k < 2 {
+        return Vec::new();
+    }
+    let a = Xc::from_cfe(step.a);
+    let u: Vec<[f32; 4]> = (0..=k)
+        .map(|j| {
+            let (x, y) = a.mul(sample_xc(&orbit[j * l])).to_f64s();
+            super::pack_sample(x, y)
+        })
+        .collect();
+    let lim = FloatExp::from_f64(1.0).mul_pow2(step.log2_dc_max);
+    let dc = if dc_max.lt(lim) { dc_max } else { lim };
+    let dcp = (step.a * step.b).abs() * dc;
+    let tree = super::build_bla_mandel(&u, dcp, eps, super::AuxAggParams::default());
+    // A view that is shallow in u-space (its |δc′| near the radii themselves: the ladder's 2.1e57
+    // scene spans ~1e-4 of c′) merges nothing, and a tree that only ever offers single steps
+    // costs a search per step for no skip (measured there: 655 → 738 ms).
+    if tree.iter().skip(1).all(|level| level.iter().all(|n| n.r.m <= 0.0)) {
+        return Vec::new();
+    }
+    super::bla_to_gpu(&tree)
+}
+
+/// The node count (`[f32; 4]` × 4 per node) of [`renorm_bla_gpu`]'s tree for `K` u-steps: level 0
+/// has `K` nodes and each level above half (rounded up) as many, down to one.
+pub fn renorm_bla_nodes(k: u32) -> usize {
+    let mut n = k as usize;
+    let mut total = 0;
+    while n > 0 {
+        total += n;
+        if n == 1 {
+            break;
+        }
+        n = n.div_ceil(2);
+    }
+    total
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,6 +421,215 @@ mod tests {
             }
         }
         assert!(checked >= 10, "the comparison ran ({checked})");
+    }
+
+    /// The u-space tree against the steps it replaces, at the ladder's period-15,248 minibrot
+    /// (953 × 16, 2.1e57×): the step is the parent's 953 and the u-reference repeats every 16 steps.
+    /// For a pixel inside a deep view, each level's node at `k = 2^l` (span `2^l`) must land where
+    /// `2^l` perturbed u-steps do, to within the tree's tolerance.
+    #[test]
+    fn the_u_space_tree_follows_the_u_steps_it_skips() {
+        use crate::{parse_real_expr, BigFloat};
+        let prec = 400;
+        let cx = parse_real_expr("-2.804105430550454669840777002898397927204098765083451958014259277838710256889075333271267217529135e-2", prec).unwrap();
+        let cy = parse_real_expr("6.948927538996523858929943394989672880373767486737755680968675269305405323393245987015207130043252e-1", prec).unwrap();
+        let zero = BigFloat::from_f64(0.0, prec);
+        let (orbit, _, _) = super::super::reference_orbit_t(&zero, &zero, &cx, &cy, 0, 15_248, prec);
+        let step = renorm_step(&orbit).expect("the parent's period is usable");
+        assert_eq!(step.len, 953, "{step:?}");
+        let k = ((orbit.len() - 1) / 953) as u32;
+        assert_eq!(k, 16);
+        // A view as deep as the ladder's 1e68 scene (whose step is this same parent's): in u-space
+        // 57's own view spans ~1e-4 of c′, where |B·δc′| outweighs every merged radius — a shallow
+        // view, as a z-space one at 1e4× is — while 1e68's spans ~1e-15.
+        let view = (4.0f64 / 2.0e68).log2();
+        let eps = 1e-6;
+        let tree = renorm_bla_gpu(&orbit, &step, FloatExp::from_f64(1.0).mul_pow2(view), eps);
+        assert_eq!(tree.len(), renorm_bla_nodes(k) * 4);
+        let decode = |m: [f32; 4], e: f32| -> (f64, f64) {
+            let s = (e as f64).exp2();
+            ((m[0] as f64 + m[1] as f64) * s, (m[2] as f64 + m[3] as f64) * s)
+        };
+        // The u-reference, as the shader forms it, and a pixel's δc′ a thousandth of the view out.
+        let a = cf(step.a);
+        let uref: Vec<(f64, f64)> = (0..=k as usize)
+            .map(|j| {
+                let (zx, zy) = super::super::sample_xy(&orbit[j * 953]);
+                cmul(a, (zx, zy))
+            })
+            .collect();
+        // Level 0's A is 2·U_k (node 0: U_0 = 0, so it can never apply).
+        for (j, u) in uref.iter().enumerate().take(k as usize) {
+            let (ax, ay) = decode(tree[j * 4], tree[j * 4 + 2][0]);
+            assert!((ax - 2.0 * u.0).hypot(ay - 2.0 * u.1) <= 1e-6 * (1.0 + u.0.hypot(u.1)), "node {j}");
+        }
+        let ab = cmul(a, cf(step.b));
+        let dc = 1e-3 * view.exp2();
+        let dcp = cmul(ab, (dc * 0.6, dc * 0.8));
+        let plain = |mut du: (f64, f64), from: usize, n: usize| {
+            for i in from..from + n {
+                let u = uref[i];
+                let t = cmul((2.0 * u.0, 2.0 * u.1), du);
+                let sq = cmul(du, du);
+                du = (t.0 + sq.0 + dcp.0, t.1 + sq.1 + dcp.1);
+            }
+            du
+        };
+        let mut off = 0usize;
+        let mut len = k as usize;
+        let mut checked = 0;
+        for l in 0.. {
+            let span = 1usize << l;
+            if span < k as usize && 1 < len {
+                // The node at k = span (j = 1) covers steps span..2·span.
+                let node = (off + 1) * 4;
+                let du0 = plain((0.0, 0.0), 0, span);
+                let (am, bm, ex, sp) = (tree[node], tree[node + 1], tree[node + 2], tree[node + 3]);
+                assert_eq!(sp[0] as usize, span.min(k as usize - span), "level {l} span");
+                let r = (ex[3] as f64) * (ex[2] as f64).exp2();
+                if du0.0.hypot(du0.1) < r && sp[0] as usize == span {
+                    let (ax, ay) = decode(am, ex[0]);
+                    let (bx, by) = decode(bm, ex[1]);
+                    let lin = cmul((ax, ay), du0);
+                    let lin = (lin.0 + bx * dcp.0 - by * dcp.1, lin.1 + bx * dcp.1 + by * dcp.0);
+                    let want = plain(du0, span, span);
+                    let err = (lin.0 - want.0).hypot(lin.1 - want.1);
+                    assert!(err <= 1e-4 * want.0.hypot(want.1), "level {l}: skip {lin:?} vs steps {want:?}");
+                    checked += 1;
+                }
+            }
+            if len <= 1 {
+                break;
+            }
+            off += len;
+            len = len.div_ceil(2);
+        }
+        assert!(checked >= 3, "the comparison ran at {checked} levels");
+    }
+
+    /// Probe (ignored; `cargo test --release -p fractadyne-core -- --ignored probe_u_space --nocapture`):
+    /// the shader's u-space walk, BLA and all, on the CPU at the ladder's 1e68 scene, printing what
+    /// the u-reference looks like and how far each skip goes.
+    #[test]
+    #[ignore]
+    fn probe_u_space_at_the_1e68_minibrot() {
+        use crate::{parse_real_expr, BigFloat};
+        let prec = 280;
+        let cx = parse_real_expr("-2.8041054305504546698407770028983979272040987650834524316481736852848679363432650309792659781081363390252362581574126e-2", prec).unwrap();
+        let cy = parse_real_expr("6.9489275389965238589299433949896728803737674867377557299604836990561657887294711299974639904251203515742450986635039e-1", prec).unwrap();
+        let zero = BigFloat::from_f64(0.0, prec);
+        let (orbit, _, _) = super::super::reference_orbit_t(&zero, &zero, &cx, &cy, 0, 951_094, prec);
+        let step = renorm_step(&orbit).expect("step");
+        let l = step.len as usize;
+        let k = (orbit.len() - 1) / l;
+        println!("step {} K {k} log2|a| {:.1} log2|ab| {:.1} R 2^{:.0}", step.len, step.a.abs().log2(), (step.a * step.b).abs().log2(), step.log2_r);
+        let a = cf(step.a);
+        let uref: Vec<(f64, f64)> = (0..=k).map(|j| cmul(a, super::super::sample_xy(&orbit[j * l]))).collect();
+        let mut mags: Vec<(f64, usize)> = uref.iter().enumerate().map(|(j, u)| (u.0.hypot(u.1), j)).collect();
+        let lp: f64 = mags.iter().skip(1).take(k - 1).map(|(m, _)| (2.0 * m).log2()).sum();
+        mags.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
+        println!("smallest |U_k|: {:?}", &mags[..12]);
+        println!("log2 |prod 2U_k| over the cycle: {lp:.1}; median |U| {:.3}", mags[mags.len() / 2].0);
+        let view = (4.0f64 / 2.142891e68).log2();
+        let eps = 1e-6;
+        let tree = renorm_bla_gpu(&orbit, &step, FloatExp::from_f64(2.5).mul_pow2(view), eps);
+        let decode = |m: [f32; 4], e: f32| -> (f64, f64) {
+            let s = (e as f64).exp2();
+            ((m[0] as f64 + m[1] as f64) * s, (m[2] as f64 + m[3] as f64) * s)
+        };
+        let mut lv = vec![];
+        let (mut off, mut len) = (0usize, k);
+        loop {
+            lv.push((off, len));
+            if len <= 1 {
+                break;
+            }
+            off += len;
+            len = len.div_ceil(2);
+        }
+        let ab = cmul(a, cf(step.b));
+        let r2 = (2.0 * step.log2_r).exp2();
+        for frac in [0.05f64, 0.2, 0.45] {
+            let dc = frac * view.exp2();
+            let dcp = cmul(ab, (dc * 0.6, dc * 0.8));
+            let (mut du, mut ddu, mut kr, mut kk) = ((0.0f64, 0.0f64), (0.0f64, 0.0f64), 0usize, 0usize);
+            let (mut trips, mut skipped, mut rebases) = (0u64, 0u64, 0u64);
+            let mut hist = [0u64; 12];
+            let k_max = 28_532_820usize.div_ceil(l);
+            let mut out = false;
+            while kk < k_max && trips < 200_000 {
+                trips += 1;
+                let dum = du.0.hypot(du.1);
+                let mut applied = false;
+                for lvl in (0..lv.len()).rev() {
+                    let stepn = 1usize << lvl;
+                    if kr & (stepn - 1) != 0 {
+                        continue;
+                    }
+                    let j = kr >> lvl;
+                    if j >= lv[lvl].1 {
+                        continue;
+                    }
+                    let n = (lv[lvl].0 + j) * 4;
+                    let ex = tree[n + 2];
+                    let span = tree[n + 3][0] as usize;
+                    if span == 0 || kr + span > k || kk + span > k_max {
+                        continue;
+                    }
+                    let r = ex[3] as f64 * (ex[2] as f64).exp2();
+                    if !(dum < r) {
+                        continue;
+                    }
+                    let am = decode(tree[n], ex[0]);
+                    let bm = decode(tree[n + 1], ex[1]);
+                    let t = cmul(am, du);
+                    let t2 = cmul(bm, dcp);
+                    let ndu = (t.0 + t2.0, t.1 + t2.1);
+                    let nkr = kr + span;
+                    let u = (uref[nkr].0 + ndu.0, uref[nkr].1 + ndu.1);
+                    if u.0 * u.0 + u.1 * u.1 > r2 {
+                        continue;
+                    }
+                    let dd = cmul(am, ddu);
+                    ddu = (dd.0 + bm.0, dd.1 + bm.1);
+                    du = ndu;
+                    kr = nkr;
+                    kk += span;
+                    hist[lvl.min(11)] += 1;
+                    skipped += span as u64;
+                    if u.0.hypot(u.1) < du.0.hypot(du.1) || (kr + 1) * l >= orbit.len() {
+                        du = u;
+                        kr = 0;
+                        rebases += 1;
+                    }
+                    applied = true;
+                    break;
+                }
+                if applied {
+                    continue;
+                }
+                let uk = uref[kr];
+                let t = cmul((2.0 * uk.0, 2.0 * uk.1), du);
+                let sq = cmul(du, du);
+                du = (t.0 + sq.0 + dcp.0, t.1 + sq.1 + dcp.1);
+                kr += 1;
+                kk += 1;
+                let u = (uref[kr].0 + du.0, uref[kr].1 + du.1);
+                if u.0.hypot(u.1) < du.0.hypot(du.1) || (kr + 1) * l >= orbit.len() {
+                    du = u;
+                    kr = 0;
+                    rebases += 1;
+                }
+                if u.0 * u.0 + u.1 * u.1 > r2 {
+                    out = true;
+                    break;
+                }
+            }
+            println!(
+                "pixel {frac}: u-steps {kk} trips {trips} ({:.1}/trip) skipped {skipped} rebases {rebases} out {out}; skips by level {hist:?}",
+                kk as f64 / trips as f64
+            );
+        }
     }
 
     #[test]

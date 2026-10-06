@@ -145,6 +145,9 @@ pub(crate) struct RecomputeResult {
     /// THE RENORMALIZED STEP for this reference (`fractadyne_core::RenormStep`); `None` unless the
     /// orbit is periodic, Mandelbrot, not Julia, and a step holds near it.
     rn: Option<fractadyne_core::RenormStep>,
+    /// The u-space BLA for `rn` (`fractadyne_core::renorm_bla_gpu`), built with the BLA's `dc_max`;
+    /// empty without one.
+    rn_bla: std::sync::Arc<Vec<[f32; 4]>>,
     bla: std::sync::Arc<Vec<[f32; 4]>>,
     bla_dc_max_log2: f64,
     /// Stripe frequency the BLA's `agg_stripe` lane was built with, so the live path can detect a
@@ -1312,6 +1315,13 @@ fn finish_reference(
         .filter(|_| crate::tunables::cost().renorm == 1)
         .filter(|_| inp.formula == fc::formula::MANDELBROT && !inp.julia && inp.custom.is_none())
         .and_then(|_| fc::renorm_step(&orbit));
+    // Its u-space BLA, under the same `dc_max` as the z-space tree (and only where there is one).
+    let rn_bla = match (rn.as_ref(), inp.bla_dc_max) {
+        (Some(step), Some(dc_max)) if crate::tunables::cost().renorm_bla == 1 => std::sync::Arc::new(
+            fc::renorm_bla_gpu(&orbit, step, dc_max, crate::tunables::cost().bla_eps),
+        ),
+        _ => std::sync::Arc::new(Vec::new()),
+    };
     let rn_ms = t_rn.elapsed().as_secs_f64() * 1000.0;
     crate::diag::breadcrumb(format!(
         "reference built [{}]: len={len} iter={orbit_iter} prec={orbit_prec}",
@@ -1334,8 +1344,8 @@ fn finish_reference(
                     .map(|pp| format!(" periodic={} (|Z|=2^{:.0}, |D|=2^{:.0})", pp.period, pp.log2_z, pp.log2_d))
                     .unwrap_or_default(),
                 rn.map(|r| format!(
-                    " renorm={} (R=2^{:.0}, |dc|<=2^{:.0}, |kappa|=2^{:.0})",
-                    r.len, r.log2_r, r.log2_dc_max, r.log2_kappa,
+                    " renorm={} (R=2^{:.0}, |dc|<=2^{:.0}, |kappa|=2^{:.0}, u-bla nodes {})",
+                    r.len, r.log2_r, r.log2_dc_max, r.log2_kappa, rn_bla.len() / 4,
                 ))
                 .unwrap_or_default(),
                 sa.skip,
@@ -1349,6 +1359,7 @@ fn finish_reference(
         rp,
         sa,
         rn,
+        rn_bla,
         bla,
         bla_dc_max_log2,
         bla_stripe_freq: inp.stripe_freq,
@@ -1610,6 +1621,7 @@ struct RefFields {
     orbit_len: u32,
     sa: fractadyne_core::SeriesSkip,
     rn: Option<fractadyne_core::RenormStep>,
+    rn_bla: std::sync::Arc<Vec<[f32; 4]>>,
     bla: std::sync::Arc<Vec<[f32; 4]>>,
     bla_on: u32,
 }
@@ -1622,6 +1634,7 @@ impl Default for RefFields {
             orbit_len: 0,
             sa: fractadyne_core::SeriesSkip::NONE,
             rn: None,
+            rn_bla: std::sync::Arc::new(Vec::new()),
             bla: std::sync::Arc::new(Vec::new()),
             bla_on: 0,
         }
@@ -1646,6 +1659,7 @@ fn assemble_ref_fields(vp: &Viewport, precision: usize, delta_exp: i32, res: Rec
         orbit_len: res.orbit_len,
         sa: res.sa,
         rn: res.rn,
+        rn_bla: res.rn_bla,
         bla: res.bla,
         bla_on,
     }
@@ -1957,6 +1971,7 @@ impl FractadyneApp {
             res.orbit_tail = None;
             res.bla = std::sync::Arc::new(Vec::new());
             res.rn = None; // no longer the periodic orbit
+            res.rn_bla = std::sync::Arc::new(Vec::new());
             if !keep_sa {
                 res.sa = fractadyne_core::SeriesSkip::NONE;
             }
@@ -2887,6 +2902,7 @@ impl FractadyneApp {
                 orbit_len: vc.orbit_len,
                 sa: vc.sa,
                 rn: vc.rn,
+                rn_bla: std::sync::Arc::new(Vec::new()),
                 bla,
                 bla_on,
             },
@@ -3690,7 +3706,7 @@ impl FractadyneApp {
         // three produce byte-identical references). Split timings recorded for `--profile`.
         // Iteration ceiling. Only the LIVE-borrowed reference can lower it — see `live_ref_fields`.
         let mut req_max_iter = eff_iter;
-        let RefFields { ref_offset, orbit, orbit_len, sa, rn, bla, bla_on } = if !mode.is_direct() {
+        let RefFields { ref_offset, orbit, orbit_len, sa, rn, rn_bla, bla, bla_on } = if !mode.is_direct() {
             // ⭐Borrowed live reference: no bignum, and no `prof.set` (the probe fires many times a
             // second and would otherwise clobber the `--profile` breakdown of the real render).
             // `None` = the cache cannot serve this view, so fall through to a fresh build.
@@ -3786,6 +3802,7 @@ impl FractadyneApp {
             sa_c: sa.c,
             sa_c_exp: sa.c_exp,
             rn: renorm_uniform(rn.as_ref()),
+            rn_bla,
             julia_c,
             orbit,
             orbit_len,
@@ -4057,6 +4074,7 @@ impl FractadyneApp {
             r.sa_skip = 0;
             // The renormalized step described the PRIMARY reference's orbit, not this one's.
             r.rn = fractadyne_gpu::Renorm::default();
+            r.rn_bla = std::sync::Arc::new(Vec::new());
             r.bla_on = bla_on;
             r.bla = bla;
             // ⭐⭐A correction pass exists to repair `glitch`, and the adoption below reads NOTHING
@@ -6554,6 +6572,9 @@ impl FractadyneApp {
             probe_nonce: self.perf.probe_nonce[vs],
             orbit: self.ref_cache[vi].orbit.clone(),
             rn: renorm_uniform(self.ref_cache[vi].rn.as_ref()),
+            // The live view takes plain u-steps: its tree upload is keyed on `orbit_id` alone, and
+            // a u-space tree is rebuilt with the BLA's `dc_max`, which that key does not see.
+            rn_bla: std::sync::Arc::new(Vec::new()),
             orbit_id: self.ref_cache[vi].orbit_id,
             orbit_len: self.ref_cache[vi].orbit_len,
             bla,

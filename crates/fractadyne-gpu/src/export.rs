@@ -227,6 +227,8 @@ pub struct ExportRequest {
     pub sa_c_exp: i32,
     /// THE RENORMALIZED STEP for this reference and view ([`crate::Renorm`]; default = off).
     pub rn: crate::Renorm,
+    /// The u-space BLA ([`fractadyne_core::renorm_bla_gpu`]) for `rn`; empty = plain u-steps.
+    pub rn_bla: Arc<Vec<[f32; 4]>>,
     pub julia_c: [f32; 4],
     pub orbit: Arc<Vec<[f32; 4]>>,
     pub orbit_len: u32,
@@ -283,6 +285,46 @@ pub struct ExportRequest {
 }
 
 impl ExportRequest {
+    /// The reference storage buffer: the orbit, its BLA tree from index `orbit.len()`, then the
+    /// u-space tree ([`Self::rn_uniform`] points the shader at it).
+    fn upload_reference(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<wgpu::Buffer, GpuError> {
+        let rn_bla: &[[f32; 4]] = if self.rn_bla_k() > 0 { self.rn_bla.as_slice() } else { &[] };
+        let tail = self.bla.len() + rn_bla.len();
+        check_orbit_binding(device, self.orbit.len(), tail)?;
+        let orbit_buf = make_orbit_buffer(device, (self.orbit.len() + tail).max(1) as u32);
+        if !self.orbit.is_empty() {
+            queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(self.orbit.as_slice()));
+        }
+        if !self.bla.is_empty() {
+            let off = (self.orbit.len() * 16) as u64;
+            queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(self.bla.as_slice()));
+        }
+        if !rn_bla.is_empty() {
+            let off = ((self.orbit.len() + self.bla.len()) * 16) as u64;
+            queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(rn_bla));
+        }
+        Ok(orbit_buf)
+    }
+
+    /// `K` of the u-space tree, or 0 when there is none for this orbit (see [`crate::rn_bla_k`]).
+    fn rn_bla_k(&self) -> u32 {
+        crate::rn_bla_k(self.rn.len, self.orbit_len, self.rn_bla.len())
+    }
+
+    /// The renormalized step's uniform, pointing at the u-space tree [`Self::upload_reference`]
+    /// placed after the BLA tree (relative to `orbit_len`, where the shader's BLA base is).
+    pub(crate) fn rn_uniform(&self) -> crate::Renorm {
+        let mut rn = self.rn;
+        let k = self.rn_bla_k();
+        rn.bla_k = k;
+        rn.bla_off = if k > 0 {
+            1 + (self.orbit.len() + self.bla.len()).saturating_sub(self.orbit_len as usize) as u32
+        } else {
+            0
+        };
+        rn
+    }
+
     /// Whether the resumable chunk pass may iterate this frame: the formula family's capability,
     /// and for a custom formula its own shader's — one with Fractint's sections (an init section,
     /// variables kept from step to step) has state the chunk pass neither starts nor carries.
@@ -667,6 +709,7 @@ impl Packer {
         iter_bgl: &wgpu::BindGroupLayout,
         state_bgl: &wgpu::BindGroupLayout,
         tile_size: [u32; 2],
+        rn_bla: bool,
     ) -> Self {
         let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
             binding,
@@ -701,8 +744,9 @@ impl Packer {
             push_constant_ranges: &[],
         });
         let formats = [ITER_FORMAT; 4];
-        let pass_pipeline = fullscreen_pipeline(
+        let pass_pipeline = crate::fullscreen_pipeline_c(
             device, shader, &layout, "fs_iterate_chunk_fe_packed", &formats, "export.pack_pass",
+            crate::iter_constants(rn_bla),
         );
         let gather_pipeline =
             fullscreen_pipeline(device, shader, &layout, "fs_pack_gather", &formats, "export.pack_gather");
@@ -919,7 +963,9 @@ struct TileChunker {
 
 impl TileChunker {
     /// `max_size` is the largest sample grid any tile can ask for (static tile bound x ss).
-    /// `steps`: the tiles will run as step-bounded passes ([`Self::run_tile_steps`]).
+    /// `steps`: the tiles will run as step-bounded passes ([`Self::run_tile_steps`]). `rn_bla`: the
+    /// iterate compiles in the renormalized step's u-space BLA ([`crate::iter_constants`]).
+    #[allow(clippy::too_many_arguments)]
     fn new(
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
@@ -927,6 +973,7 @@ impl TileChunker {
         fe: bool,
         max_size: [u32; 2],
         steps: bool,
+        rn_bla: bool,
     ) -> Self {
         let targets: usize = if fe { 4 } else { 3 };
         let state_bgl = crate::state_bind_group_layout_n(device, targets as u32);
@@ -936,13 +983,14 @@ impl TileChunker {
             push_constant_ranges: &[],
         });
         let chunk_formats = [ITER_FORMAT; 4];
-        let chunk_pipeline = fullscreen_pipeline(
+        let chunk_pipeline = crate::fullscreen_pipeline_c(
             device,
             shader,
             &layout,
             if fe { "fs_iterate_chunk_fe" } else { "fs_iterate_chunk" },
             &chunk_formats[..targets],
             "export.tilechunk_pipeline",
+            crate::iter_constants(rn_bla),
         );
         let resolve_pipeline = fullscreen_pipeline(
             device, shader, &layout, "fs_resolve", &[ITER_FORMAT, ITER_FORMAT],
@@ -960,7 +1008,7 @@ impl TileChunker {
             && steps
             && crate::tile_pack_on()
             && max_size[0] as u64 * max_size[1] as u64 <= PACK_MAX_TILE_AREA)
-            .then(|| Packer::new(device, shader, iter_bgl, &state_bgl, max_size));
+            .then(|| Packer::new(device, shader, iter_bgl, &state_bgl, max_size, rn_bla));
         Self { chunk_pipeline, resolve_pipeline, state, state_bg, pack }
     }
 
@@ -1349,9 +1397,12 @@ fn render_export_impl(
         bind_group_layouts: &[&color_bgl],
         push_constant_ranges: &[],
     });
-    let iter_pipeline = fullscreen_pipeline(
+    // The u-space BLA is compiled into every iterate pipeline of a render whose request carries a
+    // tree — the single-pass control included, so the two agree as they do without one.
+    let rn_bla = req.rn_bla_k() > 0;
+    let iter_pipeline = crate::fullscreen_pipeline_c(
         device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
-        "export.iter_pipeline",
+        "export.iter_pipeline", crate::iter_constants(rn_bla),
     );
     let color_pipeline = fullscreen_pipeline(
         device, &shader, &color_layout, "fs_color", &[EXPORT_FORMAT], "export.color_pipeline",
@@ -1383,7 +1434,7 @@ fn render_export_impl(
     let (row_h, col_w) = (balanced_extent(h, tile), balanced_extent(w, tile));
     let state_size = if occupancy { [col_w * ss, row_h * ss] } else { [tile * ss, tile * ss] };
     let chunker: Option<TileChunker> = if chunk_scope {
-        Some(TileChunker::new(device, &shader, &iter_bgl, fe, state_size, occupancy))
+        Some(TileChunker::new(device, &shader, &iter_bgl, fe, state_size, occupancy, rn_bla))
     } else {
         None
     };
@@ -1406,16 +1457,7 @@ fn render_export_impl(
     let iter_uniform = uniform("export.iter_uniform", std::mem::size_of::<IterUniforms>() as u64);
     let color_uniform = uniform("export.color_uniform", std::mem::size_of::<ColorUniforms>() as u64);
 
-    check_orbit_binding(device, req.orbit.len(), req.bla.len())?;
-    let orbit_cap = (req.orbit.len() + req.bla.len()).max(1) as u32;
-    let orbit_buf = make_orbit_buffer(device, orbit_cap);
-    if !req.orbit.is_empty() {
-        queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
-    }
-    if !req.bla.is_empty() {
-        let off = (req.orbit.len() * 16) as u64;
-        queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(req.bla.as_slice()));
-    }
+    let orbit_buf = req.upload_reference(device, queue)?;
     let counters_buf = crate::make_counters_buf(device);
     let counters_read = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("export.counters_read"),
@@ -1530,7 +1572,7 @@ fn render_export_impl(
                 end_iter: 0,
                 gather: [0; 2],
                 tail: crate::tail_word(),
-                rn: req.rn,
+                rn: req.rn_uniform(),
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -1998,15 +2040,7 @@ pub fn render_iter_tiled(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    check_orbit_binding(device, req.orbit.len(), req.bla.len())?;
-    let orbit_buf = make_orbit_buffer(device, (req.orbit.len() + req.bla.len()).max(1) as u32);
-    if !req.orbit.is_empty() {
-        queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
-    }
-    if !req.bla.is_empty() {
-        let off = (req.orbit.len() * 16) as u64;
-        queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(req.bla.as_slice()));
-    }
+    let orbit_buf = req.upload_reference(device, queue)?;
     let counters_buf = crate::make_counters_buf(device);
     let counters_read = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("itertiled.counters_read"),
@@ -2115,7 +2149,7 @@ pub fn render_iter_tiled(
                 end_iter: 0,
                 gather: [0; 2],
                 tail: crate::tail_word(),
-                rn: req.rn,
+                rn: req.rn_uniform(),
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -2151,7 +2185,10 @@ pub fn render_iter_tiled(
                 && (occupancy || pricer.open(req.max_iter) < req.max_iter)
             {
                 chunker =
-                    Some(TileChunker::new(device, shader, iter_bgl, req.mode == 2, state_size, occupancy));
+                    Some(TileChunker::new(
+                        device, shader, iter_bgl, req.mode == 2, state_size, occupancy,
+                        occupancy && req.rn_bla_k() > 0,
+                    ));
             }
             // Chunked tiles iterate BEFORE the main encoder, one polled submission per window;
             // the first window clears the counters. The deadline is honoured between windows.
@@ -2520,15 +2557,7 @@ impl GatherPass {
 
         // Per-pass only: a fresh reference orbit + BLA tree, and the coordinate list. Everything else
         // (shader, layouts, pipeline, uniform, counters) lives on `self` - see the struct's note.
-        check_orbit_binding(device, req.orbit.len(), req.bla.len())?;
-        let orbit_buf = make_orbit_buffer(device, (req.orbit.len() + req.bla.len()).max(1) as u32);
-        if !req.orbit.is_empty() {
-            queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
-        }
-        if !req.bla.is_empty() {
-            let off = (req.orbit.len() * 16) as u64;
-            queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(req.bla.as_slice()));
-        }
+        let orbit_buf = req.upload_reference(device, queue)?;
         let iter_bg = make_iter_bg(
             device,
             &self.iter_bgl,
@@ -2621,7 +2650,7 @@ impl GatherPass {
                 end_iter: 0,
                 gather: [gw, n as u32],
                 tail: crate::tail_word(),
-                rn: req.rn,
+                rn: req.rn_uniform(),
             };
             queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -2883,15 +2912,7 @@ fn render_iter_passes(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    check_orbit_binding(device, req.orbit.len(), req.bla.len())?;
-    let orbit_buf = make_orbit_buffer(device, (req.orbit.len() + req.bla.len()).max(1) as u32);
-    if !req.orbit.is_empty() {
-        queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
-    }
-    if !req.bla.is_empty() {
-        let off = (req.orbit.len() * 16) as u64;
-        queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(req.bla.as_slice()));
-    }
+    let orbit_buf = req.upload_reference(device, queue)?;
     let counters_buf = crate::make_counters_buf(device);
     let counters_read = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("selftest.counters_read"),
@@ -2937,7 +2958,7 @@ fn render_iter_passes(
         end_iter: 0,
         gather: [0; 2],
         tail: crate::tail_word(),
-        rn: req.rn,
+        rn: req.rn_uniform(),
     };
     queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -3333,15 +3354,7 @@ pub fn render_iter_chunked_timed(
     // BLA table every pass, and a chunk pass that ran with `bla_on = 0` and an empty tree is the
     // beta.101 e100 pathology verbatim — 0.04 Gsteps/s against the base pass's 174 in the same
     // frame, which reads as "chunking is slow" rather than "chunking is broken".
-    check_orbit_binding(device, req.orbit.len(), req.bla.len())?;
-    let orbit_buf = make_orbit_buffer(device, (req.orbit.len() + req.bla.len()).max(1) as u32);
-    if !req.orbit.is_empty() {
-        queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
-    }
-    if !req.bla.is_empty() {
-        let off = (req.orbit.len() * std::mem::size_of::<[f32; 4]>()) as u64;
-        queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(req.bla.as_slice()));
-    }
+    let orbit_buf = req.upload_reference(device, queue)?;
     let counters_buf = crate::make_counters_buf(device);
     let counters_read = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("chunked.counters_read"),
@@ -3399,7 +3412,7 @@ pub fn render_iter_chunked_timed(
         end_iter: 0,
         gather: [0; 2],
         tail: crate::tail_word(),
-        rn: req.rn,
+        rn: req.rn_uniform(),
     };
 
     // One bounded submission per iteration range; poll-wait between them so each stays a short,

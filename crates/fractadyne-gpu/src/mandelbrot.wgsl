@@ -641,7 +641,13 @@ struct IterU {
     rn_len: u32,
     rn_r2: f32,
     rn_dc_log2: f32,
-    rn_pad0: u32,
+    // THE U-SPACE BLA (`renorm_bla_gpu` in fractadyne-core): 1 + its first node's index past the
+    // orbit (nodes at `orbit_len + rn_bla_off − 1`), 0 = none; it covers `rn_bla_k` u-steps.
+    rn_bla_off: u32,
+    rn_bla_k: u32,
+    rn_pad1: u32,
+    rn_pad2: u32,
+    rn_pad3: u32,
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo). When BLA is on,
@@ -788,16 +794,94 @@ struct RnState {
     k: u32,    // renormalized steps taken
     kr: u32,   // u-reference index (step kr reads Z_{kr·rn_len})
     out: bool, // left the model (|u|² > rn_r2)
+    trips: u32, // loop trips this call (a u-step, or a u-space BLA skip of several)
 };
+// The u-space BLA is compiled in only for a render that has a tree (`iter_constants` in lib.rs):
+// present but switched off, its code cost every other deep render 3–9% (measured at 1.2e148 and
+// 4.2e275, 4K), and compiled out, nothing.
+override RN_BLA: bool = false;
+// The u-space BLA is in use (and so is the BLA: `bla_on` = 0 turns both off).
+fn rn_bla_on() -> bool {
+    return RN_BLA && iu.rn_bla_off > 0u && iu.rn_bla_k > 1u && iu.bla_on == 1u;
+}
+// A loop trip's charge against a pass's step cap, in 1/RN_STEP_WEIGHT steps: a plain u-step is
+// one, a trip that may search the u-space tree costs about a perturbation step.
+fn rn_trip_weight() -> u32 {
+    return select(1u, RN_STEP_WEIGHT, rn_bla_on());
+}
 // Renormalized steps as PERTURBATION about the u-space reference: δu′ = 2U·δu + δu² + δc′. Plain u
 // in df32 lost a tuned minibrot's structure — near a u-space return |u| is tiny and u² fell under
 // df32's resolution beside c′ ≈ 1, so every cycle restarted the pixel (median error 34 iterations at
 // the ladder's period 15,248) — the same failure the main loop's rebasing exists for, and the same
 // cure: rebase (onto U_0 = 0) when |u| < |δu| and at the reference's end, keeping δu relative.
-fn rn_steps(dcp: Fe, s0: RnState, k_end: u32) -> RnState {
+//
+// ⭐THE U-SPACE BLA. Near a tuned minibrot the u-reference has its own period (998 steps at the
+// ladder's 951,094 = 953·998), and a pixel follows it for several cycles; one u-step per `rn_len`
+// iterations was 97% of that render. In u-space the parent's near-returns are gone, so the BLA
+// tree over U (`rn_bla_*`, the main loop's layout and node format) skips along it as the main loop
+// skips along Z: the same level search, the same validity test, `A·δu + B·δc′`, and a skip that
+// would land outside the model (|u|² > rn_r2) takes a smaller one, so a pixel leaves on the same
+// u-step it would have. Bounded by `k_max` (never past the cap), never by the pass's own end, so
+// where passes split does not change a pixel; `trip_max` bounds the pass's work in loop trips.
+fn rn_steps(dcp: Fe, s0: RnState, k_end: u32, trip_max: u32) -> RnState {
     var s = s0;
+    s.trips = 0u;
+    let k_max = rn_k_max();
+    // The tree's levels: level i has `((K − 1) >> i) + 1` nodes, level 0 first. No per-level
+    // arrays (they live in memory, not registers): a trip starts at the highest level its index
+    // is aligned to and walks the offsets down by subtraction.
+    let kk = iu.rn_bla_k;
+    var ub_levels = 0u;
+    if (rn_bla_on()) {
+        ub_levels = 32u - countLeadingZeros(kk - 1u) + 1u; // until a level has one node
+    }
+    let ub_base = iu.orbit_len + iu.rn_bla_off - 1u;
     loop {
-        if (s.k >= k_end) { break; }
+        if (s.k >= k_end || s.trips >= trip_max) { break; }
+        s.trips = s.trips + 1u;
+        if (ub_levels > 0u) {
+            let dum = fe_abs_sf(s.du);
+            var applied = false;
+            var l = ub_levels - 1u;
+            if (s.kr != 0u) { l = min(l, countTrailingZeros(s.kr)); }
+            var off = 0u;
+            for (var i = 0u; i < l; i = i + 1u) { off = off + ((kk - 1u) >> i) + 1u; }
+            loop {
+                let j = s.kr >> l;
+                if (j < ((kk - 1u) >> l) + 1u) {
+                    let node = ub_base + (off + j) * 4u;
+                    let v2 = reference[node + 2u];
+                    let span = u32(reference[node + 3u].x);
+                    if (span != 0u && s.kr + span <= kk && s.k + span <= k_max
+                        && sf_lt(dum, sf_norm(vec2<f32>(v2.w, 0.0), i32(v2.z)))) {
+                        let v0 = reference[node];
+                        let v1 = reference[node + 1u];
+                        let A = fe_norm(cset(v0.xy, v0.zw), i32(v2.x));
+                        let B = fe_norm(cset(v1.xy, v1.zw), i32(v2.y));
+                        let ndu = fe_add(fe_mul(A, s.du), fe_mul(B, dcp));
+                        let nkr = s.kr + span;
+                        let u = fe_add(rn_ref_u(nkr), ndu);
+                        // A skip that would land outside the model takes a smaller one.
+                        if (fe_mag2(u) <= iu.rn_r2) {
+                            s.ddu = fe_add(fe_mul(A, s.ddu), B);
+                            s.du = ndu;
+                            s.kr = nkr;
+                            s.k = s.k + span;
+                            if (sf_lt(fe_abs_sf(u), fe_abs_sf(s.du)) || (s.kr + 1u) * iu.rn_len >= iu.orbit_len) {
+                                s.du = u;
+                                s.kr = 0u;
+                            }
+                            applied = true;
+                            break;
+                        }
+                    }
+                }
+                if (l == 0u) { break; }
+                l = l - 1u;
+                off = off - (((kk - 1u) >> l) + 1u);
+            }
+            if (applied) { continue; }
+        }
         let U = rn_ref_u(s.kr);
         s.ddu = fe_add(fe_two(fe_mul(fe_add(U, s.du), s.ddu)), fe_one());
         s.du = fe_add(fe_add(fe_two(fe_mul(U, s.du)), fe_sqr(s.du)), dcp);
@@ -1291,8 +1375,8 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 if (rn_settled(rc.dcp)) {
                     st.k = k_max;
                 } else {
-                    st = rn_steps(rc.dcp, st, k_max);
-                    n_rn = st.k;
+                    st = rn_steps(rc.dcp, st, k_max, 0xffffffffu);
+                    n_rn = st.trips;
                 }
                 if (st.out && st.k * iu.rn_len < iu.max_iter) {
                     dz = rn_dz(st.du);
@@ -2539,10 +2623,11 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
                 }
                 let k0 = st.k;
                 // The window's last whole step, or the cap's own when the window reaches it.
-                var k_end = select(stop / iu.rn_len, k_max, stop >= iu.max_iter);
-                if (iu.step_cap > 0u) { k_end = min(k_end, k0 + iu.step_cap * RN_STEP_WEIGHT); }
-                st = rn_steps(rc.dcp, st, max(k_end, k0));
-                n_rn = st.k - k0;
+                let k_end = select(stop / iu.rn_len, k_max, stop >= iu.max_iter);
+                var trip_max = 0xffffffffu;
+                if (iu.step_cap > 0u) { trip_max = iu.step_cap * RN_STEP_WEIGHT / rn_trip_weight(); }
+                st = rn_steps(rc.dcp, st, max(k_end, k0), trip_max);
+                n_rn = st.trips;
                 if (st.out) {
                     if (st.k * iu.rn_len < iu.max_iter) {
                         dz = rn_dz(st.du);
@@ -2600,7 +2685,7 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
         // the dispatch whatever the pixel does. A pass may stop between any two steps: the state
         // below round-trips exactly (the same property that lets a window end anywhere), so where
         // the passes split never changes a pixel.
-        if (iu.step_cap > 0u && n_bla + n_full + n_rn / RN_STEP_WEIGHT >= iu.step_cap) { break; }
+        if (iu.step_cap > 0u && n_bla + n_full + n_rn * rn_trip_weight() / RN_STEP_WEIGHT >= iu.step_cap) { break; }
         if (d_now && bla_levels > 0u) {
             dz = fe_from_cdf(dzd);
             d_now = false;

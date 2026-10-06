@@ -1243,9 +1243,13 @@ impl FractadyneApp {
         // and resume it from state. At the ladder's period-15,248 minibrot (2.1e57×) the step is the
         // parent's, 953 iterations, perturbed about a 16-step u-orbit — the case it exists for.
         // Each claim asserts the step ENGAGED first: a view where it does not would pass vacuously.
+        // ⚠The centre is the 2.1e57 scene's own. This case first ran at the PARENT's nucleus (the
+        // 1.3e53 scene's centre) at this zoom: there the reference's c′ is 2^-143, the view is the
+        // middle of the u-map's main cardioid, and every pixel settled at once — the step engaged,
+        // and nothing ever paused inside it.
         if want("renorm") {
-            const RX: &str = "-2.804105430550454669840777002898397927204098765083452471337241940737508121866324414807243345475023e-2";
-            const RY: &str = "6.948927538996523858929943394989672880373767486737755673829879259356243644967862160620146096103277e-1";
+            const RX: &str = "-2.804105430550454669840777002898397927204098765083451958014259277838710256889075333271267217529135e-2";
+            const RY: &str = "6.948927538996523858929943394989672880373767486737755680968675269305405323393245987015207130043252e-1";
             const RN_N: u32 = 192;
             let mag = 2.143e57;
             let mut vp = Viewport::new(RN_N as f64, RN_N as f64);
@@ -1322,6 +1326,71 @@ impl FractadyneApp {
                 params: "ladder p15248 2.1e57x, 40,000-iteration windows, raw".into(),
                 result,
                 threshold: "0 texels differ, more than one window",
+                pass,
+            });
+
+            // ⭐⭐THE U-SPACE BLA (`fractadyne_core::renorm_bla_gpu`) at the ladder's period-121,984
+            // minibrot (1.7e66×): the same parent step, now with a 128-step u-reference and a view
+            // ~1e-13 of c′ deep, where the u-space tree skips. Its step-capped chunked passes pause
+            // pixels between skips and must match the single dispatch bit for bit (both compile the
+            // tree in), and the tree must have SKIPPED: fewer executed steps than the same render
+            // with its tree withheld. 1024² (one tile): a first pass is priced before any is measured
+            // at ~127 trips a pixel there, under what these pixels take, so pixels pause between
+            // skips; at 192² every pixel finished in the first pass and nothing was resumed.
+            const UN: u32 = 1024;
+            const UX: &str = "-2.8041054305504546698407770028983979272040987650834522647373826069780910294289008745460822093586627899398116964168839e-2";
+            const UY: &str = "6.9489275389965238589299433949896728803737674867377557295375615363433163450543217966821361887684294277878069845792365e-1";
+            let umag = 1.682674e66;
+            let mut uvp = Viewport::new(UN as f64, UN as f64);
+            uvp.center_x = fractadyne_core::parse_bf(UX).unwrap();
+            uvp.center_y = fractadyne_core::parse_bf(UY).unwrap();
+            uvp.units_per_pixel = fractadyne_core::FloatExp::from_f64(4.0 / (UN as f64 * umag));
+            uvp.precision = fractadyne_core::precision_for_magnification(umag);
+            self.render_cfg.max_iter = 3_659_520;
+            self.render_cfg.auto_iter = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            let mut ureq = self.current_export_request_for(&uvp, false);
+            ureq.width = UN;
+            ureq.height = UN;
+            ureq.ss = 1;
+            self.render_cfg.max_iter = saved_iter;
+            self.render_cfg.auto_iter = saved_auto;
+            self.coloring.color_method = saved_method;
+            let tree = ureq.mode == 2 && ureq.rn.len > 0 && !ureq.rn_bla.is_empty();
+            let exec = |r: &fractadyne_gpu::ExportResult| {
+                r.counters[fractadyne_gpu::CTR_STEP_EXEC] + (r.counters[fractadyne_gpu::CTR_STEP_EXEC + 1] << 32)
+            };
+            let a = tree.then(|| fractadyne_gpu::render_export(device, queue, &ureq, &progress, &cancel).ok()).flatten();
+            let b = tree
+                .then(|| fractadyne_gpu::render_export_unchunked(device, queue, &ureq, &progress, &cancel).ok())
+                .flatten();
+            let mut plain_req = ureq.clone();
+            plain_req.rn_bla = std::sync::Arc::new(Vec::new());
+            let c = tree
+                .then(|| fractadyne_gpu::render_export(device, queue, &plain_req, &progress, &cancel).ok())
+                .flatten();
+            let (pass, result) = match (&a, &b, &c) {
+                (Some(a), Some(b), Some(c)) if a.pixels.len() == b.pixels.len() => {
+                    let diffs = bit_exact(&a.pixels, &b.pixels);
+                    let (ea, ec) = (exec(a), exec(c));
+                    (
+                        diffs == 0 && a.chunk_passes > a.tiles_total && ea * 2 < ec,
+                        format!(
+                            "{diffs} texels differ; {} passes; {} nodes; sampled steps {ea} with the tree, {ec} without",
+                            a.chunk_passes,
+                            ureq.rn_bla.len() / 4
+                        ),
+                    )
+                }
+                _ if !tree => (false, format!("no u-space tree (mode {}, step {})", ureq.mode, ureq.rn.len)),
+                _ => (false, "render failed".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Renorm",
+                name: "u-space BLA: chunked export matches its single dispatch, and skips".into(),
+                params: "ladder p121984 1.7e66x, 3,659,520 iter, 1024px in one tile".into(),
+                result,
+                threshold: "0 texels differ, passes > tiles, steps under half without the tree",
                 pass,
             });
         }
