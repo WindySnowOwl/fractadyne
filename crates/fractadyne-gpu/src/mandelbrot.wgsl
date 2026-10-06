@@ -1395,17 +1395,30 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             if (iter >= iu.max_iter) { break; }
             // BLA works in floatexp: hand a df32 δz back first (exact at |δz| >= 2^-60), so every
             // skip decision is the one the all-floatexp loop would make.
-            if (d_now && bla_levels > 0u) {
+            // In the df32 tail phase most steps cannot take a skip, and finding that out cost a floatexp
+            // round trip and a search. No level's radius at ref_n exceeds level 0's (a merged radius is
+            // at most its first child's), so a δz already past it rules every level out and the step
+            // keeps its df32 δz. Exact either way: the round trip is a power-of-two scaling there, and
+            // the tail test reads |δz| ≥ 2^-60 the same in both forms.
+            var no_skip = false;
+            if (d_now && bla_levels > 0u && ref_n < bla_len[0]) {
+                let r0 = reference[iu.orbit_len + (bla_off[0] + ref_n) * 4u + 2u];
+                no_skip = !(r0.w > 0.0) || log2(df_max_abs(dzd)) > log2(r0.w) + r0.z + 0.01;
+            }
+            if (d_now && bla_levels > 0u && !no_skip) {
                 dz = fe_from_cdf(dzd);
                 d_now = false;
             }
             // BLA: skip 2^l reference steps at once while |δz| is within the merged validity
             // radius; revert to a lower level (ultimately a full step) on escape overshoot.
             // δz stays small in the BLA regime, so rebasing never triggers here.
-            if (bla_levels > 0u) {
+            if (bla_levels > 0u && !no_skip) {
                 let dzmag = fe_abs_sf(dz);
                 var applied = false;
                 var l = bla_levels;
+                // Levels above ref_n's alignment would all `continue`: start at the highest it is aligned
+                // to — the same levels in the same order, without walking the ~20 above it every step.
+                if (ref_n != 0u) { l = min(l, countTrailingZeros(ref_n) + 1u); }
                 loop {
                     if (l == 0u) { break; }
                     l = l - 1u;
@@ -2686,17 +2699,30 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
         // below round-trips exactly (the same property that lets a window end anywhere), so where
         // the passes split never changes a pixel.
         if (iu.step_cap > 0u && n_bla + n_full + n_rn * rn_trip_weight() / RN_STEP_WEIGHT >= iu.step_cap) { break; }
-        if (d_now && bla_levels > 0u) {
+        // In the df32 tail phase most steps cannot take a skip, and finding that out cost a floatexp
+        // round trip and a search. No level's radius at ref_n exceeds level 0's (a merged radius is
+        // at most its first child's), so a δz already past it rules every level out and the step
+        // keeps its df32 δz. Exact either way: the round trip is a power-of-two scaling there, and
+        // the tail test reads |δz| ≥ 2^-60 the same in both forms.
+        var no_skip = false;
+        if (d_now && bla_levels > 0u && ref_n < bla_len[0]) {
+            let r0 = reference[iu.orbit_len + (bla_off[0] + ref_n) * 4u + 2u];
+            no_skip = !(r0.w > 0.0) || log2(df_max_abs(dzd)) > log2(r0.w) + r0.z + 0.01;
+        }
+        if (d_now && bla_levels > 0u && !no_skip) {
             dz = fe_from_cdf(dzd);
             d_now = false;
         }
         // BLA: skip 2^l reference steps at once while |δz| is within the merged validity radius;
         // revert to a lower level (ultimately a full step) on escape overshoot. Verbatim from
         // fs_iterate's mode-2 branch minus the aux aggregate (aux is out of scope here).
-        if (bla_levels > 0u) {
+        if (bla_levels > 0u && !no_skip) {
             let dzmag = fe_abs_sf(dz);
             var applied = false;
             var l = bla_levels;
+            // Levels above ref_n's alignment would all `continue`: start at the highest it is aligned
+            // to — the same levels in the same order, without walking the ~20 above it every step.
+            if (ref_n != 0u) { l = min(l, countTrailingZeros(ref_n) + 1u); }
             loop {
                 if (l == 0u) { break; }
                 l = l - 1u;
