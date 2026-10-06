@@ -448,7 +448,17 @@ const CHUNK_ABS_MIN: u32 = 256;
 /// mode 2's chunked and single-pass entry points agree bit for bit, so `render_iter_tiled`, which
 /// picks its entry point lazily, can use it too. Modes 0/1 have no BLA, their nominal work is close
 /// to their real work, and they keep their tiles.
-const OCC_TILE_SAMPLES: u32 = 1024;
+///
+/// ⭐2048, not the first 1024: once a thinning tile packs its running pixels ([`Packer`]), what a
+/// tile still pays for being a tile is its last few pixels — one chain of dependent steps, run
+/// once per tile and one tile after another — and every pass's fixed submit-and-read cost. Fewer,
+/// larger tiles pay both fewer times. Measured at 4K on the RTX 3080 (packing on, 12 tiles of
+/// 960×720 against 4 of 1920×1080, same images): 1.2e148 2.99 → 2.54 s of iterate, 4.2e275
+/// 0.71 → 0.56 s, the ladder's period-951,094 minibrot 9.16 → 9.05 s, the longest pass 176 ms
+/// either way. The tile state is allocated at the tile's own size, not a square of this side
+/// (`render_export` and `render_iter_tiled`): 265 MB at 1920×1080, where a 2048² square would
+/// take 537.
+const OCC_TILE_SAMPLES: u32 = 2048;
 
 /// Row height (or column width) that splits `extent` into equal parts no larger than `tile`. The
 /// tile loops' own rule — `tile`-sized from the origin, the remainder last, and no tile wider than
@@ -582,10 +592,9 @@ mod step_pricer;
 #[cfg(test)]
 mod readback;
 
-/// The side of the packed grid's state textures (see [`Packer`]): it holds `PACK_SIDE²` = 589,824
-/// pixels, over half of an occupancy tile (1024², or 960×720 at 4K), so every such tile can pack at
-/// its halfway point.
-const PACK_SIDE: u32 = 768;
+/// The largest side of a packed grid's state textures (see [`Packer`]), which is sized to hold half
+/// its tile — a 1920×1080 tile packs at its halfway point into 1,024² — up to this.
+const PACK_SIDE_MAX: u32 = 1024;
 /// A packed grid this small is not packed again: its passes are bound by one pixel's chain of
 /// steps, not by idle lanes, and a repack (a scatter and a gather) would cost more than it saves.
 const PACK_MIN_REPACK: u64 = 4096;
@@ -645,6 +654,8 @@ struct Packer {
     bg: [wgpu::BindGroup; 2],
     state: [Vec<wgpu::TextureView>; 2],
     state_bg: [wgpu::BindGroup; 2],
+    /// The packed grid's side: it holds `side²` pixels.
+    side: u32,
     /// The tile state textures' size, where the scatter places its points.
     tex: [f32; 2],
 }
@@ -761,9 +772,11 @@ impl Packer {
             })
         };
         let bg = [bg(0), bg(1)];
+        // Half the tile, as a square of even side (a multiple of 8: `gather` widths are).
+        let side = (((area / 2).max(1) as f64).sqrt().ceil() as u32).next_multiple_of(8).min(PACK_SIDE_MAX);
         let state = [
-            crate::make_state_textures(device, [PACK_SIDE, PACK_SIDE], 4),
-            crate::make_state_textures(device, [PACK_SIDE, PACK_SIDE], 4),
+            crate::make_state_textures(device, [side, side], 4),
+            crate::make_state_textures(device, [side, side], 4),
         ];
         let state_bg = [
             crate::make_state_bg(device, state_bgl, &state[0]),
@@ -779,6 +792,7 @@ impl Packer {
             bg,
             state,
             state_bg,
+            side,
             tex: [tex[0] as f32, tex[1] as f32],
         }
     }
@@ -796,8 +810,8 @@ impl Packer {
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
     }
 
-    /// Pack the `n` running pixels `lists[list]` names from the tile state `tile_bg` into a grid,
-    /// as wide as it is tall so a warp's block of texels is all in use.
+    /// Pack the `n` (at most `side²`) running pixels `lists[list]` names from the tile state
+    /// `tile_bg` into a grid, as wide as it is tall so a warp's block of texels is all in use.
     fn gather(
         &self,
         device: &wgpu::Device,
@@ -807,7 +821,7 @@ impl Packer {
         n: u32,
         list: usize,
     ) -> PackedGrid {
-        let w = ((n as f64).sqrt().ceil() as u32).next_multiple_of(8).clamp(8, PACK_SIDE);
+        let w = ((n as f64).sqrt().ceil() as u32).next_multiple_of(8).clamp(8, self.side);
         let grid = PackedGrid { n, w, rows: n.div_ceil(w), list, read: 0 };
         self.write(queue, Some(&grid));
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -1211,7 +1225,7 @@ px_steps={px_steps} ns_per={:.3} packed={} full={full} full_df32={big}",
             let space = packed.map_or(area, |g| g.n as u64);
             let pack_now = running > 0
                 && running as u64 * 2 <= space
-                && running as u64 <= (PACK_SIDE * PACK_SIDE) as u64
+                && running as u64 <= pk.side as u64 * pk.side as u64
                 && (packed.is_none() || space > PACK_MIN_REPACK);
             if running == 0 || pack_now {
                 // The grid's pixels, settled and running, back into the tile before it repacks or
@@ -1364,8 +1378,12 @@ fn render_export_impl(
     // textures. The corrector's loop (`render_iter_tiled`) keeps its lazy build for now — it calls
     // in up to 64 times per render, where that setup was measured at ~7 s (bench scene 04,
     // 14.3 s -> 21.7 s).
+    // Step-bounded tiles split the frame into EQUAL rows and columns (see `balanced_extent`), and
+    // their state is allocated at that size; the others are at most `tile` square.
+    let (row_h, col_w) = (balanced_extent(h, tile), balanced_extent(w, tile));
+    let state_size = if occupancy { [col_w * ss, row_h * ss] } else { [tile * ss, tile * ss] };
     let chunker: Option<TileChunker> = if chunk_scope {
-        Some(TileChunker::new(device, &shader, &iter_bgl, fe, [tile * ss, tile * ss], occupancy))
+        Some(TileChunker::new(device, &shader, &iter_bgl, fe, state_size, occupancy))
     } else {
         None
     };
@@ -1465,8 +1483,6 @@ fn render_export_impl(
     // per-tile u32 never wraps, and the whole-render total can exceed 2^32).
     let mut ctr_sum = [0u64; crate::COUNTER_SLOTS];
 
-    // Step-bounded tiles split the frame into EQUAL rows and columns (see `balanced_extent`).
-    let (row_h, col_w) = (balanced_extent(h, tile), balanced_extent(w, tile));
     let mut ty0 = 0u32;
     while ty0 < h {
         let th = if occupancy { row_h.min(h - ty0) } else { cap.min(h - ty0) };
@@ -2040,8 +2056,10 @@ pub fn render_iter_tiled(
     // Wall-adaptive cap, same rule as `render_export` (see `export_tile_cap`): the correction
     // loop's budget is nominal too, and its dark-core tiles are exactly where nominal != real.
     let mut cap = tile;
-    // Step-bounded tiles split the frame into EQUAL rows and columns (see `balanced_extent`).
+    // Step-bounded tiles split the frame into EQUAL rows and columns (see `balanced_extent`), and
+    // their state is allocated at that size; the others are at most `tile` square.
     let (row_h, col_w) = (balanced_extent(h, tile), balanced_extent(w, tile));
+    let state_size = if occupancy { [col_w, row_h] } else { [tile, tile] };
     let mut ty0 = 0u32;
     while ty0 < h {
         let th = if occupancy { row_h.min(h - ty0) } else { cap.min(h - ty0) };
@@ -2133,7 +2151,7 @@ pub fn render_iter_tiled(
                 && (occupancy || pricer.open(req.max_iter) < req.max_iter)
             {
                 chunker =
-                    Some(TileChunker::new(device, shader, iter_bgl, req.mode == 2, [tile, tile], occupancy));
+                    Some(TileChunker::new(device, shader, iter_bgl, req.mode == 2, state_size, occupancy));
             }
             // Chunked tiles iterate BEFORE the main encoder, one polled submission per window;
             // the first window clears the counters. The deadline is honoured between windows.
