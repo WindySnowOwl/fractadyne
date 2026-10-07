@@ -20,6 +20,10 @@ So the second GPU pays for **exports and tours**, not for deep live navigation, 
 bottleneck is the orbit. That agrees with the 2026-07-01 assessment in `TODO.md:9197-9201` and
 the deferred item at `TODO.md:9413-9423` ("Multi-GPU — offline/export only").
 
+**Revised 2026-10-07:** the live half of that conclusion no longer holds. A moving deep frame
+measured ~100% GPU (2026-09-17), and the reference has since become cheap. The live view now has
+its own design: `design/multi-gpu-live.md`.
+
 ## 2. Facts that shape the design
 
 1. **One device per process.** eframe creates the only Instance, Adapter, Device and Queue
@@ -136,7 +140,11 @@ itself. At depth that is the expensive part, so it would cost CPU (and a minute 
 for every GPU. Periodic references are also not written to the disk cache (`9fdf3da`). In-process
 devices share the one reference for free.
 
-### Phase 3 — the live view (research, only if measurements justify it)
+### Phase 3 — the live view
+
+**Superseded by `design/multi-gpu-live.md` (2026-10-07).** That design keeps both uses below:
+supersampling on settle (its L2) and refreshes during motion at predicted views (its L3). It
+adopts only whole products through paths the live view already has. The original note follows.
 
 The window can only paint from its own device, and moving pixels between devices goes through
 CPU readback. At 1080p RGBA32F that's about 33 MB per pass. Two candidate uses of the second GPU
