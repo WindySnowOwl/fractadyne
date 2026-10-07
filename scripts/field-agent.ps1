@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 16   # 16: farm-client "discover": first run --discover from the package and return what answered this machine's broadcast (the farm's network discovery). 15: farm-client in share mode (request "share": the client writes its frames to this agent's share). 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
+$AgentVersion = 17   # 17: farm-client "adapters" (--adapters: all of this machine's GPUs, or some, each its own session) and a 24 h ceiling (a long tour render; was 4 h). 16: farm-client "discover": first run --discover from the package and return what answered this machine's broadcast (the farm's network discovery). 15: farm-client in share mode (request "share": the client writes its frames to this agent's share). 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -499,7 +499,13 @@ function Invoke-FarmClient($r, [string]$dir, $status) {
     if ($controller -notmatch '^[A-Za-z0-9.-]{1,253}:[0-9]{1,5}$') { Stop-Refused "controller must be HOST:PORT" }
     $key = [string](Get-Field $r "farm_key" "")
     if ($key -notmatch '^fdn1-[a-z2-7-]{50,90}$') { Stop-Refused "farm_key is not a farm key (fdn1-...)" }
-    $timeout = [math]::Min([int](Get-Field $r "timeout_min" 60), 240)
+    # A farm job is a whole tour render, which can run most of a day (v17; was 4 h). The controller
+    # re-queues a client's unfinished frames whenever it stops, so the ceiling only bounds a lost job.
+    $timeout = [math]::Min([int](Get-Field $r "timeout_min" 60), 1440)
+    # v17: which of this machine's GPUs serve the job, each as its own session (--adapters): "all", or
+    # the numbers --list-adapters prints.
+    $adapters = [string](Get-Field $r "adapters" "")
+    if ($adapters -and $adapters -notmatch '^(all|[0-9]{1,2}(,[0-9]{1,2}){0,7})$') { Stop-Refused "adapters must be 'all' or GPU numbers such as 0,1" }
     $root = Get-Package $tag $package
     $status.build = $tag; $status.package = $package
     $local = Join-Path (Join-Path $Work $status.id) "client"
@@ -511,6 +517,7 @@ function Invoke-FarmClient($r, [string]$dir, $status) {
     # Share mode: this machine's path to the share is the agent's own share root; the controller
     # names the same folder by its own path to it.
     if ([bool](Get-Field $r "share" $false)) { $argv += @("--share-root", $Share) }
+    if ($adapters) { $argv += @("--adapters", $adapters) }
     $status.detail = "render client of $controller ($tag)"
     Write-JsonFile (Join-Path $dir "status.json") $status
     $env:FRACTADYNE_CONFIG_DIR = $cfgDir

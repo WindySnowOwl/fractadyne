@@ -51,6 +51,9 @@ param(
     [switch]$FarmShare,
     # farm-client (agent v16+): run --discover first and return which controllers answered.
     [switch]$FarmDiscover,
+    # farm-client (agent v17+): the test machine's GPUs to render with, each its own session:
+    # "all", or numbers from --list-adapters ("0,1"). Default: the one the app picks.
+    [string]$FarmAdapters = "",
     [int]$TimeoutMin = 0,
     [string]$Note = "",
     [switch]$Wait,
@@ -174,6 +177,10 @@ switch ($Action) {
         $req.farm_key = $k
         $req.share = [bool]$FarmShare
         if ($FarmDiscover) { $req.discover = $true }
+        if ($FarmAdapters) {
+            if ($FarmAdapters -notmatch '^(all|[0-9]{1,2}(,[0-9]{1,2}){0,7})$') { throw "-FarmAdapters must be 'all' or GPU numbers such as 0,1" }
+            $req.adapters = $FarmAdapters
+        }
     }
 }
 if ($TimeoutMin -gt 0) { $req.timeout_min = $TimeoutMin }
