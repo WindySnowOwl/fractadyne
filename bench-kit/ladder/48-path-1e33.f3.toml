@@ -1,0 +1,19 @@
+[location]
+real = "-2.804105430550454669840777002898397927364325841900623000741038149904438840e-2"
+imag = "6.948927538996523858929943394989672880391149901637978576136530872504350242e-1"
+zoom = "1.000000e33"
+[image]
+width = 1280
+height = 720
+subframes = 1
+[bailout]
+iterations = 2859
+maximum_reference_iterations = 2859
+maximum_perturb_iterations = 2859
+maximum_bla_steps = 8192
+escape_radius = 256
+[transform]
+exponential_map = false
+[render]
+filename = "48-path-1e33-f3"
+save_png = true

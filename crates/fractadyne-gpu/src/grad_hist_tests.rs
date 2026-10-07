@@ -1,7 +1,7 @@
 //! The step histogram's readback, including the bucket the shader deliberately never writes.
 
 use crate::{
-    grad_hist_from_slots, StepStats, COUNTER_SLOTS, CTR_CHUNK_RUNNING, CTR_ESC_HIST,
+    grad_hist_from_slots, StepStats, COUNTER_SLOTS, CTR_CHUNK_RUNNING, CTR_ESC_HIST, CTR_RENORM,
     CTR_GRAD_HIST, CTR_GRAD_N, CTR_STEP_BIG, CTR_STEP_EXEC, CTR_STEP_FULL, CTR_STEP_ITER,
     CTR_STEP_PX, ESC_HIST_BUCKETS, GRAD_HIST_BUCKETS,
 };
@@ -52,7 +52,9 @@ fn the_histogram_fits_the_counter_buffer() {
     );
     // ...and the step-bounded runner's one-word running count after the last two-word sum.
     assert_eq!(CTR_STEP_BIG + 2, CTR_CHUNK_RUNNING);
-    assert_eq!(CTR_CHUNK_RUNNING + 1, COUNTER_SLOTS);
+    // ...and the renormalized step's one-word count after it.
+    assert_eq!(CTR_CHUNK_RUNNING + 1, CTR_RENORM);
+    assert_eq!(CTR_RENORM + 1, COUNTER_SLOTS);
     assert!(CTR_GRAD_HIST > CTR_GRAD_N, "the histogram must not overlap the gradient sum/count");
 }
 
@@ -68,6 +70,7 @@ fn the_shader_agrees_on_the_step_accounting_slots() {
         ("CTR_STEP_FULL", CTR_STEP_FULL),
         ("CTR_STEP_BIG", CTR_STEP_BIG),
         ("CTR_CHUNK_RUNNING", CTR_CHUNK_RUNNING),
+        ("CTR_RENORM", CTR_RENORM),
     ] {
         let decl = format!("const {name}: u32 = {v}u;");
         assert!(wgsl.contains(&decl), "mandelbrot.wgsl must declare `{decl}`");

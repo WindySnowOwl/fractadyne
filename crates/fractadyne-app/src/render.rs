@@ -142,6 +142,12 @@ pub(crate) struct RecomputeResult {
     pub(crate) orbit_len: u32,
     rp: [fractadyne_core::BigFloat; 2],
     sa: fractadyne_core::SeriesSkip,
+    /// THE RENORMALIZED STEP for this reference (`fractadyne_core::RenormStep`); `None` unless the
+    /// orbit is periodic, Mandelbrot, not Julia, and a step holds near it.
+    rn: Option<fractadyne_core::RenormStep>,
+    /// The u-space BLA for `rn` (`fractadyne_core::renorm_bla_gpu`), built with the BLA's `dc_max`;
+    /// empty without one.
+    rn_bla: std::sync::Arc<Vec<[f32; 4]>>,
     bla: std::sync::Arc<Vec<[f32; 4]>>,
     bla_dc_max_log2: f64,
     /// Stripe frequency the BLA's `agg_stripe` lane was built with, so the live path can detect a
@@ -199,6 +205,10 @@ pub(crate) struct RecomputeResult {
     /// `"centre"` (the pick was the centre, and this is that build), `"discarded"` (another point
     /// won), `""` (no speculation — every other path). The same non-vacuity purpose as `reused`.
     spec_build: &'static str,
+    /// The pick took its walks of the centre (phase 2's deep walk and its samples) off that
+    /// speculative build instead of walking the centre again (`RefPickDiag::centre_from_build`).
+    /// The same non-vacuity purpose as `spec_build`.
+    pick_centre_from_build: bool,
     /// Where the series skip came from: `"overlap"` (the walk that ran beside the build, kept
     /// under `series_skip_holds_for`), `"walk"` (walked after the build), `""` (no SA).
     sa_from: &'static str,
@@ -413,6 +423,10 @@ pub(crate) struct RecomputeInputs {
     /// A prior reference the worker may extend instead of rebuilding (deeper zoom, same in-view
     /// point). `None` forces a fresh best-reference pick + full orbit build.
     reuse: Option<ReuseRef>,
+    /// A cap the build obeys if it is LOWERED while the build runs (Mandelbrot builds only; see
+    /// `fractadyne_core::reference_orbit_periodic_until`). Only the early `--render` reference
+    /// carries one: it starts before the device's orbit cap is known.
+    stop_at: Option<std::sync::Arc<std::sync::atomic::AtomicU32>>,
     /// The view's `orbit_id` when this build was SPAWNED — its staleness stamp. A deep build runs
     /// for seconds while other builders (lookahead, hold prefetch) finish and install, so a result
     /// can land against a reference that is already BETTER than the one it started from. Measured
@@ -633,7 +647,7 @@ pub(crate) fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
 fn custom_reference(inp: &RecomputeInputs) -> RecomputeResult {
     use fractadyne_core as fc;
     let cap = build_cap(inp.gpu_iter, inp);
-    let mut best = (inp.center_bf.clone(), build_orbit(&inp.center_bf, inp.gpu_iter, inp));
+    let mut best = (inp.center_bf.clone(), build_orbit(&inp.center_bf, inp.gpu_iter, inp, false));
     if best.1.tail.escaped && best.1.len.saturating_mul(2) < cap {
         let prec = inp.precision + REF_PREC_HEADROOM;
         'grid: for (i, j) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
@@ -641,7 +655,7 @@ fn custom_reference(inp: &RecomputeInputs) -> RecomputeResult {
                 fc::add_floatexp(&inp.center_bf[0], inp.span.0.mul_f64(0.25 * i as f64), prec),
                 fc::add_floatexp(&inp.center_bf[1], inp.span.1.mul_f64(0.25 * j as f64), prec),
             ];
-            let b = build_orbit(&p, inp.gpu_iter, inp);
+            let b = build_orbit(&p, inp.gpu_iter, inp, false);
             let done = !b.tail.escaped;
             if b.len > best.1.len {
                 best = (p, b);
@@ -664,21 +678,25 @@ pub(crate) fn fresh_build_for_selftest(inp: RecomputeInputs, overlap: bool) -> R
 }
 
 /// Pick a reference and build it. With `overlap`, the CENTRE's walks run beside the pick instead
-/// of after it, and the pick's centre rescue reads its score off the centre's build.
+/// of after it, and the pick takes its walks of the centre off the centre's build.
 ///
 /// Why: the sequential order walks the same orbit up to four times. At 4.6e1105× (4K export,
-/// the centre is the pick) that was phase 2 scoring the centre at `p`, the rescue re-scoring it
-/// at `p + 128`, the build walking it again at `p + 128`, and the series walk re-iterating it at
-/// `p` — pick 2.8 s + orbit 1.3 s + series 2.1 s of a 6.2 s reference window.
+/// the centre is the pick) that was phase 2 scoring the centre, the rescue re-scoring it, the
+/// build walking it again, and the series walk re-iterating it — pick 2.8 s + orbit 1.3 s +
+/// series 2.1 s of a 6.2 s reference window.
 ///
 /// The centre is candidate 0, deep-scored first, and the likeliest pick, so its build (at the
 /// build precision and cap) and its series walk start on their own threads BEFORE the pick. When
 /// the pick is the centre, that build is the one `build_reference_from_point` would have made —
-/// same point, same cap, same precision — and the rescue's score is read off it
-/// (`scoring_len_from_build`). The series walk runs against an upper bound on the orbit length
-/// and is kept under `series_skip_holds_for`, else walked again. Any other pick cancels the
-/// series walk, drops the build, and builds as before. The result is therefore byte-identical
-/// to `overlap = false`; only the wall-clock changes (`ref-overlap-identical` selftest).
+/// same point, same cap, same precision. The pick's phase 2 and its rescue walk the centre at
+/// that same precision, so both are read off the build (`centre_walk_from_build`; the build
+/// records the extended-range samples phase 2 scores against when the pick would want them,
+/// `pick_records_centre`) — before this the pick walked the centre again beside the build: two
+/// 100,000-bit walks of one orbit at 1e30000×. The series walk runs against an upper bound on
+/// the orbit length and is kept under `series_skip_holds_for`, else walked again. Any other pick
+/// cancels the series walk, drops the build, and builds as before. The result is therefore
+/// byte-identical to `overlap = false`; only the wall-clock changes (`ref-overlap-identical`
+/// selftest).
 fn pick_and_build(inp: &RecomputeInputs, overlap: bool) -> RecomputeResult {
     use fractadyne_core as fc;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -701,7 +719,7 @@ fn pick_and_build(inp: &RecomputeInputs, overlap: bool) -> RecomputeResult {
     };
     if !overlap {
         let t_pick = Instant::now();
-        let rp = pick_reference(inp, None);
+        let rp = pick_reference(inp, None).0;
         pick_trace(t_pick, "");
         return build_reference_from_point(rp, inp.gpu_iter, inp.do_sa, inp);
     }
@@ -712,10 +730,11 @@ fn pick_and_build(inp: &RecomputeInputs, overlap: bool) -> RecomputeResult {
     let sa_may_run = inp.do_sa
         || (inp.bla_dc_max.is_some() && fractadyne_core::formula::caps(inp.formula).series_approximation);
     let cancel_sa = AtomicBool::new(false);
+    let record = fc::pick_records_centre(inp.formula, inp.julia, [inp.span.0, inp.span.1]);
     std::thread::scope(|s| {
         let (tx, rx) = std::sync::mpsc::channel();
         s.spawn(move || {
-            let _ = tx.send(build_orbit(centre, inp.gpu_iter, inp));
+            let _ = tx.send(build_orbit(centre, inp.gpu_iter, inp, record));
         });
         let cancel = &cancel_sa;
         let sa = sa_may_run.then(|| {
@@ -742,11 +761,11 @@ fn pick_and_build(inp: &RecomputeInputs, overlap: bool) -> RecomputeResult {
                 *built.borrow_mut() = rx.recv().ok();
             }
         };
-        let rescue = || {
+        let centre_walk = |want_samples: bool| {
             take();
-            let b = built.borrow();
-            let b = b.as_ref()?;
-            // The `c` the rescue walk iterates with: the centre itself, or Julia's constant.
+            let mut b = built.borrow_mut();
+            let b = b.as_mut()?;
+            // The `c` the centre's walks iterate with: the centre itself, or Julia's constant.
             let (cx, cy) = if inp.julia {
                 (
                     fc::BigFloat::from_f64(inp.julia_c.0, b.orbit_prec),
@@ -755,16 +774,27 @@ fn pick_and_build(inp: &RecomputeInputs, overlap: bool) -> RecomputeResult {
             } else {
                 (centre[0].clone(), centre[1].clone())
             };
-            fc::scoring_len_from_build(b.len, &b.tail, &cx, &cy, inp.formula, inp.gpu_iter, b.orbit_prec)
+            // Phase 2 asks for the samples once; they move to it.
+            let fe = if want_samples { b.fe.take() } else { None };
+            fc::centre_walk_from_build(
+                b.len, &b.tail, fe, &cx, &cy, inp.formula, inp.gpu_iter, b.orbit_prec, want_samples,
+            )
         };
+        // Phase 2 waits for the build only when the build runs to the pick's own cap: then it holds
+        // the whole of the centre's walk whatever the orbit does. The live view caps its builds
+        // short; there phase 2 walks the centre beside phase 1 as before.
+        let src = fc::CentreSource { walk: &centre_walk, whole: build_cap(inp.gpu_iter, inp) >= inp.gpu_iter };
         let t_pick = Instant::now();
-        let rp = pick_reference(inp, Some(&rescue));
+        let (rp, pick_diag) = pick_reference(inp, Some(src));
         pick_trace(t_pick, " (overlapped with the centre's build)");
         let is_centre = same_point(&rp, centre);
         if is_centre {
             take();
         }
-        let built = built.into_inner();
+        let mut built = built.into_inner();
+        if let Some(b) = built.as_mut() {
+            b.fe = None; // the pick is done with the recording
+        }
         let spec_ms = built.as_ref().map_or(0.0, |b| b.ref_ms);
         let res = match built.filter(|_| is_centre) {
             Some(b) => {
@@ -777,6 +807,7 @@ fn pick_and_build(inp: &RecomputeInputs, overlap: bool) -> RecomputeResult {
                     rp, b.o, b.len, b.tail, b.orbit_prec, inp.gpu_iter, inp.do_sa, inp, b.ref_ms, sa_pre,
                 );
                 res.spec_build = "centre";
+                res.pick_centre_from_build = pick_diag.centre_from_build;
                 res
             }
             None => {
@@ -815,6 +846,9 @@ struct EarlyRef {
     inputs: RecomputeInputs,
     handle: std::thread::JoinHandle<RecomputeResult>,
     started: Instant,
+    /// The running build's cap, lowered when the device's turns out smaller (see
+    /// `take_early_reference`).
+    stop_at: std::sync::Arc<std::sync::atomic::AtomicU32>,
 }
 
 static EARLY_REF: std::sync::Mutex<Option<EarlyRef>> = std::sync::Mutex::new(None);
@@ -965,10 +999,18 @@ fn build_reference_watching(name: &'static str, inputs: RecomputeInputs, watch: 
 
 fn take_early_reference(inputs: &RecomputeInputs) -> Option<RecomputeResult> {
     let early = EARLY_REF.lock().ok()?.take()?;
-    let why = early_inputs_differ(&early.inputs, inputs).or_else(|| {
-        (build_cap(inputs.gpu_iter, inputs) != inputs.gpu_iter.min(inputs.orbit_len_cap))
-            .then_some("orbit-length cap (the device's binds)")
-    });
+    let why = early_inputs_differ(&early.inputs, inputs);
+    // The device's orbit cap was unknown when the early build started. If it binds, TELL the
+    // running build (it stops after that many steps, exactly where a build capped there stops)
+    // instead of discarding it: a periodic or escaping orbit usually ends long before either cap,
+    // and a discard built the same reference twice (a 1e30000 minibrot: 220 s, twice, in
+    // parallel). A build already past the cap, or a family the cap cannot reach (it is watched by
+    // the Mandelbrot probe), still comes back too long, and is discarded below.
+    let device_cap = build_cap(inputs.gpu_iter, inputs);
+    let device_binds = device_cap != inputs.gpu_iter.min(inputs.orbit_len_cap);
+    if why.is_none() && device_binds {
+        early.stop_at.store(device_cap, std::sync::atomic::Ordering::Relaxed);
+    }
     if let Some(what) = why {
         crate::diag::log_line(
             "ref",
@@ -979,6 +1021,16 @@ fn take_early_reference(inputs: &RecomputeInputs) -> Option<RecomputeResult> {
     let asked = early.started.elapsed().as_secs_f64() * 1000.0;
     let t = Instant::now();
     let res = early.handle.join().ok()?;
+    if device_binds && res.orbit_len > device_cap.saturating_add(1) {
+        crate::diag::log_line(
+            "ref",
+            &format!(
+                "early reference DISCARDED — {} samples, past the device's orbit cap {device_cap}; building fresh",
+                res.orbit_len
+            ),
+        );
+        return None;
+    }
     crate::diag::log_line(
         "ref",
         &format!(
@@ -1044,16 +1096,18 @@ impl FractadyneApp {
             return;
         }
         let (vp, julia) = (&self.viewport, self.julia_mode);
-        let (Some(inputs), Some(copy)) =
+        let (Some(mut inputs), Some(copy)) =
             (self.export_fresh_reference_inputs(vp, julia), self.export_fresh_reference_inputs(vp, julia))
         else {
             return;
         };
+        let stop_at = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(u32::MAX));
+        inputs.stop_at = Some(stop_at.clone());
         let spawned = std::thread::Builder::new()
             .name("early-reference".into())
             .spawn(move || recompute_worker(inputs));
         if let (Ok(handle), Ok(mut slot)) = (spawned, EARLY_REF.lock()) {
-            *slot = Some(EarlyRef { inputs: copy, handle, started: Instant::now() });
+            *slot = Some(EarlyRef { inputs: copy, handle, started: Instant::now(), stop_at });
             crate::diag::log_line("ref", "early reference build started before the window and GPU (--render)");
         }
     }
@@ -1158,16 +1212,16 @@ fn offer_to_orbit_cache(res: &RecomputeResult, key: orbit_blob::OrbitKey, origin
 
 /// Choose the reference point for `inp`. The ranking scan is internally capped (`REF_SCORE_SCAN`),
 /// so this is cheap and deterministic — the SAME point comes back for any iteration budget past the
-/// cap, which is why a coarse and a full stage share it exactly. `rescue`: the centre-rescue score
-/// from a build of the centre ([`pick_and_build`]); `None` walks it as before.
+/// cap, which is why a coarse and a full stage share it exactly. `centre`: the pick's walks of the
+/// centre, from a build of the centre ([`pick_and_build`]); `None` walks them here.
 fn pick_reference(
     inp: &RecomputeInputs,
-    rescue: Option<&dyn Fn() -> Option<u32>>,
-) -> [fractadyne_core::BigFloat; 2] {
+    centre: Option<fractadyne_core::CentreSource<'_>>,
+) -> ([fractadyne_core::BigFloat; 2], fractadyne_core::RefPickDiag) {
     let (center, span, julia_c) = (&inp.center_bf, [inp.span.0, inp.span.1], [inp.julia_c.0, inp.julia_c.1]);
-    let (point, diag) = match rescue {
-        Some(rescue) => fractadyne_core::best_reference_diag_rescued(
-            center, span, inp.formula, inp.julia, julia_c, inp.gpu_iter, inp.precision, rescue,
+    let (point, diag) = match centre {
+        Some(centre) => fractadyne_core::best_reference_diag_from_build(
+            center, span, inp.formula, inp.julia, julia_c, inp.gpu_iter, inp.precision, centre,
         ),
         None => fractadyne_core::best_reference_diag(
             center, span, inp.formula, inp.julia, julia_c, inp.gpu_iter, inp.precision,
@@ -1191,7 +1245,7 @@ fn pick_reference(
         crate::diag::trace(
             "ref",
             format!(
-                "pick [{}]: ask={} scored@{}bits survivors={} winner_len={}{}{} offset=({dx:.3},{dy:.3}) spans{}",
+                "pick [{}]: ask={} scored@{}bits survivors={} winner_len={}{}{}{} offset=({dx:.3},{dy:.3}) spans{}",
                 inp.origin,
                 inp.gpu_iter,
                 diag.scoring_prec,
@@ -1199,6 +1253,7 @@ fn pick_reference(
                 diag.winner_len,
                 diag.rescued.map(|r| format!(" RESCUED={r}")).unwrap_or_default(),
                 if diag.fallback_escaper { " FALLBACK-ESCAPER" } else { "" },
+                if diag.centre_from_build { " centre=build" } else { "" },
                 // The redesigned phase-2 engine, when it scored anyone (design/pick-redesign.md):
                 // appended so every existing `pick [..]:` consumer keeps parsing unchanged.
                 if diag.deep_perturb {
@@ -1212,7 +1267,7 @@ fn pick_reference(
             ),
         );
     }
-    point
+    (point, diag)
 }
 
 /// Build the orbit (to `orbit_iter`, at reuse-headroom precision) + series-approximation skip + BLA
@@ -1224,7 +1279,7 @@ fn build_reference_from_point(
     do_sa: bool,
     inp: &RecomputeInputs,
 ) -> RecomputeResult {
-    let b = build_orbit(&rp, orbit_iter, inp);
+    let b = build_orbit(&rp, orbit_iter, inp, false);
     finish_reference(rp, b.o, b.len, b.tail, b.orbit_prec, orbit_iter, do_sa, inp, b.ref_ms, None)
 }
 
@@ -1235,6 +1290,9 @@ struct BuiltOrbit {
     tail: fractadyne_core::OrbitTail,
     orbit_prec: usize,
     ref_ms: f64,
+    /// The orbit recorded extended-range, when asked for: what the pick's phase 2 scores the
+    /// other survivors against (`fractadyne_core::centre_walk_from_build`).
+    fe: Option<Vec<fractadyne_core::CFloatExp>>,
 }
 
 /// The iteration cap a fresh build of `orbit_iter` walks to. Cap the stored orbit LENGTH to the
@@ -1247,10 +1305,17 @@ fn build_cap(orbit_iter: u32, inp: &RecomputeInputs) -> u32 {
     orbit_iter.min(inp.orbit_len_cap).min(orbit_len_cap())
 }
 
+/// log₂ of the view's larger extent — what a periodic reference is judged against
+/// ([`fractadyne_core::OrbitPeriod::valid_for`]).
+fn log2_view_span(inp: &RecomputeInputs) -> f64 {
+    inp.span.0.log2().max(inp.span.1.log2())
+}
+
 /// Build the orbit of `rp` (to `build_cap`, at reuse-headroom precision). Everything the fresh
 /// build path walks, in one place, so the speculative centre build in [`pick_and_build`] is the
-/// same build by construction.
-fn build_orbit(rp: &[fractadyne_core::BigFloat; 2], orbit_iter: u32, inp: &RecomputeInputs) -> BuiltOrbit {
+/// same build by construction. `record`: also record it extended-range for the pick (c-plane
+/// builds only — a Julia pick never asks).
+fn build_orbit(rp: &[fractadyne_core::BigFloat; 2], orbit_iter: u32, inp: &RecomputeInputs, record: bool) -> BuiltOrbit {
     use fractadyne_core as fc;
     let t = Instant::now();
     let orbit_prec = inp.precision + REF_PREC_HEADROOM;
@@ -1266,14 +1331,31 @@ fn build_orbit(rp: &[fractadyne_core::BigFloat; 2], orbit_iter: u32, inp: &Recom
         (zero.clone(), zero, rp[0].clone(), rp[1].clone())
     };
     let cap = build_cap(orbit_iter, inp);
+    let mut fe = Vec::new();
     let (o, len, tail) = match &inp.custom {
         // Only a formula with a perturbed step reaches here, and those evaluate in bignum (no
         // division or functions) with every parameter supplied.
         Some(c) => fc::ir::reference_orbit(&c.formula, &z0x, &z0y, &cx0, &cy0, &c.params, cap, orbit_prec)
             .expect("a perturbable custom formula evaluates in bignum"),
+        // ⭐A minibrot-centred view's orbit closes on itself: the build stops at the period and
+        // the shader wraps (see `OrbitPeriod`), instead of walking the whole cap — at 1e10000×,
+        // 137,396 steps instead of 4.12 million. Julia's orbit starts at the centre, not 0.
+        None if !inp.julia => fc::reference_orbit_periodic_until(
+            &z0x,
+            &z0y,
+            &cx0,
+            &cy0,
+            inp.formula,
+            cap,
+            orbit_prec,
+            log2_view_span(inp),
+            inp.stop_at.as_deref(),
+            record.then_some(&mut fe),
+        ),
         None => fc::reference_orbit_t(&z0x, &z0y, &cx0, &cy0, inp.formula, cap, orbit_prec),
     };
-    BuiltOrbit { o, len, tail, orbit_prec, ref_ms: t.elapsed().as_secs_f64() * 1000.0 }
+    let fe = (record && inp.custom.is_none() && !inp.julia).then_some(fe);
+    BuiltOrbit { o, len, tail, orbit_prec, ref_ms: t.elapsed().as_secs_f64() * 1000.0, fe }
 }
 
 /// A series skip walked BEFORE the orbit length was known (beside the build, in
@@ -1336,7 +1418,10 @@ fn finish_reference(
     sa_pre: Option<SaPre>,
 ) -> RecomputeResult {
     use fractadyne_core as fc;
-    let partial = !tail.escaped;
+    // A periodic orbit valid for this view is the WHOLE orbit: not partial, so pixels are not
+    // clamped to its length — they wrap at its end, which the period makes exact.
+    let period = tail.period.filter(|pp| pp.valid_for(log2_view_span(inp)));
+    let partial = !tail.escaped && period.is_none();
     // ⚠The trace below used to print `orbit_tail.is_none() && !partial`, which has been
     // HARDCODED FALSE ever since the tail became unconditional (see `orbit_tail` below) — a dead
     // field that read as "this reference never escaped" for every reference in the log. It cost a
@@ -1344,7 +1429,7 @@ fn finish_reference(
     // when it is an orbit that ESCAPED at 626.
     let tail_escaped = tail.escaped;
     // SA is forced back on for a short escaper even in a BLA view — see `sa_short_escaper`.
-    let short_escaper = sa_short_escaper(inp, len, partial);
+    let short_escaper = sa_short_escaper(inp, len, !tail.escaped);
     // Keep the tail even for a COMPLETE (escaped) orbit: it can't be EXTENDED, but it can still be
     // REUSED as-is (same point + orbit) so a rebuild doesn't re-pick a fresh reference — which at
     // extreme depth renders a hair differently each time and makes the view "jump" on zoom.
@@ -1357,8 +1442,13 @@ fn finish_reference(
     let t_sa = Instant::now();
     let mut sa_from = "";
     let mut pre_ms = None;
+    // A periodic orbit repeats past its last sample, so the series may skip up to the period
+    // itself (one more than a truncated orbit allows): the shader wraps a pixel seeded there
+    // before its first step. Without it a nucleus view's skip came out one short (997 for period
+    // 998) and every pixel past it differed from the full-length render.
+    let sa_len = if period.is_some() { len + 1 } else { len };
     let sa = if do_sa || short_escaper {
-        match sa_pre.filter(|pre| pre.max_iter == orbit_iter && fc::series_skip_holds_for(&pre.skip, len)) {
+        match sa_pre.filter(|pre| pre.max_iter == orbit_iter && fc::series_skip_holds_for(&pre.skip, sa_len)) {
             Some(pre) => {
                 sa_from = "overlap";
                 pre_ms = Some(pre.ms);
@@ -1367,7 +1457,7 @@ fn finish_reference(
             None => {
                 sa_from = "walk";
                 let log2_max_dc = sa_log2_max_dc(inp, &rp);
-                fc::series_skip(&rp[0], &rp[1], log2_max_dc, orbit_iter, len, inp.formula, inp.precision)
+                fc::series_skip(&rp[0], &rp[1], log2_max_dc, orbit_iter, sa_len, inp.formula, inp.precision)
             }
         }
     } else {
@@ -1402,6 +1492,22 @@ fn finish_reference(
         _ => (std::sync::Arc::new(Vec::new()), f64::NEG_INFINITY),
     };
     let bla_ms = t_bla.elapsed().as_secs_f64() * 1000.0;
+    // ⭐THE RENORMALIZED STEP (`fc::RenormStep`): near the minibrot a periodic reference is centred
+    // on, a pixel takes a whole period (or its parent's) per step as u ↦ u² + c′. One pass over the
+    // orbit in an extended-range accumulator; periodic orbits only, which bounds that pass.
+    let t_rn = Instant::now();
+    let rn = period
+        .filter(|_| crate::tunables::cost().renorm == 1)
+        .filter(|_| inp.formula == fc::formula::MANDELBROT && !inp.julia && inp.custom.is_none())
+        .and_then(|_| fc::renorm_step(&orbit));
+    // Its u-space BLA, under the same `dc_max` as the z-space tree (and only where there is one).
+    let rn_bla = match (rn.as_ref(), inp.bla_dc_max) {
+        (Some(step), Some(dc_max)) if crate::tunables::cost().renorm_bla == 1 => std::sync::Arc::new(
+            fc::renorm_bla_gpu(&orbit, step, dc_max, crate::tunables::cost().bla_eps),
+        ),
+        _ => std::sync::Arc::new(Vec::new()),
+    };
+    let rn_ms = t_rn.elapsed().as_secs_f64() * 1000.0;
     crate::diag::breadcrumb(format!(
         "reference built [{}]: len={len} iter={orbit_iter} prec={orbit_prec}",
         inp.origin
@@ -1415,10 +1521,18 @@ fn finish_reference(
             "ref",
             format!(
                 "[{}] len={len} iter={orbit_iter} prec={orbit_prec} partial={partial} \
-                 escaped={} sa_skip={} bla_dc_max_log2={bla_dc_max_log2:.1} bla_nodes={} \
-                 | orbit_ms={ref_ms:.0} sa_ms={series_ms:.0} bla_ms={bla_ms:.0}",
+                 escaped={}{}{} sa_skip={} bla_dc_max_log2={bla_dc_max_log2:.1} bla_nodes={} \
+                 | orbit_ms={ref_ms:.0} sa_ms={series_ms:.0} bla_ms={bla_ms:.0} rn_ms={rn_ms:.0}",
                 inp.origin,
                 tail_escaped,
+                period
+                    .map(|pp| format!(" periodic={} (|Z|=2^{:.0}, |D|=2^{:.0})", pp.period, pp.log2_z, pp.log2_d))
+                    .unwrap_or_default(),
+                rn.map(|r| format!(
+                    " renorm={} (R=2^{:.0}, |dc|<=2^{:.0}, |kappa|=2^{:.0}, u-bla nodes {})",
+                    r.len, r.log2_r, r.log2_dc_max, r.log2_kappa, rn_bla.len() / 4,
+                ))
+                .unwrap_or_default(),
                 sa.skip,
                 bla.len(),
             ),
@@ -1429,6 +1543,8 @@ fn finish_reference(
         orbit_len: len,
         rp,
         sa,
+        rn,
+        rn_bla,
         bla,
         bla_dc_max_log2,
         bla_stripe_freq: inp.stripe_freq,
@@ -1448,6 +1564,7 @@ fn finish_reference(
         reused: false,
         from_disk: false,
         spec_build: "",
+        pick_centre_from_build: false,
         sa_from,
     }
 }
@@ -1484,9 +1601,16 @@ fn try_reuse_reference(inp: &RecomputeInputs) -> Option<RecomputeResult> {
     // build's length cap (LIVE freeze safety) or the GPU buffer. `inp.gpu_iter` (the render
     // budget) still flows to `finish_reference` below unchanged — only the stored length is bounded.
     let target = inp.gpu_iter.min(inp.orbit_len_cap).min(orbit_len_cap());
+    // A period found for another view may not be exact enough for this one (a deeper view has
+    // smaller pixels): then it is not the whole orbit here, and the true orbit continues from the
+    // tail — which is the state at that step, so the extension is the fresh build's.
+    let mut reuse_tail = reuse.tail.clone();
+    if reuse_tail.period.is_some_and(|pp| !pp.valid_for(log2_view_span(inp))) {
+        reuse_tail.period = None;
+    }
     let (o, len, tail) = fc::extend_reference_orbit(
         &reuse.prefix,
-        &reuse.tail,
+        &reuse_tail,
         &cx0,
         &cy0,
         inp.formula,
@@ -1562,7 +1686,7 @@ fn recompute_worker_staged(
             }
             inp.reuse = None;
         }
-        let rp = pick_reference(&inp, None);
+        let rp = pick_reference(&inp, None).0;
         // Coarse stage skips series approximation: its `series_skip` is a bignum coefficient pass
         // that costs seconds at extreme depth (≈ as much as the whole reference), and this stage
         // exists only to put a fast, BLA-accelerated, iteration-capped preview on screen so panning
@@ -1682,6 +1806,8 @@ struct RefFields {
     orbit: std::sync::Arc<Vec<[f32; 4]>>,
     orbit_len: u32,
     sa: fractadyne_core::SeriesSkip,
+    rn: Option<fractadyne_core::RenormStep>,
+    rn_bla: std::sync::Arc<Vec<[f32; 4]>>,
     bla: std::sync::Arc<Vec<[f32; 4]>>,
     bla_on: u32,
 }
@@ -1693,10 +1819,18 @@ impl Default for RefFields {
             orbit: std::sync::Arc::new(Vec::new()),
             orbit_len: 0,
             sa: fractadyne_core::SeriesSkip::NONE,
+            rn: None,
+            rn_bla: std::sync::Arc::new(Vec::new()),
             bla: std::sync::Arc::new(Vec::new()),
             bla_on: 0,
         }
     }
+}
+
+/// THE RENORMALIZED STEP's uniform (off for `None`). Each pixel checks its own `|δc|` against the
+/// model in the shader, so a panned or zoomed view can keep the step its reference chose.
+fn renorm_uniform(step: Option<&fractadyne_core::RenormStep>) -> fractadyne_gpu::Renorm {
+    step.map(fractadyne_gpu::Renorm::from_step).unwrap_or_default()
 }
 
 /// Turn a completed reference recompute into the GPU request's reference fields: the δ-offset of the
@@ -1710,6 +1844,8 @@ fn assemble_ref_fields(vp: &Viewport, precision: usize, delta_exp: i32, res: Rec
         orbit: res.orbit,
         orbit_len: res.orbit_len,
         sa: res.sa,
+        rn: res.rn,
+        rn_bla: res.rn_bla,
         bla: res.bla,
         bla_on,
     }
@@ -2030,6 +2166,8 @@ impl FractadyneApp {
             res.partial = false;
             res.orbit_tail = None;
             res.bla = std::sync::Arc::new(Vec::new());
+            res.rn = None; // no longer the periodic orbit
+            res.rn_bla = std::sync::Arc::new(Vec::new());
             if !keep_sa {
                 res.sa = fractadyne_core::SeriesSkip::NONE;
             }
@@ -2214,6 +2352,7 @@ impl FractadyneApp {
         vc.last_recompute = Some(Instant::now());
         vc.sa = res.sa;
         vc.sa_key = (vc.orbit_id, res.iter);
+        vc.rn = res.rn;
         vc.bla = res.bla;
         vc.bla_id = vc.orbit_id;
         vc.bla_dc_max_log2 = res.bla_dc_max_log2;
@@ -2526,6 +2665,7 @@ impl FractadyneApp {
                 stripe_freq: self.coloring.stripe_freq as f64,
                 trap_type: self.coloring.trap_type as u32,
                 reuse,
+                stop_at: None,
                 spawn_orbit_id: self.ref_cache[0].orbit_id,
             };
             let (tx, rx) = std::sync::mpsc::channel();
@@ -2803,6 +2943,7 @@ impl FractadyneApp {
             stripe_freq: self.coloring.stripe_freq as f64,
             trap_type: self.coloring.trap_type as u32,
             reuse,
+            stop_at: None,
             spawn_orbit_id: self.ref_cache[0].orbit_id,
         };
         if crate::diag::trace_on("ref") {
@@ -2956,6 +3097,8 @@ impl FractadyneApp {
                 orbit: vc.orbit.clone(),
                 orbit_len: vc.orbit_len,
                 sa: vc.sa,
+                rn: vc.rn,
+                rn_bla: std::sync::Arc::new(Vec::new()),
                 bla,
                 bla_on,
             },
@@ -3096,6 +3239,7 @@ impl FractadyneApp {
             // ⭐The plumbing and the gate both exist, so flipping this is a one-line experiment
             // with a check standing under it — see `selfcheck_reference_reuse`.
             reuse: None,
+            stop_at: None,
             spawn_orbit_id: 0, // export never installs into a live cache
         }
     }
@@ -3136,7 +3280,7 @@ impl FractadyneApp {
         &self,
         vp: &Viewport,
         max_iter: u32,
-    ) -> Result<(&'static str, &'static str, String), String> {
+    ) -> Result<(&'static str, &'static str, bool, String), String> {
         let budget = IterBudget { max_iter, auto_iter: false };
         let inputs = || self.export_reference_inputs_for(vp, false, budget).ok_or("not a perturbation view");
         let t = Instant::now();
@@ -3164,13 +3308,15 @@ impl FractadyneApp {
         Ok((
             b.spec_build,
             b.sa_from,
+            b.pick_centre_from_build,
             format!(
-                "identical; len={} sa_skip={} sa={}/{} centre build={} ({seq_ms:.0} ms sequential, {ovl_ms:.0} ms overlapped)",
+                "identical; len={} sa_skip={} sa={}/{} centre build={} pick's centre walk={} ({seq_ms:.0} ms sequential, {ovl_ms:.0} ms overlapped)",
                 b.orbit_len,
                 b.sa.skip,
                 if a.sa_from.is_empty() { "none" } else { a.sa_from },
                 if b.sa_from.is_empty() { "none" } else { b.sa_from },
                 b.spec_build,
+                if b.pick_centre_from_build { "from the build" } else { "walked" },
             ),
         ))
     }
@@ -3767,7 +3913,7 @@ impl FractadyneApp {
         // three produce byte-identical references). Split timings recorded for `--profile`.
         // Iteration ceiling. Only the LIVE-borrowed reference can lower it — see `live_ref_fields`.
         let mut req_max_iter = eff_iter;
-        let RefFields { ref_offset, orbit, orbit_len, sa, bla, bla_on } = if !mode.is_direct() {
+        let RefFields { ref_offset, orbit, orbit_len, sa, rn, rn_bla, bla, bla_on } = if !mode.is_direct() {
             // ⭐Borrowed live reference: no bignum, and no `prof.set` (the probe fires many times a
             // second and would otherwise clobber the `--profile` breakdown of the real render).
             // `None` = the cache cannot serve this view, so fall through to a fresh build.
@@ -3869,6 +4015,8 @@ impl FractadyneApp {
             sa_b_exp: sa.b_exp,
             sa_c: sa.c,
             sa_c_exp: sa.c_exp,
+            rn: renorm_uniform(rn.as_ref()),
+            rn_bla,
             julia_c,
             orbit,
             orbit_len,
@@ -4138,6 +4286,9 @@ impl FractadyneApp {
             r.orbit_len = len;
             r.ref_offset = RefOffset::from_df32(dx, dy);
             r.sa_skip = 0;
+            // The renormalized step described the PRIMARY reference's orbit, not this one's.
+            r.rn = fractadyne_gpu::Renorm::default();
+            r.rn_bla = std::sync::Arc::new(Vec::new());
             r.bla_on = bla_on;
             r.bla = bla;
             // ⭐⭐A correction pass exists to repair `glitch`, and the adoption below reads NOTHING
@@ -6634,6 +6785,10 @@ impl FractadyneApp {
             chunk_idx,
             probe_nonce: self.perf.probe_nonce[vs],
             orbit: self.ref_cache[vi].orbit.clone(),
+            rn: renorm_uniform(self.ref_cache[vi].rn.as_ref()),
+            // The live view takes plain u-steps: its tree upload is keyed on `orbit_id` alone, and
+            // a u-space tree is rebuilt with the BLA's `dc_max`, which that key does not see.
+            rn_bla: std::sync::Arc::new(Vec::new()),
             orbit_id: self.ref_cache[vi].orbit_id,
             orbit_len: self.ref_cache[vi].orbit_len,
             bla,
@@ -8676,6 +8831,7 @@ impl FractadyneApp {
                     stripe_freq: self.coloring.stripe_freq as f64,
                     trap_type: self.coloring.trap_type as u32,
                     reuse,
+                    stop_at: None,
                     spawn_orbit_id: self.ref_cache[vi].orbit_id,
                 };
                 // Anti-churn backstop: never respawn more than ~60×/s (spaced ≥ 16 ms). The wider

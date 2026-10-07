@@ -20,8 +20,14 @@ function Read-Kfr($path) {
     $kv
 }
 
-function Read-Scenes($kitRoot) {
-    Import-Csv (Join-Path $kitRoot 'scenes.csv')
+# $set: 'standard' = scenes.csv (the published ten), 'ladder' = scenes-ladder.csv, 'all' = both.
+function Read-Scenes($kitRoot, $set = 'standard') {
+    $files = switch ($set) {
+        'ladder' { @('scenes-ladder.csv') }
+        'all'    { @('scenes.csv', 'scenes-ladder.csv') }
+        default  { @('scenes.csv') }
+    }
+    foreach ($f in $files) { Import-Csv (Join-Path $kitRoot $f) }
 }
 
 # ---- run manifest: what was actually EXECUTED, per render -------------------------------------
@@ -70,7 +76,16 @@ function Invoke-TimedRender($exe, $argLine, $timeoutS, $cwd) {
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $p = [System.Diagnostics.Process]::Start($psi)
+    # A launch that throws (an over-long command line, a missing DLL, a bad path) is ONE failed
+    # render, not the end of the run: with $ErrorActionPreference = 'Stop' it used to abort every
+    # remaining lane and leave no row at all.
+    try {
+        $p = [System.Diagnostics.Process]::Start($psi)
+    } catch {
+        $sw.Stop()
+        return @{ status = 'DNF-launch'; wall_s = ''; wall_ms = ''; stdout = ''
+                  stderr = $_.Exception.Message }
+    }
     $out = $p.StandardOutput.ReadToEndAsync()
     $err = $p.StandardError.ReadToEndAsync()
     if (-not $p.WaitForExit($timeoutS * 1000)) {
@@ -201,6 +216,25 @@ function Write-FsPhases($csvPath, $row) {
 }
 
 # Shut the server down and WAIT for it, because that is what flushes the pending PNG writes.
+# One untimed frame on a FRESH server, so the timed image after it starts warm. A server's first
+# render pays a one-off setup that its later renders do not: measured 2026-10-06 on scene 03 at 4K,
+# 1.20-1.34 s client time as a server's first image, 0.35-0.38 s as its second, and 0.36-0.37 s
+# after this warm-up. The warm-up frame lies entirely OUTSIDE the set (centre 4+0i at zoom 1, every
+# pixel escapes at once), so its reference orbit is a single step that no scene could reuse. Returns
+# the warm-up's own wall, which is kept out of every image's time.
+function Invoke-SharkWarmup($cli, $endpoint, $algo, $w, $h, $dir, $timeoutS) {
+    $stem = Join-Path $dir ('warmup-' + $endpoint)
+    $a = ('--connect --endpoint {0} --render-algorithm {1} --center-x 4 --center-y 0 --zoom 1 --iterations 1000 --width {2} --height {3} --antialiasing 1 --out "{4}" --quiet' -f
+          $endpoint, $algo, $w, $h, $stem)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $r = Invoke-TimedRender $cli $a $timeoutS $dir
+    # Its PNG must be written before the timed image starts, or that image waits for this encode.
+    if ($r.status -eq 'ok') { $null = Wait-PngComplete ($stem + '.png') $timeoutS }
+    $sw.Stop()
+    Remove-Item -Force -ErrorAction SilentlyContinue ($stem + '.png')
+    @{ ok = ($r.status -eq 'ok'); s = [math]::Round($sw.Elapsed.TotalSeconds, 1) }
+}
+
 function Stop-SharkServer($cli, $endpoint, $srv) {
     & $cli --connect --endpoint $endpoint --shutdown 2>&1 | Out-Null
     if ($srv -and $srv.proc) {

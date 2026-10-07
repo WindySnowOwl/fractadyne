@@ -163,6 +163,28 @@ pub fn selected() -> BackendChoice {
     *SELECTED.get().unwrap_or(&default_choice())
 }
 
+thread_local! {
+    /// Set on the threads of a pool that already fills the machine (the pick's candidate scans):
+    /// an orbit walked there computes its step's products on its own thread rather than spawning
+    /// product threads per walk (32 walks × 9 product threads oversubscribed the build ~3×).
+    static SEQUENTIAL_PRODUCTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f` with this thread's orbit walks keeping their products on this thread. Byte-identical
+/// either way: only where the products run changes.
+pub(crate) fn with_sequential_products<R>(f: impl FnOnce() -> R) -> R {
+    let was = SEQUENTIAL_PRODUCTS.with(|s| s.replace(true));
+    let r = f();
+    SEQUENTIAL_PRODUCTS.with(|s| s.set(was));
+    r
+}
+
+/// Whether this thread's walks keep their products on this thread ([`with_sequential_products`]).
+#[cfg_attr(not(feature = "rug"), allow(dead_code))]
+pub(crate) fn sequential_products() -> bool {
+    SEQUENTIAL_PRODUCTS.with(|s| s.get())
+}
+
 /// Is the MPFR runtime actually loadable in this process?
 ///
 /// ⭐**Only meaningful for the accelerated Windows build**, where libmpfr-6.dll / libgmp-10.dll are

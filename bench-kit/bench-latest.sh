@@ -3,7 +3,8 @@
 # benchmarked renderers, run the benchmark sequentially, and produce the summary report.
 #
 #   ./bench-latest.sh [--apps-dir DIR] [--required-gb N] [--reps N] [--timeout S]
-#                     [--scenes slug,slug|id,...] [--skip lane,lane] [--skip-download]
+#                     [--scenes slug,slug|id,...] [--scene-set standard|ladder|all]
+#                     [--skip lane,lane] [--skip-download]
 #                     [--fractadyne PATH] [--fraktaler3 PATH]
 #
 # Lanes on Linux, honestly:
@@ -32,6 +33,7 @@ REQUIRED_GB=2
 REPS=1
 TIMEOUT_S=7200
 SCENES_FILTER=""
+SCENE_SET="standard"
 SKIP=""
 SKIP_DOWNLOAD=0
 FRACTADYNE_EXE=""
@@ -44,6 +46,7 @@ while [ $# -gt 0 ]; do
         --reps) REPS="$2"; shift 2 ;;
         --timeout) TIMEOUT_S="$2"; shift 2 ;;
         --scenes) SCENES_FILTER="$2"; shift 2 ;;
+        --scene-set) SCENE_SET="$2"; shift 2 ;;
         --skip) SKIP="$2"; shift 2 ;;
         --skip-download) SKIP_DOWNLOAD=1; shift ;;
         --fractadyne) FRACTADYNE_EXE="$2"; shift 2 ;;
@@ -224,7 +227,13 @@ result() { # renderer scene rep status wall reported note
     printf '  %-13s %-18s rep%s  %-12s wall=%-8s reported=%s\n' "$1" "$2" "$3" "$4" "$5" "$6"
 }
 
-# ---- scene table (scenes.csv, optionally filtered by --scenes slug-or-id list) ----
+# ---- scene table (scenes.csv and/or scenes-ladder.csv per --scene-set, then --scenes) ----
+case "$SCENE_SET" in
+    standard) SCENE_CSVS=("$KIT/scenes.csv") ;;
+    ladder) SCENE_CSVS=("$KIT/scenes-ladder.csv") ;;
+    all) SCENE_CSVS=("$KIT/scenes.csv" "$KIT/scenes-ladder.csv") ;;
+    *) echo "ERROR: --scene-set must be standard, ladder or all"; exit 1 ;;
+esac
 SCENES=()
 while IFS=, read -r id slug mag_log10 iterations normalize; do
     [ "$id" = "id" ] && continue
@@ -241,8 +250,22 @@ while IFS=, read -r id slug mag_log10 iterations normalize; do
 # (14, 17, 35) -- a different picture AND a different time, on Linux only, reported as success.
 # kfr_field() already strips \r for this reason; this reader did not. Strip once, here, so every
 # field downstream is clean rather than only the one someone remembered.
-done < <(tr -d '\r' <"$KIT/scenes.csv")
-[ "${#SCENES[@]}" -gt 0 ] || { echo "ERROR: --scenes matched nothing in scenes.csv"; exit 1; }
+done < <(cat "${SCENE_CSVS[@]}" | tr -d '\r')
+[ "${#SCENES[@]}" -gt 0 ] || { echo "ERROR: --scenes matched nothing in the $SCENE_SET scene set"; exit 1; }
+# In the repository scenes/ is gitignored; refresh each needed file from where it lives (the
+# ladder in ladder/, the standard ten in validation/corpus/locations), as run-all.ps1 does. A
+# packaged kit has no sources beside it and keeps its scenes/ as shipped. A Linux command line
+# takes a 30,000-digit argument (the per-argument limit is 128 KiB), so no lane needs a file here.
+for row in "${SCENES[@]}"; do
+    IFS=, read -r _ slug _ _ _ <<<"$row"
+    for ext in .kfr .f3.toml .fdn; do
+        for src in "$KIT/ladder" "$KIT/../validation/corpus/locations"; do
+            if [ -f "$src/$slug$ext" ]; then
+                mkdir -p "$KIT/scenes"; cp -f "$src/$slug$ext" "$KIT/scenes/$slug$ext"; break
+            fi
+        done
+    done
+done
 
 step "Lanes: fractadyne=$([ -n "$FRACTADYNE_EXE" ] && echo yes || echo no) fraktaler3=$([ -n "$FRAKTALER3_EXE" ] && echo yes || echo no) imagina=NA-windows-only fractalshark=$([ -n "$FRACTALSHARK_EXE" ] && echo assisted || echo no)"
 step "Reps: $REPS  Timeout per render: ${TIMEOUT_S}s"

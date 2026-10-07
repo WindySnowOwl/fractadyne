@@ -44,7 +44,9 @@ pub(crate) fn blob_at(orbit: &[[f32; 4]], prec: usize, iter: u32, k: OrbitKey, r
         zpx: parse_bf_prec("0", prec).unwrap(),
         zpy: parse_bf_prec("0", prec).unwrap(),
         escaped: false,
+        period: None,
         backend: k.backend,
+        sched: None,
     };
     let mut out = Vec::new();
     out.extend_from_slice(MAGIC);
@@ -69,6 +71,7 @@ pub(crate) fn blob_at(orbit: &[[f32; 4]], prec: usize, iter: u32, k: OrbitKey, r
     write_bf(&tail.zpy, &mut out);
     out.push(u8::from(tail.escaped));
     out.extend_from_slice(&tail.backend.to_le_bytes());
+    write_sched(&mut out, tail.sched);
     for p in orbit {
         for v in p {
             out.extend_from_slice(&v.to_le_bytes());

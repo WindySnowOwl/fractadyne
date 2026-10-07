@@ -499,7 +499,7 @@ impl FractadyneApp {
         let filter: Option<String> = self.selftest.filter.clone();
         const GROUPS: &[&str] = &[
             "numeric", "symmetry", "abs-family", "custom-formula", "life", "lsystem", "multibrot-sa", "bla", "aux-bla",
-            "consistency", "counters", "iter-budget", "iter-chunk", "live-split", "nr-zoom", "coords",
+            "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "nr-zoom", "coords",
             "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
             "checklist",
@@ -1190,7 +1190,214 @@ impl FractadyneApp {
                     threshold: "0 texels differ, 1 tile, passes > tiles, pass <= ceiling",
                     pass,
                 });
+
+                // ⭐⭐PACKED TAILS (`Packer` in fractadyne-gpu's export.rs): once at most half of a
+                // step-bounded tile runs, its running pixels iterate in a dense grid, and when that
+                // grid thins out too they go back to the tile and pack again; the last grid is
+                // written back before the resolve. The same frame with packing switched off must
+                // match the packed render bit for bit, and the packed render must have packed
+                // TWICE in its one tile — once proves the gather and the final write-back, the
+                // second the repack between them; a tile that never thinned that far would pass
+                // vacuously. 1024² is still one tile, and its smaller step cap (the pixel-step
+                // ceiling over 1M samples) gives the slow pixels the passes to thin out over.
+                const PACK_N: u32 = 1024;
+                let mut pack_req = occ_req.clone();
+                pack_req.width = PACK_N;
+                pack_req.height = PACK_N;
+                let packed = fractadyne_gpu::render_export(device, queue, &pack_req, &progress, &cancel)
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (render_export, packed): {e}"))
+                    .ok();
+                fractadyne_gpu::set_tile_pack(false);
+                let flat = fractadyne_gpu::render_export(device, queue, &pack_req, &progress, &cancel)
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (render_export, unpacked): {e}"))
+                    .ok();
+                fractadyne_gpu::set_tile_pack(crate::tunables::cost().tile_pack == 1);
+                let (pass, result) = match (&packed, &flat) {
+                    (Some(p), Some(f)) if p.pixels.len() == f.pixels.len() => {
+                        let diffs = bit_exact(&p.pixels, &f.pixels);
+                        (
+                            diffs == 0 && p.tiles_total == 1 && p.packs >= 2 && f.packs == 0,
+                            format!(
+                                "{diffs} texels differ; {} tile(s), {} passes, packed {} times (unpacked twin: {})",
+                                p.tiles_total, p.chunk_passes, p.packs, f.packs
+                            ),
+                        )
+                    }
+                    _ => (false, "render failed".into()),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "IterChunk",
+                    name: "packed tails: a packed tile matches its unpacked twin".into(),
+                    params: "corpus07 1e30x, 4M iter, 1024px in one tile, TILE_PACK 1 vs 0".into(),
+                    result,
+                    threshold: "0 texels differ, 1 tile, packed at least twice",
+                    pass,
+                });
             }
+        }
+
+        // ⭐⭐THE RENORMALIZED STEP (`fractadyne_core::RenormStep`) through every path that runs it. The
+        // step is not bit-identical to the perturbation loop (it is an approximation, judged against
+        // the oracle by `--renorm-audit`), but it must be bit-identical to ITSELF however a frame is
+        // split: the single dispatch runs it to the end, a chunked tile may pause a pixel inside it
+        // and resume it from state. At the ladder's period-15,248 minibrot (2.1e57×) the step is the
+        // parent's, 953 iterations, perturbed about a 16-step u-orbit — the case it exists for.
+        // Each claim asserts the step ENGAGED first: a view where it does not would pass vacuously.
+        // ⚠The centre is the 2.1e57 scene's own. This case first ran at the PARENT's nucleus (the
+        // 1.3e53 scene's centre) at this zoom: there the reference's c′ is 2^-143, the view is the
+        // middle of the u-map's main cardioid, and every pixel settled at once — the step engaged,
+        // and nothing ever paused inside it.
+        if want("renorm") {
+            const RX: &str = "-2.804105430550454669840777002898397927204098765083451958014259277838710256889075333271267217529135e-2";
+            const RY: &str = "6.948927538996523858929943394989672880373767486737755680968675269305405323393245987015207130043252e-1";
+            const RN_N: u32 = 192;
+            let mag = 2.143e57;
+            let mut vp = Viewport::new(RN_N as f64, RN_N as f64);
+            vp.center_x = fractadyne_core::parse_bf(RX).unwrap();
+            vp.center_y = fractadyne_core::parse_bf(RY).unwrap();
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(4.0 / (RN_N as f64 * mag));
+            vp.precision = fractadyne_core::precision_for_magnification(mag);
+            let saved_iter = self.render_cfg.max_iter;
+            let saved_auto = self.render_cfg.auto_iter;
+            let saved_method = self.coloring.color_method;
+            self.render_cfg.max_iter = 457_440;
+            self.render_cfg.auto_iter = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            let mut req = self.current_export_request_for(&vp, false);
+            req.width = RN_N;
+            req.height = RN_N;
+            req.ss = 1;
+            self.render_cfg.max_iter = saved_iter;
+            self.render_cfg.auto_iter = saved_auto;
+            self.coloring.color_method = saved_method;
+            let bit_exact = |a: &[f32], b: &[f32]| -> usize {
+                a.iter().zip(b).filter(|(x, y)| x.to_bits() != y.to_bits()).count()
+            };
+            let engaged = req.mode == 2 && req.rn.len > 0;
+            use std::sync::atomic::{AtomicBool, AtomicU32};
+            let progress = AtomicU32::new(0);
+            let cancel = AtomicBool::new(false);
+            let a = engaged
+                .then(|| fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel).ok())
+                .flatten();
+            let b = engaged
+                .then(|| fractadyne_gpu::render_export_unchunked(device, queue, &req, &progress, &cancel).ok())
+                .flatten();
+            let took = a.as_ref().map_or(0, |r| r.counters[fractadyne_gpu::CTR_RENORM]);
+            let (pass, result) = match (&a, &b) {
+                (Some(a), Some(b)) if a.pixels.len() == b.pixels.len() => {
+                    let diffs = bit_exact(&a.pixels, &b.pixels);
+                    (
+                        diffs == 0 && took > 0,
+                        format!("{diffs} texels differ; step {} its, {took} sampled px took it", req.rn.len),
+                    )
+                }
+                _ if !engaged => (false, format!("the step did not engage (mode {}, step {})", req.mode, req.rn.len)),
+                _ => (false, "render failed".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Renorm",
+                name: "renormalized step: chunked export matches its single dispatch".into(),
+                params: "ladder p15248 2.1e57x, 457,440 iter, 192px".into(),
+                result,
+                threshold: "step engaged; 0 texels differ",
+                pass,
+            });
+            // Windows of 40,000 iterations (42 renormalized steps) end INSIDE the step for every
+            // pixel that takes more, so pixels pause there and resume from state.
+            let mut windows = Vec::new();
+            let w = if engaged {
+                fractadyne_gpu::render_iter_chunked_timed(device, queue, &req, 40_000, &mut windows).ok()
+            } else {
+                None
+            };
+            let u = engaged.then(|| fractadyne_gpu::render_iter(device, queue, &req).ok()).flatten();
+            let (pass, result) = match (&w, &u) {
+                (Some(w), Some(u)) if w.pixels.len() == u.pixels.len() => {
+                    let diffs = bit_exact(&w.pixels, &u.pixels);
+                    (diffs == 0 && windows.len() > 1, format!("{diffs} texels differ; {} windows", windows.len()))
+                }
+                _ if !engaged => (false, "the step did not engage".into()),
+                _ => (false, "render failed".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Renorm",
+                name: "renormalized step: pixels paused inside it resume bit-identically".into(),
+                params: "ladder p15248 2.1e57x, 40,000-iteration windows, raw".into(),
+                result,
+                threshold: "0 texels differ, more than one window",
+                pass,
+            });
+
+            // ⭐⭐THE U-SPACE BLA (`fractadyne_core::renorm_bla_gpu`) at the ladder's period-121,984
+            // minibrot (1.7e66×): the same parent step, now with a 128-step u-reference and a view
+            // ~1e-13 of c′ deep, where the u-space tree skips. Its step-capped chunked passes pause
+            // pixels between skips and must match the single dispatch bit for bit (both compile the
+            // tree in), and the tree must have SKIPPED: fewer executed steps than the same render
+            // with its tree withheld. 1024² (one tile): a first pass is priced before any is measured
+            // at ~127 trips a pixel there, under what these pixels take, so pixels pause between
+            // skips; at 192² every pixel finished in the first pass and nothing was resumed.
+            const UN: u32 = 1024;
+            const UX: &str = "-2.8041054305504546698407770028983979272040987650834522647373826069780910294289008745460822093586627899398116964168839e-2";
+            const UY: &str = "6.9489275389965238589299433949896728803737674867377557295375615363433163450543217966821361887684294277878069845792365e-1";
+            let umag = 1.682674e66;
+            let mut uvp = Viewport::new(UN as f64, UN as f64);
+            uvp.center_x = fractadyne_core::parse_bf(UX).unwrap();
+            uvp.center_y = fractadyne_core::parse_bf(UY).unwrap();
+            uvp.units_per_pixel = fractadyne_core::FloatExp::from_f64(4.0 / (UN as f64 * umag));
+            uvp.precision = fractadyne_core::precision_for_magnification(umag);
+            self.render_cfg.max_iter = 3_659_520;
+            self.render_cfg.auto_iter = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            let mut ureq = self.current_export_request_for(&uvp, false);
+            ureq.width = UN;
+            ureq.height = UN;
+            ureq.ss = 1;
+            self.render_cfg.max_iter = saved_iter;
+            self.render_cfg.auto_iter = saved_auto;
+            self.coloring.color_method = saved_method;
+            let tree = ureq.mode == 2 && ureq.rn.len > 0 && !ureq.rn_bla.is_empty();
+            let exec = |r: &fractadyne_gpu::ExportResult| {
+                r.counters[fractadyne_gpu::CTR_STEP_EXEC] + (r.counters[fractadyne_gpu::CTR_STEP_EXEC + 1] << 32)
+            };
+            // A breadcrumb between the three 1024² renders: each stamps liveness, so a GPU shared
+            // with another application (one full run took 19 s here, against 2.5) cannot read as a
+            // wedged frame loop to the watchdog.
+            let a = tree.then(|| fractadyne_gpu::render_export(device, queue, &ureq, &progress, &cancel).ok()).flatten();
+            crate::diag::breadcrumb("selftest: u-space BLA, chunked render done".into());
+            let b = tree
+                .then(|| fractadyne_gpu::render_export_unchunked(device, queue, &ureq, &progress, &cancel).ok())
+                .flatten();
+            crate::diag::breadcrumb("selftest: u-space BLA, single dispatch done".into());
+            let mut plain_req = ureq.clone();
+            plain_req.rn_bla = std::sync::Arc::new(Vec::new());
+            let c = tree
+                .then(|| fractadyne_gpu::render_export(device, queue, &plain_req, &progress, &cancel).ok())
+                .flatten();
+            let (pass, result) = match (&a, &b, &c) {
+                (Some(a), Some(b), Some(c)) if a.pixels.len() == b.pixels.len() => {
+                    let diffs = bit_exact(&a.pixels, &b.pixels);
+                    let (ea, ec) = (exec(a), exec(c));
+                    (
+                        diffs == 0 && a.chunk_passes > a.tiles_total && ea * 2 < ec,
+                        format!(
+                            "{diffs} texels differ; {} passes; {} nodes; sampled steps {ea} with the tree, {ec} without",
+                            a.chunk_passes,
+                            ureq.rn_bla.len() / 4
+                        ),
+                    )
+                }
+                _ if !tree => (false, format!("no u-space tree (mode {}, step {})", ureq.mode, ureq.rn.len)),
+                _ => (false, "render failed".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Renorm",
+                name: "u-space BLA: chunked export matches its single dispatch, and skips".into(),
+                params: "ladder p121984 1.7e66x, 3,659,520 iter, 1024px in one tile".into(),
+                result,
+                threshold: "0 texels differ, passes > tiles, steps under half without the tree",
+                pass,
+            });
         }
 
         // ⭐⭐ONE COMPILED ENTRY POINT PER RENDER — the gate the corpus red at `06-seahorse-1e24`
@@ -1304,6 +1511,7 @@ impl FractadyneApp {
                 ),
             ];
             let mut engaged = false;
+            let mut centre_taken = false;
             for (label, x, y, log2mag, iter) in views {
                 let mag = 2f64.powf(log2mag);
                 let mut vp = Viewport::new(N as f64, N as f64);
@@ -1312,8 +1520,9 @@ impl FractadyneApp {
                 vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
                 vp.precision = fractadyne_core::precision_for_magnification(mag);
                 let (pass, result) = match self.selfcheck_ref_overlap(&vp, iter) {
-                    Ok((spec, sa_from, summary)) => {
+                    Ok((spec, sa_from, from_build, summary)) => {
                         engaged |= spec == "centre" && sa_from == "overlap";
+                        centre_taken |= from_build;
                         (true, summary)
                     }
                     Err(e) => (false, e),
@@ -1334,6 +1543,14 @@ impl FractadyneApp {
                 result: format!("engaged={engaged}"),
                 threshold: "at least one view took both from the overlap",
                 pass: engaged,
+            });
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "RefOverlap",
+                name: "the pick took its walk of the centre from the centre build".into(),
+                params: "across the views above".into(),
+                result: format!("taken={centre_taken}"),
+                threshold: "at least one view's phase 2 read the centre (and its samples) off the build",
+                pass: centre_taken,
             });
         }
 
@@ -3503,6 +3720,11 @@ impl FractadyneApp {
                 };
                 let agree = |a: f64, b: f64| if a < 0.0 || b < 0.0 { (a < 0.0) == (b < 0.0) } else { (a - b).abs() < tol };
                 for j in 0..nn {
+                    // The interpreter walks every pixel to the cap; Manowar's took 9.3–10.4 s with
+                    // no breadcrumb, at the watchdog's 10 s window, and a busier run tripped it.
+                    if j > 0 && j % 64 == 0 {
+                        crate::diag::breadcrumb(format!("selftest: {label}: CPU interpreter, row {j} of {nn}"));
+                    }
                     for i in 0..nn {
                         let c = (
                             centre.0 + sx * ((i as f64 + 0.5) - N as f64 * 0.5) * scale,
@@ -8977,9 +9199,11 @@ zoom = \"1e94\"
         // defaults. Fields gated off here (light/de/duotone/binary, orbit-trap) don't reach the
         // output, so their sub-parameters are left as-is.
         let bless = self.selftest.bless; // from new()'s expanded args (honors @response-file)
-        let report_path = std::env::args()
+        let args = crate::effective_args();
+        let report_path = args
+            .iter()
             .position(|a| a == "--out" || a == "-o")
-            .and_then(|i| std::env::args().nth(i + 1))
+            .and_then(|i| args.get(i + 1))
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| anchored("validation/report.md"));
         let out_base = report_path

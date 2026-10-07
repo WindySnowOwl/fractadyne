@@ -133,3 +133,98 @@ fn shallow_behaviour_is_unchanged_and_a_perfect_seed_converges_in_place() {
         .expect("re-solving from the nucleus itself must not be rejected as a runaway");
     assert_eq!(again.period, 3);
 }
+
+/// ⭐`PeriodSearch::Ball` answers "which minibrot is at this view", which the closest-approach
+/// search cannot on a deep zoom path: the path to the 9.98e60205× spiral
+/// (`validation/spiral-9.98e60205.fdn`) keeps its centre inside the period-953 minibrot's atom
+/// domain long after that nucleus has left the view, so closest approach names 953 and the
+/// runaway check rejects it. Measured 2026-10-05 at this 1e50× view (the path's centre cut to
+/// 80 digits): closest approach → None; the ball → the period-2066 minibrot, 3.6 view widths
+/// from the centre (the ball over-approximates: "near the view", not "in it").
+#[test]
+fn the_ball_search_finds_the_minibrot_in_a_deep_path_view() {
+    let seed = [
+        fc::parse_bf("-2.8041054305504546698407770028983979273643258419006230007410381499044388400475119e-2").unwrap(),
+        fc::parse_bf("6.9489275389965238589299433949896728803911499016379785761365308725043502422306740e-1").unwrap(),
+    ];
+    let l2 = 50.0 * std::f64::consts::LOG2_10;
+    assert!(
+        fc::find_nucleus(&seed, l2, 0, 100_000).is_none(),
+        "closest approach at this view names the period-953 minibrot, whose nucleus is outside it"
+    );
+    let n = fc::find_nucleus_by(&seed, l2, 0, 100_000, fc::PeriodSearch::Ball)
+        .expect("the ball search finds the minibrot in the view");
+    assert_eq!(n.period, 2066, "the path's minibrot in this view has period 2066");
+    // Near the view: 3.6 spans (3/mag) from the centre, measured; the runaway bound is 8.
+    let p = fc::precision_for_octaves(l2.ceil() as u64);
+    let off = (fc::sub_f64(&n.cx, &seed[0], p).powi(2) + fc::sub_f64(&n.cy, &seed[1], p).powi(2)).sqrt();
+    let spans = off / (3.0 * (-l2).exp2());
+    assert!((3.0..4.5).contains(&spans), "the nucleus is {spans:.2} view widths from the centre (measured 3.6)");
+    // And it is a real nucleus at its own scale: the atom is 2^-320.7 wide (it frames at 1e96.5×).
+    let atom = fc::nucleus_size(&n.cx, &n.cy, n.period, 0, p).expect("atom size");
+    assert!((atom.log2_size + 320.67).abs() < 0.05, "atom 2^{:.3}", atom.log2_size);
+}
+
+/// The ball's own arithmetic on cases with a known answer: a view centred on the period-2 nucleus
+/// (-1) finds period 2, a view that contains 0 finds period 1, and the ball refuses a family it
+/// has no bound for (it is written for `z² + c`) rather than answer with the wrong one.
+#[test]
+fn the_ball_search_on_known_cases() {
+    let at = |x: f64, y: f64| [fc::BigFloat::from_f64(x, 128), fc::BigFloat::from_f64(y, 128)];
+    let n = fc::find_nucleus_by(&at(-1.0, 0.0), 10f64.log2(), 0, 1000, fc::PeriodSearch::Ball).expect("period 2");
+    assert_eq!(n.period, 2);
+    let n = fc::find_nucleus_by(&at(0.1, 0.05), 4f64.log2(), 0, 1000, fc::PeriodSearch::Ball).expect("period 1");
+    assert_eq!(n.period, 1);
+    assert!(fc::find_nucleus_by(&at(-1.0, 0.0), 10f64.log2(), fc::formula::MULTIBROT3, 1000, fc::PeriodSearch::Ball).is_none());
+}
+
+/// The period-998 seahorse nucleus, re-solved to `p` bits, and its atom's log₂ size (2^-50.5).
+fn seahorse_nucleus(p: usize) -> ([fc::BigFloat; 2], f64) {
+    let seed = [fc::parse_bf("-0.743643887037151").unwrap(), fc::parse_bf("0.131825904205330").unwrap()];
+    let n = fc::find_nucleus(&seed, 30.0, 0, 100_000).expect("the seahorse nucleus");
+    assert_eq!(n.period, 998);
+    let (rx, ry) = fc::refine_nucleus(&n.cx, &n.cy, 998, 0, p).expect("refine");
+    let atom = fc::nucleus_size(&rx, &ry, 998, 0, p).expect("atom size");
+    ([rx, ry], atom.log2_size)
+}
+
+/// ⭐A reference centred on a nucleus closes on itself at the period: `Z_998 ≈ 0 = Z_0`, so the
+/// build stops there and the orbit to 998 IS the whole orbit (the shader wraps). Its samples are
+/// the plain build's, sample for sample — the period only decides where to stop.
+#[test]
+fn a_nucleus_centred_reference_stops_at_its_period() {
+    let p = 256;
+    let (c, log2_size) = seahorse_nucleus(p);
+    let zero = fc::BigFloat::from_f64(0.0, p);
+    let log2_span = log2_size + 1.3; // the frame the finder would put it in: ~2.5 atoms across
+    let (o, len, tail) = fc::reference_orbit_periodic(&zero, &zero, &c[0], &c[1], 0, 30_000, p, log2_span);
+    let period = tail.period.expect("the nucleus's orbit closes on itself");
+    assert_eq!((period.period, len), (998, 999), "stops at Z_998");
+    assert!(period.valid_for(log2_span));
+    assert!(!tail.escaped);
+    let (full, full_len, _) = fc::reference_orbit_t(&zero, &zero, &c[0], &c[1], 0, 30_000, p);
+    assert_eq!(full_len, 30_001, "the nucleus never escapes");
+    let bits = |s: &[[f32; 4]]| s.iter().map(|q| q.map(f32::to_bits)).collect::<Vec<_>>();
+    assert_eq!(bits(&o), bits(&full[..999]), "the periodic build is the plain build's prefix");
+    // And the 1000th sample of the plain build is Z_1 again, to f64: it really repeats.
+    assert_eq!(bits(&full[999..1000]), bits(&full[1..2]));
+}
+
+/// A point a millionth of the atom away from the nucleus does not close to 2^-38 of the view, so
+/// it is NOT periodic (a wrap there would shift every pixel visibly); nor is the exact nucleus
+/// seen from a view so wide that it is not linear at the period (|D|·span > 2^-8) — there, nuclei
+/// of every large period lie within a pixel of any point.
+#[test]
+fn only_a_close_enough_centre_in_a_narrow_enough_view_is_periodic() {
+    let p = 256;
+    let (c, log2_size) = seahorse_nucleus(p);
+    let zero = fc::BigFloat::from_f64(0.0, p);
+    let log2_span = log2_size + 1.3;
+    let off = fc::FloatExp::from_f64(1.0e-6).mul_pow2(log2_size).to_bf(p);
+    let cx_off = c[0].add(&off, p, astro_float::RoundingMode::ToEven);
+    let (_, len, tail) = fc::reference_orbit_periodic(&zero, &zero, &cx_off, &c[1], 0, 30_000, p, log2_span);
+    assert!(tail.period.is_none(), "1e-6 of an atom off the nucleus: {:?}", tail.period);
+    assert_eq!(len, 30_001, "an interior point runs to the cap");
+    let (_, _, tail) = fc::reference_orbit_periodic(&zero, &zero, &c[0], &c[1], 0, 30_000, p, 0.0);
+    assert!(tail.period.is_none(), "a whole-set view is not linear at period 998: {:?}", tail.period);
+}

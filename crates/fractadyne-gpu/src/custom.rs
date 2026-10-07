@@ -1118,23 +1118,24 @@ fn fe_branch() -> String {
 }
 
 /// The resumable floatexp chunk pass for a custom formula (the `@@CUSTOM_CHUNK_FE` slot): the fixed
-/// entry point's prologue, state layout and epilogue, around the same step as [`fe_branch`]. The
+/// `chunk_fe_at`'s prologue, state layout and epilogue, around the same step as [`fe_branch`]. The
 /// derivative channels carry zeros (a custom formula has no derivative; its resolve reads none).
+/// The entry points that call it (`fs_iterate_chunk_fe`, the export's packed pass) are the fixed
+/// module's.
 fn chunk_fe_entry() -> String {
     format!(
-        "@fragment
-fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {{
+        "fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {{
+    chunk_slot = NO_SLOT;
     let step_re = iu.step.xy;
     let step_im = iu.step.zw;
-    let gx = iu.px_offset.x + in.pos.x;
-    let gy = iu.px_offset.y + in.pos.y;
+    let gx = iu.px_offset.x + pos.x;
+    let gy = iu.px_offset.y + pos.y;
     let coord_re = gx - iu.res.x * 0.5;
     let coord_im = iu.res.y * 0.5 - gy;
     let off_re = df_mul_f32(step_re, coord_re);
     let off_im = df_mul_f32(step_im, coord_im);
     let bail2 = 256.0 * 256.0;
     let stop = min(iu.end_iter, iu.max_iter);
-    let p = vec2<i32>(i32(in.pos.x), i32(in.pos.y));
     var sz = vec4<f32>(0.0);
     var sm = vec4<f32>(0.0);
     if (iu.start_iter > 0u) {{
@@ -1192,7 +1193,7 @@ fn fs_iterate_chunk_fe(in: VsOut) -> ChunkOut4 {{
     var status: f32 = ST_RUNNING;
     if (iter >= iu.max_iter) {{ status = ST_INTERIOR; }}
     if (status == ST_RUNNING && iu.step_cap > 0u) {{
-        atomicAdd(&counters[CTR_CHUNK_RUNNING], 1u);
+        chunk_slot = atomicAdd(&counters[CTR_CHUNK_RUNNING], 1u);
     }}
     return ChunkOut4(
         vec4<f32>(dz.m.re.x, dz.m.re.y, dz.m.im.x, dz.m.im.y),

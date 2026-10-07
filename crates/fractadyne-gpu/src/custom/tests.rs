@@ -37,7 +37,7 @@ fn every_built_in_step_generates_a_valid_module_with_its_own_floatexp_paths() {
     assert!(fe.len() > 10_000, "the replaced region should be the fixed floatexp path ({} bytes)", fe.len());
     assert!(fe.contains("Floatexp perturbation (mode 2)"), "the replaced region is not the floatexp path");
     let chunk_fe = region(CHUNK_FE_BEGIN, CHUNK_FE_END);
-    assert!(chunk_fe.contains("fn fs_iterate_chunk_fe(") && chunk_fe.contains("Series-approximation seeding"));
+    assert!(chunk_fe.contains("fn chunk_fe_at(") && chunk_fe.contains("Series-approximation seeding"));
     assert!(chunk_fe.contains("STEP-BOUNDED PASSES") && chunk_fe.trim_end().ends_with("CUSTOM_CHUNK_FE_END"));
     let mut built = 0;
     for id in 0..f::COUNT {
@@ -60,6 +60,7 @@ fn every_built_in_step_generates_a_valid_module_with_its_own_floatexp_paths() {
         assert!(!s.contains("let de = de_log2(mag2, d.x * d.x + d.y * d.y, sm.w);"), "the resolve's DE survived");
         assert!(!s.contains(fe), "formula {id}: the fixed floatexp path is still present");
         assert!(!s.contains(chunk_fe), "formula {id}: the fixed floatexp chunk pass is still present");
+        assert_eq!(s.matches("fn chunk_fe_at(").count(), 1, "formula {id}: one floatexp chunk body");
         assert_eq!(s.matches("fn fs_iterate_chunk_fe(").count(), 1, "formula {id}: one floatexp chunk entry point");
         assert!(SLOTS.iter().all(|(b, e)| !s.contains(b) && !s.contains(e)), "a marker survived");
         assert!(s.contains("fn fs_iterate(") && s.contains("fn vs_split_tiles("));

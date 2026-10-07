@@ -151,7 +151,13 @@ fn compare_reference(
     max_iter: u32,
     p: usize,
 ) -> usize {
-    let (want, wlen, wtail) = crate::reference_orbit_t_in(backend, z0.0, z0.1, c.0, c.1, id, max_iter, p);
+    // At full precision: these orbits run far past the step where |dZ/dc| outgrows `p` (a chaotic
+    // real-axis orbit at 192 bits does by ~190), where every finite build has lost the true orbit
+    // and only the arithmetic decides the bits. THE PRECISION SCHEDULE changes that arithmetic
+    // there — by design, and with nothing reading it — so the interpreter is held to the loop's.
+    let (want, wlen, wtail) = crate::with_orbit_schedule(false, || {
+        crate::reference_orbit_t_in(backend, z0.0, z0.1, c.0, c.1, id, max_iter, p)
+    });
     let (got, glen, gtail) =
         reference_orbit_in(backend, formula, z0.0, z0.1, c.0, c.1, &[], max_iter, p).unwrap();
     let at = format!("{name} p={p} c=({}, {})", crate::to_f64(c.0), crate::to_f64(c.1));

@@ -1,0 +1,19 @@
+[location]
+real = "-7.14551915195120200514790056315853223748008888603321361014952137862514485185657e-1"
+imag = "3.54020733323182320631202461710338314959697450602330047024923063406593205528663e-1"
+zoom = "5.176068e33"
+[image]
+width = 1280
+height = 720
+subframes = 1
+[bailout]
+iterations = 13440
+maximum_reference_iterations = 13440
+maximum_perturb_iterations = 13440
+maximum_bla_steps = 8192
+escape_radius = 256
+[transform]
+exponential_map = false
+[render]
+filename = "41-mini-p448-1e34-f3"
+save_png = true

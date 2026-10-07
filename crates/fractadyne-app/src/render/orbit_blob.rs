@@ -25,7 +25,7 @@
 //! header    formula, julia, c, backend, prec, req_prec, iter, orbit_len, partial, file_len,
 //!           point[2]
 //!           HEADER_DIGEST(8)   — over prelude + header
-//! tail      zx zy zpx zpy escaped backend      (only a decode needs it)
+//! tail      zx zy zpx zpy escaped backend sched (only a decode needs it)
 //! orbit     orbit_len × [f32; 4]
 //!           FILE_DIGEST(8)     — over everything before it
 //! ```
@@ -42,7 +42,10 @@ const MAGIC: &[u8; 8] = b"FDNORBIT";
 
 /// ⛔Bump on ANY layout or semantic change. An entry written by a different build must be refused,
 /// never reinterpreted — see the module note on wrong pictures. (v1 never shipped in a release.)
-const VERSION: u16 = 2;
+/// v3: the tail carries THE PRECISION SCHEDULE's state (`fractadyne_core::SchedState`), so an
+/// extension resumes it as a fresh build would — one flag byte, then `d` (re m/e, im m/e) and
+/// `cur` when set.
+const VERSION: u16 = 3;
 
 /// Bytes before the header body: magic, version, header length.
 const PRELUDE: usize = 8 + 2 + 4;
@@ -133,6 +136,12 @@ pub(crate) fn key_id(key: &OrbitKey, prec: usize, point: &[BigFloat; 2]) -> u64 
 /// for no gain. Rebuilding them on load is both simpler and more correct.
 pub(crate) fn encode(res: &RecomputeResult, key: OrbitKey) -> Option<Vec<u8>> {
     let tail = res.orbit_tail.as_ref()?;
+    // A periodic orbit (`OrbitTail::period`) is not written: the format has no field for the
+    // period, and read back without one it would be a partial orbit that clamps every pixel to
+    // one period. It is also the cheap case to rebuild — one period, not the iteration budget.
+    if tail.period.is_some() {
+        return None;
+    }
     // ⚠`orbit_len` is what the header promises and what decode reads back; it must be the
     // sample count actually written, or a decode would refuse its own writer's output.
     if res.orbit.is_empty() || res.orbit.len() != res.orbit_len as usize {
@@ -170,6 +179,7 @@ pub(crate) fn encode(res: &RecomputeResult, key: OrbitKey) -> Option<Vec<u8>> {
     write_bf(&tail.zpy, &mut out);
     out.push(u8::from(tail.escaped));
     out.extend_from_slice(&tail.backend.to_le_bytes());
+    write_sched(&mut out, tail.sched);
     for p in res.orbit.iter() {
         for v in p {
             out.extend_from_slice(&v.to_le_bytes());
@@ -182,6 +192,48 @@ pub(crate) fn encode(res: &RecomputeResult, key: OrbitKey) -> Option<Vec<u8>> {
     let d = digest(&out);
     out.extend_from_slice(&d.to_le_bytes());
     Some(out)
+}
+
+/// The tail's schedule state: a flag, then `d` and `cur` when set (see [`VERSION`]).
+pub(crate) fn write_sched(out: &mut Vec<u8>, sched: Option<fractadyne_core::SchedState>) {
+    out.push(u8::from(sched.is_some()));
+    if let Some(s) = sched {
+        out.extend_from_slice(&s.d.re.m.to_le_bytes());
+        out.extend_from_slice(&s.d.re.e.to_le_bytes());
+        out.extend_from_slice(&s.d.im.m.to_le_bytes());
+        out.extend_from_slice(&s.d.im.e.to_le_bytes());
+        out.extend_from_slice(&s.cur.to_le_bytes());
+    }
+}
+
+fn read_sched(buf: &[u8], at: &mut usize) -> Option<Option<fractadyne_core::SchedState>> {
+    let flag = *buf.get(*at)?;
+    *at += 1;
+    if flag == 0 {
+        return Some(None);
+    }
+    if flag != 1 {
+        return None;
+    }
+    let f64_at = |at: &mut usize| -> Option<f64> {
+        let v = f64::from_le_bytes(buf.get(*at..*at + 8)?.try_into().ok()?);
+        *at += 8;
+        Some(v)
+    };
+    let i32_at = |at: &mut usize| -> Option<i32> {
+        let v = i32::from_le_bytes(buf.get(*at..*at + 4)?.try_into().ok()?);
+        *at += 4;
+        Some(v)
+    };
+    let (rm, re) = (f64_at(at)?, i32_at(at)?);
+    let (im, ie) = (f64_at(at)?, i32_at(at)?);
+    let cur = u32::from_le_bytes(buf.get(*at..*at + 4)?.try_into().ok()?);
+    *at += 4;
+    let fe = |m: f64, e: i32| fractadyne_core::FloatExp { m, e };
+    Some(Some(fractadyne_core::SchedState {
+        d: fractadyne_core::CFloatExp { re: fe(rm, re), im: fe(im, ie) },
+        cur,
+    }))
 }
 
 /// How many bytes from the start of a file [`read_header`] needs, given its first [`PRELUDE`]
@@ -287,6 +339,7 @@ pub(crate) fn decode(buf: &[u8]) -> Option<DecodedOrbit> {
     at += 1;
     let tail_backend = u32::from_le_bytes(buf.get(at..at + 4)?.try_into().ok()?);
     at += 4;
+    let sched = read_sched(buf, &mut at)?;
     let n = header.orbit_len as usize;
     // ⚠Exactly the promised samples must remain: fewer is truncation, more is trailing bytes,
     // and the count is bounded by the bytes actually present before anything is reserved.
@@ -305,7 +358,7 @@ pub(crate) fn decode(buf: &[u8]) -> Option<DecodedOrbit> {
     let reuse = ReuseRef {
         point: header.point.clone(),
         prefix: std::sync::Arc::new(orbit),
-        tail: fractadyne_core::OrbitTail { zx, zy, zpx, zpy, escaped, backend: tail_backend },
+        tail: fractadyne_core::OrbitTail { zx, zy, zpx, zpy, escaped, period: None, backend: tail_backend, sched },
         prec: header.prec,
     };
     Some(DecodedOrbit { header, reuse })

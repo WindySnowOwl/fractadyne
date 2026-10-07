@@ -225,6 +225,10 @@ pub struct ExportRequest {
     pub sa_b_exp: i32,
     pub sa_c: [f32; 4],
     pub sa_c_exp: i32,
+    /// THE RENORMALIZED STEP for this reference and view ([`crate::Renorm`]; default = off).
+    pub rn: crate::Renorm,
+    /// The u-space BLA ([`fractadyne_core::renorm_bla_gpu`]) for `rn`; empty = plain u-steps.
+    pub rn_bla: Arc<Vec<[f32; 4]>>,
     pub julia_c: [f32; 4],
     pub orbit: Arc<Vec<[f32; 4]>>,
     pub orbit_len: u32,
@@ -281,6 +285,46 @@ pub struct ExportRequest {
 }
 
 impl ExportRequest {
+    /// The reference storage buffer: the orbit, its BLA tree from index `orbit.len()`, then the
+    /// u-space tree ([`Self::rn_uniform`] points the shader at it).
+    fn upload_reference(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<wgpu::Buffer, GpuError> {
+        let rn_bla: &[[f32; 4]] = if self.rn_bla_k() > 0 { self.rn_bla.as_slice() } else { &[] };
+        let tail = self.bla.len() + rn_bla.len();
+        check_orbit_binding(device, self.orbit.len(), tail)?;
+        let orbit_buf = make_orbit_buffer(device, (self.orbit.len() + tail).max(1) as u32);
+        if !self.orbit.is_empty() {
+            queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(self.orbit.as_slice()));
+        }
+        if !self.bla.is_empty() {
+            let off = (self.orbit.len() * 16) as u64;
+            queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(self.bla.as_slice()));
+        }
+        if !rn_bla.is_empty() {
+            let off = ((self.orbit.len() + self.bla.len()) * 16) as u64;
+            queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(rn_bla));
+        }
+        Ok(orbit_buf)
+    }
+
+    /// `K` of the u-space tree, or 0 when there is none for this orbit (see [`crate::rn_bla_k`]).
+    fn rn_bla_k(&self) -> u32 {
+        crate::rn_bla_k(self.rn.len, self.orbit_len, self.rn_bla.len())
+    }
+
+    /// The renormalized step's uniform, pointing at the u-space tree [`Self::upload_reference`]
+    /// placed after the BLA tree (relative to `orbit_len`, where the shader's BLA base is).
+    pub(crate) fn rn_uniform(&self) -> crate::Renorm {
+        let mut rn = self.rn;
+        let k = self.rn_bla_k();
+        rn.bla_k = k;
+        rn.bla_off = if k > 0 {
+            1 + (self.orbit.len() + self.bla.len()).saturating_sub(self.orbit_len as usize) as u32
+        } else {
+            0
+        };
+        rn
+    }
+
     /// Whether the resumable chunk pass may iterate this frame: the formula family's capability,
     /// and for a custom formula its own shader's — one with Fractint's sections (an init section,
     /// variables kept from step to step) has state the chunk pass neither starts nor carries.
@@ -339,6 +383,10 @@ pub struct ExportResult {
     /// corrector's ~64 calls per render. The counters are what makes that visible.
     pub tiles_total: u32,
     pub tiles_chunked: u32,
+    /// Times a step-bounded tile PACKED its running pixels into a dense grid (`Packer`), summed over
+    /// tiles; a tile that packs twice has written its first grid back and packed again. The proof
+    /// the selftest's packed-against-unpacked gate asserts. 0 = none.
+    pub packs: u32,
 }
 
 /// Render `req` offscreen and read the colored image back to the CPU. Synchronous
@@ -442,7 +490,17 @@ const CHUNK_ABS_MIN: u32 = 256;
 /// mode 2's chunked and single-pass entry points agree bit for bit, so `render_iter_tiled`, which
 /// picks its entry point lazily, can use it too. Modes 0/1 have no BLA, their nominal work is close
 /// to their real work, and they keep their tiles.
-const OCC_TILE_SAMPLES: u32 = 1024;
+///
+/// ⭐2048, not the first 1024: once a thinning tile packs its running pixels ([`Packer`]), what a
+/// tile still pays for being a tile is its last few pixels — one chain of dependent steps, run
+/// once per tile and one tile after another — and every pass's fixed submit-and-read cost. Fewer,
+/// larger tiles pay both fewer times. Measured at 4K on the RTX 3080 (packing on, 12 tiles of
+/// 960×720 against 4 of 1920×1080, same images): 1.2e148 2.99 → 2.54 s of iterate, 4.2e275
+/// 0.71 → 0.56 s, the ladder's period-951,094 minibrot 9.16 → 9.05 s, the longest pass 176 ms
+/// either way. The tile state is allocated at the tile's own size, not a square of this side
+/// (`render_export` and `render_iter_tiled`): 265 MB at 1920×1080, where a 2048² square would
+/// take 537.
+const OCC_TILE_SAMPLES: u32 = 2048;
 
 /// Row height (or column width) that splits `extent` into equal parts no larger than `tile`. The
 /// tile loops' own rule — `tile`-sized from the origin, the remainder last, and no tile wider than
@@ -576,6 +634,318 @@ mod step_pricer;
 #[cfg(test)]
 mod readback;
 
+/// The largest side of a packed grid's state textures (see [`Packer`]), which is sized to hold half
+/// its tile — a 1920×1080 tile packs at its halfway point into 1,024² — up to this.
+const PACK_SIDE_MAX: u32 = 1024;
+/// A packed grid this small is not packed again: its passes are bound by one pixel's chain of
+/// steps, not by idle lanes, and a repack (a scatter and a gather) would cost more than it saves.
+const PACK_MIN_REPACK: u64 = 4096;
+/// The largest tile (samples) that packs. A tile's running list can hold every pixel of it, so the
+/// two lists cost `16·area` bytes: 64 MB at this size. Only a shallow, low-iteration view gets
+/// bigger occupancy tiles, and its tails are short.
+const PACK_MAX_TILE_AREA: u64 = 2048 * 2048;
+
+/// `PackU` in the shader.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct PackUniforms {
+    packed: u32,
+    n: u32,
+    w: u32,
+    pad0: u32,
+    tex: [f32; 2],
+    pad1: [f32; 2],
+}
+
+/// A tile's packed grid: `n` pixels in a `w`-wide grid of `rows` rows, texel `i` being tile pixel
+/// `lists[list][i]`; the latest state is in `state[read]`.
+#[derive(Clone, Copy, Debug)]
+struct PackedGrid {
+    n: u32,
+    w: u32,
+    rows: u32,
+    list: usize,
+    read: usize,
+}
+
+/// ⭐⭐PACKED TAILS for the step-bounded tiles ([`TileChunker::run_tile_steps`]; the shader's note
+/// at `fs_iterate_chunk_fe_packed`). A tile's last passes run a few pixels scattered across it, and
+/// a warp shades a block of neighbours and runs while any one of them does: measured at 4K with
+/// the step counts per pass, a pass with 10–50% of its tile running cost 8× the busy rate per step
+/// at 1.2e148, 1–10% 20×, under 1% 77×, and those passes were 27% of the iterate there and 50% at
+/// 4.2e275. So once at most half a tile (or half a packed grid) still runs, its pixels move into a
+/// dense grid and the passes run there; when the tile is done they are written back, and the
+/// resolve reads the tile's state exactly as before. Measured at 4K on the RTX 3080, pass wall with
+/// `TILE_PACK` 0 → 1, every image identical: 1.2e148 3.53 → 2.91 s, 4.2e275 1.00 → 0.71 s, the
+/// ladder's period-951,094 minibrot 9.82 → 9.21 s, the 1e10003 minibrot 1.07 → 1.06 s.
+///
+/// What packing cannot remove: a step costs more the later it comes (at 1.2e148 a full tile's
+/// pass 5 runs 3.5× pass 0's cost per step with every pixel still running, and a dense packed pass
+/// ~1 ns a step against 0.11), and a tile's last few pixels are one chain of dependent steps.
+///
+/// Every pass lists the pixels it leaves running (`pk_next`, one entry per `CTR_CHUNK_RUNNING`
+/// count), so packing needs no extra pass to find them. The whole-tile passes use the packed entry
+/// point too (`packed = 0`), so a tile runs ONE compiled program whether it packs or not.
+struct Packer {
+    pass_pipeline: wgpu::RenderPipeline,
+    gather_pipeline: wgpu::RenderPipeline,
+    scatter_pipeline: wgpu::RenderPipeline,
+    uniform: wgpu::Buffer,
+    lists: [wgpu::Buffer; 2],
+    /// `bg[k]` reads `lists[k]` (`pk_cur`) and writes `lists[1 - k]` (`pk_next`).
+    bg: [wgpu::BindGroup; 2],
+    state: [Vec<wgpu::TextureView>; 2],
+    state_bg: [wgpu::BindGroup; 2],
+    /// The packed grid's side: it holds `side²` pixels.
+    side: u32,
+    /// The tile state textures' size, where the scatter places its points.
+    tex: [f32; 2],
+}
+
+impl Packer {
+    fn new(
+        device: &wgpu::Device,
+        shader: &wgpu::ShaderModule,
+        iter_bgl: &wgpu::BindGroupLayout,
+        state_bgl: &wgpu::BindGroupLayout,
+        tile_size: [u32; 2],
+        rn_bla: bool,
+    ) -> Self {
+        let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("export.pack_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                storage(1, true),
+                storage(2, false),
+            ],
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("export.pack_layout"),
+            bind_group_layouts: &[iter_bgl, state_bgl, &bgl],
+            push_constant_ranges: &[],
+        });
+        let formats = [ITER_FORMAT; 4];
+        let pass_pipeline = crate::fullscreen_pipeline_c(
+            device, shader, &layout, "fs_iterate_chunk_fe_packed", &formats, "export.pack_pass",
+            crate::iter_constants(rn_bla),
+        );
+        let gather_pipeline =
+            fullscreen_pipeline(device, shader, &layout, "fs_pack_gather", &formats, "export.pack_gather");
+        let targets: Vec<Option<wgpu::ColorTargetState>> = formats
+            .iter()
+            .map(|&format| {
+                Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })
+            })
+            .collect();
+        let scatter_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("export.pack_scatter"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_pack_scatter"),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: 8,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Uint32x2,
+                        offset: 0,
+                        shader_location: 0,
+                    }],
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_pack_scatter"),
+                targets: &targets,
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::PointList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+        let area = tile_size[0] as u64 * tile_size[1] as u64;
+        let list = |label| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: (area * 8).max(8),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
+                mapped_at_creation: false,
+            })
+        };
+        let lists = [list("export.pack_list0"), list("export.pack_list1")];
+        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("export.pack_uniform"),
+            size: std::mem::size_of::<PackUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bg = |k: usize| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("export.pack_bg"),
+                layout: &bgl,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: lists[k].as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: lists[1 - k].as_entire_binding() },
+                ],
+            })
+        };
+        let bg = [bg(0), bg(1)];
+        // Half the tile, as a square of even side (a multiple of 8: `gather` widths are).
+        let side = (((area / 2).max(1) as f64).sqrt().ceil() as u32).next_multiple_of(8).min(PACK_SIDE_MAX);
+        let state = [
+            crate::make_state_textures(device, [side, side], 4),
+            crate::make_state_textures(device, [side, side], 4),
+        ];
+        let state_bg = [
+            crate::make_state_bg(device, state_bgl, &state[0]),
+            crate::make_state_bg(device, state_bgl, &state[1]),
+        ];
+        let tex = crate::state_texture_size(tile_size);
+        Self {
+            pass_pipeline,
+            gather_pipeline,
+            scatter_pipeline,
+            uniform,
+            lists,
+            bg,
+            state,
+            state_bg,
+            side,
+            tex: [tex[0] as f32, tex[1] as f32],
+        }
+    }
+
+    /// The pack uniform for the next submission: a whole-tile pass (`None`) or one over `grid`.
+    fn write(&self, queue: &wgpu::Queue, grid: Option<&PackedGrid>) {
+        let u = PackUniforms {
+            packed: u32::from(grid.is_some()),
+            n: grid.map_or(0, |g| g.n),
+            w: grid.map_or(0, |g| g.w),
+            pad0: 0,
+            tex: self.tex,
+            pad1: [0.0; 2],
+        };
+        queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+    }
+
+    /// Pack the `n` (at most `side²`) running pixels `lists[list]` names from the tile state
+    /// `tile_bg` into a grid, as wide as it is tall so a warp's block of texels is all in use.
+    fn gather(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        iter_bg: &wgpu::BindGroup,
+        tile_bg: &wgpu::BindGroup,
+        n: u32,
+        list: usize,
+    ) -> PackedGrid {
+        let w = ((n as f64).sqrt().ceil() as u32).next_multiple_of(8).clamp(8, self.side);
+        let grid = PackedGrid { n, w, rows: n.div_ceil(w), list, read: 0 };
+        self.write(queue, Some(&grid));
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("export.pack_gather_enc"),
+        });
+        {
+            let attachments: Vec<_> = self.state[grid.read]
+                .iter()
+                .map(|v| {
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: v,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })
+                })
+                .collect();
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("export.pack_gather"),
+                color_attachments: &attachments,
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.gather_pipeline);
+            pass.set_bind_group(0, iter_bg, &[]);
+            pass.set_bind_group(1, tile_bg, &[]);
+            pass.set_bind_group(2, &self.bg[list], &[]);
+            pass.set_scissor_rect(0, 0, grid.w, grid.rows);
+            pass.draw(0..3, 0..1);
+        }
+        queue.submit(std::iter::once(enc.finish()));
+        grid
+    }
+
+    /// Write every texel of `grid` back to its pixel of the tile state `tile` (the pixels that
+    /// settled in the grid as well as the ones still running).
+    fn scatter(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        iter_bg: &wgpu::BindGroup,
+        tile: &[wgpu::TextureView],
+        grid: &PackedGrid,
+    ) {
+        self.write(queue, Some(grid));
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("export.pack_scatter_enc"),
+        });
+        {
+            let attachments: Vec<_> = tile
+                .iter()
+                .map(|v| {
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: v,
+                        resolve_target: None,
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                    })
+                })
+                .collect();
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("export.pack_scatter"),
+                color_attachments: &attachments,
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.scatter_pipeline);
+            pass.set_bind_group(0, iter_bg, &[]);
+            pass.set_bind_group(1, &self.state_bg[grid.read], &[]);
+            pass.set_bind_group(2, &self.bg[grid.list], &[]);
+            pass.set_vertex_buffer(0, self.lists[grid.list].slice(..grid.n as u64 * 8));
+            pass.draw(0..grid.n, 0..1);
+        }
+        queue.submit(std::iter::once(enc.finish()));
+    }
+}
+
 /// Per-render plumbing for the chunked per-tile iterate: the resumable chunk pipeline, the
 /// state->G-buffer resolve pipeline, and one max-tile-sized pair of ping-pong state texture sets
 /// shared by every tile (chunk 0 of each tile initializes from scratch, so no cross-tile state
@@ -586,16 +956,24 @@ struct TileChunker {
     resolve_pipeline: wgpu::RenderPipeline,
     state: [Vec<wgpu::TextureView>; 2],
     state_bg: [wgpu::BindGroup; 2],
+    /// Packed tails for the step-bounded tiles (see [`Packer`]); `None` when this render's tiles
+    /// are not step-bounded, or packing is off (`TILE_PACK`).
+    pack: Option<Packer>,
 }
 
 impl TileChunker {
     /// `max_size` is the largest sample grid any tile can ask for (static tile bound x ss).
+    /// `steps`: the tiles will run as step-bounded passes ([`Self::run_tile_steps`]). `rn_bla`: the
+    /// iterate compiles in the renormalized step's u-space BLA ([`crate::iter_constants`]).
+    #[allow(clippy::too_many_arguments)]
     fn new(
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
         iter_bgl: &wgpu::BindGroupLayout,
         fe: bool,
         max_size: [u32; 2],
+        steps: bool,
+        rn_bla: bool,
     ) -> Self {
         let targets: usize = if fe { 4 } else { 3 };
         let state_bgl = crate::state_bind_group_layout_n(device, targets as u32);
@@ -605,13 +983,14 @@ impl TileChunker {
             push_constant_ranges: &[],
         });
         let chunk_formats = [ITER_FORMAT; 4];
-        let chunk_pipeline = fullscreen_pipeline(
+        let chunk_pipeline = crate::fullscreen_pipeline_c(
             device,
             shader,
             &layout,
             if fe { "fs_iterate_chunk_fe" } else { "fs_iterate_chunk" },
             &chunk_formats[..targets],
             "export.tilechunk_pipeline",
+            crate::iter_constants(rn_bla),
         );
         let resolve_pipeline = fullscreen_pipeline(
             device, shader, &layout, "fs_resolve", &[ITER_FORMAT, ITER_FORMAT],
@@ -625,7 +1004,12 @@ impl TileChunker {
             crate::make_state_bg(device, &state_bgl, &state[0]),
             crate::make_state_bg(device, &state_bgl, &state[1]),
         ];
-        Self { chunk_pipeline, resolve_pipeline, state, state_bg }
+        let pack = (fe
+            && steps
+            && crate::tile_pack_on()
+            && max_size[0] as u64 * max_size[1] as u64 <= PACK_MAX_TILE_AREA)
+            .then(|| Packer::new(device, shader, iter_bgl, &state_bgl, max_size, rn_bla));
+        Self { chunk_pipeline, resolve_pipeline, state, state_bg, pack }
     }
 
     /// Run one tile's iterate as bounded chunk passes over `[0, max_iter)`, one submission each
@@ -743,7 +1127,8 @@ impl TileChunker {
     /// after each pass — the read is also the pass's fence). Pass 0 starts from scratch; later
     /// passes set `start_iter = 1`, which the chunk shader reads only as "resume from state". Same
     /// return and accounting as [`Self::run_tile`]; `max_work` records the largest
-    /// `area × step_cap`, the pixel-steps a pass was allowed.
+    /// `area × step_cap`, the pixel-steps a pass was allowed, and `packs` counts the times the tile
+    /// packed ([`Packer`]).
     #[allow(clippy::too_many_arguments)]
     fn run_tile_steps(
         &self,
@@ -761,6 +1146,7 @@ impl TileChunker {
         deadline: Option<std::time::Instant>,
         wall_sum_ms: &mut f64,
         max_work: &mut u64,
+        packs: &mut u32,
     ) -> Result<(u32, usize, f64), GpuError> {
         let area = grid[0] as u64 * grid[1] as u64;
         let slot = (crate::CTR_CHUNK_RUNNING * 4) as u64;
@@ -768,6 +1154,10 @@ impl TileChunker {
         let mut passes = 0u32;
         let mut max_chunk_ms = 0.0f64;
         let mut active = area; // pixels still running when this pass starts
+        // The tile trace's running totals of sampled loop trips, full steps and df32 full steps.
+        let mut seen = [0u64; 3];
+        // The packed grid this tile's passes run over once it has packed (see `Packer`).
+        let mut packed: Option<PackedGrid> = None;
         loop {
             if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
                 return Err(GpuError::Canceled);
@@ -781,7 +1171,9 @@ impl TileChunker {
             iu.end_iter = max_iter;
             iu.tail[1] = cap;
             queue.write_buffer(iter_uniform, 0, bytemuck::bytes_of(iu));
-            let write_set = 1 - read_set;
+            if let Some(pk) = &self.pack {
+                pk.write(queue, packed.as_ref());
+            }
             let t = std::time::Instant::now();
             let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("export.tilesteps_enc"),
@@ -801,7 +1193,14 @@ impl TileChunker {
                         store: wgpu::StoreOp::Store,
                     },
                 });
-                let attachments: Vec<_> = self.state[write_set].iter().map(|v| attach(v)).collect();
+                // A packed tile runs over its grid; a whole tile over its own state. With a packer,
+                // the whole-tile passes run the packed entry point too and list their running
+                // pixels in `lists[0]` (bind group 1 writes it).
+                let (write, read_bg, scissor) = match (&self.pack, &packed) {
+                    (Some(pk), Some(g)) => (&pk.state[1 - g.read], &pk.state_bg[g.read], [g.w, g.rows]),
+                    _ => (&self.state[1 - read_set], &self.state_bg[read_set], grid),
+                };
+                let attachments: Vec<_> = write.iter().map(|v| attach(v)).collect();
                 let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("export.tilesteps_pass"),
                     color_attachments: &attachments,
@@ -809,13 +1208,20 @@ impl TileChunker {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                pass.set_pipeline(&self.chunk_pipeline);
+                match &self.pack {
+                    Some(pk) => {
+                        pass.set_pipeline(&pk.pass_pipeline);
+                        pass.set_bind_group(2, &pk.bg[packed.map_or(1, |g| g.list)], &[]);
+                    }
+                    None => pass.set_pipeline(&self.chunk_pipeline),
+                }
                 pass.set_bind_group(0, iter_bg, &[]);
-                pass.set_bind_group(1, &self.state_bg[read_set], &[]);
-                pass.set_scissor_rect(0, 0, grid[0], grid[1]);
+                pass.set_bind_group(1, read_bg, &[]);
+                pass.set_scissor_rect(0, 0, scissor[0], scissor[1]);
                 pass.draw(0..3, 0..1);
             }
-            enc.copy_buffer_to_buffer(counters_buf, slot, running_read, 0, 4);
+            let first = (crate::CTR_STEP_PX * 4) as u64;
+            enc.copy_buffer_to_buffer(counters_buf, first, running_read, 0, (RUNNING_READ_WORDS * 4) as u64);
             queue.submit(std::iter::once(enc.finish()));
             let (tx, rx) = std::sync::mpsc::channel();
             running_read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
@@ -823,16 +1229,27 @@ impl TileChunker {
             });
             // Bounded, cancel- and device-loss-aware, like every other wait here.
             await_readback(device, &rx, cancel, None).into_result()?;
-            let running = {
+            let words: Vec<u32> = {
                 let mapped = running_read.slice(..).get_mapped_range();
-                let v = u32::from_le_bytes([mapped[0], mapped[1], mapped[2], mapped[3]]);
+                let v = mapped.chunks_exact(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
                 drop(mapped);
                 running_read.unmap();
                 v
             };
+            let running = words[RUNNING_READ_WORDS - 1];
             let wall = t.elapsed().as_secs_f64() * 1000.0;
             if tile_trace_on() {
-                eprintln!("[fd-export] steps pass {passes} cap={cap} wall={wall:.1}ms running={running}");
+                // Sampled loop trips so far this tile (1 px in 64); the pass's share is the delta.
+                let w = |i: usize| words[i - crate::CTR_STEP_PX] as u64 | (words[i - crate::CTR_STEP_PX + 1] as u64) << 32;
+                let now = [w(crate::CTR_STEP_EXEC), w(crate::CTR_STEP_FULL), w(crate::CTR_STEP_BIG)];
+                let [px_steps, full, big] = [0, 1, 2].map(|i| 64 * now[i].saturating_sub(seen[i]));
+                seen = now;
+                eprintln!(
+                    "[fd-export] steps pass {passes} cap={cap} wall={wall:.1}ms running={running} active={active} \
+px_steps={px_steps} ns_per={:.3} packed={} full={full} full_df32={big}",
+                    wall * 1.0e6 / px_steps.max(1) as f64,
+                    packed.map_or(0, |g| g.n)
+                );
             }
             *wall_sum_ms += wall;
             // Into the profiler's accumulator too — see the note in `run_tile`.
@@ -840,10 +1257,37 @@ impl TileChunker {
             max_chunk_ms = max_chunk_ms.max(wall);
             steps.observe(wall, active, cap);
             active = running as u64;
-            read_set = write_set;
             passes += 1;
+            match &mut packed {
+                Some(g) => g.read = 1 - g.read,
+                None => read_set = 1 - read_set,
+            }
+            let Some(pk) = &self.pack else {
+                if running == 0 {
+                    break;
+                }
+                continue;
+            };
+            // The pass listed its running pixels in the list its bind group writes.
+            let listed = packed.map_or(0, |g| 1 - g.list);
+            let space = packed.map_or(area, |g| g.n as u64);
+            let pack_now = running > 0
+                && running as u64 * 2 <= space
+                && running as u64 <= pk.side as u64 * pk.side as u64
+                && (packed.is_none() || space > PACK_MIN_REPACK);
+            if running == 0 || pack_now {
+                // The grid's pixels, settled and running, back into the tile before it repacks or
+                // resolves. (Queued behind the pass; the next pass's read is the fence.)
+                if let Some(g) = packed.take() {
+                    pk.scatter(device, queue, iter_bg, &self.state[read_set], &g);
+                }
+            }
             if running == 0 {
                 break;
+            }
+            if pack_now {
+                packed = Some(pk.gather(device, queue, iter_bg, &self.state_bg[read_set], running, listed));
+                *packs += 1;
             }
         }
         // Leave the uniform as a plain chunk pass would: the resolve reads no cap, but nothing
@@ -953,9 +1397,12 @@ fn render_export_impl(
         bind_group_layouts: &[&color_bgl],
         push_constant_ranges: &[],
     });
-    let iter_pipeline = fullscreen_pipeline(
+    // The u-space BLA is compiled into every iterate pipeline of a render whose request carries a
+    // tree — the single-pass control included, so the two agree as they do without one.
+    let rn_bla = req.rn_bla_k() > 0;
+    let iter_pipeline = crate::fullscreen_pipeline_c(
         device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
-        "export.iter_pipeline",
+        "export.iter_pipeline", crate::iter_constants(rn_bla),
     );
     let color_pipeline = fullscreen_pipeline(
         device, &shader, &color_layout, "fs_color", &[EXPORT_FORMAT], "export.color_pipeline",
@@ -982,8 +1429,12 @@ fn render_export_impl(
     // textures. The corrector's loop (`render_iter_tiled`) keeps its lazy build for now — it calls
     // in up to 64 times per render, where that setup was measured at ~7 s (bench scene 04,
     // 14.3 s -> 21.7 s).
+    // Step-bounded tiles split the frame into EQUAL rows and columns (see `balanced_extent`), and
+    // their state is allocated at that size; the others are at most `tile` square.
+    let (row_h, col_w) = (balanced_extent(h, tile), balanced_extent(w, tile));
+    let state_size = if occupancy { [col_w * ss, row_h * ss] } else { [tile * ss, tile * ss] };
     let chunker: Option<TileChunker> = if chunk_scope {
-        Some(TileChunker::new(device, &shader, &iter_bgl, fe, [tile * ss, tile * ss]))
+        Some(TileChunker::new(device, &shader, &iter_bgl, fe, state_size, occupancy, rn_bla))
     } else {
         None
     };
@@ -993,6 +1444,7 @@ fn render_export_impl(
     let mut max_dispatch_ms = 0.0f64;
     let mut max_work = 0u64;
     let (mut tiles_total, mut tiles_chunked, mut chunk_passes) = (0u32, 0u32, 0u32);
+    let mut packs = 0u32;
 
     let uniform = |label, size| {
         device.create_buffer(&wgpu::BufferDescriptor {
@@ -1005,16 +1457,7 @@ fn render_export_impl(
     let iter_uniform = uniform("export.iter_uniform", std::mem::size_of::<IterUniforms>() as u64);
     let color_uniform = uniform("export.color_uniform", std::mem::size_of::<ColorUniforms>() as u64);
 
-    check_orbit_binding(device, req.orbit.len(), req.bla.len())?;
-    let orbit_cap = (req.orbit.len() + req.bla.len()).max(1) as u32;
-    let orbit_buf = make_orbit_buffer(device, orbit_cap);
-    if !req.orbit.is_empty() {
-        queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
-    }
-    if !req.bla.is_empty() {
-        let off = (req.orbit.len() * 16) as u64;
-        queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(req.bla.as_slice()));
-    }
+    let orbit_buf = req.upload_reference(device, queue)?;
     let counters_buf = crate::make_counters_buf(device);
     let counters_read = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("export.counters_read"),
@@ -1082,8 +1525,6 @@ fn render_export_impl(
     // per-tile u32 never wraps, and the whole-render total can exceed 2^32).
     let mut ctr_sum = [0u64; crate::COUNTER_SLOTS];
 
-    // Step-bounded tiles split the frame into EQUAL rows and columns (see `balanced_extent`).
-    let (row_h, col_w) = (balanced_extent(h, tile), balanced_extent(w, tile));
     let mut ty0 = 0u32;
     while ty0 < h {
         let th = if occupancy { row_h.min(h - ty0) } else { cap.min(h - ty0) };
@@ -1131,6 +1572,7 @@ fn render_export_impl(
                 end_iter: 0,
                 gather: [0; 2],
                 tail: crate::tail_word(),
+                rn: req.rn_uniform(),
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -1192,7 +1634,7 @@ fn render_export_impl(
                     let (passes, read_set, max_chunk) = ch.run_tile_steps(
                         device, queue, &iter_bg, &counters_buf, &running_read, &mut iu,
                         &iter_uniform, [iw, ih], req.max_iter, &mut steps, Some(cancel), None,
-                        &mut sum_iterate_ms, &mut max_work,
+                        &mut sum_iterate_ms, &mut max_work, &mut packs,
                     )?;
                     max_dispatch_ms = max_dispatch_ms.max(max_chunk);
                     Some((passes, read_set))
@@ -1423,14 +1865,19 @@ cap={cap} chunks={chunk_passes} steps={occupancy}"
         chunk_passes,
         tiles_total,
         tiles_chunked,
+        packs,
     })
 }
 
-/// The 4-byte readback the step-bounded runner reads `CTR_CHUNK_RUNNING` into after every pass.
+/// The readback the step-bounded runner reads after every pass: the step accounting
+/// (`CTR_STEP_PX` up to and including `CTR_CHUNK_RUNNING`), so the tile trace can price each pass
+/// by the steps it executed. Its last word is the running count the loop stops on.
+const RUNNING_READ_WORDS: usize = crate::CTR_CHUNK_RUNNING - crate::CTR_STEP_PX + 1;
+
 fn make_running_read(device: &wgpu::Device) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("export.running_read"),
-        size: 4,
+        size: (RUNNING_READ_WORDS * 4) as u64,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     })
@@ -1575,6 +2022,7 @@ pub fn render_iter_tiled(
     let mut max_dispatch_ms = 0.0f64;
     let mut max_work = 0u64;
     let (mut tiles_total, mut tiles_chunked, mut chunk_passes) = (0u32, 0u32, 0u32);
+    let mut packs = 0u32;
     // Pure-GPU iterate time, same accounting as `render_export`: an unchunked tile's timestamped
     // pass, plus a chunked tile's fenced window walls (`run_tile`) and its timestamped resolve.
     // Until beta.149 this path reported 0.0, so every normalized export's `gpu_iterate` read
@@ -1592,15 +2040,7 @@ pub fn render_iter_tiled(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    check_orbit_binding(device, req.orbit.len(), req.bla.len())?;
-    let orbit_buf = make_orbit_buffer(device, (req.orbit.len() + req.bla.len()).max(1) as u32);
-    if !req.orbit.is_empty() {
-        queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
-    }
-    if !req.bla.is_empty() {
-        let off = (req.orbit.len() * 16) as u64;
-        queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(req.bla.as_slice()));
-    }
+    let orbit_buf = req.upload_reference(device, queue)?;
     let counters_buf = crate::make_counters_buf(device);
     let counters_read = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("itertiled.counters_read"),
@@ -1650,8 +2090,10 @@ pub fn render_iter_tiled(
     // Wall-adaptive cap, same rule as `render_export` (see `export_tile_cap`): the correction
     // loop's budget is nominal too, and its dark-core tiles are exactly where nominal != real.
     let mut cap = tile;
-    // Step-bounded tiles split the frame into EQUAL rows and columns (see `balanced_extent`).
+    // Step-bounded tiles split the frame into EQUAL rows and columns (see `balanced_extent`), and
+    // their state is allocated at that size; the others are at most `tile` square.
     let (row_h, col_w) = (balanced_extent(h, tile), balanced_extent(w, tile));
+    let state_size = if occupancy { [col_w, row_h] } else { [tile, tile] };
     let mut ty0 = 0u32;
     while ty0 < h {
         let th = if occupancy { row_h.min(h - ty0) } else { cap.min(h - ty0) };
@@ -1707,6 +2149,7 @@ pub fn render_iter_tiled(
                 end_iter: 0,
                 gather: [0; 2],
                 tail: crate::tail_word(),
+                rn: req.rn_uniform(),
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -1742,7 +2185,10 @@ pub fn render_iter_tiled(
                 && (occupancy || pricer.open(req.max_iter) < req.max_iter)
             {
                 chunker =
-                    Some(TileChunker::new(device, shader, iter_bgl, req.mode == 2, [tile, tile]));
+                    Some(TileChunker::new(
+                        device, shader, iter_bgl, req.mode == 2, state_size, occupancy,
+                        occupancy && req.rn_bla_k() > 0,
+                    ));
             }
             // Chunked tiles iterate BEFORE the main encoder, one polled submission per window;
             // the first window clears the counters. The deadline is honoured between windows.
@@ -1751,7 +2197,7 @@ pub fn render_iter_tiled(
                     let (passes, read_set, max_chunk) = ch.run_tile_steps(
                         device, queue, &iter_bg, &counters_buf, &running_read, &mut iu,
                         &iter_uniform, [tw, th], req.max_iter, &mut steps, None, deadline,
-                        &mut sum_iterate_ms, &mut max_work,
+                        &mut sum_iterate_ms, &mut max_work, &mut packs,
                     )?;
                     max_dispatch_ms = max_dispatch_ms.max(max_chunk);
                     Some((passes, read_set))
@@ -1933,6 +2379,7 @@ chunks={chunk_passes} steps={occupancy}"
         chunk_passes,
         tiles_total,
         tiles_chunked,
+        packs,
     })
 }
 
@@ -2110,15 +2557,7 @@ impl GatherPass {
 
         // Per-pass only: a fresh reference orbit + BLA tree, and the coordinate list. Everything else
         // (shader, layouts, pipeline, uniform, counters) lives on `self` - see the struct's note.
-        check_orbit_binding(device, req.orbit.len(), req.bla.len())?;
-        let orbit_buf = make_orbit_buffer(device, (req.orbit.len() + req.bla.len()).max(1) as u32);
-        if !req.orbit.is_empty() {
-            queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
-        }
-        if !req.bla.is_empty() {
-            let off = (req.orbit.len() * 16) as u64;
-            queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(req.bla.as_slice()));
-        }
+        let orbit_buf = req.upload_reference(device, queue)?;
         let iter_bg = make_iter_bg(
             device,
             &self.iter_bgl,
@@ -2211,6 +2650,7 @@ impl GatherPass {
                 end_iter: 0,
                 gather: [gw, n as u32],
                 tail: crate::tail_word(),
+                rn: req.rn_uniform(),
             };
             queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -2472,15 +2912,7 @@ fn render_iter_passes(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    check_orbit_binding(device, req.orbit.len(), req.bla.len())?;
-    let orbit_buf = make_orbit_buffer(device, (req.orbit.len() + req.bla.len()).max(1) as u32);
-    if !req.orbit.is_empty() {
-        queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
-    }
-    if !req.bla.is_empty() {
-        let off = (req.orbit.len() * 16) as u64;
-        queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(req.bla.as_slice()));
-    }
+    let orbit_buf = req.upload_reference(device, queue)?;
     let counters_buf = crate::make_counters_buf(device);
     let counters_read = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("selftest.counters_read"),
@@ -2526,6 +2958,7 @@ fn render_iter_passes(
         end_iter: 0,
         gather: [0; 2],
         tail: crate::tail_word(),
+        rn: req.rn_uniform(),
     };
     queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -2798,6 +3231,7 @@ fn render_iter_passes(
     Ok(ExportResult {
         width: w, height: h, ss: 1, pixels, iterate_ms, color_ms: 0.0, counters,
         max_dispatch_ms: 0.0, max_dispatch_work: 0, chunk_passes: 0, tiles_total: 0, tiles_chunked: 0,
+        packs: 0,
     })
 }
 
@@ -2920,15 +3354,7 @@ pub fn render_iter_chunked_timed(
     // BLA table every pass, and a chunk pass that ran with `bla_on = 0` and an empty tree is the
     // beta.101 e100 pathology verbatim — 0.04 Gsteps/s against the base pass's 174 in the same
     // frame, which reads as "chunking is slow" rather than "chunking is broken".
-    check_orbit_binding(device, req.orbit.len(), req.bla.len())?;
-    let orbit_buf = make_orbit_buffer(device, (req.orbit.len() + req.bla.len()).max(1) as u32);
-    if !req.orbit.is_empty() {
-        queue.write_buffer(&orbit_buf, 0, bytemuck::cast_slice(req.orbit.as_slice()));
-    }
-    if !req.bla.is_empty() {
-        let off = (req.orbit.len() * std::mem::size_of::<[f32; 4]>()) as u64;
-        queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(req.bla.as_slice()));
-    }
+    let orbit_buf = req.upload_reference(device, queue)?;
     let counters_buf = crate::make_counters_buf(device);
     let counters_read = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("chunked.counters_read"),
@@ -2986,6 +3412,7 @@ pub fn render_iter_chunked_timed(
         end_iter: 0,
         gather: [0; 2],
         tail: crate::tail_word(),
+        rn: req.rn_uniform(),
     };
 
     // One bounded submission per iteration range; poll-wait between them so each stays a short,
@@ -3129,6 +3556,7 @@ pub fn render_iter_chunked_timed(
     Ok(ExportResult {
         width: w, height: h, ss: 1, pixels, iterate_ms: 0.0, color_ms: 0.0, counters,
         max_dispatch_ms, max_dispatch_work: 0, chunk_passes: 0, tiles_total: 0, tiles_chunked: 0,
+        packs: 0,
     })
 }
 
@@ -3404,6 +3832,7 @@ pub fn color_iter_buffer_ss(
         chunk_passes: 0,
         tiles_total: 0,
         tiles_chunked: 0,
+        packs: 0,
     })
 }
 

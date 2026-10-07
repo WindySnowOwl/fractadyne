@@ -103,3 +103,38 @@ fn lut_binding_is_declared_and_sized() {
     assert_eq!(std::mem::size_of::<[f32; 4]>(), 16);
     assert!(fractadyne_color::segment::LUT_SIZE >= 256, "a LUT below 256 entries bands visibly");
 }
+
+/// Byte offset of `field` in a WGSL struct laid out as [`wgsl_struct_size`] does.
+fn wgsl_field_offset(fields: &[(String, String)], field: &str) -> usize {
+    let mut off = 0usize;
+    for (name, ty) in fields {
+        let (size, align) = size_align(ty);
+        off = off.div_ceil(align) * align;
+        if name == field {
+            return off;
+        }
+        off += size;
+    }
+    panic!("no field `{field}` in the struct");
+}
+
+/// The same gate for the ITERATE uniform, which every iterate pipeline binds: `IterU` (WGSL) and
+/// `IterUniforms` (Rust) must agree on size, and on where the renormalized step's block starts
+/// (a field added on one side only would shift it, and the step would read garbage).
+#[test]
+fn iter_uniform_matches_the_shader() {
+    let src = include_str!("mandelbrot.wgsl");
+    let fields = wgsl_struct_fields(src, "IterU");
+    assert_eq!(
+        wgsl_struct_size(&fields),
+        std::mem::size_of::<super::IterUniforms>(),
+        "IterU (WGSL, {} fields) and IterUniforms (Rust) disagree on size",
+        fields.len(),
+    );
+    assert_eq!(
+        wgsl_field_offset(&fields, "rn_a"),
+        std::mem::offset_of!(super::IterUniforms, rn),
+        "IterU.rn_a and IterUniforms.rn start at different offsets",
+    );
+    assert_eq!(std::mem::size_of::<super::Renorm>(), 128, "Renorm is the shader's 32 words");
+}

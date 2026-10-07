@@ -1900,6 +1900,7 @@ fn run_reference<B: RefBackend + IrField>(
     let escape2 = crate::reference::ref_escape2_of_degree(formula.escape_degree().unwrap_or(2.0));
     for n in 0..max_iter as usize {
         m.step(n)?;
+        crate::reference::count_reference_step(n as u32 + 1);
         let xv = m.pool[Z_RE].to_f64_trunc();
         let yv = m.pool[Z_IM].to_f64_trunc();
         out.push(pack_sample(xv, yv));
@@ -1915,7 +1916,9 @@ fn run_reference<B: RefBackend + IrField>(
         zpx: m.pool[ZP_RE].to_carrier(ctx),
         zpy: m.pool[ZP_IM].to_carrier(ctx),
         escaped,
+        period: None,
         backend: B::BIT,
+        sched: None,
     })
 }
 

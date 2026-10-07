@@ -5,6 +5,7 @@
 #       [-FractadyneExe path] [-Fraktaler3Exe path] [-ImaginaExe path] [-FractalSharkExe path]
 #       [-TimeoutS 7200] [-Size 3840x2160] [-ZoomSeqFrames 8] [-PythonExe python]
 #       [-F3Wisdom path] [-FractalSharkCliExe path] [-FractalSharkAlgo NAME]
+#       [-SceneSet standard|ladder|all] [-Scenes slug-or-id,...]
 
 [CmdletBinding()]
 param(
@@ -16,6 +17,12 @@ param(
     [string]$FractalSharkExe = '',
     [int]$TimeoutS = 7200,
     [string[]]$Scenes = @(),
+    # Which scene list to run. 'standard' is scenes.csv, the ten scenes every published table
+    # uses (minutes). 'ladder' is scenes-ladder.csv: 21 scenes that take depth to 1e30000x and the
+    # iteration cap to 28.5 million (hours - two of them alone take several minutes per render in
+    # every lane). 'all' runs both. -Scenes then filters whichever set is chosen.
+    [ValidateSet('standard', 'ladder', 'all')]
+    [string]$SceneSet = 'standard',
     # Render size for EVERY lane. 4K because it is what someone actually renders at, and
     # because a benchmark should be a real load: 3840x2160 is 4x the old Fractadyne size
     # and 9x the size Fraktaler-3 was silently given.
@@ -204,10 +211,28 @@ Write-SysInfo (Join-Path $outDir 'sysinfo.txt')
 # [string[]]$Scenes parameter TYPE-CONSTRAINS the slot, so `$scenes = Import-Csv ...` would
 # silently coerce every row to a string (and strict mode then fails on `.slug`).
 $sceneFilter = @($Scenes)
-$sceneRows = Read-Scenes $kit
+$sceneRows = Read-Scenes $kit $SceneSet
 if ($sceneFilter.Count) {
     $sceneRows = @($sceneRows | Where-Object { $sceneFilter -contains $_.slug -or $sceneFilter -contains $_.id })
-    if (-not $sceneRows.Count) { Write-Host 'ERROR: -Scenes matched nothing in scenes.csv'; exit 1 }
+    if (-not $sceneRows.Count) { Write-Host ('ERROR: -Scenes matched nothing in the ' + $SceneSet + ' scene set'); exit 1 }
+}
+# IN THE REPOSITORY scenes\ is gitignored, so it cannot drift from the files it copies: the
+# standard ten live in validation\corpus\locations and the ladder in ladder\. Refresh every file
+# this run needs from there, overwriting, because a stale copy is exactly how scene 35 went
+# missing (below). A packaged kit has no sources beside it and runs on its scenes\ as shipped.
+$sceneSources = @((Join-Path $kit 'ladder'), (Join-Path (Split-Path -Parent $kit) 'validation\corpus\locations'))
+$sceneDir = Join-Path $kit 'scenes'
+foreach ($s in $sceneRows) {
+    foreach ($ext in '.kfr', '.f3.toml', '.fdn') {
+        foreach ($src in $sceneSources) {
+            $from = Join-Path $src ($s.slug + $ext)
+            if (Test-Path $from) {
+                New-Item -ItemType Directory -Force $sceneDir | Out-Null
+                Copy-Item -Force $from (Join-Path $sceneDir ($s.slug + $ext))
+                break
+            }
+        }
+    }
 }
 # Every scene's three files must exist BEFORE anything runs. A missing one used to fail inside a
 # lane (Get-Content on the .f3.toml) and the loop moved on: no row in results.csv, only red text
@@ -220,10 +245,17 @@ $missing = @(foreach ($s in $sceneRows) {
     }
 })
 if ($missing.Count) {
-    Write-Host ('ERROR: scene files missing (copy them from validation\corpus\locations, as package.ps1 does):')
+    Write-Host ('ERROR: scene files missing (the standard set comes from validation\corpus\locations and the ladder from ladder\, as package.ps1 copies them):')
     $missing | ForEach-Object { Write-Host ('  ' + $_) }
     exit 1
 }
+# A WINDOWS COMMAND LINE HOLDS 32,767 CHARACTERS, and a 1e30000x centre is 30,000 digits per
+# coordinate. Process.Start used to throw on such a line and abort the WHOLE run, every lane, with
+# no row written. Each lane now checks its line against this bound first: Fractadyne then reads its
+# arguments from a file, FractalShark from a locations file, and imagina-cli, which takes the centre
+# only on its command line, records NA-command-line for that scene. Under the bound, every line is
+# exactly what it always was.
+$MaxCommandLine = 30000
 Write-Host ''
 Write-Host ('Lanes: ' + (($have.GetEnumerator() | Where-Object Value | ForEach-Object Key) -join ', '))
 Write-Host ('Scenes: ' + ($sceneRows.slug -join ', '))
@@ -256,7 +288,18 @@ if ($have.fractadyne) {
             $argLine = ('--render --out "{0}" --size {5} --center {1} {2} --zoom-log2 {3} --iter {4} --ss 1 --palette 0' -f $png, $kfr['Re'], $kfr['Im'], $zl2, $s.iterations, $Size)
             if ($s.normalize -eq '1') { $argLine += ' --normalize' }
             if ($SharedPalette) { $argLine += (' --palette-map "{0}"' -f $SharedPalette) }
-            $r = Invoke-TimedRender $FractadyneExe $argLine $TimeoutS $kit
+            # Too long for a command line (see $MaxCommandLine): the SAME text goes in an args
+            # file, which the app reads as `@file` with the same whitespace-and-quotes tokenizing.
+            $launch = $argLine
+            $argFile = ''
+            if ($argLine.Length -gt $MaxCommandLine) {
+                $argDir = Join-Path $outDir 'fd-args'
+                New-Item -ItemType Directory -Force $argDir | Out-Null
+                $argFile = Join-Path $argDir ($s.slug + '.args')
+                [System.IO.File]::WriteAllText($argFile, $argLine + "`n", [System.Text.Encoding]::ASCII)
+                $launch = '"@' + $argFile + '"'
+            }
+            $r = Invoke-TimedRender $FractadyneExe $launch $TimeoutS $kit
             # The app prints "(in 40.8s)" / "(in 2m07s)" / "(in 1h02m)"; the CSV stores plain
             # SECONDS so the summary can compare numbers, not strings.
             $reported = ''
@@ -277,7 +320,10 @@ if ($have.fractadyne) {
             Write-FdPhases $fdPhases $ph
             Add-RunRecord @{
                 renderer = 'fractadyne'; scene = $s.slug; rep = $rep
-                exe = $FractadyneExe; args = $argLine; cwd = $kit
+                # What was EXECUTED: the `@file` line when the arguments went through a file,
+                # which then holds the full line verbatim (args_file, kept in the run folder).
+                exe = $FractadyneExe; args = $launch; cwd = $kit
+                args_file = $(if ($argFile) { 'fd-args\' + $s.slug + '.args' } else { '' })
                 # The lane derives zoom-log2 from the scene's mag_log10 rather than passing the
                 # .kfr's Zoom: it is the same magnification in the units this CLI takes.
                 source = ('scenes\' + $s.slug + '.kfr')
@@ -435,32 +481,45 @@ if ($have.fractalsharkcli) {
     # most of a shallow frame, and a bias that grew as the frame got cheaper.
     # -NoFractalSharkServer restores the old shape, which is the only way to compare against the
     # numbers this kit published before 0.543.
+    # A FRESH SERVER FOR EVERY IMAGE. A server KEEPS each scene's reference orbit, so one server for
+    # the whole lane rendered rounds 2 and 3 of a scene from the orbit round 1 had built, and the
+    # fastest of three was a frame that skipped the orbit: measured 2026-10-05, the 1e10000x path
+    # view took 17.1 s in round 1 and 2.4 / 2.1 s after it, while every run of the other three lanes
+    # computes its own. Each image now gets a new server, warmed by one untimed frame that leaves
+    # no orbit a scene could reuse (Invoke-SharkWarmup), so the image starts warm and builds its own
+    # orbit. Server startup and the warm-up stay OUTSIDE the image's time, as startup always was.
     $useServer = -not $NoFractalSharkServer
-    $endpoint = 'FractalSharkCli-benchkit-' + $PID
-    $srv = $null
-    if ($useServer) {
-        Write-Host ('FractalShark: starting the CLI server (endpoint ' + $endpoint + ')')
-        $srv = Start-SharkServer $FractalSharkCliExe $endpoint $wh[0] $wh[1] $outDir
-        if (-not $srv.ok) {
-            Write-Host '  server did not come up - falling back to one process per frame.'
-            $useServer = $false
-        } else {
-            Write-Host ('  ready in ' + $srv.startup_s + ' s')
-            $fsStartup = [string]$srv.startup_s
-        }
-    }
-    $fsShape = $(if ($useServer) { 'server-amortized (--server/--connect, startup paid once; each image timed to its own PNG on disk, the next started only after it)' }
+    $srvDir = Join-Path $outDir 'fs-server'
+    if ($useServer) { New-Item -ItemType Directory -Force $srvDir | Out-Null }
+    $fsStartups = @()
+    $fsWarmups = @()
+    $fsImage = 0
+    $fsShape = $(if ($useServer) { 'a fresh server per image (--server/--connect), warmed by one untimed frame outside the set; startup and warm-up outside the time; each image timed to its own PNG on disk, the next started only after it' }
                  else { 'one process per frame (startup folded into every frame)' })
     Write-Host ('FractalShark: automated via ' + (Split-Path $FractalSharkCliExe -Leaf) +
                 ', algorithm ' + $FractalSharkAlgo +
-                $(if ($useServer) { ' (server-amortized)' } else { ' (process per frame)' }))
-    # PNG encoding is ASYNCHRONOUS and only flushed by --shutdown, so a render cannot be validated
-    # where it is timed: checking the file straight after the client returns finds nothing and
-    # scores a DNF for a frame that rendered perfectly. Collect, flush, then judge.
+                $(if ($useServer) { ' (a fresh warmed server per image)' } else { ' (process per frame)' }))
     $pending = @()
     foreach ($rep in 1..$Reps) {
         foreach ($s in $sceneRows) {
             $kfr = Read-Kfr (Join-Path $kit ('scenes\' + $s.slug + '.kfr'))
+            $imgServer = $false
+            $srv = $null
+            $endpoint = ''
+            if ($useServer) {
+                $fsImage++
+                $endpoint = 'FractalSharkCli-benchkit-' + $PID + '-' + $fsImage
+                $srv = Start-SharkServer $FractalSharkCliExe $endpoint $wh[0] $wh[1] $srvDir
+                if ($srv.ok) {
+                    $fsStartups += $srv.startup_s
+                    $wu = Invoke-SharkWarmup $FractalSharkCliExe $endpoint $FractalSharkAlgo $wh[0] $wh[1] $srvDir $TimeoutS
+                    $fsWarmups += $wu.s
+                    $imgServer = $true
+                } else {
+                    Write-Host ('  ' + $s.slug + ' r' + $rep + ': the server did not come up - this image runs as its own process.')
+                    Stop-SharkServer $FractalSharkCliExe $endpoint $srv
+                }
+            }
             # The magnification is a STRING, never a number: 10^1105.79 is +inf in double and the
             # corpus goes there. Its zoom convention is Kalles Fraktaler's - the same one we and
             # Fraktaler-3 use - so the .kfr's own Zoom field is handed over VERBATIM.
@@ -499,8 +558,27 @@ if ($have.fractalsharkcli) {
             # LA tables, per-pixel), kept in fs-phases.csv. Its author asked for it, and it is the
             # only way to see where FractalShark's time goes.
             $renderArgs = ('--render-algorithm {0} --center-x {1} --center-y {2} --zoom {3} --iterations {4} --width {5} --height {6} --antialiasing 1 --out "{7}"' -f $FractalSharkAlgo, $kfr['Re'], $kfr['Im'], $zoom, $s.iterations, $wh[0], $wh[1], $stem)
-            $argLine = if ($useServer) { ('--connect --endpoint {0} ' -f $endpoint) + $renderArgs } else { $renderArgs }
-            $r = Invoke-TimedRender $FractalSharkCliExe $argLine $TimeoutS $outDir
+            # Too long for a command line (see $MaxCommandLine): the view goes in FractalShark's own
+            # locations file instead, a box of centre +/- 2/zoom in each axis written at full
+            # precision by tools/make-fsloc.py from the same .kfr. No Python, no file, no render.
+            $fsLoc = ''
+            if ($renderArgs.Length -gt $MaxCommandLine) {
+                $locDir = Join-Path $outDir 'fs-loc'
+                New-Item -ItemType Directory -Force $locDir | Out-Null
+                $fsLoc = Join-Path $locDir ($s.slug + '.fsloc')
+                $mk = Join-Path $kit 'tools\make-fsloc.py'
+                if ($PythonExe -and (Test-Path $mk)) {
+                    & $PythonExe $mk (Join-Path $kit ('scenes\' + $s.slug + '.kfr')) $fsLoc --width $wh[0] --height $wh[1] --iterations $s.iterations --name ($s.slug -replace '\.', 'p') 2>&1 | Out-Null
+                }
+                $renderArgs = ('--render-algorithm {0} --locations "{1}" --iterations {2} --width {3} --height {4} --antialiasing 1 --out "{5}"' -f $FractalSharkAlgo, $fsLoc, $s.iterations, $wh[0], $wh[1], $stem)
+            }
+            $argLine = if ($imgServer) { ('--connect --endpoint {0} ' -f $endpoint) + $renderArgs } else { $renderArgs }
+            if ($fsLoc -and -not (Test-Path $fsLoc)) {
+                $r = @{ status = 'NA-no-python'; wall_s = ''; wall_ms = ''; stdout = ''
+                        stderr = 'this centre needs a locations file, which tools/make-fsloc.py writes with Python' }
+            } else {
+                $r = Invoke-TimedRender $FractalSharkCliExe $argLine $TimeoutS $outDir
+            }
             # EACH IMAGE'S OWN ENCODE, AND NO OTHER. The client returns before its PNG is written,
             # and the next render waits for that encode, so client calls timed back to back each
             # carried the PREVIOUS image's encode - every FractalShark time this kit published up to
@@ -521,8 +599,11 @@ if ($have.fractalsharkcli) {
                     $r.status = 'DNF-png-incomplete'
                 }
             }
-            $note = $(if ($useServer) { 'server-amortized' } else { 'process per frame' }) +
-                    $(if ($FractalSharkAlgo -like 'Gpu*') { '; GPU path (CUDA)' } else { '; CPU path' })
+            # This image's server goes now: its PNG is complete, and the next image gets a new one.
+            if ($imgServer) { Stop-SharkServer $FractalSharkCliExe $endpoint $srv }
+            $note = $(if ($imgServer) { 'fresh warmed server' } else { 'process per frame' }) +
+                    $(if ($FractalSharkAlgo -like 'Gpu*') { '; GPU path (CUDA)' } else { '; CPU path' }) +
+                    $(if ($fsLoc) { '; view passed as a locations file (centre too long for a command line)' } else { '' })
             # The reported "Frame time" is worth HAVING - it is FractalShark's own render cost,
             # and the gap between it and our wall is the pipe plus the PNG encode, which is the
             # one number that says whether the CLI transport is in the way. But it is NEVER
@@ -545,13 +626,10 @@ if ($have.fractalsharkcli) {
                            inputs = @{ center_re = $kfr['Re']; center_im = $kfr['Im']
                                        zoom = $zoom; iterations = $s.iterations; size = $Size
                                        antialiasing = 1; algorithm = $FractalSharkAlgo
-                                       mode = $(if ($useServer) { 'client against a live server' }
+                                       locations_file = $(if ($fsLoc) { 'fs-loc\' + $s.slug + '.fsloc' } else { '' })
+                                       mode = $(if ($imgServer) { 'client against a fresh, warmed server' }
                                                 else { 'one process per frame' }) } }
         }
-    }
-    if ($useServer) {
-        Write-Host 'FractalShark: shutting the server down - this is what flushes the PNGs'
-        Stop-SharkServer $FractalSharkCliExe $endpoint $srv
     }
     # IS IT THE RIGHT PICTURE? The structure guard below only ever asked "is it A picture", and on
     # 2026-09-21 all ten scenes passed it while being renders of the wrong place, because the CLI
@@ -631,14 +709,18 @@ if ($have.fractalsharkcli) {
             status = $status; wall_s = $q.r.wall_s; reported_s = $reported; note = $note
         }
     }
-    if ($useServer) {
-        Add-RunRecord @{ renderer = 'fractalshark'; scene = '(server) startup'; rep = 0
+    if ($useServer -and $fsStartups.Count) {
+        $fsStartup = [string](Get-Median $fsStartups)
+        $fsWarm = [string](Get-Median $fsWarmups)
+        Add-RunRecord @{ renderer = 'fractalshark'; scene = '(server) startup + warm-up'; rep = 0
                          exe = $FractalSharkCliExe
-                         args = ('--server --endpoint {0} --width {1} --height {2}' -f $endpoint, $wh[0], $wh[1])
-                         cwd = $outDir; source = ''; inputs = @{ endpoint = $endpoint }
-                         output = ('fs-server-' + $endpoint + '.log')
+                         args = ('--server --endpoint FractalSharkCli-benchkit-{0}-N --width {1} --height {2}' -f $PID, $wh[0], $wh[1])
+                         cwd = $outDir; source = ''; inputs = @{ servers = $fsStartups.Count }
+                         output = 'fs-server\'
                          status = 'ok'; wall_s = $fsStartup; reported_s = ''
-                         note = 'paid ONCE for the whole lane; the per-scene rows are client calls' }
+                         note = ('median of ' + $fsStartups.Count + ' servers, one per image; each then rendered one untimed warm-up frame (median ' +
+                                 $fsWarm + ' s). Both are outside every image''s time; the per-scene rows are client calls') }
+        $fsStartup = $fsStartup + ' s median per image, warm-up ' + $fsWarm
     }
 }
 
@@ -676,6 +758,21 @@ if ($have.imaginacli) {
             } elseif ($ImaginaPaletteMap) {
                 $argLine += (' --palette-map "{0}" --palette-cycle {1} --palette-offset {2} --palette-smooth' -f
                              $ImaginaPaletteMap, $ImaginaPaletteCycle, $ImaginaPaletteOffset)
+            }
+            # imagina-cli takes the centre ONLY on its command line, so a centre too long for one
+            # (see $MaxCommandLine) cannot be rendered at all here: a row that says so, not a crash.
+            if ($argLine.Length -gt $MaxCommandLine) {
+                $note = ('imagina-cli takes the centre only on its command line, and this one needs ' + $argLine.Length +
+                         ' characters; Windows allows 32,767')
+                Write-Result $csv 'imagina' $s.slug $rep 'NA-command-line' '' '' $note
+                Add-RunRecord @{
+                    renderer = 'imagina'; scene = $s.slug; rep = $rep
+                    exe = $ImaginaCliExe; args = ''; cwd = $outDir
+                    source = ('scenes\' + $s.slug + '.kfr')
+                    inputs = @{ zoom = $zoom; iterations = $s.iterations; size = $Size; command_line_chars = $argLine.Length }
+                    output = ''; status = 'NA-command-line'; wall_s = ''; reported_s = ''; note = $note
+                }
+                continue
             }
             $r = Invoke-TimedRender $ImaginaCliExe $argLine $TimeoutS $outDir
             $note = 'headless imagina-cli (AGPL fork, built from source); CPU path'
@@ -817,10 +914,12 @@ $md = @(('# Benchmark summary - ' + $env:COMPUTERNAME + ' - ' + $stamp), '',
         'wall_s and leaves reported_s empty, so printing `reported` here rendered every automated',
         'FractalShark result as a BLANK CELL while the numbers sat in results.csv. A summary that',
         'silently drops a lane it ran is worse than one that admits it skipped it.',
-        'In server mode that wall is the client call until THAT image''s PNG is complete on disk, with',
-        'CUDA and process startup paid once for the whole run. The next image starts only after it:',
-        'the server encodes in the background and the next render waits for the encode, so before',
-        '2026-10-04 each FractalShark time here carried the PREVIOUS image''s encode instead of its own.', '',
+        'In server mode that wall is the client call until THAT image''s PNG is complete on disk. Each',
+        'image gets a fresh server, warmed by one untimed frame, so CUDA and process startup stay out of',
+        'its time while its reference orbit is built for it, as every other lane''s is: a server keeps',
+        'each scene''s orbit, and before 2026-10-06 rounds 2 and 3 of a scene reused round 1''s (the',
+        '1e10000x path view: 17.1 s, then 2.1 s). The next image starts only after this one''s PNG:',
+        'before 2026-10-04 each FractalShark time here carried the PREVIOUS image''s encode instead.', '',
         'Rows run SHALLOWEST FIRST. scenes.csv is ordered by scene id, which is not depth order -',
         'it puts 1e1105 above 1e27.7 - and a benchmark whose whole axis is magnification should',
         'not be read in an order that hides it. Execution order is unchanged and stays in the',

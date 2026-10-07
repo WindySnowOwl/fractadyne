@@ -376,3 +376,192 @@ fn the_sa_walk_is_backend_identical() {
         "the MPFR twin never actually ran — every Rug case silently fell back to astro"
     );
 }
+
+/// Both backends count their steps toward `REFERENCE_STEPS`, in the orbit build AND in the
+/// candidate walk. The counter is what tells a headless render's progress pump that a long
+/// reference is still advancing; it was first added to the astro-float loops only, the test for it
+/// ran on astro-float only, and an MPFR render of a 1e10000 minibrot still logged 13
+/// `possible hang` lines. Each backend has its own loops, so each is checked here. "At least": other
+/// tests may build orbits at the same time and add theirs.
+#[test]
+fn every_backend_counts_its_reference_steps() {
+    let p = 128;
+    let z0 = fc::BigFloat::from_f64(0.0, p);
+    let (cx, cy) = (fc::BigFloat::from_f64(-0.1, p), fc::BigFloat::from_f64(0.1, p)); // interior
+    let batch = u64::from(fc::REFERENCE_STEP_BATCH);
+    for backend in [BackendChoice::Astro, BackendChoice::Rug] {
+        let before = fc::reference_steps();
+        let (_, len, _) = fc::reference_orbit_t_in(backend, &z0, &z0, &cx, &cy, 0, 5000, p);
+        assert_eq!(len, 5001, "{backend:?}: an interior point runs to the cap");
+        let added = fc::reference_steps() - before;
+        assert!(added >= 4 * batch, "{backend:?} orbit build: a 5,000-step build added only {added}");
+
+        let before = fc::reference_steps();
+        let n = fc::orbit_length_in(backend, &z0, &z0, &cx, &cy, 0, 5000, p, None);
+        assert_eq!(n, 5000, "{backend:?}: the walk runs to the cap");
+        let added = fc::reference_steps() - before;
+        assert!(added >= 4 * batch, "{backend:?} candidate walk: 5,000 steps added only {added}");
+    }
+}
+
+/// A periodic build (`reference_orbit_periodic_in`) stops at the same step in both backends, with
+/// byte-identical samples: the probe watches each backend's own loop (the MPFR in-place loop is
+/// separate code), and a period found in one but not the other would make a render depend on
+/// which arithmetic built its reference. The period-998 seahorse nucleus, in a view ~2.5 atoms wide.
+#[test]
+fn a_periodic_build_is_backend_identical() {
+    let p = 256;
+    let seed = [fc::parse_bf("-0.743643887037151").unwrap(), fc::parse_bf("0.131825904205330").unwrap()];
+    let n = fc::find_nucleus(&seed, 30.0, 0, 100_000).expect("the seahorse nucleus");
+    let (cx, cy) = fc::refine_nucleus(&n.cx, &n.cy, n.period, 0, p).expect("refine");
+    let log2_span = fc::nucleus_size(&cx, &cy, n.period, 0, p).expect("atom").log2_size + 1.3;
+    let z0 = fc::BigFloat::from_f64(0.0, p);
+    let (a, la, ta) = fc::reference_orbit_periodic_in(BackendChoice::Astro, &z0, &z0, &cx, &cy, 0, 30_000, p, log2_span);
+    let (r, lr, tr) = fc::reference_orbit_periodic_in(BackendChoice::Rug, &z0, &z0, &cx, &cy, 0, 30_000, p, log2_span);
+    assert_eq!((la, lr), (999, 999), "both stop at Z_998");
+    assert_eq!(ta.period.map(|q| q.period), Some(998));
+    assert_eq!(tr.period.map(|q| q.period), Some(998));
+    assert_eq!(bits(&a), bits(&r), "byte-identical samples");
+}
+
+/// Above `PAR_MIN_BITS` the MPFR build runs its three products on three cores; the samples and
+/// the tail must still be astro-float's, byte for byte. The other identity tests stop at 2,112
+/// bits, below the threshold, so without this one the parallel path would never be compared.
+#[test]
+fn the_three_core_build_is_byte_identical_to_astro_float() {
+    let p = 17_000;
+    let z0 = fc::BigFloat::from_f64(0.0, p);
+    for (sx, sy) in [("-0.7436438870371587", "0.1318259042053122"), ("-0.1", "0.65"), ("0.3", "0.5")] {
+        let cx = fc::parse_bf_prec(sx, p).unwrap();
+        let cy = fc::parse_bf_prec(sy, p).unwrap();
+        let (a, la, ta) = fc::reference_orbit_t_in(BackendChoice::Astro, &z0, &z0, &cx, &cy, 0, 1500, p);
+        let (r, lr, tr) = fc::reference_orbit_t_in(BackendChoice::Rug, &z0, &z0, &cx, &cy, 0, 1500, p);
+        assert_eq!(la, lr, "{sx}: length");
+        assert_eq!(bits(&a), bits(&r), "{sx}: samples");
+        assert!(tail_eq(&ta.zx, &tr.zx) && tail_eq(&ta.zy, &tr.zy), "{sx}: tail");
+        assert_eq!(ta.escaped, tr.escaped, "{sx}: escaped");
+    }
+}
+
+/// The SPLIT products (`ParSplit`: each product as three half-width ones, at 32,768 bits and up)
+/// against astro-float: an unscheduled walk at 40,000 bits, and a scheduled one near `c = i` that
+/// starts above the split width and is carried below it mid-walk, so both of the split walk's step
+/// kinds and the change between them are compared. The split must really have run.
+#[test]
+fn the_split_product_build_is_byte_identical_to_astro_float() {
+    fc::force_orbit_split(); // whatever this machine's core count
+    let before = fc::orbit_split_steps();
+    let p = 40_000;
+    let z0 = fc::BigFloat::from_f64(0.0, p);
+    for (sx, sy) in [("-0.7436438870371587", "0.1318259042053122"), ("-0.1", "0.65")] {
+        let cx = fc::parse_bf_prec(sx, p).unwrap();
+        let cy = fc::parse_bf_prec(sy, p).unwrap();
+        let build = |backend| {
+            fc::with_orbit_schedule(false, || fc::reference_orbit_t_in(backend, &z0, &z0, &cx, &cy, 0, 400, p))
+        };
+        let (a, la, ta) = build(BackendChoice::Astro);
+        let (r, lr, tr) = build(BackendChoice::Rug);
+        assert_eq!(la, lr, "{sx}: length");
+        assert_eq!(bits(&a), bits(&r), "{sx}: samples");
+        assert!(tail_eq(&ta.zx, &tr.zx) && tail_eq(&ta.zy, &tr.zy), "{sx}: tail");
+    }
+    let split = fc::orbit_split_steps();
+    assert!(split - before >= 399, "the unscheduled walks did not split ({} steps)", split - before);
+
+    // ~2^-6,640 from i: the orbit follows i's (~1.25 bits of derivative a step) for ~5,300 steps,
+    // so the schedule falls from 34,000 bits through 32,768 early and ends far below it.
+    let p = 34_000;
+    let zeros = 2_000;
+    let z0 = fc::BigFloat::from_f64(0.0, p);
+    let cx = fc::parse_bf_prec(&format!("7.07e-{}", zeros + 1), p).unwrap();
+    let cy = fc::parse_bf_prec(&format!("1.{}95", "0".repeat(zeros)), p).unwrap();
+    let build = |backend| {
+        fc::with_orbit_schedule(true, || {
+            fc::reference_orbit_t_in(backend, &z0, &z0, &cx, &cy, fc::formula::MANDELBROT, 20_000, p)
+        })
+    };
+    let (a, al, at) = build(BackendChoice::Astro);
+    let (r, rl, rt) = build(BackendChoice::Rug);
+    assert_eq!(al, rl, "scheduled: lengths differ");
+    assert!(at.escaped, "scheduled: the test orbit should escape, so the whole run is compared");
+    assert_eq!(bits(&a), bits(&r), "scheduled: the samples differ between backends");
+    assert_eq!(at.sched, rt.sched, "scheduled: the schedule states differ");
+    let st = at.sched.expect("scheduled");
+    assert!(st.cur < 32_768, "scheduled: the schedule never left the split width ({} bits)", st.cur);
+    assert!(fc::orbit_split_steps() > split, "scheduled: the walk never split");
+}
+
+/// The build's extended-range RECORDING (`reference_orbit_periodic_until`'s sink, which the pick
+/// takes the centre's walk from) against the pick's own scoring walk, in the products-across-cores
+/// walk (17,000 bits) and the split one (40,000): the same samples, bit for bit, in MPFR and in
+/// astro-float. The low-precision loops are covered by the core's
+/// `the_centre_walk_can_come_from_a_build`, which runs in MPFR under this feature.
+#[test]
+fn the_build_records_the_scoring_walks_samples() {
+    fc::force_orbit_split(); // whatever this machine's core count
+    let steps = 300;
+    for p in [17_000usize, 40_000] {
+        let z0 = fc::BigFloat::from_f64(0.0, p);
+        let cx = fc::parse_bf_prec("-0.7436438870371587", p).unwrap();
+        let cy = fc::parse_bf_prec("0.1318259042053122", p).unwrap();
+        let mut fe = Vec::new();
+        let (_, len, tail) = fc::with_orbit_schedule(false, || {
+            fc::reference_orbit_periodic_until(&z0, &z0, &cx, &cy, 0, steps, p, -60.0, None, Some(&mut fe))
+        });
+        assert_eq!(len, steps + 1, "p={p}: the test orbit should run to its cap");
+        assert!(!tail.escaped && tail.period.is_none(), "p={p}");
+        for backend in [BackendChoice::Rug, BackendChoice::Astro] {
+            let mut walked = Vec::new();
+            let n = fc::with_orbit_schedule(false, || {
+                fc::orbit_length_in(backend, &z0, &z0, &cx, &cy, 0, steps, p, Some(&mut walked))
+            });
+            assert_eq!(n, steps, "p={p} {backend:?}");
+            assert!(fe == walked, "p={p} {backend:?}: the build's recording is not the scoring walk's samples");
+        }
+    }
+}
+
+/// Where splitting a step's products across cores starts to pay: ns per step of the MPFR
+/// build at several widths. Run twice — `FRACTADYNE_ORBIT_PAR_MIN_BITS=1` (always split) and
+/// `FRACTADYNE_ORBIT_THREADS=1` (never) — with `--ignored --nocapture`, and compare.
+#[test]
+#[ignore]
+fn par_crossover() {
+    let z0 = fc::BigFloat::from_f64(0.0, 64);
+    for p in [1024usize, 2048, 4096, 8192, 16_384, 32_768, 65_536, 100_000] {
+        let cx = fc::parse_bf_prec("-0.7436438870371587", p).unwrap();
+        let cy = fc::parse_bf_prec("0.1318259042053122", p).unwrap();
+        let steps = (2.0e8 / (p as f64).powf(1.5)).clamp(200.0, 200_000.0) as u32;
+        let t = std::time::Instant::now();
+        let (_, len, _) = fc::reference_orbit_t_in(BackendChoice::Rug, &z0, &z0, &cx, &cy, 0, steps, p);
+        let ns = t.elapsed().as_nanos() as f64 / f64::from(len - 1);
+        println!("p={p:>6} steps={steps:>6} {ns:>12.0} ns/step");
+    }
+}
+
+/// THE PRECISION SCHEDULE (`fc::SchedState`) across backends, where it is certainly ENGAGED: points
+/// ~2^-900 and ~2^-16,600 from the Misiurewicz point `c = i`, whose orbits follow i's (~1.25 bits of
+/// derivative a step) until they escape, so most steps run far below full precision — in the
+/// sequential MPFR loop at 1,024 bits and the three-core one at 17,000. Each backend's samples and
+/// its tail's schedule state must match the other's, and the schedule must have gone low.
+#[test]
+fn a_scheduled_orbit_is_byte_identical_across_backends() {
+    for (p, zeros) in [(1_024usize, 271usize), (17_000, 5_000)] {
+        let cx = fc::parse_bf_prec(&format!("7.07e-{}", zeros + 1), p).unwrap();
+        let cy = fc::parse_bf_prec(&format!("1.{}95", "0".repeat(zeros)), p).unwrap();
+        let z0 = fc::BigFloat::from_f64(0.0, p);
+        let build = |backend| {
+            fc::with_orbit_schedule(true, || {
+                fc::reference_orbit_t_in(backend, &z0, &z0, &cx, &cy, fc::formula::MANDELBROT, 40_000, p)
+            })
+        };
+        let (a, al, at) = build(BackendChoice::Astro);
+        let (r, rl, rt) = build(BackendChoice::Rug);
+        assert_eq!(al, rl, "p={p}: lengths differ");
+        assert!(at.escaped, "p={p}: the test orbit should escape, so the whole run is compared");
+        assert_eq!(bits(&a), bits(&r), "p={p}: the scheduled samples differ between backends");
+        assert_eq!(at.sched, rt.sched, "p={p}: the schedule states differ");
+        let st = at.sched.expect("scheduled");
+        assert!((st.cur as usize) * 2 < p, "p={p}: the schedule never went low ({} bits)", st.cur);
+    }
+}
