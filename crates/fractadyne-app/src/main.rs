@@ -1477,6 +1477,10 @@ struct Perf {
     chunk_cursor: [u32; 2],
     chunk_idx: [u32; 2],
     chunk_sig: [(u64, u32, [u32; 2], u32); 2],
+    /// `chunk_sig` without the supersampling jitter: the walk's VIEW. A new sample changes only the
+    /// jitter, so it restarts the walk (`chunk_sig`) but keeps the band ledger, which belongs to the
+    /// orbit's iteration bands, not to a sub-pixel position.
+    chunk_walk_view: [(u64, u32, [u32; 2], u32); 2],
     chunk_pending: [bool; 2],
     /// Motion-presentation observability (design/mode2-chunking.md §11, asserted by
     /// `--motiontest`). Counted only DURING INTERACTION at a chunk-eligible perturbation view
@@ -2269,6 +2273,7 @@ impl Default for Perf {
             chunk_cursor: [0, 0],
             chunk_idx: [0, 0],
             chunk_sig: [(0, 0, [0, 0], 0), (0, 0, [0, 0], 0)],
+            chunk_walk_view: [(0, 0, [0, 0], 0), (0, 0, [0, 0], 0)],
             chunk_pending: [false, false],
             adopt_partial: [0, 0],
             adopt_complete: [0, 0],

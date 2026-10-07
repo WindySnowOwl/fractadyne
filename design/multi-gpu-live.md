@@ -401,7 +401,30 @@ frames a sample, §8 above). So the largest lever is single-GPU: render the sett
 frame pacing (on the window's own device, or a twin of it), which every user gets. A second GPU then
 adds its own sample rate on top.
 
+**Pacing, step 1 (2026-10-07): a new sample keeps the band ledger.** The tile trace of one sample
+at 9.3e78× showed the mode-2 walk crossing ~9 iteration bands, each re-opened at the 256-iteration
+floor and doubled once a frame: ~90 of the sample's 158 frames were ramps. The cause: the walk's sig
+includes the supersampling jitter (right — the per-pixel state is position-specific), and a sig
+change also cleared the ledger, although the ledger is the orbit's (it already survives pins and
+same-sig restarts). `chunk_restart_clears_ledger` now spares a jitter-only change. Output-neutral
+(the chunked iterate's bit-identity contract); measured pixel-identical:
+- 9.3e78×: 158 → 81 frames a sample; the settle 68.4 → 35.9 s (1.9×).
+- 6.8e3999×: 24.2 → 9.0 s (2.7×).
+
+**What is left.** Every pass now runs at the cap: `EXPLICIT_STEPS_CEIL` (6e10 nominal steps,
+pixels × iterations over the WHOLE frame) — 125,164 iterations at 551×870. A pass costs ~4–6 ms of
+GPU; the frame is ~18 ms (the swap chain's vsync wait, no fps cap), so the walk is one pass per
+displayed frame and the card idles ~70%. At the tail only the interior's chains run, latency-bound
+(~40 ns an iteration), so a sample's GPU work (~0.4 s) is already near its floor; the pacing is the
+remainder. Both ways past it touch the dispatch-size safety model:
+- **Count nominal steps over the pixels still running** (a live `CTR_CHUNK_RUNNING`-style count,
+  monotone within a walk so a stale reading is an upper bound), charged at least the occupancy knee
+  as the calibration ceiling already does: the same worst-case model, an honest pixel count. ~1.8×
+  at this window, far more at 4K. Needs the shader count, its readback, and a deliberate revision of
+  the "a settled chunked pass stays inside ONE dispatch budget" selftest's units.
+- **Several passes a frame** while accumulating: each pass inside the ceiling, but one submission's
+  sum is not, which the serialized walk exists to prevent.
+
 **Next.**
-1. Unpace the settle samples on one GPU (measure input latency while a sample renders: a twin's long
-   dispatches share the card with the UI).
+1. Decide on the active-pixel accounting above (TDR-safety model; the RX 6800 XT has a loss history).
 2. A setting in place of the flag.

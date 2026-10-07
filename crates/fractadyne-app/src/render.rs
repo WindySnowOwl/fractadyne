@@ -5887,18 +5887,14 @@ impl FractadyneApp {
             // uitest's Custom step at home (−0.5+0i, Mandelbrot's home too) kept showing the
             // formula applied three steps earlier. The tiled settle's key had the same hole once
             // (`settings_hash`'s own note).
-            let sig = (
-                center.0.to_bits()
-                    ^ center.1.to_bits().rotate_left(17)
-                    ^ magnification.to_bits().rotate_left(34)
-                    ^ (self.ref_cache[vidx].orbit_len as u64).rotate_left(51)
-                    ^ jbits.rotate_left(7)
-                    ^ pos_sig.rotate_left(41)
-                    ^ view_key.4.rotate_left(29),
-                gpu_iter,
-                resolution,
-                ss,
-            );
+            let view_bits = center.0.to_bits()
+                ^ center.1.to_bits().rotate_left(17)
+                ^ magnification.to_bits().rotate_left(34)
+                ^ (self.ref_cache[vidx].orbit_len as u64).rotate_left(51)
+                ^ pos_sig.rotate_left(41)
+                ^ view_key.4.rotate_left(29);
+            let walk_view = (view_bits, gpu_iter, resolution, ss);
+            let sig = (view_bits ^ jbits.rotate_left(7), gpu_iter, resolution, ss);
             if pin_frame {
                 // The pin owns the progression: every sig input above is captured, so the sig is
                 // constant by construction, and the interacting reset below — the §10 defect — is
@@ -5907,7 +5903,21 @@ impl FractadyneApp {
                 // drift, pan, panel), so the cursor advance further down is safe — and
                 // belt-checked at the commit point after the freeze anyway.
             } else if self.perf.chunk_sig[vs] != sig || interacting {
-                if self.perf.chunk_sig[vs] != sig && !interacting {
+                // ⭐⭐A NEW SUPERSAMPLING SAMPLE KEEPS THE LEDGER. Each sample of a settled view's
+                // progressive supersampling is the same view at a new sub-pixel jitter: the walk
+                // must restart (its per-pixel state is position-specific), but the bands' prices
+                // are the ORBIT's, the reason the ledger already survives pins and same-sig
+                // restarts. Clearing it made every sample re-climb every band from the floor, ×2 a
+                // pass: ~90 of a sample's ~158 frames at 9.3e78× were 256..65536-iteration passes
+                // at one a frame (2026-10-07). Output-neutral: the window size never changes a
+                // pixel (the chunked iterate's bit-identity contract).
+                if chunk_restart_clears_ledger(
+                    self.perf.chunk_sig[vs],
+                    self.perf.chunk_walk_view[vs],
+                    sig,
+                    walk_view,
+                    interacting,
+                ) {
                     // Another view/ask: its prices describe another walk entirely.
                     // ⭐Not during INTERACTION: successive pinned refreshes of a glide are the
                     // same orbit a few hundredths of an octave apart, and the band ledger is a
@@ -5924,6 +5934,7 @@ impl FractadyneApp {
                 // cycle restarts the walk, and re-crossing the wrap-storm band with amnesia is
                 // how the cliff got re-rolled dozens of times in one session.
                 self.perf.chunk_sig[vs] = sig;
+                self.perf.chunk_walk_view[vs] = walk_view;
                 self.perf.chunk_cursor[vs] = 0;
                 self.perf.chunk_idx[vs] = 0;
                 self.perf.chunk_last_range[vs] = None;
@@ -11150,6 +11161,31 @@ mod chunk_band_end_tests {
 /// line. Shedding only "the" band would shed the wrong one.
 pub(crate) fn chunk_band_retreat(bands: &mut [u32; crate::tunables::CHUNK_BANDS]) {
     *bands = [0; crate::tunables::CHUNK_BANDS];
+}
+
+/// A chunk walk's identity: `(view hash, ask, resolution, ss)` — see `chunk_sig` in `build_params`.
+pub(crate) type ChunkSig = (u64, u32, [u32; 2], u32);
+
+/// Does restarting the chunk walk CLEAR the band ledger? `prev_*` are the walk being replaced:
+/// its `chunk_sig` and its jitter-free `chunk_walk_view`.
+///
+/// Only a settled restart into ANOTHER VIEW clears it ("its prices describe another walk").
+/// - Not during interaction: pinned refreshes of a glide are the same orbit (see the call site).
+/// - ⭐Not when only the supersampling JITTER moved: a new sample is the same view at a sub-pixel
+///   offset, so the bands are the same orbit's bands. Clearing there made every one of a settle's
+///   24 samples re-climb every band from the floor (~90 of ~158 frames a sample at 9.3e78×,
+///   2026-10-07).
+/// - A walk that never ran (`prev_sig` zeroed — fresh state, or a harness forcing a restart)
+///   clears as before: a zero sig says nothing about the view.
+pub(crate) fn chunk_restart_clears_ledger(
+    prev_sig: ChunkSig,
+    prev_view: ChunkSig,
+    sig: ChunkSig,
+    view: ChunkSig,
+    interacting: bool,
+) -> bool {
+    let jitter_only = prev_view == view && prev_sig != (0, 0, [0, 0], 0);
+    prev_sig != sig && !interacting && !jitter_only
 }
 
 /// Feed one priced pass into the band ledger. Acceptance is AT the target (a price accepted

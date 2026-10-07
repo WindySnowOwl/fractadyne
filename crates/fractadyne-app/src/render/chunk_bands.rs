@@ -114,3 +114,51 @@ fn garbage_prices_are_ignored_but_zero_is_clearly_cheap() {
     chunk_band_update(&mut b, 1, 5_000, 0.0, 400.0);
     assert_eq!(b[1], 10_000);
 }
+
+// ---- chunk_restart_clears_ledger: which walk restarts forget the band prices ------------------
+
+const VIEW: ChunkSig = (0xABCD, 10_000_000, [551, 870], 1);
+const OTHER_VIEW: ChunkSig = (0x1234, 10_000_000, [551, 870], 1);
+
+fn with_jitter(view: ChunkSig, jitter_bits: u64) -> ChunkSig {
+    (view.0 ^ jitter_bits, view.1, view.2, view.3)
+}
+
+#[test]
+fn a_new_supersampling_sample_keeps_the_ledger() {
+    // Same view, the jitter moved: the walk restarts (sig differs) but the ledger survives.
+    let prev = with_jitter(VIEW, 0);
+    let next = with_jitter(VIEW, 0x5555);
+    assert_ne!(prev, next, "the walk itself must restart");
+    assert!(!chunk_restart_clears_ledger(prev, VIEW, next, VIEW, false));
+}
+
+#[test]
+fn another_view_while_settled_clears_it() {
+    assert!(chunk_restart_clears_ledger(VIEW, VIEW, OTHER_VIEW, OTHER_VIEW, false));
+    // ...even when the jitter moved too: the view decides, not the jitter.
+    assert!(chunk_restart_clears_ledger(
+        with_jitter(VIEW, 1),
+        VIEW,
+        with_jitter(OTHER_VIEW, 2),
+        OTHER_VIEW,
+        false
+    ));
+}
+
+#[test]
+fn interaction_never_clears_it() {
+    assert!(!chunk_restart_clears_ledger(VIEW, VIEW, OTHER_VIEW, OTHER_VIEW, true));
+}
+
+#[test]
+fn a_walk_that_never_ran_clears_as_before() {
+    // A zeroed sig (fresh state, or a harness forcing a restart) says nothing about the view.
+    let zero = (0, 0, [0, 0], 0);
+    assert!(chunk_restart_clears_ledger(zero, VIEW, with_jitter(VIEW, 7), VIEW, false));
+}
+
+#[test]
+fn an_unchanged_walk_clears_nothing() {
+    assert!(!chunk_restart_clears_ledger(VIEW, VIEW, VIEW, VIEW, false));
+}
