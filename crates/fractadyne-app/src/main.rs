@@ -1481,6 +1481,19 @@ struct Perf {
     /// jitter, so it restarts the walk (`chunk_sig`) but keeps the band ledger, which belongs to the
     /// orbit's iteration bands, not to a sub-pixel position.
     chunk_walk_view: [(u64, u32, [u32; 2], u32); 2],
+    /// The walk's NUMBER: +1 at every restart of the walk (`bp_chunk_tiling`, and a pin's start or
+    /// discard). A counted pass carries it (`MandelbrotParams::chunk_walk`), and its reading is
+    /// believed only for the same number — a new walk starts with every pixel running.
+    chunk_walk_epoch: [u64; 2],
+    /// `(walk, cursor, running)` from the walk's counted readings (`walk_running_feed`): after the
+    /// pass that ended at `cursor`, at most `running` texels were still iterating. A pixel never
+    /// restarts within a walk, so this bounds every LATER pass of that walk (`walk_charged_px`).
+    chunk_running: [Option<(u64, u32, u32)>; 2],
+    /// This frame's pass: the walk number to count under (0 = no count), and the texels it was
+    /// CHARGED for when that was fewer than the frame's (0 = the whole frame) — so the step
+    /// accounting that pairs with its timing describes the pass as it was sized.
+    chunk_count_walk: [u64; 2],
+    chunk_charged_px: [u64; 2],
     chunk_pending: [bool; 2],
     /// Motion-presentation observability (design/mode2-chunking.md §11, asserted by
     /// `--motiontest`). Counted only DURING INTERACTION at a chunk-eligible perturbation view
@@ -2274,6 +2287,10 @@ impl Default for Perf {
             chunk_idx: [0, 0],
             chunk_sig: [(0, 0, [0, 0], 0), (0, 0, [0, 0], 0)],
             chunk_walk_view: [(0, 0, [0, 0], 0), (0, 0, [0, 0], 0)],
+            chunk_walk_epoch: [0, 0],
+            chunk_running: [None, None],
+            chunk_count_walk: [0, 0],
+            chunk_charged_px: [0, 0],
             chunk_pending: [false, false],
             adopt_partial: [0, 0],
             adopt_complete: [0, 0],

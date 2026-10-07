@@ -162,3 +162,80 @@ fn a_walk_that_never_ran_clears_as_before() {
 fn an_unchanged_walk_clears_nothing() {
     assert!(!chunk_restart_clears_ledger(VIEW, VIEW, VIEW, VIEW, false));
 }
+
+// ---- walk_charged_px / walk_running_feed: charging a pass for the pixels still running --------
+
+const ALL: u64 = 479_370;
+const KNEE: u64 = 262_144;
+
+#[test]
+fn an_unknown_count_charges_the_whole_frame() {
+    assert_eq!(walk_charged_px(ALL, KNEE, 7, 5_000, None), ALL);
+}
+
+#[test]
+fn a_count_of_this_walk_charges_the_running_pixels_but_never_below_the_knee() {
+    // Few running: latency-bound, charged the knee.
+    assert_eq!(walk_charged_px(ALL, KNEE, 7, 5_000, Some((7, 4_000, 1_200))), KNEE);
+    // Many running but fewer than the frame: charged what runs.
+    let big = 4_000_000;
+    assert_eq!(walk_charged_px(big, KNEE, 7, 5_000, Some((7, 4_000, 300_000))), 300_000);
+    // Never more than the frame.
+    assert_eq!(walk_charged_px(ALL, KNEE, 7, 5_000, Some((7, 4_000, 900_000))), ALL);
+}
+
+#[test]
+fn another_walks_count_never_applies() {
+    // A new sample's walk starts with every pixel running: the previous walk's tail count would
+    // size its first passes for a few hundred pixels.
+    assert_eq!(walk_charged_px(ALL, KNEE, 8, 5_000, Some((7, 4_000, 1_200))), ALL);
+    // Walk 0 is "uncounted", never a match.
+    assert_eq!(walk_charged_px(ALL, KNEE, 0, 5_000, Some((0, 4_000, 1_200))), ALL);
+}
+
+#[test]
+fn a_pass_before_the_readings_cursor_is_not_bounded_by_it() {
+    // Only LATER passes are bounded: at an earlier cursor more pixels may still run.
+    assert_eq!(walk_charged_px(ALL, KNEE, 7, 3_999, Some((7, 4_000, 1_200))), ALL);
+    assert_eq!(walk_charged_px(ALL, KNEE, 7, 4_000, Some((7, 4_000, 1_200))), KNEE);
+}
+
+#[test]
+fn no_knee_means_no_charge() {
+    assert_eq!(walk_charged_px(ALL, 0, 7, 5_000, Some((7, 4_000, 1_200))), ALL);
+}
+
+#[test]
+fn readings_fold_into_the_current_walks_bound_only() {
+    // First reading of walk 7.
+    let b = walk_running_feed(None, 7, 7, 4_000, 50_000);
+    assert_eq!(b, Some((7, 4_000, 50_000)));
+    // A later one tightens it.
+    let b = walk_running_feed(b, 7, 7, 9_000, 1_200);
+    assert_eq!(b, Some((7, 9_000, 1_200)));
+    // An earlier one landing late cannot loosen it.
+    let b = walk_running_feed(b, 7, 7, 6_000, 20_000);
+    assert_eq!(b, Some((7, 9_000, 1_200)));
+    // An uncounted reading changes nothing.
+    assert_eq!(walk_running_feed(b, 7, 0, 12_000, 0), b);
+    // The previous walk's reading, landing after a restart: ignored, and the old bound dropped.
+    assert_eq!(walk_running_feed(b, 8, 7, 12_000, 0), None);
+    assert_eq!(walk_running_feed(None, 8, 7, 12_000, 0), None);
+}
+
+// ---- series_seed_bits: a refined series is another walk ---------------------------------------
+
+#[test]
+fn a_refined_series_is_another_walk() {
+    let mut a = fractadyne_core::SeriesSkip::NONE;
+    a.skip = 5513;
+    a.a = [1.0, 0.0, 0.5, 0.0];
+    let same = a;
+    assert_eq!(series_seed_bits(&a), series_seed_bits(&same));
+    let mut skip = a;
+    skip.skip = 5535; // the 9.3e78x refinement
+    assert_ne!(series_seed_bits(&a), series_seed_bits(&skip));
+    let mut coef = a;
+    coef.b[2] = 1.0e-7; // same skip, one coefficient moved
+    assert_ne!(series_seed_bits(&a), series_seed_bits(&coef));
+}

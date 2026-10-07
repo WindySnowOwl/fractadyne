@@ -118,6 +118,8 @@ pub struct Renorm {
     pub bla_off: u32,
     /// The u-steps the tree covers, `K = (orbit_len − 1)/len`.
     pub bla_k: u32,
+    /// `pad[0]` is the shader's `count_running`: set by the live `prepare` for a counted mode-2
+    /// chunk pass (see [`MandelbrotParams::chunk_walk`]), never by a caller. The rest is padding.
     pub pad: [u32; 3],
 }
 
@@ -742,6 +744,8 @@ struct CounterRead {
     /// stamped at copy time like `norm_sig`, published in the [`ContentReading`].
     content_tag: u64,
     content_cursor: u32,
+    /// The armed pass's [`MandelbrotParams::chunk_walk`] when it COUNTED its running pixels, else 0.
+    walk: u64,
 }
 
 impl CounterRead {
@@ -762,6 +766,7 @@ impl CounterRead {
             norm_complete: true,
             content_tag: 0,
             content_cursor: 0,
+            walk: 0,
         }
     }
 
@@ -849,6 +854,8 @@ impl CounterRead {
                                         h.copy_from_slice(&slots[CTR_ESC_HIST..CTR_ESC_HIST + ESC_HIST_BUCKETS]);
                                         h
                                     },
+                                    walk: self.walk,
+                                    running: if self.walk != 0 { slots[CTR_CHUNK_RUNNING] } else { 0 },
                                 });
                             }
                         }
@@ -1410,6 +1417,11 @@ pub struct ContentReading {
     /// The escaped pixels' log₂ iteration histogram from the same readback ([`CTR_ESC_HIST`]);
     /// all zero for a single-pass frame, which never runs `fs_resolve`.
     pub esc_hist: EscHist,
+    /// The chunk walk the armed pass belonged to ([`MandelbrotParams::chunk_walk`]) when it counted
+    /// its running pixels; 0 = it did not, and `running` means nothing.
+    pub walk: u64,
+    /// Texels (resolution × ss²) the armed pass left still RUNNING ([`CTR_CHUNK_RUNNING`]).
+    pub running: u32,
 }
 
 /// Where the live path publishes a [`ContentReading`] — the `GradHistSink` idiom, one lock per
@@ -2659,6 +2671,12 @@ pub struct MandelbrotParams {
     /// app attaches one only on a frame that does not also `accum_commit` — the two folds would
     /// share the accumulator's weight uniform within one submission.
     pub accum_external: Option<Arc<AccumSample>>,
+    /// The app's number for the chunk walk this frame's pass belongs to; nonzero asks a mode-2
+    /// chunk pass that iterates something to count the pixels it leaves running. The count comes
+    /// back in [`ContentReading::running`] stamped with this number ([`ContentReading::walk`]), so
+    /// the app can tell it from another walk's (a new walk starts with every pixel running). 0 =
+    /// no count.
+    pub chunk_walk: u64,
     /// The accumulator's own sample count, stored after every fold: what the average really holds,
     /// for the app to check against what it counted.
     pub accum_folds: Option<Arc<std::sync::atomic::AtomicU32>>,
@@ -2783,6 +2801,7 @@ impl Default for MandelbrotParams {
             accum_reset: false,
             accum_external: None,
             accum_folds: None,
+            chunk_walk: 0,
         }
     }
 }
@@ -3252,6 +3271,15 @@ impl CallbackTrait for MandelbrotParams {
                 iu.start_iter = cs;
                 iu.end_iter = ce;
             }
+            // THE RUNNING COUNT (`MandelbrotParams::chunk_walk`): a live mode-2 chunk pass that
+            // iterates something counts the pixels it leaves running; its readback carries the walk.
+            // Only the four-target (`fs_iterate_chunk_fe`) pipelines count, so any other pass reads
+            // back `walk` 0 and the app learns nothing from it, rather than a zero that looks real.
+            let count_walk = match chunk {
+                Some([s, e]) if s < e && chunk_targets == 4 && self.chunk_walk != 0 => self.chunk_walk,
+                _ => 0,
+            };
+            iu.rn.pad[0] = (count_walk != 0) as u32;
             queue.write_buffer(&view.iter_uniform, 0, bytemuck::bytes_of(&iu));
             // Bracket the iterate with GPU timestamps when nothing is already in flight. This is the
             // only measurement of the deep iterate that isn't contaminated by vsync, repaint
@@ -3572,6 +3600,7 @@ impl CallbackTrait for MandelbrotParams {
                 view.counter_read.content_tag = self.content_tag;
                 view.counter_read.content_cursor =
                     self.chunk_range.map_or(self.max_iter, |[_, e]| e);
+                view.counter_read.walk = count_walk;
                 view.counter_read.state = TimingState::Recorded;
             }
             view.last_iter_key = Some(key);

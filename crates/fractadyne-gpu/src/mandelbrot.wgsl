@@ -645,7 +645,11 @@ struct IterU {
     // orbit (nodes at `orbit_len + rn_bla_off − 1`), 0 = none; it covers `rn_bla_k` u-steps.
     rn_bla_off: u32,
     rn_bla_k: u32,
-    rn_pad1: u32,
+    // `fs_iterate_chunk_fe` only: 1 = a LIVE chunk pass counts the pixels it leaves running into
+    // `CTR_CHUNK_RUNNING`, as a step-capped export pass always does (`MandelbrotParams::chunk_walk`;
+    // the app sizes the walk's later passes by it). `Renorm::pad[0]` in lib.rs; a padding word, so no
+    // field moved.
+    count_running: u32,
     rn_pad2: u32,
     rn_pad3: u32,
 };
@@ -2656,7 +2660,7 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
                     // Paused inside: store it and leave this pass.
                     step_commit(gx, gy, n_rn, 0u, 0u, st.k * iu.rn_len - select(0u, iter_loaded, iu.start_iter > 0u));
                     if (rn_px) { rn_commit(gx, gy); }
-                    if (iu.step_cap > 0u) { chunk_slot = atomicAdd(&counters[CTR_CHUNK_RUNNING], 1u); }
+                    if (iu.step_cap > 0u || iu.count_running == 1u) { chunk_slot = atomicAdd(&counters[CTR_CHUNK_RUNNING], 1u); }
                     return ChunkOut4(
                         vec4<f32>(st.du.m.re.x, st.du.m.re.y, st.du.m.im.x, st.du.m.im.y),
                         vec4<f32>(st.ddu.m.re.x, st.ddu.m.re.y, st.ddu.m.im.x, st.ddu.m.im.y),
@@ -2941,7 +2945,7 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
     if (iter >= iu.max_iter) {
         status = ST_INTERIOR;
     }
-    if (status == ST_RUNNING && iu.step_cap > 0u) {
+    if (status == ST_RUNNING && (iu.step_cap > 0u || iu.count_running == 1u)) {
         chunk_slot = atomicAdd(&counters[CTR_CHUNK_RUNNING], 1u);
     }
     // Still running: δz mantissa + its exponent in info ch3, derivative mantissa + its exponent

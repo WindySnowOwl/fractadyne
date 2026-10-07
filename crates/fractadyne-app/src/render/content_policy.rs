@@ -4,7 +4,7 @@
 use super::*;
 
 fn reading(tag: u64, cursor: u32, escaped: u32) -> ContentReading {
-    ContentReading { tag, cursor, escaped, px: 1_600_000, esc_min_bits: 0, esc_max_bits: 0, esc_hist: [0; 24] }
+    ContentReading { tag, cursor, escaped, px: 1_600_000, esc_min_bits: 0, esc_max_bits: 0, esc_hist: [0; 24], walk: 0, running: 0 }
 }
 
 #[test]

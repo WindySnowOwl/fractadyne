@@ -5209,6 +5209,14 @@ impl FractadyneApp {
             // view's `ContentTrack`, which the present gate and the pin verdict consult. Its
             // trace is what says whether the frame that reached the screen had a picture.
             if let Some(r) = self.perf.content_sink[vb].lock().ok().and_then(|mut g| g.take()) {
+                // A counted pass's running texels bound the rest of ITS walk (`walk_charged_px`).
+                self.perf.chunk_running[vb] = walk_running_feed(
+                    self.perf.chunk_running[vb],
+                    self.perf.chunk_walk_epoch[vb],
+                    r.walk,
+                    r.cursor,
+                    r.running,
+                );
                 // Into the frame record, ONLY here where a reading arrives, and stamped with the
                 // render it describes (`r.tag`). The work counters come from the same readback of
                 // the same armed frame (one `CounterRead::pump`, which runs in `prepare`, i.e.
@@ -5583,6 +5591,7 @@ impl FractadyneApp {
         tdr_allowed: u64,
         max_tiles: u64,
         chunk_over: bool,
+        fe_walk: bool,
         pin_frame: bool,
         key_changed: bool,
         tile: Option<[u32; 4]>,
@@ -5595,6 +5604,10 @@ impl FractadyneApp {
         vidx: usize,
         vs: usize,
     ) -> ChunkPlan {
+        // This frame's pass is uncounted and charged for the whole frame until the walk below
+        // says otherwise.
+        self.perf.chunk_count_walk[vs] = 0;
+        self.perf.chunk_charged_px[vs] = 0;
         // ---- iteration-range tiling (direct + df32-perturbation; see `chunk_over` above) ----
         // One bounded resumable pass over [cursor, cursor+step) per frame at FULL resolution; the
         // cursor advances while the view holds still and restarts on any view change or
@@ -5887,12 +5900,19 @@ impl FractadyneApp {
             // uitest's Custom step at home (−0.5+0i, Mandelbrot's home too) kept showing the
             // formula applied three steps earlier. The tiled settle's key had the same hole once
             // (`settings_hash`'s own note).
+            // ⚠And the SERIES SEED (`series_seed_bits`). The first pass seeds every pixel from the
+            // series at `sa.skip` and later passes only resume, so a series refined mid-walk
+            // (9.3e78×: skip 5513 → 5535 four frames after the walk began, 2026-10-07) left that
+            // walk's pixels seeded from the old one while any later walk seeds from the new: the
+            // settled picture then depended on whether the walk happened to start before the
+            // refinement — 79 pixels of a converged supersampling average, run to run.
             let view_bits = center.0.to_bits()
                 ^ center.1.to_bits().rotate_left(17)
                 ^ magnification.to_bits().rotate_left(34)
                 ^ (self.ref_cache[vidx].orbit_len as u64).rotate_left(51)
                 ^ pos_sig.rotate_left(41)
-                ^ view_key.4.rotate_left(29);
+                ^ view_key.4.rotate_left(29)
+                ^ series_seed_bits(&self.ref_cache[vidx].sa).rotate_left(13);
             let walk_view = (view_bits, gpu_iter, resolution, ss);
             let sig = (view_bits ^ jbits.rotate_left(7), gpu_iter, resolution, ss);
             if pin_frame {
@@ -5935,6 +5955,8 @@ impl FractadyneApp {
                 // how the cliff got re-rolled dozens of times in one session.
                 self.perf.chunk_sig[vs] = sig;
                 self.perf.chunk_walk_view[vs] = walk_view;
+                self.perf.chunk_walk_epoch[vs] = self.perf.chunk_walk_epoch[vs].wrapping_add(1).max(1);
+                self.perf.chunk_running[vs] = None;
                 self.perf.chunk_cursor[vs] = 0;
                 self.perf.chunk_idx[vs] = 0;
                 self.perf.chunk_last_range[vs] = None;
@@ -5942,6 +5964,15 @@ impl FractadyneApp {
                 // A restarted walk's escape bands are a different progression's data.
             }
             let cur = self.perf.chunk_cursor[vs];
+            // A walk is never behind its own reading: a cursor that went back was reset somewhere
+            // this stage did not see, so its bound describes another walk — drop it.
+            if self.perf.chunk_running[vs].is_some_and(|(_, at, _)| cur < at) {
+                self.perf.chunk_running[vs] = None;
+            }
+            // A settled mode-2 walk counts its running pixels (`walk_charged_px` sizes by them).
+            if fe_walk && !interacting && !pin_frame && crate::tunables::cost().chunk_charge == 1 {
+                self.perf.chunk_count_walk[vs] = self.perf.chunk_walk_epoch[vs];
+            }
             if interacting && !pin_frame {
                 // The pass budget a MOVING frame was actually given, which is what decides whether
                 // it can walk far enough to commit a pixel at all. Recorded BEFORE the growth
@@ -6093,7 +6124,53 @@ impl FractadyneApp {
                     } else {
                         chunk_band_license(&self.perf.chunk_bands[vs], band as usize, pin_floor)
                     };
+                    // ⭐⭐CHARGE THE PIXELS STILL RUNNING (settled mode-2 walk). `budget_step` divides the
+                    // pass budget by EVERY texel, but a walk's later passes iterate only the texels
+                    // still running: at 9.3e78× the tail passes were ~5 ms of a 400 ms-model budget
+                    // (2026-10-07), one a frame. This walk's own count (`chunk_running`) is an UPPER
+                    // bound for every later pass (a pixel never restarts), and below the occupancy
+                    // knee a pass is charged the knee, as the calibration ceiling charges it: the
+                    // worst-case model is unchanged, only the pixel count is honest. Unknown (no
+                    // reading of THIS walk yet, no knee) charges the whole frame, as before. The band
+                    // licence below still caps every pass by its own band's prices.
+                    let all_px = spx.saturating_mul(ss2);
+                    let charged = if fe_walk && !interacting && !pin_frame && crate::tunables::cost().chunk_charge == 1 {
+                        walk_charged_px(
+                            all_px,
+                            crate::calibration::knee_px(),
+                            self.perf.chunk_walk_epoch[vs],
+                            real_lo,
+                            self.perf.chunk_running[vs],
+                        )
+                    } else {
+                        all_px
+                    };
+                    let budget_step = if charged < all_px {
+                        self.perf.chunk_charged_px[vs] = charged;
+                        let charged_step =
+                            ((pass_steps / charged.max(1)) as u32).clamp(floor, gpu_iter.max(floor));
+                        if crate::diag::trace_on("tile") {
+                            crate::diag::trace(
+                                "tile",
+                                format!(
+                                    "chunk-charge f={} vs={vs} running={} charged={charged} of {all_px} step {budget_step} -> {charged_step}",
+                                    self.perf.frame_idx,
+                                    self.perf.chunk_running[vs].map_or(0, |(_, _, n)| n),
+                                ),
+                            );
+                        }
+                        charged_step
+                    } else {
+                        budget_step
+                    };
                     let step = budget_step.min(licence);
+                    let step = if crate::tunables::cost().chunk_shuffle == 1 && !interacting && !pin_frame {
+                        // Test hook (`CHUNK_SHUFFLE`): an uneven window, the same every run.
+                        let h = (self.perf.chunk_idx[vs] as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 60;
+                        ((step as u64 * (16 + h) / 32) as u32).max(1)
+                    } else {
+                        step
+                    };
                     let step = if pin_frame { step.max(pin_floor.min(gpu_iter.max(1))) } else { step };
                     let end = real_lo.saturating_add(step).min(walk_end);
                     // A PIN pass stops at the end of the band it started in. The licence is the
@@ -6144,9 +6221,9 @@ impl FractadyneApp {
                         self.perf.pin_pass_gpu_ms[vs] = -1.0;
                     }
                     // This frame runs a real bounded pass; pair the measurement with ITS cost —
-                    // the iterations past the SA seed, not the free [0, sa_skip) prefix.
-                    self.perf.fe_steps_last[vs] =
-                        spx.saturating_mul(ss2).saturating_mul((end - real_lo).max(1) as u64);
+                    // the iterations past the SA seed, not the free [0, sa_skip) prefix — over the
+                    // texels it was CHARGED for (the whole frame unless the running count applied).
+                    self.perf.fe_steps_last[vs] = charged.saturating_mul((end - real_lo).max(1) as u64);
                     self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
                 }
             } else {
@@ -6741,9 +6818,13 @@ impl FractadyneApp {
         // otherwise; a CHUNKED frame's cost is the whole frame over its iteration RANGE, not the
         // full count. Travels with the pass so the timing comes back already paired.
         let nominal_steps = match (chunk_range, tile) {
-            (Some([cs, ce]), _) => spx
-                .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                .saturating_mul((ce.saturating_sub(cs)).max(1) as u64),
+            (Some([cs, ce]), _) => {
+                let px = match self.perf.chunk_charged_px[vs.min(1)] {
+                    0 => spx.saturating_mul((ss as u64).saturating_mul(ss as u64)),
+                    charged => charged,
+                };
+                px.saturating_mul((ce.saturating_sub(cs)).max(1) as u64)
+            }
             (None, Some(r)) => (r[2] as u64)
                 .saturating_mul(r[3] as u64)
                 .saturating_mul((ss as u64).saturating_mul(ss as u64))
@@ -6792,6 +6873,7 @@ impl FractadyneApp {
             norm_complete_out: Some(self.perf.norm_complete_sink[vs.min(1)].clone()),
             content_tag,
             content_out: Some(self.perf.content_sink[vs.min(1)].clone()),
+            chunk_walk: self.perf.chunk_count_walk[vs.min(1)],
             tile,
             chunk_range,
             chunk_idx,
@@ -8594,6 +8676,7 @@ impl FractadyneApp {
             tdr_allowed,
             max_tiles,
             chunk_over,
+            chunk_mode == RenderMode::Floatexp,
             pin_frame,
             key_changed,
             tile,
@@ -9052,6 +9135,8 @@ impl FractadyneApp {
                 // with no dispatch and the resume state is untrustworthy. Discard it.
                 self.perf.pin[vsub] = None;
                 self.perf.chunk_cursor[vs] = 0;
+                self.perf.chunk_walk_epoch[vs] = self.perf.chunk_walk_epoch[vs].wrapping_add(1).max(1);
+                self.perf.chunk_running[vs] = None;
                 self.perf.chunk_idx[vs] = 0;
                 self.perf.chunk_pending[vs] = false;
                 pin_frame = false;
@@ -9103,6 +9188,8 @@ impl FractadyneApp {
                     split_next: 0,
                 });
                 self.perf.chunk_cursor[vs] = end;
+                self.perf.chunk_walk_epoch[vs] = self.perf.chunk_walk_epoch[vs].wrapping_add(1).max(1);
+                self.perf.chunk_running[vs] = None;
                 self.perf.chunk_idx[vs] = 1;
                 self.perf.chunk_pending[vs] = true;
                 self.perf.chunk_dirty[vsub] = true;
@@ -11165,6 +11252,66 @@ pub(crate) fn chunk_band_retreat(bands: &mut [u32; crate::tunables::CHUNK_BANDS]
 
 /// A chunk walk's identity: `(view hash, ask, resolution, ss)` — see `chunk_sig` in `build_params`.
 pub(crate) type ChunkSig = (u64, u32, [u32; 2], u32);
+
+/// The series approximation a walk's first pass seeds from, as bits for the walk's identity: the
+/// skip and every coefficient (FNV-1a over their bit patterns). Two seeds that differ in any bit
+/// seed different pixels, so they are different walks.
+pub(crate) fn series_seed_bits(sa: &fractadyne_core::SeriesSkip) -> u64 {
+    let words = std::iter::once(sa.skip)
+        .chain(sa.a.iter().map(|v| v.to_bits()))
+        .chain([sa.a_exp as u32])
+        .chain(sa.b.iter().map(|v| v.to_bits()))
+        .chain([sa.b_exp as u32])
+        .chain(sa.c.iter().map(|v| v.to_bits()))
+        .chain([sa.c_exp as u32]);
+    words.fold(0xcbf2_9ce4_8422_2325u64, |h, w| (h ^ u64::from(w)).wrapping_mul(0x0000_0100_0000_01b3))
+}
+
+/// Texels a settled mode-2 walk pass starting at `start` is CHARGED for: `max(running, knee)`
+/// from this walk's own count, never more than the frame's `all_px`. The whole frame when the bound
+/// does not apply: no reading of walk `walk` yet (`bound` is another walk's, or none), a pass that
+/// starts BEFORE the reading's cursor (only later passes are bounded — a pixel never restarts
+/// within a walk, so the count can only fall), or no occupancy knee for this adapter.
+///
+/// ⚠Charging the KNEE below it is what keeps the worst case where it was: a dispatch narrower
+/// than the knee does not get cheaper per step, it gets latency-bound (the calibration ceiling's
+/// own `min(1, px / knee)` term). So `max(running, knee) × window ≤ budget` bounds a pass exactly
+/// as `all_px × window ≤ budget` did, for the frames where `running` is honest — which the walk
+/// number and the cursor make it.
+pub(crate) fn walk_charged_px(
+    all_px: u64,
+    knee: u64,
+    walk: u64,
+    start: u32,
+    bound: Option<(u64, u32, u32)>,
+) -> u64 {
+    match bound {
+        Some((w, at, running)) if knee > 0 && walk != 0 && w == walk && start >= at => {
+            (running as u64).max(knee).min(all_px)
+        }
+        _ => all_px,
+    }
+}
+
+/// Fold one counter reading into the walk's running bound (`Perf::chunk_running`). Only a reading
+/// of the CURRENT walk (`reading_walk == walk`, nonzero: the pass counted) moves it; within a walk
+/// the bound keeps the smallest count at the furthest cursor, whatever order readings land in.
+pub(crate) fn walk_running_feed(
+    cur: Option<(u64, u32, u32)>,
+    walk: u64,
+    reading_walk: u64,
+    reading_cursor: u32,
+    reading_running: u32,
+) -> Option<(u64, u32, u32)> {
+    if reading_walk == 0 || reading_walk != walk {
+        // Not counted, or another walk's: keep the bound only if it is this walk's.
+        return cur.filter(|&(w, _, _)| w == walk);
+    }
+    Some(match cur {
+        Some((w, at, n)) if w == walk => (w, at.max(reading_cursor), n.min(reading_running)),
+        _ => (walk, reading_cursor, reading_running),
+    })
+}
 
 /// Does restarting the chunk walk CLEAR the band ledger? `prev_*` are the walk being replaced:
 /// its `chunk_sig` and its jitter-free `chunk_walk_view`.

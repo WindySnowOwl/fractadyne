@@ -109,6 +109,10 @@ pub(crate) struct Cost {
     pub orbit_schedule: u64,
     /// A tour's series walk recorded once per reference (`SA_TRACE_DEFAULT`; 0 = off, 1 = on).
     pub sa_trace: u64,
+    /// A settled mode-2 walk charges the pixels still running (`CHUNK_CHARGE_DEFAULT`; 0 = off).
+    pub chunk_charge: u64,
+    /// Test hook: deterministic uneven settled-walk windows (`CHUNK_SHUFFLE_DEFAULT`; 0 = off).
+    pub chunk_shuffle: u64,
     /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
     /// second override channel because duplicating the machinery for a single value would be worse.
     /// See the note above on what earns a place in this set.
@@ -150,6 +154,8 @@ impl Default for Cost {
             renorm_bla: RENORM_BLA_DEFAULT,
             orbit_schedule: ORBIT_SCHEDULE_DEFAULT,
             sa_trace: SA_TRACE_DEFAULT,
+            chunk_charge: CHUNK_CHARGE_DEFAULT,
+            chunk_shuffle: CHUNK_SHUFFLE_DEFAULT,
             bla_eps: BLA_EPS,
         }
     }
@@ -368,6 +374,24 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "CHUNK_CHARGE" => {
+                let p = c.chunk_charge;
+                c.chunk_charge = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set CHUNK_CHARGE: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
+            "CHUNK_SHUFFLE" => {
+                let p = c.chunk_shuffle;
+                c.chunk_shuffle = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set CHUNK_SHUFFLE: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "TILE_PACK" => {
                 let p = c.tile_pack;
                 c.tile_pack = match raw.as_str() {
@@ -476,7 +500,8 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
-    ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE";
+    ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
+    CHUNK_SHUFFLE";
 
 #[cfg(test)]
 mod override_tests;
@@ -935,6 +960,17 @@ pub(crate) const RENORM_DEFAULT: u64 = 1;
 /// beside them. Byte-identical either way (selftest `iter-chunk`). 0 = every pass runs the whole
 /// tile, for the before/after measurement.
 pub(crate) const TILE_PACK_DEFAULT: u64 = 1;
+
+/// 1 = a settled mode-2 chunk walk charges each pass for the pixels still RUNNING (a counted
+/// upper bound from the walk's own readings, at least the occupancy knee) instead of every pixel,
+/// so its late passes cover more iterations under the same worst-case model (`walk_charged_px` in
+/// render.rs). 0 = every pass is charged the whole frame, as before 2026-10-07.
+pub(crate) const CHUNK_CHARGE_DEFAULT: u64 = 1;
+
+/// TEST HOOK, 0 in use. 1 = every settled walk pass's window is scaled by a fixed pseudo-random
+/// factor in [50%, 97%] chosen by its pass index — uneven window sequences that repeat exactly from
+/// run to run, to test that where a walk's passes split never changes a pixel.
+pub(crate) const CHUNK_SHUFFLE_DEFAULT: u64 = 0;
 
 /// 1 = THE U-SPACE BLA (`fractadyne_core::renorm_bla_gpu`): the renormalized step skips along its
 /// own u-reference by a BLA tree, as the main loop skips along the orbit. An approximation held to

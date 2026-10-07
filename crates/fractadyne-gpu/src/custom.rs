@@ -1192,7 +1192,7 @@ fn chunk_fe_entry() -> String {
     }}
     var status: f32 = ST_RUNNING;
     if (iter >= iu.max_iter) {{ status = ST_INTERIOR; }}
-    if (status == ST_RUNNING && iu.step_cap > 0u) {{
+    if (status == ST_RUNNING && (iu.step_cap > 0u || iu.count_running == 1u)) {{
         chunk_slot = atomicAdd(&counters[CTR_CHUNK_RUNNING], 1u);
     }}
     return ChunkOut4(

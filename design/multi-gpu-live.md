@@ -425,6 +425,39 @@ remainder. Both ways past it touch the dispatch-size safety model:
 - **Several passes a frame** while accumulating: each pass inside the ceiling, but one submission's
   sum is not, which the serialized walk exists to prevent.
 
+**Pacing, step 2 (2026-10-07, user: "count only pixels still iterating"): charge the pixels still
+running.** A live mode-2 chunk pass now counts the pixels it leaves running (`count_running`, the
+former `rn_pad1`; the same `CTR_CHUNK_RUNNING` the export's step-capped passes fill), and the
+readback carries the walk's number (`MandelbrotParams::chunk_walk`). A settled pass is charged
+`max(running, knee)` texels instead of the whole frame (`walk_charged_px`), and only from a count of
+the SAME walk at an earlier cursor (`walk_running_feed`; every restart, pin start and pin discard
+bumps the number, and a cursor found behind its reading drops the bound). The worst case is the
+calibration ceiling's own model: below the knee a pass is latency-bound and charged the knee. No
+knee for the adapter, no count, or `--set CHUNK_CHARGE=0`: the whole frame, as before.
+- 9.3e78×: 81 → 48 frames a sample; the settle 35.9 → ~21 s (68.4 s before step 1: 3.2×).
+- 6.8e3999×: 9.0 → 5.3 s (24.2 s before step 1: 4.6×), pixel-identical.
+- At 1600×1000 the pane is 479k px, so the knee (262k on the RTX 3080, 524k by default and on the
+  RX 6800 XT) caps the gain near 1.8×; a 4K pane's late passes can grow far more.
+
+**A walk's identity now includes its SERIES SEED** (`series_seed_bits`). Found while checking
+step 2's images: at 9.3e78× the series skip is refined (5513 → 5535, with a new reference) a few
+frames after the settle walk starts, and the walk carried on, its pixels seeded from the old series
+while every later walk seeds from the new one. A supersampling run whose quick colour restarts
+reused that settle walk as sample 0 converged 79 pixels away from one that re-walked it. A
+pre-existing bug; it touched ordinary settled frames too.
+
+**⚠Open, pre-existing: the live walk is not reproducible under every timing.** With live
+normalization OFF (the sensitive test: the palette cycles fast through the deep counts), identical
+settings sometimes converge a few dozen pixels apart (≤ 3/255): uniform 209k-iteration windows with
+`CHUNK_CHARGE=0` gave 65 and 16 pixels against the old build, 78 between the two runs; default
+windows did not show it here, but two runs sharing the GPU did (192/251, earlier). Longer passes
+make it likelier, so step 2 surfaces it more often (1 run in 5 at default normalization-off; with
+normalization on, 0–3 pixels). Ruled out: window size and placement (`--set CHUNK_SHUFFLE=1`,
+deterministic uneven windows, is pixel-identical), the colour mapping, the series seed (fixed), the
+running count's data flow (no shader code reads counters), and every iterate input in the frame
+record. Next: read back each folded sample's iteration texture and hash it, so two runs name the
+sample that differs.
+
 **Next.**
-1. Decide on the active-pixel accounting above (TDR-safety model; the RX 6800 XT has a loss history).
+1. Find the timing-dependent difference (per-sample hashes, above).
 2. A setting in place of the flag.
