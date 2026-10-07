@@ -3720,6 +3720,11 @@ impl FractadyneApp {
                 };
                 let agree = |a: f64, b: f64| if a < 0.0 || b < 0.0 { (a < 0.0) == (b < 0.0) } else { (a - b).abs() < tol };
                 for j in 0..nn {
+                    // The interpreter walks every pixel to the cap; Manowar's took 9.3–10.4 s with
+                    // no breadcrumb, at the watchdog's 10 s window, and a busier run tripped it.
+                    if j > 0 && j % 64 == 0 {
+                        crate::diag::breadcrumb(format!("selftest: {label}: CPU interpreter, row {j} of {nn}"));
+                    }
                     for i in 0..nn {
                         let c = (
                             centre.0 + sx * ((i as f64 + 0.5) - N as f64 * 0.5) * scale,
