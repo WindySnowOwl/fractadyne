@@ -1010,6 +1010,10 @@ struct HoldState {
 /// resized in `ensure_accum`, dropped when a non-accumulating frame renders.
 struct AccumState {
     frame: wgpu::TextureView,
+    /// A sample rendered on ANOTHER device (`MandelbrotParams::accum_external`): uploaded here,
+    /// written into its own `frame`-format target, and folded like `frame`. Made on first use at
+    /// the accumulator's size.
+    ext: Option<ExtSlot>,
     avg: [wgpu::TextureView; 2],
     /// `accum_bg[dst]` folds into `avg[dst]`, reading `avg[1 - dst]` at binding 2 + `frame` at 1.
     accum_bg: [wgpu::BindGroup; 2],
@@ -2240,6 +2244,7 @@ impl ViewResources {
         ];
         self.accum = Some(AccumState {
             frame,
+            ext: None,
             avg,
             accum_bg,
             present_bg,
@@ -2370,6 +2375,33 @@ impl Default for RefOffset {
     fn default() -> Self {
         RefOffset::ZERO
     }
+}
+
+/// One supersampling sample rendered on another device (`design/multi-gpu-live.md` L2): the
+/// colour of a whole jittered frame as `fs_color` returns it (the export's `Rgba32Float` output),
+/// `width × height` pixels of RGBA floats.
+///
+/// ⭐Floats, not bytes. A local sample reaches the average through this device's write into the
+/// 8-bit `frame` target, and that write is the VENDOR's rounding, not `round(v · 255)`: on the RTX
+/// 3080 (Vulkan) it lands one lower on 3% of a float ramp and never higher. Samples rounded on the
+/// CPU folded half an LSB high in places, and the converged image read 1/255 brighter on 10% of its
+/// pixels (2026-10-07). So this device writes the floats into a `frame`-format target itself, and
+/// every sample in the average is rounded by the same hardware.
+pub struct AccumSample {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<f32>,
+}
+
+/// The accumulator's slot for an [`AccumSample`]: the float upload, the `frame`-format target it is
+/// written into (`write_bg` binds the upload for the present pipeline, whose blit IS that write),
+/// and the fold bind groups (`bg[dst]` folds into `avg[dst]`, reading `avg[1 - dst]`, like
+/// `AccumState::accum_bg`).
+struct ExtSlot {
+    upload: wgpu::Texture,
+    frame: wgpu::TextureView,
+    write_bg: wgpu::BindGroup,
+    bg: [wgpu::BindGroup; 2],
 }
 
 /// Per-frame data the app hands to the paint callback. The reference orbit is
@@ -2622,6 +2654,11 @@ pub struct MandelbrotParams {
     pub accum_present: bool,
     pub accum_commit: bool,
     pub accum_reset: bool,
+    /// A sample rendered on another device, to fold into the running average this frame (it is
+    /// complete by construction: no tile, chunk or reprojection state of this frame applies). The
+    /// app attaches one only on a frame that does not also `accum_commit` — the two folds would
+    /// share the accumulator's weight uniform within one submission.
+    pub accum_external: Option<Arc<AccumSample>>,
 }
 
 /// A frame that asks for nothing: no sinks, no reference, the direct mode, one sample a pixel, no
@@ -2741,6 +2778,7 @@ impl Default for MandelbrotParams {
             accum_present: false,
             accum_commit: false,
             accum_reset: false,
+            accum_external: None,
         }
     }
 }
@@ -2835,6 +2873,7 @@ impl CallbackTrait for MandelbrotParams {
         // Progressive-SSAA passes (disjoint fields, borrowed alongside the per-view resources).
         let color_pipeline = &r.color_pipeline;
         let accum_pipeline = &r.accum_pipeline;
+        let present_pipeline = &r.present_pipeline;
         let accum_bgl = &r.accum_bgl;
         let present_bgl = &r.present_bgl;
         let accum_format = r.target_format;
@@ -3632,6 +3671,96 @@ impl CallbackTrait for MandelbrotParams {
             let a = view.accum.as_mut().unwrap();
             a.count = n + 1;
             a.latest = dst;
+        } else if let Some(sample) = &self.accum_external {
+            // A sample from another device: upload its floats, write them into a `frame`-format
+            // target through this device's own colour write (see `AccumSample`), and fold that
+            // exactly as a local sample is folded (the same pipeline and weight rule). Only into a
+            // run already under way (sample 0 is always this device's), and only at its size.
+            let fits = sample.rgba.len() == 4 * sample.width as usize * sample.height as usize;
+            if let Some(a) =
+                view.accum.as_mut().filter(|a| fits && a.count > 0 && a.size == [sample.width, sample.height])
+            {
+                if a.ext.is_none() {
+                    let upload = device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("fractadyne.accum_ext_upload"),
+                        size: wgpu::Extent3d { width: a.size[0], height: a.size[1], depth_or_array_layers: 1 },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                        view_formats: &[],
+                    });
+                    let uv = upload.create_view(&wgpu::TextureViewDescriptor::default());
+                    let frame = make_target_texture(device, a.size, accum_format);
+                    let write_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("fractadyne.accum_ext_write_bg"),
+                        layout: present_bgl,
+                        entries: &[wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&uv) }],
+                    });
+                    let bg = |prev: &wgpu::TextureView, label| {
+                        device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some(label),
+                            layout: accum_bgl,
+                            entries: &[
+                                wgpu::BindGroupEntry { binding: 0, resource: a.uniform.as_entire_binding() },
+                                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&frame) },
+                                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(prev) },
+                            ],
+                        })
+                    };
+                    let bgs = [bg(&a.avg[1], "fractadyne.accum_ext_bg0"), bg(&a.avg[0], "fractadyne.accum_ext_bg1")];
+                    a.ext = Some(ExtSlot { upload, frame, write_bg, bg: bgs });
+                }
+                let ext = a.ext.as_ref().unwrap();
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &ext.upload,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    bytemuck::cast_slice(&sample.rgba),
+                    wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(16 * sample.width), rows_per_image: None },
+                    wgpu::Extent3d { width: sample.width, height: sample.height, depth_or_array_layers: 1 },
+                );
+                let (n, src) = (a.count, a.latest);
+                let dst = 1 - src;
+                queue.write_buffer(&a.uniform, 0, bytemuck::bytes_of(&AccumU { inv_weight: 1.0 / (n as f32 + 1.0), _pad: [0.0; 3] }));
+                let target = |v| wgpu::RenderPassColorAttachment {
+                    view: v,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                };
+                // The floats → the `frame`-format target: the present pipeline's blit, which is a
+                // textureLoad and this device's colour write, as `fs_color`'s output takes.
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("fractadyne.accum_ext_write"),
+                        color_attachments: &[Some(target(&ext.frame))],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_pipeline(present_pipeline);
+                    pass.set_bind_group(0, &ext.write_bg, &[]);
+                    pass.draw(0..3, 0..1);
+                }
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("fractadyne.accum_fold_ext"),
+                        color_attachments: &[Some(target(&a.avg[dst]))],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    pass.set_pipeline(accum_pipeline);
+                    pass.set_bind_group(0, &ext.bg[dst], &[]);
+                    pass.draw(0..3, 0..1);
+                }
+                a.count = n + 1;
+                a.latest = dst;
+            }
         } else if !self.accum_present {
             view.accum = None; // accumulation fully off → release the accumulator's textures
         }

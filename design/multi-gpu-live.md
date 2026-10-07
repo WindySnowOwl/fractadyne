@@ -98,6 +98,8 @@ each of the 24 samples is a whole walk of the frame.
   - one reference buffer per `orbit_id` it has been sent;
   - the dispatch ceiling for **its** adapter;
   - its own capability flags (`TAIL_DF32` etc., process-wide atomics today, lib.rs:175-211);
+    **2026-10-07: not needed.** Those three atomics are configuration switches (`--set` tunables),
+    the same for every device, not detected capabilities; see §8;
   - its own pass pricing.
 - **Rendering.** It uses the export path's tiling and TDR-safe pricing, fed the **live** job's
   iterate uniform rather than an export request's. ⚠The export and live paths set some fields
@@ -262,3 +264,93 @@ panel ever mixes GPU classes.
    speed and mixed-class checks (each queued run asked first)?
 3. **Where:** on `feat/remote-rendering`, which already has `--adapter`, `--list-adapters` and
    `gpu_choice`, or a new branch off it?
+
+**Answered 2026-10-07:** L2 first, the twin-device rig, on `feat/remote-rendering`.
+
+## 8. L2 as built (2026-10-07)
+
+**How to run it.** `--worker-gpu same | N | NAME` (a dev flag; there is no setting yet). `same` opens
+a twin device on the window's adapter, the test rig. Otherwise it takes a number from
+`--list-adapters` or part of an adapter's name. Without the flag nothing changes.
+
+**What it is.**
+- `gpu_worker.rs`: a headless device with its own `wgpu::Instance` and thread. It renders whole jobs
+  through `render_export`, so it has its own tiling, TDR-safe pricing and pipelines.
+- A job is one jittered sample of the settled frame. It is built from sample 0's confirmed
+  `MandelbrotParams` by `params_to_request_exact`: the frame's own normalization map, palette
+  anti-aliasing and custom formula. `ExportRequest::jitter` places it where the live view would:
+  `px_offset = jitter · ss`.
+- The worker's loss is its own. The device-lost and error callbacks mark it dead and log it. The app
+  drops it, gives back the sample index it held, and carries on with one GPU.
+  `FRACTADYNE_WORKER_LOSE_AFTER=n` simulates a loss for tests.
+
+**Where it differs from §4 L2, and why.**
+- **Sample indices are shared, not split.** The window's device and the worker take the next free
+  Halton index when each is ready, not every other one. Two cards of different speeds both stay
+  busy. A failed or cancelled sample gives its index back.
+- **Each sample is shipped, not a partial average.** Every fold then uses the one weight rule,
+  `1/(n+1)`. At most one fold runs per frame, because the folds share the accumulator's weight
+  uniform.
+- **A sample travels as floats (16 B/px), and the window's device rounds it.** A local sample
+  reaches the average through that device's write into the 8-bit `frame` target. That write rounds
+  the way the vendor rounds, not as `round(v · 255)`. On the RTX 3080 (Vulkan), a float ramp
+  written to `Bgra8Unorm` came out one lower than `round(v · 255)` in 8,351 of 262,144 channels,
+  and never higher. The first version rounded worker samples on the CPU, and its converged image
+  read 1/255 brighter on about 10% of the pixels, all in one direction. So the window's device now
+  writes the floats into a `frame`-format target with the present pipeline's blit, which is a
+  `textureLoad` and that same write. Every sample in the average is then rounded by one device's
+  hardware, whatever vendor made it.
+- **Generations are run ids.** Each accumulation run has an id. A run that ends cancels the job in
+  flight, and an answer from an old run is dropped.
+
+**Not needed: per-device capability flags.** `TAIL_DF32`, `TILE_OCCUPANCY` and `TILE_PACK` are
+configuration, the same for every device. The export path keeps no other per-process GPU state
+(the remaining statics are a trace switch and the pipeline-constant maps). Nothing had to become
+per-device for L2.
+
+**`--shot` waits for a due run to begin** (`Perf::accum_due`). Its gate waited only on an *active*
+run. Between the settle and `accum: begin` it passed, and a 9.3e78× shot was written 80 ms after
+`begin`, an unaveraged frame.
+
+**Tests.**
+- `--selftest-filter worker` (4 checks):
+  - a twin device's jittered sample is bit-identical to the window's device rendering the same
+    request;
+  - control: the jitter changes the sample;
+  - control: a whole-pixel jitter is a whole-pixel shift (sign and units);
+  - a cancelled run's job answers without a sample, even when the cancel arrives before the job,
+    and the next run's job renders. It went red with the queued-cancel branch disabled.
+- `--shot` A/B at 1600×1000, with and without `--worker-gpu same`, comparing view 0's pane only:
+
+| View | Solo: 24 samples | With the twin worker | Worker's share | Pane pixels differing (382,100) |
+| --- | --- | --- | --- | --- |
+| 9.3e78× minibrot (4 runs) | 68.6 s | 18.0 s | 18 of 24, ~0.78 s each | 11 to 140 (max 3 to 5/255); solo vs solo: 0 |
+| 6.8e3999× Misiurewicz | 24.3 s | 4.2 s | 20 of 24, ~0.13 s each | 0 |
+| 9.3e78×, worker lost after 3 jobs | — | 63.0 s | 2 of 24 | 71 (max 3/255) |
+
+  The CPU-rounded first version differed at 53,680 pixels of the 9.3e78× pane, 23 of them by more
+  than 1.
+
+  ⚠**The worker arm is not reproducible run to run, though solo is.** All four 9.3e78× worker runs
+  gave the worker the same sample indices, and two of them still differ by 140 pixels (max 5/255).
+  The export path is bit-identical to itself (the checks above), so the suspect is the live path's
+  own samples. Whether a live frame runs as one pass or as chunks depends on timing, the two entry
+  points are known to differ at a few hundred pixels, and the worker's load on the same GPU moves
+  that timing. **Unverified**: the tile trace of two worker runs would show it.
+- `FRACTADYNE_WORKER_LOSE_AFTER=3`: the worker dropped out after its jobs, the app said so ("one
+  GPU from here"), gave the lost job's sample back to the window's device, and converged.
+
+**⚠The speed-up on ONE GPU is a finding, not a result.** A twin on the same adapter should add
+nothing, yet it finished the run 3.8× and 5.8× sooner. That means a live settle sample takes far
+longer than the GPU work in it: 2.9 s against 0.78 s, and 1.0 s against 0.13 s. The live path paces
+samples by its frame budget; the export path has no such pacing. Every timing here was taken while
+a farm render loaded the same GPU, and time-slicing favours big batches over frame-paced work. So
+these ratios are an upper bound until they are re-measured on an idle machine. If they hold, a
+faster single-GPU settle is open, at the cost of how quickly the first input after a settle can
+interrupt a long dispatch.
+
+**Next.**
+1. Re-measure the A/B on an idle machine, plus input latency during a worker sample.
+2. PLUTO (RTX 3070 + RX 6800 XT, asked first): speed and the mixed-class image (§5).
+3. Explain the worker arm's run-to-run variation with the tile trace (above).
+4. A setting in place of the flag, once PLUTO passes.

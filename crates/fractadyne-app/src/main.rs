@@ -82,6 +82,7 @@ mod glitchaudit;
 mod deviceloss_repro;
 mod gpu_choice;
 mod gputest;
+mod gpu_worker;
 mod help;
 mod icons;
 #[cfg(test)]
@@ -1581,12 +1582,33 @@ struct Perf {
     /// per-frame command handed to the GPU via `MandelbrotParams`. See `drive_accumulation`.
     accum_count: [u32; 2],
     accum_active: [bool; 2],
+    /// A run is DUE for this view but has not begun: accumulation is allowed here and
+    /// `drive_accumulation` is waiting for the settle to finish. `--shot` waits on it — between
+    /// the settle and `begin` nothing is in flight and no run is active, and a capture there is the
+    /// unaveraged frame. Only `drive_accumulation` sets it, so a view that never accumulates (an
+    /// L-system, Life) never reads due.
+    accum_due: [bool; 2],
     /// The current sample has been folded; the NEXT frame advances (re-arms the grid for the next
     /// jitter). Split across two frames so the fold reads the completed frame before a re-arm
     /// re-iterates over `tex_view`.
     accum_committed: [bool; 2],
     accum_jitter: [[f32; 2]; 2],
     accum_cmd: [AccumCmd; 2],
+    /// Supersampling on a SECOND GPU (`gpu_worker`, design/multi-gpu-live.md L2). `accum_run`: the
+    /// run's id, bumped whenever a run starts or stops, so a late sample of an old run is dropped.
+    /// `accum_next`: the next sample index to hand out — this device and the worker share the
+    /// jitter sequence, so every index is rendered once, by one of them; `accum_free`: indices a
+    /// failed worker job gave back. `accum_template`: the settled frame (sample 0's params) the
+    /// worker renders its samples from. `accum_ext_ready`: worker samples waiting to fold;
+    /// `accum_ext_attach`: the one handed to this frame's params (`build_params` takes it).
+    accum_run: [u64; 2],
+    accum_next: [u32; 2],
+    accum_free: [Vec<u32>; 2],
+    accum_template: [Option<fractadyne_gpu::MandelbrotParams>; 2],
+    accum_ext_ready: [Vec<std::sync::Arc<fractadyne_gpu::AccumSample>>; 2],
+    accum_ext_attach: [Option<std::sync::Arc<fractadyne_gpu::AccumSample>>; 2],
+    /// The worker's job in flight: (view, run, sample index).
+    worker_job: Option<(usize, u64, u32)>,
     /// The colour-state signature (`accum_color_sig`) the running average was started under, and
     /// the supersampling factor its samples are rendered at. The average is a COLOUR texture, so
     /// any change to how a frame is coloured — palette, cycle/offset, method, effects, live
@@ -2205,8 +2227,16 @@ impl Default for Perf {
             tile_pending: [false, false],
             accum_count: [0, 0],
             accum_active: [false, false],
+            accum_due: [false, false],
             accum_committed: [false, false],
             accum_jitter: [[0.0, 0.0], [0.0, 0.0]],
+            accum_run: [0, 0],
+            accum_next: [0, 0],
+            accum_free: [Vec::new(), Vec::new()],
+            accum_template: [None, None],
+            accum_ext_ready: [Vec::new(), Vec::new()],
+            accum_ext_attach: [None, None],
+            worker_job: None,
             accum_cmd: [AccumCmd::default(), AccumCmd::default()],
             accum_sig: [0, 0],
             accum_ss: [1, 1],
@@ -5808,6 +5838,9 @@ struct FractadyneApp {
     /// the renderer from outside the paint callback — compiling a custom formula's pipelines off
     /// the render thread (`fractadyne_gpu::compile_custom_async`).
     render_state: Option<eframe::egui_wgpu::RenderState>,
+    /// A second graphics device for the live view (`--worker-gpu`, `design/multi-gpu-live.md`);
+    /// `None` = one GPU, as always. Dropped (not fatal) when it is lost.
+    gpu_worker: Option<gpu_worker::Worker>,
     /// Bookmarks (saved views), persisted to the config dir; + window/input state.
     bookmarks: Vec<Bookmark>,
     /// The user's saved gradients, loaded from `gradients.toml` beside the bookmarks.
@@ -6133,6 +6166,15 @@ impl FractadyneApp {
         self.sysinfo = gather_system_info(Some(&gpu_name));
         self.gpu_name = gpu_name;
         self.max_texture_dim = render_state.device.limits().max_texture_dimension_2d;
+        // `--worker-gpu SPEC`: a second device renders some of the settle's supersampling samples
+        // (design/multi-gpu-live.md L2). `same` = a twin device on this adapter (the test rig).
+        let worker_spec = std::env::args().collect::<Vec<_>>().windows(2).find(|w| w[0] == "--worker-gpu").map(|w| w[1].clone());
+        if let Some(spec) = worker_spec {
+            match gpu_worker::Worker::spawn(&spec, &render_state.adapter.get_info()) {
+                Ok(w) => self.gpu_worker = Some(w),
+                Err(e) => diag::log_line("worker", &format!("no worker GPU: {e}")),
+            }
+        }
         // Tell the operator they are watching a harness drive the app, not a person — the title
         // is the one place visible even when the window is behind others.
         if let Some(mode) = &self.test_banner {
@@ -6942,6 +6984,7 @@ impl FractadyneApp {
             gallery: GalleryState { dir: Self::pictures_dir(), ..Default::default() },
             gpu: None,
             render_state: None,
+            gpu_worker: None,
             bookmarks: Self::load_bookmarks(),
             saved_gradients: Self::load_saved_gradients(),
             pending_thumb: None,
@@ -13967,6 +14010,7 @@ impl FractadyneApp {
         // state presenting its stale average, never repainting). Any change restarts the run;
         // an ANIMATED colouring (glow phase, palette cycling) changes every frame and so simply
         // keeps accumulation off, which is right — a moving image has no fixed mean.
+        self.pump_worker();
         let sig = self.accum_color_sig(view);
         let stale = self.perf.accum_active[view] && sig != self.perf.accum_sig[view];
         let allowed = self.accumulation_allowed()
@@ -13974,7 +14018,11 @@ impl FractadyneApp {
             && !self.tour_playing()
             && log2mag >= ACCUM_MIN_LOG2
             && !stale;
+        self.perf.accum_due[view] = allowed && !self.perf.accum_active[view];
         if !allowed {
+            if self.perf.accum_active[view] {
+                self.accum_worker_reset(view);
+            }
             self.perf.accum_active[view] = false;
             self.perf.accum_committed[view] = false;
             self.perf.accum_cmd[view] = AccumCmd::default();
@@ -14014,7 +14062,9 @@ impl FractadyneApp {
                     ),
                 );
             }
+            self.accum_worker_reset(view);
             self.perf.accum_active[view] = false;
+            self.perf.accum_due[view] = true; // a fresh run starts once the texture is this view's
             self.perf.accum_committed[view] = false;
             self.perf.accum_cmd[view] = AccumCmd::default(); // present the live frame, not the average
             self.schedule_repaint(ctx);
@@ -14052,7 +14102,10 @@ impl FractadyneApp {
                 self.schedule_repaint(ctx);
                 return;
             }
+            self.accum_worker_reset(view);
+            self.perf.accum_next[view] = 1; // sample 0 (unjittered) is this device's
             self.perf.accum_active[view] = true;
+            self.perf.accum_due[view] = false;
             self.perf.content_wait_logged[view] = false; // arm the next episode's single line
             self.perf.accum_count[view] = 0;
             self.perf.accum_committed[view] = false;
@@ -14086,15 +14139,125 @@ impl FractadyneApp {
             // the held reprojection of the pre-pan frame with the new view's first tiles over it.
             cmd.commit = true;
             cmd.reset = count == 0;
-        } else {
+        } else if let Some(index) = self.accum_take_index(view) {
             // Folded — advance to the next sample: re-arm the settle grid at the next jitter.
+            // (One GPU: `index == count`, the sequence it always took.)
             self.perf.accum_committed[view] = false;
-            self.perf.accum_jitter[view] = accum_jitter_seq(count);
+            self.perf.accum_jitter[view] = accum_jitter_seq(index);
             self.perf.view_gen[view] = self.perf.frame_idx;
             cmd.jitter = self.perf.accum_jitter[view];
             self.schedule_repaint(ctx);
+        } else {
+            // Every sample is handed out and this device's are folded: the rest are the worker's.
+            // Stay committed (re-folding this frame would count it twice) and look again.
+            self.schedule_repaint(ctx);
+        }
+        // The worker's samples: fold a finished one on a frame that does not fold its own (the two
+        // folds would share the accumulator's weight uniform), and keep the worker busy.
+        if self.perf.accum_count[view] < accum_target() {
+            if !cmd.commit && !self.perf.accum_ext_ready[view].is_empty() {
+                let sample = self.perf.accum_ext_ready[view].remove(0);
+                self.perf.accum_ext_attach[view] = Some(sample);
+                let folded = self.perf.accum_count[view] + 1;
+                self.perf.accum_count[view] = folded;
+                if folded >= accum_target() {
+                    crate::diag::log_line("accum", &format!("view {view}: converged at {folded} samples (with the worker GPU)"));
+                }
+                self.schedule_repaint(ctx);
+            }
+            self.dispatch_worker_sample(view);
         }
         self.perf.accum_cmd[view] = cmd;
+    }
+
+    /// The next supersampling sample index for view `view` (a given-back one first), or `None` when
+    /// all `accum_target()` are handed out.
+    fn accum_take_index(&mut self, view: usize) -> Option<u32> {
+        if let Some(i) = self.perf.accum_free[view].pop() {
+            return Some(i);
+        }
+        let i = self.perf.accum_next[view];
+        (i < accum_target()).then(|| {
+            self.perf.accum_next[view] = i + 1;
+            i
+        })
+    }
+
+    /// Forget view `view`'s worker samples: a run starts or stops. The job in flight, if it is this
+    /// view's, is cancelled; its answer arrives under the old run id and is dropped.
+    fn accum_worker_reset(&mut self, view: usize) {
+        self.perf.accum_run[view] = self.perf.accum_run[view].wrapping_add(1);
+        self.perf.accum_template[view] = None;
+        self.perf.accum_free[view].clear();
+        self.perf.accum_ext_ready[view].clear();
+        self.perf.accum_ext_attach[view] = None;
+        if let Some((v, r, _)) = self.perf.worker_job.filter(|&(v, ..)| v == view) {
+            if let Some(w) = &self.gpu_worker {
+                w.cancel(v, r);
+            }
+        }
+    }
+
+    /// Give the worker its next sample of view `view`'s run, when it is idle and the run has a
+    /// settled frame to render from.
+    fn dispatch_worker_sample(&mut self, view: usize) {
+        if self.perf.worker_job.is_some()
+            || self.perf.accum_template[view].is_none()
+            || !self.gpu_worker.as_ref().is_some_and(|w| w.alive())
+        {
+            return;
+        }
+        let Some(index) = self.accum_take_index(view) else { return };
+        let req = crate::profile::params_to_request_exact(
+            self.perf.accum_template[view].as_ref().expect("checked above"),
+            accum_jitter_seq(index),
+        );
+        let run = self.perf.accum_run[view];
+        let job = gpu_worker::Job { view, run, index, req };
+        if self.gpu_worker.as_ref().is_some_and(|w| w.submit(job)) {
+            self.perf.worker_job = Some((view, run, index));
+        } else {
+            self.perf.accum_free[view].push(index); // this device renders it instead
+        }
+    }
+
+    /// Collect the worker's finished jobs: a current run's sample waits to fold; a failed or
+    /// cancelled one gives its index back; an old run's is dropped. A lost worker is dropped.
+    fn pump_worker(&mut self) {
+        let Some(w) = self.gpu_worker.as_ref() else { return };
+        while let Some(d) = w.try_recv() {
+            if self.perf.worker_job.is_some_and(|(v, r, i)| (v, r, i) == (d.view, d.run, d.index)) {
+                self.perf.worker_job = None;
+            }
+            let current = d.run == self.perf.accum_run[d.view] && self.perf.accum_active[d.view];
+            if !current {
+                continue;
+            }
+            match d.sample {
+                Some(s) => {
+                    crate::diag::log_line(
+                        "accum",
+                        &format!("view {}: sample {} rendered on the worker GPU in {:.0} ms", d.view, d.index, d.ms),
+                    );
+                    self.perf.accum_ext_ready[d.view].push(s);
+                }
+                None => {
+                    self.perf.accum_free[d.view].push(d.index);
+                    if let Some(e) = d.err {
+                        crate::diag::log_line("worker", &format!("sample {} failed on the worker GPU: {e}", d.index));
+                    }
+                }
+            }
+        }
+        if !w.alive() {
+            crate::diag::log_line("worker", &format!("dropping the worker GPU ({}) — one GPU from here", w.name));
+            if let Some((v, r, i)) = self.perf.worker_job.take() {
+                if r == self.perf.accum_run[v] {
+                    self.perf.accum_free[v].push(i);
+                }
+            }
+            self.gpu_worker = None;
+        }
     }
 
     /// Rule on the fold `drive_accumulation` proposed, now that `build_params` has built THIS
@@ -14182,6 +14345,16 @@ impl FractadyneApp {
         let folded = count + 1;
         self.perf.accum_count[view] = folded;
         self.perf.accum_committed[view] = true;
+        if count == 0 && self.gpu_worker.is_some() {
+            // Sample 0's frame is the settled view: the worker renders its samples from it.
+            let mut t = params.clone();
+            t.jitter = [0.0, 0.0];
+            t.accum_present = false;
+            t.accum_commit = false;
+            t.accum_reset = false;
+            t.accum_external = None;
+            self.perf.accum_template[view] = Some(t);
+        }
         // The fold's IDENTITY, on the tile trace: which view the folded texture was rendered
         // at and when. A sample folded at a different view than sample 0 is a ghost in every
         // later average (field report 2026-09-16: "a transparent overlay of another

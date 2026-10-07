@@ -4001,6 +4001,7 @@ impl FractadyneApp {
             height,
             work_budget: None, // default export tile budget; the tour path overrides per frame
             tile_px_max: None,
+            jitter: [0.0, 0.0],
             ss: self.export.ss.max(1),
             span_mantissa: scale.span_mantissa,
             center,
@@ -6865,6 +6866,7 @@ impl FractadyneApp {
             accum_present: self.perf.accum_cmd[vsub].present,
             accum_commit: self.perf.accum_cmd[vsub].commit,
             accum_reset: self.perf.accum_cmd[vsub].reset,
+            accum_external: self.perf.accum_ext_attach[vsub].take(),
             // The view the GPU stamps this frame's pixels with, and where it reports back which
             // view the texture is WHOLLY drawn at. `pos_sig` is the right identity because it is
             // the view's exact position as the shader sees it — the offset from the reference,

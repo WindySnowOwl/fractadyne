@@ -900,6 +900,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         height: p.resolution[1].max(1),
         work_budget: None,
         tile_px_max: None,
+        jitter: [0.0, 0.0],
         ss: p.ss.max(1),
         span_mantissa: p.span_mantissa,
         center: p.center,
@@ -949,6 +950,21 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         trap_type: p.trap_type,
         aa_filter: p.aa_filter,
         interior_col: p.interior_col,
+    }
+}
+
+/// [`params_to_request`] for COLOUR too, at sample position `jitter` (display pixels): the frame's
+/// own normalization map, palette anti-aliasing and custom formula. What a supersampling sample
+/// rendered on another device must use to fold into the live average (`gpu_worker`,
+/// `design/multi-gpu-live.md` L2) — the profiling conversion keeps the linear map on purpose.
+pub(crate) fn params_to_request_exact(p: &fractadyne_gpu::MandelbrotParams, jitter: [f32; 2]) -> fractadyne_gpu::ExportRequest {
+    fractadyne_gpu::ExportRequest {
+        norm_mode: p.norm_mode,
+        norm_lo: p.norm_lo,
+        aa_palette: p.aa_palette,
+        custom: p.custom.clone(),
+        jitter,
+        ..params_to_request(p)
     }
 }
 

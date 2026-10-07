@@ -499,7 +499,7 @@ impl FractadyneApp {
         let filter: Option<String> = self.selftest.filter.clone();
         const GROUPS: &[&str] = &[
             "numeric", "symmetry", "abs-family", "custom-formula", "life", "lsystem", "multibrot-sa", "bla", "aux-bla",
-            "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "nr-zoom", "coords",
+            "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "worker", "nr-zoom", "coords",
             "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
             "checklist",
@@ -1234,6 +1234,181 @@ impl FractadyneApp {
                     pass,
                 });
             }
+        }
+
+        // ⭐⭐A SECOND GPU'S SAMPLE (`gpu_worker`, design/multi-gpu-live.md L2). The live view folds
+        // supersampling samples rendered on another device into its running average, so a sample
+        // must not depend on the device that made it. The rig is a TWIN device on this adapter:
+        // the worker's own instance, device, queue and thread, through the export renderer, must
+        // give the bytes this device gives for the same jittered request. Two controls keep it
+        // honest, because each claim has a vacuous way to pass:
+        // - the jitter must change the picture (a twin that ignored it would agree about an
+        //   unjittered frame, and every sample of a run would be the same sample);
+        // - a whole-pixel jitter must be a whole-pixel SHIFT: the units and sign the live view
+        //   uses (`px_offset = jitter · ss`), through the iterate AND the colour pass.
+        if want("worker") {
+            use std::sync::atomic::{AtomicBool, AtomicU32};
+            const WW: u32 = 192;
+            const WH: u32 = 120;
+            let mag = 1.0e30;
+            let mut vp = Viewport::new(WW as f64, WH as f64);
+            vp.center_x = fractadyne_core::parse_bf(CRX).unwrap();
+            vp.center_y = fractadyne_core::parse_bf(CRY).unwrap();
+            vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (WH as f64 * mag));
+            vp.precision = fractadyne_core::precision_for_magnification(mag);
+            let saved_iter = self.render_cfg.max_iter;
+            let saved_auto = self.render_cfg.auto_iter;
+            let saved_method = self.coloring.color_method;
+            self.render_cfg.max_iter = 20_000;
+            self.render_cfg.auto_iter = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            let mut req = self.current_export_request_for(&vp, false);
+            self.render_cfg.max_iter = saved_iter;
+            self.render_cfg.auto_iter = saved_auto;
+            self.coloring.color_method = saved_method;
+            req.width = WW;
+            req.height = WH;
+            req.ss = 2;
+            req.jitter = [0.31, -0.22];
+            let progress = AtomicU32::new(0);
+            let cancel = AtomicBool::new(false);
+            let bit_exact = |a: &[f32], b: &[f32]| -> usize {
+                a.iter().zip(b).filter(|(x, y)| x.to_bits() != y.to_bits()).count()
+            };
+            let local = |r: &fractadyne_gpu::ExportRequest| {
+                fractadyne_gpu::render_export(device, queue, r, &progress, &cancel)
+                    .map_err(|e| eprintln!("[selftest] GPU ERROR (render_export, worker case): {e}"))
+                    .ok()
+            };
+            let mine = local(&req).map(crate::gpu_worker::sample_of);
+            let worker = self
+                .render_state
+                .as_ref()
+                .map(|rs| rs.adapter.get_info())
+                .ok_or_else(|| "no window adapter".to_string())
+                .and_then(|info| crate::gpu_worker::Worker::spawn("same", &info));
+            // One job of run `run`, waited for: its sample, `None` if it was cancelled, or why not.
+            type Answer = Result<Option<std::sync::Arc<fractadyne_gpu::AccumSample>>, String>;
+            let ask = |wk: &crate::gpu_worker::Worker, run: u64| -> Answer {
+                if !wk.submit(crate::gpu_worker::Job { view: 0, run, index: 1, req: req.clone() }) {
+                    return Err("the worker refused the job".into());
+                }
+                let t0 = std::time::Instant::now();
+                loop {
+                    if let Some(d) = wk.try_recv() {
+                        return d.err.map_or(Ok(d.sample), Err);
+                    }
+                    if t0.elapsed().as_secs() > 120 {
+                        return Err("no answer in 120 s".into());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            };
+            let theirs = worker
+                .as_ref()
+                .map_err(|e| e.clone())
+                .and_then(|wk| ask(wk, 1)?.ok_or_else(|| "cancelled".to_string()));
+            let (pass, result) = match (&mine, &theirs) {
+                (Some(m), Ok(t)) if m.rgba.len() == t.rgba.len() && [m.width, m.height] == [t.width, t.height] => {
+                    let diffs = bit_exact(&m.rgba, &t.rgba);
+                    (diffs == 0, format!("{diffs} of {} channels differ ({}×{})", m.rgba.len(), t.width, t.height))
+                }
+                (_, Err(e)) => (false, format!("the worker did not deliver: {e}")),
+                _ => (false, "render failed, or the sizes differ".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Worker",
+                name: "a twin device's jittered sample is bit-identical".into(),
+                params: format!("corpus07 1e30x, 20k iter, {WW}×{WH} ss 2, jitter (0.31, -0.22), mode {}", req.mode),
+                result,
+                threshold: "0 channels differ (bit for bit)",
+                pass,
+            });
+
+            // Control 1: the jitter reaches the picture.
+            let mut flat = req.clone();
+            flat.jitter = [0.0, 0.0];
+            let unjittered = local(&flat).map(crate::gpu_worker::sample_of);
+            let (pass, result) = match (&mine, &unjittered) {
+                (Some(m), Some(u)) if m.rgba.len() == u.rgba.len() => {
+                    let diffs = bit_exact(&m.rgba, &u.rgba);
+                    (diffs > 0, format!("{diffs} of {} channels differ from the unjittered frame", m.rgba.len()))
+                }
+                _ => (false, "render failed".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Worker",
+                name: "the jitter changes the sample (control)".into(),
+                params: "the case above, jitter (0, 0)".into(),
+                result,
+                threshold: "some channels differ",
+                pass,
+            });
+
+            // Control 2: jitter (1, 0) at ss 1 samples each pixel's right-hand neighbour. The edge
+            // columns are left out: their colour reads a neighbour one frame has and the other not.
+            let mut a = req.clone();
+            a.ss = 1;
+            a.jitter = [0.0, 0.0];
+            let mut b = a.clone();
+            b.jitter = [1.0, 0.0];
+            let (ra, rb) = (local(&a), local(&b));
+            let (pass, result) = match (&ra, &rb) {
+                (Some(ra), Some(rb)) if ra.pixels.len() == rb.pixels.len() => {
+                    let (w, h) = (ra.width as usize, ra.height as usize);
+                    let (mut shifted, mut aligned) = (0usize, 0usize);
+                    for y in 0..h {
+                        for x in 1..w - 2 {
+                            for k in 0..4 {
+                                let bv = rb.pixels[(y * w + x) * 4 + k].to_bits();
+                                shifted += (bv != ra.pixels[(y * w + x + 1) * 4 + k].to_bits()) as usize;
+                                aligned += (bv != ra.pixels[(y * w + x) * 4 + k].to_bits()) as usize;
+                            }
+                        }
+                    }
+                    (
+                        shifted == 0 && aligned > 0,
+                        format!("{shifted} texels differ from the frame shifted one pixel ({aligned} from the unshifted)"),
+                    )
+                }
+                _ => (false, "render failed".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Worker",
+                name: "a whole-pixel jitter is a whole-pixel shift (control)".into(),
+                params: format!("corpus07 1e30x, {WW}×{WH} ss 1, jitter (1, 0) vs (0, 0)"),
+                result,
+                threshold: "0 differ shifted, some differ unshifted",
+                pass,
+            });
+
+            // A cancelled run's job answers without a sample, even when the cancel reaches the
+            // worker before the job does (the app cancels on a run's reset, queued or rendering);
+            // and the cancel does not stick: the next run's job renders.
+            let say = |a: &Answer| match a {
+                Ok(Some(_)) => "a sample".to_string(),
+                Ok(None) => "no sample".to_string(),
+                Err(e) => e.clone(),
+            };
+            let (pass, result) = match &worker {
+                Err(e) => (false, format!("no worker: {e}")),
+                Ok(wk) => {
+                    wk.cancel(0, 2);
+                    let (cancelled, next) = (ask(wk, 2), ask(wk, 3));
+                    (
+                        matches!((&cancelled, &next), (Ok(None), Ok(Some(_)))),
+                        format!("cancelled run's job: {}; next run's job: {}", say(&cancelled), say(&next)),
+                    )
+                }
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Worker",
+                name: "a cancelled run's job answers without a sample; the next run's renders".into(),
+                params: "the twin above, cancel(view 0, run 2) before run 2's job is sent".into(),
+                result,
+                threshold: "no sample, then a sample",
+                pass,
+            });
         }
 
         // ⭐⭐THE RENORMALIZED STEP (`fractadyne_core::RenormStep`) through every path that runs it. The

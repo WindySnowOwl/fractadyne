@@ -333,7 +333,7 @@ fn report(sink: &mut Sink, w: u32, h: u32, px: &[f32]) -> usize {
 
 /// Block on a wgpu native future. Adapter/device requests resolve immediately on native, so a
 /// busy poll with a no-op waker is sufficient (and keeps the crate free of an async runtime).
-fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+pub(crate) fn block_on<F: std::future::Future>(fut: F) -> F::Output {
     let mut fut = std::pin::pin!(fut);
     let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
     loop {

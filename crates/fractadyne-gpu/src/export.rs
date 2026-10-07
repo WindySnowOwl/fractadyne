@@ -278,6 +278,11 @@ pub struct ExportRequest {
     /// dispatch and lose the device — the live path bounds this via `fe_budget`, the tour didn't).
     /// With occupancy-sized tiles (`OCC_TILE_SAMPLES`) it bounds each chunk DISPATCH instead.
     pub work_budget: Option<u64>,
+    /// Sub-pixel sample offset in DISPLAY pixels (`[0, 0]` = pixel centres), as the live view's
+    /// `MandelbrotParams::jitter` — the progressive-supersampling sample position, so a sample
+    /// rendered here on another device lands where the live view would place it. Honoured by
+    /// [`render_export`] (each tile's `px_offset` = its origin + `jitter · ss`, in texels).
+    pub jitter: [f32; 2],
     /// Test hook: the largest tile side, output px, the tiled loops may use. `None` in production.
     /// The selftest's tile-loop cases pin the pre-occupancy tile with it, so a 220-px frame still
     /// runs several tiles — a single tile cannot exercise cross-tile state or mix entry points.
@@ -1544,7 +1549,7 @@ fn render_export_impl(
                 center: req.center,
                 julia_c: req.julia_c,
                 res: [full_iw, full_ih],
-                px_offset: [(tx0 * ss) as f32, (ty0 * ss) as f32],
+                px_offset: [(tx0 * ss) as f32 + req.jitter[0] * ss as f32, (ty0 * ss) as f32 + req.jitter[1] * ss as f32],
                 max_iter: req.max_iter,
                 orbit_len: req.orbit_len,
                 mode: req.mode,
