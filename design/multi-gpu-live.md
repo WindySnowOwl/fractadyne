@@ -373,8 +373,35 @@ all left it unchanged. That is why a twin on the same card sped the run up.
 - Every run restarts once about 3 s in, in solo too, and re-renders sample 0 (one sample's time
   lost). Pre-existing; not changed here.
 
+**Idle re-measure (2026-10-07, after the farm render).** Unchanged: 9.3e78× solo 68.4 s → twin
+17.6 s (3.9×); 6.8e3999× solo 24.2 s → 4.1 s (5.9×). The contention had not inflated the ratios.
+
+**PLUTO (2026-10-07, field agent v18, build `g8bd5929`).** RX 6800 XT and RTX 3070, both Vulkan, in
+ONE process on Windows: no errors, no device loss. That settles §6's first risk.
+- The twin self-test passes on each card (`--adapter 1` and `--adapter 2`): 4/4 each.
+- `--shot` at 1600×1000, 24 samples:
+
+| View | Window card | Alone | Other card as worker | Worker's samples |
+| --- | --- | --- | --- | --- |
+| 6.8e3999× | RX 6800 XT | 29.0 s | 3.3 s (8.8×) | 20, 130 ms each on the 3070 |
+| 6.8e3999× | RTX 3070 | 27.5 s | 4.8 s (5.7×) | 19, 198 ms each on the 6800 XT |
+| 9.3e78× | RX 6800 XT | 95.0 s | 13.3 s (7.1×) | 20, 512 ms each |
+| 9.3e78× | RTX 3070 | 78.5 s | 13.1 s (6.0×) | 20, 493 ms each |
+
+  "The average holds all 24 samples" in every worker run.
+- **Mixed classes, the image.** The two cards alone differ at the 6.8e3999× view on 72% of
+  pane pixels (mean 2.3/255, max 23; the 6800 XT +0.2–0.35/255 brighter): fine grain across the
+  detailed filaments, faint arcs in the smooth background, nothing visible side by side. At 9.3e78×
+  they differ on 9% (max 9). A mixed run lands between the two (window alone vs mixed: 56% and
+  0.5%), the per-pixel averaging §5 predicted: no seam, no region from either card.
+
+**⭐What this says to do next.** §4's acceptance expected ~1/(1 + s₂/s₁) of one GPU's time; the
+measured 6–9× is far beyond it, because the worker is not frame-paced and the live path is (~158
+frames a sample, §8 above). So the largest lever is single-GPU: render the settle's samples off the
+frame pacing (on the window's own device, or a twin of it), which every user gets. A second GPU then
+adds its own sample rate on top.
+
 **Next.**
-1. Re-measure the A/B on an idle machine, plus input latency during a worker sample.
-2. PLUTO (RTX 3070 + RX 6800 XT, asked first; field agent v18 has `--shot`, `--worker-gpu`,
-   `--adapter`): speed and the mixed-class image (§5).
-3. A setting in place of the flag, once PLUTO passes.
+1. Unpace the settle samples on one GPU (measure input latency while a sample renders: a twin's long
+   dispatches share the card with the UI).
+2. A setting in place of the flag.
