@@ -716,7 +716,7 @@ fn the_pipelined_sa_walk_is_the_sequential_one() {
 }
 
 // The centre rescue may take its score from the app's build of the centre instead of walking it
-// again (`best_reference_diag_rescued` + `scoring_len_from_build`). The pick must come out
+// again (`best_reference_diag_from_build` + `centre_walk_from_build`). The pick must come out
 // byte-identical to the plain one — point, score, scoring precision, rescue verdict — whatever
 // the build's cap: past the escape (read off the build), short of it (continued from the tail),
 // and exactly at it. Anti-vacuity: the rescue branch really ran (the oracle was consulted), and
@@ -739,11 +739,12 @@ fn the_rescue_can_come_from_a_build() {
     for cap in [max_iter, full, full - 1, 3000, 1] {
         let (_, len, tail) = reference_orbit_t(&zero, &zero, &center[0], &center[1], 0, cap, p2);
         let asked = std::cell::Cell::new(0u32);
-        let rescue = || {
+        let centre = |want: bool| {
             asked.set(asked.get() + 1);
-            scoring_len_from_build(len, &tail, &center[0], &center[1], 0, max_iter, p2)
+            centre_walk_from_build(len, &tail, None, &center[0], &center[1], 0, max_iter, p2, want)
         };
-        let (got, diag) = best_reference_diag_rescued(&center, span, 0, false, [0.0, 0.0], max_iter, p, &rescue);
+        let src = CentreSource { walk: &centre, whole: cap >= max_iter };
+        let (got, diag) = best_reference_diag_from_build(&center, span, 0, false, [0.0, 0.0], max_iter, p, src);
         assert!(asked.get() > 0, "cap {cap}: the rescue never ran — this compared nothing");
         assert!(eq(&got[0], &plain[0]) && eq(&got[1], &plain[1]), "cap {cap}: a different point");
         assert_eq!(
@@ -751,7 +752,7 @@ fn the_rescue_can_come_from_a_build() {
             (plain_diag.winner_len, plain_diag.scoring_prec, plain_diag.rescued, plain_diag.survivors),
             "cap {cap}"
         );
-        assert_eq!(rescue(), Some(full), "cap {cap}: the build's score is not the walk's");
+        assert_eq!(centre(false).map(|w| w.len), Some(full), "cap {cap}: the build's score is not the walk's");
     }
     // A bounded orbit (main cardioid) never escapes: the build's cap decides everything, and a
     // short build must be continued to exactly `max_iter`.
@@ -763,6 +764,68 @@ fn the_rescue_can_come_from_a_build() {
             Some(orbit_length_in(crate::backend::selected(), &zero, &zero, &ix, &iy, 0, max_iter, p2, None)),
             "bounded orbit, cap {cap}"
         );
+    }
+}
+
+// Phase 2 may take the CENTRE's deep walk — its score AND the samples the perturbation scorer
+// rates the other survivors against — from the app's build of the centre (the build records into
+// `reference_orbit_periodic_until`'s sink; `centre_walk_from_build`). The pick must come out
+// byte-identical to the plain one whatever the build's cap: a build that walked the whole of the
+// centre's walk answers it, one cut short does not (the pick walks the centre itself); a build
+// not known to hold the whole walk (`whole` false) is not waited for at all. And the recording
+// must be the walk's own samples, bit for bit. Anti-vacuity: the scorer really ran against the
+// centre's walk, the samples were really asked for, and taken exactly where they should be.
+#[test]
+fn the_centre_walk_can_come_from_a_build() {
+    let p = 128;
+    let p2 = p + REF_RESCUE_EXTRA_BITS;
+    // Seahorse valley at a 1e-20 span: past 2^-44, so phase 2 scores the other survivors by
+    // perturbation against the centre's recorded walk; every candidate escapes after ~π/1e-4 ≈
+    // 31,400 iterations — past the quick scan (4,096), short of `max_iter` — so the centre is the
+    // first of many survivors and the winner escapes early (the rescue runs too).
+    let center = [bf(-0.75, p), bf(0.0001, p)];
+    let span = [FloatExp::from_f64(1e-20), FloatExp::from_f64(1e-20)];
+    let max_iter = 50_000;
+    assert!(pick_records_centre(0, false, span), "the view no longer engages the perturbation scorer");
+    let (plain, plain_diag) = best_reference_diag(&center, span, 0, false, [0.0, 0.0], max_iter, p);
+    assert!(plain_diag.deep_perturb && plain_diag.deep_scored > 0, "nothing was scored against the centre's walk");
+    assert!(!plain_diag.centre_from_build);
+    let zero = bf(0.0, p2);
+    let log2_span = span[0].log2().max(span[1].log2());
+    let mut walked = Vec::new();
+    let full = orbit_length_in(
+        crate::backend::selected(), &zero, &zero, &center[0], &center[1], 0, max_iter, p2, Some(&mut walked),
+    );
+    assert!(full > 4096 && full < max_iter, "the view no longer exercises phase 2 ({full})");
+    let eq = |a: &BigFloat, b: &BigFloat| a.cmp(b).is_some_and(|o| o == 0);
+    // (cap, `whole` as claimed, phase 2 takes the walk from the build): a build that ran to
+    // `max_iter`; one that escaped inside its cap, claimed whole and not; one cut a step short,
+    // even when (wrongly) claimed whole — it then walks the centre after phase 1; and a stub.
+    for (cap, whole, taken) in
+        [(max_iter, true, true), (full, true, true), (full, false, false), (full - 1, true, false), (1, false, false)]
+    {
+        let mut fe = Vec::new();
+        let (_, len, tail) =
+            reference_orbit_periodic_until(&zero, &zero, &center[0], &center[1], 0, cap, p2, log2_span, None, Some(&mut fe));
+        if cap >= full {
+            assert!(fe == walked, "cap {cap}: the build's recording is not the walk's samples");
+        }
+        let fe = std::cell::RefCell::new(Some(fe));
+        let sampled = std::cell::Cell::new(false);
+        let centre = |want: bool| {
+            sampled.set(sampled.get() | want);
+            let fe = if want { fe.borrow_mut().take() } else { None };
+            centre_walk_from_build(len, &tail, fe, &center[0], &center[1], 0, max_iter, p2, want)
+        };
+        let src = CentreSource { walk: &centre, whole };
+        let (got, diag) = best_reference_diag_from_build(&center, span, 0, false, [0.0, 0.0], max_iter, p, src);
+        assert_eq!(sampled.get(), whole, "cap {cap}: phase 2 asked for the samples, or not, wrongly");
+        assert_eq!(diag.centre_from_build, taken, "cap {cap}: taken from the build, or not, wrongly");
+        assert!(eq(&got[0], &plain[0]) && eq(&got[1], &plain[1]), "cap {cap}: a different point");
+        let key = |d: &RefPickDiag| {
+            (d.winner_len, d.scoring_prec, d.rescued, d.survivors, d.deep_scored, d.perturb_rebases, d.perturb_fallbacks)
+        };
+        assert_eq!(key(&diag), key(&plain_diag), "cap {cap}");
     }
 }
 

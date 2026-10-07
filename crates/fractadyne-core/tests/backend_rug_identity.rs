@@ -491,6 +491,36 @@ fn the_split_product_build_is_byte_identical_to_astro_float() {
     assert!(fc::orbit_split_steps() > split, "scheduled: the walk never split");
 }
 
+/// The build's extended-range RECORDING (`reference_orbit_periodic_until`'s sink, which the pick
+/// takes the centre's walk from) against the pick's own scoring walk, in the products-across-cores
+/// walk (17,000 bits) and the split one (40,000): the same samples, bit for bit, in MPFR and in
+/// astro-float. The low-precision loops are covered by the core's
+/// `the_centre_walk_can_come_from_a_build`, which runs in MPFR under this feature.
+#[test]
+fn the_build_records_the_scoring_walks_samples() {
+    fc::force_orbit_split(); // whatever this machine's core count
+    let steps = 300;
+    for p in [17_000usize, 40_000] {
+        let z0 = fc::BigFloat::from_f64(0.0, p);
+        let cx = fc::parse_bf_prec("-0.7436438870371587", p).unwrap();
+        let cy = fc::parse_bf_prec("0.1318259042053122", p).unwrap();
+        let mut fe = Vec::new();
+        let (_, len, tail) = fc::with_orbit_schedule(false, || {
+            fc::reference_orbit_periodic_until(&z0, &z0, &cx, &cy, 0, steps, p, -60.0, None, Some(&mut fe))
+        });
+        assert_eq!(len, steps + 1, "p={p}: the test orbit should run to its cap");
+        assert!(!tail.escaped && tail.period.is_none(), "p={p}");
+        for backend in [BackendChoice::Rug, BackendChoice::Astro] {
+            let mut walked = Vec::new();
+            let n = fc::with_orbit_schedule(false, || {
+                fc::orbit_length_in(backend, &z0, &z0, &cx, &cy, 0, steps, p, Some(&mut walked))
+            });
+            assert_eq!(n, steps, "p={p} {backend:?}");
+            assert!(fe == walked, "p={p} {backend:?}: the build's recording is not the scoring walk's samples");
+        }
+    }
+}
+
 /// Where splitting a step's products across cores starts to pay: ns per step of the MPFR
 /// build at several widths. Run twice — `FRACTADYNE_ORBIT_PAR_MIN_BITS=1` (always split) and
 /// `FRACTADYNE_ORBIT_THREADS=1` (never) — with `--ignored --nocapture`, and compare.

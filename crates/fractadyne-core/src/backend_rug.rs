@@ -396,7 +396,7 @@ mod tests {
         // The same schedule state the fresh build above started from (on or off with the switch).
         let sched = crate::reference::SchedState::fresh(p, crate::formula::MANDELBROT, true);
         let tail = super::try_run_orbit_inplace(
-            &mut got, &z0, &z0, &cx, &cy, crate::formula::MANDELBROT, 0, 12, p, None, sched,
+            &mut got, &z0, &z0, &cx, &cy, crate::formula::MANDELBROT, 0, 12, p, None, sched, None,
         )
         .expect("Mandelbrot must take the in-place path");
         assert_eq!(want.len(), got.len());
@@ -1039,6 +1039,7 @@ pub(crate) fn try_run_orbit_inplace(
     p: usize,
     mut probe: Option<&mut crate::reference::PeriodProbe<'_>>,
     sched: Option<crate::reference::SchedState>,
+    mut fe: Option<&mut Vec<crate::floatexp::CFloatExp>>,
 ) -> Option<(BigFloat, BigFloat, bool, Option<crate::reference::SchedState>)> {
     use crate::formula as fam;
     use rug::ops::{AddAssignRound, AssignRound, SubAssignRound, SubFromRound};
@@ -1076,6 +1077,9 @@ pub(crate) fn try_run_orbit_inplace(
                 let xv = zx.to_f64_trunc();
                 let yv = zy.to_f64_trunc();
                 out.push(crate::reference::pack_sample(xv, yv));
+                if let Some(s) = fe.as_deref_mut() {
+                    s.push(crate::floatexp::CFloatExp { re: RefBackend::to_floatexp(zx), im: RefBackend::to_floatexp(zy) });
+                }
                 n += 1;
                 crate::reference::count_reference_step(n);
                 if xv * xv + yv * yv > 1.0e12 {
@@ -1180,6 +1184,9 @@ pub(crate) fn try_run_orbit_inplace(
         let xv = zx.to_f64_trunc();
         let yv = zy.to_f64_trunc();
         out.push(crate::reference::pack_sample(xv, yv));
+        if let Some(s) = fe.as_deref_mut() {
+            s.push(crate::floatexp::CFloatExp { re: RefBackend::to_floatexp(&zx), im: RefBackend::to_floatexp(&zy) });
+        }
         n += 1;
         crate::reference::count_reference_step(n);
         if xv * xv + yv * yv > 1.0e12 {

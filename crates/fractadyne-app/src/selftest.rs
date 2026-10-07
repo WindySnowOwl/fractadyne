@@ -1511,6 +1511,7 @@ impl FractadyneApp {
                 ),
             ];
             let mut engaged = false;
+            let mut centre_taken = false;
             for (label, x, y, log2mag, iter) in views {
                 let mag = 2f64.powf(log2mag);
                 let mut vp = Viewport::new(N as f64, N as f64);
@@ -1519,8 +1520,9 @@ impl FractadyneApp {
                 vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * mag));
                 vp.precision = fractadyne_core::precision_for_magnification(mag);
                 let (pass, result) = match self.selfcheck_ref_overlap(&vp, iter) {
-                    Ok((spec, sa_from, summary)) => {
+                    Ok((spec, sa_from, from_build, summary)) => {
                         engaged |= spec == "centre" && sa_from == "overlap";
+                        centre_taken |= from_build;
                         (true, summary)
                     }
                     Err(e) => (false, e),
@@ -1541,6 +1543,14 @@ impl FractadyneApp {
                 result: format!("engaged={engaged}"),
                 threshold: "at least one view took both from the overlap",
                 pass: engaged,
+            });
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "RefOverlap",
+                name: "the pick took its walk of the centre from the centre build".into(),
+                params: "across the views above".into(),
+                result: format!("taken={centre_taken}"),
+                threshold: "at least one view's phase 2 read the centre (and its samples) off the build",
+                pass: centre_taken,
             });
         }
 

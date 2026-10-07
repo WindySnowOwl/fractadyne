@@ -524,7 +524,9 @@ impl Schedule {
 
 /// Append `Z_{n+1..max_iter}` (df64 samples) to `out`, which already holds `Z_0..Z_n`, iterating from
 /// the running state `(zx, zy)` with previous iterate `(zpx, zpy)`. Returns the final [`OrbitTail`].
-/// Shared by the fresh build and the extend path so both emit **byte-identical** samples.
+/// Shared by the fresh build and the extend path so both emit **byte-identical** samples. `fe`,
+/// when present, also records each new iterate extended-range, as the pick's scoring walk does
+/// (see [`CentreWalk`]).
 #[allow(clippy::too_many_arguments)]
 fn run_orbit(
     out: &mut Vec<[f32; 4]>,
@@ -540,9 +542,10 @@ fn run_orbit(
     max_iter: u32,
     p: usize,
     probe: Option<&mut PeriodProbe<'_>>,
+    fe: Option<&mut Vec<CFloatExp>>,
 ) -> OrbitTail {
     let sched = SchedState::fresh(p, formula, n == 0 && zx.is_zero() && zy.is_zero());
-    dispatch_orbit(bit, out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe, sched)
+    dispatch_orbit(bit, out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe, sched, fe)
         .expect("a BackendChoice variant only exists when its backend is compiled in")
 }
 
@@ -569,17 +572,21 @@ fn dispatch_orbit(
     p: usize,
     probe: Option<&mut PeriodProbe<'_>>,
     sched: Option<SchedState>,
+    fe: Option<&mut Vec<CFloatExp>>,
 ) -> Option<OrbitTail> {
     match bit {
-        0 => Some(run_orbit_carrier::<BigFloat>(out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe, sched)),
+        0 => Some(run_orbit_carrier::<BigFloat>(
+            out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe, sched, fe,
+        )),
         #[cfg(feature = "rug")]
         1 => {
             // Prefer the backend's allocation-free loop where it has one; fall back to the generic
             // path otherwise, which is still MPFR — just allocating per operation. The two are held
             // byte-identical by the cross-backend matrix, which covers every formula id.
             let mut probe = probe;
+            let mut fe = fe;
             let fast = crate::backend_rug::try_run_orbit_inplace(
-                out, &zx, &zy, cx, cy, formula, n, max_iter, p, probe.as_deref_mut(), sched,
+                out, &zx, &zy, cx, cy, formula, n, max_iter, p, probe.as_deref_mut(), sched, fe.as_deref_mut(),
             );
             match fast {
                 Some((tzx, tzy, escaped, sched)) => {
@@ -599,7 +606,7 @@ fn dispatch_orbit(
                     })
                 }
                 None => Some(run_orbit_carrier::<rug::Float>(
-                    out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe, sched,
+                    out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe, sched, fe,
                 )),
             }
         }
@@ -629,6 +636,7 @@ fn run_orbit_carrier<B: RefBackend>(
     p: usize,
     mut probe: Option<&mut PeriodProbe<'_>>,
     sched: Option<SchedState>,
+    fe: Option<&mut Vec<CFloatExp>>,
 ) -> OrbitTail {
     let ctx = B::ctx_for(p);
     let (bzx, bzy) = (B::from_carrier(&zx, ctx), B::from_carrier(&zy, ctx));
@@ -636,7 +644,7 @@ fn run_orbit_carrier<B: RefBackend>(
     let (bcx, bcy) = (B::from_carrier(cx, ctx), B::from_carrier(cy, ctx));
     let mut sched = Schedule::new(p, to_f64(cx), to_f64(cy), sched);
     let (zx, zy, zpx, zpy, escaped) = run_orbit_gen::<B>(
-        out, bzx, bzy, bzpx, bzpy, &bcx, &bcy, formula, n, max_iter, ctx, probe.as_deref_mut(), &mut sched,
+        out, bzx, bzy, bzpx, bzpy, &bcx, &bcy, formula, n, max_iter, ctx, probe.as_deref_mut(), &mut sched, fe,
     );
     // Stamp AFTER the work, not before: `crate::backend::status_line` is quoted by the startup
     // log, crash reports and every gate, and must report what ran rather than what was asked for.
@@ -675,6 +683,7 @@ fn run_orbit_gen<B: RefBackend>(
     ctx: B::Ctx,
     mut probe: Option<&mut PeriodProbe<'_>>,
     sched: &mut Schedule,
+    mut fe: Option<&mut Vec<CFloatExp>>,
 ) -> (B, B, B, B, bool) {
     let mut escaped = false;
     let escape2 = ref_escape2(formula);
@@ -697,6 +706,9 @@ fn run_orbit_gen<B: RefBackend>(
         let xv = zx.to_f64_trunc();
         let yv = zy.to_f64_trunc();
         out.push(pack_sample(xv, yv));
+        if let Some(s) = fe.as_deref_mut() {
+            s.push(CFloatExp { re: zx.to_floatexp(), im: zy.to_floatexp() });
+        }
         n += 1;
         count_reference_step(n);
         if xv * xv + yv * yv > escape2 {
@@ -749,6 +761,23 @@ pub fn reference_orbit_t_in(
     max_iter: u32,
     p: usize,
 ) -> (Vec<[f32; 4]>, u32, OrbitTail) {
+    reference_orbit_t_rec(backend, z0x, z0y, cx, cy, formula, max_iter, p, None)
+}
+
+/// [`reference_orbit_t_in`] that can also record the orbit extended-range into `fe`
+/// (`Z_0..=Z_len−1`, as [`orbit_length_in`]'s sink does).
+#[allow(clippy::too_many_arguments)]
+fn reference_orbit_t_rec(
+    backend: crate::BackendChoice,
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+    mut fe: Option<&mut Vec<CFloatExp>>,
+) -> (Vec<[f32; 4]>, u32, OrbitTail) {
     let bit = backend.bit();
     let mut out = Vec::with_capacity(max_iter as usize + 1);
     let zx = z0x.clone();
@@ -759,7 +788,10 @@ pub fn reference_orbit_t_in(
     let (xh, xl) = split_df64(to_f64(&zx));
     let (yh, yl) = split_df64(to_f64(&zy));
     out.push([xh, yh, xl, yl]); // Z_0
-    let tail = run_orbit(&mut out, bit, zx, zy, zpx, zpy, cx, cy, formula, 0, max_iter, p, None);
+    if let Some(s) = fe.as_deref_mut() {
+        s.push(CFloatExp { re: bf_to_floatexp(&zx), im: bf_to_floatexp(&zy) });
+    }
+    let tail = run_orbit(&mut out, bit, zx, zy, zpx, zpy, cx, cy, formula, 0, max_iter, p, None, fe);
     let len = out.len() as u32;
     (out, len, tail)
 }
@@ -795,7 +827,7 @@ pub fn reference_orbit_periodic_in(
     p: usize,
     log2_span: f64,
 ) -> (Vec<[f32; 4]>, u32, OrbitTail) {
-    reference_orbit_periodic_until_in(backend, z0x, z0y, cx, cy, formula, max_iter, p, log2_span, None)
+    reference_orbit_periodic_until_in(backend, z0x, z0y, cx, cy, formula, max_iter, p, log2_span, None, None)
 }
 
 /// [`reference_orbit_periodic`] whose cap can be lowered WHILE it runs: the build stops after
@@ -804,6 +836,10 @@ pub fn reference_orbit_periodic_in(
 /// that cap turns out smaller, the running build is told it rather than discarded and built again
 /// (a 1e30000 minibrot built its 220 s reference twice, in parallel). Mandelbrot from `Z_0 = 0`
 /// only — the probe is what watches the cap; other builds ignore it.
+///
+/// `fe`, when present, also records the orbit extended-range — exactly the samples the pick's
+/// phase 2 records walking the same point at the same precision (see [`CentreWalk`]), so the
+/// pick can take the centre's walk from this build instead of walking it again.
 #[allow(clippy::too_many_arguments)]
 pub fn reference_orbit_periodic_until(
     z0x: &BigFloat,
@@ -815,9 +851,10 @@ pub fn reference_orbit_periodic_until(
     p: usize,
     log2_span: f64,
     stop_at: Option<&std::sync::atomic::AtomicU32>,
+    fe: Option<&mut Vec<CFloatExp>>,
 ) -> (Vec<[f32; 4]>, u32, OrbitTail) {
     let backend = crate::backend::selected();
-    reference_orbit_periodic_until_in(backend, z0x, z0y, cx, cy, formula, max_iter, p, log2_span, stop_at)
+    reference_orbit_periodic_until_in(backend, z0x, z0y, cx, cy, formula, max_iter, p, log2_span, stop_at, fe)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -832,14 +869,18 @@ fn reference_orbit_periodic_until_in(
     p: usize,
     log2_span: f64,
     stop_at: Option<&std::sync::atomic::AtomicU32>,
+    mut fe: Option<&mut Vec<CFloatExp>>,
 ) -> (Vec<[f32; 4]>, u32, OrbitTail) {
     if formula != formula::MANDELBROT || !z0x.is_zero() || !z0y.is_zero() {
-        return reference_orbit_t_in(backend, z0x, z0y, cx, cy, formula, max_iter, p);
+        return reference_orbit_t_rec(backend, z0x, z0y, cx, cy, formula, max_iter, p, fe);
     }
     let mut probe = PeriodProbe::new(log2_span);
     probe.stop_at = stop_at;
     let mut out = Vec::new();
     out.push([0.0f32; 4]); // Z_0 = 0
+    if let Some(s) = fe.as_deref_mut() {
+        s.push(CFloatExp { re: FloatExp::ZERO, im: FloatExp::ZERO });
+    }
     let zero = BigFloat::from_f64(0.0, p);
     let tail = run_orbit(
         &mut out,
@@ -855,6 +896,7 @@ fn reference_orbit_periodic_until_in(
         max_iter,
         p,
         Some(&mut probe),
+        fe,
     );
     let len = out.len() as u32;
     (out, len, tail)
@@ -901,6 +943,7 @@ pub fn extend_reference_orbit(
         p,
         None,
         tail.sched,
+        None,
     );
     let Some(new_tail) = extended else {
         // The prefix was built by a backend this binary does not have. Finishing it in a different
@@ -1832,6 +1875,66 @@ pub fn scoring_len_from_build(
     Some(steps + orbit_length_bf(&tail.zx, &tail.zy, cx, cy, formula, max_iter - steps, p))
 }
 
+/// The CENTRE's deep walk in the pick ([`best_reference_diag_from_build`]): its score — the
+/// scoring walk's count, `max_iter` for a centre whose orbit closes on itself — and, when phase 2
+/// asks for them, its extended-range samples `R[0..=len]` for the perturbation scorer.
+pub struct CentreWalk {
+    pub len: u32,
+    pub samples: Option<Vec<CFloatExp>>,
+}
+
+/// The centre's deep walk from a finished BUILD of the centre at the walk's precision `p`
+/// (`p_pick + REF_RESCUE_EXTRA_BITS`): `len` samples, `tail`, and `fe` — the build's
+/// extended-range recording ([`reference_orbit_periodic_until`]'s sink), if it made one.
+/// Without `want_samples` this is [`scoring_len_from_build`] (a build cut short by its cap is
+/// continued from its tail). With them, the build must have walked the whole of the centre's walk
+/// — escaped, closed on itself, or reached `max_iter` — and recorded it; anything less is `None`,
+/// and the pick walks the centre itself.
+#[allow(clippy::too_many_arguments)]
+pub fn centre_walk_from_build(
+    len: u32,
+    tail: &OrbitTail,
+    fe: Option<Vec<CFloatExp>>,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+    want_samples: bool,
+) -> Option<CentreWalk> {
+    if !want_samples {
+        return scoring_len_from_build(len, tail, cx, cy, formula, max_iter, p).map(|len| CentreWalk { len, samples: None });
+    }
+    let steps = len.checked_sub(1)?;
+    let whole = tail.escaped || tail.period.is_some() || steps >= max_iter;
+    let samples = fe.filter(|s| whole && s.len() == len as usize)?;
+    let len = if tail.period.is_some() { max_iter } else { steps.min(max_iter) };
+    Some(CentreWalk { len, samples: Some(samples) })
+}
+
+/// Where the pick may take its walks of the centre from ([`best_reference_diag_from_build`]).
+#[derive(Clone, Copy)]
+pub struct CentreSource<'a> {
+    /// `walk(want_samples)`: the centre's walk, from the build — or `None`, and the pick walks
+    /// the centre itself. May block until the build is done.
+    pub walk: &'a dyn Fn(bool) -> Option<CentreWalk>,
+    /// The build's cap is at least the pick's `max_iter`, so it holds the whole of phase 2's walk
+    /// whatever the orbit does: phase 2 waits for it. Otherwise (the live view caps its builds
+    /// short) phase 2 walks the centre itself, beside phase 1 as without a build — waiting first
+    /// for a build that may stop short would serialize the walk behind phase 1 — and the source
+    /// answers only the rescue.
+    pub whole: bool,
+}
+
+/// Whether a pick of this view would want the centre's walk RECORDED (its phase 2 scores the
+/// other survivors by perturbation against it): what a build of the centre should record for
+/// [`centre_walk_from_build`].
+pub fn pick_records_centre(formula: u32, julia: bool, span: [FloatExp; 2]) -> bool {
+    perturb_scoring_supported(formula, julia)
+        && span[0].log2() < REF_PICK_PERTURB_SPAN_LOG2
+        && span[1].log2() < REF_PICK_PERTURB_SPAN_LOG2
+}
+
 /// [`orbit_length_bf`] in an **explicitly named** backend, with an optional extended-range
 /// sample sink (the recording the perturbation scorer consumes). Public for the same reason
 /// [`reference_orbit_t_in`] is: a bit-identity test must run both arithmetics in ONE process to
@@ -2233,7 +2336,9 @@ pub struct RefPickDiag {
     pub scoring_prec: usize,
     /// Phase-1 survivor count of the winning pass.
     pub survivors: usize,
-    /// The winner's deep score at `scoring_prec` (≥ `max_iter` means it survives the render).
+    /// The winner's deep score at `scoring_prec` (≥ `max_iter` means it survives the render) —
+    /// except the CENTRE's, which phase 2 scores at `scoring_prec + REF_RESCUE_EXTRA_BITS`, the
+    /// precision the app builds it at (see [`best_reference_diag_from_build`]).
     pub winner_len: u32,
     /// `Some("rescan")` — no phase-1 survivor at `p`, whole selection redone at `p + 128`;
     /// `Some("centre")` — the `p`-winner escaped early and the centre, rescored at `p + 128`,
@@ -2254,6 +2359,9 @@ pub struct RefPickDiag {
     /// Candidates whose perturbed score was DISTRUSTED (ran past the first rebase's
     /// [`PERTURB_POST_REBASE_TRUST`]) and were re-walked in bignum (`0` on the walk engine).
     pub perturb_fallbacks: u32,
+    /// Phase 2 took the centre's deep walk from the app's build of the centre instead of walking
+    /// it again ([`best_reference_diag_from_build`]).
+    pub centre_from_build: bool,
 }
 
 /// One selection pass at a fixed precision: phase 1 (cheap rank to `quick`) + phase 2 (deep-rank
@@ -2271,6 +2379,7 @@ enum PickPass {
         deep_scored: u32,
         rebases: u32,
         fallbacks: u32,
+        centre_from_build: bool,
     },
     /// Every candidate escaped within `quick` — the longest escaper and its length.
     NoSurvivor { point: [BigFloat; 2], esc_len: u32 },
@@ -2320,18 +2429,22 @@ pub fn best_reference_diag(
     best_reference_diag_forced(center, span, formula, julia, julia_c, max_iter, p, None, None)
 }
 
-/// [`best_reference_diag`] whose CENTRE RESCUE may take its score from `rescue` instead of
-/// walking the centre itself. The rescue walks the centre at `p + REF_RESCUE_EXTRA_BITS` to
-/// `max_iter` — the same orbit, at the same precision, that the app then builds whenever the
-/// centre is the pick, so the app can build it once, on its own thread, while phases 1–2 run
-/// here, and answer the rescue from that build ([`scoring_len_from_build`]).
+/// [`best_reference_diag`] that takes the CENTRE's walks from `centre` instead of walking the
+/// centre itself. The pick walks the centre twice over, both times at `p + REF_RESCUE_EXTRA_BITS`
+/// to `max_iter`: phase 2's deep walk (the centre is candidate 0, so whenever it survives phase 1
+/// it is the first survivor) and the centre rescue. That is the orbit, at the precision, the app
+/// builds whenever the centre is the pick, so the app builds it once, on its own thread, while
+/// phase 1 runs here, and answers both from that build ([`centre_walk_from_build`]). At 1e30000×
+/// the pick's own walk of the centre had run beside the app's build of it, step for step: two
+/// 100,000-bit walks of one orbit.
 ///
-/// ⛔Contract: `rescue()` returns EXACTLY what the rescue walk would — `orbit_length_bf` of the
-/// centre (Julia: `z₀` = centre, `c` = `julia_c`) to `max_iter` at `p + REF_RESCUE_EXTRA_BITS`
-/// — or `None`, and the walk then runs here as before. The pick is then byte-identical to
-/// [`best_reference_diag`]'s (`the_rescue_can_come_from_a_build`).
+/// ⛔Contract: `centre.walk(want_samples)` returns EXACTLY what the walk here would — the centre's
+/// length (c-plane: the period-watching walk, `max_iter` for an orbit that closes; Julia: `z₀` =
+/// centre, `c` = `julia_c`) and, with `want_samples`, its extended-range samples — or `None`, and
+/// the walk then runs here. The pick is then byte-identical to [`best_reference_diag`]'s
+/// (`the_rescue_can_come_from_a_build`, `the_centre_walk_can_come_from_a_build`).
 #[allow(clippy::too_many_arguments)]
-pub fn best_reference_diag_rescued(
+pub fn best_reference_diag_from_build(
     center: &[BigFloat; 2],
     span: [FloatExp; 2],
     formula: u32,
@@ -2339,17 +2452,17 @@ pub fn best_reference_diag_rescued(
     julia_c: [f64; 2],
     max_iter: u32,
     p: usize,
-    rescue: &dyn Fn() -> Option<u32>,
+    centre: CentreSource<'_>,
 ) -> ([BigFloat; 2], RefPickDiag) {
-    best_reference_diag_forced(center, span, formula, julia, julia_c, max_iter, p, None, Some(rescue))
+    best_reference_diag_forced(center, span, formula, julia, julia_c, max_iter, p, None, Some(centre))
 }
 
 /// [`best_reference_diag`] with the phase-2 engine FORCED (`None` = resolve from the inputs —
 /// the production path). The force threads through the rescue rescans too, so a forced run is
 /// one engine end-to-end; it can override the span auto-gate but never engine eligibility
 /// ([`perturb_scoring_supported`] — forcing `Perturb` on a Julia/Phoenix request still walks).
-/// Exists for [`best_reference_dual`], the acceptance harness's entry point. `rescue`: see
-/// [`best_reference_diag_rescued`].
+/// Exists for [`best_reference_dual`], the acceptance harness's entry point. `centre`: see
+/// [`best_reference_diag_from_build`].
 #[allow(clippy::too_many_arguments)]
 fn best_reference_diag_forced(
     center: &[BigFloat; 2],
@@ -2360,10 +2473,10 @@ fn best_reference_diag_forced(
     max_iter: u32,
     p: usize,
     force: Option<RefDeepScore>,
-    rescue: Option<&dyn Fn() -> Option<u32>>,
+    centre: Option<CentreSource<'_>>,
 ) -> ([BigFloat; 2], RefPickDiag) {
-    match pick_pass(center, span, formula, julia, julia_c, max_iter, p, force) {
-        PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks }
+    match pick_pass(center, span, formula, julia, julia_c, max_iter, p, force, centre) {
+        PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build }
             if deep_len >= max_iter =>
         (
             point,
@@ -2377,14 +2490,15 @@ fn best_reference_diag_forced(
                 deep_scored,
                 perturb_rebases: rebases,
                 perturb_fallbacks: fallbacks,
+                centre_from_build,
             },
         ),
-        PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks } => {
+        PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build } => {
             // The winner escapes before the render budget — either a genuine boundary/exterior
             // view (every point escapes) or a precision cliff between `quick` and `max_iter`.
             // Rescoring the centre at the BUILD precision separates them: only a cliff un-blinds.
             let p2 = p + REF_RESCUE_EXTRA_BITS;
-            let centre_len = rescue.and_then(|f| f()).unwrap_or_else(|| {
+            let centre_len = centre.and_then(|c| (c.walk)(false)).map(|w| w.len).unwrap_or_else(|| {
                 let jcx = bf(julia_c[0], p2);
                 let jcy = bf(julia_c[1], p2);
                 let zero = bf(0.0, p2);
@@ -2408,6 +2522,7 @@ fn best_reference_diag_forced(
                         deep_scored: 0,
                         perturb_rebases: 0,
                         perturb_fallbacks: 0,
+                        centre_from_build,
                     },
                 )
             } else {
@@ -2423,6 +2538,7 @@ fn best_reference_diag_forced(
                         deep_scored,
                         perturb_rebases: rebases,
                         perturb_fallbacks: fallbacks,
+                        centre_from_build,
                     },
                 )
             }
@@ -2433,9 +2549,10 @@ fn best_reference_diag_forced(
             // fiction. Redo the WHOLE selection at the build precision; a still-empty pass is
             // then a real exterior view and the longest escaper (at truthful scores) stands.
             let p2 = p + REF_RESCUE_EXTRA_BITS;
-            match pick_pass(center, span, formula, julia, julia_c, max_iter, p2, force) {
-                // (No centre rescue on this branch, so `rescue` is never consulted here.)
-                PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks } => (
+            // The rescan's centre walk is at `p2 + REF_RESCUE_EXTRA_BITS`, not the build's precision,
+            // so `centre` cannot answer it: the pass walks the centre itself.
+            match pick_pass(center, span, formula, julia, julia_c, max_iter, p2, force, None) {
+                PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build } => (
                     point,
                     RefPickDiag {
                         scoring_prec: p2,
@@ -2447,6 +2564,7 @@ fn best_reference_diag_forced(
                         deep_scored,
                         perturb_rebases: rebases,
                         perturb_fallbacks: fallbacks,
+                        centre_from_build,
                     },
                 ),
                 PickPass::NoSurvivor { point, esc_len } => (
@@ -2461,6 +2579,7 @@ fn best_reference_diag_forced(
                         deep_scored: 0,
                         perturb_rebases: 0,
                         perturb_fallbacks: 0,
+                        centre_from_build: false,
                     },
                 ),
             }
@@ -2480,6 +2599,7 @@ fn pick_pass(
     max_iter: u32,
     p: usize,
     force: Option<RefDeepScore>,
+    centre_src: Option<CentreSource<'_>>,
 ) -> PickPass {
     // Score candidates by orbit length in **bignum** (f64 coords collapse to the same value at deep
     // zoom, which broke reference selection on cold jumps). TWO PHASES: rank cheaply to `quick`, then
@@ -2537,32 +2657,38 @@ fn pick_pass(
             }
         };
     let idxs: Vec<usize> = (0..cands.len()).collect();
-    // ⭐The CENTRE's deep walk runs BESIDE phase 1. The centre is candidate 0, so whenever it
-    // survives phase 1 it is the first survivor, and phase 2 walks it to `max_iter` — the walk its
-    // phase-1 score is a prefix of. Starting it now takes phase 1 off the pick's critical path (at
-    // 4.6e1105×, ~0.3 s of phase 1 ahead of a ~1.2 s deep walk). A centre that does NOT survive
-    // phase 1 escaped inside `quick` steps, so its walk here was short. Results are unchanged:
-    // the same walk, recorded by the same engine rule, used only where phase 2 would have run it.
+    // ⭐The CENTRE's deep walk. The centre is candidate 0, so whenever it survives phase 1 it is
+    // the first survivor, and phase 2 walks it to `max_iter`. It walks at `p +
+    // REF_RESCUE_EXTRA_BITS`, the precision the app builds a reference at: when the centre is the
+    // pick, its build is then this very walk, so the app can build it once, beside phase 1, and
+    // answer from that build (`centre_src`, see [`best_reference_diag_from_build`]). Without a
+    // build that holds the whole walk it runs here, BESIDE phase 1, which takes phase 1 off the
+    // pick's critical path (at 4.6e1105×, ~0.3 s of phase 1 ahead of a ~1.2 s deep walk); a centre
+    // that does NOT survive phase 1 escaped inside `quick` steps, so that walk was short.
     //
     // ⭐A centre whose orbit closes on itself ([`OrbitPeriod`], a minibrot-centred view) stops
     // there and scores `max_iter`: a periodic point never escapes, so it wins outright, and the
     // walk costs one period instead of the whole budget.
     let log2_span = span[0].log2().max(span[1].log2());
-    let (scores, centre_deep) = std::thread::scope(|s| {
-        let centre = s.spawn(|| {
-            if julia {
-                (score(&cands[0][0], &cands[0][1], max_iter), None)
-            } else if use_perturb {
-                let mut samples = Vec::new();
-                let (len, _) =
-                    orbit_length_periodic(&cands[0][0], &cands[0][1], formula, max_iter, p, log2_span, Some(&mut samples));
-                (len, Some(samples))
-            } else {
-                (orbit_length_periodic(&cands[0][0], &cands[0][1], formula, max_iter, p, log2_span, None).0, None)
-            }
-        });
+    let pd = p + REF_RESCUE_EXTRA_BITS;
+    let centre_walk_here = |want_samples: bool| -> (u32, Option<Vec<CFloatExp>>) {
+        if julia {
+            let (jx, jy) = (bf(julia_c[0], pd), bf(julia_c[1], pd));
+            (orbit_length_bf(&cands[0][0], &cands[0][1], &jx, &jy, formula, max_iter, pd), None)
+        } else if want_samples {
+            let mut samples = Vec::new();
+            let (len, _) =
+                orbit_length_periodic(&cands[0][0], &cands[0][1], formula, max_iter, pd, log2_span, Some(&mut samples));
+            (len, Some(samples))
+        } else {
+            (orbit_length_periodic(&cands[0][0], &cands[0][1], formula, max_iter, pd, log2_span, None).0, None)
+        }
+    };
+    let (scores, centre_beside) = std::thread::scope(|s| {
+        let beside = !centre_src.is_some_and(|c| c.whole);
+        let centre = beside.then(|| s.spawn(|| centre_walk_here(use_perturb)));
         let scores = par_orbit_scores(&cands, &idxs, quick, julia, &jcx, &jcy, formula, p);
-        (scores, centre.join().expect("the centre's deep walk panicked"))
+        (scores, centre.map(|h| h.join().expect("the centre's deep walk panicked")))
     });
     let mut survivors: Vec<usize> = Vec::new();
     let (mut esc_i, mut esc_len) = (0usize, 0u32);
@@ -2594,11 +2720,23 @@ fn pick_pass(
     // feed the same selection loop; `--pickcheck` asserts they elect the same point.
     let first = survivors[0];
     let rest: Vec<usize> = survivors.iter().skip(1).take(REF_DEEP_MAX - 1).copied().collect();
+    let mut centre_from_build = false;
     let (dl0, ref_orbit) = if first == 0 {
-        // The centre's deep walk, already run beside phase 1. The recorded and plain walks return
-        // the same length, so only the recording's use follows the rule below.
-        let (len, samples) = centre_deep;
-        (len, samples.filter(|_| use_perturb && !rest.is_empty()))
+        // The centre's deep walk: run beside phase 1, else from the app's build, else walked now
+        // (a build cut short of the whole walk). The recorded and plain walks return the same
+        // length, so only the recording's use follows the rule below.
+        let want = use_perturb && !rest.is_empty();
+        let (len, samples) = match centre_beside {
+            Some(walk) => walk,
+            None => match centre_src.and_then(|c| (c.walk)(want)).filter(|w| !want || w.samples.is_some()) {
+                Some(w) => {
+                    centre_from_build = true;
+                    (w.len, w.samples)
+                }
+                None => centre_walk_here(want),
+            },
+        };
+        (len, samples.filter(|_| want))
     } else if use_perturb && !rest.is_empty() {
         debug_assert!(!julia, "perturb engine is gated to c-plane candidates");
         let (len, samples) = orbit_length_bf_recorded(
@@ -2623,6 +2761,7 @@ fn pick_pass(
             deep_scored: 0,
             rebases: 0,
             fallbacks: 0,
+            centre_from_build,
         };
     }
     let mut rebases = 0u32;
@@ -2706,6 +2845,7 @@ fn pick_pass(
         deep_scored: rest.len() as u32,
         rebases,
         fallbacks,
+        centre_from_build,
     }
 }
 
