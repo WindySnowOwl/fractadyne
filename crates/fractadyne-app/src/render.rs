@@ -6867,6 +6867,7 @@ impl FractadyneApp {
             accum_commit: self.perf.accum_cmd[vsub].commit,
             accum_reset: self.perf.accum_cmd[vsub].reset,
             accum_external: self.perf.accum_ext_attach[vsub].take(),
+            accum_folds: Some(self.perf.accum_gpu_folds[vsub].clone()),
             // The view the GPU stamps this frame's pixels with, and where it reports back which
             // view the texture is WHOLLY drawn at. `pos_sig` is the right identity because it is
             // the view's exact position as the shader sees it — the offset from the reference,

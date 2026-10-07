@@ -1588,6 +1588,16 @@ struct Perf {
     /// unaveraged frame. Only `drive_accumulation` sets it, so a view that never accumulates (an
     /// L-system, Life) never reads due.
     accum_due: [bool; 2],
+    /// What sample 0's iterate read beyond the view (mode, caps, orbit, series, BLA): the run's
+    /// inputs, and the worker's template. A later fold that read others mixes two renders into the
+    /// average; `accum_confirm` says so, once per run (`accum_key_warned`).
+    accum_key: [String; 2],
+    accum_key_warned: [bool; 2],
+    /// The accumulator's own count (`MandelbrotParams::accum_folds`), checked once against
+    /// `accum_count` when a run converges (`accum_folds_checked`): a sample the app counted but the
+    /// GPU never folded, or folded twice, would otherwise pass as a converged average.
+    accum_gpu_folds: [std::sync::Arc<std::sync::atomic::AtomicU32>; 2],
+    accum_folds_checked: [bool; 2],
     /// The current sample has been folded; the NEXT frame advances (re-arms the grid for the next
     /// jitter). Split across two frames so the fold reads the completed frame before a re-arm
     /// re-iterates over `tex_view`.
@@ -2228,6 +2238,10 @@ impl Default for Perf {
             accum_count: [0, 0],
             accum_active: [false, false],
             accum_due: [false, false],
+            accum_key: [String::new(), String::new()],
+            accum_key_warned: [false, false],
+            accum_gpu_folds: Default::default(),
+            accum_folds_checked: [false, false],
             accum_committed: [false, false],
             accum_jitter: [[0.0, 0.0], [0.0, 0.0]],
             accum_run: [0, 0],
@@ -14013,12 +14027,14 @@ impl FractadyneApp {
         self.pump_worker();
         let sig = self.accum_color_sig(view);
         let stale = self.perf.accum_active[view] && sig != self.perf.accum_sig[view];
-        let allowed = self.accumulation_allowed()
-            && !interacting
-            && !self.tour_playing()
-            && log2mag >= ACCUM_MIN_LOG2
-            && !stale;
-        self.perf.accum_due[view] = allowed && !self.perf.accum_active[view];
+        let qualifies =
+            self.accumulation_allowed() && !interacting && !self.tour_playing() && log2mag >= ACCUM_MIN_LOG2;
+        let allowed = qualifies && !stale;
+        // Due whenever the view qualifies and no run is under way, INCLUDING the frame that restarts
+        // a stale run: that frame passes through the `!allowed` arm below with no run active, and a
+        // `--shot` gate that read "not due" there captured one unaveraged sample (2026-10-07: three
+        // restarts in 75 ms as live normalization settled the map, and the shot taken at the third).
+        self.perf.accum_due[view] = qualifies && (stale || !self.perf.accum_active[view]);
         if !allowed {
             if self.perf.accum_active[view] {
                 self.accum_worker_reset(view);
@@ -14108,6 +14124,7 @@ impl FractadyneApp {
             self.perf.accum_due[view] = false;
             self.perf.content_wait_logged[view] = false; // arm the next episode's single line
             self.perf.accum_count[view] = 0;
+            self.perf.accum_folds_checked[view] = false;
             self.perf.accum_committed[view] = false;
             self.perf.accum_jitter[view] = [0.0, 0.0];
             self.perf.accum_sig[view] = sig;
@@ -14124,7 +14141,20 @@ impl FractadyneApp {
         let count = self.perf.accum_count[view];
         cmd.jitter = self.perf.accum_jitter[view];
         if count >= accum_target() {
-            // Converged: keep presenting the average, request no repaint → the view quiesces.
+            // Converged: keep presenting the average, request no repaint → the view quiesces. The
+            // last fold ran in the previous frame's prepare, so the GPU's count is final here.
+            if !self.perf.accum_folds_checked[view] {
+                self.perf.accum_folds_checked[view] = true;
+                let gpu = self.perf.accum_gpu_folds[view].load(std::sync::atomic::Ordering::Relaxed);
+                if gpu != count {
+                    crate::diag::log_line(
+                        "accum",
+                        &format!("⚠view {view}: converged at {count} samples, but the average holds {gpu}"),
+                    );
+                } else if self.gpu_worker.is_some() {
+                    crate::diag::log_line("accum", &format!("view {view}: the average holds all {gpu} samples"));
+                }
+            }
         } else if busy {
             self.schedule_repaint(ctx); // this sample is still rendering
         } else if !self.perf.accum_committed[view] {
@@ -14207,7 +14237,11 @@ impl FractadyneApp {
         {
             return;
         }
-        let Some(index) = self.accum_take_index(view) else { return };
+        // Test hook: `FRACTADYNE_WORKER_SHADOW=1` keeps the worker rendering (sample 1, again and
+        // again) but throws its samples away, so this device renders all of them: the converged
+        // image must then equal a run without a worker, or the worker's load alone moves it.
+        let shadow = std::env::var_os("FRACTADYNE_WORKER_SHADOW").is_some();
+        let Some(index) = (if shadow { Some(1) } else { self.accum_take_index(view) }) else { return };
         let req = crate::profile::params_to_request_exact(
             self.perf.accum_template[view].as_ref().expect("checked above"),
             accum_jitter_seq(index),
@@ -14216,7 +14250,7 @@ impl FractadyneApp {
         let job = gpu_worker::Job { view, run, index, req };
         if self.gpu_worker.as_ref().is_some_and(|w| w.submit(job)) {
             self.perf.worker_job = Some((view, run, index));
-        } else {
+        } else if !shadow {
             self.perf.accum_free[view].push(index); // this device renders it instead
         }
     }
@@ -14230,14 +14264,22 @@ impl FractadyneApp {
                 self.perf.worker_job = None;
             }
             let current = d.run == self.perf.accum_run[d.view] && self.perf.accum_active[d.view];
-            if !current {
+            if !current || std::env::var_os("FRACTADYNE_WORKER_SHADOW").is_some() {
                 continue;
             }
             match d.sample {
                 Some(s) => {
+                    // The sample's identity (FNV-1a over its floats' bits): the same index of the
+                    // same run renders the same bytes on any run, so two logs can be compared.
+                    let hash = s.rgba.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, v| {
+                        (h ^ u64::from(v.to_bits())).wrapping_mul(0x0000_0100_0000_01b3)
+                    });
                     crate::diag::log_line(
                         "accum",
-                        &format!("view {}: sample {} rendered on the worker GPU in {:.0} ms", d.view, d.index, d.ms),
+                        &format!(
+                            "view {}: sample {} rendered on the worker GPU in {:.0} ms (#{hash:016x})",
+                            d.view, d.index, d.ms
+                        ),
                     );
                     self.perf.accum_ext_ready[d.view].push(s);
                 }
@@ -14341,6 +14383,37 @@ impl FractadyneApp {
                     ),
                 );
             }
+        }
+        let key = format!(
+            "mode {} max_iter {} orbit_len {} sa_skip {} bla {} ({} rows) rn_bla {} rows delta_exp {} {}x{} ss {}",
+            params.mode,
+            params.max_iter,
+            params.orbit_len,
+            params.sa_skip,
+            params.bla_on,
+            params.bla.len(),
+            params.rn_bla.len(),
+            params.delta_exp,
+            params.resolution[0],
+            params.resolution[1],
+            params.ss
+        );
+        if count == 0 {
+            if self.gpu_worker.is_some() {
+                crate::diag::log_line("accum", &format!("view {view}: sample 0, the worker's template: {key}"));
+            }
+            self.perf.accum_key[view] = key;
+            self.perf.accum_key_warned[view] = false;
+        } else if key != self.perf.accum_key[view] && !self.perf.accum_key_warned[view] {
+            self.perf.accum_key_warned[view] = true;
+            crate::diag::log_line(
+                "accum",
+                &format!(
+                    "⚠view {view}: fold #{} read other iterate inputs than sample 0: {key} (sample 0: {})",
+                    count + 1,
+                    self.perf.accum_key[view]
+                ),
+            );
         }
         let folded = count + 1;
         self.perf.accum_count[view] = folded;

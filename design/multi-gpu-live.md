@@ -331,12 +331,25 @@ run. Between the settle and `accum: begin` it passed, and a 9.3e78× shot was wr
   The CPU-rounded first version differed at 53,680 pixels of the 9.3e78× pane, 23 of them by more
   than 1.
 
-  ⚠**The worker arm is not reproducible run to run, though solo is.** All four 9.3e78× worker runs
-  gave the worker the same sample indices, and two of them still differ by 140 pixels (max 5/255).
-  The export path is bit-identical to itself (the checks above), so the suspect is the live path's
-  own samples. Whether a live frame runs as one pass or as chunks depends on timing, the two entry
-  points are known to differ at a few hundred pixels, and the worker's load on the same GPU moves
-  that timing. **Unverified**: the tile trace of two worker runs would show it.
+  ⚠**The worker arm is not reproducible run to run, though uncontended solo is.** Explained on
+  2026-10-07, at the 9.3e78× view, where every differing pixel sits within a few pixels of
+  interior (102 of 140 within 2 px):
+  - The worker is deterministic. Each sample index hashed the same in three runs (the
+    `#hash` on its log line), and the template (sample 0's iterate inputs, now logged) was
+    identical.
+  - Nothing is lost or doubled. The GPU reports its own fold count, and the app checks it at
+    convergence: "the average holds all 24 samples".
+  - **The live path's samples move with GPU timing.** Two solo runs (no worker) sharing the GPU
+    with each other differ from an uncontended solo by 192 and 251 pixels (max 5/255). A
+    "shadow" worker whose samples are thrown away (`FRACTADYNE_WORKER_SHADOW=1`) moves the solo
+    image by about 100. This is pre-existing and not L2's. The likely mechanism is the live path's
+    timing-priced choice of passes, which (as noted before) differ at a few hundred pixels; that
+    part is unproven.
+  - The live and export paths disagree, sample for sample, at boundary pixels: moving one index
+    from the window's device to the worker moved 264 pixels (max 6/255).
+
+  None of this shows away from interior (the 6.8e3999× view, with none, matched to the pixel), and
+  all of it is within a few 1/255 at under 0.1% of a pane.
 - `FRACTADYNE_WORKER_LOSE_AFTER=3`: the worker dropped out after its jobs, the app said so ("one
   GPU from here"), gave the lost job's sample back to the window's device, and converged.
 
@@ -349,8 +362,19 @@ these ratios are an upper bound until they are re-measured on an idle machine. I
 faster single-GPU settle is open, at the cost of how quickly the first input after a settle can
 interrupt a long dispatch.
 
+**The live pace is set by frames, not by the GPU.** A live sample takes ~158 frames (~3 s here)
+whatever else the GPU is doing: a 100 ms dispatch budget, another process's shot, and the worker
+all left it unchanged. That is why a twin on the same card sped the run up.
+
+**Two more fixes found on the way.**
+- `--shot` captured an unaveraged frame when a run restarted (live normalization settling the map
+  restarts it, up to three times in 75 ms): the restart frame passed the `!allowed` arm with no run
+  active, and `accum_due` read false there. A run is now due whenever the view qualifies.
+- Every run restarts once about 3 s in, in solo too, and re-renders sample 0 (one sample's time
+  lost). Pre-existing; not changed here.
+
 **Next.**
 1. Re-measure the A/B on an idle machine, plus input latency during a worker sample.
-2. PLUTO (RTX 3070 + RX 6800 XT, asked first): speed and the mixed-class image (§5).
-3. Explain the worker arm's run-to-run variation with the tile trace (above).
-4. A setting in place of the flag, once PLUTO passes.
+2. PLUTO (RTX 3070 + RX 6800 XT, asked first; field agent v18 has `--shot`, `--worker-gpu`,
+   `--adapter`): speed and the mixed-class image (§5).
+3. A setting in place of the flag, once PLUTO passes.

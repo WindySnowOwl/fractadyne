@@ -2659,6 +2659,9 @@ pub struct MandelbrotParams {
     /// app attaches one only on a frame that does not also `accum_commit` — the two folds would
     /// share the accumulator's weight uniform within one submission.
     pub accum_external: Option<Arc<AccumSample>>,
+    /// The accumulator's own sample count, stored after every fold: what the average really holds,
+    /// for the app to check against what it counted.
+    pub accum_folds: Option<Arc<std::sync::atomic::AtomicU32>>,
 }
 
 /// A frame that asks for nothing: no sinks, no reference, the direct mode, one sample a pixel, no
@@ -2779,6 +2782,7 @@ impl Default for MandelbrotParams {
             accum_commit: false,
             accum_reset: false,
             accum_external: None,
+            accum_folds: None,
         }
     }
 }
@@ -3671,6 +3675,9 @@ impl CallbackTrait for MandelbrotParams {
             let a = view.accum.as_mut().unwrap();
             a.count = n + 1;
             a.latest = dst;
+            if let Some(c) = &self.accum_folds {
+                c.store(a.count, std::sync::atomic::Ordering::Relaxed);
+            }
         } else if let Some(sample) = &self.accum_external {
             // A sample from another device: upload its floats, write them into a `frame`-format
             // target through this device's own colour write (see `AccumSample`), and fold that
@@ -3760,6 +3767,9 @@ impl CallbackTrait for MandelbrotParams {
                 }
                 a.count = n + 1;
                 a.latest = dst;
+                if let Some(c) = &self.accum_folds {
+                    c.store(a.count, std::sync::atomic::Ordering::Relaxed);
+                }
             }
         } else if !self.accum_present {
             view.accum = None; // accumulation fully off → release the accumulator's textures
