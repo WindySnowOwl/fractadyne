@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 17   # 17: farm-client "adapters" (--adapters: all of this machine's GPUs, or some, each its own session) and a 24 h ceiling (a long tour render; was 4 h). 16: farm-client "discover": first run --discover from the package and return what answered this machine's broadcast (the farm's network discovery). 15: farm-client in share mode (request "share": the client writes its frames to this agent's share). 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
+$AgentVersion = 18   # 18: --shot (a location, captured once its supersampling converges; the agent names --out and delivers shot.png), --list-adapters, --adapter and --worker-gpu (design/multi-gpu-live.md L2: a second GPU in the live view). 17: farm-client "adapters" (--adapters: all of this machine's GPUs, or some, each its own session) and a 24 h ceiling (a long tour render; was 4 h). 16: farm-client "discover": first run --discover from the package and return what answered this machine's broadcast (the farm's network discovery). 15: farm-client in share mode (request "share": the client writes its frames to this agent's share). 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -247,7 +247,7 @@ function Get-Package([string]$tag, [string]$package) {
 # --- the harness allow-list -------------------------------------------------------------------------
 # flag -> the values it takes. "?x" = optional. Values never contain spaces or quotes, and a file is
 # only ever one shipped inside the package.
-$Modes = @("--recordtest", "--zoomtest", "--motiontest", "--gputest", "--selftest", "--bench-matrix", "--livetest", "--chunk-sweep", "--soak", "--tail-audit", "--glitch-audit", "--render", "--farmtest")
+$Modes = @("--recordtest", "--zoomtest", "--motiontest", "--gputest", "--selftest", "--bench-matrix", "--livetest", "--chunk-sweep", "--soak", "--tail-audit", "--glitch-audit", "--render", "--farmtest", "--shot", "--list-adapters")
 $Allowed = @{
     # The audits render a view (--center/--zoom-log2/--iter/--size) twice and check the pixels that
     # differ against the arbitrary-precision oracle; they print a verdict and write no file. Send them
@@ -270,6 +270,14 @@ $Allowed = @{
     # corrupting frames, one killed) against a single-machine reference. Writes to a temp folder;
     # its verdict is in the output.
     "--farmtest" = @()
+    # v18: the GPUs. --list-adapters prints them and exits; --adapter picks the window's (a number
+    # from that list, or a word of a name); --worker-gpu opens a SECOND device for the live view's
+    # settle supersampling ("same" = a twin on the window's own adapter). --shot loads a location,
+    # waits for its supersampling to converge and captures the window: the agent adds --out itself,
+    # into the run's local folder, and delivers shot.png with the logs. The location is a package
+    # file or locations/NAME.fdn in the share's field folder (the package ships no test views).
+    "--shot" = @("shotloc"); "--shot-timeout" = @("int"); "--list-adapters" = @()
+    "--adapter" = @("word"); "--worker-gpu" = @("word")
 }
 $ValuePattern = @{
     "int" = '^[0-9]{1,9}$'; "num" = '^[-+0-9.eE]{1,2000}$'; "word" = '^[A-Za-z0-9_.-]{1,64}$'
@@ -278,6 +286,8 @@ $ValuePattern = @{
     "pkgfile" = '^(tours|validation|benchmarks)/[A-Za-z0-9_./-]{1,160}\.(toml|fdn|kfr)$'
     # a package file, or "session" (the view the request staged)
     "loc" = '^(session|(tours|validation|benchmarks)/[A-Za-z0-9_./-]{1,160}\.(toml|fdn|kfr))$'
+    # a package file, or a view the dev box put in the share's field\locations folder
+    "shotloc" = '^((tours|validation|benchmarks)/[A-Za-z0-9_./-]{1,160}\.(toml|fdn|kfr)|locations/[A-Za-z0-9_.-]{1,64}\.fdn)$'
     "taps" = '^[0-9]{1,3},[0-9.]{1,8},[0-9.]{1,8}$'
 }
 
@@ -294,15 +304,16 @@ function Resolve-HarnessArgs([string[]]$argv, [string]$pkgRoot) {
         foreach ($kind in $Allowed[$flag]) {
             $opt = $kind.StartsWith("?"); $k = $kind.TrimStart("?")
             $v = if ($i -lt $argv.Count) { $argv[$i] } else { $null }
-            $isFile = $k -eq "pkgfile" -or ($k -eq "loc" -and $v -ne "session")
+            $isFile = $k -eq "pkgfile" -or $k -eq "shotloc" -or ($k -eq "loc" -and $v -ne "session")
             if ($null -eq $v -or $v -notmatch $ValuePattern[$k] -or ($isFile -and $v -match '\.\.')) {
                 if ($opt) { continue }
                 Stop-Refused "$flag needs a $k value, got '$v'"
             }
             $i++
             if ($isFile) {
-                $abs = Join-Path $pkgRoot ($v -replace '/', '\')
-                if (-not (Test-Path -LiteralPath $abs)) { Stop-Refused "$v is not in the package" }
+                $base = if ($v.StartsWith("locations/")) { Join-Path $Share "field" } else { $pkgRoot }
+                $abs = Join-Path $base ($v -replace '/', '\')
+                if (-not (Test-Path -LiteralPath $abs)) { Stop-Refused "$v is not in the package (or the share's field\locations)" }
                 $v = $abs
             }
             $out += $v
@@ -449,6 +460,9 @@ function Invoke-Harness($r, [string]$dir, $status) {
             if ($session) { [IO.File]::WriteAllText((Join-Path $cfgDir "session.toml"), $session, $Utf8) }
             $exe = Join-Path $roots[$t] "fractadyne.exe"
             $resolved = Resolve-HarnessArgs $argv $roots[$t]
+            # v18: a shot's image goes into this run's folder, never a path from the request.
+            $shotPng = Join-Path $local "shot.png"
+            if ($resolved -contains "--shot") { $resolved += @("--out", $shotPng) }
             $status.detail = "$name of $($repeat * $tags.Count): fractadyne $($argv -join ' ')"
             Write-JsonFile (Join-Path $dir "status.json") $status
             $env:FRACTADYNE_CONFIG_DIR = $cfgDir
@@ -473,6 +487,7 @@ function Invoke-Harness($r, [string]$dir, $status) {
             foreach ($logs in @((Join-Path $cfgDir "logs"), (Join-Path $local "logs"))) {
                 if (Test-Path $logs) { Copy-Item -Path (Join-Path $logs "*") -Destination $to -Recurse -Force -ErrorAction SilentlyContinue }
             }
+            if (Test-Path -LiteralPath $shotPng) { Copy-Item -LiteralPath $shotPng -Destination $to -Force }
             # A staged view the app did not LOAD (it falls back to defaults on a file it cannot
             # parse) means the run measured the wrong view - say so, do not pass it off.
             $sessionLoaded = $null

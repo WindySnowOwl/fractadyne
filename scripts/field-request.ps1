@@ -17,6 +17,9 @@
 #                                                                 # one render-farm job as a CLIENT of the
 #                                                                 # controller on this machine (agent v14;
 #                                                                 # scripts\farm-pluto.ps1 drives the whole run)
+#   .\scripts\field-request.ps1 -Action harness -Run "--shot locations/e4000.fdn --worker-gpu 1" -Wait
+#                                                                 # a shot (agent v18): the view from the share's
+#                                                                 # field\locations, its PNG in the results
 #   .\scripts\field-request.ps1 -Cancel <id>                      # withdraw a request not yet started
 #
 # The agent is the authority on what it will run (field-agent.ps1 $Allowed); this only checks the
