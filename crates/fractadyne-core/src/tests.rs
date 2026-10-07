@@ -698,7 +698,7 @@ fn the_pipelined_sa_walk_is_the_sequential_one() {
             let cx = parse_bf_prec(sx, p).unwrap();
             let cy = parse_bf_prec(sy, p).unwrap();
             for dc in [-40.0f64, -400.0] {
-                let run = |pipe| series_skip_astro_piped(&cx, &cy, dc, 3000, 3002, f, p, pc, None, Some(pipe));
+                let run = |pipe| series_skip_astro_piped(&cx, &cy, dc, 3000, 3002, f, p, pc, None, Some(pipe), None);
                 let (seq, piped) = (run(false), run(true));
                 assert_eq!(key(&seq), key(&piped), "{sx},{sy} f={f} dc={dc}");
                 cases += 1;
@@ -711,7 +711,7 @@ fn the_pipelined_sa_walk_is_the_sequential_one() {
     // A cancelled pipelined walk returns NONE and does not hang on its Z chain.
     let on = std::sync::atomic::AtomicBool::new(true);
     let (cx, cy) = (bf(-0.5, p), bf(0.1, p));
-    let dead = series_skip_astro_piped(&cx, &cy, -40.0, 3000, 3002, 0, p, pc, Some(&on), Some(true));
+    let dead = series_skip_astro_piped(&cx, &cy, -40.0, 3000, 3002, 0, p, pc, Some(&on), Some(true), None);
     assert_eq!(dead.skip, 0);
 }
 
@@ -826,6 +826,107 @@ fn the_centre_walk_can_come_from_a_build() {
             (d.winner_len, d.scoring_prec, d.rescued, d.survivors, d.deep_scored, d.perturb_rebases, d.perturb_fallbacks)
         };
         assert_eq!(key(&diag), key(&plain_diag), "cap {cap}");
+    }
+}
+
+/// Every field of a `SeriesSkip`, bitwise.
+fn sa_bits(s: &SeriesSkip) -> (u32, [u32; 4], i32, [u32; 4], i32, [u32; 4], i32) {
+    let b = |q: &[f32; 4]| q.map(f32::to_bits);
+    (s.skip, b(&s.a), s.a_exp, b(&s.b), s.b_exp, b(&s.c), s.c_exp)
+}
+
+/// A point ~1e-271 from the Misiurewicz point `c = i`: its orbit follows i's for ~700 steps with
+/// |dZ/dc| growing ~1.25 bits a step, so the series stays valid a long way at a small view, and
+/// the walk's coefficients feel the working precision (`Z` is cut from it every step).
+fn sa_near_i(p: usize) -> (BigFloat, BigFloat) {
+    let im = format!("1.{}95", "0".repeat(271));
+    (parse_bf_prec("7.07e-272", p).unwrap(), parse_bf_prec(&im, p).unwrap())
+}
+
+// The series walk's TRACE (`SaTraces`, `sa_replay`): a walk recorded once answers every later
+// frame by replaying the loop's own stop rules. Against the direct walk, bit for bit, over view
+// sizes from "stops at once" to "never stops for validity" (those walks run on to the seed bound
+// by the reference's escape), step limits from the orbit length, the iteration count and the
+// budget, in every compiled backend — through ONE cache, so most answers are replays of the first
+// call's record. Anti-vacuity: real skips of many lengths, some ended by the seed bound.
+#[test]
+fn the_sa_trace_replays_the_walk() {
+    let p = 1024;
+    let (cx, cy) = sa_near_i(p);
+    for backend in crate::available_backends() {
+        let traces = crate::reference::SaTraces::new();
+        let (mut cases, mut skips, mut seed_ended) = (0u32, std::collections::BTreeSet::new(), 0u32);
+        let dcs: Vec<f64> = (0..48).map(|i| -20.0 - 20.0 * f64::from(i)).chain([-1500.0, -2000.0, -5000.0]).collect();
+        for &(max_iter, orbit_len) in &[(3000u32, 3002u32), (900, 3002), (3000, 500), (60, 3002)] {
+            for &dc in &dcs {
+                let direct = crate::reference::series_skip_walk(backend, &cx, &cy, dc, max_iter, orbit_len, 0, p, None, None);
+                let traced = traces.series_skip(backend, &cx, &cy, dc, max_iter, orbit_len, 0, p, None);
+                assert_eq!(sa_bits(&traced), sa_bits(&direct), "{backend:?} dc={dc} max_iter={max_iter} orbit_len={orbit_len}");
+                cases += 1;
+                skips.insert(direct.skip);
+                // A walk at a view this small stops at the seed bound, short of the reference's escape.
+                let never_invalid = crate::reference::series_skip_walk(backend, &cx, &cy, -1.0e300, max_iter, orbit_len, 0, p, None, None);
+                seed_ended += u32::from(dc <= -1500.0 && direct.skip == never_invalid.skip && direct.skip > 0);
+            }
+        }
+        assert!(skips.len() >= 20 && skips.iter().any(|&k| k >= 500), "{backend:?}: too few distinct skips to mean anything: {skips:?}");
+        assert!(seed_ended > 0, "{backend:?}: no walk ran on to the seed bound — its rule went untested");
+        assert_eq!(cases, 204);
+    }
+}
+
+// The same, where the SEED BOUND decides: for z⁴ + c it is |Z|² ≤ 2^30, inside the reference's
+// 1e12 bailout (for z² it is 2^60, past the bailout, so a Mandelbrot walk never meets it). A walk
+// that never fails validity must stop there, short of the escape — else the rule went untested.
+#[test]
+fn the_sa_trace_replays_the_seed_bound() {
+    let p = 256;
+    let (cx, cy) = (parse_bf_prec("0.54", p).unwrap(), parse_bf_prec("0.585", p).unwrap());
+    let f = 2; // z⁴ + c
+    let zero = bf(0.0, p);
+    let esc = orbit_length_in(crate::backend::selected(), &zero, &zero, &cx, &cy, f, 5000, p, None);
+    assert!(esc > 200 && esc < 5000, "the point no longer escapes late ({esc})");
+    for backend in crate::available_backends() {
+        let open = crate::reference::series_skip_walk(backend, &cx, &cy, -1.0e300, 5000, esc + 1, f, p, None, None);
+        assert!(
+            open.skip > 0 && open.skip + 1 < esc,
+            "{backend:?}: the never-invalid walk ({}) did not stop at the seed bound before the escape at {esc}",
+            open.skip
+        );
+        let traces = crate::reference::SaTraces::new();
+        for i in 0..40 {
+            let dc = -5.0 - 10.0 * f64::from(i);
+            for (max_iter, orbit_len) in [(5000, esc + 1), (esc / 2, esc + 1)] {
+                let direct = crate::reference::series_skip_walk(backend, &cx, &cy, dc, max_iter, orbit_len, f, p, None, None);
+                let traced = traces.series_skip(backend, &cx, &cy, dc, max_iter, orbit_len, f, p, None);
+                assert_eq!(sa_bits(&traced), sa_bits(&direct), "{backend:?} dc={dc} max_iter={max_iter}");
+            }
+        }
+    }
+}
+
+// The trace cache keys on the precision in 64-bit WORDS: both arithmetics round a working precision
+// up to whole words, so every `p` in one word walks the same — which is what lets one record serve
+// a deep dive's frames as their precision creeps up a bit per octave. Control: the next word
+// walks DIFFERENTLY here, so the point does feel the precision and the equality is not vacuous.
+// The point is `i + 7.07e-300` (exact at every precision, so only the walk's precision varies):
+// it follows i's orbit until |dZ/dc| ~ 2^994, past the 2^(p-128) where the walk's 128-bit copy
+// of Z starts to carry the working precision's rounding, and the tiny views keep it walking there.
+#[test]
+fn sa_walks_agree_within_a_precision_word() {
+    let cx = parse_bf_prec("7.07e-300", 64).unwrap();
+    let cy = bf(1.0, 64);
+    for backend in crate::available_backends() {
+        let walk = |p: usize, dc: f64| crate::reference::series_skip_walk(backend, &cx, &cy, dc, 3000, 3002, 0, p, None, None);
+        let mut differs_next_word = false;
+        for dc in [-1000.0, -1050.0, -1100.0] {
+            let base = sa_bits(&walk(1024, dc));
+            for p in [961, 990, 1000, 1023] {
+                assert_eq!(sa_bits(&walk(p, dc)), base, "{backend:?}: p={p} walks differently from 1024 (dc={dc})");
+            }
+            differs_next_word |= sa_bits(&walk(1088, dc)) != base;
+        }
+        assert!(differs_next_word, "{backend:?}: the next word walks the same too — this point cannot show the word matters");
     }
 }
 

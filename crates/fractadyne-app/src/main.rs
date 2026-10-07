@@ -257,6 +257,9 @@ fn main() -> eframe::Result<()> {
         fractadyne_gpu::set_tile_occupancy(tunables::cost().tile_occupancy == 1);
         fractadyne_gpu::set_tile_pack(tunables::cost().tile_pack == 1);
         fractadyne_core::set_orbit_schedule(tunables::cost().orbit_schedule == 1);
+        // A tour renders hundreds of frames against one reference: its series walk once, not each.
+        let tour = args.iter().any(|a| a == "--render-tour");
+        fractadyne_core::set_sa_trace_cache(tour && tunables::cost().sa_trace == 1);
     }
     // `--oomtest`: force a real allocation failure, to prove the OOM path actually writes a crash
     // report. It cannot be verified any other way — an out-of-memory abort skips the panic hook,

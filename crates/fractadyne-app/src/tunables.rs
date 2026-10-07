@@ -107,6 +107,8 @@ pub(crate) struct Cost {
     pub renorm_bla: u64,
     /// The reference orbit's precision schedule (`ORBIT_SCHEDULE_DEFAULT`; 0 = off, 1 = on).
     pub orbit_schedule: u64,
+    /// A tour's series walk recorded once per reference (`SA_TRACE_DEFAULT`; 0 = off, 1 = on).
+    pub sa_trace: u64,
     /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
     /// second override channel because duplicating the machinery for a single value would be worse.
     /// See the note above on what earns a place in this set.
@@ -147,6 +149,7 @@ impl Default for Cost {
             tile_pack: TILE_PACK_DEFAULT,
             renorm_bla: RENORM_BLA_DEFAULT,
             orbit_schedule: ORBIT_SCHEDULE_DEFAULT,
+            sa_trace: SA_TRACE_DEFAULT,
             bla_eps: BLA_EPS,
         }
     }
@@ -338,6 +341,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "SA_TRACE" => {
+                let p = c.sa_trace;
+                c.sa_trace = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set SA_TRACE: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "ORBIT_SCHEDULE" => {
                 let p = c.orbit_schedule;
                 c.orbit_schedule = match raw.as_str() {
@@ -464,7 +476,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
-    ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE";
+    ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE";
 
 #[cfg(test)]
 mod override_tests;
@@ -935,6 +947,13 @@ pub(crate) const RENORM_BLA_DEFAULT: u64 = 1;
 /// grows. Its samples were byte-identical to the full-precision build's at the ladder's 1e30000
 /// path, in half the time. 0 = every step at full precision, for the before/after measurement.
 pub(crate) const ORBIT_SCHEDULE_DEFAULT: u64 = 1;
+
+/// 1 = A TOUR'S SERIES WALK ONCE PER REFERENCE (`fractadyne_core::set_sa_trace_cache`, `--render-tour`
+/// processes only): the walk is recorded once and each frame replays its stop rules over the record
+/// — byte-identical skips and coefficients. A 4K frame of the 1.82e5001 dive spent ~9 s of CPU on
+/// the walk, every frame, once its iteration count passed twice the reference's length. 0 = every
+/// frame walks, for the before/after measurement.
+pub(crate) const SA_TRACE_DEFAULT: u64 = 1;
 
 /// 1 = the OVERLAPPED pick + build (render.rs `pick_and_build`): the view centre's orbit build and
 /// series walk run beside the pick, and the pick's centre rescue reads its score off that build.

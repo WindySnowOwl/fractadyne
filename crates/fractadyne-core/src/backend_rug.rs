@@ -1666,6 +1666,7 @@ pub(crate) fn try_series_skip_walk(
     formula: u32,
     p: usize,
     cancel: Option<&std::sync::atomic::AtomicBool>,
+    mut rec: Option<&mut Vec<crate::reference::SaStep>>,
 ) -> Option<Option<(u32, [BigFloat; 6])>> {
     use crate::fractal::Field;
 
@@ -1725,9 +1726,9 @@ pub(crate) fn try_series_skip_walk(
         let m2 = fx * fx + fy * fy;
         (zcx, zcy, m2 > 1.0e12, m2 <= seed_max2)
     };
-    // The coefficient chain. `Err` = cancelled.
+    // The coefficient chain. `Err` = cancelled. `rec`: every step, as the astro walk records it.
     type Walked = Result<Option<(u32, [Float; 6])>, ()>;
-    let walk = |next: &mut dyn FnMut() -> Option<(Float, Float, bool, bool)>| -> Walked {
+    let mut walk = |next: &mut dyn FnMut() -> Option<(Float, Float, bool, bool)>| -> Walked {
         let (mut ax, mut ay) = (zero(ctx_c), zero(ctx_c));
         let (mut bx, mut by) = (zero(ctx_c), zero(ctx_c));
         let (mut cxx, mut cyy) = (zero(ctx_c), zero(ctx_c));
@@ -1763,6 +1764,12 @@ pub(crate) fn try_series_skip_walk(
             cyy = nc_y;
             let la = log2_cmag_rug(&ax, &ay);
             let lc = log2_cmag_rug(&cxx, &cyy);
+            if let Some(r) = rec.as_deref_mut() {
+                // The coefficients carried back exactly, as the walk's `best` is at its end.
+                let k = [&ax, &ay, &bx, &by, &cxx, &cyy].map(|v| v.to_carrier(ctx_c));
+                let skip = crate::reference::skip_from_coeffs(n, [&k[0], &k[1], &k[2], &k[3], &k[4], &k[5]]);
+                r.push(crate::reference::SaStep::new(la, lc, z_seedable, z_escaped, skip));
+            }
             if !la.is_finite() {
                 continue;
             }

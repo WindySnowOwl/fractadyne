@@ -1084,20 +1084,220 @@ pub fn series_skip_in_cancellable(
     if !log2_max_dc.is_finite() {
         return SeriesSkip::NONE;
     }
+    if SA_TRACES_ON.load(std::sync::atomic::Ordering::Relaxed) {
+        return SA_TRACES.series_skip(backend, cx, cy, log2_max_dc, max_iter, orbit_len, formula, p, cancel);
+    }
+    series_skip_walk(backend, cx, cy, log2_max_dc, max_iter, orbit_len, formula, p, cancel, None)
+}
+
+/// The walk itself, in `backend`, optionally RECORDING every step into `rec` (see [`SaStep`]).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn series_skip_walk(
+    backend: crate::BackendChoice,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    log2_max_dc: f64,
+    max_iter: u32,
+    orbit_len: u32,
+    formula: u32,
+    p: usize,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+    #[cfg_attr(not(feature = "rug"), allow(unused_mut))] mut rec: Option<&mut Vec<SaStep>>,
+) -> SeriesSkip {
     match backend {
         crate::BackendChoice::Astro => {}
         #[cfg(feature = "rug")]
         crate::BackendChoice::Rug => {
             let limit = max_iter.min(orbit_len.saturating_sub(2)).min(sa_step_budget(p));
             if let Some(best) = crate::backend_rug::try_series_skip_walk(
-                cx, cy, log2_max_dc, limit, formula, p, cancel,
+                cx, cy, log2_max_dc, limit, formula, p, cancel, rec.as_deref_mut(),
             ) {
                 crate::backend::note_observed::<rug::Float>();
                 return series_best_to_skip(best);
             }
         }
     }
-    series_skip_astro(cx, cy, log2_max_dc, max_iter, orbit_len, formula, p, p.min(SA_COEFF_BITS), cancel)
+    series_skip_astro_piped(
+        cx, cy, log2_max_dc, max_iter, orbit_len, formula, p, p.min(SA_COEFF_BITS), cancel, None, rec,
+    )
+}
+
+// ---- The series walk, once per reference: SA traces ------------------------------------------------
+//
+// A tour renders frame after frame against ONE reference, and every frame walked the series again:
+// at 1.8e5001x, ~9 s of CPU a 4K frame while the GPU idled. Nothing in the walk depends on the
+// frame but WHERE it stops. The coefficients A, B, C at step n are a function of the reference
+// point, the formula, the working precision and the coefficient width alone; the frame's view
+// size enters only the per-step validity test (`lc + 2·log2|δc| < la + eps`), and `max_iter` /
+// the orbit length / the cost budget only the step limit. So one walk that never stops for
+// validity (a view size of 2^-1e300: every finite step valid), recording every step's `la`,
+// `lc`, flags and coefficients, answers every later frame by REPLAYING the loop's own stop rules
+// over the record — the same decisions on the same values, so the same skip and coefficients,
+// byte for byte (`the_sa_trace_replays_the_walk`).
+//
+// The key holds the precision in 64-bit WORDS: both arithmetics round a working precision up to
+// whole words (MPFR through `ctx_for`, astro-float internally), so every `p` in one word walks the
+// same — a deep dive's precision moves one bit per octave, and a word serves ~64 of them
+// (`sa_walks_agree_within_a_precision_word`).
+
+/// One step of a recorded series walk: what the stop rules read, and the coefficients a stop
+/// there emits.
+#[derive(Clone, Copy)]
+pub struct SaStep {
+    la: f64,
+    lc: f64,
+    seedable: bool,
+    escaped: bool,
+    skip: SeriesSkip,
+}
+
+/// The recording walk's view size: every step with finite coefficients is valid.
+const SA_TRACE_LOG2_DC: f64 = -1.0e300;
+
+/// The six coefficients at step `n` → the [`SeriesSkip`] a walk stopping there emits.
+pub(crate) fn skip_from_coeffs(n: u32, k: [&BigFloat; 6]) -> SeriesSkip {
+    let (a, a_exp) = coeff_to_fe(k[0], k[1]);
+    let (b, b_exp) = coeff_to_fe(k[2], k[3]);
+    let (c, c_exp) = coeff_to_fe(k[4], k[5]);
+    SeriesSkip { skip: n, a, a_exp, b, b_exp, c, c_exp }
+}
+
+impl SaStep {
+    pub(crate) fn new(la: f64, lc: f64, seedable: bool, escaped: bool, skip: SeriesSkip) -> SaStep {
+        SaStep { la, lc, seedable, escaped, skip }
+    }
+
+    /// Whether the walk stops at this step under view size `log2_max_dc` (`n` = its index).
+    fn stops(&self, n: u32, log2_max_dc: f64) -> bool {
+        if !self.la.is_finite() {
+            return false; // `continue`: no test, no escape check
+        }
+        let valid = self.lc + 2.0 * log2_max_dc < self.la + SA_EPS_LOG2;
+        (n >= SA_MIN_SKIP && !(valid && self.seedable)) || self.escaped
+    }
+}
+
+/// The walk's stop rules over a record: the loop of `series_skip_astro_piped`, step for step.
+fn sa_replay(steps: &[SaStep], log2_max_dc: f64, limit: u32) -> SeriesSkip {
+    let mut best: Option<usize> = None;
+    for (i, st) in steps.iter().take(limit as usize).enumerate() {
+        let n = i as u32 + 1;
+        if !st.la.is_finite() {
+            continue;
+        }
+        let valid = st.lc + 2.0 * log2_max_dc < st.la + SA_EPS_LOG2;
+        if n >= SA_MIN_SKIP {
+            if valid && st.seedable {
+                best = Some(i);
+            } else {
+                break;
+            }
+        }
+        if st.escaped {
+            break;
+        }
+    }
+    best.map_or(SeriesSkip::NONE, |i| steps[i].skip)
+}
+
+/// One recorded walk and what it can answer.
+struct SaTrace {
+    cx: BigFloat,
+    cy: BigFloat,
+    formula: u32,
+    words: usize,
+    pc: usize,
+    steps: Vec<SaStep>,
+    /// The walk ended by its own stop rules (not at its step limit): it answers any limit.
+    ended: bool,
+}
+
+impl SaTrace {
+    fn is_for(&self, cx: &BigFloat, cy: &BigFloat, formula: u32, p: usize) -> bool {
+        let eq = |a: &BigFloat, b: &BigFloat| a.cmp(b).is_some_and(|o| o == 0);
+        self.formula == formula
+            && self.words == p.div_ceil(64)
+            && self.pc == p.min(SA_COEFF_BITS)
+            && eq(&self.cx, cx)
+            && eq(&self.cy, cy)
+    }
+
+    fn covers(&self, limit: u32) -> bool {
+        self.ended || limit as usize <= self.steps.len()
+    }
+}
+
+/// Recorded walks, the latest few (a tour holds one reference for hundreds of frames).
+pub(crate) struct SaTraces(std::sync::Mutex<Vec<SaTrace>>);
+
+const SA_TRACES_KEPT: usize = 2;
+
+impl SaTraces {
+    pub(crate) const fn new() -> SaTraces {
+        SaTraces(std::sync::Mutex::new(Vec::new()))
+    }
+
+    /// [`series_skip_in`], from a recorded walk when one covers it, else recording one.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn series_skip(
+        &self,
+        backend: crate::BackendChoice,
+        cx: &BigFloat,
+        cy: &BigFloat,
+        log2_max_dc: f64,
+        max_iter: u32,
+        orbit_len: u32,
+        formula: u32,
+        p: usize,
+        cancel: Option<&std::sync::atomic::AtomicBool>,
+    ) -> SeriesSkip {
+        let limit = max_iter.min(orbit_len.saturating_sub(2)).min(sa_step_budget(p));
+        {
+            let traces = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(t) = traces.iter().find(|t| t.is_for(cx, cy, formula, p) && t.covers(limit)) {
+                return sa_replay(&t.steps, log2_max_dc, limit);
+            }
+        }
+        // Record to the limit the orbit and the budget allow, not the frame's `max_iter`: the
+        // steps do not depend on the limit, so a longer record serves the deeper frames too. A
+        // speculative walk (`cancel`, beside the pick) records too; cancelled, its record is partial
+        // and goes, and the answer is NONE, as the plain walk's is.
+        let mut steps = Vec::new();
+        series_skip_walk(backend, cx, cy, SA_TRACE_LOG2_DC, u32::MAX, orbit_len, formula, p, cancel, Some(&mut steps));
+        if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
+            return SeriesSkip::NONE;
+        }
+        let walked = orbit_len.saturating_sub(2).min(sa_step_budget(p)) as usize;
+        let ended = steps.len() < walked
+            || steps.last().is_some_and(|st| st.stops(steps.len() as u32, SA_TRACE_LOG2_DC));
+        let trace = SaTrace {
+            cx: cx.clone(),
+            cy: cy.clone(),
+            formula,
+            words: p.div_ceil(64),
+            pc: p.min(SA_COEFF_BITS),
+            steps,
+            ended,
+        };
+        let out = sa_replay(&trace.steps, log2_max_dc, limit);
+        let mut traces = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        traces.retain(|t| !t.is_for(cx, cy, formula, p));
+        traces.push(trace);
+        if traces.len() > SA_TRACES_KEPT {
+            traces.remove(0);
+        }
+        out
+    }
+}
+
+static SA_TRACES: SaTraces = SaTraces::new();
+static SA_TRACES_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Record each reference's series walk once and answer later frames from it (a tour: many frames,
+/// one reference). Off by default: a single render walks once anyway, and the record walks the
+/// whole budget where the frame's own walk may stop early.
+pub fn set_sa_trace_cache(on: bool) {
+    SA_TRACES_ON.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Whether a skip walked with `orbit_len` = an UPPER BOUND on the reference length is also the
@@ -1116,12 +1316,7 @@ pub fn series_skip_holds_for(s: &SeriesSkip, len: u32) -> bool {
 fn series_best_to_skip(best: Option<(u32, [BigFloat; 6])>) -> SeriesSkip {
     match best {
         None => SeriesSkip::NONE,
-        Some((skip, k)) => {
-            let (a, a_exp) = coeff_to_fe(&k[0], &k[1]);
-            let (b, b_exp) = coeff_to_fe(&k[2], &k[3]);
-            let (c, c_exp) = coeff_to_fe(&k[4], &k[5]);
-            SeriesSkip { skip, a, a_exp, b, b_exp, c, c_exp }
-        }
+        Some((skip, k)) => skip_from_coeffs(skip, [&k[0], &k[1], &k[2], &k[3], &k[4], &k[5]]),
     }
 }
 
@@ -1150,6 +1345,8 @@ pub fn series_skip(
 /// `pc` bits instead of `p` ([`SA_COEFF_BITS`]; `pc = p` is the historical walk exactly). The
 /// MPFR twin mirrors this loop op-for-op; change one only with the other, and with
 /// `the_sa_walk_is_backend_identical` green. `cancel`: see [`series_skip_in_cancellable`].
+// The tests' entry to the astro walk; production reaches it through `series_skip_walk`.
+#[cfg_attr(not(test), allow(dead_code))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn series_skip_astro(
     cx: &BigFloat,
@@ -1162,7 +1359,7 @@ pub(crate) fn series_skip_astro(
     pc: usize,
     cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> SeriesSkip {
-    series_skip_astro_piped(cx, cy, log2_max_dc, max_iter, orbit_len, formula, p, pc, cancel, None)
+    series_skip_astro_piped(cx, cy, log2_max_dc, max_iter, orbit_len, formula, p, pc, cancel, None, None)
 }
 
 /// [`series_skip_astro`] with the pipeline FORCED on or off (`None` = the production rule), so a
@@ -1179,6 +1376,7 @@ pub(crate) fn series_skip_astro_piped(
     pc: usize,
     cancel: Option<&std::sync::atomic::AtomicBool>,
     pipe: Option<bool>,
+    mut rec: Option<&mut Vec<SaStep>>,
 ) -> SeriesSkip {
     if !log2_max_dc.is_finite() {
         return SeriesSkip::NONE;
@@ -1219,9 +1417,10 @@ pub(crate) fn series_skip_astro_piped(
         let m2 = to_f64(zx) * to_f64(zx) + to_f64(zy) * to_f64(zy);
         (zcx, zcy, m2 > ref_escape2(formula), m2 <= seed_max2)
     };
-    // The coefficient chain, fed one Z-chain step per iteration. `Err` = cancelled.
+    // The coefficient chain, fed one Z-chain step per iteration. `Err` = cancelled. `rec` gets
+    // every step it computes (an `SaStep`), before the stop rules read it.
     type Walked = Result<Option<(u32, [BigFloat; 6])>, ()>;
-    let walk = |next: &mut dyn FnMut() -> Option<(BigFloat, BigFloat, bool, bool)>| -> Walked {
+    let mut walk = |next: &mut dyn FnMut() -> Option<(BigFloat, BigFloat, bool, bool)>| -> Walked {
         let (mut ax, mut ay) = (bf(0.0, pc), bf(0.0, pc));
         let (mut bx, mut by) = (bf(0.0, pc), bf(0.0, pc));
         let (mut cxx, mut cyy) = (bf(0.0, pc), bf(0.0, pc));
@@ -1284,6 +1483,10 @@ pub(crate) fn series_skip_astro_piped(
             // Validity (in log space → no overflow): cubic·|δc|³ ≤ 2^EPS · linear·|δc|.
             let la = log2_cmag(&ax, &ay);
             let lc = log2_cmag(&cxx, &cyy);
+            if let Some(r) = rec.as_deref_mut() {
+                let k = skip_from_coeffs(n, [&ax, &ay, &bx, &by, &cxx, &cyy]);
+                r.push(SaStep::new(la, lc, z_seedable, z_escaped, k));
+            }
             if !la.is_finite() {
                 continue;
             }
