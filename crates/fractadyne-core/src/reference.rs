@@ -2792,9 +2792,12 @@ fn par_orbit_scores(
         for (idx_chunk, out_chunk) in idxs.chunks(chunk).zip(out.chunks_mut(chunk)) {
             s.spawn(|| {
                 let (jcx, jcy, zero) = (jcx.clone(), jcy.clone(), bf(0.0, p));
-                for (&i, o) in idx_chunk.iter().zip(out_chunk.iter_mut()) {
-                    *o = score_one(&cands[i], &jcx, &jcy, &zero);
-                }
+                // The pool fills the machine: each walk keeps its products on its own thread.
+                crate::backend::with_sequential_products(|| {
+                    for (&i, o) in idx_chunk.iter().zip(out_chunk.iter_mut()) {
+                        *o = score_one(&cands[i], &jcx, &jcy, &zero);
+                    }
+                });
             });
         }
     });

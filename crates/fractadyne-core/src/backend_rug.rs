@@ -525,7 +525,7 @@ fn par_enabled(ctx: u32) -> bool {
             .unwrap_or(PAR_MIN_BITS);
         (off, min)
     });
-    !off && ctx >= min
+    !off && ctx >= min && !crate::backend::sequential_products()
 }
 
 fn spin_until(mut ready: impl FnMut() -> bool) {
@@ -668,6 +668,9 @@ fn par_mandel_walk(
     steps: u32,
 ) -> (Float, Float) {
     use rug::ops::{AddAssignRound, SubAssignRound};
+    if split_enabled(ctx) {
+        return split_mandel_walk(zx, zy, rcx, rcy, ctx, each, steps);
+    }
     let par = ParProducts::new(vec![zx, zy], vec![vec![(0, 0)], vec![(1, 1)], vec![(0, 1)]], ctx);
     let mut cur = ctx;
     par.with_workers(|par| {
@@ -697,6 +700,311 @@ fn par_mandel_walk(
                         }
                     }
                 });
+                cur = next;
+            }
+        }
+    });
+    let mut z = par.inputs.into_inner().expect("inputs");
+    let zy = z.pop().expect("zy");
+    let zx = z.pop().expect("zx");
+    (zx, zy)
+}
+
+// ---- Products split across cores --------------------------------------------------------------
+//
+// One product per core still leaves a step at the cost of its slowest product, x·y: ~140 µs at
+// 100,000 bits. Wider than `SPLIT_MIN_BITS`, each product is split again. A significand
+// m = h·2^k + l squares EXACTLY as h²·2^2k + ((h+l)² − h² − l²)·2^k + l² (Karatsuba; x·y likewise
+// from h·h', l·l' and (h+l)(h'+l')), so the step's three products are nine half-width integer
+// products on nine cores (~57 µs for the widest at 100,000 bits), then three threads each assemble
+// one exact product and truncate it to the step's precision. A correctly rounded result is unique,
+// so that is the very value MPFR's RZ multiply returns: the walk stays byte-identical
+// (`tests/backend_rug_identity.rs`), only the wall time changes.
+
+/// Below this working width the split does not pay. Measured in isolation, at 100,000 bits MPFR's
+/// x·y takes 139 µs against 57 µs for the widest half-width product plus ~8 µs to assemble and
+/// round; at 16,384 bits 9.7 µs against 4.0 + 0.8, where two extra handshakes a step eat the
+/// difference. `FRACTADYNE_ORBIT_SPLIT_MIN_BITS` moves it (a huge value turns the split off).
+const SPLIT_MIN_BITS: u32 = 32_768;
+
+fn split_min_bits() -> u32 {
+    static MIN: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *MIN.get_or_init(|| {
+        std::env::var("FRACTADYNE_ORBIT_SPLIT_MIN_BITS")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(SPLIT_MIN_BITS)
+    })
+}
+
+/// Whether a walk of working width `ctx` splits its products: wide enough, and a machine with the
+/// cores for it. The pick's centre walk and the build's run side by side, so that is two walks'
+/// `SPLIT_THREADS`; with fewer cores the threads only take turns (measured: oversubscribed product
+/// threads, 32 pool walks × 9, made the 1e10003 minibrot's reference 3.7× slower).
+fn split_enabled(ctx: u32) -> bool {
+    static CORES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let cores = *CORES.get_or_init(|| {
+        std::thread::available_parallelism().map_or(1, |n| n.get()) >= 2 * SPLIT_THREADS
+    });
+    ctx >= split_min_bits() && (cores || FORCE_SPLIT.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+static FORCE_SPLIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Tests: split wide walks whatever the core count (a CI runner has four).
+#[doc(hidden)]
+pub fn force_split() {
+    FORCE_SPLIT.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Steps the split has taken in this process: lets a test show the split really ran.
+static SPLIT_STEPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[doc(hidden)]
+pub fn split_steps() -> u64 {
+    SPLIT_STEPS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Threads of a split step, the calling thread included: one per half-width product.
+const SPLIT_THREADS: usize = 9;
+
+/// A split step's shared state. Stage A: thread `w` splits the significands it needs and computes
+/// half-width product `w` — 0–2 build x², 3–5 y² (h², l², (h+l)²), 6–8 x·y (h·h', l·l',
+/// (h+l)(h'+l')); stage B: threads 0–2 each assemble one exact product and round it. A step too
+/// narrow to split (the schedule can lower the precision mid-walk), or with a zero input, is the
+/// three plain MPFR products on threads 0–2.
+///
+/// ⚠Measured, not assumed: each thread splitting its own operands into FRESH integers is the
+/// fastest of three layouts at the 1e30000 path (3 interleaved runs each): 57.8–58.3 s, against
+/// 61.6 s splitting both significands once on the calling thread and 62.4 s with every thread
+/// reusing its own buffers.
+struct ParSplit {
+    inputs: std::sync::RwLock<Vec<Float>>,
+    subs: Vec<std::sync::Mutex<Integer>>,
+    /// x², y² and x·y at the step's precision.
+    prods: Vec<std::sync::Mutex<Float>>,
+    /// Stage B's scratch, one per assembling thread.
+    scratch: Vec<std::sync::Mutex<(Integer, Integer)>>,
+    /// The inputs' significand exponents (`z = m·2^e`), from stage A for stage B.
+    exps: [std::sync::atomic::AtomicI32; 2],
+    /// The split point `k` of this step, and whether it splits at all.
+    k: std::sync::atomic::AtomicU32,
+    split: std::sync::atomic::AtomicBool,
+    /// 0 = stage A, 1 = stage B.
+    stage: std::sync::atomic::AtomicU32,
+    gen: std::sync::atomic::AtomicU64,
+    done: std::sync::atomic::AtomicU64,
+    stop: std::sync::atomic::AtomicBool,
+}
+
+impl ParSplit {
+    fn new(zx: Float, zy: Float, ctx: u32) -> Self {
+        use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64};
+        use std::sync::Mutex;
+        ParSplit {
+            inputs: std::sync::RwLock::new(vec![zx, zy]),
+            subs: (0..SPLIT_THREADS).map(|_| Mutex::new(Integer::new())).collect(),
+            prods: (0..3).map(|_| Mutex::new(Float::with_val(ctx, 0))).collect(),
+            scratch: (0..3).map(|_| Mutex::new((Integer::new(), Integer::new()))).collect(),
+            exps: [AtomicI32::new(0), AtomicI32::new(0)],
+            k: AtomicU32::new(0),
+            split: AtomicBool::new(false),
+            stage: AtomicU32::new(0),
+            gen: AtomicU64::new(0),
+            done: AtomicU64::new(0),
+            stop: AtomicBool::new(false),
+        }
+    }
+
+    /// `|m|`'s halves at `k` (`h`, `l`) for `z = m·2^e`, and `e`.
+    fn halves(z: &Float, k: u32) -> (Integer, Integer, i32) {
+        let (m, e) = z.to_integer_exp().expect("a split input is finite and non-zero");
+        let m = m.abs();
+        (Integer::from(&m >> k), m.keep_bits(k), e)
+    }
+
+    fn stage_a(&self, w: usize) {
+        use rug::{ops::AssignRound, Assign};
+        use std::sync::atomic::Ordering::Relaxed;
+        if !self.split.load(Relaxed) {
+            if w < 3 {
+                let inp = self.inputs.read().expect("inputs");
+                let (a, b) = [(0, 0), (1, 1), (0, 1)][w];
+                self.prods[w].lock().expect("products").assign_round(&inp[a] * &inp[b], RZ);
+            }
+            return;
+        }
+        let k = self.k.load(Relaxed);
+        let inp = self.inputs.read().expect("inputs");
+        let mut out = self.subs[w].lock().expect("half products");
+        if w < 6 {
+            let (h, l, e) = Self::halves(&inp[w / 3], k);
+            match w % 3 {
+                0 => {
+                    self.exps[w / 3].store(e, Relaxed);
+                    out.assign(h.square_ref());
+                }
+                1 => out.assign(l.square_ref()),
+                _ => out.assign((h + l).square_ref()),
+            }
+        } else {
+            let (xh, xl, _) = Self::halves(&inp[0], k);
+            let (yh, yl, _) = Self::halves(&inp[1], k);
+            match w {
+                6 => out.assign(&xh * &yh),
+                7 => out.assign(&xl * &yl),
+                _ => out.assign(&(xh + xl) * &(yh + yl)),
+            }
+        }
+    }
+
+    /// Product `w` from its three half-width products: h·2^2k + (s − h − l)·2^k + l, its sign,
+    /// truncated to the product's precision, then scaled by its exponent (exact).
+    fn stage_b(&self, w: usize) {
+        use rug::{ops::{AssignRound, NegAssign}, Assign};
+        use std::sync::atomic::Ordering::Relaxed;
+        if w >= 3 || !self.split.load(Relaxed) {
+            return;
+        }
+        let k = self.k.load(Relaxed);
+        let (h, l, s) = (
+            self.subs[3 * w].lock().expect("half products"),
+            self.subs[3 * w + 1].lock().expect("half products"),
+            self.subs[3 * w + 2].lock().expect("half products"),
+        );
+        let mut scratch = self.scratch[w].lock().expect("scratch");
+        let (exact, mid) = &mut *scratch;
+        mid.assign(&*s - &*h);
+        *mid -= &*l;
+        *mid <<= k;
+        exact.assign(&*h << (2 * k));
+        *exact += &*mid;
+        *exact += &*l;
+        let (ex, ey) = (self.exps[0].load(Relaxed), self.exps[1].load(Relaxed));
+        let e = match w {
+            0 => 2 * ex,
+            1 => 2 * ey,
+            _ => {
+                let inp = self.inputs.read().expect("inputs");
+                if inp[0].is_sign_negative() != inp[1].is_sign_negative() {
+                    exact.neg_assign();
+                }
+                ex + ey
+            }
+        };
+        let mut p = self.prods[w].lock().expect("products");
+        p.assign_round(&*exact, RZ);
+        *p <<= e;
+    }
+
+    fn run_stage(&self, stage: u32) {
+        use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed};
+        self.stage.store(stage, Relaxed);
+        let g = self.gen.fetch_add(1, AcqRel) + 1;
+        if stage == 0 {
+            self.stage_a(0);
+        } else {
+            self.stage_b(0);
+        }
+        let want = g * (SPLIT_THREADS as u64 - 1);
+        spin_until(|| self.done.load(Acquire) >= want);
+    }
+
+    /// One step's three products at the current precision `cur`.
+    fn step(&self, cur: u32) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let split = cur >= split_min_bits() && self.read(|z| !z[0].is_zero() && !z[1].is_zero());
+        if split {
+            let k = self.read(|z| z[0].prec().max(z[1].prec())) / 2;
+            self.k.store(k, Relaxed);
+            SPLIT_STEPS.fetch_add(1, Relaxed);
+        }
+        self.split.store(split, Relaxed);
+        self.run_stage(0);
+        if split {
+            self.run_stage(1);
+        }
+    }
+
+    fn worker(&self, w: usize) {
+        use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed};
+        let mut seen = 0u64;
+        loop {
+            spin_until(|| self.gen.load(Acquire) != seen || self.stop.load(Acquire));
+            if self.stop.load(Acquire) {
+                return;
+            }
+            seen += 1; // the caller waits for every worker before the next stage: exactly one
+            if self.stage.load(Relaxed) == 0 {
+                self.stage_a(w);
+            } else {
+                self.stage_b(w);
+            }
+            self.done.fetch_add(1, AcqRel);
+        }
+    }
+
+    /// Run `f` with workers `1..` live on scoped threads, stopping them however `f` ends.
+    fn with_workers<R>(&self, f: impl FnOnce(&Self) -> R) -> R {
+        struct Stop<'a>(&'a std::sync::atomic::AtomicBool);
+        impl Drop for Stop<'_> {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
+        std::thread::scope(|s| {
+            for w in 1..SPLIT_THREADS {
+                s.spawn(move || self.worker(w));
+            }
+            let _stop = Stop(&self.stop);
+            f(self)
+        })
+    }
+
+    fn read<R>(&self, f: impl FnOnce(&[Float]) -> R) -> R {
+        f(&self.inputs.read().expect("inputs"))
+    }
+}
+
+/// [`par_mandel_walk`] with each product split across cores (see `ParSplit`); the combination
+/// after the products is `par_mandel_walk`'s, op for op.
+fn split_mandel_walk(
+    zx: Float,
+    zy: Float,
+    rcx: &Float,
+    rcy: &Float,
+    ctx: u32,
+    mut each: impl FnMut(&Float, &Float) -> (bool, u32),
+    steps: u32,
+) -> (Float, Float) {
+    use rug::ops::{AddAssignRound, SubAssignRound};
+    let par = ParSplit::new(zx, zy, ctx);
+    let mut cur = ctx;
+    par.with_workers(|par| {
+        for _ in 0..steps {
+            par.step(cur);
+            {
+                let mut p: Vec<_> = par.prods.iter().map(|m| m.lock().expect("products")).collect();
+                let mut inp = par.inputs.write().expect("inputs");
+                let (p0, rest) = p.split_at_mut(1);
+                let (p1, p2) = rest.split_at_mut(1);
+                let (x2, y2, t) = (&mut *p0[0], &*p1[0], &mut *p2[0]);
+                *t <<= 1; // exact
+                x2.sub_assign_round(y2, RZ);
+                x2.add_assign_round(rcx, RZ);
+                t.add_assign_round(rcy, RZ);
+                swap_in(&mut inp[0], x2, cur);
+                swap_in(&mut inp[1], t, cur);
+            }
+            let (stop, next) = par.read(|z| each(&z[0], &z[1]));
+            if stop {
+                break;
+            }
+            if next != cur {
+                // The next step's products and sums round to `next` bits.
+                for m in &par.prods {
+                    m.lock().expect("products").set_prec(next);
+                }
                 cur = next;
             }
         }

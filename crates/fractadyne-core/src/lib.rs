@@ -51,6 +51,9 @@ pub mod lsystem;
 mod backend;
 #[cfg(feature = "rug")]
 mod backend_rug;
+#[cfg(feature = "rug")]
+#[doc(hidden)]
+pub use backend_rug::{force_split as force_orbit_split, split_steps as orbit_split_steps};
 pub use backend::{
     available_backends, built_in_backends, mpfr_found_message, mpfr_missing_message,
     mpfr_restored_message, mpfr_runtime_available, observed_backends,

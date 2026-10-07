@@ -443,6 +443,54 @@ fn the_three_core_build_is_byte_identical_to_astro_float() {
     }
 }
 
+/// The SPLIT products (`ParSplit`: each product as three half-width ones, at 32,768 bits and up)
+/// against astro-float: an unscheduled walk at 40,000 bits, and a scheduled one near `c = i` that
+/// starts above the split width and is carried below it mid-walk, so both of the split walk's step
+/// kinds and the change between them are compared. The split must really have run.
+#[test]
+fn the_split_product_build_is_byte_identical_to_astro_float() {
+    fc::force_orbit_split(); // whatever this machine's core count
+    let before = fc::orbit_split_steps();
+    let p = 40_000;
+    let z0 = fc::BigFloat::from_f64(0.0, p);
+    for (sx, sy) in [("-0.7436438870371587", "0.1318259042053122"), ("-0.1", "0.65")] {
+        let cx = fc::parse_bf_prec(sx, p).unwrap();
+        let cy = fc::parse_bf_prec(sy, p).unwrap();
+        let build = |backend| {
+            fc::with_orbit_schedule(false, || fc::reference_orbit_t_in(backend, &z0, &z0, &cx, &cy, 0, 400, p))
+        };
+        let (a, la, ta) = build(BackendChoice::Astro);
+        let (r, lr, tr) = build(BackendChoice::Rug);
+        assert_eq!(la, lr, "{sx}: length");
+        assert_eq!(bits(&a), bits(&r), "{sx}: samples");
+        assert!(tail_eq(&ta.zx, &tr.zx) && tail_eq(&ta.zy, &tr.zy), "{sx}: tail");
+    }
+    let split = fc::orbit_split_steps();
+    assert!(split - before >= 399, "the unscheduled walks did not split ({} steps)", split - before);
+
+    // ~2^-6,640 from i: the orbit follows i's (~1.25 bits of derivative a step) for ~5,300 steps,
+    // so the schedule falls from 34,000 bits through 32,768 early and ends far below it.
+    let p = 34_000;
+    let zeros = 2_000;
+    let z0 = fc::BigFloat::from_f64(0.0, p);
+    let cx = fc::parse_bf_prec(&format!("7.07e-{}", zeros + 1), p).unwrap();
+    let cy = fc::parse_bf_prec(&format!("1.{}95", "0".repeat(zeros)), p).unwrap();
+    let build = |backend| {
+        fc::with_orbit_schedule(true, || {
+            fc::reference_orbit_t_in(backend, &z0, &z0, &cx, &cy, fc::formula::MANDELBROT, 20_000, p)
+        })
+    };
+    let (a, al, at) = build(BackendChoice::Astro);
+    let (r, rl, rt) = build(BackendChoice::Rug);
+    assert_eq!(al, rl, "scheduled: lengths differ");
+    assert!(at.escaped, "scheduled: the test orbit should escape, so the whole run is compared");
+    assert_eq!(bits(&a), bits(&r), "scheduled: the samples differ between backends");
+    assert_eq!(at.sched, rt.sched, "scheduled: the schedule states differ");
+    let st = at.sched.expect("scheduled");
+    assert!(st.cur < 32_768, "scheduled: the schedule never left the split width ({} bits)", st.cur);
+    assert!(fc::orbit_split_steps() > split, "scheduled: the walk never split");
+}
+
 /// Where splitting a step's products across cores starts to pay: ns per step of the MPFR
 /// build at several widths. Run twice — `FRACTADYNE_ORBIT_PAR_MIN_BITS=1` (always split) and
 /// `FRACTADYNE_ORBIT_THREADS=1` (never) — with `--ignored --nocapture`, and compare.
