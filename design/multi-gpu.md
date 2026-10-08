@@ -219,7 +219,24 @@ process, with no per-device capability state (`design/multi-gpu-live.md` §8).
   close-up of the busiest seam shows the same speckle on both sides (`local/l2-ab/split-pluto/`).
   So splitting by tile across different models looks safe for stills; a smooth-gradient view would
   be the harder test of it.
-- **Next:** the Export dialog (Use all graphics cards), and its default for different models.
+- **The smooth-gradient test (2026-10-08, user: "yes"; field agent v22 for the 4,031-digit centre).**
+  6.8e3999× (`locations/e4000.fdn`, the view whose class difference showed as faint arcs in a smooth
+  background) at 3840×2160 ss 2, 2,008,192 iterations: the two cards agree EXACTLY on 64.6% of the
+  pixels — every smooth region (the map of which card drew what is `=` there) — and differ (mean
+  7.0/255, 0.67 after a 16×16 average, signed −0.004) only in the detailed ones. Every pixel of the
+  split is one card's; across the five seams the band step is the single card's to 0.15/255. GPU
+  phase: 6800 XT 2.53 s, 3070 1.44 s, split 1.19 s (4 + 8 tiles); totals reference-bound (~12 s).
+  Decided with the user: no restriction to same-model cards.
+- **Export ▸ Use all graphics cards (2026-10-08).** A checkbox under "Open when done", shown for two
+  or more cards (the `--list-adapters` child listing the Second graphics card row uses,
+  `card_list`), off by default, persisted (`export_all_gpus`). The export's thread opens the other
+  cards (`gpu_worker::open_other_cards`, Vulkan only) and renders through `export::render_split`,
+  the same function `--render --gpus` uses; `--shot … --image` (the Export dialog's settings) does
+  the same, which is how it was checked here with `FRACTADYNE_EXPORT_TWIN=1`: a 10240×2880
+  side-by-side export of 9.3e78×, map 60 tiles (31 + 29) and Julia 57,600, identical to the
+  unsplit export. Not driven by a harness: the dialog's own thread (shared code, compile-checked).
+  The UI walk's Export screen is seeded with two cards; ⛔its seeded list was replaced by a real
+  one-card listing still on its way from an earlier screen — the walk now drops pending listings.
 
 Big stills (8K and up, high caps, interior-heavy minibrots) are where a single frame waits on the
 GPU. The work splits like this:

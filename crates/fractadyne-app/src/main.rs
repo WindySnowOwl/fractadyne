@@ -5369,6 +5369,9 @@ struct ExportState {
     started: Option<std::time::Instant>,
     /// Open the finished image in the system viewer once the export succeeds (persisted).
     open_after: bool,
+    /// Render on every graphics card of this machine (persisted; off by default): the export's
+    /// thread opens the other cards and splits the image by tile (`render_export_multi`).
+    all_gpus: bool,
     /// Where the in-flight export is being written. ⭐Captured at START, not parsed back out
     /// of the status message — the message is prose for a human and its shape is free to
     /// change; the path is the fact.
@@ -7140,6 +7143,7 @@ impl FractadyneApp {
                 last_dir: s.export_dir.clone().map(std::path::PathBuf::from),
                 started: None,
                 open_after: s.export_open_after,
+                all_gpus: s.export_all_gpus,
                 dest: None,
                 pending_open: None,
             },
@@ -7879,6 +7883,7 @@ impl FractadyneApp {
             },
             export_aspect: self.export.aspect.clone(),
             export_open_after: self.export.open_after,
+            export_all_gpus: self.export.all_gpus,
             share_include_thumb: self.share.include_thumb,
             show_location: self.show_location,
             palette_anim: self.anim.palette_anim.key().to_string(),

@@ -8,7 +8,9 @@ use crate::FractadyneApp;
 impl FractadyneApp {
     /// The setting's row and its status line. The cards come from a `--list-adapters` child process
     /// the first time the row is drawn (`farm_client::list_cards`), never from this process.
-    pub(super) fn second_gpu_row(&mut self, ui: &mut egui::Ui) {
+    /// This machine's graphics cards (number, name), from a `--list-adapters` child process started
+    /// on first use; `None` until it answers. Shared by this row and the Export dialog.
+    pub(crate) fn card_list(&mut self) -> Option<&[(usize, String)]> {
         if self.worker_cards.is_none() && self.worker_cards_rx.is_none() {
             let (tx, rx) = std::sync::mpsc::channel();
             self.worker_cards_rx = Some(rx);
@@ -22,6 +24,11 @@ impl FractadyneApp {
                 self.worker_cards_rx = None;
             }
         }
+        self.worker_cards.as_deref()
+    }
+
+    pub(super) fn second_gpu_row(&mut self, ui: &mut egui::Ui) {
+        let _ = self.card_list();
         let choices = self.worker_cards.as_deref().map(|c| second_card_choices(c, &self.gpu_name));
         let value = &mut self.render_cfg.worker_gpu;
         let selected = match value.trim() {

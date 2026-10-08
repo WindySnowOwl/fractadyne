@@ -225,6 +225,43 @@ pub(crate) fn open_headless(spec: &str, window: &wgpu::AdapterInfo, backends: wg
     Ok(Headless { device, queue, name, alive })
 }
 
+/// Open every graphics card of this machine except the window's own (Vulkan, real hardware), for
+/// an export split across them. A card that will not open is logged and left out. Enumerates
+/// Vulkan only, so the app never enumerates OpenGL beside its own device; numbered as
+/// [`open_headless`] picks them over the same enumeration.
+pub(crate) fn open_other_cards(window: &wgpu::AdapterInfo) -> Vec<Headless> {
+    let backends = crate::gpu_choice::backends() & wgpu::Backends::VULKAN;
+    // Test hook: `FRACTADYNE_EXPORT_TWIN=1` — a second device on the window's own card, so a
+    // one-card machine runs the Export dialog's split path end to end.
+    if std::env::var_os("FRACTADYNE_EXPORT_TWIN").is_some() {
+        return open_headless("same", window, backends, "fractadyne.export").map_or_else(
+            |e| {
+                crate::diag::log_line("render", &format!("export: FRACTADYNE_EXPORT_TWIN: {e}"));
+                Vec::new()
+            },
+            |h| vec![h],
+        );
+    }
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor { backends, ..Default::default() });
+    let cards: Vec<(usize, String)> = instance
+        .enumerate_adapters(backends)
+        .iter()
+        .map(|a| a.get_info())
+        .enumerate()
+        .filter(|(_, i)| matches!(i.device_type, wgpu::DeviceType::DiscreteGpu | wgpu::DeviceType::IntegratedGpu))
+        .map(|(k, i)| (k + 1, i.name))
+        .collect();
+    drop(instance);
+    let mut out = Vec::new();
+    for k in export_extra_cards(&crate::farm::local::Gpus::All, &cards, &window.name) {
+        match open_headless(&k.to_string(), window, backends, "fractadyne.export") {
+            Ok(h) => out.push(h),
+            Err(e) => crate::diag::log_line("render", &format!("export: graphics card {k} left out: {e}")),
+        }
+    }
+    out
+}
+
 /// The cards a still export renders on BESIDE the window's own, for `--render … --gpus SPEC`
 /// (`farm::local::parse_gpus`), as `--list-adapters` numbers for [`open_headless`]. `cards` are
 /// this machine's Vulkan cards (number, name). The window's card always renders: `all` adds every

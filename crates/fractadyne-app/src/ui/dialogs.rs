@@ -2242,6 +2242,19 @@ impl FractadyneApp {
                     .on_hover_text(
                         "Hand the finished image to the system viewer as soon as it is written.",
                     );
+                // Every graphics card of this machine renders the image (design/multi-gpu.md
+                // Phase 2), offered when there are two or more.
+                if let Some(n) = self.card_list().map(<[_]>::len).filter(|&n| n >= 2) {
+                    ui.checkbox(&mut self.export.all_gpus, format!("Use all graphics cards ({n})"))
+                        .on_hover_text(
+                            "Split the image by tile across every graphics card of this machine, \
+                             each with its own copy of the deep reference. Identical cards give \
+                             exactly the image one renders alone; different models draw a few \
+                             pixels slightly differently, tile by tile (measured: no visible seam). \
+                             If a card fails, its tiles go to the others. Images the split cannot \
+                             take (some colouring methods and formulas) use this window's card.",
+                        );
+                }
                 ui.add_space(6.0);
                 let busy = self.export.task.is_some() || self.export.prep.is_some();
                 let elapsed = self

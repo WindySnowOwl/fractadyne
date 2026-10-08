@@ -232,6 +232,11 @@ pub struct SessionState {
     /// stealing focus mid-session is not something to opt people into silently.
     #[serde(default)]
     pub export_open_after: bool,
+    /// Render exports on every graphics card of this machine (Export ▸ Use all graphics cards):
+    /// the image split by tile across them. Off by default. `serde(default)` keeps older session
+    /// files loadable.
+    #[serde(default)]
+    pub export_all_gpus: bool,
     /// Burn the zoom/coordinate HUD into exports (also settable via the `--show-location` CLI flag).
     #[serde(default)]
     pub show_location: bool,
@@ -621,6 +626,7 @@ impl Default for SessionState {
             export_aspect: default_export_aspect(),
             share_include_thumb: true,
             export_open_after: false,
+            export_all_gpus: false,
             show_location: false,
             palette_anim: default_palette_anim(),
             palette_anim_speed: default_palette_anim_speed(),

@@ -59,12 +59,15 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
-- **A still image on several graphics cards (0.3.0-beta.18, command line).** `--render … --gpus all`
-  (or card numbers from `--list-adapters`) splits one image by tile across the card drawing the window
-  and the others, each with its own copy of the deep reference; a card that fails hands its tile to
-  another. On the deep path the tiles are the ones a single card renders, so identical cards give
-  exactly that card's image; different card models draw a few pixels differently, tile by tile. The
-  app's Export dialog does not offer it yet.
+- **A still image on several graphics cards (0.3.0-beta.18).** On a machine with more than one
+  graphics card, Export image has *Use all graphics cards* (off by default), and `--render … --gpus
+  all` (or card numbers from `--list-adapters`) does the same from the command line: the image is
+  split by tile across the card drawing the window and the others, each with its own copy of the deep
+  reference, and a card that fails hands its tiles to the others. On the deep path the tiles are the
+  ones a single card renders, so identical cards give exactly that card's image. Different card
+  models draw a few pixels differently, tile by tile; on a test machine with an RX 6800 XT and an
+  RTX 3070 no seam between their tiles could be measured, and the two cards rendered the GPU part
+  of a 4K export 1.7 to 1.9 times faster than either alone.
 - **Render a tour on every graphics card (0.3.0-beta.18).** On a machine with more than one
   graphics card, the Render tour window has *Use all graphics cards*, and `--render-tour TOUR --gpus
   all` does the same from the command line: every card renders its share of the frames at once,

@@ -1164,6 +1164,9 @@ impl FractadyneApp {
         self.render_cfg.worker_gpu.clear();
         self.worker_state = crate::gpu_worker::WorkerState::Off;
         self.worker_cards = None;
+        // …and any listing still on its way: a real one-card answer arriving during a later seeded
+        // screen replaced its two cards (the Export screen photographed no "Use all graphics cards").
+        self.worker_cards_rx = None;
         self.update_prompt_open = false;
         self.coloring.palette_editor_open = false;
         // ⚠**Three windows this list had missed**, found by narrowing the gradient editor in P3′:
@@ -1221,6 +1224,7 @@ impl FractadyneApp {
                 self.dialogs.uitest_advanced_open = Some(true);
                 let other = "AMD Radeon RX 6800 XT".to_string();
                 self.worker_cards = Some(vec![(1, self.gpu_name.clone()), (2, other.clone())]);
+                self.worker_cards_rx = None;
                 self.render_cfg.worker_gpu = "2".into();
                 self.worker_state = crate::gpu_worker::WorkerState::Running(format!("{other} · Vulkan"));
             }
@@ -1298,7 +1302,12 @@ impl FractadyneApp {
             // would contend for the same GPU the walk is rendering with, and turn a UI check into
             // a flaky performance test.
             Screen::Diagnostics => self.diagnostics.open = true,
-            Screen::Export => self.export.open = true,
+            Screen::Export => {
+                self.export.open = true;
+                // A two-card machine, so the walk photographs "Use all graphics cards".
+                self.worker_cards = Some(vec![(1, self.gpu_name.clone()), (2, "AMD Radeon RX 6800 XT".into())]);
+                self.worker_cards_rx = None;
+            }
             Screen::ScriptExport => self.dialogs.script_export_open = true,
             // ⚠⚠Seeded: opening the flag alone photographed an EMPTY screen and passed — the
             // dialog read its tour from the player, and the walk plays none (found 2026-10-04).

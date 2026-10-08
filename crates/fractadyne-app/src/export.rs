@@ -1543,6 +1543,16 @@ impl FractadyneApp {
         if !self.export_extra.is_empty() {
             return self.render_export_split(device, queue, req, progress, cancel);
         }
+        // `--shot … --image` renders at the Export dialog's settings, Use all graphics cards
+        // included: the same split the dialog's own export thread makes (`spawn_export_worker`).
+        if self.export.all_gpus && self.harness.shot.is_some() {
+            if let Some(info) = self.render_state.as_ref().map(|rs| rs.adapter.get_info()) {
+                let extra = crate::gpu_worker::open_other_cards(&info);
+                if !extra.is_empty() {
+                    return render_split((device, queue, &self.gpu_name), &extra, req, progress, cancel);
+                }
+            }
+        }
         fractadyne_gpu::render_export(device, queue, req, progress, cancel)
     }
 
@@ -1557,36 +1567,7 @@ impl FractadyneApp {
         progress: &std::sync::atomic::AtomicU32,
         cancel: &std::sync::atomic::AtomicBool,
     ) -> Result<fractadyne_gpu::ExportResult, fractadyne_gpu::GpuError> {
-        let mut devices: Vec<(&eframe::wgpu::Device, &eframe::wgpu::Queue)> = vec![(device, queue)];
-        let mut names = vec![self.gpu_name.clone()];
-        for h in self.export_extra.iter().filter(|h| h.alive.load(std::sync::atomic::Ordering::Relaxed)) {
-            devices.push((&h.device, &h.queue));
-            names.push(h.name.clone());
-        }
-        let limits: Vec<eframe::wgpu::Limits> = devices.iter().map(|(d, _)| d.limits()).collect();
-        if !fractadyne_gpu::export_splits(&limits, req) {
-            crate::diag::log_line("render", "--gpus: this render cannot be split by tile (outside the chunked iterate) — the window's card renders it");
-        }
-        let t = std::time::Instant::now();
-        let (r, shares) = fractadyne_gpu::render_export_multi(&devices, req, progress, cancel)?;
-        let words: Vec<String> = shares
-            .iter()
-            .zip(&names)
-            .map(|(s, n)| {
-                format!(
-                    "{n}: {} tiles, {:.1} Mpx, GPU {:.0} ms{}",
-                    s.tiles,
-                    s.pixels as f64 / 1e6,
-                    s.iterate_ms + s.color_ms,
-                    s.error.as_ref().map_or(String::new(), |e| format!(" (stopped: {e})"))
-                )
-            })
-            .collect();
-        crate::diag::log_line(
-            "render",
-            &format!("split across {} card(s) in {:.0} ms — {}", shares.len(), t.elapsed().as_secs_f64() * 1000.0, words.join("; ")),
-        );
-        Ok(r)
+        render_split((device, queue, &self.gpu_name), &self.export_extra, req, progress, cancel)
     }
 
     /// End-of-render perf + counter summary (D3.1/D3.2/D3.3): pure-GPU pass times, the
@@ -2140,13 +2121,21 @@ impl FractadyneApp {
         let progress = self.export.progress.clone();
         let cancel = self.export.cancel.clone();
         let wm = self.watermark.then(|| self.watermark_overlay.clone()).flatten();
+        // Export ▸ Use all graphics cards: the thread opens the other cards and splits the image.
+        let window = self.export.all_gpus.then(|| self.render_state.as_ref().map(|rs| rs.adapter.get_info())).flatten();
+        let window_name = self.gpu_name.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         self.export.task = Some(rx);
         self.export.status = Some("Rendering…".to_string());
         crate::diag::breadcrumb(format!("GUI export → {}", path.display()));
         std::thread::spawn(move || {
+            let extra = window.as_ref().map(crate::gpu_worker::open_other_cards).unwrap_or_default();
             let render = |req: &fractadyne_gpu::ExportRequest| {
-                fractadyne_gpu::render_export(&device, &queue, req, &progress, &cancel)
+                if extra.is_empty() {
+                    fractadyne_gpu::render_export(&device, &queue, req, &progress, &cancel)
+                } else {
+                    render_split((&device, &queue, &window_name), &extra, req, &progress, &cancel)
+                }
             };
             let write = |p: &std::path::Path, w: u32, h: u32, mut px: Vec<f32>| {
                 if let Some(ov) = &wm {
@@ -2215,3 +2204,46 @@ mod palette_embed;
 mod view_text;
 #[cfg(test)]
 mod shipped_files;
+
+/// The plain export across the window's card and `extra` (`render_export_multi`), with a line
+/// saying who rendered what. A request the split cannot take (outside the chunked iterate) renders
+/// on the window's card, as the log says.
+pub(crate) fn render_split(
+    window: (&eframe::wgpu::Device, &eframe::wgpu::Queue, &str),
+    extra: &[crate::gpu_worker::Headless],
+    req: &fractadyne_gpu::ExportRequest,
+    progress: &std::sync::atomic::AtomicU32,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<fractadyne_gpu::ExportResult, fractadyne_gpu::GpuError> {
+    let (device, queue, name) = window;
+    let mut devices: Vec<(&eframe::wgpu::Device, &eframe::wgpu::Queue)> = vec![(device, queue)];
+    let mut names = vec![name.to_string()];
+    for h in extra.iter().filter(|h| h.alive.load(std::sync::atomic::Ordering::Relaxed)) {
+        devices.push((&h.device, &h.queue));
+        names.push(h.name.clone());
+    }
+    let limits: Vec<eframe::wgpu::Limits> = devices.iter().map(|(d, _)| d.limits()).collect();
+    if !fractadyne_gpu::export_splits(&limits, req) {
+        crate::diag::log_line("render", "this render cannot be split by tile (outside the chunked iterate): the window's card renders it");
+    }
+    let t = std::time::Instant::now();
+    let (r, shares) = fractadyne_gpu::render_export_multi(&devices, req, progress, cancel)?;
+    let words: Vec<String> = shares
+        .iter()
+        .zip(&names)
+        .map(|(s, n)| {
+            format!(
+                "{n}: {} tiles, {:.1} Mpx, GPU {:.0} ms{}",
+                s.tiles,
+                s.pixels as f64 / 1e6,
+                s.iterate_ms + s.color_ms,
+                s.error.as_ref().map_or(String::new(), |e| format!(" (stopped: {e})"))
+            )
+        })
+        .collect();
+    crate::diag::log_line(
+        "render",
+        &format!("split across {} card(s) in {:.0} ms — {}", shares.len(), t.elapsed().as_secs_f64() * 1000.0, words.join("; ")),
+    );
+    Ok(r)
+}
