@@ -59,6 +59,20 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **A deep view sharpens sooner after it stops moving (0.3.0-beta.18).** Once a deep view
+  settles, the app averages 24 slightly shifted renders of it to remove speckle. That stage was
+  paced by the screen's frames rather than by the graphics card, and it started over every time the
+  automatic iteration count rose or the colour range was measured again. At one user's 2.3e11×
+  view it started over 20 times and finished after 122 s; it now starts once, after the iteration
+  count has settled, and finishes after 85 s. At two test views the averaging takes a third and a
+  fifth of the time it took (9.3e78×: 68 s to 21 s; 6.8e3999×: 24 s to 5 s). The finished picture
+  is the same.
+- **A second graphics card can help (0.3.0-beta.18).** On a machine with more than one graphics
+  card, Advanced ▸ *Second graphics card* has another card render some of those 24 renders, while
+  the card drawing the window draws everything as before. Two different card models draw a few
+  pixels slightly differently; the renders are averaged, so the picture lands between the two. If
+  the second card fails, the view carries on with one. Off by default; `--worker-gpu` sets it from
+  the command line.
 - **Fixed: rendering a tour from the app filed a crash report for the app (0.3.0-beta.18).** The
   render process the Render tour window starts shares the app's log folder, and it took the running
   session's "still running" marker for one left behind by a crash: it wrote a crash report for a

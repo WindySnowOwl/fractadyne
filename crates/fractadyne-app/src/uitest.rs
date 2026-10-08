@@ -23,6 +23,10 @@ use crate::{FractadyneApp, RenderMode};
 enum Screen {
     Home,          // the plain view — menu bar, status bar, central fractal, no dialog
     RightPanel,    // the controls panel open over the view
+    /// The panel's Advanced section, scrolled to Second graphics card. ⚠Seeded: a two-card machine
+    /// with the other card in use — the walk opens no second device, and a one-card machine would
+    /// photograph an empty list.
+    RightPanelAdvanced,
     Minimap,       // the minimap overview on
     Help,
     /// Help opened AT the coordinate-expression reference — the section the Go-to dialog's `?`
@@ -743,6 +747,7 @@ fn build_steps() -> Vec<Step> {
         // --- UI screens ---
         screen("home", Screen::Home),
         screen("right-panel", Screen::RightPanel),
+        screen("right-panel-advanced", Screen::RightPanelAdvanced),
         screen("minimap", Screen::Minimap),
         screen("help", Screen::Help),
         screen("help-expressions", Screen::HelpExpressions),
@@ -1151,6 +1156,12 @@ impl FractadyneApp {
         self.farm_client.uitest_live = false;
         self.farm_client.uitest_sessions.clear();
         self.farm_controller.uitest_live = false;
+        // The Advanced screen's seeded second card: the walk applies no setting (`drive_worker_setting`),
+        // so only the panel's state goes back.
+        self.dialogs.uitest_advanced_open = false;
+        self.render_cfg.worker_gpu.clear();
+        self.worker_state = crate::gpu_worker::WorkerState::Off;
+        self.worker_cards = None;
         self.update_prompt_open = false;
         self.coloring.palette_editor_open = false;
         // ⚠**Three windows this list had missed**, found by narrowing the gradient editor in P3′:
@@ -1203,6 +1214,14 @@ impl FractadyneApp {
                 self.dialogs.minimap = false;
             }
             Screen::RightPanel => self.dialogs.right_panel_open = true,
+            Screen::RightPanelAdvanced => {
+                self.dialogs.right_panel_open = true;
+                self.dialogs.uitest_advanced_open = true;
+                let other = "AMD Radeon RX 6800 XT".to_string();
+                self.worker_cards = Some(vec![(1, self.gpu_name.clone()), (2, other.clone())]);
+                self.render_cfg.worker_gpu = "2".into();
+                self.worker_state = crate::gpu_worker::WorkerState::Running(format!("{other} · Vulkan"));
+            }
             Screen::Minimap => self.dialogs.minimap = true,
             Screen::Help => self.dialogs.help_open = true,
             Screen::HelpExpressions => {

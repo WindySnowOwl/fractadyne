@@ -144,6 +144,12 @@ pub struct SessionState {
     /// during motion instead of re-iterating coarse). Default off.
     #[serde(default)]
     pub prefer_detail: bool,
+    /// A second graphics card for the live view (Advanced ▸ Second graphics card): the
+    /// `--list-adapters` number of a Vulkan card that renders some of the supersampling samples
+    /// while a deep view settles. Empty = off, the default. `serde(default)` keeps older session
+    /// files loadable.
+    #[serde(default)]
+    pub live_worker_gpu: String,
     /// Draw the elapsed-time overlay over the view: a large clock reading the SAME `+12.345s` the
     /// log stamps every line with, so a screen recording of a live problem can be lined up against
     /// the log frame by frame. A diagnostic, off by default. `serde(default)` = `false` keeps older
@@ -594,6 +600,7 @@ impl Default for SessionState {
             work_budget_scale: default_work_budget_scale(),
             min_motion_res: default_min_motion_res(),
             prefer_detail: false,
+            live_worker_gpu: String::new(),
             show_timestamp: false,
             show_zoom_target: false,
             aa: default_aa(),

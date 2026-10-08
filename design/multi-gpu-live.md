@@ -491,6 +491,22 @@ and the restarted runs were what retried it.
   pixel charge is mode 2 only), and each climb step re-walks from 0 although a raise only extends
   the pixels still running.
 
+**The setting (2026-10-08, user: "continue" after the next steps were listed).** Advanced ▸
+*Second graphics card* (`RenderConfig::worker_gpu`, session key `live_worker_gpu`): Off, or a card
+by its `--list-adapters` number. The cards come from a `--list-adapters` child process the first
+time the row is drawn (`farm_client::list_cards`, the Render client's rule: the app never enumerates
+OpenGL beside its own device), and the window's own card is left out unless two cards share its
+name (`second_card_choices`). `drive_worker_setting` applies it once a frame: a change stops the
+worker and opens the new card off the UI thread (`Worker::spawn_on`, Vulkan only; wgpu lists
+Vulkan adapters first, so the listing's number names the same card). A status line under the row
+says Off, Starting, In use, Could not start or Stopped (lost); a lost card is not reopened until
+the setting changes. `--worker-gpu` overrides it, and harnesses other than `--shot` leave it off.
+The UI walk has a `right-panel-advanced` screen, seeded with a second card.
+- Checked on this machine through the setting alone (card 1 = the window's RTX 3080, so a twin):
+  in use (10 of 24 samples on the worker, "the average holds all 24"); lost after 3 jobs
+  (`FRACTADYNE_WORKER_LOSE_AFTER=3`: dropped, converged on one GPU); a card that does not exist
+  (`no worker GPU: --adapter 9 …`, one GPU). Not yet on PLUTO, where card 2 is a real second card.
+
 **Next.**
 1. Find the timing-dependent difference (per-sample hashes, above).
-2. A setting in place of the flag.
+2. Re-measure the second card on PLUTO with the paced settle (the 6–9× above predates it).

@@ -5484,6 +5484,10 @@ struct RenderConfig {
     /// settle composite is still visible as it lands; present-gating (back-buffer swap) is the
     /// follow-up stage.
     prefer_detail: bool,
+    /// Advanced ▸ Second graphics card: the `--list-adapters` number of another card that renders
+    /// some of the settle's supersampling samples (`gpu_worker`), or empty for off (the default).
+    /// Applied by `drive_worker_setting`; `--worker-gpu` overrides it.
+    worker_gpu: String,
     /// Draw the elapsed-time overlay over the view (View ▸ Show timestamp, or `--show-timestamp`).
     ///
     /// ⭐It reads the SAME clock the log stamps every line with (`diag::elapsed_s`), which is the
@@ -5792,6 +5796,9 @@ struct DialogState {
     backend_notice_suppress: bool,
     /// Whether the right-hand control panel is shown (persisted).
     right_panel_open: bool,
+    /// `--uitest` only: hold the panel's Advanced section open and scroll to Second graphics card
+    /// (the `right-panel-advanced` screen). Never set outside the walk.
+    uitest_advanced_open: bool,
     /// Minimap overview enabled (persisted).
     minimap: bool,
     /// "Script to current view" export dialog open, plus its inputs (a notation caption and the
@@ -5952,6 +5959,18 @@ struct FractadyneApp {
     /// A second graphics device for the live view (`--worker-gpu`, `design/multi-gpu-live.md`);
     /// `None` = one GPU, as always. Dropped (not fatal) when it is lost.
     gpu_worker: Option<gpu_worker::Worker>,
+    /// The second card's status line (Advanced ▸ Second graphics card), and the setting value
+    /// `gpu_worker` was started for (`None` before the first decision; see
+    /// `drive_worker_setting`). `worker_pinned`: `--worker-gpu` chose it and the setting is not
+    /// applied. `worker_start_rx`: a device being opened off the UI thread.
+    worker_state: gpu_worker::WorkerState,
+    worker_for: Option<String>,
+    worker_pinned: bool,
+    worker_start_rx: Option<std::sync::mpsc::Receiver<Result<gpu_worker::Worker, String>>>,
+    /// The cards the setting can offer (number, name), from a `--list-adapters` child process
+    /// started the first time the row is drawn; `None` until it answers.
+    worker_cards: Option<Vec<(usize, String)>>,
+    worker_cards_rx: Option<std::sync::mpsc::Receiver<Vec<(usize, String)>>>,
     /// Bookmarks (saved views), persisted to the config dir; + window/input state.
     bookmarks: Vec<Bookmark>,
     /// The user's saved gradients, loaded from `gradients.toml` beside the bookmarks.
@@ -6279,11 +6298,19 @@ impl FractadyneApp {
         self.max_texture_dim = render_state.device.limits().max_texture_dimension_2d;
         // `--worker-gpu SPEC`: a second device renders some of the settle's supersampling samples
         // (design/multi-gpu-live.md L2). `same` = a twin device on this adapter (the test rig).
+        // The flag overrides Advanced ▸ Second graphics card (`drive_worker_setting`).
         let worker_spec = std::env::args().collect::<Vec<_>>().windows(2).find(|w| w[0] == "--worker-gpu").map(|w| w[1].clone());
         if let Some(spec) = worker_spec {
+            self.worker_pinned = true;
             match gpu_worker::Worker::spawn(&spec, &render_state.adapter.get_info()) {
-                Ok(w) => self.gpu_worker = Some(w),
-                Err(e) => diag::log_line("worker", &format!("no worker GPU: {e}")),
+                Ok(w) => {
+                    self.worker_state = gpu_worker::WorkerState::Running(w.name.clone());
+                    self.gpu_worker = Some(w);
+                }
+                Err(e) => {
+                    diag::log_line("worker", &format!("no worker GPU: {e}"));
+                    self.worker_state = gpu_worker::WorkerState::Failed(e);
+                }
             }
         }
         // Tell the operator they are watching a harness drive the app, not a person — the title
@@ -7037,6 +7064,7 @@ impl FractadyneApp {
                     .flatten(),
                 backend_notice_suppress: s.mpfr_warning_suppressed,
                 right_panel_open: s.right_panel_open,
+                uitest_advanced_open: false,
                 minimap: s.minimap,
                 script_export_open: false,
                 script_export_note: String::new(),
@@ -7096,6 +7124,12 @@ impl FractadyneApp {
             gpu: None,
             render_state: None,
             gpu_worker: None,
+            worker_state: gpu_worker::WorkerState::Off,
+            worker_for: None,
+            worker_pinned: false,
+            worker_start_rx: None,
+            worker_cards: None,
+            worker_cards_rx: None,
             bookmarks: Self::load_bookmarks(),
             saved_gradients: Self::load_saved_gradients(),
             pending_thumb: None,
@@ -7234,6 +7268,7 @@ impl FractadyneApp {
                 work_budget_scale: s.work_budget_scale.clamp(0.25, 8.0),
                 min_motion_res: s.min_motion_res.clamp(0.30, 1.0),
                 prefer_detail: s.prefer_detail,
+                worker_gpu: gpu_worker::setting_spec(&s.live_worker_gpu),
                 show_timestamp: s.show_timestamp,
                 show_zoom_target: s.show_zoom_target,
                 finish_sound: s.finish_sound,
@@ -7793,6 +7828,7 @@ impl FractadyneApp {
             work_budget_scale: self.render_cfg.work_budget_scale,
             min_motion_res: self.render_cfg.min_motion_res,
             prefer_detail: self.render_cfg.prefer_detail,
+            live_worker_gpu: self.render_cfg.worker_gpu.clone(),
             show_timestamp: self.render_cfg.show_timestamp,
             show_zoom_target: self.render_cfg.show_zoom_target,
             finish_sound: self.render_cfg.finish_sound,
@@ -14398,6 +14434,72 @@ impl FractadyneApp {
         }
     }
 
+    /// Apply Advanced ▸ Second graphics card (`RenderConfig::worker_gpu`) once per frame: when the
+    /// card it names changes, stop the worker and open the new one OFF the UI thread (enumerating
+    /// and opening a device takes a moment), adopting it when it is ready. A lost worker is not
+    /// reopened until the setting changes (`WorkerState::Lost`): a dying device must not be retried
+    /// in a loop. `--worker-gpu` pins the worker, and the setting is then left alone. Off for
+    /// tasks other than `--shot`, the same stance as `accumulation_allowed`: harnesses stay on one
+    /// GPU whatever the session says.
+    fn drive_worker_setting(&mut self) {
+        if self.worker_pinned {
+            return;
+        }
+        let Some(window) = self.render_state.as_ref().map(|r| r.adapter.get_info()) else { return };
+        let want = if !launched_as_task() || self.harness.shot.is_some() {
+            gpu_worker::setting_spec(&self.render_cfg.worker_gpu)
+        } else {
+            String::new()
+        };
+        if self.worker_for.as_deref() != Some(want.as_str()) {
+            if let Some(w) = self.gpu_worker.take() {
+                diag::log_line("worker", &format!("stopping the worker GPU ({}): the setting changed", w.name));
+                self.release_worker_job();
+            }
+            self.worker_start_rx = None; // a device still opening is dropped when its answer cannot be sent
+            self.worker_for = Some(want.clone());
+            if want.is_empty() {
+                self.worker_state = gpu_worker::WorkerState::Off;
+            } else {
+                let (tx, rx) = std::sync::mpsc::channel();
+                let backends = crate::gpu_choice::backends() & eframe::wgpu::Backends::VULKAN;
+                render::spawn_named("fd-gpu-worker-open", move || {
+                    let _ = tx.send(gpu_worker::Worker::spawn_on(&want, &window, backends));
+                });
+                self.worker_start_rx = Some(rx);
+                self.worker_state = gpu_worker::WorkerState::Starting;
+            }
+        }
+        if let Some(rx) = &self.worker_start_rx {
+            match rx.try_recv() {
+                Ok(Ok(w)) => {
+                    self.worker_state = gpu_worker::WorkerState::Running(w.name.clone());
+                    self.gpu_worker = Some(w);
+                    self.worker_start_rx = None;
+                }
+                Ok(Err(e)) => {
+                    diag::log_line("worker", &format!("no worker GPU: {e}"));
+                    self.worker_state = gpu_worker::WorkerState::Failed(e);
+                    self.worker_start_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.worker_state = gpu_worker::WorkerState::Failed("the device thread stopped".into());
+                    self.worker_start_rx = None;
+                }
+            }
+        }
+    }
+
+    /// The worker's in-flight sample goes back to the window's card when the worker goes away.
+    fn release_worker_job(&mut self) {
+        if let Some((v, r, i)) = self.perf.worker_job.take() {
+            if r == self.perf.accum_run[v] {
+                self.perf.accum_free[v].push(i);
+            }
+        }
+    }
+
     /// Collect the worker's finished jobs: a current run's sample waits to fold; a failed or
     /// cancelled one gives its index back; an old run's is dropped. A lost worker is dropped.
     fn pump_worker(&mut self) {
@@ -14436,11 +14538,8 @@ impl FractadyneApp {
         }
         if !w.alive() {
             crate::diag::log_line("worker", &format!("dropping the worker GPU ({}) — one GPU from here", w.name));
-            if let Some((v, r, i)) = self.perf.worker_job.take() {
-                if r == self.perf.accum_run[v] {
-                    self.perf.accum_free[v].push(i);
-                }
-            }
+            self.worker_state = gpu_worker::WorkerState::Lost(w.name.clone());
+            self.release_worker_job();
             self.gpu_worker = None;
         }
     }
@@ -15208,6 +15307,8 @@ impl eframe::App for FractadyneApp {
         // Record the on-screen view so a device loss can write it as a loadable `.fdn` beside the
         // crash report (the manifest omits the coordinates). Cheap; must run before the GPU submit.
         self.stash_crash_view();
+        // Advanced ▸ Second graphics card: start, stop or replace the worker as the setting says.
+        self.drive_worker_setting();
         // While the centre still sits exactly on a coordinate expression, top its precision up to
         // whatever the current zoom needs — so zooming straight into an exact landmark stays exact
         // rather than freezing at the digits it was entered with. Cheap no-op once off-point.

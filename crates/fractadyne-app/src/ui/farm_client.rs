@@ -153,13 +153,13 @@ impl FarmClientUi {
 }
 
 /// The graphics cards `--list-adapters` names, read in a child process (see
-/// `gpu_choice::cards_in_listing`); none when it cannot run.
-fn list_cards() -> Vec<(usize, String)> {
+/// `gpu_choice::cards_in_listing`); none when it cannot run. The child logs under `logs/<log>`.
+pub(crate) fn list_cards(log: &str) -> Vec<(usize, String)> {
     let Ok(exe) = std::env::current_exe() else { return Vec::new() };
     let mut cmd = std::process::Command::new(exe);
     cmd.arg(crate::gpu_choice::LIST_FLAG).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null());
     if let Some(d) = crate::diag::logs_dir() {
-        cmd.env("FRACTADYNE_LOG_DIR", d.join("farm-client"));
+        cmd.env("FRACTADYNE_LOG_DIR", d.join(log));
     }
     #[cfg(windows)]
     {
@@ -356,7 +356,7 @@ impl FractadyneApp {
             let (tx, rx) = std::sync::mpsc::channel();
             c.cards_rx = Some(rx);
             std::thread::spawn(move || {
-                let _ = tx.send(list_cards());
+                let _ = tx.send(list_cards("farm-client"));
             });
         }
         c.open = true;

@@ -24,3 +24,4 @@ pub(crate) mod timestamp_overlay;
 pub(crate) mod tour_render;
 pub(crate) mod farm_client;
 pub(crate) mod farm_controller;
+mod second_gpu;

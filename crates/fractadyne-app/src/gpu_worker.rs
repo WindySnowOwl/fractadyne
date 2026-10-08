@@ -49,7 +49,14 @@ impl Worker {
     /// Open the worker device and start its thread. `spec`: `same` = the window's adapter again (a
     /// twin device), else a number or name as `--adapter` takes them (`gpu_choice::pick`).
     pub(crate) fn spawn(spec: &str, window: &wgpu::AdapterInfo) -> Result<Worker, String> {
-        let backends = crate::gpu_choice::backends();
+        Self::spawn_on(spec, window, crate::gpu_choice::backends())
+    }
+
+    /// [`Self::spawn`] over `backends` only. The setting passes Vulkan alone: its number comes from
+    /// a `--list-adapters` listing (`gpu_choice::cards_in_listing`, Vulkan cards only), and wgpu
+    /// lists Vulkan adapters before OpenGL ones, so the number names the same card, while the app
+    /// itself never enumerates OpenGL beside its own device (the farm client's rule).
+    pub(crate) fn spawn_on(spec: &str, window: &wgpu::AdapterInfo, backends: wgpu::Backends) -> Result<Worker, String> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor { backends, ..Default::default() });
         let adapters = instance.enumerate_adapters(backends);
         let adapter = if spec == "same" {
@@ -195,6 +202,97 @@ impl Worker {
 
     pub(crate) fn alive(&self) -> bool {
         self.alive.load(Relaxed)
+    }
+}
+
+/// Where the live view's second graphics card stands, for the setting's status line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum WorkerState {
+    /// No second card: the window's card renders every sample.
+    Off,
+    /// Its device is being opened, off the UI thread.
+    Starting,
+    /// Rendering samples; the adapter's name as the log gives it.
+    Running(String),
+    /// It would not open (the reason).
+    Failed(String),
+    /// It was lost or failed while in use; the view carries on with one card.
+    Lost(String),
+}
+
+impl WorkerState {
+    /// The setting's status line. `pinned`: `--worker-gpu` chose the card, not the setting.
+    pub(crate) fn text(&self, pinned: bool) -> String {
+        let s = match self {
+            WorkerState::Off => "Off: this window's graphics card renders every sample.".to_string(),
+            WorkerState::Starting => "Starting…".to_string(),
+            WorkerState::Running(name) => format!("In use: {name}"),
+            WorkerState::Failed(e) => format!("Could not start: {e}"),
+            WorkerState::Lost(name) => {
+                format!("Stopped: {name} was lost. One card from here; choose it again to retry.")
+            }
+        };
+        if pinned {
+            format!("{s} (set by --worker-gpu)")
+        } else {
+            s
+        }
+    }
+}
+
+/// The cards the setting offers: every card in `cards` (`gpu_choice::cards_in_listing`) except
+/// the one drawing the window, `window_name`. A card is left out only when it is the ONLY one by
+/// that name: with two identical cards neither can be told apart from the window's, so both stay
+/// (choosing the window's own then opens a second device on it, which still works).
+pub(crate) fn second_card_choices(cards: &[(usize, String)], window_name: &str) -> Vec<(usize, String)> {
+    let same = cards.iter().filter(|(_, n)| n == window_name).count();
+    cards.iter().filter(|(_, n)| !(same == 1 && n == window_name)).cloned().collect()
+}
+
+/// What the setting holds, cleaned: a card number from the listing, or empty (off). Anything else
+/// (an edited session file) reads as off rather than as a name to search for.
+pub(crate) fn setting_spec(raw: &str) -> String {
+    let t = raw.trim();
+    if t.parse::<usize>().is_ok_and(|n| (1..100).contains(&n)) {
+        t.to_string()
+    } else {
+        String::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_setting_offers_every_card_but_the_window_s_own() {
+        let cards = vec![(1, "NVIDIA GeForce RTX 3080".to_string()), (2, "AMD Radeon RX 6800 XT".to_string())];
+        assert_eq!(second_card_choices(&cards, "NVIDIA GeForce RTX 3080"), vec![(2, "AMD Radeon RX 6800 XT".to_string())]);
+        // One card: nothing to offer.
+        assert!(second_card_choices(&cards[..1], "NVIDIA GeForce RTX 3080").is_empty());
+        // Two identical cards: neither can be told apart from the window's, so both are offered.
+        let twins = vec![(1, "NVIDIA GeForce RTX 3080".to_string()), (2, "NVIDIA GeForce RTX 3080".to_string())];
+        assert_eq!(second_card_choices(&twins, "NVIDIA GeForce RTX 3080"), twins);
+        // A window on a card the listing does not name (another API): every card is offered.
+        assert_eq!(second_card_choices(&cards, "llvmpipe"), cards);
+    }
+
+    #[test]
+    fn the_setting_holds_a_card_number_or_nothing() {
+        assert_eq!(setting_spec(""), "");
+        assert_eq!(setting_spec(" 2 "), "2");
+        assert_eq!(setting_spec("0"), "");
+        assert_eq!(setting_spec("same"), "");
+        assert_eq!(setting_spec("RTX"), "");
+        assert_eq!(setting_spec("6800"), ""); // a model number is a name, not a position
+    }
+
+    #[test]
+    fn the_status_line_says_where_the_card_stands() {
+        assert!(WorkerState::Off.text(false).starts_with("Off"));
+        assert_eq!(WorkerState::Running("X · Vulkan".into()).text(false), "In use: X · Vulkan");
+        assert!(WorkerState::Lost("X".into()).text(false).contains("choose it again"));
+        assert!(WorkerState::Running("X".into()).text(true).ends_with("(set by --worker-gpu)"));
     }
 }
 

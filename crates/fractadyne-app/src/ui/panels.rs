@@ -556,7 +556,10 @@ impl FractadyneApp {
                 // performance-tuning sliders that used to sit inside Navigation. "Live render
                 // budget" and "Min motion resolution" are arguably MORE obscure than BLA: BLA can
                 // be ignored safely, whereas a mis-set budget changes behaviour with no clue why.
-                egui::CollapsingHeader::new("Advanced").default_open(false).show(ui, |ui| {
+                egui::CollapsingHeader::new("Advanced")
+                    .default_open(false)
+                    .open(self.dialogs.uitest_advanced_open.then_some(true))
+                    .show(ui, |ui| {
                 ui.label(egui::RichText::new("Accelerators").weak().small());
                 ui.checkbox(&mut self.render_cfg.use_bla, "BLA acceleration (deep zoom)")
                     .on_hover_text(
@@ -676,6 +679,9 @@ impl FractadyneApp {
                      deep dive feels jerky, lower this. Default 30%; doesn't affect the settled \
                      image or exports.",
                 );
+
+                // Another graphics card for the settle's supersampling (design/multi-gpu-live.md L2).
+                self.second_gpu_row(ui);
 
                 // KF-style stepping: hold the last detailed frame (geometrically tracked) through
                 // motion instead of rendering coarse intermediate frames.
