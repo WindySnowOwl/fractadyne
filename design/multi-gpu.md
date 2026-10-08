@@ -131,8 +131,27 @@ Render tour window's *Use all graphics cards (N)* (shown for two or more cards, 
   farm test tour's 19 frames identical to a `--farm-child` render, and identical again after `-y` and
   after `--resume` with two frames deleted. Against a plain `--render-tour` the farm's frames differ
   only in the watermark (52–91 px a frame, all inside the mark: a farm draws it at a fixed scale).
-- **Not yet:** a run on PLUTO's two cards (the field agent has no `--render-tour` mode yet), and a
-  `--farmtest` variant with `--gpus`.
+- **PLUTO, 2026-10-08 (build `g08d0431`, field agent v19).** `tours/deep-minibrot-dive.toml` at
+  1280×720, 6 fps, 265 frames, Windows, both cards Vulkan:
+
+  | Render | Time | Frames/s |
+  | --- | --- | --- |
+  | `--gpus all` (RX 6800 XT + RTX 3070) | 2 min 27 s | 1.80 |
+  | RX 6800 XT alone (`--adapter 1`) | 6 min 00 s | 0.74 |
+  | RTX 3070 alone (`--adapter 2`) | 4 min 08 s | 1.07 |
+
+  The sum of the two solo rates predicts 147 s; it took 147 s, farm start-up included (1.7× the
+  faster card, 2.4× the slower). The 3070 took 176 frames (median 379 ms), the 6800 XT 89 (median
+  1,453 ms). Same 265 frame names; every one of the farm's frames is identical to the solo render
+  of the card that drew it outside the watermark's corner (the farm's mark is drawn at a fixed
+  scale), and the two cards differ from each other on a median 29% of a frame's pixels. All three
+  runs exit 0 and pass their log checks. The 3 held shots stayed on one card each.
+- ⚠**Class switches.** The frames came back in 5 runs: 6800 XT 0–21, 3070 22–196, 6800 XT 197–199,
+  3070 200, 6800 XT 201–264. Frame 200 is one frame of the other card between the 6800 XT's, from
+  the scheduler taking over the end of a run. With classes this far apart (29% of pixels) that can
+  show as a one-frame change of fine grain in motion; the farm's flicker measurement (3080 against
+  6800 XT, 2% of pixels) was made on a smaller difference. Not yet looked at on screen.
+- **Not yet:** a `--farmtest` variant with `--gpus`, and a look at the switch frames.
 
 ### Phase 2 — one still across GPUs (tile-level, in one process)
 
