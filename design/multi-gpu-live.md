@@ -434,6 +434,7 @@ the SAME walk at an earlier cursor (`walk_running_feed`; every restart, pin star
 bumps the number, and a cursor found behind its reading drops the bound). The worst case is the
 calibration ceiling's own model: below the knee a pass is latency-bound and charged the knee. No
 knee for the adapter, no count, or `--set CHUNK_CHARGE=0`: the whole frame, as before.
+Decision (user, 2026-10-08): `CHUNK_CHARGE` stays ON by default while the timing-dependent difference below is investigated; `--set CHUNK_CHARGE=0` remains the off switch.
 - 9.3e78×: 81 → 48 frames a sample; the settle 35.9 → ~21 s (68.4 s before step 1: 3.2×).
 - 6.8e3999×: 9.0 → 5.3 s (24.2 s before step 1: 4.6×), pixel-identical.
 - At 1600×1000 the pane is 479k px, so the knee (262k on the RTX 3080, 524k by default and on the
