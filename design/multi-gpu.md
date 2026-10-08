@@ -196,8 +196,30 @@ process, with no per-device capability state (`design/multi-gpu-live.md` §8).
   window took its tile and the image was identical. Selftest `worker` group +2: the split, and the
   split whose twin fails, both bit-identical with both devices rendering — proven red by corrupting
   one channel of the twin's tiles (both FAIL, "1 of 92160 channels differ").
-- **Next:** PLUTO, a still on the RX 6800 XT, the RTX 3070 and both (field agent v21 delivers a
-  `--render`'s image): the speed, and whether a seam between the two models' tiles shows.
+- **PLUTO (2026-10-08, build `g2a6dcbf`, field agent v21).** 9.3e78× (the mini78 minibrot) at
+  3840×2160 ss 2, 1,000,000 iterations, standard package:
+
+  | Render | Saved after | GPU iterate | Tiles |
+  | --- | --- | --- | --- |
+  | RX 6800 XT alone | 12.9 s | 6.67 s | 12 |
+  | RTX 3070 alone | 10.5 s | 5.93 s | 12 |
+  | Both (`--gpus all`, window on the 6800 XT) | 10.6 s | the split itself 3.55 s | 5 + 7 |
+
+  The split's GPU phase is 1.7–1.9× faster than either card (the two rates predict 3.1 s; the rest
+  is the second device's set-up). The total hardly moves because the reference orbit, built before
+  any tile, took 7.3 s of it on the CPU (the standard package's astro-float; the accelerated build
+  is several times faster there). Exports dominated by GPU work (bigger frames, more iterations,
+  interior-heavy minibrots) gain the full factor.
+- **Seams between the two models: none measurable.** Every pixel of the split matches one card's
+  own render (0 match neither; a 4×3 grid of 960×720 tiles, as on one card). At this view the
+  cards differ a lot — on 68.5% of pixels, mean 8.4/255, max 217 — but as fine structure along
+  every filament, not in brightness: after a 16×16 average the difference is 0.8/255 (99th
+  percentile 3.7), and its signed mean +0.006/255. Across each of the five seams the step between
+  8-px bands either side is the single card's to within 0.07/255 (26.24 vs 26.17 at worst), and the
+  close-up of the busiest seam shows the same speckle on both sides (`local/l2-ab/split-pluto/`).
+  So splitting by tile across different models looks safe for stills; a smooth-gradient view would
+  be the harder test of it.
+- **Next:** the Export dialog (Use all graphics cards), and its default for different models.
 
 Big stills (8K and up, high caps, interior-heavy minibrots) are where a single frame waits on the
 GPU. The work splits like this:
