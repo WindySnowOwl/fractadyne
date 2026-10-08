@@ -20,7 +20,7 @@
 #   .\scripts\field-request.ps1 -Action harness -Run "--shot locations/e4000.fdn --worker-gpu 1" -Wait
 #                                                                 # a shot (agent v18): the view from the share's
 #                                                                 # field\locations, its PNG in the results
-#   .\scriptsield-request.ps1 -Action harness -Run "--render-tour tours/deep-minibrot-dive.toml --size 1280x720 --fps 6 --gpus all" -Wait
+#   .\scripts\field-request.ps1 -Action harness -Run "--render-tour tours/deep-minibrot-dive.toml --size 1280x720 --fps 6 --gpus all" -Wait
 #                                                                 # a tour on every GPU (agent v19): the frames (up to
 #                                                                 # 1 GB), the farm state and the client's logs come back
 #   .\scripts\field-request.ps1 -Cancel <id>                      # withdraw a request not yet started
