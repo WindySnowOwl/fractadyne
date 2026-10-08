@@ -2485,6 +2485,12 @@ pub(crate) fn deep_jump_iter_shortfall(
 #[cfg(test)]
 mod deep_jump_warning;
 
+/// `--render … --gpus SPEC` on this command line (`FractadyneApp::open_export_cards`).
+fn args_have_render_gpus() -> bool {
+    let args: Vec<String> = std::env::args().collect();
+    args.iter().any(|a| a == "--render") && args.iter().any(|a| a == crate::farm::local::FLAG)
+}
+
 /// Anti-alias supersampling for progressive-settle stage `frame`, ramping 1→2→4→… up to `target`.
 /// A settled view refines from an instant coarse frame to full AA over a few frames, rather than
 /// blocking on one expensive full-AA frame. `frame` is capped so the shift can't overflow.
@@ -5969,6 +5975,9 @@ struct FractadyneApp {
     /// A second graphics device for the live view (`--worker-gpu`, `design/multi-gpu-live.md`);
     /// `None` = one GPU, as always. Dropped (not fatal) when it is lost.
     gpu_worker: Option<gpu_worker::Worker>,
+    /// `--render … --gpus SPEC`: the cards a still export renders on beside the window's own
+    /// (`gpu_worker::export_extra_cards`), opened at start (`fractadyne_gpu::render_export_multi`).
+    export_extra: Vec<gpu_worker::Headless>,
     /// The second card's status line (Advanced ▸ Second graphics card), and the setting value
     /// `gpu_worker` was started for (`None` before the first decision; see
     /// `drive_worker_setting`). `worker_pinned`: `--worker-gpu` chose it and the setting is not
@@ -6308,6 +6317,10 @@ impl FractadyneApp {
         self.max_texture_dim = render_state.device.limits().max_texture_dimension_2d;
         // `--worker-gpu SPEC`: a second device renders some of the settle's supersampling samples
         // (design/multi-gpu-live.md L2). `same` = a twin device on this adapter (the test rig).
+        // `--render … --gpus SPEC`: open the other cards a still export splits across.
+        if args_have_render_gpus() {
+            self.open_export_cards(&render_state.adapter.get_info());
+        }
         // The flag overrides Advanced ▸ Second graphics card (`drive_worker_setting`).
         let worker_spec = std::env::args().collect::<Vec<_>>().windows(2).find(|w| w[0] == "--worker-gpu").map(|w| w[1].clone());
         if let Some(spec) = worker_spec {
@@ -7134,6 +7147,7 @@ impl FractadyneApp {
             gpu: None,
             render_state: None,
             gpu_worker: None,
+            export_extra: Vec::new(),
             worker_state: gpu_worker::WorkerState::Off,
             worker_for: None,
             worker_pinned: false,
@@ -14498,6 +14512,39 @@ impl FractadyneApp {
                     self.worker_start_rx = None;
                 }
             }
+        }
+    }
+
+    /// Open the cards `--render … --gpus SPEC` names beside the window's (`export_extra`). Vulkan
+    /// only, as the setting opens them. A card that will not open is logged and left out.
+    fn open_export_cards(&mut self, window: &eframe::wgpu::AdapterInfo) {
+        let args: Vec<String> = std::env::args().collect();
+        let Some(spec) = args.windows(2).find(|w| w[0] == crate::farm::local::FLAG).map(|w| w[1].clone()) else { return };
+        let gpus = match crate::farm::local::parse_gpus(&spec) {
+            Ok(g) => g,
+            Err(e) => {
+                eprintln!("fractadyne: {e}");
+                crate::exit(2);
+            }
+        };
+        let cards: Vec<(usize, String)> = crate::gpu_choice::list()
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.is_hardware() && r.backend == eframe::wgpu::Backend::Vulkan)
+            .map(|(i, r)| (i + 1, r.name.clone()))
+            .collect();
+        let backends = crate::gpu_choice::backends() & eframe::wgpu::Backends::VULKAN;
+        for k in gpu_worker::export_extra_cards(&gpus, &cards, &window.name) {
+            match gpu_worker::open_headless(&k.to_string(), window, backends, "fractadyne.export") {
+                Ok(h) => {
+                    diag::log_line("render", &format!("--gpus: card {k} ({}) renders beside the window's ({})", h.name, window.name));
+                    self.export_extra.push(h);
+                }
+                Err(e) => diag::log_line("render", &format!("--gpus: card {k} left out: {e}")),
+            }
+        }
+        if self.export_extra.is_empty() {
+            diag::log_line("render", &format!("--gpus {spec}: no card beside the window's — rendering on one"));
         }
     }
 

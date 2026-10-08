@@ -57,73 +57,7 @@ impl Worker {
     /// lists Vulkan adapters before OpenGL ones, so the number names the same card, while the app
     /// itself never enumerates OpenGL beside its own device (the farm client's rule).
     pub(crate) fn spawn_on(spec: &str, window: &wgpu::AdapterInfo, backends: wgpu::Backends) -> Result<Worker, String> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor { backends, ..Default::default() });
-        let adapters = instance.enumerate_adapters(backends);
-        let adapter = if spec == "same" {
-            adapters.into_iter().find(|a| {
-                let i = a.get_info();
-                i.name == window.name && i.backend == window.backend
-            })
-        } else {
-            let rows: Vec<(String, wgpu::Backend)> =
-                adapters.iter().map(|a| (a.get_info().name, a.get_info().backend)).collect();
-            let k = crate::gpu_choice::pick(spec, &rows)?;
-            adapters.into_iter().nth(k)
-        }
-        .ok_or_else(|| format!("no adapter matches '{spec}'"))?;
-        let info = adapter.get_info();
-        // The window device's requests (main.rs), so the same jobs fit: up to 1 GiB of reference,
-        // the adapter's full texture size, and 64 attachment bytes for the chunked iterate.
-        let al = adapter.limits();
-        let base = wgpu::Limits::default();
-        let want: u32 = 1 << 30;
-        let limits = wgpu::Limits {
-            max_texture_dimension_2d: al.max_texture_dimension_2d.max(base.max_texture_dimension_2d),
-            max_storage_buffer_binding_size: al
-                .max_storage_buffer_binding_size
-                .min(want)
-                .max(base.max_storage_buffer_binding_size),
-            max_buffer_size: al.max_buffer_size.min(want as u64).max(base.max_buffer_size),
-            max_color_attachment_bytes_per_sample: al
-                .max_color_attachment_bytes_per_sample
-                .min(64)
-                .max(base.max_color_attachment_bytes_per_sample),
-            ..base
-        };
-        let mut features = wgpu::Features::empty();
-        if adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
-            features |= wgpu::Features::TIMESTAMP_QUERY;
-        }
-        let (device, queue) = crate::gputest::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("fractadyne.worker"),
-                required_features: features,
-                required_limits: limits,
-                memory_hints: wgpu::MemoryHints::default(),
-            },
-            None,
-        ))
-        .map_err(|e| format!("the worker device on {} would not open: {e}", info.name))?;
-        let name = format!("{} · {:?}", info.name, info.backend);
-        let alive = Arc::new(AtomicBool::new(true));
-        // ⭐Its loss is ITS loss: unlike the window's device (main.rs), nothing here exits.
-        {
-            let (alive, name) = (alive.clone(), name.clone());
-            device.set_device_lost_callback(move |reason, msg| {
-                alive.store(false, Relaxed);
-                crate::diag::log_line(
-                    "worker",
-                    &format!("the worker GPU ({name}) was lost ({reason:?}): {msg} — the live view carries on with one GPU"),
-                );
-            });
-        }
-        {
-            let (alive, name) = (alive.clone(), name.clone());
-            device.on_uncaptured_error(Box::new(move |e| {
-                alive.store(false, Relaxed);
-                crate::diag::log_line("worker", &format!("the worker GPU ({name}) failed: {e} — it is dropped"));
-            }));
-        }
+        let Headless { device, queue, name, alive } = open_headless(spec, window, backends, "fractadyne.worker")?;
         // Test hook: `FRACTADYNE_WORKER_LOSE_AFTER=n` — the worker answers `n` jobs, then behaves as
         // a lost device (the path a real loss takes from there: answers fail, `alive` reads false).
         let lose_after = match std::env::var("FRACTADYNE_WORKER_LOSE_AFTER") {
@@ -205,6 +139,112 @@ impl Worker {
     }
 }
 
+/// A headless graphics device on another adapter (or a twin on the window's own: `same`), whose
+/// loss is ITS loss: `alive` turns false and a line is logged, nothing exits. Shared by the live
+/// view's worker (`Worker::spawn_on`) and a still export split across cards
+/// (`fractadyne_gpu::render_export_multi`).
+pub(crate) struct Headless {
+    pub(crate) device: wgpu::Device,
+    pub(crate) queue: wgpu::Queue,
+    /// The adapter, as the log names it.
+    pub(crate) name: String,
+    pub(crate) alive: Arc<AtomicBool>,
+}
+
+/// Open a [`Headless`] device on the adapter `spec` names (as `--adapter` takes it, see
+/// `gpu_choice::pick`; `same` = the window's), with the window device's limits, so the same
+/// renders fit. `label` names the device in driver diagnostics.
+pub(crate) fn open_headless(spec: &str, window: &wgpu::AdapterInfo, backends: wgpu::Backends, label: &str) -> Result<Headless, String> {
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor { backends, ..Default::default() });
+    let adapters = instance.enumerate_adapters(backends);
+    let adapter = if spec == "same" {
+        adapters.into_iter().find(|a| {
+            let i = a.get_info();
+            i.name == window.name && i.backend == window.backend
+        })
+    } else {
+        let rows: Vec<(String, wgpu::Backend)> =
+            adapters.iter().map(|a| (a.get_info().name, a.get_info().backend)).collect();
+        let k = crate::gpu_choice::pick(spec, &rows)?;
+        adapters.into_iter().nth(k)
+    }
+    .ok_or_else(|| format!("no adapter matches '{spec}'"))?;
+    let info = adapter.get_info();
+    // The window device's requests (main.rs), so the same jobs fit: up to 1 GiB of reference,
+    // the adapter's full texture size, and 64 attachment bytes for the chunked iterate.
+    let al = adapter.limits();
+    let base = wgpu::Limits::default();
+    let want: u32 = 1 << 30;
+    let limits = wgpu::Limits {
+        max_texture_dimension_2d: al.max_texture_dimension_2d.max(base.max_texture_dimension_2d),
+        max_storage_buffer_binding_size: al
+            .max_storage_buffer_binding_size
+            .min(want)
+            .max(base.max_storage_buffer_binding_size),
+        max_buffer_size: al.max_buffer_size.min(want as u64).max(base.max_buffer_size),
+        max_color_attachment_bytes_per_sample: al
+            .max_color_attachment_bytes_per_sample
+            .min(64)
+            .max(base.max_color_attachment_bytes_per_sample),
+        ..base
+    };
+    let mut features = wgpu::Features::empty();
+    if adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+        features |= wgpu::Features::TIMESTAMP_QUERY;
+    }
+    let (device, queue) = crate::gputest::block_on(adapter.request_device(
+        &wgpu::DeviceDescriptor {
+            label: Some(label),
+            required_features: features,
+            required_limits: limits,
+            memory_hints: wgpu::MemoryHints::default(),
+        },
+        None,
+    ))
+    .map_err(|e| format!("a device on {} would not open: {e}", info.name))?;
+    let name = format!("{} · {:?}", info.name, info.backend);
+    let alive = Arc::new(AtomicBool::new(true));
+    // ⭐Its loss is ITS loss: unlike the window's device (main.rs), nothing here exits.
+    {
+        let (alive, name) = (alive.clone(), name.clone());
+        device.set_device_lost_callback(move |reason, msg| {
+            alive.store(false, Relaxed);
+            crate::diag::log_line(
+                "worker",
+                &format!("the second GPU ({name}) was lost ({reason:?}): {msg} — it is dropped, and the work carries on without it"),
+            );
+        });
+    }
+    {
+        let (alive, name) = (alive.clone(), name.clone());
+        device.on_uncaptured_error(Box::new(move |e| {
+            alive.store(false, Relaxed);
+            crate::diag::log_line("worker", &format!("the second GPU ({name}) failed: {e} — it is dropped"));
+        }));
+    }
+    Ok(Headless { device, queue, name, alive })
+}
+
+/// The cards a still export renders on BESIDE the window's own, for `--render … --gpus SPEC`
+/// (`farm::local::parse_gpus`), as `--list-adapters` numbers for [`open_headless`]. `cards` are
+/// this machine's Vulkan cards (number, name). The window's card always renders: `all` adds every
+/// other card; a list adds what it names, the window's own card standing for the window the first
+/// time it appears (a second mention opens a second device on it — the one-card machine's test of
+/// the whole path). The window's card is found by name; with two of that name, the first.
+pub(crate) fn export_extra_cards(gpus: &crate::farm::local::Gpus, cards: &[(usize, String)], window_name: &str) -> Vec<usize> {
+    let mine = cards.iter().find(|(_, n)| n == window_name).map(|(k, _)| *k);
+    match gpus {
+        crate::farm::local::Gpus::All => cards.iter().map(|(k, _)| *k).filter(|&k| Some(k) != mine).collect(),
+        crate::farm::local::Gpus::List(v) => {
+            let mut v = v.clone();
+            if let Some(i) = mine.and_then(|m| v.iter().position(|&k| k == m)) {
+                v.remove(i);
+            }
+            v
+        }
+    }
+}
+
 /// Where the live view's second graphics card stands, for the setting's status line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum WorkerState {
@@ -275,6 +315,20 @@ mod tests {
         assert_eq!(second_card_choices(&twins, "NVIDIA GeForce RTX 3080"), twins);
         // A window on a card the listing does not name (another API): every card is offered.
         assert_eq!(second_card_choices(&cards, "llvmpipe"), cards);
+    }
+
+    #[test]
+    fn an_export_renders_on_the_window_s_card_and_the_ones_named_beside_it() {
+        use crate::farm::local::Gpus;
+        let cards = vec![(1, "AMD Radeon RX 6800 XT".to_string()), (2, "NVIDIA GeForce RTX 3070".to_string())];
+        // The window on the 6800 XT: `all` adds the 3070; naming both adds the 3070 alone.
+        assert_eq!(export_extra_cards(&Gpus::All, &cards, "AMD Radeon RX 6800 XT"), vec![2]);
+        assert_eq!(export_extra_cards(&Gpus::List(vec![1, 2]), &cards, "AMD Radeon RX 6800 XT"), vec![2]);
+        assert_eq!(export_extra_cards(&Gpus::List(vec![2]), &cards, "AMD Radeon RX 6800 XT"), vec![2]);
+        // One card named twice: the window plus a second device on the same card.
+        let one = vec![(1, "NVIDIA GeForce RTX 3080".to_string())];
+        assert_eq!(export_extra_cards(&Gpus::List(vec![1, 1]), &one, "NVIDIA GeForce RTX 3080"), vec![1]);
+        assert!(export_extra_cards(&Gpus::All, &one, "NVIDIA GeForce RTX 3080").is_empty());
     }
 
     #[test]

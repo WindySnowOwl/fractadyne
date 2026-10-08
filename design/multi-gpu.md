@@ -170,6 +170,35 @@ Render tour window's *Use all graphics cards (N)* (shown for two or more cards, 
 
 ### Phase 2 — one still across GPUs (tile-level, in one process)
 
+**Phase 2a as built (2026-10-08, user: "yes" to step 3).** The export path needed far less than this
+section expected: L2 had already shown `render_export` runs unchanged on a second device in the same
+process, with no per-device capability state (`design/multi-gpu-live.md` §8).
+- `render_export_impl` is split into `export_plan` (tile size, chunk scope, occupancy: decided once,
+  from the SMALLEST limits among the devices), a per-device `TileRenderer` (pipelines, its own upload
+  of the reference, uniforms, its own chunk/step pricers, which change dispatch shapes, never pixels)
+  and the drivers. The single-device loop is the old one, wall-adaptive cap included: the full
+  selftest is 510/510 with 31/31 goldens on the refactor.
+- `render_export_multi`: a fixed grid (`multi_tile_rects`: the single device's equal grid on the
+  step-bounded mode-2 path; elsewhere `tile` squares, the single loop's layout before its cap moves),
+  one scoped thread per device taking the next tile from a shared counter (a handed-back tile
+  first), assembly and progress in the caller's thread. A device that fails is retired and its tile
+  goes back; one handed back after the others finished is rendered at the end on a device still
+  standing; the render fails only with none left. Only the chunked iterate is split
+  (`export_splits`): outside it a tile is one unbounded dispatch, safe only under the single loop's
+  wall-adaptive size.
+- CLI: `--render … --gpus all | N,N`. The window's card always renders; the extra cards are opened
+  at start as `gpu_worker::open_headless` (the device code the live worker now shares), Vulkan only;
+  `export_extra_cards` resolves the spec (the window's number once = the window, twice = a twin).
+  The log names who rendered what. Not yet in the Export dialog: the mixed-model default is open.
+- **Checked on this machine (RTX 3080 + a twin device):** 9.3e78× at 1280×720 ss 2 and 3840×2160 ss 2
+  (12 tiles), and 1e12× df32 at 1920×1080 ss 2 (93 tiles): 0 differing pixels against the card alone,
+  event counters equal; with the twin failing after 2 tiles (`FRACTADYNE_SPLIT_LOSE_AFTER=1:2`) the
+  window took its tile and the image was identical. Selftest `worker` group +2: the split, and the
+  split whose twin fails, both bit-identical with both devices rendering — proven red by corrupting
+  one channel of the twin's tiles (both FAIL, "1 of 92160 channels differ").
+- **Next:** PLUTO, a still on the RX 6800 XT, the RTX 3070 and both (field agent v21 delivers a
+  `--render`'s image): the speed, and whether a seam between the two models' tiles shows.
+
 Big stills (8K and up, high caps, interior-heavy minibrots) are where a single frame waits on the
 GPU. The work splits like this:
 - **Share the reference.** The parent builds the reference orbit, series skip and BLA tree once on

@@ -639,6 +639,9 @@ mod step_pricer;
 #[cfg(test)]
 mod readback;
 
+#[cfg(test)]
+mod multi_grid;
+
 /// The largest side of a packed grid's state textures (see [`Packer`]), which is sized to hold half
 /// its tile — a 1920×1080 tile packs at its halfway point into 1,024² — up to this.
 const PACK_SIDE_MAX: u32 = 1024;
@@ -1326,22 +1329,32 @@ pub fn render_export_unchunked(
     render_export_impl(device, queue, req, progress, cancel, false)
 }
 
-fn render_export_impl(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    req: &ExportRequest,
-    progress: &std::sync::atomic::AtomicU32,
-    cancel: &std::sync::atomic::AtomicBool,
-    allow_chunking: bool,
-) -> Result<ExportResult, GpuError> {
-    use std::sync::atomic::Ordering::Relaxed;
-    let max_dim = device.limits().max_texture_dimension_2d;
-    let max_buf = device.limits().max_buffer_size;
+/// What every tile of one export shares, decided once from the request and the device limits: the
+/// tile size, whether the iterate is chunked, and whether mode 2 runs step-bounded occupancy tiles
+/// (and so the fixed equal grid `row_h`×`col_w`). A multi-device render plans from the SMALLEST
+/// limits among its devices, so every device can render every tile.
+#[derive(Clone, Copy, Debug)]
+struct ExportPlan {
+    w: u32,
+    h: u32,
+    ss: u32,
+    /// The nominal tile side (output px), and the occupancy grid's row height and column width.
+    tile: u32,
+    row_h: u32,
+    col_w: u32,
+    fe: bool,
+    chunk_scope: bool,
+    occupancy: bool,
+    rn_bla: bool,
+    state_size: [u32; 2],
+}
+
+fn export_plan(limits: &wgpu::Limits, req: &ExportRequest, allow_chunking: bool) -> ExportPlan {
+    let max_dim = limits.max_texture_dimension_2d;
+    let max_buf = limits.max_buffer_size;
     let w = req.width.max(1);
     let h = req.height.max(1);
     let ss = req.ss.max(1);
-    let full_iw = w as f32 * ss as f32; // full iteration resolution (across all tiles)
-    let full_ih = h as f32 * ss as f32;
     // Tile size (output px): keep tile×ss within the texture cap and the per-tile
     // readback buffer (tile²·16 B) within the buffer-size limit. Tiling lets exports
     // exceed the single-texture/buffer limits without crashing. Also bound each tile by
@@ -1378,7 +1391,7 @@ fn render_export_impl(
         && (req.mode == 1 || req.mode == 0 || req.mode == 2)
         && req.resumable()
         && !method_needs_aux(req.color_method)
-        && device.limits().max_color_attachment_bytes_per_sample >= if fe { 64 } else { 48 };
+        && limits.max_color_attachment_bytes_per_sample >= if fe { 64 } else { 48 };
     // Mode 2 in chunk scope: occupancy-sized tiles run as step-bounded passes (see
     // `OCC_TILE_SAMPLES`). Everything else keeps the nominal-work tile, which is its bound.
     let occupancy = chunk_scope && fe && crate::tile_occupancy_on();
@@ -1388,465 +1401,635 @@ fn render_export_impl(
         .min(tile_work)
         .min(req.tile_px_max.unwrap_or(u32::MAX))
         .clamp(1, 2048);
-
-    let shader = crate::shader_module_for(device, req.custom.as_deref());
-    let iter_bgl = iter_bind_group_layout(device);
-    let color_bgl = color_bind_group_layout(device);
-    let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("export.iter_layout"),
-        bind_group_layouts: &[&iter_bgl],
-        push_constant_ranges: &[],
-    });
-    let color_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("export.color_layout"),
-        bind_group_layouts: &[&color_bgl],
-        push_constant_ranges: &[],
-    });
-    // The u-space BLA is compiled into every iterate pipeline of a render whose request carries a
-    // tree — the single-pass control included, so the two agree as they do without one.
-    let rn_bla = req.rn_bla_k() > 0;
-    let iter_pipeline = crate::fullscreen_pipeline_c(
-        device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
-        "export.iter_pipeline", crate::iter_constants(rn_bla),
-    );
-    let color_pipeline = fullscreen_pipeline(
-        device, &shader, &color_layout, "fs_color", &[EXPORT_FORMAT], "export.color_pipeline",
-    );
-
-    // ⚠BUILT UP FRONT WHEN IN SCOPE, NOT LAZILY — and that is a CORRECTNESS requirement, not a
-    // preference. `fs_iterate` and `fs_iterate_chunk` are separate entry points compiled
-    // independently, and on this backend they do NOT produce identical arithmetic: measured on the
-    // corpus's 06-seahorse-1e24 at ss=2, chunked against unchunked differs on 279 pixels and 47
-    // rebases out of 30.8M, and it still differs (378 px, 67 rebases) when the chunked path is
-    // forced to run in ONE window with no state round-trip at all. So the divergence is the
-    // COMPILED PROGRAM, not the boundary — the same NVIDIA folding family as the df32 EFTs.
-    //
-    // Building lazily meant a single frame mixed both programs: `pricer.observe` runs on unchunked
-    // tiles too (deliberately — a hot tile must be able to teach the pricer), so the first hot tile
-    // flipped the rest of the render onto the other entry point. The rendered image therefore
-    // depended on the tile budget, the adaptive cap, and where in the frame the expensive region
-    // sat. Measured: budgets 10e9/20e9/40e9 gave 57- and 40-pixel disagreements against the
-    // reference. With one entry point for the whole render, the same three budgets give ZERO.
-    //
-    // The cost the old note worried about is still respected: a tile that does not need splitting
-    // runs ONE window, i.e. the same single dispatch it always did, plus one `fs_resolve` pass.
-    // What we now pay unconditionally within scope is the two pipelines and the ping-pong state
-    // textures. The corrector's loop (`render_iter_tiled`) keeps its lazy build for now — it calls
-    // in up to 64 times per render, where that setup was measured at ~7 s (bench scene 04,
-    // 14.3 s -> 21.7 s).
     // Step-bounded tiles split the frame into EQUAL rows and columns (see `balanced_extent`), and
     // their state is allocated at that size; the others are at most `tile` square.
     let (row_h, col_w) = (balanced_extent(h, tile), balanced_extent(w, tile));
     let state_size = if occupancy { [col_w * ss, row_h * ss] } else { [tile * ss, tile * ss] };
-    let chunker: Option<TileChunker> = if chunk_scope {
-        Some(TileChunker::new(device, &shader, &iter_bgl, fe, state_size, occupancy, rn_bla))
-    } else {
-        None
-    };
-    let mut pricer = ChunkPricer::new();
-    let mut steps = StepPricer::new();
-    let running_read = make_running_read(device);
-    let mut max_dispatch_ms = 0.0f64;
-    let mut max_work = 0u64;
-    let (mut tiles_total, mut tiles_chunked, mut chunk_passes) = (0u32, 0u32, 0u32);
-    let mut packs = 0u32;
+    ExportPlan { w, h, ss, tile, row_h, col_w, fe, chunk_scope, occupancy, rn_bla: req.rn_bla_k() > 0, state_size }
+}
 
-    let uniform = |label, size| {
-        device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label),
-            size,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+/// One tile's output and what it cost (see [`ExportResult`] for the meaning of each figure).
+struct TileOut {
+    x0: u32,
+    y0: u32,
+    w: u32,
+    h: u32,
+    /// Linear RGBA, row-major, `w*h*4` floats.
+    rgba: Vec<f32>,
+    counters: [u64; crate::COUNTER_SLOTS],
+    iterate_ms: f64,
+    color_ms: f64,
+    wall_ms: f64,
+    /// `Some(passes)` when the tile took the chunked entry point.
+    chunked: Option<u32>,
+    max_dispatch_ms: f64,
+    max_work: u64,
+    packs: u32,
+}
+
+/// One device's means of rendering tiles of one export: its pipelines, its copy of the reference,
+/// the uniforms, and the pricers that size its chunk windows and step passes (which change how a
+/// tile is dispatched, never a pixel: "bit-identical for any window", see `ChunkPricer`).
+struct TileRenderer<'a> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    req: &'a ExportRequest,
+    plan: ExportPlan,
+    iter_pipeline: wgpu::RenderPipeline,
+    color_pipeline: wgpu::RenderPipeline,
+    color_bgl: wgpu::BindGroupLayout,
+    chunker: Option<TileChunker>,
+    pricer: ChunkPricer,
+    steps: StepPricer,
+    running_read: wgpu::Buffer,
+    iter_uniform: wgpu::Buffer,
+    color_uniform: wgpu::Buffer,
+    counters_buf: wgpu::Buffer,
+    counters_read: wgpu::Buffer,
+    iter_bg: wgpu::BindGroup,
+    lut_buf: wgpu::Buffer,
+    /// The reference (orbit, BLA, u-space BLA) on this device, bound in `iter_bg`.
+    _orbit_buf: wgpu::Buffer,
+    /// The full-resolution step (hi, lo per axis) and iteration resolution.
+    step: [f32; 4],
+    full: [f32; 2],
+}
+
+impl<'a> TileRenderer<'a> {
+    fn new(device: &'a wgpu::Device, queue: &'a wgpu::Queue, req: &'a ExportRequest, plan: ExportPlan) -> Result<Self, GpuError> {
+        let (w, h, ss) = (plan.w, plan.h, plan.ss);
+        let shader = crate::shader_module_for(device, req.custom.as_deref());
+        let iter_bgl = iter_bind_group_layout(device);
+        let color_bgl = color_bind_group_layout(device);
+        let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("export.iter_layout"),
+            bind_group_layouts: &[&iter_bgl],
+            push_constant_ranges: &[],
+        });
+        let color_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("export.color_layout"),
+            bind_group_layouts: &[&color_bgl],
+            push_constant_ranges: &[],
+        });
+        // The u-space BLA is compiled into every iterate pipeline of a render whose request carries a
+        // tree — the single-pass control included, so the two agree as they do without one.
+        let iter_pipeline = crate::fullscreen_pipeline_c(
+            device, &shader, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
+            "export.iter_pipeline", crate::iter_constants(plan.rn_bla),
+        );
+        let color_pipeline = fullscreen_pipeline(
+            device, &shader, &color_layout, "fs_color", &[EXPORT_FORMAT], "export.color_pipeline",
+        );
+
+        // ⚠BUILT UP FRONT WHEN IN SCOPE, NOT LAZILY — and that is a CORRECTNESS requirement, not a
+        // preference. `fs_iterate` and `fs_iterate_chunk` are separate entry points compiled
+        // independently, and on this backend they do NOT produce identical arithmetic: measured on the
+        // corpus's 06-seahorse-1e24 at ss=2, chunked against unchunked differs on 279 pixels and 47
+        // rebases out of 30.8M, and it still differs (378 px, 67 rebases) when the chunked path is
+        // forced to run in ONE window with no state round-trip at all. So the divergence is the
+        // COMPILED PROGRAM, not the boundary — the same NVIDIA folding family as the df32 EFTs.
+        //
+        // Building lazily meant a single frame mixed both programs: `pricer.observe` runs on unchunked
+        // tiles too (deliberately — a hot tile must be able to teach the pricer), so the first hot tile
+        // flipped the rest of the render onto the other entry point. The rendered image therefore
+        // depended on the tile budget, the adaptive cap, and where in the frame the expensive region
+        // sat. Measured: budgets 10e9/20e9/40e9 gave 57- and 40-pixel disagreements against the
+        // reference. With one entry point for the whole render, the same three budgets give ZERO.
+        //
+        // The cost the old note worried about is still respected: a tile that does not need splitting
+        // runs ONE window, i.e. the same single dispatch it always did, plus one `fs_resolve` pass.
+        // What we now pay unconditionally within scope is the two pipelines and the ping-pong state
+        // textures. The corrector's loop (`render_iter_tiled`) keeps its lazy build for now — it calls
+        // in up to 64 times per render, where that setup was measured at ~7 s (bench scene 04,
+        // 14.3 s -> 21.7 s).
+        let chunker: Option<TileChunker> = if plan.chunk_scope {
+            Some(TileChunker::new(device, &shader, &iter_bgl, plan.fe, plan.state_size, plan.occupancy, plan.rn_bla))
+        } else {
+            None
+        };
+        let running_read = make_running_read(device);
+
+        let uniform = |label, size| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let iter_uniform = uniform("export.iter_uniform", std::mem::size_of::<IterUniforms>() as u64);
+        let color_uniform = uniform("export.color_uniform", std::mem::size_of::<ColorUniforms>() as u64);
+
+        let orbit_buf = req.upload_reference(device, queue)?;
+        let counters_buf = crate::make_counters_buf(device);
+        let counters_read = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("export.counters_read"),
+            size: (crate::COUNTER_SLOTS * 4) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
+        });
+        let iter_bg = make_iter_bg(device, &iter_bgl, &iter_uniform, &orbit_buf, &counters_buf);
+
+        // Coloring uniform is constant across tiles; step is the full-resolution step. So is the
+        // palette LUT beside it — one write, then every tile colors through the same table.
+        let lut_buf = crate::make_lut_buffer(device);
+        let (lut_len, lut_smooth) = crate::write_lut(queue, &lut_buf, &req.lut, req.lut_smooth);
+        let cu = ColorUniforms {
+            lut_len,
+            cycle: req.cycle,
+            offset: req.offset,
+            ss,
+            light: req.light,
+            light_angle: req.light_angle,
+            light_height: req.light_height,
+            de_on: req.de_on,
+            de_strength: req.de_strength,
+            de_width: req.de_width,
+            de_phase: req.de_phase,
+            color_method: req.color_method,
+            aa_filter: req.aa_filter.max(1),
+            reproject: 0,
+            uv_offset: [0.0, 0.0],
+            uv_scale: 1.0,
+            vig_on: req.vignette.on,
+            vig_dim: req.vignette.dim,
+            vig_soft: req.vignette.soft,
+            vig_center: req.vignette.center,
+            vig_radius: req.vignette.radius,
+            lut_smooth,
+            interior_col: req.interior_col,
+            out_res: [w as f32, h as f32],
+            norm_mode: req.norm_mode,
+            norm_lo: req.norm_lo,
+            aa_palette: req.aa_palette as u32,
+            _pad_aa: [0; 3],
+        };
+        queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
+        let split = |v: f64| -> (f32, f32) {
+            let hi = v as f32;
+            (hi, (v - hi as f64) as f32)
+        };
+        // Step mantissa = span_mantissa (already × 2^-delta_exp) / texdim — O(1), no overflow.
+        let (sxh, sxl) = split(req.span_mantissa.x / (w as f64 * ss as f64));
+        let (syh, syl) = split(req.span_mantissa.y / (h as f64 * ss as f64));
+        Ok(Self {
+            device,
+            queue,
+            req,
+            plan,
+            iter_pipeline,
+            color_pipeline,
+            color_bgl,
+            chunker,
+            pricer: ChunkPricer::new(),
+            steps: StepPricer::new(),
+            running_read,
+            iter_uniform,
+            color_uniform,
+            counters_buf,
+            counters_read,
+            iter_bg,
+            lut_buf,
+            _orbit_buf: orbit_buf,
+            step: [sxh, sxl, syh, syl],
+            full: [w as f32 * ss as f32, h as f32 * ss as f32],
         })
-    };
-    let iter_uniform = uniform("export.iter_uniform", std::mem::size_of::<IterUniforms>() as u64);
-    let color_uniform = uniform("export.color_uniform", std::mem::size_of::<ColorUniforms>() as u64);
+    }
 
-    let orbit_buf = req.upload_reference(device, queue)?;
-    let counters_buf = crate::make_counters_buf(device);
-    let counters_read = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("export.counters_read"),
-        size: (crate::COUNTER_SLOTS * 4) as u64,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    let iter_bg = make_iter_bg(device, &iter_bgl, &iter_uniform, &orbit_buf, &counters_buf);
+    /// Render the tile at output pixel `(tx0, ty0)`, `tw`×`th`.
+    fn tile(&mut self, tx0: u32, ty0: u32, tw: u32, th: u32, cancel: &std::sync::atomic::AtomicBool) -> Result<TileOut, GpuError> {
+        let (device, queue, req) = (self.device, self.queue, self.req);
+        let ss = self.plan.ss;
+        let t_tile = std::time::Instant::now();
+        let (mut iterate_ms, mut color_ms, mut max_dispatch_ms, mut max_work, mut packs) = (0.0f64, 0.0f64, 0.0f64, 0u64, 0u32);
+        let iw = tw * ss;
+        let ih = th * ss;
+        let [sxh, sxl, syh, syl] = self.step;
 
-    // Coloring uniform is constant across tiles; step is the full-resolution step. So is the
-    // palette LUT beside it — one write, then every tile colors through the same table.
-    let lut_buf = crate::make_lut_buffer(device);
-    let (lut_len, lut_smooth) = crate::write_lut(queue, &lut_buf, &req.lut, req.lut_smooth);
-    let cu = ColorUniforms {
-        lut_len,
-        cycle: req.cycle,
-        offset: req.offset,
-        ss,
-        light: req.light,
-        light_angle: req.light_angle,
-        light_height: req.light_height,
-        de_on: req.de_on,
-        de_strength: req.de_strength,
-        de_width: req.de_width,
-        de_phase: req.de_phase,
-        color_method: req.color_method,
-        aa_filter: req.aa_filter.max(1),
-        reproject: 0,
-        uv_offset: [0.0, 0.0],
-        uv_scale: 1.0,
-        vig_on: req.vignette.on,
-        vig_dim: req.vignette.dim,
-        vig_soft: req.vignette.soft,
-        vig_center: req.vignette.center,
-        vig_radius: req.vignette.radius,
-        lut_smooth,
-        interior_col: req.interior_col,
-        out_res: [w as f32, h as f32],
-        norm_mode: req.norm_mode,
-        norm_lo: req.norm_lo,
-        aa_palette: req.aa_palette as u32,
-        _pad_aa: [0; 3],
-    };
-    queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
-    let split = |v: f64| -> (f32, f32) {
-        let hi = v as f32;
-        (hi, (v - hi as f64) as f32)
-    };
-    // Step mantissa = span_mantissa (already × 2^-delta_exp) / texdim — O(1), no overflow.
-    let (sxh, sxl) = split(req.span_mantissa.x / (w as f64 * ss as f64));
-    let (syh, syl) = split(req.span_mantissa.y / (h as f64 * ss as f64));
+        let mut iu = IterUniforms {
+            step: [sxh, sxl, syh, syl],
+            ref_offset: req.ref_offset.to_array(),
+            center: req.center,
+            julia_c: req.julia_c,
+            res: self.full,
+            px_offset: [(tx0 * ss) as f32 + req.jitter[0] * ss as f32, (ty0 * ss) as f32 + req.jitter[1] * ss as f32],
+            max_iter: req.max_iter,
+            orbit_len: req.orbit_len,
+            mode: req.mode,
+            formula: req.formula,
+            julia: req.julia,
+            delta_exp: req.delta_exp,
+            color_method: req.color_method,
+            stripe_freq: req.stripe_freq,
+            trap_type: req.trap_type,
+            aux_on: crate::aux_on_word(
+                method_needs_aux(req.color_method),
+                req.stripe_tail,
+                req.stripe_tail_len,
+            ),
+            sa_skip: req.sa_skip,
+            glitch_on: req.glitch_on,
+            sa_a: req.sa_a,
+            sa_b: req.sa_b,
+            sa_c: req.sa_c,
+            sa_a_exp: req.sa_a_exp,
+            sa_b_exp: req.sa_b_exp,
+            sa_c_exp: req.sa_c_exp,
+            bla_on: req.bla_on,
+            start_iter: 0,
+            end_iter: 0,
+            gather: [0; 2],
+            tail: crate::tail_word(),
+            rn: req.rn_uniform(),
+        };
+        queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
-    let bpp = 16u32; // Rgba32Float
-    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-    let mut pixels = vec![0.0_f32; (w as usize) * (h as usize) * 4];
+        let iter_view = make_iter_texture(device, [iw, ih]);
+        let aux_view = make_iter_texture(device, [iw, ih]);
+        let color_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("export.color_tex"),
+            size: wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: EXPORT_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let color_view = color_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let color_bg =
+            make_color_bg(device, &self.color_bgl, &self.color_uniform, &self.lut_buf, &iter_view, &aux_view);
+
+        let bpp = 16u32; // Rgba32Float
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let unpadded_bpr = tw * bpp;
+        let padded_bpr = unpadded_bpr.div_ceil(align) * align;
+        let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("export.readback"),
+            size: (padded_bpr * th) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Per-pass GPU timestamps — unconditional since D3.1 (the tile already blocks on
+        // poll(Wait), so the extra 32-byte map is marginal). Four queries: iterate
+        // begin/end (0,1) and color begin/end (2,3), resolved and read after the poll.
+        let ts = if device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+            let set = device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("export.timestamps"),
+                ty: wgpu::QueryType::Timestamp,
+                count: 4,
+            });
+            let resolve = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("export.ts_resolve"),
+                size: 256, // >= 4*8 bytes and a multiple of QUERY_RESOLVE_BUFFER_ALIGNMENT
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let read = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("export.ts_read"),
+                size: 32,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            Some((set, resolve, read))
+        } else {
+            None
+        };
+
+        // Chunked tiles iterate BEFORE the main encoder: each window is its own polled
+        // submission (that is the whole point), and the first window clears the counters.
+        let chunked = match self.chunker.as_ref() {
+            Some(ch) if self.plan.occupancy => {
+                let (passes, read_set, max_chunk) = ch.run_tile_steps(
+                    device, queue, &self.iter_bg, &self.counters_buf, &self.running_read, &mut iu,
+                    &self.iter_uniform, [iw, ih], req.max_iter, &mut self.steps, Some(cancel), None,
+                    &mut iterate_ms, &mut max_work, &mut packs,
+                )?;
+                max_dispatch_ms = max_dispatch_ms.max(max_chunk);
+                Some((passes, read_set))
+            }
+            Some(ch) => {
+                let (passes, read_set, max_chunk) = ch.run_tile(
+                    device, queue, &self.iter_bg, &self.counters_buf, &mut iu, &self.iter_uniform,
+                    [iw, ih], req.max_iter, &mut self.pricer, Some(cancel), None,
+                    &mut iterate_ms, &mut max_work,
+                )?;
+                max_dispatch_ms = max_dispatch_ms.max(max_chunk);
+                Some((passes, read_set))
+            }
+            None => None,
+        };
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("export.encoder"),
+        });
+        if chunked.is_none() {
+            // Zero the event counters before THIS tile's iterate pass, so each tile's counts
+            // are read back independently and summed in u64 (no cross-tile u32 wrap). On a
+            // chunked tile the first window's encoder already did this.
+            enc.clear_buffer(&self.counters_buf, 0, None);
+        }
+        {
+            let attach = |v| Some(wgpu::RenderPassColorAttachment {
+                view: v,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            });
+            // Chunked: settle the ping-pong state into the tile's G-buffer (`fs_resolve`),
+            // so the color pass below is oblivious to how the iterate was dispatched.
+            // Unchunked: the classic single-dispatch iterate. Either way the pass writes
+            // iter/aux and the iterate timestamps bracket it.
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("export.iter_pass"),
+                color_attachments: &[attach(&iter_view), attach(&aux_view)],
+                depth_stencil_attachment: None,
+                timestamp_writes: ts.as_ref().map(|(set, _, _)| {
+                    wgpu::RenderPassTimestampWrites {
+                        query_set: set,
+                        beginning_of_pass_write_index: Some(0),
+                        end_of_pass_write_index: Some(1),
+                    }
+                }),
+                occlusion_query_set: None,
+            });
+            match (self.chunker.as_ref(), chunked) {
+                (Some(ch), Some((_, read_set))) => {
+                    pass.set_pipeline(&ch.resolve_pipeline);
+                    pass.set_bind_group(0, &self.iter_bg, &[]);
+                    pass.set_bind_group(1, &ch.state_bg[read_set], &[]);
+                    pass.draw(0..3, 0..1);
+                }
+                _ => {
+                    pass.set_pipeline(&self.iter_pipeline);
+                    pass.set_bind_group(0, &self.iter_bg, &[]);
+                    pass.draw(0..3, 0..1);
+                }
+            }
+        }
+        {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("export.color_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: ts.as_ref().map(|(set, _, _)| {
+                    wgpu::RenderPassTimestampWrites {
+                        query_set: set,
+                        beginning_of_pass_write_index: Some(2),
+                        end_of_pass_write_index: Some(3),
+                    }
+                }),
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.color_pipeline);
+            pass.set_bind_group(0, &color_bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        if let Some((set, resolve, read)) = &ts {
+            enc.resolve_query_set(set, 0..4, resolve, 0);
+            enc.copy_buffer_to_buffer(resolve, 0, read, 0, 32);
+        }
+        enc.copy_buffer_to_buffer(
+            &self.counters_buf, 0, &self.counters_read, 0, (crate::COUNTER_SLOTS * 4) as u64,
+        );
+        enc.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &color_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &out_buf,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bpr),
+                    rows_per_image: Some(th),
+                },
+            },
+            wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 },
+        );
+        queue.submit(std::iter::once(enc.finish()));
+
+        let slice = out_buf.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        let ts_rx = ts.as_ref().map(|(_, _, read)| {
+            let (ttx, trx) = std::sync::mpsc::channel();
+            read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                let _ = ttx.send(r);
+            });
+            trx
+        });
+        let (ctx_, ctr_rx) = std::sync::mpsc::channel();
+        self.counters_read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+            let _ = ctx_.send(r);
+        });
+        // Bounded wait for THIS tile's output readback instead of an unbounded `poll(Wait)`:
+        // honors the export's cancel flag (shutdown / superseded) and surfaces a lost device
+        // rather than hanging the export worker. The counter/timestamp `recv()`s below are
+        // driven by the same submission, so the poll that completes this one has already fired
+        // their callbacks — they no longer block.
+        await_readback(device, &rx, Some(cancel), None).into_result()?;
+
+        // This tile's event counts (u64: the caller sums them across tiles).
+        let mut counters = [0u64; crate::COUNTER_SLOTS];
+        if ctr_rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
+            let mapped = self.counters_read.slice(..).get_mapped_range();
+            let tile_ctr: &[u32] = bytemuck::cast_slice(&mapped[..crate::COUNTER_SLOTS * 4]);
+            for (sum, &c) in counters.iter_mut().zip(tile_ctr) {
+                *sum += c as u64;
+            }
+            drop(mapped);
+            self.counters_read.unmap();
+        }
+
+        // Resolved timestamps → pure-GPU iterate/color ms (ticks × the queue's timestamp
+        // period), accumulated into the active `timing::capture` scope.
+        if let (Some((_, _, read)), Some(ts_rx)) = (&ts, &ts_rx) {
+            if ts_rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
+                let mapped = read.slice(..).get_mapped_range();
+                let t: &[u64] = bytemuck::cast_slice(&mapped[..32]);
+                let period = queue.get_timestamp_period() as f64; // ns per tick
+                let it_ms = t[1].saturating_sub(t[0]) as f64 * period / 1.0e6;
+                let co_ms = t[3].saturating_sub(t[2]) as f64 * period / 1.0e6;
+                drop(mapped);
+                read.unmap();
+                iterate_ms += it_ms;
+                color_ms += co_ms;
+                crate::timing::accumulate(it_ms, co_ms);
+            }
+        }
+
+        let data = slice.get_mapped_range();
+        let row_floats = (tw * 4) as usize;
+        let mut rgba = vec![0.0_f32; row_floats * th as usize];
+        for r in 0..th as usize {
+            let src = r * padded_bpr as usize;
+            let src_row: &[f32] = bytemuck::cast_slice(&data[src..src + unpadded_bpr as usize]);
+            rgba[r * row_floats..(r + 1) * row_floats].copy_from_slice(src_row);
+        }
+        drop(data);
+        out_buf.unmap();
+
+        let wall_ms = t_tile.elapsed().as_secs_f64() * 1000.0;
+        if chunked.is_none() {
+            max_dispatch_ms = max_dispatch_ms.max(wall_ms);
+            max_work = max_work.max(iw as u64 * ih as u64 * req.max_iter as u64);
+            // An UNCHUNKED tile is still evidence: it ran the full ask in `wall_ms`, so it
+            // prices the serial chain exactly as a window would. Feeding it in is what keeps
+            // the lazy trigger honest — a render whose ask fits one opening window but whose
+            // tiles turn out slow anyway will raise the high-water mark here, shrink the
+            // opening below the ask, and start chunking from the next tile on. (The wall
+            // includes readback and the color pass, so it over-prices slightly — the safe
+            // direction: chunking engages sooner, never later.)
+            self.pricer.observe(req.max_iter, wall_ms);
+        }
+        Ok(TileOut {
+            x0: tx0,
+            y0: ty0,
+            w: tw,
+            h: th,
+            rgba,
+            counters,
+            iterate_ms,
+            color_ms,
+            wall_ms,
+            chunked: chunked.map(|(p, _)| p),
+            max_dispatch_ms,
+            max_work,
+            packs,
+        })
+    }
+}
+
+/// The running totals of a render's tiles, and the image they are assembled into.
+struct TileSum {
+    w: u32,
+    pixels: Vec<f32>,
+    ctr_sum: [u64; crate::COUNTER_SLOTS],
+    iterate_ms: f64,
+    color_ms: f64,
+    max_dispatch_ms: f64,
+    max_work: u64,
+    tiles_total: u32,
+    tiles_chunked: u32,
+    chunk_passes: u32,
+    packs: u32,
+    done_px: u64,
+}
+
+impl TileSum {
+    fn new(w: u32, h: u32) -> Self {
+        Self {
+            w,
+            pixels: vec![0.0_f32; (w as usize) * (h as usize) * 4],
+            ctr_sum: [0; crate::COUNTER_SLOTS],
+            iterate_ms: 0.0,
+            color_ms: 0.0,
+            max_dispatch_ms: 0.0,
+            max_work: 0,
+            tiles_total: 0,
+            tiles_chunked: 0,
+            chunk_passes: 0,
+            packs: 0,
+            done_px: 0,
+        }
+    }
+
+    fn add(&mut self, t: &TileOut) {
+        let row_floats = (t.w * 4) as usize;
+        for r in 0..t.h {
+            let dst = (((t.y0 + r) * self.w + t.x0) * 4) as usize;
+            self.pixels[dst..dst + row_floats].copy_from_slice(&t.rgba[r as usize * row_floats..(r as usize + 1) * row_floats]);
+        }
+        for (sum, &c) in self.ctr_sum.iter_mut().zip(&t.counters) {
+            *sum += c;
+        }
+        self.iterate_ms += t.iterate_ms;
+        self.color_ms += t.color_ms;
+        self.max_dispatch_ms = self.max_dispatch_ms.max(t.max_dispatch_ms);
+        self.max_work = self.max_work.max(t.max_work);
+        self.tiles_total += 1;
+        self.tiles_chunked += u32::from(t.chunked.is_some());
+        self.chunk_passes += t.chunked.unwrap_or(0);
+        self.packs += t.packs;
+        self.done_px += (t.w as u64) * (t.h as u64);
+    }
+
+    fn finish(self, h: u32, ss: u32) -> ExportResult {
+        ExportResult {
+            width: self.w,
+            height: h,
+            ss,
+            pixels: self.pixels,
+            iterate_ms: self.iterate_ms,
+            color_ms: self.color_ms,
+            counters: self.ctr_sum,
+            max_dispatch_ms: self.max_dispatch_ms,
+            max_dispatch_work: self.max_work,
+            chunk_passes: self.chunk_passes,
+            tiles_total: self.tiles_total,
+            tiles_chunked: self.tiles_chunked,
+            packs: self.packs,
+        }
+    }
+}
+
+fn render_export_impl(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+    progress: &std::sync::atomic::AtomicU32,
+    cancel: &std::sync::atomic::AtomicBool,
+    allow_chunking: bool,
+) -> Result<ExportResult, GpuError> {
+    use std::sync::atomic::Ordering::Relaxed;
+    let plan = export_plan(&device.limits(), req, allow_chunking);
+    let (w, h, ss, tile) = (plan.w, plan.h, plan.ss, plan.tile);
+    let mut renderer = TileRenderer::new(device, queue, req, plan)?;
+    let mut sum = TileSum::new(w, h);
 
     // Wall-adaptive cap (see `export_tile_cap`): starts at the nominal bound, then prices every
     // subsequent tile from the last one's measured wall time. Progress is by PIXELS because the
     // tile count is no longer fixed.
     let mut cap = tile;
     let total_px = (w as u64).saturating_mul(h as u64).max(1);
-    let mut done_px = 0u64;
-    let (mut sum_iterate_ms, mut sum_color_ms) = (0.0f64, 0.0f64);
-    // Event counters summed across tiles in u64 (each tile is zeroed + read below, so the
-    // per-tile u32 never wraps, and the whole-render total can exceed 2^32).
-    let mut ctr_sum = [0u64; crate::COUNTER_SLOTS];
 
     let mut ty0 = 0u32;
     while ty0 < h {
-        let th = if occupancy { row_h.min(h - ty0) } else { cap.min(h - ty0) };
+        let th = if plan.occupancy { plan.row_h.min(h - ty0) } else { cap.min(h - ty0) };
         let mut tx0 = 0u32;
         while tx0 < w {
             if cancel.load(Relaxed) {
                 return Err(GpuError::Canceled);
             }
-            let t_tile = std::time::Instant::now();
-            let tw = if occupancy { col_w.min(w - tx0) } else { cap.min(w - tx0).min(th.max(16)) };
-            let iw = tw * ss;
-            let ih = th * ss;
-
-            let mut iu = IterUniforms {
-                step: [sxh, sxl, syh, syl],
-                ref_offset: req.ref_offset.to_array(),
-                center: req.center,
-                julia_c: req.julia_c,
-                res: [full_iw, full_ih],
-                px_offset: [(tx0 * ss) as f32 + req.jitter[0] * ss as f32, (ty0 * ss) as f32 + req.jitter[1] * ss as f32],
-                max_iter: req.max_iter,
-                orbit_len: req.orbit_len,
-                mode: req.mode,
-                formula: req.formula,
-                julia: req.julia,
-                delta_exp: req.delta_exp,
-                color_method: req.color_method,
-                stripe_freq: req.stripe_freq,
-                trap_type: req.trap_type,
-                aux_on: crate::aux_on_word(
-                    method_needs_aux(req.color_method),
-                    req.stripe_tail,
-                    req.stripe_tail_len,
-                ),
-                sa_skip: req.sa_skip,
-                glitch_on: req.glitch_on,
-                sa_a: req.sa_a,
-                sa_b: req.sa_b,
-                sa_c: req.sa_c,
-                sa_a_exp: req.sa_a_exp,
-                sa_b_exp: req.sa_b_exp,
-                sa_c_exp: req.sa_c_exp,
-                bla_on: req.bla_on,
-                start_iter: 0,
-                end_iter: 0,
-                gather: [0; 2],
-                tail: crate::tail_word(),
-                rn: req.rn_uniform(),
-            };
-            queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
-
-            let iter_view = make_iter_texture(device, [iw, ih]);
-            let aux_view = make_iter_texture(device, [iw, ih]);
-            let color_tex = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("export.color_tex"),
-                size: wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: EXPORT_FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            });
-            let color_view = color_tex.create_view(&wgpu::TextureViewDescriptor::default());
-            let color_bg =
-                make_color_bg(device, &color_bgl, &color_uniform, &lut_buf, &iter_view, &aux_view);
-
-            let unpadded_bpr = tw * bpp;
-            let padded_bpr = unpadded_bpr.div_ceil(align) * align;
-            let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("export.readback"),
-                size: (padded_bpr * th) as u64,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-
-            // Per-pass GPU timestamps — unconditional since D3.1 (the tile already blocks on
-            // poll(Wait), so the extra 32-byte map is marginal). Four queries: iterate
-            // begin/end (0,1) and color begin/end (2,3), resolved and read after the poll.
-            let ts = if device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
-                let set = device.create_query_set(&wgpu::QuerySetDescriptor {
-                    label: Some("export.timestamps"),
-                    ty: wgpu::QueryType::Timestamp,
-                    count: 4,
-                });
-                let resolve = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("export.ts_resolve"),
-                    size: 256, // >= 4*8 bytes and a multiple of QUERY_RESOLVE_BUFFER_ALIGNMENT
-                    usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-                    mapped_at_creation: false,
-                });
-                let read = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("export.ts_read"),
-                    size: 32,
-                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                Some((set, resolve, read))
-            } else {
-                None
-            };
-
-            // Chunked tiles iterate BEFORE the main encoder: each window is its own polled
-            // submission (that is the whole point), and the first window clears the counters.
-            let chunked = match chunker.as_ref() {
-                Some(ch) if occupancy => {
-                    let (passes, read_set, max_chunk) = ch.run_tile_steps(
-                        device, queue, &iter_bg, &counters_buf, &running_read, &mut iu,
-                        &iter_uniform, [iw, ih], req.max_iter, &mut steps, Some(cancel), None,
-                        &mut sum_iterate_ms, &mut max_work, &mut packs,
-                    )?;
-                    max_dispatch_ms = max_dispatch_ms.max(max_chunk);
-                    Some((passes, read_set))
-                }
-                Some(ch) => {
-                    let (passes, read_set, max_chunk) = ch.run_tile(
-                        device, queue, &iter_bg, &counters_buf, &mut iu, &iter_uniform,
-                        [iw, ih], req.max_iter, &mut pricer, Some(cancel), None,
-                        &mut sum_iterate_ms, &mut max_work,
-                    )?;
-                    max_dispatch_ms = max_dispatch_ms.max(max_chunk);
-                    Some((passes, read_set))
-                }
-                None => None,
-            };
-            tiles_total += 1;
-            tiles_chunked += u32::from(chunked.is_some());
-            chunk_passes += chunked.map_or(0, |(p, _)| p);
-            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("export.encoder"),
-            });
-            if chunked.is_none() {
-                // Zero the event counters before THIS tile's iterate pass, so each tile's counts
-                // are read back independently and summed in u64 (no cross-tile u32 wrap). On a
-                // chunked tile the first window's encoder already did this.
-                enc.clear_buffer(&counters_buf, 0, None);
-            }
-            {
-                let attach = |v| Some(wgpu::RenderPassColorAttachment {
-                    view: v,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                });
-                // Chunked: settle the ping-pong state into the tile's G-buffer (`fs_resolve`),
-                // so the color pass below is oblivious to how the iterate was dispatched.
-                // Unchunked: the classic single-dispatch iterate. Either way the pass writes
-                // iter/aux and the iterate timestamps bracket it.
-                let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("export.iter_pass"),
-                    color_attachments: &[attach(&iter_view), attach(&aux_view)],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: ts.as_ref().map(|(set, _, _)| {
-                        wgpu::RenderPassTimestampWrites {
-                            query_set: set,
-                            beginning_of_pass_write_index: Some(0),
-                            end_of_pass_write_index: Some(1),
-                        }
-                    }),
-                    occlusion_query_set: None,
-                });
-                match (chunker.as_ref(), chunked) {
-                    (Some(ch), Some((_, read_set))) => {
-                        pass.set_pipeline(&ch.resolve_pipeline);
-                        pass.set_bind_group(0, &iter_bg, &[]);
-                        pass.set_bind_group(1, &ch.state_bg[read_set], &[]);
-                        pass.draw(0..3, 0..1);
-                    }
-                    _ => {
-                        pass.set_pipeline(&iter_pipeline);
-                        pass.set_bind_group(0, &iter_bg, &[]);
-                        pass.draw(0..3, 0..1);
-                    }
-                }
-            }
-            {
-                let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("export.color_pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &color_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: ts.as_ref().map(|(set, _, _)| {
-                        wgpu::RenderPassTimestampWrites {
-                            query_set: set,
-                            beginning_of_pass_write_index: Some(2),
-                            end_of_pass_write_index: Some(3),
-                        }
-                    }),
-                    occlusion_query_set: None,
-                });
-                pass.set_pipeline(&color_pipeline);
-                pass.set_bind_group(0, &color_bg, &[]);
-                pass.draw(0..3, 0..1);
-            }
-            if let Some((set, resolve, read)) = &ts {
-                enc.resolve_query_set(set, 0..4, resolve, 0);
-                enc.copy_buffer_to_buffer(resolve, 0, read, 0, 32);
-            }
-            enc.copy_buffer_to_buffer(
-                &counters_buf, 0, &counters_read, 0, (crate::COUNTER_SLOTS * 4) as u64,
-            );
-            enc.copy_texture_to_buffer(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &color_tex,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::TexelCopyBufferInfo {
-                    buffer: &out_buf,
-                    layout: wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(padded_bpr),
-                        rows_per_image: Some(th),
-                    },
-                },
-                wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 },
-            );
-            queue.submit(std::iter::once(enc.finish()));
-
-            let slice = out_buf.slice(..);
-            let (tx, rx) = std::sync::mpsc::channel();
-            slice.map_async(wgpu::MapMode::Read, move |r| {
-                let _ = tx.send(r);
-            });
-            let ts_rx = ts.as_ref().map(|(_, _, read)| {
-                let (ttx, trx) = std::sync::mpsc::channel();
-                read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
-                    let _ = ttx.send(r);
-                });
-                trx
-            });
-            let (ctx_, ctr_rx) = std::sync::mpsc::channel();
-            counters_read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
-                let _ = ctx_.send(r);
-            });
-            // Bounded wait for THIS tile's output readback instead of an unbounded `poll(Wait)`:
-            // honors the export's cancel flag (shutdown / superseded) and surfaces a lost device
-            // rather than hanging the export worker. The counter/timestamp `recv()`s below are
-            // driven by the same submission, so the poll that completes this one has already fired
-            // their callbacks — they no longer block.
-            await_readback(device, &rx, Some(cancel), None).into_result()?;
-
-            // This tile's event counts → the u64 running totals.
-            if ctr_rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
-                let mapped = counters_read.slice(..).get_mapped_range();
-                let tile_ctr: &[u32] = bytemuck::cast_slice(&mapped[..crate::COUNTER_SLOTS * 4]);
-                for (sum, &c) in ctr_sum.iter_mut().zip(tile_ctr) {
-                    *sum += c as u64;
-                }
-                drop(mapped);
-                counters_read.unmap();
-            }
-
-            // Resolved timestamps → pure-GPU iterate/color ms (ticks × the queue's timestamp
-            // period), accumulated into the active `timing::capture` scope.
-            if let (Some((_, _, read)), Some(ts_rx)) = (&ts, &ts_rx) {
-                if ts_rx.recv().map(|r| r.is_ok()).unwrap_or(false) {
-                    let mapped = read.slice(..).get_mapped_range();
-                    let t: &[u64] = bytemuck::cast_slice(&mapped[..32]);
-                    let period = queue.get_timestamp_period() as f64; // ns per tick
-                    let iterate_ms = t[1].saturating_sub(t[0]) as f64 * period / 1.0e6;
-                    let color_ms = t[3].saturating_sub(t[2]) as f64 * period / 1.0e6;
-                    drop(mapped);
-                    read.unmap();
-                    sum_iterate_ms += iterate_ms;
-                    sum_color_ms += color_ms;
-                    crate::timing::accumulate(iterate_ms, color_ms);
-                }
-            }
-
-            let data = slice.get_mapped_range();
-            let row_floats = (tw * 4) as usize;
-            for r in 0..th {
-                let src = (r * padded_bpr) as usize;
-                let src_row: &[f32] =
-                    bytemuck::cast_slice(&data[src..src + unpadded_bpr as usize]);
-                let dst = (((ty0 + r) * w + tx0) * 4) as usize;
-                pixels[dst..dst + row_floats].copy_from_slice(src_row);
-            }
-            drop(data);
-            out_buf.unmap();
-
-            done_px += (tw as u64) * (th as u64);
-            progress.store(((done_px.saturating_mul(1000)) / total_px) as u32, Relaxed);
-            let wall_ms = t_tile.elapsed().as_secs_f64() * 1000.0;
-            let chunk_passes = chunked.map_or(0, |(p, _)| p);
-            if chunked.is_none() {
-                max_dispatch_ms = max_dispatch_ms.max(wall_ms);
-                max_work = max_work.max(iw as u64 * ih as u64 * req.max_iter as u64);
-                // An UNCHUNKED tile is still evidence: it ran the full ask in `wall_ms`, so it
-                // prices the serial chain exactly as a window would. Feeding it in is what keeps
-                // the lazy trigger honest — a render whose ask fits one opening window but whose
-                // tiles turn out slow anyway will raise the high-water mark here, shrink the
-                // opening below the ask, and start chunking from the next tile on. (The wall
-                // includes readback and the color pass, so it over-prices slightly — the safe
-                // direction: chunking engages sooner, never later.)
-                pricer.observe(req.max_iter, wall_ms);
-            }
+            let tw = if plan.occupancy { plan.col_w.min(w - tx0) } else { cap.min(w - tx0).min(th.max(16)) };
+            let out = renderer.tile(tx0, ty0, tw, th, cancel)?;
+            sum.add(&out);
+            progress.store(((sum.done_px.saturating_mul(1000)) / total_px) as u32, Relaxed);
+            let chunk_passes = out.chunked.unwrap_or(0);
             if tile_trace_on() {
                 eprintln!(
-                    "[fd-export] tile {tx0},{ty0} {tw}x{th} ss={ss} wall={wall_ms:.1}ms \
-cap={cap} chunks={chunk_passes} steps={occupancy}"
+                    "[fd-export] tile {tx0},{ty0} {tw}x{th} ss={ss} wall={:.1}ms \
+cap={cap} chunks={chunk_passes} steps={}", out.wall_ms, plan.occupancy
                 );
             }
             // Step-bounded tiles keep their size: the step cap bounds each pass, and shrinking the
             // area would only give back the occupancy the tile exists for.
-            if chunk_passes <= 1 && !occupancy {
-                cap = export_tile_cap(cap, wall_ms, tile);
+            if chunk_passes <= 1 && !plan.occupancy {
+                cap = export_tile_cap(cap, out.wall_ms, tile);
             }
             // else: serial regime — the wall is dwell-chain time, which shrinking the AREA cannot
             // reduce (it only multiplies how many chains the frame pays; the same wrong-actuator
@@ -1856,22 +2039,211 @@ cap={cap} chunks={chunk_passes} steps={occupancy}"
         }
         ty0 += th;
     }
+    Ok(sum.finish(h, ss))
+}
 
-    Ok(ExportResult {
-        width: w,
-        height: h,
-        ss,
-        pixels,
-        iterate_ms: sum_iterate_ms,
-        color_ms: sum_color_ms,
-        counters: ctr_sum,
-        max_dispatch_ms,
-        max_dispatch_work: max_work,
-        chunk_passes,
-        tiles_total,
-        tiles_chunked,
-        packs,
-    })
+/// The fixed tile grid of a multi-device render, in raster order. Step-bounded (occupancy) tiles
+/// are the grid a single device uses too, so a split render is that render's tiles exactly; the
+/// others are `tile` squares laid out as the single-device loop lays them before its wall-adaptive
+/// cap has moved (a split render has no one device's wall time to adapt to).
+fn multi_tile_rects(plan: &ExportPlan) -> Vec<[u32; 4]> {
+    let mut rects = Vec::new();
+    let mut ty0 = 0u32;
+    while ty0 < plan.h {
+        let th = if plan.occupancy { plan.row_h.min(plan.h - ty0) } else { plan.tile.min(plan.h - ty0) };
+        let mut tx0 = 0u32;
+        while tx0 < plan.w {
+            let tw = if plan.occupancy { plan.col_w.min(plan.w - tx0) } else { plan.tile.min(plan.w - tx0).min(th.max(16)) };
+            rects.push([tx0, ty0, tw, th]);
+            tx0 += tw;
+        }
+        ty0 += th;
+    }
+    rects
+}
+
+/// What each device did in a [`render_export_multi`].
+#[derive(Clone, Debug, Default)]
+pub struct DeviceShare {
+    /// Tiles it rendered, and their output pixels.
+    pub tiles: u32,
+    pub pixels: u64,
+    /// Its pure-GPU iterate and colour time, summed over its tiles (ms).
+    pub iterate_ms: f64,
+    pub color_ms: f64,
+    /// Why it stopped early, if it did (its unfinished tile went to another device).
+    pub error: Option<String>,
+}
+
+/// Whether [`render_export_multi`] can split this request across devices. Only the chunked
+/// iterate: outside its scope (aux colouring, a formula without resumable passes, a device without
+/// the state-attachment width) a tile is one unbounded dispatch, kept safe only by the single
+/// device loop's wall-adaptive tile size, which a split render cannot have.
+pub fn export_splits(limits: &[wgpu::Limits], req: &ExportRequest) -> bool {
+    !limits.is_empty() && export_plan(&min_limits(limits), req, true).chunk_scope
+}
+
+fn min_limits(limits: &[wgpu::Limits]) -> wgpu::Limits {
+    let mut l = limits[0].clone();
+    for o in &limits[1..] {
+        l.max_texture_dimension_2d = l.max_texture_dimension_2d.min(o.max_texture_dimension_2d);
+        l.max_buffer_size = l.max_buffer_size.min(o.max_buffer_size);
+        l.max_storage_buffer_binding_size = l.max_storage_buffer_binding_size.min(o.max_storage_buffer_binding_size);
+        l.max_color_attachment_bytes_per_sample = l.max_color_attachment_bytes_per_sample.min(o.max_color_attachment_bytes_per_sample);
+    }
+    l
+}
+
+/// [`render_export`] across several devices (design/multi-gpu.md Phase 2): one thread per device,
+/// each with its own copy of the reference and its own pipelines, takes the next tile of a fixed
+/// grid from a shared counter until none is left, so a fast and a slow card balance themselves and
+/// the tail is at most one tile. The tiles are assembled here, in the caller's thread.
+///
+/// Same-class devices give exactly the image one of them renders alone when the grid is the
+/// single-device grid (step-bounded mode 2, `export_plan`'s `occupancy`); different classes give
+/// each tile as ITS device draws it. A device that fails (lost, or its reference too large for it)
+/// is retired and its tile goes back for another; the render fails only when none is left.
+/// Requires [`export_splits`]; a request outside it renders on the first device as usual.
+pub fn render_export_multi(
+    devices: &[(&wgpu::Device, &wgpu::Queue)],
+    req: &ExportRequest,
+    progress: &std::sync::atomic::AtomicU32,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<(ExportResult, Vec<DeviceShare>), GpuError> {
+    // Test hook: `FRACTADYNE_SPLIT_LOSE_AFTER=d:n` — device `d` (0 = the first) fails as a lost device
+    // would after `n` tiles, so the hand-back and the recovery run without losing a real one.
+    let lose_after: Option<(usize, u32)> = std::env::var("FRACTADYNE_SPLIT_LOSE_AFTER").ok().and_then(|v| {
+        let (d, n) = v.trim().split_once(':')?;
+        Some((d.parse().ok()?, n.parse().ok()?))
+    });
+    render_export_multi_with(devices, req, progress, cancel, lose_after)
+}
+
+/// [`render_export_multi`] with its failure hook as a parameter: `lose_after = Some((d, n))` makes
+/// device `d` fail as a lost device would after `n` tiles (the selftest's check of the hand-back).
+#[doc(hidden)]
+pub fn render_export_multi_with(
+    devices: &[(&wgpu::Device, &wgpu::Queue)],
+    req: &ExportRequest,
+    progress: &std::sync::atomic::AtomicU32,
+    cancel: &std::sync::atomic::AtomicBool,
+    lose_after: Option<(usize, u32)>,
+) -> Result<(ExportResult, Vec<DeviceShare>), GpuError> {
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+    if devices.is_empty() {
+        return Err(GpuError::Readback("no device to render on".into()));
+    }
+    let limits: Vec<wgpu::Limits> = devices.iter().map(|(d, _)| d.limits()).collect();
+    if devices.len() == 1 || !export_splits(&limits, req) {
+        let (d, q) = devices[0];
+        let r = render_export_impl(d, q, req, progress, cancel, true)?;
+        let share = DeviceShare { tiles: r.tiles_total, pixels: r.width as u64 * r.height as u64, iterate_ms: r.iterate_ms, color_ms: r.color_ms, error: None };
+        return Ok((r, vec![share]));
+    }
+    let plan = export_plan(&min_limits(&limits), req, true);
+    let rects = multi_tile_rects(&plan);
+    let n = rects.len();
+    let next = AtomicUsize::new(0);
+    let requeue = std::sync::Mutex::new(Vec::<usize>::new());
+    let total_px = (plan.w as u64).saturating_mul(plan.h as u64).max(1);
+    let mut sum = TileSum::new(plan.w, plan.h);
+    let mut done = vec![false; n];
+    let mut shares = vec![DeviceShare::default(); devices.len()];
+    let (tx, rx) = std::sync::mpsc::channel::<(usize, usize, Result<TileOut, GpuError>)>();
+    let take = || -> Option<usize> {
+        if let Some(k) = requeue.lock().ok().and_then(|mut q| q.pop()) {
+            return Some(k);
+        }
+        let k = next.fetch_add(1, Relaxed);
+        (k < n).then_some(k)
+    };
+    std::thread::scope(|sc| {
+        for (di, &(device, queue)) in devices.iter().enumerate() {
+            let (tx, take, requeue, rects) = (tx.clone(), &take, &requeue, &rects);
+            sc.spawn(move || {
+                let mut renderer = match TileRenderer::new(device, queue, req, plan) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let _ = tx.send((di, usize::MAX, Err(e)));
+                        return;
+                    }
+                };
+                let mut rendered = 0u32;
+                while let Some(k) = take() {
+                    if cancel.load(Relaxed) {
+                        let _ = tx.send((di, k, Err(GpuError::Canceled)));
+                        return;
+                    }
+                    let [x, y, w, h] = rects[k];
+                    let out = if lose_after == Some((di, rendered)) {
+                        Err(GpuError::DeviceLost)
+                    } else {
+                        renderer.tile(x, y, w, h, cancel)
+                    };
+                    rendered += 1;
+                    match out {
+                        Ok(t) => {
+                            if tx.send((di, k, Ok(t))).is_err() {
+                                return;
+                            }
+                        }
+                        Err(e) => {
+                            // Retire this device; its tile goes back for another.
+                            if !matches!(e, GpuError::Canceled) {
+                                if let Ok(mut q) = requeue.lock() {
+                                    q.push(k);
+                                }
+                            }
+                            let _ = tx.send((di, k, Err(e)));
+                            return;
+                        }
+                    }
+                }
+            });
+        }
+        drop(tx);
+        for (di, k, r) in rx {
+            match r {
+                Ok(t) => {
+                    let s = &mut shares[di];
+                    s.tiles += 1;
+                    s.pixels += t.w as u64 * t.h as u64;
+                    s.iterate_ms += t.iterate_ms;
+                    s.color_ms += t.color_ms;
+                    sum.add(&t);
+                    done[k] = true;
+                    progress.store(((sum.done_px.saturating_mul(1000)) / total_px) as u32, Relaxed);
+                }
+                Err(e) => shares[di].error = Some(e.to_string()),
+            }
+        }
+    });
+    if cancel.load(Relaxed) {
+        return Err(GpuError::Canceled);
+    }
+    // A tile handed back after the other devices had already finished: render it on the first
+    // device still standing.
+    let missing: Vec<usize> = (0..n).filter(|&k| !done[k]).collect();
+    if !missing.is_empty() {
+        let Some(di) = (0..devices.len()).find(|&i| shares[i].error.is_none()) else {
+            let why = shares.iter().filter_map(|s| s.error.clone()).collect::<Vec<_>>().join("; ");
+            return Err(GpuError::Readback(format!("every device failed: {why}")));
+        };
+        let (d, q) = devices[di];
+        let mut renderer = TileRenderer::new(d, q, req, plan)?;
+        for k in missing {
+            let [x, y, w, h] = rects[k];
+            let t = renderer.tile(x, y, w, h, cancel)?;
+            let s = &mut shares[di];
+            s.tiles += 1;
+            s.pixels += t.w as u64 * t.h as u64;
+            s.iterate_ms += t.iterate_ms;
+            s.color_ms += t.color_ms;
+            sum.add(&t);
+            progress.store(((sum.done_px.saturating_mul(1000)) / total_px) as u32, Relaxed);
+        }
+    }
+    Ok((sum.finish(plan.h, plan.ss), shares))
 }
 
 /// The readback the step-bounded runner reads after every pass: the step accounting

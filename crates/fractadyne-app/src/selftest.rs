@@ -1409,6 +1409,58 @@ impl FractadyneApp {
                 threshold: "no sample, then a sample",
                 pass,
             });
+
+            // ⭐ONE STILL ACROSS DEVICES (design/multi-gpu.md Phase 2): split by tile between this
+            // device and a twin, the image must be the bytes this device renders alone — the split
+            // keeps the single device's tile grid (mode 2 step-bounded), and a tile's pixels depend
+            // on nothing but the request. Control: both devices really rendered tiles (a split that
+            // left everything to one would pass vacuously). Then the twin fails after one tile: its
+            // tile goes back for this device, and the image must not change.
+            let mut s = req.clone();
+            s.jitter = [0.0, 0.0];
+            s.tile_px_max = Some(48); // several tiles at 192×120
+            let alone = local(&s);
+            let twin = self
+                .render_state
+                .as_ref()
+                .map(|rs| rs.adapter.get_info())
+                .ok_or_else(|| "no window adapter".to_string())
+                .and_then(|info| crate::gpu_worker::open_headless("same", &info, crate::gpu_choice::backends(), "fractadyne.selftest"));
+            let split = |lose: Option<(usize, u32)>| -> Result<(fractadyne_gpu::ExportResult, Vec<fractadyne_gpu::DeviceShare>), String> {
+                let t = twin.as_ref().map_err(|e| e.clone())?;
+                fractadyne_gpu::render_export_multi_with(&[(device, queue), (&t.device, &t.queue)], &s, &progress, &cancel, lose)
+                    .map_err(|e| e.to_string())
+            };
+            for (lose, name, threshold) in [
+                (None, "a still split across this device and a twin is bit-identical, both rendering", "0 channels differ; both devices rendered tiles"),
+                (Some((1, 1)), "a split whose twin fails after one tile hands it back, bit-identical", "0 channels differ; the twin stopped, every tile rendered"),
+            ] {
+                let (pass, result) = match (&alone, split(lose)) {
+                    (Some(a), Ok((r, shares))) if a.pixels.len() == r.pixels.len() => {
+                        let diffs = bit_exact(&a.pixels, &r.pixels);
+                        let tiles: Vec<u32> = shares.iter().map(|x| x.tiles).collect();
+                        let ok = diffs == 0
+                            && r.tiles_total == a.tiles_total
+                            && a.tiles_total > 2
+                            && match lose {
+                                None => tiles.iter().all(|&k| k > 0),
+                                Some(_) => shares[1].error.is_some() && tiles.iter().sum::<u32>() == a.tiles_total,
+                            };
+                        (ok, format!("{diffs} of {} channels differ; tiles per device {tiles:?} of {}{}", a.pixels.len(), a.tiles_total,
+                            shares[1].error.as_ref().map_or(String::new(), |e| format!("; the twin stopped: {e}"))))
+                    }
+                    (_, Err(e)) => (false, format!("the split did not render: {e}")),
+                    _ => (false, "render failed, or the sizes differ".into()),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Worker",
+                    name: name.into(),
+                    params: format!("corpus07 1e30x, 20k iter, {WW}×{WH} ss 2, 48-px tiles, mode {}", s.mode),
+                    result,
+                    threshold,
+                    pass,
+                });
+            }
         }
 
         // ⭐⭐THE RENORMALIZED STEP (`fractadyne_core::RenormStep`) through every path that runs it. The

@@ -1540,7 +1540,53 @@ impl FractadyneApp {
                 return Ok(res);
             }
         }
+        if !self.export_extra.is_empty() {
+            return self.render_export_split(device, queue, req, progress, cancel);
+        }
         fractadyne_gpu::render_export(device, queue, req, progress, cancel)
+    }
+
+    /// The plain export across the window's card and `export_extra` (`--render … --gpus`), with a
+    /// line saying who rendered what. A request the split cannot take (outside the chunked
+    /// iterate) renders on the window's card, as `render_export_multi` decides and this says.
+    fn render_export_split(
+        &self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        req: &fractadyne_gpu::ExportRequest,
+        progress: &std::sync::atomic::AtomicU32,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<fractadyne_gpu::ExportResult, fractadyne_gpu::GpuError> {
+        let mut devices: Vec<(&eframe::wgpu::Device, &eframe::wgpu::Queue)> = vec![(device, queue)];
+        let mut names = vec![self.gpu_name.clone()];
+        for h in self.export_extra.iter().filter(|h| h.alive.load(std::sync::atomic::Ordering::Relaxed)) {
+            devices.push((&h.device, &h.queue));
+            names.push(h.name.clone());
+        }
+        let limits: Vec<eframe::wgpu::Limits> = devices.iter().map(|(d, _)| d.limits()).collect();
+        if !fractadyne_gpu::export_splits(&limits, req) {
+            crate::diag::log_line("render", "--gpus: this render cannot be split by tile (outside the chunked iterate) — the window's card renders it");
+        }
+        let t = std::time::Instant::now();
+        let (r, shares) = fractadyne_gpu::render_export_multi(&devices, req, progress, cancel)?;
+        let words: Vec<String> = shares
+            .iter()
+            .zip(&names)
+            .map(|(s, n)| {
+                format!(
+                    "{n}: {} tiles, {:.1} Mpx, GPU {:.0} ms{}",
+                    s.tiles,
+                    s.pixels as f64 / 1e6,
+                    s.iterate_ms + s.color_ms,
+                    s.error.as_ref().map_or(String::new(), |e| format!(" (stopped: {e})"))
+                )
+            })
+            .collect();
+        crate::diag::log_line(
+            "render",
+            &format!("split across {} card(s) in {:.0} ms — {}", shares.len(), t.elapsed().as_secs_f64() * 1000.0, words.join("; ")),
+        );
+        Ok(r)
     }
 
     /// End-of-render perf + counter summary (D3.1/D3.2/D3.3): pure-GPU pass times, the
