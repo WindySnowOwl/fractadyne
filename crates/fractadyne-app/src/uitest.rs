@@ -1158,7 +1158,9 @@ impl FractadyneApp {
         self.farm_controller.uitest_live = false;
         // The Advanced screen's seeded second card: the walk applies no setting (`drive_worker_setting`),
         // so only the panel's state goes back.
-        self.dialogs.uitest_advanced_open = false;
+        if self.dialogs.uitest_advanced_open.is_some() {
+            self.dialogs.uitest_advanced_open = Some(false); // closed on the panel's next draw
+        }
         self.render_cfg.worker_gpu.clear();
         self.worker_state = crate::gpu_worker::WorkerState::Off;
         self.worker_cards = None;
@@ -1216,7 +1218,7 @@ impl FractadyneApp {
             Screen::RightPanel => self.dialogs.right_panel_open = true,
             Screen::RightPanelAdvanced => {
                 self.dialogs.right_panel_open = true;
-                self.dialogs.uitest_advanced_open = true;
+                self.dialogs.uitest_advanced_open = Some(true);
                 let other = "AMD Radeon RX 6800 XT".to_string();
                 self.worker_cards = Some(vec![(1, self.gpu_name.clone()), (2, other.clone())]);
                 self.render_cfg.worker_gpu = "2".into();

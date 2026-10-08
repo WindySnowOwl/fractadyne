@@ -91,6 +91,15 @@ impl FractadyneApp {
         self.tour_render.progress_frames = None;
         self.tour_render.status = None;
         self.tour_render.open = true;
+        // This machine's graphics cards, once, from a child process (the app never enumerates
+        // OpenGL beside its own device): "Use all graphics cards" is offered only for two or more.
+        if self.tour_render.cards.is_none() && self.tour_render.cards_rx.is_none() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            self.tour_render.cards_rx = Some(rx);
+            crate::render::spawn_named("fd-list-cards", move || {
+                let _ = tx.send(crate::ui::farm_client::list_cards("tour-render").len());
+            });
+        }
     }
 
     /// Poll the render child: drain its progress lines and reap it when it exits. Called every
@@ -294,7 +303,8 @@ impl FractadyneApp {
                         ui.end_row();
 
                         ui.label("Chapter");
-                        egui::ComboBox::from_id_salt("tour_render_segment")
+                        // All graphics cards render the whole tour (a farm job has no chapters).
+                        ui.add_enabled_ui(!self.tour_render.all_gpus, |ui| egui::ComboBox::from_id_salt("tour_render_segment")
                             .selected_text(match self.tour_render.segment {
                                 0 => "Whole tour".to_string(),
                                 i => chapters.get(i - 1).map(|c| c.0.clone()).unwrap_or_default(),
@@ -314,7 +324,7 @@ impl FractadyneApp {
                             .on_hover_text(
                                 "Rendering one chapter keeps the GLOBAL frame numbering, so its \
                                  frames drop straight back into a full sequence.",
-                            );
+                            ));
                         ui.end_row();
                     });
                     ui.horizontal(|ui| {
@@ -331,7 +341,30 @@ impl FractadyneApp {
                              stepping back until a good one is found; a folder holding frames at a \
                              different size is refused rather than mixed into this sequence.",
                         );
-                    ui.horizontal(|ui| {
+                    if let Some(rx) = &self.tour_render.cards_rx {
+                        if let Ok(n) = rx.try_recv() {
+                            self.tour_render.cards = Some(n);
+                            self.tour_render.cards_rx = None;
+                        }
+                    }
+                    if let Some(n) = self.tour_render.cards.filter(|&n| n >= 2) {
+                        if ui
+                            .checkbox(&mut self.tour_render.all_gpus, format!("Use all graphics cards ({n})"))
+                            .on_hover_text(
+                                "Render on every graphics card of this machine at once, through a \
+                                 render farm on this computer (--gpus all). The frames, their names, \
+                                 Resume and the mp4 are as for one card; the whole tour renders, in \
+                                 the farm's own order. Different card models draw a few pixels \
+                                 slightly differently: a held shot and a dissolve stay on one card.",
+                            )
+                            .changed()
+                            && self.tour_render.all_gpus
+                        {
+                            self.tour_render.segment = 0;
+                            self.tour_render.progressive = false;
+                        }
+                    }
+                    ui.add_enabled_ui(!self.tour_render.all_gpus, |ui| ui.horizontal(|ui| {
                         ui.label("Render order");
                         egui::ComboBox::from_id_salt("tour_render_order")
                             .selected_text(if self.tour_render.progressive {
@@ -361,7 +394,7 @@ impl FractadyneApp {
                                      flip-book, and restart with Resume in either order.",
                                 );
                             });
-                    });
+                    }));
                 });
 
                 // What this is about to cost, before committing to it.
@@ -572,6 +605,10 @@ impl FractadyneApp {
         if t.overwrite {
             a.push("-y".to_string());
         }
+        if t.all_gpus {
+            a.push("--gpus".to_string());
+            a.push("all".to_string());
+        }
         a
     }
 
@@ -591,6 +628,9 @@ impl FractadyneApp {
         t.progress.clear();
         t.progress_frames = None;
         t.status = None;
+        // A two-card machine, so the walk photographs "Use all graphics cards" whatever runs it.
+        t.cards = Some(2);
+        t.cards_rx = None;
         t.open = true;
     }
 

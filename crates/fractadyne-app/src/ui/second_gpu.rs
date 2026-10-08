@@ -63,7 +63,7 @@ impl FractadyneApp {
              slightly differently; the samples are averaged, so the picture lands between them. \
              If the second card fails, the view carries on with one.",
         );
-        if self.dialogs.uitest_advanced_open {
+        if self.dialogs.uitest_advanced_open == Some(true) {
             row.scroll_to_me(Some(egui::Align::Center)); // the walk's screenshot of this row
         }
         // Always one line, so choosing a card never moves the rows below it.

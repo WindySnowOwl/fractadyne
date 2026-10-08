@@ -1,7 +1,8 @@
 # Several GPUs in one machine — plan
 
-Status: **plan (2026-10-05), nothing built.** The test machine (PLUTO) now has an RTX 3070 beside its
-RX 6800 XT. This document says what is worth parallelising across them, in what order, and what
+Status: **plan (2026-10-05). Phase 1 built 2026-10-08 (§3, "Phase 1 as built"); the live view's
+second GPU (L2, `design/multi-gpu-live.md`) built 2026-10-07.** The test machine (PLUTO) now has an
+RTX 3070 beside its RX 6800 XT. This document says what is worth parallelising across them, in what order, and what
 has to change first. Line references are to `feat/bench-ladder` unless marked `[RR]`
 (`feat/remote-rendering`, not merged).
 
@@ -102,6 +103,36 @@ What's missing is a local, zero-configuration entry point:
 - A two-GPU tour has the same frame count and order as a single-GPU one.
 - Held frames all come from one class.
 - `--farmtest`'s checks pass with `--gpus all` on PLUTO.
+
+**Phase 1 as built (2026-10-08, `farm/local.rs`).** `--render-tour TOUR --gpus all | N,N,…` and the
+Render tour window's *Use all graphics cards (N)* (shown for two or more cards, counted by a
+`--list-adapters` child when the window opens).
+- **Not in-process.** The render process is an orchestrator: a `--farm-render` controller on
+  `127.0.0.1:0` (`--no-discovery`, `--min-clients N`, `--ui-status`) and one `--render-client
+  --adapters … --one-job --ui-status`, both children through `status::Link`, so their stdin is the
+  orchestrator's: however it ends (the window's Stop kills it), the controller stops and the client
+  leaves. Measured: kill the orchestrator mid-render and the controller, the client and its render
+  process are all gone within 12 s.
+- **Single-render surface.** It resolves the tour as `--render-tour` does, keeps the
+  existing-frames rule (refuses without `-y`/`--resume`; `-y` clears those frames and `DIR/farm/`,
+  since the controller adopts any complete frame it finds), prints `frame K/N` lines from the
+  controller's status (the window's bar reads them), writes `render-status.txt`, and runs the mp4
+  step (`scripting::assemble_mp4`, now shared). Refused, not ignored: what a farm job has no
+  notion of (`--segment(s)`, `--frames`, `--order`, `--dry-run`, the anchor flags) and the overrides
+  a farm takes from the session instead (`--watermark`, `--show-location`, `--bla`, `--set`).
+- **Its own key and client**, in `<config>/farm/local-gpus/`: the controller pins a client's name to
+  its identity, so a client made afresh per run would be refused the second time (checked: a second
+  `-y` run into the same folder renders). The user's `farm-key.txt` is neither read nor made.
+- ⛔**No `FRACTADYNE_LOG_DIR` for the children.** Their render processes inherit it; one the client
+  stopped when the job closed left its "still running" marker there, the next client reported it as
+  a crash, and relayed child lines in the orchestrator's own log then failed ITS log check. The
+  children log as guests, the client's renders in their job folders; child lines go to stdout only.
+- **Same-class identity.** `--gpus 1,1` (two sessions on this machine's one RTX 3080) renders the
+  farm test tour's 19 frames identical to a `--farm-child` render, and identical again after `-y` and
+  after `--resume` with two frames deleted. Against a plain `--render-tour` the farm's frames differ
+  only in the watermark (52–91 px a frame, all inside the mark: a farm draws it at a fixed scale).
+- **Not yet:** a run on PLUTO's two cards (the field agent has no `--render-tour` mode yet), and a
+  `--farmtest` variant with `--gpus`.
 
 ### Phase 2 — one still across GPUs (tile-level, in one process)
 

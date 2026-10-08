@@ -558,7 +558,7 @@ impl FractadyneApp {
                 // be ignored safely, whereas a mis-set budget changes behaviour with no clue why.
                 egui::CollapsingHeader::new("Advanced")
                     .default_open(false)
-                    .open(self.dialogs.uitest_advanced_open.then_some(true))
+                    .open(self.dialogs.uitest_advanced_open)
                     .show(ui, |ui| {
                 ui.label(egui::RichText::new("Accelerators").weak().small());
                 ui.checkbox(&mut self.render_cfg.use_bla, "BLA acceleration (deep zoom)")
@@ -702,6 +702,9 @@ impl FractadyneApp {
                          cheap and sharp every frame either way.",
                     );
                 });
+                if self.dialogs.uitest_advanced_open == Some(false) {
+                    self.dialogs.uitest_advanced_open = None; // closed now; clicks rule it again
+                }
                 // Per-fractal info, LAST and closed by default: it is reference material, not a
                 // control, and it was previously the panel's top section - the most valuable space in
                 // the panel spent on something read once. Its header was also `self.fractal.name()`,

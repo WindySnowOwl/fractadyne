@@ -507,6 +507,24 @@ The UI walk has a `right-panel-advanced` screen, seeded with a second card.
   (`FRACTADYNE_WORKER_LOSE_AFTER=3`: dropped, converged on one GPU); a card that does not exist
   (`no worker GPU: --adapter 9 …`, one GPU). Not yet on PLUTO, where card 2 is a real second card.
 
+**PLUTO re-measure (2026-10-08, `gfaa17d8`: the paced settle, the decided-inputs gate and the
+setting).** Same requests as on 2026-10-07: `--list-adapters` (1 = RX 6800 XT, 2 = RTX 3070, 3 = the
+6800 XT under OpenGL: Vulkan first, so the setting's numbers hold there too), the twin self-test on
+each card (4/4 both), and `--shot` at 1600×1000. The 24-sample stage:
+
+| View | Window card | Alone | Other card helping | 2026-10-07 (alone → helped) |
+| --- | --- | --- | --- | --- |
+| 6.8e3999× | RX 6800 XT | 11.7 s | 2.8 s (4.2×), 16 samples on the 3070 | 29.0 → 3.3 s |
+| 6.8e3999× | RTX 3070 | 10.0 s | 3.4 s (2.9×), 15 on the 6800 XT | 27.5 → 4.8 s |
+| mini78 (2^262.6) | RX 6800 XT | 64.8 s | 13.9 s (4.7×), 18 on the 3070 | 95.0 → 13.3 s |
+| mini78 (2^262.6) | RTX 3070 | 41.8 s | 13.3 s (3.1×), 17 on the 6800 XT | 78.5 → 13.1 s |
+
+The pacing made one card 1.4–2.7× faster on its own, so the second card now adds 2.9–4.7× where it
+added 5.7–8.8×; with it, the times hardly moved (the worker is not frame-paced). Every helped run:
+"the average holds all 24 samples", no worker error. Every shot exits 1 on the log check, as on
+2026-10-07 (`timing-starved`; one `budget-blind` at 6.8e3999×, which last week's solo runs at that
+view had too). Shot totals at 6.8e3999× are ~50–57 s, mostly the reference: the standard package
+builds it with astro-float.
+
 **Next.**
 1. Find the timing-dependent difference (per-sample hashes, above).
-2. Re-measure the second card on PLUTO with the paced settle (the 6–9× above predates it).

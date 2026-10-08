@@ -5024,6 +5024,11 @@ pub(crate) struct TourRenderUi {
     /// Render order: progressive (keyframes first, then bisect the largest gaps — preview the
     /// whole tour early) vs the default sequential. Maps to `--order progressive`.
     pub(crate) progressive: bool,
+    /// Render on every graphics card of this machine (`--gpus all`, `farm::local`). Offered only
+    /// when `cards` (counted by a `--list-adapters` child when the dialog opens) is two or more.
+    pub(crate) all_gpus: bool,
+    pub(crate) cards: Option<usize>,
+    pub(crate) cards_rx: Option<std::sync::mpsc::Receiver<usize>>,
     /// Latest line from the child (its "frame N/M …" progress), and the finished-run summary.
     pub(crate) progress: String,
     /// `(done, planned)` parsed from the latest progress line — drives the progress BAR; the raw
@@ -5057,6 +5062,9 @@ impl Default for TourRenderUi {
             overwrite: true,
             resume: false,
             progressive: false,
+            all_gpus: false,
+            cards: None,
+            cards_rx: None,
             progress: String::new(),
             progress_frames: None,
             error: None,
@@ -5796,9 +5804,11 @@ struct DialogState {
     backend_notice_suppress: bool,
     /// Whether the right-hand control panel is shown (persisted).
     right_panel_open: bool,
-    /// `--uitest` only: hold the panel's Advanced section open and scroll to Second graphics card
-    /// (the `right-panel-advanced` screen). Never set outside the walk.
-    uitest_advanced_open: bool,
+    /// `--uitest` only: `Some(true)` holds the panel's Advanced section open and scrolls to Second
+    /// graphics card (the `right-panel-advanced` screen); `Some(false)` closes it again, once, as
+    /// the walk leaves that screen — egui remembers a section's state, and the open section stood
+    /// in every later screenshot. `None` outside the walk.
+    uitest_advanced_open: Option<bool>,
     /// Minimap overview enabled (persisted).
     minimap: bool,
     /// "Script to current view" export dialog open, plus its inputs (a notation caption and the
@@ -7064,7 +7074,7 @@ impl FractadyneApp {
                     .flatten(),
                 backend_notice_suppress: s.mpfr_warning_suppressed,
                 right_panel_open: s.right_panel_open,
-                uitest_advanced_open: false,
+                uitest_advanced_open: None,
                 minimap: s.minimap,
                 script_export_open: false,
                 script_export_note: String::new(),

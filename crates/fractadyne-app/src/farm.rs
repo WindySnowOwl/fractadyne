@@ -12,6 +12,7 @@
 pub(crate) mod client;
 pub(crate) mod controller;
 pub(crate) mod farmtest;
+pub(crate) mod local;
 pub(crate) mod status;
 
 use fractadyne_farm::key::{FarmKey, Identity};
@@ -31,7 +32,8 @@ pub(crate) fn run_headless(args: &[String]) -> Option<i32> {
     if args.iter().any(|a| a == "--render-client") {
         return Some(client::run(args));
     }
-    None
+    // `--render-tour … --gpus`: a farm on this machine, or (one card) the ordinary render below.
+    local::run(args)
 }
 
 /// `<config>/farm/`: identity, keys, pins, and the client's job folders.

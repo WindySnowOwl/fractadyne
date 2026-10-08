@@ -465,7 +465,7 @@ fn prompt_overwrite(path: &std::path::Path) -> Result<OverwriteChoice, String> {
 /// headless render that needed nothing from it (observed in a beta.45 crash report; the prime
 /// suspect in the silent 4K death at frame 5682/9931). Progress is best-effort: write, ignore a
 /// dead pipe, and mirror to the render log so a parentless child still leaves a trail on disk.
-fn say(msg: &str) {
+pub(crate) fn say(msg: &str) {
     use std::io::Write;
     let _ = writeln!(std::io::stdout(), "{msg}");
     crate::diag::log_line("render", msg);
@@ -479,7 +479,7 @@ fn say(msg: &str) {
 /// signature, diagnosable from the frames folder alone — and the Render Script dialog's planned
 /// progress bar can read the same file. Best-effort by design: a full disk must not take down a
 /// render that is otherwise succeeding.
-fn write_render_status(out_dir: &std::path::Path, state: &str) {
+pub(crate) fn write_render_status(out_dir: &std::path::Path, state: &str) {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -488,8 +488,78 @@ fn write_render_status(out_dir: &std::path::Path, state: &str) {
     let _ = std::fs::write(out_dir.join("render-status.txt"), line);
 }
 
+/// Assemble `<prefix>_%05d.png` in `out_dir` into `mp4` with ffmpeg, or say how to: the render's
+/// closing message either way. A missing or failed ffmpeg never fails a render: its frames stand.
+/// Shared by the single-GPU render and the local farm (`farm::local`).
+pub(crate) fn assemble_mp4(out_dir: &std::path::Path, prefix: &str, fps: f64, mp4: Option<&std::path::Path>) -> String {
+    let pattern = out_dir.join(format!("{prefix}_%05d.png"));
+    // Optionally assemble the PNG sequence into an mp4 via ffmpeg (kept separate from the
+    // frames so a failed/absent ffmpeg never loses the render).
+    if let Some(mp4_path) = mp4 {
+        // F-06: resolve ffmpeg to an absolute path (FRACTADYNE_FFMPEG override → PATH, never
+        // cwd) and surface where it came from, so a surprising binary is visible before it runs.
+        let Some(ffmpeg) = crate::exec_resolve::external("ffmpeg") else {
+            return format!(
+                "Could not find ffmpeg (set FRACTADYNE_FFMPEG or add it to PATH); frames are \
+                 intact. Assemble:\n  ffmpeg -framerate {fps} -i {} -c:v libx264 -pix_fmt \
+                 yuv420p {}",
+                pattern.display(),
+                mp4_path.display()
+            );
+        };
+        say(&format!(
+            "Encoding → {} (ffmpeg: {})…",
+            mp4_path.display(),
+            ffmpeg.display()
+        ));
+        let enc = std::time::Instant::now();
+        // `-vf pad…` rounds the frame up to even dimensions (yuv420p/H.264 requires it) without
+        // resampling; `-crf 18` is visually near-lossless.
+        let status = std::process::Command::new(&ffmpeg)
+            .arg("-y")
+            .arg("-hide_banner")
+            .args(["-framerate", &format!("{fps}")])
+            .arg("-i")
+            .arg(&pattern)
+            .args(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2"])
+            .args(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18"])
+            .arg(&mp4_path)
+            .status();
+        match status {
+            Ok(s) if s.success() => {
+                return format!(
+                    "Encoded {} in {}.",
+                    mp4_path.display(),
+                    fmt_hms(enc.elapsed().as_secs_f64())
+                );
+            }
+            Ok(s) => {
+                return format!(
+                    "ffmpeg exited with {s}; frames are intact. Assemble manually:\n  \
+                     ffmpeg -framerate {fps} -i {} -c:v libx264 -pix_fmt yuv420p {}",
+                    pattern.display(),
+                    mp4_path.display()
+                );
+            }
+            Err(e) => {
+                return format!(
+                    "Could not run ffmpeg ({e}); is it on your PATH? Frames are intact. Assemble:\n  \
+                     ffmpeg -framerate {fps} -i {} -c:v libx264 -pix_fmt yuv420p {}",
+                    pattern.display(),
+                    mp4_path.display()
+                );
+            }
+        }
+    }
+    format!(
+        "Assemble into a video:\n  ffmpeg -framerate {fps} -i {} -c:v libx264 -pix_fmt yuv420p \
+         tour.mp4\n(or re-run with --mp4 to do this automatically)",
+        pattern.display()
+    )
+}
+
 /// Format a duration in seconds as a compact `1h02m03s` / `2m03s` / `4.2s` string for progress logs.
-fn fmt_hms(secs: f64) -> String {
+pub(crate) fn fmt_hms(secs: f64) -> String {
     let s = secs.max(0.0);
     if s < 60.0 {
         return format!("{s:.1}s");
@@ -4045,70 +4115,7 @@ impl FractadyneApp {
             out_dir.display()
         ));
 
-        // Optionally assemble the PNG sequence into an mp4 via ffmpeg (kept separate from the
-        // frames so a failed/absent ffmpeg never loses the render).
-        let pattern = out_dir.join(format!("{prefix}_%05d.png"));
-        if let Some(mp4_path) = mp4 {
-            // F-06: resolve ffmpeg to an absolute path (FRACTADYNE_FFMPEG override → PATH, never
-            // cwd) and surface where it came from, so a surprising binary is visible before it runs.
-            let Some(ffmpeg) = crate::exec_resolve::external("ffmpeg") else {
-                return Ok(format!(
-                    "Could not find ffmpeg (set FRACTADYNE_FFMPEG or add it to PATH); frames are \
-                     intact. Assemble:\n  ffmpeg -framerate {fps} -i {} -c:v libx264 -pix_fmt \
-                     yuv420p {}",
-                    pattern.display(),
-                    mp4_path.display()
-                ));
-            };
-            say(&format!(
-                "Encoding → {} (ffmpeg: {})…",
-                mp4_path.display(),
-                ffmpeg.display()
-            ));
-            let enc = std::time::Instant::now();
-            // `-vf pad…` rounds the frame up to even dimensions (yuv420p/H.264 requires it) without
-            // resampling; `-crf 18` is visually near-lossless.
-            let status = std::process::Command::new(&ffmpeg)
-                .arg("-y")
-                .arg("-hide_banner")
-                .args(["-framerate", &format!("{fps}")])
-                .arg("-i")
-                .arg(&pattern)
-                .args(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2"])
-                .args(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18"])
-                .arg(&mp4_path)
-                .status();
-            match status {
-                Ok(s) if s.success() => {
-                    return Ok(format!(
-                        "Encoded {} in {}.",
-                        mp4_path.display(),
-                        fmt_hms(enc.elapsed().as_secs_f64())
-                    ));
-                }
-                Ok(s) => {
-                    return Ok(format!(
-                        "ffmpeg exited with {s}; frames are intact. Assemble manually:\n  \
-                         ffmpeg -framerate {fps} -i {} -c:v libx264 -pix_fmt yuv420p {}",
-                        pattern.display(),
-                        mp4_path.display()
-                    ));
-                }
-                Err(e) => {
-                    return Ok(format!(
-                        "Could not run ffmpeg ({e}); is it on your PATH? Frames are intact. Assemble:\n  \
-                         ffmpeg -framerate {fps} -i {} -c:v libx264 -pix_fmt yuv420p {}",
-                        pattern.display(),
-                        mp4_path.display()
-                    ));
-                }
-            }
-        }
-        Ok(format!(
-            "Assemble into a video:\n  ffmpeg -framerate {fps} -i {} -c:v libx264 -pix_fmt yuv420p \
-             tour.mp4\n(or re-run with --mp4 to do this automatically)",
-            pattern.display()
-        ))
+        Ok(assemble_mp4(&out_dir, &prefix, fps, mp4.as_deref()))
         })();
         // One writer, every exit path: the marker can never be stale-by-omission.
         match &render_result {
