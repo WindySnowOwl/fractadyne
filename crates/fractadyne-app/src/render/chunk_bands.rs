@@ -239,3 +239,20 @@ fn a_refined_series_is_another_walk() {
     coef.b[2] = 1.0e-7; // same skip, one coefficient moved
     assert_ne!(series_seed_bits(&a), series_seed_bits(&coef));
 }
+
+// ---- tail_read_retry: a finished walk fetches its complete reading -----------------------------
+
+#[test]
+fn a_finished_walk_resends_its_tail_until_the_reading_lands() {
+    let (read, now) = (0x11, 0x22);
+    // The reading has not landed: re-send.
+    assert!(tail_read_retry(false, false, read, now, 0));
+    // It landed: stop.
+    assert!(!tail_read_retry(false, false, now, now, 0));
+    // Motion re-walks every frame anyway; a running supersampling run's samples need no reading.
+    assert!(!tail_read_retry(true, false, read, now, 0));
+    assert!(!tail_read_retry(false, true, read, now, 0));
+    // Bounded: a reading that never comes cannot keep a still view dispatching forever.
+    assert!(tail_read_retry(false, false, read, now, TAIL_READ_RETRIES - 1));
+    assert!(!tail_read_retry(false, false, read, now, TAIL_READ_RETRIES));
+}

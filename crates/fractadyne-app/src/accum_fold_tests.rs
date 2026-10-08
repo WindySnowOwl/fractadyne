@@ -33,3 +33,28 @@ fn jitter_sequence_starts_at_the_pixel_centre_and_stays_in_the_pixel() {
         assert!((-0.5..0.5).contains(&j[0]) && (-0.5..0.5).contains(&j[1]), "sample {i}: {j:?}");
     }
 }
+
+/// Supersampling begins on a chunk-walked settle only once the adaptive limit has a verdict at the
+/// budget it plans and the colour range has had its complete reading (2026-10-07: a run begun
+/// during the climb restarted at every raise, for minutes).
+#[test]
+fn a_walked_settle_begins_only_once_the_limit_and_the_range_are_decided() {
+    use AccumWait::*;
+    let (sig, other) = (0x5151, 0x7272);
+    // Decided: the verdict names the planned budget, and the complete reading is this view's.
+    assert_eq!(accum_inputs_pending(true, true, false, Some(197_132), 197_132, sig, sig), None);
+    // The climb has not read the new budget yet, or its last reading moved it.
+    assert_eq!(accum_inputs_pending(true, true, false, None, 197_132, sig, sig), Some(IterationLimit));
+    assert_eq!(
+        accum_inputs_pending(true, true, false, Some(123_207), 197_132, sig, sig),
+        Some(IterationLimit)
+    );
+    // The limit is decided but the range has not had its complete reading at this view and ask.
+    assert_eq!(accum_inputs_pending(true, true, false, Some(197_132), 197_132, other, sig), Some(ColourRange));
+    // No climb to wait for: an explicit count, or a latched interior plateau. The range still waits.
+    assert_eq!(accum_inputs_pending(true, false, false, None, 1_000_000, sig, sig), None);
+    assert_eq!(accum_inputs_pending(true, true, true, None, 197_132, sig, sig), None);
+    assert_eq!(accum_inputs_pending(true, false, false, None, 1_000_000, other, sig), Some(ColourRange));
+    // A one-pass settle cannot re-send for its reading: it begins as before.
+    assert_eq!(accum_inputs_pending(false, true, false, None, 197_132, other, sig), None);
+}

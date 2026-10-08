@@ -1605,6 +1605,11 @@ struct Perf {
     /// unaveraged frame. Only `drive_accumulation` sets it, so a view that never accumulates (an
     /// L-system, Life) never reads due.
     accum_due: [bool; 2],
+    /// Settled frames in a row `drive_accumulation` has held a run back for an undecided iteration
+    /// limit or colour range (`accum_inputs_pending`; the waiver's count), and when that wait began
+    /// (`diag::elapsed_ms`; the begin line's note).
+    accum_gate_wait: [u32; 2],
+    accum_gate_since: [Option<u64>; 2],
     /// What sample 0's iterate read beyond the view (mode, caps, orbit, series, BLA): the run's
     /// inputs, and the worker's template. A later fold that read others mixes two renders into the
     /// average; `accum_confirm` says so, once per run (`accum_key_warned`).
@@ -1745,6 +1750,13 @@ struct Perf {
     /// Bounded to once per settle — if the appetite-picked reference is STILL all-capped the view is
     /// genuinely interior and the revert stands. Cleared with the view (motion / `invalidate_refs`).
     iter_repicked: [bool; 2],
+    /// The adaptive climb's VERDICT: the budget at which a current reading that reached the ask last
+    /// arrived and left the boost where it was. `None` once anything moves the boost (motion, the
+    /// reference seed, a raise, a revert, the appetite re-pick) until the next such reading.
+    /// `iter_planned`: the budget the last frame planned (before `iter_cap`). Supersampling begins
+    /// only when the two agree (`accum_inputs_pending`).
+    iter_verdict: [Option<u32>; 2],
+    iter_planned: [u32; 2],
     /// Escape-range sink per view (GPU → app: packed `(min_bits << 32) | max_bits` f32 bits of the
     /// frame's escaped smooth-iter range; drained with `swap(u64::MAX)`).
     norm_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
@@ -1771,6 +1783,12 @@ struct Perf {
     /// again when the render params are built later in the SAME frame — so the value that travels
     /// to the GPU is the signature of the render it travels with.
     norm_sig_submit: [u64; 2],
+    /// The signature of the last COMPLETE reading drained per view (a pass that reached the walk's
+    /// end, at the view on screen), whether it held escapes or not: the reading the colour range
+    /// locks on and the iteration climb decides on. A finished walk re-sends its empty tail until
+    /// one lands (`tail_retries` per walk, at most `render::TAIL_READ_RETRIES`).
+    walk_read_sig: [u64; 2],
+    tail_retries: [u32; 2],
     /// Whether this frame's escape-range reading will describe the whole picture going on screen (an
     /// unchunked pass, a displayed one-pass motion preview, or the pass that completes a chunked
     /// walk — not a pinned refresh's or a settled walk's earlier passes), decided where the chunk
@@ -2255,6 +2273,8 @@ impl Default for Perf {
             accum_count: [0, 0],
             accum_active: [false, false],
             accum_due: [false, false],
+            accum_gate_wait: [0, 0],
+            accum_gate_since: [None, None],
             accum_key: [String::new(), String::new()],
             accum_key_warned: [false, false],
             accum_gpu_folds: Default::default(),
@@ -2339,6 +2359,8 @@ impl Default for Perf {
             iter_stall: [0, 0],
             iter_stall_base: [1.0, 1.0],
             iter_repicked: [false, false],
+            iter_verdict: [None, None],
+            iter_planned: [0, 0],
             norm_sink: [
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
@@ -2360,6 +2382,8 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             ],
             norm_sig_submit: [0; 2],
+            walk_read_sig: [0; 2],
+            tail_retries: [0; 2],
             norm_complete_submit: [true; 2],
             norm_complete_sink: [
                 std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
@@ -2476,6 +2500,57 @@ pub(crate) const ACCUM_MIN_LOG2: f64 = 33.0;
 /// The accumulation's `begin` / `abandoned` log lines print at most once per this many ms per
 /// view (`diag::LineLimiter`). Every begin is still counted, in the frame record's `accum_begins`.
 const ACCUM_LINE_GAP_MS: u64 = 5000;
+
+/// How many settled frames in a row supersampling waits for an undecided iteration limit or colour
+/// range (`accum_inputs_pending`) before it begins anyway, with a warning. The reading both decide
+/// on lands a few frames after a walk finishes (the tail is re-sent until it does), so reaching
+/// this means the reading is not coming, and waiting longer would leave the view unaveraged.
+const ACCUM_DECIDE_WAIT_FRAMES: u32 = 120;
+
+/// What a run that is due still waits for (`accum_inputs_pending`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum AccumWait {
+    /// The adaptive iteration limit has no verdict at the budget it is planning: it has not read a
+    /// complete frame there, or the reading it read moved it.
+    IterationLimit,
+    /// No complete reading at this view and limit has reached the colour range's decision yet.
+    ColourRange,
+}
+
+/// May supersampling begin on a settled view whose ordinary settle has finished? `None` = yes;
+/// otherwise what it still waits for. Pure, so the test pins it.
+///
+/// ⭐⭐**Every sample enters the average under the colouring and limit of sample 0, and a run whose
+/// inputs move restarts.** Begun while the adaptive limit was still climbing, a run restarted at
+/// every raise (each re-decides the colour range at the new ask), and begun before the range had
+/// its complete reading, every jittered sample's partial reading nudged the range and restarted it
+/// again. Measured on a user's 2.3e11× view (2026-10-07): the limit climbed ×1.6 → ×68.7 and fell
+/// back to ×16.8 over ~90 s, the range locked 14 s after that, and the view showed unaveraged single
+/// samples throughout, restarting dozens of times.
+///
+/// Only a CHUNKED settle waits (`walked`): its finished walk re-sends its tail until the reading
+/// lands. A one-pass settle has no cheap re-send and begins as before. An explicit iteration count
+/// (`auto_iter` off) or a latched interior plateau has no climb to wait for.
+pub(crate) fn accum_inputs_pending(
+    walked: bool,
+    auto_iter: bool,
+    plateau: bool,
+    verdict: Option<u32>,
+    planned: u32,
+    read_sig: u64,
+    submit_sig: u64,
+) -> Option<AccumWait> {
+    if !walked {
+        return None;
+    }
+    if auto_iter && !plateau && verdict != Some(planned) {
+        return Some(AccumWait::IterationLimit);
+    }
+    if read_sig != submit_sig {
+        return Some(AccumWait::ColourRange);
+    }
+    None
+}
 
 /// ` — N more held back …` for a rate-limited line that follows held-back repeats; empty otherwise.
 fn held_note(held: u32) -> String {
@@ -8311,6 +8386,7 @@ impl FractadyneApp {
         self.perf.iter_stall = [0, 0];
         self.perf.iter_stall_base = [1.0, 1.0];
         self.perf.iter_repicked = [false, false];
+        self.perf.iter_verdict = [None, None];
         self.perf.capped_frac = [None, None];
         self.perf.iter_exhausted = [false, false];
         self.perf.norm_range = [None, None];
@@ -14058,6 +14134,8 @@ impl FractadyneApp {
         // restarts in 75 ms as live normalization settled the map, and the shot taken at the third).
         self.perf.accum_due[view] = qualifies && (stale || !self.perf.accum_active[view]);
         if !allowed {
+            self.perf.accum_gate_wait[view] = 0;
+            self.perf.accum_gate_since[view] = None;
             if self.perf.accum_active[view] {
                 self.accum_worker_reset(view);
             }
@@ -14124,6 +14202,9 @@ impl FractadyneApp {
             // but a clean match waits rather than making it sample 0, because sample 0 enters the
             // average at FULL weight and is then carried through every later sample.
             if busy || !ramp_done || !content_clean {
+                if busy {
+                    self.perf.accum_gate_wait[view] = 0; // the waiver counts IDLE frames only
+                }
                 self.perf.accum_cmd[view] = AccumCmd::default();
                 if !busy && ramp_done && !content_clean && !self.perf.content_wait_logged[view] {
                     // Always on, like the fold tripwire, but once per episode: if a ghost is still
@@ -14140,6 +14221,46 @@ impl FractadyneApp {
                 self.schedule_repaint(ctx);
                 return;
             }
+            // ⭐⭐**AND THE ITERATION LIMIT AND THE COLOUR RANGE MUST BE DECIDED** — see
+            // `accum_inputs_pending`. Both decide on the finished walk's complete reading, a few
+            // frames after the walk ends; until then the classic frame stays on screen.
+            if let Some(what) = accum_inputs_pending(
+                self.perf.chunk_governed[view],
+                self.render_cfg.auto_iter,
+                self.perf.iter_plateau[view],
+                self.perf.iter_verdict[view],
+                self.perf.iter_planned[view],
+                self.perf.walk_read_sig[view],
+                self.perf.norm_sig_submit[view],
+            ) {
+                self.perf.accum_gate_since[view].get_or_insert(diag::elapsed_ms());
+                if self.perf.accum_gate_wait[view] < ACCUM_DECIDE_WAIT_FRAMES {
+                    self.perf.accum_gate_wait[view] += 1;
+                    self.perf.accum_cmd[view] = AccumCmd::default();
+                    self.schedule_repaint(ctx);
+                    return;
+                }
+                crate::diag::log_line(
+                    "accum",
+                    &format!(
+                        "⚠view {view}: beginning with {what:?} undecided — no complete reading in \
+                         {ACCUM_DECIDE_WAIT_FRAMES} settled frames (verdict {:?}, planned {}, read {:#x}, \
+                         submitted {:#x})",
+                        self.perf.iter_verdict[view],
+                        self.perf.iter_planned[view],
+                        self.perf.walk_read_sig[view],
+                        self.perf.norm_sig_submit[view],
+                    ),
+                );
+            }
+            self.perf.accum_gate_wait[view] = 0;
+            let waited = self.perf.accum_gate_since[view].take().map_or(String::new(), |t0| {
+                format!(
+                    ", limit {} after {:.1} s",
+                    self.perf.iter_planned[view],
+                    diag::elapsed_ms().saturating_sub(t0) as f64 / 1000.0
+                )
+            });
             self.accum_worker_reset(view);
             self.perf.accum_next[view] = 1; // sample 0 (unjittered) is this device's
             self.perf.accum_active[view] = true;
@@ -14156,7 +14277,7 @@ impl FractadyneApp {
             if let Some(held) = self.perf.accum_begin_line[view].admit(diag::elapsed_ms(), ACCUM_LINE_GAP_MS) {
                 crate::diag::log_line(
                     "accum",
-                    &format!("view {view}: begin (2^{log2mag:.1}, target {}){}", accum_target(), held_note(held)),
+                    &format!("view {view}: begin (2^{log2mag:.1}, target {}{waited}){}", accum_target(), held_note(held)),
                 );
             }
         }

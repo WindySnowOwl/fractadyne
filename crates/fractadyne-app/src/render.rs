@@ -5016,6 +5016,8 @@ impl FractadyneApp {
         {
             use std::sync::atomic::Ordering::SeqCst;
             let vb = (view_id as usize).min(1);
+            // Where the climb stood before this frame — its verdict below asks whether it moved.
+            let (boost_in, repicked_in) = (self.perf.iter_boost[vb], self.perf.iter_repicked[vb]);
             // The probe baseline and the interior plateau are properties of ONE settled view: any
             // motion invalidates both (comparing a new view's capped fraction against another
             // view's baseline falsely reads "the raise didn't help" and latches the plateau —
@@ -5050,6 +5052,9 @@ impl FractadyneApp {
                 self.perf.capped_frac[vb] = None; // a moving frame's reading describes another view
             }
             let v = self.perf.maxiter_sink[vb].swap(u64::MAX, SeqCst);
+            // The GPU publishes this reading only from a pass that REACHED ITS ASK (the walk's end),
+            // whatever budget it was armed at — the one test of "this reading saw the whole walk".
+            let reached_ask = v != u64::MAX;
             // The reading is `(frac_f32_bits << 32) | armed_max_iter`. Only adapt on readings
             // measured AT the current boost's budget: the readback lands ~2 frames late, and a
             // stale pre-raise reading ("still 100% capped") right after a raise falsely reads as
@@ -5291,6 +5296,16 @@ impl FractadyneApp {
                 }
             }
             let nr = self.perf.norm_sink[vb].swap(u64::MAX, SeqCst);
+            // A reading of the WHOLE WALK at the view on screen, escapes or none: the one the range
+            // locks on and the climb decides on. Supersampling waits for it, and a finished walk
+            // re-sends its tail until it lands (`walk_read_sig`).
+            // ⚠`read_complete` alone does not say so: a moving frame's one-pass preview is
+            // "complete" (it IS what is displayed), and at startup the settle's first drain read the
+            // [0, 253) preview of the same view — no escapes yet — as this view's reading, so the
+            // tail stopped re-sending and the walk's real reading never came (2.3e11×, 2026-10-07).
+            if nr != u64::MAX && reached_ask && read_complete && reading_current && !interacting {
+                self.perf.walk_read_sig[vb] = nsig;
+            }
             // ⚠**The two ways to get no normalization are indistinguishable without this.** A drain
             // that publishes an EMPTY range (the seed `u32::MAX` floor untouched: no escaped pixel
             // was committed) fails the validity test below and falls out silently, which reads in a
@@ -5541,6 +5556,16 @@ impl FractadyneApp {
                     self.perf.iter_stall[vb] = 0;
                 }
             }
+            // ⭐THE CLIMB'S VERDICT (`Perf::iter_verdict`): a reading measured at this budget that
+            // left it where it was. Supersampling begins on nothing less (`accum_inputs_pending`):
+            // every raise and revert re-decides the colour range and restarts a run.
+            let moved =
+                self.perf.iter_boost[vb] != boost_in || self.perf.iter_repicked[vb] != repicked_in;
+            if interacting || moved {
+                self.perf.iter_verdict[vb] = None;
+            } else if v != u64::MAX {
+                self.perf.iter_verdict[vb] = Some(budget_now);
+            }
         }
         // The boost applies to ALL frames, motion included: gating it to settled frames made every
         // MOTION refresh frame render at the unboosted cap — at a starved view (43–96% capped)
@@ -5561,13 +5586,14 @@ impl FractadyneApp {
         // starved frames are exactly the ones the viewer stares at.
         let gpu_iter = {
             let vb = (view_id as usize).min(1);
-            live_iter_budget(
+            let planned = live_iter_budget(
                 eff_iter,
                 log2mag,
                 self.perf.iter_boost[vb],
                 !self.render_cfg.auto_iter,
-            )
-            .min(iter_cap)
+            );
+            self.perf.iter_planned[vb] = planned; // what the climb's verdict must name
+            planned.min(iter_cap)
         };
         BudgetPlan { px, is_pert, budget, iter_cap, gpu_iter }
     }
@@ -5957,6 +5983,7 @@ impl FractadyneApp {
                 self.perf.chunk_walk_view[vs] = walk_view;
                 self.perf.chunk_walk_epoch[vs] = self.perf.chunk_walk_epoch[vs].wrapping_add(1).max(1);
                 self.perf.chunk_running[vs] = None;
+                self.perf.tail_retries[vs] = 0;
                 self.perf.chunk_cursor[vs] = 0;
                 self.perf.chunk_idx[vs] = 0;
                 self.perf.chunk_last_range[vs] = None;
@@ -6238,8 +6265,22 @@ impl FractadyneApp {
                 // The counter readback arms only when idle, so the completing pass may have gone
                 // out unarmed; re-dispatching the (empty, cheap) tail under a fresh probe nonce
                 // keeps readings coming until one carries the finished cursor.
-                if pin_frame {
+                // ⭐So does a finished SETTLED walk, until its complete reading lands: the iteration
+                // climb and the colour range both decide on it, and supersampling waits for both
+                // (`accum_inputs_pending`). Missed, nothing else dispatched on a still view, and the
+                // run that began anyway was what retried it — restarting at every reading it brought.
+                let retry = tail_read_retry(
+                    interacting,
+                    self.perf.accum_active[vs],
+                    self.perf.walk_read_sig[vs],
+                    self.perf.norm_sig_submit[vs],
+                    self.perf.tail_retries[vs],
+                );
+                if pin_frame || retry {
                     self.perf.probe_nonce[vs] = self.perf.probe_nonce[vs].wrapping_add(1);
+                }
+                if retry && !pin_frame {
+                    self.perf.tail_retries[vs] += 1;
                 }
             }
             // ⭐Does this pass's escape-range reading describe the picture that will be ON SCREEN?
@@ -11311,6 +11352,26 @@ pub(crate) fn walk_running_feed(
         Some((w, at, n)) if w == walk => (w, at.max(reading_cursor), n.min(reading_running)),
         _ => (walk, reading_cursor, reading_running),
     })
+}
+
+/// Re-sends a finished settled walk may spend on its complete reading (`tail_read_retry`). The
+/// counter readback arms only when idle, so about every other pass goes out unarmed; one empty tail a
+/// frame lands the reading within a few frames. Past this the reading is not coming, and
+/// supersampling's own wait gives up too (`ACCUM_DECIDE_WAIT_FRAMES`).
+pub(crate) const TAIL_READ_RETRIES: u32 = 30;
+
+/// Does a finished settled walk re-send its EMPTY tail pass this frame (under a fresh probe nonce,
+/// as a finished pin does)? Only while its complete reading has not landed — `read_sig` (the last
+/// complete reading's signature) is not this frame's `submit_sig` — and not once a supersampling run
+/// is under way: its samples are walks of the same view and need no reading of their own.
+pub(crate) fn tail_read_retry(
+    interacting: bool,
+    accumulating: bool,
+    read_sig: u64,
+    submit_sig: u64,
+    retries: u32,
+) -> bool {
+    !interacting && !accumulating && read_sig != submit_sig && retries < TAIL_READ_RETRIES
 }
 
 /// Does restarting the chunk walk CLEAR the band ledger? `prev_*` are the walk being replaced:

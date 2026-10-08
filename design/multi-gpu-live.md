@@ -458,6 +458,38 @@ running count's data flow (no shader code reads counters), and every iterate inp
 record. Next: read back each folded sample's iteration texture and hash it, so two runs name the
 sample that differs.
 
+**A run begins only once the iteration limit and the colour range are decided (2026-10-07, user:
+"start supersampling only after the iteration limit stops rising").** Asked "is it speckled?" at a
+user's 2.3e11× view (df32, an escaping 6,286-long reference): the converged 24-sample average keeps
+a fine grain (128 samples halve it, as 1/√N predicts), but for minutes the screen showed single
+samples, because every run restarted. Two causes, both in the colour signature a run is held to:
+(1) the adaptive limit climbed ×1 → ×42.9 and fell back to ×10.5, and every raise re-decides the
+colour range at the new ask; (2) at a fixed limit a run began before the range had its whole-walk
+reading, so each jittered sample's partial reading nudged the unlocked range. The reading both
+decide on comes from the walk's last pass, and the counter readback arms only when idle, so about
+every other pass goes out unarmed; when the last one did, nothing re-dispatched on a still view,
+and the restarted runs were what retried it.
+- `accum_inputs_pending`: on a chunk-walked settle a run waits until the climb has a verdict at
+  the planned budget (`Perf::iter_verdict`: a reading at that budget that left the boost alone) and
+  a reading of the whole walk at this view has landed (`walk_read_sig`). It gives up after
+  `ACCUM_DECIDE_WAIT_FRAMES` (120) idle frames with a `⚠… undecided` line. A one-pass settle
+  begins as before.
+- `tail_read_retry`: a finished settled walk re-sends its empty tail (fresh probe nonce, as a
+  finished pin does) until that reading lands, at most `TAIL_READ_RETRIES` (30) per walk.
+- ⛔`read_complete` is not "the walk was read": a moving frame's one-pass preview is complete by
+  definition, and the first build counted the startup [0, 253) preview (no escapes) as the view's
+  reading, so the tail stopped re-sending. Only a reading the GPU published as REACHING ITS ASK
+  counts (the maxiter reading's own condition).
+- Measured at the user's view, single view 1431×1102 as they run it (normal launch, scratch copy
+  of their session; `--shot` forces dual view): before 20 begins, converged at 122.5 s; after ONE
+  begin at 28.1 s (limit 122,295), converged at 85.2 s. The climb itself ended at 25.6 s instead
+  of 44.2 s, with the same readings at every step: nothing restarted under it, and each step's
+  reading came within a few frames. Lethal-band passes 9 → 3. In dual view (`--shot`): 22 begins
+  and 59.0 s before, one begin and 46.1 s after, converged images 3 px apart by 1/255.
+- Left: 24 samples there take ~57 s (2.4 s each: a 122k df32 walk with rebase storms; the running
+  pixel charge is mode 2 only), and each climb step re-walks from 0 although a raise only extends
+  the pixels still running.
+
 **Next.**
 1. Find the timing-dependent difference (per-sample hashes, above).
 2. A setting in place of the flag.
