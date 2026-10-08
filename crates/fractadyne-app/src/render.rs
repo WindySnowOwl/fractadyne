@@ -7010,6 +7010,7 @@ impl FractadyneApp {
             view_stamp: pos_sig,
             content_stamp_out: Some(self.perf.content_stamp[vsub].clone()),
             adopt: None,
+            adopt_hold: false,
         };
         // Record whether THIS frame really re-iterates (vs reprojecting a held frame) — the
         // motion-res controller adapts only on the interval that FOLLOWS a real frame, since
@@ -7183,7 +7184,20 @@ impl FractadyneApp {
         };
         let mut pin_frame = false;
         if self.perf.pin[vsub].is_some() {
-            let verdict = {
+            // A worker frame on screen shows the live view at least as well as this pin's frame
+            // could (`motion_worker::frame_quality`; their ranking holds for the rest of a dive):
+            // the pin's work can never reach the screen.
+            let superseded = self.perf.pin[vsub].as_ref().is_some_and(|p| {
+                let rc = &self.ref_cache[vsub];
+                let pin_res = ((p.resolution[0] * p.ss.max(1)) as f64 / p.panel[0].max(1) as f64).log2();
+                rc.frozen_by_worker
+                    && crate::motion_worker::frame_quality(rc.frozen_res, rc.frozen_l2, log2mag)
+                        >= crate::motion_worker::frame_quality(pin_res, p.log2mag, log2mag)
+            });
+            let verdict = if superseded {
+                self.perf.live_stats[vsub].superseded += 1;
+                PinVerdict::Stop(PinStop::Superseded)
+            } else {
                 let pin = self.perf.pin[vsub].as_ref().unwrap();
                 // Pan drift in LIVE view-spans. The shared exponent cancels in the ratio, and the
                 // live values keep both mantissas O(1), so this is depth-safe.
@@ -7257,6 +7271,12 @@ impl FractadyneApp {
                     self.ref_cache[vsub].frozen_l2 = pin.log2mag;
                     self.ref_cache[vsub].frozen_upp_l2 = pin.upp_l2;
                     self.ref_cache[vsub].frozen_at = Some(Instant::now());
+                    self.ref_cache[vsub].frozen_frame = pin.started_frame;
+                    self.ref_cache[vsub].frozen_res =
+                        ((pin.resolution[0] * pin.ss.max(1)) as f64 / pin.panel[0].max(1) as f64).log2();
+                    self.ref_cache[vsub].frozen_by_worker = false;
+                    self.ref_cache[vsub].local_l2 = pin.log2mag;
+                    self.ref_cache[vsub].local_at = Some(Instant::now());
                     self.perf.chunk_dirty[vsub] = false;
                     self.perf.adopt_complete[vsub] =
                         self.perf.adopt_complete[vsub].wrapping_add(1);
@@ -7750,13 +7770,19 @@ impl FractadyneApp {
         // compositor stretch the stale frame — the "briefly squashed" resize. With zero zoom the
         // hold's reproject path serves the frame aspect-fit and cheap (the pre-floor behaviour);
         // the `frozen_drift < REFRESH_OCTAVES` gate still forces a real frame on a BIG resize.
+        // ⭐On THIS DEVICE's refresh clock (`local_l2`, `local_at`): a worker frame on screen
+        // (`motion_worker`) does not postpone the window's own next refresh, so the two interleave.
         let upp_l2 = span.0.log2() - (resolution[0].max(1) as f64).log2();
         let vc = &self.ref_cache[view_id as usize];
-        let frozen_drift = (vc.frozen_l2 - log2mag).abs();
+        let frozen_drift = (vc.local_l2 - log2mag).abs();
         let zoom_drift = (vc.frozen_upp_l2 - upp_l2).abs();
         let frozen_fresh = vc
-            .frozen_at
+            .local_at
             .is_none_or(|t| t.elapsed().as_secs_f64() < REFRESH_MAX_SECS);
+        // How well a frame from the second GPU on screen shows this view
+        // (`motion_worker::frame_quality`); `None` when the frame on screen is this device's, or old.
+        let worker_q = (vc.frozen_by_worker && vc.frozen_at.is_some_and(|t| t.elapsed().as_secs_f64() < REFRESH_MAX_SECS))
+            .then(|| crate::motion_worker::frame_quality(vc.frozen_res, vc.frozen_l2, log2mag));
         // ⭐⭐LIVE REFRESH (see `live_refresh_verdict`): a moving df32 frame whose whole refresh this
         // view has MEASURED as cheap renders in one pass and is shown live — no reuse hold below,
         // and no forced chunking at `chunk_over` — exactly as a direct-mode frame is. Sized at this
@@ -7922,12 +7948,15 @@ impl FractadyneApp {
         // …and its pass asks for the live-refresh timer (`MandelbrotParams::live_timing`).
         self.perf.live_pass[vsub] = live_refresh;
         let res_scale = if live_refresh && !split_frame { motion_scale } else { res_scale };
+        // …or a frame from the second GPU is on screen that a refresh of this device, at the
+        // resolution it would render, could not show better (`motion_worker`): a walk started now
+        // would only be abandoned for it.
+        let worker_hold = worker_q.is_some_and(|q| q >= res_scale.min(1.0).log2() - 1.0e-9);
         let reuse_hold = is_pert
             && interacting
             && !live_refresh
             && !self.autopilot.stepping
-            && frozen_drift < REFRESH_OCTAVES
-            && (frozen_fresh || zoom_drift < REFRESH_MIN_DRIFT);
+            && ((frozen_drift < REFRESH_OCTAVES && (frozen_fresh || zoom_drift < REFRESH_MIN_DRIFT)) || worker_hold);
         // A reprojection/freeze frame runs NO iterate (it re-samples the frozen texture), so the
         // motion res_scale saves nothing on it — and worse, it shrinks the frame's base below the
         // frozen texture's settle-time resolution, so the color-pass aspect-fit `fit = out_res /
@@ -8765,9 +8794,13 @@ impl FractadyneApp {
         // view holds instead of flashing blank.
         let mut reproject = reproject
             .filter(|_| !mode.is_direct() && self.ref_cache[vi].ref_pt.is_some());
+        // A pan drag's frame computes no reference offset: its params describe no real frame.
+        let caller_pan = reproject.is_some();
         // Reprojection scale about the view centre: 1.0 for a pan (drag) reprojection; set <1.0 by
         // the freeze below to zoom the held frame as the view keeps diving (zoom-reprojection).
         let mut reproject_scale = 1.0_f32;
+        // A worker frame adopted on this frame (`motion_worker`), and whether into the hold.
+        let mut worker_adopt: Option<(std::sync::Arc<fractadyne_gpu::AdoptFrame>, bool)> = None;
 
         let mut ref_offset = RefOffset::ZERO;
         let mut sa = fractadyne_core::SeriesSkip::NONE;
@@ -9333,6 +9366,63 @@ impl FractadyneApp {
                     );
                 }
             }
+            // ---- a motion refresh from the second GPU (`motion_worker`, design/multi-gpu-live.md L3) ----
+            // Decided here, where this frame's kind is known, and before the snapshot transforms
+            // below, which read the frozen bookkeeping it moves. Into the live texture, the frame
+            // it shows (or snapshots, at a pin start) becomes the worker's; into the hold, the pin
+            // composing underneath carries on. Either way the display reprojects it from its own
+            // view, and this device's refresh clock (`local_l2`) does not move.
+            let real_frame = reproject.is_none() && !pin_frame && !pin_started && !split_started;
+            // On a pin frame the locals describe the pinned view; the live one was saved.
+            let l2_now = if pin_frame { live_l2 } else { log2mag };
+            if let Some((d, into_hold)) = self.live_take(vi, interacting, l2_now, real_frame, display_hold, hold_copy) {
+                let t = &d.ticket;
+                self.ref_cache[vi].frozen_center = Some(t.center_bf.clone());
+                self.ref_cache[vi].frozen_l2 = t.log2mag;
+                self.ref_cache[vi].frozen_at = Some(Instant::now());
+                self.ref_cache[vi].frozen_frame = t.frame;
+                self.ref_cache[vi].frozen_res = t.res_log2;
+                self.ref_cache[vi].frozen_by_worker = true;
+                self.perf.content[vsub].note_adopt(crate::app_micros());
+                if into_hold {
+                    self.perf.content[vsub].hold_verified = true;
+                } else {
+                    // Complete by construction, and checked to hold a picture on the worker.
+                    let ct = &mut self.perf.content[vsub];
+                    ct.live_tag = crate::motion_worker::LIVE_TAG_BIT | t.gen;
+                    ct.live_complete = true;
+                    if !display_hold {
+                        // Nothing gates the display: the texture it reprojects is now whole, and
+                        // this frame's transform is taken from the worker frame's view.
+                        self.perf.chunk_dirty[vsub] = false;
+                        let scale = ((t.log2mag - log2mag) as f32)
+                            .exp2()
+                            .clamp(hold_scale_floor(self.pointer.zoom_vel.abs() < 1.0e-9), 1.099_512e12);
+                        let px = fractadyne_core::ref_offset_mantissa(&center_bf[0], &t.center_bf[0], delta_exp, precision)
+                            / span_mantissa.x;
+                        let py = fractadyne_core::ref_offset_mantissa(&center_bf[1], &t.center_bf[1], delta_exp, precision)
+                            / span_mantissa.y;
+                        reproject_scale = scale;
+                        reproject = Some([(-px as f32) * scale, (py as f32) * scale]);
+                    }
+                }
+                if crate::diag::trace_on("live") {
+                    crate::diag::trace(
+                        "live",
+                        format!(
+                            "worker v={vi} f={} adopt frame of f{} into the {} ({:.0} ms old, lag {:.2} oct, {}x{})",
+                            self.perf.frame_idx,
+                            t.frame,
+                            if into_hold { "hold" } else { "live texture" },
+                            t.at.elapsed().as_secs_f64() * 1000.0,
+                            log2mag - t.log2mag,
+                            t.res[0],
+                            t.res[1],
+                        ),
+                    );
+                }
+                worker_adopt = Some((d.frame, into_hold));
+            }
             // Present-gate snapshot transform: captured ONCE from the same math as the freeze —
             // the snapshot holds the frame `frozen_center` still describes at this instant, and
             // the very next block overwrites that bookkeeping with the current view. The view is
@@ -9423,6 +9513,12 @@ impl FractadyneApp {
                 self.ref_cache[vi].frozen_l2 = log2mag;
                 self.ref_cache[vi].frozen_upp_l2 = upp_l2;
                 self.ref_cache[vi].frozen_at = Some(Instant::now());
+                self.ref_cache[vi].frozen_frame = self.perf.frame_idx;
+                self.ref_cache[vi].frozen_res =
+                    ((resolution[0] * ss.max(1)) as f64 / panel_res[0].max(1) as f64).log2();
+                self.ref_cache[vi].frozen_by_worker = false;
+                self.ref_cache[vi].local_l2 = log2mag;
+                self.ref_cache[vi].local_at = Some(Instant::now());
                 // A real latch re-synchronizes the frozen bookkeeping with the texture this frame
                 // renders — any pin residue is settled (e.g. the un-chunked handoff's complete
                 // render, or a cold view's honest first frame).
@@ -9560,7 +9656,7 @@ impl FractadyneApp {
             self.perf.record_full_pass(vs.min(1), self.perf.frame_idx, steps, at);
         }
 
-        self.bp_finish_params(
+        let mut params = self.bp_finish_params(
             center_df,
             julia_c,
             span_mantissa,
@@ -9599,7 +9695,28 @@ impl FractadyneApp {
             vsub,
             pin_frame,
             split_pass.filter(|_| chunk_range.is_none() && tile.is_none()).unwrap_or([0, 0]),
-        )
+        );
+        // The worker's frame for this frame, and its next motion refresh (`motion_worker`).
+        if let Some((g, hold)) = worker_adopt {
+            params.adopt = Some(g);
+            params.adopt_hold = hold;
+        }
+        if vi == 0 {
+            let real = !caller_pan
+                && !mode.is_direct()
+                && self.ref_cache[vi].ref_pt.is_some()
+                && !self.ref_cache[vi].partial;
+            // A pin frame renders the pinned view: the worker is aimed at the live one.
+            let aim = live_center_bf.as_ref().filter(|_| pin_frame).map(|c| crate::motion_worker::LiveAim {
+                center_bf: c.clone(),
+                log2mag: live_l2,
+                delta_exp: live_de,
+                span: fractadyne_core::SpanMantissa::new(live_smx, live_smy),
+                precision: live_prec,
+            });
+            self.live_offer(&params, interacting, real, &center_bf, log2mag, aim, panel_res);
+        }
+        params
     }
 }
 
@@ -9855,6 +9972,9 @@ pub(crate) enum PinStop {
     /// The walk completed and its own reading says NOT ONE pixel escaped: the picture at this
     /// ask is a flat interior colour. The hold stays; adopting it would put that colour on screen.
     Blank,
+    /// A frame from the second GPU on screen shows the live view at least as well as the pin's
+    /// could (`motion_worker::frame_quality`): the pin's work could never reach the screen.
+    Superseded,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

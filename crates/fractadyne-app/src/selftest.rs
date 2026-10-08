@@ -1478,6 +1478,23 @@ impl FractadyneApp {
                 const LITER: u32 = 20_000;
                 let saved_vp = self.viewport.clone();
                 let saved = (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method);
+                // ⛔⭐`build_params` mutates far more frame state than any list of fields would
+                // catch — the thumbnail check above leaked twice that way, and the first build of
+                // this one failed "unmeasured budget bounds the FIRST dispatch" (a chunked 244 became
+                // an unchunked 256, 3.998e8 → 4.195e8 steps). So it runs on a FRESH frame state (the
+                // device's capabilities copied in), a cold reference cache and no build in flight,
+                // and the session's are put back whole afterwards.
+                let fresh = crate::Perf {
+                    ts_supported: self.perf.ts_supported,
+                    wall_fallback: self.perf.wall_fallback,
+                    chunk_ok: self.perf.chunk_ok,
+                    chunk_fe_ok: self.perf.chunk_fe_ok,
+                    ..Default::default()
+                };
+                let saved_perf = std::mem::replace(&mut self.perf, fresh);
+                let saved_cache = self.ref_cache.clone();
+                let saved_rx = std::mem::take(&mut self.recompute_rx);
+                self.ref_cache[0] = Default::default();
                 self.render_cfg.max_iter = LITER;
                 self.render_cfg.auto_iter = false;
                 self.coloring.color_method = crate::ColorMethod::Smooth;
@@ -1487,7 +1504,6 @@ impl FractadyneApp {
                     fractadyne_core::parse_bf(CRY).unwrap(),
                     100.0, // 1.3e30×: floatexp (mode 2), the chunked mode
                 );
-                self.ref_cache[0].ref_pt = None;
                 let live = |app: &mut Self| {
                     app.perf.frame_idx += 1;
                     let center_bf = [app.viewport.center_x.clone(), app.viewport.center_y.clone()];
@@ -1507,7 +1523,9 @@ impl FractadyneApp {
                 let pr = live(self);
                 self.viewport = saved_vp;
                 (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method) = saved;
-                self.ref_cache[0].ref_pt = None;
+                self.perf = saved_perf;
+                self.ref_cache = saved_cache;
+                self.recompute_rx = saved_rx;
 
                 // The frame's own params, as a whole frame at its full size (the app's walk state —
                 // tile, chunk window, split, reprojection — is set per pass below).
@@ -1525,7 +1543,7 @@ impl FractadyneApp {
                     for p in passes {
                         t.frame(dev, q, p).map_err(|e| e.to_string())?;
                     }
-                    t.gbuffer(dev, q, base.view_id).map_err(|e| e.to_string())
+                    t.gbuffer(dev, q, base.view_id, true).map_err(|e| e.to_string())
                 };
                 let on_twin = |passes: &[fractadyne_gpu::MandelbrotParams]| -> Result<fractadyne_gpu::GBuffer, String> {
                     let t = twin.as_ref().map_err(|e| e.clone())?;
@@ -1644,12 +1662,12 @@ impl FractadyneApp {
                         let adopt = |g: &fractadyne_gpu::GBuffer, then: &[fractadyne_gpu::MandelbrotParams]| -> Result<fractadyne_gpu::GBuffer, String> {
                             let mut t = fractadyne_gpu::LiveTwin::new(device, queue);
                             let mut p = base.clone();
-                            p.adopt = Some(std::sync::Arc::new(g.clone()));
+                            p.adopt = fractadyne_gpu::AdoptFrame::upload(device, queue, g).map(std::sync::Arc::new);
                             t.frame(device, queue, &p).map_err(|e| e.to_string())?;
                             for p in then {
                                 t.frame(device, queue, p).map_err(|e| e.to_string())?;
                             }
-                            t.gbuffer(device, queue, base.view_id).map_err(|e| e.to_string())
+                            t.gbuffer(device, queue, base.view_id, true).map_err(|e| e.to_string())
                         };
                         match (adopt(g, &[]), adopt(other, &one)) {
                             (Ok(a), Ok(b)) => {

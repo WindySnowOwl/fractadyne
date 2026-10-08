@@ -9,6 +9,11 @@
 //! settled frame (`params_to_request_exact`); the result is that sample's colour as floats, for
 //! `MandelbrotParams::accum_external` — the window's device rounds it to 8 bits itself, as it does
 //! its own samples (see `fractadyne_gpu::AccumSample`).
+//!
+//! Second use (L3): motion refreshes. A [`LiveJob`] is a moving frame's own params; the worker
+//! renders it through the LIVE renderer (`fractadyne_gpu::LiveTwin`, the window's `prepare` run
+//! headless, as a walk of priced chunk windows) and sends back its G-buffer, which the window
+//! adopts as the frame it reprojects (`MandelbrotParams::adopt`).
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed, Ordering::SeqCst};
 use std::sync::{mpsc, Arc};
@@ -23,6 +28,38 @@ pub(crate) struct Job {
     pub(crate) req: fractadyne_gpu::ExportRequest,
 }
 
+/// A motion refresh (L3): `params` is a whole moving frame at the view the app captured on frame
+/// `gen`'s ticket (`MandelbrotParams::headless`, no tile, chunk window, split or reprojection);
+/// `with_aux` reads the aux plane back too. `window`: the device that shows it, which the frame is
+/// uploaded to from this thread.
+pub(crate) struct LiveJob {
+    pub(crate) view: usize,
+    pub(crate) gen: u64,
+    pub(crate) params: fractadyne_gpu::MandelbrotParams,
+    pub(crate) with_aux: bool,
+    pub(crate) window: (wgpu::Device, wgpu::Queue),
+}
+
+/// A finished, failed or cancelled [`LiveJob`] (every accepted one answers once). `frame` is
+/// `None` when it was cancelled (`err` too) or failed (`err` says why).
+pub(crate) struct LiveDone {
+    pub(crate) view: usize,
+    pub(crate) gen: u64,
+    pub(crate) frame: Option<Arc<fractadyne_gpu::AdoptFrame>>,
+    pub(crate) walk: fractadyne_gpu::WalkStats,
+    /// The G-buffer's readback, and its upload to the window's device, ms (inside `ms`).
+    pub(crate) read_ms: f64,
+    pub(crate) upload_ms: f64,
+    /// From the worker taking the job to its answer, ms.
+    pub(crate) ms: f64,
+    pub(crate) err: Option<String>,
+}
+
+enum Work {
+    Sample(Job),
+    Live(LiveJob),
+}
+
 /// A finished (or failed, or cancelled) [`Job`]. Every accepted job answers exactly once, so the
 /// caller can always tell its sample index was not rendered.
 pub(crate) struct Done {
@@ -35,8 +72,11 @@ pub(crate) struct Done {
 }
 
 pub(crate) struct Worker {
-    tx: mpsc::Sender<Job>,
+    tx: mpsc::Sender<Work>,
     rx: mpsc::Receiver<Done>,
+    live_rx: mpsc::Receiver<LiveDone>,
+    /// Every live job up to this `gen` is cancelled (asked before each of its passes).
+    live_cancel: Arc<AtomicU64>,
     /// The job being cancelled, as [`job_key`]; with `cancel`, the flag the render polls.
     cancelled: Arc<AtomicU64>,
     cancel: Arc<AtomicBool>,
@@ -70,17 +110,24 @@ impl Worker {
                 }
             },
         };
-        let (tx, jobs) = mpsc::channel::<Job>();
+        let (tx, jobs) = mpsc::channel::<Work>();
         let (done, rx) = mpsc::channel::<Done>();
+        let (live_done, live_rx) = mpsc::channel::<LiveDone>();
         let cancel = Arc::new(AtomicBool::new(false));
         let cancelled = Arc::new(AtomicU64::new(u64::MAX));
+        let live_cancel = Arc::new(AtomicU64::new(0));
         {
             let (cancel, cancelled, alive, name) = (cancel.clone(), cancelled.clone(), alive.clone(), name.clone());
+            let live_cancel = live_cancel.clone();
             std::thread::Builder::new()
                 .name("fd-gpu-worker".into())
                 .spawn(move || {
                     let mut answered = 0u32;
-                    for job in jobs {
+                    // The live renderer on this device, built at the first motion refresh, and the
+                    // pricing its walks carry from one to the next.
+                    let mut twin: Option<fractadyne_gpu::LiveTwin> = None;
+                    let mut pricer = fractadyne_gpu::WalkPricer::default();
+                    for work in jobs {
                         if lose_after == Some(answered) && alive.swap(false, Relaxed) {
                             crate::diag::log_line(
                                 "worker",
@@ -88,6 +135,16 @@ impl Worker {
                             );
                         }
                         answered = answered.saturating_add(1);
+                        let job = match work {
+                            Work::Sample(job) => job,
+                            Work::Live(job) => {
+                                let out = render_live(&device, &queue, &alive, &live_cancel, &mut twin, &mut pricer, job);
+                                if live_done.send(out).is_err() {
+                                    break; // the app has gone
+                                }
+                                continue;
+                            }
+                        };
                         // Clear the flag BEFORE reading the key (`cancel` writes them the other way
                         // round), so a cancel aimed at this job is never lost: either the key is
                         // seen here, or the flag is set after this store and the render sees it.
@@ -115,12 +172,26 @@ impl Worker {
                 .map_err(|e| format!("the worker thread would not start: {e}"))?;
         }
         crate::diag::log_line("worker", &format!("worker GPU ready: {name} (spec '{spec}')"));
-        Ok(Worker { tx, rx, cancelled, cancel, alive, name })
+        Ok(Worker { tx, rx, live_rx, live_cancel, cancelled, cancel, alive, name })
     }
 
     /// Queue `job`; `false` when the worker is gone (the caller renders that sample itself).
     pub(crate) fn submit(&self, job: Job) -> bool {
-        self.alive() && self.tx.send(job).is_ok()
+        self.alive() && self.tx.send(Work::Sample(job)).is_ok()
+    }
+
+    /// Queue a motion refresh; `false` when the worker is gone.
+    pub(crate) fn submit_live(&self, job: LiveJob) -> bool {
+        self.alive() && self.tx.send(Work::Live(job)).is_ok()
+    }
+
+    /// Abandon every motion refresh up to `gen`, queued or rendering (each still answers).
+    pub(crate) fn cancel_live(&self, gen: u64) {
+        self.live_cancel.fetch_max(gen, SeqCst);
+    }
+
+    pub(crate) fn try_recv_live(&self) -> Option<LiveDone> {
+        self.live_rx.try_recv().ok()
     }
 
     /// Abandon view `view`'s job of run `run`, queued or rendering (its [`Done`] still arrives,
@@ -385,6 +456,59 @@ mod tests {
         assert!(WorkerState::Lost("X".into()).text(false).contains("choose it again"));
         assert!(WorkerState::Running("X".into()).text(true).ends_with("(set by --worker-gpu)"));
     }
+}
+
+/// Render a motion refresh on the worker's own live renderer: the walk, then the G-buffer, which
+/// must hold a picture (a cleared texture is not one).
+fn render_live(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    alive: &AtomicBool,
+    live_cancel: &AtomicU64,
+    twin: &mut Option<fractadyne_gpu::LiveTwin>,
+    pricer: &mut fractadyne_gpu::WalkPricer,
+    job: LiveJob,
+) -> LiveDone {
+    let t = std::time::Instant::now();
+    let mut out = LiveDone {
+        view: job.view,
+        gen: job.gen,
+        frame: None,
+        walk: Default::default(),
+        read_ms: 0.0,
+        upload_ms: 0.0,
+        ms: 0.0,
+        err: None,
+    };
+    let cancelled = || live_cancel.load(SeqCst) >= job.gen;
+    if !alive.load(Relaxed) {
+        out.err = Some("the worker GPU is gone".into());
+    } else if !cancelled() {
+        let tw = twin.get_or_insert_with(|| fractadyne_gpu::LiveTwin::new(device, queue));
+        match tw.walk(device, queue, &job.params, pricer, &cancelled) {
+            Ok(walk) => {
+                out.walk = walk;
+                let tr = std::time::Instant::now();
+                match tw.gbuffer(device, queue, job.params.view_id, job.with_aux) {
+                    Ok(g) if g.drawn() => {
+                        out.read_ms = tr.elapsed().as_secs_f64() * 1000.0;
+                        let tu = std::time::Instant::now();
+                        out.frame = fractadyne_gpu::AdoptFrame::upload(&job.window.0, &job.window.1, &g).map(Arc::new);
+                        out.upload_ms = tu.elapsed().as_secs_f64() * 1000.0;
+                        if out.frame.is_none() {
+                            out.err = Some("the frame's planes do not fill it".into());
+                        }
+                    }
+                    Ok(_) => out.err = Some("the frame came back blank".into()),
+                    Err(e) => out.err = Some(format!("{e}")),
+                }
+            }
+            Err(fractadyne_gpu::GpuError::Canceled) => {}
+            Err(e) => out.err = Some(format!("{e}")),
+        }
+    }
+    out.ms = t.elapsed().as_secs_f64() * 1000.0;
+    out
 }
 
 /// A job's identity for [`Worker::cancel`]: its run, and its view in the low bit (views are 0 and 1).

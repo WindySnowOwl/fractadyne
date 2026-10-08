@@ -2320,44 +2320,22 @@ impl ViewResources {
         self.last_chunk = None;
     }
 
-    /// Install a G-buffer rendered elsewhere (`MandelbrotParams::adopt`): upload its planes and draw
-    /// them into this view's textures with the seed pipeline, the exact `textureLoad` copy (the live
-    /// textures take no `COPY_DST`). The caller records the frame's key.
+    /// Install a frame rendered elsewhere (`MandelbrotParams::adopt`): draw its uploaded planes into
+    /// this view's textures with the seed pipeline, the exact `textureLoad` copy (the live textures
+    /// take no `COPY_DST`). The caller records the frame's key.
     fn adopt(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         color_bgl: &wgpu::BindGroupLayout,
         seed_pipeline: &wgpu::RenderPipeline,
-        g: &GBuffer,
+        f: &AdoptFrame,
     ) {
-        let size = [g.width, g.height];
+        let size = [f.width, f.height];
         if size != self.size {
             self.resize(device, color_bgl, size);
         }
-        let extent = wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 };
-        let upload = |data: &[f32], label| {
-            let t = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: extent,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: ITER_FORMAT,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo { texture: &t, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-                bytemuck::cast_slice(data),
-                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(16 * size[0]), rows_per_image: None },
-                extent,
-            );
-            t.create_view(&wgpu::TextureViewDescriptor::default())
-        };
-        let (ui, ua) = (upload(&g.iter, "fractadyne.adopt_iter"), upload(&g.aux, "fractadyne.adopt_aux"));
-        let seed_bg = make_color_bg(device, color_bgl, &self.color_uniform, &self.lut_buf, &ui, &ua);
+        let seed_bg = make_color_bg(device, color_bgl, &self.color_uniform, &self.lut_buf, &f.iter, &f.aux);
         {
             let attach = |v| Some(wgpu::RenderPassColorAttachment {
                 view: v,
@@ -2381,6 +2359,13 @@ impl ViewResources {
         // A whole frame replaces whatever walk was under way.
         self.chunk_state = None;
         self.last_chunk = None;
+    }
+
+    /// A hold snapshot that IS `f` (`MandelbrotParams::adopt_hold`): its planes bound for the colour
+    /// pass, as `hold_copy`'s copy is.
+    fn hold_of(&self, device: &wgpu::Device, color_bgl: &wgpu::BindGroupLayout, f: &AdoptFrame) -> HoldState {
+        let bg = make_color_bg(device, color_bgl, &self.color_uniform, &self.lut_buf, &f.iter, &f.aux);
+        HoldState { bg, size: [f.width, f.height], ss: f.ss }
     }
 
     fn ensure_orbit_capacity(
@@ -2746,12 +2731,18 @@ pub struct MandelbrotParams {
     /// The accumulator's own sample count, stored after every fold: what the average really holds,
     /// for the app to check against what it counted.
     pub accum_folds: Option<Arc<std::sync::atomic::AtomicU32>>,
-    /// A frame rendered on another device for exactly these params ([`LiveTwin`], design/multi-gpu-live.md
-    /// L3): installed as this view's G-buffer INSTEAD of iterating, and recorded as rendered at this
-    /// frame's key, so the frames after it at the same view do not render it again. Ignored when
-    /// it does not fit the texture this frame would iterate into (size and ss), or on a
-    /// reprojected or held frame.
-    pub adopt: Option<Arc<GBuffer>>,
+    /// A whole frame rendered on another device ([`LiveTwin`], design/multi-gpu-live.md L3), installed
+    /// before anything else this frame:
+    /// - into the LIVE G-buffer (`adopt_hold` false). Of exactly these params (it fits this frame's
+    ///   texture and the frame is neither reprojected nor held) it stands in for the iterate and is
+    ///   recorded at this frame's key, so the frames after it at the same view do not render it
+    ///   again. Of another view (a motion refresh) it is what this frame's reprojection shows, and
+    ///   the next real frame renders over it; it is installed before `hold_copy`, so a snapshot
+    ///   taken this frame is of it.
+    /// - into the HOLD snapshot (`adopt_hold` true, with `display_hold`): it replaces what the
+    ///   display serves while a walk composes underneath, which it does not touch.
+    pub adopt: Option<Arc<AdoptFrame>>,
+    pub adopt_hold: bool,
 }
 
 /// A frame that asks for nothing: no sinks, no reference, the direct mode, one sample a pixel, no
@@ -2875,6 +2866,7 @@ impl Default for MandelbrotParams {
             accum_folds: None,
             chunk_walk: 0,
             adopt: None,
+            adopt_hold: false,
         }
     }
 }
@@ -3044,13 +3036,34 @@ impl CallbackTrait for MandelbrotParams {
         let lsystem_on = self.lsystem.is_some() && lsystem_r.is_some();
         // Life or an L-system: a class whose picture is not an iterate (no iterate timers).
         let life_on = (self.life.is_some() && life_r.is_some()) || lsystem_on;
+        // A zero-area tile is a "hold" frame (another view owns this frame's tile slot): render
+        // nothing, keep the texture exactly as it is — like a reprojection with no translation.
+        let hold = self.tile.is_some_and(|t| t[2] == 0 || t[3] == 0);
+        // A frame from another device for the LIVE G-buffer (`adopt`), installed first: of these
+        // very params it stands in for the iterate (`adopted`, recorded at this frame's key
+        // below); of another view it is simply what the texture now holds — this frame's
+        // reprojection shows it, a snapshot taken below copies it, and the next real frame renders
+        // over it.
+        let mut adopted = false;
+        if let Some(f) = self.adopt.as_deref().filter(|_| !self.adopt_hold) {
+            let exact = self.reproject != 1 && !hold && f.fits(size, ss);
+            view.adopt(device, encoder, color_bgl, seed_pipeline, f);
+            if exact {
+                adopted = true;
+            } else {
+                view.last_iter_key = None;
+                view.last_tile = None;
+                view.last_ss = f.ss;
+                view.rendered = true;
+                // Another view's pixels: nothing may seed from them or average over them.
+                view.content_stamp = None;
+                view.content_foreign = true;
+            }
+        }
         // Pan reprojection: keep the frozen iteration texture (only valid once something has
         // been rendered into it). Skip the resize so the texture isn't cleared, and color it
         // with the ss it was built at.
         let reproject = self.reproject == 1 && view.rendered;
-        // A zero-area tile is a "hold" frame (another view owns this frame's tile slot): render
-        // nothing, keep the texture exactly as it is — like a reprojection with no translation.
-        let hold = self.tile.is_some_and(|t| t[2] == 0 || t[3] == 0);
         // Present-gating ("prefer detail" stage B): snapshot the current — complete — frame into
         // the hold pair BEFORE any compose pass lands this frame. A seed-pipeline draw is the
         // copy (the seeded_resize idiom; at equal size it is 1:1), so no texture-usage changes.
@@ -3093,15 +3106,10 @@ impl CallbackTrait for MandelbrotParams {
             let bg = make_color_bg(device, color_bgl, &view.color_uniform, &view.lut_buf, &ht, &ha);
             view.hold = Some(HoldState { bg, size: view.size, ss: view.last_ss.max(1) });
         }
-        // A frame from another device for these params (`adopt`) stands in for this frame's
-        // iterate: installed here, and recorded at this frame's key below.
-        let adopted = match self.adopt.as_deref() {
-            Some(g) if !reproject && !hold && g.fits(size, ss) => {
-                view.adopt(device, queue, encoder, color_bgl, seed_pipeline, g);
-                true
-            }
-            _ => false,
-        };
+        // …or for the HOLD (`adopt_hold`): it becomes what the display serves, over any snapshot.
+        if let Some(f) = self.adopt.as_deref().filter(|_| self.adopt_hold && self.display_hold) {
+            view.hold = Some(view.hold_of(device, color_bgl, f));
+        }
         if !reproject && !hold && !adopted && size != view.size {
             // ⛔**THE SEED MAY ONLY CARRY THIS VIEW'S OWN PIXELS.** Seeding exists so a resolution
             // change mid-settle refines in place instead of against black, which is right when the

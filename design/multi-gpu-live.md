@@ -528,3 +528,103 @@ builds it with astro-float.
 
 **Next.**
 1. Find the timing-dependent difference (per-sample hashes, above).
+
+## 9. L3 as built (2026-10-08, user: "Now work on the multi gpu live view")
+
+**What it is.** While the view moves, the worker renders whole frames of it and the window adopts
+each one that shows the view better than the frame on screen, as the frame it reprojects. Same
+switch as L2 (Advanced ▸ Second graphics card, or `--worker-gpu`); `--set WORKER_MOTION=0` keeps the
+second card to settle samples.
+
+- **The worker runs the window's own renderer** (`fractadyne_gpu::LiveTwin`, twin.rs): its own
+  `Renderer` driving the window's `prepare` headless, so a frame is the one the window's device
+  would render from the same params. The export renderer is not that frame (§3.1's warning; the
+  chunk and single-pass programs differ at a few hundred pixels).
+- **A job is the moving frame's own params** (`MandelbrotParams::headless`: every sink dropped,
+  no hold, reprojection or supersampling), as a whole frame at the worker's own resolution. A
+  pin frame's params describe the pinned view; they are re-aimed at the live view (reference
+  offset, exponent, span) only when the live view lies inside the pinned one, so every
+  approximation the pin made for its view (series skip, BLA radii) holds (`LiveAim`,
+  `view_inside`). A pan drag's frame computes no reference offset, so it offers nothing.
+- **The walk** (`LiveTwin::walk`, `WalkPricer`): chunk windows sized for 40 ms by wall clock, at
+  most doubling. Only an opening pass (every pixel running) prices the next walk's opening, which
+  rises at once and falls a fifth of the way per walk. Later passes are priced from the pass
+  before, because pixels only stop running; carried into the next opening they would underprice it
+  by the share that had escaped. Hard bounds: 1e9 pixel-steps for an opening, 6e10 nominal for any
+  pass (`EXPLICIT_STEPS_CEIL`). A device or formula that cannot walk renders one pass if it fits.
+- **The resolution** follows the worker's time: 150 ms a frame from offer to answer, each side
+  scaled by `√(target / ms)`, within a quarter either way a frame, 0.25 to 1 of the panel.
+- **Transfer.** The G-buffer comes back through the seed pipeline (the live textures have no
+  `COPY_SRC`; `Renderer::read_gbuffer`), the aux plane only for the colourings that read it, and is
+  checked to hold a picture (`GBuffer::drawn`). The worker thread then uploads it to the WINDOW's
+  device itself (`AdoptFrame::upload`; wgpu 24's `Device`/`Queue` are `Clone` and `Send`), so the UI
+  thread copies nothing. Measured: the first version uploaded on the UI thread, 26 MB a frame at
+  full resolution, and a twin run had 53 frames over 33 ms; uploading from the worker, 9, then 0–2.
+- **Adoption** (`MandelbrotParams::adopt`, `adopt_hold`), decided in `build_params` once the
+  frame's kind is known (`motion_worker::adopt_target`): a frame that renders the current view
+  itself drops it; a plain reprojection takes it into the live texture (and this frame's transform
+  is taken from the worker frame's view); a pin in flight, or its residue, takes it into the hold
+  the display serves; a pin starting this frame takes it into the live texture, which `hold_copy`
+  then snapshots (so adoption into the live texture is installed before the snapshot).
+- **Which frame is better** (`frame_quality`): the texels a screen pixel gets once the frame is
+  magnified to the live view (capped at 1), times the share of the screen it covers. Two frames
+  rank the same at every later view of a dive (both are magnified alike), so the comparison made
+  now holds. At equal resolutions the newest wins; a worker that has dropped its resolution does
+  not replace a sharper pin with a blurrier frame.
+- **The window's own refreshes** run on their own clock (`RefCache::local_l2` / `local_at`; a worker
+  frame moves only the frozen bookkeeping). While a worker frame on screen is at least as good as a
+  refresh of the window's device would be at its resolution, the window holds instead of starting
+  a walk (`worker_hold`); a pin that cannot beat the worker frame on screen is abandoned
+  (`PinStop::Superseded`). Both only while a worker frame is on screen, so one GPU behaves exactly
+  as before.
+
+**Tests.**
+- Self-test (worker group, now 10 checks): the app's own params at 1.3e30× (mode 2) on this device
+  and on a twin agree bit for bit in both planes, one pass and a chunked walk whose windows end at the
+  frame's escape quintiles (19,681 of 23,040 pixels pause in it); control: a one-pixel jitter changes
+  the frame; a twin's walk adopted here reads back unchanged, and a frame adopted at its params' key
+  is not iterated again. The adoption check went red with the upload or the key record removed; the
+  walk check refused its first version, whose windows paused no pixel. ⛔Its first build also
+  failed a later check in a full run ("unmeasured budget bounds the FIRST dispatch": a chunked
+  244-iteration arm frame became an unchunked 256), because its `build_params` calls left frame state
+  behind, the thumbnail check's leak again; it now runs on a fresh `Perf` and a cold reference
+  cache, and puts the session's back whole.
+- Unit tests: the pricer, the resolution rule, `adopt_target`, `frame_quality`, `view_inside`.
+- `--motiontest`, solo and twin: PASS (A2 counts worker frames with the pins they replace).
+- `--zoomtest` reports the lag of the frame on screen (mean, p95) and the worker frames adopted.
+
+**Measured on this machine, a twin on the RTX 3080** (one card shared by both devices),
+`--zoomtest 30` from corpus 07 (2^103.3, floatexp), 45 s each:
+
+| Build | Lag on screen, mean / p95 | Frames over 33 ms | Frame interval p95 | Worker frames |
+| --- | --- | --- | --- | --- |
+| Solo | 0.294 / 0.456 oct | 0 | 18.4 ms | — |
+| Twin, first cut (upload on the UI thread) | 0.091 / 0.186 | 53 | 29.4 ms | 448 |
+| Twin, upload on the worker | 0.085 / 0.183 | 9 | 24.8 ms | 485 |
+| Twin, aimed at the live view on pin frames | 0.035 / 0.060 | 0 | 21.4 ms | 1,075 |
+| Twin, final (quality rule, window holds) | 0.036 / 0.062 | 1 | 21.7 ms | 1,095 |
+| Solo, final build | 0.304 / 0.466 | 0 | 18.3 ms | — |
+
+The worker reaches the panel's full resolution (1477×1102) in ~50 ms a frame, 6 passes, and the
+screen lags the view 8× less. ⭐**On ONE card**: the twin is the window's own GPU, so the gain is the
+pacing again (§8): the window's walks run one pass a displayed frame, the worker's do not. A
+same-card twin is a single-GPU speed-up for motion, as it was for the settle.
+
+Window captures during a twin zoom (`PrintWindow` on the test's own window, ~9 a second),
+registered pair by pair as a magnification about the pane's centre: every pair a pure zoom with
+zero shift (residual 1–3 of 255), through the settle (scale 1.06 → 1.000 as the glide eases out).
+The only outliers were the live normalization switching mapping (3 times, as many as in a solo run:
+not L3) and supersampling starting at the settled view.
+
+**Open.**
+1. PLUTO (two real cards): the cadence, the hitches and the mixed-class flicker of §4 L3's
+   acceptance. Ask before queueing.
+2. Worker frames bring no counter readings: the verified-present check treats them as complete by
+   construction, and live normalization keeps reading only the window's passes.
+3. Pan drags offer nothing (their frames compute no reference offset); the dual view's Julia
+   panel (L4) and prediction (rendering where the camera will be) are not built.
+4. When the worker outpaces the window, the window's GPU idles in motion (it holds rather than
+   start walks that would be abandoned). It could render something the worker does not.
+5. Where a moving df32 view refreshes live every frame (`live_refresh_verdict`), the window's own
+   frame is always newer, so every worker frame is overtaken (dropped). Harmless — that regime is
+   already smooth on one GPU — but the worker's work there is wasted.

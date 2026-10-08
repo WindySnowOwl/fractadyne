@@ -83,6 +83,7 @@ mod deviceloss_repro;
 mod gpu_choice;
 mod gputest;
 mod gpu_worker;
+mod motion_worker;
 mod help;
 mod icons;
 #[cfg(test)]
@@ -1641,6 +1642,16 @@ struct Perf {
     accum_ext_attach: [Option<std::sync::Arc<fractadyne_gpu::AccumSample>>; 2],
     /// The worker's job in flight: (view, run, sample index).
     worker_job: Option<(usize, u64, u32)>,
+    /// Motion refreshes on the worker (`motion_worker`): the job in flight, the finished frame
+    /// waiting to be adopted, the job counter, the worker's resolution (a fraction of the panel),
+    /// and the current motion's counts.
+    live_job: [Option<motion_worker::LiveTicket>; 2],
+    live_ready: [Option<motion_worker::LiveDelivery>; 2],
+    live_gen: u64,
+    live_res: [f64; 2],
+    live_stats: [motion_worker::LiveStats; 2],
+    /// Worker frames adopted since the start (`--zoomtest` reads it).
+    live_adopted_total: [u64; 2],
     /// The colour-state signature (`accum_color_sig`) the running average was started under, and
     /// the supersampling factor its samples are rendered at. The average is a COLOUR texture, so
     /// any change to how a frame is coloured — palette, cycle/offset, method, effects, live
@@ -2288,6 +2299,12 @@ impl Default for Perf {
             accum_ext_ready: [Vec::new(), Vec::new()],
             accum_ext_attach: [None, None],
             worker_job: None,
+            live_job: [None, None],
+            live_ready: [None, None],
+            live_gen: 0,
+            live_res: [motion_worker::LIVE_RES_START; 2],
+            live_stats: Default::default(),
+            live_adopted_total: [0, 0],
             accum_cmd: [AccumCmd::default(), AccumCmd::default()],
             accum_sig: [0, 0],
             accum_ss: [1, 1],
@@ -5137,11 +5154,24 @@ struct RefCache {
     /// When the frozen frame was rendered — ages the reuse-hold so a SLOW dive still refreshes
     /// real detail on a time floor (`REFRESH_MAX_SECS`), not just every `REFRESH_OCTAVES` of zoom.
     frozen_at: Option<Instant>,
-    /// log2(units-per-pixel) of the frozen frame — the resize-invariant ZOOM signal the time
-    /// floor gates on (`log2mag` follows the window height, so a resize drifts it without any
+    /// log2(units-per-pixel) of THIS DEVICE's last refresh — the resize-invariant ZOOM signal the
+    /// time floor gates on (`log2mag` follows the window height, so a resize drifts it without any
     /// zoom; re-iterating an un-zoomed held frame on every resize tick caused the "squashed
-    /// resize" judder).
+    /// resize" judder). Part of the local refresh clock below: a worker frame leaves it.
     frozen_upp_l2: f64,
+    /// The CAPTURE frame of the frame on screen (`frame_idx` of the params it was rendered from):
+    /// a real frame's own, a pin's start, a worker frame's ticket (`motion_worker`).
+    frozen_frame: u64,
+    /// log2 of the frame on screen's texels across the panel's width (resolution × ss over the
+    /// panel), and whether it came from the second GPU: with `frozen_l2`, what `frame_quality`
+    /// compares a worker frame or a pin against (`motion_worker`).
+    frozen_res: f64,
+    frozen_by_worker: bool,
+    /// THIS DEVICE's last refresh, view and time: the reuse hold's refresh clock. The same as
+    /// `frozen_l2`/`frozen_at` except that a worker frame does not move it, so the window's own
+    /// refreshes keep their cadence while the worker's interleave (`motion_worker`).
+    local_l2: f64,
+    local_at: Option<Instant>,
     /// Octaves the view has zoomed IN past the cached BLA's validity (recomputed each frame in
     /// `build_params`; 0 when not in the deep floatexp regime). This is the "reference pipeline is
     /// behind the dive" signal — script playback reads it to DILATE the tour clock (slow the dive)
@@ -5173,6 +5203,11 @@ impl Default for RefCache {
             frozen_l2: 0.0,
             frozen_at: None,
             frozen_upp_l2: 0.0,
+            frozen_frame: 0,
+            frozen_res: 0.0,
+            frozen_by_worker: false,
+            local_l2: 0.0,
+            local_at: None,
             last_depth_lag: 0.0,
         }
     }
@@ -14553,18 +14588,22 @@ impl FractadyneApp {
         }
     }
 
-    /// The worker's in-flight sample goes back to the window's card when the worker goes away.
+    /// The worker's in-flight sample goes back to the window's card when the worker goes away, and
+    /// its motion refreshes are forgotten.
     fn release_worker_job(&mut self) {
         if let Some((v, r, i)) = self.perf.worker_job.take() {
             if r == self.perf.accum_run[v] {
                 self.perf.accum_free[v].push(i);
             }
         }
+        self.perf.live_job = [None, None];
+        self.perf.live_ready = [None, None];
     }
 
     /// Collect the worker's finished jobs: a current run's sample waits to fold; a failed or
     /// cancelled one gives its index back; an old run's is dropped. A lost worker is dropped.
     fn pump_worker(&mut self) {
+        self.pump_live();
         let Some(w) = self.gpu_worker.as_ref() else { return };
         while let Some(d) = w.try_recv() {
             if self.perf.worker_job.is_some_and(|(v, r, i)| (v, r, i) == (d.view, d.run, d.index)) {

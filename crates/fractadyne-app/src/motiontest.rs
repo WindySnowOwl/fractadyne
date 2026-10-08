@@ -13,7 +13,8 @@
 //! - **A1 (the regression)**: `adopt_partial == 0` — a partial chunk progression must never be
 //!   adopted as the frozen texture while the user has real content on screen. RED on the held
 //!   slice-3 flip by construction: every interacting refresh there latches `[0, step)`.
-//! - **A2 (anti-freeze)**: `adopt_complete >= 1` during the motion window — real detail must keep
+//! - **A2 (anti-freeze)**: `adopt_complete >= 1` during the motion window, counting frames from the
+//!   second GPU (`live_adopted_total`, `motion_worker`) with the pins they replace — real detail must keep
 //!   streaming; a gate that "fixes" A1 by holding forever (§10 option B, the field-reported
 //!   ever-larger-blocks bug) fails here.
 //! - **A3 (display honesty)**: `dirty_shown == 0` — no frame displayed the live texture while it
@@ -68,6 +69,7 @@ enum Phase {
 struct Base {
     partial: u64,
     complete: u64,
+    worker: u64,
     motion_frames: u64,
     dirty: u64,
 }
@@ -168,6 +170,7 @@ impl FractadyneApp {
                     mt.base = Base {
                         partial: self.perf.adopt_partial[0],
                         complete: self.perf.adopt_complete[0],
+                        worker: self.perf.live_adopted_total[0],
                         motion_frames: self.perf.chunk_motion_frames[0],
                         dirty: self.perf.dirty_shown[0],
                     };
@@ -209,6 +212,7 @@ impl FractadyneApp {
                     let b = mt.base;
                     let partial = self.perf.adopt_partial[0].wrapping_sub(b.partial);
                     let complete = self.perf.adopt_complete[0].wrapping_sub(b.complete);
+                    let worker = self.perf.live_adopted_total[0].wrapping_sub(b.worker);
                     let motion =
                         self.perf.chunk_motion_frames[0].wrapping_sub(b.motion_frames);
                     let dirty = self.perf.dirty_shown[0].wrapping_sub(b.dirty);
@@ -218,7 +222,7 @@ impl FractadyneApp {
                         mt.frames, motion, self.perf.chunk_ok, self.perf.chunk_fe_ok
                     );
                     eprintln!(
-                        "--motiontest: adopt partial={partial} complete={complete} dirty-shown={dirty} \
+                        "--motiontest: adopt partial={partial} complete={complete} worker={worker} dirty-shown={dirty} \
                          (session totals: converged={} blank-walks={})",
                         self.perf.adopt_converged[0], self.perf.blank_walks_total[0]
                     );
@@ -233,7 +237,7 @@ impl FractadyneApp {
                             "A1: {partial} partial progression(s) adopted as the frozen texture during motion (the §9 noise regression)"
                         ));
                     }
-                    if complete == 0 {
+                    if complete + worker == 0 {
                         fails.push(
                             "A2: no complete refresh was adopted during motion — detail stopped streaming (the option-B freeze shape)".into(),
                         );

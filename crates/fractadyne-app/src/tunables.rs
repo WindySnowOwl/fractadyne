@@ -113,6 +113,8 @@ pub(crate) struct Cost {
     pub chunk_charge: u64,
     /// Test hook: deterministic uneven settled-walk windows (`CHUNK_SHUFFLE_DEFAULT`; 0 = off).
     pub chunk_shuffle: u64,
+    /// Motion refreshes on the second graphics card (`WORKER_MOTION_DEFAULT`; 0 = off, 1 = on).
+    pub worker_motion: u64,
     /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
     /// second override channel because duplicating the machinery for a single value would be worse.
     /// See the note above on what earns a place in this set.
@@ -156,6 +158,7 @@ impl Default for Cost {
             sa_trace: SA_TRACE_DEFAULT,
             chunk_charge: CHUNK_CHARGE_DEFAULT,
             chunk_shuffle: CHUNK_SHUFFLE_DEFAULT,
+            worker_motion: WORKER_MOTION_DEFAULT,
             bla_eps: BLA_EPS,
         }
     }
@@ -392,6 +395,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "WORKER_MOTION" => {
+                let p = c.worker_motion;
+                c.worker_motion = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set WORKER_MOTION: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "TILE_PACK" => {
                 let p = c.tile_pack;
                 c.tile_pack = match raw.as_str() {
@@ -501,7 +513,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
-    CHUNK_SHUFFLE";
+    CHUNK_SHUFFLE, WORKER_MOTION";
 
 #[cfg(test)]
 mod override_tests;
@@ -971,6 +983,12 @@ pub(crate) const CHUNK_CHARGE_DEFAULT: u64 = 1;
 /// factor in [50%, 97%] chosen by its pass index — uneven window sequences that repeat exactly from
 /// run to run, to test that where a walk's passes split never changes a pixel.
 pub(crate) const CHUNK_SHUFFLE_DEFAULT: u64 = 0;
+
+/// 1 = while the view moves, a second graphics card in use (Advanced ▸ Second graphics card, or
+/// `--worker-gpu`) also renders motion refreshes, which the window adopts as the frame it
+/// reprojects when they are newer than the one on screen (`motion_worker`, design/multi-gpu-live.md
+/// L3). 0 = the second card renders settle samples only, for the before/after measurement.
+pub(crate) const WORKER_MOTION_DEFAULT: u64 = 1;
 
 /// 1 = THE U-SPACE BLA (`fractadyne_core::renorm_bla_gpu`): the renormalized step skips along its
 /// own u-reference by a BLA tree, as the main loop skips along the orbit. An approximation held to

@@ -91,6 +91,11 @@ Changes after 0.3.0-beta.1:
   the second card fails, the view carries on with one. On a test machine with an RX 6800 XT and an
   RTX 3070, the averaging finished 2.9 to 4.7 times sooner with the other card helping. Off by
   default; `--worker-gpu` sets it from the command line.
+- **The second graphics card also helps while zooming (0.3.0-beta.18).** With Advanced ▸ *Second
+  graphics card* in use, the other card renders whole frames of the moving view, and the window
+  shows each one that is sharper or newer than the frame on screen. It renders with the same code
+  as the card drawing the window, so identical cards give identical frames. `--set
+  WORKER_MOTION=0` keeps the second card to the settled view.
 - **Fixed: rendering a tour from the app filed a crash report for the app (0.3.0-beta.18).** The
   render process the Render tour window starts shares the app's log folder, and it took the running
   session's "still running" marker for one left behind by a crash: it wrote a crash report for a

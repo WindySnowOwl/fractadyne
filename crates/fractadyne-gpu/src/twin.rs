@@ -13,7 +13,9 @@ use egui_wgpu::{CallbackResources, CallbackTrait, ScreenDescriptor};
 
 /// One view's G-buffer, read back: the iteration plane (`smooth_iter, normal.x, normal.y,
 /// DE_log2`; `r < 0` = interior or glitched) and the aux plane, `Rgba32Float`, row-major, at the
-/// texture's size (resolution × ss).
+/// texture's size (resolution × ss). `aux` is empty when it was not read: the colour pass reads it
+/// only for the orbit-statistics methods (`method_needs_aux`), and a frame installed without it
+/// gets a zero plane.
 #[derive(Clone, Debug, Default)]
 pub struct GBuffer {
     pub width: u32,
@@ -24,10 +26,78 @@ pub struct GBuffer {
 }
 
 impl GBuffer {
+    /// Whether the planes fill the texture (`aux` may be empty).
+    pub fn whole(&self) -> bool {
+        let n = self.width as usize * self.height as usize * 4;
+        n > 0 && self.iter.len() == n && (self.aux.is_empty() || self.aux.len() == n)
+    }
+
     /// Whether this G-buffer is a whole texture of `size` texels built at `ss`.
     pub fn fits(&self, size: [u32; 2], ss: u32) -> bool {
-        let n = size[0] as usize * size[1] as usize * 4;
-        [self.width, self.height] == size && self.ss == ss && self.iter.len() == n && self.aux.len() == n
+        self.whole() && [self.width, self.height] == size && self.ss == ss
+    }
+
+    /// Whether anything was drawn: a cleared texture reads 0 everywhere, and no pixel of a
+    /// perturbation view escapes at iteration 0 (interior reads negative).
+    pub fn drawn(&self) -> bool {
+        self.iter.chunks(4).any(|t| t[0] != 0.0)
+    }
+}
+
+/// A G-buffer uploaded to the device that will show it, ready to install
+/// (`MandelbrotParams::adopt`). [`Self::upload`] runs on any thread — the copy into wgpu's staging
+/// happens there, and the device's next submission carries it — so a frame from another GPU
+/// reaches the window without the UI thread copying a byte of it.
+#[derive(Clone, Debug)]
+pub struct AdoptFrame {
+    pub width: u32,
+    pub height: u32,
+    pub ss: u32,
+    pub(crate) iter: wgpu::TextureView,
+    /// A 1×1 zero texture when the G-buffer had no aux plane: every read of it is 0.
+    pub(crate) aux: wgpu::TextureView,
+}
+
+impl AdoptFrame {
+    /// Upload `g` (`None` when its planes do not fill its size).
+    pub fn upload(device: &wgpu::Device, queue: &wgpu::Queue, g: &GBuffer) -> Option<Self> {
+        if !g.whole() {
+            return None;
+        }
+        let texture = |w: u32, h: u32, data: &[f32], label| {
+            let extent = wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 };
+            let t = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: extent,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: ITER_FORMAT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            if !data.is_empty() {
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo { texture: &t, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                    bytemuck::cast_slice(data),
+                    wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(16 * w), rows_per_image: None },
+                    extent,
+                );
+            }
+            t.create_view(&wgpu::TextureViewDescriptor::default())
+        };
+        let iter = texture(g.width, g.height, &g.iter, "fractadyne.adopt_iter");
+        let aux = if g.aux.is_empty() {
+            texture(1, 1, &[], "fractadyne.adopt_aux_zero")
+        } else {
+            texture(g.width, g.height, &g.aux, "fractadyne.adopt_aux")
+        };
+        Some(Self { width: g.width, height: g.height, ss: g.ss.max(1), iter, aux })
+    }
+
+    /// Whether this frame is a whole texture of `size` texels built at `ss`.
+    pub fn fits(&self, size: [u32; 2], ss: u32) -> bool {
+        [self.width, self.height] == size && self.ss == ss
     }
 }
 
@@ -55,10 +125,149 @@ impl LiveTwin {
         crate::export::await_submitted(device, queue, None, None).into_result()
     }
 
-    /// Read back view `view_id`'s G-buffer.
-    pub fn gbuffer(&self, device: &wgpu::Device, queue: &wgpu::Queue, view_id: u32) -> Result<GBuffer, GpuError> {
+    /// Render `base` (a whole frame: [`MandelbrotParams::headless`], no tile, chunk window, split
+    /// or reprojection) as a walk of chunk windows priced by `pricer`, as the live view's chunked
+    /// refreshes are (the chunked iterate is bit-identical for any windows). `cancel` is asked
+    /// before every pass. A device or formula that cannot walk renders one pass, and only when
+    /// that pass fits the opening budget.
+    pub fn walk(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        base: &MandelbrotParams,
+        pricer: &mut WalkPricer,
+        cancel: &dyn Fn() -> bool,
+    ) -> Result<WalkStats, GpuError> {
+        let t0 = std::time::Instant::now();
+        let ss = base.ss.max(1) as u64;
+        let area = base.resolution[0].max(1) as u64 * base.resolution[1].max(1) as u64 * ss * ss;
+        let max_iter = base.max_iter.max(1);
+        let walks = if base.mode == 2 { crate::chunking_mode2_available(device) } else { crate::chunking_available(device) }
+            && base.custom.as_ref().is_none_or(|c| c.resumable);
+        let mut stats = WalkStats::default();
+        if !walks {
+            if area as f64 * max_iter as f64 > pricer.open_px_steps() {
+                return Err(GpuError::Readback(format!(
+                    "{area} samples × {max_iter} iterations is too much for one pass, and this frame cannot walk"
+                )));
+            }
+            let mut p = base.clone();
+            p.chunk_range = None;
+            self.frame(device, queue, &p)?;
+            stats.passes = 1;
+            stats.ms = t0.elapsed().as_secs_f64() * 1000.0;
+            return Ok(stats);
+        }
+        let mut start = 0u32;
+        let mut window = pricer.open(area);
+        loop {
+            if cancel() {
+                return Err(GpuError::Canceled);
+            }
+            // The first window starts at 0 and the series seeds [0, sa_skip) in one evaluation, so
+            // it loops `window` real iterations past the skip.
+            let skip = if stats.passes == 0 { base.sa_skip.min(max_iter) } else { start };
+            let end = skip.saturating_add(window).min(max_iter);
+            let mut p = base.clone();
+            p.chunk_range = Some([start, end]);
+            p.chunk_idx = stats.passes;
+            let tp = std::time::Instant::now();
+            self.frame(device, queue, &p)?;
+            let ms = tp.elapsed().as_secs_f64() * 1000.0;
+            let looped = end - skip;
+            if stats.passes == 0 {
+                pricer.observe_open(area, looped, ms);
+            }
+            stats.passes += 1;
+            stats.max_pass_ms = stats.max_pass_ms.max(ms);
+            start = end;
+            if start >= max_iter {
+                break;
+            }
+            window = pricer.next(area, looped.max(1), ms);
+        }
+        stats.ms = t0.elapsed().as_secs_f64() * 1000.0;
+        Ok(stats)
+    }
+
+    /// Read back view `view_id`'s G-buffer; the aux plane only `with_aux`.
+    pub fn gbuffer(&self, device: &wgpu::Device, queue: &wgpu::Queue, view_id: u32, with_aux: bool) -> Result<GBuffer, GpuError> {
         let r = self.resources.get::<Renderer>().ok_or_else(|| GpuError::Readback("the twin has no renderer".into()))?;
-        r.read_gbuffer(device, queue, view_id)
+        r.read_gbuffer(device, queue, view_id, with_aux)
+    }
+}
+
+/// What one [`LiveTwin::walk`] took.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WalkStats {
+    pub passes: u32,
+    pub ms: f64,
+    pub max_pass_ms: f64,
+}
+
+/// A walk pass is sized for this wall. Short, so a cancel lands within one and a pass costlier
+/// than its price stays far under the driver's watchdog.
+pub const WALK_PASS_MS: f64 = 40.0;
+/// The cost assumed for an opening pass before any is measured, ns per pixel-step: the export's
+/// unobserved prior (`STEP_PRIOR_NS`), above the worst the RTX 3080 has shown.
+const WALK_PRIOR_NS: f64 = 1.5;
+/// No opening pass may exceed this many pixel-steps, whatever was measured (~1.5 s at the prior,
+/// 0.8 s at the worst cost measured): the bound on a view far costlier than every one before it.
+const WALK_OPEN_MAX_PX_STEPS: f64 = 1.0e9;
+/// No later pass may exceed this many NOMINAL pixel-steps (the frame × its window, running or
+/// not): `EXPLICIT_STEPS_CEIL`, the live view's own cap on a settled chunk pass.
+const WALK_MAX_PX_STEPS: f64 = 6.0e10;
+/// A window never shrinks below this: a bounded pass count.
+const WALK_MIN_ITERS: u32 = 256;
+/// A window at most doubles from one pass to the next.
+const WALK_GROW: f64 = 2.0;
+
+/// Pass sizing for a worker's walks. A walk's OPENING pass has every pixel running, so its cost
+/// per pixel-step prices the next walk's opening; later passes are priced from the one before
+/// within the walk (`window × target / wall`), because pixels only stop running as a walk goes on,
+/// so a pass costs no more than the last one did per iteration — and they are NOT carried to the
+/// next opening, which they would underprice by the fraction that had escaped.
+#[derive(Clone, Debug)]
+pub struct WalkPricer {
+    /// ns per pixel-step of the opening passes: rises at once, falls a fifth of the way per walk.
+    open_ns: f64,
+}
+
+impl Default for WalkPricer {
+    fn default() -> Self {
+        Self { open_ns: WALK_PRIOR_NS }
+    }
+}
+
+impl WalkPricer {
+    /// Pixel-steps an opening pass may take.
+    pub fn open_px_steps(&self) -> f64 {
+        (WALK_PASS_MS * 1.0e6 / self.open_ns).min(WALK_OPEN_MAX_PX_STEPS)
+    }
+
+    /// The opening window, iterations, for `area` samples.
+    pub fn open(&self, area: u64) -> u32 {
+        (self.open_px_steps() / area.max(1) as f64).clamp(WALK_MIN_ITERS as f64, u32::MAX as f64) as u32
+    }
+
+    /// An opening pass over `area` samples looped `iters` iterations in `wall_ms`.
+    pub fn observe_open(&mut self, area: u64, iters: u32, wall_ms: f64) {
+        if !wall_ms.is_finite() || wall_ms <= 0.0 || iters == 0 {
+            return;
+        }
+        let ns = wall_ms * 1.0e6 / (area.max(1) as f64 * iters as f64);
+        self.open_ns = if ns >= self.open_ns { ns } else { self.open_ns + 0.2 * (ns - self.open_ns) };
+    }
+
+    /// The window after a pass of `window` iterations over `area` samples that took `wall_ms`.
+    pub fn next(&self, area: u64, window: u32, wall_ms: f64) -> u32 {
+        let scaled = if wall_ms.is_finite() && wall_ms > 0.0 {
+            window as f64 * (WALK_PASS_MS / wall_ms).min(WALK_GROW)
+        } else {
+            window as f64
+        };
+        let ceiling = WALK_MAX_PX_STEPS / area.max(1) as f64;
+        scaled.min(ceiling).clamp(WALK_MIN_ITERS as f64, u32::MAX as f64) as u32
     }
 }
 
@@ -70,14 +279,21 @@ pub fn read_window_gbuffer(rs: &egui_wgpu::RenderState, view_id: u32) -> Result<
         .callback_resources
         .get::<Renderer>()
         .ok_or_else(|| GpuError::Readback("the window has no renderer".into()))?;
-    r.read_gbuffer(&rs.device, &rs.queue, view_id)
+    r.read_gbuffer(&rs.device, &rs.queue, view_id, true)
 }
 
 impl Renderer {
-    /// View `view_id`'s G-buffer, read back. The live textures are attachments and samplers only
-    /// (no `COPY_SRC`), so they are first drawn into readable twins by the seed pipeline — the
-    /// same exact `textureLoad` copy the hold snapshot makes (`hold_copy`) — and those are read.
-    pub(crate) fn read_gbuffer(&self, device: &wgpu::Device, queue: &wgpu::Queue, view_id: u32) -> Result<GBuffer, GpuError> {
+    /// View `view_id`'s G-buffer, read back (the aux plane only `with_aux`). The live textures are
+    /// attachments and samplers only (no `COPY_SRC`), so they are first drawn into readable twins
+    /// by the seed pipeline — the same exact `textureLoad` copy the hold snapshot makes
+    /// (`hold_copy`) — and those are read.
+    pub(crate) fn read_gbuffer(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view_id: u32,
+        with_aux: bool,
+    ) -> Result<GBuffer, GpuError> {
         let view = self
             .views
             .get(&view_id)
@@ -130,7 +346,8 @@ impl Renderer {
             pass.set_bind_group(0, &view.color_bg, &[]);
             pass.draw(0..3, 0..1);
         }
-        for (t, b) in [(&ti, &bi), (&ta, &ba)] {
+        let planes: &[(&wgpu::Texture, &wgpu::Buffer)] = if with_aux { &[(&ti, &bi), (&ta, &ba)] } else { &[(&ti, &bi)] };
+        for (t, b) in planes {
             enc.copy_texture_to_buffer(
                 wgpu::TexelCopyTextureInfo { texture: t, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
                 wgpu::TexelCopyBufferInfo {
@@ -157,13 +374,16 @@ impl Renderer {
             b.unmap();
             Ok(out)
         };
-        Ok(GBuffer { width: w, height: h, ss: view.last_ss.max(1), iter: read(&bi)?, aux: read(&ba)? })
+        let iter = read(&bi)?;
+        let aux = if with_aux { read(&ba)? } else { Vec::new() };
+        Ok(GBuffer { width: w, height: h, ss: view.last_ss.max(1), iter, aux })
     }
 }
 
 impl MandelbrotParams {
     /// This frame's params for a headless renderer ([`LiveTwin`]): every sink dropped — a twin's
-    /// readings must never land in the window's — and no hold, reprojection or supersampling.
+    /// readings must never land in the window's — and no hold, reprojection, supersampling or
+    /// adoption.
     pub fn headless(&self) -> Self {
         let mut p = self.clone();
         p.iterate_ms = None;
@@ -193,6 +413,45 @@ impl MandelbrotParams {
         p.accum_external = None;
         p.accum_folds = None;
         p.adopt = None;
+        p.adopt_hold = false;
         p
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_opening_pass_prices_the_next_opening_at_once_and_forgets_slowly() {
+        let mut p = WalkPricer::default();
+        let area = 40_000u64;
+        // Unmeasured: the prior, 40 ms at 1.5 ns a pixel-step.
+        assert_eq!(p.open(area), (40.0e6 / 1.5 / area as f64) as u32);
+        // Measured dearer: the next opening takes the dearer price at once.
+        p.observe_open(area, 100, 3.0 * 100.0 * area as f64 / 1.0e6);
+        assert_eq!(p.open(area), (40.0e6 / 3.0 / area as f64) as u32);
+        // Cheaper: a fifth of the way per walk, never the whole way at once.
+        p.observe_open(area, 100, 1.0 * 100.0 * area as f64 / 1.0e6);
+        let ns = 3.0 + 0.2 * (1.0 - 3.0);
+        assert_eq!(p.open(area), (40.0e6 / ns / area as f64) as u32);
+        // A cheap card's opening is bounded by pixel-steps; a big frame's is floored at 256.
+        assert_eq!(WalkPricer { open_ns: 1.0e-6 }.open(1), WALK_OPEN_MAX_PX_STEPS as u32);
+        assert_eq!(WalkPricer::default().open(4_000_000), WALK_MIN_ITERS);
+    }
+
+    #[test]
+    fn a_window_follows_its_wall_grows_at_most_twofold_and_stays_under_the_ceiling() {
+        let p = WalkPricer::default();
+        let area = 400_000u64;
+        // On target: unchanged. Hot: shrinks in proportion. Cheap: at most doubles.
+        assert_eq!(p.next(area, 4000, WALK_PASS_MS), 4000);
+        assert_eq!(p.next(area, 4000, 4.0 * WALK_PASS_MS), 1000);
+        assert_eq!(p.next(area, 4000, 1.0), 8000);
+        // Never below the floor, never above the nominal ceiling.
+        assert_eq!(p.next(area, 300, 100.0 * WALK_PASS_MS), WALK_MIN_ITERS);
+        assert_eq!(p.next(area, 140_000, 1.0), (WALK_MAX_PX_STEPS / area as f64) as u32);
+        // A garbage wall keeps the window.
+        assert_eq!(p.next(area, 1000, f64::NAN), 1000);
     }
 }
