@@ -150,8 +150,23 @@ Render tour window's *Use all graphics cards (N)* (shown for two or more cards, 
   3070 200, 6800 XT 201–264. Frame 200 is one frame of the other card between the 6800 XT's, from
   the scheduler taking over the end of a run. With classes this far apart (29% of pixels) that can
   show as a one-frame change of fine grain in motion; the farm's flicker measurement (3080 against
-  6800 XT, 2% of pixels) was made on a smaller difference. Not yet looked at on screen.
-- **Not yet:** a `--farmtest` variant with `--gpus`, and a look at the switch frames.
+  6800 XT, 2% of pixels) was made on a smaller difference.
+- **The switches at 30 fps (2026-10-08, user: "yes" to checking them).** The same tour at 1280×720
+  and 30 fps, 1,321 frames: `--gpus all` 11 min 06 s, the RTX 3070 alone 20 min 39 s (1.86×). The
+  farm made four runs (6800 XT 0–105, 3070 106–816, 6800 XT 817–1135, 3070 1136–1320): three
+  switches, none a single frame. Measured against the 3070's own sequence at the same frames:
+  - 106 ends the opening held shot (frames 0–105, kept on one card), where the cards differ by
+    0.09/255: nothing to see.
+  - 817 and 1136: the class difference is 4.5 and 5.5/255 (2.9 and 3.9 after a 2×2 average)
+    against a frame-to-frame motion of 42 and 50/255 (38 and 40): about a ninth, as pixel speckle
+    in the filaments, which the zoom rearranges on every frame anyway. The farm's change into the
+    switch frame equals the single card's to 0.1%, and the amplified change images of the two
+    sequences look the same (`local/l2-ab/switch/switch-00817.png`; clips of a second either side,
+    farm and single card, beside it).
+  So no shimmer to expect at these switches. The risky case would be a switch in a slow or held
+  stretch, and the farm keeps holds on one card; the 6 fps run's one-frame switch came from its
+  shorter tour (265 frames) ending in stolen work.
+- **Not yet:** a `--farmtest` variant with `--gpus`.
 
 ### Phase 2 — one still across GPUs (tile-level, in one process)
 
