@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 19   # 19: --render-tour (a tour shipped in the package; the agent names --out and delivers the frames up to 1 GB, the folder's farm state and the local client's logs), --gpus (design/multi-gpu.md Phase 1: a tour on every graphics card through a farm on this machine), --fps, --ss and -y. 18: --shot (a location, captured once its supersampling converges; the agent names --out and delivers shot.png), --list-adapters, --adapter and --worker-gpu (design/multi-gpu-live.md L2: a second GPU in the live view). 17: farm-client "adapters" (--adapters: all of this machine's GPUs, or some, each its own session) and a 24 h ceiling (a long tour render; was 4 h). 16: farm-client "discover": first run --discover from the package and return what answered this machine's broadcast (the farm's network discovery). 15: farm-client in share mode (request "share": the client writes its frames to this agent's share). 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
+$AgentVersion = 20   # 20: frames delivered up to 4 GB (a 30 fps tour at 1280x720 is about 2 GB). 19: --render-tour (a tour shipped in the package; the agent names --out and delivers the frames up to 1 GB, the folder's farm state and the local client's logs), --gpus (design/multi-gpu.md Phase 1: a tour on every graphics card through a farm on this machine), --fps, --ss and -y. 18: --shot (a location, captured once its supersampling converges; the agent names --out and delivers shot.png), --list-adapters, --adapter and --worker-gpu (design/multi-gpu-live.md L2: a second GPU in the live view). 17: farm-client "adapters" (--adapters: all of this machine's GPUs, or some, each its own session) and a 24 h ceiling (a long tour render; was 4 h). 16: farm-client "discover": first run --discover from the package and return what answered this machine's broadcast (the farm's network discovery). 15: farm-client in share mode (request "share": the client writes its frames to this agent's share). 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -279,7 +279,7 @@ $Allowed = @{
     "--shot" = @("shotloc"); "--shot-timeout" = @("int"); "--list-adapters" = @()
     "--adapter" = @("word"); "--worker-gpu" = @("word")
     # v19: a tour shipped in the package, rendered into the run's local folder (the agent adds --out;
-    # the frames are delivered when they total 1 GB or less). --gpus all | N,N renders it on several
+    # the frames are delivered when they total 4 GB or less). --gpus all | N,N renders it on several
     # of this machine's graphics cards through a render farm on this machine (design/multi-gpu.md
     # Phase 1): the folder's farm state and the local client's logs come back too.
     "--render-tour" = @("pkgfile"); "--gpus" = @("gpus"); "--fps" = @("num"); "--ss" = @("int"); "-y" = @()
@@ -502,8 +502,8 @@ function Invoke-Harness($r, [string]$dir, $status) {
                 $bytes = ($pngs | Measure-Object -Property Length -Sum).Sum
                 $fto = Join-Path $to "frames"
                 New-Item -ItemType Directory -Force -Path $fto | Out-Null
-                if ($bytes -le 1GB) { $pngs | Copy-Item -Destination $fto -Force }
-                else { "$($pngs.Count) frames, $bytes bytes: over 1 GB, not copied" | Out-File (Join-Path $fto "not-copied.txt") -Encoding utf8 }
+                if ($bytes -le 4GB) { $pngs | Copy-Item -Destination $fto -Force }
+                else { "$($pngs.Count) frames, $bytes bytes: over 4 GB, not copied" | Out-File (Join-Path $fto "not-copied.txt") -Encoding utf8 }
                 Copy-Item -LiteralPath (Join-Path $framesDir "render-status.txt") -Destination $fto -Force -ErrorAction SilentlyContinue
                 $farm = Join-Path $framesDir "farm"
                 if (Test-Path -LiteralPath $farm) {
