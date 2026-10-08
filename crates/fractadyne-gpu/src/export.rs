@@ -60,7 +60,7 @@ fn check_orbit_binding(device: &wgpu::Device, orbit_len: usize, bla_len: usize) 
 /// How a bounded GPU-completion wait ended. Every offscreen readback in this module resolves to one
 /// of these instead of blocking forever inside `device.poll(Maintain::Wait)` + `Receiver::recv()`.
 #[derive(Debug, PartialEq)]
-enum ReadbackWait {
+pub(crate) enum ReadbackWait {
     /// The mapped buffer (or submitted work) completed successfully — proceed.
     Ready,
     /// The caller's cancel flag was observed set — unwind cleanly (shutdown / superseded export).
@@ -77,7 +77,7 @@ enum ReadbackWait {
 impl ReadbackWait {
     /// Fold a completed wait into the caller's `Result`. `Ready` → `Ok`; everything else is the
     /// matching terminal [`GpuError`]. Keeps the call sites to `wait.into_result()?`.
-    fn into_result(self) -> Result<(), GpuError> {
+    pub(crate) fn into_result(self) -> Result<(), GpuError> {
         match self {
             ReadbackWait::Ready => Ok(()),
             ReadbackWait::Canceled => Err(GpuError::Canceled),
@@ -170,7 +170,7 @@ fn recv_readback_outcome(
 /// Bounded wait for a mapped-buffer readback: poll until the `map_async` callback delivers `rx`'s
 /// result (or the wait is canceled / deadlined / the device is lost). Replaces
 /// `device.poll(Maintain::Wait); rx.recv()`.
-fn await_readback(
+pub(crate) fn await_readback(
     device: &wgpu::Device,
     rx: &std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
     cancel: Option<&std::sync::atomic::AtomicBool>,
@@ -183,7 +183,7 @@ fn await_readback(
 /// buffer. Replaces a bare `device.poll(Maintain::Wait)` used only to fence between passes
 /// (per-chunk-window timing barriers). Uses `Queue::on_submitted_work_done` as the completion
 /// signal so it is cancellable and device-loss-aware like [`await_readback`].
-fn await_submitted(
+pub(crate) fn await_submitted(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     cancel: Option<&std::sync::atomic::AtomicBool>,

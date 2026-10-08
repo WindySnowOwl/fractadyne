@@ -15,6 +15,9 @@ use std::sync::Arc;
 
 mod export;
 pub use export::*;
+/// The live renderer on a second device (design/multi-gpu-live.md L3).
+mod twin;
+pub use twin::*;
 pub mod timing;
 /// Custom formulas: WGSL generated from the formula IR and spliced into the fixed shader.
 pub mod custom;
@@ -2317,6 +2320,69 @@ impl ViewResources {
         self.last_chunk = None;
     }
 
+    /// Install a G-buffer rendered elsewhere (`MandelbrotParams::adopt`): upload its planes and draw
+    /// them into this view's textures with the seed pipeline, the exact `textureLoad` copy (the live
+    /// textures take no `COPY_DST`). The caller records the frame's key.
+    fn adopt(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        color_bgl: &wgpu::BindGroupLayout,
+        seed_pipeline: &wgpu::RenderPipeline,
+        g: &GBuffer,
+    ) {
+        let size = [g.width, g.height];
+        if size != self.size {
+            self.resize(device, color_bgl, size);
+        }
+        let extent = wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 };
+        let upload = |data: &[f32], label| {
+            let t = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: extent,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: ITER_FORMAT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo { texture: &t, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                bytemuck::cast_slice(data),
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(16 * size[0]), rows_per_image: None },
+                extent,
+            );
+            t.create_view(&wgpu::TextureViewDescriptor::default())
+        };
+        let (ui, ua) = (upload(&g.iter, "fractadyne.adopt_iter"), upload(&g.aux, "fractadyne.adopt_aux"));
+        let seed_bg = make_color_bg(device, color_bgl, &self.color_uniform, &self.lut_buf, &ui, &ua);
+        {
+            let attach = |v| Some(wgpu::RenderPassColorAttachment {
+                view: v,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            });
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("fractadyne.adopt_pass"),
+                color_attachments: &[attach(&self.tex_view), attach(&self.aux_view)],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(seed_pipeline);
+            pass.set_bind_group(0, &seed_bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        // A whole frame replaces whatever walk was under way.
+        self.chunk_state = None;
+        self.last_chunk = None;
+    }
+
     fn ensure_orbit_capacity(
         &mut self,
         device: &wgpu::Device,
@@ -2680,6 +2746,12 @@ pub struct MandelbrotParams {
     /// The accumulator's own sample count, stored after every fold: what the average really holds,
     /// for the app to check against what it counted.
     pub accum_folds: Option<Arc<std::sync::atomic::AtomicU32>>,
+    /// A frame rendered on another device for exactly these params ([`LiveTwin`], design/multi-gpu-live.md
+    /// L3): installed as this view's G-buffer INSTEAD of iterating, and recorded as rendered at this
+    /// frame's key, so the frames after it at the same view do not render it again. Ignored when
+    /// it does not fit the texture this frame would iterate into (size and ss), or on a
+    /// reprojected or held frame.
+    pub adopt: Option<Arc<GBuffer>>,
 }
 
 /// A frame that asks for nothing: no sinks, no reference, the direct mode, one sample a pixel, no
@@ -2802,6 +2874,7 @@ impl Default for MandelbrotParams {
             accum_external: None,
             accum_folds: None,
             chunk_walk: 0,
+            adopt: None,
         }
     }
 }
@@ -3020,7 +3093,16 @@ impl CallbackTrait for MandelbrotParams {
             let bg = make_color_bg(device, color_bgl, &view.color_uniform, &view.lut_buf, &ht, &ha);
             view.hold = Some(HoldState { bg, size: view.size, ss: view.last_ss.max(1) });
         }
-        if !reproject && !hold && size != view.size {
+        // A frame from another device for these params (`adopt`) stands in for this frame's
+        // iterate: installed here, and recorded at this frame's key below.
+        let adopted = match self.adopt.as_deref() {
+            Some(g) if !reproject && !hold && g.fits(size, ss) => {
+                view.adopt(device, queue, encoder, color_bgl, seed_pipeline, g);
+                true
+            }
+            _ => false,
+        };
+        if !reproject && !hold && !adopted && size != view.size {
             // ⛔**THE SEED MAY ONLY CARRY THIS VIEW'S OWN PIXELS.** Seeding exists so a resolution
             // change mid-settle refines in place instead of against black, which is right when the
             // content is this view at another size. Across a VIEW change it instead copies another
@@ -3194,6 +3276,7 @@ impl CallbackTrait for MandelbrotParams {
         // final rect/range, so the triple stops changing and the frame is served from the texture.
         if !reproject
             && !hold
+            && !adopted
             && (view.last_iter_key != Some(key)
                 || view.last_tile != self.tile
                 || view.last_chunk != self.chunk_range
@@ -3623,6 +3706,18 @@ impl CallbackTrait for MandelbrotParams {
             );
             view.content_stamp = stamp;
             view.content_foreign = foreign;
+        }
+        if adopted {
+            view.last_iter_key = Some(key);
+            view.last_tile = self.tile;
+            view.last_chunk = self.chunk_range;
+            view.last_probe = self.probe_nonce;
+            view.last_split = self.split;
+            view.last_ss = ss;
+            view.rendered = true;
+            // A whole frame of this view.
+            view.content_stamp = Some(self.view_stamp);
+            view.content_foreign = false;
         }
         if reproject {
             let (stamp, foreign) = content_after_frame(

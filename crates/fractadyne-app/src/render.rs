@@ -7009,6 +7009,7 @@ impl FractadyneApp {
             // deep views apart. See `ViewResources::content_stamp`.
             view_stamp: pos_sig,
             content_stamp_out: Some(self.perf.content_stamp[vsub].clone()),
+            adopt: None,
         };
         // Record whether THIS frame really re-iterates (vs reprojecting a held frame) — the
         // motion-res controller adapts only on the interval that FOLLOWS a real frame, since
