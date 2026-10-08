@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 18   # 18: --shot (a location, captured once its supersampling converges; the agent names --out and delivers shot.png), --list-adapters, --adapter and --worker-gpu (design/multi-gpu-live.md L2: a second GPU in the live view). 17: farm-client "adapters" (--adapters: all of this machine's GPUs, or some, each its own session) and a 24 h ceiling (a long tour render; was 4 h). 16: farm-client "discover": first run --discover from the package and return what answered this machine's broadcast (the farm's network discovery). 15: farm-client in share mode (request "share": the client writes its frames to this agent's share). 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
+$AgentVersion = 19   # 19: --render-tour (a tour shipped in the package; the agent names --out and delivers the frames up to 1 GB, the folder's farm state and the local client's logs), --gpus (design/multi-gpu.md Phase 1: a tour on every graphics card through a farm on this machine), --fps, --ss and -y. 18: --shot (a location, captured once its supersampling converges; the agent names --out and delivers shot.png), --list-adapters, --adapter and --worker-gpu (design/multi-gpu-live.md L2: a second GPU in the live view). 17: farm-client "adapters" (--adapters: all of this machine's GPUs, or some, each its own session) and a 24 h ceiling (a long tour render; was 4 h). 16: farm-client "discover": first run --discover from the package and return what answered this machine's broadcast (the farm's network discovery). 15: farm-client in share mode (request "share": the client writes its frames to this agent's share). 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -247,7 +247,7 @@ function Get-Package([string]$tag, [string]$package) {
 # --- the harness allow-list -------------------------------------------------------------------------
 # flag -> the values it takes. "?x" = optional. Values never contain spaces or quotes, and a file is
 # only ever one shipped inside the package.
-$Modes = @("--recordtest", "--zoomtest", "--motiontest", "--gputest", "--selftest", "--bench-matrix", "--livetest", "--chunk-sweep", "--soak", "--tail-audit", "--glitch-audit", "--render", "--farmtest", "--shot", "--list-adapters")
+$Modes = @("--recordtest", "--zoomtest", "--motiontest", "--gputest", "--selftest", "--bench-matrix", "--livetest", "--chunk-sweep", "--soak", "--tail-audit", "--glitch-audit", "--render", "--farmtest", "--shot", "--list-adapters", "--render-tour")
 $Allowed = @{
     # The audits render a view (--center/--zoom-log2/--iter/--size) twice and check the pixels that
     # differ against the arbitrary-precision oracle; they print a verdict and write no file. Send them
@@ -278,6 +278,11 @@ $Allowed = @{
     # file or locations/NAME.fdn in the share's field folder (the package ships no test views).
     "--shot" = @("shotloc"); "--shot-timeout" = @("int"); "--list-adapters" = @()
     "--adapter" = @("word"); "--worker-gpu" = @("word")
+    # v19: a tour shipped in the package, rendered into the run's local folder (the agent adds --out;
+    # the frames are delivered when they total 1 GB or less). --gpus all | N,N renders it on several
+    # of this machine's graphics cards through a render farm on this machine (design/multi-gpu.md
+    # Phase 1): the folder's farm state and the local client's logs come back too.
+    "--render-tour" = @("pkgfile"); "--gpus" = @("gpus"); "--fps" = @("num"); "--ss" = @("int"); "-y" = @()
 }
 $ValuePattern = @{
     "int" = '^[0-9]{1,9}$'; "num" = '^[-+0-9.eE]{1,2000}$'; "word" = '^[A-Za-z0-9_.-]{1,64}$'
@@ -289,6 +294,7 @@ $ValuePattern = @{
     # a package file, or a view the dev box put in the share's field\locations folder
     "shotloc" = '^((tours|validation|benchmarks)/[A-Za-z0-9_./-]{1,160}\.(toml|fdn|kfr)|locations/[A-Za-z0-9_.-]{1,64}\.fdn)$'
     "taps" = '^[0-9]{1,3},[0-9.]{1,8},[0-9.]{1,8}$'
+    "gpus" = '^(all|[0-9]{1,2}(,[0-9]{1,2}){1,7})$'
 }
 
 # Validate and resolve a harness argument list. Package files become absolute paths.
@@ -463,6 +469,9 @@ function Invoke-Harness($r, [string]$dir, $status) {
             # v18: a shot's image goes into this run's folder, never a path from the request.
             $shotPng = Join-Path $local "shot.png"
             if ($resolved -contains "--shot") { $resolved += @("--out", $shotPng) }
+            # v19: a tour's frames likewise, into this run's folder.
+            $framesDir = Join-Path $local "frames"
+            if ($resolved -contains "--render-tour") { $resolved += @("--out", $framesDir) }
             $status.detail = "$name of $($repeat * $tags.Count): fractadyne $($argv -join ' ')"
             Write-JsonFile (Join-Path $dir "status.json") $status
             $env:FRACTADYNE_CONFIG_DIR = $cfgDir
@@ -488,6 +497,25 @@ function Invoke-Harness($r, [string]$dir, $status) {
                 if (Test-Path $logs) { Copy-Item -Path (Join-Path $logs "*") -Destination $to -Recurse -Force -ErrorAction SilentlyContinue }
             }
             if (Test-Path -LiteralPath $shotPng) { Copy-Item -LiteralPath $shotPng -Destination $to -Force }
+            if (Test-Path -LiteralPath $framesDir) {
+                $pngs = @(Get-ChildItem -LiteralPath $framesDir -Filter "*.png" -File -ErrorAction SilentlyContinue)
+                $bytes = ($pngs | Measure-Object -Property Length -Sum).Sum
+                $fto = Join-Path $to "frames"
+                New-Item -ItemType Directory -Force -Path $fto | Out-Null
+                if ($bytes -le 1GB) { $pngs | Copy-Item -Destination $fto -Force }
+                else { "$($pngs.Count) frames, $bytes bytes: over 1 GB, not copied" | Out-File (Join-Path $fto "not-copied.txt") -Encoding utf8 }
+                Copy-Item -LiteralPath (Join-Path $framesDir "render-status.txt") -Destination $fto -Force -ErrorAction SilentlyContinue
+                $farm = Join-Path $framesDir "farm"
+                if (Test-Path -LiteralPath $farm) {
+                    $ffto = Join-Path $to "farm"
+                    New-Item -ItemType Directory -Force -Path $ffto | Out-Null
+                    foreach ($f in @("job.toml", "done.jsonl", "events.jsonl", "status.toml", "metrics.jsonl")) {
+                        Copy-Item -LiteralPath (Join-Path $farm $f) -Destination $ffto -Force -ErrorAction SilentlyContinue
+                    }
+                }
+                $clientLogs = Join-Path $cfgDir "farm\local-gpus\client\logs"
+                if (Test-Path -LiteralPath $clientLogs) { Copy-Item -Path $clientLogs -Destination (Join-Path $to "client-logs") -Recurse -Force -ErrorAction SilentlyContinue }
+            }
             # A staged view the app did not LOAD (it falls back to defaults on a file it cannot
             # parse) means the run measured the wrong view - say so, do not pass it off.
             $sessionLoaded = $null
