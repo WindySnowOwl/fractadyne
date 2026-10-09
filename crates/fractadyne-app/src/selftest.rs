@@ -1433,7 +1433,7 @@ impl FractadyneApp {
             };
             for (lose, name, threshold) in [
                 (None, "a still split across this device and a twin is bit-identical, both rendering", "0 channels differ; both devices rendered tiles"),
-                (Some((1, 1)), "a split whose twin fails after one tile hands it back, bit-identical", "0 channels differ; the twin stopped, every tile rendered"),
+                (Some((1, 0)), "a split whose twin fails at its first tile hands it back, bit-identical", "0 channels differ; the twin stopped, every tile rendered"),
             ] {
                 let (pass, result) = match (&alone, split(lose)) {
                     (Some(a), Ok((r, shares))) if a.pixels.len() == r.pixels.len() => {
@@ -1662,7 +1662,7 @@ impl FractadyneApp {
                         let adopt = |g: &fractadyne_gpu::GBuffer, then: &[fractadyne_gpu::MandelbrotParams]| -> Result<fractadyne_gpu::GBuffer, String> {
                             let mut t = fractadyne_gpu::LiveTwin::new(device, queue);
                             let mut p = base.clone();
-                            p.adopt = fractadyne_gpu::AdoptFrame::upload(device, queue, g).map(std::sync::Arc::new);
+                            p.adopt = fractadyne_gpu::AdoptFrame::upload(device, g).map(std::sync::Arc::new);
                             t.frame(device, queue, &p).map_err(|e| e.to_string())?;
                             for p in then {
                                 t.frame(device, queue, p).map_err(|e| e.to_string())?;

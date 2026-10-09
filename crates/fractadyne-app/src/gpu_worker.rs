@@ -31,13 +31,13 @@ pub(crate) struct Job {
 /// A motion refresh (L3): `params` is a whole moving frame at the view the app captured on frame
 /// `gen`'s ticket (`MandelbrotParams::headless`, no tile, chunk window, split or reprojection);
 /// `with_aux` reads the aux plane back too. `window`: the device that shows it, which the frame is
-/// uploaded to from this thread.
+/// handed to from this thread (`AdoptFrame::upload`).
 pub(crate) struct LiveJob {
     pub(crate) view: usize,
     pub(crate) gen: u64,
     pub(crate) params: fractadyne_gpu::MandelbrotParams,
     pub(crate) with_aux: bool,
-    pub(crate) window: (wgpu::Device, wgpu::Queue),
+    pub(crate) window: wgpu::Device,
 }
 
 /// A finished, failed or cancelled [`LiveJob`] (every accepted one answers once). `frame` is
@@ -493,7 +493,7 @@ fn render_live(
                     Ok(g) if g.drawn() => {
                         out.read_ms = tr.elapsed().as_secs_f64() * 1000.0;
                         let tu = std::time::Instant::now();
-                        out.frame = fractadyne_gpu::AdoptFrame::upload(&job.window.0, &job.window.1, &g).map(Arc::new);
+                        out.frame = fractadyne_gpu::AdoptFrame::upload(&job.window, &g).map(Arc::new);
                         out.upload_ms = tu.elapsed().as_secs_f64() * 1000.0;
                         if out.frame.is_none() {
                             out.err = Some("the frame's planes do not fill it".into());

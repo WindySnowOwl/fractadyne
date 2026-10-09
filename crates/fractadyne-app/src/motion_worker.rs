@@ -152,7 +152,7 @@ impl FractadyneApp {
     ) {
         let v = 0;
         let Some(w) = self.gpu_worker.as_ref().filter(|w| w.alive()) else { return };
-        let Some(window) = self.render_state.as_ref().map(|r| (r.device.clone(), r.queue.clone())) else { return };
+        let Some(window) = self.render_state.as_ref().map(|r| r.device.clone()) else { return };
         if crate::tunables::cost().worker_motion == 0 {
             return;
         }

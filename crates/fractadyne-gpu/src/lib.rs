@@ -3047,6 +3047,7 @@ impl CallbackTrait for MandelbrotParams {
         let mut adopted = false;
         if let Some(f) = self.adopt.as_deref().filter(|_| !self.adopt_hold) {
             let exact = self.reproject != 1 && !hold && f.fits(size, ss);
+            f.stage(encoder);
             view.adopt(device, encoder, color_bgl, seed_pipeline, f);
             if exact {
                 adopted = true;
@@ -3108,6 +3109,7 @@ impl CallbackTrait for MandelbrotParams {
         }
         // …or for the HOLD (`adopt_hold`): it becomes what the display serves, over any snapshot.
         if let Some(f) = self.adopt.as_deref().filter(|_| self.adopt_hold && self.display_hold) {
+            f.stage(encoder);
             view.hold = Some(view.hold_of(device, color_bgl, f));
         }
         if !reproject && !hold && !adopted && size != view.size {

@@ -2157,11 +2157,19 @@ pub fn render_export_multi_with(
         let k = next.fetch_add(1, Relaxed);
         (k < n).then_some(k)
     };
+    // Under the loss hook every device starts taking tiles at once, so the one meant to fail
+    // takes one: a fast window device otherwise took every tile while the other was still
+    // building its pipelines, and the hook never fired (the RTX 3070 on PLUTO, 2026-10-08).
+    let together = std::sync::Barrier::new(devices.len());
     std::thread::scope(|sc| {
         for (di, &(device, queue)) in devices.iter().enumerate() {
-            let (tx, take, requeue, rects) = (tx.clone(), &take, &requeue, &rects);
+            let (tx, take, requeue, rects, together) = (tx.clone(), &take, &requeue, &rects, &together);
             sc.spawn(move || {
-                let mut renderer = match TileRenderer::new(device, queue, req, plan) {
+                let renderer = TileRenderer::new(device, queue, req, plan);
+                if lose_after.is_some() {
+                    together.wait();
+                }
+                let mut renderer = match renderer {
                     Ok(r) => r,
                     Err(e) => {
                         let _ = tx.send((di, usize::MAX, Err(e)));

@@ -44,11 +44,17 @@ impl GBuffer {
     }
 }
 
-/// A G-buffer uploaded to the device that will show it, ready to install
-/// (`MandelbrotParams::adopt`). [`Self::upload`] runs on any thread — the copy into wgpu's staging
-/// happens there, and the device's next submission carries it — so a frame from another GPU
-/// reaches the window without the UI thread copying a byte of it.
-#[derive(Clone, Debug)]
+/// A G-buffer handed to the device that will show it, ready to install (`MandelbrotParams::adopt`).
+/// [`Self::upload`] runs on any thread and touches no queue: the planes are written into buffers
+/// mapped at creation, and the device copies them into its textures inside the frame that adopts
+/// them ([`Self::stage`]).
+///
+/// ⛔⭐Not `queue.write_texture`. wgpu-core 24 holds the device's `pending_writes` lock for the whole
+/// of a `write_texture`, its staging copy included, and every `queue.submit` takes that lock too: a
+/// worker thread writing a frame stalled the window's next present for as long as the copy took. On
+/// PLUTO with the RTX 3070 drawing the window, ~150 frames a run went over 33 ms, almost all of them
+/// the frame before an adoption (2026-10-08); with the RX 6800 XT drawing it, 1–3.
+#[derive(Debug)]
 pub struct AdoptFrame {
     pub width: u32,
     pub height: u32,
@@ -56,43 +62,83 @@ pub struct AdoptFrame {
     pub(crate) iter: wgpu::TextureView,
     /// A 1×1 zero texture when the G-buffer had no aux plane: every read of it is 0.
     pub(crate) aux: wgpu::TextureView,
+    /// The written buffers and the textures they go to, until the adopting frame copies them.
+    pending: std::sync::Mutex<Vec<(wgpu::Buffer, wgpu::Texture)>>,
+    bytes_per_row: u32,
 }
 
 impl AdoptFrame {
-    /// Upload `g` (`None` when its planes do not fill its size).
-    pub fn upload(device: &wgpu::Device, queue: &wgpu::Queue, g: &GBuffer) -> Option<Self> {
+    /// Hand `g` to `device` (`None` when its planes do not fill its size).
+    pub fn upload(device: &wgpu::Device, g: &GBuffer) -> Option<Self> {
         if !g.whole() {
             return None;
         }
-        let texture = |w: u32, h: u32, data: &[f32], label| {
-            let extent = wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 };
-            let t = device.create_texture(&wgpu::TextureDescriptor {
+        let (w, h) = (g.width, g.height);
+        let row = w * 16; // Rgba32Float
+        let bpr = row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let texture = |tw: u32, th: u32, label| {
+            device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
-                size: extent,
+                size: wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: ITER_FORMAT,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
+            })
+        };
+        let written = |data: &[f32], label| {
+            let b = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: bpr as u64 * h as u64,
+                usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: true,
             });
-            if !data.is_empty() {
-                queue.write_texture(
-                    wgpu::TexelCopyTextureInfo { texture: &t, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-                    bytemuck::cast_slice(data),
-                    wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(16 * w), rows_per_image: None },
-                    extent,
-                );
+            {
+                let src: &[u8] = bytemuck::cast_slice(data);
+                let mut dst = b.slice(..).get_mapped_range_mut();
+                for r in 0..h as usize {
+                    let (s, d) = (r * row as usize, r * bpr as usize);
+                    dst[d..d + row as usize].copy_from_slice(&src[s..s + row as usize]);
+                }
             }
-            t.create_view(&wgpu::TextureViewDescriptor::default())
+            b.unmap();
+            b
         };
-        let iter = texture(g.width, g.height, &g.iter, "fractadyne.adopt_iter");
-        let aux = if g.aux.is_empty() {
-            texture(1, 1, &[], "fractadyne.adopt_aux_zero")
+        let iter_t = texture(w, h, "fractadyne.adopt_iter");
+        let mut pending = vec![(written(&g.iter, "fractadyne.adopt_iter_upload"), iter_t.clone())];
+        let aux_t = if g.aux.is_empty() {
+            texture(1, 1, "fractadyne.adopt_aux_zero")
         } else {
-            texture(g.width, g.height, &g.aux, "fractadyne.adopt_aux")
+            let t = texture(w, h, "fractadyne.adopt_aux");
+            pending.push((written(&g.aux, "fractadyne.adopt_aux_upload"), t.clone()));
+            t
         };
-        Some(Self { width: g.width, height: g.height, ss: g.ss.max(1), iter, aux })
+        Some(Self {
+            width: w,
+            height: h,
+            ss: g.ss.max(1),
+            iter: iter_t.create_view(&wgpu::TextureViewDescriptor::default()),
+            aux: aux_t.create_view(&wgpu::TextureViewDescriptor::default()),
+            pending: std::sync::Mutex::new(pending),
+            bytes_per_row: bpr,
+        })
+    }
+
+    /// Copy the written planes into the textures, in the adopting frame's encoder (once).
+    pub(crate) fn stage(&self, encoder: &mut wgpu::CommandEncoder) {
+        let pending = self.pending.lock().map(|mut p| std::mem::take(&mut *p)).unwrap_or_default();
+        for (b, t) in &pending {
+            encoder.copy_buffer_to_texture(
+                wgpu::TexelCopyBufferInfo {
+                    buffer: b,
+                    layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(self.bytes_per_row), rows_per_image: Some(self.height) },
+                },
+                wgpu::TexelCopyTextureInfo { texture: t, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                wgpu::Extent3d { width: self.width, height: self.height, depth_or_array_layers: 1 },
+            );
+        }
     }
 
     /// Whether this frame is a whole texture of `size` texels built at `ss`.
