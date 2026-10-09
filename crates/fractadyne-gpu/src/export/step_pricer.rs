@@ -80,6 +80,34 @@ fn under_a_pass_target_a_slow_pass_now_and_then_does_not_pin_the_cap() {
 }
 
 #[test]
+fn under_a_pass_target_a_tile_opens_at_its_price_and_then_follows_its_walls() {
+    let area = 600_000u64;
+    let mut p = StepPricer::for_pass(Some(8.0));
+    // Measured at 1.5 ns a step (the RX 6800 XT's busy floatexp passes).
+    for _ in 0..5 {
+        p.observe(1.5e-6 * area as f64 * 10.0, area, 10);
+    }
+    // A tile's first pass: the whole area at that price, below the export's 16-step floor.
+    let open = p.cap_for(area, true);
+    assert_eq!(open, (8.0e6 / 1.5 / area as f64) as u32);
+    assert!(open < STEP_MIN_CAP);
+    assert_eq!(StepPricer::for_pass(Some(0.01)).cap_for(area, true), STEP_MIN_CAP_TARGET);
+    // Later passes follow the last wall: on target, kept; twice it, halved; far under it, at most
+    // doubled — a latency-bound tail grows its cap pass by pass instead of jumping to thousands.
+    p.observe(8.0, area, 100);
+    assert_eq!(p.cap_for(area, false), 100);
+    p.observe(16.0, area, 100);
+    assert_eq!(p.cap_for(area, false), 50);
+    p.observe(0.5, 2_000, 100);
+    assert_eq!(p.cap_for(area, false), 200);
+    // A new tile opens at the price again, whatever the last tail allowed.
+    assert_eq!(p.cap_for(area, true), (8.0e6 / p.price_ns() / area as f64) as u32);
+    // Without a target nothing changes: the export's own cap.
+    let w = StepPricer::new();
+    assert_eq!(w.cap_for(area, false), w.cap(area));
+}
+
+#[test]
 fn a_nearly_finished_pass_does_not_price_steps() {
     // A few hundred active pixels leave the card idle: the wall is one chain, not per-step cost
     // (measured up to 1,500 ns per pixel-step). Pricing from it would shrink every later cap.

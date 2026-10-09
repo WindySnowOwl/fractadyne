@@ -544,6 +544,10 @@ const STEP_PRIOR_NS: f64 = 1.5;
 pub const STEP_MAX_PX_STEPS: f64 = 6.0e8;
 /// A pass's step cap is never below this: a bounded pass count even on a pathological card.
 const STEP_MIN_CAP: u32 = 16;
+/// The floor under a pass target (`ExportRequest::pass_ms`, [`StepPricer::cap_for`]): on the RX
+/// 6800 XT a 16-step pass over a busy 9.3e78× tile took 15 ms at p90 and 30 at p99 against an 8 ms
+/// target (PLUTO, 2026-10-09), so the export's floor was itself the stall.
+const STEP_MIN_CAP_TARGET: u32 = 2;
 /// A pass prices steps only when this many pixels were active in it. With fewer, the card is not
 /// busy and the wall is one pixel's chain, not per-step cost (measured up to 1,500 ns per
 /// pixel-step at a few hundred active pixels), which would shrink every later cap for nothing.
@@ -567,6 +571,9 @@ pub(crate) struct StepPricer {
     /// for 14,400 passes. The worst-ever rule is a margin against the watchdog for passes sized in
     /// hundreds of ms; a pass target is milliseconds, where even a 20× underprice stays far from it.
     recent: Option<Vec<f64>>,
+    /// Under a pass target: the last pass's cap and wall, which size the next pass of the same
+    /// tile ([`Self::cap_for`]).
+    last: Option<(u32, f64)>,
 }
 
 /// Passes in the median a pass target prices from ([`StepPricer::recent`]).
@@ -580,7 +587,7 @@ impl StepPricer {
     pub(crate) fn for_pass(pass_ms: Option<f64>) -> Self {
         let target = pass_ms.filter(|m| m.is_finite() && *m > 0.0);
         let target_ms = target.map_or(STEP_TARGET_MS, |m| m.min(STEP_TARGET_MS));
-        Self { worst_ns: STEP_PRIOR_NS, measured: false, target_ms, recent: target.map(|_| Vec::new()) }
+        Self { worst_ns: STEP_PRIOR_NS, measured: false, target_ms, recent: target.map(|_| Vec::new()), last: None }
     }
     /// The cost a pass is priced at, ns per active pixel-step.
     fn price_ns(&self) -> f64 {
@@ -598,9 +605,35 @@ impl StepPricer {
         let px_steps = (self.target_ms * 1.0e6 / self.price_ns()).min(STEP_MAX_PX_STEPS);
         (px_steps / area.max(1) as f64).clamp(STEP_MIN_CAP as f64, u32::MAX as f64) as u32
     }
+    /// The step cap for the next pass over a tile of `area` samples; `fresh` = its first pass.
+    /// Without a pass target: [`Self::cap`], the export's own sizing. Under one, a tile's first pass
+    /// is priced over the whole area (all of it runs), and every later pass FOLLOWS the one before:
+    /// `cap × target / wall`, at most doubling. One model cannot price both ends of a tile: a busy
+    /// pass costs its running pixels' steps, a thinning tail one pixel's chain of dependent steps,
+    /// whatever few pixels run (sized by its running pixels, a 9.3e78× tail asked ~27,000 steps
+    /// and took 100–220 ms, RTX 3080, 2026-10-09). The last wall measures whichever it is. The
+    /// floor is [`STEP_MIN_CAP_TARGET`].
+    fn cap_for(&self, area: u64, fresh: bool) -> u32 {
+        if self.recent.is_none() {
+            return self.cap(area);
+        }
+        let floor = STEP_MIN_CAP_TARGET as f64;
+        match self.last {
+            Some((cap, wall)) if !fresh && wall.is_finite() && wall > 0.0 => {
+                (cap as f64 * (self.target_ms / wall).min(2.0)).clamp(floor, u32::MAX as f64) as u32
+            }
+            _ => {
+                let px_steps = (self.target_ms * 1.0e6 / self.price_ns()).min(STEP_MAX_PX_STEPS);
+                (px_steps / area.max(1) as f64).clamp(floor, u32::MAX as f64) as u32
+            }
+        }
+    }
     /// Record a pass: `active` pixels ran up to `cap` steps in `wall_ms`. The first measurement
     /// REPLACES the prior (the prior is a guess, not evidence); later ones can only raise it.
     fn observe(&mut self, wall_ms: f64, active: u64, cap: u32) {
+        if self.recent.is_some() && wall_ms.is_finite() && wall_ms > 0.0 && cap > 0 {
+            self.last = Some((cap, wall_ms)); // any pass, busy or a tail (`cap_for`)
+        }
         if !wall_ms.is_finite() || wall_ms <= 0.0 || active < STEP_PRICE_MIN_ACTIVE || cap == 0 {
             return;
         }
@@ -1229,7 +1262,7 @@ impl TileChunker {
             if passes > 0 && deadline.is_some_and(|d| std::time::Instant::now() >= d) {
                 return Err(GpuError::Canceled);
             }
-            let cap = steps.cap(area);
+            let cap = steps.cap_for(area, passes == 0);
             *max_work = (*max_work).max(area * cap as u64);
             iu.start_iter = u32::from(passes > 0);
             iu.end_iter = max_iter;
