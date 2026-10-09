@@ -696,6 +696,28 @@ worst-ever rule stands, the margin it is for passes sized in hundreds of ms. On 
 
 6.8e3999×: 7.0 s alone, 4.0 s, no second over 10 ms either way.
 
+**PLUTO with Same card (2026-10-09, `g4e34f86`, release candidate).** `--zoomtest 30`, two runs per
+arm: on-screen lag 0.299/0.322 → 0.043/0.043 oct on the RX 6800 XT, 0.306/0.273 → 0.028/0.027 on the
+RTX 3070, frames over 33 ms 5/5 → 2/0 and 2/3 → 2/3; `--motiontest` PASS on both; worker self-test
+12/12 on both; no device loss. But settling the 9.3e78× view on the 6800 XT, the window's worst frame
+each second went from 20 ms to ~100: traced, 5,724 of the second device's 5,764 step passes sat at
+the export's 16-step floor, 15 ms at p90 and 30 at p99, where the target was 8. **Fix (`c16f6d7`):**
+under a pass target a tile's first pass is priced over its area and every later pass follows the one
+before (`cap × target / wall`, at most doubling, floor 2 steps). Sized by the RUNNING pixels instead,
+a thinning tail asked ~27,000 steps — a tail costs one pixel's chain, not its pixel count — and took
+100–220 ms; following the wall measures whichever it is. Settle shots, alone / Same card before /
+after:
+
+| View, card | Settle | Worst frame each second, median |
+| --- | --- | --- |
+| 9.3e78×, RX 6800 XT | 64.8 / 21.8 / 10.9 s | 20 / 101 / 34 ms |
+| 6.8e3999×, RX 6800 XT | 11.7 / 5.5 / 5.5 s | 69 / 65 / 68 ms |
+| 9.3e78×, RTX 3070 | 41.7 / 20.7 / 14.3 s | 66 / 61 / 59 ms |
+
+On the RTX 3080 (back to back, with a remote-desktop session running): 20.3 s alone, 11.8 s, no
+second over 33 ms. The battery on the 6800 XT at `g4e34f86`: self-test 515/516 with goldens 31/31
+(the known Windows-on-Radeon "wider canvas" check), every other step as expected.
+
 **On by default, with an offer after a crash (2026-10-09, user: "Enable by default. If there is a
 crash, offer to turn it off on restart").**
 - The stored setting keeps three states (`gpu_worker::clean_setting`): empty = never chosen, which
