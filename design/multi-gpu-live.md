@@ -670,14 +670,35 @@ The converged images: identical at 6.8e3999×; at 9.3e78× 449 pane pixels at mo
 known timing-dependent difference near interior, §8). ⚠While the 9.3e78× view settles, the
 window's worst frame each second goes from ~23 ms to ~57 ms (80 at most): settle samples go through
 the export renderer, whose passes are sized for 200–400 ms, and on a shared card (as on a card that
-composites the desktop) they hold up the window's present. Motion refreshes have 8 ms passes; the
-settle samples do not yet. ⛔A reset of the card ends the app whichever device caused it, so the
-setting's text says so. Off by default.
+composites the desktop) they hold up the window's present. ⛔A reset of the card ends the app
+whichever device caused it, so the setting's text says so. Off by default.
+
+**Short settle passes (2026-10-09, user: "yes").** `ExportRequest::pass_ms` sizes the export's
+passes for a wall (`None`, the default, keeps its own: step passes for 200 ms, chunk windows between
+100 and 400 ms, the tile budget where it cannot chunk); the second device's settle samples set it to
+`WORKER_PASS_MS` (8 ms). Self-test: a 1 ms target changes no pixel and takes more passes, at the
+deep view (step-bounded, 79 passes against 1) and a df32 one (chunk windows, 213 against 2, the
+longest 4.9 ms against 172). ⛔The export's step pricer priced from the WORST pass it had seen, and
+a pass's wall runs from submission to readback: on a shared card it includes waiting behind the
+window's frames (one cold first pass read 9.2 ns a step, the rest 0.15 with a 10 ms wait every few
+passes), so a 9.3e78× sample sat at the 16-step floor for 14,400 passes and took 2.5 s. Under a pass
+target it now prices from the median of the last 9 passes (`StepPricer::recent`); without one the
+worst-ever rule stands, the margin it is for passes sized in hundreds of ms. On the RTX 3080 with
+*Same card*:
+
+| 9.3e78× settle | Time | Seconds with a frame over 33 ms | Second-device sample |
+| --- | --- | --- | --- |
+| Alone | 20.6 s | 0 of 20 | — |
+| Export's own passes | 11.6 s | 10 of 10 (6 over 50 ms) | ~1.0 s |
+| 8 ms, worst-ever price | 15.4 s | 0 of 14 | 2.5 s |
+| 8 ms, median price | 13.7 s | 1 of 12 (the last, at convergence) | 1.7 s |
+
+6.8e3999×: 7.0 s alone, 4.0 s, no second over 10 ms either way.
 
 **Open.**
-1. Settle samples on the second device: export passes of up to 200–400 ms stall the window when that
-   device shares its card with the window or the desktop (above). A pass target for worker samples,
-   as `WORKER_PASS_MS` is for motion refreshes, would close it.
+1. Short settle passes cost the heavy sample 1.7 s against 1.0 (the readback after every pass, and
+   the time behind the window's frames). Packing more work per pass, or overlapping the readback
+   with the next pass, would win some of it back.
 2. With the 3070 drawing the window and the 6800 XT helping, 7–9 frames a run still go over 33 ms
    (0–1 alone). The mixed-class flicker of §4 L3's acceptance is not measured (in motion nearly
    every frame on screen is the worker's, so classes rarely alternate).

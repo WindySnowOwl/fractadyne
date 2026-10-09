@@ -1462,6 +1462,59 @@ impl FractadyneApp {
                 });
             }
 
+            // ⭐THE SECOND DEVICE'S SHORT PASSES (`ExportRequest::pass_ms`, `WORKER_PASS_MS`). Its settle
+            // samples run with a pass target so that, on a card it shares with the window or the
+            // desktop, no pass holds up a present; where passes split never changes a pixel, so the
+            // sample must be the one the export's own sizing renders. Both pass shapes it can take: the
+            // deep view above (step-bounded passes) and a df32 view (chunk windows). Control: the
+            // target reached the renderer — it took MORE passes (a target that changed nothing would
+            // pass the identity check vacuously).
+            {
+                let mut vp = Viewport::new(WW as f64, WH as f64);
+                vp.center_x = fractadyne_core::parse_bf(SX).unwrap();
+                vp.center_y = fractadyne_core::parse_bf(SY).unwrap();
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (WH as f64 * 1.0e8));
+                vp.precision = fractadyne_core::precision_for_magnification(1.0e8);
+                let saved = (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method);
+                self.render_cfg.max_iter = 200_000;
+                self.render_cfg.auto_iter = false;
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                let mut df = self.current_export_request_for(&vp, false);
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method) = saved;
+                df.width = WW;
+                df.height = WH;
+                df.ss = 2;
+                for (label, base) in [("floatexp 1e30x, step-bounded", req.clone()), ("df32 1e8x, chunk windows", df)] {
+                    let mut short = base.clone();
+                    short.pass_ms = Some(1.0);
+                    let (pass, result) = match (local(&base), local(&short)) {
+                        (Some(a), Some(b)) if a.pixels.len() == b.pixels.len() => {
+                            let diffs = bit_exact(&a.pixels, &b.pixels);
+                            (
+                                diffs == 0 && b.chunk_passes > a.chunk_passes,
+                                format!(
+                                    "{diffs} of {} channels differ; {} passes against {} (longest {:.1} ms against {:.1})",
+                                    a.pixels.len(),
+                                    b.chunk_passes,
+                                    a.chunk_passes,
+                                    b.max_dispatch_ms,
+                                    a.max_dispatch_ms
+                                ),
+                            )
+                        }
+                        _ => (false, "render failed, or the sizes differ".into()),
+                    };
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Worker",
+                        name: format!("a pass target changes no pixel, and shortens the passes ({label})"),
+                        params: format!("{WW}×{WH} ss 2, mode {}, pass_ms 1 against the export's own sizing", base.mode),
+                        result,
+                        threshold: "0 channels differ; more passes",
+                        pass,
+                    });
+                }
+            }
+
             // ⭐THE LIVE RENDERER ON ANOTHER DEVICE (design/multi-gpu-live.md L3). A motion refresh
             // from a second GPU is adopted as the window's frozen frame, so it must be the frame the
             // window's device renders from the same params, and the export renderer is not that

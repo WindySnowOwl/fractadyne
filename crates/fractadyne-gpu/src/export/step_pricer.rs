@@ -48,6 +48,38 @@ fn a_measurement_replaces_the_prior_and_then_only_raises_the_price() {
 }
 
 #[test]
+fn under_a_pass_target_a_slow_pass_now_and_then_does_not_pin_the_cap() {
+    // The shared-card shape (2026-10-09): passes cost 0.15 ns a step, but one in four waits behind
+    // the window's frames and reads ten times that.
+    let area = 479_370u64;
+    let mut p = StepPricer::for_pass(Some(8.0));
+    let mut caps = Vec::new();
+    for k in 0..20 {
+        let cap = p.cap(area);
+        let ns = if k % 4 == 0 { 1.5 } else { 0.15 };
+        p.observe(ns * 1.0e-6 * area as f64 * cap as f64, area, cap);
+        caps.push(cap);
+    }
+    let fair = (8.0e6 / 0.15 / area as f64) as u32;
+    assert_eq!(*caps.last().unwrap(), fair, "priced at the passes that did not wait: {caps:?}");
+    // Without a target the worst wait rules, as it must for passes sized near the watchdog.
+    let mut w = StepPricer::new();
+    w.observe(0.15e-6 * area as f64 * 100.0, area, 100);
+    w.observe(1.5e-6 * area as f64 * 100.0, area, 100);
+    w.observe(0.15e-6 * area as f64 * 100.0, area, 100);
+    assert_eq!(w.cap(area), (STEP_TARGET_MS * 1.0e6 / 1.5 / area as f64) as u32);
+    // And a real rise in cost reaches the price within a few passes.
+    let mut r = StepPricer::for_pass(Some(8.0));
+    for _ in 0..9 {
+        r.observe(0.15e-6 * area as f64 * 100.0, area, 100);
+    }
+    for _ in 0..5 {
+        r.observe(0.6e-6 * area as f64 * 100.0, area, 100);
+    }
+    assert_eq!(r.cap(area), (8.0e6 / 0.6 / area as f64) as u32);
+}
+
+#[test]
 fn a_nearly_finished_pass_does_not_price_steps() {
     // A few hundred active pixels leave the card idle: the wall is one chain, not per-step cost
     // (measured up to 1,500 ns per pixel-step). Pricing from it would shrink every later cap.

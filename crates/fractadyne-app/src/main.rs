@@ -14485,10 +14485,13 @@ impl FractadyneApp {
         // image must then equal a run without a worker, or the worker's load alone moves it.
         let shadow = std::env::var_os("FRACTADYNE_WORKER_SHADOW").is_some();
         let Some(index) = (if shadow { Some(1) } else { self.accum_take_index(view) }) else { return };
-        let req = crate::profile::params_to_request_exact(
+        let mut req = crate::profile::params_to_request_exact(
             self.perf.accum_template[view].as_ref().expect("checked above"),
             accum_jitter_seq(index),
         );
+        // Short passes, as for its motion refreshes: the second device may share a card with the
+        // window or the desktop, and one pass is one draw the GPU does not interrupt.
+        req.pass_ms = Some(crate::tunables::cost().worker_pass_ms);
         let run = self.perf.accum_run[view];
         let job = gpu_worker::Job { view, run, index, req };
         if self.gpu_worker.as_ref().is_some_and(|w| w.submit(job)) {

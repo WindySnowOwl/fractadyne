@@ -4000,6 +4000,7 @@ impl FractadyneApp {
             width,
             height,
             work_budget: None, // default export tile budget; the tour path overrides per frame
+            pass_ms: None,
             tile_px_max: None,
             jitter: [0.0, 0.0],
             ss: self.export.ss.max(1),

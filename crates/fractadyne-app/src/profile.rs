@@ -904,6 +904,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         width: p.resolution[0].max(1),
         height: p.resolution[1].max(1),
         work_budget: None,
+        pass_ms: None,
         tile_px_max: None,
         jitter: [0.0, 0.0],
         ss: p.ss.max(1),

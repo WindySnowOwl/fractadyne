@@ -98,8 +98,8 @@ Changes after 0.3.0-beta.1:
   WORKER_MOTION=0` keeps the second card to the settled view. On a machine with one card, the
   setting's *Same card* opens a second device on it: no extra speed, but it renders without waiting
   for the screen, and on a test machine it cut how far the picture lagged a deep zoom by about
-  six times and settled two deep views 1.8 times sooner. While a heavy view settles the window then
-  updates less evenly, and a failure that resets the card ends the app.
+  six times and settled two deep views 1.5 and 1.75 times sooner, the window as smooth as without
+  it. A failure that resets the card ends the app.
 - **Fixed: rendering a tour from the app filed a crash report for the app (0.3.0-beta.18).** The
   render process the Render tour window starts shares the app's log folder, and it took the running
   session's "still running" marker for one left behind by a crash: it wrote a crash report for a

@@ -278,6 +278,14 @@ pub struct ExportRequest {
     /// dispatch and lose the device — the live path bounds this via `fe_budget`, the tour didn't).
     /// With occupancy-sized tiles (`OCC_TILE_SAMPLES`) it bounds each chunk DISPATCH instead.
     pub work_budget: Option<u64>,
+    /// The wall each pass is sized for, ms: `None` = the export's own sizing (step-bounded passes
+    /// for [`STEP_TARGET_MS`], chunk windows held between `CHUNK_CHEAP_MS` and `CHUNK_HOT_MS`, the
+    /// tile work budget where the iterate cannot chunk). The live view's second device sets it short
+    /// for its settle samples (`WORKER_PASS_MS`): one pass is one draw the GPU does not interrupt, so
+    /// on a card that also draws the window or the desktop a long pass holds up their presents.
+    /// Where the passes split never changes a pixel (step caps and chunk windows), so neither does
+    /// this.
+    pub pass_ms: Option<f64>,
     /// Sub-pixel sample offset in DISPLAY pixels (`[0, 0]` = pixel centres), as the live view's
     /// `MandelbrotParams::jitter` — the progressive-supersampling sample position, so a sample
     /// rendered here on another device lands where the live view would place it. Honoured by
@@ -549,15 +557,45 @@ const STEP_PRICE_MIN_ACTIVE: u64 = 131_072;
 pub(crate) struct StepPricer {
     worst_ns: f64,
     measured: bool,
+    /// The wall a pass is sized for, ms ([`STEP_TARGET_MS`] unless `ExportRequest::pass_ms`).
+    target_ms: f64,
+    /// Under a pass target: the last [`STEP_RECENT`] priced passes, whose MEDIAN prices the next
+    /// one instead of the worst ever seen. A pass's wall runs from its submission to its readback,
+    /// so on a card shared with the window it includes waiting behind the window's frames: on the
+    /// RTX 3080 (2026-10-09) one cold first pass read 9.2 ns a step and the rest 0.15 with a 10 ms
+    /// wait every few passes, and the worst-ever price held a 9.3e78× sample at the 16-step floor
+    /// for 14,400 passes. The worst-ever rule is a margin against the watchdog for passes sized in
+    /// hundreds of ms; a pass target is milliseconds, where even a 20× underprice stays far from it.
+    recent: Option<Vec<f64>>,
 }
+
+/// Passes in the median a pass target prices from ([`StepPricer::recent`]).
+const STEP_RECENT: usize = 9;
 
 impl StepPricer {
     pub(crate) fn new() -> Self {
-        Self { worst_ns: STEP_PRIOR_NS, measured: false }
+        Self::for_pass(None)
+    }
+    /// Passes sized for `pass_ms` (`ExportRequest::pass_ms`), else for [`STEP_TARGET_MS`].
+    pub(crate) fn for_pass(pass_ms: Option<f64>) -> Self {
+        let target = pass_ms.filter(|m| m.is_finite() && *m > 0.0);
+        let target_ms = target.map_or(STEP_TARGET_MS, |m| m.min(STEP_TARGET_MS));
+        Self { worst_ns: STEP_PRIOR_NS, measured: false, target_ms, recent: target.map(|_| Vec::new()) }
+    }
+    /// The cost a pass is priced at, ns per active pixel-step.
+    fn price_ns(&self) -> f64 {
+        match &self.recent {
+            Some(r) if r.len() >= 3 => {
+                let mut v = r.clone();
+                v.sort_by(|a, b| a.total_cmp(b));
+                v[v.len() / 2]
+            }
+            _ => self.worst_ns,
+        }
     }
     /// The step cap for a pass over `area` samples.
     fn cap(&self, area: u64) -> u32 {
-        let px_steps = (STEP_TARGET_MS * 1.0e6 / self.worst_ns).min(STEP_MAX_PX_STEPS);
+        let px_steps = (self.target_ms * 1.0e6 / self.price_ns()).min(STEP_MAX_PX_STEPS);
         (px_steps / area.max(1) as f64).clamp(STEP_MIN_CAP as f64, u32::MAX as f64) as u32
     }
     /// Record a pass: `active` pixels ran up to `cap` steps in `wall_ms`. The first measurement
@@ -569,6 +607,12 @@ impl StepPricer {
         let ns = wall_ms * 1.0e6 / (active as f64 * cap as f64);
         self.worst_ns = if self.measured { self.worst_ns.max(ns) } else { ns };
         self.measured = true;
+        if let Some(r) = self.recent.as_mut() {
+            r.push(ns);
+            if r.len() > STEP_RECENT {
+                r.remove(0);
+            }
+        }
     }
 }
 
@@ -578,11 +622,23 @@ pub(crate) struct ChunkPricer {
     /// per iteration. Only ever rises: a cheap (BLA-skipping, parallel-bound) chunk must never
     /// re-widen the openings that protect the next dwell-bound tile.
     worst_ms_per_iter: f64,
+    /// The band a window is held in, ms: [`CHUNK_HOT_MS`] and [`CHUNK_CHEAP_MS`], or twice and half
+    /// `ExportRequest::pass_ms`.
+    hot_ms: f64,
+    cheap_ms: f64,
 }
 
 impl ChunkPricer {
     pub(crate) fn new() -> Self {
-        Self { worst_ms_per_iter: 1.0 / CHUNK_SERIAL_FLOOR_IPMS }
+        Self::for_pass(None)
+    }
+    /// Windows held around `pass_ms` (`ExportRequest::pass_ms`), else in the export's own band.
+    pub(crate) fn for_pass(pass_ms: Option<f64>) -> Self {
+        let (hot_ms, cheap_ms) = match pass_ms.filter(|m| m.is_finite() && *m > 0.0) {
+            Some(m) => ((2.0 * m).min(CHUNK_HOT_MS), (0.5 * m).min(CHUNK_CHEAP_MS)),
+            None => (CHUNK_HOT_MS, CHUNK_CHEAP_MS),
+        };
+        Self { worst_ms_per_iter: 1.0 / CHUNK_SERIAL_FLOOR_IPMS, hot_ms, cheap_ms }
     }
     /// The window floor for the current worst observed rate. Normally [`CHUNK_MIN_ITERS`], but
     /// when the worst serial rate says that many iters would exceed [`CHUNK_HOT_MS`] it yields
@@ -593,7 +649,7 @@ impl ChunkPricer {
     /// unchanged (`render_iter_chunked` is bit-identical for any window; the IterChunk goldens
     /// pin that).
     fn window_floor(&self) -> u32 {
-        let hot_window = (CHUNK_HOT_MS / self.worst_ms_per_iter) as u32;
+        let hot_window = (self.hot_ms / self.worst_ms_per_iter) as u32;
         CHUNK_MIN_ITERS.min(hot_window).max(CHUNK_ABS_MIN)
     }
     /// Opening window for a tile: the largest window that stays under `CHUNK_HOT_MS` even if some
@@ -601,7 +657,7 @@ impl ChunkPricer {
     /// `w` already IS that budget window, and flooring it UP is precisely what made a hot location
     /// lethal; the hard `CHUNK_ABS_MIN` still bounds the pass count.
     pub(crate) fn open(&self, max_iter: u32) -> u32 {
-        let w = (CHUNK_HOT_MS / self.worst_ms_per_iter) as u32;
+        let w = (self.hot_ms / self.worst_ms_per_iter) as u32;
         w.max(CHUNK_ABS_MIN).min(max_iter.max(1))
     }
     /// Record a chunk's measured wall. Garbage walls (NaN/negative) are ignored.
@@ -619,9 +675,9 @@ impl ChunkPricer {
     pub(crate) fn next(&self, window: u32, wall_ms: f64, max_iter: u32) -> u32 {
         let next = if !wall_ms.is_finite() || wall_ms < 0.0 {
             window
-        } else if wall_ms > CHUNK_HOT_MS {
+        } else if wall_ms > self.hot_ms {
             window / 2
-        } else if wall_ms < CHUNK_CHEAP_MS {
+        } else if wall_ms < self.cheap_ms {
             window.saturating_mul(2)
         } else {
             window
@@ -1366,6 +1422,20 @@ fn export_plan(limits: &wgpu::Limits, req: &ExportRequest, allow_chunking: bool)
     // lowers the tile-size floor so the cap is actually honoured — at extreme `max_iter` a 64²
     // floor tile could still exceed a small budget, so drop the floor to 16² when one is set.
     let budget = req.work_budget.unwrap_or(TILE_WORK_BUDGET);
+    let fe = req.mode == 2;
+    let chunk_scope = allow_chunking
+        && (req.mode == 1 || req.mode == 0 || req.mode == 2)
+        && req.resumable()
+        && !method_needs_aux(req.color_method)
+        && limits.max_color_attachment_bytes_per_sample >= if fe { 64 } else { 48 };
+    // A pass target (`ExportRequest::pass_ms`) prices chunk windows and step caps; where the
+    // iterate cannot chunk, the tile is the pass, and only a smaller work budget shortens it.
+    let budget = match req.pass_ms.filter(|m| m.is_finite() && *m > 0.0) {
+        Some(m) if !chunk_scope && req.work_budget.is_none() => {
+            ((budget as f64) * (m / CHUNK_HOT_MS).min(1.0)) as u64
+        }
+        _ => budget,
+    };
     let by_tex = (max_dim / ss).max(1);
     let by_buf = (((max_buf / 16) as f64).sqrt() as u32).max(256);
     let work_per_px = (ss as u64 * ss as u64) * (req.max_iter.max(1) as u64);
@@ -1386,12 +1456,6 @@ fn export_plan(limits: &wgpu::Limits, req: &ExportRequest, allow_chunking: bool)
     // price it. Out of scope (aux coloring, non-holomorphic formulas, or a device without the
     // state-attachment width) keeps the single-dispatch path unchanged. Glitch detection IS in
     // scope since beta.124 (`ST_GLITCHED`).
-    let fe = req.mode == 2;
-    let chunk_scope = allow_chunking
-        && (req.mode == 1 || req.mode == 0 || req.mode == 2)
-        && req.resumable()
-        && !method_needs_aux(req.color_method)
-        && limits.max_color_attachment_bytes_per_sample >= if fe { 64 } else { 48 };
     // Mode 2 in chunk scope: occupancy-sized tiles run as step-bounded passes (see
     // `OCC_TILE_SAMPLES`). Everything else keeps the nominal-work tile, which is its bound.
     let occupancy = chunk_scope && fe && crate::tile_occupancy_on();
@@ -1581,8 +1645,8 @@ impl<'a> TileRenderer<'a> {
             color_pipeline,
             color_bgl,
             chunker,
-            pricer: ChunkPricer::new(),
-            steps: StepPricer::new(),
+            pricer: ChunkPricer::for_pass(req.pass_ms),
+            steps: StepPricer::for_pass(req.pass_ms),
             running_read,
             iter_uniform,
             color_uniform,
