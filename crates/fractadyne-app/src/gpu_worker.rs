@@ -374,7 +374,7 @@ impl WorkerState {
     /// The setting's status line. `pinned`: `--worker-gpu` chose the card, not the setting.
     pub(crate) fn text(&self, pinned: bool) -> String {
         let s = match self {
-            WorkerState::Off => "Off: this window's graphics card renders every sample.".to_string(),
+            WorkerState::Off => "Off: this window's graphics card renders everything.".to_string(),
             WorkerState::Starting => "Starting…".to_string(),
             WorkerState::Running(name) => format!("In use: {name}"),
             WorkerState::Failed(e) => format!("Could not start: {e}"),
@@ -399,11 +399,14 @@ pub(crate) fn second_card_choices(cards: &[(usize, String)], window_name: &str) 
     cards.iter().filter(|(_, n)| !(same == 1 && n == window_name)).cloned().collect()
 }
 
-/// What the setting holds, cleaned: a card number from the listing, or empty (off). Anything else
-/// (an edited session file) reads as off rather than as a name to search for.
+/// The setting's value for "this card, as a second device" (`open_headless`'s `same`).
+pub(crate) const SAME_CARD: &str = "same";
+
+/// What the setting holds, cleaned: a card number from the listing, [`SAME_CARD`], or empty (off).
+/// Anything else (an edited session file) reads as off rather than as a name to search for.
 pub(crate) fn setting_spec(raw: &str) -> String {
     let t = raw.trim();
-    if t.parse::<usize>().is_ok_and(|n| (1..100).contains(&n)) {
+    if t.parse::<usize>().is_ok_and(|n| (1..100).contains(&n)) || t == SAME_CARD {
         t.to_string()
     } else {
         String::new()
@@ -446,7 +449,7 @@ mod tests {
         assert_eq!(setting_spec(""), "");
         assert_eq!(setting_spec(" 2 "), "2");
         assert_eq!(setting_spec("0"), "");
-        assert_eq!(setting_spec("same"), "");
+        assert_eq!(setting_spec(" same "), SAME_CARD);
         assert_eq!(setting_spec("RTX"), "");
         assert_eq!(setting_spec("6800"), ""); // a model number is a name, not a position
     }

@@ -1225,8 +1225,10 @@ impl FractadyneApp {
                 let other = "AMD Radeon RX 6800 XT".to_string();
                 self.worker_cards = Some(vec![(1, self.gpu_name.clone()), (2, other.clone())]);
                 self.worker_cards_rx = None;
-                self.render_cfg.worker_gpu = "2".into();
-                self.worker_state = crate::gpu_worker::WorkerState::Running(format!("{other} · Vulkan"));
+                // The same-card choice (the one every one-card machine can take), as the setting shows it in use.
+                self.render_cfg.worker_gpu = crate::gpu_worker::SAME_CARD.into();
+                self.worker_state =
+                    crate::gpu_worker::WorkerState::Running(format!("same card, {} · Vulkan", self.gpu_name));
             }
             Screen::Minimap => self.dialogs.minimap = true,
             Screen::Help => self.dialogs.help_open = true,

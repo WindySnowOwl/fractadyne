@@ -653,16 +653,40 @@ took 11 of 12 tiles while the twin built its pipelines, so the twin never asked 
 meant to fail on — under the hook every device now starts together, and the twin fails on its
 first tile).
 
+**One card: "Same card" (2026-10-09, user: "yes" to offering it).** Advanced ▸ Second graphics card
+now offers *Same card* (session value `same`, `gpu_worker::SAME_CARD`): a second device on the
+window's own card. It adds no GPU, but its walks and samples are not paced by the screen's frames.
+On the RTX 3080 (`--zoomtest 30`, two runs per arm, interleaved; `--shot` at 1600×1000):
+
+| | Alone | Same card, 8 ms passes | Same card, 16 ms passes |
+| --- | --- | --- | --- |
+| Lag on screen, mean | 0.296, 0.278 oct | 0.047, 0.052 | 0.043, 0.043 |
+| Frame interval p95 | 18.5, 18.9 ms | 21.3, 21.6 | 20.3, 21.3 |
+| Frames over 33 ms | 6, 0 | 12, 2 | 3, 15 |
+| Settle, 9.3e78× minibrot | 20.9 s | 11.6 s (12 of 24 samples on the second device) | — |
+| Settle, 6.8e3999× | 7.0 s | 3.9 s (14 of 24) | — |
+
+The converged images: identical at 6.8e3999×; at 9.3e78× 449 pane pixels at most 5/255 apart (the
+known timing-dependent difference near interior, §8). ⚠While the 9.3e78× view settles, the
+window's worst frame each second goes from ~23 ms to ~57 ms (80 at most): settle samples go through
+the export renderer, whose passes are sized for 200–400 ms, and on a shared card (as on a card that
+composites the desktop) they hold up the window's present. Motion refreshes have 8 ms passes; the
+settle samples do not yet. ⛔A reset of the card ends the app whichever device caused it, so the
+setting's text says so. Off by default.
+
 **Open.**
-1. With the 3070 drawing the window and the 6800 XT helping, 7–9 frames a run still go over 33 ms
+1. Settle samples on the second device: export passes of up to 200–400 ms stall the window when that
+   device shares its card with the window or the desktop (above). A pass target for worker samples,
+   as `WORKER_PASS_MS` is for motion refreshes, would close it.
+2. With the 3070 drawing the window and the 6800 XT helping, 7–9 frames a run still go over 33 ms
    (0–1 alone). The mixed-class flicker of §4 L3's acceptance is not measured (in motion nearly
    every frame on screen is the worker's, so classes rarely alternate).
-2. Worker frames bring no counter readings: the verified-present check treats them as complete by
+3. Worker frames bring no counter readings: the verified-present check treats them as complete by
    construction, and live normalization keeps reading only the window's passes.
-3. Pan drags offer nothing (their frames compute no reference offset); the dual view's Julia
+4. Pan drags offer nothing (their frames compute no reference offset); the dual view's Julia
    panel (L4) and prediction (rendering where the camera will be) are not built.
-4. When the worker outpaces the window, the window's GPU idles in motion (it holds rather than
+5. When the worker outpaces the window, the window's GPU idles in motion (it holds rather than
    start walks that would be abandoned). It could render something the worker does not.
-5. Where a moving df32 view refreshes live every frame (`live_refresh_verdict`), the window's own
+6. Where a moving df32 view refreshes live every frame (`live_refresh_verdict`), the window's own
    frame is always newer, so every worker frame is overtaken (dropped). Harmless — that regime is
    already smooth on one GPU — but the worker's work there is wasted.

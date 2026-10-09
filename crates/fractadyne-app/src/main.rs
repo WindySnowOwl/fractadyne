@@ -14537,7 +14537,12 @@ impl FractadyneApp {
         if let Some(rx) = &self.worker_start_rx {
             match rx.try_recv() {
                 Ok(Ok(w)) => {
-                    self.worker_state = gpu_worker::WorkerState::Running(w.name.clone());
+                    let name = if self.worker_for.as_deref() == Some(gpu_worker::SAME_CARD) {
+                        format!("same card, {}", w.name)
+                    } else {
+                        w.name.clone()
+                    };
+                    self.worker_state = gpu_worker::WorkerState::Running(name);
                     self.gpu_worker = Some(w);
                     self.worker_start_rx = None;
                 }
