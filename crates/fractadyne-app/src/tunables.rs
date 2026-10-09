@@ -1002,10 +1002,10 @@ pub(crate) const CHUNK_SHUFFLE_DEFAULT: u64 = 0;
 /// L3). 0 = the second card renders settle samples only, for the before/after measurement.
 pub(crate) const WORKER_MOTION_DEFAULT: u64 = 1;
 
-/// The wall, ms, each pass of the second card's motion-refresh walk is sized for (`WalkPricer`).
-/// One pass is one draw, which the GPU does not interrupt: on a card that also draws the desktop,
-/// a long pass holds up its composition.
-pub(crate) const WORKER_PASS_MS_DEFAULT: f64 = 40.0;
+/// The wall, ms, each pass of the second card's motion-refresh walk is sized for (`WalkPricer`;
+/// the measurements are at `fractadyne_gpu::WALK_PASS_MS`). One pass is one draw, which the GPU does
+/// not interrupt: on a card that also draws the desktop, a long pass holds up its composition.
+pub(crate) const WORKER_PASS_MS_DEFAULT: f64 = fractadyne_gpu::WALK_PASS_MS;
 
 /// 1 = THE U-SPACE BLA (`fractadyne_core::renorm_bla_gpu`): the renormalized step skips along its
 /// own u-reference by a BLA tree, as the main loop skips along the orbit. An approximation held to

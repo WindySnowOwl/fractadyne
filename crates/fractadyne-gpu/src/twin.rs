@@ -251,10 +251,12 @@ pub struct WalkStats {
     pub max_pass_ms: f64,
 }
 
-/// A walk pass is sized for this wall by default ([`WalkPricer::with_pass_ms`] sets another). Short,
-/// so a cancel lands within one and a pass costlier than its price stays far under the driver's
-/// watchdog.
-pub const WALK_PASS_MS: f64 = 40.0;
+/// A walk pass is sized for this wall by default ([`WalkPricer::with_pass_ms`] sets another): half
+/// a 60 Hz frame. One pass is one draw, which the GPU does not interrupt, so on a card that also
+/// composites the desktop a long pass holds up every window's present: with the RX 6800 XT as the
+/// worker and the RTX 3070 drawing the window (PLUTO, 2026-10-08), 40 ms passes put 62–162 frames
+/// a `--zoomtest` over 33 ms, 16 ms and 8 ms passes 7–9 (1 alone), at the same worker frame rate.
+pub const WALK_PASS_MS: f64 = 8.0;
 /// The cost assumed for an opening pass before any is measured, ns per pixel-step: the export's
 /// unobserved prior (`STEP_PRIOR_NS`), above the worst the RTX 3080 has shown.
 const WALK_PRIOR_NS: f64 = 1.5;
@@ -484,16 +486,17 @@ mod tests {
     #[test]
     fn an_opening_pass_prices_the_next_opening_at_once_and_forgets_slowly() {
         let mut p = WalkPricer::default();
-        let area = 40_000u64;
-        // Unmeasured: the prior, 40 ms at 1.5 ns a pixel-step.
-        assert_eq!(p.open(area), (40.0e6 / 1.5 / area as f64) as u32);
+        let area = 4_000u64;
+        let budget = WALK_PASS_MS * 1.0e6;
+        // Unmeasured: the prior, one pass's wall at 1.5 ns a pixel-step.
+        assert_eq!(p.open(area), (budget / 1.5 / area as f64) as u32);
         // Measured dearer: the next opening takes the dearer price at once.
         p.observe_open(area, 100, 3.0 * 100.0 * area as f64 / 1.0e6);
-        assert_eq!(p.open(area), (40.0e6 / 3.0 / area as f64) as u32);
+        assert_eq!(p.open(area), (budget / 3.0 / area as f64) as u32);
         // Cheaper: a fifth of the way per walk, never the whole way at once.
         p.observe_open(area, 100, 1.0 * 100.0 * area as f64 / 1.0e6);
         let ns = 3.0 + 0.2 * (1.0 - 3.0);
-        assert_eq!(p.open(area), (40.0e6 / ns / area as f64) as u32);
+        assert_eq!(p.open(area), (budget / ns / area as f64) as u32);
         // A cheap card's opening is bounded by pixel-steps; a big frame's is floored at 256.
         assert_eq!(WalkPricer { open_ns: 1.0e-6, pass_ms: WALK_PASS_MS }.open(1), WALK_OPEN_MAX_PX_STEPS as u32);
         assert_eq!(WalkPricer::default().open(4_000_000), WALK_MIN_ITERS);

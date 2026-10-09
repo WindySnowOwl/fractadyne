@@ -546,8 +546,8 @@ second card to settle samples.
   offset, exponent, span) only when the live view lies inside the pinned one, so every
   approximation the pin made for its view (series skip, BLA radii) holds (`LiveAim`,
   `view_inside`). A pan drag's frame computes no reference offset, so it offers nothing.
-- **The walk** (`LiveTwin::walk`, `WalkPricer`): chunk windows sized for 40 ms by wall clock, at
-  most doubling. Only an opening pass (every pixel running) prices the next walk's opening, which
+- **The walk** (`LiveTwin::walk`, `WalkPricer`): chunk windows sized for 8 ms by wall clock
+  (`--set WORKER_PASS_MS`; why 8, below), at most doubling. Only an opening pass (every pixel running) prices the next walk's opening, which
   rises at once and falls a fifth of the way per walk. Later passes are priced from the pass
   before, because pixels only stop running; carried into the next opening they would underprice it
   by the share that had escaped. Hard bounds: 1e9 pixel-steps for an opening, 6e10 nominal for any
@@ -556,10 +556,18 @@ second card to settle samples.
   scaled by `√(target / ms)`, within a quarter either way a frame, 0.25 to 1 of the panel.
 - **Transfer.** The G-buffer comes back through the seed pipeline (the live textures have no
   `COPY_SRC`; `Renderer::read_gbuffer`), the aux plane only for the colourings that read it, and is
-  checked to hold a picture (`GBuffer::drawn`). The worker thread then uploads it to the WINDOW's
-  device itself (`AdoptFrame::upload`; wgpu 24's `Device`/`Queue` are `Clone` and `Send`), so the UI
-  thread copies nothing. Measured: the first version uploaded on the UI thread, 26 MB a frame at
-  full resolution, and a twin run had 53 frames over 33 ms; uploading from the worker, 9, then 0–2.
+  checked to hold a picture (`GBuffer::drawn`). The worker thread then hands it to the WINDOW's
+  device itself (`AdoptFrame::upload`; wgpu 24's `Device` is `Clone` and `Send`), so the UI thread
+  copies nothing. Measured: the first version uploaded on the UI thread, 26 MB a frame at full
+  resolution, and a twin run had 53 frames over 33 ms; uploading from the worker, 9, then 0–2.
+  ⛔**But not with `queue.write_texture`**: wgpu-core 24 holds the device's `pending_writes` lock for
+  the whole call, staging copy included, and `queue.submit` takes it too, so the worker's upload
+  stalled the window's present. Invisible on the twin and with the RX 6800 XT drawing the window;
+  with the RTX 3070 drawing it (PLUTO, `gd914dd7`) ~150 frames a run went over 33 ms against 1
+  alone, 128–147 of them the frame just before an adoption, with the app's own work 1–4 ms. Now
+  the planes go into buffers mapped at creation (`MAP_WRITE | COPY_SRC`, no queue), and the adopting
+  frame copies them into the textures in its own encoder (`AdoptFrame::stage`): ~4 ms on the worker
+  thread at full resolution, against ~19 ms for the readback that precedes it.
 - **Adoption** (`MandelbrotParams::adopt`, `adopt_hold`), decided in `build_params` once the
   frame's kind is known (`motion_worker::adopt_target`): a frame that renders the current view
   itself drops it; a plain reprojection takes it into the live texture (and this frame's transform
@@ -616,9 +624,38 @@ zero shift (residual 1–3 of 255), through the settle (scale 1.06 → 1.000 as 
 The only outliers were the live normalization switching mapping (3 times, as many as in a solo run:
 not L3) and supersampling starting at the settled view.
 
+**PLUTO (2026-10-08, user: "Yes", queueing approved for the session; RX 6800 XT = adapter 1,
+RTX 3070 = 2).** `--zoomtest 30` (corpus 07, floatexp), two runs per arm:
+
+| Window card | Helping | Lag on screen, mean | p95 | Second-card frames | Frames over 33 ms |
+| --- | --- | --- | --- | --- | --- |
+| RX 6800 XT | — | 0.289, 0.302 oct | 0.51, 0.46 | — | 4, 11 |
+| RX 6800 XT | RTX 3070 | 0.030, 0.022 | 0.037, 0.037 | 28, 41 a second | 1, 3 |
+| RTX 3070 | — | 0.341, 0.260 (0.270 later) | 0.51, 0.42 | — | 1, 1 (0) |
+| RTX 3070 | RX 6800 XT | 0.041, 0.042 | 0.078, 0.078 | 21.5, 21.3 | 149, 162 |
+
+The screen lags the view 7–14× less with the other card helping, either way round. With the RX
+6800 XT helping, the 3070's window hitched, two causes:
+1. **The queue lock** (above): the worker's `write_texture` stalled the window's submit. Moving
+   the upload to mapped buffers (`a359e38`) took it to 98 and 117.
+2. **The worker drew on the card that composites the desktop.** The rest were mostly 33–47 ms
+   (one or two missed vsyncs) with the app's own work short, and none with the cards swapped: one
+   walk pass is one draw, which the GPU does not interrupt, and a 20–40 ms pass on the 6800 XT
+   held up the desktop's composition. Test (`g41d291f`, `--set WORKER_PASS_MS`): 40 ms 62, 16 ms 7,
+   8 ms 7 and 9, at the same worker rate (22 a second) and lag (0.042, 0.044); the other pairing
+   at 8 ms unchanged (1, 28 a second, 0.030). 8 ms is the default (`WALK_PASS_MS`).
+
+Also on PLUTO: `--motiontest` PASS both ways (289 and 185 worker frames adopted, no partial frame,
+no frame shown that its bookkeeping did not describe); the worker self-test 10/10 on each card
+(`ga359e38`; at `gd914dd7` the 3070 failed the Phase 2 split hand-back check: the window's card
+took 11 of 12 tiles while the twin built its pipelines, so the twin never asked for the tile it was
+meant to fail on — under the hook every device now starts together, and the twin fails on its
+first tile).
+
 **Open.**
-1. PLUTO (two real cards): the cadence, the hitches and the mixed-class flicker of §4 L3's
-   acceptance. Ask before queueing.
+1. With the 3070 drawing the window and the 6800 XT helping, 7–9 frames a run still go over 33 ms
+   (0–1 alone). The mixed-class flicker of §4 L3's acceptance is not measured (in motion nearly
+   every frame on screen is the worker's, so classes rarely alternate).
 2. Worker frames bring no counter readings: the verified-present check treats them as complete by
    construction, and live normalization keeps reading only the window's passes.
 3. Pan drags offer nothing (their frames compute no reference offset); the dual view's Julia
