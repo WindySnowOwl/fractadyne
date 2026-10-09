@@ -99,7 +99,9 @@ Changes after 0.3.0-beta.1:
   setting's *Same card* opens a second device on it: no extra speed, but it renders without waiting
   for the screen, and on a test machine it cut how far the picture lagged a deep zoom by about
   six times and settled two deep views 1.5 and 1.75 times sooner, the window as smooth as without
-  it. *Same card* is the default; Off turns it off. A failure that resets the card ends the app, so
+  it. *Same card* is the default; Off turns it off. The second device copies a deep view's
+  reference only when it fits a share of the card's memory (a quarter on the same card); a bigger
+  one stays on the window's card alone. A failure that resets the card ends the app, so
   if the app ends unexpectedly, or loses its graphics card, while a second device is in use, the
   next start asks whether to turn it off.
 - **Fixed: rendering a tour from the app filed a crash report for the app (0.3.0-beta.18).** The

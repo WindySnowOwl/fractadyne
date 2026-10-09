@@ -190,6 +190,11 @@ impl FractadyneApp {
         if !real || self.perf.live_job[v].is_some() || self.perf.worker_job.is_some() {
             return;
         }
+        // Within the second device's reference budget (`gpu_worker::reference_budget`): a moving
+        // reference is small, but a frame may still carry a settled one.
+        if crate::gpu_worker::reference_bytes(params) > self.worker_ref_budget {
+            return;
+        }
         let s = self.perf.live_res[v];
         let res = [
             ((panel[0] as f64 * s).round() as u32).max(16),

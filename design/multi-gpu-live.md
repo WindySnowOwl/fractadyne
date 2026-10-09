@@ -716,6 +716,14 @@ crash, offer to turn it off on restart").**
   prompt is silenced, and below it when both are up. Until it is answered no second device opens,
   so a fault that recurs at once cannot end the session before the answer. *Turn it off* stores
   `off`; *Keep it on* or closing it changes nothing.
+- **The memory budget** (user: "settle the memory question"). A second device keeps its own copy of
+  the reference: a moving one is capped at ~37 MB (`LIVE_REF_CAP`), but a settled one reaches ~1 GiB
+  and every settle sample uploads it again. `gpu_worker::reference_budget`: a quarter of the card's
+  memory when the device shares the window's card (which holds both copies), half on a card of its
+  own, 256 MB when `sysinfo::gpu_vram_bytes` cannot read it; a frame or sample whose reference
+  (`reference_bytes`: orbit, BLA, u-space tree) is over it stays on the window's card. Checked at
+  9.3e78× (a 25 MB reference) on the RTX 3080 (10 GB, budget 2.5 GB): 7 samples on the second
+  device, 14.7 s; with `FRACTADYNE_WORKER_REF_BUDGET_MB=1`, one log line, none, 20.6 s (one card's).
 - Checked on this machine: a fresh config opened `spec 'same'`; that test process killed, the next
   start reported the unclean end with `second-device same card, …`, showed the offer under the
   crash prompt and opened no device; with the relaunch variable set on a clean config, the offer

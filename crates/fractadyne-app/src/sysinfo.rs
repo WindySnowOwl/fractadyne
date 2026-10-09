@@ -631,7 +631,7 @@ fn cpu_topology() -> (usize, u64, u64) {
 /// wgpu adapter name; the widest max is only the fallback when no name is available or nothing
 /// matches. Best-effort; returns 0 if unavailable.
 #[cfg(windows)]
-fn gpu_vram_bytes(active_gpu: Option<&str>) -> u64 {
+pub(crate) fn gpu_vram_bytes(active_gpu: Option<&str>) -> u64 {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     #[link(name = "advapi32")]
@@ -709,7 +709,7 @@ fn gpu_vram_bytes(active_gpu: Option<&str>) -> u64 {
     if matched > 0 { matched } else { any }
 }
 #[cfg(target_os = "linux")]
-fn gpu_vram_bytes(_active_gpu: Option<&str>) -> u64 {
+pub(crate) fn gpu_vram_bytes(_active_gpu: Option<&str>) -> u64 {
     // amdgpu/i915 expose VRAM bytes directly in sysfs; take the largest card. (Stale-adapter
     // selection is a Windows-registry problem; sysfs lists only PRESENT cards, so the name is
     // unused here.)
@@ -741,6 +741,6 @@ fn gpu_vram_bytes(_active_gpu: Option<&str>) -> u64 {
         .unwrap_or(0)
 }
 #[cfg(not(any(windows, target_os = "linux")))]
-fn gpu_vram_bytes(_active_gpu: Option<&str>) -> u64 {
+pub(crate) fn gpu_vram_bytes(_active_gpu: Option<&str>) -> u64 {
     0
 }

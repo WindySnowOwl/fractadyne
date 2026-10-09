@@ -1642,6 +1642,8 @@ struct Perf {
     accum_ext_attach: [Option<std::sync::Arc<fractadyne_gpu::AccumSample>>; 2],
     /// The worker's job in flight: (view, run, sample index).
     worker_job: Option<(usize, u64, u32)>,
+    /// The accumulation run whose reference was found over the second device's budget (logged once).
+    worker_budget_note: [u64; 2],
     /// Motion refreshes on the worker (`motion_worker`): the job in flight, the finished frame
     /// waiting to be adopted, the job counter, the worker's resolution (a fraction of the panel),
     /// and the current motion's counts.
@@ -2299,6 +2301,7 @@ impl Default for Perf {
             accum_ext_ready: [Vec::new(), Vec::new()],
             accum_ext_attach: [None, None],
             worker_job: None,
+            worker_budget_note: [u64::MAX, u64::MAX],
             live_job: [None, None],
             live_ready: [None, None],
             live_gen: 0,
@@ -6018,6 +6021,9 @@ struct FractadyneApp {
     /// A second graphics device for the live view (`--worker-gpu`, `design/multi-gpu-live.md`);
     /// `None` = one GPU, as always. Dropped (not fatal) when it is lost.
     gpu_worker: Option<gpu_worker::Worker>,
+    /// The largest reference the second device may copy, bytes (`gpu_worker::reference_budget`),
+    /// set when it opens.
+    worker_ref_budget: u64,
     /// `--render … --gpus SPEC`: the cards a still export renders on beside the window's own
     /// (`gpu_worker::export_extra_cards`), opened at start (`fractadyne_gpu::render_export_multi`).
     export_extra: Vec<gpu_worker::Headless>,
@@ -6380,6 +6386,7 @@ impl FractadyneApp {
             match gpu_worker::Worker::spawn(&spec, &render_state.adapter.get_info()) {
                 Ok(w) => {
                     diag::set_second_device(Some(&w.name));
+                    self.worker_ref_budget = Self::worker_budget_for(&w, spec == gpu_worker::SAME_CARD);
                     self.worker_state = gpu_worker::WorkerState::Running(w.name.clone());
                     self.gpu_worker = Some(w);
                 }
@@ -7389,6 +7396,7 @@ impl FractadyneApp {
             pending_install: [None, None],
             orbit_cache_mb: s.orbit_cache_mb.max(64),
             recompute_rx: [None, None],
+            worker_ref_budget: 0,
             ref_prefetch: Vec::new(),
             ref_prefetch_interactive: false,
             hold_prefetch: Vec::new(),
@@ -14504,6 +14512,24 @@ impl FractadyneApp {
         // again) but throws its samples away, so this device renders all of them: the converged
         // image must then equal a run without a worker, or the worker's load alone moves it.
         let shadow = std::env::var_os("FRACTADYNE_WORKER_SHADOW").is_some();
+        // A reference over the second device's budget stays on the window's card alone: every
+        // sample would copy it there again (`gpu_worker::reference_budget`).
+        let bytes = gpu_worker::reference_bytes(self.perf.accum_template[view].as_ref().expect("checked above"));
+        if bytes > self.worker_ref_budget {
+            let run = self.perf.accum_run[view];
+            if self.perf.worker_budget_note[view] != run {
+                self.perf.worker_budget_note[view] = run;
+                diag::log_line(
+                    "worker",
+                    &format!(
+                        "view {view}: the reference ({} MB) is over the second device's budget ({} MB) — this card renders every sample",
+                        bytes >> 20,
+                        self.worker_ref_budget >> 20
+                    ),
+                );
+            }
+            return;
+        }
         let Some(index) = (if shadow { Some(1) } else { self.accum_take_index(view) }) else { return };
         let mut req = crate::profile::params_to_request_exact(
             self.perf.accum_template[view].as_ref().expect("checked above"),
@@ -14581,6 +14607,7 @@ impl FractadyneApp {
                         w.name.clone()
                     };
                     diag::set_second_device(Some(&name));
+                    self.worker_ref_budget = Self::worker_budget_for(&w, self.worker_for.as_deref() == Some(gpu_worker::SAME_CARD));
                     self.worker_state = gpu_worker::WorkerState::Running(name);
                     self.gpu_worker = Some(w);
                     self.worker_start_rx = None;
@@ -14599,6 +14626,25 @@ impl FractadyneApp {
                 }
             }
         }
+    }
+
+    /// Size the reference the second device `w` may copy (`gpu_worker::reference_budget`) from its
+    /// card's memory. Test hook: `FRACTADYNE_WORKER_REF_BUDGET_MB=n` sets it.
+    fn worker_budget_for(w: &gpu_worker::Worker, same_card: bool) -> u64 {
+        let vram = crate::sysinfo::gpu_vram_bytes(Some(&w.adapter));
+        let hook = std::env::var("FRACTADYNE_WORKER_REF_BUDGET_MB").ok().and_then(|v| v.trim().parse::<u64>().ok());
+        let budget = hook.map_or_else(|| gpu_worker::reference_budget(vram, same_card), |mb| mb << 20);
+        diag::log_line(
+            "worker",
+            &format!(
+                "the second device may copy a reference of up to {} MB ({}{}{})",
+                budget >> 20,
+                if vram > 0 { format!("card memory {} MB", vram >> 20) } else { "card memory unknown".to_string() },
+                if same_card { ", shared with the window" } else { "" },
+                if hook.is_some() { "; set by FRACTADYNE_WORKER_REF_BUDGET_MB" } else { "" },
+            ),
+        );
+        budget
     }
 
     /// Open the cards `--render … --gpus SPEC` names beside the window's (`export_extra`). Vulkan

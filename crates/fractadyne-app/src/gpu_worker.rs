@@ -85,6 +85,8 @@ pub(crate) struct Worker {
     alive: Arc<AtomicBool>,
     /// The worker's adapter, as the log names it.
     pub(crate) name: String,
+    /// The adapter's own name (`AdapterInfo::name`), for the memory probe (`sysinfo::gpu_vram_bytes`).
+    pub(crate) adapter: String,
 }
 
 impl Worker {
@@ -99,7 +101,7 @@ impl Worker {
     /// lists Vulkan adapters before OpenGL ones, so the number names the same card, while the app
     /// itself never enumerates OpenGL beside its own device (the farm client's rule).
     pub(crate) fn spawn_on(spec: &str, window: &wgpu::AdapterInfo, backends: wgpu::Backends) -> Result<Worker, String> {
-        let Headless { device, queue, name, alive } = open_headless(spec, window, backends, "fractadyne.worker")?;
+        let Headless { device, queue, name, adapter, alive } = open_headless(spec, window, backends, "fractadyne.worker")?;
         // Test hook: `FRACTADYNE_WORKER_LOSE_AFTER=n` — the worker answers `n` jobs, then behaves as
         // a lost device (the path a real loss takes from there: answers fail, `alive` reads false).
         let lose_after = match std::env::var("FRACTADYNE_WORKER_LOSE_AFTER") {
@@ -174,7 +176,7 @@ impl Worker {
                 .map_err(|e| format!("the worker thread would not start: {e}"))?;
         }
         crate::diag::log_line("worker", &format!("worker GPU ready: {name} (spec '{spec}')"));
-        Ok(Worker { tx, rx, live_rx, live_cancel, cancelled, cancel, alive, name })
+        Ok(Worker { tx, rx, live_rx, live_cancel, cancelled, cancel, alive, name, adapter })
     }
 
     /// Queue `job`; `false` when the worker is gone (the caller renders that sample itself).
@@ -221,6 +223,8 @@ pub(crate) struct Headless {
     pub(crate) queue: wgpu::Queue,
     /// The adapter, as the log names it.
     pub(crate) name: String,
+    /// The adapter's own name (`AdapterInfo::name`).
+    pub(crate) adapter: String,
     pub(crate) alive: Arc<AtomicBool>,
 }
 
@@ -295,7 +299,7 @@ pub(crate) fn open_headless(spec: &str, window: &wgpu::AdapterInfo, backends: wg
             crate::diag::log_line("worker", &format!("the second GPU ({name}) failed: {e} — it is dropped"));
         }));
     }
-    Ok(Headless { device, queue, name, alive })
+    Ok(Headless { device, queue, name, adapter: info.name.clone(), alive })
 }
 
 /// Open every graphics card of this machine except the window's own (Vulkan, real hardware), for
@@ -399,6 +403,29 @@ pub(crate) fn second_card_choices(cards: &[(usize, String)], window_name: &str) 
     cards.iter().filter(|(_, n)| !(same == 1 && n == window_name)).cloned().collect()
 }
 
+/// The bytes of the reference a frame's params carry to a device: the orbit, the BLA tree and the
+/// u-space tree, each `[f32; 4]`. A second device holds its own copy while it renders.
+pub(crate) fn reference_bytes(p: &fractadyne_gpu::MandelbrotParams) -> u64 {
+    16 * (p.orbit.len() + p.bla.len() + p.rn_bla.len()) as u64
+}
+
+/// The reference budget when the card's memory cannot be read.
+pub(crate) const UNKNOWN_VRAM_BUDGET: u64 = 256 << 20;
+
+/// The largest reference a second device may copy, bytes: a quarter of its card's memory when it
+/// shares the window's card (which then holds both copies), half when it has a card of its own;
+/// [`UNKNOWN_VRAM_BUDGET`] when the memory cannot be read. Over it, the window's card renders that
+/// view's frames and samples itself, as with one GPU. A settled reference can reach ~1 GiB
+/// (`init_orbit_len_cap`), and every settle sample re-uploads it; a moving one is capped at
+/// ~37 MB (`LIVE_REF_CAP`).
+pub(crate) fn reference_budget(vram: u64, same_card: bool) -> u64 {
+    if vram == 0 {
+        UNKNOWN_VRAM_BUDGET
+    } else {
+        vram / if same_card { 4 } else { 2 }
+    }
+}
+
 /// The setting's value for "this card, as a second device" (`open_headless`'s `same`).
 pub(crate) const SAME_CARD: &str = "same";
 /// The setting's value for Off, chosen. Empty is the DEFAULT (never chosen), which is Same card.
@@ -466,6 +493,25 @@ mod tests {
         let one = vec![(1, "NVIDIA GeForce RTX 3080".to_string())];
         assert_eq!(export_extra_cards(&Gpus::List(vec![1, 1]), &one, "NVIDIA GeForce RTX 3080"), vec![1]);
         assert!(export_extra_cards(&Gpus::All, &one, "NVIDIA GeForce RTX 3080").is_empty());
+    }
+
+    #[test]
+    fn a_second_device_copies_a_reference_only_within_its_card_s_budget() {
+        const GIB: u64 = 1 << 30;
+        // Sharing the window's card: both copies live there, so a quarter each at most.
+        assert_eq!(reference_budget(8 * GIB, true), 2 * GIB);
+        assert_eq!(reference_budget(2 * GIB, true), GIB / 2);
+        // A card of its own holds only its copy.
+        assert_eq!(reference_budget(16 * GIB, false), 8 * GIB);
+        // Unknown memory: a fixed budget, above any moving reference (~37 MB).
+        assert_eq!(reference_budget(0, true), UNKNOWN_VRAM_BUDGET);
+        assert!(UNKNOWN_VRAM_BUDGET > 37 << 20);
+        let p = fractadyne_gpu::MandelbrotParams {
+            orbit: Arc::new(vec![[0.0; 4]; 1000]),
+            bla: Arc::new(vec![[0.0; 4]; 500]),
+            ..Default::default()
+        };
+        assert_eq!(reference_bytes(&p), 16 * 1500);
     }
 
     #[test]
