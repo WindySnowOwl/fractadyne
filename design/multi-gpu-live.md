@@ -643,7 +643,8 @@ The screen lags the view 7–14× less with the other card helping, either way r
    walk pass is one draw, which the GPU does not interrupt, and a 20–40 ms pass on the 6800 XT
    held up the desktop's composition. Test (`g41d291f`, `--set WORKER_PASS_MS`): 40 ms 62, 16 ms 7,
    8 ms 7 and 9, at the same worker rate (22 a second) and lag (0.042, 0.044); the other pairing
-   at 8 ms unchanged (1, 28 a second, 0.030). 8 ms is the default (`WALK_PASS_MS`).
+   at 8 ms unchanged (1, 28 a second, 0.030). 8 ms is the default (`WALK_PASS_MS`); stock at
+   `g7cacd16`: 9 and 9 with the 3070 drawing the window (lag 0.043), 1 the other way (0.030).
 
 Also on PLUTO: `--motiontest` PASS both ways (289 and 185 worker frames adopted, no partial frame,
 no frame shown that its bookkeeping did not describe); the worker self-test 10/10 on each card
