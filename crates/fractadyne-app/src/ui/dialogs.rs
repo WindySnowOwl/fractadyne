@@ -116,6 +116,50 @@ impl FractadyneApp {
         }
     }
 
+    /// "Turn off the second graphics device?" (`DialogState::second_device_prompt`): the previous
+    /// session ended unexpectedly, or lost its graphics card, with a second device open. The device
+    /// may be the cause; turning it off stores [`crate::gpu_worker::OFF`], keeping it changes nothing.
+    /// Below the crash-report prompt when both are up.
+    pub(crate) fn draw_second_device_prompt(&mut self, ctx: &egui::Context) {
+        let Some(desc) = self.dialogs.second_device_prompt.clone() else { return };
+        let mut open = true;
+        let below = if self.dialogs.crash_prompt_open { 170.0 } else { 0.0 };
+        egui::Window::new("Turn off the second graphics device?")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, below])
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "The previous session ended unexpectedly while a second graphics device was in use ({desc}). It may be the cause."
+                ));
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(
+                        "With it off, the card drawing the window renders everything, as before. You can turn it back on in Advanced ▸ Second graphics card.",
+                    )
+                    .weak()
+                    .small(),
+                );
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.button(egui::RichText::new("Turn it off").strong()).clicked() {
+                        self.render_cfg.worker_gpu = crate::gpu_worker::OFF.to_string();
+                        self.dialogs.second_device_prompt = None;
+                        crate::diag::log_line("worker", &format!("second graphics device turned off after the previous session ended unexpectedly with it in use ({desc})"));
+                    }
+                    if ui.button("Keep it on").clicked() {
+                        self.dialogs.second_device_prompt = None;
+                        crate::diag::log_line("worker", &format!("second graphics device kept on after the previous session ended unexpectedly with it in use ({desc})"));
+                    }
+                });
+            });
+        if !open {
+            // Closing the window keeps the setting, like "Keep it on".
+            self.dialogs.second_device_prompt = None;
+        }
+    }
+
     /// First-run welcome overlay: a short quick-start shown once on a fresh install (and
     /// re-openable from Help). Deep-zoom explorers are opaque to newcomers — this covers the
     /// first-two-minutes controls and offers a couple of one-click destinations, then gets out of

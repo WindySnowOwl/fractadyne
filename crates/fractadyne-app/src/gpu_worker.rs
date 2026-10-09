@@ -401,15 +401,39 @@ pub(crate) fn second_card_choices(cards: &[(usize, String)], window_name: &str) 
 
 /// The setting's value for "this card, as a second device" (`open_headless`'s `same`).
 pub(crate) const SAME_CARD: &str = "same";
+/// The setting's value for Off, chosen. Empty is the DEFAULT (never chosen), which is Same card.
+pub(crate) const OFF: &str = "off";
 
-/// What the setting holds, cleaned: a card number from the listing, [`SAME_CARD`], or empty (off).
-/// Anything else (an edited session file) reads as off rather than as a name to search for.
-pub(crate) fn setting_spec(raw: &str) -> String {
+/// The setting as stored, cleaned: empty (never chosen: the default), [`OFF`], [`SAME_CARD`] or a
+/// card number from the listing. Anything else (an edited session file) reads as off rather than as
+/// a name to search for. The empty value is kept as such, so a harness can tell the default from a
+/// choice ([`explicit_spec`]).
+pub(crate) fn clean_setting(raw: &str) -> String {
     let t = raw.trim();
-    if t.parse::<usize>().is_ok_and(|n| (1..100).contains(&n)) || t == SAME_CARD {
+    if t.is_empty() || t == OFF || t == SAME_CARD || t.parse::<usize>().is_ok_and(|n| (1..100).contains(&n)) {
         t.to_string()
     } else {
+        OFF.to_string()
+    }
+}
+
+/// The device the setting asks for, as `open_headless` takes it, or empty for none. Never chosen =
+/// [`SAME_CARD`] (the default since 2026-10-09).
+pub(crate) fn setting_spec(raw: &str) -> String {
+    match clean_setting(raw).as_str() {
+        "" => SAME_CARD.to_string(),
+        OFF => String::new(),
+        v => v.to_string(),
+    }
+}
+
+/// [`setting_spec`] for a harness (`--shot`): only a second device the session CHOSE. The default
+/// stays off there, so neither a run's timings nor the images it writes change with it.
+pub(crate) fn explicit_spec(raw: &str) -> String {
+    if clean_setting(raw).is_empty() {
         String::new()
+    } else {
+        setting_spec(raw)
     }
 }
 
@@ -445,13 +469,25 @@ mod tests {
     }
 
     #[test]
-    fn the_setting_holds_a_card_number_or_nothing() {
-        assert_eq!(setting_spec(""), "");
+    fn the_setting_is_same_card_unless_chosen_otherwise() {
+        // Never chosen: Same card. Chosen: what was chosen.
+        assert_eq!(setting_spec(""), SAME_CARD);
+        assert_eq!(setting_spec(OFF), "");
         assert_eq!(setting_spec(" 2 "), "2");
-        assert_eq!(setting_spec("0"), "");
         assert_eq!(setting_spec(" same "), SAME_CARD);
+        // An edited session file reads as off, never as a name to search for.
+        assert_eq!(setting_spec("0"), "");
         assert_eq!(setting_spec("RTX"), "");
         assert_eq!(setting_spec("6800"), ""); // a model number is a name, not a position
+        assert_eq!(clean_setting("RTX"), OFF);
+        // The stored value keeps "never chosen" apart from a choice...
+        assert_eq!(clean_setting(" "), "");
+        assert_eq!(clean_setting(" same "), SAME_CARD);
+        // ...so a harness takes only a choice.
+        assert_eq!(explicit_spec(""), "");
+        assert_eq!(explicit_spec(SAME_CARD), SAME_CARD);
+        assert_eq!(explicit_spec("2"), "2");
+        assert_eq!(explicit_spec(OFF), "");
     }
 
     #[test]

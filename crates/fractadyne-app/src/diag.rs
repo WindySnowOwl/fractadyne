@@ -929,6 +929,60 @@ fn marker_path() -> Option<PathBuf> {
 /// This process armed the marker: only it may disarm it (see [`end_session`]).
 static MARKER_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// The second graphics device the live view has open (`gpu_worker`), as its status names it: what
+/// a session that ends without a clean shutdown, or loses its card, was running beside the window.
+/// Written into the marker, and passed to the process a device loss relaunches.
+static SECOND_DEVICE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// When this session armed its marker (the marker is rewritten when the second device changes).
+static MARKER_STARTED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+/// The previous session's second device, read from its marker when it ended unclean.
+static PREV_SECOND_DEVICE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+/// Set on the process a device loss relaunches when a second device was open (`set_second_device`).
+pub(crate) const LOST_WITH_SECOND_DEVICE_ENV: &str = "FRACTADYNE_LOST_WITH_SECOND_DEVICE";
+
+/// Record the second device the live view has open (`None` when there is none).
+pub(crate) fn set_second_device(desc: Option<&str>) {
+    let changed = match SECOND_DEVICE.lock() {
+        Ok(mut g) if g.as_deref() != desc => {
+            *g = desc.map(str::to_string);
+            true
+        }
+        _ => false,
+    };
+    if changed {
+        if let Some(p) = marker_path().filter(|_| MARKER_ARMED.load(Ordering::Relaxed)) {
+            let _ = std::fs::write(p, marker_body());
+        }
+    }
+}
+
+/// The second device the live view has open, if any.
+pub(crate) fn second_device() -> Option<String> {
+    SECOND_DEVICE.lock().ok().and_then(|g| g.clone())
+}
+
+/// The second device the previous session had open when it ended without a clean shutdown, or lost
+/// its card (the relaunch carries it in [`LOST_WITH_SECOND_DEVICE_ENV`]).
+pub(crate) fn previous_session_second_device() -> Option<String> {
+    PREV_SECOND_DEVICE
+        .get()
+        .cloned()
+        .or_else(|| std::env::var(LOST_WITH_SECOND_DEVICE_ENV).ok().filter(|s| !s.trim().is_empty()))
+}
+
+fn marker_body() -> String {
+    let mut body = format!(
+        "{}\nstarted {}\npid {}\n",
+        crate::sysinfo::version_string(),
+        MARKER_STARTED.get().cloned().unwrap_or_default(),
+        std::process::id()
+    );
+    if let Some(d) = second_device() {
+        body.push_str(&format!("second-device {d}\n"));
+    }
+    body
+}
+
 pub(crate) fn begin_gui_session() {
     if let Some(p) = marker_path() {
         // ⚠Not over a LIVE session's marker. A windowed task the GUI starts (`--render-tour` runs
@@ -943,13 +997,8 @@ pub(crate) fn begin_gui_session() {
         // The pid lets any other process that starts against this log folder while the session is
         // alive (a Render tour or farm child, a second instance, a script asking `--version`) see
         // the marker is live, not left behind — see `report_unclean_previous_session`.
-        let body = format!(
-            "{}\nstarted {}\npid {}\n",
-            crate::sysinfo::version_string(),
-            crate::sysinfo::now_utc_string(),
-            std::process::id()
-        );
-        let _ = std::fs::write(p, body);
+        let _ = MARKER_STARTED.set(crate::sysinfo::now_utc_string());
+        let _ = std::fs::write(p, marker_body());
     }
 }
 
@@ -1050,6 +1099,9 @@ fn report_unclean_previous_session() {
         return;
     }
     let _ = std::fs::remove_file(&p);
+    if let Some(d) = prev.lines().find_map(|l| l.strip_prefix("second-device ")).map(str::trim).filter(|d| !d.is_empty()) {
+        let _ = PREV_SECOND_DEVICE.set(d.to_string());
+    }
     // The dead session's log: rotated into `.1` if this startup rotated it (see ROTATED_AT_START).
     let dead_log = if ROTATED_AT_START.load(Ordering::Relaxed) { "fractadyne.log.1" } else { "fractadyne.log" };
     let tail = LOG_DIR

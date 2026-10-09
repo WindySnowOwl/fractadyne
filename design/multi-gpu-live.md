@@ -671,7 +671,8 @@ known timing-dependent difference near interior, §8). ⚠While the 9.3e78× vie
 window's worst frame each second goes from ~23 ms to ~57 ms (80 at most): settle samples go through
 the export renderer, whose passes are sized for 200–400 ms, and on a shared card (as on a card that
 composites the desktop) they hold up the window's present. ⛔A reset of the card ends the app
-whichever device caused it, so the setting's text says so. Off by default.
+whichever device caused it, so the setting's text says so. Off by default at first; on by
+default since (below).
 
 **Short settle passes (2026-10-09, user: "yes").** `ExportRequest::pass_ms` sizes the export's
 passes for a wall (`None`, the default, keeps its own: step passes for 200 ms, chunk windows between
@@ -694,6 +695,31 @@ worst-ever rule stands, the margin it is for passes sized in hundreds of ms. On 
 | 8 ms, median price | 13.7 s | 1 of 12 (the last, at convergence) | 1.7 s |
 
 6.8e3999×: 7.0 s alone, 4.0 s, no second over 10 ms either way.
+
+**On by default, with an offer after a crash (2026-10-09, user: "Enable by default. If there is a
+crash, offer to turn it off on restart").**
+- The stored setting keeps three states (`gpu_worker::clean_setting`): empty = never chosen, which
+  now means *Same card* (`setting_spec`); `off` = chosen Off (the menu's Off stores it); `same` or a
+  card number. Empty was Off before, and every saved session stores it, so only this keeps the
+  default reaching existing sessions. The menu SHOWS the default without storing it.
+- Harnesses stay on one GPU: tasks other than `--shot` never open a second device, and `--shot`
+  opens one only when the session chose it (`explicit_spec`), so the default changes neither a
+  run's timings nor the images it writes. Checked: a fresh-config `--shot` and the UI walk opened
+  none.
+- The offer: while a second device is open, `diag::set_second_device` names it in the unclean-exit
+  marker (`second-device …`; named before it opens, since opening is one of the things that can
+  fail hard). A start that finds the marker reads it. A device loss exits CLEANLY (it relaunches,
+  through `crate::exit`), so its relaunch carries the name in `FRACTADYNE_LOST_WITH_SECOND_DEVICE`
+  (removed when there is none, so a later generation does not inherit it). Either way the start
+  shows "Turn off the second graphics device?" (`draw_second_device_prompt`) if the setting still
+  asks for one, unless it is a harness or `--worker-gpu` pinned it; whether or not the crash-report
+  prompt is silenced, and below it when both are up. Until it is answered no second device opens,
+  so a fault that recurs at once cannot end the session before the answer. *Turn it off* stores
+  `off`; *Keep it on* or closing it changes nothing.
+- Checked on this machine: a fresh config opened `spec 'same'`; that test process killed, the next
+  start reported the unclean end with `second-device same card, …`, showed the offer under the
+  crash prompt and opened no device; with the relaunch variable set on a clean config, the offer
+  alone. The UI walk has a `second-device-prompt` screen.
 
 **Open.**
 1. Short settle passes cost the heavy sample 1.7 s against 1.0 (the readback after every pass, and

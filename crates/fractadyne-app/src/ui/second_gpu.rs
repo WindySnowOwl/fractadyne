@@ -4,7 +4,7 @@
 //! another card, or a second device on the window's own card, which adds no GPU but renders
 //! without waiting for the screen's frames.
 
-use crate::gpu_worker::{second_card_choices, WorkerState, SAME_CARD};
+use crate::gpu_worker::{second_card_choices, WorkerState, OFF, SAME_CARD};
 use crate::FractadyneApp;
 
 /// The choice that opens a second device on the window's own card.
@@ -35,9 +35,14 @@ impl FractadyneApp {
     pub(super) fn second_gpu_row(&mut self, ui: &mut egui::Ui) {
         let _ = self.card_list();
         let choices = self.worker_cards.as_deref().map(|c| second_card_choices(c, &self.gpu_name));
-        let value = &mut self.render_cfg.worker_gpu;
+        // Never chosen ("") is the default, Same card: shown and ticked as that, but stored only when
+        // the user picks something, so the default stays the default (`gpu_worker::explicit_spec`).
+        let stored = self.render_cfg.worker_gpu.clone();
+        let effective = if stored.trim().is_empty() { SAME_CARD.to_string() } else { stored.trim().to_string() };
+        let mut shown = effective.clone();
+        let value = &mut shown;
         let selected = match value.trim() {
-            "" => "Off".to_string(),
+            OFF => "Off".to_string(),
             SAME_CARD => SAME_CARD_LABEL.to_string(),
             v => choices
                 .as_deref()
@@ -52,7 +57,7 @@ impl FractadyneApp {
                 .truncate()
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(value, String::new(), "Off");
+                    ui.selectable_value(value, OFF.to_string(), "Off");
                     ui.selectable_value(value, SAME_CARD.to_string(), SAME_CARD_LABEL);
                     match choices.as_deref() {
                         None => {
@@ -76,10 +81,14 @@ impl FractadyneApp {
              reaches its final quality sooner. The card drawing the window still draws everything.\n\n\
              Another card adds its own speed. Two different card models draw a few pixels slightly \
              differently; if the second card fails, the view carries on with one.\n\n\
-             \"Same card\" opens a second device on this card. It adds no speed but renders without waiting for the \
-             screen's frames. It shares the card: a failure that resets the card ends the app, as a \
-             failure of the window's own rendering does.",
+             \"Same card\" (the default) opens a second device on this card. It adds no speed but \
+             renders without waiting for the screen's frames. It shares the card: a failure that \
+             resets the card ends the app, as a failure of the window's own rendering does, and the \
+             next start offers to turn it off.",
         );
+        if shown != effective {
+            self.render_cfg.worker_gpu = shown;
+        }
         if self.dialogs.uitest_advanced_open == Some(true) {
             row.scroll_to_me(Some(egui::Align::Center)); // the walk's screenshot of this row
         }

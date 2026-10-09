@@ -5823,6 +5823,11 @@ struct DialogState {
     /// Post-crash "send a report?" prompt. Opened at startup when the previous session ended
     /// unclean and the user has not opted out.
     crash_prompt_open: bool,
+    /// "Turn off the second graphics device?": the previous session ended unclean, or lost its card,
+    /// with this second device open, and the setting still asks for one. Until it is answered no
+    /// second device is opened (`drive_worker_setting`). Shown whether or not the crash-report
+    /// prompt is silenced; never in front of a harness.
+    second_device_prompt: Option<String>,
     /// A view whose checksum did not match, held UNAPPLIED while the user is asked whether to
     /// load it anyway. ⭐Parked rather than loaded-then-undone: a half-applied view would have
     /// already moved them, and "undo" is not a thing a jump has.
@@ -6294,10 +6299,19 @@ impl FractadyneApp {
             };
             if let Ok(exe) = std::env::current_exe() {
                 diag::log_line("wgpu", &format!("device lost — restarting (generation {next})"));
-                let _ = std::process::Command::new(exe)
-                    .args(std::env::args().skip(1))
-                    .env("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS", next.to_string())
-                    .spawn();
+                let mut cmd = std::process::Command::new(exe);
+                cmd.args(std::env::args().skip(1)).env("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS", next.to_string());
+                // The second device that was open beside the window, so the relaunched session can
+                // offer to turn it off; a later generation without one must not inherit the offer.
+                match diag::second_device() {
+                    Some(d) => {
+                        cmd.env(diag::LOST_WITH_SECOND_DEVICE_ENV, d);
+                    }
+                    None => {
+                        cmd.env_remove(diag::LOST_WITH_SECOND_DEVICE_ENV);
+                    }
+                }
+                let _ = cmd.spawn();
             }
         }
         render_state.device.on_uncaptured_error(Box::new(|e| {
@@ -6365,6 +6379,7 @@ impl FractadyneApp {
             self.worker_pinned = true;
             match gpu_worker::Worker::spawn(&spec, &render_state.adapter.get_info()) {
                 Ok(w) => {
+                    diag::set_second_device(Some(&w.name));
                     self.worker_state = gpu_worker::WorkerState::Running(w.name.clone());
                     self.gpu_worker = Some(w);
                 }
@@ -7112,6 +7127,11 @@ impl FractadyneApp {
                 crash_prompt_open: crate::diag::previous_session_unclean()
                     && !s.crash_prompt_disabled
                     && !launched_for_a_task,
+                second_device_prompt: crate::diag::previous_session_second_device().filter(|_| {
+                    !launched_for_a_task
+                        && !gpu_worker::setting_spec(&s.live_worker_gpu).is_empty()
+                        && !std::env::args().any(|a| a == "--worker-gpu")
+                }),
                 accelerated_open: false,
                 open_fractal_dropdown: false,
                 help_open: false,
@@ -7331,7 +7351,7 @@ impl FractadyneApp {
                 work_budget_scale: s.work_budget_scale.clamp(0.25, 8.0),
                 min_motion_res: s.min_motion_res.clamp(0.30, 1.0),
                 prefer_detail: s.prefer_detail,
-                worker_gpu: gpu_worker::setting_spec(&s.live_worker_gpu),
+                worker_gpu: gpu_worker::clean_setting(&s.live_worker_gpu),
                 show_timestamp: s.show_timestamp,
                 show_zoom_target: s.show_zoom_target,
                 finish_sound: s.finish_sound,
@@ -14513,8 +14533,16 @@ impl FractadyneApp {
             return;
         }
         let Some(window) = self.render_state.as_ref().map(|r| r.adapter.get_info()) else { return };
-        let want = if !launched_as_task() || self.harness.shot.is_some() {
+        let want = if self.dialogs.second_device_prompt.is_some() {
+            // Asked whether to keep the device that may have ended the last session: not until
+            // answered, or a fault that recurs at once would end this one before the answer.
+            String::new()
+        } else if !launched_as_task() {
             gpu_worker::setting_spec(&self.render_cfg.worker_gpu)
+        } else if self.harness.shot.is_some() {
+            // A harness keeps one GPU unless the session CHOSE a second device: the default must not
+            // change what a run measures or the images it writes.
+            gpu_worker::explicit_spec(&self.render_cfg.worker_gpu)
         } else {
             String::new()
         };
@@ -14527,7 +14555,14 @@ impl FractadyneApp {
             self.worker_for = Some(want.clone());
             if want.is_empty() {
                 self.worker_state = gpu_worker::WorkerState::Off;
+                diag::set_second_device(None);
             } else {
+                // Named before it opens: opening a device is one of the things that can fail hard.
+                diag::set_second_device(Some(&if want == gpu_worker::SAME_CARD {
+                    format!("same card, {}", window.name)
+                } else {
+                    format!("card {want}")
+                }));
                 let (tx, rx) = std::sync::mpsc::channel();
                 let backends = crate::gpu_choice::backends() & eframe::wgpu::Backends::VULKAN;
                 render::spawn_named("fd-gpu-worker-open", move || {
@@ -14545,17 +14580,20 @@ impl FractadyneApp {
                     } else {
                         w.name.clone()
                     };
+                    diag::set_second_device(Some(&name));
                     self.worker_state = gpu_worker::WorkerState::Running(name);
                     self.gpu_worker = Some(w);
                     self.worker_start_rx = None;
                 }
                 Ok(Err(e)) => {
                     diag::log_line("worker", &format!("no worker GPU: {e}"));
+                    diag::set_second_device(None);
                     self.worker_state = gpu_worker::WorkerState::Failed(e);
                     self.worker_start_rx = None;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    diag::set_second_device(None);
                     self.worker_state = gpu_worker::WorkerState::Failed("the device thread stopped".into());
                     self.worker_start_rx = None;
                 }
@@ -14647,6 +14685,7 @@ impl FractadyneApp {
         }
         if !w.alive() {
             crate::diag::log_line("worker", &format!("dropping the worker GPU ({}) — one GPU from here", w.name));
+            crate::diag::set_second_device(None);
             self.worker_state = gpu_worker::WorkerState::Lost(w.name.clone());
             self.release_worker_job();
             self.gpu_worker = None;

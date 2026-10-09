@@ -147,7 +147,8 @@ pub struct SessionState {
     /// A second graphics device for the live view (Advanced ▸ Second graphics card): the
     /// `--list-adapters` number of a Vulkan card, or `same` for a second device on the window's own
     /// card, that renders frames of a moving deep view and some of the supersampling samples while
-    /// it settles. Empty = off, the default. `serde(default)` keeps older session files loadable.
+    /// it settles; `off` for none. Empty = never chosen, which means `same` (the default since
+    /// 2026-10-09; before it, empty meant off). `serde(default)` keeps older session files loadable.
     #[serde(default)]
     pub live_worker_gpu: String,
     /// Draw the elapsed-time overlay over the view: a large clock reading the SAME `+12.345s` the

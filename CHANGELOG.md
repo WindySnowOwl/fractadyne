@@ -99,7 +99,9 @@ Changes after 0.3.0-beta.1:
   setting's *Same card* opens a second device on it: no extra speed, but it renders without waiting
   for the screen, and on a test machine it cut how far the picture lagged a deep zoom by about
   six times and settled two deep views 1.5 and 1.75 times sooner, the window as smooth as without
-  it. A failure that resets the card ends the app.
+  it. *Same card* is the default; Off turns it off. A failure that resets the card ends the app, so
+  if the app ends unexpectedly, or loses its graphics card, while a second device is in use, the
+  next start asks whether to turn it off.
 - **Fixed: rendering a tour from the app filed a crash report for the app (0.3.0-beta.18).** The
   render process the Render tour window starts shares the app's log folder, and it took the running
   session's "still running" marker for one left behind by a crash: it wrote a crash report for a
