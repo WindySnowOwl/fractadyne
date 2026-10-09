@@ -1069,6 +1069,48 @@ pub(crate) fn help_acknowledgments(ui: &mut egui::Ui) {
          (see Peitgen & Saupe, “The Science of Fractal Images”, 1988).",
     );
 
+    help_sub(ui, "L-systems & the Game of Life");
+    help_cite_unlinked(
+        ui,
+        "L-systems — Aristid Lindenmayer",
+        "Parallel string rewriting, introduced in 1968 to model how plants and algae grow \
+         (“Mathematical models for cellular interactions in development”, Journal of Theoretical \
+         Biology).",
+    );
+    help_cite(
+        ui,
+        "The Algorithmic Beauty of Plants — Przemysław Prusinkiewicz & Aristid Lindenmayer",
+        "The book (1990) whose turtle interpretation and notation for stochastic, \
+         context-sensitive and parametric systems the L-system reader follows; the built-in \
+         systems marked ABOP are entered from its figures.",
+        "The book, free from Algorithmic Botany",
+        "https://algorithmicbotany.org/papers/#abop",
+    );
+    help_cite(
+        ui,
+        "L-system collection — Paul Bourke",
+        "Many of the built-in systems come from his L-system pages, among them Chris Wallace's \
+         rules for Sierpinski's curve and Dietmar Saupe's bush. Fractint's .l files, which open \
+         directly, are in the Stone Soup Group's format.",
+        "L-system user notes — Paul Bourke",
+        "https://paulbourke.net/fractals/lsys/",
+    );
+    help_cite_unlinked(
+        ui,
+        "The Game of Life — John Horton Conway",
+        "The cellular automaton B3/S23 (1970), which reached the world through Martin Gardner's \
+         “Mathematical Games” column in Scientific American (October 1970).",
+    );
+    help_cite(
+        ui,
+        "LifeWiki — the ConwayLife.com community",
+        "The reference for the rule notations the app reads (B/S, von Neumann, Generations, Alan \
+         Hensel's letters for non-totalistic rules, and MAP), for the RLE pattern format it shares \
+         with Golly, and for the built-in rules and patterns, whose discoverers it records.",
+        "LifeWiki",
+        "https://conwaylife.com/wiki/",
+    );
+
     help_sub(ui, "Foundations & tools");
     help_cite_unlinked(
         ui,
@@ -1126,6 +1168,9 @@ pub(crate) fn help_licenses(ui: &mut egui::Ui) {
 /// open Help AT it by name rather than by an index that moves when a section is inserted.
 pub(crate) const EXPRESSIONS_SECTION: &str = "Coordinate expressions";
 
+/// The contents-list name of the credits, which the UI walk (`--uitest`) photographs.
+pub(crate) const ACKNOWLEDGMENTS_SECTION: &str = "Acknowledgments";
+
 /// Contents-list index of a section by name (the window stores the selection as an index). A
 /// name not in the list yields Overview rather than a panic — the caller passes a constant from
 /// this module, and `section_index_finds_every_named_section` pins that it resolves.
@@ -1149,7 +1194,7 @@ pub(crate) const SECTION_NAMES: [&str; 12] = [
     "Command line",
     "Shortcuts",
     "Recommended hardware",
-    "Acknowledgments",
+    ACKNOWLEDGMENTS_SECTION,
     "Licenses",
     "About",
 ];
@@ -1271,6 +1316,8 @@ mod help_tests {
         let i = section_index(EXPRESSIONS_SECTION);
         assert_eq!(SECTION_NAMES[i], EXPRESSIONS_SECTION);
         assert!(std::ptr::fn_addr_eq(SECTION_BODIES[i], help_expressions as fn(&mut egui::Ui)));
+        let i = section_index(ACKNOWLEDGMENTS_SECTION);
+        assert!(std::ptr::fn_addr_eq(SECTION_BODIES[i], help_acknowledgments as fn(&mut egui::Ui)));
         assert_eq!(section_index("no such section"), 0, "an unknown name falls back to Overview");
     }
 }
