@@ -1,9 +1,14 @@
-//! Advanced ▸ Second graphics card: the live view's supersampling on another card
-//! (`design/multi-gpu-live.md` L2). The window's card still draws everything; the other one renders
-//! some of the jittered samples that sharpen a deep view after it stops moving.
+//! Advanced ▸ Second graphics card: another device for the live view (`design/multi-gpu-live.md`
+//! L2, L3). The window's card still draws everything; the other device renders frames of a moving
+//! view and some of the jittered samples that sharpen a deep view after it stops moving. It can be
+//! another card, or a second device on the window's own card, which adds no GPU but renders
+//! without waiting for the screen's frames.
 
-use crate::gpu_worker::{second_card_choices, WorkerState};
+use crate::gpu_worker::{second_card_choices, WorkerState, OFF, SAME_CARD};
 use crate::FractadyneApp;
+
+/// The choice that opens a second device on the window's own card.
+const SAME_CARD_LABEL: &str = "Same card";
 
 impl FractadyneApp {
     /// The setting's row and its status line. The cards come from a `--list-adapters` child process
@@ -30,9 +35,15 @@ impl FractadyneApp {
     pub(super) fn second_gpu_row(&mut self, ui: &mut egui::Ui) {
         let _ = self.card_list();
         let choices = self.worker_cards.as_deref().map(|c| second_card_choices(c, &self.gpu_name));
-        let value = &mut self.render_cfg.worker_gpu;
+        // Never chosen ("") is the default, Same card: shown and ticked as that, but stored only when
+        // the user picks something, so the default stays the default (`gpu_worker::explicit_spec`).
+        let stored = self.render_cfg.worker_gpu.clone();
+        let effective = if stored.trim().is_empty() { SAME_CARD.to_string() } else { stored.trim().to_string() };
+        let mut shown = effective.clone();
+        let value = &mut shown;
         let selected = match value.trim() {
-            "" => "Off".to_string(),
+            OFF => "Off".to_string(),
+            SAME_CARD => SAME_CARD_LABEL.to_string(),
             v => choices
                 .as_deref()
                 .and_then(|c| c.iter().find(|(n, _)| n.to_string() == v))
@@ -46,7 +57,8 @@ impl FractadyneApp {
                 .truncate()
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(value, String::new(), "Off");
+                    ui.selectable_value(value, OFF.to_string(), "Off");
+                    ui.selectable_value(value, SAME_CARD.to_string(), SAME_CARD_LABEL);
                     match choices.as_deref() {
                         None => {
                             ui.label(egui::RichText::new("Finding this machine's graphics cards…").weak());
@@ -64,12 +76,19 @@ impl FractadyneApp {
                 .response
         })
         .on_hover_text(
-            "Another graphics card renders some of the extra samples that sharpen a deep view \
-             after it stops moving, so the view reaches its final quality sooner. The card drawing \
-             the window still draws everything. Two different card models draw a few pixels \
-             slightly differently; the samples are averaged, so the picture lands between them. \
-             If the second card fails, the view carries on with one.",
+            "Another graphics device renders frames of a deep view while it moves, and some of the \
+             extra samples that sharpen it after it stops, so the picture keeps up with a zoom and \
+             reaches its final quality sooner. The card drawing the window still draws everything.\n\n\
+             Another card adds its own speed. Two different card models draw a few pixels slightly \
+             differently; if the second card fails, the view carries on with one.\n\n\
+             \"Same card\" (the default) opens a second device on this card. It adds no speed but \
+             renders without waiting for the screen's frames. It shares the card: a failure that \
+             resets the card ends the app, as a failure of the window's own rendering does, and the \
+             next start offers to turn it off.",
         );
+        if shown != effective {
+            self.render_cfg.worker_gpu = shown;
+        }
         if self.dialogs.uitest_advanced_open == Some(true) {
             row.scroll_to_me(Some(egui::Align::Center)); // the walk's screenshot of this row
         }

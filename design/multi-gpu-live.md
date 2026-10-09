@@ -528,3 +528,220 @@ builds it with astro-float.
 
 **Next.**
 1. Find the timing-dependent difference (per-sample hashes, above).
+
+## 9. L3 as built (2026-10-08, user: "Now work on the multi gpu live view")
+
+**What it is.** While the view moves, the worker renders whole frames of it and the window adopts
+each one that shows the view better than the frame on screen, as the frame it reprojects. Same
+switch as L2 (Advanced ▸ Second graphics card, or `--worker-gpu`); `--set WORKER_MOTION=0` keeps the
+second card to settle samples.
+
+- **The worker runs the window's own renderer** (`fractadyne_gpu::LiveTwin`, twin.rs): its own
+  `Renderer` driving the window's `prepare` headless, so a frame is the one the window's device
+  would render from the same params. The export renderer is not that frame (§3.1's warning; the
+  chunk and single-pass programs differ at a few hundred pixels).
+- **A job is the moving frame's own params** (`MandelbrotParams::headless`: every sink dropped,
+  no hold, reprojection or supersampling), as a whole frame at the worker's own resolution. A
+  pin frame's params describe the pinned view; they are re-aimed at the live view (reference
+  offset, exponent, span) only when the live view lies inside the pinned one, so every
+  approximation the pin made for its view (series skip, BLA radii) holds (`LiveAim`,
+  `view_inside`). A pan drag's frame computes no reference offset, so it offers nothing.
+- **The walk** (`LiveTwin::walk`, `WalkPricer`): chunk windows sized for 8 ms by wall clock
+  (`--set WORKER_PASS_MS`; why 8, below), at most doubling. Only an opening pass (every pixel running) prices the next walk's opening, which
+  rises at once and falls a fifth of the way per walk. Later passes are priced from the pass
+  before, because pixels only stop running; carried into the next opening they would underprice it
+  by the share that had escaped. Hard bounds: 1e9 pixel-steps for an opening, 6e10 nominal for any
+  pass (`EXPLICIT_STEPS_CEIL`). A device or formula that cannot walk renders one pass if it fits.
+- **The resolution** follows the worker's time: 150 ms a frame from offer to answer, each side
+  scaled by `√(target / ms)`, within a quarter either way a frame, 0.25 to 1 of the panel.
+- **Transfer.** The G-buffer comes back through the seed pipeline (the live textures have no
+  `COPY_SRC`; `Renderer::read_gbuffer`), the aux plane only for the colourings that read it, and is
+  checked to hold a picture (`GBuffer::drawn`). The worker thread then hands it to the WINDOW's
+  device itself (`AdoptFrame::upload`; wgpu 24's `Device` is `Clone` and `Send`), so the UI thread
+  copies nothing. Measured: the first version uploaded on the UI thread, 26 MB a frame at full
+  resolution, and a twin run had 53 frames over 33 ms; uploading from the worker, 9, then 0–2.
+  ⛔**But not with `queue.write_texture`**: wgpu-core 24 holds the device's `pending_writes` lock for
+  the whole call, staging copy included, and `queue.submit` takes it too, so the worker's upload
+  stalled the window's present. Invisible on the twin and with the RX 6800 XT drawing the window;
+  with the RTX 3070 drawing it (PLUTO, `gd914dd7`) ~150 frames a run went over 33 ms against 1
+  alone, 128–147 of them the frame just before an adoption, with the app's own work 1–4 ms. Now
+  the planes go into buffers mapped at creation (`MAP_WRITE | COPY_SRC`, no queue), and the adopting
+  frame copies them into the textures in its own encoder (`AdoptFrame::stage`): ~4 ms on the worker
+  thread at full resolution, against ~19 ms for the readback that precedes it.
+- **Adoption** (`MandelbrotParams::adopt`, `adopt_hold`), decided in `build_params` once the
+  frame's kind is known (`motion_worker::adopt_target`): a frame that renders the current view
+  itself drops it; a plain reprojection takes it into the live texture (and this frame's transform
+  is taken from the worker frame's view); a pin in flight, or its residue, takes it into the hold
+  the display serves; a pin starting this frame takes it into the live texture, which `hold_copy`
+  then snapshots (so adoption into the live texture is installed before the snapshot).
+- **Which frame is better** (`frame_quality`): the texels a screen pixel gets once the frame is
+  magnified to the live view (capped at 1), times the share of the screen it covers. Two frames
+  rank the same at every later view of a dive (both are magnified alike), so the comparison made
+  now holds. At equal resolutions the newest wins; a worker that has dropped its resolution does
+  not replace a sharper pin with a blurrier frame.
+- **The window's own refreshes** run on their own clock (`RefCache::local_l2` / `local_at`; a worker
+  frame moves only the frozen bookkeeping). While a worker frame on screen is at least as good as a
+  refresh of the window's device would be at its resolution, the window holds instead of starting
+  a walk (`worker_hold`); a pin that cannot beat the worker frame on screen is abandoned
+  (`PinStop::Superseded`). Both only while a worker frame is on screen, so one GPU behaves exactly
+  as before.
+
+**Tests.**
+- Self-test (worker group, now 10 checks): the app's own params at 1.3e30× (mode 2) on this device
+  and on a twin agree bit for bit in both planes, one pass and a chunked walk whose windows end at the
+  frame's escape quintiles (19,681 of 23,040 pixels pause in it); control: a one-pixel jitter changes
+  the frame; a twin's walk adopted here reads back unchanged, and a frame adopted at its params' key
+  is not iterated again. The adoption check went red with the upload or the key record removed; the
+  walk check refused its first version, whose windows paused no pixel. ⛔Its first build also
+  failed a later check in a full run ("unmeasured budget bounds the FIRST dispatch": a chunked
+  244-iteration arm frame became an unchunked 256), because its `build_params` calls left frame state
+  behind, the thumbnail check's leak again; it now runs on a fresh `Perf` and a cold reference
+  cache, and puts the session's back whole.
+- Unit tests: the pricer, the resolution rule, `adopt_target`, `frame_quality`, `view_inside`.
+- `--motiontest`, solo and twin: PASS (A2 counts worker frames with the pins they replace).
+- `--zoomtest` reports the lag of the frame on screen (mean, p95) and the worker frames adopted.
+
+**Measured on this machine, a twin on the RTX 3080** (one card shared by both devices),
+`--zoomtest 30` from corpus 07 (2^103.3, floatexp), 45 s each:
+
+| Build | Lag on screen, mean / p95 | Frames over 33 ms | Frame interval p95 | Worker frames |
+| --- | --- | --- | --- | --- |
+| Solo | 0.294 / 0.456 oct | 0 | 18.4 ms | — |
+| Twin, first cut (upload on the UI thread) | 0.091 / 0.186 | 53 | 29.4 ms | 448 |
+| Twin, upload on the worker | 0.085 / 0.183 | 9 | 24.8 ms | 485 |
+| Twin, aimed at the live view on pin frames | 0.035 / 0.060 | 0 | 21.4 ms | 1,075 |
+| Twin, final (quality rule, window holds) | 0.036 / 0.062 | 1 | 21.7 ms | 1,095 |
+| Solo, final build | 0.304 / 0.466 | 0 | 18.3 ms | — |
+
+The worker reaches the panel's full resolution (1477×1102) in ~50 ms a frame, 6 passes, and the
+screen lags the view 8× less. ⭐**On ONE card**: the twin is the window's own GPU, so the gain is the
+pacing again (§8): the window's walks run one pass a displayed frame, the worker's do not. A
+same-card twin is a single-GPU speed-up for motion, as it was for the settle.
+
+Window captures during a twin zoom (`PrintWindow` on the test's own window, ~9 a second),
+registered pair by pair as a magnification about the pane's centre: every pair a pure zoom with
+zero shift (residual 1–3 of 255), through the settle (scale 1.06 → 1.000 as the glide eases out).
+The only outliers were the live normalization switching mapping (3 times, as many as in a solo run:
+not L3) and supersampling starting at the settled view.
+
+**PLUTO (2026-10-08, user: "Yes", queueing approved for the session; RX 6800 XT = adapter 1,
+RTX 3070 = 2).** `--zoomtest 30` (corpus 07, floatexp), two runs per arm:
+
+| Window card | Helping | Lag on screen, mean | p95 | Second-card frames | Frames over 33 ms |
+| --- | --- | --- | --- | --- | --- |
+| RX 6800 XT | — | 0.289, 0.302 oct | 0.51, 0.46 | — | 4, 11 |
+| RX 6800 XT | RTX 3070 | 0.030, 0.022 | 0.037, 0.037 | 28, 41 a second | 1, 3 |
+| RTX 3070 | — | 0.341, 0.260 (0.270 later) | 0.51, 0.42 | — | 1, 1 (0) |
+| RTX 3070 | RX 6800 XT | 0.041, 0.042 | 0.078, 0.078 | 21.5, 21.3 | 149, 162 |
+
+The screen lags the view 7–14× less with the other card helping, either way round. With the RX
+6800 XT helping, the 3070's window hitched, two causes:
+1. **The queue lock** (above): the worker's `write_texture` stalled the window's submit. Moving
+   the upload to mapped buffers (`a359e38`) took it to 98 and 117.
+2. **The worker drew on the card that composites the desktop.** The rest were mostly 33–47 ms
+   (one or two missed vsyncs) with the app's own work short, and none with the cards swapped: one
+   walk pass is one draw, which the GPU does not interrupt, and a 20–40 ms pass on the 6800 XT
+   held up the desktop's composition. Test (`g41d291f`, `--set WORKER_PASS_MS`): 40 ms 62, 16 ms 7,
+   8 ms 7 and 9, at the same worker rate (22 a second) and lag (0.042, 0.044); the other pairing
+   at 8 ms unchanged (1, 28 a second, 0.030). 8 ms is the default (`WALK_PASS_MS`); stock at
+   `g7cacd16`: 9 and 9 with the 3070 drawing the window (lag 0.043), 1 the other way (0.030).
+
+Also on PLUTO: `--motiontest` PASS both ways (289 and 185 worker frames adopted, no partial frame,
+no frame shown that its bookkeeping did not describe); the worker self-test 10/10 on each card
+(`ga359e38`; at `gd914dd7` the 3070 failed the Phase 2 split hand-back check: the window's card
+took 11 of 12 tiles while the twin built its pipelines, so the twin never asked for the tile it was
+meant to fail on — under the hook every device now starts together, and the twin fails on its
+first tile).
+
+**One card: "Same card" (2026-10-09, user: "yes" to offering it).** Advanced ▸ Second graphics card
+now offers *Same card* (session value `same`, `gpu_worker::SAME_CARD`): a second device on the
+window's own card. It adds no GPU, but its walks and samples are not paced by the screen's frames.
+On the RTX 3080 (`--zoomtest 30`, two runs per arm, interleaved; `--shot` at 1600×1000):
+
+| | Alone | Same card, 8 ms passes | Same card, 16 ms passes |
+| --- | --- | --- | --- |
+| Lag on screen, mean | 0.296, 0.278 oct | 0.047, 0.052 | 0.043, 0.043 |
+| Frame interval p95 | 18.5, 18.9 ms | 21.3, 21.6 | 20.3, 21.3 |
+| Frames over 33 ms | 6, 0 | 12, 2 | 3, 15 |
+| Settle, 9.3e78× minibrot | 20.9 s | 11.6 s (12 of 24 samples on the second device) | — |
+| Settle, 6.8e3999× | 7.0 s | 3.9 s (14 of 24) | — |
+
+The converged images: identical at 6.8e3999×; at 9.3e78× 449 pane pixels at most 5/255 apart (the
+known timing-dependent difference near interior, §8). ⚠While the 9.3e78× view settles, the
+window's worst frame each second goes from ~23 ms to ~57 ms (80 at most): settle samples go through
+the export renderer, whose passes are sized for 200–400 ms, and on a shared card (as on a card that
+composites the desktop) they hold up the window's present. ⛔A reset of the card ends the app
+whichever device caused it, so the setting's text says so. Off by default at first; on by
+default since (below).
+
+**Short settle passes (2026-10-09, user: "yes").** `ExportRequest::pass_ms` sizes the export's
+passes for a wall (`None`, the default, keeps its own: step passes for 200 ms, chunk windows between
+100 and 400 ms, the tile budget where it cannot chunk); the second device's settle samples set it to
+`WORKER_PASS_MS` (8 ms). Self-test: a 1 ms target changes no pixel and takes more passes, at the
+deep view (step-bounded, 79 passes against 1) and a df32 one (chunk windows, 213 against 2, the
+longest 4.9 ms against 172). ⛔The export's step pricer priced from the WORST pass it had seen, and
+a pass's wall runs from submission to readback: on a shared card it includes waiting behind the
+window's frames (one cold first pass read 9.2 ns a step, the rest 0.15 with a 10 ms wait every few
+passes), so a 9.3e78× sample sat at the 16-step floor for 14,400 passes and took 2.5 s. Under a pass
+target it now prices from the median of the last 9 passes (`StepPricer::recent`); without one the
+worst-ever rule stands, the margin it is for passes sized in hundreds of ms. On the RTX 3080 with
+*Same card*:
+
+| 9.3e78× settle | Time | Seconds with a frame over 33 ms | Second-device sample |
+| --- | --- | --- | --- |
+| Alone | 20.6 s | 0 of 20 | — |
+| Export's own passes | 11.6 s | 10 of 10 (6 over 50 ms) | ~1.0 s |
+| 8 ms, worst-ever price | 15.4 s | 0 of 14 | 2.5 s |
+| 8 ms, median price | 13.7 s | 1 of 12 (the last, at convergence) | 1.7 s |
+
+6.8e3999×: 7.0 s alone, 4.0 s, no second over 10 ms either way.
+
+**On by default, with an offer after a crash (2026-10-09, user: "Enable by default. If there is a
+crash, offer to turn it off on restart").**
+- The stored setting keeps three states (`gpu_worker::clean_setting`): empty = never chosen, which
+  now means *Same card* (`setting_spec`); `off` = chosen Off (the menu's Off stores it); `same` or a
+  card number. Empty was Off before, and every saved session stores it, so only this keeps the
+  default reaching existing sessions. The menu SHOWS the default without storing it.
+- Harnesses stay on one GPU: tasks other than `--shot` never open a second device, and `--shot`
+  opens one only when the session chose it (`explicit_spec`), so the default changes neither a
+  run's timings nor the images it writes. Checked: a fresh-config `--shot` and the UI walk opened
+  none.
+- The offer: while a second device is open, `diag::set_second_device` names it in the unclean-exit
+  marker (`second-device …`; named before it opens, since opening is one of the things that can
+  fail hard). A start that finds the marker reads it. A device loss exits CLEANLY (it relaunches,
+  through `crate::exit`), so its relaunch carries the name in `FRACTADYNE_LOST_WITH_SECOND_DEVICE`
+  (removed when there is none, so a later generation does not inherit it). Either way the start
+  shows "Turn off the second graphics device?" (`draw_second_device_prompt`) if the setting still
+  asks for one, unless it is a harness or `--worker-gpu` pinned it; whether or not the crash-report
+  prompt is silenced, and below it when both are up. Until it is answered no second device opens,
+  so a fault that recurs at once cannot end the session before the answer. *Turn it off* stores
+  `off`; *Keep it on* or closing it changes nothing.
+- **The memory budget** (user: "settle the memory question"). A second device keeps its own copy of
+  the reference: a moving one is capped at ~37 MB (`LIVE_REF_CAP`), but a settled one reaches ~1 GiB
+  and every settle sample uploads it again. `gpu_worker::reference_budget`: a quarter of the card's
+  memory when the device shares the window's card (which holds both copies), half on a card of its
+  own, 256 MB when `sysinfo::gpu_vram_bytes` cannot read it; a frame or sample whose reference
+  (`reference_bytes`: orbit, BLA, u-space tree) is over it stays on the window's card. Checked at
+  9.3e78× (a 25 MB reference) on the RTX 3080 (10 GB, budget 2.5 GB): 7 samples on the second
+  device, 14.7 s; with `FRACTADYNE_WORKER_REF_BUDGET_MB=1`, one log line, none, 20.6 s (one card's).
+- Checked on this machine: a fresh config opened `spec 'same'`; that test process killed, the next
+  start reported the unclean end with `second-device same card, …`, showed the offer under the
+  crash prompt and opened no device; with the relaunch variable set on a clean config, the offer
+  alone. The UI walk has a `second-device-prompt` screen.
+
+**Open.**
+1. Short settle passes cost the heavy sample 1.7 s against 1.0 (the readback after every pass, and
+   the time behind the window's frames). Packing more work per pass, or overlapping the readback
+   with the next pass, would win some of it back.
+2. With the 3070 drawing the window and the 6800 XT helping, 7–9 frames a run still go over 33 ms
+   (0–1 alone). The mixed-class flicker of §4 L3's acceptance is not measured (in motion nearly
+   every frame on screen is the worker's, so classes rarely alternate).
+3. Worker frames bring no counter readings: the verified-present check treats them as complete by
+   construction, and live normalization keeps reading only the window's passes.
+4. Pan drags offer nothing (their frames compute no reference offset); the dual view's Julia
+   panel (L4) and prediction (rendering where the camera will be) are not built.
+5. When the worker outpaces the window, the window's GPU idles in motion (it holds rather than
+   start walks that would be abandoned). It could render something the worker does not.
+6. Where a moving df32 view refreshes live every frame (`live_refresh_verdict`), the window's own
+   frame is always newer, so every worker frame is overtaken (dropped). Harmless — that regime is
+   already smooth on one GPU — but the worker's work there is wasted.

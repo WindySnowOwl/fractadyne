@@ -15,6 +15,9 @@ use std::sync::Arc;
 
 mod export;
 pub use export::*;
+/// The live renderer on a second device (design/multi-gpu-live.md L3).
+mod twin;
+pub use twin::*;
 pub mod timing;
 /// Custom formulas: WGSL generated from the formula IR and spliced into the fixed shader.
 pub mod custom;
@@ -2317,6 +2320,54 @@ impl ViewResources {
         self.last_chunk = None;
     }
 
+    /// Install a frame rendered elsewhere (`MandelbrotParams::adopt`): draw its uploaded planes into
+    /// this view's textures with the seed pipeline, the exact `textureLoad` copy (the live textures
+    /// take no `COPY_DST`). The caller records the frame's key.
+    fn adopt(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        color_bgl: &wgpu::BindGroupLayout,
+        seed_pipeline: &wgpu::RenderPipeline,
+        f: &AdoptFrame,
+    ) {
+        let size = [f.width, f.height];
+        if size != self.size {
+            self.resize(device, color_bgl, size);
+        }
+        let seed_bg = make_color_bg(device, color_bgl, &self.color_uniform, &self.lut_buf, &f.iter, &f.aux);
+        {
+            let attach = |v| Some(wgpu::RenderPassColorAttachment {
+                view: v,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            });
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("fractadyne.adopt_pass"),
+                color_attachments: &[attach(&self.tex_view), attach(&self.aux_view)],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(seed_pipeline);
+            pass.set_bind_group(0, &seed_bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        // A whole frame replaces whatever walk was under way.
+        self.chunk_state = None;
+        self.last_chunk = None;
+    }
+
+    /// A hold snapshot that IS `f` (`MandelbrotParams::adopt_hold`): its planes bound for the colour
+    /// pass, as `hold_copy`'s copy is.
+    fn hold_of(&self, device: &wgpu::Device, color_bgl: &wgpu::BindGroupLayout, f: &AdoptFrame) -> HoldState {
+        let bg = make_color_bg(device, color_bgl, &self.color_uniform, &self.lut_buf, &f.iter, &f.aux);
+        HoldState { bg, size: [f.width, f.height], ss: f.ss }
+    }
+
     fn ensure_orbit_capacity(
         &mut self,
         device: &wgpu::Device,
@@ -2680,6 +2731,18 @@ pub struct MandelbrotParams {
     /// The accumulator's own sample count, stored after every fold: what the average really holds,
     /// for the app to check against what it counted.
     pub accum_folds: Option<Arc<std::sync::atomic::AtomicU32>>,
+    /// A whole frame rendered on another device ([`LiveTwin`], design/multi-gpu-live.md L3), installed
+    /// before anything else this frame:
+    /// - into the LIVE G-buffer (`adopt_hold` false). Of exactly these params (it fits this frame's
+    ///   texture and the frame is neither reprojected nor held) it stands in for the iterate and is
+    ///   recorded at this frame's key, so the frames after it at the same view do not render it
+    ///   again. Of another view (a motion refresh) it is what this frame's reprojection shows, and
+    ///   the next real frame renders over it; it is installed before `hold_copy`, so a snapshot
+    ///   taken this frame is of it.
+    /// - into the HOLD snapshot (`adopt_hold` true, with `display_hold`): it replaces what the
+    ///   display serves while a walk composes underneath, which it does not touch.
+    pub adopt: Option<Arc<AdoptFrame>>,
+    pub adopt_hold: bool,
 }
 
 /// A frame that asks for nothing: no sinks, no reference, the direct mode, one sample a pixel, no
@@ -2802,6 +2865,8 @@ impl Default for MandelbrotParams {
             accum_external: None,
             accum_folds: None,
             chunk_walk: 0,
+            adopt: None,
+            adopt_hold: false,
         }
     }
 }
@@ -2971,13 +3036,35 @@ impl CallbackTrait for MandelbrotParams {
         let lsystem_on = self.lsystem.is_some() && lsystem_r.is_some();
         // Life or an L-system: a class whose picture is not an iterate (no iterate timers).
         let life_on = (self.life.is_some() && life_r.is_some()) || lsystem_on;
+        // A zero-area tile is a "hold" frame (another view owns this frame's tile slot): render
+        // nothing, keep the texture exactly as it is — like a reprojection with no translation.
+        let hold = self.tile.is_some_and(|t| t[2] == 0 || t[3] == 0);
+        // A frame from another device for the LIVE G-buffer (`adopt`), installed first: of these
+        // very params it stands in for the iterate (`adopted`, recorded at this frame's key
+        // below); of another view it is simply what the texture now holds — this frame's
+        // reprojection shows it, a snapshot taken below copies it, and the next real frame renders
+        // over it.
+        let mut adopted = false;
+        if let Some(f) = self.adopt.as_deref().filter(|_| !self.adopt_hold) {
+            let exact = self.reproject != 1 && !hold && f.fits(size, ss);
+            f.stage(encoder);
+            view.adopt(device, encoder, color_bgl, seed_pipeline, f);
+            if exact {
+                adopted = true;
+            } else {
+                view.last_iter_key = None;
+                view.last_tile = None;
+                view.last_ss = f.ss;
+                view.rendered = true;
+                // Another view's pixels: nothing may seed from them or average over them.
+                view.content_stamp = None;
+                view.content_foreign = true;
+            }
+        }
         // Pan reprojection: keep the frozen iteration texture (only valid once something has
         // been rendered into it). Skip the resize so the texture isn't cleared, and color it
         // with the ss it was built at.
         let reproject = self.reproject == 1 && view.rendered;
-        // A zero-area tile is a "hold" frame (another view owns this frame's tile slot): render
-        // nothing, keep the texture exactly as it is — like a reprojection with no translation.
-        let hold = self.tile.is_some_and(|t| t[2] == 0 || t[3] == 0);
         // Present-gating ("prefer detail" stage B): snapshot the current — complete — frame into
         // the hold pair BEFORE any compose pass lands this frame. A seed-pipeline draw is the
         // copy (the seeded_resize idiom; at equal size it is 1:1), so no texture-usage changes.
@@ -3020,7 +3107,12 @@ impl CallbackTrait for MandelbrotParams {
             let bg = make_color_bg(device, color_bgl, &view.color_uniform, &view.lut_buf, &ht, &ha);
             view.hold = Some(HoldState { bg, size: view.size, ss: view.last_ss.max(1) });
         }
-        if !reproject && !hold && size != view.size {
+        // …or for the HOLD (`adopt_hold`): it becomes what the display serves, over any snapshot.
+        if let Some(f) = self.adopt.as_deref().filter(|_| self.adopt_hold && self.display_hold) {
+            f.stage(encoder);
+            view.hold = Some(view.hold_of(device, color_bgl, f));
+        }
+        if !reproject && !hold && !adopted && size != view.size {
             // ⛔**THE SEED MAY ONLY CARRY THIS VIEW'S OWN PIXELS.** Seeding exists so a resolution
             // change mid-settle refines in place instead of against black, which is right when the
             // content is this view at another size. Across a VIEW change it instead copies another
@@ -3194,6 +3286,7 @@ impl CallbackTrait for MandelbrotParams {
         // final rect/range, so the triple stops changing and the frame is served from the texture.
         if !reproject
             && !hold
+            && !adopted
             && (view.last_iter_key != Some(key)
                 || view.last_tile != self.tile
                 || view.last_chunk != self.chunk_range
@@ -3623,6 +3716,18 @@ impl CallbackTrait for MandelbrotParams {
             );
             view.content_stamp = stamp;
             view.content_foreign = foreign;
+        }
+        if adopted {
+            view.last_iter_key = Some(key);
+            view.last_tile = self.tile;
+            view.last_chunk = self.chunk_range;
+            view.last_probe = self.probe_nonce;
+            view.last_split = self.split;
+            view.last_ss = ss;
+            view.rendered = true;
+            // A whole frame of this view.
+            view.content_stamp = Some(self.view_stamp);
+            view.content_foreign = false;
         }
         if reproject {
             let (stamp, foreign) = content_after_frame(

@@ -1433,7 +1433,7 @@ impl FractadyneApp {
             };
             for (lose, name, threshold) in [
                 (None, "a still split across this device and a twin is bit-identical, both rendering", "0 channels differ; both devices rendered tiles"),
-                (Some((1, 1)), "a split whose twin fails after one tile hands it back, bit-identical", "0 channels differ; the twin stopped, every tile rendered"),
+                (Some((1, 0)), "a split whose twin fails at its first tile hands it back, bit-identical", "0 channels differ; the twin stopped, every tile rendered"),
             ] {
                 let (pass, result) = match (&alone, split(lose)) {
                     (Some(a), Ok((r, shares))) if a.pixels.len() == r.pixels.len() => {
@@ -1458,6 +1458,293 @@ impl FractadyneApp {
                     params: format!("corpus07 1e30x, 20k iter, {WW}×{WH} ss 2, 48-px tiles, mode {}", s.mode),
                     result,
                     threshold,
+                    pass,
+                });
+            }
+
+            // ⭐THE SECOND DEVICE'S SHORT PASSES (`ExportRequest::pass_ms`, `WORKER_PASS_MS`). Its settle
+            // samples run with a pass target so that, on a card it shares with the window or the
+            // desktop, no pass holds up a present; where passes split never changes a pixel, so the
+            // sample must be the one the export's own sizing renders. Both pass shapes it can take: the
+            // deep view above (step-bounded passes) and a df32 view (chunk windows). Control: the
+            // target reached the renderer — it took MORE passes (a target that changed nothing would
+            // pass the identity check vacuously).
+            {
+                let mut vp = Viewport::new(WW as f64, WH as f64);
+                vp.center_x = fractadyne_core::parse_bf(SX).unwrap();
+                vp.center_y = fractadyne_core::parse_bf(SY).unwrap();
+                vp.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (WH as f64 * 1.0e8));
+                vp.precision = fractadyne_core::precision_for_magnification(1.0e8);
+                let saved = (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method);
+                self.render_cfg.max_iter = 200_000;
+                self.render_cfg.auto_iter = false;
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                let mut df = self.current_export_request_for(&vp, false);
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method) = saved;
+                df.width = WW;
+                df.height = WH;
+                df.ss = 2;
+                for (label, base) in [("floatexp 1e30x, step-bounded", req.clone()), ("df32 1e8x, chunk windows", df)] {
+                    let mut short = base.clone();
+                    short.pass_ms = Some(1.0);
+                    let (pass, result) = match (local(&base), local(&short)) {
+                        (Some(a), Some(b)) if a.pixels.len() == b.pixels.len() => {
+                            let diffs = bit_exact(&a.pixels, &b.pixels);
+                            (
+                                diffs == 0 && b.chunk_passes > a.chunk_passes,
+                                format!(
+                                    "{diffs} of {} channels differ; {} passes against {} (longest {:.1} ms against {:.1})",
+                                    a.pixels.len(),
+                                    b.chunk_passes,
+                                    a.chunk_passes,
+                                    b.max_dispatch_ms,
+                                    a.max_dispatch_ms
+                                ),
+                            )
+                        }
+                        _ => (false, "render failed, or the sizes differ".into()),
+                    };
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Worker",
+                        name: format!("a pass target changes no pixel, and shortens the passes ({label})"),
+                        params: format!("{WW}×{WH} ss 2, mode {}, pass_ms 1 against the export's own sizing", base.mode),
+                        result,
+                        threshold: "0 channels differ; more passes",
+                        pass,
+                    });
+                }
+            }
+
+            // ⭐THE LIVE RENDERER ON ANOTHER DEVICE (design/multi-gpu-live.md L3). A motion refresh
+            // from a second GPU is adopted as the window's frozen frame, so it must be the frame the
+            // window's device renders from the same params, and the export renderer is not that
+            // frame (a separately compiled program, a few hundred pixels apart). `LiveTwin` runs the
+            // window's own `prepare` headless: one on this device and one on the twin are given the
+            // app's own params for a deep view (`build_params`), one pass and then a chunked walk,
+            // and must agree bit for bit in both planes. The G-buffer then crosses: adopted into a
+            // view on this device it must read back unchanged, and the next frame at the same key
+            // must not iterate it again. Controls: the frame really is this view's (escaped texels,
+            // and a one-pixel jitter changes it).
+            {
+                const LW: u32 = 192;
+                const LH: u32 = 120;
+                const LITER: u32 = 20_000;
+                let saved_vp = self.viewport.clone();
+                let saved = (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method);
+                // ⛔⭐`build_params` mutates far more frame state than any list of fields would
+                // catch — the thumbnail check above leaked twice that way, and the first build of
+                // this one failed "unmeasured budget bounds the FIRST dispatch" (a chunked 244 became
+                // an unchunked 256, 3.998e8 → 4.195e8 steps). So it runs on a FRESH frame state (the
+                // device's capabilities copied in), a cold reference cache and no build in flight,
+                // and the session's are put back whole afterwards.
+                let fresh = crate::Perf {
+                    ts_supported: self.perf.ts_supported,
+                    wall_fallback: self.perf.wall_fallback,
+                    chunk_ok: self.perf.chunk_ok,
+                    chunk_fe_ok: self.perf.chunk_fe_ok,
+                    ..Default::default()
+                };
+                let saved_perf = std::mem::replace(&mut self.perf, fresh);
+                let saved_cache = self.ref_cache.clone();
+                let saved_rx = std::mem::take(&mut self.recompute_rx);
+                self.ref_cache[0] = Default::default();
+                self.render_cfg.max_iter = LITER;
+                self.render_cfg.auto_iter = false;
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.viewport.set_size(LW as f64, LH as f64);
+                self.viewport.set_center_log2mag(
+                    fractadyne_core::parse_bf(CRX).unwrap(),
+                    fractadyne_core::parse_bf(CRY).unwrap(),
+                    100.0, // 1.3e30×: floatexp (mode 2), the chunked mode
+                );
+                let live = |app: &mut Self| {
+                    app.perf.frame_idx += 1;
+                    let center_bf = [app.viewport.center_x.clone(), app.viewport.center_y.clone()];
+                    let center = app.viewport.center_f64();
+                    let span = app.viewport.complex_span_fe();
+                    let mag = app.viewport.magnification();
+                    let l2 = app.viewport.log2_magnification();
+                    app.build_params(center_bf, center, span, mag, l2, app.fractal, false, LITER, false, 1, [LW, LH], 0, None)
+                };
+                let mut warm = 0;
+                while self.ref_cache[0].ref_pt.is_none() && warm < 400 {
+                    let _ = live(self);
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    warm += 1;
+                }
+                let have_ref = self.ref_cache[0].ref_pt.is_some();
+                let pr = live(self);
+                self.viewport = saved_vp;
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method) = saved;
+                self.perf = saved_perf;
+                self.ref_cache = saved_cache;
+                self.recompute_rx = saved_rx;
+
+                // The frame's own params, as a whole frame at its full size (the app's walk state —
+                // tile, chunk window, split, reprojection — is set per pass below).
+                let mut base = pr.headless();
+                base.tile = None;
+                base.chunk_range = None;
+                base.chunk_idx = 0;
+                base.split = [1, 0];
+                base.ss = 1;
+                base.jitter = [0.0, 0.0];
+                base.resolution = [LW, LH];
+                let max_iter = base.max_iter;
+                let render = |dev: &eframe::wgpu::Device, q: &eframe::wgpu::Queue, passes: &[fractadyne_gpu::MandelbrotParams]| -> Result<fractadyne_gpu::GBuffer, String> {
+                    let mut t = fractadyne_gpu::LiveTwin::new(dev, q);
+                    for p in passes {
+                        t.frame(dev, q, p).map_err(|e| e.to_string())?;
+                    }
+                    t.gbuffer(dev, q, base.view_id, true).map_err(|e| e.to_string())
+                };
+                let on_twin = |passes: &[fractadyne_gpu::MandelbrotParams]| -> Result<fractadyne_gpu::GBuffer, String> {
+                    let t = twin.as_ref().map_err(|e| e.clone())?;
+                    render(&t.device, &t.queue, passes)
+                };
+                let differ = |a: &fractadyne_gpu::GBuffer, b: &fractadyne_gpu::GBuffer| -> Option<usize> {
+                    ([a.width, a.height] == [b.width, b.height] && a.iter.len() == b.iter.len() && a.aux.len() == b.aux.len())
+                        .then(|| bit_exact(&a.iter, &b.iter) + bit_exact(&a.aux, &b.aux))
+                };
+                let escaped = |g: &fractadyne_gpu::GBuffer| g.iter.chunks(4).filter(|t| t[0] >= 0.0).count();
+                let one = [base.clone()];
+                let here_one = render(device, queue, &one);
+                // The walk's windows end INSIDE this frame's escapes (the quintiles of the one-pass
+                // frame's counts), so pixels pause and resume from state; then the rest of the
+                // limit, then the walk's empty tail. (Fifths of the limit ended past every pixel's
+                // escape here: a walk that paused nothing, which the check below now refuses.)
+                let mut counts: Vec<f32> = here_one
+                    .as_ref()
+                    .map(|g| g.iter.chunks(4).map(|t| t[0]).filter(|v| *v >= 0.0).collect())
+                    .unwrap_or_default();
+                counts.sort_by(|a, b| a.total_cmp(b));
+                let mut cuts: Vec<u32> = (1..5)
+                    .filter_map(|k| counts.get(counts.len() * k / 5).map(|v| *v as u32))
+                    .filter(|&c| c > 0 && c < max_iter)
+                    .collect();
+                cuts.dedup();
+                cuts.push(max_iter);
+                let step = cuts[0];
+                let mut walk = Vec::new();
+                let mut s0 = 0;
+                for e in cuts {
+                    let mut p = base.clone();
+                    p.chunk_range = Some([s0, e]);
+                    p.chunk_idx = walk.len() as u32;
+                    walk.push(p);
+                    s0 = e;
+                }
+                let mut tail = base.clone();
+                tail.chunk_range = Some([max_iter, max_iter]);
+                tail.chunk_idx = walk.len() as u32;
+                walk.push(tail);
+                let here_walk = render(device, queue, &walk);
+                let twin_one = on_twin(&one);
+                let twin_walk = on_twin(&walk);
+                let params = format!(
+                    "corpus07 1.3e30x, {max_iter} iter, {LW}×{LH}, mode {}, the app's params; walk {:?} + tail",
+                    base.mode,
+                    walk.iter().filter_map(|p| p.chunk_range).filter(|r| r[0] < r[1]).map(|r| r[1]).collect::<Vec<_>>()
+                );
+                // A walk is only a walk if pixels pause in it: some must escape after the first window.
+                let paused = |g: &fractadyne_gpu::GBuffer| g.iter.chunks(4).filter(|t| t[0] > step as f32).count();
+                let walk_note = match (&here_walk, &here_one) {
+                    (Ok(w), Ok(o)) => format!(
+                        "; {} escaped after the first window; the walk and the one pass differ in {} channels here",
+                        paused(w),
+                        differ(w, o).map_or("all".to_string(), |d| d.to_string())
+                    ),
+                    _ => String::new(),
+                };
+                for (name, here, there, walked) in [
+                    ("a live frame on a twin device is bit-identical (one pass)", &here_one, &twin_one, false),
+                    ("a live chunked walk on a twin device is bit-identical", &here_walk, &twin_walk, true),
+                ] {
+                    let (pass, result) = match (here, there) {
+                        (Ok(a), Ok(b)) => match differ(a, b) {
+                            Some(d) => (
+                                d == 0 && have_ref && base.mode == 2 && (!walked || paused(a) > 0),
+                                format!(
+                                    "{d} of {} channels differ; {} of {} texels escaped{}",
+                                    a.iter.len() * 2,
+                                    escaped(a),
+                                    a.iter.len() / 4,
+                                    if walked { walk_note.as_str() } else { "" }
+                                ),
+                            ),
+                            None => (false, format!("sizes differ: {}×{} and {}×{}", a.width, a.height, b.width, b.height)),
+                        },
+                        (Err(e), _) => (false, format!("this device: {e}")),
+                        (_, Err(e)) => (false, format!("the twin: {e}")),
+                    };
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Worker",
+                        name: name.into(),
+                        params: params.clone(),
+                        result: if have_ref { result } else { format!("{result}; the reference never arrived") },
+                        threshold: "0 channels differ (iter + aux planes), mode 2; a walk pauses pixels",
+                        pass,
+                    });
+                }
+
+                // Control: the frame is this view's — escaped texels, and a whole-pixel jitter moves it.
+                let mut shifted = base.clone();
+                shifted.jitter = [1.0, 0.0];
+                let here_shifted = render(device, queue, &[shifted]);
+                let (pass, result) = match (&here_one, &here_shifted) {
+                    (Ok(a), Ok(b)) => {
+                        let d = differ(a, b).unwrap_or(0);
+                        (d > 0 && escaped(a) > 0, format!("{} texels escaped; {d} channels differ from the frame jittered one pixel", escaped(a)))
+                    }
+                    _ => (false, "render failed".into()),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Worker",
+                    name: "the twins drew this view (control)".into(),
+                    params: "the one-pass frame above, and it at jitter (1, 0)".into(),
+                    result,
+                    threshold: "some escaped; some differ",
+                    pass,
+                });
+
+                // Adoption: the twin's walk installed in a view on this device reads back unchanged;
+                // and a frame adopted under these params is not iterated again at the same key (a
+                // DIFFERENT frame, the jittered one, is adopted, so a re-render would show).
+                let (pass, result) = match (&twin_walk, &here_shifted) {
+                    (Ok(g), Ok(other)) => {
+                        let adopt = |g: &fractadyne_gpu::GBuffer, then: &[fractadyne_gpu::MandelbrotParams]| -> Result<fractadyne_gpu::GBuffer, String> {
+                            let mut t = fractadyne_gpu::LiveTwin::new(device, queue);
+                            let mut p = base.clone();
+                            p.adopt = fractadyne_gpu::AdoptFrame::upload(device, g).map(std::sync::Arc::new);
+                            t.frame(device, queue, &p).map_err(|e| e.to_string())?;
+                            for p in then {
+                                t.frame(device, queue, p).map_err(|e| e.to_string())?;
+                            }
+                            t.gbuffer(device, queue, base.view_id, true).map_err(|e| e.to_string())
+                        };
+                        match (adopt(g, &[]), adopt(other, &one)) {
+                            (Ok(a), Ok(b)) => {
+                                let (da, db) = (differ(g, &a), differ(other, &b));
+                                (
+                                    da == Some(0) && db == Some(0),
+                                    format!(
+                                        "adopted walk: {} channels differ; adopted jittered frame after a frame at its key: {}",
+                                        da.map_or("size differs".to_string(), |d| d.to_string()),
+                                        db.map_or("size differs".to_string(), |d| d.to_string()),
+                                    ),
+                                )
+                            }
+                            (Err(e), _) | (_, Err(e)) => (false, e),
+                        }
+                    }
+                    _ => (false, "the frames to adopt did not render".into()),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Worker",
+                    name: "a twin's frame adopted here reads back unchanged and is not re-iterated".into(),
+                    params: "the twin's walk above; the jittered frame adopted under the unjittered params".into(),
+                    result,
+                    threshold: "0 channels differ, both",
                     pass,
                 });
             }

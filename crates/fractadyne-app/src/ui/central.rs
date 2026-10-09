@@ -1451,6 +1451,7 @@ impl FractadyneApp {
         self.help_window(ctx);
         self.draw_welcome_dialog(ctx);
         self.draw_crash_prompt(ctx);
+        self.draw_second_device_prompt(ctx);
     }
 }
 

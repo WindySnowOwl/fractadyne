@@ -33,6 +33,9 @@ enum Screen {
     /// jumps to, and the one page whose tables are rendered from core data rather than prose.
     HelpExpressions,
     Welcome,
+    /// The offer to turn off the second graphics device after a session it was in use for ended
+    /// unexpectedly (seeded: the walk ends no session).
+    SecondDevicePrompt,
     Bookmarks,
     BenchConfig,
     BenchResults,  // seeded with a synthetic report so the populated layout renders
@@ -752,6 +755,7 @@ fn build_steps() -> Vec<Step> {
         screen("help", Screen::Help),
         screen("help-expressions", Screen::HelpExpressions),
         screen("welcome", Screen::Welcome),
+        screen("second-device-prompt", Screen::SecondDevicePrompt),
         screen("bookmarks", Screen::Bookmarks),
         screen("benchmark-config", Screen::BenchConfig),
         screen("benchmark-results", Screen::BenchResults),
@@ -1137,6 +1141,7 @@ impl FractadyneApp {
     fn uitest_close_all(&mut self) {
         self.dialogs.help_open = false;
         self.dialogs.welcome_open = false;
+        self.dialogs.second_device_prompt = None;
         self.dialogs.bookmarks_open = false;
         self.dialogs.bench_open = false;
         self.dialogs.bench_dialog_open = false;
@@ -1225,8 +1230,10 @@ impl FractadyneApp {
                 let other = "AMD Radeon RX 6800 XT".to_string();
                 self.worker_cards = Some(vec![(1, self.gpu_name.clone()), (2, other.clone())]);
                 self.worker_cards_rx = None;
-                self.render_cfg.worker_gpu = "2".into();
-                self.worker_state = crate::gpu_worker::WorkerState::Running(format!("{other} · Vulkan"));
+                // The same-card choice (the one every one-card machine can take), as the setting shows it in use.
+                self.render_cfg.worker_gpu = crate::gpu_worker::SAME_CARD.into();
+                self.worker_state =
+                    crate::gpu_worker::WorkerState::Running(format!("same card, {} · Vulkan", self.gpu_name));
             }
             Screen::Minimap => self.dialogs.minimap = true,
             Screen::Help => self.dialogs.help_open = true,
@@ -1236,6 +1243,9 @@ impl FractadyneApp {
                 self.dialogs.help_open = true;
             }
             Screen::Welcome => self.dialogs.welcome_open = true,
+            Screen::SecondDevicePrompt => {
+                self.dialogs.second_device_prompt = Some(format!("same card, {} · Vulkan", self.gpu_name));
+            }
             Screen::Bookmarks => self.dialogs.bookmarks_open = true,
             Screen::BenchConfig => self.dialogs.bench_dialog_open = true,
             Screen::BenchResults => {

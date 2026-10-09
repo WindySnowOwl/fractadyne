@@ -83,6 +83,7 @@ mod deviceloss_repro;
 mod gpu_choice;
 mod gputest;
 mod gpu_worker;
+mod motion_worker;
 mod help;
 mod icons;
 #[cfg(test)]
@@ -1641,6 +1642,18 @@ struct Perf {
     accum_ext_attach: [Option<std::sync::Arc<fractadyne_gpu::AccumSample>>; 2],
     /// The worker's job in flight: (view, run, sample index).
     worker_job: Option<(usize, u64, u32)>,
+    /// The accumulation run whose reference was found over the second device's budget (logged once).
+    worker_budget_note: [u64; 2],
+    /// Motion refreshes on the worker (`motion_worker`): the job in flight, the finished frame
+    /// waiting to be adopted, the job counter, the worker's resolution (a fraction of the panel),
+    /// and the current motion's counts.
+    live_job: [Option<motion_worker::LiveTicket>; 2],
+    live_ready: [Option<motion_worker::LiveDelivery>; 2],
+    live_gen: u64,
+    live_res: [f64; 2],
+    live_stats: [motion_worker::LiveStats; 2],
+    /// Worker frames adopted since the start (`--zoomtest` reads it).
+    live_adopted_total: [u64; 2],
     /// The colour-state signature (`accum_color_sig`) the running average was started under, and
     /// the supersampling factor its samples are rendered at. The average is a COLOUR texture, so
     /// any change to how a frame is coloured — palette, cycle/offset, method, effects, live
@@ -2288,6 +2301,13 @@ impl Default for Perf {
             accum_ext_ready: [Vec::new(), Vec::new()],
             accum_ext_attach: [None, None],
             worker_job: None,
+            worker_budget_note: [u64::MAX, u64::MAX],
+            live_job: [None, None],
+            live_ready: [None, None],
+            live_gen: 0,
+            live_res: [motion_worker::LIVE_RES_START; 2],
+            live_stats: Default::default(),
+            live_adopted_total: [0, 0],
             accum_cmd: [AccumCmd::default(), AccumCmd::default()],
             accum_sig: [0, 0],
             accum_ss: [1, 1],
@@ -5137,11 +5157,24 @@ struct RefCache {
     /// When the frozen frame was rendered — ages the reuse-hold so a SLOW dive still refreshes
     /// real detail on a time floor (`REFRESH_MAX_SECS`), not just every `REFRESH_OCTAVES` of zoom.
     frozen_at: Option<Instant>,
-    /// log2(units-per-pixel) of the frozen frame — the resize-invariant ZOOM signal the time
-    /// floor gates on (`log2mag` follows the window height, so a resize drifts it without any
+    /// log2(units-per-pixel) of THIS DEVICE's last refresh — the resize-invariant ZOOM signal the
+    /// time floor gates on (`log2mag` follows the window height, so a resize drifts it without any
     /// zoom; re-iterating an un-zoomed held frame on every resize tick caused the "squashed
-    /// resize" judder).
+    /// resize" judder). Part of the local refresh clock below: a worker frame leaves it.
     frozen_upp_l2: f64,
+    /// The CAPTURE frame of the frame on screen (`frame_idx` of the params it was rendered from):
+    /// a real frame's own, a pin's start, a worker frame's ticket (`motion_worker`).
+    frozen_frame: u64,
+    /// log2 of the frame on screen's texels across the panel's width (resolution × ss over the
+    /// panel), and whether it came from the second GPU: with `frozen_l2`, what `frame_quality`
+    /// compares a worker frame or a pin against (`motion_worker`).
+    frozen_res: f64,
+    frozen_by_worker: bool,
+    /// THIS DEVICE's last refresh, view and time: the reuse hold's refresh clock. The same as
+    /// `frozen_l2`/`frozen_at` except that a worker frame does not move it, so the window's own
+    /// refreshes keep their cadence while the worker's interleave (`motion_worker`).
+    local_l2: f64,
+    local_at: Option<Instant>,
     /// Octaves the view has zoomed IN past the cached BLA's validity (recomputed each frame in
     /// `build_params`; 0 when not in the deep floatexp regime). This is the "reference pipeline is
     /// behind the dive" signal — script playback reads it to DILATE the tour clock (slow the dive)
@@ -5173,6 +5206,11 @@ impl Default for RefCache {
             frozen_l2: 0.0,
             frozen_at: None,
             frozen_upp_l2: 0.0,
+            frozen_frame: 0,
+            frozen_res: 0.0,
+            frozen_by_worker: false,
+            local_l2: 0.0,
+            local_at: None,
             last_depth_lag: 0.0,
         }
     }
@@ -5788,6 +5826,11 @@ struct DialogState {
     /// Post-crash "send a report?" prompt. Opened at startup when the previous session ended
     /// unclean and the user has not opted out.
     crash_prompt_open: bool,
+    /// "Turn off the second graphics device?": the previous session ended unclean, or lost its card,
+    /// with this second device open, and the setting still asks for one. Until it is answered no
+    /// second device is opened (`drive_worker_setting`). Shown whether or not the crash-report
+    /// prompt is silenced; never in front of a harness.
+    second_device_prompt: Option<String>,
     /// A view whose checksum did not match, held UNAPPLIED while the user is asked whether to
     /// load it anyway. ⭐Parked rather than loaded-then-undone: a half-applied view would have
     /// already moved them, and "undo" is not a thing a jump has.
@@ -5978,6 +6021,9 @@ struct FractadyneApp {
     /// A second graphics device for the live view (`--worker-gpu`, `design/multi-gpu-live.md`);
     /// `None` = one GPU, as always. Dropped (not fatal) when it is lost.
     gpu_worker: Option<gpu_worker::Worker>,
+    /// The largest reference the second device may copy, bytes (`gpu_worker::reference_budget`),
+    /// set when it opens.
+    worker_ref_budget: u64,
     /// `--render … --gpus SPEC`: the cards a still export renders on beside the window's own
     /// (`gpu_worker::export_extra_cards`), opened at start (`fractadyne_gpu::render_export_multi`).
     export_extra: Vec<gpu_worker::Headless>,
@@ -6259,10 +6305,19 @@ impl FractadyneApp {
             };
             if let Ok(exe) = std::env::current_exe() {
                 diag::log_line("wgpu", &format!("device lost — restarting (generation {next})"));
-                let _ = std::process::Command::new(exe)
-                    .args(std::env::args().skip(1))
-                    .env("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS", next.to_string())
-                    .spawn();
+                let mut cmd = std::process::Command::new(exe);
+                cmd.args(std::env::args().skip(1)).env("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS", next.to_string());
+                // The second device that was open beside the window, so the relaunched session can
+                // offer to turn it off; a later generation without one must not inherit the offer.
+                match diag::second_device() {
+                    Some(d) => {
+                        cmd.env(diag::LOST_WITH_SECOND_DEVICE_ENV, d);
+                    }
+                    None => {
+                        cmd.env_remove(diag::LOST_WITH_SECOND_DEVICE_ENV);
+                    }
+                }
+                let _ = cmd.spawn();
             }
         }
         render_state.device.on_uncaptured_error(Box::new(|e| {
@@ -6330,6 +6385,8 @@ impl FractadyneApp {
             self.worker_pinned = true;
             match gpu_worker::Worker::spawn(&spec, &render_state.adapter.get_info()) {
                 Ok(w) => {
+                    diag::set_second_device(Some(&w.name));
+                    self.worker_ref_budget = Self::worker_budget_for(&w, spec == gpu_worker::SAME_CARD);
                     self.worker_state = gpu_worker::WorkerState::Running(w.name.clone());
                     self.gpu_worker = Some(w);
                 }
@@ -7077,6 +7134,11 @@ impl FractadyneApp {
                 crash_prompt_open: crate::diag::previous_session_unclean()
                     && !s.crash_prompt_disabled
                     && !launched_for_a_task,
+                second_device_prompt: crate::diag::previous_session_second_device().filter(|_| {
+                    !launched_for_a_task
+                        && !gpu_worker::setting_spec(&s.live_worker_gpu).is_empty()
+                        && !std::env::args().any(|a| a == "--worker-gpu")
+                }),
                 accelerated_open: false,
                 open_fractal_dropdown: false,
                 help_open: false,
@@ -7296,7 +7358,7 @@ impl FractadyneApp {
                 work_budget_scale: s.work_budget_scale.clamp(0.25, 8.0),
                 min_motion_res: s.min_motion_res.clamp(0.30, 1.0),
                 prefer_detail: s.prefer_detail,
-                worker_gpu: gpu_worker::setting_spec(&s.live_worker_gpu),
+                worker_gpu: gpu_worker::clean_setting(&s.live_worker_gpu),
                 show_timestamp: s.show_timestamp,
                 show_zoom_target: s.show_zoom_target,
                 finish_sound: s.finish_sound,
@@ -7334,6 +7396,7 @@ impl FractadyneApp {
             pending_install: [None, None],
             orbit_cache_mb: s.orbit_cache_mb.max(64),
             recompute_rx: [None, None],
+            worker_ref_budget: 0,
             ref_prefetch: Vec::new(),
             ref_prefetch_interactive: false,
             hold_prefetch: Vec::new(),
@@ -14449,11 +14512,32 @@ impl FractadyneApp {
         // again) but throws its samples away, so this device renders all of them: the converged
         // image must then equal a run without a worker, or the worker's load alone moves it.
         let shadow = std::env::var_os("FRACTADYNE_WORKER_SHADOW").is_some();
+        // A reference over the second device's budget stays on the window's card alone: every
+        // sample would copy it there again (`gpu_worker::reference_budget`).
+        let bytes = gpu_worker::reference_bytes(self.perf.accum_template[view].as_ref().expect("checked above"));
+        if bytes > self.worker_ref_budget {
+            let run = self.perf.accum_run[view];
+            if self.perf.worker_budget_note[view] != run {
+                self.perf.worker_budget_note[view] = run;
+                diag::log_line(
+                    "worker",
+                    &format!(
+                        "view {view}: the reference ({} MB) is over the second device's budget ({} MB) — this card renders every sample",
+                        bytes >> 20,
+                        self.worker_ref_budget >> 20
+                    ),
+                );
+            }
+            return;
+        }
         let Some(index) = (if shadow { Some(1) } else { self.accum_take_index(view) }) else { return };
-        let req = crate::profile::params_to_request_exact(
+        let mut req = crate::profile::params_to_request_exact(
             self.perf.accum_template[view].as_ref().expect("checked above"),
             accum_jitter_seq(index),
         );
+        // Short passes, as for its motion refreshes: the second device may share a card with the
+        // window or the desktop, and one pass is one draw the GPU does not interrupt.
+        req.pass_ms = Some(crate::tunables::cost().worker_pass_ms);
         let run = self.perf.accum_run[view];
         let job = gpu_worker::Job { view, run, index, req };
         if self.gpu_worker.as_ref().is_some_and(|w| w.submit(job)) {
@@ -14475,8 +14559,16 @@ impl FractadyneApp {
             return;
         }
         let Some(window) = self.render_state.as_ref().map(|r| r.adapter.get_info()) else { return };
-        let want = if !launched_as_task() || self.harness.shot.is_some() {
+        let want = if self.dialogs.second_device_prompt.is_some() {
+            // Asked whether to keep the device that may have ended the last session: not until
+            // answered, or a fault that recurs at once would end this one before the answer.
+            String::new()
+        } else if !launched_as_task() {
             gpu_worker::setting_spec(&self.render_cfg.worker_gpu)
+        } else if self.harness.shot.is_some() {
+            // A harness keeps one GPU unless the session CHOSE a second device: the default must not
+            // change what a run measures or the images it writes.
+            gpu_worker::explicit_spec(&self.render_cfg.worker_gpu)
         } else {
             String::new()
         };
@@ -14489,7 +14581,14 @@ impl FractadyneApp {
             self.worker_for = Some(want.clone());
             if want.is_empty() {
                 self.worker_state = gpu_worker::WorkerState::Off;
+                diag::set_second_device(None);
             } else {
+                // Named before it opens: opening a device is one of the things that can fail hard.
+                diag::set_second_device(Some(&if want == gpu_worker::SAME_CARD {
+                    format!("same card, {}", window.name)
+                } else {
+                    format!("card {want}")
+                }));
                 let (tx, rx) = std::sync::mpsc::channel();
                 let backends = crate::gpu_choice::backends() & eframe::wgpu::Backends::VULKAN;
                 render::spawn_named("fd-gpu-worker-open", move || {
@@ -14502,22 +14601,50 @@ impl FractadyneApp {
         if let Some(rx) = &self.worker_start_rx {
             match rx.try_recv() {
                 Ok(Ok(w)) => {
-                    self.worker_state = gpu_worker::WorkerState::Running(w.name.clone());
+                    let name = if self.worker_for.as_deref() == Some(gpu_worker::SAME_CARD) {
+                        format!("same card, {}", w.name)
+                    } else {
+                        w.name.clone()
+                    };
+                    diag::set_second_device(Some(&name));
+                    self.worker_ref_budget = Self::worker_budget_for(&w, self.worker_for.as_deref() == Some(gpu_worker::SAME_CARD));
+                    self.worker_state = gpu_worker::WorkerState::Running(name);
                     self.gpu_worker = Some(w);
                     self.worker_start_rx = None;
                 }
                 Ok(Err(e)) => {
                     diag::log_line("worker", &format!("no worker GPU: {e}"));
+                    diag::set_second_device(None);
                     self.worker_state = gpu_worker::WorkerState::Failed(e);
                     self.worker_start_rx = None;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    diag::set_second_device(None);
                     self.worker_state = gpu_worker::WorkerState::Failed("the device thread stopped".into());
                     self.worker_start_rx = None;
                 }
             }
         }
+    }
+
+    /// Size the reference the second device `w` may copy (`gpu_worker::reference_budget`) from its
+    /// card's memory. Test hook: `FRACTADYNE_WORKER_REF_BUDGET_MB=n` sets it.
+    fn worker_budget_for(w: &gpu_worker::Worker, same_card: bool) -> u64 {
+        let vram = crate::sysinfo::gpu_vram_bytes(Some(&w.adapter));
+        let hook = std::env::var("FRACTADYNE_WORKER_REF_BUDGET_MB").ok().and_then(|v| v.trim().parse::<u64>().ok());
+        let budget = hook.map_or_else(|| gpu_worker::reference_budget(vram, same_card), |mb| mb << 20);
+        diag::log_line(
+            "worker",
+            &format!(
+                "the second device may copy a reference of up to {} MB ({}{}{})",
+                budget >> 20,
+                if vram > 0 { format!("card memory {} MB", vram >> 20) } else { "card memory unknown".to_string() },
+                if same_card { ", shared with the window" } else { "" },
+                if hook.is_some() { "; set by FRACTADYNE_WORKER_REF_BUDGET_MB" } else { "" },
+            ),
+        );
+        budget
     }
 
     /// Open the cards `--render … --gpus SPEC` names beside the window's (`export_extra`). Vulkan
@@ -14553,18 +14680,22 @@ impl FractadyneApp {
         }
     }
 
-    /// The worker's in-flight sample goes back to the window's card when the worker goes away.
+    /// The worker's in-flight sample goes back to the window's card when the worker goes away, and
+    /// its motion refreshes are forgotten.
     fn release_worker_job(&mut self) {
         if let Some((v, r, i)) = self.perf.worker_job.take() {
             if r == self.perf.accum_run[v] {
                 self.perf.accum_free[v].push(i);
             }
         }
+        self.perf.live_job = [None, None];
+        self.perf.live_ready = [None, None];
     }
 
     /// Collect the worker's finished jobs: a current run's sample waits to fold; a failed or
     /// cancelled one gives its index back; an old run's is dropped. A lost worker is dropped.
     fn pump_worker(&mut self) {
+        self.pump_live();
         let Some(w) = self.gpu_worker.as_ref() else { return };
         while let Some(d) = w.try_recv() {
             if self.perf.worker_job.is_some_and(|(v, r, i)| (v, r, i) == (d.view, d.run, d.index)) {
@@ -14600,6 +14731,7 @@ impl FractadyneApp {
         }
         if !w.alive() {
             crate::diag::log_line("worker", &format!("dropping the worker GPU ({}) — one GPU from here", w.name));
+            crate::diag::set_second_device(None);
             self.worker_state = gpu_worker::WorkerState::Lost(w.name.clone());
             self.release_worker_job();
             self.gpu_worker = None;

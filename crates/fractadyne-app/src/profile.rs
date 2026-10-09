@@ -497,6 +497,11 @@ impl crate::FractadyneApp {
                 vc.frozen_l2 = 0.0;
                 vc.frozen_at = None;
                 vc.frozen_upp_l2 = 0.0;
+                vc.frozen_frame = 0;
+                vc.frozen_res = 0.0;
+                vc.frozen_by_worker = false;
+                vc.local_l2 = 0.0;
+                vc.local_at = None;
             }
             let tour_max_l2 = pb.sample(pb.total).logmag / LN_2;
             // Glide mode: the tour supplies the window's start view and the anchor (its final
@@ -899,6 +904,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         width: p.resolution[0].max(1),
         height: p.resolution[1].max(1),
         work_budget: None,
+        pass_ms: None,
         tile_px_max: None,
         jitter: [0.0, 0.0],
         ss: p.ss.max(1),

@@ -9,6 +9,11 @@
 //! settled frame (`params_to_request_exact`); the result is that sample's colour as floats, for
 //! `MandelbrotParams::accum_external` — the window's device rounds it to 8 bits itself, as it does
 //! its own samples (see `fractadyne_gpu::AccumSample`).
+//!
+//! Second use (L3): motion refreshes. A [`LiveJob`] is a moving frame's own params; the worker
+//! renders it through the LIVE renderer (`fractadyne_gpu::LiveTwin`, the window's `prepare` run
+//! headless, as a walk of priced chunk windows) and sends back its G-buffer, which the window
+//! adopts as the frame it reprojects (`MandelbrotParams::adopt`).
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed, Ordering::SeqCst};
 use std::sync::{mpsc, Arc};
@@ -23,6 +28,40 @@ pub(crate) struct Job {
     pub(crate) req: fractadyne_gpu::ExportRequest,
 }
 
+/// A motion refresh (L3): `params` is a whole moving frame at the view the app captured on frame
+/// `gen`'s ticket (`MandelbrotParams::headless`, no tile, chunk window, split or reprojection);
+/// `with_aux` reads the aux plane back too. `window`: the device that shows it, which the frame is
+/// handed to from this thread (`AdoptFrame::upload`).
+pub(crate) struct LiveJob {
+    pub(crate) view: usize,
+    pub(crate) gen: u64,
+    pub(crate) params: fractadyne_gpu::MandelbrotParams,
+    pub(crate) with_aux: bool,
+    pub(crate) window: wgpu::Device,
+    /// The wall each walk pass is sized for (`WORKER_PASS_MS`).
+    pub(crate) pass_ms: f64,
+}
+
+/// A finished, failed or cancelled [`LiveJob`] (every accepted one answers once). `frame` is
+/// `None` when it was cancelled (`err` too) or failed (`err` says why).
+pub(crate) struct LiveDone {
+    pub(crate) view: usize,
+    pub(crate) gen: u64,
+    pub(crate) frame: Option<Arc<fractadyne_gpu::AdoptFrame>>,
+    pub(crate) walk: fractadyne_gpu::WalkStats,
+    /// The G-buffer's readback, and its upload to the window's device, ms (inside `ms`).
+    pub(crate) read_ms: f64,
+    pub(crate) upload_ms: f64,
+    /// From the worker taking the job to its answer, ms.
+    pub(crate) ms: f64,
+    pub(crate) err: Option<String>,
+}
+
+enum Work {
+    Sample(Job),
+    Live(LiveJob),
+}
+
 /// A finished (or failed, or cancelled) [`Job`]. Every accepted job answers exactly once, so the
 /// caller can always tell its sample index was not rendered.
 pub(crate) struct Done {
@@ -35,14 +74,19 @@ pub(crate) struct Done {
 }
 
 pub(crate) struct Worker {
-    tx: mpsc::Sender<Job>,
+    tx: mpsc::Sender<Work>,
     rx: mpsc::Receiver<Done>,
+    live_rx: mpsc::Receiver<LiveDone>,
+    /// Every live job up to this `gen` is cancelled (asked before each of its passes).
+    live_cancel: Arc<AtomicU64>,
     /// The job being cancelled, as [`job_key`]; with `cancel`, the flag the render polls.
     cancelled: Arc<AtomicU64>,
     cancel: Arc<AtomicBool>,
     alive: Arc<AtomicBool>,
     /// The worker's adapter, as the log names it.
     pub(crate) name: String,
+    /// The adapter's own name (`AdapterInfo::name`), for the memory probe (`sysinfo::gpu_vram_bytes`).
+    pub(crate) adapter: String,
 }
 
 impl Worker {
@@ -57,7 +101,7 @@ impl Worker {
     /// lists Vulkan adapters before OpenGL ones, so the number names the same card, while the app
     /// itself never enumerates OpenGL beside its own device (the farm client's rule).
     pub(crate) fn spawn_on(spec: &str, window: &wgpu::AdapterInfo, backends: wgpu::Backends) -> Result<Worker, String> {
-        let Headless { device, queue, name, alive } = open_headless(spec, window, backends, "fractadyne.worker")?;
+        let Headless { device, queue, name, adapter, alive } = open_headless(spec, window, backends, "fractadyne.worker")?;
         // Test hook: `FRACTADYNE_WORKER_LOSE_AFTER=n` — the worker answers `n` jobs, then behaves as
         // a lost device (the path a real loss takes from there: answers fail, `alive` reads false).
         let lose_after = match std::env::var("FRACTADYNE_WORKER_LOSE_AFTER") {
@@ -70,17 +114,24 @@ impl Worker {
                 }
             },
         };
-        let (tx, jobs) = mpsc::channel::<Job>();
+        let (tx, jobs) = mpsc::channel::<Work>();
         let (done, rx) = mpsc::channel::<Done>();
+        let (live_done, live_rx) = mpsc::channel::<LiveDone>();
         let cancel = Arc::new(AtomicBool::new(false));
         let cancelled = Arc::new(AtomicU64::new(u64::MAX));
+        let live_cancel = Arc::new(AtomicU64::new(0));
         {
             let (cancel, cancelled, alive, name) = (cancel.clone(), cancelled.clone(), alive.clone(), name.clone());
+            let live_cancel = live_cancel.clone();
             std::thread::Builder::new()
                 .name("fd-gpu-worker".into())
                 .spawn(move || {
                     let mut answered = 0u32;
-                    for job in jobs {
+                    // The live renderer on this device, built at the first motion refresh, and the
+                    // pricing its walks carry from one to the next.
+                    let mut twin: Option<fractadyne_gpu::LiveTwin> = None;
+                    let mut pricer = fractadyne_gpu::WalkPricer::default();
+                    for work in jobs {
                         if lose_after == Some(answered) && alive.swap(false, Relaxed) {
                             crate::diag::log_line(
                                 "worker",
@@ -88,6 +139,16 @@ impl Worker {
                             );
                         }
                         answered = answered.saturating_add(1);
+                        let job = match work {
+                            Work::Sample(job) => job,
+                            Work::Live(job) => {
+                                let out = render_live(&device, &queue, &alive, &live_cancel, &mut twin, &mut pricer, job);
+                                if live_done.send(out).is_err() {
+                                    break; // the app has gone
+                                }
+                                continue;
+                            }
+                        };
                         // Clear the flag BEFORE reading the key (`cancel` writes them the other way
                         // round), so a cancel aimed at this job is never lost: either the key is
                         // seen here, or the flag is set after this store and the render sees it.
@@ -115,12 +176,26 @@ impl Worker {
                 .map_err(|e| format!("the worker thread would not start: {e}"))?;
         }
         crate::diag::log_line("worker", &format!("worker GPU ready: {name} (spec '{spec}')"));
-        Ok(Worker { tx, rx, cancelled, cancel, alive, name })
+        Ok(Worker { tx, rx, live_rx, live_cancel, cancelled, cancel, alive, name, adapter })
     }
 
     /// Queue `job`; `false` when the worker is gone (the caller renders that sample itself).
     pub(crate) fn submit(&self, job: Job) -> bool {
-        self.alive() && self.tx.send(job).is_ok()
+        self.alive() && self.tx.send(Work::Sample(job)).is_ok()
+    }
+
+    /// Queue a motion refresh; `false` when the worker is gone.
+    pub(crate) fn submit_live(&self, job: LiveJob) -> bool {
+        self.alive() && self.tx.send(Work::Live(job)).is_ok()
+    }
+
+    /// Abandon every motion refresh up to `gen`, queued or rendering (each still answers).
+    pub(crate) fn cancel_live(&self, gen: u64) {
+        self.live_cancel.fetch_max(gen, SeqCst);
+    }
+
+    pub(crate) fn try_recv_live(&self) -> Option<LiveDone> {
+        self.live_rx.try_recv().ok()
     }
 
     /// Abandon view `view`'s job of run `run`, queued or rendering (its [`Done`] still arrives,
@@ -148,6 +223,8 @@ pub(crate) struct Headless {
     pub(crate) queue: wgpu::Queue,
     /// The adapter, as the log names it.
     pub(crate) name: String,
+    /// The adapter's own name (`AdapterInfo::name`).
+    pub(crate) adapter: String,
     pub(crate) alive: Arc<AtomicBool>,
 }
 
@@ -222,7 +299,7 @@ pub(crate) fn open_headless(spec: &str, window: &wgpu::AdapterInfo, backends: wg
             crate::diag::log_line("worker", &format!("the second GPU ({name}) failed: {e} — it is dropped"));
         }));
     }
-    Ok(Headless { device, queue, name, alive })
+    Ok(Headless { device, queue, name, adapter: info.name.clone(), alive })
 }
 
 /// Open every graphics card of this machine except the window's own (Vulkan, real hardware), for
@@ -301,7 +378,7 @@ impl WorkerState {
     /// The setting's status line. `pinned`: `--worker-gpu` chose the card, not the setting.
     pub(crate) fn text(&self, pinned: bool) -> String {
         let s = match self {
-            WorkerState::Off => "Off: this window's graphics card renders every sample.".to_string(),
+            WorkerState::Off => "Off: this window's graphics card renders everything.".to_string(),
             WorkerState::Starting => "Starting…".to_string(),
             WorkerState::Running(name) => format!("In use: {name}"),
             WorkerState::Failed(e) => format!("Could not start: {e}"),
@@ -326,14 +403,64 @@ pub(crate) fn second_card_choices(cards: &[(usize, String)], window_name: &str) 
     cards.iter().filter(|(_, n)| !(same == 1 && n == window_name)).cloned().collect()
 }
 
-/// What the setting holds, cleaned: a card number from the listing, or empty (off). Anything else
-/// (an edited session file) reads as off rather than as a name to search for.
-pub(crate) fn setting_spec(raw: &str) -> String {
+/// The bytes of the reference a frame's params carry to a device: the orbit, the BLA tree and the
+/// u-space tree, each `[f32; 4]`. A second device holds its own copy while it renders.
+pub(crate) fn reference_bytes(p: &fractadyne_gpu::MandelbrotParams) -> u64 {
+    16 * (p.orbit.len() + p.bla.len() + p.rn_bla.len()) as u64
+}
+
+/// The reference budget when the card's memory cannot be read.
+pub(crate) const UNKNOWN_VRAM_BUDGET: u64 = 256 << 20;
+
+/// The largest reference a second device may copy, bytes: a quarter of its card's memory when it
+/// shares the window's card (which then holds both copies), half when it has a card of its own;
+/// [`UNKNOWN_VRAM_BUDGET`] when the memory cannot be read. Over it, the window's card renders that
+/// view's frames and samples itself, as with one GPU. A settled reference can reach ~1 GiB
+/// (`init_orbit_len_cap`), and every settle sample re-uploads it; a moving one is capped at
+/// ~37 MB (`LIVE_REF_CAP`).
+pub(crate) fn reference_budget(vram: u64, same_card: bool) -> u64 {
+    if vram == 0 {
+        UNKNOWN_VRAM_BUDGET
+    } else {
+        vram / if same_card { 4 } else { 2 }
+    }
+}
+
+/// The setting's value for "this card, as a second device" (`open_headless`'s `same`).
+pub(crate) const SAME_CARD: &str = "same";
+/// The setting's value for Off, chosen. Empty is the DEFAULT (never chosen), which is Same card.
+pub(crate) const OFF: &str = "off";
+
+/// The setting as stored, cleaned: empty (never chosen: the default), [`OFF`], [`SAME_CARD`] or a
+/// card number from the listing. Anything else (an edited session file) reads as off rather than as
+/// a name to search for. The empty value is kept as such, so a harness can tell the default from a
+/// choice ([`explicit_spec`]).
+pub(crate) fn clean_setting(raw: &str) -> String {
     let t = raw.trim();
-    if t.parse::<usize>().is_ok_and(|n| (1..100).contains(&n)) {
+    if t.is_empty() || t == OFF || t == SAME_CARD || t.parse::<usize>().is_ok_and(|n| (1..100).contains(&n)) {
         t.to_string()
     } else {
+        OFF.to_string()
+    }
+}
+
+/// The device the setting asks for, as `open_headless` takes it, or empty for none. Never chosen =
+/// [`SAME_CARD`] (the default since 2026-10-09).
+pub(crate) fn setting_spec(raw: &str) -> String {
+    match clean_setting(raw).as_str() {
+        "" => SAME_CARD.to_string(),
+        OFF => String::new(),
+        v => v.to_string(),
+    }
+}
+
+/// [`setting_spec`] for a harness (`--shot`): only a second device the session CHOSE. The default
+/// stays off there, so neither a run's timings nor the images it writes change with it.
+pub(crate) fn explicit_spec(raw: &str) -> String {
+    if clean_setting(raw).is_empty() {
         String::new()
+    } else {
+        setting_spec(raw)
     }
 }
 
@@ -369,13 +496,44 @@ mod tests {
     }
 
     #[test]
-    fn the_setting_holds_a_card_number_or_nothing() {
-        assert_eq!(setting_spec(""), "");
+    fn a_second_device_copies_a_reference_only_within_its_card_s_budget() {
+        const GIB: u64 = 1 << 30;
+        // Sharing the window's card: both copies live there, so a quarter each at most.
+        assert_eq!(reference_budget(8 * GIB, true), 2 * GIB);
+        assert_eq!(reference_budget(2 * GIB, true), GIB / 2);
+        // A card of its own holds only its copy.
+        assert_eq!(reference_budget(16 * GIB, false), 8 * GIB);
+        // Unknown memory: a fixed budget, above any moving reference (~37 MB).
+        assert_eq!(reference_budget(0, true), UNKNOWN_VRAM_BUDGET);
+        assert!(UNKNOWN_VRAM_BUDGET > 37 << 20);
+        let p = fractadyne_gpu::MandelbrotParams {
+            orbit: Arc::new(vec![[0.0; 4]; 1000]),
+            bla: Arc::new(vec![[0.0; 4]; 500]),
+            ..Default::default()
+        };
+        assert_eq!(reference_bytes(&p), 16 * 1500);
+    }
+
+    #[test]
+    fn the_setting_is_same_card_unless_chosen_otherwise() {
+        // Never chosen: Same card. Chosen: what was chosen.
+        assert_eq!(setting_spec(""), SAME_CARD);
+        assert_eq!(setting_spec(OFF), "");
         assert_eq!(setting_spec(" 2 "), "2");
+        assert_eq!(setting_spec(" same "), SAME_CARD);
+        // An edited session file reads as off, never as a name to search for.
         assert_eq!(setting_spec("0"), "");
-        assert_eq!(setting_spec("same"), "");
         assert_eq!(setting_spec("RTX"), "");
         assert_eq!(setting_spec("6800"), ""); // a model number is a name, not a position
+        assert_eq!(clean_setting("RTX"), OFF);
+        // The stored value keeps "never chosen" apart from a choice...
+        assert_eq!(clean_setting(" "), "");
+        assert_eq!(clean_setting(" same "), SAME_CARD);
+        // ...so a harness takes only a choice.
+        assert_eq!(explicit_spec(""), "");
+        assert_eq!(explicit_spec(SAME_CARD), SAME_CARD);
+        assert_eq!(explicit_spec("2"), "2");
+        assert_eq!(explicit_spec(OFF), "");
     }
 
     #[test]
@@ -385,6 +543,60 @@ mod tests {
         assert!(WorkerState::Lost("X".into()).text(false).contains("choose it again"));
         assert!(WorkerState::Running("X".into()).text(true).ends_with("(set by --worker-gpu)"));
     }
+}
+
+/// Render a motion refresh on the worker's own live renderer: the walk, then the G-buffer, which
+/// must hold a picture (a cleared texture is not one).
+fn render_live(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    alive: &AtomicBool,
+    live_cancel: &AtomicU64,
+    twin: &mut Option<fractadyne_gpu::LiveTwin>,
+    pricer: &mut fractadyne_gpu::WalkPricer,
+    job: LiveJob,
+) -> LiveDone {
+    let t = std::time::Instant::now();
+    let mut out = LiveDone {
+        view: job.view,
+        gen: job.gen,
+        frame: None,
+        walk: Default::default(),
+        read_ms: 0.0,
+        upload_ms: 0.0,
+        ms: 0.0,
+        err: None,
+    };
+    let cancelled = || live_cancel.load(SeqCst) >= job.gen;
+    if !alive.load(Relaxed) {
+        out.err = Some("the worker GPU is gone".into());
+    } else if !cancelled() {
+        let tw = twin.get_or_insert_with(|| fractadyne_gpu::LiveTwin::new(device, queue));
+        pricer.set_pass_ms(job.pass_ms);
+        match tw.walk(device, queue, &job.params, pricer, &cancelled) {
+            Ok(walk) => {
+                out.walk = walk;
+                let tr = std::time::Instant::now();
+                match tw.gbuffer(device, queue, job.params.view_id, job.with_aux) {
+                    Ok(g) if g.drawn() => {
+                        out.read_ms = tr.elapsed().as_secs_f64() * 1000.0;
+                        let tu = std::time::Instant::now();
+                        out.frame = fractadyne_gpu::AdoptFrame::upload(&job.window, &g).map(Arc::new);
+                        out.upload_ms = tu.elapsed().as_secs_f64() * 1000.0;
+                        if out.frame.is_none() {
+                            out.err = Some("the frame's planes do not fill it".into());
+                        }
+                    }
+                    Ok(_) => out.err = Some("the frame came back blank".into()),
+                    Err(e) => out.err = Some(format!("{e}")),
+                }
+            }
+            Err(fractadyne_gpu::GpuError::Canceled) => {}
+            Err(e) => out.err = Some(format!("{e}")),
+        }
+    }
+    out.ms = t.elapsed().as_secs_f64() * 1000.0;
+    out
 }
 
 /// A job's identity for [`Worker::cancel`]: its run, and its view in the low bit (views are 0 and 1).

@@ -114,6 +114,8 @@ struct Frame {
     /// completed with no escaped pixel and were kept OFF the screen (`perf.blank_walks_total[0]`).
     converged: u64,
     blank: u64,
+    /// Frames from the second GPU adopted so far (`perf.live_adopted_total[0]`, `motion_worker`).
+    worker: u64,
     /// The display served the HOLD SNAPSHOT (`perf.hold_active[0]`, the present gate's own state)
     /// rather than the live texture. `real` and `gap_oct` cannot see this: `real` counts
     /// re-iterates (a held frame's pass still runs underneath), and `gap_oct` reads the frozen
@@ -534,6 +536,7 @@ impl FractadyneApp {
                         adopts: self.perf.adopt_complete[0],
                         converged: self.perf.adopt_converged[0],
                         blank: self.perf.blank_walks_total[0],
+                        worker: self.perf.live_adopted_total[0],
                         snap: self.perf.hold_active[0],
                         // The window the colour pass USES (`norm_shown`), not the fed target:
                         // the glide sits between them, and it is the shown one the eye sees.
@@ -809,12 +812,18 @@ impl FractadyneApp {
         steps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let (step_p95, step_max) = (pct(&steps, 0.95), steps.last().copied().unwrap_or(0.0));
         let gap_oct_max = f.iter().map(|r| r.gap_oct).fold(0.0, f64::max);
+        // How old the frame on screen is, frame by frame — what a second GPU's refreshes lower.
+        let mut gap_octs: Vec<f64> = f.iter().map(|r| r.gap_oct).collect();
+        gap_octs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let gap_oct_mean = gap_octs.iter().sum::<f64>() / n as f64;
+        let gap_oct_p95 = pct(&gap_octs, 0.95);
         let lag_max = f.iter().map(|r| r.lag).fold(0.0, f64::max);
         let installs = f.last().unwrap().orbit_id.saturating_sub(f.first().unwrap().orbit_id);
         let look = f.last().unwrap().look.saturating_sub(f.first().unwrap().look);
         let adopts = f.last().unwrap().adopts.saturating_sub(f.first().unwrap().adopts);
         let converged = f.last().unwrap().converged.saturating_sub(f.first().unwrap().converged);
         let blank = f.last().unwrap().blank.saturating_sub(f.first().unwrap().blank);
+        let worker = f.last().unwrap().worker.saturating_sub(f.first().unwrap().worker);
         let paced_pct = f.iter().filter(|r| r.vel_frac < 0.999).count() as f64 / n as f64 * 100.0;
         let hold_pct = f.iter().filter(|r| !r.real).count() as f64 / n as f64 * 100.0;
         // The snapshot hold (see `Frame::snap`): its share, and its longest unbroken run — how long
@@ -859,6 +868,10 @@ impl FractadyneApp {
             gap_oct_max.exp2()
         );
         eprintln!(
+            "  frame on screen lags the view: mean {gap_oct_mean:.3} oct  p95 {gap_oct_p95:.3} oct · worker GPU frames adopted {worker} ({:.1}/s)",
+            worker as f64 / secs.max(1e-9)
+        );
+        eprintln!(
             "  snapshot served {snap_pct:.0}% of frames · longest run {snap_best} frames ({snap_best_s:.2} s)"
         );
         eprintln!(
@@ -877,7 +890,7 @@ impl FractadyneApp {
             ));
         }
         let json = format!(
-            "{{\n\"tool\": \"fractadyne --zoomtest\",\n\"version\": {},\n\"location\": {},\n\"zoom_rate\": {:.3},\n\"prefetch\": {},\n\"start_l2\": {:.4},\n\"octaves\": {oct:.4},\n\"secs\": {secs:.3},\n\"summary\": {{\"frames\":{n},\"fps\":{fps:.2},\"oct_s\":{oct_s:.4},\"dt_mean\":{dt_mean:.3},\"dt_p50\":{dt_p50:.3},\"dt_p95\":{dt_p95:.3},\"dt_p99\":{dt_p99:.3},\"dt_max\":{dt_max:.3},\"gt33\":{gt33},\"gt50\":{gt50},\"gt100\":{gt100},\"longest_ms\":{:.3},\"longest_t\":{:.3},\"longest_l2\":{:.3},\"reals\":{reals},\"hold_pct\":{hold_pct:.2},\"real_gap_mean\":{gap_mean:.3},\"real_gap_p95\":{gap_p95:.3},\"real_gap_max\":{gap_max:.3},\"step_p95\":{step_p95:.5},\"step_max\":{step_max:.5},\"gap_oct_max\":{gap_oct_max:.4},\"lag_max\":{lag_max:.3},\"installs\":{installs},\"lookahead\":{look},\"adopts\":{adopts},\"paced_pct\":{paced_pct:.2}}},\n\"frames\": [\n{rows}\n]\n}}\n",
+            "{{\n\"tool\": \"fractadyne --zoomtest\",\n\"version\": {},\n\"location\": {},\n\"zoom_rate\": {:.3},\n\"prefetch\": {},\n\"start_l2\": {:.4},\n\"octaves\": {oct:.4},\n\"secs\": {secs:.3},\n\"summary\": {{\"frames\":{n},\"fps\":{fps:.2},\"oct_s\":{oct_s:.4},\"dt_mean\":{dt_mean:.3},\"dt_p50\":{dt_p50:.3},\"dt_p95\":{dt_p95:.3},\"dt_p99\":{dt_p99:.3},\"dt_max\":{dt_max:.3},\"gt33\":{gt33},\"gt50\":{gt50},\"gt100\":{gt100},\"longest_ms\":{:.3},\"longest_t\":{:.3},\"longest_l2\":{:.3},\"reals\":{reals},\"hold_pct\":{hold_pct:.2},\"real_gap_mean\":{gap_mean:.3},\"real_gap_p95\":{gap_p95:.3},\"real_gap_max\":{gap_max:.3},\"step_p95\":{step_p95:.5},\"step_max\":{step_max:.5},\"gap_oct_max\":{gap_oct_max:.4},\"gap_oct_mean\":{gap_oct_mean:.4},\"gap_oct_p95\":{gap_oct_p95:.4},\"worker\":{worker},\"lag_max\":{lag_max:.3},\"installs\":{installs},\"lookahead\":{look},\"adopts\":{adopts},\"paced_pct\":{paced_pct:.2}}},\n\"frames\": [\n{rows}\n]\n}}\n",
             json_str(&crate::version_string()),
             json_str(&zt.location.describe()),
             zt.rate,
