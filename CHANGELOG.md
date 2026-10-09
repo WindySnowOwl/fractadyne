@@ -59,6 +59,10 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Credits for L-systems and the Game of Life (0.3.0-beta.19).** Help ▸ Acknowledgments now
+  credits Aristid Lindenmayer, *The Algorithmic Beauty of Plants* (Prusinkiewicz and
+  Lindenmayer), Paul Bourke's L-system collection, John Horton Conway, and LifeWiki, whose rule
+  notations, pattern format and pattern records the Life view follows.
 - **A still image on several graphics cards (0.3.0-beta.18).** On a machine with more than one
   graphics card, Export image has *Use all graphics cards* (off by default), and `--render … --gpus
   all` (or card numbers from `--list-adapters`) does the same from the command line: the image is

@@ -5844,6 +5844,11 @@ struct DialogState {
     help_open: bool,
     /// Selected Help section index.
     help_section: usize,
+    /// Hold the Help pane at the END of its section while the window stays open (the UI test's
+    /// `help-acknowledgments` step: the newest credits are below the fold). Held rather than
+    /// taken once: the window sizes itself over its first frames, so a single request would
+    /// scroll a pane that is about to change.
+    help_scroll_to_end: bool,
     /// The first-press Snapshot choice (screen capture vs full render) is showing, and whether
     /// its "remember, don't ask again" box is ticked (on by default — the user asked for a
     /// choice that sticks).
@@ -7143,6 +7148,7 @@ impl FractadyneApp {
                 open_fractal_dropdown: false,
                 help_open: false,
                 help_section: 0,
+                help_scroll_to_end: false,
                 snapshot_choice_open: false,
                 snapshot_choice_remember: true,
                 // Show the MPFR-missing notice on first frame if we fell back at startup and the
@@ -13540,6 +13546,9 @@ impl FractadyneApp {
                                     // are now one table entry, checked by a test.
                                     let i = self.dialogs.help_section.min(SECTIONS.len() - 1);
                                     help::SECTION_BODIES[i](ui);
+                                    if self.dialogs.help_scroll_to_end {
+                                        ui.scroll_to_cursor(Some(egui::Align::Max));
+                                    }
                                 });
                         },
                     );
@@ -13554,6 +13563,9 @@ impl FractadyneApp {
                 });
             });
         self.dialogs.help_open = open && !close;
+        if !self.dialogs.help_open {
+            self.dialogs.help_scroll_to_end = false;
+        }
     }
 
     /// Set a transient status toast (auto-fades after a few seconds).

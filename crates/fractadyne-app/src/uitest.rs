@@ -32,6 +32,8 @@ enum Screen {
     /// Help opened AT the coordinate-expression reference — the section the Go-to dialog's `?`
     /// jumps to, and the one page whose tables are rendered from core data rather than prose.
     HelpExpressions,
+    /// Help opened at the credits, scrolled to their end (the newest ones).
+    HelpAcknowledgments,
     Welcome,
     /// The offer to turn off the second graphics device after a session it was in use for ended
     /// unexpectedly (seeded: the walk ends no session).
@@ -754,6 +756,7 @@ fn build_steps() -> Vec<Step> {
         screen("minimap", Screen::Minimap),
         screen("help", Screen::Help),
         screen("help-expressions", Screen::HelpExpressions),
+        screen("help-acknowledgments", Screen::HelpAcknowledgments),
         screen("welcome", Screen::Welcome),
         screen("second-device-prompt", Screen::SecondDevicePrompt),
         screen("bookmarks", Screen::Bookmarks),
@@ -1240,6 +1243,12 @@ impl FractadyneApp {
             Screen::HelpExpressions => {
                 self.dialogs.help_section =
                     crate::help::section_index(crate::help::EXPRESSIONS_SECTION);
+                self.dialogs.help_open = true;
+            }
+            Screen::HelpAcknowledgments => {
+                self.dialogs.help_section =
+                    crate::help::section_index(crate::help::ACKNOWLEDGMENTS_SECTION);
+                self.dialogs.help_scroll_to_end = true;
                 self.dialogs.help_open = true;
             }
             Screen::Welcome => self.dialogs.welcome_open = true,
