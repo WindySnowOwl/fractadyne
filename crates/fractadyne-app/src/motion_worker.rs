@@ -236,6 +236,7 @@ impl FractadyneApp {
             with_aux: fractadyne_gpu::method_needs_aux(params.color_method),
             params: p,
             window,
+            pass_ms: crate::tunables::cost().worker_pass_ms,
         };
         if w.submit_live(job) {
             self.perf.live_job[v] = Some(LiveTicket {

@@ -38,6 +38,8 @@ pub(crate) struct LiveJob {
     pub(crate) params: fractadyne_gpu::MandelbrotParams,
     pub(crate) with_aux: bool,
     pub(crate) window: wgpu::Device,
+    /// The wall each walk pass is sized for (`WORKER_PASS_MS`).
+    pub(crate) pass_ms: f64,
 }
 
 /// A finished, failed or cancelled [`LiveJob`] (every accepted one answers once). `frame` is
@@ -485,6 +487,7 @@ fn render_live(
         out.err = Some("the worker GPU is gone".into());
     } else if !cancelled() {
         let tw = twin.get_or_insert_with(|| fractadyne_gpu::LiveTwin::new(device, queue));
+        pricer.set_pass_ms(job.pass_ms);
         match tw.walk(device, queue, &job.params, pricer, &cancelled) {
             Ok(walk) => {
                 out.walk = walk;

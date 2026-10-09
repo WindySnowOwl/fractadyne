@@ -251,8 +251,9 @@ pub struct WalkStats {
     pub max_pass_ms: f64,
 }
 
-/// A walk pass is sized for this wall. Short, so a cancel lands within one and a pass costlier
-/// than its price stays far under the driver's watchdog.
+/// A walk pass is sized for this wall by default ([`WalkPricer::with_pass_ms`] sets another). Short,
+/// so a cancel lands within one and a pass costlier than its price stays far under the driver's
+/// watchdog.
 pub const WALK_PASS_MS: f64 = 40.0;
 /// The cost assumed for an opening pass before any is measured, ns per pixel-step: the export's
 /// unobserved prior (`STEP_PRIOR_NS`), above the worst the RTX 3080 has shown.
@@ -277,18 +278,30 @@ const WALK_GROW: f64 = 2.0;
 pub struct WalkPricer {
     /// ns per pixel-step of the opening passes: rises at once, falls a fifth of the way per walk.
     open_ns: f64,
+    /// The wall a pass is sized for, ms.
+    pass_ms: f64,
 }
 
 impl Default for WalkPricer {
     fn default() -> Self {
-        Self { open_ns: WALK_PRIOR_NS }
+        Self { open_ns: WALK_PRIOR_NS, pass_ms: WALK_PASS_MS }
     }
 }
 
 impl WalkPricer {
+    /// Size passes for `ms` (at least 1) from here on.
+    pub fn with_pass_ms(mut self, ms: f64) -> Self {
+        self.set_pass_ms(ms);
+        self
+    }
+
+    pub fn set_pass_ms(&mut self, ms: f64) {
+        self.pass_ms = if ms.is_finite() { ms.max(1.0) } else { WALK_PASS_MS };
+    }
+
     /// Pixel-steps an opening pass may take.
     pub fn open_px_steps(&self) -> f64 {
-        (WALK_PASS_MS * 1.0e6 / self.open_ns).min(WALK_OPEN_MAX_PX_STEPS)
+        (self.pass_ms * 1.0e6 / self.open_ns).min(WALK_OPEN_MAX_PX_STEPS)
     }
 
     /// The opening window, iterations, for `area` samples.
@@ -308,7 +321,7 @@ impl WalkPricer {
     /// The window after a pass of `window` iterations over `area` samples that took `wall_ms`.
     pub fn next(&self, area: u64, window: u32, wall_ms: f64) -> u32 {
         let scaled = if wall_ms.is_finite() && wall_ms > 0.0 {
-            window as f64 * (WALK_PASS_MS / wall_ms).min(WALK_GROW)
+            window as f64 * (self.pass_ms / wall_ms).min(WALK_GROW)
         } else {
             window as f64
         };
@@ -482,7 +495,7 @@ mod tests {
         let ns = 3.0 + 0.2 * (1.0 - 3.0);
         assert_eq!(p.open(area), (40.0e6 / ns / area as f64) as u32);
         // A cheap card's opening is bounded by pixel-steps; a big frame's is floored at 256.
-        assert_eq!(WalkPricer { open_ns: 1.0e-6 }.open(1), WALK_OPEN_MAX_PX_STEPS as u32);
+        assert_eq!(WalkPricer { open_ns: 1.0e-6, pass_ms: WALK_PASS_MS }.open(1), WALK_OPEN_MAX_PX_STEPS as u32);
         assert_eq!(WalkPricer::default().open(4_000_000), WALK_MIN_ITERS);
     }
 
@@ -499,5 +512,10 @@ mod tests {
         assert_eq!(p.next(area, 140_000, 1.0), (WALK_MAX_PX_STEPS / area as f64) as u32);
         // A garbage wall keeps the window.
         assert_eq!(p.next(area, 1000, f64::NAN), 1000);
+        // A shorter pass target sizes both the opening and the steps for it.
+        let short = WalkPricer::default().with_pass_ms(10.0);
+        assert_eq!(short.open(4_000), (10.0e6 / 1.5 / 4_000.0) as u32);
+        assert_eq!(short.next(area, 4000, 10.0), 4000);
+        assert_eq!(short.next(area, 4000, 40.0), 1000);
     }
 }
