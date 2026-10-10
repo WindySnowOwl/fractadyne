@@ -286,7 +286,11 @@ if ($have.fractadyne) {
             # at script scope silently does not stick in 5.1 - the render launched with NO
             # arguments and sat in the GUI event loop until the timeout.
             $argLine = ('--render --out "{0}" --size {5} --center {1} {2} --zoom-log2 {3} --iter {4} --ss 1 --palette 0' -f $png, $kfr['Re'], $kfr['Im'], $zl2, $s.iterations, $Size)
+            # normalize: 1 = --normalize; log = --normalize --log-palette (the ladder's minibrots, whose
+            # field is palette noise without it: escape counts in the hundreds of thousands put
+            # neighbouring pixels far apart on a cyclic palette).
             if ($s.normalize -eq '1') { $argLine += ' --normalize' }
+            elseif ($s.normalize -eq 'log') { $argLine += ' --normalize --log-palette' }
             if ($SharedPalette) { $argLine += (' --palette-map "{0}"' -f $SharedPalette) }
             # Too long for a command line (see $MaxCommandLine): the SAME text goes in an args
             # file, which the app reads as `@file` with the same whitespace-and-quotes tokenizing.
@@ -331,7 +335,8 @@ if ($have.fractadyne) {
                             kfr_zoom = $kfr['Zoom']; zoom_log2 = $zl2
                             iterations = $s.iterations; size = $Size
                             samples_per_pixel = 1; palette = 0
-                            normalize = ($s.normalize -eq '1') }
+                            normalize = ($s.normalize -eq '1' -or $s.normalize -eq 'log')
+                            log_palette = ($s.normalize -eq 'log') }
                 output = ('fd-' + $s.slug + '.png')
                 log = ('fd-logs\' + $s.slug + '-r' + $rep + '.log')
                 status = $r.status; wall_s = $r.wall_s; reported_s = $reported; note = ''

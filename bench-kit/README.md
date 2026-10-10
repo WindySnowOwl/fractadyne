@@ -79,6 +79,12 @@ which the two 1e30000x scenes take several minutes per render in every lane.
 | 59-iter-p951094-1e68 | 2.1e68 | 28,532,820 | minibrot, period 951,094 (iteration ladder) |
 | 60-mini-p410594-1e30000 | 1.5e30000 | 12,317,820 | minibrot, period 410,594 |
 
+The twelve minibrot scenes give Fractadyne `--normalize --log-palette` (`normalize` = `log` in
+`scenes-ladder.csv`; `1` is `--normalize` alone). Without it their field is palette noise: escape
+counts in the hundreds of thousands put neighbouring pixels far apart on the cyclic palette. On an
+RTX 3080 at 4K it costs Fractadyne 0.1 to 0.4 s a render, so it does not flatter it; the other
+renderers colour as they always do.
+
 Two scenes need their centre in a file, because a 1e30000x centre is 30,000 digits per coordinate
 and a Windows command line holds 32,767 characters. Each lane checks its line first: Fractadyne
 reads the same arguments from an `@file` (kept in `fd-args\`), FractalShark reads a locations file
