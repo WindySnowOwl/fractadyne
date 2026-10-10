@@ -5,6 +5,7 @@
 #       [-FractadyneExe path] [-Fraktaler3Exe path] [-ImaginaExe path] [-FractalSharkExe path]
 #       [-TimeoutS 7200] [-Size 3840x2160] [-ZoomSeqFrames 8] [-PythonExe python]
 #       [-F3Wisdom path] [-FractalSharkCliExe path] [-FractalSharkAlgo NAME]
+#       [-FractalSharkPerturbAlg NAME]
 #       [-SceneSet standard|ladder|all] [-Scenes slug-or-id,...]
 
 [CmdletBinding()]
@@ -85,6 +86,10 @@ param(
     # CPU algorithm (e.g. Cpu64PerturbedBLAV2HDR) - correct at shallow/mid depth, blank past ~1e27.
     # Either way the structure guard stands: a flat frame is DNF-blank, never a TIME without an IMAGE.
     [string]$FractalSharkAlgo = 'GpuHDRx32PerturbedLAv2',
+    # How FractalShark builds the REFERENCE ORBIT (--perturbation-alg: Auto, ST, MT, GPU, or a
+    # periodicity mode). Empty leaves FractalShark's own default. GPU builds it with CUDA; its author
+    # suggested trying that at the deepest scenes (2026-10-10), where the orbit dominates.
+    [string]$FractalSharkPerturbAlg = '',
     # FractalShark 0.543 added a CLI server (--server / --connect / --shutdown) so CUDA and
     # process startup are paid once for a whole run instead of once per frame. The kit uses it by
     # default because that is the honest per-frame cost. Set this switch to go back to a process
@@ -562,7 +567,8 @@ if ($have.fractalsharkcli) {
             # No --quiet: without it each image prints FractalShark's own report (reference orbit,
             # LA tables, per-pixel), kept in fs-phases.csv. Its author asked for it, and it is the
             # only way to see where FractalShark's time goes.
-            $renderArgs = ('--render-algorithm {0} --center-x {1} --center-y {2} --zoom {3} --iterations {4} --width {5} --height {6} --antialiasing 1 --out "{7}"' -f $FractalSharkAlgo, $kfr['Re'], $kfr['Im'], $zoom, $s.iterations, $wh[0], $wh[1], $stem)
+            $perturbArg = $(if ($FractalSharkPerturbAlg) { ' --perturbation-alg ' + $FractalSharkPerturbAlg } else { '' })
+            $renderArgs = ('--render-algorithm {0} --center-x {1} --center-y {2} --zoom {3} --iterations {4} --width {5} --height {6} --antialiasing 1 --out "{7}"' -f $FractalSharkAlgo, $kfr['Re'], $kfr['Im'], $zoom, $s.iterations, $wh[0], $wh[1], $stem) + $perturbArg
             # Too long for a command line (see $MaxCommandLine): the view goes in FractalShark's own
             # locations file instead, a box of centre +/- 2/zoom in each axis written at full
             # precision by tools/make-fsloc.py from the same .kfr. No Python, no file, no render.
@@ -575,7 +581,7 @@ if ($have.fractalsharkcli) {
                 if ($PythonExe -and (Test-Path $mk)) {
                     & $PythonExe $mk (Join-Path $kit ('scenes\' + $s.slug + '.kfr')) $fsLoc --width $wh[0] --height $wh[1] --iterations $s.iterations --name ($s.slug -replace '\.', 'p') 2>&1 | Out-Null
                 }
-                $renderArgs = ('--render-algorithm {0} --locations "{1}" --iterations {2} --width {3} --height {4} --antialiasing 1 --out "{5}"' -f $FractalSharkAlgo, $fsLoc, $s.iterations, $wh[0], $wh[1], $stem)
+                $renderArgs = ('--render-algorithm {0} --locations "{1}" --iterations {2} --width {3} --height {4} --antialiasing 1 --out "{5}"' -f $FractalSharkAlgo, $fsLoc, $s.iterations, $wh[0], $wh[1], $stem) + $perturbArg
             }
             $argLine = if ($imgServer) { ('--connect --endpoint {0} ' -f $endpoint) + $renderArgs } else { $renderArgs }
             if ($fsLoc -and -not (Test-Path $fsLoc)) {
@@ -631,6 +637,7 @@ if ($have.fractalsharkcli) {
                            inputs = @{ center_re = $kfr['Re']; center_im = $kfr['Im']
                                        zoom = $zoom; iterations = $s.iterations; size = $Size
                                        antialiasing = 1; algorithm = $FractalSharkAlgo
+                                       perturbation_alg = $(if ($FractalSharkPerturbAlg) { $FractalSharkPerturbAlg } else { 'default' })
                                        locations_file = $(if ($fsLoc) { 'fs-loc\' + $s.slug + '.fsloc' } else { '' })
                                        mode = $(if ($imgServer) { 'client against a fresh, warmed server' }
                                                 else { 'one process per frame' }) } }
@@ -962,7 +969,9 @@ $md += ''
 # process-per-frame number differ by more than a second on this box and are not comparable.
 # A table that does not say which one it holds invites exactly that comparison.
 if ($fsShape) {
-    $md += ('FractalShark lane: ' + $FractalSharkAlgo + ', ' + $fsShape +
+    $md += ('FractalShark lane: ' + $FractalSharkAlgo +
+            $(if ($FractalSharkPerturbAlg) { ', reference orbit --perturbation-alg ' + $FractalSharkPerturbAlg } else { '' }) +
+            ', ' + $fsShape +
             $(if ($fsStartup) { '; server ready in ' + $fsStartup + ' s' } else { '' }) + '.')
     $md += ''
 }
@@ -1116,6 +1125,7 @@ $meta = @{
     )
     lanes = @(($have.GetEnumerator() | Where-Object Value | ForEach-Object Key))
     fractalshark_algorithm = $FractalSharkAlgo
+    fractalshark_perturbation_alg = $(if ($FractalSharkPerturbAlg) { $FractalSharkPerturbAlg } else { 'default' })
     fractalshark_shape = $fsShape
     shared_palette = $SharedPalette
     imagina_palette = @{ map = $ImaginaPaletteMap; cycle = $ImaginaPaletteCycle; offset = $ImaginaPaletteOffset }
