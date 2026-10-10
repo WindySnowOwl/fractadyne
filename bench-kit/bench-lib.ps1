@@ -136,6 +136,10 @@ function Invoke-TimedRender($exe, $argLine, $timeoutS, $cwd) {
 # Starts the server and waits for it to say it is listening, rather than sleeping a guess: a
 # fixed sleep either wastes seconds per run or races on a slow CUDA init.
 function Start-SharkServer($cli, $endpoint, $w, $h, $logDir) {
+    # The pipe probe below writes to stderr until the server listens; under run-all's
+    # $ErrorActionPreference = 'Stop' a native command's stderr is a TERMINATING error in
+    # PowerShell 5.1, so it must not be one here (function scope only).
+    $ErrorActionPreference = 'Continue'
     $log = Join-Path $logDir ('fs-server-' + $endpoint + '.log')
     if (Test-Path $log) { Remove-Item -Force $log }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -236,7 +240,11 @@ function Invoke-SharkWarmup($cli, $endpoint, $algo, $w, $h, $dir, $timeoutS) {
 }
 
 function Stop-SharkServer($cli, $endpoint, $srv) {
-    & $cli --connect --endpoint $endpoint --shutdown 2>&1 | Out-Null
+    # A server that never came up has no pipe, so this --shutdown fails with a stderr line. Under
+    # run-all's 'Stop' that ended the WHOLE run (2026-10-10: the ladder died at its 20th image, one
+    # server that did not start) instead of the one image falling back to a process of its own.
+    $ErrorActionPreference = 'Continue'
+    try { & $cli --connect --endpoint $endpoint --shutdown 2>&1 | Out-Null } catch {}
     if ($srv -and $srv.proc) {
         if (-not $srv.proc.WaitForExit(120000)) { try { $srv.proc.Kill() } catch {} }
         try {
