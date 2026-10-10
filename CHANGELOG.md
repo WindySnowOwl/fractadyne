@@ -63,6 +63,12 @@ Changes after 0.3.0-beta.1:
   credits Aristid Lindenmayer, *The Algorithmic Beauty of Plants* (Prusinkiewicz and
   Lindenmayer), Paul Bourke's L-system collection, John Horton Conway, and LifeWiki, whose rule
   notations, pattern format and pattern records the Life view follows.
+- **Benchmark kit: readable minibrots in the deeper scenes (0.3.0-beta.19).** `run-all.ps1
+  -SceneSet ladder` (and `bench-latest.sh --scene-set ladder`) runs 21 scenes beyond the standard
+  ten, to 1e30000× and iteration caps of 28.5 million. Its twelve minibrot scenes now render with
+  `--normalize --log-palette`: without it the field around a deep minibrot came out as palette
+  noise, because escape counts in the hundreds of thousands put neighbouring pixels far apart on
+  the palette. It costs Fractadyne 0.1 to 0.4 s a 4K render on an RTX 3080.
 - **A still image on several graphics cards (0.3.0-beta.18).** On a machine with more than one
   graphics card, Export image has *Use all graphics cards* (off by default), and `--render … --gpus
   all` (or card numbers from `--list-adapters`) does the same from the command line: the image is
