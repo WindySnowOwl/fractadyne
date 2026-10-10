@@ -311,6 +311,7 @@ if [ -n "$FRACTADYNE_EXE" ] && ! skipped fractadyne; then
             args=(--render --out "$OUT/fd-$slug.png" --size 1920x1080
                   --center "$re" "$im" --zoom-log2 "$zl2" --iter "$iterations" --ss 1 --palette 0)
             [ "$normalize" = "1" ] && args+=(--normalize)
+            [ "$normalize" = "log" ] && args+=(--normalize --log-palette)
             sw=$(FRACTADYNE_CONFIG_DIR="$cfg" timed_run "$FRACTADYNE_EXE" "${args[@]}")
             status=${sw% *}; wall=${sw#* }
             raw=$(printf '%s' "$RUN_OUT" | sed -n 's/.*(in \([0-9hms. ]*\)).*/\1/p' | head -1)
