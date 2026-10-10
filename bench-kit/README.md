@@ -82,7 +82,7 @@ which the two 1e30000x scenes take several minutes per render in every lane.
 The twelve minibrot scenes give Fractadyne `--normalize --log-palette` (`normalize` = `log` in
 `scenes-ladder.csv`; `1` is `--normalize` alone). Without it their field is palette noise: escape
 counts in the hundreds of thousands put neighbouring pixels far apart on the cyclic palette. On an
-RTX 3080 at 4K it costs Fractadyne 0.1 to 0.3 s a render, so it does not flatter it; the other
+RTX 3080 at 4K it costs Fractadyne 0.1 to 0.4 s a render, so it does not flatter it; the other
 renderers colour as they always do.
 
 Two scenes need their centre in a file, because a 1e30000x centre is 30,000 digits per coordinate
