@@ -475,13 +475,62 @@ pub(crate) struct Schedule {
     cyf: f64,
     /// Steps computed below full precision (diagnostics).
     pub(crate) reduced: u64,
+    /// `FRACTADYNE_SCHED_TRACE=<dir>` only: every change of the step's bits, written to a CSV in
+    /// `<dir>` when the walk ends (see [`SchedTrace`]).
+    trace: Option<Box<SchedTrace>>,
+}
+
+/// Where a scheduled walk spends its time: one row per change of the step's bits (step index, new
+/// bits, `log2|Z_n|`, `log2|dZ/dc|`, nanoseconds since the walk began), so the time at each
+/// precision is the gap to the next row. Diagnostics only, and only when the variable is set: the
+/// untraced walk pays one `Option` test per step.
+struct SchedTrace {
+    dir: std::path::PathBuf,
+    t0: std::time::Instant,
+    n: u64,
+    rows: Vec<(u64, u32, f32, f32, u64)>,
+}
+
+fn sched_trace_dir() -> Option<&'static std::path::Path> {
+    static DIR: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| std::env::var_os("FRACTADYNE_SCHED_TRACE").map(std::path::PathBuf::from))
+        .as_deref()
+}
+
+impl Drop for Schedule {
+    fn drop(&mut self) {
+        let Some(t) = self.trace.take() else { return };
+        // The pick scores ~100 short candidate walks; only a real build is worth a file.
+        if t.n < 10_000 {
+            return;
+        }
+        static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = t.dir.join(format!("sched-{}-{}-{seq}.csv", self.full, std::process::id()));
+        let mut s = String::from("step,bits,log2_z,log2_d,ns\n");
+        for (n, b, z, d, ns) in &t.rows {
+            s.push_str(&format!("{n},{b},{z},{d},{ns}\n"));
+        }
+        s.push_str(&format!("{},{},,,{}\n", t.n, self.st.map_or(self.full, |st| st.cur), t.t0.elapsed().as_nanos()));
+        let _ = std::fs::write(path, s);
+    }
 }
 
 impl Schedule {
     /// For a walk at `p` bits of the point `c` (its `f64` view, `crate::to_f64` of the carrier).
     pub(crate) fn new(p: usize, cxf: f64, cyf: f64, st: Option<SchedState>) -> Schedule {
         let full = (p.div_ceil(64) * 64) as u32;
-        Schedule { st, full, q: (full / 64 / 64 * 64).max(64), cxf, cyf, reduced: 0 }
+        let trace = st.and_then(|st| {
+            sched_trace_dir().map(|dir| {
+                Box::new(SchedTrace {
+                    dir: dir.to_path_buf(),
+                    t0: std::time::Instant::now(),
+                    n: 0,
+                    rows: vec![(0, st.cur, f32::NAN, 0.0, 0)],
+                })
+            })
+        });
+        Schedule { st, full, q: (full / 64 / 64 * 64).max(64), cxf, cyf, reduced: 0, trace }
     }
 
     pub(crate) fn active(&self) -> bool {
@@ -516,7 +565,14 @@ impl Schedule {
             ((need.max(64.0) / self.q as f64).ceil() as u32 * self.q).clamp(64, self.full)
         };
         if target > st.cur || target + self.q <= st.cur {
+            if let Some(t) = self.trace.as_mut() {
+                let ns = t.t0.elapsed().as_nanos() as u64;
+                t.rows.push((t.n + 1, target, z.abs().log2() as f32, st.d.abs().log2() as f32, ns));
+            }
             st.cur = target;
+        }
+        if let Some(t) = self.trace.as_mut() {
+            t.n += 1;
         }
         self.reduced += u64::from(st.cur < self.full);
     }
