@@ -407,7 +407,8 @@ pub struct OrbitTail {
 // backends schedule identically. At the ladder's 1e30000 path (99,722 bits, 821,554 steps) the
 // derivative grows steadily to the view's scale and the average step needs half the bits: the
 // orbit and the pick's walk of it both took 66 s against 138, and not one of the 821,554 stored
-// samples changed (see the margin). Mandelbrot from `Z_0 = 0` only; an extension resumes the
+// samples changed (see the margin). The `z^d + c` families from `Z_0 = 0` only (Multibrot 3–8
+// since 2026-10-11, design/precision-schedule.md P1); an extension resumes the
 // schedule from its tail.
 
 /// Bits the schedule keeps above the need: the injected error stays 2^-112 under a pixel's own δz,
@@ -456,9 +457,9 @@ pub struct SchedState {
 
 impl SchedState {
     /// The state before `Z_1` of a build at `p` bits (`dZ_1/dc = 1`, full precision), or `None`
-    /// when the schedule is off or does not apply (not Mandelbrot from `Z_0 = 0`).
+    /// when the schedule is off or does not apply (not a `z^d + c` family from `Z_0 = 0`).
     pub(crate) fn fresh(p: usize, formula: u32, from_zero: bool) -> Option<SchedState> {
-        (formula == formula::MANDELBROT && from_zero && orbit_schedule_on()).then(|| SchedState {
+        (formula_power(formula).is_some() && from_zero && orbit_schedule_on()).then(|| SchedState {
             d: CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO },
             cur: (p.div_ceil(64) * 64) as u32,
         })
@@ -469,6 +470,9 @@ impl SchedState {
 /// full precision, `advance` a no-op) without a state.
 pub(crate) struct Schedule {
     st: Option<SchedState>,
+    /// The family's power `d` (`z^d + c`; 2 for Mandelbrot), which the derivative and the error
+    /// term follow.
+    power: u32,
     full: u32,
     q: u32,
     cxf: f64,
@@ -517,8 +521,9 @@ impl Drop for Schedule {
 }
 
 impl Schedule {
-    /// For a walk at `p` bits of the point `c` (its `f64` view, `crate::to_f64` of the carrier).
-    pub(crate) fn new(p: usize, cxf: f64, cyf: f64, st: Option<SchedState>) -> Schedule {
+    /// For a walk of `formula` at `p` bits of the point `c` (its `f64` view, `crate::to_f64` of
+    /// the carrier).
+    pub(crate) fn new(p: usize, formula: u32, cxf: f64, cyf: f64, st: Option<SchedState>) -> Schedule {
         let full = (p.div_ceil(64) * 64) as u32;
         let trace = st.and_then(|st| {
             sched_trace_dir().map(|dir| {
@@ -530,7 +535,8 @@ impl Schedule {
                 })
             })
         });
-        Schedule { st, full, q: (full / 64 / 64 * 64).max(64), cxf, cyf, reduced: 0, trace }
+        let power = formula_power(formula).unwrap_or(2);
+        Schedule { st, power, full, q: (full / 64 / 64 * 64).max(64), cxf, cyf, reduced: 0, trace }
     }
 
     pub(crate) fn active(&self) -> bool {
@@ -549,14 +555,31 @@ impl Schedule {
     /// `Z_n` was just computed (its exact top bits `z` and `f64` view `xv, yv`): reckon `Z_{n+1}`.
     pub(crate) fn advance(&mut self, z: CFloatExp, xv: f64, yv: f64) {
         let Some(st) = self.st.as_mut() else { return };
-        st.d = (z * st.d).mul_f64(2.0) + CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
+        let one = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
+        let r2 = xv * xv + yv * yv;
+        // `dZ_{n+1}/dc = d·Z_n^{d−1}·dZ_n/dc + 1`, and the step's operands are `|Z_n|^d` (every
+        // partial product of the power is rounded, but each one's error reaches the result scaled
+        // to `|Z_n|^d`; their count, under `log2 d` bits, is inside the margin) against `|c|`.
+        // Mandelbrot keeps its arithmetic exactly, so its schedule — and so its samples and
+        // orbit blobs — are unchanged.
+        let operands = if self.power == 2 {
+            st.d = (z * st.d).mul_f64(2.0) + one;
+            r2
+        } else {
+            let mut zk = z; // Z^{d−1}
+            for _ in 2..self.power {
+                zk = zk * z;
+            }
+            st.d = (zk * st.d).mul_f64(f64::from(self.power)) + one;
+            r2.powf(f64::from(self.power) / 2.0)
+        };
         // ⛔The step's error is its OPERANDS' scale, not its result's: x², y² and their difference
         // are each rounded to the step's bits before `c` is added, so a near-return (Z_n² ≈ −c,
         // the result ~1e-71) still carries 2^-p·|c| of absolute error. Reckoned from |Z_{n+1}| the
         // first version gave such a step 64 bits — its f64 estimate cancelled to 0 — and at the
         // 1.2e148 corpus centre the orbit lost its dip at step 4,383 and escaped at 6,780 where it
         // survives 363,791.
-        let scale = (xv * xv + yv * yv).max(self.cxf.hypot(self.cyf));
+        let scale = operands.max(self.cxf.hypot(self.cyf));
         let full = self.full as f64;
         let need = full + scale.log2() - st.d.abs().log2() + ORBIT_SCHED_MARGIN;
         let target = if need.is_nan() || need >= full {
@@ -698,7 +721,7 @@ fn run_orbit_carrier<B: RefBackend>(
     let (bzx, bzy) = (B::from_carrier(&zx, ctx), B::from_carrier(&zy, ctx));
     let (bzpx, bzpy) = (B::from_carrier(&zpx, ctx), B::from_carrier(&zpy, ctx));
     let (bcx, bcy) = (B::from_carrier(cx, ctx), B::from_carrier(cy, ctx));
-    let mut sched = Schedule::new(p, to_f64(cx), to_f64(cy), sched);
+    let mut sched = Schedule::new(p, formula, to_f64(cx), to_f64(cy), sched);
     let (zx, zy, zpx, zpy, escaped) = run_orbit_gen::<B>(
         out, bzx, bzy, bzpx, bzpy, &bcx, &bcy, formula, n, max_iter, ctx, probe.as_deref_mut(), &mut sched, fe,
     );
@@ -744,7 +767,7 @@ fn run_orbit_gen<B: RefBackend>(
     let mut escaped = false;
     let escape2 = ref_escape2(formula);
     while n < max_iter {
-        // The precision schedule's bits for this step (only Mandelbrot from 0 schedules).
+        // The precision schedule's bits for this step (only the `z^d + c` families from 0 schedule).
         let ctx = if sched.active() { B::ctx_for(sched.bits() as usize) } else { ctx };
         let (nzx, nzy) = if formula == formula::PHOENIX {
             phoenix_step_gen(&zx, &zy, &zpx, &zpy, cx, cy, ctx)
@@ -2315,6 +2338,7 @@ fn orbit_length_gen<B: RefBackend>(
     let ctx = B::ctx_for(p);
     let mut sched = Schedule::new(
         p,
+        formula,
         to_f64(cx),
         to_f64(cy),
         SchedState::fresh(p, formula, z0x.is_zero() && z0y.is_zero()),

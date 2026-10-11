@@ -1056,9 +1056,11 @@ pub(crate) fn try_run_orbit_inplace(
     let mut zy = <Float as RefBackend>::from_carrier(z0y, ctx);
     let rcx = <Float as RefBackend>::from_carrier(cx, ctx);
     let rcy = <Float as RefBackend>::from_carrier(cy, ctx);
-    // THE PRECISION SCHEDULE (`crate::reference::Schedule`): Mandelbrot only, as in the generic loop.
+    // THE PRECISION SCHEDULE (`crate::reference::Schedule`): of this loop's power-2 families only
+    // Mandelbrot schedules (the folds are not `z^d + c`), as in the generic loop.
     let mut sched = crate::reference::Schedule::new(
         p,
+        formula,
         crate::to_f64(cx),
         crate::to_f64(cy),
         sched.filter(|_| formula == fam::MANDELBROT),
@@ -1250,6 +1252,7 @@ pub(crate) fn try_orbit_length_inplace(
     // THE PRECISION SCHEDULE, as the build walks the same orbit (`crate::reference::Schedule`).
     let mut sched = crate::reference::Schedule::new(
         p,
+        formula,
         crate::to_f64(cx),
         crate::to_f64(cy),
         crate::reference::SchedState::fresh(p, formula, z0x.is_zero() && z0y.is_zero()),

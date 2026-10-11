@@ -1,7 +1,8 @@
 # The reference orbit's precision schedule — and extending it past Mandelbrot
 
 Status: the Mandelbrot schedule shipped in 0.3.0-beta.18 (`8e77046`). This note records what it is,
-what the 2026-10-11 measurements found, and the plan to extend it to the other families.
+what the 2026-10-11 measurements found, and the plan to extend it to the other families. **Done
+2026-10-11:** P0 (`9c5646e`) and P1 (Multibrot 3–8); results under each. P2 and P3 open.
 
 ## What it is
 
@@ -75,6 +76,14 @@ Two options, smallest first:
    opening alone would save ~9.5 s; the whole saving is unmeasured). Same gate as phase 2 (`!julia`,
    polynomial, deep spans); `--pickcheck` must show the same winner on the ladder and the corpus.
 
+**Done: option 2** (`perturb_scan`, `9c5646e`). The centre walked in bignum to `quick + 64`; the others
+δ-scored against it; a trusted score 64+ steps either side of the threshold decides, anything nearer
+or untrusted is walked in bignum, and "no survivor" is never decided by perturbation. The 31 bench
+scenes at 1280x720 are pixel-identical to the previous build; `--pickcheck` 9/9 with the same
+survivors (it now fails on a survivor-count difference), the scan engaged on every rung with
+survivors and re-walked no one. Single runs, MPFR build: 60 43.5 → 33.8 s, 55 54.9 → 45.8 s,
+54 8.4 → 5.9 s, 46 6.4 → 4.3 s; shallower scenes unchanged.
+
 ### P1 — Multibrot 3–8 (c plane)
 
 `Z_{n+1} = Z_n^d + c`: error `2^-p · max(|Z_n|^d, |c|)` (the margin absorbs the `log2 d` from the
@@ -84,12 +93,32 @@ backends. Changes: `SchedState::fresh` admits the polynomial family with its pow
 uses `d`. The Mandelbrot arm stays exactly as it is (byte-identical schedule, so byte-identical
 samples and blobs).
 
+**Done.** `Schedule::new` takes the formula and keeps the power (not in `SchedState`, so `OrbitTail`
+and the orbit blob are unchanged); the power-2 arm is the old arithmetic verbatim. Tests: the
+`M_{2,1}` Misiurewicz points `c = (ω − 1)^{1/(d−1)}`, `ω = e^{2πi/d}` (0 → c → ωc, repelling,
+`|f'| = 2d·sin(π/d)`), d = 3–8, at 1,024 bits: samples bit for bit over the accurate stretch, the
+schedule below half, extend == fresh (goes red when the derivative is inflated 2^200); and both
+backends byte-identical at d = 3 and 8. Renders (`local/bench-ladder/mb_sched_ab.py`, views centred
+on those points, schedule on vs `--set ORBIT_SCHEDULE=0`): 17 views at 1e300–1e30000, every one
+pixel-identical. Reference build: 1e3000 about half; 1e10000 2.8 → 1.2 s (d=3), 3.7 → 1.5 s (d=5),
+2.7 → 1.1 s (d=8); 1e30000 40.0 → 17.5 s (d=3, render 40.5 → 18.1 s), 41.7 → 19.4 s (d=8, render
+42.5 → 20.2 s).
+
+**Found on the way: Multibrot series approximation runs on astro-float.** At 1e10000 a Multibrot
+render is ~11 s, of which the series walk is ~10 s (`sa_ms`), because `series_skip_in` routes only
+Mandelbrot to MPFR ("multibrots fall back to astro — speed, never bits"). Routing the `z^d + c` series
+walk to MPFR, as Mandelbrot's was (`try_series_skip_walk`, e4000 SA 47.5 → 13.6 s), is the next
+Multibrot speed-up; it hides the schedule's saving below ~1e30000.
+
 ### P2 — Julia views of the polynomial families
 
 `Z_0` is the pixel, `c` the constant: derivative with respect to `Z_0`, `D_0 = 1`,
 `D_{n+1} = d·Z_n^{d−1}·D_n` (no `+1`), same error term. `D` can fall below 1 (near the critical
 point, attracting cycles); the bits then cap at full, which is today's behaviour. The pick's Julia
-walk and the build both pass `from_zero = false` today; they need the Julia flag instead.
+walk and the build both pass `from_zero = false` today; they need the Julia flag instead. ⚠The core
+cannot tell a Julia view from `Z_0 ≠ 0`: the orbit entry points (`reference_orbit_t`, the extend
+path, the pick's walks, the orbit cache key) take `z0` and `c` with no plane, so the app has to pass
+the plane through them — a wider change than P1.
 
 ### P3 — the fold families (Tricorn, Burning Ship, Celtic, Buffalo; powers 2–5; both planes)
 
