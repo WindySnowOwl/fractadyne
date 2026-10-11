@@ -213,6 +213,9 @@ fn both_engines_elect_the_same_reference() {
         dual.walk_diag.winner_len, dual.perturb_diag.winner_len
     );
     assert!(dual.perturb_diag.deep_perturb, "perturb engine must actually have run");
+    assert!(dual.perturb_diag.scan_perturb, "phase 1 must have been scored by perturbation");
+    assert!(!dual.walk_diag.scan_perturb, "the walk engine's phase 1 is the bignum scan");
+    assert_eq!(dual.perturb_diag.survivors, dual.walk_diag.survivors, "phase 1 kept different survivors");
     assert!(
         dual.perturb_diag.deep_scored > 0,
         "degenerate fixture: nothing beyond the first survivor was scored — pick another"
@@ -264,4 +267,70 @@ fn shallow_views_and_other_formulas_keep_the_walk() {
             .is_err(),
         "the dual harness must refuse (SKIP), not vacuously pass, an ineligible formula"
     );
+}
+
+/// Phase 1 by perturbation ([`perturb_scan`]) against the bignum scan it replaces, on the pick's own
+/// candidate grid, three formulas, a tight and a wide spread: the same survivor set (the only thing
+/// phase 2 reads from phase 1). And not vacuously: the fixtures must hold survivors and escapers
+/// between them, and the perturbation must have decided candidates on its own (a scan that
+/// re-walked everyone in bignum could never go red).
+#[test]
+fn the_perturbed_scan_keeps_the_bignum_survivors() {
+    let p = 164;
+    let quick = 4096u32;
+    let zero = bf(0.0, p);
+    let (mut survived, mut escaped, mut decided) = (0usize, 0usize, 0usize);
+    for (formula, x, y) in [
+        (
+            formula::MANDELBROT,
+            "-7.219621882920463979621343199249635039400777157391994056859e-1",
+            "2.406540627640154659873781066416545013133592385797331352286e-1",
+        ),
+        (
+            formula::MULTIBROT3,
+            "2.19533102209775940218788168856401426185991366731348781648e-1",
+            "7.317770073659198278104833118192370226116695264984596408352e-1",
+        ),
+        (
+            formula::MULTIBROT5,
+            "2.320768669674853369085651557338865001525750889159483426277e-1",
+            "7.735895565582844849904484291320284693154748744446630197764e-1",
+        ),
+    ] {
+        let cx = parse_bf_prec(x, p).unwrap();
+        let cy = parse_bf_prec(y, p).unwrap();
+        for span_y in [1.0e-30, 1.0e-9] {
+            let span = [FloatExp::from_f64(span_y * 16.0 / 9.0), FloatExp::from_f64(span_y)];
+            // `pick_pass`'s grid: the centre, then 5×5 at four fractions of the span.
+            let mut cands = vec![[cx.clone(), cy.clone()]];
+            for sc in [0.04, 0.12, 0.28, 0.5] {
+                for j in 0..5 {
+                    for i in 0..5 {
+                        let fx = (f64::from(i) / 4.0 - 0.5) * 2.0 * sc;
+                        let fy = (f64::from(j) / 4.0 - 0.5) * 2.0 * sc;
+                        cands.push([
+                            cx.add(&span[0].mul_f64(fx).to_bf(p), p, RM),
+                            cy.add(&span[1].mul_f64(fy).to_bf(p), p, RM),
+                        ]);
+                    }
+                }
+            }
+            let idxs: Vec<usize> = (0..cands.len()).collect();
+            let walked = par_orbit_scores(&cands, &idxs, quick, false, &zero, &zero, formula, p);
+            let scan = perturb_scan(&cands, quick, false, &zero, &zero, formula, p)
+                .expect("the centre's walk is long enough to perturb against");
+            let alive = |s: &[u32]| s.iter().map(|&l| l >= quick).collect::<Vec<_>>();
+            assert_eq!(
+                alive(&scan.scores),
+                alive(&walked),
+                "formula {formula}, span {span_y:e}: the perturbed scan kept different survivors"
+            );
+            assert!(scan.perturb);
+            survived += walked.iter().filter(|&&l| l >= quick).count();
+            escaped += walked.iter().filter(|&&l| l < quick).count();
+            decided += cands.len() - 1 - scan.rewalked as usize;
+        }
+    }
+    assert!(survived > 0 && escaped > 0, "the fixtures must hold survivors and escapers ({survived}, {escaped})");
+    assert!(decided > 0, "the perturbation decided no candidate on its own");
 }

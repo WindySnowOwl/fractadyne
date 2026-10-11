@@ -1245,7 +1245,7 @@ fn pick_reference(
         crate::diag::trace(
             "ref",
             format!(
-                "pick [{}]: ask={} scored@{}bits survivors={} winner_len={}{}{}{} offset=({dx:.3},{dy:.3}) spans{}",
+                "pick [{}]: ask={} scored@{}bits survivors={} winner_len={}{}{}{} offset=({dx:.3},{dy:.3}) spans{}{}",
                 inp.origin,
                 inp.gpu_iter,
                 diag.scoring_prec,
@@ -1264,6 +1264,8 @@ fn pick_reference(
                 } else {
                     String::new()
                 },
+                // Phase 1 by perturbation (design/precision-schedule.md P0), likewise appended.
+                if diag.scan_perturb { format!(" scan=perturb(rewalked={})", diag.scan_rewalked) } else { String::new() },
             ),
         );
     }

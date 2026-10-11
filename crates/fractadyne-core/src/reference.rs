@@ -2510,6 +2510,100 @@ fn perturb_orbit_length(
     Some(n)
 }
 
+/// [`perturb_orbit_length`] for every `dcs` entry against one recorded orbit, across the machine's
+/// cores like [`par_orbit_scores`]: each candidate's walk is an independent sequential loop and the
+/// results land in `dcs` order, so a selection over them — and a rebase total, a sum of
+/// per-candidate counts — is byte-identical to a sequential scan; threading changes wall-clock only.
+/// (At ~1,700 bits the sequential version measured SLOWER than the old engine's parallel bignum
+/// batch — the δ-walk win must not be given back to the wall.) Returns `(score, rebases)` each.
+fn par_perturb_lengths(samples: &[CFloatExp], dcs: &[CFloatExp], power: u32, max_iter: u32) -> Vec<(Option<u32>, u32)> {
+    let mut per: Vec<(Option<u32>, u32)> = vec![(None, 0); dcs.len()];
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(dcs.len().max(1));
+    let chunk = dcs.len().div_ceil(threads).max(1);
+    std::thread::scope(|sc| {
+        for (dc_chunk, out_chunk) in dcs.chunks(chunk).zip(per.chunks_mut(chunk)) {
+            sc.spawn(move || {
+                for (dc, out) in dc_chunk.iter().zip(out_chunk.iter_mut()) {
+                    let mut rb = 0u32;
+                    let len = perturb_orbit_length(samples, *dc, power, max_iter, &mut rb);
+                    *out = (len, rb);
+                }
+            });
+        }
+    });
+    per
+}
+
+/// Phase 1's scores ([`pick_pass`]): every candidate's orbit length, capped at `quick`.
+struct ScanScores {
+    scores: Vec<u32>,
+    /// Scored by [`perturb_scan`] (else every candidate was walked in bignum).
+    perturb: bool,
+    /// Candidates [`perturb_scan`] walked in bignum after all (near the threshold, or untrusted).
+    rewalked: u32,
+}
+
+/// How far either side of phase 1's threshold a perturbed score must land before it decides the
+/// candidate on its own; anything closer is walked in bignum (see [`perturb_scan`]). Phase 2's
+/// perturbed scores have measured within ±2 of the bignum walk's (design/pick-redesign.md).
+const SCAN_BAND: u32 = 64;
+
+/// PHASE 1 BY PERTURBATION (2026-10-11, design/precision-schedule.md P0). Phase 1 only decides which
+/// candidates survive `quick` steps, and at depth every candidate is a small δ off the centre: the
+/// old scan walked all 101 in bignum, 4,096 steps each at full precision (at 1e30000× ~414,000
+/// full-precision steps, half the length of the whole orbit, on every core beside the centre's
+/// build — which ran its opening 7× slower per step for it). Here the centre alone is walked in
+/// bignum, recorded, to `quick + SCAN_BAND`; the others are δ-walked against it in floatexp to the
+/// same cap. A candidate whose δ walk escapes `SCAN_BAND` steps or more before `quick`, or survives
+/// the whole cap, is decided by it; one that lands nearer the threshold, or whose score the trust
+/// rule rejects, is walked in bignum exactly as before. So the survivor set — the only thing phase 2
+/// reads from phase 1 — is the bignum scan's unless a trusted δ score is off by more than
+/// `SCAN_BAND` steps. (Escapers' scores matter only when nothing survives, and then the caller
+/// re-scans in bignum.) `None` when the centre's walk is too short to perturb against.
+fn perturb_scan(
+    cands: &[[BigFloat; 2]],
+    quick: u32,
+    julia: bool,
+    jcx: &BigFloat,
+    jcy: &BigFloat,
+    formula: u32,
+    p: usize,
+) -> Option<ScanScores> {
+    let power = formula_power(formula)?;
+    let zero = bf(0.0, p);
+    let cap = quick.saturating_add(SCAN_BAND);
+    let (len0, samples) = orbit_length_bf_recorded(&zero, &zero, &cands[0][0], &cands[0][1], formula, cap, p);
+    if samples.len() < 2 {
+        return None;
+    }
+    // Exact bignum differences rounded once to floatexp, as phase 2 does.
+    let dcs: Vec<CFloatExp> = cands[1..]
+        .iter()
+        .map(|c| CFloatExp {
+            re: bf_to_floatexp(&c[0].sub(&cands[0][0], p, RM)),
+            im: bf_to_floatexp(&c[1].sub(&cands[0][1], p, RM)),
+        })
+        .collect();
+    let per = par_perturb_lengths(&samples, &dcs, power, cap);
+    // The centre's own score is its bignum walk's, capped as the scan caps it.
+    let mut scores = vec![len0.min(quick)];
+    let mut rewalk = Vec::new();
+    for (k, &(len, _)) in per.iter().enumerate() {
+        match len {
+            Some(l) if l >= cap => scores.push(quick),
+            Some(l) if l.saturating_add(SCAN_BAND) <= quick => scores.push(l),
+            _ => {
+                scores.push(0);
+                rewalk.push(k + 1);
+            }
+        }
+    }
+    for (&i, l) in rewalk.iter().zip(par_orbit_scores(cands, &rewalk, quick, julia, jcx, jcy, formula, p)) {
+        scores[i] = l;
+    }
+    Some(ScanScores { scores, perturb: true, rewalked: rewalk.len() as u32 })
+}
+
 /// Whether the perturbation deep-scoring engine can express this request at all: the δ-step
 /// table covers the polynomial `z^k + c` families, and candidates must vary `c` with `z₀`
 /// fixed at the critical point (a Julia view varies `z₀` instead — unvalidated there, so it
@@ -2621,6 +2715,10 @@ pub struct RefPickDiag {
     /// Phase 2 took the centre's deep walk from the app's build of the centre instead of walking
     /// it again ([`best_reference_diag_from_build`]).
     pub centre_from_build: bool,
+    /// Phase 1 of the winning pass scored by perturbation against the centre ([`perturb_scan`]).
+    pub scan_perturb: bool,
+    /// Candidates [`perturb_scan`] walked in bignum after all (near the threshold, or untrusted).
+    pub scan_rewalked: u32,
 }
 
 /// One selection pass at a fixed precision: phase 1 (cheap rank to `quick`) + phase 2 (deep-rank
@@ -2639,6 +2737,8 @@ enum PickPass {
         rebases: u32,
         fallbacks: u32,
         centre_from_build: bool,
+        scan_perturb: bool,
+        scan_rewalked: u32,
     },
     /// Every candidate escaped within `quick` — the longest escaper and its length.
     NoSurvivor { point: [BigFloat; 2], esc_len: u32 },
@@ -2735,7 +2835,7 @@ fn best_reference_diag_forced(
     centre: Option<CentreSource<'_>>,
 ) -> ([BigFloat; 2], RefPickDiag) {
     match pick_pass(center, span, formula, julia, julia_c, max_iter, p, force, centre) {
-        PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build }
+        PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build, scan_perturb, scan_rewalked }
             if deep_len >= max_iter =>
         (
             point,
@@ -2750,9 +2850,11 @@ fn best_reference_diag_forced(
                 perturb_rebases: rebases,
                 perturb_fallbacks: fallbacks,
                 centre_from_build,
+                scan_perturb,
+                scan_rewalked,
             },
         ),
-        PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build } => {
+        PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build, scan_perturb, scan_rewalked } => {
             // The winner escapes before the render budget — either a genuine boundary/exterior
             // view (every point escapes) or a precision cliff between `quick` and `max_iter`.
             // Rescoring the centre at the BUILD precision separates them: only a cliff un-blinds.
@@ -2782,6 +2884,8 @@ fn best_reference_diag_forced(
                         perturb_rebases: 0,
                         perturb_fallbacks: 0,
                         centre_from_build,
+                        scan_perturb,
+                        scan_rewalked,
                     },
                 )
             } else {
@@ -2798,6 +2902,8 @@ fn best_reference_diag_forced(
                         perturb_rebases: rebases,
                         perturb_fallbacks: fallbacks,
                         centre_from_build,
+                        scan_perturb,
+                        scan_rewalked,
                     },
                 )
             }
@@ -2811,7 +2917,7 @@ fn best_reference_diag_forced(
             // The rescan's centre walk is at `p2 + REF_RESCUE_EXTRA_BITS`, not the build's precision,
             // so `centre` cannot answer it: the pass walks the centre itself.
             match pick_pass(center, span, formula, julia, julia_c, max_iter, p2, force, None) {
-                PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build } => (
+                PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build, scan_perturb, scan_rewalked } => (
                     point,
                     RefPickDiag {
                         scoring_prec: p2,
@@ -2824,6 +2930,8 @@ fn best_reference_diag_forced(
                         perturb_rebases: rebases,
                         perturb_fallbacks: fallbacks,
                         centre_from_build,
+                        scan_perturb,
+                        scan_rewalked,
                     },
                 ),
                 PickPass::NoSurvivor { point, esc_len } => (
@@ -2839,6 +2947,8 @@ fn best_reference_diag_forced(
                         perturb_rebases: 0,
                         perturb_fallbacks: 0,
                         centre_from_build: false,
+                        scan_perturb: false,
+                        scan_rewalked: 0,
                     },
                 ),
             }
@@ -2943,21 +3053,44 @@ fn pick_pass(
             (orbit_length_periodic(&cands[0][0], &cands[0][1], formula, max_iter, pd, log2_span, None).0, None)
         }
     };
-    let (scores, centre_beside) = std::thread::scope(|s| {
+    // Phase 1's scores: by perturbation against the centre where phase 2 would use it (see
+    // [`perturb_scan`]), else the bignum walks of every candidate.
+    let (mut scan, centre_beside) = std::thread::scope(|s| {
         let beside = !centre_src.is_some_and(|c| c.whole);
         let centre = beside.then(|| s.spawn(|| centre_walk_here(use_perturb)));
-        let scores = par_orbit_scores(&cands, &idxs, quick, julia, &jcx, &jcy, formula, p);
-        (scores, centre.map(|h| h.join().expect("the centre's deep walk panicked")))
+        let scan = use_perturb
+            .then(|| perturb_scan(&cands, quick, julia, &jcx, &jcy, formula, p))
+            .flatten()
+            .unwrap_or_else(|| ScanScores {
+                scores: par_orbit_scores(&cands, &idxs, quick, julia, &jcx, &jcy, formula, p),
+                perturb: false,
+                rewalked: 0,
+            });
+        (scan, centre.map(|h| h.join().expect("the centre's deep walk panicked")))
     });
-    let mut survivors: Vec<usize> = Vec::new();
-    let (mut esc_i, mut esc_len) = (0usize, 0u32);
-    for (idx, &len) in scores.iter().enumerate() {
-        if len >= quick {
-            survivors.push(idx);
-        } else if len > esc_len {
-            esc_len = len;
-            esc_i = idx;
+    let rank = |scores: &[u32]| {
+        let mut survivors: Vec<usize> = Vec::new();
+        let (mut esc_i, mut esc_len) = (0usize, 0u32);
+        for (idx, &len) in scores.iter().enumerate() {
+            if len >= quick {
+                survivors.push(idx);
+            } else if len > esc_len {
+                esc_len = len;
+                esc_i = idx;
+            }
         }
+        (survivors, esc_i, esc_len)
+    };
+    let (mut survivors, mut esc_i, mut esc_len) = rank(&scan.scores);
+    if survivors.is_empty() && scan.perturb {
+        // "No survivor" is what the cliff rescue keys on: never let the perturbed scan decide it.
+        // Score every candidate in bignum, exactly the old phase 1.
+        scan = ScanScores {
+            scores: par_orbit_scores(&cands, &idxs, quick, julia, &jcx, &jcy, formula, p),
+            perturb: false,
+            rewalked: 0,
+        };
+        (survivors, esc_i, esc_len) = rank(&scan.scores);
     }
     if survivors.is_empty() {
         // Deep exterior — or a precision cliff; the caller's rescue pass tells them apart.
@@ -3021,6 +3154,8 @@ fn pick_pass(
             rebases: 0,
             fallbacks: 0,
             centre_from_build,
+            scan_perturb: scan.perturb,
+            scan_rewalked: scan.rewalked,
         };
     }
     let mut rebases = 0u32;
@@ -3038,27 +3173,7 @@ fn pick_pass(
                     im: bf_to_floatexp(&cands[i][1].sub(&cands[first][1], p, RM)),
                 })
                 .collect();
-            // δ-walks across the machine's cores, like `par_orbit_scores`: each candidate's
-            // walk is an independent sequential loop and the results land in `rest` order, so
-            // the selection — and the rebase total, a sum of per-candidate counts — is
-            // byte-identical to a sequential scan; threading changes wall-clock only. (At
-            // ~1,700 bits the sequential version measured SLOWER than the old engine's
-            // parallel bignum batch — the δ-walk win must not be given back to the wall.)
-            let mut per: Vec<(Option<u32>, u32)> = vec![(None, 0); rest.len()];
-            let threads =
-                std::thread::available_parallelism().map_or(1, |n| n.get()).min(rest.len().max(1));
-            let chunk = rest.len().div_ceil(threads).max(1);
-            std::thread::scope(|sc| {
-                for (dc_chunk, out_chunk) in dcs.chunks(chunk).zip(per.chunks_mut(chunk)) {
-                    sc.spawn(move || {
-                        for (dc, out) in dc_chunk.iter().zip(out_chunk.iter_mut()) {
-                            let mut rb = 0u32;
-                            let len = perturb_orbit_length(samples, *dc, power, max_iter, &mut rb);
-                            *out = (len, rb);
-                        }
-                    });
-                }
-            });
+            let per = par_perturb_lengths(samples, &dcs, power, max_iter);
             let scored: Vec<Option<u32>> = per
                 .iter()
                 .map(|&(len, rb)| {
@@ -3105,6 +3220,8 @@ fn pick_pass(
         rebases,
         fallbacks,
         centre_from_build,
+        scan_perturb: scan.perturb,
+        scan_rewalked: scan.rewalked,
     }
 }
 
