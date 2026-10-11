@@ -108,7 +108,7 @@ def write_tour(path, frames, start_rung, size, iters, fps=1):
     return path
 
 
-def write_f3_frame(path, template, n, size):
+def write_f3_frame(path, template, n, size, limit=None):
     w, h = size.split('x')
     zoom = zoom_str(n)
     out = []
@@ -121,6 +121,9 @@ def write_f3_frame(path, template, n, size):
         # pixel on both arms, and 4x the samples on one of them is not a comparison.
         elif re.match(r'^\s*subframes\s*=', s): s = 'subframes = 1'
         elif re.match(r'^\s*zoom\s*=', s):   s = 'zoom = "%s"' % zoom
+        # The kit's per-pixel limits, as run-all.ps1 writes them into every single-frame scene.
+        elif limit and re.match(r'^\s*maximum_perturb_iterations\s*=', s): s = 'maximum_perturb_iterations = %d' % limit
+        elif limit and re.match(r'^\s*maximum_bla_steps\s*=', s): s = 'maximum_bla_steps = %d' % limit
         out.append(s)
     with open(path, 'w', newline='\n') as f:
         f.write("\n".join(out) + "\n")
@@ -136,10 +139,30 @@ def f3_out_name(toml_path):
     return ''
 
 
-def timed(cmd, cwd=None, timeout=7200):
+def f3_profile_env(profile):
+    """Fraktaler-3 renders a batch PNG through its GUI program, which loads the GUI's preferences
+    from SDL's pref path and, with Limit Iterations on (the default), clamps the file's perturb and
+    BLA limits to 4096. Point the pref path at a profile of the kit's own with the clamp off, for
+    the F3 child only (see New-F3Profile in bench-lib.ps1)."""
+    profile = os.path.abspath(profile)
+    env = dict(os.environ)
+    if os.name == 'nt':
+        env['USERPROFILE'] = profile
+        env['APPDATA'] = os.path.join(profile, 'AppData', 'Roaming')
+        pref = os.path.join(env['APPDATA'], 'uk.co.mathr', 'fraktaler-3')
+    else:
+        env['XDG_DATA_HOME'] = os.path.join(profile, 'share')
+        pref = os.path.join(env['XDG_DATA_HOME'], 'uk.co.mathr', 'fraktaler-3')
+    os.makedirs(pref, exist_ok=True)
+    with open(os.path.join(pref, 'gui-settings.toml'), 'w', newline='\n') as f:
+        f.write('iterations_limited = false\n')
+    return env
+
+
+def timed(cmd, cwd=None, timeout=7200, env=None):
     t0 = time.time()
     try:
-        p = subprocess.run(cmd, cwd=cwd, timeout=timeout,
+        p = subprocess.run(cmd, cwd=cwd, timeout=timeout, env=env,
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         wall = time.time() - t0
         return ("ok" if p.returncode == 0 else "fail-%d" % p.returncode), wall, p.stdout.decode('utf-8', 'replace')
@@ -154,6 +177,8 @@ def main():
     ap.add_argument('--fraktaler3')
     ap.add_argument('--f3-wisdom')
     ap.add_argument('--f3-template', default=os.path.join(REPO, 'validation/corpus/locations/21-m43-spar-1e27.7.f3.toml'))
+    ap.add_argument('--f3-profile', help="Fraktaler-3's pref dir (a kit-owned profile, Limit Iterations off)")
+    ap.add_argument('--f3-limit', type=int, help='maximum_perturb_iterations = maximum_bla_steps for every frame')
     ap.add_argument('--frames', type=int, default=8)
     ap.add_argument('--start-rung', type=int, default=44)   # ~1e23.9, mid df32
     ap.add_argument('--size', default='3840x2160')
@@ -244,22 +269,25 @@ def main():
 
     # ---- Fraktaler-3: CLI batch is one image per invocation (see the module docstring) ----
     if a.fraktaler3 and os.path.exists(a.f3_template):
+        f3_env = f3_profile_env(a.f3_profile) if a.f3_profile else None
         t0 = time.time()
         ok = True
         for i in range(a.frames):
             n = a.start_rung + i
-            tp = write_f3_frame(os.path.join(a.out, 'zoomseq-f3-%02d.toml' % i), a.f3_template, n, a.size)
-            cmd = [a.fraktaler3]
+            tp = write_f3_frame(os.path.join(a.out, 'zoomseq-f3-%02d.toml' % i), a.f3_template, n, a.size, a.f3_limit)
+            # -P: no persistence file, as in the single-frame lane.
+            cmd = [a.fraktaler3, '-P']
             if a.f3_wisdom:
                 cmd += ['-w', a.f3_wisdom]
             cmd += ['-b', os.path.basename(tp)]   # cwd is a.out; see the abspath note above
-            st, w, _ = timed(cmd, cwd=a.out, timeout=a.timeout)
-            # PROVE it rendered the scene we asked for. F3 falls back to the settings persisted
-            # in %APPDATA%/uk.co.mathr/fraktaler-3/persistence.f3.toml when it cannot read the
-            # batch file, and then reports success: exit 0, a full-cost render, a PNG named
-            # after somebody else's location. Without this check the lane times the wrong scene
-            # and calls it a result (2026-08-22: four minutes a frame of a 1e1105 view while
-            # the ladder sat at 1e23.9).
+            st, w, _ = timed(cmd, cwd=a.out, timeout=a.timeout, env=f3_env)
+            # PROVE it rendered the scene we asked for. F3 falls back to other settings when it
+            # cannot read the batch file - before -P, the ones persisted in
+            # %APPDATA%/uk.co.mathr/fraktaler-3/persistence.f3.toml; with -P, its built-in
+            # defaults - and then reports success: exit 0, a full-cost render, a PNG named after
+            # somebody else's location. Without this check the lane times the wrong scene and
+            # calls it a result (2026-08-22: four minutes a frame of a 1e1105 view while the
+            # ladder sat at 1e23.9).
             want = os.path.join(a.out, f3_out_name(tp))
             if st == 'ok' and not os.path.exists(want):
                 st = 'fail-wrong-scene'
@@ -267,7 +295,7 @@ def main():
                 ok = False
                 print("  fraktaler3  frame %d %s" % (i, st))
                 if st == 'fail-wrong-scene':
-                    print("    expected %s - F3 fell back to its PERSISTED settings; the batch"
+                    print("    expected %s - F3 fell back to other settings; the batch"
                           % os.path.basename(want))
                     print("    file was rejected. Nothing timed here describes this ladder.")
                 break

@@ -59,6 +59,19 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Benchmark kit: Fraktaler-3 renders at the limits it is given (0.3.0-beta.20).** Fraktaler-3
+  3.1 renders a batch PNG through its GUI program, which applies the GUI's Limit Iterations
+  preference (on by default), so every Fraktaler-3 render the kit made ran with its perturbation
+  and BLA limits clamped to 4096, whatever the scene file said. That is why the period-951,094
+  scene came out black. The kit now runs Fraktaler-3 with a profile of its own, Limit Iterations
+  off, and writes both limits into each scene: 8192 (`-F3Limit`), or a scene's own value in the
+  new `f3_limit` column (32768 at period 951,094, which now renders). Rendered at 4096, 8192 and
+  32768, 29 of the 31 scenes draw identical images in the same time, so for them the clamp made no
+  difference; one more changes 4 pixels between 4096 and 8192. A relative path given to
+  `run-all.ps1` (`-F3Wisdom f3-wisdom-gpu.toml`) is now resolved from where you start it:
+  Fraktaler-3 looked for it in the run folder and rendered on its default tuning. On Linux,
+  `bench-latest.sh` now gives Fraktaler-3 the same per-run copy of the scene as Windows does,
+  1920x1080 at one sample per pixel, where it used to render the scene file's own size with four.
 - **Credits for L-systems and the Game of Life (0.3.0-beta.19).** Help ▸ Acknowledgments now
   credits Aristid Lindenmayer, *The Algorithmic Beauty of Plants* (Prusinkiewicz and
   Lindenmayer), Paul Bourke's L-system collection, John Horton Conway, and LifeWiki, whose rule

@@ -20,6 +20,16 @@ function Read-Kfr($path) {
     $kv
 }
 
+# A relative path on the command line means "from where I started the kit", and that is where
+# Test-Path looks; but every renderer runs with the run folder as its working directory, where the
+# same relative path names a file that is not there. 2026-10-10: `-F3Wisdom f3-wisdom-gpu.toml`
+# passed the check, and Fraktaler-3 then rendered on its default tuning without a word (different
+# pixels, 60% slower). Resolve once, up front; works for files that do not exist yet. Empty stays empty.
+function Resolve-KitPath($p) {
+    if (-not $p) { return $p }
+    $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($p)
+}
+
 # $set: 'standard' = scenes.csv (the published ten), 'ladder' = scenes-ladder.csv, 'all' = both.
 function Read-Scenes($kitRoot, $set = 'standard') {
     $files = switch ($set) {
@@ -28,6 +38,32 @@ function Read-Scenes($kitRoot, $set = 'standard') {
         default  { @('scenes.csv') }
     }
     foreach ($f in $files) { Import-Csv (Join-Path $kitRoot $f) }
+}
+
+# ---- Fraktaler-3's profile: the kit's own, never the user's -----------------------------------
+# Fraktaler-3 3.1 renders a batch PNG through its GUI program (main.cc hands any -b that saves PNG or
+# JPG to gui(); batch.cc is only the EXR path), and the GUI loads gui-settings.toml from SDL's pref
+# path - %APPDATA%\uk.co.mathr\fraktaler-3 - before it starts the batch. With Preferences > Limit
+# Iterations on, which is the DEFAULT (a settings file stores only non-default values), it clamps
+# the scene file's maximum_perturb_iterations and maximum_bla_steps to 4096 each and its iterations
+# to 2^27, silently. Every Fraktaler-3 number this kit published before 2026-10-10 ran at 4096/4096
+# whatever the scene file said, and the period-951,094 scene rendered black because of it.
+# So every F3 launch gets a profile of the kit's own with the clamp off: the scene file decides.
+# SDL's pref path follows USERPROFILE/APPDATA here; both point into the profile, for the child
+# process only (bench-latest.sh does the same with XDG_DATA_HOME). Returns that environment.
+function New-F3Profile($dir) {
+    $roaming = Join-Path $dir 'AppData\Roaming'
+    $pref = Join-Path $roaming 'uk.co.mathr\fraktaler-3'
+    New-Item -ItemType Directory -Force $pref | Out-Null
+    Set-Content -Path (Join-Path $pref 'gui-settings.toml') -Value 'iterations_limited = false' -Encoding ASCII
+    @{ USERPROFILE = $dir; APPDATA = $roaming }
+}
+
+# The limits a scene's Fraktaler-3 file is rendered with: the scene row's f3_limit column when it
+# has one, else the kit default. Both maximum_perturb_iterations and maximum_bla_steps take it.
+function Get-F3Limit($row, $default) {
+    if (($row.PSObject.Properties.Name -contains 'f3_limit') -and $row.f3_limit) { return [int]$row.f3_limit }
+    $default
 }
 
 # ---- run manifest: what was actually EXECUTED, per render -------------------------------------
@@ -67,12 +103,14 @@ function Get-ExeStamp($path) {
 # The timeout is a DNF, not an error - a renderer that cannot finish is a data point.
 # $argLine, never $args: $args is the automatic variable, and binding a parameter over it is
 # exactly the silent-empty-arguments trap that had the first kit run launch a GUI (2026-08-21).
-function Invoke-TimedRender($exe, $argLine, $timeoutS, $cwd) {
+# $envVars: optional hashtable of environment variables set for THIS child only (the F3 profile).
+function Invoke-TimedRender($exe, $argLine, $timeoutS, $cwd, $envVars = $null) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $exe
     $psi.Arguments = $argLine
     $psi.WorkingDirectory = $cwd
     $psi.UseShellExecute = $false
+    if ($envVars) { foreach ($k in $envVars.Keys) { $psi.EnvironmentVariables[$k] = $envVars[$k] } }
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
