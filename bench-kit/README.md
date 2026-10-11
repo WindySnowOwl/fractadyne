@@ -93,9 +93,11 @@ its scene file, and imagina-cli, which takes the centre only on its command line
 `NA-command-line` for that scene. On Linux (`bench-latest.sh --scene-set ladder`) an argument may
 be 128 KiB, so no lane needs a file.
 
-Known result, so nobody chases it: Fraktaler-3 3.1 reports every pixel of
-`59-iter-p951094-1e68` as never escaping and writes a black image, also with
-`maximum_bla_steps` raised to the cap; the other three render the minibrot.
+`59-iter-p951094-1e68` is the scene whose Fraktaler-3 limits matter: at the kit's default of 8192
+most of its field stops early and comes out black, so its row in `scenes-ladder.csv` sets
+`f3_limit` to 32768, the figure Fraktaler-3's author gave (65536 draws the same image). Until
+2026-10-10 the kit's Fraktaler-3 ran clamped at 4096 and this scene came out entirely black; see
+"Fraktaler-3's limits" below.
 
 ## Prerequisites & quick start
 
@@ -208,6 +210,20 @@ manual calls conservative. Pick a size that divides the frame exactly (960x540 a
 that stays under the OS GPU watchdog — a tile that overruns it resets the display driver, which on
 the machine you are sitting at is a device loss. Every F3 call passes `-P`, so the lane neither
 reads nor rewrites your own F3 persistence file.
+
+**Fraktaler-3's limits, and why the kit gives it a profile of its own.** Fraktaler-3 3.1 renders a
+batch PNG through its GUI program, which first loads the GUI's preferences. With Preferences ▸
+Limit Iterations on, which is its default, that clamps the scene file's `maximum_perturb_iterations`
+and `maximum_bla_steps` to 4096 each and its iteration cap to 2^27, without a word. So every F3 call
+runs with a profile of the kit's own (`f3-profile\` in the run folder, Limit Iterations off; on
+Linux through `XDG_DATA_HOME`) and never reads your own F3 preferences. Both limits are written into
+each per-run scene file: **`-F3Limit`** (default 8192; F3's manual advises "a few 1000"), or the
+scene's own `f3_limit` column in its scenes CSV where it needs more. A pixel that reaches either
+limit stops and is coloured as interior. **Every Fraktaler-3 number this kit published before
+2026-10-10 ran at 4096/4096**, whatever the scene files said. A survey that day (RTX 3080,
+1280x720, Limit Iterations off) rendered all 31 scenes at 4096, 8192 and 32768: 29 drew identical
+images at all three, in the same time; `58-iter-p121984-1e66` changed 4 pixels between 4096 and 8192
+and none after; `59-iter-p951094-1e68` was black at 4096, 85% black at 8192 and complete at 32768.
 
 ## The cutoff-crossing lane
 

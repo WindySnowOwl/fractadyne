@@ -4,7 +4,7 @@
 #   powershell -ExecutionPolicy Bypass -File run-all.ps1 [-Reps 2] [-Skip imagina,fractalshark]
 #       [-FractadyneExe path] [-Fraktaler3Exe path] [-ImaginaExe path] [-FractalSharkExe path]
 #       [-TimeoutS 7200] [-Size 3840x2160] [-ZoomSeqFrames 8] [-PythonExe python]
-#       [-F3Wisdom path] [-FractalSharkCliExe path] [-FractalSharkAlgo NAME]
+#       [-F3Wisdom path] [-F3Limit 8192] [-FractalSharkCliExe path] [-FractalSharkAlgo NAME]
 #       [-FractalSharkPerturbAlg NAME]
 #       [-SceneSet standard|ladder|all] [-Scenes slug-or-id,...]
 
@@ -56,6 +56,13 @@ param(
     # enabled device, and a CPU tile can still be running long after the GPU has finished its own;
     # the developer disables the CPU entirely. Applies only when the wisdom file is being created.
     [switch]$F3GpuOnly,
+    # Fraktaler-3's per-pixel limits: maximum_perturb_iterations and maximum_bla_steps, both written
+    # into every scene's per-run file. A pixel that reaches either stops and is coloured as interior,
+    # so too low blacks out a deep minibrot's field, and too high lets interior pixels iterate on to
+    # the full cap. The manual says "a few 1000"; a scene that needs more names its own in the
+    # f3_limit column of its scenes CSV. (The scene files set perturb to the iteration cap, which was
+    # never in effect: F3 clamped it to 4096 - see New-F3Profile in bench-lib.ps1.)
+    [int]$F3Limit = 8192,
     # FractalShark ships a headless renderer, FractalSharkCli.exe, beside the GUI. Point at it to
     # automate the lane; left empty it is looked for next to -FractalSharkExe.
     [string]$FractalSharkCliExe = '',
@@ -149,6 +156,11 @@ $kit = Split-Path -Parent $MyInvocation.MyCommand.Path
 # list parameters so the documented invocation actually works.
 $Skip = @($Skip | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $Scenes = @($Scenes | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
+# Every path a child process receives, absolute (see Resolve-KitPath in bench-lib.ps1).
+foreach ($n in 'FractadyneExe', 'Fraktaler3Exe', 'ImaginaExe', 'FractalSharkExe', 'FractalSharkCliExe',
+               'ImaginaCliExe', 'ImaginaRuntimeDir', 'ImaginaPaletteMap', 'SharedPalette', 'F3Wisdom') {
+    Set-Variable -Name $n -Value (Resolve-KitPath (Get-Variable -Name $n -ValueOnly))
+}
 
 # ---- resolve tools ----
 if (-not $FractadyneExe) { $FractadyneExe = Join-Path $kit 'bin\fractadyne.exe' }
@@ -356,6 +368,24 @@ if ($have.fractadyne) {
 # file, and under Set-StrictMode an undefined variable is an error, not an empty string.
 if (-not $F3Wisdom) { $F3Wisdom = Join-Path $kit 'f3-wisdom.toml' }
 $wisdom = $F3Wisdom
+# Every Fraktaler-3 launch (wisdom, scenes, zoom sequence) runs with the kit's own profile, Limit
+# Iterations off, so the per-run scene file is what F3 renders - see New-F3Profile in bench-lib.ps1.
+$f3ProfileDir = Join-Path $outDir 'f3-profile'
+$f3Env = $null
+if ($have.fraktaler3) {
+    $f3Env = New-F3Profile $f3ProfileDir
+    # The limits are rewritten per run, so a scene file without the keys would quietly fall back
+    # to F3's own defaults. Every shipped file has both; say so loudly before rendering if one does not.
+    foreach ($s in $sceneRows) {
+        $src = Join-Path $kit ('scenes\' + $s.slug + '.f3.toml')
+        foreach ($key in 'maximum_perturb_iterations', 'maximum_bla_steps') {
+            if (-not ((Get-Content $src) -match ('^\s*' + $key + '\s*='))) {
+                Write-Host ('ERROR: ' + $src + ' has no ' + $key + '; the kit sets the Fraktaler-3 limits by rewriting it')
+                exit 1
+            }
+        }
+    }
+}
 
 # ---- lane: Fraktaler-3 (automated; wisdom generated once per machine) ----
 if ($have.fraktaler3) {
@@ -372,7 +402,7 @@ if ($have.fraktaler3) {
         # state under this one. Checked 2026-09-24 that the scene files overrode every persisted
         # key, but a benchmark must not depend on that, nor touch the user's own F3 state.
         $wArgs = '-P -w "' + $wisdom + '" -W'
-        $w = Invoke-TimedRender $Fraktaler3Exe $wArgs 300 $outDir
+        $w = Invoke-TimedRender $Fraktaler3Exe $wArgs 300 $outDir $f3Env
         Write-Host ('  wisdom init: ' + $w.status + ' in ' + $w.wall_s + 's')
         Add-RunRecord @{ renderer = 'fraktaler3'; scene = '(tuning) wisdom init'; rep = 0
                          exe = $Fraktaler3Exe; args = $wArgs; cwd = $outDir; source = ''
@@ -396,7 +426,7 @@ if ($have.fraktaler3) {
         }
         if ($F3GpuOnly) { & $cpuOff; Write-Host '  wisdom: CPU devices (platform -1) disabled - GPU only' }
         $bArgs = '-P -w "' + $wisdom + '" -B'
-        $w = Invoke-TimedRender $Fraktaler3Exe $bArgs 1800 $outDir
+        $w = Invoke-TimedRender $Fraktaler3Exe $bArgs 1800 $outDir $f3Env
         Write-Host ('  wisdom benchmark: ' + $w.status + ' in ' + $w.wall_s + 's')
         Add-RunRecord @{ renderer = 'fraktaler3'; scene = '(tuning) wisdom benchmark'; rep = 0
                          exe = $Fraktaler3Exe; args = $bArgs; cwd = $outDir; source = ''
@@ -436,10 +466,13 @@ if ($have.fraktaler3) {
             $srcToml = Join-Path $kit ('scenes\' + $s.slug + '.f3.toml')
             $toml    = Join-Path $outDir ($s.slug + '.bench.f3.toml')
             $wh      = $Size -split 'x'
+            $lim     = Get-F3Limit $s $F3Limit
             $tomlTxt = (Get-Content $srcToml) `
                 -replace '^\s*width\s*=.*',  ('width = '  + $wh[0]) `
                 -replace '^\s*height\s*=.*', ('height = ' + $wh[1]) `
-                -replace '^\s*subframes\s*=.*', 'subframes = 1'
+                -replace '^\s*subframes\s*=.*', 'subframes = 1' `
+                -replace '^\s*maximum_perturb_iterations\s*=.*', ('maximum_perturb_iterations = ' + $lim) `
+                -replace '^\s*maximum_bla_steps\s*=.*', ('maximum_bla_steps = ' + $lim)
             if ($F3Tile) {
                 $t = $F3Tile -split 'x'
                 if ($t.Count -ne 2 -or -not ($t[0] -match '^\d+$') -or -not ($t[1] -match '^\d+$')) {
@@ -449,7 +482,7 @@ if ($have.fraktaler3) {
             }
             Set-Content -Path $toml -Value $tomlTxt -Encoding ASCII
             $argLine = ('-P -w "{0}" -b "{1}"' -f $wisdom, $toml)
-            $r = Invoke-TimedRender $Fraktaler3Exe $argLine $TimeoutS $outDir
+            $r = Invoke-TimedRender $Fraktaler3Exe $argLine $TimeoutS $outDir $f3Env
             Write-Result $csv 'fraktaler3' $s.slug $rep $r.status $r.wall_s '' ''
             # Fraktaler-3 takes its whole view from the .toml, not from flags, so the argument
             # line alone does not say what was rendered. The rewritten toml IS the input and is
@@ -460,6 +493,8 @@ if ($have.fraktaler3) {
                 source = ($s.slug + '.bench.f3.toml')
                 inputs = @{ size = $Size; subframes = 1; wisdom = 'f3-wisdom.toml'
                             iterations = $s.iterations
+                            maximum_perturb_iterations = $lim; maximum_bla_steps = $lim
+                            profile = 'f3-profile (kit-owned; Limit Iterations off)'
                             tile = $(if ($F3Tile) { $F3Tile } else { '128x128 (F3 default)' })
                             note = 'view comes from the .toml; width/height/subframes rewritten per run' }
                 output = ($s.slug + '-f3.png')
@@ -865,7 +900,10 @@ if ($have.zoomseq) {
     $zsArgs = @($zsScript, '--out', $zsDir, '--size', $Size, '--frames', $ZoomSeqFrames,
                 '--timeout', $TimeoutS)
     if ($have.fractadyne) { $zsArgs += @('--fractadyne', $FractadyneExe) }
-    if ($have.fraktaler3) { $zsArgs += @('--fraktaler3', $Fraktaler3Exe, '--f3-wisdom', $wisdom) }
+    if ($have.fraktaler3) {
+        $zsArgs += @('--fraktaler3', $Fraktaler3Exe, '--f3-wisdom', $wisdom,
+                     '--f3-profile', $f3ProfileDir, '--f3-limit', $F3Limit)
+    }
     # The kit ships the ladder's scene in its scenes folder; in the repo it lives in the corpus,
     # which is zoom-seq.py's own default. Pass the kit copy only when it is actually there.
     $zsTemplate = Join-Path $kit ('scenes' + [io.path]::DirectorySeparatorChar + '21-m43-spar-1e27.7.f3.toml')
@@ -1127,6 +1165,12 @@ $meta = @{
     fractalshark_algorithm = $FractalSharkAlgo
     fractalshark_perturbation_alg = $(if ($FractalSharkPerturbAlg) { $FractalSharkPerturbAlg } else { 'default' })
     fractalshark_shape = $fsShape
+    fraktaler3_profile = 'kit-owned (f3-profile), Limit Iterations off'
+    fraktaler3_limits = $(
+        $m = @{}
+        foreach ($s in $sceneRows) { $m[$s.slug] = (Get-F3Limit $s $F3Limit) }
+        $m
+    )
     shared_palette = $SharedPalette
     imagina_palette = @{ map = $ImaginaPaletteMap; cycle = $ImaginaPaletteCycle; offset = $ImaginaPaletteOffset }
     zoomseq_frames = $ZoomSeqFrames

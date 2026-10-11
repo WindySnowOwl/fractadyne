@@ -5,7 +5,7 @@
 #   ./bench-latest.sh [--apps-dir DIR] [--required-gb N] [--reps N] [--timeout S]
 #                     [--scenes slug,slug|id,...] [--scene-set standard|ladder|all]
 #                     [--skip lane,lane] [--skip-download]
-#                     [--fractadyne PATH] [--fraktaler3 PATH]
+#                     [--fractadyne PATH] [--fraktaler3 PATH] [--f3-limit N]
 #
 # Lanes on Linux, honestly:
 #   fractadyne    automated. Newest GitHub release with a linux-x64 tarball (prereleases
@@ -38,6 +38,11 @@ SKIP=""
 SKIP_DOWNLOAD=0
 FRACTADYNE_EXE=""
 FRAKTALER3_EXE=""
+# One render size for every automated lane (Fraktaler-3 used to render its fixture's own size).
+SIZE="1920x1080"
+# Fraktaler-3's maximum_perturb_iterations = maximum_bla_steps unless a scene's f3_limit column
+# says otherwise; see run-all.ps1's -F3Limit.
+F3_LIMIT=8192
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -51,6 +56,7 @@ while [ $# -gt 0 ]; do
         --skip-download) SKIP_DOWNLOAD=1; shift ;;
         --fractadyne) FRACTADYNE_EXE="$2"; shift 2 ;;
         --fraktaler3) FRAKTALER3_EXE="$2"; shift 2 ;;
+        --f3-limit) F3_LIMIT="$2"; shift 2 ;;
         -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
         *) echo "unknown option: $1 (see --help)"; exit 1 ;;
     esac
@@ -235,7 +241,7 @@ case "$SCENE_SET" in
     *) echo "ERROR: --scene-set must be standard, ladder or all"; exit 1 ;;
 esac
 SCENES=()
-while IFS=, read -r id slug mag_log10 iterations normalize; do
+while IFS=, read -r id slug mag_log10 iterations normalize f3_limit; do
     [ "$id" = "id" ] && continue
     if [ -n "$SCENES_FILTER" ]; then
         case ",$SCENES_FILTER," in
@@ -243,7 +249,7 @@ while IFS=, read -r id slug mag_log10 iterations normalize; do
             *) continue ;;
         esac
     fi
-    SCENES+=("$id,$slug,$mag_log10,$iterations,$normalize")
+    SCENES+=("$id,$slug,$mag_log10,$iterations,$normalize,$f3_limit")
 # scenes.csv is authored and shipped from Windows, so it arrives CRLF, and `read` leaves the
 # trailing \r on the LAST field of every row. That made `normalize` the string "1\r", which is
 # not "1", so `--normalize` was silently dropped for exactly the three scenes that need it
@@ -303,12 +309,12 @@ to_seconds() {
 if [ -n "$FRACTADYNE_EXE" ] && ! skipped fractadyne; then
     for rep in $(seq 1 "$REPS"); do
         for row in "${SCENES[@]}"; do
-            IFS=, read -r id slug mag_log10 iterations normalize <<<"$row"
+            IFS=, read -r id slug mag_log10 iterations normalize f3_limit <<<"$row"
             kfr="$KIT/scenes/$slug.kfr"
             re=$(kfr_field "$kfr" Re); im=$(kfr_field "$kfr" Im)
             zl2=$(awk -v m="$mag_log10" 'BEGIN {printf "%.10f", m * log(10) / log(2)}')
             cfg="$OUT/fd-config"; rm -rf "$cfg"; mkdir -p "$cfg"
-            args=(--render --out "$OUT/fd-$slug.png" --size 1920x1080
+            args=(--render --out "$OUT/fd-$slug.png" --size "$SIZE"
                   --center "$re" "$im" --zoom-log2 "$zl2" --iter "$iterations" --ss 1 --palette 0)
             [ "$normalize" = "1" ] && args+=(--normalize)
             [ "$normalize" = "log" ] && args+=(--normalize --log-palette)
@@ -324,21 +330,39 @@ fi
 # ---- lane: fraktaler3 (automated when a binary was provided; wisdom generated once) ----
 if [ -n "$FRAKTALER3_EXE" ] && ! skipped fraktaler3; then
     wisdom="$OUT/f3-wisdom.toml"
+    # The kit's own Fraktaler-3 profile. F3 renders a batch PNG through its GUI program, which
+    # loads the GUI's preferences from SDL's pref path ($XDG_DATA_HOME/uk.co.mathr/fraktaler-3)
+    # and, with Limit Iterations on - the default - clamps the scene file's perturb and BLA limits
+    # to 4096 each. Clamp off, for the F3 child only (see New-F3Profile in bench-lib.ps1).
+    f3_xdg="$OUT/f3-profile/share"
+    mkdir -p "$f3_xdg/uk.co.mathr/fraktaler-3"
+    echo "iterations_limited = false" > "$f3_xdg/uk.co.mathr/fraktaler-3/gui-settings.toml"
     if [ ! -f "$wisdom" ]; then
         # `-w path -W` writes the initial hardware config to OUR file, `-w path -B` benchmarks
         # number types (the real tuning). A bare `-W path` treats the path as an input file and
         # silently writes nothing (see run-all.ps1 for the full story).
         step "Fraktaler-3: generating + benchmarking tuning wisdom (once)..."
-        sw=$(timed_run "$FRAKTALER3_EXE" -w "$wisdom" -W)
+        sw=$(timed_run env XDG_DATA_HOME="$f3_xdg" "$FRAKTALER3_EXE" -P -w "$wisdom" -W)
         echo "  wisdom init: ${sw% *} in ${sw#* }s"
-        sw=$(timed_run "$FRAKTALER3_EXE" -w "$wisdom" -B)
+        sw=$(timed_run env XDG_DATA_HOME="$f3_xdg" "$FRAKTALER3_EXE" -P -w "$wisdom" -B)
         echo "  wisdom benchmark: ${sw% *} in ${sw#* }s"
     fi
     for rep in $(seq 1 "$REPS"); do
         for row in "${SCENES[@]}"; do
-            IFS=, read -r id slug mag_log10 iterations normalize <<<"$row"
-            sw=$(timed_run "$FRAKTALER3_EXE" -w "$wisdom" -b "$KIT/scenes/$slug.f3.toml")
-            result fraktaler3 "$slug" "$rep" "${sw% *}" "${sw#* }" "" ""
+            IFS=, read -r id slug mag_log10 iterations normalize f3_limit <<<"$row"
+            # A per-run copy, as run-all.ps1 makes: the fixture carries the corpus's size and
+            # subframes = 4 (F3's antialiasing samples), and every lane here renders $SIZE at one
+            # sample per pixel. Rendered in $OUT, where its PNG belongs.
+            lim=${f3_limit:-$F3_LIMIT}
+            toml="$OUT/$slug.bench.f3.toml"
+            tr -d '\r' < "$KIT/scenes/$slug.f3.toml" | sed -E \
+                -e "s/^[[:space:]]*width[[:space:]]*=.*/width = ${SIZE%x*}/" \
+                -e "s/^[[:space:]]*height[[:space:]]*=.*/height = ${SIZE#*x}/" \
+                -e "s/^[[:space:]]*subframes[[:space:]]*=.*/subframes = 1/" \
+                -e "s/^[[:space:]]*maximum_perturb_iterations[[:space:]]*=.*/maximum_perturb_iterations = $lim/" \
+                -e "s/^[[:space:]]*maximum_bla_steps[[:space:]]*=.*/maximum_bla_steps = $lim/" > "$toml"
+            sw=$(cd "$OUT" && timed_run env XDG_DATA_HOME="$f3_xdg" "$FRAKTALER3_EXE" -P -w "$wisdom" -b "$toml")
+            result fraktaler3 "$slug" "$rep" "${sw% *}" "${sw#* }" "" "limits $lim"
         done
     done
 else
