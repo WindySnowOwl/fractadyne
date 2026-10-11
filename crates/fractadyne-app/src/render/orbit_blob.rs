@@ -47,7 +47,9 @@ const MAGIC: &[u8; 8] = b"FDNORBIT";
 /// `cur` when set.
 /// v4: the flag byte also says the schedule's plane — 1 the c plane, 2 a Julia view, whose `d` is
 /// `dZ/dZ_0` (design/precision-schedule.md P2).
-const VERSION: u16 = 4;
+/// v5: a fold family's schedule (P3) — flag 3 (c plane) or 4 (Julia), then its 2×2 Jacobian (four
+/// m/e pairs, row-major) in place of `d`, then `cur`.
+const VERSION: u16 = 5;
 
 /// Bytes before the header body: magic, version, header length.
 const PRELUDE: usize = 8 + 2 + 4;
@@ -196,19 +198,22 @@ pub(crate) fn encode(res: &RecomputeResult, key: OrbitKey) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// The tail's schedule state: a flag (0 none, 1 c plane, 2 Julia), then `d` and `cur` when set (see
-/// [`VERSION`]).
+/// The tail's schedule state: a flag (0 none, 1 c plane, 2 Julia, 3 fold c plane, 4 fold Julia),
+/// then `d` — or a fold's 2×2 Jacobian — and `cur` when set (see [`VERSION`]).
 pub(crate) fn write_sched(out: &mut Vec<u8>, sched: Option<fractadyne_core::SchedState>) {
     out.push(match sched {
         None => 0,
-        Some(s) if s.julia => 2,
-        Some(_) => 1,
+        Some(s) => 1 + u8::from(s.julia) + 2 * u8::from(s.j.is_some()),
     });
     if let Some(s) = sched {
-        out.extend_from_slice(&s.d.re.m.to_le_bytes());
-        out.extend_from_slice(&s.d.re.e.to_le_bytes());
-        out.extend_from_slice(&s.d.im.m.to_le_bytes());
-        out.extend_from_slice(&s.d.im.e.to_le_bytes());
+        let entries = match s.j {
+            Some(j) => j.to_vec(),
+            None => vec![s.d.re, s.d.im],
+        };
+        for v in entries {
+            out.extend_from_slice(&v.m.to_le_bytes());
+            out.extend_from_slice(&v.e.to_le_bytes());
+        }
         out.extend_from_slice(&s.cur.to_le_bytes());
     }
 }
@@ -219,9 +224,10 @@ fn read_sched(buf: &[u8], at: &mut usize) -> Option<Option<fractadyne_core::Sche
     if flag == 0 {
         return Some(None);
     }
-    if flag != 1 && flag != 2 {
+    if !(1..=4).contains(&flag) {
         return None;
     }
+    let (julia, fold) = (flag % 2 == 0, flag >= 3);
     let f64_at = |at: &mut usize| -> Option<f64> {
         let v = f64::from_le_bytes(buf.get(*at..*at + 8)?.try_into().ok()?);
         *at += 8;
@@ -232,15 +238,19 @@ fn read_sched(buf: &[u8], at: &mut usize) -> Option<Option<fractadyne_core::Sche
         *at += 4;
         Some(v)
     };
-    let (rm, re) = (f64_at(at)?, i32_at(at)?);
-    let (im, ie) = (f64_at(at)?, i32_at(at)?);
+    let fe = |m: f64, e: i32| fractadyne_core::FloatExp { m, e };
+    let mut entries = Vec::with_capacity(4);
+    for _ in 0..if fold { 4 } else { 2 } {
+        entries.push(fe(f64_at(at)?, i32_at(at)?));
+    }
     let cur = u32::from_le_bytes(buf.get(*at..*at + 4)?.try_into().ok()?);
     *at += 4;
-    let fe = |m: f64, e: i32| fractadyne_core::FloatExp { m, e };
+    let one = fractadyne_core::CFloatExp { re: fe(1.0, 0), im: fractadyne_core::FloatExp::ZERO };
     Some(Some(fractadyne_core::SchedState {
-        d: fractadyne_core::CFloatExp { re: fe(rm, re), im: fe(im, ie) },
+        d: if fold { one } else { fractadyne_core::CFloatExp { re: entries[0], im: entries[1] } },
         cur,
-        julia: flag == 2,
+        julia,
+        j: fold.then(|| [entries[0], entries[1], entries[2], entries[3]]),
     }))
 }
 

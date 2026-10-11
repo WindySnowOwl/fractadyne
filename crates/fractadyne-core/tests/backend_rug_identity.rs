@@ -37,7 +37,12 @@ fn tail_eq(a: &fc::BigFloat, b: &fc::BigFloat) -> bool {
     if a.is_zero() && b.is_zero() {
         return true;
     }
-    fc::to_decimal_string(a) == fc::to_decimal_string(b)
+    // By VALUE, not by decimal string. Under the precision schedule a walk can end below full
+    // precision, and the backends carry such a tail at different widths: astro-float keeps the
+    // value's own (`to_carrier` is a clone), MPFR's is widened to the carrier's `ctx` — the same
+    // number, printed to different lengths. (Until the folds scheduled, every case here happened to
+    // end at full precision.)
+    a.cmp(b).is_some_and(|o| o == 0)
 }
 
 /// (label, cx, cy, z0x, z0y) — a boundary point, an interior one, an escaper, the origin, a
@@ -621,5 +626,51 @@ fn a_scheduled_julia_orbit_is_byte_identical_across_backends() {
         });
         let st = lt.sched.expect("scheduled");
         assert!(st.julia && (st.cur as usize) * 2 < p, "d={d}: not a low Julia schedule at step 500 ({st:?})");
+    }
+}
+
+/// P3 through both backends: scheduled fold orbits — the power-2 Burning Ship (the in-place MPFR
+/// loop) and the power-3 Celtic (the generic loop), c plane, from their Misiurewicz-type points
+/// (see `reference/sched_tests.rs`), and a power-2 Tricorn Julia view: the same samples, the same
+/// Jacobian state, and the schedule really went low.
+#[test]
+fn a_scheduled_fold_orbit_is_byte_identical_across_backends() {
+    let p = 1_024usize;
+    let bs2 = ("burning-ship", 2, "1.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", "-1.7320508075688772935274463415058723669428052538103806280558069794519330169088000370811461867572485756756261414154067030299699450949989524788116555120943736485280932319023055820679748201010846749232650153123432669033228866506722546689218379712270471316603678615880190499865373798593894676503475065760507566183481296061009");
+    let tc2 = ("tricorn", 2, "1.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", "1.7320508075688772935274463415058723669428052538103806280558069794519330169088000370811461867572485756756261414154067030299699450949989524788116555120943736485280932319023055820679748201010846749232650153123432669033228866506722546689218379712270471316603678615880190499865373798593894676503475065760507566183481296061009");
+    let ce3 = ("celtic", 3, "-2.3805545409929041668386720768381798431983872908076334538132571362802441878067997857378211857201748925377592590496223833877847095236305053975531660282994467929673968279838293916798056863802359671540260891291897144142460829481212639403877677875925964170975305506432789647038561128691510866573149658363869923354055900733632e-1", "-1.3500795688941438838424863554373537763012030732892347816415214133803821262695984079630586147474194172087427607756875141594066526767987036303709410693916871826260964448686915536067380874075599295769396734451053536849603602633539918154787186776412378096595300312752645783115919554976185582761226281766246918118121014737207");
+    let z0 = fc::BigFloat::from_f64(0.0, p);
+    for (label, formula, (_, _, x, y), julia) in [
+        ("burning ship d=2", fc::formula::BURNING_SHIP, bs2, false),
+        ("celtic d=3", fc::formula::CELTIC3, ce3, false),
+        ("tricorn d=2 julia", fc::formula::TRICORN, tc2, true),
+    ] {
+        let (cx, cy) = (fc::parse_bf_prec(x, p).unwrap(), fc::parse_bf_prec(y, p).unwrap());
+        // A Julia view starts at the fixed point Z_2 = f(f(0)), walked here in the c plane.
+        let (sx, sy) = if julia {
+            let (o, _, _) = fc::with_orbit_schedule(false, || fc::reference_orbit_t_in(BackendChoice::Astro, &z0, &z0, &cx, &cy, formula, 3, p));
+            let _ = o;
+            let (_, _, t) = fc::with_orbit_schedule(false, || fc::reference_orbit_t_in(BackendChoice::Astro, &z0, &z0, &cx, &cy, formula, 2, p));
+            (t.zx, t.zy)
+        } else {
+            (z0.clone(), z0.clone())
+        };
+        let build = |backend, n| {
+            fc::with_orbit_schedule(true, || {
+                if julia {
+                    fc::reference_orbit_julia_t_in(backend, &sx, &sy, &cx, &cy, formula, n, p)
+                } else {
+                    fc::reference_orbit_t_in(backend, &sx, &sy, &cx, &cy, formula, n, p)
+                }
+            })
+        };
+        let (a, al, at) = build(BackendChoice::Astro, 3_000);
+        let (r, rl, rt) = build(BackendChoice::Rug, 3_000);
+        assert_eq!(al, rl, "{label}: lengths differ");
+        assert_eq!(bits(&a), bits(&r), "{label}: the scheduled samples differ between backends");
+        assert_eq!(at.sched, rt.sched, "{label}: the schedule states differ");
+        let (_, _, lt) = build(BackendChoice::Rug, 400);
+        let st = lt.sched.expect("scheduled");
+        assert!(st.j.is_some() && (st.cur as usize) * 2 < p, "{label}: not a low fold schedule at step 400 ({st:?})");
     }
 }

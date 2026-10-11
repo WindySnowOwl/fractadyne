@@ -456,16 +456,22 @@ pub struct SchedState {
     /// A Julia view's walk (design/precision-schedule.md P2): its pixels vary `Z_0`, so `d` is
     /// `dZ/dZ_0` and its recurrence has no `+ 1`.
     pub julia: bool,
+    /// A fold family's walk (P3): the real 2×2 Jacobian `[[∂x/∂a, ∂x/∂b], [∂y/∂a, ∂y/∂b]]` (row-
+    /// major) in place of the complex `d`, which is then unused (1).
+    pub j: Option<[FloatExp; 4]>,
 }
 
 impl SchedState {
     /// The state before `Z_1` of a build at `p` bits (`dZ_1/dc = 1`, full precision), or `None`
     /// when the schedule is off or does not apply (not a `z^d + c` family from `Z_0 = 0`).
     pub(crate) fn fresh(p: usize, formula: u32, from_zero: bool) -> Option<SchedState> {
-        (formula_power(formula).is_some() && from_zero && orbit_schedule_on()).then(|| SchedState {
+        let schedulable = formula_power(formula).is_some() || fold_kind(formula).is_some();
+        (schedulable && from_zero && orbit_schedule_on()).then(|| SchedState {
             d: CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO },
             cur: (p.div_ceil(64) * 64) as u32,
             julia: false,
+            // A fold's `Z_1 = fold(0) + c`: `dZ_1/dc` is the identity.
+            j: fold_kind(formula).map(|_| MAT_ID),
         })
     }
 
@@ -473,15 +479,91 @@ impl SchedState {
     /// `Z_1`'s is `d·Z_0^{d−1}`; full precision. `None` when the schedule is off or the family is
     /// not `z^d + c`.
     pub(crate) fn fresh_julia(p: usize, formula: u32, z0: CFloatExp) -> Option<SchedState> {
+        if let Some((shape, d)) = fold_kind(formula) {
+            return orbit_schedule_on().then(|| SchedState {
+                d: CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO },
+                cur: (p.div_ceil(64) * 64) as u32,
+                julia: true,
+                j: Some(fold_step_jacobian(shape, d, z0)),
+            });
+        }
         let d = formula_power(formula)?;
         orbit_schedule_on().then(|| {
             let mut zk = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
             for _ in 1..d {
                 zk = zk * z0;
             }
-            SchedState { d: zk.mul_f64(f64::from(d)), cur: (p.div_ceil(64) * 64) as u32, julia: true }
+            SchedState { d: zk.mul_f64(f64::from(d)), cur: (p.div_ceil(64) * 64) as u32, julia: true, j: None }
         })
     }
+}
+
+/// The 2×2 identity, row-major.
+const MAT_ID: [FloatExp; 4] = [FloatExp { m: 1.0, e: 0 }, FloatExp::ZERO, FloatExp::ZERO, FloatExp { m: 1.0, e: 0 }];
+
+/// A fold family's shape and power (design/precision-schedule.md P3): the power-2 originals and the
+/// power families' fold shapes. `None` for the `z^d + c` families and everything else.
+fn fold_kind(formula: u32) -> Option<(formula::Shape, u32)> {
+    use formula::Shape;
+    match formula {
+        formula::TRICORN => Some((Shape::Tricorn, 2)),
+        formula::BURNING_SHIP => Some((Shape::BurningShip, 2)),
+        formula::CELTIC => Some((Shape::Celtic, 2)),
+        formula::BUFFALO => Some((Shape::Buffalo, 2)),
+        f => formula::family(f).filter(|(s, _)| *s != Shape::Multibrot),
+    }
+}
+
+/// One fold step's Jacobian at `Z` (row-major, with respect to `(Re Z, Im Z)`): `F·P(u)·G`, where
+/// `G` is the fold before the power (Burning Ship: `diag(sgn x, sgn y)`, so `u = |x| + i|y|`), `P`
+/// the 2×2 of multiplying by `d·u^{d−1}`, and `F` the fold after (Tricorn `diag(1, −1)`, Celtic
+/// `diag(sgn Re z^d, 1)`, Buffalo `diag(sgn Re z^d, sgn Im z^d)`). The power-2 Burning Ship folds
+/// `Im(z²)` after the square instead — the same matrix, since `sgn(Im z²) = sgn x · sgn y`. Every
+/// factor is a similarity or a reflection, so the product is a similarity of scale `|d·u^{d−1}|`.
+/// The signs come from the floatexp `Z`: exact for `x`, `y`; for `z^d` they can only differ from the
+/// bignum step's where that coordinate is within 2^-53 of zero, which the margin covers.
+fn fold_step_jacobian(shape: formula::Shape, d: u32, z: CFloatExp) -> [FloatExp; 4] {
+    use formula::Shape;
+    let one = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
+    let sgn = |v: FloatExp| if v.m < 0.0 { -1.0 } else { 1.0 };
+    let (gx, gy) = if shape == Shape::BurningShip { (sgn(z.re), sgn(z.im)) } else { (1.0, 1.0) };
+    let u = CFloatExp { re: z.re.mul_f64(gx), im: z.im.mul_f64(gy) };
+    let mut uk = one;
+    for _ in 1..d {
+        uk = uk * u;
+    }
+    let p = uk.mul_f64(f64::from(d)); // d·u^{d−1} = a + ib
+    let (fx, fy) = match shape {
+        Shape::Tricorn => (1.0, -1.0),
+        Shape::Celtic | Shape::Buffalo => {
+            let mut w = one;
+            for _ in 0..d {
+                w = w * z;
+            }
+            (sgn(w.re), if shape == Shape::Buffalo { sgn(w.im) } else { 1.0 })
+        }
+        Shape::BurningShip | Shape::Multibrot => (1.0, 1.0),
+    };
+    // F·[[a, −b], [b, a]]·G
+    [p.re.mul_f64(fx * gx), p.im.mul_f64(-fx * gy), p.im.mul_f64(fy * gx), p.re.mul_f64(fy * gy)]
+}
+
+/// `a·b` for row-major 2×2 floatexp matrices.
+fn mat_mul(a: [FloatExp; 4], b: [FloatExp; 4]) -> [FloatExp; 4] {
+    [a[0] * b[0] + a[1] * b[2], a[0] * b[1] + a[1] * b[3], a[2] * b[0] + a[3] * b[2], a[2] * b[1] + a[3] * b[3]]
+}
+
+/// A lower bound on `log2 σ_min(J)`, the least a rounding error is shrunk on its way back to the
+/// parameter: `σ_min = |det J| / σ_max ≥ |det J| / ‖J‖_F`. A determinant that cancels (under 2^-40
+/// of its two products) is not trusted: −∞, so the step runs at full precision.
+fn log2_sigma_min(j: [FloatExp; 4]) -> f64 {
+    let (p, q) = (j[0] * j[3], j[1] * j[2]);
+    let det = (p - q).abs();
+    let fro2 = j[0] * j[0] + j[1] * j[1] + j[2] * j[2] + j[3] * j[3];
+    if det.m == 0.0 || det.lt((p.abs() + q.abs()).mul_f64(1.0e-12)) {
+        return f64::NEG_INFINITY;
+    }
+    det.log2() - 0.5 * fro2.log2()
 }
 
 /// The schedule a fresh walk from `(z0x, z0y)` starts with: a Julia view's when `julia` (its
@@ -498,9 +580,11 @@ pub(crate) fn start_sched(p: usize, formula: u32, z0x: &BigFloat, z0y: &BigFloat
 /// full precision, `advance` a no-op) without a state.
 pub(crate) struct Schedule {
     st: Option<SchedState>,
-    /// The family's power `d` (`z^d + c`; 2 for Mandelbrot), which the derivative and the error
-    /// term follow.
+    /// The family's power `d` (`z^d + c`; 2 for Mandelbrot; a fold family's own), which the
+    /// derivative and the error term follow.
     power: u32,
+    /// A fold family's shape (P3), whose 2×2 Jacobian the state then carries.
+    fold: Option<formula::Shape>,
     full: u32,
     q: u32,
     cxf: f64,
@@ -563,8 +647,9 @@ impl Schedule {
                 })
             })
         });
-        let power = formula_power(formula).unwrap_or(2);
-        Schedule { st, power, full, q: (full / 64 / 64 * 64).max(64), cxf, cyf, reduced: 0, trace }
+        let fold = fold_kind(formula);
+        let power = formula_power(formula).or(fold.map(|(_, d)| d)).unwrap_or(2);
+        Schedule { st, power, fold: fold.map(|(s, _)| s), full, q: (full / 64 / 64 * 64).max(64), cxf, cyf, reduced: 0, trace }
     }
 
     pub(crate) fn active(&self) -> bool {
@@ -591,7 +676,16 @@ impl Schedule {
         // Mandelbrot keeps its arithmetic exactly, so its schedule — and so its samples and
         // orbit blobs — are unchanged.
         // A Julia walk's derivative is `dZ/dZ_0`: the same product without the `+ 1`.
-        let operands = if self.power == 2 {
+        let operands = if let (Some(j), Some(shape)) = (st.j, self.fold) {
+            // A fold family (P3): the 2×2 Jacobian, `J' = J_step·J (+ I in the c plane)`.
+            let mut a = mat_mul(fold_step_jacobian(shape, self.power, z), j);
+            if !st.julia {
+                a[0] = a[0] + FloatExp::from_f64(1.0);
+                a[3] = a[3] + FloatExp::from_f64(1.0);
+            }
+            st.j = Some(a);
+            r2.powf(f64::from(self.power) / 2.0)
+        } else if self.power == 2 {
             st.d = if st.julia { (z * st.d).mul_f64(2.0) } else { (z * st.d).mul_f64(2.0) + one };
             r2
         } else {
@@ -611,7 +705,13 @@ impl Schedule {
         // survives 363,791.
         let scale = operands.max(self.cxf.hypot(self.cyf));
         let full = self.full as f64;
-        let need = full + scale.log2() - st.d.abs().log2() + ORBIT_SCHED_MARGIN;
+        // How much a rounding error shrinks on its way back to the parameter: `|dZ/dc|` (conformal),
+        // or a fold Jacobian's least singular value.
+        let contraction = match st.j {
+            Some(j) => log2_sigma_min(j),
+            None => st.d.abs().log2(),
+        };
+        let need = full + scale.log2() - contraction + ORBIT_SCHED_MARGIN;
         let target = if need.is_nan() || need >= full {
             self.full
         } else {

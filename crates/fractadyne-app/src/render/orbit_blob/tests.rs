@@ -244,8 +244,16 @@ fn the_key_is_stable_and_last_word_sensitive() {
 #[test]
 fn the_schedule_state_round_trips_with_its_plane() {
     use fractadyne_core::{CFloatExp, FloatExp, SchedState};
-    let d = CFloatExp { re: FloatExp { m: 0.75, e: 300 }, im: FloatExp { m: -0.5, e: 299 } };
-    for s in [None, Some(SchedState { d, cur: 4096, julia: false }), Some(SchedState { d, cur: 1984, julia: true })] {
+    let d = CFloatExp { re: FloatExp { m: 1.75, e: 300 }, im: FloatExp { m: -1.5, e: 299 } };
+    let one = CFloatExp { re: FloatExp { m: 1.0, e: 0 }, im: FloatExp::ZERO };
+    let j = Some([FloatExp { m: 1.25, e: 40 }, FloatExp { m: -1.5, e: 41 }, FloatExp { m: 1.5, e: 41 }, FloatExp { m: 1.25, e: 40 }]);
+    for s in [
+        None,
+        Some(SchedState { d, cur: 4096, julia: false, j: None }),
+        Some(SchedState { d, cur: 1984, julia: true, j: None }),
+        Some(SchedState { d: one, cur: 2048, julia: false, j }),
+        Some(SchedState { d: one, cur: 1024, julia: true, j }),
+    ] {
         let mut out = Vec::new();
         write_sched(&mut out, s);
         let mut at = 0;
@@ -253,7 +261,7 @@ fn the_schedule_state_round_trips_with_its_plane() {
         assert_eq!(at, out.len(), "{s:?}: read a different length than was written");
     }
     let mut out = Vec::new();
-    write_sched(&mut out, Some(SchedState { d, cur: 64, julia: true }));
-    out[0] = 3;
+    write_sched(&mut out, Some(SchedState { d, cur: 64, julia: true, j: None }));
+    out[0] = 5;
     assert_eq!(read_sched(&out, &mut 0), None, "an unknown plane must be refused");
 }

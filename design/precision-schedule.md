@@ -155,6 +155,42 @@ the check. Power 2 runs in the MPFR in-place loop (`try_run_orbit_inplace`, alre
 gate `formula == MANDELBROT` today), powers 3–5 in the generic loop. `SchedState` grows the 2×2
 state, so `OrbitTail` and the orbit blob change: blob v4, still reading v3.
 
+**Done.** `SchedState.j` carries the 2×2 Jacobian (row-major) for the folds; `fold_step_jacobian`
+builds `F·P(u)·G` per step (the power-2 Burning Ship folds `Im z²` after the square — the same
+matrix, since `sgn(Im z²) = sgn x · sgn y`); `log2_sigma_min` bounds `σ_min ≥ |det J| / ‖J‖_F` and
+answers −∞ (full precision) when the determinant cancels below 2^-40 of its products. Every factor
+is a similarity or a reflection, so `J` stays near a similarity — the `+ I` bends it only where its
+scale is near 1, where the precision is high anyway — and the determinant does not cancel in
+practice. The holomorphic families' arithmetic is untouched. Orbit blob v5: flags 3 (fold c plane)
+and 4 (fold Julia) with the Jacobian's four entries.
+
+Tests: Misiurewicz-type points of every fold shape at powers 2 and 3 — `c` with `Z_2 = f(f(0))` a
+repelling fixed point, the orbit clear of every fold and off the real axis
+(`local/bench-ladder/fold_points.py`: Newton in mpmath; |f'| 4 to 6, several of them `±1 ± √3 i`):
+bit-identical samples over the accurate stretch, the schedule low, extend == fresh, in the c plane
+(8 cases) and as Julia views from `Z_2` (2 cases); red with the contraction overstated by 200 bits;
+both backends identical (Burning Ship 2 in-place, Celtic 3 generic, a Tricorn Julia view). ⚠The
+big cross-backend matrix compared tails by decimal string: with folds, some walks end below full
+precision, where astro-float keeps the tail at its own width and MPFR widens it to the carrier's —
+the same value, different strings; it now compares by value (all equal).
+
+Renders (`fold_sched_ab.py`, views centred on those points, schedule on vs off): 16 views at
+1e300 and 1e3000, all pixel-identical, including the glitch-corrected ones (Buffalo 3 at 1e300
+corrects 84,501 pixels over 64 passes, scheduled references and all). Reference build at 1e3000:
+119–126 → 72–75 ms at power 2, 235–241 → 107–113 ms at power 3; an interior reference (Burning
+Ship 3, Buffalo 3) gains nothing, its Jacobian shrinking on the attracting cycle. At 1e10000 (640×360,
+33,412 bits, orbits 13,373–16,727 steps), all four pixel-identical:
+
+| view | orbit ms off → on | render s off → on |
+|---|---|---|
+| Burning Ship 2 | 2,615 → 1,300 | 8.1 → 5.4 |
+| Buffalo 2 | 2,556 → 1,407 | 8.1 → 5.6 |
+| Tricorn 3 | 4,923 → 2,118 | 14.1 → 8.7 |
+| Celtic 3 | 4,809 → 1,933 | 13.6 → 8.5 |
+
+Power 2 (MPFR in-place loop) halves, as Mandelbrot does; power 3 (generic loop) gains more, 2.3–2.5×,
+since its per-operation allocation scales with the width too.
+
 ### Not planned now
 
 - Phoenix (`z² + c + p·z_{n−1}`): two-step derivative state; first confirm it renders deep at all.
