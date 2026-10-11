@@ -80,8 +80,8 @@ fn probe_schedule_at_the_1e148_centre() {
     let cx = crate::parse_bf_prec(&field("Re:"), p).unwrap();
     let cy = crate::parse_bf_prec(&field("Im:"), p).unwrap();
     let zero = BigFloat::from_f64(0.0, p);
-    let a = with_orbit_schedule(false, || orbit_length_bf(&zero, &zero, &cx, &cy, formula::MANDELBROT, 800_000, p));
-    let b = with_orbit_schedule(true, || orbit_length_bf(&zero, &zero, &cx, &cy, formula::MANDELBROT, 800_000, p));
+    let a = with_orbit_schedule(false, || orbit_length_bf(&zero, &zero, &cx, &cy, formula::MANDELBROT, 800_000, p, false));
+    let b = with_orbit_schedule(true, || orbit_length_bf(&zero, &zero, &cx, &cy, formula::MANDELBROT, 800_000, p, false));
     println!("length: full {a}, scheduled {b}");
     let n = a.min(b).min(20_000);
     let (fa, _, _) = with_orbit_schedule(false, || reference_orbit_t(&zero, &zero, &cx, &cy, formula::MANDELBROT, n, p));
@@ -135,6 +135,10 @@ fn only_a_polynomial_orbit_from_zero_is_scheduled() {
         assert!(t.sched.is_some(), "the Mandelbrot from zero is");
         let (_, _, t) = reference_orbit_t(&zero, &zero, &cx, &cy, formula::MULTIBROT3, 200, p);
         assert!(t.sched.is_some(), "a Multibrot from zero is");
+        let (_, _, t) = reference_orbit_julia_t(&other, &zero, &cx, &cy, formula::MANDELBROT, 200, p);
+        assert!(t.sched.is_some_and(|s| s.julia), "a Julia view is, in its own plane");
+        let (_, _, t) = reference_orbit_julia_t(&other, &zero, &cx, &cy, formula::TRICORN, 200, p);
+        assert!(t.sched.is_none(), "a tricorn Julia view is not");
     });
 }
 
@@ -208,6 +212,74 @@ fn a_scheduled_multibrot_orbit_stores_the_full_precision_samples() {
 
         let (prefix, _, tail) = with_orbit_schedule(true, || reference_orbit_t(&zero, &zero, &cx, &cy, f, n / 2, p));
         assert!(tail.sched.is_some(), "d={d}: the prefix carries its schedule");
+        let (ext, ext_len, ext_tail) = extend_reference_orbit(&prefix, &tail, &cx, &cy, f, n, p);
+        assert_eq!(ext_len, sched_len, "d={d}");
+        assert!(ext == sched, "d={d}: the extension is not the scheduled build's continuation");
+        assert_eq!(ext_tail.sched, sched_tail.sched, "d={d}: the extension ends in the fresh build's state");
+    }
+}
+
+/// Repelling fixed points `β` of `z^d + c` (`β^d + c = β`) for two Julia constants: a Julia orbit
+/// from `β` stays put while `|dZ/dZ_0|` grows `log2|d·β^{d−1}|` bits a step (1.6 for d = 2, 2.05 for
+/// d = 3), so at 1,024 bits the schedule falls far while the orbit is accurate. 320 digits (mpmath).
+const JULIA_BETA: [(u32, &str, &str, &str, &str); 2] = [
+        (2, "-0.8", "0.156", "1.5275031186435346107897464024449153375667459478117081603398751970032030110974513871892240841872097036285278118446470216567675511048976381591052049755871002178668204260624975532103883153157850045642586716683757126554935558516329825172798984230759160894866588240765086337258890754472162281949012509562911231362152794511317", "-0.075912178352287867071814194826348046366422194847978022539732593449186891503078959907318388553620835791521773673509239408146903775435705768770946476723892232618119845275553360281913106439290191996395355249148696879548476966056803740776194271345874761975802848949142559058010559243202318523468404390439539001577743141061347"),
+        (3, "0.4", "0.3", "-1.1704074112365126914112728416701441973107854513040361277264055611820071716701862728166014491780241452073254690305035070792468780817691622722567595378677543416231543729687718918107278290307877257959096332398247228734619520439070379937625122340250184885003376167683854768953729905446766476966917786722521361038741887820044", "-0.096768060724085084544219802220566855051561723002067248723755909438584355132952627120669361723819874365286468333162893722172984236615610486253061358044852989366167596840881643072854333732875911888017613919988914237939124886474913239959240081980254584466631039981404420991707079940540998999110187868288138663962856400706887"),
+];
+
+/// `log2|dZ_k/dZ_0|` along a Julia view's packed samples (`D_0 = 1`, `D_{k+1} = d·Z_k^{d−1}·D_k`).
+fn log2_derivatives_julia(orbit: &[[f32; 4]], d: u32) -> Vec<f64> {
+    let one = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
+    let mut dz = one;
+    let mut out = Vec::with_capacity(orbit.len());
+    for s in orbit {
+        out.push(dz.abs().log2());
+        let (zr, zi) = sample_xy(s);
+        let z = CFloatExp { re: FloatExp::from_f64(zr), im: FloatExp::from_f64(zi) };
+        let mut zk = one;
+        for _ in 1..d {
+            zk = zk * z;
+        }
+        dz = (zk * dz).mul_f64(f64::from(d));
+    }
+    out
+}
+
+/// P2: a Julia view's scheduled build stores the full-precision build's samples bit for bit over
+/// the accurate stretch, the schedule really ran low (in the Julia plane), and a scheduled prefix
+/// extended to the same length is the fresh build — the extension resumes the plane from the tail.
+#[test]
+fn a_scheduled_julia_orbit_stores_the_full_precision_samples() {
+    let p = 1024;
+    for (d, cre, cim, bre, bim) in JULIA_BETA {
+        let f = if d == 2 { formula::MANDELBROT } else { multibrot(d) };
+        let cx = crate::parse_bf_prec(cre, p).unwrap();
+        let cy = crate::parse_bf_prec(cim, p).unwrap();
+        let z0x = crate::parse_bf_prec(bre, p).unwrap();
+        let z0y = crate::parse_bf_prec(bim, p).unwrap();
+        let probe = with_orbit_schedule(false, || reference_orbit_julia_t(&z0x, &z0y, &cx, &cy, f, 2_000, p).0);
+        let dd = log2_derivatives_julia(&probe, d);
+        // The accurate stretch ends where |dZ/dZ_0| first reaches the precision less a guard. (Not
+        // the LAST step under it: off β the orbit can settle on an attracting cycle, where the
+        // derivative shrinks again and the schedule rightly climbs back to full.)
+        let n = dd.iter().position(|&l| l >= p as f64 - 96.0).expect("the derivative outgrows the precision") as u32 - 1;
+        assert!(n > 250, "d={d}: too short a stretch to say anything ({n} steps)");
+
+        let (full, full_len, full_tail) =
+            with_orbit_schedule(false, || reference_orbit_julia_t(&z0x, &z0y, &cx, &cy, f, n, p));
+        let (sched, sched_len, sched_tail) =
+            with_orbit_schedule(true, || reference_orbit_julia_t(&z0x, &z0y, &cx, &cy, f, n, p));
+        assert!(full_tail.sched.is_none(), "d={d}: the unscheduled build carries no schedule");
+        let st = sched_tail.sched.expect("the scheduled build carries its state");
+        assert!(st.julia, "d={d}: the state must say it is a Julia walk");
+        assert!(st.cur * 2 < p as u32, "d={d}: the schedule never ran low: {} of {p} bits at step {n}", st.cur);
+        assert_eq!(full_len, sched_len, "d={d}");
+        let differ = full.iter().zip(&sched).filter(|(a, b)| a.map(f32::to_bits) != b.map(f32::to_bits)).count();
+        assert_eq!(differ, 0, "d={d}: {differ} of {full_len} samples differ (to step {n})");
+
+        let (prefix, _, tail) =
+            with_orbit_schedule(true, || reference_orbit_julia_t(&z0x, &z0y, &cx, &cy, f, n / 2, p));
+        assert!(tail.sched.is_some_and(|s| s.julia), "d={d}: the prefix carries its Julia schedule");
         let (ext, ext_len, ext_tail) = extend_reference_orbit(&prefix, &tail, &cx, &cy, f, n, p);
         assert_eq!(ext_len, sched_len, "d={d}");
         assert!(ext == sched, "d={d}: the extension is not the scheduled build's continuation");

@@ -1354,7 +1354,8 @@ fn build_orbit(rp: &[fractadyne_core::BigFloat; 2], orbit_iter: u32, inp: &Recom
             inp.stop_at.as_deref(),
             record.then_some(&mut fe),
         ),
-        None => fc::reference_orbit_t(&z0x, &z0y, &cx0, &cy0, inp.formula, cap, orbit_prec),
+        // A Julia view: the precision schedule follows dZ/dZ_0 (design/precision-schedule.md P2).
+        None => fc::reference_orbit_julia_t(&z0x, &z0y, &cx0, &cy0, inp.formula, cap, orbit_prec),
     };
     let fe = (record && inp.custom.is_none() && !inp.julia).then_some(fe);
     BuiltOrbit { o, len, tail, orbit_prec, ref_ms: t.elapsed().as_secs_f64() * 1000.0, fe }

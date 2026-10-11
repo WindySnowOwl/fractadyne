@@ -238,3 +238,22 @@ fn the_key_is_stable_and_last_word_sensitive() {
     assert_ne!(a, key_id(&key(), 1088, &p));
     assert_ne!(a, key_id(&OrbitKey { backend: 8, ..key() }, 1024, &p));
 }
+
+/// The tail's schedule state round-trips with its plane (v4): none, a c-plane state, a Julia one —
+/// and an unknown plane byte is refused, never guessed.
+#[test]
+fn the_schedule_state_round_trips_with_its_plane() {
+    use fractadyne_core::{CFloatExp, FloatExp, SchedState};
+    let d = CFloatExp { re: FloatExp { m: 0.75, e: 300 }, im: FloatExp { m: -0.5, e: 299 } };
+    for s in [None, Some(SchedState { d, cur: 4096, julia: false }), Some(SchedState { d, cur: 1984, julia: true })] {
+        let mut out = Vec::new();
+        write_sched(&mut out, s);
+        let mut at = 0;
+        assert_eq!(read_sched(&out, &mut at), Some(s), "{s:?}");
+        assert_eq!(at, out.len(), "{s:?}: read a different length than was written");
+    }
+    let mut out = Vec::new();
+    write_sched(&mut out, Some(SchedState { d, cur: 64, julia: true }));
+    out[0] = 3;
+    assert_eq!(read_sched(&out, &mut 0), None, "an unknown plane must be refused");
+}

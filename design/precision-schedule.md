@@ -2,7 +2,8 @@
 
 Status: the Mandelbrot schedule shipped in 0.3.0-beta.18 (`8e77046`). This note records what it is,
 what the 2026-10-11 measurements found, and the plan to extend it to the other families. **Done
-2026-10-11:** P0 (`9c5646e`) and P1 (Multibrot 3–8); results under each. P2 and P3 open.
+2026-10-11:** P0 (`9c5646e`), P1 (Multibrot 3–8, `eaf3622`) and P2 (Julia views); results under
+each. P3 open.
 
 ## What it is
 
@@ -119,6 +120,27 @@ walk and the build both pass `from_zero = false` today; they need the Julia flag
 cannot tell a Julia view from `Z_0 ≠ 0`: the orbit entry points (`reference_orbit_t`, the extend
 path, the pick's walks, the orbit cache key) take `z0` and `c` with no plane, so the app has to pass
 the plane through them — a wider change than P1.
+
+**Done.** `SchedState` carries `julia` (`fresh_julia`: `d = d·Z_0^{d−1}`, no `+ 1` in `advance`;
+the c-plane arithmetic verbatim); `reference_orbit_julia_t` is the app's Julia build; the length
+walks take their starting state from the caller (`start_sched`), and the pick's Julia walks pass
+the plane. The orbit blob is v4 (the flag byte: 1 c plane, 2 Julia; an unknown plane is refused).
+Tests: repelling fixed points β of `z^d + c` (`β^d + c = β`) for c = −0.8+0.156i (d=2) and
+0.4+0.3i (d=3) — bit-identical samples over the accurate stretch, the schedule low and marked
+Julia, extend == fresh (red with the derivative inflated 2^200); both backends identical; the blob
+round-trips each plane. ⚠The app holds the Julia constant as an f64, so β must be the fixed point
+of the f64's exact value (`local/bench-ladder/julia_points.py`). Renders (`julia_sched_ab.py`,
+views centred on β, cap ~2 steps per digit of depth): 8 views at 1e300–1e30000, all
+pixel-identical; reference build at 1e30000 16.0 → 12.5 s (d=2), 69.5 → 30.2 s (d=3, render
+71.5 → 32.2 s).
+
+**Found on the way: the Julia pick walks everything in bignum.** The perturbation scoring of both
+pick phases is gated to the c plane (`perturb_scoring_supported`: "a Julia view varies z₀ —
+unvalidated there"), so a deep Julia view's pick walks 101 candidates × 4,096 steps and then the
+centre and 15 survivors to the whole cap at full precision. It contends with the build exactly as
+P0 found (d=2 at 1e10000: the build's first 506 steps took 1.7 s of its 2.1) and is most of a deep
+Julia render (d=3 at 1e10000: 32 of 35 s). The δ-recurrence for a Julia candidate is the c-plane
+one without `δc` (`δ_0 = Z_0 − Z_0^ref`); extending both phases to it is the next Julia speed-up.
 
 ### P3 — the fold families (Tricorn, Burning Ship, Celtic, Buffalo; powers 2–5; both planes)
 

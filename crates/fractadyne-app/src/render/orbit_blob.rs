@@ -45,7 +45,9 @@ const MAGIC: &[u8; 8] = b"FDNORBIT";
 /// v3: the tail carries THE PRECISION SCHEDULE's state (`fractadyne_core::SchedState`), so an
 /// extension resumes it as a fresh build would — one flag byte, then `d` (re m/e, im m/e) and
 /// `cur` when set.
-const VERSION: u16 = 3;
+/// v4: the flag byte also says the schedule's plane — 1 the c plane, 2 a Julia view, whose `d` is
+/// `dZ/dZ_0` (design/precision-schedule.md P2).
+const VERSION: u16 = 4;
 
 /// Bytes before the header body: magic, version, header length.
 const PRELUDE: usize = 8 + 2 + 4;
@@ -194,9 +196,14 @@ pub(crate) fn encode(res: &RecomputeResult, key: OrbitKey) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// The tail's schedule state: a flag, then `d` and `cur` when set (see [`VERSION`]).
+/// The tail's schedule state: a flag (0 none, 1 c plane, 2 Julia), then `d` and `cur` when set (see
+/// [`VERSION`]).
 pub(crate) fn write_sched(out: &mut Vec<u8>, sched: Option<fractadyne_core::SchedState>) {
-    out.push(u8::from(sched.is_some()));
+    out.push(match sched {
+        None => 0,
+        Some(s) if s.julia => 2,
+        Some(_) => 1,
+    });
     if let Some(s) = sched {
         out.extend_from_slice(&s.d.re.m.to_le_bytes());
         out.extend_from_slice(&s.d.re.e.to_le_bytes());
@@ -212,7 +219,7 @@ fn read_sched(buf: &[u8], at: &mut usize) -> Option<Option<fractadyne_core::Sche
     if flag == 0 {
         return Some(None);
     }
-    if flag != 1 {
+    if flag != 1 && flag != 2 {
         return None;
     }
     let f64_at = |at: &mut usize| -> Option<f64> {
@@ -233,6 +240,7 @@ fn read_sched(buf: &[u8], at: &mut usize) -> Option<Option<fractadyne_core::Sche
     Some(Some(fractadyne_core::SchedState {
         d: fractadyne_core::CFloatExp { re: fe(rm, re), im: fe(im, ie) },
         cur,
+        julia: flag == 2,
     }))
 }
 

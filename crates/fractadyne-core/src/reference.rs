@@ -453,6 +453,9 @@ fn orbit_schedule_on() -> bool {
 pub struct SchedState {
     pub d: CFloatExp,
     pub cur: u32,
+    /// A Julia view's walk (design/precision-schedule.md P2): its pixels vary `Z_0`, so `d` is
+    /// `dZ/dZ_0` and its recurrence has no `+ 1`.
+    pub julia: bool,
 }
 
 impl SchedState {
@@ -462,7 +465,32 @@ impl SchedState {
         (formula_power(formula).is_some() && from_zero && orbit_schedule_on()).then(|| SchedState {
             d: CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO },
             cur: (p.div_ceil(64) * 64) as u32,
+            julia: false,
         })
+    }
+
+    /// A Julia view's state before `Z_1`: the derivative is with respect to `Z_0` (`1` there), so
+    /// `Z_1`'s is `d·Z_0^{d−1}`; full precision. `None` when the schedule is off or the family is
+    /// not `z^d + c`.
+    pub(crate) fn fresh_julia(p: usize, formula: u32, z0: CFloatExp) -> Option<SchedState> {
+        let d = formula_power(formula)?;
+        orbit_schedule_on().then(|| {
+            let mut zk = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
+            for _ in 1..d {
+                zk = zk * z0;
+            }
+            SchedState { d: zk.mul_f64(f64::from(d)), cur: (p.div_ceil(64) * 64) as u32, julia: true }
+        })
+    }
+}
+
+/// The schedule a fresh walk from `(z0x, z0y)` starts with: a Julia view's when `julia` (its
+/// derivative with respect to `Z_0`), else a c-plane walk's from `Z_0 = 0` ([`SchedState::fresh`]).
+pub(crate) fn start_sched(p: usize, formula: u32, z0x: &BigFloat, z0y: &BigFloat, julia: bool) -> Option<SchedState> {
+    if julia {
+        SchedState::fresh_julia(p, formula, CFloatExp { re: bf_to_floatexp(z0x), im: bf_to_floatexp(z0y) })
+    } else {
+        SchedState::fresh(p, formula, z0x.is_zero() && z0y.is_zero())
     }
 }
 
@@ -562,15 +590,17 @@ impl Schedule {
         // to `|Z_n|^d`; their count, under `log2 d` bits, is inside the margin) against `|c|`.
         // Mandelbrot keeps its arithmetic exactly, so its schedule — and so its samples and
         // orbit blobs — are unchanged.
+        // A Julia walk's derivative is `dZ/dZ_0`: the same product without the `+ 1`.
         let operands = if self.power == 2 {
-            st.d = (z * st.d).mul_f64(2.0) + one;
+            st.d = if st.julia { (z * st.d).mul_f64(2.0) } else { (z * st.d).mul_f64(2.0) + one };
             r2
         } else {
             let mut zk = z; // Z^{d−1}
             for _ in 2..self.power {
                 zk = zk * z;
             }
-            st.d = (zk * st.d).mul_f64(f64::from(self.power)) + one;
+            let dz = (zk * st.d).mul_f64(f64::from(self.power));
+            st.d = if st.julia { dz } else { dz + one };
             r2.powf(f64::from(self.power) / 2.0)
         };
         // ⛔The step's error is its OPERANDS' scale, not its result's: x², y² and their difference
@@ -622,8 +652,9 @@ fn run_orbit(
     p: usize,
     probe: Option<&mut PeriodProbe<'_>>,
     fe: Option<&mut Vec<CFloatExp>>,
+    julia: bool,
 ) -> OrbitTail {
-    let sched = SchedState::fresh(p, formula, n == 0 && zx.is_zero() && zy.is_zero());
+    let sched = if n == 0 { start_sched(p, formula, &zx, &zy, julia) } else { None };
     dispatch_orbit(bit, out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe, sched, fe)
         .expect("a BackendChoice variant only exists when its backend is compiled in")
 }
@@ -840,7 +871,39 @@ pub fn reference_orbit_t_in(
     max_iter: u32,
     p: usize,
 ) -> (Vec<[f32; 4]>, u32, OrbitTail) {
-    reference_orbit_t_rec(backend, z0x, z0y, cx, cy, formula, max_iter, p, None)
+    reference_orbit_t_rec(backend, z0x, z0y, cx, cy, formula, max_iter, p, None, false)
+}
+
+/// [`reference_orbit_t`] for a JULIA view: `Z_0` is the reference point, `c` the Julia constant,
+/// and the precision schedule follows `dZ/dZ_0` (the view's pixels vary the start). The c-plane
+/// entry cannot tell a Julia view from `Z_0 ≠ 0`, so the caller names the plane.
+pub fn reference_orbit_julia_t(
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+) -> (Vec<[f32; 4]>, u32, OrbitTail) {
+    reference_orbit_julia_t_in(crate::backend::selected(), z0x, z0y, cx, cy, formula, max_iter, p)
+}
+
+/// [`reference_orbit_julia_t`] in an explicitly named backend, for the cross-backend identity
+/// suite (see [`reference_orbit_t_in`]). Not part of the app-facing API.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn reference_orbit_julia_t_in(
+    backend: crate::BackendChoice,
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+) -> (Vec<[f32; 4]>, u32, OrbitTail) {
+    reference_orbit_t_rec(backend, z0x, z0y, cx, cy, formula, max_iter, p, None, true)
 }
 
 /// [`reference_orbit_t_in`] that can also record the orbit extended-range into `fe`
@@ -856,6 +919,7 @@ fn reference_orbit_t_rec(
     max_iter: u32,
     p: usize,
     mut fe: Option<&mut Vec<CFloatExp>>,
+    julia: bool,
 ) -> (Vec<[f32; 4]>, u32, OrbitTail) {
     let bit = backend.bit();
     let mut out = Vec::with_capacity(max_iter as usize + 1);
@@ -870,7 +934,7 @@ fn reference_orbit_t_rec(
     if let Some(s) = fe.as_deref_mut() {
         s.push(CFloatExp { re: bf_to_floatexp(&zx), im: bf_to_floatexp(&zy) });
     }
-    let tail = run_orbit(&mut out, bit, zx, zy, zpx, zpy, cx, cy, formula, 0, max_iter, p, None, fe);
+    let tail = run_orbit(&mut out, bit, zx, zy, zpx, zpy, cx, cy, formula, 0, max_iter, p, None, fe, julia);
     let len = out.len() as u32;
     (out, len, tail)
 }
@@ -951,7 +1015,7 @@ fn reference_orbit_periodic_until_in(
     mut fe: Option<&mut Vec<CFloatExp>>,
 ) -> (Vec<[f32; 4]>, u32, OrbitTail) {
     if formula != formula::MANDELBROT || !z0x.is_zero() || !z0y.is_zero() {
-        return reference_orbit_t_rec(backend, z0x, z0y, cx, cy, formula, max_iter, p, fe);
+        return reference_orbit_t_rec(backend, z0x, z0y, cx, cy, formula, max_iter, p, fe, false);
     }
     let mut probe = PeriodProbe::new(log2_span);
     probe.stop_at = stop_at;
@@ -976,6 +1040,7 @@ fn reference_orbit_periodic_until_in(
         p,
         Some(&mut probe),
         fe,
+        false,
     );
     let len = out.len() as u32;
     (out, len, tail)
@@ -2121,8 +2186,9 @@ fn orbit_length_bf(
     formula: u32,
     max_iter: u32,
     p: usize,
+    julia: bool,
 ) -> u32 {
-    orbit_length_in(crate::backend::selected(), z0x, z0y, cx, cy, formula, max_iter, p, None)
+    orbit_length_probed(crate::backend::selected(), z0x, z0y, cx, cy, formula, max_iter, p, None, None, julia)
 }
 
 /// The centre rescue's score ([`best_reference_diag_rescued`]) from a finished BUILD of the same
@@ -2154,7 +2220,7 @@ pub fn scoring_len_from_build(
     if formula == formula::PHOENIX {
         return None;
     }
-    Some(steps + orbit_length_bf(&tail.zx, &tail.zy, cx, cy, formula, max_iter - steps, p))
+    Some(steps + orbit_length_bf(&tail.zx, &tail.zy, cx, cy, formula, max_iter - steps, p, false))
 }
 
 /// The CENTRE's deep walk in the pick ([`best_reference_diag_from_build`]): its score — the
@@ -2234,7 +2300,7 @@ pub fn orbit_length_in(
     p: usize,
     samples: Option<&mut Vec<CFloatExp>>,
 ) -> u32 {
-    orbit_length_probed(backend, z0x, z0y, cx, cy, formula, max_iter, p, samples, None)
+    orbit_length_probed(backend, z0x, z0y, cx, cy, formula, max_iter, p, samples, None, false)
 }
 
 /// [`orbit_length_in`] with an optional [`PeriodProbe`]: a walk that finds the orbit closing on
@@ -2251,10 +2317,12 @@ fn orbit_length_probed(
     p: usize,
     samples: Option<&mut Vec<CFloatExp>>,
     probe: Option<&mut PeriodProbe<'_>>,
+    julia: bool,
 ) -> u32 {
+    let sched = start_sched(p, formula, z0x, z0y, julia);
     match backend {
         crate::BackendChoice::Astro => {
-            orbit_length_gen::<BigFloat>(z0x, z0y, cx, cy, formula, max_iter, p, samples, probe)
+            orbit_length_gen::<BigFloat>(z0x, z0y, cx, cy, formula, max_iter, p, samples, probe, sched)
         }
         #[cfg(feature = "rug")]
         crate::BackendChoice::Rug => {
@@ -2270,11 +2338,12 @@ fn orbit_length_probed(
                 p,
                 samples.as_deref_mut(),
                 probe.as_deref_mut(),
+                sched,
             ) {
                 Some(n) => n,
                 // Non-Mandelbrot: the generic loop — allocating per op, but still MPFR.
                 None => {
-                    orbit_length_gen::<rug::Float>(z0x, z0y, cx, cy, formula, max_iter, p, samples, probe)
+                    orbit_length_gen::<rug::Float>(z0x, z0y, cx, cy, formula, max_iter, p, samples, probe, sched)
                 }
             }
         }
@@ -2297,7 +2366,7 @@ fn orbit_length_periodic(
 ) -> (u32, Option<OrbitPeriod>) {
     let zero = bf(0.0, p);
     if formula != formula::MANDELBROT {
-        let n = orbit_length_probed(crate::backend::selected(), &zero, &zero, cx, cy, formula, max_iter, p, samples, None);
+        let n = orbit_length_probed(crate::backend::selected(), &zero, &zero, cx, cy, formula, max_iter, p, samples, None, false);
         return (n, None);
     }
     let mut probe = PeriodProbe::new(log2_span);
@@ -2312,6 +2381,7 @@ fn orbit_length_periodic(
         p,
         samples,
         Some(&mut probe),
+        false,
     );
     (n, probe.found)
 }
@@ -2334,15 +2404,10 @@ fn orbit_length_gen<B: RefBackend>(
     p: usize,
     mut samples: Option<&mut Vec<CFloatExp>>,
     mut probe: Option<&mut PeriodProbe<'_>>,
+    sched: Option<SchedState>,
 ) -> u32 {
     let ctx = B::ctx_for(p);
-    let mut sched = Schedule::new(
-        p,
-        formula,
-        to_f64(cx),
-        to_f64(cy),
-        SchedState::fresh(p, formula, z0x.is_zero() && z0y.is_zero()),
-    );
+    let mut sched = Schedule::new(p, formula, to_f64(cx), to_f64(cy), sched);
     let mut zx = B::from_carrier(z0x, ctx);
     let mut zy = B::from_carrier(z0y, ctx);
     let mut zpx = B::from_f64(0.0, ctx); // previous iterate (Phoenix)
@@ -2888,9 +2953,9 @@ fn best_reference_diag_forced(
                 let jcy = bf(julia_c[1], p2);
                 let zero = bf(0.0, p2);
                 if julia {
-                    orbit_length_bf(&center[0], &center[1], &jcx, &jcy, formula, max_iter, p2)
+                    orbit_length_bf(&center[0], &center[1], &jcx, &jcy, formula, max_iter, p2, true)
                 } else {
-                    orbit_length_bf(&zero, &zero, &center[0], &center[1], formula, max_iter, p2)
+                    orbit_length_bf(&zero, &zero, &center[0], &center[1], formula, max_iter, p2, false)
                 }
             });
             if centre_len >= max_iter {
@@ -3009,9 +3074,9 @@ fn pick_pass(
     let zero = bf(0.0, p);
     let score = |zx: &BigFloat, zy: &BigFloat, cap: u32| -> u32 {
         if julia {
-            orbit_length_bf(zx, zy, &jcx, &jcy, formula, cap, p)
+            orbit_length_bf(zx, zy, &jcx, &jcy, formula, cap, p, true)
         } else {
-            orbit_length_bf(&zero, &zero, zx, zy, formula, cap, p)
+            orbit_length_bf(&zero, &zero, zx, zy, formula, cap, p, false)
         }
     };
     // Candidate points: the centre first, then a 5×5 grid at several span fractions (fine→coarse), so
@@ -3067,7 +3132,7 @@ fn pick_pass(
     let centre_walk_here = |want_samples: bool| -> (u32, Option<Vec<CFloatExp>>) {
         if julia {
             let (jx, jy) = (bf(julia_c[0], pd), bf(julia_c[1], pd));
-            (orbit_length_bf(&cands[0][0], &cands[0][1], &jx, &jy, formula, max_iter, pd), None)
+            (orbit_length_bf(&cands[0][0], &cands[0][1], &jx, &jy, formula, max_iter, pd, true), None)
         } else if want_samples {
             let mut samples = Vec::new();
             let (len, _) =
@@ -3316,9 +3381,9 @@ fn par_orbit_scores(
 ) -> Vec<u32> {
     let score_one = |c: &[BigFloat; 2], jcx: &BigFloat, jcy: &BigFloat, zero: &BigFloat| -> u32 {
         if julia {
-            orbit_length_bf(&c[0], &c[1], jcx, jcy, formula, cap, p)
+            orbit_length_bf(&c[0], &c[1], jcx, jcy, formula, cap, p, true)
         } else {
-            orbit_length_bf(zero, zero, &c[0], &c[1], formula, cap, p)
+            orbit_length_bf(zero, zero, &c[0], &c[1], formula, cap, p, false)
         }
     };
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(idxs.len());

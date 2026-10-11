@@ -1233,6 +1233,7 @@ pub(crate) fn try_orbit_length_inplace(
     p: usize,
     mut samples: Option<&mut Vec<crate::floatexp::CFloatExp>>,
     mut probe: Option<&mut crate::reference::PeriodProbe<'_>>,
+    sched: Option<crate::reference::SchedState>,
 ) -> Option<u32> {
     use crate::floatexp::CFloatExp;
     use rug::ops::{AddAssignRound, AssignRound, SubAssignRound};
@@ -1255,7 +1256,7 @@ pub(crate) fn try_orbit_length_inplace(
         formula,
         crate::to_f64(cx),
         crate::to_f64(cy),
-        crate::reference::SchedState::fresh(p, formula, z0x.is_zero() && z0y.is_zero()),
+        sched,
     );
 
     if let Some(s) = samples.as_deref_mut() {

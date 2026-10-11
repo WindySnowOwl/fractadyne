@@ -80,7 +80,7 @@ fn scorer_matches_oracle_at(
     }
     let oracle: Vec<u32> = cands
         .iter()
-        .map(|c| orbit_length_bf(&zero, &zero, &c[0], &c[1], formula, max_iter, p))
+        .map(|c| orbit_length_bf(&zero, &zero, &c[0], &c[1], formula, max_iter, p, false))
         .collect();
     // Reference = the shortest ESCAPING candidate, so others outlive it and the
     // reference-exhausted rebase + the trust budget are both exercised.

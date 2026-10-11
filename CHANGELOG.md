@@ -66,8 +66,10 @@ Changes after 0.3.0-beta.1:
   17–33% off the deepest benchmark scenes (the 1e30000× spiral view 54.9 → 45.8 s, the 1.5e30000×
   minibrot 43.5 → 33.8 s, both at 1280x720). And the precision schedule — each step of the
   reference orbit computed at the precision it needs, introduced for the Mandelbrot set in beta.18 —
-  now covers Multibrot 3 to 8: at 1e30000× their reference orbits take less than half the time
-  (a Multibrot 3 render 40.5 → 18.1 s), again with identical images.
+  now covers Multibrot 3 to 8 and the Julia views of those families: at 1e30000× their reference
+  orbits take less than half the time (a Multibrot 3 render 40.5 → 18.1 s, a power-3 Julia view
+  71.5 → 32.2 s), again with identical images. Orbits kept from an earlier version are rebuilt
+  once.
 - **Benchmark kit: Fraktaler-3 renders at the limits it is given (0.3.0-beta.20).** Fraktaler-3
   3.1 renders a batch PNG through its GUI program, which applies the GUI's Limit Iterations
   preference (on by default), so every Fraktaler-3 render the kit made ran with its perturbation

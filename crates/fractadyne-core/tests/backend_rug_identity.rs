@@ -592,3 +592,34 @@ fn a_scheduled_multibrot_orbit_is_byte_identical_across_backends() {
         assert!((st.cur as usize) * 2 < p, "d={d}: the schedule never went low ({} bits)", st.cur);
     }
 }
+
+/// P2 through both backends: a scheduled JULIA view (the walk from a repelling fixed point `β` of
+/// `z^d + c`, see `reference/sched_tests.rs`) — the same samples, the same Julia schedule state, and
+/// the schedule really went low. d = 2 takes the in-place MPFR loop, d = 3 the generic one.
+#[test]
+fn a_scheduled_julia_orbit_is_byte_identical_across_backends() {
+    let p = 1_024usize;
+    for (d, cre, cim, bre, bim) in [
+    (2, "-0.8", "0.156", "1.5275031186435346107897464024449153375667459478117081603398751970032030110974513871892240841872097036285278118446470216567675511048976381591052049755871002178668204260624975532103883153157850045642586716683757126554935558516329825172798984230759160894866588240765086337258890754472162281949012509562911231362152794511317", "-0.075912178352287867071814194826348046366422194847978022539732593449186891503078959907318388553620835791521773673509239408146903775435705768770946476723892232618119845275553360281913106439290191996395355249148696879548476966056803740776194271345874761975802848949142559058010559243202318523468404390439539001577743141061347"),
+    (3, "0.4", "0.3", "-1.1704074112365126914112728416701441973107854513040361277264055611820071716701862728166014491780241452073254690305035070792468780817691622722567595378677543416231543729687718918107278290307877257959096332398247228734619520439070379937625122340250184885003376167683854768953729905446766476966917786722521361038741887820044", "-0.096768060724085084544219802220566855051561723002067248723755909438584355132952627120669361723819874365286468333162893722172984236615610486253061358044852989366167596840881643072854333732875911888017613919988914237939124886474913239959240081980254584466631039981404420991707079940540998999110187868288138663962856400706887"),
+    ] {
+        let formula = if d == 2 { fc::formula::MANDELBROT } else { fc::formula::MULTIBROT3 };
+        let (cx, cy) = (fc::parse_bf_prec(cre, p).unwrap(), fc::parse_bf_prec(cim, p).unwrap());
+        let (z0x, z0y) = (fc::parse_bf_prec(bre, p).unwrap(), fc::parse_bf_prec(bim, p).unwrap());
+        let build = |backend| {
+            fc::with_orbit_schedule(true, || fc::reference_orbit_julia_t_in(backend, &z0x, &z0y, &cx, &cy, formula, 3_000, p))
+        };
+        let (a, al, at) = build(BackendChoice::Astro);
+        let (r, rl, rt) = build(BackendChoice::Rug);
+        assert_eq!(al, rl, "d={d}: lengths differ");
+        assert_eq!(bits(&a), bits(&r), "d={d}: the scheduled samples differ between backends");
+        assert_eq!(at.sched, rt.sched, "d={d}: the schedule states differ");
+        // Off β the orbit settles on an attracting cycle and the schedule climbs back to full by
+        // step 3,000; 500 steps ends inside the descent, where it must be low.
+        let (_, _, lt) = fc::with_orbit_schedule(true, || {
+            fc::reference_orbit_julia_t_in(BackendChoice::Rug, &z0x, &z0y, &cx, &cy, formula, 500, p)
+        });
+        let st = lt.sched.expect("scheduled");
+        assert!(st.julia && (st.cur as usize) * 2 < p, "d={d}: not a low Julia schedule at step 500 ({st:?})");
+    }
+}
