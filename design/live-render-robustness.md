@@ -2790,3 +2790,32 @@ byte-neutral in behaviour.
   `ReadingProvenance`, `budget_confident`, the `Admission` token at every dispatch entry point, and
   the three deletions; B5 the actuator un-suppression. Each deletion has to be re-checked against
   today's code before it is made.
+
+**2026-10-12 — B4 as a SHADOW first (`c3907dd`, `5f075bb`), and what it changed in B4.** `admit()`,
+`budget_confident` and a wall-clock term are computed every frame and recorded (frame record schema
+4: `wall_cap`, `admitted`, `admit_bound`, `confident`); nothing is sized from them. Two pieces of this
+section's B4 did not survive the measurement:
+
+- **The wall term as a second learned budget binds in healthy use.** Learned from whatever is
+  dispatched, it trails every climb, and while the view moves what is dispatched is small motion
+  passes. RTX 3080: a 20-octave zoomtest had it binding 86% of frames at a median 0.13× the planned
+  size, a 60 s still soak 99.6% at 0.67×; every dispatch it would have shrunk (103 and 3) ran under
+  5 ms. Enforced, it would have choked every settle after motion. It is now **one-sided**
+  (`wall_cap_step`): no cap until a dispatch is followed by a slow interval, then that dispatch shrunk
+  by `budget_step`'s arithmetic, relaxed by fast intervals, dropped at the ceiling. The wall clock may
+  only ever say "too high", which is the one thing it knows that a timestamp may not.
+- **`budget_confident` at 8 frames flags pinned chunk walks**, which are priced about one frame in
+  ten in motion (146 of 149 flagged frames, all fast). At 16 it still flags the same run's real
+  118-frame starvation (the one that tripped the wall-clock fallback).
+- **Revised, on the RTX 3080:** motiontest, zoomtest and soak — the admission binds below the learned
+  size on 3 frames in all (0.2% of the zoomtest), the cap never sets. The budget trap (SEED_BUDGET,
+  REF_ESCAPE_AT=655, taps at the field crash view, 1117×907): the unconfident term would have
+  admitted the un-chunked whole frames at 15.3 s (1.45e10 and 5.7e9 steps; 384 ms here, ~0.85 s on the
+  RX 6800 XT) at 5.4e7 — the dispatches the 2026-09-27 entry above named the lethal edge. The cap did
+  not set: no frame passed 400 ms on this card.
+- **Not yet built:** the reaction (`tdr_steps` ← the admission), `ReadingProvenance` (readings
+  already carry their pass's frame and nominal steps, which `budget_confident` needs no more than),
+  the `Admission` token (the GPU crate cannot name an app type, so it would be a GPU-crate trait the
+  app's admission implements, its single `impl` counted by a test), the deletions and B5. Next
+  evidence: the same trap on the RX 6800 XT, where the cap should set.
+
