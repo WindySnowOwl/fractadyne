@@ -9027,7 +9027,7 @@ phase-1 scoring is already capped at `REF_SCORE_SCAN = 4096`):
   perturbation theory applied to the reference itself, recursable down the precision ladder
   (serial work → ~P²/3 schoolbook). No known published implementation — requires rounding-error
   analysis before trusting; publishable if it works.
-- [x] ✅**DONE (audit 2026-10-12):** 8e77046 (0.3.0-beta.18): the precision schedule, byte-identical (1e30000 path 140 → 69 s). Mandelbrot from 0 on main; Multibrot, Julia views and the folds are on `feat/schedule-other-formulas`. — **Precision ramp-down along the orbit (research)** — later iterations may tolerate less
+- [x] ✅**DONE (audit 2026-10-12):** 8e77046 (0.3.0-beta.18): the precision schedule, byte-identical (1e30000 path 140 → 69 s). Multibrot 3–8, Julia views and the folds followed (design/precision-schedule.md P1–P3, merged to main 2026-10-12). — **Precision ramp-down along the orbit (research)** — later iterations may tolerate less
   precision (the same Lyapunov factor that amplifies errors grows |δ|); adjacent to why rebasing
   works. Needs the error analysis WRITTEN DOWN first — the cliff saga is what happens when
   reference precision is guessed.
@@ -9137,7 +9137,7 @@ decision in its §13 is taken. The struck item is kept for the reasoning, which 
   complexity: a small compute pass + readback, reusing the existing iterate kernel. Alternative
   considered and rejected: limb-parallel bignum multiplication per orbit step on GPU (workgroup-wide
   carry propagation each iteration — latency-bound, not competitive).
-  - 🔎 **Audit 2026-10-12:** Shipped: CPU δ-scoring: phase 2 in 0.2.41-beta.1 (23d03f7), phase 1 by perturbation 9c5646e on the unmerged `feat/schedule-other-formulas`. Still open: the GPU compute version.
+  - 🔎 **Audit 2026-10-12:** Shipped: CPU δ-scoring: phase 2 in 0.2.41-beta.1 (23d03f7), phase 1 by perturbation 9c5646e (merged to main 2026-10-12). Still open: the GPU compute version.
 
 - [x] **Deep-dive live "monocolor" past ~1e400× — FIXED v0.2.40-beta.7 (parallel `best_reference` +
   pipeline pacing).** Diagnosis: on a centered dive the picked reference (a nearby nucleus, a
