@@ -139,7 +139,7 @@ if ($Action -eq "status") {
 # --- file a request -------------------------------------------------------------------------------
 # `-Builds a,b` arrives as ONE string under `pwsh -File`.
 $Builds = @($Builds | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
-$tagRe = '^(latest|v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?)$'
+$tagRe = '^(latest|v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+(\.dev\.[0-9]+)?)?)$'   # .dev.M: a test build under its own tag (agent v23)
 foreach ($t in @($Build) + $Builds) { if ($t -notmatch $tagRe) { throw "bad build tag: $t" } }
 $id = "{0:yyyyMMdd-HHmmss}-{1}" -f (Get-Date), (-join ((48..57) + (97..122) | Get-Random -Count 4 | ForEach-Object { [char]$_ }))
 $req = [ordered]@{ schema = 1; id = $id; action = $Action; package = $Package; requested_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ"); note = $Note }
