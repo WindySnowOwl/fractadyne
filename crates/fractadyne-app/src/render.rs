@@ -6784,10 +6784,10 @@ impl FractadyneApp {
         // alone, never `!will_reproject`); a chunked frame's completed-tail re-key goes unstamped
         // on purpose — one stale pairing costs one mis-priced measurement, which the ratio
         // search corrects, exactly as the paragraph above records.
+        // ⚠Nor as the whole frame on a settle TILE: the tile block has paired it with its rect, and
+        // the first tile of every grid is a key change (`key_change_steps`).
         if key_changed && chunk_range.is_none() {
-            self.perf.fe_steps_last[vs] = spx
-                .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                .saturating_mul(gpu_iter.max(1) as u64);
+            self.perf.fe_steps_last[vs] = key_change_steps(spx, ss, gpu_iter, tile);
             self.perf.fe_iter_frame[vs] = self.perf.frame_idx;
             self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
         }
@@ -6872,10 +6872,7 @@ impl FractadyneApp {
                 };
                 px.saturating_mul((ce.saturating_sub(cs)).max(1) as u64)
             }
-            (None, Some(r)) => (r[2] as u64)
-                .saturating_mul(r[3] as u64)
-                .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                .saturating_mul(gpu_iter.max(1) as u64),
+            (None, Some(r)) => tile_steps(r, ss, gpu_iter),
             (None, None) => full_pass_steps(spx, ss, gpu_iter, split[0]),
         };
         // Display-honesty tripwire (`--motiontest` A3): an interacting frame whose live texture
@@ -8727,10 +8724,7 @@ impl FractadyneApp {
             if total > tdr_steps {
                 let (rect, advanced) = self.next_settle_tile(vidx, resolution, ss, gpu_iter, tdr_steps);
                 if advanced && rect[2] > 0 && rect[3] > 0 {
-                    self.perf.fe_steps_last[vs] = (rect[2] as u64)
-                        .saturating_mul(rect[3] as u64)
-                        .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                        .saturating_mul(gpu_iter.max(1) as u64);
+                    self.perf.fe_steps_last[vs] = tile_steps(rect, ss, gpu_iter);
                     // This frame runs a real pass, even though the iterate KEY is unchanged.
                     self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
                     tile_work = true;

@@ -52,7 +52,7 @@ use std::time::Duration;
 
 /// Bumped whenever a field is added, removed, retyped or reordered. Every record and every file
 /// header carries it, and a reader must refuse a schema it does not know rather than guess.
-pub(crate) const SCHEMA: u16 = 4;
+pub(crate) const SCHEMA: u16 = 5;
 /// Records the in-memory ring (and `frames.bin`) holds. At the 1–5 fps of the failing cadence
 /// that is 14–68 minutes of one view — the ring lengthens in TIME exactly as the app slows down,
 /// the opposite of the 24-entry decision ring it supersedes.
@@ -322,6 +322,10 @@ frame_record! {
     admitted: u64,
     admit_bound: u8,
     confident: bool,
+    /// The steps the wall clock prices this view's last dispatch at (`fe_steps_last`, schema 5): a
+    /// settle tile's rect, a chunk's range, else the whole frame. Unlike `nominal_steps` it is not
+    /// what travels with the pass; a disagreement on a dispatched frame is a mis-pairing.
+    priced_steps: u64,
     full_inflight: u32,
     pin_inflight: u32,
     present_throttle: u32,

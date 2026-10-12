@@ -14923,6 +14923,7 @@ impl FractadyneApp {
             r.motion_rate = p.motion_rate_now(v);
             r.wall_fallback = p.wall_fallback;
             r.wall_cap = p.wall_cap[v];
+            r.priced_steps = p.fe_steps_last[v];
             r.full_inflight = p.full_inflight[v];
             r.pin_inflight = p.pin_inflight[v];
             r.present_throttle = p.present_throttle;

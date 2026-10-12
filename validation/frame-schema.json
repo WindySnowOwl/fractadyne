@@ -1,10 +1,10 @@
 {
-  "schema": 4,
+  "schema": 5,
   "slot_bytes": 640,
   "slot_header_bytes": 32,
   "header_bytes": 4096,
   "ring_len": 4096,
-  "payload_bytes": 499,
+  "payload_bytes": 507,
   "slot_magic": "FDFR",
   "file_magic": "FDFH",
   "fields": [
@@ -48,6 +48,7 @@
     ["admitted", "u64"],
     ["admit_bound", "u8"],
     ["confident", "bool"],
+    ["priced_steps", "u64"],
     ["full_inflight", "u32"],
     ["pin_inflight", "u32"],
     ["present_throttle", "u32"],

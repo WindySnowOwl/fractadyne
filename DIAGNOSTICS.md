@@ -149,8 +149,11 @@ and `--recordtest` is the gate that proves the record is being written. Schema 4
 budget's admission, SHADOW (design/live-render-robustness.md §5.1, B4): `wall_cap` (the
 wall-clock cap, 0 = none; set only when a dispatch is followed by a slow frame), `admitted` (the steps `admit()` would have let the
 dispatch carry), `admit_bound` (0 learned, 1 wall clock, 2 unconfident) and `confident`. They size
-nothing yet; the `[fd-render] admission (shadow)` line marks a change of binding term. Older files
-read with `validation/frame-schema-v3.json`.
+nothing yet; the `[fd-render] admission (shadow)` line marks a change of binding term. Schema 5
+adds `priced_steps`, the step count the wall clock prices the view's last dispatch at
+(`fe_steps_last`); on a dispatched frame it should equal `nominal_steps`, except a split live
+refresh, whose pass carries a share of the frame (not yet reconciled). Older files
+read with `validation/frame-schema-v4.json` or `-v3.json`.
 
 **Reading it: `scripts/framelog.py`** (standard library only).
 

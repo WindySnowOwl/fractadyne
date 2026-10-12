@@ -1,5 +1,5 @@
-//! B4's admission (design/live-render-robustness.md §5.1), shadow: `admit`, `budget_confident` and
-//! the wall-clock cap's step.
+//! B4's admission (design/live-render-robustness.md §5.1), shadow: `admit`, `budget_confident`, the
+//! wall-clock cap's step, and the step count that cap prices (`key_change_steps`).
 
 use super::*;
 
@@ -85,4 +85,23 @@ fn an_unusable_reading_leaves_the_cap_alone() {
         assert_eq!(wall_cap_step(7e9 as u64, steps, ms, false), 7e9 as u64, "{steps} {ms}");
         assert_eq!(wall_cap_step(0, steps, ms, false), 0, "{steps} {ms}");
     }
+}
+
+#[test]
+fn a_key_changed_settle_tile_is_priced_as_its_rect() {
+    // The RX 6800 XT budget trap's first tile: 660×660 at ss 2 of a 1117×821 frame.
+    let (spx, ss, iter) = (1117u64 * 821, 2u32, 4626u32);
+    let tile = [228, 80, 660, 660];
+    assert_eq!(key_change_steps(spx, ss, iter, Some(tile)), tile_steps(tile, ss, iter));
+    assert_eq!(tile_steps(tile, ss, iter), 660 * 660 * 4 * 4626);
+    assert!(key_change_steps(spx, ss, iter, Some(tile)) < key_change_steps(spx, ss, iter, None));
+}
+
+#[test]
+fn an_untiled_or_held_key_change_is_priced_as_the_whole_frame() {
+    let (spx, ss, iter) = (1117u64 * 821, 2u32, 4626u32);
+    let whole = spx * 4 * 4626;
+    assert_eq!(key_change_steps(spx, ss, iter, None), whole);
+    assert_eq!(key_change_steps(spx, ss, iter, Some([0, 0, 0, 0])), whole);
+    assert_eq!(key_change_steps(spx, ss, 0, None), spx * 4);
 }

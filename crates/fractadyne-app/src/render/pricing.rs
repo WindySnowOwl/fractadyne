@@ -857,6 +857,32 @@ impl Meter {
     }
 }
 
+/// Nominal steps of one settle-grid tile: its pixels × ss² × the iteration count.
+pub(crate) fn tile_steps(rect: [u32; 4], ss: u32, gpu_iter: u32) -> u64 {
+    (rect[2] as u64)
+        .saturating_mul(rect[3] as u64)
+        .saturating_mul((ss as u64).saturating_mul(ss as u64))
+        .saturating_mul(gpu_iter.max(1) as u64)
+}
+
+/// What a KEY-CHANGED, un-chunked dispatch ran, for `fe_steps_last`: the settle tile's rect when the
+/// frame dispatches one, the whole frame otherwise.
+///
+/// ⚠The first tile of every settle grid arrives on a key change (the ss stage moves), and the
+/// key-change stamp used to price it as the WHOLE frame, overwriting the rect the tile block had
+/// just paired it with. RX 6800 XT budget trap, 2026-10-12: 16.97e9 against an 8.06e9 tile (2.1×),
+/// so B4's wall cap learned 1.534e10 from the first slow grid where the tile said ~7.3e9, too loose
+/// to bind the second grid. The wall-clock fallback prices the same slot, in the direction of growth.
+/// A zero-area hold rect keeps the whole-frame stamp it always had.
+pub(crate) fn key_change_steps(spx: u64, ss: u32, gpu_iter: u32, tile: Option<[u32; 4]>) -> u64 {
+    match tile {
+        Some(r) if r[2] > 0 && r[3] > 0 => tile_steps(r, ss, gpu_iter),
+        _ => spx
+            .saturating_mul((ss as u64).saturating_mul(ss as u64))
+            .saturating_mul(gpu_iter.max(1) as u64),
+    }
+}
+
 /// Frames a view's newest dispatch may go without a reading feeding its learned budget before that
 /// budget stops vouching for the next dispatch ([`budget_confident`]). A GPU reading lands two to
 /// three frames after its pass, but a PINNED chunk walk in motion is priced about one frame in ten
