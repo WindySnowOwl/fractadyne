@@ -1941,7 +1941,7 @@ impl Perf {
     /// See `render::Meter::record_mode_rate`.
     fn record_mode_rate(&mut self, v: usize, ms: f64, steps: u64) {
         let straddles = self.straddles_switch(v);
-        self.meter.record_mode_rate(v, self.budget_mode[v], straddles, ms, steps);
+        self.meter.record_mode_rate(v, self.budget_mode[v], straddles, ms, steps, diag::elapsed_s());
     }
 
     /// See `render::Meter::motion_rate_now`.

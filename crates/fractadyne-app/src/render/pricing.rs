@@ -672,6 +672,17 @@ pub(crate) fn bounded_motion_cut(cur: f64, wall_rate: f64) -> Option<f64> {
     Some(wall_rate.max(cur / crate::tunables::MOTION_CUT_MAX))
 }
 
+/// One reading of `Meter::mode_rate`: `cur` (0 = none yet), a reading's `rate`, and the seconds
+/// since the slot last took one. A slower reading is adopted at once (the pessimistic latch); a
+/// faster one raises the slot by at most 2× per `MODE_RATE_DOUBLING_S`, and never past itself.
+pub(crate) fn mode_rate_step(cur: f64, rate: f64, elapsed_s: f64) -> f64 {
+    if cur.is_nan() || cur <= 0.0 || rate <= cur {
+        return rate;
+    }
+    let cap = cur * 2f64.powf(elapsed_s.max(0.0) / crate::tunables::MODE_RATE_DOUBLING_S);
+    rate.min(cap)
+}
+
 /// The measured rates the pricing family reads, per view and per arithmetic mode (design/
 /// live-render-robustness.md §5.1, step M3). `Perf` owns one and passes in what only it knows: the
 /// view's current mode, and whether a reading straddles that view's last mode switch.
@@ -688,7 +699,18 @@ pub(crate) struct Meter {
     /// BLA-live reading size the opening dispatch of a no-BLA re-entry, which is exactly the frame
     /// that lost the device. The pessimistic latch costs at most a few ×1.5 climb frames; the
     /// optimistic one costs the device, and the asymmetry is the whole design.
+    ///
+    /// ⭐**…but not for the whole session (U23).** A slower reading is still adopted at once; a
+    /// faster one may raise it by at most 2× per `MODE_RATE_DOUBLING_S` ([`mode_rate_step`]). As a
+    /// session-long minimum it kept the worst reading of any pass forever: on the RTX 3080 budget
+    /// trap the small moving passes of an escaped-reference storm took it from 4e7 to 1.5e6
+    /// steps/ms and the opening guess from 4e8 to 5.9e7, on the RX 6800 XT to 6.8e5 and 2.7e7, for
+    /// the rest of the session; with B4 that guess is the unconfident admission. Recovery cannot
+    /// make anything unsafe: both readers are clamped to their historical constants (the opening
+    /// guess to `TDR_BOOTSTRAP_STEPS`, the chunk floor to 256 iterations).
     pub(crate) mode_rate: [[f64; MODE_RATE_SLOTS]; 2],
+    /// When each `mode_rate` slot last took a reading, seconds of process time.
+    pub(crate) mode_rate_t: [[f64; MODE_RATE_SLOTS]; 2],
     /// SMOOTHNESS-pacing rate per mode: nominal steps per ms as currently measured (an
     /// asymmetric EMA — a slower reading is adopted at once, a faster one is blended in), as
     /// opposed to `mode_rate`'s all-time pessimistic minimum. `mode_rate` sizes SAFETY floors and
@@ -708,9 +730,18 @@ impl Meter {
         (r.is_finite() && r > 0.0).then_some(r)
     }
 
-    /// Fold one priced dispatch into this view's per-mode rate, keeping the PESSIMISTIC extreme.
-    /// See the `mode_rate` field comment for why this is a min and not an average.
-    pub(crate) fn record_mode_rate(&mut self, v: usize, mode: u32, straddles_switch: bool, ms: f64, steps: u64) {
+    /// Fold one priced dispatch into this view's per-mode rate, keeping the PESSIMISTIC extreme,
+    /// which recovers slowly ([`mode_rate_step`]). See the `mode_rate` field comment for why this
+    /// is a min and not an average. `now_s` is process time in seconds.
+    pub(crate) fn record_mode_rate(
+        &mut self,
+        v: usize,
+        mode: u32,
+        straddles_switch: bool,
+        ms: f64,
+        steps: u64,
+        now_s: f64,
+    ) {
         let (Some(s), true) = (slot(mode), ms > 0.0 && steps > 0) else {
             return;
         };
@@ -730,8 +761,9 @@ impl Meter {
         if !rate.is_finite() || rate <= 0.0 {
             return;
         }
-        let cur = self.mode_rate[v][s];
-        self.mode_rate[v][s] = if cur > 0.0 { cur.min(rate) } else { rate };
+        let elapsed = (now_s - self.mode_rate_t[v][s]).max(0.0);
+        self.mode_rate[v][s] = mode_rate_step(self.mode_rate[v][s], rate, elapsed);
+        self.mode_rate_t[v][s] = now_s;
     }
 
     /// The smoothness-pacing rate for this view's CURRENT mode (nominal steps per ms), or 0.0
@@ -1064,3 +1096,5 @@ mod admission_tests;
 mod settle_tile_tests;
 #[cfg(test)]
 mod settle_strip_tests;
+#[cfg(test)]
+mod mode_rate_tests;

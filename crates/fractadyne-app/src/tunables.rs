@@ -1008,6 +1008,12 @@ pub(crate) const SETTLE_SERIALIZE_DEFAULT: u64 = 1;
 /// measurement and as a field fallback.
 pub(crate) const ADMISSION_DEFAULT: u64 = 1;
 
+/// Seconds over which `Meter::mode_rate`'s pessimistic minimum may at most double once readings
+/// say the mode has got faster (U23; `render::mode_rate_step`). Slow enough that a storm still in
+/// progress keeps it low (its own readings re-lower it at once), fast enough that a session is not
+/// sized by its worst minute forever: a 20× drop recovers in ~45 s of readings.
+pub(crate) const MODE_RATE_DOUBLING_S: f64 = 10.0;
+
 /// Frames a settle grid waits, at most, for the learned budget to be confident before it freezes
 /// its tile geometry (`next_settle_tile`). A grid's geometry is fixed for its whole life, and a
 /// view is often unconfident for the first frames of a settle (its readings were sparse in
