@@ -2974,3 +2974,31 @@ Evidence, RTX 3080 (three interleaved runs per arm unless stated):
   4.333e9).
 - **Next:** one PLUTO run of the trap with this build (ask first), then the token.
 
+**2026-10-12 — B4's admission on the RX 6800 XT (field build `v0.3.0-beta.19.dev.3`, PLUTO, the
+same trap; user approved).** Exit 0 in 52 s, logcheck PASS, 0 of 225 dispatches over the admission.
+
+| run (same command) | frames > 200 ms | > 400 ms | worst five (ms) |
+|---|---|---|---|
+| dev.1, shadow only | 7 | 3 | 713, 495, 443, 392, 357 |
+| dev.2, + settle serialization | 7 | 2 | 734, 496, 386, 346, 345 |
+| dev.3, + admission | 6 | 1 | 468, 393, 340, 315, 282 |
+
+- **The cap set on the first grid's first tile** (8.06e9, the ceiling's size, ~0.7 s to completion):
+  4.83e9 at 7.4 s. The next tile went out as two strips (4.83e9 + 7.5e8), as designed. A fast
+  representative completion later relaxed it to 5.18e9.
+- **The second settle sized its grid from the cap** (528-pixel tiles, 5.16e9). In the trap's later,
+  heavier regime that tile took ~0.9 s (the 468 ms worst frame), and the cap tightened to 2.58e9.
+- **Then the settle changed path.** The chunk decision compares the frame's ss 1 cost (4.24e9) with
+  the admission. Against the 8.08e9 ceiling it fit, so earlier builds tiled at ss 2; against
+  2.58e9 it does not, so this build chunked, and the walk finished cleanly (no frame over 85 ms) at
+  ss 1, which is where a chunked settle stays: its supersampling is capped by what one
+  full-iteration dispatch affords. dev.1 and dev.2 ended this view at ss 2, tiled; dev.3 at ss 1,
+  chunked. That is §5.1's "chunk whatever the budget says" applied where the wall clock distrusts
+  the budget, and it is the existing preference for the iteration axis (tiles in an escaped-
+  reference storm cost the full chain each). The price is the view's final supersampling, on a view
+  whose tiles ran past half a second.
+- **Unconfident:** 30 frames bound, all with passes already under the admission; the binding term
+  flips often in motion (the log holds back 9–11 changes per 2 s line).
+- **Open:** whether a hostile view should keep its ss 2 as admitted tiles rather than an ss 1 walk
+  (a policy choice, not a safety one: both bound every dispatch); the `Admission` token.
+
