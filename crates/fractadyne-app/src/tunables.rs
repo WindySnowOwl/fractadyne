@@ -89,6 +89,8 @@ pub(crate) struct Cost {
     pub dispatch_ceiling: u64,
     /// One settle tile in flight per view (`SETTLE_SERIALIZE_DEFAULT`; 0 = off, 1 = on).
     pub settle_serialize: u64,
+    /// B4's admission sizes each dispatch (`ADMISSION_DEFAULT`; 0 = recorded only, 1 = on).
+    pub admission: u64,
     /// The mode-2 df32 tail phase (`TAIL_DF32_DEFAULT`; 0 = off, 1 = on).
     pub tail_df32: u64,
     /// The overlapped pick + centre build (`REF_OVERLAP_DEFAULT`; 0 = off, 1 = on).
@@ -150,6 +152,7 @@ impl Default for Cost {
             dead_man: DEAD_MAN_DEFAULT,
             dispatch_ceiling: DISPATCH_CEILING_DEFAULT,
             settle_serialize: SETTLE_SERIALIZE_DEFAULT,
+            admission: ADMISSION_DEFAULT,
             tail_df32: TAIL_DF32_DEFAULT,
             ref_overlap: REF_OVERLAP_DEFAULT,
             early_ref: EARLY_REF_DEFAULT,
@@ -365,6 +368,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "ADMISSION" => {
+                let p = c.admission;
+                c.admission = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set ADMISSION: '{raw}' is not 0 (recorded only) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "SA_TRACE" => {
                 let p = c.sa_trace;
                 c.sa_trace = match raw.as_str() {
@@ -535,7 +547,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     TDR_BOOTSTRAP_MS, MOTION_UNPRICED_MAX, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL, \
-    DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
+    DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
     CHUNK_SHUFFLE, WORKER_MOTION, WORKER_PASS_MS";
 
@@ -986,6 +998,23 @@ pub(crate) const DISPATCH_CEILING_DEFAULT: u64 = 1;
 /// 495 ms; budget trap, 2026-10-12). 0 = the old one-per-frame cadence, for the before/after
 /// measurement and as a field fallback.
 pub(crate) const SETTLE_SERIALIZE_DEFAULT: u64 = 1;
+
+/// 1 = B4's ADMISSION sizes each dispatch (design/live-render-robustness.md §5.1;
+/// `render::admit`): a chunk pass, a settle tile, an un-chunked frame or a live refresh carries at
+/// most the learned size bounded by the wall-clock cap (set only after a slow frame) and, while no
+/// reading has fed the learned budget for `CONFIDENT_FRAMES`, by the opening guess. Planning (ss,
+/// the tile allowance) keeps the learned size: the admission bounds what goes out, not what is
+/// aimed for. 0 = computed and recorded only (the shadow of `c3907dd`), for the before/after
+/// measurement and as a field fallback.
+pub(crate) const ADMISSION_DEFAULT: u64 = 1;
+
+/// Frames a settle grid waits, at most, for the learned budget to be confident before it freezes
+/// its tile geometry (`next_settle_tile`). A grid's geometry is fixed for its whole life, and a
+/// view is often unconfident for the first frames of a settle (its readings were sparse in
+/// motion), so sizing the grid then would fix the opening guess for every tile: 5.4e7 steps
+/// against 1.45e10 on the RTX 3080 trap. The coarse arm frame's own reading usually lands two or
+/// three frames later; past this the grid starts at the admitted size.
+pub(crate) const GRID_CONFIDENCE_WAIT_FRAMES: u64 = 30;
 
 /// 1 = the mode-2 df32 TAIL PHASE (beta.141; `TAIL_DF32_MIN` in mandelbrot.wgsl): a Mandelbrot
 /// full step whose |δz| has grown past 2^-60 runs in df32 instead of floatexp. The step counters

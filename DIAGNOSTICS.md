@@ -146,10 +146,12 @@ A crash report prints the last 40 rows under `frames  :` and writes all of them 
 `-frames.jsonl` beside it. `session :` in the report joins the three files. The encoding is
 `validation/frame-schema.json` (`--dump-frame-schema` regenerates it; a test fails if it is stale),
 and `--recordtest` is the gate that proves the record is being written. Schema 4 adds the frame
-budget's admission, SHADOW (design/live-render-robustness.md §5.1, B4): `wall_cap` (the
-wall-clock cap, 0 = none; set only when a dispatch is followed by a slow frame), `admitted` (the steps `admit()` would have let the
-dispatch carry), `admit_bound` (0 learned, 1 wall clock, 2 unconfident) and `confident`. They size
-nothing yet; the `[fd-render] admission (shadow)` line marks a change of binding term. Schema 5
+budget's admission (design/live-render-robustness.md §5.1, B4): `wall_cap` (the wall-clock cap,
+0 = none; set only when a dispatch takes past 600 ms from dispatch to completion), `admitted` (the
+most one dispatch may carry), `admit_bound` (0 learned, 1 wall clock, 2 unconfident) and
+`confident`. With `ADMISSION` on they bound every dispatch; the `[fd-render] admission v0: bound
+by …` line marks a change of binding term (`admission (recorded only)` with `ADMISSION=0`;
+builds before the reaction wrote `admission (shadow)`). Schema 5
 adds `priced_steps`, the step count the wall clock prices the view's last dispatch at
 (`fe_steps_last`); on a dispatched frame it should equal `nominal_steps`, except a split live
 refresh, whose pass carries a share of the frame (not yet reconciled). It also adds `queue_busy`:
@@ -280,7 +282,17 @@ measurement or as a fallback): a view's next settle tile waits until the GPU con
 previous work complete (a completion callback, not a frame interval, which can be quick while a
 tile is still running), so each view has at most one tile in the queue. A completion that has not
 come after 3 s releases the tile anyway and logs `settle tile: view N's queued work has no
-completion after 3000 ms — tile released anyway`. — and `TAIL_DF32`
+completion after 3000 ms — tile released anyway`. — and `ADMISSION` (default 1; `0` = computed
+and recorded only, for a before/after measurement or as a fallback): each dispatch carries at most
+the learned size, bounded by the wall-clock cap and, while no GPU reading has reached the learned
+budget for 16 frames, by the opening guess. It bounds what goes out, not what is planned: the
+supersampling and the tile allowance keep the learned size, while the chunk decision, every chunk
+pass (including the walk's iteration floor), every settle tile, the un-tiled frame's resolution
+shrink and the live refreshes take the admission. A tile larger than the admission (a cap set by
+an earlier tile of the same grid) goes out as horizontal strips, and a grid waits up to 30 frames
+for a confident budget before fixing its tile size. The wall-clock cap is priced from each
+dispatch's completion callback, reacts only past 600 ms, aims back at 400 ms, relaxes on fast
+dispatches, and is left alone while presents are throttled. — and `TAIL_DF32`
 (default 1 from beta.141; `0` = off, for a before/after measurement): a deep (floatexp) Mandelbrot
 step whose offset from the reference has grown past 2^-60 runs in ordinary df32 arithmetic instead
 of floatexp, and back if it shrinks. The share of steps taken that way is the `in df32` figure on a

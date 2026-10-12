@@ -883,6 +883,20 @@ pub(crate) fn key_change_steps(spx: u64, ss: u32, gpu_iter: u32, tile: Option<[u
     }
 }
 
+/// The next piece of a settle tile that fits the admission: the full tile `full` (`[x, y, w, h]`,
+/// base pixels) from row `row` on, as many whole rows as `admitted` affords at `per_row` steps a
+/// row, at least one. A tile the admission covers comes back whole.
+///
+/// ⭐A grid freezes its geometry on its first tile, so an admission that drops mid-grid (a wall cap
+/// set by one of its own tiles running past `TDR_LATENCY_ACCEPT_MS`) used to leave every remaining
+/// tile at the old size: on the RTX 3080, three tiles of 1.1e10–1.45e10 steps after a cap of 8.9e9.
+/// Splitting the tile into rows keeps the grid's order and everything already composed.
+pub(crate) fn settle_strip(full: [u32; 4], row: u32, per_row: u64, admitted: u64) -> [u32; 4] {
+    let row = row.min(full[3].saturating_sub(1));
+    let fit = ((admitted / per_row.max(1)).min(u32::MAX as u64) as u32).max(1);
+    [full[0], full[1] + row, full[2], fit.min(full[3] - row)]
+}
+
 /// The latest completed registration of a view's work (`Perf::view_done`): its sequence, its time
 /// from dispatch to the completion callback, and the steps it carried.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -994,13 +1008,22 @@ pub(crate) fn admit(learned: u64, wall_cap: u64, bootstrap: u64, confident: bool
 }
 
 /// One reading of the WALL-CLOCK CAP (design §5.1's `wall_budget`, made one-sided by the evidence):
-/// `steps` dispatched, `ms` the longest frame interval of the one it was submitted in and the two
-/// after it ([`wall_probe_step`]). 0 = no cap.
+/// `steps` dispatched and `ms` from its dispatch to the GPU's completion callback (`Perf::view_done`,
+/// which includes any work queued ahead of it, so it errs long). 0 = no cap.
 ///
-/// It only ever says "too high". It does not exist until a priced interval is SLOW (over the
-/// target): the dispatch that took it is shrunk by [`budget_step`]'s arithmetic (its own size times
-/// target/ms, the raw ratio past the lethal band), and that is the cap. A fast reading relaxes an
-/// existing cap through the same arithmetic, and a cap relaxed to the ceiling is dropped.
+/// It only ever says "too high". It does not exist until a dispatch is SLOW past
+/// `TDR_LATENCY_ACCEPT_MS` (600 ms): the dispatch is then shrunk by [`budget_step`]'s arithmetic
+/// toward the 400 ms target (its own size times target/ms, the raw ratio past the lethal band), and
+/// that is the cap. Between the target and 600 ms it neither sets nor tightens: a settled pass is
+/// SIZED to land near 400 ms and its completion reads a frame or two late, so a trigger at the
+/// target would make the cap a second controller of every walk. A fast reading relaxes an existing
+/// cap through the same arithmetic, and a cap relaxed to the ceiling is dropped.
+///
+/// ⚠**Why completion, not the frame interval.** It was priced by the longest of the three frame
+/// intervals after a dispatch (`wall_probe_step`). Serialized settle tiles spread a tile's cost over
+/// several frames, and on the RX 6800 XT an 8.06e9-step tile of about half a second showed as 234,
+/// 386 and 345 ms intervals, none of them slow, so the cap never set on the first grid
+/// (2026-10-12, field build dev.2).
 ///
 /// ⭐**Why one-sided.** Specified as a second learned budget, the wall term trails the climb: it
 /// learns from whatever was dispatched, and while the view moves that is small motion passes. On
@@ -1012,12 +1035,13 @@ pub(crate) fn wall_cap_step(cap: u64, steps: u64, ms: f64, explicit: bool) -> u6
     if steps == 0 || !ms.is_finite() || ms <= 0.0 {
         return cap;
     }
-    let (target_ms, ceil) = if explicit {
-        (crate::tunables::cost().tdr_explicit_budget_ms, crate::tunables::cost().explicit_steps_ceil)
+    // The target is `budget_step`'s own (both regimes aim at 400 ms); this decides only WHEN to act.
+    let ceil = if explicit {
+        crate::tunables::cost().explicit_steps_ceil
     } else {
-        (crate::tunables::cost().tdr_budget_ms, crate::tunables::cost().tdr_steps_ceil)
+        crate::tunables::cost().tdr_steps_ceil
     };
-    if ms > target_ms {
+    if ms > crate::tunables::cost().tdr_latency_accept_ms {
         // The dispatch that ran slow, shrunk: `budget_step` from its own size (`min(cap, steps)`).
         let base = if cap == 0 { steps } else { cap.min(steps) };
         return budget_step(base, steps, ms, explicit).map_or(base, |(next, _)| next);
@@ -1036,3 +1060,5 @@ pub(crate) fn wall_cap_step(cap: u64, steps: u64, ms: f64, explicit: bool) -> u6
 mod admission_tests;
 #[cfg(test)]
 mod settle_tile_tests;
+#[cfg(test)]
+mod settle_strip_tests;

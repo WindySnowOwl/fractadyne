@@ -96,6 +96,11 @@ pub(crate) struct TileGrid {
     pub geo: Option<([u32; 2], u32, u32)>,
     /// Next tile index (in center-out order) to render.
     pub next: u32,
+    /// Rows of tile `next` already sent: a tile larger than the admission goes out as strips
+    /// (`render::settle_strip`). 0 = none yet.
+    pub row: u32,
+    /// The last rect sent, which a completed grid repeats so the GPU dedupes it.
+    pub last: [u32; 4],
 }
 
 /// Result of a multi-reference glitch-corrected iteration render (`render_corrected_iter`):
@@ -4782,6 +4787,25 @@ impl FractadyneApp {
         gpu_iter: u32,
         tdr_steps: u64,
     ) -> ([u32; 4], bool) {
+        // ⭐A grid about to FREEZE its geometry waits while the learned budget is unconfident (B4;
+        // `GRID_CONFIDENCE_WAIT_FRAMES`). The side is sized from `tdr_steps` here, which is the
+        // admission, and an unconfident admission is the opening guess; a view is often unconfident
+        // for the first frames of a settle, and a grid sized then keeps tiles of the guess for its
+        // whole life (5.4e7 steps against 1.45e10 on the RTX 3080 trap). The coarse arm frame's own
+        // reading usually lands a few frames later; past the wait the grid starts at the admission.
+        let freezes = !matches!(
+            self.perf.tile_state[vidx].as_ref().and_then(|g| g.geo),
+            Some(g) if g.0 == resolution && g.1 == ss
+        );
+        if freezes && !self.perf.admission[vidx].2 && crate::tunables::cost().admission == 1 {
+            let since = *self.perf.grid_wait_from[vidx].get_or_insert(self.perf.frame_idx);
+            if self.perf.frame_idx.saturating_sub(since) < crate::tunables::GRID_CONFIDENCE_WAIT_FRAMES {
+                self.perf.tile_pending[vidx] = true;
+                return ([0, 0, 0, 0], false);
+            }
+        } else {
+            self.perf.grid_wait_from[vidx] = None;
+        }
         // Read before `state` borrows the grid (the hold below uses them).
         let outstanding = self.perf.view_outstanding(vidx);
         let last_done = self.perf.view_last_done(vidx);
@@ -4800,6 +4824,7 @@ impl FractadyneApp {
                 let side = side.clamp(16, resolution[0].max(resolution[1]).max(16));
                 state.geo = Some((resolution, ss, side));
                 state.next = 0;
+                state.row = 0;
                 (resolution, ss, side)
             }
         };
@@ -4829,8 +4854,20 @@ impl FractadyneApp {
             // runs — pricing this as a dispatch feeds the cost controller a frame interval with
             // no work behind it, and the corner rect it repeats is far under budget size, so
             // every such "reading" is discarded and the budget never moves off the bootstrap.
-            return (rect(idx), false);
+            // The rect LAST SENT, which after strips is the final strip, not the whole tile.
+            let last = if state.last[2] > 0 && state.last[3] > 0 { state.last } else { rect(idx) };
+            return (last, false);
         }
+        // The piece of this tile that fits the admission (B4): the whole tile unless the admission
+        // has dropped below the grid's frozen tile size since the grid started.
+        let piece = if crate::tunables::cost().admission == 1 {
+            let per_row = (rect(idx)[2] as u64)
+                .saturating_mul((ss as u64) * (ss as u64))
+                .saturating_mul(gpu_iter.max(1) as u64);
+            settle_strip(rect(idx), state.row, per_row, tdr_steps)
+        } else {
+            rect(idx)
+        };
         // Hold while the OTHER view is busy: its tile (turn token), its own budget-sized
         // re-iterate (two ~TDR_BUDGET_MS dispatches in one egui submission pair up toward the
         // watchdog), or the user interacting in it (a ~1 s tile per frame would pin the
@@ -4841,7 +4878,7 @@ impl FractadyneApp {
         // to go out one per frame, and on the RX 6800 XT four of them queued behind one another. The
         // present gate keeps serving the snapshot meanwhile, and `tile_pending` keeps the repaints
         // coming that notice the completion.
-        if settle_tile_waits(outstanding, last_done, tile_steps(rect(idx), ss, gpu_iter), reg_age) {
+        if settle_tile_waits(outstanding, last_done, tile_steps(piece, ss, gpu_iter), reg_age) {
             self.perf.tile_pending[vidx] = true;
             return ([0, 0, 0, 0], false);
         }
@@ -4868,9 +4905,15 @@ impl FractadyneApp {
             return ([0, 0, 0, 0], false);
         }
         self.perf.tile_turn = self.perf.frame_idx;
-        state.next += 1;
+        let full = rect(idx);
+        state.row = (piece[1] - full[1]) + piece[3];
+        if state.row >= full[3] {
+            state.next += 1;
+            state.row = 0;
+        }
+        state.last = piece;
         self.perf.tile_pending[vidx] = state.next < n;
-        (rect(idx), true)
+        (piece, true)
     }
 }
 
@@ -5726,6 +5769,17 @@ impl FractadyneApp {
                     ((crate::tunables::cost().tdr_budget_ms * rate) / per_iter) as u32
                 });
                 affordable.map_or(256, |a| a.clamp(1, 256))
+            };
+            // ⭐…and never above what B4's admission lets one pass carry (`tdr_steps` is the
+            // admission here). The floor is the least a pass may carry and the admission the most;
+            // where they cross, the admission wins. Without this an unconfident settle on the
+            // RTX 3080 trap walked 256-iteration passes (3.9e8 steps) against an admission of
+            // 4.8e7: the pass size was admitted and the floor lifted it straight back.
+            let floor = if crate::tunables::cost().admission == 1 {
+                let per_iter = spx.saturating_mul(ss2).max(1);
+                floor.min(((tdr_steps / per_iter) as u32).max(1))
+            } else {
+                floor
             };
             // ---- PRICE-SERIALIZED WALKING, pricing half (design/mode2-chunking.md §12) ----
             // The settled walk holds AT MOST ONE unpriced pass in flight. The in-flight pass
@@ -8303,13 +8357,14 @@ impl FractadyneApp {
         } else {
             tdr_steps
         };
-        if !offscreen && !will_reproject {
-            self.perf.frozen_budget[vidx] = tdr_steps;
-            // ⭐B4's ADMISSION, SHADOW (design/live-render-robustness.md §5.1): what `admit()` would
-            // let this frame dispatch — the size just arrived at, bounded by the wall-clock cap (set
-            // only by a slow frame) and, while no reading has fed the learned budget for
-            // `CONFIDENT_FRAMES`, by the opening guess. Recorded every frame and logged when its binding term changes; it sizes
-            // nothing in this build.
+        // ⭐B4's ADMISSION (design/live-render-robustness.md §5.1; `ADMISSION`): the most one dispatch
+        // of this frame may carry — the size just arrived at, bounded by the wall-clock cap (set
+        // only after a slow frame) and, while no reading has fed the learned budget for
+        // `CONFIDENT_FRAMES`, by the opening guess. `tdr_steps` stays the PLAN (ss, the tile
+        // allowance); `adm` bounds what goes out: the chunk decision and every chunk pass, the
+        // settle tiles, the un-tiled frame's shrink and the live refreshes. Recorded every frame and
+        // logged when its binding term changes; with `ADMISSION=0` it is only recorded.
+        let adm = if !offscreen && !will_reproject {
             let confident = budget_confident(
                 self.perf.fe_dispatch_frame[vidx],
                 self.perf.fed_frame[vidx],
@@ -8319,13 +8374,15 @@ impl FractadyneApp {
                 admit(tdr_steps, self.perf.wall_cap[vidx], self.perf.bootstrap_steps(vidx), confident);
             let prev = self.perf.admission[vidx].1;
             self.perf.admission[vidx] = (admitted, bound, confident);
+            let on = crate::tunables::cost().admission == 1;
             if bound != prev {
                 if let Some(held) = self.perf.admission_line[vidx].admit(crate::diag::elapsed_ms(), 2_000) {
                     crate::diag::log_line(
                         "render",
                         &format!(
-                            "admission (shadow) v{vidx}: bound by {} — size {:.3e}, admitted {:.3e}, \
+                            "admission{} v{vidx}: bound by {} — size {:.3e}, admitted {:.3e}, \
                              wall cap {:.3e}{}",
+                            if on { "" } else { " (recorded only)" },
                             bound.name(),
                             tdr_steps as f64,
                             admitted as f64,
@@ -8335,7 +8392,14 @@ impl FractadyneApp {
                     );
                 }
             }
-        }
+            let adm = if on { admitted } else { tdr_steps };
+            // A reproject frame re-samples this frame's texture and must land on its resolution,
+            // which the admission sized (the shrink below); a tiled frame overrides it with MAX.
+            self.perf.frozen_budget[vidx] = adm;
+            adm
+        } else {
+            tdr_steps
+        };
         // TILED SETTLE. A single dispatch caps a settled deep frame at whatever resolution fits the
         // watchdog budget — at a worst-case interior view that is a fraction of the panel, displayed
         // upscaled and permanently blocky. So once the view is SETTLED, spend up to TDR_MAX_TILES
@@ -8492,7 +8556,7 @@ impl FractadyneApp {
                     // tear the grid down — that threw away completed near-native frames whenever a
                     // stray measurement nudged the budget.
                     self.perf.tile_state[vidx] =
-                        Some(TileGrid { key: view_key, geo: None, next: 0 });
+                        Some(TileGrid { key: view_key, geo: None, next: 0, row: 0, last: [0; 4] });
                     false
                 }
                 _ => false,
@@ -8594,14 +8658,14 @@ impl FractadyneApp {
                 || (!live_refresh
                     && spx.saturating_mul(gpu_iter.max(1) as u64)
                         > if interacting && !live_refresh {
-                            tdr_steps.min(motion_pass_steps(
+                            adm.min(motion_pass_steps(
                                 self.perf.motion_rate_now(vidx),
                                 crate::tunables::MOTION_PASS_MS,
-                                tdr_steps,
+                                adm,
                                 crate::tunables::cost().tdr_bootstrap_steps,
                             ))
                         } else {
-                            tdr_steps
+                            adm
                         }));
         // A pin outliving `chunk_over` (the budget grew past the ask mid-progression) hands off:
         // this frame still renders the PINNED view — un-chunked and COMPLETE, affordable by the
@@ -8640,10 +8704,13 @@ impl FractadyneApp {
             // measurement prices it past what the budget has learned so far, but never past the
             // bound nothing learned may raise (`live_fit` already declined any deep shrink). A
             // probe fits its own bound (`live_probe_cap`, never above the ceiling).
+            // The admission bounds each of them; a tiled frame's allowance is spent as tiles, each
+            // of which is admitted on its own.
             let cap = match live_verdict {
-                LiveRefresh::Priced | LiveRefresh::Split(_) | LiveRefresh::Reprobe(_) => live_cap,
-                LiveRefresh::Probe => live_probe_cap,
-                LiveRefresh::No => tdr_allowed,
+                LiveRefresh::Priced | LiveRefresh::Split(_) | LiveRefresh::Reprobe(_) => live_cap.min(adm),
+                LiveRefresh::Probe => live_probe_cap.min(adm),
+                LiveRefresh::No if tiling => tdr_allowed,
+                LiveRefresh::No => tdr_allowed.min(adm),
             };
             if iter_cost > cap && !chunk_over {
                 let f = (cap as f64 / iter_cost as f64).sqrt();
@@ -8757,8 +8824,8 @@ impl FractadyneApp {
             let total = spx
                 .saturating_mul((ss as u64).saturating_mul(ss as u64))
                 .saturating_mul(gpu_iter.max(1) as u64);
-            if total > tdr_steps {
-                let (rect, advanced) = self.next_settle_tile(vidx, resolution, ss, gpu_iter, tdr_steps);
+            if total > adm {
+                let (rect, advanced) = self.next_settle_tile(vidx, resolution, ss, gpu_iter, adm);
                 if advanced && rect[2] > 0 && rect[3] > 0 {
                     self.perf.fe_steps_last[vs] = tile_steps(rect, ss, gpu_iter);
                     // This frame runs a real pass, even though the iterate KEY is unchanged.
@@ -8813,7 +8880,7 @@ impl FractadyneApp {
             gpu_iter,
             ss,
             spx,
-            tdr_steps,
+            adm, // every pass is admitted (`tdr_steps` is the plan)
             tdr_allowed,
             max_tiles,
             chunk_over,

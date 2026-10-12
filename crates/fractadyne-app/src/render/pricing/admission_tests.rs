@@ -50,6 +50,17 @@ fn there_is_no_wall_cap_until_a_frame_runs_slow() {
 }
 
 #[test]
+fn a_dispatch_over_the_target_but_inside_the_accept_window_sets_nothing() {
+    // A settled pass is sized to land near 400 ms and its completion reads a frame or two late.
+    let accept = crate::tunables::cost().tdr_latency_accept_ms;
+    assert_eq!(wall_cap_step(0, 1e10 as u64, 450.0, false), 0);
+    assert_eq!(wall_cap_step(0, 1e10 as u64, accept, false), 0);
+    assert!(wall_cap_step(0, 1e10 as u64, accept + 1.0, false) > 0);
+    // …and does not tighten an existing cap either.
+    assert_eq!(wall_cap_step(4e9 as u64, 4e9 as u64, 500.0, false), 4e9 as u64);
+}
+
+#[test]
 fn a_slow_frame_caps_below_the_dispatch_that_ran_slow() {
     let cap = wall_cap_step(0, 1e10 as u64, 1_200.0, false);
     assert!(cap > 0 && cap < 1e10 as u64, "{cap:e}");

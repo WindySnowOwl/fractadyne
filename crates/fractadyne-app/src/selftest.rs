@@ -6904,6 +6904,12 @@ impl FractadyneApp {
                 self.perf.fe_budget_ok = [false, false];
                 let deep_build = |app: &mut Self, iter: u32| -> ([u32; 2], bool) {
                     app.perf.frame_idx += 1;
+                    // Every frame here stands for one whose reading fed the budget: the checks inject
+                    // a converged budget, and no GPU reading ever arrives in this harness, so without
+                    // this B4's admission would call that budget unconfident after CONFIDENT_FRAMES
+                    // and size the grid from the opening guess (a 540-tile grid then outlives 900
+                    // frames).
+                    app.perf.fed_frame = [app.perf.frame_idx; 2];
                     let center_bf = [app.viewport.center_x.clone(), app.viewport.center_y.clone()];
                     let center = app.viewport.center_f64();
                     let span = app.viewport.complex_span_fe();

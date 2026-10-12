@@ -1344,12 +1344,13 @@ struct Perf {
     /// after the frame that submitted it, so it cannot be priced in place.
     wall_probe: [Option<(u64, u64, f64)>; 2],
     /// ⭐The WALL-CLOCK CAP per view (design/live-render-robustness.md §5.1, B4's `wall_budget`,
-    /// one-sided: 0 = none): set when a dispatch is followed by a slow frame interval, relaxed by
-    /// fast ones (`render::wall_cap_step`). Priced on every frame, never latched, never frozen.
-    /// SHADOW in this build — recorded with the admission it would bound.
+    /// one-sided: 0 = none): set when a dispatch takes past `TDR_LATENCY_ACCEPT_MS` from dispatch to
+    /// completion, relaxed by fast ones (`render::wall_cap_step`), priced in `update` from each new
+    /// `view_done`. Never latched; frozen only while presents are throttled. The admission bounds
+    /// every dispatch by it (`ADMISSION`).
     wall_cap: [u64; 2],
-    /// Its own deferred probe; `wall_probe` belongs to the fallback that prices `fe_budget`.
-    wall_cap_probe: [Option<(u64, u64, f64)>; 2],
+    /// The `view_done` sequence last priced into `wall_cap`.
+    view_priced_seq: [u64; 2],
     /// The last frame a reading reached this view's learned budget: a GPU reading, or the wall
     /// clock while the fallback stands in for one. What `render::budget_confident` reads.
     fed_frame: [u64; 2],
@@ -1432,6 +1433,9 @@ struct Perf {
     view_done: [std::sync::Arc<std::sync::Mutex<render::ViewDone>>; 2],
     /// The `view_reg_seq` whose overdue completion was last logged (one line per registration).
     view_overdue_logged: [u64; 2],
+    /// The frame a settle grid began waiting for a confident budget before freezing its geometry
+    /// (`GRID_CONFIDENCE_WAIT_FRAMES`); `None` = not waiting.
+    grid_wait_from: [Option<u64>; 2],
     /// The last dispatched pin pass: its nominal steps (the key its GPU timestamp reading is
     /// paired by — `apply_iterate_measurement` stores the FIRST reading whose steps match), the
     /// frame it went out, and the paired GPU time (< 0 = not yet). The completion stamp above is
@@ -2015,6 +2019,7 @@ impl Perf {
         if let Ok(mut d) = self.view_done[v].lock() {
             d.seq = self.view_reg_seq[v];
         }
+        self.view_priced_seq[v] = self.view_reg_seq[v];
     }
 
     /// The last completed registration of this view's work (see `view_reg_pending`).
@@ -2147,7 +2152,7 @@ impl Default for Perf {
             prev_offscreen_ms: 0.0,
             wall_probe: [None, None],
             wall_cap: [0, 0],
-            wall_cap_probe: [None, None],
+            view_priced_seq: [0, 0],
             fed_frame: [0, 0],
             admission: [(0, render::AdmitBound::Learned, true); 2],
             admission_line: Default::default(),
@@ -2173,6 +2178,7 @@ impl Default for Perf {
             view_reg_seq: [0, 0],
             view_reg_at: [0, 0],
             view_overdue_logged: [0, 0],
+            grid_wait_from: [None, None],
             view_done: Default::default(),
             pin_pass_steps: [0, 0],
             pin_pass_frame: [0, 0],
@@ -15346,33 +15352,6 @@ impl FractadyneApp {
             }
         }
     }
-
-    /// B4's WALL-CLOCK CAP (design/live-render-robustness.md §5.1), SHADOW: each dispatch priced by
-    /// the same deferred probe as the fallback — the longest of the interval it was submitted in and
-    /// the two after it — and folded into `wall_cap` by `render::wall_cap_step`. Unlike the fallback
-    /// it runs on every frame: no latch to trip, and no present-throttle freeze, because a frame that
-    /// dispatched and then waited is exactly what it exists to see (a throttled window that
-    /// dispatches nothing is never priced).
-    fn wall_cap_tick(&mut self, dt_ms: f64) {
-        if dt_ms.is_nan() || dt_ms <= 0.01 {
-            return;
-        }
-        let explicit = !self.render_cfg.auto_iter;
-        for v in 0..2 {
-            let dispatched = self.perf.fe_dispatch_frame[v] == self.perf.frame_idx;
-            let (probe, priced) = render::wall_probe_step(
-                self.perf.wall_cap_probe[v],
-                dispatched,
-                self.perf.fe_steps_last[v],
-                self.perf.frame_idx,
-                dt_ms,
-            );
-            self.perf.wall_cap_probe[v] = probe;
-            if let Some((ms, steps)) = priced {
-                self.perf.wall_cap[v] = render::wall_cap_step(self.perf.wall_cap[v], steps, ms, explicit);
-            }
-        }
-    }
 }
 
 // ================================================================================================
@@ -15643,6 +15622,23 @@ impl eframe::App for FractadyneApp {
                         at.store(app_micros(), std::sync::atomic::Ordering::Relaxed);
                         c.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     });
+                }
+                // B4's wall cap, priced by COMPLETION (`render::wall_cap_step`): each completion the
+                // callbacks recorded since last frame, once. Not while presents are throttled: the
+                // callbacks fire when the queue is polled, at the throttled frame rate, so a ~1 Hz
+                // background window would price every dispatch at ~1 s and walk the cap to the floor
+                // (the 2026-09-04 crush, 6 h at the bootstrap, moved from the budget to the cap).
+                let done = self.perf.view_last_done(v);
+                if done.seq > self.perf.view_priced_seq[v] {
+                    self.perf.view_priced_seq[v] = done.seq;
+                    if self.perf.present_throttle < render::PRESENT_THROTTLE_FRAMES {
+                        self.perf.wall_cap[v] = render::wall_cap_step(
+                            self.perf.wall_cap[v],
+                            done.steps,
+                            done.price_us as f64 / 1000.0,
+                            !self.render_cfg.auto_iter,
+                        );
+                    }
                 }
                 // The settle-tile gate (see `Perf::view_reg_pending`): one registration covers all
                 // of this view's work submitted so far.
@@ -16151,8 +16147,6 @@ impl eframe::App for FractadyneApp {
             // the frame budget can have. Here `dt`, `fe_iter_frame`, and `fe_steps_last` all still
             // describe the frame just drawn — see `wall_clock_budget_tick`.
             self.wall_clock_budget_tick(dt);
-            // …and the always-on wall-clock cap (B4, shadow), on the same interval.
-            self.wall_cap_tick(dt);
             // Resolve adaptive-AA probes (see `Perf::aa_probe`): a stage armed on frame F is
             // costed as the max frame interval over F+1..=F+2 — with frame latency 1 a heavy GPU
             // frame stalls the NEXT acquire, so its cost shows up one interval late. A resolution
