@@ -7094,6 +7094,10 @@ impl FractadyneApp {
             r.sa_skip_raw = sa.skip;
             r.bla_on = bla_on != 0;
             r.tdr_steps = tdr_steps;
+            let (admitted, bound, confident) = self.perf.admission[vs.min(1)];
+            r.admitted = admitted;
+            r.admit_bound = bound.code();
+            r.confident = confident;
             r.steps = steps;
             r.nominal_steps = nominal_steps;
             r.chunked = chunk_range.is_some();
@@ -8268,6 +8272,36 @@ impl FractadyneApp {
         };
         if !offscreen && !will_reproject {
             self.perf.frozen_budget[vidx] = tdr_steps;
+            // ⭐B4's ADMISSION, SHADOW (design/live-render-robustness.md §5.1): what `admit()` would
+            // let this frame dispatch — the size just arrived at, bounded by the always-on wall-clock
+            // budget and, while no reading has fed the learned budget for `CONFIDENT_FRAMES`, by the
+            // opening guess. Recorded every frame and logged when its binding term changes; it sizes
+            // nothing in this build.
+            let confident = budget_confident(
+                self.perf.fe_dispatch_frame[vidx],
+                self.perf.fed_frame[vidx],
+                self.perf.frame_idx,
+            );
+            let (admitted, bound) =
+                admit(tdr_steps, self.perf.wall_budget[vidx], self.perf.bootstrap_steps(vidx), confident);
+            let prev = self.perf.admission[vidx].1;
+            self.perf.admission[vidx] = (admitted, bound, confident);
+            if bound != prev {
+                if let Some(held) = self.perf.admission_line[vidx].admit(crate::diag::elapsed_ms(), 2_000) {
+                    crate::diag::log_line(
+                        "render",
+                        &format!(
+                            "admission (shadow) v{vidx}: bound by {} — size {:.3e}, admitted {:.3e}, \
+                             wall {:.3e}{}",
+                            bound.name(),
+                            tdr_steps as f64,
+                            admitted as f64,
+                            self.perf.wall_budget[vidx] as f64,
+                            if held > 0 { format!(" (+{held} changes held back)") } else { String::new() },
+                        ),
+                    );
+                }
+            }
         }
         // TILED SETTLE. A single dispatch caps a settled deep frame at whatever resolution fits the
         // watchdog budget — at a worst-case interior view that is a fraction of the panel, displayed

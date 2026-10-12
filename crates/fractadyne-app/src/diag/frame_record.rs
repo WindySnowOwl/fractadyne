@@ -52,7 +52,7 @@ use std::time::Duration;
 
 /// Bumped whenever a field is added, removed, retyped or reordered. Every record and every file
 /// header carries it, and a reader must refuse a schema it does not know rather than guess.
-pub(crate) const SCHEMA: u16 = 3;
+pub(crate) const SCHEMA: u16 = 4;
 /// Records the in-memory ring (and `frames.bin`) holds. At the 1–5 fps of the failing cadence
 /// that is 14–68 minutes of one view — the ring lengthens in TIME exactly as the app slows down,
 /// the opposite of the 24-entry decision ring it supersedes.
@@ -315,6 +315,13 @@ frame_record! {
     mode_rate: f64,
     motion_rate: f64,
     wall_fallback: bool,
+    /// B4, SHADOW (schema 4): the always-on wall-clock budget (0 = unmeasured), the steps `admit()`
+    /// would have let this frame's dispatch carry, which term bound it (0 learned, 1 wall clock,
+    /// 2 unconfident), and whether the learned budget was confident. Sizes nothing yet.
+    wall_budget: u64,
+    admitted: u64,
+    admit_bound: u8,
+    confident: bool,
     full_inflight: u32,
     pin_inflight: u32,
     present_throttle: u32,

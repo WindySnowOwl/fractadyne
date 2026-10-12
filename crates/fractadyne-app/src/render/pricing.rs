@@ -856,3 +856,87 @@ impl Meter {
         bootstrap_steps(this, other)
     }
 }
+
+/// Frames a view's newest dispatch may go without a reading feeding its learned budget before that
+/// budget stops vouching for the next dispatch ([`budget_confident`]). A GPU reading lands two to
+/// three frames after its pass, so eight is a reading lost, not one late.
+pub(crate) const CONFIDENT_FRAMES: u64 = 8;
+
+/// `budget_confident` (design/live-render-robustness.md §5.1, B4): is this view's learned budget
+/// fed by readings of the work it is sending? False once a real dispatch (`dispatch_frame`) has gone
+/// [`CONFIDENT_FRAMES`] without any reading reaching the learned budget (`fed_frame`: a GPU reading,
+/// or the wall clock while it stands in for one). An idle view is never unconfident: nothing is
+/// outstanding. An unfed budget may be stale in either direction, and the opening guess is the
+/// only size chosen to be safe without a measurement, so [`admit`] bounds such a frame by it.
+pub(crate) fn budget_confident(dispatch_frame: u64, fed_frame: u64, now: u64) -> bool {
+    !measurement_starved(dispatch_frame, fed_frame, now, CONFIDENT_FRAMES)
+}
+
+/// Which term bounds an admission ([`admit`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum AdmitBound {
+    /// The learned size, already capped by the fixed ceiling, the explicit bound and the motion jam.
+    #[default]
+    Learned,
+    /// The always-on wall-clock budget.
+    Wall,
+    /// The opening guess, because the learned budget is unconfident.
+    Unconfident,
+}
+
+impl AdmitBound {
+    /// The frame record's code: 0 learned, 1 wall, 2 unconfident.
+    pub(crate) fn code(self) -> u8 {
+        match self {
+            AdmitBound::Learned => 0,
+            AdmitBound::Wall => 1,
+            AdmitBound::Unconfident => 2,
+        }
+    }
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            AdmitBound::Learned => "learned",
+            AdmitBound::Wall => "wall clock",
+            AdmitBound::Unconfident => "unconfident (opening guess)",
+        }
+    }
+}
+
+/// `admit()` (design §5.1, B4) as a pure function: the steps one dispatch may carry. `learned` is the
+/// size the chain in `build_params` arrived at (learned budget, fixed ceiling, explicit bound, motion
+/// jam); it is further bounded by `wall_budget` (0 = not yet measured, no bound) and, while the
+/// learned budget is unconfident, by `bootstrap`. Never raises `learned`.
+///
+/// ⚠SHADOW in this build: `build_params` computes and records it every frame and sizes nothing from
+/// it. Where it would bind, and whether that is where it should, is the evidence the reaction waits on.
+pub(crate) fn admit(learned: u64, wall_budget: u64, bootstrap: u64, confident: bool) -> (u64, AdmitBound) {
+    let mut out = (learned, AdmitBound::Learned);
+    if wall_budget != 0 && wall_budget < out.0 {
+        out = (wall_budget, AdmitBound::Wall);
+    }
+    if !confident && bootstrap < out.0 {
+        out = (bootstrap, AdmitBound::Unconfident);
+    }
+    out
+}
+
+/// One reading of the always-on WALL-CLOCK budget (design §5.1, B4's `wall_budget`): `steps`
+/// dispatched, `ms` the longest frame interval of the one it was submitted in and the two after it
+/// ([`wall_probe_step`]). [`budget_step`]'s arithmetic, with one difference: it starts from the
+/// dispatch actually measured rather than from `cur`, because this budget does not size the
+/// dispatches it reads. A fast dispatch larger than `cur` proves at least its own size fits
+/// (`base = max(cur, steps)`); a slow one shrinks from `min(cur, steps)` inside [`budget_step`]; a
+/// fast one far smaller than `cur` says nothing and is discarded. 0 = unmeasured.
+pub(crate) fn wall_budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> u64 {
+    if steps == 0 || !ms.is_finite() || ms <= 0.0 {
+        return cur;
+    }
+    match budget_step(cur.max(steps), steps, ms, explicit) {
+        Some((next, _)) => next,
+        None => cur,
+    }
+}
+
+#[cfg(test)]
+mod admission_tests;

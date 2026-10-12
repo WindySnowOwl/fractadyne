@@ -1,10 +1,10 @@
 {
-  "schema": 3,
+  "schema": 4,
   "slot_bytes": 640,
   "slot_header_bytes": 32,
   "header_bytes": 4096,
   "ring_len": 4096,
-  "payload_bytes": 481,
+  "payload_bytes": 499,
   "slot_magic": "FDFR",
   "file_magic": "FDFH",
   "fields": [
@@ -44,6 +44,10 @@
     ["mode_rate", "f64"],
     ["motion_rate", "f64"],
     ["wall_fallback", "bool"],
+    ["wall_budget", "u64"],
+    ["admitted", "u64"],
+    ["admit_bound", "u8"],
+    ["confident", "bool"],
     ["full_inflight", "u32"],
     ["pin_inflight", "u32"],
     ["present_throttle", "u32"],
