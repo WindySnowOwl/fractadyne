@@ -4,3 +4,6 @@
 
 # Reorganize main.rs, render.rs, scripting.rs for first-read order (2026-09-02)
 1a13c685350ff4d8490e5b67873c93c637708923
+
+# Pricing family out of render.rs into render/pricing.rs, W2 step M2 (2026-10-12)
+f9b07d178cd4123d9353295bd973fac342b1abe4
