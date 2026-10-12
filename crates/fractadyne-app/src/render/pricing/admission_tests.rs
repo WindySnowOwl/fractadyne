@@ -1,5 +1,5 @@
 //! B4's admission (design/live-render-robustness.md §5.1), shadow: `admit`, `budget_confident` and
-//! the always-on wall-clock budget's step.
+//! the wall-clock cap's step.
 
 use super::*;
 
@@ -16,12 +16,12 @@ fn admit_never_raises_the_learned_size() {
 }
 
 #[test]
-fn an_unmeasured_wall_budget_bounds_nothing() {
+fn no_wall_cap_bounds_nothing() {
     assert_eq!(admit(3e10 as u64, 0, 4e8 as u64, true), (3e10 as u64, AdmitBound::Learned));
 }
 
 #[test]
-fn the_wall_budget_binds_when_it_is_lower() {
+fn the_wall_cap_binds_when_it_is_lower() {
     assert_eq!(admit(3e10 as u64, 2e10 as u64, 4e8 as u64, true), (2e10 as u64, AdmitBound::Wall));
     assert_eq!(admit(1e10 as u64, 2e10 as u64, 4e8 as u64, true), (1e10 as u64, AdmitBound::Learned));
 }
@@ -44,31 +44,45 @@ fn confidence_is_lost_only_by_an_outstanding_dispatch_going_unread() {
 }
 
 #[test]
-fn a_fast_dispatch_larger_than_the_wall_budget_proves_its_own_size() {
-    let next = wall_budget_step(4e8 as u64, 1e10 as u64, 30.0, false);
-    assert!(next >= 1e10 as u64, "{next:e}");
+fn there_is_no_wall_cap_until_a_frame_runs_slow() {
+    assert_eq!(wall_cap_step(0, 1e10 as u64, 30.0, false), 0);
+    assert_eq!(wall_cap_step(0, 1e8 as u64, 399.0, false), 0);
 }
 
 #[test]
-fn an_unmeasured_wall_budget_starts_from_the_first_dispatch() {
-    let next = wall_budget_step(0, 5e9 as u64, 100.0, false);
-    assert!(next >= 5e9 as u64, "{next:e}");
+fn a_slow_frame_caps_below_the_dispatch_that_ran_slow() {
+    let cap = wall_cap_step(0, 1e10 as u64, 1_200.0, false);
+    assert!(cap > 0 && cap < 1e10 as u64, "{cap:e}");
 }
 
 #[test]
-fn a_slow_dispatch_shrinks_the_wall_budget_below_its_own_size() {
-    let next = wall_budget_step(3e10 as u64, 1e10 as u64, 1_200.0, false);
-    assert!(next < 1e10 as u64, "{next:e}");
+fn a_slow_frame_tightens_an_existing_cap() {
+    let cap = wall_cap_step(5e9 as u64, 1e10 as u64, 1_200.0, false);
+    assert!(cap < 5e9 as u64, "{cap:e}");
 }
 
 #[test]
-fn a_fast_dispatch_far_smaller_than_the_wall_budget_says_nothing() {
-    assert_eq!(wall_budget_step(3e10 as u64, 1e8 as u64, 5.0, false), 3e10 as u64);
+fn a_fast_representative_frame_relaxes_the_cap_and_never_tightens_it() {
+    let cap = wall_cap_step(4e9 as u64, 4e9 as u64, 100.0, false);
+    assert!(cap > 4e9 as u64, "{cap:e}");
+    assert!(wall_cap_step(4e9 as u64, 4e9 as u64, 390.0, false) >= 4e9 as u64);
 }
 
 #[test]
-fn an_unusable_reading_leaves_the_wall_budget_alone() {
-    for (steps, ms) in [(0u64, 30.0), (1e9 as u64, 0.0), (1e9 as u64, f64::NAN), (1e9 as u64, f64::INFINITY)] {
-        assert_eq!(wall_budget_step(7e9 as u64, steps, ms, false), 7e9 as u64, "{steps} {ms}");
+fn a_fast_dispatch_far_smaller_than_the_cap_says_nothing() {
+    assert_eq!(wall_cap_step(4e9 as u64, 1e8 as u64, 5.0, false), 4e9 as u64);
+}
+
+#[test]
+fn a_cap_relaxed_to_the_ceiling_is_dropped() {
+    let ceil = crate::tunables::cost().tdr_steps_ceil;
+    assert_eq!(wall_cap_step(ceil / 10 * 9, ceil / 10 * 9, 50.0, false), 0);
+}
+
+#[test]
+fn an_unusable_reading_leaves_the_cap_alone() {
+    for (steps, ms) in [(0u64, 3_000.0), (1e9 as u64, 0.0), (1e9 as u64, f64::NAN), (1e9 as u64, f64::INFINITY)] {
+        assert_eq!(wall_cap_step(7e9 as u64, steps, ms, false), 7e9 as u64, "{steps} {ms}");
+        assert_eq!(wall_cap_step(0, steps, ms, false), 0, "{steps} {ms}");
     }
 }

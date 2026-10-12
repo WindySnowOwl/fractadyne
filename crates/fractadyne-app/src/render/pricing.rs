@@ -859,8 +859,11 @@ impl Meter {
 
 /// Frames a view's newest dispatch may go without a reading feeding its learned budget before that
 /// budget stops vouching for the next dispatch ([`budget_confident`]). A GPU reading lands two to
-/// three frames after its pass, so eight is a reading lost, not one late.
-pub(crate) const CONFIDENT_FRAMES: u64 = 8;
+/// three frames after its pass, but a PINNED chunk walk in motion is priced about one frame in ten
+/// (RTX 3080 zoomtest, 2026-10-12: 146 of 149 frames an 8-frame window flagged were those walks,
+/// every one of them fast). Sixteen clears that cadence and still flags a real starvation — the same
+/// run had one of 118 frames, the one that tripped the wall-clock fallback.
+pub(crate) const CONFIDENT_FRAMES: u64 = 16;
 
 /// `budget_confident` (design/live-render-robustness.md §5.1, B4): is this view's learned budget
 /// fed by readings of the work it is sending? False once a real dispatch (`dispatch_frame`) has gone
@@ -878,14 +881,14 @@ pub(crate) enum AdmitBound {
     /// The learned size, already capped by the fixed ceiling, the explicit bound and the motion jam.
     #[default]
     Learned,
-    /// The always-on wall-clock budget.
+    /// The wall-clock cap.
     Wall,
     /// The opening guess, because the learned budget is unconfident.
     Unconfident,
 }
 
 impl AdmitBound {
-    /// The frame record's code: 0 learned, 1 wall, 2 unconfident.
+    /// The frame record's code: 0 learned, 1 wall clock, 2 unconfident.
     pub(crate) fn code(self) -> u8 {
         match self {
             AdmitBound::Learned => 0,
@@ -905,15 +908,15 @@ impl AdmitBound {
 
 /// `admit()` (design §5.1, B4) as a pure function: the steps one dispatch may carry. `learned` is the
 /// size the chain in `build_params` arrived at (learned budget, fixed ceiling, explicit bound, motion
-/// jam); it is further bounded by `wall_budget` (0 = not yet measured, no bound) and, while the
-/// learned budget is unconfident, by `bootstrap`. Never raises `learned`.
+/// jam); it is further bounded by the wall-clock cap (`wall_cap`, 0 = none) and, while the learned
+/// budget is unconfident, by `bootstrap`. Never raises `learned`.
 ///
 /// ⚠SHADOW in this build: `build_params` computes and records it every frame and sizes nothing from
 /// it. Where it would bind, and whether that is where it should, is the evidence the reaction waits on.
-pub(crate) fn admit(learned: u64, wall_budget: u64, bootstrap: u64, confident: bool) -> (u64, AdmitBound) {
+pub(crate) fn admit(learned: u64, wall_cap: u64, bootstrap: u64, confident: bool) -> (u64, AdmitBound) {
     let mut out = (learned, AdmitBound::Learned);
-    if wall_budget != 0 && wall_budget < out.0 {
-        out = (wall_budget, AdmitBound::Wall);
+    if wall_cap != 0 && wall_cap < out.0 {
+        out = (wall_cap, AdmitBound::Wall);
     }
     if !confident && bootstrap < out.0 {
         out = (bootstrap, AdmitBound::Unconfident);
@@ -921,20 +924,42 @@ pub(crate) fn admit(learned: u64, wall_budget: u64, bootstrap: u64, confident: b
     out
 }
 
-/// One reading of the always-on WALL-CLOCK budget (design §5.1, B4's `wall_budget`): `steps`
-/// dispatched, `ms` the longest frame interval of the one it was submitted in and the two after it
-/// ([`wall_probe_step`]). [`budget_step`]'s arithmetic, with one difference: it starts from the
-/// dispatch actually measured rather than from `cur`, because this budget does not size the
-/// dispatches it reads. A fast dispatch larger than `cur` proves at least its own size fits
-/// (`base = max(cur, steps)`); a slow one shrinks from `min(cur, steps)` inside [`budget_step`]; a
-/// fast one far smaller than `cur` says nothing and is discarded. 0 = unmeasured.
-pub(crate) fn wall_budget_step(cur: u64, steps: u64, ms: f64, explicit: bool) -> u64 {
+/// One reading of the WALL-CLOCK CAP (design §5.1's `wall_budget`, made one-sided by the evidence):
+/// `steps` dispatched, `ms` the longest frame interval of the one it was submitted in and the two
+/// after it ([`wall_probe_step`]). 0 = no cap.
+///
+/// It only ever says "too high". It does not exist until a priced interval is SLOW (over the
+/// target): the dispatch that took it is shrunk by [`budget_step`]'s arithmetic (its own size times
+/// target/ms, the raw ratio past the lethal band), and that is the cap. A fast reading relaxes an
+/// existing cap through the same arithmetic, and a cap relaxed to the ceiling is dropped.
+///
+/// ⭐**Why one-sided.** Specified as a second learned budget, the wall term trails the climb: it
+/// learns from whatever was dispatched, and while the view moves that is small motion passes. On
+/// the RTX 3080 (2026-10-12, shadow) it bound 86% of a zoomtest's frames at a median 0.13× the
+/// planned size and 99.6% of a still soak at 0.67×, every dispatch it would have shrunk taking under
+/// 5 ms — it would have choked every settle after motion. What the wall clock knows that the GPU
+/// timestamps may not is that a frame ran SLOW; that is the only thing it is allowed to say here.
+pub(crate) fn wall_cap_step(cap: u64, steps: u64, ms: f64, explicit: bool) -> u64 {
     if steps == 0 || !ms.is_finite() || ms <= 0.0 {
-        return cur;
+        return cap;
     }
-    match budget_step(cur.max(steps), steps, ms, explicit) {
-        Some((next, _)) => next,
-        None => cur,
+    let (target_ms, ceil) = if explicit {
+        (crate::tunables::cost().tdr_explicit_budget_ms, crate::tunables::cost().explicit_steps_ceil)
+    } else {
+        (crate::tunables::cost().tdr_budget_ms, crate::tunables::cost().tdr_steps_ceil)
+    };
+    if ms > target_ms {
+        // The dispatch that ran slow, shrunk: `budget_step` from its own size (`min(cap, steps)`).
+        let base = if cap == 0 { steps } else { cap.min(steps) };
+        return budget_step(base, steps, ms, explicit).map_or(base, |(next, _)| next);
+    }
+    if cap == 0 {
+        return 0;
+    }
+    match budget_step(cap, steps, ms, explicit) {
+        Some((next, _)) if next >= ceil => 0,
+        Some((next, _)) => next.max(cap),
+        None => cap,
     }
 }
 

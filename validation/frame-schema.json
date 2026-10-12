@@ -44,7 +44,7 @@
     ["mode_rate", "f64"],
     ["motion_rate", "f64"],
     ["wall_fallback", "bool"],
-    ["wall_budget", "u64"],
+    ["wall_cap", "u64"],
     ["admitted", "u64"],
     ["admit_bound", "u8"],
     ["confident", "bool"],

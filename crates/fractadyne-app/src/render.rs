@@ -8273,9 +8273,9 @@ impl FractadyneApp {
         if !offscreen && !will_reproject {
             self.perf.frozen_budget[vidx] = tdr_steps;
             // ⭐B4's ADMISSION, SHADOW (design/live-render-robustness.md §5.1): what `admit()` would
-            // let this frame dispatch — the size just arrived at, bounded by the always-on wall-clock
-            // budget and, while no reading has fed the learned budget for `CONFIDENT_FRAMES`, by the
-            // opening guess. Recorded every frame and logged when its binding term changes; it sizes
+            // let this frame dispatch — the size just arrived at, bounded by the wall-clock cap (set
+            // only by a slow frame) and, while no reading has fed the learned budget for
+            // `CONFIDENT_FRAMES`, by the opening guess. Recorded every frame and logged when its binding term changes; it sizes
             // nothing in this build.
             let confident = budget_confident(
                 self.perf.fe_dispatch_frame[vidx],
@@ -8283,7 +8283,7 @@ impl FractadyneApp {
                 self.perf.frame_idx,
             );
             let (admitted, bound) =
-                admit(tdr_steps, self.perf.wall_budget[vidx], self.perf.bootstrap_steps(vidx), confident);
+                admit(tdr_steps, self.perf.wall_cap[vidx], self.perf.bootstrap_steps(vidx), confident);
             let prev = self.perf.admission[vidx].1;
             self.perf.admission[vidx] = (admitted, bound, confident);
             if bound != prev {
@@ -8292,11 +8292,11 @@ impl FractadyneApp {
                         "render",
                         &format!(
                             "admission (shadow) v{vidx}: bound by {} — size {:.3e}, admitted {:.3e}, \
-                             wall {:.3e}{}",
+                             wall cap {:.3e}{}",
                             bound.name(),
                             tdr_steps as f64,
                             admitted as f64,
-                            self.perf.wall_budget[vidx] as f64,
+                            self.perf.wall_cap[vidx] as f64,
                             if held > 0 { format!(" (+{held} changes held back)") } else { String::new() },
                         ),
                     );

@@ -146,8 +146,8 @@ A crash report prints the last 40 rows under `frames  :` and writes all of them 
 `-frames.jsonl` beside it. `session :` in the report joins the three files. The encoding is
 `validation/frame-schema.json` (`--dump-frame-schema` regenerates it; a test fails if it is stale),
 and `--recordtest` is the gate that proves the record is being written. Schema 4 adds the frame
-budget's admission, SHADOW (design/live-render-robustness.md §5.1, B4): `wall_budget` (the
-always-on wall-clock budget, 0 = unmeasured), `admitted` (the steps `admit()` would have let the
+budget's admission, SHADOW (design/live-render-robustness.md §5.1, B4): `wall_cap` (the
+wall-clock cap, 0 = none; set only when a dispatch is followed by a slow frame), `admitted` (the steps `admit()` would have let the
 dispatch carry), `admit_bound` (0 learned, 1 wall clock, 2 unconfident) and `confident`. They size
 nothing yet; the `[fd-render] admission (shadow)` line marks a change of binding term. Older files
 read with `validation/frame-schema-v3.json`.

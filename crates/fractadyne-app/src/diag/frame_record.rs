@@ -315,10 +315,10 @@ frame_record! {
     mode_rate: f64,
     motion_rate: f64,
     wall_fallback: bool,
-    /// B4, SHADOW (schema 4): the always-on wall-clock budget (0 = unmeasured), the steps `admit()`
-    /// would have let this frame's dispatch carry, which term bound it (0 learned, 1 wall clock,
-    /// 2 unconfident), and whether the learned budget was confident. Sizes nothing yet.
-    wall_budget: u64,
+    /// B4, SHADOW (schema 4): the wall-clock cap (0 = none; set only by a slow frame), the steps
+    /// `admit()` would have let this frame's dispatch carry, which term bound it (0 learned, 1 wall
+    /// clock, 2 unconfident), and whether the learned budget was confident. Sizes nothing yet.
+    wall_cap: u64,
     admitted: u64,
     admit_bound: u8,
     confident: bool,

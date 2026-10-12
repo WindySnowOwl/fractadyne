@@ -1343,12 +1343,13 @@ struct Perf {
     /// seen since)`. See `wall_clock_budget_tick` — a dispatch's cost lands one to two intervals
     /// after the frame that submitted it, so it cannot be priced in place.
     wall_probe: [Option<(u64, u64, f64)>; 2],
-    /// ⭐The always-on WALL-CLOCK budget per view (design/live-render-robustness.md §5.1, B4's
-    /// `wall_budget`; 0 = unmeasured): learned from the frame interval after every dispatch, never
-    /// latched, never frozen. SHADOW in this build — recorded with the admission it would bound.
-    wall_budget: [u64; 2],
+    /// ⭐The WALL-CLOCK CAP per view (design/live-render-robustness.md §5.1, B4's `wall_budget`,
+    /// one-sided: 0 = none): set when a dispatch is followed by a slow frame interval, relaxed by
+    /// fast ones (`render::wall_cap_step`). Priced on every frame, never latched, never frozen.
+    /// SHADOW in this build — recorded with the admission it would bound.
+    wall_cap: [u64; 2],
     /// Its own deferred probe; `wall_probe` belongs to the fallback that prices `fe_budget`.
-    wall_budget_probe: [Option<(u64, u64, f64)>; 2],
+    wall_cap_probe: [Option<(u64, u64, f64)>; 2],
     /// The last frame a reading reached this view's learned budget: a GPU reading, or the wall
     /// clock while the fallback stands in for one. What `render::budget_confident` reads.
     fed_frame: [u64; 2],
@@ -2110,8 +2111,8 @@ impl Default for Perf {
             offscreen_ms: 0.0,
             prev_offscreen_ms: 0.0,
             wall_probe: [None, None],
-            wall_budget: [0, 0],
-            wall_budget_probe: [None, None],
+            wall_cap: [0, 0],
+            wall_cap_probe: [None, None],
             fed_frame: [0, 0],
             admission: [(0, render::AdmitBound::Learned, true); 2],
             admission_line: Default::default(),
@@ -14921,7 +14922,7 @@ impl FractadyneApp {
             r.mode_rate = p.worst_rate_steps_per_ms(v).unwrap_or(0.0);
             r.motion_rate = p.motion_rate_now(v);
             r.wall_fallback = p.wall_fallback;
-            r.wall_budget = p.wall_budget[v];
+            r.wall_cap = p.wall_cap[v];
             r.full_inflight = p.full_inflight[v];
             r.pin_inflight = p.pin_inflight[v];
             r.present_throttle = p.present_throttle;
@@ -15302,13 +15303,13 @@ impl FractadyneApp {
         }
     }
 
-    /// B4's always-on WALL-CLOCK budget (design/live-render-robustness.md §5.1), SHADOW: each
-    /// dispatch priced by the same deferred probe as the fallback — the longest of the interval it
-    /// was submitted in and the two after it — and folded into `wall_budget` by
-    /// `render::wall_budget_step`. Unlike the fallback it runs on every frame: no latch to trip, and
-    /// no present-throttle freeze, because a frame that dispatched and then waited is exactly what
-    /// it exists to see (a throttled window that dispatches nothing is never priced).
-    fn wall_budget_tick(&mut self, dt_ms: f64) {
+    /// B4's WALL-CLOCK CAP (design/live-render-robustness.md §5.1), SHADOW: each dispatch priced by
+    /// the same deferred probe as the fallback — the longest of the interval it was submitted in and
+    /// the two after it — and folded into `wall_cap` by `render::wall_cap_step`. Unlike the fallback
+    /// it runs on every frame: no latch to trip, and no present-throttle freeze, because a frame that
+    /// dispatched and then waited is exactly what it exists to see (a throttled window that
+    /// dispatches nothing is never priced).
+    fn wall_cap_tick(&mut self, dt_ms: f64) {
         if dt_ms.is_nan() || dt_ms <= 0.01 {
             return;
         }
@@ -15316,15 +15317,15 @@ impl FractadyneApp {
         for v in 0..2 {
             let dispatched = self.perf.fe_dispatch_frame[v] == self.perf.frame_idx;
             let (probe, priced) = render::wall_probe_step(
-                self.perf.wall_budget_probe[v],
+                self.perf.wall_cap_probe[v],
                 dispatched,
                 self.perf.fe_steps_last[v],
                 self.perf.frame_idx,
                 dt_ms,
             );
-            self.perf.wall_budget_probe[v] = probe;
+            self.perf.wall_cap_probe[v] = probe;
             if let Some((ms, steps)) = priced {
-                self.perf.wall_budget[v] = render::wall_budget_step(self.perf.wall_budget[v], steps, ms, explicit);
+                self.perf.wall_cap[v] = render::wall_cap_step(self.perf.wall_cap[v], steps, ms, explicit);
             }
         }
     }
@@ -16089,8 +16090,8 @@ impl eframe::App for FractadyneApp {
             // the frame budget can have. Here `dt`, `fe_iter_frame`, and `fe_steps_last` all still
             // describe the frame just drawn — see `wall_clock_budget_tick`.
             self.wall_clock_budget_tick(dt);
-            // …and the always-on wall-clock budget (B4, shadow), on the same interval.
-            self.wall_budget_tick(dt);
+            // …and the always-on wall-clock cap (B4, shadow), on the same interval.
+            self.wall_cap_tick(dt);
             // Resolve adaptive-AA probes (see `Perf::aa_probe`): a stage armed on frame F is
             // costed as the max frame interval over F+1..=F+2 — with frame latency 1 a heavy GPU
             // frame stalls the NEXT acquire, so its cost shows up one interval late. A resolution
