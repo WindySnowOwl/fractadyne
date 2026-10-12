@@ -2862,3 +2862,41 @@ interval 713 ms.
   the way the settled chunk walk already is (at most one unpriced pass in flight, released by a
   quick present: design/mode2-chunking.md §12) would address the stacking directly. Not decided.
 
+**2026-10-12 — settle-tile serialization (`SETTLE_SERIALIZE`, default on), decided by the user:
+serialize first, then the admission.** A view's next settle tile now waits on what the GPU has
+CONFIRMED complete, not on the frame interval (the trap showed a 7.4 ms interval after an 8.06e9-step
+tile). Every real dispatch of a view owes one `on_submitted_work_done` registration, made in the next
+`update` after eframe has submitted the frame, as the pin and motion-jam gates already do; the
+callback records a sequence number, the work's dispatch-to-completion time and its steps
+(`Perf::view_done`). `render::settle_tile_waits`: nothing outstanding, go; three or more outstanding,
+wait; fewer, go only if the last completed work was at least 0.7× this tile and took under 100 ms,
+otherwise wait. A registration older than 3 s releases the gate (past the 2 s watchdog: a lost
+device or a callback that is not coming) and logs one line. A harness that never runs `update`
+never registers, so it never holds; the synchronous ones retire through
+`retire_synchronous_dispatches` as for pins. The frame record's `queue_busy` (schema 5, extended in
+place: no schema-5 file had left this machine) shows the gate's input.
+
+- **Why not the chunk walk's quick-present drain:** the frame after a dispatch is quick while the
+  GPU still runs it (the swap chain hides a pass for about two frames, as the pin gate's comment
+  already says). A drain on it would have released the trap's second tile exactly when it was
+  released anyway.
+- **Why not strict one-in-flight:** settles only tile where chunking cannot serve (auxiliary
+  colourings, formulas past power 3, missing device capability) or where the frame fits the learned
+  budget but not the ceiling. On the RTX 3080 at the trap's view in stripe colouring, 1920x1200, a
+  cheap settle (bootstrap-sized tiles, each a few ms of GPU) reached full resolution in 0.68 s
+  unpaced, 1.39 s strictly serialized, 0.91 s with the rule above capped at two outstanding (a
+  completion is noticed two to three frames after its dispatch, so one cheap tile per frame keeps
+  two outstanding) and 0.80 s capped at three. The heavy ss 2 grid after it (six ceiling-sized
+  tiles) took 4% longer serialized (1.96 → 2.04 s, three interleaved runs each), with one frame
+  fewer over 200 ms and the worst 326 ms against 365 ms. Serialized, that first settle also went on
+  to ss 2 without a further interaction, which unpaced it did not: the budget kept learning from
+  readings during the holds.
+- **The trap on the RTX 3080:** both grids serialize (every tile after a slow one waits for the
+  queue to empty; only the small last tile pipelines, behind a fast predecessor of more than its
+  size). The first tile of each grid is still a 1.45e10-step dispatch and still the slow frame
+  (316 ms): one oversized dispatch is the admission's job, not the queue's.
+- **Not affected:** motiontest, the 60 s soak and the 20-octave zoomtest never tile on this card,
+  so the gate never holds there; all three PASS.
+- **Next:** the admission's reaction (`tdr_steps` ← the admission), then one PLUTO run of the trap
+  for both (ask first).
+
