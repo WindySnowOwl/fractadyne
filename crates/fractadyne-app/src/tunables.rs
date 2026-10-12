@@ -1222,6 +1222,12 @@ pub(crate) const MOTION_STEP_OPEN: u32 = 512;
 /// reading. The TDR ceiling (`tdr_steps`) is untouched: this paces smoothness, not safety.
 pub(crate) const MOTION_CUT_MAX: f64 = 2.0;
 
+/// The most one motion pass may RAISE the motion rate (`render::bounded_motion_lift`), the mirror
+/// of `MOTION_CUT_MAX`. The lift used to be unbounded and any dispatch counted, so a still settle
+/// tile lifted the rate 350× in one frame (U40). At one lift per motion frame, ×2 is still ×1000 in
+/// ten frames: the hint recovers from a cut within a glide.
+pub(crate) const MOTION_LIFT_MAX: f64 = 2.0;
+
 /// Price target for a PINNED-refresh pass, ms — the pin is priced and serialized by the same
 /// ledger as the settled walk (`chunk_inflight`, `chunk_band_license`, `chunk_step_factor`),
 /// because the nominal-steps rate alone mispriced it twice in one trace: in a fast-escape region

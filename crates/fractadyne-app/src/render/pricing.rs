@@ -683,6 +683,22 @@ pub(crate) fn mode_rate_step(cur: f64, rate: f64, elapsed_s: f64) -> f64 {
     rate.min(cap)
 }
 
+/// The rate a motion pass may LIFT the motion estimate to from `cur`, given the rate it proved:
+/// at most `cur × MOTION_LIFT_MAX` in one lift, the mirror of [`bounded_motion_cut`]. `None` = it
+/// proves nothing higher (or nothing usable).
+pub(crate) fn bounded_motion_lift(cur: f64, proved: f64) -> Option<f64> {
+    if !proved.is_finite() || proved <= 0.0 {
+        return None;
+    }
+    if cur.is_nan() || cur <= 0.0 {
+        return Some(proved);
+    }
+    if proved <= cur {
+        return None;
+    }
+    Some(proved.min(cur * crate::tunables::MOTION_LIFT_MAX))
+}
+
 /// The measured rates the pricing family reads, per view and per arithmetic mode (design/
 /// live-render-robustness.md §5.1, step M3). `Perf` owns one and passes in what only it knows: the
 /// view's current mode, and whether a reading straddles that view's last mode switch.
@@ -837,21 +853,31 @@ impl Meter {
     }
 
     /// The rate half of `Perf::motion_wall_cut`: `steps_last` is the view's last dispatch, `dt_ms` the
-    /// interval that followed it. Returns whether the interval was long enough to count against
-    /// the pass, in which case the caller halves its motion step too.
-    pub(crate) fn motion_wall_cut(&mut self, v: usize, mode: u32, steps_last: u64, dt_ms: f64) -> bool {
+    /// interval that followed it, `moving` whether that dispatch was made while the view moved.
+    /// Returns whether the interval was long enough to count against the pass, in which case the
+    /// caller halves its motion step too.
+    pub(crate) fn motion_wall_cut(&mut self, v: usize, mode: u32, steps_last: u64, dt_ms: f64, moving: bool) -> bool {
         let Some(s) = slot(mode) else {
             return false;
         };
         let cur = self.motion_rate[v][s];
-        // THE LIFT: a dispatch followed by a frame that fit its present interval proves the
+        // THE LIFT: a MOTION dispatch followed by a frame that fit its present interval proves the
         // rate was at least steps / interval. It is the deadlock-proof half of this estimator —
         // however low a cut has pushed the hint, the very next pass that fits a frame restores
-        // at least what it just did, with no reading threshold to fail.
+        // what it just did, with no reading threshold to fail — bounded to `MOTION_LIFT_MAX` per
+        // event as the cut is.
+        // ⚠**Only a dispatch made while moving (U40).** Any dispatch of the last two frames used to
+        // count, and a STILL one says nothing about the motion rate: submission is asynchronous, so
+        // the frame after a big settle tile is quick while the GPU still runs it. On the RTX 3080
+        // budget trap a 1.45e10-step tile and a 3 ms frame lifted the rate 350× (1.4e7 → 4.9e9) in
+        // one frame; on the RX 6800 XT tiles and settled chunk passes lifted it 22–58×. Proving the
+        // lift by a completion instead was tried and cost ~10% on-screen lag in a healthy glide (a
+        // completion is noticed up to a frame late, which understates a small pass's rate).
         if dt_ms <= crate::tunables::MOTION_PASS_MS * 2.0 {
-            let proved = steps_last as f64 / dt_ms;
-            if proved.is_finite() && proved > cur {
-                self.motion_rate[v][s] = proved;
+            if moving {
+                if let Some(rate) = bounded_motion_lift(cur, steps_last as f64 / dt_ms) {
+                    self.motion_rate[v][s] = rate;
+                }
             }
             return false;
         }
@@ -1098,3 +1124,5 @@ mod settle_tile_tests;
 mod settle_strip_tests;
 #[cfg(test)]
 mod mode_rate_tests;
+#[cfg(test)]
+mod motion_lift_tests;

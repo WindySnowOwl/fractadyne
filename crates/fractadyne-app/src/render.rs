@@ -6880,6 +6880,7 @@ impl FractadyneApp {
             self.perf.view_reg_pending[vs] = true;
             self.perf.view_dispatch_at[vs] = crate::app_micros();
             self.perf.view_dispatch_steps[vs] = self.perf.fe_steps_last[vs];
+            self.perf.view_dispatch_moving[vs] = interacting;
         }
         // MOTION-JAM ACCOUNTING — one site, after every dispatch path has stamped its cost.
         // Whatever shape this frame dispatched (full frame, settle tile, chunk range, climb

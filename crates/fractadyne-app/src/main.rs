@@ -1428,6 +1428,7 @@ struct Perf {
     view_reg_pending: [bool; 2],
     view_dispatch_at: [u64; 2],
     view_dispatch_steps: [u64; 2],
+    view_dispatch_moving: [bool; 2],
     view_reg_seq: [u64; 2],
     view_reg_at: [u64; 2],
     view_done: [std::sync::Arc<std::sync::Mutex<render::ViewDone>>; 2],
@@ -2047,7 +2048,8 @@ impl Perf {
         if self.frame_idx.saturating_sub(self.fe_dispatch_frame[v]) > 2 {
             return;
         }
-        if self.meter.motion_wall_cut(v, self.budget_mode[v], self.fe_steps_last[v], dt_ms) {
+        let moving = self.view_dispatch_moving[v];
+        if self.meter.motion_wall_cut(v, self.budget_mode[v], self.fe_steps_last[v], dt_ms, moving) {
             self.motion_step_last[v] = (self.motion_step_last[v] / 2).max(1);
         }
     }
@@ -2175,6 +2177,7 @@ impl Default for Perf {
             view_reg_pending: [false, false],
             view_dispatch_at: [0, 0],
             view_dispatch_steps: [0, 0],
+            view_dispatch_moving: [false, false],
             view_reg_seq: [0, 0],
             view_reg_at: [0, 0],
             view_overdue_logged: [0, 0],
