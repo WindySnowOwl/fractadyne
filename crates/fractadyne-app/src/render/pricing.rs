@@ -308,9 +308,11 @@ pub(crate) fn wall_probe_step(
     }
 }
 
-/// PRESENT-THROTTLE detector step. A frame that submitted NO new GPU work yet still took
-/// `thresh_ms` or longer measured the PRESENT PATH, not the queue: with nothing newly
-/// dispatched, the interval is acquire/present/idle by construction. A run of such frames is
+/// PRESENT-THROTTLE detector step. A frame that submitted NO new GPU work, with none of its
+/// earlier work still queued, yet still took `thresh_ms` or longer measured the PRESENT PATH,
+/// not the queue. `dispatched` is therefore "dispatched, OR has work of its own outstanding" at
+/// the caller (completion callbacks, `Perf::view_outstanding`): a hold behind a running pass is
+/// the backlog, and counting it inverted the detector exactly there (design U11/U12). A run of such frames is
 /// a compositor throttling this window (occluded/background windows present at ~1 Hz on
 /// Windows), and under it every wall-clock premise in the controller inverts:
 ///   * the chunk drain's "a quick present proves the queue drained" can NEVER pass, so a

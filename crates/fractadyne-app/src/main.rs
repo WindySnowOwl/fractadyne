@@ -16133,12 +16133,20 @@ impl eframe::App for FractadyneApp {
             for v in 0..2 {
                 self.perf.motion_wall_cut(v, dt);
             }
-            // Present-throttle detector: a no-work frame this slow measured the compositor.
+            // Present-throttle detector: a no-work frame this slow measured the compositor — but
+            // only if none of OUR work was still in the queue (design/live-render-robustness.md U11,
+            // U12). "This frame dispatched nothing" is not that: a serialized walk or a settle tile
+            // HOLDS, dispatching nothing, while its own pass runs, and a frame stalled behind that
+            // pass is the backlog, not the compositor. On the RX 6800 XT budget trap (2026-10-12) a
+            // 734 ms hold behind an 8.06e9-step tile counted as throttle evidence; five of them
+            // would have frozen the wall-clock safeguards in the middle of the backlog they exist
+            // for. The completion callbacks (`view_outstanding`) say whether our work is queued.
             let any_dispatch = self.perf.fe_dispatch_frame[0] == self.perf.frame_idx
                 || self.perf.fe_dispatch_frame[1] == self.perf.frame_idx;
+            let own_work_queued = self.perf.view_outstanding(0) > 0 || self.perf.view_outstanding(1) > 0;
             self.perf.present_throttle = render::present_throttle_step(
                 self.perf.present_throttle,
-                any_dispatch,
+                any_dispatch || own_work_queued,
                 dt,
                 tunables::CHUNK_DRAIN_DT_MS,
             );
