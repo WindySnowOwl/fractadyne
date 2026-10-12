@@ -2819,3 +2819,46 @@ section's B4 did not survive the measurement:
   app's admission implements, its single `impl` counted by a test), the deletions and B5. Next
   evidence: the same trap on the RX 6800 XT, where the cap should set.
 
+**2026-10-12 — the budget trap on the RX 6800 XT, and the pairing bug it exposed (`c54af49`).**
+Field build `v0.3.0-beta.19.dev.1` (the shadow above) on PLUTO, the same command as the RTX 3080
+trap. Exit 0 in 53 s, regime ENTERED (9 of 432 dispatches un-chunked), logcheck PASS, slowest frame
+interval 713 ms.
+
+- **The per-adapter ceiling, not the learned budget, sized every dispatch.** `tdr_steps` sat at
+  8.08e9 (df32 perturbation; 1.449e10 on the 3080) while `fe_budget` stayed at its seeded 1.515e11
+  all run. The GPU readings could not have brought it down: the two that priced a whole frame read
+  4.24e9 steps in 23.4 ms and in 2.7 ms (181 and 1,571 steps/ns, far past the card), and the rest
+  were under 0.7× the budget and fast, so discarded.
+- **The wall cap was the only signal that saw the slow frames.** Two settle grids of four tiles
+  (8.06e9, 5.58e9, 1.97e9, 1.36e9) ran slow: 443 ms after the first, 357, 713 and 495 ms after the
+  second. The cap set at 7.3 s and tightened at 24.5 s, and from then on bound 65% of frames, but
+  nothing dispatched after it was big enough to cut (0 of 432 dispatches carried more than the
+  admission).
+- **⚠The first tile of every grid was priced as the whole frame.** The tile block pairs
+  `fe_steps_last` with the tile's rect, but the first tile arrives on a key change (the ss stage
+  moves), and the key-change stamp in `bp_finish_params`, which runs later, overwrote it: 16.97e9 for
+  an 8.06e9 tile. So the first cap was 1.534e10 where the tile said 7.29e9, above `tdr_steps`, and
+  could not bind the second grid. The wall-clock fallback and `motion_wall_cut` price the same slot,
+  the fallback in the direction of growth. Fixed: `key_change_steps` stamps a real tile's rect.
+  Schema 5 records `priced_steps`, so the pairing is read off the record rather than reconstructed;
+  on the 3080 trap all 268 dispatches now record `priced_steps == nominal_steps` (the first tiles
+  were 2.81e10 against 1.446e10 tiles). The one known remaining mismatch is a split live refresh,
+  whose pass carries a share of the frame while the stamp prices all of it.
+- **Correction to the entry above:** what the unconfident term caught on the 3080 at 15.3 s (1.446e10,
+  5.71e9, 5.69e9) were un-chunked settle TILES, not whole frames.
+- **Even with the fix, the reaction would have changed almost nothing in this run.** A replay of
+  `wall_probe_step` + `wall_cap_step` over the decoded record reproduces the recorded cap on all
+  2,249 frames; with the fixed pairing it gives 7.29e9 for the first cap, which cuts one dispatch
+  (the second grid's first tile, 8.06e9 → 7.29e9). The second grid's slow intervals are not one
+  oversized dispatch. Its four tiles (16.97e9 steps, ~1.6–2 s of GPU work by the wall clock) went out
+  on consecutive frames, the second 23 ms after the first and long before the first could have
+  finished, so they queued and the stall landed on whichever acquire waited. The tile turn holds a
+  tile while the OTHER view works, never behind the same view's previous tile. A per-dispatch cap
+  cannot see a queue, and the wall probe prices one tile against the queue's backlog (5.58e9 at
+  713 ms → 3.13e9), which errs toward cutting.
+- **Open before the reaction:** what this trap reaches on the Radeon is same-view tile stacking. No
+  single dispatch was oversized: the ceiling holds each one well under a second. Switching the
+  admission on would mostly shrink tiles after a slow grid; serializing a view's own settle tiles
+  the way the settled chunk walk already is (at most one unpriced pass in flight, released by a
+  quick present: design/mode2-chunking.md §12) would address the stacking directly. Not decided.
+
