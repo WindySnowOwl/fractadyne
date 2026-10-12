@@ -132,7 +132,11 @@ round-trips each plane. ⚠The app holds the Julia constant as an f64, so β mus
 of the f64's exact value (`local/bench-ladder/julia_points.py`). Renders (`julia_sched_ab.py`,
 views centred on β, cap ~2 steps per digit of depth): 8 views at 1e300–1e30000, all
 pixel-identical; reference build at 1e30000 16.0 → 12.5 s (d=2), 69.5 → 30.2 s (d=3, render
-71.5 → 32.2 s).
+71.5 → 32.2 s). ⚠Three of those eight compared nothing: a pixel 10^-D from β escapes after
+about D·ln 10 / ln|f'(β)| steps, 2.06 per digit at d=2 (|f'| = 3.06), so at 2 per digit the d=2
+views at 1e3000 and deeper were 99% black (53 colours) on both sides. Re-run at 3 per digit
+(2026-10-11): all four d=2 views pixel-identical with 1,677–1,755 colours; 1e30000 render
+58.3 → 32.5 s. The d=3 views (1.62 per digit needed) had 390–480 colours throughout.
 
 **Found on the way: the Julia pick walks everything in bignum.** The perturbation scoring of both
 pick phases is gated to the c plane (`perturb_scoring_supported`: "a Julia view varies z₀ —
