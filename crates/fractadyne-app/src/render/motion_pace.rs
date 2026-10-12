@@ -210,7 +210,7 @@ fn one_interval_cannot_slash_the_motion_rate() {
     // the motion frame did not own, and the next motion frame painted a flat colour. A cut is
     // still a cut - it just cannot exceed MOTION_CUT_MAX in one event; repeated slow intervals
     // still ratchet it down.
-    use crate::bounded_motion_cut;
+    use crate::render::bounded_motion_cut;
     let cur = 1.35e8; // steps/ms
     assert_eq!(bounded_motion_cut(cur, cur / 9.0), Some(cur / crate::tunables::MOTION_CUT_MAX));
     let mut r = cur;

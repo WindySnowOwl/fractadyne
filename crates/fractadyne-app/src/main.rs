@@ -1362,26 +1362,8 @@ struct Perf {
     /// crossover from the death is the difference between a coincidence and a cause, and it
     /// costs one `u64` to answer.
     mode_switch_frame: [u64; 2],
-    /// ⭐Measured nominal steps per millisecond, per view and per arithmetic mode (0.0 = never
-    /// measured). This is what makes the opening guess hardware-derived instead of assumed; see
-    /// `render::bootstrap_steps` and `tunables::TDR_BOOTSTRAP_MS`.
-    ///
-    /// ⚠**Latches the MINIMUM, never an average.** Within one mode the per-step rate swings by two
-    /// orders of magnitude depending on whether a BLA tree is live — the same mode-2 view measured
-    /// ~5.7e5 steps/ms with `bla_skip=0` right after a crossover and is worth a budget 3.4× larger
-    /// once BLA is skipping (2026-08-15 field report). An average, or a last-value, would let a
-    /// BLA-live reading size the opening dispatch of a no-BLA re-entry, which is exactly the frame
-    /// that lost the device. The pessimistic latch costs at most a few ×1.5 climb frames; the
-    /// optimistic one costs the device, and the asymmetry is the whole design.
-    mode_rate: [[f64; Self::MODE_RATE_SLOTS]; 2],
-    /// SMOOTHNESS-pacing rate per mode: nominal steps per ms as currently measured (an
-    /// asymmetric EMA — a slower reading is adopted at once, a faster one is blended in), as
-    /// opposed to `mode_rate`'s all-time pessimistic minimum. `mode_rate` sizes SAFETY floors and
-    /// opening guesses, where the worst case is the only honest number; this sizes the motion
-    /// and pinned-refresh chunk passes to `MOTION_PASS_MS` (`render::motion_pass_steps`), where
-    /// the CURRENT regime is the honest number and the TDR budget remains the ceiling. GPU
-    /// timestamps only, like `mode_rate` (see `apply_iterate_measurement`).
-    motion_rate: [[f64; Self::MODE_RATE_SLOTS]; 2],
+    /// The measured per-mode rates, pessimistic and smoothness (`render::Meter`).
+    meter: render::Meter,
     /// Observed zoom speed of the main view, octaves per second (EMA of |Δlog2mag| per frame
     /// interval, jumps excluded). Read by the rate-aware refresh sizing — whatever drives the
     /// zoom (Space glide at the slider's rate, wheel, autopilot, a tour), the refresh cadence is
@@ -1902,136 +1884,36 @@ struct Perf {
     accum_abandon_line: [diag::LineLimiter; 2],
 }
 
-/// The rate a wall-clock cut may take the motion estimate to from `cur`, given the interval's
-/// own `wall_rate`: the interval's rate, bounded to `cur / MOTION_CUT_MAX` in one event. `None` =
-/// the interval does not say the rate is lower (or says nothing usable), so leave it alone.
-/// Pure, so the bound is pinned by test — see the constant for the 6–9× cuts it exists for.
-pub(crate) fn bounded_motion_cut(cur: f64, wall_rate: f64) -> Option<f64> {
-    if !wall_rate.is_finite() || !(wall_rate > 0.0) {
-        return None;
-    }
-    if !(cur > 0.0) {
-        return Some(wall_rate); // nothing measured yet: the interval is the first measurement
-    }
-    if wall_rate >= cur {
-        return None;
-    }
-    Some(wall_rate.max(cur / crate::tunables::MOTION_CUT_MAX))
-}
-
 impl Perf {
-    /// Arithmetic modes are `RenderMode::to_u32()` ∈ {0, 1, 2}; `u32::MAX` means "none yet" and is
-    /// simply out of range, so `slot()` rejects it along with anything a future mode adds.
-    const MODE_RATE_SLOTS: usize = 3;
 
-    fn slot(mode: u32) -> Option<usize> {
-        ((mode as usize) < Self::MODE_RATE_SLOTS).then_some(mode as usize)
+    /// Whether a reading landing now straddles this view's last mode switch. A measurement is
+    /// DEFERRED, so in the first frames after a switch it may price the OLD mode's dispatch; see
+    /// `render::Meter::record_mode_rate`.
+    fn straddles_switch(&self, v: usize) -> bool {
+        let since = self.frame_idx.saturating_sub(self.mode_switch_frame[v]);
+        self.mode_switch_frame[v] != u64::MAX && since < 3
     }
 
-    /// The WORST rate (steps per ms) measured for this view's current mode, if any has been.
-    /// `mode_rate` is kept as a running MINIMUM, so this is already the pessimistic extreme rather
-    /// than an average — which is what a safety floor has to be sized from.
+    /// See `render::Meter::worst_rate_steps_per_ms`.
     pub(crate) fn worst_rate_steps_per_ms(&self, v: usize) -> Option<f64> {
-        let r = Self::slot(self.budget_mode[v]).map_or(0.0, |s| self.mode_rate[v][s]);
-        (r.is_finite() && r > 0.0).then_some(r)
+        self.meter.worst_rate_steps_per_ms(v, self.budget_mode[v])
     }
 
-    /// Fold one priced dispatch into this view's per-mode rate, keeping the PESSIMISTIC extreme.
-    /// See the `mode_rate` field comment for why this is a min and not an average.
+    /// See `render::Meter::record_mode_rate`.
     fn record_mode_rate(&mut self, v: usize, ms: f64, steps: u64) {
-        let (Some(s), true) = (Self::slot(self.budget_mode[v]), ms > 0.0 && steps > 0) else {
-            return;
-        };
-        // ⚠A measurement is DEFERRED — `wall_probe_step` holds a reading for two frames, and the
-        // timestamp readback lags similarly — so `budget_mode` at record time is not necessarily
-        // the mode the priced dispatch ran in. Straight after a crossover that misattributes the
-        // OLD mode's rate to the new one, and the old mode is the fast one (~152× at 0→2 in the
-        // field report), which is precisely the optimistic direction this whole mechanism exists to
-        // avoid. The ceiling clamp in `bootstrap_steps` means such a poisoned rate can never be
-        // worse than the historical constant, but it would silently defeat the fix in the one
-        // window that motivated it. Skipping the frames that straddle the switch is enough: the
-        // dispatch behind a reading taken 3+ frames later is unambiguously in the current mode.
-        let since = self.frame_idx.saturating_sub(self.mode_switch_frame[v]);
-        if self.mode_switch_frame[v] != u64::MAX && since < 3 {
-            return;
-        }
-        let rate = steps as f64 / ms;
-        if !rate.is_finite() || rate <= 0.0 {
-            return;
-        }
-        let cur = self.mode_rate[v][s];
-        self.mode_rate[v][s] = if cur > 0.0 { cur.min(rate) } else { rate };
+        let straddles = self.straddles_switch(v);
+        self.meter.record_mode_rate(v, self.budget_mode[v], straddles, ms, steps);
     }
 
-    /// The smoothness-pacing rate for this view's CURRENT mode (nominal steps per ms), or 0.0
-    /// when nothing has been measured in it yet — the caller then falls back to the opening
-    /// guess (`bootstrap_steps`), never to the full budget. See `Perf::motion_rate`.
+    /// See `render::Meter::motion_rate_now`.
     pub(crate) fn motion_rate_now(&self, v: usize) -> f64 {
-        let slot = Self::slot(self.budget_mode[v]);
-        let this = slot.map_or(0.0, |s| self.motion_rate[v][s]);
-        if this.is_finite() && this > 0.0 {
-            return this;
-        }
-        // Nothing measured in this mode yet — the frames right after a crossover, where the
-        // first refreshes are sized. The most pessimistic rate seen in any OTHER mode, under
-        // the same margin the safety controller applies to the same gap (`bootstrap_steps`),
-        // beats a constant: measured at the 1e4 hand-over, the constant opening guess floored at
-        // `TDR_MIN_STEPS` sized 7-iteration passes and the pin never completed at 4.0×.
-        let other = self.motion_rate[v]
-            .iter()
-            .enumerate()
-            .filter(|(s, _)| slot != Some(*s))
-            .map(|(_, r)| *r)
-            .filter(|r| r.is_finite() && *r > 0.0)
-            .fold(0.0_f64, |acc, r| if acc == 0.0 { r } else { acc.min(r) });
-        if other > 0.0 {
-            other / crate::tunables::cost().mode_rate_unknown_margin.max(1.0)
-        } else {
-            0.0
-        }
+        self.meter.motion_rate_now(v, self.budget_mode[v])
     }
 
-    /// Fold one priced dispatch into this view's per-mode SMOOTHNESS rate. Asymmetric on
-    /// purpose: a reading slower than the estimate replaces it (the next pass must not be sized
-    /// off a regime that has just got more expensive — entering a minibrot interior, a BLA tree
-    /// that stopped skipping), a faster one is blended in at `MOTION_RATE_GROW` so one lucky
-    /// early-escape pass cannot size the next one at a hundred times the work. The same
-    /// mode-switch straddle rule as `record_mode_rate`.
+    /// See `render::Meter::record_motion_rate`.
     fn record_motion_rate(&mut self, v: usize, ms: f64, steps: u64) {
-        const MOTION_RATE_GROW: f64 = 0.3;
-        let (Some(s), true) = (Self::slot(self.budget_mode[v]), ms > 0.0 && steps > 0) else {
-            return;
-        };
-        let since = self.frame_idx.saturating_sub(self.mode_switch_frame[v]);
-        if self.mode_switch_frame[v] != u64::MAX && since < 3 {
-            return;
-        }
-        // The rate of the VARIABLE part of the pass: with `PASS_FIXED_MS` set, a small pass's fixed
-        // cost no longer reads as dear steps (`motion_pass_steps` spends the same split). 0 = off.
-        let rate = steps as f64 / render::variable_pass_ms(ms, crate::tunables::cost().pass_fixed_ms);
-        if !rate.is_finite() || rate <= 0.0 {
-            return;
-        }
-        let cur = self.motion_rate[v][s];
-        // A reading pulls the estimate DOWN at once and pushes it UP at `MOTION_RATE_GROW`.
-        // ⛔NO GATE ON THE WAY UP — two were tried and both deadlocked the same way: "only a
-        // pass ≥ ¼ of the current sizing may grow it" and "only a reading ≥ 1 ms may grow it".
-        // A pessimistic cut sizes the next passes below any such gate, so no pass can ever
-        // qualify again, the pin crawls at its floor and the frozen frame ages 8–13 octaves on
-        // screen. The estimate is a HINT: the pass growth limiter (×2 per pass), the band
-        // licence, the wall-clock cut and the TDR budget are the guards, and a deduped 0.2 ms
-        // reading that inflates the hint is caught by those on the next pass.
-        // ⭐The way DOWN is bounded to `MOTION_CUT_MAX` per reading (see that constant): a PIN
-        // pass's timestamp — walked past the BLA-skippable range at a per-step cost nothing like
-        // a motion frame's — landed here and cut the motion budget 9× in one reading at 2^800,
-        // and the next motion frame painted one flat colour. Three such readings still find a
-        // 9× slower regime; one reading no longer does, because one reading from a different
-        // kind of pass is not a measurement of this one.
-        self.motion_rate[v][s] = match bounded_motion_cut(cur, rate) {
-            Some(cut) => cut,
-            None if cur <= 0.0 => rate,
-            None => cur + (rate - cur) * MOTION_RATE_GROW,
-        };
+        let straddles = self.straddles_switch(v);
+        self.meter.record_motion_rate(v, self.budget_mode[v], straddles, ms, steps);
     }
 
     /// Everything a GPU TIMESTAMP reading feeds besides the safety budget: the per-mode
@@ -2096,6 +1978,7 @@ impl Perf {
         self.pin_done_at[v].store(app_micros(), std::sync::atomic::Ordering::Relaxed);
     }
 
+
     /// WALL-CLOCK CUT for the smoothness pacer, run at every frame-interval capture. The GPU
     /// timestamp behind `record_motion_rate` lands 2–3 frames after its dispatch; the interval
     /// that follows a motion / pin pass is available NOW, and a long one is proof the pass was
@@ -2110,44 +1993,11 @@ impl Perf {
         if self.frame_idx.saturating_sub(self.fe_dispatch_frame[v]) > 2 {
             return;
         }
-        let Some(s) = Self::slot(self.budget_mode[v]) else {
-            return;
-        };
-        let cur = self.motion_rate[v][s];
-        // THE LIFT: a dispatch followed by a frame that fit its present interval proves the
-        // rate was at least steps / interval. It is the deadlock-proof half of this estimator —
-        // however low a cut has pushed the hint, the very next pass that fits a frame restores
-        // at least what it just did, with no reading threshold to fail.
-        if dt_ms <= crate::tunables::MOTION_PASS_MS * 2.0 {
-            let proved = self.fe_steps_last[v] as f64 / dt_ms;
-            if proved.is_finite() && proved > cur {
-                self.motion_rate[v][s] = proved;
-            }
-            return;
+        if self.meter.motion_wall_cut(v, self.budget_mode[v], self.fe_steps_last[v], dt_ms) {
+            self.motion_step_last[v] = (self.motion_step_last[v] / 2).max(1);
         }
-        let cut_at = crate::tunables::MOTION_PASS_MS * 2.5;
-        if !(dt_ms > cut_at) {
-            return;
-        }
-        // Only a dispatch of at least half the current sizing can be blamed for the interval:
-        // a long frame behind a tiny pass was something else (a reference build on this thread,
-        // a present blocked by an unrelated submission), and pricing the tiny pass at that
-        // interval is the cut that never recovers.
-        if cur > 0.0
-            && (self.fe_steps_last[v] as f64) < 0.5 * cur * crate::tunables::MOTION_PASS_MS
-        {
-            return;
-        }
-        let wall_rate = self.fe_steps_last[v] as f64 / dt_ms;
-        if let Some(rate) = bounded_motion_cut(cur, wall_rate) {
-            self.motion_rate[v][s] = rate;
-        }
-        self.motion_step_last[v] = (self.motion_step_last[v] / 2).max(1);
     }
 
-    /// The opening guess for this view's CURRENT mode, derived from what has actually been measured
-    /// on this device. `rate_other` is the most pessimistic rate seen in any other mode, which is
-    /// all we have to go on the first time a dive crosses into a mode.
     /// How many frames of BLA suppression `FRACTADYNE_BLA_DROP_FRAMES` asks for after a mode
     /// switch. Zero (the default, and any unparseable value) disables the instrument entirely.
     /// Read once: this is consulted per frame and an env lookup per frame is a silly cost.
@@ -2167,16 +2017,9 @@ impl Perf {
         crate::tunables::instrument("FRACTADYNE_SEED_BUDGET")
     }
 
+    /// See `render::Meter::bootstrap_steps`.
     fn bootstrap_steps(&self, v: usize) -> u64 {
-        let this = Self::slot(self.budget_mode[v]).map_or(0.0, |s| self.mode_rate[v][s]);
-        let other = self.mode_rate[v]
-            .iter()
-            .enumerate()
-            .filter(|(s, _)| Self::slot(self.budget_mode[v]) != Some(*s))
-            .map(|(_, r)| *r)
-            .filter(|r| *r > 0.0)
-            .fold(0.0_f64, |acc, r| if acc == 0.0 { r } else { acc.min(r) });
-        render::bootstrap_steps(this, other)
+        self.meter.bootstrap_steps(v, self.budget_mode[v])
     }
 }
 
@@ -2257,8 +2100,7 @@ impl Default for Perf {
             ts_supported: false,
             budget_mode: [u32::MAX, u32::MAX],
             mode_switch_frame: [u64::MAX, u64::MAX],
-            mode_rate: [[0.0; Self::MODE_RATE_SLOTS]; 2],
-            motion_rate: [[0.0; Self::MODE_RATE_SLOTS]; 2],
+            meter: render::Meter::default(),
             zoom_oct_s: 0.0,
             last_l2: 0.0,
             motion_step_last: [0, 0],
