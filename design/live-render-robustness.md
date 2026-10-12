@@ -3002,3 +3002,29 @@ same trap; user approved).** Exit 0 in 52 s, logcheck PASS, 0 of 225 dispatches 
 - **Open:** whether a hostile view should keep its ss 2 as admitted tiles rather than an ss 1 walk
   (a policy choice, not a safety one: both bound every dispatch); the `Admission` token.
 
+**2026-10-12 — W2 gate 2, and the present-throttle detector fixed for a backlogged queue (U11/U12).**
+
+- **Gate 2 (`e4eff9e`), `--selftest`: "a STALE budget chunks inside the admission, and recovers".**
+  The 1.3e30× deep block with its converged 1.666e10 budget: 24 frames fed, 40 with no reading
+  reaching the budget while passes go out, 24 fed again. Today: 25 unconfident dispatches at an
+  admission of 4.0e8, none over it; fed again, the admission is the learned size and passes regrow
+  to 1.666e10. Control: `--set ADMISSION=0` turns it red (25 of 25 over, worst 41.65×). Gate 4's
+  anti-latch half is the same check's recovery leg; the existing live-res checks run through the
+  admission unchanged (491 frames, licence 7873, pass 4.333e9). Gates 1 (replay corpus) and 3 (a
+  Radeon torture rung; the dev.1–dev.3 trap runs stand in for it) remain.
+- **U11/U12.** `present_throttle_step` counted a slow frame that dispatched nothing as compositor
+  evidence, and a serialized walk or a held settle tile dispatches nothing while its own pass runs:
+  on the RX 6800 XT trap (dev.2) a 734 ms hold behind an 8.06e9-step tile counted, the count reached
+  2 of the 5 that freeze the wall-clock safeguards, and a longer grid of slow tiles would have frozen
+  them in the middle of the backlog they exist for. The caller now passes "dispatched, OR has work
+  of its own still in the queue" (the settle gate's completion callbacks, `view_outstanding`). With
+  an idle queue nothing changes; in a genuinely throttled serialized walk the first hold after a
+  dispatch no longer counts (its callback is registered but not yet fired) and the later ones do,
+  so detection arrives one frame later. No harness simulates a compositor throttle, so that half is
+  argued, not measured. RTX 3080: motiontest, soak and zoomtest never counted a frame; the trap's
+  two counted frames both had an empty queue.
+- **The review's detailed findings are gone.** `verified.md`, the catalogue and the subsystem maps
+  lived in session Temp folders that were emptied on 2026-09-30; only this document's §11 one-liners
+  and prose survive. U23 (`mode_rate`'s session-long minimum: kind filter and decay) and U40 (the
+  motion pacer's wall LIFT) are therefore re-derived from the code before they are changed.
+
