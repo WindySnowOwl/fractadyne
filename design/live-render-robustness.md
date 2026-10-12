@@ -2766,3 +2766,27 @@ the trigger acts after the first lethal frame, so a FIRST dispatch past the watc
 - The exit code was 1 on all three, from logcheck's `budget-blind` rule (max 0 for zoomtest). Under a
   regime instrument that line is the purpose of the run, so the rule is now `instrument_ok`
   (beta.133).
+
+**2026-10-12 — §5.1's M2 and M3 (branch `feat/w2-pricing-module`, `f9b07d1`, `077e8ec`).** Both
+byte-neutral in behaviour.
+
+- **M2:** the pricing family (28 functions and constants, not the thirteen the section lists: the
+  reading pool, the blind tripwire's helpers and the dead-man arrived after it was written) moved
+  verbatim to `render/pricing.rs`, which `render.rs` re-exports, so no caller changed. The property
+  tests stay where they were. The module needs nothing from `render.rs`: every item reaches only
+  `crate::` paths, which is the first evidence the family really is one unit. Two doc paragraphs an
+  earlier move had glued onto `wall_probe_step` went back to `budget_step` and `budget_base`.
+- **M3:** `mode_rate` and `motion_rate` and their arithmetic moved into `render::Meter`, with
+  `bounded_motion_cut` and the rate half of `motion_wall_cut`. `Perf` keeps one `meter` field and
+  delegators that pass in the view's mode and whether a reading straddles a mode switch, so the
+  callers in `render.rs` are unchanged.
+- **Gates, each step:** clippy findings identical before and after (148 with `--keep-going`; without
+  it, the two pre-existing `approx_constant` errors stop whichever target hits them first and the
+  counts differ for that reason alone); workspace 1,385 / 0 / 11; self-test 516/516, goldens 31/31;
+  after M3 `--livetest tours/grand-tour.toml` 24/24 ok.
+- **Next is B4 + B5, which ship together** (above). Since this section was written the code has
+  gained what B4 partly assumed absent: the per-adapter ceiling (beta.135), the reading pool and the
+  timing witness (beta.128–129) and the dead-man (beta.131–133). B4's remaining work is `wall_budget`,
+  `ReadingProvenance`, `budget_confident`, the `Admission` token at every dispatch entry point, and
+  the three deletions; B5 the actuator un-suppression. Each deletion has to be re-checked against
+  today's code before it is made.
