@@ -506,7 +506,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
                         if d.walk_diag.fallback_escaper { " FALLBACK-ESCAPER" } else { "" },
                     );
                     println!(
-                        "      perturb {:8.2}s winner_len={} survivors={} scored={} rb={} fb={}{}{}",
+                        "      perturb {:8.2}s winner_len={} survivors={} scored={} rb={} fb={}{}{}{}",
                         d.perturb_secs,
                         d.perturb_diag.winner_len,
                         d.perturb_diag.survivors,
@@ -515,8 +515,21 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
                         d.perturb_diag.perturb_fallbacks,
                         d.perturb_diag.rescued.map(|r| format!(" RESCUED={r}")).unwrap_or_default(),
                         if d.perturb_diag.fallback_escaper { " FALLBACK-ESCAPER" } else { "" },
+                        if d.perturb_diag.scan_perturb {
+                            format!(" scan=perturb(rewalked={})", d.perturb_diag.scan_rewalked)
+                        } else {
+                            String::new()
+                        },
                     );
-                    if d.identical {
+                    // Phase 1 by perturbation must keep the bignum scan's survivors, not just the winner.
+                    let same_survivors = d.walk_diag.survivors == d.perturb_diag.survivors;
+                    if !same_survivors {
+                        println!(
+                            "      MISMATCH: phase 1 kept {} survivors by perturbation, {} by the bignum scan",
+                            d.perturb_diag.survivors, d.walk_diag.survivors
+                        );
+                        mismatched += 1;
+                    } else if d.identical {
                         let speedup = if d.perturb_secs > 0.0 { d.walk_secs / d.perturb_secs } else { 0.0 };
                         println!("      MATCH ({speedup:.2}x)");
                         matched += 1;

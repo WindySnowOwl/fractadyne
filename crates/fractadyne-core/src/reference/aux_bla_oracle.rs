@@ -30,7 +30,7 @@ fn escape_length_of_rounded_centre() {
     for k in [64usize, 78, 96, 128, 157, 206, 300] {
         let rx = crate::lerp_bf(&cx, &cx, 0.5, k);
         let ry = crate::lerp_bf(&cy, &cy, 0.5, k);
-        let n = orbit_length_bf(&zero, &zero, &rx, &ry, 0, max_iter, arith);
+        let n = orbit_length_bf(&zero, &zero, &rx, &ry, 0, max_iter, arith, false);
         println!(
             "lerp'd at {k:4} bits -> true escape {n}{}",
             if n >= max_iter { "  (SURVIVED)" } else { "" }
@@ -48,7 +48,7 @@ fn escape_length_vs_precision() {
     let max_iter = 700_000u32;
     for p in [128usize, 160, 180, 207, 240, 286, 340, 400, 480] {
         let zero = BigFloat::from_f64(0.0, p);
-        let n = orbit_length_bf(&zero, &zero, &cx, &cy, 0, max_iter, p);
+        let n = orbit_length_bf(&zero, &zero, &cx, &cy, 0, max_iter, p, false);
         println!("prec {p:4} bits -> escape length {n}{}", if n >= max_iter { "  (SURVIVED)" } else { "" });
     }
 }

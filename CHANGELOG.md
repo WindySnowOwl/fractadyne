@@ -59,6 +59,19 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Faster reference orbits at extreme depth (0.3.0-beta.20).** Choosing the reference point no
+  longer competes with building it: the first round of the choice used to walk about a hundred
+  candidate points at full precision on every core while the reference was being computed, and
+  now scores them by perturbation against the centre instead. With identical images, that took
+  17–33% off the deepest benchmark scenes (the 1e30000× spiral view 54.9 → 45.8 s, the 1.5e30000×
+  minibrot 43.5 → 33.8 s, both at 1280x720). And the precision schedule — each step of the
+  reference orbit computed at the precision it needs, introduced for the Mandelbrot set in beta.18 —
+  now covers Multibrot 3 to 8, Tricorn, Burning Ship, Celtic and Buffalo at every power, and the
+  Julia views of all of them: at 1e30000× the Multibrot and Julia reference orbits take less than
+  half the time (a Multibrot 3 render 40.5 → 18.1 s, a power-3 Julia view 71.5 → 32.2 s), and at
+  1e10000× the fold families' take 45–60% less (a Tricorn 3 render 14.1 → 8.7 s, a Burning Ship
+  render 8.1 → 5.4 s), again with identical images. Orbits kept from an earlier version are rebuilt
+  once.
 - **Benchmark kit: Fraktaler-3 renders at the limits it is given (0.3.0-beta.20).** Fraktaler-3
   3.1 renders a batch PNG through its GUI program, which applies the GUI's Limit Iterations
   preference (on by default), so every Fraktaler-3 render the kit made ran with its perturbation

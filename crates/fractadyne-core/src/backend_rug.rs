@@ -1056,13 +1056,9 @@ pub(crate) fn try_run_orbit_inplace(
     let mut zy = <Float as RefBackend>::from_carrier(z0y, ctx);
     let rcx = <Float as RefBackend>::from_carrier(cx, ctx);
     let rcy = <Float as RefBackend>::from_carrier(cy, ctx);
-    // THE PRECISION SCHEDULE (`crate::reference::Schedule`): Mandelbrot only, as in the generic loop.
-    let mut sched = crate::reference::Schedule::new(
-        p,
-        crate::to_f64(cx),
-        crate::to_f64(cy),
-        sched.filter(|_| formula == fam::MANDELBROT),
-    );
+    // THE PRECISION SCHEDULE (`crate::reference::Schedule`): every family of this loop schedules
+    // (the folds by their 2×2 Jacobian since P3), as in the generic loop.
+    let mut sched = crate::reference::Schedule::new(p, formula, crate::to_f64(cx), crate::to_f64(cy), sched);
 
     if formula == fam::MANDELBROT && par_enabled(ctx) && n < max_iter {
         let mut escaped = false;
@@ -1231,6 +1227,7 @@ pub(crate) fn try_orbit_length_inplace(
     p: usize,
     mut samples: Option<&mut Vec<crate::floatexp::CFloatExp>>,
     mut probe: Option<&mut crate::reference::PeriodProbe<'_>>,
+    sched: Option<crate::reference::SchedState>,
 ) -> Option<u32> {
     use crate::floatexp::CFloatExp;
     use rug::ops::{AddAssignRound, AssignRound, SubAssignRound};
@@ -1250,9 +1247,10 @@ pub(crate) fn try_orbit_length_inplace(
     // THE PRECISION SCHEDULE, as the build walks the same orbit (`crate::reference::Schedule`).
     let mut sched = crate::reference::Schedule::new(
         p,
+        formula,
         crate::to_f64(cx),
         crate::to_f64(cy),
-        crate::reference::SchedState::fresh(p, formula, z0x.is_zero() && z0y.is_zero()),
+        sched,
     );
 
     if let Some(s) = samples.as_deref_mut() {

@@ -407,7 +407,8 @@ pub struct OrbitTail {
 // backends schedule identically. At the ladder's 1e30000 path (99,722 bits, 821,554 steps) the
 // derivative grows steadily to the view's scale and the average step needs half the bits: the
 // orbit and the pick's walk of it both took 66 s against 138, and not one of the 821,554 stored
-// samples changed (see the margin). Mandelbrot from `Z_0 = 0` only; an extension resumes the
+// samples changed (see the margin). The `z^d + c` families from `Z_0 = 0` only (Multibrot 3–8
+// since 2026-10-11, design/precision-schedule.md P1); an extension resumes the
 // schedule from its tail.
 
 /// Bits the schedule keeps above the need: the injected error stays 2^-112 under a pixel's own δz,
@@ -452,16 +453,126 @@ fn orbit_schedule_on() -> bool {
 pub struct SchedState {
     pub d: CFloatExp,
     pub cur: u32,
+    /// A Julia view's walk (design/precision-schedule.md P2): its pixels vary `Z_0`, so `d` is
+    /// `dZ/dZ_0` and its recurrence has no `+ 1`.
+    pub julia: bool,
+    /// A fold family's walk (P3): the real 2×2 Jacobian `[[∂x/∂a, ∂x/∂b], [∂y/∂a, ∂y/∂b]]` (row-
+    /// major) in place of the complex `d`, which is then unused (1).
+    pub j: Option<[FloatExp; 4]>,
 }
 
 impl SchedState {
     /// The state before `Z_1` of a build at `p` bits (`dZ_1/dc = 1`, full precision), or `None`
-    /// when the schedule is off or does not apply (not Mandelbrot from `Z_0 = 0`).
+    /// when the schedule is off or does not apply (not a `z^d + c` family from `Z_0 = 0`).
     pub(crate) fn fresh(p: usize, formula: u32, from_zero: bool) -> Option<SchedState> {
-        (formula == formula::MANDELBROT && from_zero && orbit_schedule_on()).then(|| SchedState {
+        let schedulable = formula_power(formula).is_some() || fold_kind(formula).is_some();
+        (schedulable && from_zero && orbit_schedule_on()).then(|| SchedState {
             d: CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO },
             cur: (p.div_ceil(64) * 64) as u32,
+            julia: false,
+            // A fold's `Z_1 = fold(0) + c`: `dZ_1/dc` is the identity.
+            j: fold_kind(formula).map(|_| MAT_ID),
         })
+    }
+
+    /// A Julia view's state before `Z_1`: the derivative is with respect to `Z_0` (`1` there), so
+    /// `Z_1`'s is `d·Z_0^{d−1}`; full precision. `None` when the schedule is off or the family is
+    /// not `z^d + c`.
+    pub(crate) fn fresh_julia(p: usize, formula: u32, z0: CFloatExp) -> Option<SchedState> {
+        if let Some((shape, d)) = fold_kind(formula) {
+            return orbit_schedule_on().then(|| SchedState {
+                d: CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO },
+                cur: (p.div_ceil(64) * 64) as u32,
+                julia: true,
+                j: Some(fold_step_jacobian(shape, d, z0)),
+            });
+        }
+        let d = formula_power(formula)?;
+        orbit_schedule_on().then(|| {
+            let mut zk = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
+            for _ in 1..d {
+                zk = zk * z0;
+            }
+            SchedState { d: zk.mul_f64(f64::from(d)), cur: (p.div_ceil(64) * 64) as u32, julia: true, j: None }
+        })
+    }
+}
+
+/// The 2×2 identity, row-major.
+const MAT_ID: [FloatExp; 4] = [FloatExp { m: 1.0, e: 0 }, FloatExp::ZERO, FloatExp::ZERO, FloatExp { m: 1.0, e: 0 }];
+
+/// A fold family's shape and power (design/precision-schedule.md P3): the power-2 originals and the
+/// power families' fold shapes. `None` for the `z^d + c` families and everything else.
+fn fold_kind(formula: u32) -> Option<(formula::Shape, u32)> {
+    use formula::Shape;
+    match formula {
+        formula::TRICORN => Some((Shape::Tricorn, 2)),
+        formula::BURNING_SHIP => Some((Shape::BurningShip, 2)),
+        formula::CELTIC => Some((Shape::Celtic, 2)),
+        formula::BUFFALO => Some((Shape::Buffalo, 2)),
+        f => formula::family(f).filter(|(s, _)| *s != Shape::Multibrot),
+    }
+}
+
+/// One fold step's Jacobian at `Z` (row-major, with respect to `(Re Z, Im Z)`): `F·P(u)·G`, where
+/// `G` is the fold before the power (Burning Ship: `diag(sgn x, sgn y)`, so `u = |x| + i|y|`), `P`
+/// the 2×2 of multiplying by `d·u^{d−1}`, and `F` the fold after (Tricorn `diag(1, −1)`, Celtic
+/// `diag(sgn Re z^d, 1)`, Buffalo `diag(sgn Re z^d, sgn Im z^d)`). The power-2 Burning Ship folds
+/// `Im(z²)` after the square instead — the same matrix, since `sgn(Im z²) = sgn x · sgn y`. Every
+/// factor is a similarity or a reflection, so the product is a similarity of scale `|d·u^{d−1}|`.
+/// The signs come from the floatexp `Z`: exact for `x`, `y`; for `z^d` they can only differ from the
+/// bignum step's where that coordinate is within 2^-53 of zero, which the margin covers.
+fn fold_step_jacobian(shape: formula::Shape, d: u32, z: CFloatExp) -> [FloatExp; 4] {
+    use formula::Shape;
+    let one = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
+    let sgn = |v: FloatExp| if v.m < 0.0 { -1.0 } else { 1.0 };
+    let (gx, gy) = if shape == Shape::BurningShip { (sgn(z.re), sgn(z.im)) } else { (1.0, 1.0) };
+    let u = CFloatExp { re: z.re.mul_f64(gx), im: z.im.mul_f64(gy) };
+    let mut uk = one;
+    for _ in 1..d {
+        uk = uk * u;
+    }
+    let p = uk.mul_f64(f64::from(d)); // d·u^{d−1} = a + ib
+    let (fx, fy) = match shape {
+        Shape::Tricorn => (1.0, -1.0),
+        Shape::Celtic | Shape::Buffalo => {
+            let mut w = one;
+            for _ in 0..d {
+                w = w * z;
+            }
+            (sgn(w.re), if shape == Shape::Buffalo { sgn(w.im) } else { 1.0 })
+        }
+        Shape::BurningShip | Shape::Multibrot => (1.0, 1.0),
+    };
+    // F·[[a, −b], [b, a]]·G
+    [p.re.mul_f64(fx * gx), p.im.mul_f64(-fx * gy), p.im.mul_f64(fy * gx), p.re.mul_f64(fy * gy)]
+}
+
+/// `a·b` for row-major 2×2 floatexp matrices.
+fn mat_mul(a: [FloatExp; 4], b: [FloatExp; 4]) -> [FloatExp; 4] {
+    [a[0] * b[0] + a[1] * b[2], a[0] * b[1] + a[1] * b[3], a[2] * b[0] + a[3] * b[2], a[2] * b[1] + a[3] * b[3]]
+}
+
+/// A lower bound on `log2 σ_min(J)`, the least a rounding error is shrunk on its way back to the
+/// parameter: `σ_min = |det J| / σ_max ≥ |det J| / ‖J‖_F`. A determinant that cancels (under 2^-40
+/// of its two products) is not trusted: −∞, so the step runs at full precision.
+fn log2_sigma_min(j: [FloatExp; 4]) -> f64 {
+    let (p, q) = (j[0] * j[3], j[1] * j[2]);
+    let det = (p - q).abs();
+    let fro2 = j[0] * j[0] + j[1] * j[1] + j[2] * j[2] + j[3] * j[3];
+    if det.m == 0.0 || det.lt((p.abs() + q.abs()).mul_f64(1.0e-12)) {
+        return f64::NEG_INFINITY;
+    }
+    det.log2() - 0.5 * fro2.log2()
+}
+
+/// The schedule a fresh walk from `(z0x, z0y)` starts with: a Julia view's when `julia` (its
+/// derivative with respect to `Z_0`), else a c-plane walk's from `Z_0 = 0` ([`SchedState::fresh`]).
+pub(crate) fn start_sched(p: usize, formula: u32, z0x: &BigFloat, z0y: &BigFloat, julia: bool) -> Option<SchedState> {
+    if julia {
+        SchedState::fresh_julia(p, formula, CFloatExp { re: bf_to_floatexp(z0x), im: bf_to_floatexp(z0y) })
+    } else {
+        SchedState::fresh(p, formula, z0x.is_zero() && z0y.is_zero())
     }
 }
 
@@ -469,19 +580,76 @@ impl SchedState {
 /// full precision, `advance` a no-op) without a state.
 pub(crate) struct Schedule {
     st: Option<SchedState>,
+    /// The family's power `d` (`z^d + c`; 2 for Mandelbrot; a fold family's own), which the
+    /// derivative and the error term follow.
+    power: u32,
+    /// A fold family's shape (P3), whose 2×2 Jacobian the state then carries.
+    fold: Option<formula::Shape>,
     full: u32,
     q: u32,
     cxf: f64,
     cyf: f64,
     /// Steps computed below full precision (diagnostics).
     pub(crate) reduced: u64,
+    /// `FRACTADYNE_SCHED_TRACE=<dir>` only: every change of the step's bits, written to a CSV in
+    /// `<dir>` when the walk ends (see [`SchedTrace`]).
+    trace: Option<Box<SchedTrace>>,
+}
+
+/// Where a scheduled walk spends its time: one row per change of the step's bits (step index, new
+/// bits, `log2|Z_n|`, `log2|dZ/dc|`, nanoseconds since the walk began), so the time at each
+/// precision is the gap to the next row. Diagnostics only, and only when the variable is set: the
+/// untraced walk pays one `Option` test per step.
+struct SchedTrace {
+    dir: std::path::PathBuf,
+    t0: std::time::Instant,
+    n: u64,
+    rows: Vec<(u64, u32, f32, f32, u64)>,
+}
+
+fn sched_trace_dir() -> Option<&'static std::path::Path> {
+    static DIR: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| std::env::var_os("FRACTADYNE_SCHED_TRACE").map(std::path::PathBuf::from))
+        .as_deref()
+}
+
+impl Drop for Schedule {
+    fn drop(&mut self) {
+        let Some(t) = self.trace.take() else { return };
+        // The pick scores ~100 short candidate walks; only a real build is worth a file.
+        if t.n < 10_000 {
+            return;
+        }
+        static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = t.dir.join(format!("sched-{}-{}-{seq}.csv", self.full, std::process::id()));
+        let mut s = String::from("step,bits,log2_z,log2_d,ns\n");
+        for (n, b, z, d, ns) in &t.rows {
+            s.push_str(&format!("{n},{b},{z},{d},{ns}\n"));
+        }
+        s.push_str(&format!("{},{},,,{}\n", t.n, self.st.map_or(self.full, |st| st.cur), t.t0.elapsed().as_nanos()));
+        let _ = std::fs::write(path, s);
+    }
 }
 
 impl Schedule {
-    /// For a walk at `p` bits of the point `c` (its `f64` view, `crate::to_f64` of the carrier).
-    pub(crate) fn new(p: usize, cxf: f64, cyf: f64, st: Option<SchedState>) -> Schedule {
+    /// For a walk of `formula` at `p` bits of the point `c` (its `f64` view, `crate::to_f64` of
+    /// the carrier).
+    pub(crate) fn new(p: usize, formula: u32, cxf: f64, cyf: f64, st: Option<SchedState>) -> Schedule {
         let full = (p.div_ceil(64) * 64) as u32;
-        Schedule { st, full, q: (full / 64 / 64 * 64).max(64), cxf, cyf, reduced: 0 }
+        let trace = st.and_then(|st| {
+            sched_trace_dir().map(|dir| {
+                Box::new(SchedTrace {
+                    dir: dir.to_path_buf(),
+                    t0: std::time::Instant::now(),
+                    n: 0,
+                    rows: vec![(0, st.cur, f32::NAN, 0.0, 0)],
+                })
+            })
+        });
+        let fold = fold_kind(formula);
+        let power = formula_power(formula).or(fold.map(|(_, d)| d)).unwrap_or(2);
+        Schedule { st, power, fold: fold.map(|(s, _)| s), full, q: (full / 64 / 64 * 64).max(64), cxf, cyf, reduced: 0, trace }
     }
 
     pub(crate) fn active(&self) -> bool {
@@ -500,23 +668,64 @@ impl Schedule {
     /// `Z_n` was just computed (its exact top bits `z` and `f64` view `xv, yv`): reckon `Z_{n+1}`.
     pub(crate) fn advance(&mut self, z: CFloatExp, xv: f64, yv: f64) {
         let Some(st) = self.st.as_mut() else { return };
-        st.d = (z * st.d).mul_f64(2.0) + CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
+        let one = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
+        let r2 = xv * xv + yv * yv;
+        // `dZ_{n+1}/dc = d·Z_n^{d−1}·dZ_n/dc + 1`, and the step's operands are `|Z_n|^d` (every
+        // partial product of the power is rounded, but each one's error reaches the result scaled
+        // to `|Z_n|^d`; their count, under `log2 d` bits, is inside the margin) against `|c|`.
+        // Mandelbrot keeps its arithmetic exactly, so its schedule — and so its samples and
+        // orbit blobs — are unchanged.
+        // A Julia walk's derivative is `dZ/dZ_0`: the same product without the `+ 1`.
+        let operands = if let (Some(j), Some(shape)) = (st.j, self.fold) {
+            // A fold family (P3): the 2×2 Jacobian, `J' = J_step·J (+ I in the c plane)`.
+            let mut a = mat_mul(fold_step_jacobian(shape, self.power, z), j);
+            if !st.julia {
+                a[0] = a[0] + FloatExp::from_f64(1.0);
+                a[3] = a[3] + FloatExp::from_f64(1.0);
+            }
+            st.j = Some(a);
+            r2.powf(f64::from(self.power) / 2.0)
+        } else if self.power == 2 {
+            st.d = if st.julia { (z * st.d).mul_f64(2.0) } else { (z * st.d).mul_f64(2.0) + one };
+            r2
+        } else {
+            let mut zk = z; // Z^{d−1}
+            for _ in 2..self.power {
+                zk = zk * z;
+            }
+            let dz = (zk * st.d).mul_f64(f64::from(self.power));
+            st.d = if st.julia { dz } else { dz + one };
+            r2.powf(f64::from(self.power) / 2.0)
+        };
         // ⛔The step's error is its OPERANDS' scale, not its result's: x², y² and their difference
         // are each rounded to the step's bits before `c` is added, so a near-return (Z_n² ≈ −c,
         // the result ~1e-71) still carries 2^-p·|c| of absolute error. Reckoned from |Z_{n+1}| the
         // first version gave such a step 64 bits — its f64 estimate cancelled to 0 — and at the
         // 1.2e148 corpus centre the orbit lost its dip at step 4,383 and escaped at 6,780 where it
         // survives 363,791.
-        let scale = (xv * xv + yv * yv).max(self.cxf.hypot(self.cyf));
+        let scale = operands.max(self.cxf.hypot(self.cyf));
         let full = self.full as f64;
-        let need = full + scale.log2() - st.d.abs().log2() + ORBIT_SCHED_MARGIN;
+        // How much a rounding error shrinks on its way back to the parameter: `|dZ/dc|` (conformal),
+        // or a fold Jacobian's least singular value.
+        let contraction = match st.j {
+            Some(j) => log2_sigma_min(j),
+            None => st.d.abs().log2(),
+        };
+        let need = full + scale.log2() - contraction + ORBIT_SCHED_MARGIN;
         let target = if need.is_nan() || need >= full {
             self.full
         } else {
             ((need.max(64.0) / self.q as f64).ceil() as u32 * self.q).clamp(64, self.full)
         };
         if target > st.cur || target + self.q <= st.cur {
+            if let Some(t) = self.trace.as_mut() {
+                let ns = t.t0.elapsed().as_nanos() as u64;
+                t.rows.push((t.n + 1, target, z.abs().log2() as f32, st.d.abs().log2() as f32, ns));
+            }
             st.cur = target;
+        }
+        if let Some(t) = self.trace.as_mut() {
+            t.n += 1;
         }
         self.reduced += u64::from(st.cur < self.full);
     }
@@ -543,8 +752,9 @@ fn run_orbit(
     p: usize,
     probe: Option<&mut PeriodProbe<'_>>,
     fe: Option<&mut Vec<CFloatExp>>,
+    julia: bool,
 ) -> OrbitTail {
-    let sched = SchedState::fresh(p, formula, n == 0 && zx.is_zero() && zy.is_zero());
+    let sched = if n == 0 { start_sched(p, formula, &zx, &zy, julia) } else { None };
     dispatch_orbit(bit, out, zx, zy, zpx, zpy, cx, cy, formula, n, max_iter, p, probe, sched, fe)
         .expect("a BackendChoice variant only exists when its backend is compiled in")
 }
@@ -642,7 +852,7 @@ fn run_orbit_carrier<B: RefBackend>(
     let (bzx, bzy) = (B::from_carrier(&zx, ctx), B::from_carrier(&zy, ctx));
     let (bzpx, bzpy) = (B::from_carrier(&zpx, ctx), B::from_carrier(&zpy, ctx));
     let (bcx, bcy) = (B::from_carrier(cx, ctx), B::from_carrier(cy, ctx));
-    let mut sched = Schedule::new(p, to_f64(cx), to_f64(cy), sched);
+    let mut sched = Schedule::new(p, formula, to_f64(cx), to_f64(cy), sched);
     let (zx, zy, zpx, zpy, escaped) = run_orbit_gen::<B>(
         out, bzx, bzy, bzpx, bzpy, &bcx, &bcy, formula, n, max_iter, ctx, probe.as_deref_mut(), &mut sched, fe,
     );
@@ -688,7 +898,7 @@ fn run_orbit_gen<B: RefBackend>(
     let mut escaped = false;
     let escape2 = ref_escape2(formula);
     while n < max_iter {
-        // The precision schedule's bits for this step (only Mandelbrot from 0 schedules).
+        // The precision schedule's bits for this step (only the `z^d + c` families from 0 schedule).
         let ctx = if sched.active() { B::ctx_for(sched.bits() as usize) } else { ctx };
         let (nzx, nzy) = if formula == formula::PHOENIX {
             phoenix_step_gen(&zx, &zy, &zpx, &zpy, cx, cy, ctx)
@@ -761,7 +971,39 @@ pub fn reference_orbit_t_in(
     max_iter: u32,
     p: usize,
 ) -> (Vec<[f32; 4]>, u32, OrbitTail) {
-    reference_orbit_t_rec(backend, z0x, z0y, cx, cy, formula, max_iter, p, None)
+    reference_orbit_t_rec(backend, z0x, z0y, cx, cy, formula, max_iter, p, None, false)
+}
+
+/// [`reference_orbit_t`] for a JULIA view: `Z_0` is the reference point, `c` the Julia constant,
+/// and the precision schedule follows `dZ/dZ_0` (the view's pixels vary the start). The c-plane
+/// entry cannot tell a Julia view from `Z_0 ≠ 0`, so the caller names the plane.
+pub fn reference_orbit_julia_t(
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+) -> (Vec<[f32; 4]>, u32, OrbitTail) {
+    reference_orbit_julia_t_in(crate::backend::selected(), z0x, z0y, cx, cy, formula, max_iter, p)
+}
+
+/// [`reference_orbit_julia_t`] in an explicitly named backend, for the cross-backend identity
+/// suite (see [`reference_orbit_t_in`]). Not part of the app-facing API.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn reference_orbit_julia_t_in(
+    backend: crate::BackendChoice,
+    z0x: &BigFloat,
+    z0y: &BigFloat,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    formula: u32,
+    max_iter: u32,
+    p: usize,
+) -> (Vec<[f32; 4]>, u32, OrbitTail) {
+    reference_orbit_t_rec(backend, z0x, z0y, cx, cy, formula, max_iter, p, None, true)
 }
 
 /// [`reference_orbit_t_in`] that can also record the orbit extended-range into `fe`
@@ -777,6 +1019,7 @@ fn reference_orbit_t_rec(
     max_iter: u32,
     p: usize,
     mut fe: Option<&mut Vec<CFloatExp>>,
+    julia: bool,
 ) -> (Vec<[f32; 4]>, u32, OrbitTail) {
     let bit = backend.bit();
     let mut out = Vec::with_capacity(max_iter as usize + 1);
@@ -791,7 +1034,7 @@ fn reference_orbit_t_rec(
     if let Some(s) = fe.as_deref_mut() {
         s.push(CFloatExp { re: bf_to_floatexp(&zx), im: bf_to_floatexp(&zy) });
     }
-    let tail = run_orbit(&mut out, bit, zx, zy, zpx, zpy, cx, cy, formula, 0, max_iter, p, None, fe);
+    let tail = run_orbit(&mut out, bit, zx, zy, zpx, zpy, cx, cy, formula, 0, max_iter, p, None, fe, julia);
     let len = out.len() as u32;
     (out, len, tail)
 }
@@ -872,7 +1115,7 @@ fn reference_orbit_periodic_until_in(
     mut fe: Option<&mut Vec<CFloatExp>>,
 ) -> (Vec<[f32; 4]>, u32, OrbitTail) {
     if formula != formula::MANDELBROT || !z0x.is_zero() || !z0y.is_zero() {
-        return reference_orbit_t_rec(backend, z0x, z0y, cx, cy, formula, max_iter, p, fe);
+        return reference_orbit_t_rec(backend, z0x, z0y, cx, cy, formula, max_iter, p, fe, false);
     }
     let mut probe = PeriodProbe::new(log2_span);
     probe.stop_at = stop_at;
@@ -897,6 +1140,7 @@ fn reference_orbit_periodic_until_in(
         p,
         Some(&mut probe),
         fe,
+        false,
     );
     let len = out.len() as u32;
     (out, len, tail)
@@ -2042,8 +2286,9 @@ fn orbit_length_bf(
     formula: u32,
     max_iter: u32,
     p: usize,
+    julia: bool,
 ) -> u32 {
-    orbit_length_in(crate::backend::selected(), z0x, z0y, cx, cy, formula, max_iter, p, None)
+    orbit_length_probed(crate::backend::selected(), z0x, z0y, cx, cy, formula, max_iter, p, None, None, julia)
 }
 
 /// The centre rescue's score ([`best_reference_diag_rescued`]) from a finished BUILD of the same
@@ -2075,7 +2320,7 @@ pub fn scoring_len_from_build(
     if formula == formula::PHOENIX {
         return None;
     }
-    Some(steps + orbit_length_bf(&tail.zx, &tail.zy, cx, cy, formula, max_iter - steps, p))
+    Some(steps + orbit_length_bf(&tail.zx, &tail.zy, cx, cy, formula, max_iter - steps, p, false))
 }
 
 /// The CENTRE's deep walk in the pick ([`best_reference_diag_from_build`]): its score — the
@@ -2155,7 +2400,7 @@ pub fn orbit_length_in(
     p: usize,
     samples: Option<&mut Vec<CFloatExp>>,
 ) -> u32 {
-    orbit_length_probed(backend, z0x, z0y, cx, cy, formula, max_iter, p, samples, None)
+    orbit_length_probed(backend, z0x, z0y, cx, cy, formula, max_iter, p, samples, None, false)
 }
 
 /// [`orbit_length_in`] with an optional [`PeriodProbe`]: a walk that finds the orbit closing on
@@ -2172,10 +2417,12 @@ fn orbit_length_probed(
     p: usize,
     samples: Option<&mut Vec<CFloatExp>>,
     probe: Option<&mut PeriodProbe<'_>>,
+    julia: bool,
 ) -> u32 {
+    let sched = start_sched(p, formula, z0x, z0y, julia);
     match backend {
         crate::BackendChoice::Astro => {
-            orbit_length_gen::<BigFloat>(z0x, z0y, cx, cy, formula, max_iter, p, samples, probe)
+            orbit_length_gen::<BigFloat>(z0x, z0y, cx, cy, formula, max_iter, p, samples, probe, sched)
         }
         #[cfg(feature = "rug")]
         crate::BackendChoice::Rug => {
@@ -2191,11 +2438,12 @@ fn orbit_length_probed(
                 p,
                 samples.as_deref_mut(),
                 probe.as_deref_mut(),
+                sched,
             ) {
                 Some(n) => n,
                 // Non-Mandelbrot: the generic loop — allocating per op, but still MPFR.
                 None => {
-                    orbit_length_gen::<rug::Float>(z0x, z0y, cx, cy, formula, max_iter, p, samples, probe)
+                    orbit_length_gen::<rug::Float>(z0x, z0y, cx, cy, formula, max_iter, p, samples, probe, sched)
                 }
             }
         }
@@ -2218,7 +2466,7 @@ fn orbit_length_periodic(
 ) -> (u32, Option<OrbitPeriod>) {
     let zero = bf(0.0, p);
     if formula != formula::MANDELBROT {
-        let n = orbit_length_probed(crate::backend::selected(), &zero, &zero, cx, cy, formula, max_iter, p, samples, None);
+        let n = orbit_length_probed(crate::backend::selected(), &zero, &zero, cx, cy, formula, max_iter, p, samples, None, false);
         return (n, None);
     }
     let mut probe = PeriodProbe::new(log2_span);
@@ -2233,6 +2481,7 @@ fn orbit_length_periodic(
         p,
         samples,
         Some(&mut probe),
+        false,
     );
     (n, probe.found)
 }
@@ -2255,14 +2504,10 @@ fn orbit_length_gen<B: RefBackend>(
     p: usize,
     mut samples: Option<&mut Vec<CFloatExp>>,
     mut probe: Option<&mut PeriodProbe<'_>>,
+    sched: Option<SchedState>,
 ) -> u32 {
     let ctx = B::ctx_for(p);
-    let mut sched = Schedule::new(
-        p,
-        to_f64(cx),
-        to_f64(cy),
-        SchedState::fresh(p, formula, z0x.is_zero() && z0y.is_zero()),
-    );
+    let mut sched = Schedule::new(p, formula, to_f64(cx), to_f64(cy), sched);
     let mut zx = B::from_carrier(z0x, ctx);
     let mut zy = B::from_carrier(z0y, ctx);
     let mut zpx = B::from_f64(0.0, ctx); // previous iterate (Phoenix)
@@ -2454,6 +2699,100 @@ fn perturb_orbit_length(
     Some(n)
 }
 
+/// [`perturb_orbit_length`] for every `dcs` entry against one recorded orbit, across the machine's
+/// cores like [`par_orbit_scores`]: each candidate's walk is an independent sequential loop and the
+/// results land in `dcs` order, so a selection over them — and a rebase total, a sum of
+/// per-candidate counts — is byte-identical to a sequential scan; threading changes wall-clock only.
+/// (At ~1,700 bits the sequential version measured SLOWER than the old engine's parallel bignum
+/// batch — the δ-walk win must not be given back to the wall.) Returns `(score, rebases)` each.
+fn par_perturb_lengths(samples: &[CFloatExp], dcs: &[CFloatExp], power: u32, max_iter: u32) -> Vec<(Option<u32>, u32)> {
+    let mut per: Vec<(Option<u32>, u32)> = vec![(None, 0); dcs.len()];
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(dcs.len().max(1));
+    let chunk = dcs.len().div_ceil(threads).max(1);
+    std::thread::scope(|sc| {
+        for (dc_chunk, out_chunk) in dcs.chunks(chunk).zip(per.chunks_mut(chunk)) {
+            sc.spawn(move || {
+                for (dc, out) in dc_chunk.iter().zip(out_chunk.iter_mut()) {
+                    let mut rb = 0u32;
+                    let len = perturb_orbit_length(samples, *dc, power, max_iter, &mut rb);
+                    *out = (len, rb);
+                }
+            });
+        }
+    });
+    per
+}
+
+/// Phase 1's scores ([`pick_pass`]): every candidate's orbit length, capped at `quick`.
+struct ScanScores {
+    scores: Vec<u32>,
+    /// Scored by [`perturb_scan`] (else every candidate was walked in bignum).
+    perturb: bool,
+    /// Candidates [`perturb_scan`] walked in bignum after all (near the threshold, or untrusted).
+    rewalked: u32,
+}
+
+/// How far either side of phase 1's threshold a perturbed score must land before it decides the
+/// candidate on its own; anything closer is walked in bignum (see [`perturb_scan`]). Phase 2's
+/// perturbed scores have measured within ±2 of the bignum walk's (design/pick-redesign.md).
+const SCAN_BAND: u32 = 64;
+
+/// PHASE 1 BY PERTURBATION (2026-10-11, design/precision-schedule.md P0). Phase 1 only decides which
+/// candidates survive `quick` steps, and at depth every candidate is a small δ off the centre: the
+/// old scan walked all 101 in bignum, 4,096 steps each at full precision (at 1e30000× ~414,000
+/// full-precision steps, half the length of the whole orbit, on every core beside the centre's
+/// build — which ran its opening 7× slower per step for it). Here the centre alone is walked in
+/// bignum, recorded, to `quick + SCAN_BAND`; the others are δ-walked against it in floatexp to the
+/// same cap. A candidate whose δ walk escapes `SCAN_BAND` steps or more before `quick`, or survives
+/// the whole cap, is decided by it; one that lands nearer the threshold, or whose score the trust
+/// rule rejects, is walked in bignum exactly as before. So the survivor set — the only thing phase 2
+/// reads from phase 1 — is the bignum scan's unless a trusted δ score is off by more than
+/// `SCAN_BAND` steps. (Escapers' scores matter only when nothing survives, and then the caller
+/// re-scans in bignum.) `None` when the centre's walk is too short to perturb against.
+fn perturb_scan(
+    cands: &[[BigFloat; 2]],
+    quick: u32,
+    julia: bool,
+    jcx: &BigFloat,
+    jcy: &BigFloat,
+    formula: u32,
+    p: usize,
+) -> Option<ScanScores> {
+    let power = formula_power(formula)?;
+    let zero = bf(0.0, p);
+    let cap = quick.saturating_add(SCAN_BAND);
+    let (len0, samples) = orbit_length_bf_recorded(&zero, &zero, &cands[0][0], &cands[0][1], formula, cap, p);
+    if samples.len() < 2 {
+        return None;
+    }
+    // Exact bignum differences rounded once to floatexp, as phase 2 does.
+    let dcs: Vec<CFloatExp> = cands[1..]
+        .iter()
+        .map(|c| CFloatExp {
+            re: bf_to_floatexp(&c[0].sub(&cands[0][0], p, RM)),
+            im: bf_to_floatexp(&c[1].sub(&cands[0][1], p, RM)),
+        })
+        .collect();
+    let per = par_perturb_lengths(&samples, &dcs, power, cap);
+    // The centre's own score is its bignum walk's, capped as the scan caps it.
+    let mut scores = vec![len0.min(quick)];
+    let mut rewalk = Vec::new();
+    for (k, &(len, _)) in per.iter().enumerate() {
+        match len {
+            Some(l) if l >= cap => scores.push(quick),
+            Some(l) if l.saturating_add(SCAN_BAND) <= quick => scores.push(l),
+            _ => {
+                scores.push(0);
+                rewalk.push(k + 1);
+            }
+        }
+    }
+    for (&i, l) in rewalk.iter().zip(par_orbit_scores(cands, &rewalk, quick, julia, jcx, jcy, formula, p)) {
+        scores[i] = l;
+    }
+    Some(ScanScores { scores, perturb: true, rewalked: rewalk.len() as u32 })
+}
+
 /// Whether the perturbation deep-scoring engine can express this request at all: the δ-step
 /// table covers the polynomial `z^k + c` families, and candidates must vary `c` with `z₀`
 /// fixed at the critical point (a Julia view varies `z₀` instead — unvalidated there, so it
@@ -2565,6 +2904,10 @@ pub struct RefPickDiag {
     /// Phase 2 took the centre's deep walk from the app's build of the centre instead of walking
     /// it again ([`best_reference_diag_from_build`]).
     pub centre_from_build: bool,
+    /// Phase 1 of the winning pass scored by perturbation against the centre ([`perturb_scan`]).
+    pub scan_perturb: bool,
+    /// Candidates [`perturb_scan`] walked in bignum after all (near the threshold, or untrusted).
+    pub scan_rewalked: u32,
 }
 
 /// One selection pass at a fixed precision: phase 1 (cheap rank to `quick`) + phase 2 (deep-rank
@@ -2583,6 +2926,8 @@ enum PickPass {
         rebases: u32,
         fallbacks: u32,
         centre_from_build: bool,
+        scan_perturb: bool,
+        scan_rewalked: u32,
     },
     /// Every candidate escaped within `quick` — the longest escaper and its length.
     NoSurvivor { point: [BigFloat; 2], esc_len: u32 },
@@ -2679,7 +3024,7 @@ fn best_reference_diag_forced(
     centre: Option<CentreSource<'_>>,
 ) -> ([BigFloat; 2], RefPickDiag) {
     match pick_pass(center, span, formula, julia, julia_c, max_iter, p, force, centre) {
-        PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build }
+        PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build, scan_perturb, scan_rewalked }
             if deep_len >= max_iter =>
         (
             point,
@@ -2694,9 +3039,11 @@ fn best_reference_diag_forced(
                 perturb_rebases: rebases,
                 perturb_fallbacks: fallbacks,
                 centre_from_build,
+                scan_perturb,
+                scan_rewalked,
             },
         ),
-        PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build } => {
+        PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build, scan_perturb, scan_rewalked } => {
             // The winner escapes before the render budget — either a genuine boundary/exterior
             // view (every point escapes) or a precision cliff between `quick` and `max_iter`.
             // Rescoring the centre at the BUILD precision separates them: only a cliff un-blinds.
@@ -2706,9 +3053,9 @@ fn best_reference_diag_forced(
                 let jcy = bf(julia_c[1], p2);
                 let zero = bf(0.0, p2);
                 if julia {
-                    orbit_length_bf(&center[0], &center[1], &jcx, &jcy, formula, max_iter, p2)
+                    orbit_length_bf(&center[0], &center[1], &jcx, &jcy, formula, max_iter, p2, true)
                 } else {
-                    orbit_length_bf(&zero, &zero, &center[0], &center[1], formula, max_iter, p2)
+                    orbit_length_bf(&zero, &zero, &center[0], &center[1], formula, max_iter, p2, false)
                 }
             });
             if centre_len >= max_iter {
@@ -2726,6 +3073,8 @@ fn best_reference_diag_forced(
                         perturb_rebases: 0,
                         perturb_fallbacks: 0,
                         centre_from_build,
+                        scan_perturb,
+                        scan_rewalked,
                     },
                 )
             } else {
@@ -2742,6 +3091,8 @@ fn best_reference_diag_forced(
                         perturb_rebases: rebases,
                         perturb_fallbacks: fallbacks,
                         centre_from_build,
+                        scan_perturb,
+                        scan_rewalked,
                     },
                 )
             }
@@ -2755,7 +3106,7 @@ fn best_reference_diag_forced(
             // The rescan's centre walk is at `p2 + REF_RESCUE_EXTRA_BITS`, not the build's precision,
             // so `centre` cannot answer it: the pass walks the centre itself.
             match pick_pass(center, span, formula, julia, julia_c, max_iter, p2, force, None) {
-                PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build } => (
+                PickPass::Winner { point, deep_len, survivors, deep_perturb, deep_scored, rebases, fallbacks, centre_from_build, scan_perturb, scan_rewalked } => (
                     point,
                     RefPickDiag {
                         scoring_prec: p2,
@@ -2768,6 +3119,8 @@ fn best_reference_diag_forced(
                         perturb_rebases: rebases,
                         perturb_fallbacks: fallbacks,
                         centre_from_build,
+                        scan_perturb,
+                        scan_rewalked,
                     },
                 ),
                 PickPass::NoSurvivor { point, esc_len } => (
@@ -2783,6 +3136,8 @@ fn best_reference_diag_forced(
                         perturb_rebases: 0,
                         perturb_fallbacks: 0,
                         centre_from_build: false,
+                        scan_perturb: false,
+                        scan_rewalked: 0,
                     },
                 ),
             }
@@ -2819,9 +3174,9 @@ fn pick_pass(
     let zero = bf(0.0, p);
     let score = |zx: &BigFloat, zy: &BigFloat, cap: u32| -> u32 {
         if julia {
-            orbit_length_bf(zx, zy, &jcx, &jcy, formula, cap, p)
+            orbit_length_bf(zx, zy, &jcx, &jcy, formula, cap, p, true)
         } else {
-            orbit_length_bf(&zero, &zero, zx, zy, formula, cap, p)
+            orbit_length_bf(&zero, &zero, zx, zy, formula, cap, p, false)
         }
     };
     // Candidate points: the centre first, then a 5×5 grid at several span fractions (fine→coarse), so
@@ -2877,7 +3232,7 @@ fn pick_pass(
     let centre_walk_here = |want_samples: bool| -> (u32, Option<Vec<CFloatExp>>) {
         if julia {
             let (jx, jy) = (bf(julia_c[0], pd), bf(julia_c[1], pd));
-            (orbit_length_bf(&cands[0][0], &cands[0][1], &jx, &jy, formula, max_iter, pd), None)
+            (orbit_length_bf(&cands[0][0], &cands[0][1], &jx, &jy, formula, max_iter, pd, true), None)
         } else if want_samples {
             let mut samples = Vec::new();
             let (len, _) =
@@ -2887,21 +3242,44 @@ fn pick_pass(
             (orbit_length_periodic(&cands[0][0], &cands[0][1], formula, max_iter, pd, log2_span, None).0, None)
         }
     };
-    let (scores, centre_beside) = std::thread::scope(|s| {
+    // Phase 1's scores: by perturbation against the centre where phase 2 would use it (see
+    // [`perturb_scan`]), else the bignum walks of every candidate.
+    let (mut scan, centre_beside) = std::thread::scope(|s| {
         let beside = !centre_src.is_some_and(|c| c.whole);
         let centre = beside.then(|| s.spawn(|| centre_walk_here(use_perturb)));
-        let scores = par_orbit_scores(&cands, &idxs, quick, julia, &jcx, &jcy, formula, p);
-        (scores, centre.map(|h| h.join().expect("the centre's deep walk panicked")))
+        let scan = use_perturb
+            .then(|| perturb_scan(&cands, quick, julia, &jcx, &jcy, formula, p))
+            .flatten()
+            .unwrap_or_else(|| ScanScores {
+                scores: par_orbit_scores(&cands, &idxs, quick, julia, &jcx, &jcy, formula, p),
+                perturb: false,
+                rewalked: 0,
+            });
+        (scan, centre.map(|h| h.join().expect("the centre's deep walk panicked")))
     });
-    let mut survivors: Vec<usize> = Vec::new();
-    let (mut esc_i, mut esc_len) = (0usize, 0u32);
-    for (idx, &len) in scores.iter().enumerate() {
-        if len >= quick {
-            survivors.push(idx);
-        } else if len > esc_len {
-            esc_len = len;
-            esc_i = idx;
+    let rank = |scores: &[u32]| {
+        let mut survivors: Vec<usize> = Vec::new();
+        let (mut esc_i, mut esc_len) = (0usize, 0u32);
+        for (idx, &len) in scores.iter().enumerate() {
+            if len >= quick {
+                survivors.push(idx);
+            } else if len > esc_len {
+                esc_len = len;
+                esc_i = idx;
+            }
         }
+        (survivors, esc_i, esc_len)
+    };
+    let (mut survivors, mut esc_i, mut esc_len) = rank(&scan.scores);
+    if survivors.is_empty() && scan.perturb {
+        // "No survivor" is what the cliff rescue keys on: never let the perturbed scan decide it.
+        // Score every candidate in bignum, exactly the old phase 1.
+        scan = ScanScores {
+            scores: par_orbit_scores(&cands, &idxs, quick, julia, &jcx, &jcy, formula, p),
+            perturb: false,
+            rewalked: 0,
+        };
+        (survivors, esc_i, esc_len) = rank(&scan.scores);
     }
     if survivors.is_empty() {
         // Deep exterior — or a precision cliff; the caller's rescue pass tells them apart.
@@ -2965,6 +3343,8 @@ fn pick_pass(
             rebases: 0,
             fallbacks: 0,
             centre_from_build,
+            scan_perturb: scan.perturb,
+            scan_rewalked: scan.rewalked,
         };
     }
     let mut rebases = 0u32;
@@ -2982,27 +3362,7 @@ fn pick_pass(
                     im: bf_to_floatexp(&cands[i][1].sub(&cands[first][1], p, RM)),
                 })
                 .collect();
-            // δ-walks across the machine's cores, like `par_orbit_scores`: each candidate's
-            // walk is an independent sequential loop and the results land in `rest` order, so
-            // the selection — and the rebase total, a sum of per-candidate counts — is
-            // byte-identical to a sequential scan; threading changes wall-clock only. (At
-            // ~1,700 bits the sequential version measured SLOWER than the old engine's
-            // parallel bignum batch — the δ-walk win must not be given back to the wall.)
-            let mut per: Vec<(Option<u32>, u32)> = vec![(None, 0); rest.len()];
-            let threads =
-                std::thread::available_parallelism().map_or(1, |n| n.get()).min(rest.len().max(1));
-            let chunk = rest.len().div_ceil(threads).max(1);
-            std::thread::scope(|sc| {
-                for (dc_chunk, out_chunk) in dcs.chunks(chunk).zip(per.chunks_mut(chunk)) {
-                    sc.spawn(move || {
-                        for (dc, out) in dc_chunk.iter().zip(out_chunk.iter_mut()) {
-                            let mut rb = 0u32;
-                            let len = perturb_orbit_length(samples, *dc, power, max_iter, &mut rb);
-                            *out = (len, rb);
-                        }
-                    });
-                }
-            });
+            let per = par_perturb_lengths(samples, &dcs, power, max_iter);
             let scored: Vec<Option<u32>> = per
                 .iter()
                 .map(|&(len, rb)| {
@@ -3049,6 +3409,8 @@ fn pick_pass(
         rebases,
         fallbacks,
         centre_from_build,
+        scan_perturb: scan.perturb,
+        scan_rewalked: scan.rewalked,
     }
 }
 
@@ -3119,9 +3481,9 @@ fn par_orbit_scores(
 ) -> Vec<u32> {
     let score_one = |c: &[BigFloat; 2], jcx: &BigFloat, jcy: &BigFloat, zero: &BigFloat| -> u32 {
         if julia {
-            orbit_length_bf(&c[0], &c[1], jcx, jcy, formula, cap, p)
+            orbit_length_bf(&c[0], &c[1], jcx, jcy, formula, cap, p, true)
         } else {
-            orbit_length_bf(zero, zero, &c[0], &c[1], formula, cap, p)
+            orbit_length_bf(zero, zero, &c[0], &c[1], formula, cap, p, false)
         }
     };
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(idxs.len());
