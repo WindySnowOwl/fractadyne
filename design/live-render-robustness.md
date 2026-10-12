@@ -3028,3 +3028,37 @@ same trap; user approved).** Exit 0 in 52 s, logcheck PASS, 0 of 225 dispatches 
   and prose survive. U23 (`mode_rate`'s session-long minimum: kind filter and decay) and U40 (the
   motion pacer's wall LIFT) are therefore re-derived from the code before they are changed.
 
+**2026-10-12 — U23 (`cee0b62`) and U40, re-derived from the record.**
+
+- **U23: `mode_rate`'s minimum recovers.** Every GPU reading of every kind fed a session-long
+  minimum that sizes the opening guess (40 ms at that rate, clamped to [4e6, 4e8]) and the chunk
+  walk's floor. In each run the minimum was set by small MOVING passes: the RTX 3080 trap's storm
+  passes (3.9e6–7.8e6 steps at 1.5–4e6 steps/ms against 4–7e7 for big passes; opening guess 4e8 →
+  5.9e7), the RX 6800 XT's (6.8e5; 2.7e7), and a healthy motiontest's mode-0 pass (2.6e6, where a
+  same-sized pass two frames earlier read 2.5e7). With B4 the opening guess is the unconfident
+  admission. `mode_rate_step`: a slower reading is still adopted at once, a faster one raises the
+  minimum at most 2× per `MODE_RATE_DOUBLING_S` (10 s). Safe by construction, because both readers
+  are clamped to their historical constants. The kind filter U23 also names was not substantiated:
+  the readings that set the minimum were 1–10 ms passes in genuinely slow regimes, not fixed-cost
+  slivers. RTX 3080: the trap's minimum still falls in the storm and ends at 2.7e6 against 1.1e6
+  (opening guess 1.09e8 against 4.55e7); the zoomtest's ends at 7.6e7 against 2.8e7.
+- **U40: the motion pacer's LIFT counts only a dispatch made while moving, bounded 2× per event.**
+  The lift set the motion rate to `steps / interval` for any dispatch of the last two frames whose
+  next frame fit 40 ms. A still settle tile followed by a quick frame (submission is asynchronous)
+  lifted it 350× on the RTX 3080 trap (1.4e7 → 4.9e9 steps/ms) and 22–58× on the RX 6800 XT (tiles
+  and settled chunk passes). Now: only a dispatch made while the view moved (`view_dispatch_moving`)
+  counts, through `bounded_motion_lift` (`MOTION_LIFT_MAX` = 2, the mirror of the cut). The trap
+  now has no one-frame rise over 2.3×.
+- **Tried and dropped: proving the lift by a COMPLETION** (dispatch to callback) instead of the next
+  frame. It closes the "a frame that never waited" half for moving passes too, but over six
+  interleaved zoomtest pairs it raised the on-screen lag from a median 0.306 to 0.336 octaves (a
+  completion is noticed up to a frame late, understating a small pass's rate). The kept variant
+  matches the previous build (lag 0.304 against 0.301, refreshes 34.0 against 33.8/s). Open: a big
+  PINNED pass followed by a quick frame can still prove a rate it has not shown.
+- **Outlier runs, recorded:** in 12 zoomtest runs of the two U40 variants, two had frames over 50 ms
+  (5 frames, max 98.9 ms, at pinned passes of up to 1.5e10 nominal steps during reference builds);
+  the previous build's 12 had none. The kept variant can only lower the motion rate relative to the
+  previous build (it removes lifts and caps the rest), so it cannot have sized those passes larger,
+  and 2 of 12 against 0 of 12 is within chance (Fisher p ≈ 0.24). If such frames show up in a field
+  log, look at pinned-pass sizing at deep iteration ranges first.
+
