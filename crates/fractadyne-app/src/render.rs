@@ -4782,6 +4782,10 @@ impl FractadyneApp {
         gpu_iter: u32,
         tdr_steps: u64,
     ) -> ([u32; 4], bool) {
+        // Read before `state` borrows the grid (the hold below uses them).
+        let outstanding = self.perf.view_outstanding(vidx);
+        let last_done = self.perf.view_last_done(vidx);
+        let reg_age = crate::app_micros().saturating_sub(self.perf.view_reg_at[vidx]);
         let Some(state) = self.perf.tile_state[vidx].as_mut() else {
             return ([0, 0, 0, 0], false); // unreachable: `tiling` guarantees an armed state
         };
@@ -4833,6 +4837,27 @@ impl FractadyneApp {
         // interactive panel at ~1 fps for the grid's whole duration). Draw order means the
         // guard sees the other view's markers one frame late in one direction — a residual,
         // rare single overlap, still inside the watchdog with TDR_BUDGET_MS' ~2.2x margin.
+        // …and behind THIS view's own work still in the GPU queue (`settle_tile_waits`). Tiles used
+        // to go out one per frame, and on the RX 6800 XT four of them queued behind one another. The
+        // present gate keeps serving the snapshot meanwhile, and `tile_pending` keeps the repaints
+        // coming that notice the completion.
+        if settle_tile_waits(outstanding, last_done, tile_steps(rect(idx), ss, gpu_iter), reg_age) {
+            self.perf.tile_pending[vidx] = true;
+            return ([0, 0, 0, 0], false);
+        }
+        let overdue = outstanding > 0
+            && reg_age > crate::tunables::SETTLE_COMPLETION_TIMEOUT_US
+            && crate::tunables::cost().settle_serialize == 1;
+        if overdue && self.perf.view_overdue_logged[vidx] != self.perf.view_reg_seq[vidx] {
+            self.perf.view_overdue_logged[vidx] = self.perf.view_reg_seq[vidx];
+            crate::diag::log_line(
+                "render",
+                &format!(
+                    "settle tile: view {vidx}'s queued work has no completion after {} ms — tile released anyway",
+                    crate::tunables::SETTLE_COMPLETION_TIMEOUT_US / 1000
+                ),
+            );
+        }
         let other = 1 - vidx;
         let f = self.perf.frame_idx;
         if self.perf.tile_turn == f
@@ -6790,6 +6815,17 @@ impl FractadyneApp {
             self.perf.fe_steps_last[vs] = key_change_steps(spx, ss, gpu_iter, tile);
             self.perf.fe_iter_frame[vs] = self.perf.frame_idx;
             self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
+        }
+        // SETTLE-TILE SERIALIZATION, counting half (`Perf::view_reg_pending`): every real dispatch of
+        // this view owes a completion registration, whatever its shape, so a grid's first tile also
+        // waits behind the whole frame or arm frame before it. A zero-area hold rect runs nothing.
+        if !will_reproject
+            && self.perf.fe_dispatch_frame[vs] == self.perf.frame_idx
+            && tile.is_none_or(|r| r[2] > 0 && r[3] > 0)
+        {
+            self.perf.view_reg_pending[vs] = true;
+            self.perf.view_dispatch_at[vs] = crate::app_micros();
+            self.perf.view_dispatch_steps[vs] = self.perf.fe_steps_last[vs];
         }
         // MOTION-JAM ACCOUNTING — one site, after every dispatch path has stamped its cost.
         // Whatever shape this frame dispatched (full frame, settle tile, chunk range, climb

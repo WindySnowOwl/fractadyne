@@ -326,6 +326,9 @@ frame_record! {
     /// settle tile's rect, a chunk's range, else the whole frame. Unlike `nominal_steps` it is not
     /// what travels with the pass; a disagreement on a dispatched frame is a mis-pairing.
     priced_steps: u64,
+    /// This view's registered work is not yet confirmed complete (schema 5): the settle-tile gate's
+    /// input (`render::settle_tile_waits`). A tiled frame with it set and a zero-area tile was held.
+    queue_busy: bool,
     full_inflight: u32,
     pin_inflight: u32,
     present_throttle: u32,

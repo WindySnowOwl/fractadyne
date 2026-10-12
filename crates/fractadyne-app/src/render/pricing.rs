@@ -883,6 +883,49 @@ pub(crate) fn key_change_steps(spx: u64, ss: u32, gpu_iter: u32, tile: Option<[u
     }
 }
 
+/// The latest completed registration of a view's work (`Perf::view_done`): its sequence, its time
+/// from dispatch to the completion callback, and the steps it carried.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct ViewDone {
+    pub seq: u64,
+    pub price_us: u64,
+    pub steps: u64,
+}
+
+/// SETTLE-TILE SERIALIZATION: does this view's next settle tile (`next_steps`) wait? The input is
+/// what the GPU has CONFIRMED by completion callback (`Perf::view_reg_pending`): `outstanding`
+/// registrations of this view's work not yet complete, and `last`, the latest one that is.
+///
+/// - Nothing outstanding: go.
+/// - `SETTLE_INFLIGHT_MAX` (3) or more outstanding: wait.
+/// - Fewer: go only if the last completed work was at least as big as this tile
+///   (`PRICE_REPRESENTATIVE_FRAC`) and took under `SETTLE_PIPELINE_MS` from dispatch to
+///   completion. Cheap tiles then keep close to their one-per-frame cadence, and a tile whose
+///   predecessor ran slow, or whose only evidence is a small pass, waits for the queue to empty.
+///   Measured on the RTX 3080 (stripe at 1920x1200, where settles tile): a cheap settle reached
+///   full resolution in 0.68 s unpaced, 1.39 s with one in flight, 0.91 s with this rule at two
+///   outstanding and 0.80 s at three; the heavy ss 2 grid after it took 4% longer, with a worst
+///   frame of 326 ms against 365 ms.
+/// - Whatever the count, the gate opens once the newest registration is older than
+///   `SETTLE_COMPLETION_TIMEOUT_US`: a completion that late is a lost device or a callback that is
+///   not coming, and the grid must not wedge on it.
+///
+/// ⚠Not the frame interval. The interval after a tile is no proof it finished: on the RX 6800 XT an
+/// 8.06e9-step tile was followed by a 7.4 ms interval, the next three tiles went out behind it, and
+/// the stall surfaced two and three frames later (357, 713, 495 ms; budget trap, 2026-10-12).
+pub(crate) fn settle_tile_waits(outstanding: u64, last: ViewDone, next_steps: u64, reg_age_us: u64) -> bool {
+    use crate::tunables::{SETTLE_COMPLETION_TIMEOUT_US, SETTLE_INFLIGHT_MAX, SETTLE_PIPELINE_MS};
+    if crate::tunables::cost().settle_serialize != 1 || outstanding == 0 || reg_age_us > SETTLE_COMPLETION_TIMEOUT_US {
+        return false;
+    }
+    if outstanding >= SETTLE_INFLIGHT_MAX {
+        return true;
+    }
+    let fast = (last.price_us as f64) / 1000.0 <= SETTLE_PIPELINE_MS;
+    let representative = last.steps > 0 && probe_would_price(last.steps, next_steps);
+    !(fast && representative)
+}
+
 /// Frames a view's newest dispatch may go without a reading feeding its learned budget before that
 /// budget stops vouching for the next dispatch ([`budget_confident`]). A GPU reading lands two to
 /// three frames after its pass, but a PINNED chunk walk in motion is priced about one frame in ten
@@ -991,3 +1034,5 @@ pub(crate) fn wall_cap_step(cap: u64, steps: u64, ms: f64, explicit: bool) -> u6
 
 #[cfg(test)]
 mod admission_tests;
+#[cfg(test)]
+mod settle_tile_tests;

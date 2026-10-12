@@ -87,6 +87,8 @@ pub(crate) struct Cost {
     pub dead_man: u64,
     /// The per-adapter dispatch ceiling (`DISPATCH_CEILING_DEFAULT`; 0 = off, 1 = on).
     pub dispatch_ceiling: u64,
+    /// One settle tile in flight per view (`SETTLE_SERIALIZE_DEFAULT`; 0 = off, 1 = on).
+    pub settle_serialize: u64,
     /// The mode-2 df32 tail phase (`TAIL_DF32_DEFAULT`; 0 = off, 1 = on).
     pub tail_df32: u64,
     /// The overlapped pick + centre build (`REF_OVERLAP_DEFAULT`; 0 = off, 1 = on).
@@ -147,6 +149,7 @@ impl Default for Cost {
             reading_pool: READING_POOL_DEFAULT,
             dead_man: DEAD_MAN_DEFAULT,
             dispatch_ceiling: DISPATCH_CEILING_DEFAULT,
+            settle_serialize: SETTLE_SERIALIZE_DEFAULT,
             tail_df32: TAIL_DF32_DEFAULT,
             ref_overlap: REF_OVERLAP_DEFAULT,
             early_ref: EARLY_REF_DEFAULT,
@@ -353,6 +356,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "SETTLE_SERIALIZE" => {
+                let p = c.settle_serialize;
+                c.settle_serialize = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set SETTLE_SERIALIZE: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "SA_TRACE" => {
                 let p = c.sa_trace;
                 c.sa_trace = match raw.as_str() {
@@ -523,7 +535,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     TDR_BOOTSTRAP_MS, MOTION_UNPRICED_MAX, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL, \
-    DEAD_MAN, DISPATCH_CEILING, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
+    DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
     CHUNK_SHUFFLE, WORKER_MOTION, WORKER_PASS_MS";
 
@@ -967,6 +979,14 @@ pub(crate) const DEAD_MAN_DEFAULT: u64 = 1;
 /// tunables (§5.2).
 pub(crate) const DISPATCH_CEILING_DEFAULT: u64 = 1;
 
+/// 1 = SETTLE-TILE SERIALIZATION (`render::settle_tile_waits`): a view's next settle tile waits
+/// until the GPU confirms the view's previous work complete (`on_submitted_work_done`), so at most
+/// one tile is in the queue per view. Tiles used to go out one per frame and queue behind one
+/// another: four on the RX 6800 XT, and the stall surfaced two and three frames later (357, 713,
+/// 495 ms; budget trap, 2026-10-12). 0 = the old one-per-frame cadence, for the before/after
+/// measurement and as a field fallback.
+pub(crate) const SETTLE_SERIALIZE_DEFAULT: u64 = 1;
+
 /// 1 = the mode-2 df32 TAIL PHASE (beta.141; `TAIL_DF32_MIN` in mandelbrot.wgsl): a Mandelbrot
 /// full step whose |δz| has grown past 2^-60 runs in df32 instead of floatexp. The step counters
 /// (beta.137) found 84–100% of mode-2 full steps in that range at every deep corpus scene. 0 = the
@@ -1205,6 +1225,27 @@ pub(crate) const PIN_INFLIGHT_MAX: u32 = 2;
 /// and the wall-shed retreat firing 36 times where the unpaced build fired 6. Ten frames' worth
 /// is far past any pass the pacer would size; the gate reopens on it.
 pub(crate) const PIN_COMPLETION_TIMEOUT_US: u64 = 170_000;
+
+/// Wall time after which a view's registered work still "in the queue" no longer holds its next
+/// settle tile, microseconds (`render::settle_tile_waits`). A settle tile is sized to ~TDR_BUDGET_MS
+/// and the RX 6800 XT ran them to ~0.8 s, so this must sit past any pass that can still be running:
+/// three seconds is beyond the Windows watchdog (2 s), and a completion that late is a lost device
+/// or a callback that is not coming, not a slow tile. Releasing then cannot stack onto a live pass.
+pub(crate) const SETTLE_COMPLETION_TIMEOUT_US: u64 = 3_000_000;
+
+/// Registrations of a view's work outstanding at which its next settle tile waits whatever the
+/// evidence (`render::settle_tile_waits`). Below it a tile goes out only when the last completed
+/// work was cheap and representative. Three, not two as for pins (`PIN_INFLIGHT_MAX`): a completion
+/// is noticed two to three frames after its dispatch, so one cheap tile per frame keeps two
+/// registrations outstanding, and at two the RTX 3080's cheap stripe tiles reached full
+/// resolution 34% later than unpaced (0.91 against 0.68 s).
+pub(crate) const SETTLE_INFLIGHT_MAX: u64 = 3;
+
+/// Dispatch-to-completion time under which a view's last completed work counts as cheap enough for
+/// the next settle tile to queue behind its successor, ms. Completion is observed at the queue's
+/// poll cadence (~two frames: a 1.7 ms pin pass reads 33.5 ms), so this sits well above that and
+/// well below a budget-sized tile (~TDR_BUDGET_MS); the chunk walk's "quick" is the same 100 ms.
+pub(crate) const SETTLE_PIPELINE_MS: f64 = 100.0;
 
 /// Pinned refresh (option C, design/mode2-chunking.md §10-§11): a chunked view's refresh runs its
 /// progression across frames at a PINNED view while the display reprojects the previous complete

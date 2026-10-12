@@ -1411,6 +1411,27 @@ struct Perf {
     /// of a 1.0× dive at native resolution).
     pin_done_at: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     pin_dispatch_at: [u64; 2],
+    /// SETTLE-TILE SERIALIZATION (`render::settle_tile_waits`): how much of this view's work is
+    /// still in the GPU queue, and what the last completed piece cost. Every real dispatch of the
+    /// view sets `view_reg_pending` and stamps `view_dispatch_at` / `view_dispatch_steps`; the next
+    /// `update` (after eframe has submitted that frame, as for `full_reg_pending`) registers ONE
+    /// `on_submitted_work_done` callback under a new `view_reg_seq`, and the callback records its
+    /// sequence, its dispatch-to-completion time and its steps in `view_done`. Callbacks fire in
+    /// order, so `view_reg_seq − view_done.seq` registrations are outstanding. A sequence, not a
+    /// count, so a timeout needs no reset and a late callback cannot retire newer work.
+    ///
+    /// Why: a view's settle tiles went out on CONSECUTIVE frames, the frame interval after a tile
+    /// is no proof it finished (RX 6800 XT budget trap, 2026-10-12: 7.4 ms after an 8.06e9-step
+    /// tile), so four tiles queued behind one another and the stall landed on later frames
+    /// (357, 713, 495 ms). The tile turn only ever held a tile behind the OTHER view.
+    view_reg_pending: [bool; 2],
+    view_dispatch_at: [u64; 2],
+    view_dispatch_steps: [u64; 2],
+    view_reg_seq: [u64; 2],
+    view_reg_at: [u64; 2],
+    view_done: [std::sync::Arc<std::sync::Mutex<render::ViewDone>>; 2],
+    /// The `view_reg_seq` whose overdue completion was last logged (one line per registration).
+    view_overdue_logged: [u64; 2],
     /// The last dispatched pin pass: its nominal steps (the key its GPU timestamp reading is
     /// paired by — `apply_iterate_measurement` stores the FIRST reading whose steps match), the
     /// frame it went out, and the paired GPU time (< 0 = not yet). The completion stamp above is
@@ -1990,6 +2011,20 @@ impl Perf {
         self.pin_reg_pending[v] = 0;
         self.pin_done[v].store(0, std::sync::atomic::Ordering::Relaxed);
         self.pin_done_at[v].store(app_micros(), std::sync::atomic::Ordering::Relaxed);
+        self.view_reg_pending[v] = false;
+        if let Ok(mut d) = self.view_done[v].lock() {
+            d.seq = self.view_reg_seq[v];
+        }
+    }
+
+    /// The last completed registration of this view's work (see `view_reg_pending`).
+    pub(crate) fn view_last_done(&self, v: usize) -> render::ViewDone {
+        self.view_done[v].lock().map(|d| *d).unwrap_or_default()
+    }
+
+    /// Registrations of this view's work not yet confirmed complete.
+    pub(crate) fn view_outstanding(&self, v: usize) -> u64 {
+        self.view_reg_seq[v].saturating_sub(self.view_last_done(v).seq)
     }
 
 
@@ -2132,6 +2167,13 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             ],
             pin_dispatch_at: [0, 0],
+            view_reg_pending: [false, false],
+            view_dispatch_at: [0, 0],
+            view_dispatch_steps: [0, 0],
+            view_reg_seq: [0, 0],
+            view_reg_at: [0, 0],
+            view_overdue_logged: [0, 0],
+            view_done: Default::default(),
             pin_pass_steps: [0, 0],
             pin_pass_frame: [0, 0],
             pin_pass_gpu_ms: [-1.0, -1.0],
@@ -14924,6 +14966,7 @@ impl FractadyneApp {
             r.wall_fallback = p.wall_fallback;
             r.wall_cap = p.wall_cap[v];
             r.priced_steps = p.fe_steps_last[v];
+            r.queue_busy = p.view_outstanding(v) > 0;
             r.full_inflight = p.full_inflight[v];
             r.pin_inflight = p.pin_inflight[v];
             r.present_throttle = p.present_throttle;
@@ -15599,6 +15642,23 @@ impl eframe::App for FractadyneApp {
                     q.on_submitted_work_done(move || {
                         at.store(app_micros(), std::sync::atomic::Ordering::Relaxed);
                         c.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    });
+                }
+                // The settle-tile gate (see `Perf::view_reg_pending`): one registration covers all
+                // of this view's work submitted so far.
+                if std::mem::take(&mut self.perf.view_reg_pending[v]) {
+                    let seq = self.perf.view_reg_seq[v] + 1;
+                    self.perf.view_reg_seq[v] = seq;
+                    self.perf.view_reg_at[v] = app_micros();
+                    let (at, steps) = (self.perf.view_dispatch_at[v], self.perf.view_dispatch_steps[v]);
+                    let done = self.perf.view_done[v].clone();
+                    q.on_submitted_work_done(move || {
+                        let price_us = app_micros().saturating_sub(at);
+                        if let Ok(mut d) = done.lock() {
+                            if seq > d.seq {
+                                *d = render::ViewDone { seq, price_us, steps };
+                            }
+                        }
                     });
                 }
             }

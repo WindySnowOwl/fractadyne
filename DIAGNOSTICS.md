@@ -152,7 +152,9 @@ dispatch carry), `admit_bound` (0 learned, 1 wall clock, 2 unconfident) and `con
 nothing yet; the `[fd-render] admission (shadow)` line marks a change of binding term. Schema 5
 adds `priced_steps`, the step count the wall clock prices the view's last dispatch at
 (`fe_steps_last`); on a dispatched frame it should equal `nominal_steps`, except a split live
-refresh, whose pass carries a share of the frame (not yet reconciled). Older files
+refresh, whose pass carries a share of the frame (not yet reconciled). It also adds `queue_busy`:
+the view's registered work is not yet confirmed complete, which is what holds its next settle tile
+(`SETTLE_SERIALIZE`); a tiled frame with it set and a zero-size tile was held. Older files
 read with `validation/frame-schema-v4.json` or `-v3.json`.
 
 **Reading it: `scripts/framelog.py`** (standard library only).
@@ -272,7 +274,13 @@ conservative default. Direct and df32-perturbation dispatches only (floatexp's B
 nominal steps unrepresentative). The adapter line is followed by `dispatch ceiling (calibrated for
 …)`, and a view logs `dispatch ceiling BINDS on v0: learned X → Y` when the ceiling starts to limit
 its budget and `dispatch ceiling released` when it stops. The value itself is NOT overridable: a
-per-card number as an override would make every gate on that card non-stock. — and `TAIL_DF32`
+per-card number as an override would make every gate on that card non-stock. — and
+`SETTLE_SERIALIZE` (default 1; `0` = the old one-tile-per-frame cadence, for a before/after
+measurement or as a fallback): a view's next settle tile waits until the GPU confirms the view's
+previous work complete (a completion callback, not a frame interval, which can be quick while a
+tile is still running), so each view has at most one tile in the queue. A completion that has not
+come after 3 s releases the tile anyway and logs `settle tile: view N's queued work has no
+completion after 3000 ms — tile released anyway`. — and `TAIL_DF32`
 (default 1 from beta.141; `0` = off, for a before/after measurement): a deep (floatexp) Mandelbrot
 step whose offset from the reference has grown past 2^-60 runs in ordinary df32 arithmetic instead
 of floatexp, and back if it shrinks. The share of steps taken that way is the `in df32` figure on a
