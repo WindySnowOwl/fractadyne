@@ -2900,3 +2900,77 @@ place: no schema-5 file had left this machine) shows the gate's input.
 - **Next:** the admission's reaction (`tdr_steps` ← the admission), then one PLUTO run of the trap
   for both (ask first).
 
+**2026-10-12 — serialization on the RX 6800 XT (field build `v0.3.0-beta.19.dev.2`, PLUTO, the
+same trap; user approved an interim run).** Exit 0 in 52 s, logcheck PASS. Both grids went out one
+tile at a time, with holds between, exactly as on the RTX 3080. The worst frames did not improve:
+386 ms on the first grid (443 unpaced), 734 ms on the second (713). On this card in the trap's
+regime ONE 8.06e9-step tile takes about a second, and frames stall behind it while the gate holds,
+so what remains is the size of a single dispatch, which is the admission's job. It also showed the
+frame-interval wall probe was the wrong instrument once tiles are serialized: a tile's cost now
+spreads over several frames (234, 386, 345 ms for the first grid's tiles, none over 400), so the
+cap never set on the first grid. The unconfident term bound 19 frames: six motion episodes whose
+4.7e6-step passes were under it anyway, and one at a settle start (f722–725), where the grid's
+first 8.06e9 tile went out while the budget was unconfident and confidence returned three frames
+later.
+
+**2026-10-12 — B4's reaction: the admission sizes every dispatch (`ADMISSION`, default on).**
+What §5.1 specifies, adapted to today's code and to what the shadow and the two field runs measured:
+
+- **`size()` and `admit()` are kept apart, as §5.1 says.** `tdr_steps` stays the plan (the
+  supersampling, the tile allowance), so one unconfident frame cannot knock the ss ramp down;
+  `adm = admit(...)` bounds what goes out: the chunk decision (a frame over the admission chunks),
+  every chunk pass, settled and moving, the walk's iteration floor (it lifted admitted passes
+  straight back to 256 iterations: 3.9e8 steps against 4.8e7 on the RTX 3080 trap), every settle
+  tile, the un-tiled frame's resolution shrink and the live refreshes. `frozen_budget` stores the
+  admission, since that is what sized a reprojected frame's source.
+- **Unconfident: chunk, never freeze a tiny grid.** §5.1's "chunk at the bootstrap size" is what the
+  chunk decision now does. A grid is different: it freezes its tile side on its first tile, and a
+  view is often unconfident for the first frames of a settle, so a grid sized then would keep
+  opening-guess tiles for life (5.4e7 against 1.45e10 on the RTX 3080 trap). A grid about to freeze
+  its geometry waits for a confident budget instead (`GRID_CONFIDENCE_WAIT_FRAMES`, 30; the arm
+  frame's own reading normally lands in two or three).
+- **A tile over the admission goes out as strips** (`settle_strip`): when a grid's own tile sets the
+  wall cap, the rest of the grid would otherwise exceed it (RTX 3080 stripe: three tiles of
+  1.1–1.45e10 after a cap of 8.9e9). Rows of the frozen tile, whole rows that fit, in order; the
+  finished grid repeats the last strip, not the whole tile, so the GPU still dedupes it.
+- **The wall cap is priced by completion** (the settle gate's callbacks record each dispatch's
+  dispatch-to-completion time and steps) and reacts only past `TDR_LATENCY_ACCEPT_MS` (600 ms),
+  aiming back at 400. Settled passes are sized to land near 400 ms and a completion reads a frame or
+  two late, so a 400 ms trigger would make the cap a second controller of every walk.
+- **Not deleted, deliberately:** the `wall_fallback` latch is still the only way a device without
+  timestamps learns a budget (the one-sided cap can lower a size, never grow one); the
+  present-throttle vetoes stay, and the cap gained one, because under a throttle the callbacks fire
+  at the throttled frame rate and would walk the cap to the floor (the 2026-09-04 crush moved from
+  the budget to the cap). §5.1's deletions were written for a two-sided `wall_budget` that the
+  shadow replaced.
+- **B5 not made, and why it is no longer needed for B4's safety:** §5.1 calls B4 without B5 "a worse
+  intermediate" because the `!chunk_over` suppressions would keep a too-large budget from shrinking
+  the frame. Here the admission feeds `chunk_over` itself, so a budget the wall clock or confidence
+  distrusts makes the frame chunk; the suppressions only keep the iteration axis in charge where it
+  serves, which the chunk walk's own serialization bounds. Re-examine if a non-chunkable moving
+  frame (auxiliary colouring) turns up over its admission in a field log.
+- **Not built:** the `Admission` token (a GPU-crate trait with one app implementation, counted by a
+  test). Today every live dispatch size reads `adm` in `build_params`, which is a claim checked by
+  review, not by the compiler; the token remains the way to make it structural.
+
+Evidence, RTX 3080 (three interleaved runs per arm unless stated):
+
+- **Healthy cost:** stripe at the trap's view, 1920x1200, `ADMISSION=0` against `1`: every settle
+  stage within a few ms (full-resolution ss 1 0.79 against 0.79 s, ss 2 1.95 against 1.95 s); the
+  post-tap settle 2.41 against 2.46 s, 6 tiles against 8 pieces (two tiles split by a cap one of
+  them set), one frame fewer over 200 ms, 0 dispatches over the admission.
+- **The trap:** the cap set once, at 9.1e9, after the second grid's first tile took ~640 ms from
+  dispatch to completion (the first grid's identical tile took ~265 ms and set nothing); dispatches
+  over the admission 1 of 273, the walk's first settled pass, whose nominal count includes the free
+  series-skip prefix.
+- **motiontest, 60 s soak, 20-octave zoomtest:** PASS; the admission bound below the learned size on
+  3 zoomtest frames and none elsewhere. The 7 motiontest dispatches over it are passes already at one
+  iteration of the whole frame (a chunk pass cannot be smaller), all under 5 ms in the shadow runs.
+- **Gates:** clippy findings identical (148); workspace 1,420 / 0 / 11 (+5: the accept-window and
+  four strip tests); self-test 516/516, goldens 31/31, after one harness change: `deep_build` now
+  marks the injected converged budget as fed each frame (no reading ever arrives there, so the
+  admission called it unconfident after 16 frames and "a completed tiled settle REVEALS" ran out of
+  frames). Its checks then measure exactly what they did before (491 frames, licence 7873, pass
+  4.333e9).
+- **Next:** one PLUTO run of the trap with this build (ask first), then the token.
+
