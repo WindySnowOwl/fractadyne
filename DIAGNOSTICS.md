@@ -157,7 +157,7 @@ adds `priced_steps`, the step count the wall clock prices the view's last dispat
 refresh, whose pass carries a share of the frame (not yet reconciled). It also adds `queue_busy`:
 the view's registered work is not yet confirmed complete, which is what holds its next settle tile
 (`SETTLE_SERIALIZE`); a tiled frame with it set and a zero-size tile was held. Older files
-read with `validation/frame-schema-v4.json` or `-v3.json`. Schema 6 adds, while the auto-zoom runs, `ap_eval_s` (seconds between its target re-evaluations), `ap_speed` and `ap_cap` (its zoom speed and the Quality priority's cap on it, nepers/s; -1 = uncapped): the cost loop sets the first (slow frames stretch it) and the third (refreshes that stop landing lower it), and an always-on `[fd-autopilot] steering re-evaluates every …` line marks the first stretch past twice the base. Schema-5 files read with `validation/frame-schema-v5.json`.
+read with `validation/frame-schema-v4.json` or `-v3.json`. Schema 6 adds, while the auto-zoom runs, `ap_eval_s` (seconds between its target re-evaluations), `ap_speed` and `ap_cap` (its zoom speed and the Quality priority's cap on it, nepers/s; -1 = uncapped): the cost loop sets the first (slow frames stretch it) and the third (refreshes that stop landing lower it), and an always-on `[fd-autopilot] steering re-evaluates every …` line marks the first stretch past twice the base. Schema-5 files read with `validation/frame-schema-v5.json`. Schema 7 adds `pin_escapes`: how many times this view's pin gate stopped waiting for a pass's completion on the wall clock (`PIN_COMPLETION_TIMEOUT_US`) since start, each one a pin pass released while the one before may still have been running; an always-on `[fd-render] pin gate escaped on the wall clock` line marks the first per view, and `FRACTADYNE_TRACE=tile` prints every one (`pin-escape`). Schema-6 files read with `validation/frame-schema-v6.json`.
 
 **Reading it: `scripts/framelog.py`** (standard library only).
 
@@ -292,7 +292,12 @@ shrink and the live refreshes take the admission. A tile larger than the admissi
 an earlier tile of the same grid) goes out as horizontal strips, and a grid waits up to 30 frames
 for a confident budget before fixing its tile size. The wall-clock cap is priced from each
 dispatch's completion callback, reacts only past 600 ms, aims back at 400 ms, relaxes on fast
-dispatches, and is left alone while presents are throttled. — and `TAIL_DF32`
+dispatches, and is left alone while presents are throttled. — and `PIN_TIMEOUT_SCALED` (default 1;
+`0` = the flat 170 ms, for a before/after measurement or as a fallback): a pinned refresh's next
+pass waits for the previous pass's completion callback for up to four frame intervals, never less
+than 170 ms nor more than 3 s; the flat 170 ms applies only to a pass whose callback was never
+registered (a harness without the event loop). Each release before the completion is counted in
+the frame record (`pin_escapes`). — and `TAIL_DF32`
 (default 1 from beta.141; `0` = off, for a before/after measurement): a deep (floatexp) Mandelbrot
 step whose offset from the reference has grown past 2^-60 runs in ordinary df32 arithmetic instead
 of floatexp, and back if it shrinks. The share of steps taken that way is the `in df32` figure on a

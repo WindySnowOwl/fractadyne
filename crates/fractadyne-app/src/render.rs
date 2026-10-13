@@ -6171,9 +6171,44 @@ impl FractadyneApp {
                     // (completion-counted), not while one is unpriced. A completion that never
                     // comes (a harness with no `update`, a lost device) times out on the wall
                     // clock: the gate must never depend on a signal that can fail to arrive.
-                    if crate::app_micros().saturating_sub(self.perf.pin_dispatch_at[vs])
-                        > crate::tunables::PIN_COMPLETION_TIMEOUT_US
-                    {
+                    let age_us = crate::app_micros().saturating_sub(self.perf.pin_dispatch_at[vs]);
+                    // `registered`: `update` has armed this pass's completion callback (the
+                    // registrations it owes are drained there), so the completion WILL come and
+                    // the wait scales with the frames (`pin_gate_timeout_us`, U3/U47).
+                    let registered = self.perf.pin_reg_pending[vs] == 0;
+                    let limit_us = crate::render::pin_gate_timeout_us(
+                        registered,
+                        self.perf.last_dt_ms,
+                        crate::tunables::cost().pin_timeout_scaled == 1,
+                    );
+                    if self.perf.pin_inflight[vs] > 0 && age_us > limit_us {
+                        // ⚠An ESCAPE, counted and (the first per view) logged: the next pin pass
+                        // goes out with this one possibly still running.
+                        self.perf.pin_escapes[vs] = self.perf.pin_escapes[vs].saturating_add(1);
+                        if self.perf.pin_escapes[vs] == 1 {
+                            crate::diag::log_line(
+                                "render",
+                                &format!(
+                                    "pin gate escaped on the wall clock: view={vs} pass in flight {:.0} ms \
+                                     (timeout {:.0} ms), completion callback {} — the next pin pass is \
+                                     released onto a queue that may still be running it (U3/U47; \
+                                     record `pin_escapes` counts every one)",
+                                    age_us as f64 / 1000.0,
+                                    limit_us as f64 / 1000.0,
+                                    if registered { "registered" } else { "never registered" },
+                                ),
+                            );
+                        } else if crate::diag::trace_on("tile") {
+                            crate::diag::trace(
+                                "tile",
+                                format!(
+                                    "pin-escape v={vs} f={} age={:.0}ms registered={registered} n={}",
+                                    self.perf.frame_idx,
+                                    age_us as f64 / 1000.0,
+                                    self.perf.pin_escapes[vs]
+                                ),
+                            );
+                        }
                         self.perf.pin_inflight[vs] = 0;
                     }
                     self.perf.pin_inflight[vs] >= crate::tunables::PIN_INFLIGHT_MAX

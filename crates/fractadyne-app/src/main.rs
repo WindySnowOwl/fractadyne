@@ -1417,6 +1417,12 @@ struct Perf {
     /// of a 1.0× dive at native resolution).
     pin_done_at: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     pin_dispatch_at: [u64; 2],
+    /// Times the pin gate gave up waiting for a pass's completion on the wall clock
+    /// (`PIN_COMPLETION_TIMEOUT_US`) with that pass still counted in flight, per view, since start
+    /// (frame record `pin_escapes`, schema 7). On hardware whose pin passes outlive the timeout,
+    /// each one is a second pass released onto a queue still running the first (U3/U47); the
+    /// first per view is logged.
+    pin_escapes: [u32; 2],
     /// SETTLE-TILE SERIALIZATION (`render::settle_tile_waits`): how much of this view's work is
     /// still in the GPU queue, and what the last completed piece cost. Every real dispatch of the
     /// view sets `view_reg_pending` and stamps `view_dispatch_at` / `view_dispatch_steps`; the next
@@ -2180,6 +2186,7 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             ],
             pin_dispatch_at: [0, 0],
+            pin_escapes: [0, 0],
             view_reg_pending: [false, false],
             view_dispatch_at: [0, 0],
             view_dispatch_steps: [0, 0],
@@ -14995,6 +15002,7 @@ impl FractadyneApp {
             r.queue_busy = p.view_outstanding(v) > 0;
             r.full_inflight = p.full_inflight[v];
             r.pin_inflight = p.pin_inflight[v];
+            r.pin_escapes = p.pin_escapes[v];
             r.present_throttle = p.present_throttle;
             r.visible_res = p.visible_res[v];
             r.motion_res = p.motion_res;

@@ -672,6 +672,31 @@ pub(crate) fn bounded_motion_cut(cur: f64, wall_rate: f64) -> Option<f64> {
     Some(wall_rate.max(cur / crate::tunables::MOTION_CUT_MAX))
 }
 
+/// How long the pin gate waits for the pass in flight to complete before it releases the next one
+/// anyway, microseconds (findings U3/U47, design §5.6).
+///
+/// ⚠**A latency escape, demoted to a "the callback is not coming" escape.** The flat
+/// `PIN_COMPLETION_TIMEOUT_US` (170 ms) exists for harnesses that render without the event loop, so
+/// never register the completion callback (`registered` false). As a latency bound it opened the
+/// gate on exactly the hardware it protects: a pin pass that runs longer than 170 ms got a second
+/// one behind it in the queue. With the callback registered the completion WILL come, so the wait
+/// scales with the frame interval (`frame_dt_ms`; a pass that long stretches the frames around it)
+/// to `PIN_TIMEOUT_FRAMES` of them, never under the flat value and never past
+/// `SETTLE_COMPLETION_TIMEOUT_US`, past which a completion is a lost device, not a slow pass.
+/// `scaled` false (`PIN_TIMEOUT_SCALED=0`) is the flat timeout, always.
+pub(crate) fn pin_gate_timeout_us(registered: bool, frame_dt_ms: f64, scaled: bool) -> u64 {
+    let flat = crate::tunables::PIN_COMPLETION_TIMEOUT_US;
+    if !scaled || !registered {
+        return flat;
+    }
+    let dt_us = if frame_dt_ms.is_finite() && frame_dt_ms > 0.0 {
+        (frame_dt_ms * crate::tunables::PIN_TIMEOUT_FRAMES * 1000.0) as u64
+    } else {
+        0
+    };
+    dt_us.max(flat).min(crate::tunables::SETTLE_COMPLETION_TIMEOUT_US.max(flat))
+}
+
 /// May the pin pass in flight be PRICED now (and the next one released)? By its own GPU timestamp
 /// (`gpu_ms` ≥ 0) if one has landed, else as soon as its completion has been seen (`inflight ==
 /// 0`: one pass in flight, `PIN_INFLIGHT_MAX`), and in any case once `PIN_PRICE_WAIT_FRAMES` have
@@ -1142,3 +1167,5 @@ mod mode_rate_tests;
 mod motion_lift_tests;
 #[cfg(test)]
 mod pin_pricing_tests;
+#[cfg(test)]
+mod pin_gate_timeout_tests;
