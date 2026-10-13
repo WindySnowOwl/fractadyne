@@ -87,6 +87,10 @@ pub(crate) struct Cost {
     pub dead_man: u64,
     /// The per-adapter dispatch ceiling (`DISPATCH_CEILING_DEFAULT`; 0 = off, 1 = on).
     pub dispatch_ceiling: u64,
+    /// One settle tile in flight per view (`SETTLE_SERIALIZE_DEFAULT`; 0 = off, 1 = on).
+    pub settle_serialize: u64,
+    /// B4's admission sizes each dispatch (`ADMISSION_DEFAULT`; 0 = recorded only, 1 = on).
+    pub admission: u64,
     /// The mode-2 df32 tail phase (`TAIL_DF32_DEFAULT`; 0 = off, 1 = on).
     pub tail_df32: u64,
     /// The overlapped pick + centre build (`REF_OVERLAP_DEFAULT`; 0 = off, 1 = on).
@@ -147,6 +151,8 @@ impl Default for Cost {
             reading_pool: READING_POOL_DEFAULT,
             dead_man: DEAD_MAN_DEFAULT,
             dispatch_ceiling: DISPATCH_CEILING_DEFAULT,
+            settle_serialize: SETTLE_SERIALIZE_DEFAULT,
+            admission: ADMISSION_DEFAULT,
             tail_df32: TAIL_DF32_DEFAULT,
             ref_overlap: REF_OVERLAP_DEFAULT,
             early_ref: EARLY_REF_DEFAULT,
@@ -353,6 +359,24 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 };
                 p.to_string()
             }
+            "SETTLE_SERIALIZE" => {
+                let p = c.settle_serialize;
+                c.settle_serialize = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set SETTLE_SERIALIZE: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
+            "ADMISSION" => {
+                let p = c.admission;
+                c.admission = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set ADMISSION: '{raw}' is not 0 (recorded only) or 1 (on)")),
+                };
+                p.to_string()
+            }
             "SA_TRACE" => {
                 let p = c.sa_trace;
                 c.sa_trace = match raw.as_str() {
@@ -523,7 +547,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     TDR_BOOTSTRAP_MS, MOTION_UNPRICED_MAX, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL, \
-    DEAD_MAN, DISPATCH_CEILING, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
+    DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
     CHUNK_SHUFFLE, WORKER_MOTION, WORKER_PASS_MS";
 
@@ -967,6 +991,37 @@ pub(crate) const DEAD_MAN_DEFAULT: u64 = 1;
 /// tunables (§5.2).
 pub(crate) const DISPATCH_CEILING_DEFAULT: u64 = 1;
 
+/// 1 = SETTLE-TILE SERIALIZATION (`render::settle_tile_waits`): a view's next settle tile waits
+/// until the GPU confirms the view's previous work complete (`on_submitted_work_done`), so at most
+/// one tile is in the queue per view. Tiles used to go out one per frame and queue behind one
+/// another: four on the RX 6800 XT, and the stall surfaced two and three frames later (357, 713,
+/// 495 ms; budget trap, 2026-10-12). 0 = the old one-per-frame cadence, for the before/after
+/// measurement and as a field fallback.
+pub(crate) const SETTLE_SERIALIZE_DEFAULT: u64 = 1;
+
+/// 1 = B4's ADMISSION sizes each dispatch (design/live-render-robustness.md §5.1;
+/// `render::admit`): a chunk pass, a settle tile, an un-chunked frame or a live refresh carries at
+/// most the learned size bounded by the wall-clock cap (set only after a slow frame) and, while no
+/// reading has fed the learned budget for `CONFIDENT_FRAMES`, by the opening guess. Planning (ss,
+/// the tile allowance) keeps the learned size: the admission bounds what goes out, not what is
+/// aimed for. 0 = computed and recorded only (the shadow of `c3907dd`), for the before/after
+/// measurement and as a field fallback.
+pub(crate) const ADMISSION_DEFAULT: u64 = 1;
+
+/// Seconds over which `Meter::mode_rate`'s pessimistic minimum may at most double once readings
+/// say the mode has got faster (U23; `render::mode_rate_step`). Slow enough that a storm still in
+/// progress keeps it low (its own readings re-lower it at once), fast enough that a session is not
+/// sized by its worst minute forever: a 20× drop recovers in ~45 s of readings.
+pub(crate) const MODE_RATE_DOUBLING_S: f64 = 10.0;
+
+/// Frames a settle grid waits, at most, for the learned budget to be confident before it freezes
+/// its tile geometry (`next_settle_tile`). A grid's geometry is fixed for its whole life, and a
+/// view is often unconfident for the first frames of a settle (its readings were sparse in
+/// motion), so sizing the grid then would fix the opening guess for every tile: 5.4e7 steps
+/// against 1.45e10 on the RTX 3080 trap. The coarse arm frame's own reading usually lands two or
+/// three frames later; past this the grid starts at the admitted size.
+pub(crate) const GRID_CONFIDENCE_WAIT_FRAMES: u64 = 30;
+
 /// 1 = the mode-2 df32 TAIL PHASE (beta.141; `TAIL_DF32_MIN` in mandelbrot.wgsl): a Mandelbrot
 /// full step whose |δz| has grown past 2^-60 runs in df32 instead of floatexp. The step counters
 /// (beta.137) found 84–100% of mode-2 full steps in that range at every deep corpus scene. 0 = the
@@ -1167,6 +1222,12 @@ pub(crate) const MOTION_STEP_OPEN: u32 = 512;
 /// reading. The TDR ceiling (`tdr_steps`) is untouched: this paces smoothness, not safety.
 pub(crate) const MOTION_CUT_MAX: f64 = 2.0;
 
+/// The most one motion pass may RAISE the motion rate (`render::bounded_motion_lift`), the mirror
+/// of `MOTION_CUT_MAX`. The lift used to be unbounded and any dispatch counted, so a still settle
+/// tile lifted the rate 350× in one frame (U40). At one lift per motion frame, ×2 is still ×1000 in
+/// ten frames: the hint recovers from a cut within a glide.
+pub(crate) const MOTION_LIFT_MAX: f64 = 2.0;
+
 /// Price target for a PINNED-refresh pass, ms — the pin is priced and serialized by the same
 /// ledger as the settled walk (`chunk_inflight`, `chunk_band_license`, `chunk_step_factor`),
 /// because the nominal-steps rate alone mispriced it twice in one trace: in a fast-escape region
@@ -1189,14 +1250,20 @@ pub(crate) const PIN_PASS_FRAMES: u32 = 2;
 /// must not wedge the pin).
 pub(crate) const PIN_PRICE_WAIT_FRAMES: u64 = 5;
 
-/// Pin passes allowed in the GPU queue at once. One (strict serialization, priced before the
-/// next) made a pass every third frame, and at 4.0× a 60k-iteration refresh then took longer
-/// than the 2-octave drift abandon — the held frame aged 12 octaves on screen while the cadence
-/// read perfect. Two pipelines the completion latency away: a pass per frame while passes are
-/// cheap, and the worst stall is two target-sized passes. Pricing pairs the LATEST pass with
-/// its own timestamp reading; the older one goes unpriced (the ledger learns from every other
-/// pass, which is plenty).
-pub(crate) const PIN_INFLIGHT_MAX: u32 = 2;
+/// Pin passes allowed in the GPU queue at once: ONE, each priced (by its GPU reading if one lands
+/// first, otherwise by its completion stamp, `render::pin_pass_priceable`) before the next goes.
+///
+/// ⚠It was two, on the evidence that strict serialization made a pass every third frame and at
+/// 4.0× a 60k-iteration refresh outlived the 2-octave drift abandon. That was before a pass could
+/// be priced by its completion: with two in flight a new pass went out every frame, a reading
+/// paired only to the latest, and in a traced `--motiontest` 34 of 622 pin passes were priced
+/// ("the ledger learns from every other pass" was not so), so the band licences barely grew and
+/// passes stayed small. One in flight, every pass priced, on the RTX 3080 (2026-10-12, interleaved):
+/// the motiontest adopts 43–44 complete refreshes a run against 12–16; a 20-octave zoomtest's
+/// frame on screen lags the view 0.11 against 0.30 octaves (worst 1.5× against 2.1× magnified)
+/// with twice the pinned refreshes adopted; at 4.0× it lags 0.55–0.65 against 0.77–0.89 octaves
+/// with as many adopted. Fewer passes are dispatched, so the GPU does less for it.
+pub(crate) const PIN_INFLIGHT_MAX: u32 = 1;
 
 /// Wall time after which a pin pass still "in flight" is deemed complete, microseconds. The
 /// completion callback is registered in `update`; a headless harness (`--livetest`,
@@ -1205,6 +1272,27 @@ pub(crate) const PIN_INFLIGHT_MAX: u32 = 2;
 /// and the wall-shed retreat firing 36 times where the unpaced build fired 6. Ten frames' worth
 /// is far past any pass the pacer would size; the gate reopens on it.
 pub(crate) const PIN_COMPLETION_TIMEOUT_US: u64 = 170_000;
+
+/// Wall time after which a view's registered work still "in the queue" no longer holds its next
+/// settle tile, microseconds (`render::settle_tile_waits`). A settle tile is sized to ~TDR_BUDGET_MS
+/// and the RX 6800 XT ran them to ~0.8 s, so this must sit past any pass that can still be running:
+/// three seconds is beyond the Windows watchdog (2 s), and a completion that late is a lost device
+/// or a callback that is not coming, not a slow tile. Releasing then cannot stack onto a live pass.
+pub(crate) const SETTLE_COMPLETION_TIMEOUT_US: u64 = 3_000_000;
+
+/// Registrations of a view's work outstanding at which its next settle tile waits whatever the
+/// evidence (`render::settle_tile_waits`). Below it a tile goes out only when the last completed
+/// work was cheap and representative. Three, not two as for pins (`PIN_INFLIGHT_MAX`): a completion
+/// is noticed two to three frames after its dispatch, so one cheap tile per frame keeps two
+/// registrations outstanding, and at two the RTX 3080's cheap stripe tiles reached full
+/// resolution 34% later than unpaced (0.91 against 0.68 s).
+pub(crate) const SETTLE_INFLIGHT_MAX: u64 = 3;
+
+/// Dispatch-to-completion time under which a view's last completed work counts as cheap enough for
+/// the next settle tile to queue behind its successor, ms. Completion is observed at the queue's
+/// poll cadence (~two frames: a 1.7 ms pin pass reads 33.5 ms), so this sits well above that and
+/// well below a budget-sized tile (~TDR_BUDGET_MS); the chunk walk's "quick" is the same 100 ms.
+pub(crate) const SETTLE_PIPELINE_MS: f64 = 100.0;
 
 /// Pinned refresh (option C, design/mode2-chunking.md §10-§11): a chunked view's refresh runs its
 /// progression across frames at a PINNED view while the display reprojects the previous complete

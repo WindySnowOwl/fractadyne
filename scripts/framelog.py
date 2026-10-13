@@ -556,9 +556,12 @@ def main(argv):
     if cmd == "decode":
         sch = load_schema()
         header, recs, torn = read_bin(rest[0], sch)
+        # The FILE's schema, not this reader's: an older file decodes through its saved schema.
+        with open(rest[0], "rb") as b:
+            file_schema = struct.unpack_from("<H", b.read(6), 4)[0]
         out = rest[rest.index("-o") + 1] if "-o" in rest else None
         f = open(out, "w", encoding="utf-8") if out else sys.stdout
-        f.write(json.dumps({"kind": "header", "schema": sch["schema"], "header": header}) + "\n")
+        f.write(json.dumps({"kind": "header", "schema": file_schema, "header": header}) + "\n")
         for r in recs:
             f.write(json.dumps(r) + "\n")
         if out:

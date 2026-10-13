@@ -2790,3 +2790,380 @@ byte-neutral in behaviour.
   `ReadingProvenance`, `budget_confident`, the `Admission` token at every dispatch entry point, and
   the three deletions; B5 the actuator un-suppression. Each deletion has to be re-checked against
   today's code before it is made.
+
+**2026-10-12 — B4 as a SHADOW first (`c3907dd`, `5f075bb`), and what it changed in B4.** `admit()`,
+`budget_confident` and a wall-clock term are computed every frame and recorded (frame record schema
+4: `wall_cap`, `admitted`, `admit_bound`, `confident`); nothing is sized from them. Two pieces of this
+section's B4 did not survive the measurement:
+
+- **The wall term as a second learned budget binds in healthy use.** Learned from whatever is
+  dispatched, it trails every climb, and while the view moves what is dispatched is small motion
+  passes. RTX 3080: a 20-octave zoomtest had it binding 86% of frames at a median 0.13× the planned
+  size, a 60 s still soak 99.6% at 0.67×; every dispatch it would have shrunk (103 and 3) ran under
+  5 ms. Enforced, it would have choked every settle after motion. It is now **one-sided**
+  (`wall_cap_step`): no cap until a dispatch is followed by a slow interval, then that dispatch shrunk
+  by `budget_step`'s arithmetic, relaxed by fast intervals, dropped at the ceiling. The wall clock may
+  only ever say "too high", which is the one thing it knows that a timestamp may not.
+- **`budget_confident` at 8 frames flags pinned chunk walks**, which are priced about one frame in
+  ten in motion (146 of 149 flagged frames, all fast). At 16 it still flags the same run's real
+  118-frame starvation (the one that tripped the wall-clock fallback).
+- **Revised, on the RTX 3080:** motiontest, zoomtest and soak — the admission binds below the learned
+  size on 3 frames in all (0.2% of the zoomtest), the cap never sets. The budget trap (SEED_BUDGET,
+  REF_ESCAPE_AT=655, taps at the field crash view, 1117×907): the unconfident term would have
+  admitted the un-chunked whole frames at 15.3 s (1.45e10 and 5.7e9 steps; 384 ms here, ~0.85 s on the
+  RX 6800 XT) at 5.4e7 — the dispatches the 2026-09-27 entry above named the lethal edge. The cap did
+  not set: no frame passed 400 ms on this card.
+- **Not yet built:** the reaction (`tdr_steps` ← the admission), `ReadingProvenance` (readings
+  already carry their pass's frame and nominal steps, which `budget_confident` needs no more than),
+  the `Admission` token (the GPU crate cannot name an app type, so it would be a GPU-crate trait the
+  app's admission implements, its single `impl` counted by a test), the deletions and B5. Next
+  evidence: the same trap on the RX 6800 XT, where the cap should set.
+
+**2026-10-12 — the budget trap on the RX 6800 XT, and the pairing bug it exposed (`c54af49`).**
+Field build `v0.3.0-beta.19.dev.1` (the shadow above) on PLUTO, the same command as the RTX 3080
+trap. Exit 0 in 53 s, regime ENTERED (9 of 432 dispatches un-chunked), logcheck PASS, slowest frame
+interval 713 ms.
+
+- **The per-adapter ceiling, not the learned budget, sized every dispatch.** `tdr_steps` sat at
+  8.08e9 (df32 perturbation; 1.449e10 on the 3080) while `fe_budget` stayed at its seeded 1.515e11
+  all run. The GPU readings could not have brought it down: the two that priced a whole frame read
+  4.24e9 steps in 23.4 ms and in 2.7 ms (181 and 1,571 steps/ns, far past the card), and the rest
+  were under 0.7× the budget and fast, so discarded.
+- **The wall cap was the only signal that saw the slow frames.** Two settle grids of four tiles
+  (8.06e9, 5.58e9, 1.97e9, 1.36e9) ran slow: 443 ms after the first, 357, 713 and 495 ms after the
+  second. The cap set at 7.3 s and tightened at 24.5 s, and from then on bound 65% of frames, but
+  nothing dispatched after it was big enough to cut (0 of 432 dispatches carried more than the
+  admission).
+- **⚠The first tile of every grid was priced as the whole frame.** The tile block pairs
+  `fe_steps_last` with the tile's rect, but the first tile arrives on a key change (the ss stage
+  moves), and the key-change stamp in `bp_finish_params`, which runs later, overwrote it: 16.97e9 for
+  an 8.06e9 tile. So the first cap was 1.534e10 where the tile said 7.29e9, above `tdr_steps`, and
+  could not bind the second grid. The wall-clock fallback and `motion_wall_cut` price the same slot,
+  the fallback in the direction of growth. Fixed: `key_change_steps` stamps a real tile's rect.
+  Schema 5 records `priced_steps`, so the pairing is read off the record rather than reconstructed;
+  on the 3080 trap all 268 dispatches now record `priced_steps == nominal_steps` (the first tiles
+  were 2.81e10 against 1.446e10 tiles). The one known remaining mismatch is a split live refresh,
+  whose pass carries a share of the frame while the stamp prices all of it.
+- **Correction to the entry above:** what the unconfident term caught on the 3080 at 15.3 s (1.446e10,
+  5.71e9, 5.69e9) were un-chunked settle TILES, not whole frames.
+- **Even with the fix, the reaction would have changed almost nothing in this run.** A replay of
+  `wall_probe_step` + `wall_cap_step` over the decoded record reproduces the recorded cap on all
+  2,249 frames; with the fixed pairing it gives 7.29e9 for the first cap, which cuts one dispatch
+  (the second grid's first tile, 8.06e9 → 7.29e9). The second grid's slow intervals are not one
+  oversized dispatch. Its four tiles (16.97e9 steps, ~1.6–2 s of GPU work by the wall clock) went out
+  on consecutive frames, the second 23 ms after the first and long before the first could have
+  finished, so they queued and the stall landed on whichever acquire waited. The tile turn holds a
+  tile while the OTHER view works, never behind the same view's previous tile. A per-dispatch cap
+  cannot see a queue, and the wall probe prices one tile against the queue's backlog (5.58e9 at
+  713 ms → 3.13e9), which errs toward cutting.
+- **Open before the reaction:** what this trap reaches on the Radeon is same-view tile stacking. No
+  single dispatch was oversized: the ceiling holds each one well under a second. Switching the
+  admission on would mostly shrink tiles after a slow grid; serializing a view's own settle tiles
+  the way the settled chunk walk already is (at most one unpriced pass in flight, released by a
+  quick present: design/mode2-chunking.md §12) would address the stacking directly. Not decided.
+
+**2026-10-12 — settle-tile serialization (`SETTLE_SERIALIZE`, default on), decided by the user:
+serialize first, then the admission.** A view's next settle tile now waits on what the GPU has
+CONFIRMED complete, not on the frame interval (the trap showed a 7.4 ms interval after an 8.06e9-step
+tile). Every real dispatch of a view owes one `on_submitted_work_done` registration, made in the next
+`update` after eframe has submitted the frame, as the pin and motion-jam gates already do; the
+callback records a sequence number, the work's dispatch-to-completion time and its steps
+(`Perf::view_done`). `render::settle_tile_waits`: nothing outstanding, go; three or more outstanding,
+wait; fewer, go only if the last completed work was at least 0.7× this tile and took under 100 ms,
+otherwise wait. A registration older than 3 s releases the gate (past the 2 s watchdog: a lost
+device or a callback that is not coming) and logs one line. A harness that never runs `update`
+never registers, so it never holds; the synchronous ones retire through
+`retire_synchronous_dispatches` as for pins. The frame record's `queue_busy` (schema 5, extended in
+place: no schema-5 file had left this machine) shows the gate's input.
+
+- **Why not the chunk walk's quick-present drain:** the frame after a dispatch is quick while the
+  GPU still runs it (the swap chain hides a pass for about two frames, as the pin gate's comment
+  already says). A drain on it would have released the trap's second tile exactly when it was
+  released anyway.
+- **Why not strict one-in-flight:** settles only tile where chunking cannot serve (auxiliary
+  colourings, formulas past power 3, missing device capability) or where the frame fits the learned
+  budget but not the ceiling. On the RTX 3080 at the trap's view in stripe colouring, 1920x1200, a
+  cheap settle (bootstrap-sized tiles, each a few ms of GPU) reached full resolution in 0.68 s
+  unpaced, 1.39 s strictly serialized, 0.91 s with the rule above capped at two outstanding (a
+  completion is noticed two to three frames after its dispatch, so one cheap tile per frame keeps
+  two outstanding) and 0.80 s capped at three. The heavy ss 2 grid after it (six ceiling-sized
+  tiles) took 4% longer serialized (1.96 → 2.04 s, three interleaved runs each), with one frame
+  fewer over 200 ms and the worst 326 ms against 365 ms. Serialized, that first settle also went on
+  to ss 2 without a further interaction, which unpaced it did not: the budget kept learning from
+  readings during the holds.
+- **The trap on the RTX 3080:** both grids serialize (every tile after a slow one waits for the
+  queue to empty; only the small last tile pipelines, behind a fast predecessor of more than its
+  size). The first tile of each grid is still a 1.45e10-step dispatch and still the slow frame
+  (316 ms): one oversized dispatch is the admission's job, not the queue's.
+- **Not affected:** motiontest, the 60 s soak and the 20-octave zoomtest never tile on this card,
+  so the gate never holds there; all three PASS.
+- **Next:** the admission's reaction (`tdr_steps` ← the admission), then one PLUTO run of the trap
+  for both (ask first).
+
+**2026-10-12 — serialization on the RX 6800 XT (field build `v0.3.0-beta.19.dev.2`, PLUTO, the
+same trap; user approved an interim run).** Exit 0 in 52 s, logcheck PASS. Both grids went out one
+tile at a time, with holds between, exactly as on the RTX 3080. The worst frames did not improve:
+386 ms on the first grid (443 unpaced), 734 ms on the second (713). On this card in the trap's
+regime ONE 8.06e9-step tile takes about a second, and frames stall behind it while the gate holds,
+so what remains is the size of a single dispatch, which is the admission's job. It also showed the
+frame-interval wall probe was the wrong instrument once tiles are serialized: a tile's cost now
+spreads over several frames (234, 386, 345 ms for the first grid's tiles, none over 400), so the
+cap never set on the first grid. The unconfident term bound 19 frames: six motion episodes whose
+4.7e6-step passes were under it anyway, and one at a settle start (f722–725), where the grid's
+first 8.06e9 tile went out while the budget was unconfident and confidence returned three frames
+later.
+
+**2026-10-12 — B4's reaction: the admission sizes every dispatch (`ADMISSION`, default on).**
+What §5.1 specifies, adapted to today's code and to what the shadow and the two field runs measured:
+
+- **`size()` and `admit()` are kept apart, as §5.1 says.** `tdr_steps` stays the plan (the
+  supersampling, the tile allowance), so one unconfident frame cannot knock the ss ramp down;
+  `adm = admit(...)` bounds what goes out: the chunk decision (a frame over the admission chunks),
+  every chunk pass, settled and moving, the walk's iteration floor (it lifted admitted passes
+  straight back to 256 iterations: 3.9e8 steps against 4.8e7 on the RTX 3080 trap), every settle
+  tile, the un-tiled frame's resolution shrink and the live refreshes. `frozen_budget` stores the
+  admission, since that is what sized a reprojected frame's source.
+- **Unconfident: chunk, never freeze a tiny grid.** §5.1's "chunk at the bootstrap size" is what the
+  chunk decision now does. A grid is different: it freezes its tile side on its first tile, and a
+  view is often unconfident for the first frames of a settle, so a grid sized then would keep
+  opening-guess tiles for life (5.4e7 against 1.45e10 on the RTX 3080 trap). A grid about to freeze
+  its geometry waits for a confident budget instead (`GRID_CONFIDENCE_WAIT_FRAMES`, 30; the arm
+  frame's own reading normally lands in two or three).
+- **A tile over the admission goes out as strips** (`settle_strip`): when a grid's own tile sets the
+  wall cap, the rest of the grid would otherwise exceed it (RTX 3080 stripe: three tiles of
+  1.1–1.45e10 after a cap of 8.9e9). Rows of the frozen tile, whole rows that fit, in order; the
+  finished grid repeats the last strip, not the whole tile, so the GPU still dedupes it.
+- **The wall cap is priced by completion** (the settle gate's callbacks record each dispatch's
+  dispatch-to-completion time and steps) and reacts only past `TDR_LATENCY_ACCEPT_MS` (600 ms),
+  aiming back at 400. Settled passes are sized to land near 400 ms and a completion reads a frame or
+  two late, so a 400 ms trigger would make the cap a second controller of every walk.
+- **Not deleted, deliberately:** the `wall_fallback` latch is still the only way a device without
+  timestamps learns a budget (the one-sided cap can lower a size, never grow one); the
+  present-throttle vetoes stay, and the cap gained one, because under a throttle the callbacks fire
+  at the throttled frame rate and would walk the cap to the floor (the 2026-09-04 crush moved from
+  the budget to the cap). §5.1's deletions were written for a two-sided `wall_budget` that the
+  shadow replaced.
+- **B5 not made, and why it is no longer needed for B4's safety:** §5.1 calls B4 without B5 "a worse
+  intermediate" because the `!chunk_over` suppressions would keep a too-large budget from shrinking
+  the frame. Here the admission feeds `chunk_over` itself, so a budget the wall clock or confidence
+  distrusts makes the frame chunk; the suppressions only keep the iteration axis in charge where it
+  serves, which the chunk walk's own serialization bounds. Re-examine if a non-chunkable moving
+  frame (auxiliary colouring) turns up over its admission in a field log.
+- **Not built:** the `Admission` token (a GPU-crate trait with one app implementation, counted by a
+  test). Today every live dispatch size reads `adm` in `build_params`, which is a claim checked by
+  review, not by the compiler; the token remains the way to make it structural.
+
+Evidence, RTX 3080 (three interleaved runs per arm unless stated):
+
+- **Healthy cost:** stripe at the trap's view, 1920x1200, `ADMISSION=0` against `1`: every settle
+  stage within a few ms (full-resolution ss 1 0.79 against 0.79 s, ss 2 1.95 against 1.95 s); the
+  post-tap settle 2.41 against 2.46 s, 6 tiles against 8 pieces (two tiles split by a cap one of
+  them set), one frame fewer over 200 ms, 0 dispatches over the admission.
+- **The trap:** the cap set once, at 9.1e9, after the second grid's first tile took ~640 ms from
+  dispatch to completion (the first grid's identical tile took ~265 ms and set nothing); dispatches
+  over the admission 1 of 273, the walk's first settled pass, whose nominal count includes the free
+  series-skip prefix.
+- **motiontest, 60 s soak, 20-octave zoomtest:** PASS; the admission bound below the learned size on
+  3 zoomtest frames and none elsewhere. The 7 motiontest dispatches over it are passes already at one
+  iteration of the whole frame (a chunk pass cannot be smaller), all under 5 ms in the shadow runs.
+- **Gates:** clippy findings identical (148); workspace 1,420 / 0 / 11 (+5: the accept-window and
+  four strip tests); self-test 516/516, goldens 31/31, after one harness change: `deep_build` now
+  marks the injected converged budget as fed each frame (no reading ever arrives there, so the
+  admission called it unconfident after 16 frames and "a completed tiled settle REVEALS" ran out of
+  frames). Its checks then measure exactly what they did before (491 frames, licence 7873, pass
+  4.333e9).
+- **Next:** one PLUTO run of the trap with this build (ask first), then the token.
+
+**2026-10-12 — B4's admission on the RX 6800 XT (field build `v0.3.0-beta.19.dev.3`, PLUTO, the
+same trap; user approved).** Exit 0 in 52 s, logcheck PASS, 0 of 225 dispatches over the admission.
+
+| run (same command) | frames > 200 ms | > 400 ms | worst five (ms) |
+|---|---|---|---|
+| dev.1, shadow only | 7 | 3 | 713, 495, 443, 392, 357 |
+| dev.2, + settle serialization | 7 | 2 | 734, 496, 386, 346, 345 |
+| dev.3, + admission | 6 | 1 | 468, 393, 340, 315, 282 |
+
+- **The cap set on the first grid's first tile** (8.06e9, the ceiling's size, ~0.7 s to completion):
+  4.83e9 at 7.4 s. The next tile went out as two strips (4.83e9 + 7.5e8), as designed. A fast
+  representative completion later relaxed it to 5.18e9.
+- **The second settle sized its grid from the cap** (528-pixel tiles, 5.16e9). In the trap's later,
+  heavier regime that tile took ~0.9 s (the 468 ms worst frame), and the cap tightened to 2.58e9.
+- **Then the settle changed path.** The chunk decision compares the frame's ss 1 cost (4.24e9) with
+  the admission. Against the 8.08e9 ceiling it fit, so earlier builds tiled at ss 2; against
+  2.58e9 it does not, so this build chunked, and the walk finished cleanly (no frame over 85 ms) at
+  ss 1, which is where a chunked settle stays: its supersampling is capped by what one
+  full-iteration dispatch affords. dev.1 and dev.2 ended this view at ss 2, tiled; dev.3 at ss 1,
+  chunked. That is §5.1's "chunk whatever the budget says" applied where the wall clock distrusts
+  the budget, and it is the existing preference for the iteration axis (tiles in an escaped-
+  reference storm cost the full chain each). The price is the view's final supersampling, on a view
+  whose tiles ran past half a second.
+- **Unconfident:** 30 frames bound, all with passes already under the admission; the binding term
+  flips often in motion (the log holds back 9–11 changes per 2 s line).
+- **Open:** whether a hostile view should keep its ss 2 as admitted tiles rather than an ss 1 walk
+  (a policy choice, not a safety one: both bound every dispatch); the `Admission` token.
+
+**2026-10-12 — W2 gate 2, and the present-throttle detector fixed for a backlogged queue (U11/U12).**
+
+- **Gate 2 (`e4eff9e`), `--selftest`: "a STALE budget chunks inside the admission, and recovers".**
+  The 1.3e30× deep block with its converged 1.666e10 budget: 24 frames fed, 40 with no reading
+  reaching the budget while passes go out, 24 fed again. Today: 25 unconfident dispatches at an
+  admission of 4.0e8, none over it; fed again, the admission is the learned size and passes regrow
+  to 1.666e10. Control: `--set ADMISSION=0` turns it red (25 of 25 over, worst 41.65×). Gate 4's
+  anti-latch half is the same check's recovery leg; the existing live-res checks run through the
+  admission unchanged (491 frames, licence 7873, pass 4.333e9). Gates 1 (replay corpus) and 3 (a
+  Radeon torture rung; the dev.1–dev.3 trap runs stand in for it) remain.
+- **U11/U12.** `present_throttle_step` counted a slow frame that dispatched nothing as compositor
+  evidence, and a serialized walk or a held settle tile dispatches nothing while its own pass runs:
+  on the RX 6800 XT trap (dev.2) a 734 ms hold behind an 8.06e9-step tile counted, the count reached
+  2 of the 5 that freeze the wall-clock safeguards, and a longer grid of slow tiles would have frozen
+  them in the middle of the backlog they exist for. The caller now passes "dispatched, OR has work
+  of its own still in the queue" (the settle gate's completion callbacks, `view_outstanding`). With
+  an idle queue nothing changes; in a genuinely throttled serialized walk the first hold after a
+  dispatch no longer counts (its callback is registered but not yet fired) and the later ones do,
+  so detection arrives one frame later. No harness simulates a compositor throttle, so that half is
+  argued, not measured. RTX 3080: motiontest, soak and zoomtest never counted a frame; the trap's
+  two counted frames both had an empty queue.
+- **The review's detailed findings are gone.** `verified.md`, the catalogue and the subsystem maps
+  lived in session Temp folders that were emptied on 2026-09-30; only this document's §11 one-liners
+  and prose survive. U23 (`mode_rate`'s session-long minimum: kind filter and decay) and U40 (the
+  motion pacer's wall LIFT) are therefore re-derived from the code before they are changed.
+
+**2026-10-12 — U23 (`cee0b62`) and U40, re-derived from the record.**
+
+- **U23: `mode_rate`'s minimum recovers.** Every GPU reading of every kind fed a session-long
+  minimum that sizes the opening guess (40 ms at that rate, clamped to [4e6, 4e8]) and the chunk
+  walk's floor. In each run the minimum was set by small MOVING passes: the RTX 3080 trap's storm
+  passes (3.9e6–7.8e6 steps at 1.5–4e6 steps/ms against 4–7e7 for big passes; opening guess 4e8 →
+  5.9e7), the RX 6800 XT's (6.8e5; 2.7e7), and a healthy motiontest's mode-0 pass (2.6e6, where a
+  same-sized pass two frames earlier read 2.5e7). With B4 the opening guess is the unconfident
+  admission. `mode_rate_step`: a slower reading is still adopted at once, a faster one raises the
+  minimum at most 2× per `MODE_RATE_DOUBLING_S` (10 s). Safe by construction, because both readers
+  are clamped to their historical constants. The kind filter U23 also names was not substantiated:
+  the readings that set the minimum were 1–10 ms passes in genuinely slow regimes, not fixed-cost
+  slivers. RTX 3080: the trap's minimum still falls in the storm and ends at 2.7e6 against 1.1e6
+  (opening guess 1.09e8 against 4.55e7); the zoomtest's ends at 7.6e7 against 2.8e7.
+- **U40: the motion pacer's LIFT counts only a dispatch made while moving, bounded 2× per event.**
+  The lift set the motion rate to `steps / interval` for any dispatch of the last two frames whose
+  next frame fit 40 ms. A still settle tile followed by a quick frame (submission is asynchronous)
+  lifted it 350× on the RTX 3080 trap (1.4e7 → 4.9e9 steps/ms) and 22–58× on the RX 6800 XT (tiles
+  and settled chunk passes). Now: only a dispatch made while the view moved (`view_dispatch_moving`)
+  counts, through `bounded_motion_lift` (`MOTION_LIFT_MAX` = 2, the mirror of the cut). The trap
+  now has no one-frame rise over 2.3×.
+- **Tried and dropped: proving the lift by a COMPLETION** (dispatch to callback) instead of the next
+  frame. It closes the "a frame that never waited" half for moving passes too, but over six
+  interleaved zoomtest pairs it raised the on-screen lag from a median 0.306 to 0.336 octaves (a
+  completion is noticed up to a frame late, understating a small pass's rate). The kept variant
+  matches the previous build (lag 0.304 against 0.301, refreshes 34.0 against 33.8/s). Open: a big
+  PINNED pass followed by a quick frame can still prove a rate it has not shown.
+- **Outlier runs, recorded:** in 12 zoomtest runs of the two U40 variants, two had frames over 50 ms
+  (5 frames, max 98.9 ms, at pinned passes of up to 1.5e10 nominal steps during reference builds);
+  the previous build's 12 had none. The kept variant can only lower the motion rate relative to the
+  previous build (it removes lifts and caps the rest), so it cannot have sized those passes larger,
+  and 2 of 12 against 0 of 12 is within chance (Fisher p ≈ 0.24). If such frames show up in a field
+  log, look at pinned-pass sizing at deep iteration ranges first.
+
+**2026-10-12 — U46: the wall-clock fallback no longer clears the motion-jam backlog.** When the
+fallback priced a dispatch it zeroed `full_inflight`, the owed registrations and the fired
+callbacks, on the grounds that "the interval at which the queue finally stalls proves the whole
+queue drained". It does not (the frame after a big dispatch is quick while the GPU runs it), and the
+backlog is what the motion-jam gate counts; completion callbacks retire it, with or without
+timestamps. With GPU timestamps declined (`FRACTADYNE_NO_TIMESTAMPS=1`, the fallback on for 97–99%
+of frames), two interleaved runs each of zoomtest, motiontest and the trap on the RTX 3080: the old
+build's motiontest shows the zeroing (the backlog dropping from ≥ 2 to 0 in one frame, once a run),
+the new one's backlog reaches 4 and is retired by completions; slow frames, worst frames and the
+zoomtest and trap are unchanged. Found on the way, pre-existing (the dev.1 build fails the same way):
+`--motiontest` fails A2 without timestamps, "no complete refresh was adopted during motion — detail
+stopped streaming"; filed in TODO.md under Open bugs.
+
+**2026-10-12 — U49 (in-flight pricing and the lethal shed are off for unpinned motion): covered by
+B4, no code change.** Re-derived: `bp_chunk_tiling` records a pass in flight, drains and prices it,
+and sheds the band licences on a lethal accumulator only `if !interacting || pin_frame`; an unpinned
+moving pass clears `chunk_inflight` and is never priced by the wall. What reacts to a slow moving pass
+now is B4: every dispatch's completion is priced into the wall cap whatever its kind
+(`view_done`, `0ac2ac1`), a completion past 600 ms sets or tightens it, and the admission bounds
+every later chunk pass, tile and frame by it, moving or not. The licences the shed would lower size
+settled passes, which the admission bounds too. In-flight detection would act no sooner: while a
+lethal pass holds the queue, the frame loop is blocked at acquire and runs again when the pass
+completes, which is when the completion prices it. Not measured: no harness produces a lethal moving
+pass on the RTX 3080 (an inflated rate estimate only exercises the ×2 growth limiter and the motion
+cut), and on the RX 6800 XT trap with B4 (dev.3) every moving pass was fast (worst frame 468 ms, a
+settled tile). A gate needs §7.2's gate 3 (an extra-GPU-load rung that raises the real per-step cost
+under unchanged pass sizes), which is W9's instrument and not built.
+
+**2026-10-12 — without GPU timestamps, pins never adopted a refresh: fixed.** Found while testing
+U46: `--motiontest` with `FRACTADYNE_NO_TIMESTAMPS=1` failed A2 ("no complete refresh was adopted
+during motion") on the RTX 3080, on the dev.1 field build (main's behaviour) too. Two defects:
+
+- **No pin pass was ever priced.** A pin pass is priced by its own GPU timestamp, or by its completion
+  stamp after `PIN_PRICE_WAIT_FRAMES` (5). Up to `PIN_INFLIGHT_MAX` (2) pin passes may be queued, so
+  a new one went out every frame and restarted the wait; without timestamps none was priced (0
+  pin-price lines in a traced run, against 34 with timestamps), the band licence never grew from its
+  opening value, and a pin crawled ~1,500 iterations a frame toward a 1,000,000 ask until it drifted
+  out. `pin_pass_priceable`: without timestamps a pass is priced as soon as its completion has been
+  seen, and `pin_inflight_max` holds the pin to one pass in flight so that it can be.
+- **The completion-stamp price counted the pipeline as cost.** It subtracts `PIN_PASS_FRAMES` frames
+  of latency, measured in `frame_ms`, which excludes the frame cap's sleep: ~3 ms at a capped 60 Hz
+  where a frame takes ~16.7. Every pin pass then read ~25 ms against the 20 ms target and its licence
+  halved. `Perf::frame_period_ms` is the raw period, sleep included, and the price now subtracts it
+  (prices of 0–1 ms for the same passes; licences grow ×2 a pass).
+
+Without timestamps the motiontest now passes, three runs of three, adopting 36–40 complete refreshes
+(0 before); with timestamps it passes as before (12–14). That the no-timestamps path now adopts more
+is itself a finding: with timestamps only 34 of 622 pin passes were priced (readings pair to the
+latest pass, and a new pass usually replaced it first), so the timestamp path's pins are
+under-priced too. Follow-up, not done: price pin passes by completion with timestamps as well, and
+measure cadence at 4.0×, the reason `PIN_INFLIGHT_MAX` is 2.
+
+**2026-10-12 — `MOTION_LIFT_MAX` 2 against 4: no difference beyond run-to-run noise; kept 2.** After
+U40 the motiontest seemed to adopt fewer complete refreshes than the build before it (12–13 against
+14–15 a run). Four interleaved runs each of the motiontest and the 20-octave zoomtest, RTX 3080:
+complete adoptions 15, 12, 14, 13 (bound 2) against 16, 15, 12, 12 (bound 4), median 13.5 both;
+zoomtest pinned adoptions median 73.5 against 76, on-screen lag 0.315 against 0.291 octaves, and one
+bound-2 run with six frames over 33 ms (max 47 ms) where the bound-4 runs had none. The spread
+inside each arm covers the gap, so the earlier U40 deficit was mostly noise too, and the committed
+bound stays: it is the mirror of `MOTION_CUT_MAX`, and nothing measured asks for a looser one.
+
+**2026-10-12 — one pin pass in flight, every pass priced, timestamps or not (`PIN_INFLIGHT_MAX`
+2 → 1).** The no-timestamps fix showed that path adopting three times the refreshes of the
+timestamped one, because with two passes in flight a reading pairs only to the latest pass and
+34 of 622 were priced. An interleaved A/B on the RTX 3080 with the completion rule everywhere:
+
+| | committed (2 in flight) | 1 in flight, every pass priced |
+|---|---|---|
+| motiontest complete adoptions (4 runs) | 16, 15, 15, 12 | 43, 43, 44, 43 |
+| zoomtest 20 oct: on-screen lag, mean (3 runs) | 0.27–0.35 oct | 0.10–0.12 oct |
+| … worst held magnification | 2.13× | 1.51× |
+| … pinned refreshes adopted | 68–79 | 144–158 |
+| … frames over 50 ms | 4 (three runs) | 0 |
+| zoomtest at 4.0×: on-screen lag | 0.77–0.89 oct | 0.55–0.65 oct |
+| … pinned refreshes adopted | 31–34 | 33–36 |
+
+The zoomtest's "real refreshes" fall (33/s → 15/s at the default rate) because it counts frames that
+re-iterated, and a pin dispatches a pass about every second frame now; what is ON SCREEN (the lag) is
+what improved. The reason two were allowed — strict serialization made a pass every third frame and
+at 4.0× a 60k-iteration refresh outlived the drift abandon — predates pricing by completion: then an
+unpriced pass's licence never grew, now each pass grows the next. `pin_pass_priceable` prices by the
+reading when it lands first, else by the completion stamp once seen, else after the 5-frame wait.
+The refresh-resolution sizing still counts the rate's frames as passes; it was left as measured.
+
+**2026-10-12 — the RX 6800 XT on field build `v0.3.0-beta.19.dev.4` (everything since dev.3: U11/U12,
+U23, U40, U46, the no-timestamps pin fix, one pin pass in flight), user approved; dev.3 run alongside
+as the baseline on the same card.** All five runs exit 0, logcheck PASS.
+
+| PLUTO, same command | dev.3 | dev.4 |
+|---|---|---|
+| zoomtest 20 oct: frame on screen lags the view | 0.316 oct | 0.099 oct |
+| … pinned refreshes adopted | 69 | 159 |
+| … frames over 33 ms / over 50 ms | 17 / 0 | 21 / 0 (p99 33.5 → 38.2 ms) |
+| motiontest complete adoptions (both PASS) | 16 | 52 |
+| budget trap: frames over 200 / 400 ms, worst | 6 / 1, 468 ms | 5 / 2, 484 ms |
+| … dispatches over the admission | 0 | 0 |
+
+The motion result carries over from the RTX 3080: the picture on screen is three times closer to the
+view and pins complete two to three times as often. The Radeon shows a few more frames between 33
+and 48 ms in the zoomtest (17 → 21, none past 50): the priced pin passes grow, and on the slower card
+a grown pass costs a frame now and then. The trap is unchanged within run-to-run spread; its worst
+frames remain single settle tiles at the cap. In the trap the opening guess (the unconfident
+admission) now sits near 5e6 steps: the storm keeps re-lowering the per-mode minimum faster than
+U23 lets it recover, as designed.
+

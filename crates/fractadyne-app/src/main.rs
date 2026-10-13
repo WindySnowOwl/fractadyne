@@ -1136,6 +1136,11 @@ struct Perf {
     last_frame: Option<Instant>,
     /// Smoothed wall-clock interval between frames (ms) → FPS.
     frame_ms: f64,
+    /// Smoothed RAW interval between frames (ms), the frame cap's sleep INCLUDED: the period at which
+    /// the queue is polled and completion callbacks fire. `frame_ms` excludes the sleep (it prices
+    /// work), so at a capped 60 Hz it reads ~3 ms where a frame takes ~16.7 — the wrong unit for a
+    /// latency measured in frames (the pin pass's completion stamp, `PIN_PASS_FRAMES`).
+    frame_period_ms: f64,
     /// Smoothed CPU time spent in `update()` (ms).
     cpu_ms: f64,
     /// Duration of the most recent reference-orbit recompute (ms).
@@ -1343,6 +1348,21 @@ struct Perf {
     /// seen since)`. See `wall_clock_budget_tick` — a dispatch's cost lands one to two intervals
     /// after the frame that submitted it, so it cannot be priced in place.
     wall_probe: [Option<(u64, u64, f64)>; 2],
+    /// ⭐The WALL-CLOCK CAP per view (design/live-render-robustness.md §5.1, B4's `wall_budget`,
+    /// one-sided: 0 = none): set when a dispatch takes past `TDR_LATENCY_ACCEPT_MS` from dispatch to
+    /// completion, relaxed by fast ones (`render::wall_cap_step`), priced in `update` from each new
+    /// `view_done`. Never latched; frozen only while presents are throttled. The admission bounds
+    /// every dispatch by it (`ADMISSION`).
+    wall_cap: [u64; 2],
+    /// The `view_done` sequence last priced into `wall_cap`.
+    view_priced_seq: [u64; 2],
+    /// The last frame a reading reached this view's learned budget: a GPU reading, or the wall
+    /// clock while the fallback stands in for one. What `render::budget_confident` reads.
+    fed_frame: [u64; 2],
+    /// The shadow admission of the frame last planned per view: `(steps, bound, confident)`.
+    admission: [(u64, render::AdmitBound, bool); 2],
+    /// Rate-limits the admission's binding-term line (`render::AdmitBound` can flap frame to frame).
+    admission_line: [diag::LineLimiter; 2],
     /// Whether the device granted `TIMESTAMP_QUERY` at all. Diagnostics only — nothing sizes a
     /// frame from it — but a crash report that names it turns "renders blurry on my laptop" into
     /// one line of fact.
@@ -1397,6 +1417,31 @@ struct Perf {
     /// of a 1.0× dive at native resolution).
     pin_done_at: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     pin_dispatch_at: [u64; 2],
+    /// SETTLE-TILE SERIALIZATION (`render::settle_tile_waits`): how much of this view's work is
+    /// still in the GPU queue, and what the last completed piece cost. Every real dispatch of the
+    /// view sets `view_reg_pending` and stamps `view_dispatch_at` / `view_dispatch_steps`; the next
+    /// `update` (after eframe has submitted that frame, as for `full_reg_pending`) registers ONE
+    /// `on_submitted_work_done` callback under a new `view_reg_seq`, and the callback records its
+    /// sequence, its dispatch-to-completion time and its steps in `view_done`. Callbacks fire in
+    /// order, so `view_reg_seq − view_done.seq` registrations are outstanding. A sequence, not a
+    /// count, so a timeout needs no reset and a late callback cannot retire newer work.
+    ///
+    /// Why: a view's settle tiles went out on CONSECUTIVE frames, the frame interval after a tile
+    /// is no proof it finished (RX 6800 XT budget trap, 2026-10-12: 7.4 ms after an 8.06e9-step
+    /// tile), so four tiles queued behind one another and the stall landed on later frames
+    /// (357, 713, 495 ms). The tile turn only ever held a tile behind the OTHER view.
+    view_reg_pending: [bool; 2],
+    view_dispatch_at: [u64; 2],
+    view_dispatch_steps: [u64; 2],
+    view_dispatch_moving: [bool; 2],
+    view_reg_seq: [u64; 2],
+    view_reg_at: [u64; 2],
+    view_done: [std::sync::Arc<std::sync::Mutex<render::ViewDone>>; 2],
+    /// The `view_reg_seq` whose overdue completion was last logged (one line per registration).
+    view_overdue_logged: [u64; 2],
+    /// The frame a settle grid began waiting for a confident budget before freezing its geometry
+    /// (`GRID_CONFIDENCE_WAIT_FRAMES`); `None` = not waiting.
+    grid_wait_from: [Option<u64>; 2],
     /// The last dispatched pin pass: its nominal steps (the key its GPU timestamp reading is
     /// paired by — `apply_iterate_measurement` stores the FIRST reading whose steps match), the
     /// frame it went out, and the paired GPU time (< 0 = not yet). The completion stamp above is
@@ -1902,7 +1947,7 @@ impl Perf {
     /// See `render::Meter::record_mode_rate`.
     fn record_mode_rate(&mut self, v: usize, ms: f64, steps: u64) {
         let straddles = self.straddles_switch(v);
-        self.meter.record_mode_rate(v, self.budget_mode[v], straddles, ms, steps);
+        self.meter.record_mode_rate(v, self.budget_mode[v], straddles, ms, steps, diag::elapsed_s());
     }
 
     /// See `render::Meter::motion_rate_now`.
@@ -1976,6 +2021,21 @@ impl Perf {
         self.pin_reg_pending[v] = 0;
         self.pin_done[v].store(0, std::sync::atomic::Ordering::Relaxed);
         self.pin_done_at[v].store(app_micros(), std::sync::atomic::Ordering::Relaxed);
+        self.view_reg_pending[v] = false;
+        if let Ok(mut d) = self.view_done[v].lock() {
+            d.seq = self.view_reg_seq[v];
+        }
+        self.view_priced_seq[v] = self.view_reg_seq[v];
+    }
+
+    /// The last completed registration of this view's work (see `view_reg_pending`).
+    pub(crate) fn view_last_done(&self, v: usize) -> render::ViewDone {
+        self.view_done[v].lock().map(|d| *d).unwrap_or_default()
+    }
+
+    /// Registrations of this view's work not yet confirmed complete.
+    pub(crate) fn view_outstanding(&self, v: usize) -> u64 {
+        self.view_reg_seq[v].saturating_sub(self.view_last_done(v).seq)
     }
 
 
@@ -1993,7 +2053,8 @@ impl Perf {
         if self.frame_idx.saturating_sub(self.fe_dispatch_frame[v]) > 2 {
             return;
         }
-        if self.meter.motion_wall_cut(v, self.budget_mode[v], self.fe_steps_last[v], dt_ms) {
+        let moving = self.view_dispatch_moving[v];
+        if self.meter.motion_wall_cut(v, self.budget_mode[v], self.fe_steps_last[v], dt_ms, moving) {
             self.motion_step_last[v] = (self.motion_step_last[v] / 2).max(1);
         }
     }
@@ -2034,6 +2095,7 @@ impl Default for Perf {
             status_bar_texts: Vec::new(),
             last_frame: None,
             frame_ms: 0.0,
+            frame_period_ms: 0.0,
             cpu_ms: 0.0,
             recompute_ms: 0.0,
             recompute_total: 0,
@@ -2097,6 +2159,11 @@ impl Default for Perf {
             offscreen_ms: 0.0,
             prev_offscreen_ms: 0.0,
             wall_probe: [None, None],
+            wall_cap: [0, 0],
+            view_priced_seq: [0, 0],
+            fed_frame: [0, 0],
+            admission: [(0, render::AdmitBound::Learned, true); 2],
+            admission_line: Default::default(),
             ts_supported: false,
             budget_mode: [u32::MAX, u32::MAX],
             mode_switch_frame: [u64::MAX, u64::MAX],
@@ -2113,6 +2180,15 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             ],
             pin_dispatch_at: [0, 0],
+            view_reg_pending: [false, false],
+            view_dispatch_at: [0, 0],
+            view_dispatch_steps: [0, 0],
+            view_dispatch_moving: [false, false],
+            view_reg_seq: [0, 0],
+            view_reg_at: [0, 0],
+            view_overdue_logged: [0, 0],
+            grid_wait_from: [None, None],
+            view_done: Default::default(),
             pin_pass_steps: [0, 0],
             pin_pass_frame: [0, 0],
             pin_pass_gpu_ms: [-1.0, -1.0],
@@ -14903,6 +14979,9 @@ impl FractadyneApp {
             r.mode_rate = p.worst_rate_steps_per_ms(v).unwrap_or(0.0);
             r.motion_rate = p.motion_rate_now(v);
             r.wall_fallback = p.wall_fallback;
+            r.wall_cap = p.wall_cap[v];
+            r.priced_steps = p.fe_steps_last[v];
+            r.queue_busy = p.view_outstanding(v) > 0;
             r.full_inflight = p.full_inflight[v];
             r.pin_inflight = p.pin_inflight[v];
             r.present_throttle = p.present_throttle;
@@ -15206,6 +15285,17 @@ impl FractadyneApp {
         moved
     }
 
+    /// Live `(rebase, bla_skip)` from the last counter readback, or `(0, 0)` if none has landed.
+    /// Both are stored biased by one so a genuine zero is distinguishable from "never published" —
+    /// and a genuine zero is the interesting reading here, not a missing one.
+    fn live_work_counters(&self, v: usize) -> (u64, u64) {
+        let packed = self.perf.work_sink[v].load(std::sync::atomic::Ordering::SeqCst);
+        if packed == 0 {
+            return (0, 0);
+        }
+        ((packed >> 32).saturating_sub(1), (packed & 0xFFFF_FFFF).saturating_sub(1))
+    }
+
     /// WALL-CLOCK FALLBACK for the frame budget, used once `wall_fallback` trips (no GPU
     /// timestamps, or a sink that never delivers). Called from the frame-interval capture, which
     /// is the one point where the interval, `prev_real`, and `fe_steps_last` all describe the SAME
@@ -15219,17 +15309,6 @@ impl FractadyneApp {
     /// A dispatch that fits inside a vsync cannot be distinguished from a much cheaper one, but
     /// that only means the climb keeps growing at `TDR_GROW_MAX` until a frame is genuinely slow,
     /// which is exactly the intended search.
-    /// Live `(rebase, bla_skip)` from the last counter readback, or `(0, 0)` if none has landed.
-    /// Both are stored biased by one so a genuine zero is distinguishable from "never published" —
-    /// and a genuine zero is the interesting reading here, not a missing one.
-    fn live_work_counters(&self, v: usize) -> (u64, u64) {
-        let packed = self.perf.work_sink[v].load(std::sync::atomic::Ordering::SeqCst);
-        if packed == 0 {
-            return (0, 0);
-        }
-        ((packed >> 32).saturating_sub(1), (packed & 0xFFFF_FFFF).saturating_sub(1))
-    }
-
     fn wall_clock_budget_tick(&mut self, dt_ms: f64) {
         if !self.perf.wall_fallback || !(dt_ms > 0.01) {
             return;
@@ -15271,13 +15350,16 @@ impl FractadyneApp {
             );
             self.perf.wall_probe[v] = probe;
             if let Some((ms, steps)) = priced {
-                // The wall fallback prices "the interval at which the queue finally STALLS" —
-                // unlike a GPU timestamp it genuinely proves the whole queue drained, so
-                // clear-to-zero is honest here (and it only runs once timestamps are starved).
-                self.perf.full_inflight[v] = 0;
-                self.perf.full_reg_pending[v] = 0;
-                self.perf.full_done[v].store(0, std::sync::atomic::Ordering::Relaxed);
+                // ⚠It does NOT clear the motion-jam backlog (`full_inflight`) any more (U46). It used
+                // to, on the grounds that "the interval at which the queue finally stalls proves the
+                // whole queue drained" — but the interval proves no such thing (the frame after a
+                // big dispatch is quick while the GPU still runs it: 7.4 ms after an 8.06e9-step
+                // tile on the RX 6800 XT), and zeroing the count, the owed registrations and the
+                // fired callbacks re-admitted full-size dispatches the GPU had not finished, the
+                // crash-1787275348-0 shape. Completion callbacks retire the backlog here as they do
+                // everywhere else; they work without timestamps.
                 self.apply_iterate_measurement(v, ms, steps, "wall_iterate");
+                self.perf.fed_frame[v] = self.perf.frame_idx;
             }
         }
     }
@@ -15552,6 +15634,40 @@ impl eframe::App for FractadyneApp {
                         c.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     });
                 }
+                // B4's wall cap, priced by COMPLETION (`render::wall_cap_step`): each completion the
+                // callbacks recorded since last frame, once. Not while presents are throttled: the
+                // callbacks fire when the queue is polled, at the throttled frame rate, so a ~1 Hz
+                // background window would price every dispatch at ~1 s and walk the cap to the floor
+                // (the 2026-09-04 crush, 6 h at the bootstrap, moved from the budget to the cap).
+                let done = self.perf.view_last_done(v);
+                if done.seq > self.perf.view_priced_seq[v] {
+                    self.perf.view_priced_seq[v] = done.seq;
+                    if self.perf.present_throttle < render::PRESENT_THROTTLE_FRAMES {
+                        self.perf.wall_cap[v] = render::wall_cap_step(
+                            self.perf.wall_cap[v],
+                            done.steps,
+                            done.price_us as f64 / 1000.0,
+                            !self.render_cfg.auto_iter,
+                        );
+                    }
+                }
+                // The settle-tile gate (see `Perf::view_reg_pending`): one registration covers all
+                // of this view's work submitted so far.
+                if std::mem::take(&mut self.perf.view_reg_pending[v]) {
+                    let seq = self.perf.view_reg_seq[v] + 1;
+                    self.perf.view_reg_seq[v] = seq;
+                    self.perf.view_reg_at[v] = app_micros();
+                    let (at, steps) = (self.perf.view_dispatch_at[v], self.perf.view_dispatch_steps[v]);
+                    let done = self.perf.view_done[v].clone();
+                    q.on_submitted_work_done(move || {
+                        let price_us = app_micros().saturating_sub(at);
+                        if let Ok(mut d) = done.lock() {
+                            if seq > d.seq {
+                                *d = render::ViewDone { seq, price_us, steps };
+                            }
+                        }
+                    });
+                }
             }
             // The timing witness: the previous frame's work (`frame_idx` is not yet advanced) has
             // been submitted — stamp when it completes.
@@ -15696,6 +15812,7 @@ impl eframe::App for FractadyneApp {
                         // 0.3.0-beta.8: 7 in a minute, past the logcheck's `timing-starved` limit;
                         // beta.3 2–4; with this, 1 — the direct-mode start every build has).
                         self.perf.ts_reading_frame[v] = self.perf.frame_idx;
+                        self.perf.fed_frame[v] = self.perf.frame_idx;
                     }
                 }
                 if diag::trace_on("gpu") && v == 0 {
@@ -15752,6 +15869,7 @@ impl eframe::App for FractadyneApp {
                 continue;
             }
             self.perf.ts_reading_frame[v] = self.perf.frame_idx;
+            self.perf.fed_frame[v] = self.perf.frame_idx;
             // A real GPU timing arrived, so the fallback's premise is gone — UNLATCH it. It used to
             // be a one-way switch, so a single 30-frame gap (a settle, a long reference install, an
             // alt-tab) turned the wall clock into a permanent SECOND measurement source competing
@@ -16001,6 +16119,8 @@ impl eframe::App for FractadyneApp {
             }
         }
         if let Some(prev) = self.perf.last_frame {
+            let raw_ms = frame_start.duration_since(prev).as_secs_f64() * 1000.0;
+            self.perf.frame_period_ms = ema(self.perf.frame_period_ms, raw_ms);
             // Discount the previous frame's deliberate cap sleep — it lies inside this interval and
             // is not work. See `Perf::cap_sleep_ms` for the mispricing that cost. Likewise its
             // pipeline compile (`Perf::ui_compile_ms`, also after this point in a frame).
@@ -16026,12 +16146,20 @@ impl eframe::App for FractadyneApp {
             for v in 0..2 {
                 self.perf.motion_wall_cut(v, dt);
             }
-            // Present-throttle detector: a no-work frame this slow measured the compositor.
+            // Present-throttle detector: a no-work frame this slow measured the compositor — but
+            // only if none of OUR work was still in the queue (design/live-render-robustness.md U11,
+            // U12). "This frame dispatched nothing" is not that: a serialized walk or a settle tile
+            // HOLDS, dispatching nothing, while its own pass runs, and a frame stalled behind that
+            // pass is the backlog, not the compositor. On the RX 6800 XT budget trap (2026-10-12) a
+            // 734 ms hold behind an 8.06e9-step tile counted as throttle evidence; five of them
+            // would have frozen the wall-clock safeguards in the middle of the backlog they exist
+            // for. The completion callbacks (`view_outstanding`) say whether our work is queued.
             let any_dispatch = self.perf.fe_dispatch_frame[0] == self.perf.frame_idx
                 || self.perf.fe_dispatch_frame[1] == self.perf.frame_idx;
+            let own_work_queued = self.perf.view_outstanding(0) > 0 || self.perf.view_outstanding(1) > 0;
             self.perf.present_throttle = render::present_throttle_step(
                 self.perf.present_throttle,
-                any_dispatch,
+                any_dispatch || own_work_queued,
                 dt,
                 tunables::CHUNK_DRAIN_DT_MS,
             );

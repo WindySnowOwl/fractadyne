@@ -6904,6 +6904,12 @@ impl FractadyneApp {
                 self.perf.fe_budget_ok = [false, false];
                 let deep_build = |app: &mut Self, iter: u32| -> ([u32; 2], bool) {
                     app.perf.frame_idx += 1;
+                    // Every frame here stands for one whose reading fed the budget: the checks inject
+                    // a converged budget, and no GPU reading ever arrives in this harness, so without
+                    // this B4's admission would call that budget unconfident after CONFIDENT_FRAMES
+                    // and size the grid from the opening guess (a 540-tile grid then outlives 900
+                    // frames).
+                    app.perf.fed_frame = [app.perf.frame_idx; 2];
                     let center_bf = [app.viewport.center_x.clone(), app.viewport.center_y.clone()];
                     let center = app.viewport.center_f64();
                     let span = app.viewport.complex_span_fe();
@@ -7166,6 +7172,126 @@ impl FractadyneApp {
                         threshold: "chunked, and ≤ 1× the single-dispatch budget",
                         pass: deep_ref && disp.is_some_and(|d| d <= budget_now),
                     });
+                }
+
+                // ---- a STALE budget chunks inside the admission, and recovers (W2 gate 2) ----
+                // ⭐design/live-render-robustness.md §7.2, gate 2: the case the two checks above do
+                // not touch — a budget LEARNED large that has gone stale (measurement arrived, then
+                // stopped: the 2026-09-21 shape). Drive `build_params` with the converged budget,
+                // then with no reading reaching it while passes keep going out, then with readings
+                // again. RED: a dispatch goes out over the admission while the budget is
+                // unconfident (B4 says chunk at the opening guess, whatever the budget says), or
+                // the admission is still bound below the learned size once readings resume (a
+                // latch), or the passes never grow back past the stale admission.
+                // ⚠ANTI-VACUITY: the stale leg must actually reach `budget_confident == false`
+                // with dispatches going out, and the confident leg must actually chunk, or the
+                // check says nothing about the reaction it exists for.
+                {
+                    let saved_chunk = (self.perf.chunk_ok, self.perf.chunk_fe_ok);
+                    let saved_method = self.coloring.color_method;
+                    self.perf.chunk_ok = true;
+                    self.perf.chunk_fe_ok = true;
+                    self.coloring.color_method = crate::ColorMethod::Smooth;
+                    self.perf.chunk_sig = [(0, 0, [0, 0], 0); 2];
+                    self.perf.chunk_cursor = [0, 0];
+                    self.perf.chunk_idx = [0, 0];
+                    self.perf.chunk_inflight = [None, None];
+                    self.perf.chunk_pass_dt = [0.0, 0.0];
+                    self.perf.chunk_bands =
+                        [[0; crate::tunables::CHUNK_BANDS], [0; crate::tunables::CHUNK_BANDS]];
+                    self.perf.tile_state = [None, None];
+                    self.perf.tile_pending = [false, false];
+                    // One frame: the converged budget re-injected; `fed` = a reading reached it.
+                    // Returns (dispatched, confident, admitted, bound, chunked, steps out, one
+                    // iteration of the frame).
+                    let step = |app: &mut Self, fed: bool| {
+                        app.perf.fe_budget = [FIELD_BUDGET, FIELD_BUDGET];
+                        app.perf.fe_budget_ok = [true, true];
+                        app.perf.frame_idx += 1;
+                        if fed {
+                            app.perf.fed_frame = [app.perf.frame_idx; 2];
+                        }
+                        let center_bf = [app.viewport.center_x.clone(), app.viewport.center_y.clone()];
+                        let center = app.viewport.center_f64();
+                        let span = app.viewport.complex_span_fe();
+                        let mag = app.viewport.magnification();
+                        let l2 = app.viewport.log2_magnification();
+                        let pr = app.build_params(
+                            center_bf, center, span, mag, l2, app.fractal, false, DEEP_ITER, false, 1,
+                            DEEP, 0, None,
+                        );
+                        let per_iter = (pr.resolution[0] as u64)
+                            * (pr.resolution[1] as u64)
+                            * (pr.ss as u64).pow(2);
+                        // Real work past the SA seed, as in the check above.
+                        let out = match (pr.chunk_range, pr.tile) {
+                            (Some([s, e]), _) => per_iter * (e.saturating_sub(s.max(pr.sa_skip)).max(1) as u64),
+                            (None, Some(r)) => crate::render::tile_steps(r, pr.ss, DEEP_ITER),
+                            (None, None) => per_iter * DEEP_ITER as u64,
+                        };
+                        let (admitted, bound, confident) = app.perf.admission[0];
+                        let dispatched = app.perf.fe_dispatch_frame[0] == app.perf.frame_idx;
+                        (dispatched, confident, admitted, bound, pr.chunk_range.is_some(), out, per_iter)
+                    };
+                    let mut chunked_while_fed = 0u32;
+                    let mut fed_max = 0u64;
+                    for _ in 0..24 {
+                        let (d, _, _, _, chunked, out, _) = step(self, true);
+                        if d && chunked {
+                            chunked_while_fed += 1;
+                            fed_max = fed_max.max(out);
+                        }
+                    }
+                    let (mut stale_dispatches, mut stale_over, mut stale_adm, mut worst) = (0u32, 0u32, 0u64, 0.0f64);
+                    for _ in 0..40 {
+                        let (d, confident, admitted, _, _, out, per_iter) = step(self, false);
+                        if d && !confident {
+                            stale_dispatches += 1;
+                            stale_adm = admitted;
+                            // A pass cannot be smaller than one iteration of the frame.
+                            let bound = admitted.max(per_iter);
+                            worst = worst.max(out as f64 / bound as f64);
+                            if out > bound {
+                                stale_over += 1;
+                            }
+                        }
+                    }
+                    let (mut back_learned, mut grown) = (false, 0u64);
+                    for _ in 0..24 {
+                        let (d, confident, _, bound, _, out, _) = step(self, true);
+                        back_learned = confident && bound != crate::render::AdmitBound::Unconfident;
+                        if d {
+                            grown = grown.max(out);
+                        }
+                    }
+                    let recovered = back_learned && grown > stale_adm.saturating_mul(4);
+                    push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Live budget",
+                        name: "a STALE budget chunks inside the admission, and recovers".into(),
+                        params: format!(
+                            "{}×{} panel, {DEEP_ITER} iter @1.3e30×, converged budget {:.3e}: 24 frames fed, \
+                             40 with no reading, 24 fed again",
+                            DEEP[0], DEEP[1], FIELD_BUDGET as f64
+                        ),
+                        result: format!(
+                            "fed: {chunked_while_fed} chunked passes (largest {:.3e}); stale: \
+                             {stale_dispatches} unconfident dispatches, admission {:.3e}, {stale_over} \
+                             over it (worst {worst:.2}×); fed again: admission back={back_learned}, \
+                             largest pass {:.3e}",
+                            fed_max as f64, stale_adm as f64, grown as f64
+                        ),
+                        threshold: "the fed leg chunks; the stale leg reaches unconfident with passes going \
+                                    out, none over the admission; fed again, the admission is the learned \
+                                    size and passes grow past 4× the stale one",
+                        pass: deep_ref
+                            && chunked_while_fed > 0
+                            && stale_dispatches > 0
+                            && stale_over == 0
+                            && recovered,
+                    });
+                    self.coloring.color_method = saved_method;
+                    self.perf.chunk_ok = saved_chunk.0;
+                    self.perf.chunk_fe_ok = saved_chunk.1;
                 }
                 self.viewport.set_size(PANEL[0] as f64, PANEL[1] as f64);
                 self.perf.fe_budget = [0, 0];
