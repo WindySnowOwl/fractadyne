@@ -157,7 +157,7 @@ adds `priced_steps`, the step count the wall clock prices the view's last dispat
 refresh, whose pass carries a share of the frame (not yet reconciled). It also adds `queue_busy`:
 the view's registered work is not yet confirmed complete, which is what holds its next settle tile
 (`SETTLE_SERIALIZE`); a tiled frame with it set and a zero-size tile was held. Older files
-read with `validation/frame-schema-v4.json` or `-v3.json`.
+read with `validation/frame-schema-v4.json` or `-v3.json`. Schema 6 adds, while the auto-zoom runs, `ap_eval_s` (seconds between its target re-evaluations), `ap_speed` and `ap_cap` (its zoom speed and the Quality priority's cap on it, nepers/s; -1 = uncapped): the cost loop sets the first (slow frames stretch it) and the third (refreshes that stop landing lower it), and an always-on `[fd-autopilot] steering re-evaluates every …` line marks the first stretch past twice the base. Schema-5 files read with `validation/frame-schema-v5.json`.
 
 **Reading it: `scripts/framelog.py`** (standard library only).
 

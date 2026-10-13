@@ -3167,3 +3167,18 @@ frames remain single settle tiles at the cap. In the trap the opening guess (the
 admission) now sits near 5e6 steps: the storm keeps re-lowering the per-mode minimum faster than
 U23 lets it recover, as designed.
 
+**2026-10-12 — U53 (the steering loop's cadence and pacing are silently rescaled by the cost loop's
+failures): made visible, behaviour unchanged.** Re-derived: the autopilot re-evaluates its target
+every max(0.35 s, 1.5 × `frame_ms`), so frames slowed by a mispriced dispatch stretch the steering
+with them; the Quality priority caps the zoom speed from the refresh period (floored at
+`QUALITY_MIN_SPEED_FRAC`, so it cannot stall); the glide's own step is already bounded (egui's
+stable `dt`, clamped to 100 ms). Nothing recorded or logged either rescaling. No harness measures
+steering quality under a failing cost loop (`--autodive` hammers the controller; the CL-10
+target-motion replay measures the aim), so changing the steering would be a fix to a mechanism
+argument. Instead: frame record schema 6 records `ap_eval_s`, `ap_speed` and `ap_cap` every frame
+the autopilot runs, and `[fd-autopilot] steering re-evaluates every …` is logged once per episode
+when the cadence passes twice its base. A 60 s `--autodive` on the RTX 3080, plain and under the
+trap's instruments, never stretched it (worst frame 37 ms: with B4 and the serialized tiles those
+harnesses no longer reach sustained slow frames), so the line itself is not yet exercised. The first
+field log in which the cost loop slows a dive will show it.
+

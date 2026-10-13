@@ -595,3 +595,12 @@ fn a_dead_end_caused_by_the_iteration_cap_says_so() {
     let capped = dead_end_message(20.0, 10_000, false, Some(9995.0));
     assert!(capped.to_lowercase().contains("iteration"), "{capped}");
 }
+
+#[test]
+fn the_steering_cadence_is_its_base_until_frames_slow_and_then_one_and_a_half_frames() {
+    // U53: the cost loop sets this, so it is recorded and logged; here its arithmetic is pinned.
+    assert_eq!(steering_eval_interval(3.0), AUTOPILOT_EVAL_INTERVAL);
+    assert_eq!(steering_eval_interval(0.0), AUTOPILOT_EVAL_INTERVAL);
+    assert_eq!(steering_eval_interval(-5.0), AUTOPILOT_EVAL_INTERVAL);
+    assert!((steering_eval_interval(700.0) - 1.05).abs() < 1e-12);
+}

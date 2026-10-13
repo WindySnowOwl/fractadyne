@@ -5376,6 +5376,14 @@ struct AutopilotState {
     eval_t: f64,
     /// True during the deep *stepped* dive (past the smooth regime) — see autopilot.rs / render.rs.
     stepping: bool,
+    /// The steering cadence and pace in force this frame, recorded because the COST loop sets them
+    /// (design/live-render-robustness.md U53): seconds between target re-evaluations (stretched by
+    /// slow frames, `autopilot::steering_eval_interval`) and the Quality priority's zoom-speed cap,
+    /// nepers/s (`INFINITY` = uncapped: Speed, or nothing measured yet). `cadence_stretched` makes
+    /// the stretch a log line once per episode instead of a silent change.
+    eval_interval: f64,
+    speed_cap: f64,
+    cadence_stretched: bool,
     /// Dive limit as log2(magnification); persisted.
     dive_log2: f64,
     /// Speed or Quality first (see `autopilot::AutopilotPriority`); persisted.
@@ -6928,6 +6936,9 @@ impl FractadyneApp {
                 retarget_t: f64::NEG_INFINITY,
                 eval_t: 0.0,
                 stepping: false,
+                eval_interval: 0.0,
+                speed_cap: f64::INFINITY,
+                cadence_stretched: false,
                 dive_log2: s.autopilot_dive_log2,
                 priority: crate::autopilot::AutopilotPriority::parse(&s.autopilot_priority)
                     .unwrap_or_default(),
@@ -15024,6 +15035,11 @@ impl FractadyneApp {
             r.in_space = space;
             r.in_keys = keys.min(u8::MAX as usize) as u8;
             r.autopilot = self.autopilot.active;
+            if self.autopilot.active {
+                r.ap_eval_s = self.autopilot.eval_interval as f32;
+                r.ap_speed = self.autopilot.speed as f32;
+                r.ap_cap = if self.autopilot.speed_cap.is_finite() { self.autopilot.speed_cap as f32 } else { -1.0 };
+            }
             r.zoom_oct_s = p.zoom_oct_s;
             r.rec_us = p.rec_us;
             diag::frame_record::record(r);

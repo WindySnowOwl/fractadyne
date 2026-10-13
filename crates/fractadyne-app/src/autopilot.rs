@@ -160,6 +160,14 @@ pub(crate) fn goal_of_point(
     (px / vp.width_px.max(1.0), py / vp.height_px.max(1.0))
 }
 
+/// Seconds between the steering's target re-evaluations: `AUTOPILOT_EVAL_INTERVAL`, stretched to
+/// 1.5 frames when frames are slower than that (`frame_ms`, the smoothed work per frame, cap sleep
+/// excluded) so a deep dive evaluates about once per rendered frame. The stretch is the COST loop's
+/// doing (U53): it is recorded (`ap_eval_s`) and logged, not hidden.
+pub(crate) fn steering_eval_interval(frame_ms: f64) -> f64 {
+    (1.5 * (frame_ms / 1000.0).max(0.0)).max(AUTOPILOT_EVAL_INTERVAL)
+}
+
 /// The zoom speed (nepers/s) the Quality priority allows, given how long a refresh currently
 /// takes and how far the held frame has already been magnified.
 ///
@@ -485,8 +493,23 @@ impl FractadyneApp {
         // Adaptive re-evaluation: the target-field render + reference recompute slow down with
         // depth, so evaluate less often as frames slow (≈ once per rendered frame when deep) while
         // staying snappy when shallow.
-        let frame_s = (self.perf.frame_ms / 1000.0).max(0.0);
-        let eval_interval = (1.5 * frame_s).max(AUTOPILOT_EVAL_INTERVAL);
+        let eval_interval = steering_eval_interval(self.perf.frame_ms);
+        self.autopilot.eval_interval = eval_interval;
+        // ⚠The COST loop sets this cadence (U53): frames slowed by an oversized or mispriced dispatch
+        // stretch the steering with them. Say so once per episode rather than let it happen silently.
+        let stretched = eval_interval > 2.0 * AUTOPILOT_EVAL_INTERVAL;
+        if stretched && !self.autopilot.cadence_stretched {
+            crate::diag::log_line(
+                "autopilot",
+                &format!(
+                    "steering re-evaluates every {eval_interval:.2} s ({:.1}× its {AUTOPILOT_EVAL_INTERVAL} s \
+                     base): frames average {:.0} ms of work, so the cost loop is slowing the dive's steering",
+                    eval_interval / AUTOPILOT_EVAL_INTERVAL,
+                    self.perf.frame_ms
+                ),
+            );
+        }
+        self.autopilot.cadence_stretched = stretched;
 
         // In stepped mode, only advance once a real (settled) frame has actually rendered at the
         // current depth (frozen_l2 caught up to now) — so each full frame stays on screen while the
@@ -619,6 +642,7 @@ impl FractadyneApp {
                 quality_speed_cap(period, held_age, rate)
             }
         };
+        self.autopilot.speed_cap = speed_cap;
         let a = &self.autopilot;
         let g = glide_step(a.aim, a.lead, goal, a.speed, rate, speed_cap, aspect, dt);
         self.autopilot.speed = g.speed;
