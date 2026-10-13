@@ -3245,3 +3245,32 @@ motion pacing (step 4). The sweep's first pass carries ~4–5 ms (RTX 3080) to ~
 one-off cost; the harness allocates the walk's state textures per call, which the live path keeps,
 so that is the harness, not a per-walk cost of the live walk.
 
+**2026-10-13 — W3 gate 2: a retreat says what it reached** (`a64c9f1`). `render::retreat_outcome`
+(`Applied { from, to }` or `NoActuatorReachable { at }`, `#[must_use]`) at both emergency retreats:
+the in-flight lethal-band shed compares the pass's window with the walk's floor, the lethal-band
+frame reading compares its steps with the budget it retreats to. Each records the outcome per view
+(frame record `retreat`, schema 8) and, when nothing was reachable, says `RETREAT REACHED NOTHING`
+in its always-on line. Self-test "a retreat that reaches nothing says so"
+(`--selftest-filter retreat`): a 1,125 ms reading with the budget at its floor comes back
+NoActuatorReachable with the line logged; at 1e10 steps it is Applied, to 3.56e9. It feeds
+`wall_iterate` (prices the budget like a GPU reading without latching the mode's worst rate) and
+restores what it touches; its two deliberate lethal lines get a self-test allowance of exactly 2 in
+the `lethal-band-frame` log rule. B5 stays unmade: with the admission feeding the chunk decision, the
+floor a retreat reaches is the admission-bounded walk floor, so `NoActuatorReachable` is the rare
+answer it should be — if field records show it often, that reopens B5.
+
+**2026-10-13 — W3 gate 3: `--deviceloss-repro` has a criterion and an exit code** (`35ef1a0`). The
+verdict now returns its cost model (a window costs `exp(winter)·W^b` at the safe area, scaled by
+`area^a`), and the harness asks the LIVE path what it would dispatch first at the view — it waits for
+the live reference, reads `build_params` with a fresh budget and with the field's stale 1.515e11
+(confident), and prices each first dispatch. RED (exit 2) when one is predicted to reach
+`TDR_LETHAL_MS` while the live path would not have chunked it; vacuous is a fail too. RTX 3080 at the
+default view (Seahorse p998 nucleus, 2^54, 1728×1201): PASS — fresh, chunked, first pass 192
+iterations ~6 ms; stale, the dispatch ceiling binds it to 1.45e10 steps and the frame chunks, first
+pass 256 iterations ~8 ms. The gate can go red: with `DISPATCH_CEILING=0` and the explicit cap and
+ceiling lifted, at a 50,000-iteration ask the stale arm sends the whole frame unchunked, predicted
+1,357 ms — FAIL (predicted, never submitted). Three layers stood between the stale budget and that
+dispatch here: the per-adapter ceiling, the explicit dispatch cap, and the admission's chunking.
+⚠Not yet on the RX 6800 XT: the field agent deliberately refuses `--deviceloss-repro` (its window
+axis reaches a ~1.4 s dispatch on the RTX 3080); widening its allow-list is the user's call.
+
