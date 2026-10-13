@@ -672,6 +672,34 @@ pub(crate) fn bounded_motion_cut(cur: f64, wall_rate: f64) -> Option<f64> {
     Some(wall_rate.max(cur / crate::tunables::MOTION_CUT_MAX))
 }
 
+/// May the pin pass in flight be PRICED now (and the next one released)? By its own GPU timestamp
+/// (`gpu_ms` ≥ 0), or, once `PIN_PRICE_WAIT_FRAMES` have passed without one, by its completion
+/// stamp — and, when this device gives no timestamps at all (`no_timestamps`), as soon as its
+/// completion has been seen (`inflight == 0`).
+///
+/// ⚠**Why the last clause.** Up to `PIN_INFLIGHT_MAX` pin passes may be queued, so a new pass goes
+/// out every frame and restarts the wait before it ends; with timestamps a reading usually lands
+/// first, and without them no pin pass was ever priced. The band licence then never grew from its
+/// opening value, a pin crawled ~1,500 iterations a frame toward a 1,000,000 ask, drifted out, and
+/// `--motiontest` failed A2 ("no complete refresh was adopted during motion") with
+/// `FRACTADYNE_NO_TIMESTAMPS=1` — on main's build too (dev.1). Without timestamps the pin is held
+/// to one pass in flight (`pin_inflight_max`) so its completion can be seen before the next goes.
+pub(crate) fn pin_pass_priceable(gpu_ms: f64, frames_since: u64, no_timestamps: bool, inflight: u32) -> bool {
+    gpu_ms >= 0.0
+        || frames_since >= crate::tunables::PIN_PRICE_WAIT_FRAMES
+        || (no_timestamps && inflight == 0)
+}
+
+/// Pin passes allowed in the queue at once: `PIN_INFLIGHT_MAX`, or one when the device gives no GPU
+/// timestamps (see [`pin_pass_priceable`]).
+pub(crate) fn pin_inflight_max(no_timestamps: bool) -> u32 {
+    if no_timestamps {
+        1
+    } else {
+        crate::tunables::PIN_INFLIGHT_MAX
+    }
+}
+
 /// One reading of `Meter::mode_rate`: `cur` (0 = none yet), a reading's `rate`, and the seconds
 /// since the slot last took one. A slower reading is adopted at once (the pessimistic latch); a
 /// faster one raises the slot by at most 2× per `MODE_RATE_DOUBLING_S`, and never past itself.
@@ -1126,3 +1154,5 @@ mod settle_strip_tests;
 mod mode_rate_tests;
 #[cfg(test)]
 mod motion_lift_tests;
+#[cfg(test)]
+mod pin_pricing_tests;

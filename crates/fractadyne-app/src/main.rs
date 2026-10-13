@@ -1136,6 +1136,11 @@ struct Perf {
     last_frame: Option<Instant>,
     /// Smoothed wall-clock interval between frames (ms) → FPS.
     frame_ms: f64,
+    /// Smoothed RAW interval between frames (ms), the frame cap's sleep INCLUDED: the period at which
+    /// the queue is polled and completion callbacks fire. `frame_ms` excludes the sleep (it prices
+    /// work), so at a capped 60 Hz it reads ~3 ms where a frame takes ~16.7 — the wrong unit for a
+    /// latency measured in frames (the pin pass's completion stamp, `PIN_PASS_FRAMES`).
+    frame_period_ms: f64,
     /// Smoothed CPU time spent in `update()` (ms).
     cpu_ms: f64,
     /// Duration of the most recent reference-orbit recompute (ms).
@@ -2028,6 +2033,12 @@ impl Perf {
         self.view_done[v].lock().map(|d| *d).unwrap_or_default()
     }
 
+    /// No GPU timestamps reach the budget: the adapter lacks the feature, or they stopped arriving
+    /// and the wall-clock fallback stands in.
+    pub(crate) fn timestamps_absent(&self) -> bool {
+        !self.ts_supported || self.wall_fallback
+    }
+
     /// Registrations of this view's work not yet confirmed complete.
     pub(crate) fn view_outstanding(&self, v: usize) -> u64 {
         self.view_reg_seq[v].saturating_sub(self.view_last_done(v).seq)
@@ -2090,6 +2101,7 @@ impl Default for Perf {
             status_bar_texts: Vec::new(),
             last_frame: None,
             frame_ms: 0.0,
+            frame_period_ms: 0.0,
             cpu_ms: 0.0,
             recompute_ms: 0.0,
             recompute_total: 0,
@@ -16113,6 +16125,8 @@ impl eframe::App for FractadyneApp {
             }
         }
         if let Some(prev) = self.perf.last_frame {
+            let raw_ms = frame_start.duration_since(prev).as_secs_f64() * 1000.0;
+            self.perf.frame_period_ms = ema(self.perf.frame_period_ms, raw_ms);
             // Discount the previous frame's deliberate cap sleep — it lies inside this interval and
             // is not work. See `Perf::cap_sleep_ms` for the mispricing that cost. Likewise its
             // pipeline compile (`Perf::ui_compile_ms`, also after this point in a frame).

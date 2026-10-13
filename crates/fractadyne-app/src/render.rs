@@ -5863,10 +5863,14 @@ impl FractadyneApp {
                         // present: the swap chain hides a pass's cost for two frames, so the
                         // quick interval that follows a 100 ms pass proves nothing about it.
                         // Dispatch is gated separately, on completions (`Perf::pin_inflight`,
-                        // `PIN_INFLIGHT_MAX`).
-                        self.perf.pin_pass_gpu_ms[vs] >= 0.0
-                            || self.perf.frame_idx.saturating_sub(self.perf.pin_pass_frame[vs])
-                                >= crate::tunables::PIN_PRICE_WAIT_FRAMES
+                        // `PIN_INFLIGHT_MAX`). Without timestamps, by the completion stamp as soon
+                        // as the completion is seen (`pin_pass_priceable`).
+                        pin_pass_priceable(
+                            self.perf.pin_pass_gpu_ms[vs],
+                            self.perf.frame_idx.saturating_sub(self.perf.pin_pass_frame[vs]),
+                            self.perf.timestamps_absent(),
+                            self.perf.pin_inflight[vs],
+                        )
                     } else {
                         self.perf.last_dt_ms < crate::tunables::CHUNK_DRAIN_DT_MS
                     }) || acc > target_ms * 60.0
@@ -5887,7 +5891,14 @@ impl FractadyneApp {
                                 let done = self.perf.pin_done_at[vs].load(std::sync::atomic::Ordering::Relaxed);
                                 let sent = self.perf.pin_dispatch_at[vs];
                                 let wall = if done > sent && sent > 0 { (done - sent) as f64 / 1000.0 } else { acc };
-                                (wall - crate::tunables::PIN_PASS_FRAMES as f64 * self.perf.frame_ms).max(0.0)
+                                // Real frame periods (`Perf::frame_period_ms`): a completion is
+                                // seen at the poll, which comes once a frame INCLUDING the cap's
+                                // sleep. `frame_ms` (sleep excluded, ~3 ms at a capped 60 Hz)
+                                // left ~27 ms of pipeline latency in every price, and without GPU
+                                // timestamps — where this stamp is the only price — every pin pass
+                                // read ~25 ms against a 20 ms target and its licence halved.
+                                (wall - crate::tunables::PIN_PASS_FRAMES as f64 * self.perf.frame_period_ms)
+                                    .max(0.0)
                             }
                         } else {
                             acc
@@ -6166,7 +6177,7 @@ impl FractadyneApp {
                     {
                         self.perf.pin_inflight[vs] = 0;
                     }
-                    self.perf.pin_inflight[vs] >= crate::tunables::PIN_INFLIGHT_MAX
+                    self.perf.pin_inflight[vs] >= pin_inflight_max(self.perf.timestamps_absent())
                         && self.perf.chunk_last_range[vs].is_some()
                 } else {
                     !interacting
