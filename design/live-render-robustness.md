@@ -3305,3 +3305,70 @@ criterion "a shed to the window floor measurably reduces wall time per pass on t
 ~0.2 ms fixed term, a floor pass costs its iterations, so a shed does reduce it; the "243 sheds at
 size=2 over 700 s" memory note it was written against remains unverified.
 
+
+**2026-10-13 — W4 begins: what a frame IS, and who owns the walk's identity** (`feat/w4-frame-plan`,
+off `feat/w3-pin-timeout`). Instrumentation first (`adba77b`): `render/frame_plan.rs` with
+`FrameKind` (placeholder, reproject, pin-walk, motion, hold, settled-walk, tile, accum, settled),
+decided once in `bp_finish_params` from what the frame handed the GPU, and `WalkSig` — the walk
+identity with private fields and ONE constructor (`WalkSig::of`); the tuple `ChunkSig` is gone, so a
+walk identity cannot be assembled by hand where an input could be forgotten. Frame record schema 10:
+`frame_kind`, `walk_sig`, `walk_restarted`, `hold_floor`. A restart that throws a part-way walk away
+(`walk_restart_discards`: cursor past 0 and short of its end; an adopted pin's walk is USED, not lost)
+is counted per view and becomes `--motiontest` A4. Baseline (RTX 3080, three runs): 3 restarts in
+every dive, 30–36 in every Home glide — the glide's are pins outrun every ~6 frames at a 1M ask,
+abandons rather than a re-chosen walk, so A4 is gated on the dive (RED past 12, §7.4) and the glide is
+reported.
+
+**2026-10-13 — U39 closed** (`252eba1`). The four held-frame transforms take their scale from one
+helper that records which floor applied, and the record convicted the inference before any change:
+every Home-glide frame took the JUMP floor (the glide writes no `zoom_vel`), and it bound on 7 moving
+frames of one baseline run in three. A per-frame speed threshold could not replace it — the record
+showed the smoothstep Home glide moving ~3 octaves a frame from 1e31, and from 1e30000 it peaks near
+277 — so a jump is decided by `frame_plan::is_jump_in`: a frame that zooms IN by more than 1.5
+octaves AND more than 4× the previous frame's step (a step from rest; only a zoom-in matters, the
+floor bounds magnification), kept by `hold_jump_next` while that held frame stays on screen and
+cleared at every latch. `--motiontest` gains A5 — a 100× click-to-zoom at depth through the real
+actuator, RED if a held frame took the DIVE floor past 8× (`hold_floor` 4, the 11-pixel patch) — and
+A6, no moving frame shown at the jump floor's clamped scale. After: every moving frame on the dive
+floor, A6 0, A5 10 frames held at the jump floor in each run; a sabotage build with jump detection
+disabled went RED (10 frames at the dive floor past 8×, exit 2), so A5 can fail.
+
+**2026-10-13 — One dispatch stamp** (`252eba1`, §5.3). `fe_dispatch_frame` was stamped at four
+planning sites and, when the later freeze verdict turned the frame into a reprojection, rewound eight
+frames. A pass is now planned upstream (`ChunkPlan::pass`, `tile_work`, the un-chunked key change)
+and stamped once in `bp_finish_params`, after the verdict; a planned-then-frozen frame zeroes its step
+count as before. The view's registration and motion-jam counts had keyed on the EARLY
+`will_reproject`, so they also counted the dispatch the freeze cancelled; they now require the
+stamp. Frames reading 8+ frames since a dispatch while one had run within 7: 41–50 per baseline run,
+0 after. `rg 'fe_dispatch_frame\[[a-z]+\] = '` finds one site.
+
+**2026-10-13 — U56 and U51's reset list** (`f133f5d`). `Perf::motion_res` (the AIMD scale) was one
+value stepped only on view 0's frames, so the dual view's second panel moved at the first panel's
+scale, and while only the second panel moved nothing stepped it. It is per view now (with
+`motion_res_measured`). `--dualsettle` (the Julia panel moving, view 0 still): view 1's 145 moving
+frames used view 0's scale (the same 18 values, 0.30–0.62) before; after, its own — 38 values up to
+1.0, its shallow direct frames being quick. `visible_res` and `motion_pass_steps_last` join the
+mode-switch reset list. NOT changed: U51's boost-seed half (a seed above the user's own count leaves
+an inert multiplier that outlives its view) — the boost's carry between views has regressed
+`--livetest` twice, and needs that gate.
+
+**2026-10-13 — U24 measured; the escape histogram was never stored.** `need` — how far a moving
+frame's one pass must reach — is the palette window's top, and a moving view's one-pass preview is a
+"complete" reading (it is what is on screen), so a preview that stops short lowers the top the next
+frame is sized against: P3's shape. `MOTION_NEED_SOURCE` (default 0, shipped) = 1 takes the top of
+the view's last COMPLETE walk (`Perf::esc_top`). Its first A/B was vacuous in an instructive way: arm
+B never sized a frame, because `Perf::esc_hist` — the complete-walk histogram `MOTION_NEED_QUANTILE`
+was built on — was never stored. Its gate read the frame record's `gpu_iter`, which is written later
+in the frame and reset at its end, so it read 0 at the drain: no `esc-hist` line in six 2^800 dives
+with 60–107 completed pins each. The record's per-frame reset came in W1 (`94d59c5`, beta.113), the
+histogram four days later (`7208ec4`, beta.123); ⚠so every `MOTION_NEED_QUANTILE` < 1 measurement
+since — the RX 6800 XT A/B of 2026-09-26 included — ran with no histogram, i.e. with `need` = the
+window's top in every arm. Fixed (`Perf::planned_ask`, persisting). With it, three interleaved pairs
+at 2^800 (RTX 3080, session-seed, 10,000 iterations): both arms screen-gate PASS (0% blank, flat,
+flash, stale in all six), `need` median ~4,900 in both (4,909–4,954 against 4,717–5,077) — the two
+tops agree here, because the moving frames are pin passes whose partial readings can only RAISE the
+window's top; the self-reference runs only through unpinned one-pass previews, rare in this regime.
+The moving scale moved more between rounds than between arms. Default left at 0: the complete-walk
+top is refreshed only when a walk completes (2–3 times a run), so in a long deepening dive it can go
+stale while the escape range climbs. The arm stays for the RX 6800 XT, where a slow card sat on the
+ladder's floor.

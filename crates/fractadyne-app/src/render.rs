@@ -5322,9 +5322,13 @@ impl FractadyneApp {
                 // The escape distribution of a COMPLETE walk only (see `Perf::esc_hist`): the
                 // cursor reached the ask the view was last planned at, and the histogram is not
                 // the all-zero of a single-pass frame (which never runs `fs_resolve`).
+                // ⚠`planned_ask`, not the frame record's `gpu_iter`: the record is written later in
+                // the frame and reset at its end, so at this drain it read 0 on every first plan of a
+                // frame and this histogram was never stored — from beta.123, when it was added, to
+                // W4 (no `esc-hist` line in six 2^800 dives with 60-107 completed pins each).
                 if r.esc_hist.iter().any(|&c| c > 0)
-                    && self.perf.rec[vb].gpu_iter > 0
-                    && r.cursor >= self.perf.rec[vb].gpu_iter
+                    && self.perf.planned_ask[vb] > 0
+                    && r.cursor >= self.perf.planned_ask[vb]
                 {
                     // How far below the range's top most of the picture escapes: the quantity
                     // `MOTION_NEED_QUANTILE` trades on. Traced when the stored walk changes.
@@ -5344,6 +5348,8 @@ impl FractadyneApp {
                         );
                     }
                     self.perf.esc_hist[vb] = Some(r.esc_hist);
+                    self.perf.esc_top[vb] =
+                        (r.esc_max_bits != u32::MAX).then(|| f32::from_bits(r.esc_max_bits)).filter(|t| t.is_finite());
                 }
                 let ct = &mut self.perf.content[vb];
                 ct.feed(r);
@@ -6903,6 +6909,8 @@ impl FractadyneApp {
             // `sa_skip=266796` on a frame whose shader was handed 0, which is exactly the question
             // this line exists to answer. Effective first, raw in parentheses.
             self.perf.last_sa_skip_v[vs.min(1)] = sa_skip_eff;
+            // The ask this view was planned at, for the complete-walk test at the reading drain.
+            self.perf.planned_ask[vs.min(1)] = gpu_iter;
             self.perf.last_res_v[vs.min(1)] = [resolution[0], resolution[1]];
             let manifest = format!(
                 "LIVE view={vs} mode={} {}x{} ss={ss} iter={shader_iter} (gpu_iter={gpu_iter}, \
@@ -7962,8 +7970,19 @@ impl FractadyneApp {
             // The TOP of the view's escape range, not its first escape: reaching the first escape
             // commits one pixel, reaching the top commits the picture.
             // With `MOTION_NEED_QUANTILE` below 1, how far MOST of it escapes (`motion_need`).
+            // ⚠U24: WHICH top (`MOTION_NEED_SOURCE`). 0, shipped: the palette window's — which a
+            // moving frame's own one-pass preview feeds (a preview is "complete": it is what is on
+            // screen), so a frame that stops short lowers the top the next frame is sized to reach.
+            // A guess reading a value downstream of what it sizes (principle P3). 1: the top of the
+            // view's last COMPLETE walk (`Perf::esc_top`, beside the histogram, which was already
+            // kept from complete walks only for this reason); none yet = no opinion.
+            let top = if crate::tunables::cost().motion_need_source == 1 {
+                self.perf.esc_top[vbi].map_or(0.0, |t| t as f64)
+            } else {
+                self.perf.norm_range[vbi].map_or(0.0, |(_, hi)| hi as f64)
+            };
             let need = motion_need(
-                self.perf.norm_range[vbi].map_or(0.0, |(_, hi)| hi as f64),
+                top,
                 self.perf.esc_hist[vbi].as_ref().map(|h| &h[..]),
                 crate::tunables::cost().motion_need_quantile,
             );

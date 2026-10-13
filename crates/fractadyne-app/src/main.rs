@@ -1900,6 +1900,13 @@ struct Perf {
     /// against. Only complete walks: a moving preview walks `[0, step]` and would report only the
     /// escapes it reached, which is exactly the bias to keep out of a quantile. Held while moving.
     esc_hist: [Option<fractadyne_gpu::EscHist>; 2],
+    /// The top of that same complete walk's escapes (smooth iterations), per view: what a moving
+    /// frame is sized to reach under `MOTION_NEED_SOURCE=1` (U24) — a property of the view, set
+    /// only by a walk that reached its ask, never by the moving frame being sized.
+    esc_top: [Option<f32>; 2],
+    /// The iteration ask each view was last planned at (on a frame that iterates), persisting across
+    /// frames: what a content reading's cursor must reach to describe a complete walk.
+    planned_ask: [u32; 2],
     /// A moving frame's sizing this frame, per view: `[need, ladder target, pre-ladder scale]` —
     /// how far its walk had to reach (`render::motion_need`), the scale `visible_res_target` asked
     /// for, and `res_scale` before the ladder's rung was applied. Zero when the frame was not sized
@@ -2393,6 +2400,8 @@ impl Default for Perf {
             norm_grad: [None, None],
             norm_hist: [None, None],
             esc_hist: [None, None],
+            esc_top: [None, None],
+            planned_ask: [0, 0],
             vis_sizing: [[0.0; 3]; 2],
             reading_pool: [render::ReadingPool::default(); 2],
             norm_shown: [None, None],
@@ -8514,6 +8523,7 @@ impl FractadyneApp {
         self.perf.iter_exhausted = [false, false];
         self.perf.norm_range = [None, None];
         self.perf.esc_hist = [None, None];
+        self.perf.esc_top = [None, None];
         self.perf.reading_pool = [render::ReadingPool::default(); 2];
         self.perf.norm_sig = [0, 0];
         self.perf.norm_locked = [false, false];

@@ -81,6 +81,8 @@ pub(crate) struct Cost {
     pub pass_fixed_ms: f64,
     /// Fraction of the picture a moving frame is sized to reach (`MOTION_NEED_QUANTILE_DEFAULT`).
     pub motion_need_quantile: f64,
+    /// Where a moving frame's escape top comes from (`MOTION_NEED_SOURCE_DEFAULT`; U24).
+    pub motion_need_source: u64,
     /// Pool discarded budget readings (`READING_POOL_DEFAULT`; 0 = off, 1 = on).
     pub reading_pool: u64,
     /// The wall-clock dead-man (`DEAD_MAN_DEFAULT`; 0 = off, 1 = on).
@@ -151,6 +153,7 @@ impl Default for Cost {
             tdr_tiles_ceil: TDR_TILES_CEIL_DEFAULT,
             pass_fixed_ms: PASS_FIXED_MS_DEFAULT,
             motion_need_quantile: MOTION_NEED_QUANTILE_DEFAULT,
+            motion_need_source: MOTION_NEED_SOURCE_DEFAULT,
             reading_pool: READING_POOL_DEFAULT,
             dead_man: DEAD_MAN_DEFAULT,
             dispatch_ceiling: DISPATCH_CEILING_DEFAULT,
@@ -539,6 +542,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                 c.motion_need_quantile = v;
                 p.to_string()
             }
+            "MOTION_NEED_SOURCE" => {
+                let p = c.motion_need_source;
+                c.motion_need_source = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set MOTION_NEED_SOURCE: '{raw}' is not 0 (the palette window) or 1 (the last complete walk)")),
+                };
+                p.to_string()
+            }
             _ => return Err(format!("--set {key}: not an overridable tunable ({})", OVERRIDABLE)),
         };
         applied.push(format!("{key} {was} → {raw}"));
@@ -568,7 +580,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     TDR_LATENCY_ACCEPT_MS, TDR_GROW_MAX, TDR_SHRINK_MAX, TDR_LETHAL_MS, TDR_BOOTSTRAP_STEPS, \
     TDR_BOOTSTRAP_MS, MOTION_UNPRICED_MAX, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
-    EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL, \
+    EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, MOTION_NEED_SOURCE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
     CHUNK_SHUFFLE, WORKER_MOTION, WORKER_PASS_MS";
@@ -991,6 +1003,13 @@ pub(crate) const PASS_FIXED_MS_DEFAULT: f64 = 0.2;
 /// stayed at 0.10). ⚠The pixels past the quantile are unfinished in the moving frame — the
 /// blank-frame lesson is why this is a measured setting, not a default: the screen gate decides.
 pub(crate) const MOTION_NEED_QUANTILE_DEFAULT: f64 = 1.0;
+
+/// Where the escape TOP a moving frame is sized to reach comes from (`render::motion_need`; U24,
+/// design/live-render-robustness.md §3.3). 0: the palette normalisation window's top, which the
+/// moving frame's own one-pass preview feeds — a guess reading a value downstream of what it sizes
+/// (P3). 1: the top of the view's last COMPLETE walk (`Perf::esc_top`). The A/B arm while the screen
+/// gate decides which sizes a moving frame better.
+pub(crate) const MOTION_NEED_SOURCE_DEFAULT: u64 = 0;
 
 /// 1 = pool the GPU readings the frame-budget rule would discard until together they are
 /// representative, and price the budget on the pool (`render::pool_step`); 0 = off, the behaviour
