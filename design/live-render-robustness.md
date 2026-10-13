@@ -3075,3 +3075,18 @@ zoomtest and trap are unchanged. Found on the way, pre-existing (the dev.1 build
 `--motiontest` fails A2 without timestamps, "no complete refresh was adopted during motion — detail
 stopped streaming"; filed in TODO.md under Open bugs.
 
+**2026-10-12 — U49 (in-flight pricing and the lethal shed are off for unpinned motion): covered by
+B4, no code change.** Re-derived: `bp_chunk_tiling` records a pass in flight, drains and prices it,
+and sheds the band licences on a lethal accumulator only `if !interacting || pin_frame`; an unpinned
+moving pass clears `chunk_inflight` and is never priced by the wall. What reacts to a slow moving pass
+now is B4: every dispatch's completion is priced into the wall cap whatever its kind
+(`view_done`, `0ac2ac1`), a completion past 600 ms sets or tightens it, and the admission bounds
+every later chunk pass, tile and frame by it, moving or not. The licences the shed would lower size
+settled passes, which the admission bounds too. In-flight detection would act no sooner: while a
+lethal pass holds the queue, the frame loop is blocked at acquire and runs again when the pass
+completes, which is when the completion prices it. Not measured: no harness produces a lethal moving
+pass on the RTX 3080 (an inflated rate estimate only exercises the ×2 growth limiter and the motion
+cut), and on the RX 6800 XT trap with B4 (dev.3) every moving pass was fast (worst frame 468 ms, a
+settled tile). A gate needs §7.2's gate 3 (an extra-GPU-load rung that raises the real per-step cost
+under unchanged pass sizes), which is W9's instrument and not built.
+
