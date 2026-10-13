@@ -625,7 +625,7 @@ impl crate::FractadyneApp {
                         frame_ms,
                         build_ms,
                         gpu_ms,
-                        motion_res: self.perf.motion_res,
+                        motion_res: self.perf.motion_res[0],
                         real,
                         lag: self.ref_cache[0].last_depth_lag,
                         orbit_id: self.ref_cache[0].orbit_id,

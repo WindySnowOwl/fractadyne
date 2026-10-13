@@ -7834,7 +7834,7 @@ impl FractadyneApp {
             // whole job. The AIMD is the fallback for an UNPINNED refresh only, where the frame
             // itself is the refresh and there is nothing to fail to complete.
             let measured = pin_measured.or_else(|| {
-                (!pinned_refresh && self.perf.motion_res_measured).then_some(1.0)
+                (!pinned_refresh && self.perf.motion_res_measured[vb]).then_some(1.0)
             });
             let cap = measured.unwrap_or_else(|| {
                 // Nothing measured in this regime yet — the opening guess, so the first refresh
@@ -7869,7 +7869,7 @@ impl FractadyneApp {
                          aimd={:.3} allowed={frames_allowed} pin_took={} pin_res={:.3} ask={gpu_iter}",
                         self.perf.frame_idx,
                         if measured.is_some() { "measured" } else { "model" },
-                        self.perf.motion_res,
+                        self.perf.motion_res[vb],
                         self.perf.pin_frames_last[vb],
                         self.perf.pin_res_last[vb],
                     ),
@@ -7905,7 +7905,10 @@ impl FractadyneApp {
             // "detail lost at low zoom" report of 2026-09-16. The same AIMD the deep path uses
             // finds the honest resolution here in one step per real frame, and direct mode keeps
             // `budget_res_scale` underneath it as the watchdog bound it always had.
-            if view_id == 0 {
+            // ⭐Each view steps its OWN scale, on the interval after its own real frame (U56): the
+            // second panel used to move at view 0's scale, which only view 0's frames stepped.
+            let vm = (view_id as usize).min(1);
+            {
                 // Adapt ONLY on the interval following a REAL re-iterate frame. During a dive most
                 // frames are ~free reprojections; adapting on those (the old behaviour) pushed the
                 // res toward native (+0.03/frame), so every rare real refresh rendered near-native
@@ -7918,29 +7921,29 @@ impl FractadyneApp {
                 //             (user-configurable sharpness floor, default 0.30).
                 //   < 17 ms → the real frame fit a vsync: grow gently toward native.
                 let dt = self.perf.last_dt_ms;
-                if self.perf.prev_real[0] && dt > 0.0 {
+                if self.perf.prev_real[vm] && dt > 0.0 {
                     if crate::diag::trace_on("gpu") {
                         crate::diag::trace(
                             "gpu",
-                            format!("aimd: real-frame dt={dt:.1}ms res={:.2}", self.perf.motion_res),
+                            format!("aimd: v{vm} real-frame dt={dt:.1}ms res={:.2}", self.perf.motion_res[vm]),
                         );
                     }
                     // Pure, so the thresholds are pinned by test rather than by reading — see
                     // `motion_res_step`. `dt` already has the fps_cap sleep discounted.
-                    self.perf.motion_res = motion_res_step(
-                        self.perf.motion_res,
+                    self.perf.motion_res[vm] = motion_res_step(
+                        self.perf.motion_res[vm],
                         dt,
                         self.render_cfg.min_motion_res as f64,
                     );
                     // A real frame has now been priced at a known resolution: from here the
                     // opening guess is retired and this loop owns an unpinned refresh's size.
-                    self.perf.motion_res_measured = true;
+                    self.perf.motion_res_measured[vm] = true;
                 }
             }
             // Direct mode keeps the work-budget bound it always had underneath the measured
             // scale; deep perturbation does not (the budget prices the no-skip cost and
             // over-shrinks exactly where the BLA skips — the reason this AIMD exists).
-            let scale = self.perf.motion_res.min(rate_res_cap);
+            let scale = self.perf.motion_res[vm].min(rate_res_cap);
             if is_pert { scale } else { scale.min(budget_res_scale) }
         } else {
             budget_res_scale.min(rate_res_cap)
@@ -8306,8 +8309,14 @@ impl FractadyneApp {
                 // in floatexp than in df32, so the frame that priced the old mode says nothing
                 // about this one. The rate model's opening guess sizes the next refresh until a
                 // real frame is priced here, and the pin feedback likewise re-measures.
-                self.perf.motion_res_measured = false;
+                self.perf.motion_res_measured[vidx.min(1)] = false;
                 self.perf.pin_frames_last[vidx.min(1)] = 0;
+                // ⭐…and so do the visible-frame ladder's rung and the pass budget it was sized
+                // against (U51): both were earned at the old mode's cost per step. Left in place,
+                // the first frames of the new mode ran on the old mode's rung — a rung chosen for a
+                // step that now costs several times more (or less) — until the ladder noticed.
+                self.perf.visible_res[vidx.min(1)] = 1.0;
+                self.perf.motion_pass_steps_last[vidx.min(1)] = 0;
                 // ENTERING DIRECT MODE ends any pin and its dirty residue. Only a perturbation
                 // mode's latch or a pin's own adoption can clear `chunk_dirty`, and neither exists
                 // in direct mode — so a pin a jump abandoned on the way OUT of perturbation left the

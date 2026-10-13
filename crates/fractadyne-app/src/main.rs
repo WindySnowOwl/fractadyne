@@ -1927,13 +1927,17 @@ struct Perf {
     /// WORK_BUDGET `res_scale` sizes moving frames from the *no-BLA-skip* cost and over-shrinks them
     /// where the BLA skips; this measured scale grows toward native while frames stay near vsync and
     /// backs off when they run long. Only deep perturbation motion reads it.
-    motion_res: f64,
+    ///
+    /// ⭐PER VIEW (U56). It was one scale stepped only by view 0's frames, so the dual view's second
+    /// panel moved at a resolution decided by the first panel's frames — and while only the second
+    /// panel moved (the Julia panel under a moving cursor), nothing stepped it at all.
+    motion_res: [f64; 2],
     /// Has `motion_res` been stepped on a REAL frame's own interval yet (in the current arithmetic
     /// mode)? Until it has, an unpinned refresh is sized by the rate model's opening guess; once
     /// it has, that guess is retired and this measured loop owns the size. A model that keeps
     /// bounding a measurement after the measurement exists is the bug this flag ends — see the
-    /// `rate_res_cap` block in `render.rs`.
-    motion_res_measured: bool,
+    /// `rate_res_cap` block in `render.rs`. Per view, as `motion_res` is.
+    motion_res_measured: [bool; 2],
     /// Resolution cap that keeps a MOVING frame able to commit a pixel at all, per view.
     ///
     /// ⭐⭐**BLANK IS NOT CHEAP, IT IS FREE — so every controller sized by frame TIME reads a blank
@@ -2393,10 +2397,10 @@ impl Default for Perf {
             reading_pool: [render::ReadingPool::default(); 2],
             norm_shown: [None, None],
             chunk_governed: [false, false],
-            motion_res: 0.6,
+            motion_res: [0.6, 0.6],
             visible_res: [1.0, 1.0],
             motion_pass_steps_last: [0, 0],
-            motion_res_measured: false,
+            motion_res_measured: [false, false],
             rec: [Default::default(), Default::default()],
             rec_us: 0.0,
             accum_begin_line: Default::default(),
@@ -15058,7 +15062,7 @@ impl FractadyneApp {
             r.hold_floor = p.hold_floor_pending[v];
             r.present_throttle = p.present_throttle;
             r.visible_res = p.visible_res[v];
-            r.motion_res = p.motion_res;
+            r.motion_res = p.motion_res[v];
             r.vis_pass = p.motion_pass_steps_last[v];
             [r.vis_need, r.vis_target, r.vis_pre_scale] = p.vis_sizing[v];
             r.chunk_cursor = p.chunk_cursor[v];

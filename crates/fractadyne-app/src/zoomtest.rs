@@ -530,7 +530,7 @@ impl FractadyneApp {
                         orbit_id: rc.orbit_id,
                         look: self.perf.lookahead_installs,
                         vel_frac,
-                        res: self.perf.motion_res,
+                        res: self.perf.motion_res[0],
                         res_px: self.perf.last_res_v[0],
                         oct_s: self.perf.zoom_oct_s,
                         adopts: self.perf.adopt_complete[0],
