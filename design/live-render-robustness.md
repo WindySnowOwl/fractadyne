@@ -3274,3 +3274,34 @@ dispatch here: the per-adapter ceiling, the explicit dispatch cap, and the admis
 ⚠Not yet on the RX 6800 XT: the field agent deliberately refuses `--deviceloss-repro` (its window
 axis reaches a ~1.4 s dispatch on the RTX 3080); widening its allow-list is the user's call.
 
+**2026-10-13 — W3 closes.** The rest of it:
+
+- **U38 (the steering probe, accounting half)** (`fe8fac4`): the autopilot's synchronous probe is
+  timed into `offscreen_ms` (the tripwire subtracts it, as it does a CLI render) and recorded,
+  `probe_ms` in schema 9. On the RTX 3080 a 1e8 `--autodive` ran 116 probes, median 22.6 ms, up to
+  43.3 ms: a frame and a half of UI-thread time every 0.35 s that no accounting had seen. Not routed
+  through `admit()`: it is one ≤128×128 dispatch, and its cost is now visible. The aggregate half
+  stays a named non-goal. ⚠Fixed on the way: the record's per-frame events are PENDING (set by the
+  event, cleared by the record) — `emit_frame_records` runs after `frame_idx` advances, so a stamp
+  taken earlier in the frame never matched, and `retreat` (`a64c9f1`) had the same flaw.
+- **U17 (recorded half)** (`dca59ac`): the record already carried `ctr_rebase` and `ctr_px` (W1);
+  `framelog.py summarize` now reports rebases per sampled pixel and how many readings exceed 4 while
+  the frame was not chunked (W9's criterion). The same autodive: 82 such readings, max 4.89, on
+  frames whose worst was ~250 ms — so a threshold of 4 may be too sensitive at shallow df32 depths,
+  where a rebase is cheap. W9's to settle. The refusal half stays §5.8's reference fitness.
+- **The RX 6800 XT's fixed term, with the warm-up** (dev.6, two requests × 2):
+  −0.23 ± 0.20 and −0.22 ± 0.20 ms at the all-interior view, 0.06 ± 0.21 and 0.004 ± 0.10 ms at the
+  crash view — UNRESOLVED every time, so PASS (an unresolved fit is not judged) and no calibration
+  entry; odd/even 1.01–1.10×. The warm-up does not change the Radeon's answer: its per-pass fixed cost
+  is below its noise, |F| ≲ 0.4 ms. The default 0.2 stands for it.
+
+W3's gates, where they stand: (1) `--chunk-sweep` is a gate — vacuous, a resolved fixed cost outside
+0.5–2× the calibration, or an odd/even cliff past 10× exit 2; (2) `--selftest-filter retreat`; (3)
+`--deviceloss-repro`'s criterion, PASS on the RTX 3080 with a control that goes red, not yet run on
+the RX 6800 XT (the field agent's allow-list refuses the harness). Not built, by measurement: the
+session-learned intercept and the fixed term beyond motion pacing (U4's premise does not hold on
+either card). Not changed, by evidence: U48's shared ledger (not reproduced on either card). Exit
+criterion "a shed to the window floor measurably reduces wall time per pass on the Radeon": with a
+~0.2 ms fixed term, a floor pass costs its iterations, so a shed does reduce it; the "243 sheds at
+size=2 over 700 s" memory note it was written against remains unverified.
+
