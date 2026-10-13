@@ -3182,3 +3182,32 @@ trap's instruments, never stretched it (worst frame 37 ms: with B4 and the seria
 harnesses no longer reach sustained slow frames), so the line itself is not yet exercised. The first
 field log in which the cost loop slows a dive will show it.
 
+**2026-10-13 — W3 begins. U3/U47 (the pin gate's wall-clock escape opens on the hardware it
+protects): built as §5.6 specifies, inert on the RTX 3080, awaiting the RX 6800 XT** (`8de994d`,
+`feat/w3-pin-timeout`). The gate now waits `pin_gate_timeout_us(registered, last_dt_ms, scaled)`:
+with the pass's completion callback registered (`update` has drained its registration), four frame
+intervals, never under the flat 170 ms nor past `SETTLE_COMPLETION_TIMEOUT_US` (3 s); never
+registered (a harness without the event loop), the flat 170 ms. `PIN_TIMEOUT_SCALED` (default 1;
+0 = flat) is the A/B arm. Because §5.6 warns that changing this without a measurement changes pin
+serialization on hardware we cannot observe, it is measured either way: `Perf::pin_escapes` counts
+each release before a completion, frame record schema 7 carries it, the first per view is an
+always-on line. RTX 3080, wiped config: 0 escapes under either rule in 3,465 frames (20-octave
+zoomtest at 1.0× and 4.0×, motiontest; ~1,500 frames with a pin in flight) and in the
+no-timestamps motiontest (PASS, 38 complete adoptions), so on this card the two rules behave
+identically. The dev.4 PLUTO records cannot answer whether the RX 6800 XT escapes: `pin_inflight`
+stays at 1 across back-to-back passes (a new pass goes out in the frame the last completes), so its
+spans are trains of passes, not passes; the 3080's own median span is 231 ms with 0 escapes.
+
+**2026-10-13 — U48 (one band ledger, two targets, two lanes): not reproduced on the RTX 3080; behaviour
+unchanged.** Pins (20 ms target, ×4 fast lane) and the settled walk (400 ms, ×2) share each view's
+ledger, so a licence the walk earned could size a pin pass ~20× its target. Traced (`TRACE=tile`
+`pin-price`): the budget trap's taps (1 s settles between 0.08-octave taps at 4.0×), 154 pin passes,
+worst 28 ms; the motiontest (1M ask, settle then dive and glide), 275 pin passes, 5 over twice the
+target, worst 74 ms, and all five are band-0 first passes whose size includes the free series-skip
+prefix (size 4× the licence), not passes sized by an inherited licence. Two things keep inheritance
+cheap: a pin pass stops at its band's edge (`chunk_band_end`), so in the narrow low bands no licence
+can make it long, and the ledger SURVIVES interaction on purpose (clearing it per pin made every pin
+re-climb from the floor and drift out before adopting). Keying the ledger per lane would bring that
+re-climb back after every settle, on a mechanism argument. The RX 6800 XT's pin-price trace on a
+deep, high-iteration motion run is the evidence still wanted.
+
