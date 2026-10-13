@@ -117,6 +117,9 @@ param(
     # One batch for a whole round instead of one per scene (see the lane): start-up once per round,
     # but a scene's time then depends on the scenes before it in the process.
     [switch]$FractalZoomerSharedBatch,
+    # Render an untimed warm-up image before each batch's scenes (see the lane: it can make a scene
+    # slower, not faster).
+    [switch]$FractalZoomerWarmup,
     # imagina-cli is built with msys2 mingw and needs that toolchain's DLLs on PATH; without them
     # it exits 0xC0000135 (DLL not found) with no message at all, which reads exactly like a
     # crash. Prepended for this lane only, never for the process. Autodetected when left empty.
@@ -882,15 +885,16 @@ if ($have.imaginacli) {
 # perturbation on, the rendering method Successive Refinement. Fractal Zoomer then picks its
 # arbitrary-precision library and uses Zhuoran's BLA by default.
 #
-# Each scene of each round is its own batch: an untimed warm-up image at a view outside the set (the
-# FractalShark server's warm-up, for the same reason), then the scene, in one Java process; nothing
-# is carried from one scene or rep to the next (see below for why, and -FractalZoomerSharedBatch). Java: its author's main target is 1.8, with -XX:+UseG1GC.
+# Each scene of each round is rendered by a FRESH Java process of its own, as when a user opens Fractal
+# Zoomer and renders that location: nothing is carried from one scene or rep to the next, and a scene's
+# time depends on that scene alone (see below for why, and -FractalZoomerSharedBatch /
+# -FractalZoomerWarmup). Java: its author's main target is 1.8, with -XX:+UseG1GC.
 # ⚠A JDK, not a JRE: Fractal Zoomer compiles its user code at start-up, and without a compiler it
 # opens a MODAL "Java Compiler was not found" dialog that the batch waits on forever.
 if ($have.fractalzoomer) {
     $wh = $Size -split 'x'
     $fzCp = $FractalZoomerJar + ';' + $FzsWriterPath
-    Write-Host ('Fractal Zoomer: its command line, ' + $(if ($FractalZoomerSharedBatch) { 'one batch per round' } else { 'one batch per scene after a warm-up' }) + ' (' + $FractalZoomerJar + ', ' + $JavaExe + ' ' + $FractalZoomerJavaArgs + ')')
+    Write-Host ('Fractal Zoomer: its command line, ' + $(if ($FractalZoomerSharedBatch) { 'one batch per round' } else { 'a fresh process per scene' }) + $(if ($FractalZoomerWarmup) { ', after a warm-up image' } else { '' }) + ' (' + $FractalZoomerJar + ', ' + $JavaExe + ' ' + $FractalZoomerJavaArgs + ')')
     # The inputs, once per run: every scene's .fzs, and the warm-up view's.
     $fzsDir = Join-Path $outDir 'fz-fzs'
     New-Item -ItemType Directory -Force -Path $fzsDir | Out-Null
@@ -907,12 +911,14 @@ if ($have.fractalzoomer) {
     # FzsWriter runs Fractal Zoomer's static set-up, which unpacks libraries beside it; only the .fzs matter.
     Get-ChildItem -LiteralPath $fzsDir | Where-Object { $_.Extension -notin '.fzs', '.kfr' } |
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-    # ⚠ONE BATCH PER SCENE by default (a warm-up image, then the scene, one process): measured
-    # 2026-10-13, scene 14 (1.6e148x, 800,000 iterations) rendered earlier in the same process makes
-    # 17 and 35 render 2-3x slower, on Java 8 and 11 alike and with a 24 GB heap too (17: 9.3-10.9 s
-    # after it, 3.7-5.2 s after only the warm-up). A scene's time must not depend on which scenes
-    # ran before it - the reason FractalShark gets a fresh server per image. -FractalZoomerSharedBatch
-    # renders each round as one batch instead (start-up once per round), to measure that effect.
+    # ⚠ONE FRESH PROCESS PER SCENE, NO WARM-UP, by default. Fractal Zoomer's pixel loop runs at a
+    # speed that depends on what that Java process rendered BEFORE it (2026-10-13, 4K, Java 8 and 11,
+    # heap size irrelevant): after scene 14 (1.6e148x, 800,000 iterations), 17 and 35 render 2-3x
+    # slower (17: 9.3-10.9 s against 4.3 s fresh); after a cheap warm-up image, 58 and 59 render 3.4x
+    # slower (59: 250 s against 73.5 s fresh, every round within 1%). A fresh process times each
+    # scene by itself, as a user opening that location sees it; its first-image JIT cost (a few
+    # hundred ms on the shortest scenes) is part of that. -FractalZoomerSharedBatch renders each round
+    # as one batch, and -FractalZoomerWarmup adds the warm-up image, to reproduce those effects.
     foreach ($rep in 1..$Reps) {
         $groups = @()
         if ($FractalZoomerSharedBatch) {
@@ -924,7 +930,8 @@ if ($have.fractalzoomer) {
             $b = Join-Path $outDir ('fz-batch\r' + $rep + '\' + $g.tag)
             $in = Join-Path $b 'in'; $out = Join-Path $b 'out'; $cwd = Join-Path $b 'cwd'
             foreach ($d in $in, $out, $cwd) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
-            foreach ($slug in @('00-warmup') + @($g.rows | ForEach-Object { $_.slug })) {
+            foreach ($slug in @($(if ($FractalZoomerWarmup) { '00-warmup' })) + @($g.rows | ForEach-Object { $_.slug })) {
+                if (-not $slug) { continue }
                 if ($fzsOk[$slug]) { Copy-Item -Force (Join-Path $fzsDir ($slug + '.fzs')) $in }
             }
             $argLine = ('{0} -jar "{1}" --cli_batch_dir "{2}" --cli_width {3} --cli_height {4} --cli_output_dir "{5}"' -f
@@ -944,7 +951,7 @@ if ($have.fractalzoomer) {
                 $src = Join-Path $out ($s.slug + '.png')
                 $png = Join-Path $outDir ('fz-' + $s.slug + '.png')
                 $status = 'ok'; $reported = ''; $wall = ''
-                $note = 'Fractal Zoomer command line, round ' + $rep + ', ' + $(if ($FractalZoomerSharedBatch) { 'one batch for the round' } else { 'its own batch after a warm-up' }) + '; reported = its Total Elapsed Time; wall = since the previous image was written'
+                $note = 'Fractal Zoomer command line, round ' + $rep + ', ' + $(if ($FractalZoomerSharedBatch) { 'one batch for the round' } else { 'a fresh process for it' }) + $(if ($FractalZoomerWarmup) { ' after a warm-up image' } else { '' }) + '; reported = its Total Elapsed Time; wall = ' + $(if ($g.rows.Count -eq 1 -and -not $FractalZoomerWarmup) { 'its process, start to exit' } else { 'since the previous image was written' })
                 if (-not $fzsOk[$s.slug]) {
                     $status = 'DNF-no-input'; $note = 'FzsWriter could not write the .fzs'
                 } elseif ($failed -contains $s.slug) {
@@ -961,7 +968,10 @@ if ($have.fractalzoomer) {
                     } else {
                         $reported = [math]::Round([double]$m.Groups[1].Value / 1000.0, 3)
                         if ($mr.Success) { $note += ('; reference ' + [math]::Round([double]$mr.Groups[1].Value / 1000.0, 3) + ' s') }
-                        if ($since.ContainsKey($s.slug)) { $wall = $since[$s.slug] }
+                        # A scene alone in its process: the process's own wall, start to exit, as the
+                        # other lanes record it. In a batch: the time since the previous image.
+                        if ($g.rows.Count -eq 1 -and -not $FractalZoomerWarmup) { $wall = $r.wall_s }
+                        elseif ($since.ContainsKey($s.slug)) { $wall = $since[$s.slug] }
                         Copy-Item -Force $src $png
                         if (-not (Test-PngComplete $png)) {
                             $status = 'DNF-truncated'; $note = 'the PNG is incomplete (no IEND chunk)'; $reported = ''
@@ -1113,9 +1123,9 @@ $md = @(('# Benchmark summary - ' + $env:COMPUTERNAME + ' - ' + $stamp), '',
         'Imagina is a wall column too now that imagina-cli automates it; it was a transcribed',
         'figure only while a human had to read it off the GUI.', '',
         'Fractal Zoomer is a REPORTED column: its own Total Elapsed Time (reference + pixels), which',
-        'leaves out Java''s start-up and the user-code compile (paid once per batch, i.e. once per',
-        'round here, as a user pays it once per session) and saving the image. Its wall_s in',
-        'results.csv is the time since the previous image of its batch was written.',
+        'leaves out Java''s start-up and the user-code compile (paid once per session by a user, once',
+        'per scene here: a fresh process each) and saving the image. Its wall_s in results.csv is',
+        'that process, start to exit.',
         'The rendering method its author asked for, Successive Refinement, guesses flat regions',
         'instead of iterating every pixel; Fractadyne iterates every pixel.', '',
         '| Scene | Magnification | fractadyne wall | fraktaler3 wall | fractalshark wall | imagina wall | fractalzoomer reported | fd reported |',
