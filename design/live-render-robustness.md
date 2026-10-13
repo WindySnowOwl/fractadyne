@@ -3114,3 +3114,12 @@ latest pass, and a new pass usually replaced it first), so the timestamp path's 
 under-priced too. Follow-up, not done: price pin passes by completion with timestamps as well, and
 measure cadence at 4.0×, the reason `PIN_INFLIGHT_MAX` is 2.
 
+**2026-10-12 — `MOTION_LIFT_MAX` 2 against 4: no difference beyond run-to-run noise; kept 2.** After
+U40 the motiontest seemed to adopt fewer complete refreshes than the build before it (12–13 against
+14–15 a run). Four interleaved runs each of the motiontest and the 20-octave zoomtest, RTX 3080:
+complete adoptions 15, 12, 14, 13 (bound 2) against 16, 15, 12, 12 (bound 4), median 13.5 both;
+zoomtest pinned adoptions median 73.5 against 76, on-screen lag 0.315 against 0.291 octaves, and one
+bound-2 run with six frames over 33 ms (max 47 ms) where the bound-4 runs had none. The spread
+inside each arm covers the gap, so the earlier U40 deficit was mostly noise too, and the committed
+bound stays: it is the mirror of `MOTION_CUT_MAX`, and nothing measured asks for a looser one.
+
