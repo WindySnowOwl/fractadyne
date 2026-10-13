@@ -333,6 +333,13 @@ def summarize(path, view=0, target_ms=400.0, out=sys.stdout):
     if ctr:
         p(f"  counter readings       {len(ctr)}  rebase max {max(r['ctr_rebase'] for r in ctr):,}"
           f"  bla_skip=0 with rebase>0: {sum(1 for r in ctr if r['ctr_bla_skip'] == 0 and r['ctr_rebase'] > 0)}")
+        # Rebases per sampled pixel (U17's recorded half, design 5.2): the counters' one directly
+        # measured cost multiplier, as a session estimate. W9's criterion reads it: above 4 while the
+        # frame was NOT chunked is the shape of the escaped-reference storm.
+        rpp = sorted(r['ctr_rebase'] / r['ctr_px'] for r in ctr if r.get('ctr_px', 0) > 0)
+        if rpp:
+            hot = sum(1 for r in ctr if r.get('ctr_px', 0) > 0 and r['ctr_rebase'] / r['ctr_px'] > 4 and not r['chunked'])
+            p(f"  rebases per pixel      median {rpp[len(rpp) // 2]:.2f}  max {rpp[-1]:.2f}  over 4 while unchunked: {hot}")
     # The regime that has killed every device (design 6.7): a complete (escaped) reference far
     # shorter than the ask, with BLA skipping nothing.
     regime = [r for r in built if not r["ref_partial"] and r["ref_len"] > 0 and r["iter"] >= 4 * r["ref_len"]]
