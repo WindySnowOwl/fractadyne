@@ -496,7 +496,13 @@ working folder (`fz-work\<scene>-r<rep>\`), and FzBench:
   Zoomer's `size` spans the shorter side of the image, the height here), at the precision
   Fractal Zoomer itself derives from those strings when it loads a file;
 - renders it with the Minimal Renderer's own Batch Render at `-Size`, and reads the time from the
-  `<scene>.stats` file the batch writes beside the image.
+  `<scene>.stats` file the batch writes beside the image;
+- exits only once the image is complete on disk (its PNG ends with the IEND chunk). Fractal Zoomer
+  writes the `.stats` file BEFORE it saves the image, so a driver that exits on the stats file cuts
+  the image off part-way, and the kit's structure guard cannot see that: its decoder fills the
+  missing rows, so half a picture still looks like a picture. The first 4K run (2026-10-12) did
+  exactly that; its times were right, and every image was cut off. The lane now also checks every
+  image for its IEND chunk (`Test-PngComplete`) and scores a cut-off one `DNF-truncated`.
 
 The settings are the ones Fractal Zoomer's author advised for a benchmark: the defaults, with
 perturbation on (Fractal Zoomer then picks its arbitrary-precision library and uses Zhuoran's

@@ -898,6 +898,9 @@ if ($have.fractalzoomer) {
             # Fractal Zoomer user pays once per session, not per image (FractalShark's server column is
             # the same shape). The wall time, which includes all of them, stays in results.csv.
             $m = [regex]::Match([string]$r.stdout, 'FZBENCH name=\S+ total_ms=(-?[0-9.]+) reference_ms=(-?[0-9.]+)')
+            # How long the image took to save after the render (outside the reported time): FzBench
+            # waits for it, because Fractal Zoomer writes its .stats file before the image.
+            $ms = [regex]::Match([string]$r.stdout, ' save_ms=([0-9]+)')
             $note = 'FzBench driver (GPL-3.0); reported = Fractal Zoomer''s Total Elapsed Time'
             if ($status -eq 'ok') {
                 if (-not $m.Success -or [double]$m.Groups[1].Value -lt 0) {
@@ -906,6 +909,7 @@ if ($have.fractalzoomer) {
                 } else {
                     $reported = [math]::Round([double]$m.Groups[1].Value / 1000.0, 3)
                     $note += ('; reference ' + [math]::Round([double]$m.Groups[2].Value / 1000.0, 3) + ' s')
+                    if ($ms.Success) { $note += ('; image saved ' + [math]::Round([double]$ms.Groups[1].Value / 1000.0, 1) + ' s after the render') }
                 }
             }
             $png = Join-Path $outDir ('fz-' + $s.slug + '.png')
@@ -913,7 +917,11 @@ if ($have.fractalzoomer) {
             if ($status -eq 'ok') {
                 if (Test-Path $src) {
                     Copy-Item -Force $src $png
-                    if (-not (Test-RenderHasStructure $png)) {
+                    if (-not (Test-PngComplete $png)) {
+                        # Checked FIRST: the structure guard passes a cut-off PNG (see Test-PngComplete).
+                        $status = 'DNF-truncated'
+                        $note = 'exit 0 but the PNG is incomplete (no IEND chunk) - the picture cannot be checked'
+                    } elseif (-not (Test-RenderHasStructure $png)) {
                         $status = 'DNF-blank'
                         $note = 'exit 0 but the image is uniform - a time here would be meaningless'
                     }
