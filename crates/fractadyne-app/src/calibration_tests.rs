@@ -25,6 +25,26 @@ fn the_calibrated_cards_are_found_and_anything_else_gets_the_default() {
     assert!(unknown.costs.df32_pert > 0.0 && unknown.costs.direct > 0.0);
 }
 
+/// The fixed per-pass cost: the default has one, a calibrated card's own value wins, and a card
+/// without one falls back to the default's — never to nothing.
+#[test]
+fn the_fixed_pass_cost_is_the_cards_own_else_the_default() {
+    let t = table();
+    let d = lookup(&t, "no such adapter");
+    assert!(d.pass_fixed_ms.is_some_and(|v| v > 0.0), "the default carries a pass_fixed_ms");
+    assert!(!d.pass_fixed_calibrated);
+    for name in ["NVIDIA GeForce RTX 3080", "AMD Radeon RX 6800 XT"] {
+        let c = lookup(&t, name);
+        assert!(c.pass_fixed_ms.is_some_and(|v| v > 0.0), "{name}");
+        if c.pass_fixed_calibrated {
+            // A measured value is a measurement, not the default copied in.
+            assert!(t.adapter.iter().any(|e| e.slug == slug(name) && e.pass_fixed_ms.is_some()), "{name}");
+        } else {
+            assert_eq!(c.pass_fixed_ms, d.pass_fixed_ms, "{name}");
+        }
+    }
+}
+
 /// An adapter the table has never seen must never get a HIGHER ceiling than a card that was
 /// measured: the default's costs are at least every calibrated card's, and its knee at least as
 /// large.

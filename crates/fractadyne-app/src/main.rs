@@ -15763,6 +15763,20 @@ impl eframe::App for FractadyneApp {
                         if crate::tunables::cost().dispatch_ceiling == 1 { "" } else { " — OFF (DISPATCH_CEILING=0)" }
                     ),
                 );
+                diag::log_line(
+                    "wgpu",
+                    &format!(
+                        "pass fixed cost: {:.3} ms ({})",
+                        calibration::pass_fixed_ms(),
+                        if crate::tunables::overridden("PASS_FIXED_MS") {
+                            "--set PASS_FIXED_MS"
+                        } else if cal.pass_fixed_calibrated {
+                            "calibrated for this adapter"
+                        } else {
+                            "the table default"
+                        }
+                    ),
+                );
                 // The frame record's session header: WHICH code produced the records that
                 // follow. The adapter line above is the one fact that decides which paths run
                 // (no 48/64 attach bytes = no chunked path at all), and a replay scored against

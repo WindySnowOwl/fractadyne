@@ -10379,7 +10379,7 @@ pub(crate) fn motion_pass_steps(
     motion_pass_steps_fixed(
         rate_steps_per_ms,
         target_ms,
-        crate::tunables::cost().pass_fixed_ms,
+        crate::calibration::pass_fixed_ms(),
         tdr_steps,
         fallback_steps,
     )

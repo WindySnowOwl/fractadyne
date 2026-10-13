@@ -204,6 +204,15 @@ pub(crate) fn status_line() -> String {
     }
 }
 
+/// Was `--set NAME=...` given for this tunable? For values whose stock source is not the constant
+/// (`PASS_FIXED_MS` is calibrated per adapter, `calibration::pass_fixed_ms`): an override must
+/// still win, so the reader has to know one was made.
+pub(crate) fn overridden(name: &str) -> bool {
+    APPLIED
+        .get()
+        .is_some_and(|v| v.iter().any(|s| s.split(' ').next() == Some(name)))
+}
+
 /// Are the tunables stock? The gates assert this: a self-test or benchmark run under an override
 /// has measured a build nobody ships. So has one with a diagnostic INSTRUMENT armed.
 pub(crate) fn is_stock() -> bool {
@@ -939,8 +948,16 @@ pub(crate) const LIVE_PRICE_DROP_MAX: f64 = 4.0;
 pub(crate) const MOTION_PASS_MS: f64 = 10.0;
 
 /// The part of every GPU pass's time that does NOT scale with its steps, ms — clearing and storing
-/// the chunk-state attachments and the resolve (design/live-render-robustness.md §5.2). 0 = off, the
-/// shipped behaviour: a motion pass's price is proportional to its steps.
+/// the chunk-state attachments and the resolve (design/live-render-robustness.md §5.2). 0 = off: a
+/// motion pass's price is proportional to its steps.
+///
+/// ⭐NOW A CALIBRATION (W3, 2026-10-13): what the pacing reads is `calibration::pass_fixed_ms()`,
+/// the adapter's `pass_fixed_ms` in `validation/calibration/ceilings.toml` (else the table
+/// default's), measured by `--chunk-sweep`'s wall-clock fit. This constant is the value before the
+/// adapter is known, and `--set PASS_FIXED_MS` still overrides everything (the A/B arm). The sweep
+/// measures 0.19–0.22 ms on the RTX 3080 at two views and cannot resolve the RX 6800 XT's from its
+/// noise (fits of -0.06 to 0.28 ms): ⚠the "~1 ms on the RX 6800 XT" below was read off live
+/// readings that pair with the wrong dispatch on that card, and the wall clock does not bear it out.
 ///
 /// ⭐WHY IT MATTERS ON SOME CARDS. The motion rate is learned from readings of mostly SMALL passes.
 /// On the RX 6800 XT (2026-09-26, 594 readings at the 2026-09-21 crash view) a pass of 1.6e7 steps
