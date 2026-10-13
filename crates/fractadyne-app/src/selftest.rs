@@ -7336,6 +7336,59 @@ impl FractadyneApp {
             self.perf.tile_state = [None, None];
         }
 
+        // ---- a retreat that reaches nothing SAYS so (W3 gate 2) ----
+        // ⭐design/live-render-robustness.md §5.6, §7.3 gate 2: a lethal reading with the budget
+        // already at its floor must come back NoActuatorReachable AND leave the always-on line;
+        // RED if a retreat reports success having changed nothing. The control: the same lethal
+        // reading at a large budget is Applied, to a smaller budget. Fed as `wall_iterate` (the
+        // wall-clock fallback's source), which prices the budget exactly like a GPU reading but
+        // does not latch the mode's worst rate for the rest of the session.
+        if want("retreat") {
+            let saved = (
+                self.perf.fe_budget,
+                self.perf.fe_budget_ok,
+                self.perf.chunk_bands,
+                self.perf.retreat_last,
+                self.perf.retreat_frame,
+                self.perf.last_iterate_ms,
+                self.perf.witness_pending[0].take(),
+            );
+            let lethal_ms = crate::tunables::cost().tdr_lethal_ms * 1.25;
+            let floor = crate::tunables::cost().tdr_min_steps;
+            self.perf.fe_budget[0] = floor;
+            self.perf.retreat_last[0] = None;
+            self.apply_iterate_measurement(0, lethal_ms, floor, "wall_iterate");
+            let at_floor = self.perf.retreat_last[0];
+            let logged = crate::diag::recent_log(256 * 1024)
+                .is_some_and(|l| l.contains("RETREAT REACHED NOTHING"));
+            let big: u64 = 10_000_000_000;
+            self.perf.fe_budget[0] = big;
+            self.perf.retreat_last[0] = None;
+            self.apply_iterate_measurement(0, lethal_ms, big, "wall_iterate");
+            let control = self.perf.retreat_last[0];
+            self.perf.fe_budget = saved.0;
+            self.perf.fe_budget_ok = saved.1;
+            self.perf.chunk_bands = saved.2;
+            self.perf.retreat_last = saved.3;
+            self.perf.retreat_frame = saved.4;
+            self.perf.last_iterate_ms = saved.5;
+            self.perf.witness_pending[0] = saved.6;
+            let floor_ok = matches!(at_floor, Some(crate::render::RetreatOutcome::NoActuatorReachable { .. }));
+            let control_ok = matches!(control, Some(crate::render::RetreatOutcome::Applied { from, to }) if to < from);
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Live budget",
+                name: "a retreat that reaches nothing says so".into(),
+                params: format!(
+                    "a {lethal_ms:.0} ms reading: at the budget floor ({floor} steps), then at {big:.1e} steps",
+                    big = big as f64
+                ),
+                result: format!("at the floor: {at_floor:?}, logged={logged}; at {:.1e}: {control:?}", big as f64),
+                threshold: "NoActuatorReachable with the RETREAT REACHED NOTHING line at the floor; Applied to a \
+                            smaller budget above it",
+                pass: floor_ok && logged && control_ok,
+            });
+        }
+
         if want("iter-budget") {
             const SPAR_X: &str = "-1.0109636384562213181006238475735192993836101418531854095957676149333034794266e-1";
             const SPAR_Y: &str = "9.5628651080914147131604703998237075557983304380930462483482733394361292090816e-1";

@@ -38,6 +38,7 @@ max = 0
 instrument_ok = true
 why = "a GPU pass measured inside the band where the driver's watchdog resets the device"
 mode.autodive = { max = 100000, why = "the device-loss hammer: reaching the band is its job, surviving it is its verdict" }
+mode.selftest = { max = 2, why = "the retreat check (W3 gate 2) feeds exactly two lethal readings on purpose, one at the budget floor and one above it; a third is a real one" }
 
 [[rule]]
 name = "lethal-band-in-flight"

@@ -672,6 +672,43 @@ pub(crate) fn bounded_motion_cut(cur: f64, wall_rate: f64) -> Option<f64> {
     Some(wall_rate.max(cur / crate::tunables::MOTION_CUT_MAX))
 }
 
+/// What an emergency retreat reached (design/live-render-robustness.md §5.6, W3 gate 2).
+///
+/// ⭐"Nothing happened" is a VALUE, not a silence. A retreat used to shed the band ledger and cut
+/// the budget and log the same line whether or not that could make the next dispatch any smaller
+/// than the one that came back lethal; a retreat at the floor reported a retreat. Now each one says
+/// which it was, in its always-on log line and in the frame record (`retreat`, schema 8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RetreatOutcome {
+    /// The next dispatch can be smaller than the lethal one: `from` → `to` (iterations for an
+    /// in-flight chunk pass, nominal steps for a frame's reading).
+    Applied { from: u64, to: u64 },
+    /// What the retreat drives is already at its floor, and the floor is not below the dispatch
+    /// that was lethal: nothing it can reach makes the next one smaller.
+    NoActuatorReachable { at: u64 },
+}
+
+impl RetreatOutcome {
+    /// The frame record's `retreat` value: 1 applied, 2 no actuator reachable (0 = no retreat).
+    pub(crate) fn code(self) -> u8 {
+        match self {
+            RetreatOutcome::Applied { .. } => 1,
+            RetreatOutcome::NoActuatorReachable { .. } => 2,
+        }
+    }
+}
+
+/// The outcome of a retreat from a `lethal` dispatch when the least the next one can carry is
+/// `next` (same unit). `#[must_use]`: a caller that drops the outcome has gone back to the silence.
+#[must_use]
+pub(crate) fn retreat_outcome(lethal: u64, next: u64) -> RetreatOutcome {
+    if next < lethal {
+        RetreatOutcome::Applied { from: lethal, to: next }
+    } else {
+        RetreatOutcome::NoActuatorReachable { at: lethal }
+    }
+}
+
 /// How long the pin gate waits for the pass in flight to complete before it releases the next one
 /// anyway, microseconds (findings U3/U47, design §5.6).
 ///
@@ -1169,3 +1206,5 @@ mod motion_lift_tests;
 mod pin_pricing_tests;
 #[cfg(test)]
 mod pin_gate_timeout_tests;
+#[cfg(test)]
+mod retreat_tests;

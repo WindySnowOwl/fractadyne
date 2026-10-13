@@ -1423,6 +1423,10 @@ struct Perf {
     /// each one is a second pass released onto a queue still running the first (U3/U47); the
     /// first per view is logged.
     pin_escapes: [u32; 2],
+    /// The last emergency retreat's outcome per view, and the frame it happened in (frame record
+    /// `retreat`, schema 8; `render::retreat_outcome`, W3 gate 2).
+    retreat_last: [Option<render::RetreatOutcome>; 2],
+    retreat_frame: [u64; 2],
     /// SETTLE-TILE SERIALIZATION (`render::settle_tile_waits`): how much of this view's work is
     /// still in the GPU queue, and what the last completed piece cost. Every real dispatch of the
     /// view sets `view_reg_pending` and stamps `view_dispatch_at` / `view_dispatch_steps`; the next
@@ -2187,6 +2191,8 @@ impl Default for Perf {
             ],
             pin_dispatch_at: [0, 0],
             pin_escapes: [0, 0],
+            retreat_last: [None, None],
+            retreat_frame: [0, 0],
             view_reg_pending: [false, false],
             view_dispatch_at: [0, 0],
             view_dispatch_steps: [0, 0],
@@ -15003,6 +15009,10 @@ impl FractadyneApp {
             r.full_inflight = p.full_inflight[v];
             r.pin_inflight = p.pin_inflight[v];
             r.pin_escapes = p.pin_escapes[v];
+            r.retreat = match p.retreat_last[v] {
+                Some(o) if p.retreat_frame[v] == p.frame_idx => o.code(),
+                _ => 0,
+            };
             r.present_throttle = p.present_throttle;
             r.visible_res = p.visible_res[v];
             r.motion_res = p.motion_res;
@@ -15246,18 +15256,33 @@ impl FractadyneApp {
             // on a pass the walk judged drained, which a saturated queue stops producing exactly
             // when this fires. Output-neutral (see `chunk_band_retreat`).
             render::chunk_band_retreat(&mut self.perf.chunk_bands[v.min(1)]);
+            // What the retreat REACHED (W3 gate 2): every live dispatch sizes from the budget, so
+            // the next one is below the lethal one only if the new budget is.
+            let outcome = render::retreat_outcome(steps, next);
+            let vb = v.min(1);
+            self.perf.retreat_last[vb] = Some(outcome);
+            self.perf.retreat_frame[vb] = self.perf.frame_idx;
             diag::log_line(
                 "render",
                 &format!(
                     "⚠LETHAL-BAND FRAME: view={v} {src}={ms:.0}ms (band ≥{:.0}ms) steps={:.3e} \
-                     budget={:.3e} sa_skip={} res={}x{} — emergency retreat to {:.3e}",
+                     budget={:.3e} sa_skip={} res={}x{} — emergency retreat to {:.3e}{}",
                     crate::tunables::cost().tdr_lethal_ms,
                     steps as f64,
                     cur as f64,
-                    self.perf.last_sa_skip_v[v.min(1)],
-                    self.perf.last_res_v[v.min(1)][0],
-                    self.perf.last_res_v[v.min(1)][1],
-                    next as f64
+                    self.perf.last_sa_skip_v[vb],
+                    self.perf.last_res_v[vb][0],
+                    self.perf.last_res_v[vb][1],
+                    next as f64,
+                    match outcome {
+                        render::RetreatOutcome::Applied { .. } => String::new(),
+                        render::RetreatOutcome::NoActuatorReachable { .. } => format!(
+                            " — ⚠RETREAT REACHED NOTHING: the budget is at its floor ({:.3e}), not below \
+                             the lethal dispatch ({:.3e}); no actuator the retreat drives can make the \
+                             next one smaller",
+                            next as f64, steps as f64
+                        ),
+                    }
                 ),
             );
         }

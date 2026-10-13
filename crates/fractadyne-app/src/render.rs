@@ -5834,11 +5834,22 @@ impl FractadyneApp {
                         crate::tunables::cost().tdr_lethal_ms,
                     ) {
                         chunk_band_retreat(&mut self.perf.chunk_bands[vs]);
+                        // What the shed REACHED (W3 gate 2): the next pass opens no lower than the
+                        // walk's floor, so it is smaller than this one only if the floor is.
+                        let outcome = crate::render::retreat_outcome(size as u64, floor as u64);
+                        self.perf.retreat_last[vs] = Some(outcome);
+                        self.perf.retreat_frame[vs] = self.perf.frame_idx;
                         crate::diag::log_line(
                             "render",
                             &format!(
-                                "⚠IN-FLIGHT PASS IN THE LETHAL BAND: view={vs} size={size} band={band} acc={acc:.0}ms (band ≥{:.0}ms, no drain yet) — chunk-band licences shed",
-                                crate::tunables::cost().tdr_lethal_ms
+                                "⚠IN-FLIGHT PASS IN THE LETHAL BAND: view={vs} size={size} band={band} acc={acc:.0}ms (band ≥{:.0}ms, no drain yet) — chunk-band licences shed{}",
+                                crate::tunables::cost().tdr_lethal_ms,
+                                match outcome {
+                                    crate::render::RetreatOutcome::Applied { .. } => String::new(),
+                                    crate::render::RetreatOutcome::NoActuatorReachable { .. } => format!(
+                                        " — ⚠RETREAT REACHED NOTHING: the pass was {size} iterations and the walk's floor is {floor}"
+                                    ),
+                                }
                             ),
                         );
                         true
