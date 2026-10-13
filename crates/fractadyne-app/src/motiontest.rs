@@ -19,6 +19,12 @@
 //!   ever-larger-blocks bug) fails here.
 //! - **A3 (display honesty)**: `dirty_shown == 0` — no frame displayed the live texture while it
 //!   diverged from the frozen bookkeeping during interaction.
+//! - **A4 (walk restarts, REPORTED)**: walks restarted with part of their progress thrown away
+//!   (`Perf::walk_restarts`, the frame record's `walk_restarted`), during the dive and during the
+//!   Home glide. The iteration-starvation shape: a controller that re-chose the resolution every few
+//!   frames restarted the walk every few frames, and 36% of a dive went blank while every per-pass
+//!   metric improved. Explanatory, never the verdict on its own (design/live-render-robustness.md
+//!   §7.4); reported until a baseline exists to bound it.
 //! - **Anti-vacuity**: the run FAILS unless it produced interacting chunk-eligible frames — a
 //!   harness that never reached the regime proves nothing (the `--autodive 22` lesson: it cited
 //!   the mode-2 crash while measuring 0 mode-2 frames).
@@ -72,6 +78,7 @@ struct Base {
     worker: u64,
     motion_frames: u64,
     dirty: u64,
+    restarts: u64,
 }
 
 pub(crate) struct MotionTest {
@@ -80,6 +87,8 @@ pub(crate) struct MotionTest {
     phase_t0: Instant,
     frames: u64,
     base: Base,
+    /// `Perf::walk_restarts[0]` when the Home glide began (A4 splits the dive from the glide).
+    restarts_at_home: u64,
     /// Cleared by the verdict paths so the watchdog thread stands down.
     done: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
@@ -115,6 +124,7 @@ impl MotionTest {
             phase_t0: Instant::now(),
             frames: 0,
             base: Base::default(),
+            restarts_at_home: 0,
             done,
         }
     }
@@ -173,6 +183,7 @@ impl FractadyneApp {
                         worker: self.perf.live_adopted_total[0],
                         motion_frames: self.perf.chunk_motion_frames[0],
                         dirty: self.perf.dirty_shown[0],
+                        restarts: self.perf.walk_restarts[0],
                     };
                     crate::diag::log_line(
                         "motiontest",
@@ -197,6 +208,7 @@ impl FractadyneApp {
                     // Straight into the Home glide with no settle gap — the glide stamps
                     // `settle_t` every frame, so interaction is continuous across the seam.
                     self.zoom_home(now);
+                    mt.restarts_at_home = self.perf.walk_restarts[0];
                     advance(&mut mt, Phase::Home);
                 }
             }
@@ -216,6 +228,8 @@ impl FractadyneApp {
                     let motion =
                         self.perf.chunk_motion_frames[0].wrapping_sub(b.motion_frames);
                     let dirty = self.perf.dirty_shown[0].wrapping_sub(b.dirty);
+                    let dive_restarts = mt.restarts_at_home.wrapping_sub(b.restarts);
+                    let home_restarts = self.perf.walk_restarts[0].wrapping_sub(mt.restarts_at_home);
                     eprintln!();
                     eprintln!(
                         "--motiontest: frames={} motion-chunk-frames={} (chunk_ok={} chunk_fe_ok={})",
@@ -225,6 +239,13 @@ impl FractadyneApp {
                         "--motiontest: adopt partial={partial} complete={complete} worker={worker} dirty-shown={dirty} \
                          (session totals: converged={} blank-walks={})",
                         self.perf.adopt_converged[0], self.perf.blank_walks_total[0]
+                    );
+                    eprintln!(
+                        "--motiontest: A4 walk restarts (progress thrown away): dive={dive_restarts} home={home_restarts} (reported, not gated)"
+                    );
+                    crate::diag::log_line(
+                        "motiontest",
+                        &format!("A4 walk restarts: dive={dive_restarts} home={home_restarts}"),
                     );
                     let mut fails: Vec<String> = Vec::new();
                     if motion < MIN_MOTION_FRAMES {

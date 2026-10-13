@@ -50,6 +50,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCHEMA_PATH = os.path.join(HERE, "..", "validation", "frame-schema.json")
 FMT = {"u8": "B", "u16": "H", "u32": "I", "u64": "Q", "f32": "f", "f64": "d", "bool": "B"}
 PRESENT = {0: "unset", 1: "live", 2: "reproject", 3: "hold"}
+# `frame_kind` (schema 10; `render::FrameKind`): what the frame did, decided from what it handed the GPU.
+KIND = {0: "-", 1: "placeholder", 2: "reproject", 3: "pin-walk", 4: "motion", 5: "hold",
+        6: "settled-walk", 7: "tile", 8: "accum", 9: "settled"}
+# `hold_floor` (schema 10; U39): the bound the held frame's magnification took.
+HOLD_FLOOR = {0: "-", 1: "dive", 2: "jump", 3: "jump-BOUND"}
 SRC = {0: "-", 1: "gpu", 2: "wall"}
 VERDICT = {0: "-", 1: "DISCARDED", 2: "moved", 3: "unchanged"}
 # The minimum a summary needs before it will state a verdict (design 6.6.2's anti-vacuity).
@@ -320,6 +325,21 @@ def summarize(path, view=0, target_ms=400.0, out=sys.stdout):
     p(f"  presented              {pres}  (not built: {len(recs) - len(built)})")
     p(f"  dispatched             {sum(r['dispatched'] for r in recs)}  chunked {sum(r['chunked'] for r in built)}"
       f"  tiled {sum(r['tiled'] for r in built)}")
+    if "frame_kind" in recs[0]:
+        # Schema 10 (W4): what each frame was, the walks thrown away part-way (A4's count), and the
+        # held frame's magnification bound (U39: "jump-BOUND" while moving is a held frame on screen
+        # at the wrong scale).
+        kinds = {}
+        for r in built:
+            kinds[KIND.get(r["frame_kind"], "?")] = kinds.get(KIND.get(r["frame_kind"], "?"), 0) + 1
+        p(f"  frame kinds            {kinds}")
+        hf = {}
+        for r in recs:
+            if r["hold_floor"]:
+                k = HOLD_FLOOR.get(r["hold_floor"], "?") + ("" if r["interacting"] else " (settled)")
+                hf[k] = hf.get(k, 0) + 1
+        p(f"  walk restarts          {sum(r['walk_restarted'] for r in recs)} with progress thrown away;"
+          f"  held-frame floor {hf}")
     reads = [r for r in recs if r["read_n"] > 0]
     vh = {}
     for r in reads:

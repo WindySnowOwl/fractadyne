@@ -1522,11 +1522,22 @@ struct Perf {
     chunk_fe_ok: bool,
     chunk_cursor: [u32; 2],
     chunk_idx: [u32; 2],
-    chunk_sig: [(u64, u32, [u32; 2], u32); 2],
+    chunk_sig: [render::WalkSig; 2],
     /// `chunk_sig` without the supersampling jitter: the walk's VIEW. A new sample changes only the
     /// jitter, so it restarts the walk (`chunk_sig`) but keeps the band ledger, which belongs to the
     /// orbit's iteration bands, not to a sub-pixel position.
-    chunk_walk_view: [(u64, u32, [u32; 2], u32); 2],
+    chunk_walk_view: [render::WalkSig; 2],
+    /// Where each view's current walk ends (`walk_end`, the capped ask), for the next restart to
+    /// judge whether it threw progress away (`frame_plan::walk_restart_discards`); 0 once a pin's
+    /// walk is adopted (it was used, not lost).
+    chunk_walk_end: [u32; 2],
+    /// W4's A4: walks restarted with part of their progress thrown away — per view since start,
+    /// and PENDING for the next frame record (`walk_restarted`), cleared when it is written.
+    walk_restarts: [u64; 2],
+    walk_restart_pending: [bool; 2],
+    /// The worst bound a held frame's magnification took since the last frame record
+    /// (`frame_plan::hold_floor`; record `hold_floor`, U39), cleared when it is written.
+    hold_floor_pending: [u8; 2],
     /// The walk's NUMBER: +1 at every restart of the walk (`bp_chunk_tiling`, and a pin's start or
     /// discard). A counted pass carries it (`MandelbrotParams::chunk_walk`), and its reading is
     /// believed only for the same number — a new walk starts with every pixel running.
@@ -2265,8 +2276,12 @@ impl Default for Perf {
             chunk_fe_ok: false,
             chunk_cursor: [0, 0],
             chunk_idx: [0, 0],
-            chunk_sig: [(0, 0, [0, 0], 0), (0, 0, [0, 0], 0)],
-            chunk_walk_view: [(0, 0, [0, 0], 0), (0, 0, [0, 0], 0)],
+            chunk_sig: [render::WalkSig::NONE; 2],
+            chunk_walk_view: [render::WalkSig::NONE; 2],
+            chunk_walk_end: [0, 0],
+            walk_restarts: [0, 0],
+            walk_restart_pending: [false, false],
+            hold_floor_pending: [0, 0],
             chunk_walk_epoch: [0, 0],
             chunk_running: [None, None],
             chunk_count_walk: [0, 0],
@@ -13809,7 +13824,7 @@ impl FractadyneApp {
                 None => "refining (arming)".to_string(),
             }
         } else if p.chunk_pending[0] {
-            let ask = p.chunk_sig[0].1.max(1);
+            let ask = p.chunk_sig[0].ask().max(1);
             let pct = 100.0 * p.chunk_cursor[0].min(ask) as f64 / ask as f64;
             format!("refining {pct:.1}%")
         } else if self.recompute_rx[0].is_some() {
@@ -15020,6 +15035,8 @@ impl FractadyneApp {
             r.pin_escapes = p.pin_escapes[v];
             r.retreat = p.retreat_pending[v];
             r.probe_ms = if v == 0 { p.probe_ms as f32 } else { -1.0 };
+            r.walk_restarted = p.walk_restart_pending[v];
+            r.hold_floor = p.hold_floor_pending[v];
             r.present_throttle = p.present_throttle;
             r.visible_res = p.visible_res[v];
             r.motion_res = p.motion_res;
@@ -15072,6 +15089,8 @@ impl FractadyneApp {
         self.perf.rec = Default::default();
         // The pending per-frame events are this record's; the next one starts empty.
         self.perf.retreat_pending = [0, 0];
+        self.perf.walk_restart_pending = [false, false];
+        self.perf.hold_floor_pending = [0, 0];
         self.perf.probe_ms = -1.0;
         self.perf.rec_us = t0.elapsed().as_secs_f32() * 1e6;
     }

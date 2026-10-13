@@ -117,18 +117,21 @@ fn garbage_prices_are_ignored_but_zero_is_clearly_cheap() {
 
 // ---- chunk_restart_clears_ledger: which walk restarts forget the band prices ------------------
 
-const VIEW: ChunkSig = (0xABCD, 10_000_000, [551, 870], 1);
-const OTHER_VIEW: ChunkSig = (0x1234, 10_000_000, [551, 870], 1);
+const VIEW_BITS: u64 = 0xABCD;
+const OTHER_BITS: u64 = 0x1234;
+const VIEW: WalkSig = WalkSig::of(VIEW_BITS, 0, 10_000_000, [551, 870], 1);
+const OTHER_VIEW: WalkSig = WalkSig::of(OTHER_BITS, 0, 10_000_000, [551, 870], 1);
 
-fn with_jitter(view: ChunkSig, jitter_bits: u64) -> ChunkSig {
-    (view.0 ^ jitter_bits, view.1, view.2, view.3)
+/// The walk of view `view_bits` at a supersampling sample's jitter (0 = the jitter-free VIEW).
+fn with_jitter(view_bits: u64, jitter_bits: u64) -> WalkSig {
+    WalkSig::of(view_bits, jitter_bits, 10_000_000, [551, 870], 1)
 }
 
 #[test]
 fn a_new_supersampling_sample_keeps_the_ledger() {
     // Same view, the jitter moved: the walk restarts (sig differs) but the ledger survives.
-    let prev = with_jitter(VIEW, 0);
-    let next = with_jitter(VIEW, 0x5555);
+    let prev = with_jitter(VIEW_BITS, 0);
+    let next = with_jitter(VIEW_BITS, 0x5555);
     assert_ne!(prev, next, "the walk itself must restart");
     assert!(!chunk_restart_clears_ledger(prev, VIEW, next, VIEW, false));
 }
@@ -138,9 +141,9 @@ fn another_view_while_settled_clears_it() {
     assert!(chunk_restart_clears_ledger(VIEW, VIEW, OTHER_VIEW, OTHER_VIEW, false));
     // ...even when the jitter moved too: the view decides, not the jitter.
     assert!(chunk_restart_clears_ledger(
-        with_jitter(VIEW, 1),
+        with_jitter(VIEW_BITS, 1),
         VIEW,
-        with_jitter(OTHER_VIEW, 2),
+        with_jitter(OTHER_BITS, 2),
         OTHER_VIEW,
         false
     ));
@@ -154,8 +157,8 @@ fn interaction_never_clears_it() {
 #[test]
 fn a_walk_that_never_ran_clears_as_before() {
     // A zeroed sig (fresh state, or a harness forcing a restart) says nothing about the view.
-    let zero = (0, 0, [0, 0], 0);
-    assert!(chunk_restart_clears_ledger(zero, VIEW, with_jitter(VIEW, 7), VIEW, false));
+    let zero = WalkSig::NONE;
+    assert!(chunk_restart_clears_ledger(zero, VIEW, with_jitter(VIEW_BITS, 7), VIEW, false));
 }
 
 #[test]

@@ -136,6 +136,11 @@ pub(crate) mod orbit_blob;
 /// (design/live-render-robustness.md §5.1). Re-exported, so every caller names it as before.
 pub(crate) mod pricing;
 pub(crate) use pricing::*;
+/// What a live frame is, and the identity of the walk it belongs to (design/live-render-robustness.md
+/// §5.3, W4): `FrameKind`, decided once from what the frame handed the GPU, and `WalkSig`, built in
+/// one place.
+pub(crate) mod frame_plan;
+pub(crate) use frame_plan::WalkSig;
 
 /// A completed reference recompute (orbit + series-approximation + BLA), ready to install into a
 /// view's reference cache. Produced by [`recompute_worker`], off the render thread, so the slow
@@ -6045,8 +6050,8 @@ impl FractadyneApp {
                 ^ pos_sig.rotate_left(41)
                 ^ view_key.4.rotate_left(29)
                 ^ series_seed_bits(&self.ref_cache[vidx].sa).rotate_left(13);
-            let walk_view = (view_bits, gpu_iter, resolution, ss);
-            let sig = (view_bits ^ jbits.rotate_left(7), gpu_iter, resolution, ss);
+            let walk_view = WalkSig::of(view_bits, 0, gpu_iter, resolution, ss);
+            let sig = WalkSig::of(view_bits, jbits, gpu_iter, resolution, ss);
             if pin_frame {
                 // The pin owns the progression: every sig input above is captured, so the sig is
                 // constant by construction, and the interacting reset below — the §10 defect — is
@@ -6085,6 +6090,31 @@ impl FractadyneApp {
                 // ⭐The band ledger SURVIVES a same-sig restart on purpose: every hold/refresh
                 // cycle restarts the walk, and re-crossing the wrap-storm band with amnesia is
                 // how the cliff got re-rolled dozens of times in one session.
+                // W4's A4: a restart that throws a part-way walk away is the iteration-starvation
+                // shape (a resolution rung re-chosen every few frames restarted the walk every few
+                // frames, and 36% of a dive was blank). Counted and recorded, pending until the
+                // frame record is written.
+                if crate::render::frame_plan::walk_restart_discards(
+                    self.perf.chunk_cursor[vs],
+                    self.perf.chunk_walk_end[vs],
+                ) {
+                    self.perf.walk_restart_pending[vs] = true;
+                    self.perf.walk_restarts[vs] = self.perf.walk_restarts[vs].wrapping_add(1);
+                    if crate::diag::trace_on("tile") {
+                        crate::diag::trace(
+                            "tile",
+                            format!(
+                                "walk-restart v={vs} f={} lost cur={} of {} interacting={interacting} \
+                                 sig {:016x} -> {:016x}",
+                                self.perf.frame_idx,
+                                self.perf.chunk_cursor[vs],
+                                self.perf.chunk_walk_end[vs],
+                                self.perf.chunk_sig[vs].word(),
+                                sig.word(),
+                            ),
+                        );
+                    }
+                }
                 self.perf.chunk_sig[vs] = sig;
                 self.perf.chunk_walk_view[vs] = walk_view;
                 self.perf.chunk_walk_epoch[vs] = self.perf.chunk_walk_epoch[vs].wrapping_add(1).max(1);
@@ -6151,6 +6181,8 @@ impl FractadyneApp {
                 let we = sa_skip_rescue(capped, raw_skip, self.ref_cache[vidx].orbit_len);
                 (usable_sa_skip(raw_skip, we), we)
             };
+            // Where this walk ends, for the next restart to judge whether it lost anything.
+            self.perf.chunk_walk_end[vs] = walk_end;
             // Gate observability (design/mode2-chunking.md §11): a chunk-eligible frame built
             // during interaction is the regime the motion-presentation assertions cover —
             // `--motiontest` fails a run that never produced any (anti-vacuity).
@@ -6165,7 +6197,12 @@ impl FractadyneApp {
                         "chunk f={} vs={vs} cur={cur} step={budget_step} gpu_iter={gpu_iter} \
                          walk=[{walk_floor},{walk_end}) \
                          sig=({:x},{},{}x{},{}) interacting={interacting} pin={pin_frame}",
-                        self.perf.frame_idx, sig.0, sig.1, sig.2[0], sig.2[1], sig.3
+                        self.perf.frame_idx,
+                        sig.word(),
+                        sig.ask(),
+                        sig.res()[0],
+                        sig.res()[1],
+                        sig.ss()
                     ),
                 );
             }
@@ -7214,6 +7251,18 @@ impl FractadyneApp {
                 ),
             );
         }
+        // W4: what this frame IS, decided once, from what it handed the GPU (`frame_plan::classify`).
+        let kind = crate::render::frame_plan::classify(crate::render::frame_plan::FrameFacts {
+            reproject: params.reproject != 0,
+            has_frozen: self.ref_cache[vi].frozen_center.is_some(),
+            interacting,
+            pin_pass: pin_frame
+                || self.perf.pin[vsub].as_ref().is_some_and(|p| p.started_frame == self.perf.frame_idx),
+            dispatches: self.perf.fe_dispatch_frame[vs] == self.perf.frame_idx,
+            tile: tile.is_some(),
+            chunked: chunk_range.is_some(),
+            accum: self.perf.accum_cmd[vsub].jitter != [0.0, 0.0],
+        });
         // THE FRAME RECORD'S PLAN HALF (diag::frame_record), written from the values this
         // function just handed the GPU — never re-derived later. A second call in the same frame
         // (tiled settles can) overwrites the first; `plan_calls` says how many there were.
@@ -7266,8 +7315,26 @@ impl FractadyneApp {
             r.live_complete = self.perf.content[vsub].live_complete;
             r.norm_complete = self.perf.norm_complete_submit[vsub];
             r.accum_present = self.perf.accum_cmd[vsub].present;
+            r.frame_kind = kind.code();
+            // The walk this frame's pass belongs to; 0 when the frame is not a walk pass.
+            r.walk_sig = if chunk_range.is_some() { self.perf.chunk_sig[vs].word() } else { 0 };
         }
         params
+    }
+
+    /// The held frame's reprojection scale on view `v` for `gap_oct` octaves of zoom since it was
+    /// rendered (`frozen − now`), bounded by `hold_scale_floor`. ⭐The ONE site the four hold
+    /// transforms (the freeze, a worker frame, the two snapshots) take it from, so the bound they
+    /// apply cannot differ — and the bound that applied goes into the frame record (`hold_floor`,
+    /// U39: whether a jump clamp put the held frame on screen at the wrong scale).
+    fn hold_scale_for(&mut self, v: usize, gap_oct: f64) -> f32 {
+        // ⚠U39: "no zoom velocity" is read as a jump, but only Space writes `zoom_vel` — every
+        // autopilot dive and wheel zoom takes the jump branch.
+        let jumped = self.pointer.zoom_vel.abs() < 1.0e-9;
+        let (scale, code) = crate::render::frame_plan::hold_scale(gap_oct, jumped);
+        let p = &mut self.perf.hold_floor_pending[v.min(1)];
+        *p = (*p).max(code);
+        scale
     }
 
     /// A moving df32 frame of view `lr` did not render live, for `why`: remember it, and under
@@ -7432,6 +7499,9 @@ impl FractadyneApp {
                     self.ref_cache[vsub].local_l2 = pin.log2mag;
                     self.ref_cache[vsub].local_at = Some(Instant::now());
                     self.perf.chunk_dirty[vsub] = false;
+                    // The pin's walk was USED — a converged adoption stops short of its end on
+                    // purpose — so the walk the next frame starts does not count it as lost (A4).
+                    self.perf.chunk_walk_end[vsub] = 0;
                     self.perf.adopt_complete[vsub] =
                         self.perf.adopt_complete[vsub].wrapping_add(1);
                     // A SPLIT's texture is complete by construction — every pixel ran the whole
@@ -7508,7 +7578,7 @@ impl FractadyneApp {
                                 "pin-abandon v={vsub} f={} reason={reason:?} cur={} ask={}",
                                 self.perf.frame_idx,
                                 self.perf.chunk_cursor[vsub],
-                                self.perf.chunk_sig[vsub].1
+                                self.perf.chunk_sig[vsub].ask()
                             ),
                         );
                     }
@@ -9339,9 +9409,7 @@ impl FractadyneApp {
                         // patch was dark (the 2026-09-17 "sometimes goes black" report, caught in
                         // the act at 2^174 on 2026-09-18). A dive, by contrast, must keep its true
                         // scale or the held frame slides. `hold_scale_floor` owns that split.
-                        let scale = ((self.ref_cache[vi].frozen_l2 - log2mag) as f32)
-                            .exp2()
-                            .clamp(hold_scale_floor(self.pointer.zoom_vel.abs() < 1.0e-9), 1.099_512e12);
+                        let scale = self.hold_scale_for(vi, self.ref_cache[vi].frozen_l2 - log2mag);
                         let px = fractadyne_core::ref_offset_mantissa(&center_bf[0], &fc[0], delta_exp, precision)
                             / span_mantissa.x;
                         let py = fractadyne_core::ref_offset_mantissa(&center_bf[1], &fc[1], delta_exp, precision)
@@ -9590,9 +9658,7 @@ impl FractadyneApp {
                         // Nothing gates the display: the texture it reprojects is now whole, and
                         // this frame's transform is taken from the worker frame's view.
                         self.perf.chunk_dirty[vsub] = false;
-                        let scale = ((t.log2mag - log2mag) as f32)
-                            .exp2()
-                            .clamp(hold_scale_floor(self.pointer.zoom_vel.abs() < 1.0e-9), 1.099_512e12);
+                        let scale = self.hold_scale_for(vi, t.log2mag - log2mag);
                         let px = fractadyne_core::ref_offset_mantissa(&center_bf[0], &t.center_bf[0], delta_exp, precision)
                             / span_mantissa.x;
                         let py = fractadyne_core::ref_offset_mantissa(&center_bf[1], &t.center_bf[1], delta_exp, precision)
@@ -9626,9 +9692,7 @@ impl FractadyneApp {
             if hold_copy {
                 self.perf.hold_uv[vs] = match self.ref_cache[vi].frozen_center.clone() {
                     Some(fc) => {
-                        let scale = ((self.ref_cache[vi].frozen_l2 - log2mag) as f32)
-                            .exp2()
-                            .clamp(hold_scale_floor(self.pointer.zoom_vel.abs() < 1.0e-9), 1.099_512e12);
+                        let scale = self.hold_scale_for(vi, self.ref_cache[vi].frozen_l2 - log2mag);
                         let px = fractadyne_core::ref_offset_mantissa(
                             &center_bf[0], &fc[0], delta_exp, precision,
                         ) / span_mantissa.x;
@@ -9657,9 +9721,7 @@ impl FractadyneApp {
                         } else {
                             (delta_exp, span_mantissa.x, span_mantissa.y, precision)
                         };
-                        let scale = ((self.ref_cache[vi].frozen_l2 - l2) as f32)
-                            .exp2()
-                            .clamp(hold_scale_floor(self.pointer.zoom_vel.abs() < 1.0e-9), 1.099_512e12);
+                        let scale = self.hold_scale_for(vi, self.ref_cache[vi].frozen_l2 - l2);
                         let px =
                             fractadyne_core::ref_offset_mantissa(&cbf[0], &fc[0], de, prec) / smx;
                         let py =
@@ -11199,10 +11261,11 @@ mod norm_glide;
 /// while a fresh reference builds. `jumped` means the view arrived discontinuously (no zoom
 /// velocity); see [`crate::tunables::HELD_JUMP_MAX_OCT`] for why the two cases differ.
 ///
-/// ⚠**One definition, three callers.** The freeze path and the two `hold_uv` snapshots (the settled
-/// hold gate and the pinned-refresh display gate) all describe the SAME transform; if their floors
-/// disagreed the display would contradict its own bookkeeping, so the policy lives here rather than
-/// being spelled out at each site.
+/// ⚠**One definition, one caller.** The freeze path, a worker frame's transform and the two
+/// `hold_uv` snapshots (the settled hold gate and the pinned-refresh display gate) all describe the
+/// SAME transform; if their floors disagreed the display would contradict its own bookkeeping, so
+/// the policy lives here and all four take it through `frame_plan::hold_scale`
+/// (`FractadyneApp::hold_scale_for`), which also says which bound applied.
 pub(crate) fn hold_scale_floor(jumped: bool) -> f32 {
     if jumped {
         (-crate::tunables::HELD_JUMP_MAX_OCT as f32).exp2()
@@ -11421,9 +11484,6 @@ mod chunk_band_end_tests {
     }
 }
 
-/// A chunk walk's identity: `(view hash, ask, resolution, ss)` — see `chunk_sig` in `build_params`.
-pub(crate) type ChunkSig = (u64, u32, [u32; 2], u32);
-
 /// The series approximation a walk's first pass seeds from, as bits for the walk's identity: the
 /// skip and every coefficient (FNV-1a over their bit patterns). Two seeds that differ in any bit
 /// seed different pixels, so they are different walks.
@@ -11516,13 +11576,13 @@ pub(crate) fn tail_read_retry(
 /// - A walk that never ran (`prev_sig` zeroed — fresh state, or a harness forcing a restart)
 ///   clears as before: a zero sig says nothing about the view.
 pub(crate) fn chunk_restart_clears_ledger(
-    prev_sig: ChunkSig,
-    prev_view: ChunkSig,
-    sig: ChunkSig,
-    view: ChunkSig,
+    prev_sig: WalkSig,
+    prev_view: WalkSig,
+    sig: WalkSig,
+    view: WalkSig,
     interacting: bool,
 ) -> bool {
-    let jitter_only = prev_view == view && prev_sig != (0, 0, [0, 0], 0);
+    let jitter_only = prev_view == view && prev_sig != WalkSig::NONE;
     prev_sig != sig && !interacting && !jitter_only
 }
 
