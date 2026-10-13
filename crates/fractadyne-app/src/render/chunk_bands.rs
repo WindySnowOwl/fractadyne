@@ -119,12 +119,12 @@ fn garbage_prices_are_ignored_but_zero_is_clearly_cheap() {
 
 const VIEW_BITS: u64 = 0xABCD;
 const OTHER_BITS: u64 = 0x1234;
-const VIEW: WalkSig = WalkSig::of(VIEW_BITS, 0, 10_000_000, [551, 870], 1);
-const OTHER_VIEW: WalkSig = WalkSig::of(OTHER_BITS, 0, 10_000_000, [551, 870], 1);
+const VIEW: WalkSig = WalkSig::of(VIEW_BITS, 0, 10_000_000, Resolution::panel([551, 870]), 1);
+const OTHER_VIEW: WalkSig = WalkSig::of(OTHER_BITS, 0, 10_000_000, Resolution::panel([551, 870]), 1);
 
 /// The walk of view `view_bits` at a supersampling sample's jitter (0 = the jitter-free VIEW).
 fn with_jitter(view_bits: u64, jitter_bits: u64) -> WalkSig {
-    WalkSig::of(view_bits, jitter_bits, 10_000_000, [551, 870], 1)
+    WalkSig::of(view_bits, jitter_bits, 10_000_000, Resolution::panel([551, 870]), 1)
 }
 
 #[test]

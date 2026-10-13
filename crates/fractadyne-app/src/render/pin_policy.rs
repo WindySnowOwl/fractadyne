@@ -14,7 +14,7 @@ fn pin() -> PinnedRefresh {
         upp_l2: -110.0,
         eff_iter: 1_000_000,
         gpu_iter: 1_000_000,
-        resolution: [480, 270],
+        resolution: Resolution::panel([480, 270]),
         panel: [960, 540],
         ss: 1,
         orbit_id: 7,

@@ -93,7 +93,7 @@ pub(crate) struct TileGrid {
     pub key: (u64, u32, u64, [u32; 2], u64),
     /// `(resolution, ss, tile side in base px)` — frozen when the grid starts, so a budget update
     /// mid-grid can't reshape the rects underneath the cursor. `None` until the first tiled frame.
-    pub geo: Option<([u32; 2], u32, u32)>,
+    pub geo: Option<(Resolution, u32, u32)>,
     /// Next tile index (in center-out order) to render.
     pub next: u32,
     /// Rows of tile `next` already sent: a tile larger than the admission goes out as strips
@@ -140,7 +140,7 @@ pub(crate) use pricing::*;
 /// §5.3, W4): `FrameKind`, decided once from what the frame handed the GPU, and `WalkSig`, built in
 /// one place.
 pub(crate) mod frame_plan;
-pub(crate) use frame_plan::WalkSig;
+pub(crate) use frame_plan::{Resolution, WalkSig};
 
 /// A completed reference recompute (orbit + series-approximation + BLA), ready to install into a
 /// view's reference cache. Produced by [`recompute_worker`], off the render thread, so the slow
@@ -4787,7 +4787,7 @@ impl FractadyneApp {
     fn next_settle_tile(
         &mut self,
         vidx: usize,
-        resolution: [u32; 2],
+        resolution: Resolution,
         ss: u32,
         gpu_iter: u32,
         tdr_steps: u64,
@@ -5697,7 +5697,7 @@ impl FractadyneApp {
         magnification: f64,
         pos_sig: u64,
         interacting: bool,
-        resolution: [u32; 2],
+        resolution: Resolution,
         gpu_iter: u32,
         ss: u32,
         spx: u64,
@@ -5712,7 +5712,7 @@ impl FractadyneApp {
         will_reproject: bool,
         can_tile: bool,
         tiling: bool,
-        fresh_res: [u32; 2],
+        fresh_res: Resolution,
         view_key: (u64, u32, u64, [u32; 2], u64),
         offscreen: bool,
         vidx: usize,
@@ -7413,6 +7413,10 @@ impl FractadyneApp {
         // The panel-size PARAM, saved before `resolution` is rebound downstream: the pin captures
         // it, and any change abandons (a resize re-scales everything derived from it).
         let panel_res = resolution;
+        // ⭐THE ONE PLACE a frame's resolution is made (`frame_plan::Resolution`, B7): from here on it
+        // is changed only by `Resolution::scaled`, or replaced by the one a pin or a grid was formed
+        // at — and the walk's identity takes nothing else.
+        let resolution = Resolution::panel(resolution);
         // Live-view values the display transform needs on pin frames (after the shadowing, the
         // locals describe the pinned view). The delta_exp/mantissa/precision trio is derived from
         // the LIVE span so the hold transform's offsets stay O(1) at any depth.
@@ -7687,7 +7691,7 @@ impl FractadyneApp {
             julia,
             eff_iter,
             interacting,
-            resolution,
+            resolution.get(),
             view_id,
         );
         // A pinned refresh renders the ASK captured at pin time: every pass of one progression
@@ -7713,311 +7717,14 @@ impl FractadyneApp {
         let ref_build_iter = if interacting { gpu_iter } else { gpu_iter.max(eff_iter) }
             .saturating_add(32 * 256)
             .min(iter_cap);
-        // GPU-watchdog safety: if even the capped work won't fit the budget, reduce the
-        // iteration-texture resolution (the color pass box-filters the upscale).
-        let want = px.saturating_mul(gpu_iter.max(1) as u64);
-        let budget_res_scale = if want > budget {
-            (budget as f64 / want as f64).sqrt()
-        } else {
-            1.0
-        };
-        // ADAPTIVE MOTION RESOLUTION (AIMD). `budget_res_scale` sizes the moving frame from
-        // `px·gpu_iter` — the *no-BLA-skip* cost. Where the BLA skips (the common deep case) the real
-        // GPU cost is a tiny fraction of that, so the budget over-shrinks the moving frame (≈0.47 →
-        // 668 px at 1e263×) and the reprojected/held texture goes blocky — the "distorted overlapping
-        // tiles" seen when a zoom crosses from detail into the exterior. Instead drive the deep moving
-        // res_scale by the MEASURED frame interval: additive-increase while frames stay near vsync (BLA
-        // is skipping → headroom to sharpen), multiplicative-decrease when they run long (no skip →
-        // back off). Adapts per view, needs no GPU-timestamp readback, and cannot hang — a slow frame
-        // immediately shrinks the next, and the TDR cap below is still the hard watchdog floor. Only
-        // deep perturbation motion is affected; shallow/settled keep the budget scale. The AIMD step
-        // runs once per frame (view 0); both views read the shared scale.
-        // ⭐A SETTLED frame is NOT sized by the work budget any more. `budget_res_scale` above
-        // divides the panel by a fixed constant (`WORK_BUDGET` × 6 for settle = 3.6e11 nominal
-        // steps) that measures nothing — the very shape this file spends pages warning about, and
-        // the actual binder behind "an explicit iteration count is silently overridden". At an
-        // explicit 10,000,000 iterations it shrank a 1445×1134 panel to 214×168 BEFORE any of the
-        // measured machinery below got a look in, so raising the measured budget, the tile
-        // allowance, and the grid-upgrade rule all changed nothing: the frame had already been
-        // clamped upstream. Traced as `fresh=214x168 allowed=5.536e11` — the measured bound was
-        // three times looser than the constant that won.
-        //
-        // A settled frame now carries its full resolution into the measured path, where
-        // `tdr_allowed` (measured, per dispatch) shrinks it if it must and the tiled settle
-        // spreads what remains over budget-sized dispatches. MOTION keeps the old bound in both
-        // its forms — deep motion on the AIMD `motion_res`, shallow motion on the work budget —
-        // because a moving frame has no settle grid to spread cost over.
-        //
-        // ⚠SCOPED TO `!auto_iter`, i.e. to the iteration count the USER typed, which is the case
-        // the bypass exists for. Applying it to the AUTO budget as well regressed the adaptive
-        // iteration boost, and the mechanism is worth recording: the boost adapts on the
-        // capped-pixel fraction, which the GPU only reports for a FULL-FRAME iterate. A settled
-        // auto frame used to be shrunk to fit one dispatch, so every settled frame was a full
-        // frame and fed the boost; at full resolution it tiles instead, and the boost then only
-        // gets the one coarse arm frame per grid. Measured on `--livetest` over the grand tour:
-        // the boost reached ×2.56/×6.40 where it had reached ×6.40/×16/×64, and the 1e63 hold went
-        // from 53.9% black to 100%. Resolution and the iteration budget are competing for the same
-        // frames here; that trade is its own problem (TODO), and A1 does not require touching it.
-        // ⭐A SETTLED view the user is SITTING AT is not sized by the work budget. `budget_res_scale`
-        // above divides the panel by a fixed constant (`WORK_BUDGET` × 6 for settle = 3.6e11 nominal
-        // steps) that measures nothing — the shape this file spends pages warning about, and the
-        // reason a deep view with a high explicit iteration count renders soft. Reported from the
-        // field at 6.46e94× with Iterations 4,000,000 and auto-scale off: `want` is ~6.6e12, so the
-        // shrink lands at ~0.23 of native linear and the frame is visibly blocky. The measured
-        // `tdr_allowed` bound and the tiled settle below are what should size it instead.
-        //
-        // ⚠GATED ON `!tour_playing()`, and that gate is load-bearing — not a stylistic choice.
-        // Applying this during scripted playback regressed the tour badly: tiled settle and the
-        // adaptive iteration boost compete for the same settled frames (the boost only adapts on a
-        // capped-pixel fraction the GPU reports for a FULL-FRAME iterate), so a tiling hold feeds
-        // the boost one coarse arm frame per grid instead of a reading per frame. Measured on
-        // `--livetest`: the boost fell to ×1.60 from ×6.40/×16/×64 and the 1e61 hold went from
-        // 42.1% black to 100%. The distinction that matters is TIME: a scripted hold has a few
-        // seconds on a clock and must spend them on iterations, while a view the user is parked at
-        // has as long as it likes and should spend it on resolution. A FINISHED tour is not
-        // "playing", so a parked tour sharpens — which is the reported case.
-        // RATE-AWARE REFRESH RESOLUTION (design/live-zoom-smoothing.md P-A/P-D). A moving
-        // refresh is `passes` chunk passes of `MOTION_PASS_MS` each, and `passes` comes from the
-        // observed zoom speed: the held frame may not magnify past `HELD_MAX_OCT` before the
-        // refresh lands (nor take longer than `REFRESH_TARGET_S`). What does not fit in those
-        // passes at this ask comes out of the resolution — pixels are the actuator, never the
-        // iteration count. Applied as a CAP on both motion branches below (the AIMD scale for
-        // deep perturbation motion, the work-budget scale for shallow/direct), so a zoom that is
-        // slow enough keeps whatever sharpness those controllers earned. Direct mode has no pin
-        // (every frame is one dispatch), so it gets a single pass. "Prefer detail while zooming"
-        // is the user's explicit choice of native-resolution refreshes and is left alone.
-        let rate_res_cap = if interacting && !pin_frame && !self.prefer_detail_effective() {
-            let vb = (view_id as usize).min(1);
-            // Only a frame the chunk path can serve is spread over passes (the pin); an aux
-            // colouring, a formula past the chunk shaders' scope or a device without the state
-            // targets renders each refresh as ONE dispatch, and then one pass is all there is.
-            let chunk_mode =
-                self.render_mode(fractal, julia, magnification);
-            let can_chunk = (chunk_mode.is_direct()
-                || chunk_mode == RenderMode::Df32Pert
-                || (chunk_mode == RenderMode::Floatexp && self.perf.chunk_fe_ok))
-                && self.resumable(fractal)
-                && !self.coloring.color_method.needs_aux()
-                && self.perf.chunk_ok;
-            // A PINNED refresh spans many frames, so no single frame interval prices it; an
-            // unpinned one IS this frame, and the AIMD below prices it from its own interval.
-            let pinned_refresh = is_pert && can_chunk;
-            let frames_allowed = refresh_passes_allowed(
-                self.perf.zoom_oct_s,
-                crate::tunables::HELD_MAX_OCT,
-                crate::tunables::REFRESH_TARGET_S,
-                self.perf.frame_ms.max(1.0) / 1000.0,
-            );
-            // ⭐⭐THE MEASURED ANSWER REPLACES THE MODEL — it does not merely bound it. This was
-            // `model.min(measured)`, and a pessimistic model is then a permanent CEILING: the
-            // pin's resolution is baked from the cap, so `pin_res_last` comes back capped, the
-            // measured half can raise it only ×1.25, and the model floors it again on the very
-            // next frame. Measured on the 1× → 1e100 dive at 4.0× (build 3247): the AIMD read
-            // 1.00 (native fits) at every depth past 1e8 while the dispatch went out at 438 of
-            // 1452 px — 9% of the pixels — for the WHOLE dive, at a flat 17.8 ms with the GPU
-            // idle. That is the same guess-as-a-clamp shape as the bootstrap floor in
-            // `budget_step` and the opening guess in `motion_rate_now`: a model is what you use
-            // until you have measured, never a bound on what you measured.
-            // What actually happened to the LAST pin: `frames_took` at `res_took` ⇒ the next
-            // refresh runs at `res_took · sqrt(frames_allowed / frames_took)` (cost ∝ pixels).
-            // Growth is bounded to ×1.25 per pin so an early finish sharpens gently; a pin the
-            // view outran shrinks as hard as the ratio says.
-            let pin_measured = (pinned_refresh && self.perf.pin_frames_last[vb] > 0).then(|| {
-                let took = self.perf.pin_frames_last[vb] as f64;
-                let want = frames_allowed.max(1) as f64;
-                let scale = (want / took).sqrt().min(1.25);
-                (self.perf.pin_res_last[vb] * scale)
-                    .clamp(self.render_cfg.min_motion_res as f64, 1.0)
-            });
-            // ⛔⛔**A PINNED refresh falls back to the MODEL, never to the AIMD** — tried, and it
-            // put a 50-OCTAVE-stale frame on screen (a uniform smear of a frame magnified 10^15×,
-            // seen live at 2^262 on 2026-09-17). The deadlock: the pin measurement can only be
-            // produced BY a pin that completes, and a pin completes only if something bounds its
-            // size. The model is that bound. Remove it and the first pin at a new depth goes out
-            // at native resolution against a 557,000-iteration ask, never finishes inside the
-            // drift window, abandons, and the frozen frame it was going to replace ages without
-            // limit while the view keeps zooming. The same shape as "a probe whose reading
-            // another rule discards never terminates": a measurement that can only be produced by
-            // the thing it is meant to size needs a guess to get started, and that is the model's
-            // whole job. The AIMD is the fallback for an UNPINNED refresh only, where the frame
-            // itself is the refresh and there is nothing to fail to complete.
-            let measured = pin_measured.or_else(|| {
-                (!pinned_refresh && self.perf.motion_res_measured[vb]).then_some(1.0)
-            });
-            let cap = measured.unwrap_or_else(|| {
-                // Nothing measured in this regime yet — the opening guess, so the first refresh
-                // after a jump or a mode switch is not a native-resolution TDR-sized dispatch.
-                let pass = motion_pass_steps(
-                    self.perf.motion_rate_now(vb),
-                    crate::tunables::MOTION_PASS_MS,
-                    u64::MAX,
-                    crate::tunables::cost().tdr_bootstrap_steps,
-                );
-                let passes = if pinned_refresh {
-                    // The frames the rate allows, counted as passes. With one pin pass in flight
-                    // (`PIN_INFLIGHT_MAX`) a pin dispatches nearer one pass per two frames, but each
-                    // pass is priced and grows; this sizing is the one the 2026-10-12 A/B measured.
-                    frames_allowed.max(1)
-                } else {
-                    1
-                };
-                refresh_res_cap(
-                    pass,
-                    passes,
-                    gpu_iter,
-                    (resolution[0] as u64) * (resolution[1] as u64),
-                    self.render_cfg.min_motion_res as f64,
-                )
-            });
-            if view_id == 0 && crate::diag::trace_on("gpu") {
-                crate::diag::trace(
-                    "gpu",
-                    format!(
-                        "res-cap f={} cap={cap:.3} from={} pinned={pinned_refresh} \
-                         aimd={:.3} allowed={frames_allowed} pin_took={} pin_res={:.3} ask={gpu_iter}",
-                        self.perf.frame_idx,
-                        if measured.is_some() { "measured" } else { "model" },
-                        self.perf.motion_res[vb],
-                        self.perf.pin_frames_last[vb],
-                        self.perf.pin_res_last[vb],
-                    ),
-                );
-            }
-            cap
-        } else {
-            1.0
-        };
-        let res_scale = if pin_frame {
-            // Pinned refresh: geometry is captured, not derived — the motion scale was baked into
-            // the pin's resolution at pin time, and applying it again would double-shrink (the
-            // final geometry is forced to the pin's below, after the ss chain).
-            1.0
-        } else if !interacting && !self.tour_playing() {
-            1.0
-        } else if interacting && self.prefer_detail_effective() {
-            // "Prefer detail while zooming" (or the autopilot's Quality priority): the periodic
-            // refresh frames (REFRESH_OCTAVES cadence,
-            // below) render at NATIVE resolution instead of the AIMD-adapted motion resolution —
-            // full-detail frames streamed at their real cost, the hold reprojecting between them.
-            // The budget shrink stays as the safety net if a native refresh can't fit one dispatch.
-            // (Direct mode keeps only that safety net, as it always has — it has no hold to
-            // reproject between refreshes, so "native" there means every frame at native.)
-            if is_pert { 1.0 } else { budget_res_scale }
-        } else if interacting {
-            // ⭐THE MEASURED CONTROLLER RUNS FOR EVERY MOVING FRAME, shallow included. It used to
-            // be gated on `is_pert`, so a DIRECT-mode zoom was sized by `budget_res_scale` (a
-            // constant-derived no-skip bound) capped by the rate model — two unmeasured numbers,
-            // no feedback between them. At shallow depth nearly every pixel escapes in a handful
-            // of iterations, so that nominal cost overstates the real one by orders of magnitude
-            // and the cap sat on the floor while frames ran at 17.8 ms with the GPU idle: the
-            // "detail lost at low zoom" report of 2026-09-16. The same AIMD the deep path uses
-            // finds the honest resolution here in one step per real frame, and direct mode keeps
-            // `budget_res_scale` underneath it as the watchdog bound it always had.
-            // ⭐Each view steps its OWN scale, on the interval after its own real frame (U56): the
-            // second panel used to move at view 0's scale, which only view 0's frames stepped.
-            let vm = (view_id as usize).min(1);
-            {
-                // Adapt ONLY on the interval following a REAL re-iterate frame. During a dive most
-                // frames are ~free reprojections; adapting on those (the old behaviour) pushed the
-                // res toward native (+0.03/frame), so every rare real refresh rendered near-native
-                // at 33–64 ms — 2–4 dropped vsyncs each, the divetest-measured "stepped zooming".
-                // A reprojection interval says nothing about iterate cost → hold. The raw interval
-                // (`last_dt_ms`, not the EMA `frame_ms` — the EMA smooths exactly the spikes this
-                // must react to) after a real frame IS that frame's cost signal:
-                //   > 24 ms → proportional cut toward a ~20 ms interval (cost ∝ res², so scale by
-                //             sqrt(target/dt) — one step, not a hunt), floored at `min_motion_res`
-                //             (user-configurable sharpness floor, default 0.30).
-                //   < 17 ms → the real frame fit a vsync: grow gently toward native.
-                let dt = self.perf.last_dt_ms;
-                if self.perf.prev_real[vm] && dt > 0.0 {
-                    if crate::diag::trace_on("gpu") {
-                        crate::diag::trace(
-                            "gpu",
-                            format!("aimd: v{vm} real-frame dt={dt:.1}ms res={:.2}", self.perf.motion_res[vm]),
-                        );
-                    }
-                    // Pure, so the thresholds are pinned by test rather than by reading — see
-                    // `motion_res_step`. `dt` already has the fps_cap sleep discounted.
-                    self.perf.motion_res[vm] = motion_res_step(
-                        self.perf.motion_res[vm],
-                        dt,
-                        self.render_cfg.min_motion_res as f64,
-                    );
-                    // A real frame has now been priced at a known resolution: from here the
-                    // opening guess is retired and this loop owns an unpinned refresh's size.
-                    self.perf.motion_res_measured[vm] = true;
-                }
-            }
-            // Direct mode keeps the work-budget bound it always had underneath the measured
-            // scale; deep perturbation does not (the budget prices the no-skip cost and
-            // over-shrinks exactly where the BLA skips — the reason this AIMD exists).
-            let scale = self.perf.motion_res[vm].min(rate_res_cap);
-            if is_pert { scale } else { scale.min(budget_res_scale) }
-        } else {
-            budget_res_scale.min(rate_res_cap)
-        };
-        // ⭐⭐**AND NOTHING ABOVE MAY SIZE A MOVING FRAME SO SMALL IT CANNOT SHOW ANYTHING.** Every
-        // branch above trades resolution against frame TIME, and none of them can tell a frame that
-        // finished from one that committed no pixel — because the blank one is the FASTER of the
-        // two, so they sharpen it. This cap feeds back on iterations WALKED instead, and sits
-        // beneath both `min_motion_res` and `prefer_detail` (see `Perf::visible_res`).
-        // ⚠It sizes a frame so ONE CHUNK PASS reaches the view's escapes; a live-refresh frame is
-        // one pass over the whole ask, which reaches them all, so it keeps the scale from before
-        // this ladder (`motion_scale`) — the ladder shrank the first df32 frames to 145×110.
-        let motion_scale = res_scale;
-        let res_scale = if interacting && !pin_frame {
-            let vbi = (view_id as usize).min(1);
-            // The TOP of the view's escape range, not its first escape: reaching the first escape
-            // commits one pixel, reaching the top commits the picture.
-            // With `MOTION_NEED_QUANTILE` below 1, how far MOST of it escapes (`motion_need`).
-            // ⚠U24: WHICH top (`MOTION_NEED_SOURCE`). 0, shipped: the palette window's — which a
-            // moving frame's own one-pass preview feeds (a preview is "complete": it is what is on
-            // screen), so a frame that stops short lowers the top the next frame is sized to reach.
-            // A guess reading a value downstream of what it sizes (principle P3). 1: the top of the
-            // view's last COMPLETE walk (`Perf::esc_top`, beside the histogram, which was already
-            // kept from complete walks only for this reason); none yet = no opinion.
-            let top = if crate::tunables::cost().motion_need_source == 1 {
-                self.perf.esc_top[vbi].map_or(0.0, |t| t as f64)
-            } else {
-                self.perf.norm_range[vbi].map_or(0.0, |(_, hi)| hi as f64)
-            };
-            let need = motion_need(
-                top,
-                self.perf.esc_hist[vbi].as_ref().map(|h| &h[..]),
-                crate::tunables::cost().motion_need_quantile,
-            );
-            let target = visible_res_target(
-                self.perf.motion_pass_steps_last[vbi],
-                (resolution[0] as u64) * (resolution[1] as u64),
-                need,
-            );
-            let reaches = visible_frame_reaches(
-                self.perf.motion_pass_steps_last[vbi],
-                (resolution[0] as u64) * (resolution[1] as u64),
-                self.perf.visible_res[vbi],
-                need,
-            );
-            let held = visible_res_hold(self.perf.visible_res[vbi], target, reaches);
-            if view_id == 0 && held != self.perf.visible_res[vbi] && crate::diag::trace_on("gpu") {
-                crate::diag::trace(
-                    "gpu",
-                    format!(
-                        "visible-res f={} {:.3} -> {held:.3} (target {target:.3}, pass {} steps, need {need:.0})",
-                        self.perf.frame_idx,
-                        self.perf.visible_res[vbi],
-                        self.perf.motion_pass_steps_last[vbi]
-                    ),
-                );
-            }
-            self.perf.visible_res[vbi] = held;
-            // Into the frame record: what sized this moving frame, and which of the two caps bound
-            // it — `res_scale` (the AIMD / rate / budget caps above) or the ladder's `held`.
-            self.perf.vis_sizing[vbi] = [need, target, res_scale];
-            res_scale.min(held)
-        } else {
-            self.perf.vis_sizing[(view_id as usize).min(1)] = [0.0; 3];
-            res_scale
-        };
+        // The MOVING frame's scale (W4, design/live-render-robustness.md §5.3): the work budget's
+        // bound, the rate-aware refresh cap, the measured AIMD and the visible-frame ladder, in
+        // `frame_plan`, which owns every writer of a frame's resolution and scale. `motion_scale` is
+        // the scale before the ladder (a live refresh's), `res_scale` after it.
+        let crate::render::frame_plan::MovingScale { motion_scale, res_scale } = self.bp_moving_scale(
+            px, gpu_iter, budget, interacting, pin_frame, view_id, fractal, julia, magnification, is_pert,
+            resolution,
+        );
         // REUSE-FIRST ZOOM hold decision (used by BOTH the native-res gate here and the freeze
         // trigger below — they must agree). While interacting, hold + reproject the last good frame
         // (scaled to follow the zoom) instead of re-iterating. Once the held frame has been magnified
@@ -8076,12 +7783,9 @@ impl FractadyneApp {
         {
             let lr = (view_id as usize).min(1);
             let [w, h] = if motion_scale < 1.0 {
-                [
-                    ((resolution[0] as f64 * motion_scale) as u32).max(16),
-                    ((resolution[1] as f64 * motion_scale) as u32).max(16),
-                ]
+                resolution.scaled(motion_scale).get()
             } else {
-                resolution
+                resolution.get()
             };
             let px = (w as u64) * (h as u64);
             let nominal = px * gpu_iter.max(1) as u64;
@@ -8226,7 +7930,7 @@ impl FractadyneApp {
         let live_refresh = live_verdict.passes() > 0 || split_frame;
         // …and its pass asks for the live-refresh timer (`MandelbrotParams::live_timing`).
         self.perf.live_pass[vsub] = live_refresh;
-        let res_scale = if live_refresh && !split_frame { motion_scale } else { res_scale };
+        let res_scale = crate::render::frame_plan::refresh_scale(live_refresh && !split_frame, motion_scale, res_scale);
         // …or a frame from the second GPU is on screen that a refresh of this device, at the
         // resolution it would render, could not show better (`motion_worker`): a walk started now
         // would only be abandoned for it.
@@ -8257,10 +7961,7 @@ impl FractadyneApp {
             || reuse_hold
             || (is_pert && self.ref_cache[view_id as usize].ref_pt.is_none());
         let resolution = if res_scale < 1.0 && !will_reproject {
-            [
-                ((resolution[0] as f64 * res_scale) as u32).max(16),
-                ((resolution[1] as f64 * res_scale) as u32).max(16),
-            ]
+            resolution.scaled(res_scale)
         } else {
             resolution
         };
@@ -8328,14 +8029,10 @@ impl FractadyneApp {
                 // in floatexp than in df32, so the frame that priced the old mode says nothing
                 // about this one. The rate model's opening guess sizes the next refresh until a
                 // real frame is priced here, and the pin feedback likewise re-measures.
-                self.perf.motion_res_measured[vidx.min(1)] = false;
+                // …and so do the moving scale's measured state and the visible-frame ladder's
+                // rung with the pass budget it was sized against (U51), in `frame_plan`.
+                self.reset_moving_scale(vidx.min(1));
                 self.perf.pin_frames_last[vidx.min(1)] = 0;
-                // ⭐…and so do the visible-frame ladder's rung and the pass budget it was sized
-                // against (U51): both were earned at the old mode's cost per step. Left in place,
-                // the first frames of the new mode ran on the old mode's rung — a rung chosen for a
-                // step that now costs several times more (or less) — until the ladder noticed.
-                self.perf.visible_res[vidx.min(1)] = 1.0;
-                self.perf.motion_pass_steps_last[vidx.min(1)] = 0;
                 // ENTERING DIRECT MODE ends any pin and its dirty residue. Only a perturbation
                 // mode's latch or a pin's own adoption can clear `chunk_dirty`, and neither exists
                 // in direct mode — so a pin a jump abandoned on the way OUT of perturbation left the
@@ -8686,7 +8383,7 @@ impl FractadyneApp {
             self.ref_cache[vidx].orbit_id,
             gpu_iter,
             self.perf.view_gen[vidx],
-            resolution,
+            resolution.get(),
             settings_hash,
         );
         let tiling = can_tile
@@ -8902,11 +8599,8 @@ impl FractadyneApp {
             };
             if iter_cost > cap && !chunk_over {
                 let f = (cap as f64 / iter_cost as f64).sqrt();
-                let r = [
-                    ((resolution[0] as f64 * f) as u32).max(16),
-                    ((resolution[1] as f64 * f) as u32).max(16),
-                ];
-                (r, (r[0] as u64) * (r[1] as u64))
+                let r = resolution.scaled(f);
+                (r, r.px())
             } else {
                 (resolution, spx)
             }
@@ -8996,7 +8690,7 @@ impl FractadyneApp {
         // (ss stage, resolution, reference), and on the first settled frame after an interaction
         // (the view moved, so that frame re-iterates even with an unchanged key — this bootstraps
         // the ladder on views whose static cap is 1, which otherwise never see an ss change).
-        let key = (ss, resolution, self.ref_cache[vs].orbit_id);
+        let key = (ss, resolution.get(), self.ref_cache[vs].orbit_id);
         let key_changed = key != self.perf.aa_last_key[vs];
         self.perf.aa_last_key[vs] = key;
         // Emit this frame's settle tile, if the (now-final) resolution and ss still exceed one
@@ -9996,7 +9690,7 @@ impl FractadyneApp {
             interacting,
             will_reproject,
             key_changed,
-            resolution,
+            resolution.get(),
             ss,
             spx,
             tdr_steps,
@@ -10122,8 +9816,9 @@ pub(crate) struct PinnedRefresh {
     pub(crate) eff_iter: u32,
     /// The derived ask every pass targets — completion is `chunk_cursor >= gpu_iter`.
     pub(crate) gpu_iter: u32,
-    /// FINAL iterate geometry (post motion-scale), not the panel size.
-    pub(crate) resolution: [u32; 2],
+    /// FINAL iterate geometry (post motion-scale), not the panel size — the one every pass of the
+    /// pin's walk renders, so its identity does not move (`frame_plan::Resolution`).
+    pub(crate) resolution: Resolution,
     /// The panel-size PARAM at pin time: a resize re-scales everything downstream, so it abandons.
     pub(crate) panel: [u32; 2],
     pub(crate) ss: u32,

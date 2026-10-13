@@ -3372,3 +3372,20 @@ The moving scale moved more between rounds than between arms. Default left at 0:
 top is refreshed only when a walk completes (2–3 times a run), so in a long deepening dive it can go
 stale while the escape range climbs. The arm stays for the RX 6800 XT, where a slow card sat on the
 ladder's floor.
+
+**2026-10-13 — B7: one owner of a frame's resolution and scale** (`frame_plan`). `Resolution` — the
+iteration texture a live frame renders at — has a private field: it is made ONCE (`Resolution::panel`,
+at the top of `build_params`), changed only by `Resolution::scaled` (the motion scale, the live
+refresh's pricing size and the budget fit, the one arithmetic all three spelled out by hand), and a
+pin and a settle grid carry the one they were formed at; `WalkSig::of` takes a `Resolution`, so a
+walk's identity can only carry one that came through the module. The moving frame's scale — the work
+budget's bound, the rate-aware refresh cap, the measured AIMD and the visible-frame ladder — moved
+verbatim into `frame_plan` as the `bp_moving_scale` stage (305 lines), with the mode switch's reset
+(`reset_moving_scale`) and the live refresh's choice (`refresh_scale`). §7.4's exit criterion is a
+test, not a grep someone must remember: it scans every source file of the crate and fails on a
+`let res_scale` / `let budget_res_scale` computed in place, or an assignment to `perf.visible_res[..]`
+/ `perf.motion_res[..]`, outside `frame_plan.rs` (a binding of a `frame_plan` result is not a writer),
+and on a `Resolution::panel` outside tests anywhere but the one. A sabotage line in `build_params`
+(`let res_scale = res_scale.min(0.999)`) turned it red with the file and line. (The design's literal
+grep could not be the test: it also matches the config's `min_motion_res =` and the frame record's
+copy.) Byte-neutral: goldens 31/31, `--motiontest` unchanged.
