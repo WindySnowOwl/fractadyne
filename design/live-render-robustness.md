@@ -3062,3 +3062,16 @@ same trap; user approved).** Exit 0 in 52 s, logcheck PASS, 0 of 225 dispatches 
   and 2 of 12 against 0 of 12 is within chance (Fisher p ≈ 0.24). If such frames show up in a field
   log, look at pinned-pass sizing at deep iteration ranges first.
 
+**2026-10-12 — U46: the wall-clock fallback no longer clears the motion-jam backlog.** When the
+fallback priced a dispatch it zeroed `full_inflight`, the owed registrations and the fired
+callbacks, on the grounds that "the interval at which the queue finally stalls proves the whole
+queue drained". It does not (the frame after a big dispatch is quick while the GPU runs it), and the
+backlog is what the motion-jam gate counts; completion callbacks retire it, with or without
+timestamps. With GPU timestamps declined (`FRACTADYNE_NO_TIMESTAMPS=1`, the fallback on for 97–99%
+of frames), two interleaved runs each of zoomtest, motiontest and the trap on the RTX 3080: the old
+build's motiontest shows the zeroing (the backlog dropping from ≥ 2 to 0 in one frame, once a run),
+the new one's backlog reaches 4 and is retired by completions; slow frames, worst frames and the
+zoomtest and trap are unchanged. Found on the way, pre-existing (the dev.1 build fails the same way):
+`--motiontest` fails A2 without timestamps, "no complete refresh was adopted during motion — detail
+stopped streaming"; filed in TODO.md under Open bugs.
+
