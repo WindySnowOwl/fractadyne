@@ -3211,3 +3211,37 @@ re-climb from the floor and drift out before adopting). Keying the ledger per la
 re-climb back after every settle, on a mechanism argument. The RX 6800 XT's pin-price trace on a
 deep, high-iteration motion run is the evidence still wanted.
 
+**2026-10-13 — W3 on the RX 6800 XT (dev.5, PLUTO; the user's standing go-ahead to queue).** Both
+arms of `PIN_TIMEOUT_SCALED`, one run each, plus the motiontest's pin-price trace:
+
+- **U3/U47: inert on this card too.** `pin_escapes` 0 in all six runs. Scaled against flat:
+  motiontest 52 against 56 complete adoptions (PASS both); 20-octave zoomtest lag 0.098 against
+  0.108 octaves, 160 against 158 pinned refreshes; the budget trap lag 0.138 against 0.120, worst
+  frame 392 against 497 ms. With no escape in either arm the two rules behaved identically, so these
+  differences are the runs' own spread. The scaled rule stays (§5.6), and the counter will show it
+  the first time a field log reaches it.
+- **U48: not reproduced on this card either.** 226 and 228 traced pin passes, median 0 ms, p95
+  ~20 ms, worst 44 ms; the 3 over twice the target are band-0 first passes carrying the series-skip
+  prefix (size 4× the licence), as on the RTX 3080 — none sized by an inherited licence. Closed as
+  not reproduced on either card; the shared ledger stays.
+
+**2026-10-13 — U4 (the chunk-pass price has no constant term): measured, small on both cards;
+closed by measurement** (`1b817c3`). `--chunk-sweep` now fits the per-pass fixed cost (each window
+size walks the same bracket, so total = passes × fixed + rest; the least-squares slope, with its
+standard error), warms the card up first, and exits with a verdict (§7.3 gate 1: vacuous, a
+resolved fit outside 0.5–2× the adapter's calibrated value, or an odd/even height cliff past 10×).
+The value is a calibration (`validation/calibration/ceilings.toml` `pass_fixed_ms`, read through
+`calibration::pass_fixed_ms()`; `--set PASS_FIXED_MS` still wins). RTX 3080: 0.193 ± 0.043 ms at
+the all-interior view, 0.223 ± 0.043 at the structured crash view, 0.209 on a third run — two views
+15% apart, so MEM-16's exemption holds; calibrated at 0.21, which the gate now holds it to. RX 6800
+XT: −0.06 and +0.01 ms at the same views (dev.5, no warm-up) and 0.28 ± 0.10 on 2026-09-27, all
+inside its ~±10 ms run-to-run noise on ~12 ms of signal: UNRESOLVED, so it stays on the default 0.2.
+⚠The "~1 ms on the RX 6800 XT" this document and `PASS_FIXED_MS`'s note took from live readings is
+not borne out by the wall clock: those readings pair with the wrong dispatch on that card. So U4's
+premise — a retreat asymptotes at a cost the model wrongly calls ~zero — does not hold: the floor
+pass's fixed cost really is ~0.2 ms. Not built, because a ~0.2 ms term against 10–400 ms pass
+targets moves nothing: §5.2's session-learned intercept (W3 step 3) and applying the term beyond the
+motion pacing (step 4). The sweep's first pass carries ~4–5 ms (RTX 3080) to ~11 ms (RX 6800 XT) of
+one-off cost; the harness allocates the walk's state textures per call, which the live path keeps,
+so that is the harness, not a per-walk cost of the live walk.
+
