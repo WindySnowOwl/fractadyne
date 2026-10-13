@@ -8,6 +8,7 @@ A reproducible head-to-head of deep-zoom Mandelbrot renderers on **your** hardwa
 | **Fraktaler-3** | automated | GPU (OpenCL), plus the CPU unless `-F3GpuOnly` (BLA + rebasing) | binary + source included (AGPL-3.0) |
 | **Imagina** | automated (`-ImaginaCliExe`) | CPU (MipLA) | upstream is GUI-only; a small headless `imagina-cli` fork enables the automated lane - see "Imagina" below |
 | **FractalShark** | automated (GPU, 0.541+) | GPU (CUDA) | GPU lane works from 0.541 (adds sm_75; runs on RTX 20/30/40/50); earlier releases were CPU-only here - see below |
+| **Fractal Zoomer** | automated (`-FractalZoomerJar`, `-FzBenchPath`) | CPU (Java; perturbation + BLA) | no command line; a small GPL-3.0 driver, FzBench, runs its Minimal Renderer, and the lane competes on Fractal Zoomer's OWN time - see "Fractal Zoomer" below |
 
 Ten single-frame scenes from Fractadyne's cross-validated corpus (each verified pixel-for-pixel
 against Fraktaler-3), spanning 1e6× to 4.6e1105× magnification, plus a **zoom sequence** lane
@@ -317,6 +318,10 @@ benchmark that doesn't say which latest it measured is not reproducible.
      (GPL-3.0), pass `-FractalSharkExe <path>`. The lane finds `FractalSharkCli.exe` beside
      it and runs automatically (`-FractalSharkCliExe <path>` to point elsewhere); see
      "FractalShark, honestly" for what it can and cannot render headlessly.
+   - Fractal Zoomer: download `FZMinimalRenderer.jar` from
+     https://github.com/hrkalona/Fractal-Zoomer/releases (GPL-3.0) and pass
+     `-FractalZoomerJar <path> -FzBenchPath <path>`; see "Fractal Zoomer". `bench-latest`
+     does not run this lane, because the driver is not downloadable.
 2. `powershell -ExecutionPolicy Bypass -File run-all.ps1` (add `-Reps 2` for repeats; skip
    lanes with `-Skip imagina,fractalshark`).
 3. Results land in `results\<hostname>-<timestamp>\`: open **`report.html`** first; beside it are
@@ -474,9 +479,48 @@ Upstream Imagina ships a GUI only — no headless render mode — so it has two 
   automation — type what the app shows, don't estimate. It imports `.kfr` (format drift happens;
   record DNF and say why if a scene won't load).
 
+## Fractal Zoomer
+
+Fractal Zoomer has no command line, so the lane runs its Minimal Renderer
+(`FZMinimalRenderer.jar`, from the release page) through a small driver, FzBench. FzBench calls
+into Fractal Zoomer, so it is GPL-3.0 too, kept in its own folder and never part of this kit; ask
+us for it. Build it with `javac -cp FZMinimalRenderer.jar -d classes FzBench.java`, then pass
+`-FractalZoomerJar <FZMinimalRenderer.jar> -FzBenchPath <classes folder or jar>` (Java 8 or later
+on `PATH`, or `-JavaExe <java.exe>`). For each scene and rep the lane starts one JVM in a fresh
+working folder (`fz-work\<scene>-r<rep>\`), and FzBench:
+
+- starts from Fractal Zoomer's defaults: the folder has no `MRpreferences.ini`, which is where
+  the Minimal Renderer keeps its preferences and the image size;
+- writes the scene's `.fzs` with Fractal Zoomer's own `Settings.save`: the `.kfr` centre, the
+  iteration cap from the scene table, and the magnification as `size = 4 / Zoom` (Fractal
+  Zoomer's `size` spans the shorter side of the image, the height here), at the precision
+  Fractal Zoomer itself derives from those strings when it loads a file;
+- renders it with the Minimal Renderer's own Batch Render at `-Size`, and reads the time from the
+  `<scene>.stats` file the batch writes beside the image.
+
+The settings are the ones Fractal Zoomer's author advised for a benchmark: the defaults, with
+perturbation on (Fractal Zoomer then picks its arbitrary-precision library and uses Zhuoran's
+BLA by default) and the rendering method Successive Refinement. The default method, Patterned
+Successive Refinement, is meant for the main window's rendering effects. Successive Refinement
+guesses flat regions instead of iterating every pixel, so on a scene with large flat areas it
+does less work for the same picture. Fractadyne iterates every pixel.
+
+**The lane competes on Fractal Zoomer's own time, not the wall.** Its Total Elapsed Time is the
+reference orbit plus the pixels, measured inside the program, without saving the image; the
+reference alone is in each row's note. The wall, about 14 s per image at 1280x720 on the test
+machine, is mostly starting Java, opening the window, unpacking its native libraries and
+compiling its user code: a user pays that once per session, and this kit pays it once per image.
+It stays in `results.csv`. Because the two are different clocks (see "Fairness protocol"), the
+report never ranks Fractal Zoomer against a wall-clock column. It puts it beside Fractadyne's own
+figure instead, which is the render and the PNG save without the process start. Fractal Zoomer
+does not reuse a reference orbit between loads, and every rep is a new process anyway, so the
+reps of a scene are independent. The view check (`fz-view-check.json`) compares each image with
+Fractadyne's render of the same scene, as for FractalShark and Imagina.
+
 ## Licenses
 
 This kit redistributes Fraktaler-3 (AGPL-3.0) with its corresponding source in
-`fraktaler3\source\`. Imagina (AGPL-3.0) and FractalShark (GPL-3.0) are NOT bundled —
-download them from their own release pages, linked above. Scene files are original to the
+`fraktaler3\source\`. Imagina (AGPL-3.0), FractalShark (GPL-3.0) and Fractal Zoomer
+(GPL-3.0) are NOT bundled — download them from their own release pages, linked above. The
+Fractal Zoomer driver, FzBench, is GPL-3.0 and kept outside this kit. Scene files are original to the
 Fractadyne project.

@@ -106,6 +106,13 @@ param(
     # practice never ran. imagina-cli is a small headless fork of it (AGPL, its own repo, built
     # from source - see README "Imagina"); point at it and the lane automates like the others.
     [string]$ImaginaCliExe = '',
+    # Fractal Zoomer has no command line either. FzBench is a small driver (GPL-3.0, its own folder,
+    # never part of this kit - see README "Fractal Zoomer") that writes each scene's .fzs with Fractal
+    # Zoomer's own Settings.save and renders it with the Minimal Renderer's own Batch Render. Point at
+    # the release's FZMinimalRenderer.jar and at the driver's compiled classes (or its jar).
+    [string]$FractalZoomerJar = '',
+    [string]$FzBenchPath = '',
+    [string]$JavaExe = 'java',
     # imagina-cli is built with msys2 mingw and needs that toolchain's DLLs on PATH; without them
     # it exits 0xC0000135 (DLL not found) with no message at all, which reads exactly like a
     # crash. Prepended for this lane only, never for the process. Autodetected when left empty.
@@ -158,7 +165,8 @@ $Skip = @($Skip | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $Scenes = @($Scenes | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 # Every path a child process receives, absolute (see Resolve-KitPath in bench-lib.ps1).
 foreach ($n in 'FractadyneExe', 'Fraktaler3Exe', 'ImaginaExe', 'FractalSharkExe', 'FractalSharkCliExe',
-               'ImaginaCliExe', 'ImaginaRuntimeDir', 'ImaginaPaletteMap', 'SharedPalette', 'F3Wisdom') {
+               'ImaginaCliExe', 'ImaginaRuntimeDir', 'ImaginaPaletteMap', 'SharedPalette', 'F3Wisdom',
+               'FractalZoomerJar', 'FzBenchPath') {
     Set-Variable -Name $n -Value (Resolve-KitPath (Get-Variable -Name $n -ValueOnly))
 }
 
@@ -178,6 +186,7 @@ if (-not $FractalSharkCliExe -and $FractalSharkExe) {
 }
 $have += @{ fractalsharkcli = ($FractalSharkCliExe -and (Test-Path $FractalSharkCliExe)) }
 $have += @{ imaginacli = ($ImaginaCliExe -and (Test-Path $ImaginaCliExe)) }
+$have += @{ fractalzoomer = ($FractalZoomerJar -and (Test-Path $FractalZoomerJar) -and $FzBenchPath -and (Test-Path $FzBenchPath)) }
 # Default Imagina to Fractadyne's own Ember palette, calibrated. Off only if the file is gone.
 if ($have.imaginacli -and -not $ImaginaPaletteMap) {
     $cand = Join-Path $kit 'palettes\ember.map'
@@ -861,6 +870,82 @@ if ($have.imaginacli) {
     }
 }
 
+# ---- lane: Fractal Zoomer (automated, via the FzBench driver) ----
+# As its author advised for a benchmark (2026-10-12): the defaults, perturbation on, and the rendering
+# method Successive Refinement (the default, Patterned Successive Refinement, is for the main window's
+# rendering effects). FzBench writes those into each scene's .fzs; Fractal Zoomer then chooses its
+# arbitrary-precision library and uses Zhuoran's BLA by default. One JVM per image, each in a fresh
+# working folder: Fractal Zoomer reads MRpreferences.ini from there, and does not reuse a reference
+# orbit between loads anyway.
+if ($have.fractalzoomer) {
+    $wh = $Size -split 'x'
+    $fzCp = $FractalZoomerJar + ';' + $FzBenchPath
+    Write-Host ('Fractal Zoomer: automated via FzBench (' + $FractalZoomerJar + ')')
+    foreach ($rep in 1..$Reps) {
+        foreach ($s in $sceneRows) {
+            $kfrPath = Join-Path $kit ('scenes\' + $s.slug + '.kfr')
+            $work = Join-Path $outDir ('fz-work\' + $s.slug + '-r' + $rep)
+            New-Item -ItemType Directory -Force -Path $work | Out-Null
+            $argLine = ('-cp "{0}" FzBench --kfr "{1}" --name {2} --out "{3}" --width {4} --height {5} --iter {6} --timeout-s {7}' -f
+                        $fzCp, $kfrPath, $s.slug, $work, $wh[0], $wh[1], $s.iterations, $TimeoutS)
+            # The driver keeps its own deadline; this one is the backstop if the JVM itself hangs.
+            $r = Invoke-TimedRender $JavaExe $argLine ($TimeoutS + 120) $work
+            $status = $r.status
+            $reported = ''
+            # REPORTED = Fractal Zoomer's own "Total Elapsed Time" from the image's .stats: the reference
+            # and the pixels, measured inside the program. It leaves out the JVM's start, the window,
+            # the user-code compile Fractal Zoomer runs at start-up and saving the image - costs a
+            # Fractal Zoomer user pays once per session, not per image (FractalShark's server column is
+            # the same shape). The wall time, which includes all of them, stays in results.csv.
+            $m = [regex]::Match([string]$r.stdout, 'FZBENCH name=\S+ total_ms=(-?[0-9.]+) reference_ms=(-?[0-9.]+)')
+            $note = 'FzBench driver (GPL-3.0); reported = Fractal Zoomer''s Total Elapsed Time'
+            if ($status -eq 'ok') {
+                if (-not $m.Success -or [double]$m.Groups[1].Value -lt 0) {
+                    $status = 'DNF-no-stats'
+                    $note = 'exit 0 but no Total Elapsed Time from the .stats file'
+                } else {
+                    $reported = [math]::Round([double]$m.Groups[1].Value / 1000.0, 3)
+                    $note += ('; reference ' + [math]::Round([double]$m.Groups[2].Value / 1000.0, 3) + ' s')
+                }
+            }
+            $png = Join-Path $outDir ('fz-' + $s.slug + '.png')
+            $src = Join-Path $work ($s.slug + '.png')
+            if ($status -eq 'ok') {
+                if (Test-Path $src) {
+                    Copy-Item -Force $src $png
+                    if (-not (Test-RenderHasStructure $png)) {
+                        $status = 'DNF-blank'
+                        $note = 'exit 0 but the image is uniform - a time here would be meaningless'
+                    }
+                } else {
+                    $status = 'DNF-no-output'
+                    $note = 'exit 0 but no image'
+                }
+            }
+            # Fractal Zoomer unpacks its colour maps (about 15 MB) into the working folder at every
+            # start, which over a full run is gigabytes of copies. Keep the scene's .fzs and the
+            # .stats it was timed from; on a failure keep everything but the colour maps, as evidence.
+            Get-ChildItem -LiteralPath $work | Where-Object {
+                $_.Name -eq 'ColorMaps' -or ($status -eq 'ok' -and $_.Extension -notin '.fzs', '.stats')
+            } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Result $csv 'fractalzoomer' $s.slug $rep $status $r.wall_s $reported $note
+            Add-RunRecord @{
+                renderer = 'fractalzoomer'; scene = $s.slug; rep = $rep
+                exe = $JavaExe; args = $argLine; cwd = $work
+                source = ('scenes\' + $s.slug + '.kfr')
+                inputs = @{ iterations = $s.iterations; size = $Size; jar = $FractalZoomerJar; driver = $FzBenchPath }
+                output = ('fz-' + $s.slug + '.png')
+                status = $status; wall_s = $r.wall_s; reported_s = $reported; note = $note
+            }
+        }
+    }
+    if ($PythonExe -and (Test-Path $vv) -and $have.fractadyne) {
+        Write-Host 'Fractal Zoomer: checking the renders are the scenes that were ASKED for'
+        & $PythonExe $vv $outDir --prefix fz --json (Join-Path $outDir 'fz-view-check.json') --quiet 2>&1 |
+            ForEach-Object { '  ' + $_ }
+    }
+}
+
 # ---- lanes: Imagina / FractalShark (operator-assisted; see README "honestly") ----
 if ($have.imagina) {
     $hints = @(
@@ -976,8 +1061,13 @@ $md = @(('# Benchmark summary - ' + $env:COMPUTERNAME + ' - ' + $stamp), '',
         'manifest; only the presentation is sorted.', '',
         'Imagina is a wall column too now that imagina-cli automates it; it was a transcribed',
         'figure only while a human had to read it off the GUI.', '',
-        '| Scene | Magnification | fractadyne wall | fraktaler3 wall | fractalshark wall | imagina wall | fd reported |',
-        '|---|---|---|---|---|---|---|')
+        'Fractal Zoomer is a REPORTED column: its own Total Elapsed Time (reference + pixels), which',
+        'leaves out the JVM, the window and its start-up code compile (paid once per session by a',
+        'user, once per image by this kit) and saving the image. Its wall time is in results.csv.',
+        'The rendering method its author asked for, Successive Refinement, guesses flat regions',
+        'instead of iterating every pixel; Fractadyne iterates every pixel.', '',
+        '| Scene | Magnification | fractadyne wall | fraktaler3 wall | fractalshark wall | imagina wall | fractalzoomer reported | fd reported |',
+        '|---|---|---|---|---|---|---|---|')
 # Slug is the tiebreak, not decoration: the corpus has two scenes at exactly 5.1e27, PowerShell's
 # sort is not stable for equal keys, and two runs over the same data swapping rows makes a diff
 # between reports look like a change when nothing changed.
@@ -989,9 +1079,10 @@ foreach ($s in ($sceneRows | Sort-Object @{ e = { [double]$_.mag_log10 } }, @{ e
     if ($mant -ge 9.995) { $mant = $mant / 10; $e = $e + 1 }
     $magStr = ('{0:N1}e{1}' -f $mant, [int]$e)
     $cell = @{}
-    foreach ($ren in 'fractadyne', 'fraktaler3', 'imagina', 'fractalshark') {
+    foreach ($ren in 'fractadyne', 'fraktaler3', 'imagina', 'fractalshark', 'fractalzoomer') {
         $best = $rows | Where-Object { $_.renderer -eq $ren -and $_.scene -eq $s.slug -and $_.status -eq 'ok' } |
-            Sort-Object { if ($_.wall_s) { [double]$_.wall_s } else { [double]('0' + $_.reported_s) } } |
+            Sort-Object { if ($ren -eq 'fractalzoomer') { [double]('0' + $_.reported_s) }
+                          elseif ($_.wall_s) { [double]$_.wall_s } else { [double]('0' + $_.reported_s) } } |
             Select-Object -First 1
         if ($best) {
             $cell[$ren] = @{ wall = $best.wall_s; rep = $best.reported_s }
@@ -1000,7 +1091,7 @@ foreach ($s in ($sceneRows | Sort-Object @{ e = { [double]$_.mag_log10 } }, @{ e
             $cell[$ren] = @{ wall = $(if ($st) { $st.status } else { '-' }); rep = $(if ($st) { $st.status } else { '-' }) }
         }
     }
-    $md += ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} |' -f $s.slug, $magStr, $cell.fractadyne.wall, $cell.fraktaler3.wall, $cell.fractalshark.wall, $cell.imagina.wall, $cell.fractadyne.rep)
+    $md += ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} |' -f $s.slug, $magStr, $cell.fractadyne.wall, $cell.fraktaler3.wall, $cell.fractalshark.wall, $cell.imagina.wall, $cell.fractalzoomer.rep, $cell.fractadyne.rep)
 }
 $md += ''
 # WHICH SHAPE produced the FractalShark column is not a footnote: a server number and a
@@ -1022,18 +1113,21 @@ $fmt = { param($v, $f) if ($null -eq $v -or [string]$v -eq '') { '-' } else { [s
 $depthOrder = @($sceneRows | Sort-Object @{ e = { [double]$_.mag_log10 } }, @{ e = { $_.slug } })
 $spread = @()
 foreach ($s in $depthOrder) {
-    foreach ($ren in 'fractadyne', 'fraktaler3', 'imagina', 'fractalshark') {
-        $ws = @($rows | Where-Object { $_.renderer -eq $ren -and $_.scene -eq $s.slug -and $_.status -eq 'ok' -and $_.wall_s } |
-            ForEach-Object { [double]$_.wall_s } | Sort-Object)
+    foreach ($ren in 'fractadyne', 'fraktaler3', 'imagina', 'fractalshark', 'fractalzoomer') {
+        # Fractal Zoomer by its own clock, like its column above: its wall is mostly JVM start-up.
+        $col = $(if ($ren -eq 'fractalzoomer') { 'reported_s' } else { 'wall_s' })
+        $ws = @($rows | Where-Object { $_.renderer -eq $ren -and $_.scene -eq $s.slug -and $_.status -eq 'ok' -and $_.$col } |
+            ForEach-Object { [double]$_.$col } | Sort-Object)
         if ($ws.Count -lt 2) { continue }
         $med = Get-Median $ws
         $sp = if ($med -gt 0) { 100.0 * ($ws[-1] - $ws[0]) / $med } else { 0.0 }
-        $spread += ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} |' -f $s.slug, $ren, $ws.Count,
+        $spread += ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} |' -f $s.slug,
+            $(if ($col -eq 'reported_s') { $ren + ' (reported)' } else { $ren }), $ws.Count,
             (& $fmt $ws[0] '{0:F1}'), (& $fmt $med '{0:F2}'), (& $fmt $ws[-1] '{0:F1}'), (& $fmt $sp '{0:F0}%'))
     }
 }
 if ($spread.Count) {
-    $md += '## Repeat spread (wall seconds, every ok rep)'
+    $md += '## Repeat spread (wall seconds, every ok rep; a (reported) row is that renderer''s own figure)'
     $md += ''
     $md += 'Spread = (slowest - fastest) / median. Compare two renderers only by more than their spread.'
     $md += ''

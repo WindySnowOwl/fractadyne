@@ -108,37 +108,47 @@ def derive_findings(scenes, rows_by, views, meta, zs_rows):
     out = []
 
     # Wins per scene, among rows that are 'ok'. A DNF is not a slow result, so it never competes.
-    wins = defaultdict(int)
-    gaps = []
-    for s in scenes:
-        best, second = None, None
-        for ren in ("fractadyne", "fraktaler3", "fractalshark", "imagina"):
-            t = best_time(rows_by, ren, s)
-            if t is None:
-                continue
-            if best is None or t < best[1]:
-                second, best = best, (ren, t)
-            elif second is None or t < second[1]:
-                second = (ren, t)
-        if best:
-            wins[best[0]] += 1
-            if second:
-                gaps.append((second[1] / best[1], s, best[0], best[1], second[0], second[1]))
-    if wins:
-        parts = ", ".join("%s %d" % (r, n) for r, n in
-                          sorted(wins.items(), key=lambda kv: -kv[1]))
-        out.append(("Fastest per scene", "%s (of %d scenes with a valid time)"
-                    % (parts, sum(wins.values()))))
-    if gaps:
-        gaps.sort(reverse=True)
-        r, s, w, wt, l, lt = gaps[0]
-        out.append(("Largest margin",
-                    "%s on %s: %.1fs against %.1fs for %s, a factor of %.1f"
-                    % (w, s, wt, lt, l, r)))
+    # Per CLOCK: a lane timed by its own figure competes only with other own figures (see
+    # REPORTED_LANES), and that comparison is reported only when there is something to compare.
+    lanes = ("fractadyne", "fraktaler3", "fractalshark", "imagina", OWN_FD, "fractalzoomer")
+    for clock, group in (("", [r for r in lanes if r not in REPORTED_LANES]),
+                         (", own clocks", [r for r in lanes if r in REPORTED_LANES])):
+        if clock and sum(any((r, s) in rows_by for s in scenes) for r in group) < 2:
+            continue
+        wins = defaultdict(int)
+        gaps = []
+        for s in scenes:
+            best, second = None, None
+            for ren in group:
+                t = best_time(rows_by, ren, s)
+                if t is None:
+                    continue
+                if best is None or t < best[1]:
+                    second, best = best, (ren, t)
+                elif second is None or t < second[1]:
+                    second = (ren, t)
+            if best:
+                wins[best[0]] += 1
+                if second:
+                    gaps.append((second[1] / best[1], s, best[0], best[1], second[0], second[1]))
+        nm = lambda r: "fractadyne" if r == OWN_FD else r
+        if wins:
+            parts = ", ".join("%s %d" % (nm(r), n) for r, n in
+                              sorted(wins.items(), key=lambda kv: -kv[1]))
+            out.append(("Fastest per scene" + clock, "%s (of %d scenes with a valid time)"
+                        % (parts, sum(wins.values()))))
+        if gaps:
+            gaps.sort(reverse=True)
+            r, s, w, wt, l, lt = gaps[0]
+            out.append(("Largest margin" + clock,
+                        "%s on %s: %.1fs against %.1fs for %s, a factor of %.1f"
+                        % (nm(w), s, wt, lt, nm(l), r)))
 
     # DNFs, with the reason attached. A DNF is a result and belongs in the findings.
     dnf = []
     for (ren, sc), rs in sorted(rows_by.items()):
+        if ren == OWN_FD:
+            continue  # the fractadyne rows again; their DNF is reported once, as fractadyne's
         bad = [r for r in rs if r["status"] != "ok"]
         if bad and not any(r["status"] == "ok" for r in rs):
             dnf.append((ren, sc, bad[0]["status"], bad[0].get("note", "")))
@@ -149,7 +159,7 @@ def derive_findings(scenes, rows_by, views, meta, zs_rows):
     # difference as a result.
     spreads = []
     for (ren, sc), rs in rows_by.items():
-        ts = [fnum(r["wall_s"]) for r in rs if r["status"] == "ok" and fnum(r["wall_s"])]
+        ts = [lane_time(r, ren) for r in rs if r["status"] == "ok" and lane_time(r, ren)]
         if len(ts) > 1:
             spreads.append((max(ts) - min(ts), ren, sc, min(ts), max(ts)))
     if spreads:
@@ -169,7 +179,7 @@ def derive_findings(scenes, rows_by, views, meta, zs_rows):
     for ren, vv in sorted(views.items()):
         if not vv:
             continue
-        name = {"fractalshark": "FractalShark", "imagina": "Imagina"}.get(ren, ren)
+        name = {"fractalshark": "FractalShark", "imagina": "Imagina", "fractalzoomer": "Fractal Zoomer"}.get(ren, ren)
         wrong = [k for k, v in vv.items() if not v.get("magnification_ok", True)]
         unconf = [k for k, v in vv.items()
                   if v.get("magnification_ok", True) and not v.get("same_view")]
@@ -276,7 +286,8 @@ def fmt_mag(l10):
 
 # One colour per lane, reused by the chart and its legend.
 LANE_COLOR = {"fractadyne": "#79b8ff", "fraktaler3": "#e3b341",
-              "fractalshark": "#5fd08a", "imagina": "#d48bff"}
+              "fractalshark": "#5fd08a", "imagina": "#d48bff", "fractalzoomer": "#ff8a65",
+              "fractadyne-own": "#79b8ff"}
 
 
 def nice_log_ticks(lo, hi, want=6):
@@ -315,6 +326,10 @@ def svg_time_vs_depth(scenes, mags, rows_by, live, label):
     renderer that did not produce the picture has no time, and joining the points either side
     would draw a segment that never happened.
     """
+    def dash(ren):
+        """An own-clock lane (REPORTED_LANES) is drawn dashed: a different clock, not a slower one."""
+        return " stroke-dasharray='6 4'" if ren in REPORTED_LANES else ""
+
     def xof(mag_log10):
         """Axis position: the order of magnitude of the exponent. See the docstring."""
         return math.log10(mag_log10) if mag_log10 and mag_log10 > 0 else None
@@ -390,8 +405,10 @@ def svg_time_vs_depth(scenes, mags, rows_by, live, label):
     o.append("<text x='%.1f' y='%d' fill='#9aa3b2' font-size='13' text-anchor='middle'>"
              "magnification (log scale)</text>" % (L + pw / 2.0, H - 8))
     o.append("<text x='16' y='%.1f' fill='#9aa3b2' font-size='13' text-anchor='middle' "
-             "transform='rotate(-90 16 %.1f)'>wall-clock seconds (log scale)</text>"
-             % (T + ph / 2.0, T + ph / 2.0))
+             "transform='rotate(-90 16 %.1f)'>%s (log scale)</text>"
+             % (T + ph / 2.0, T + ph / 2.0,
+                "seconds: solid wall-clock, dashed own clock" if any(r in REPORTED_LANES for r in pts)
+                else "wall-clock seconds"))
 
     for ren, segs in pts.items():
         c = LANE_COLOR.get(ren, "#cccccc")
@@ -400,7 +417,7 @@ def svg_time_vs_depth(scenes, mags, rows_by, live, label):
                 d = " ".join(("%s%.1f,%.1f" % ("M" if i == 0 else "L", px(x), py(t)))
                              for i, (x, t, _s, _m) in enumerate(seg))
                 o.append("<path d='%s' fill='none' stroke='%s' stroke-width='2' "
-                         "stroke-linejoin='round'/>" % (d, c))
+                         "stroke-linejoin='round'%s/>" % (d, c, dash(ren)))
         for x, t, s, m in [p for seg in segs for p in seg]:
             o.append("<circle cx='%.1f' cy='%.1f' r='3.5' fill='%s'><title>%s &#183; %s "
                      "&#183; %s&#215; &#183; %.1f s</title></circle>"
@@ -410,8 +427,8 @@ def svg_time_vs_depth(scenes, mags, rows_by, live, label):
     lx, ly = L + 14, T + 16
     for ren in pts:
         c = LANE_COLOR.get(ren, "#cccccc")
-        o.append("<line x1='%d' y1='%d' x2='%d' y2='%d' stroke='%s' stroke-width='2'/>"
-                 % (lx, ly, lx + 22, ly, c))
+        o.append("<line x1='%d' y1='%d' x2='%d' y2='%d' stroke='%s' stroke-width='2'%s/>"
+                 % (lx, ly, lx + 22, ly, c, dash(ren)))
         o.append("<circle cx='%d' cy='%d' r='3.5' fill='%s'/>" % (lx + 11, ly, c))
         o.append("<text x='%d' y='%d' fill='#e7e9ee' font-size='13'>%s</text>"
                  % (lx + 30, ly + 4, esc(label.get(ren, ren))))
@@ -433,6 +450,7 @@ def guess_output(d, renderer, scene):
         "fraktaler3": ["%s-f3.png" % scene],
         "fractalshark": ["fs-%s-r1.png" % p, "fs-%s.png" % p, "fs-%s.png" % scene],
         "imagina": ["im-%s.png" % scene, "%s-imagina.png" % scene],
+        "fractalzoomer": ["fz-%s.png" % scene],
     }.get(renderer, [])
     for c in cands:
         if os.path.exists(os.path.join(d, c)):
@@ -440,16 +458,33 @@ def guess_output(d, renderer, scene):
     return None
 
 
+# TWO CLOCKS, NEVER MIXED (README, "Fairness protocol"). Most lanes compete on the WALL. Fractal
+# Zoomer runs one JVM per image here, so its wall carries starting Java, its window and the user-code
+# compile it runs at start-up - costs a user pays once per session - and it competes on its OWN
+# figure instead (Total Elapsed Time: reference + pixels, without saving the image). Put beside the
+# walls, that figure would win every scene by the other renderers' start-up alone, so it never is:
+# the report adds Fractadyne's own figure as the pseudo-lane OWN_FD (the fractadyne rows'
+# reported_s: render + PNG save, without the process start) and each clock picks its own fastest.
+# Fractal Zoomer's wall stays in results.csv.
+OWN_FD = "fractadyne-own"
+REPORTED_LANES = {"fractalzoomer", OWN_FD}
+
+
+def lane_time(r, renderer):
+    """The time a row competes on: reported_s for REPORTED_LANES, wall_s for every other lane."""
+    return fnum(r["reported_s"] if renderer in REPORTED_LANES else r["wall_s"])
+
+
 def best_time(rows_by, renderer, scene):
     rs = rows_by.get((renderer, scene), [])
-    ts = [fnum(r["wall_s"]) for r in rs if r["status"] == "ok" and fnum(r["wall_s"])]
+    ts = [lane_time(r, renderer) for r in rs if r["status"] == "ok" and lane_time(r, renderer)]
     return min(ts) if ts else None
 
 
 def rep_stats(rows_by, renderer, scene):
-    """(n, fastest, median, slowest) over the ok reps' wall_s, or None. The tables lead with the
+    """(n, fastest, median, slowest) over the ok reps' lane_time, or None. The tables lead with the
     fastest rep (the published protocol); this is what says how steady that figure is."""
-    ts = sorted(t for t in (fnum(r["wall_s"]) for r in rows_by.get((renderer, scene), [])
+    ts = sorted(t for t in (lane_time(r, renderer) for r in rows_by.get((renderer, scene), [])
                             if r["status"] == "ok") if t)
     if not ts:
         return None
@@ -656,7 +691,8 @@ def main():
     # One view-check file per automated third-party lane. `view` stays the FractalShark one so
     # the findings read as before; `views` is what the per-scene badges use.
     views = {"fractalshark": load_json(os.path.join(d, "fs-view-check.json"), {}) or {},
-             "imagina": load_json(os.path.join(d, "im-view-check.json"), {}) or {}}
+             "imagina": load_json(os.path.join(d, "im-view-check.json"), {}) or {},
+             "fractalzoomer": load_json(os.path.join(d, "fz-view-check.json"), {}) or {}}
     view = views["fractalshark"]
     sysinfo = load_text(os.path.join(d, "sysinfo.txt"))
     zs_rows = load_csv(os.path.join(d, "zoomseq", "results.csv"))
@@ -668,6 +704,12 @@ def main():
     rows_by = defaultdict(list)
     for r in rows:
         rows_by[(r["renderer"], r["scene"])].append(r)
+    # Fractadyne's own figure, as a column of its own, only when a lane competes on its own clock
+    # (REPORTED_LANES): it is that lane's like-for-like neighbour.
+    if any(ren in REPORTED_LANES for (ren, _sc) in rows_by):
+        for (ren, sc), rs in list(rows_by.items()):
+            if ren == "fractadyne":
+                rows_by[(OWN_FD, sc)] = rs
 
     # Prefer the scene order the run used; fall back to whatever the CSV holds.
     scenes = meta.get("scenes") or []
@@ -696,9 +738,10 @@ def main():
         scenes = sorted(scenes, key=lambda s: (mags[s], s))
 
     thumbs = os.path.join(d, "thumbs")
-    renderers = ["fractadyne", "fraktaler3", "fractalshark", "imagina"]
+    renderers = ["fractadyne", "fraktaler3", "fractalshark", "imagina", OWN_FD, "fractalzoomer"]
     label = {"fractadyne": "Fractadyne", "fraktaler3": "Fraktaler-3",
-             "fractalshark": "FractalShark", "imagina": "Imagina"}
+             "fractalshark": "FractalShark", "imagina": "Imagina",
+             OWN_FD: "Fractadyne (reported)", "fractalzoomer": "Fractal Zoomer (reported)"}
 
     # Folders written before the manifest existed still carry host and timestamp in their NAME
     # ("HOST-20260921-123041"). Recovering them there beats printing "?" at the reader.
@@ -746,10 +789,22 @@ def main():
         for k, v in findings:
             a("<dt>%s</dt><dd>%s</dd>" % (esc(k), esc(v)))
         a("</dl></div>")
+    own = any(ren in REPORTED_LANES for (ren, _sc) in rows_by)
     a("<p class='note'>Every number below is wall-clock, process start to exit, fastest of the "
-      "repeats; where a scene ran more than once, the median, the spread (slowest - fastest, "
+      "repeats%s; where a scene ran more than once, the median, the spread (slowest - fastest, "
       "over the median) and the rep count sit under it. A DNF is a result, not a gap: it never "
-      "competes for 'fastest'.</p>")
+      "competes for 'fastest'.</p>"
+      % (", except in the columns marked (reported)" if own else ""))
+    if own:
+        a("<p class='note'>The (reported) columns are each renderer's own figure, and they compete "
+          "only with each other, never with a wall-clock column. Fractal Zoomer's is its Total "
+          "Elapsed Time: the reference and the pixels, without starting Java, its window, the "
+          "user-code compile it runs at start-up (this kit starts it once per image; a user starts "
+          "it once per session) or saving the image. Fractadyne's is the render and the PNG save, "
+          "without the process start. The rendering method Fractal Zoomer's author asked for, "
+          "Successive Refinement, guesses flat regions instead of iterating every pixel; "
+          "Fractadyne iterates every pixel. Fractal Zoomer's wall-clock times are in "
+          "results.csv.</p>")
 
     # ---- results table
     a("<h2>Results</h2>")
@@ -772,13 +827,16 @@ def main():
         if sorted_by_depth:
             a("<td class='n dim'>%s</td>" % esc(fmt_mag(mags.get(s))))
         times = {ren: best_time(rows_by, ren, s) for ren in live}
-        fastest = min((t for t in times.values() if t is not None), default=None)
+        # The fastest PER CLOCK: an own figure is never "faster" than a wall.
+        fastest = {clk: min((t for r, t in times.items()
+                             if t is not None and (r in REPORTED_LANES) == clk), default=None)
+                   for clk in (False, True)}
         for ren in live:
             t, st = times[ren], status_of(rows_by, ren, s)
             if t is None:
                 a("<td class='dnf'>%s</td>" % esc(st or "-"))
             else:
-                cls = "n win" if t == fastest else "n"
+                cls = "n win" if t == fastest[ren in REPORTED_LANES] else "n"
                 st4 = rep_stats(rows_by, ren, s)
                 spread = ""
                 if st4 and st4[0] > 1:
@@ -823,6 +881,8 @@ def main():
              if sorted_by_depth else ""))
         a("<div class='cards'>")
         for ren in live:
+            if ren == OWN_FD:
+                continue  # Fractadyne's card already shows its image
             recs = runs_by.get((ren, s), [])
             rec = recs[0] if recs else {}
             out = rec.get("output") or guess_output(d, ren, s)
