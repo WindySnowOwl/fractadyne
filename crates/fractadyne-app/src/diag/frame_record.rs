@@ -401,7 +401,8 @@ frame_record! {
     walk_restarted: bool,
     /// The bound the held frame's magnification took this frame (`frame_plan::hold_floor`, U39):
     /// 0 none, 1 the dive floor, 2 the jump floor, 3 the jump floor BINDING (the held frame shown
-    /// at less magnification than the view's).
+    /// at less magnification than the view's), 4 the dive floor with the held frame magnified past
+    /// the jump floor (true scale, a large flat patch).
     hold_floor: u8,
 
     // ---- the signals

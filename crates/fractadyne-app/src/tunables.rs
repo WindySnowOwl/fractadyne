@@ -1199,12 +1199,16 @@ pub(crate) const HELD_MAX_OCT: f64 = 0.5;
 /// "sometimes the screen goes black" rather than always. 3 octaves keeps ~135 px of real content on
 /// screen, which reads as a blocky version of where you clicked instead of nothing at all.
 ///
-/// ⛔**Applies to jumps ONLY** (`zoom_vel == 0`), and that restriction is the whole design. Flooring
-/// the scale during a DIVE was tried and reverted: `uv_off` is `px · scale`, so a scale clamped
-/// above its true value translates the held frame too far, and with the view still moving it
-/// visibly slides frame to frame — the reason the continuous floor sits all the way down at 2^-40.
-/// A jump is static by construction (click-to-zoom zeroes `zoom_vel`), so there is no motion for a
-/// clamped transform to slide against.
+/// ⛔**Applies to jumps ONLY**, and that restriction is the whole design. Flooring the scale during a
+/// DIVE was tried and reverted: `uv_off` is `px · scale`, so a scale clamped above its true value
+/// translates the held frame too far, and with the view still moving it visibly slides frame to
+/// frame — the reason the continuous floor sits all the way down at 2^-40. A jump is static by
+/// construction, so there is no motion for a clamped transform to slide against.
+///
+/// ⚠"A jump" is decided by `frame_plan::hold_jump_next`: some frame since the held one was latched
+/// zoomed in suddenly (`frame_plan::is_jump_in`: a step from rest, not a glide at any speed). It
+/// used to be "no zoom velocity", which only Space writes, so every auto-zoom dive, wheel zoom, Home
+/// glide and tour took this floor and slid (U39).
 pub(crate) const HELD_JUMP_MAX_OCT: f64 = 3.0;
 
 /// The share of a view's neighbouring pixel pairs that must step past Nyquist (see

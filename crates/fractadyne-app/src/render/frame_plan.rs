@@ -174,15 +174,58 @@ pub(crate) fn walk_restart_discards(prev_cursor: u32, prev_walk_end: u32) -> boo
     prev_cursor > 0 && prev_cursor < prev_walk_end
 }
 
+/// A JUMP IN is a frame that zooms in by more than this many octaves... ([`is_jump_in`]).
+pub(crate) const JUMP_OCT_PER_FRAME: f64 = 1.5;
+/// ...and by more than this many times the previous frame's step: a step from rest, not a rate.
+pub(crate) const JUMP_SUDDEN: f64 = 4.0;
+
+/// Did this frame's view JUMP in? `d_l2` is the frame's change in log2 magnification (positive =
+/// in), `prev_step` the previous frame's |change| (NaN on a view's first frame, which is no jump).
+///
+/// ⚠Not a speed threshold. A continuous zoom can move any distance in a frame — the Home glide is a
+/// smoothstep over at most 9 s, so from 1e31 it peaks near 0.3 octaves a frame and from 1e30000 at
+/// hundreds, and a tour plays at whatever rate its keyframes ask. What a jump has that a glide does
+/// not is SUDDENNESS: click-to-zoom, a box zoom, a bookmark, Go to and undo move the view from rest
+/// in one frame, while every glide ramps (the Space glide and the auto-zoom ease their speed, the
+/// Home glide and tours are eased curves). And only a jump IN matters: the floor bounds
+/// magnification, and a zoom-out shows the held frame shrunk (scale > 1), which no floor touches.
+pub(crate) fn is_jump_in(d_l2: f64, prev_step: f64) -> bool {
+    let prev = if prev_step.is_finite() { prev_step } else { 0.0 };
+    d_l2 > JUMP_OCT_PER_FRAME && d_l2 > JUMP_SUDDEN * prev
+}
+
+/// ⭐U39: does the HELD frame now stand across a jump? This replaces "no zoom velocity means a
+/// jump", which only a Space glide could ever answer correctly — `zoom_vel` is written by Space
+/// alone, so every auto-zoom dive, wheel zoom, Home glide and tour took the jump floor, and a held
+/// frame that fell more than 3 octaves behind such a zoom was shown at the clamped scale: the wrong
+/// magnification, translated too far, sliding against the moving view (`HELD_JUMP_MAX_OCT`'s own
+/// doc says why a moving frame must keep its true scale). Measured on `--motiontest`'s Home glide
+/// before the change: every moving frame took the jump floor, and it bound on 7 of them.
+///
+/// Sticky: set by a frame that jumped in ([`is_jump_in`]), kept while that held frame stays on
+/// screen — after a jump the view is static, and a clamped transform has nothing to slide against —
+/// and cleared when a new frame is latched as the held one (`latched`), since that frame is at the
+/// new view.
+pub(crate) fn hold_jump_next(prev: bool, jumped_in: bool, latched: bool) -> bool {
+    if latched {
+        false
+    } else {
+        prev || jumped_in
+    }
+}
+
 /// Which bound a held frame's magnification took this frame (frame record `hold_floor`; U39):
 /// 0 none (no hold transform), 1 the dive floor, 2 the jump floor without binding, 3 the jump
 /// floor BINDING — the held frame is shown at less magnification than the view's, so it is the
-/// wrong scale on screen. Pending per frame; the worst code wins.
+/// wrong scale on screen — and 4 the dive floor with the held frame magnified PAST the jump floor
+/// (more than `HELD_JUMP_MAX_OCT` behind: true scale, but a big flat patch; after a jump it would
+/// be the 100× patch the jump floor exists to prevent). Pending per frame; the highest code wins.
 pub(crate) mod hold_floor {
     // 0 (none) is the record's default: no hold transform was taken this frame.
     pub(crate) const DIVE: u8 = 1;
     pub(crate) const JUMP: u8 = 2;
     pub(crate) const JUMP_BOUND: u8 = 3;
+    pub(crate) const DIVE_DEEP: u8 = 4;
 }
 
 /// The held frame's reprojection scale for `gap_oct` octaves of zoom since it was rendered
@@ -193,7 +236,7 @@ pub(crate) fn hold_scale(gap_oct: f64, jumped: bool) -> (f32, u8) {
     let raw = (gap_oct as f32).exp2();
     let scale = raw.clamp(floor, 1.099_512e12);
     let code = if !jumped {
-        hold_floor::DIVE
+        if raw < super::hold_scale_floor(true) { hold_floor::DIVE_DEEP } else { hold_floor::DIVE }
     } else if raw < floor {
         hold_floor::JUMP_BOUND
     } else {
@@ -337,10 +380,71 @@ mod tests {
     }
 
     #[test]
+    fn continuous_motion_never_reads_as_a_jump() {
+        // U39: the auto-zoom, the wheel, the Home glide and tours used to take the jump floor
+        // because only Space wrote a zoom velocity. A zoom that ramps is motion at any speed.
+        // The Space glide / auto-zoom: eased, at most ~0.27 octaves a frame.
+        let mut prev = f64::NAN;
+        for step in [0.01, 0.05, 0.12, 0.2, 0.27, 0.27, 0.27] {
+            assert!(!is_jump_in(step, prev), "a {step}-octave glide step");
+            prev = step;
+        }
+        // A smoothstep dive from rest at 60 fps, fast enough to move hundreds of octaves a frame
+        // at its peak (the Home glide's curve, run in): never a jump.
+        let total = 99_658.0_f64; // octaves, 1e30000
+        let n = 9 * 60;
+        let ease = |u: f64| u * u * (3.0 - 2.0 * u);
+        let mut prev = f64::NAN;
+        let mut jumps = 0;
+        for i in 1..=n {
+            let d = total * (ease(i as f64 / n as f64) - ease((i - 1) as f64 / n as f64));
+            jumps += is_jump_in(d, prev) as u32;
+            prev = d;
+        }
+        // Its peak is ~277 octaves a frame, and its first frame from rest ~1.02 — under the jump
+        // threshold, and every later step under four times the one before.
+        assert_eq!(jumps, 0, "an eased curve never reads as a jump, at any depth");
+        // From 1e31 the first frame moves ~0.001 octaves.
+        let first = 103.0 * ease(1.0 / n as f64);
+        assert!(first < 0.01 && !is_jump_in(first, f64::NAN));
+        // Zooming OUT is never a jump in, however far.
+        assert!(!is_jump_in(-6.64, 0.0));
+        assert!(!is_jump_in(-1.0e4, 0.0));
+        // A view's first frame has nothing to compare against.
+        assert!(!is_jump_in(f64::NAN, f64::NAN));
+    }
+
+    #[test]
+    fn a_click_from_rest_is_a_jump_and_holds_until_a_new_frame_is_latched() {
+        // The 100× click (6.64 octaves) of the black-patch report, from a still view.
+        assert!(is_jump_in(6.64, 0.0));
+        assert!(is_jump_in(6.64, f64::NAN));
+        // 4× (2 octaves) from rest too; 2× is under the floor's reach on its own.
+        assert!(is_jump_in(2.0, 0.0));
+        assert!(!is_jump_in(1.0, 0.0));
+        // A click during a glide is sudden against the glide's step.
+        assert!(is_jump_in(6.64, 0.27));
+        let mut j = hold_jump_next(false, true, false);
+        assert!(j);
+        // The view sits still while the reference builds: the held frame still stands across it.
+        for _ in 0..8 {
+            j = hold_jump_next(j, false, false);
+            assert!(j);
+        }
+        // A real frame at the new view replaces the held one: no jump between them any more.
+        j = hold_jump_next(j, false, true);
+        assert!(!j);
+        // A jump and a latch on the same frame: the latched frame is at the new view.
+        assert!(!hold_jump_next(false, true, true));
+    }
+
+    #[test]
     fn the_hold_floor_code_says_whether_the_jump_bound_moved_the_picture() {
-        // A dive keeps its true scale and says so.
+        // A dive keeps its true scale and says so — and says when that is past the jump floor.
+        let (s, c) = hold_scale(-1.0, false);
+        assert_eq!((s, c), (0.5, hold_floor::DIVE));
         let (s, c) = hold_scale(-6.64, false);
-        assert_eq!(c, hold_floor::DIVE);
+        assert_eq!(c, hold_floor::DIVE_DEEP);
         assert!((s - (-6.64_f32).exp2()).abs() < 1.0e-6);
         // A jump within the bound is shown at its true scale.
         let (s, c) = hold_scale(-1.0, true);

@@ -54,7 +54,7 @@ PRESENT = {0: "unset", 1: "live", 2: "reproject", 3: "hold"}
 KIND = {0: "-", 1: "placeholder", 2: "reproject", 3: "pin-walk", 4: "motion", 5: "hold",
         6: "settled-walk", 7: "tile", 8: "accum", 9: "settled"}
 # `hold_floor` (schema 10; U39): the bound the held frame's magnification took.
-HOLD_FLOOR = {0: "-", 1: "dive", 2: "jump", 3: "jump-BOUND"}
+HOLD_FLOOR = {0: "-", 1: "dive", 2: "jump", 3: "jump-BOUND", 4: "dive-deep"}
 SRC = {0: "-", 1: "gpu", 2: "wall"}
 VERDICT = {0: "-", 1: "DISCARDED", 2: "moved", 3: "unchanged"}
 # The minimum a summary needs before it will state a verdict (design 6.6.2's anti-vacuity).

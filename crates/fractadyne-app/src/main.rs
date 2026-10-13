@@ -1538,6 +1538,19 @@ struct Perf {
     /// The worst bound a held frame's magnification took since the last frame record
     /// (`frame_plan::hold_floor`; record `hold_floor`, U39), cleared when it is written.
     hold_floor_pending: [u8; 2],
+    /// U39: each view's magnification (log2) at its last built frame (NaN before the first), that
+    /// frame's step (|change|), the frame it was taken on, and whether the view's HELD frame now
+    /// stands across a jump (`frame_plan::hold_jump_next`): set by a frame that jumped in
+    /// (`frame_plan::is_jump_in`), cleared by a latch.
+    hold_l2_last: [f64; 2],
+    hold_step_last: [f64; 2],
+    hold_seen_frame: [u64; 2],
+    hold_jump: [bool; 2],
+    /// Frames since start by the bound their held frame's magnification took (indexed by
+    /// `frame_plan::hold_floor` code; 0 = no hold transform), and the frames the jump floor BOUND
+    /// while the view was moving — U39's failure, a clamped transform sliding against the view.
+    hold_floor_frames: [[u64; 5]; 2],
+    hold_bound_moving: [u64; 2],
     /// The walk's NUMBER: +1 at every restart of the walk (`bp_chunk_tiling`, and a pin's start or
     /// discard). A counted pass carries it (`MandelbrotParams::chunk_walk`), and its reading is
     /// believed only for the same number — a new walk starts with every pixel running.
@@ -2282,6 +2295,12 @@ impl Default for Perf {
             walk_restarts: [0, 0],
             walk_restart_pending: [false, false],
             hold_floor_pending: [0, 0],
+            hold_l2_last: [f64::NAN; 2],
+            hold_step_last: [f64::NAN; 2],
+            hold_seen_frame: [u64::MAX; 2],
+            hold_jump: [false, false],
+            hold_floor_frames: [[0; 5]; 2],
+            hold_bound_moving: [0, 0],
             chunk_walk_epoch: [0, 0],
             chunk_running: [None, None],
             chunk_count_walk: [0, 0],
@@ -15085,6 +15104,15 @@ impl FractadyneApp {
             r.zoom_oct_s = p.zoom_oct_s;
             r.rec_us = p.rec_us;
             diag::frame_record::record(r);
+        }
+        // U39's session counts (`--motiontest` A5/A6): frames by the held frame's floor, and the
+        // frames it was shown at the jump floor's clamped scale while the view was MOVING.
+        for v in 0..2 {
+            let code = self.perf.hold_floor_pending[v].min(4) as usize;
+            self.perf.hold_floor_frames[v][code] = self.perf.hold_floor_frames[v][code].wrapping_add(1);
+            if code == render::frame_plan::hold_floor::JUMP_BOUND as usize && self.perf.rec[v].interacting {
+                self.perf.hold_bound_moving[v] = self.perf.hold_bound_moving[v].wrapping_add(1);
+            }
         }
         self.perf.rec = Default::default();
         // The pending per-frame events are this record's; the next one starts empty.
