@@ -5863,12 +5863,11 @@ impl FractadyneApp {
                         // present: the swap chain hides a pass's cost for two frames, so the
                         // quick interval that follows a 100 ms pass proves nothing about it.
                         // Dispatch is gated separately, on completions (`Perf::pin_inflight`,
-                        // `PIN_INFLIGHT_MAX`). Without timestamps, by the completion stamp as soon
-                        // as the completion is seen (`pin_pass_priceable`).
+                        // `PIN_INFLIGHT_MAX`), and once its completion is seen the completion
+                        // stamp prices it if no reading has (`pin_pass_priceable`).
                         pin_pass_priceable(
                             self.perf.pin_pass_gpu_ms[vs],
                             self.perf.frame_idx.saturating_sub(self.perf.pin_pass_frame[vs]),
-                            self.perf.timestamps_absent(),
                             self.perf.pin_inflight[vs],
                         )
                     } else {
@@ -6177,7 +6176,7 @@ impl FractadyneApp {
                     {
                         self.perf.pin_inflight[vs] = 0;
                     }
-                    self.perf.pin_inflight[vs] >= pin_inflight_max(self.perf.timestamps_absent())
+                    self.perf.pin_inflight[vs] >= crate::tunables::PIN_INFLIGHT_MAX
                         && self.perf.chunk_last_range[vs].is_some()
                 } else {
                     !interacting
@@ -7699,8 +7698,9 @@ impl FractadyneApp {
                     crate::tunables::cost().tdr_bootstrap_steps,
                 );
                 let passes = if pinned_refresh {
-                    // With `PIN_INFLIGHT_MAX` passes pipelined a pin dispatches about one pass
-                    // per frame while they are cheap, so the frames the rate allows are passes.
+                    // The frames the rate allows, counted as passes. With one pin pass in flight
+                    // (`PIN_INFLIGHT_MAX`) a pin dispatches nearer one pass per two frames, but each
+                    // pass is priced and grows; this sizing is the one the 2026-10-12 A/B measured.
                     frames_allowed.max(1)
                 } else {
                     1

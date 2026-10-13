@@ -2033,12 +2033,6 @@ impl Perf {
         self.view_done[v].lock().map(|d| *d).unwrap_or_default()
     }
 
-    /// No GPU timestamps reach the budget: the adapter lacks the feature, or they stopped arriving
-    /// and the wall-clock fallback stands in.
-    pub(crate) fn timestamps_absent(&self) -> bool {
-        !self.ts_supported || self.wall_fallback
-    }
-
     /// Registrations of this view's work not yet confirmed complete.
     pub(crate) fn view_outstanding(&self, v: usize) -> u64 {
         self.view_reg_seq[v].saturating_sub(self.view_last_done(v).seq)

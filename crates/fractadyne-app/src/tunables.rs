@@ -1250,14 +1250,20 @@ pub(crate) const PIN_PASS_FRAMES: u32 = 2;
 /// must not wedge the pin).
 pub(crate) const PIN_PRICE_WAIT_FRAMES: u64 = 5;
 
-/// Pin passes allowed in the GPU queue at once. One (strict serialization, priced before the
-/// next) made a pass every third frame, and at 4.0× a 60k-iteration refresh then took longer
-/// than the 2-octave drift abandon — the held frame aged 12 octaves on screen while the cadence
-/// read perfect. Two pipelines the completion latency away: a pass per frame while passes are
-/// cheap, and the worst stall is two target-sized passes. Pricing pairs the LATEST pass with
-/// its own timestamp reading; the older one goes unpriced (the ledger learns from every other
-/// pass, which is plenty).
-pub(crate) const PIN_INFLIGHT_MAX: u32 = 2;
+/// Pin passes allowed in the GPU queue at once: ONE, each priced (by its GPU reading if one lands
+/// first, otherwise by its completion stamp, `render::pin_pass_priceable`) before the next goes.
+///
+/// ⚠It was two, on the evidence that strict serialization made a pass every third frame and at
+/// 4.0× a 60k-iteration refresh outlived the 2-octave drift abandon. That was before a pass could
+/// be priced by its completion: with two in flight a new pass went out every frame, a reading
+/// paired only to the latest, and in a traced `--motiontest` 34 of 622 pin passes were priced
+/// ("the ledger learns from every other pass" was not so), so the band licences barely grew and
+/// passes stayed small. One in flight, every pass priced, on the RTX 3080 (2026-10-12, interleaved):
+/// the motiontest adopts 43–44 complete refreshes a run against 12–16; a 20-octave zoomtest's
+/// frame on screen lags the view 0.11 against 0.30 octaves (worst 1.5× against 2.1× magnified)
+/// with twice the pinned refreshes adopted; at 4.0× it lags 0.55–0.65 against 0.77–0.89 octaves
+/// with as many adopted. Fewer passes are dispatched, so the GPU does less for it.
+pub(crate) const PIN_INFLIGHT_MAX: u32 = 1;
 
 /// Wall time after which a pin pass still "in flight" is deemed complete, microseconds. The
 /// completion callback is registered in `update`; a headless harness (`--livetest`,
