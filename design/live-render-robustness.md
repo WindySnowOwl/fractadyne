@@ -3123,3 +3123,26 @@ bound-2 run with six frames over 33 ms (max 47 ms) where the bound-4 runs had no
 inside each arm covers the gap, so the earlier U40 deficit was mostly noise too, and the committed
 bound stays: it is the mirror of `MOTION_CUT_MAX`, and nothing measured asks for a looser one.
 
+**2026-10-12 — one pin pass in flight, every pass priced, timestamps or not (`PIN_INFLIGHT_MAX`
+2 → 1).** The no-timestamps fix showed that path adopting three times the refreshes of the
+timestamped one, because with two passes in flight a reading pairs only to the latest pass and
+34 of 622 were priced. An interleaved A/B on the RTX 3080 with the completion rule everywhere:
+
+| | committed (2 in flight) | 1 in flight, every pass priced |
+|---|---|---|
+| motiontest complete adoptions (4 runs) | 16, 15, 15, 12 | 43, 43, 44, 43 |
+| zoomtest 20 oct: on-screen lag, mean (3 runs) | 0.27–0.35 oct | 0.10–0.12 oct |
+| … worst held magnification | 2.13× | 1.51× |
+| … pinned refreshes adopted | 68–79 | 144–158 |
+| … frames over 50 ms | 4 (three runs) | 0 |
+| zoomtest at 4.0×: on-screen lag | 0.77–0.89 oct | 0.55–0.65 oct |
+| … pinned refreshes adopted | 31–34 | 33–36 |
+
+The zoomtest's "real refreshes" fall (33/s → 15/s at the default rate) because it counts frames that
+re-iterated, and a pin dispatches a pass about every second frame now; what is ON SCREEN (the lag) is
+what improved. The reason two were allowed — strict serialization made a pass every third frame and
+at 4.0× a 60k-iteration refresh outlived the drift abandon — predates pricing by completion: then an
+unpriced pass's licence never grew, now each pass grows the next. `pin_pass_priceable` prices by the
+reading when it lands first, else by the completion stamp once seen, else after the 5-frame wait.
+The refresh-resolution sizing still counts the rate's frames as passes; it was left as measured.
+
