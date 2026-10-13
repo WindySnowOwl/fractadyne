@@ -3146,3 +3146,24 @@ unpriced pass's licence never grew, now each pass grows the next. `pin_pass_pric
 reading when it lands first, else by the completion stamp once seen, else after the 5-frame wait.
 The refresh-resolution sizing still counts the rate's frames as passes; it was left as measured.
 
+**2026-10-12 — the RX 6800 XT on field build `v0.3.0-beta.19.dev.4` (everything since dev.3: U11/U12,
+U23, U40, U46, the no-timestamps pin fix, one pin pass in flight), user approved; dev.3 run alongside
+as the baseline on the same card.** All five runs exit 0, logcheck PASS.
+
+| PLUTO, same command | dev.3 | dev.4 |
+|---|---|---|
+| zoomtest 20 oct: frame on screen lags the view | 0.316 oct | 0.099 oct |
+| … pinned refreshes adopted | 69 | 159 |
+| … frames over 33 ms / over 50 ms | 17 / 0 | 21 / 0 (p99 33.5 → 38.2 ms) |
+| motiontest complete adoptions (both PASS) | 16 | 52 |
+| budget trap: frames over 200 / 400 ms, worst | 6 / 1, 468 ms | 5 / 2, 484 ms |
+| … dispatches over the admission | 0 | 0 |
+
+The motion result carries over from the RTX 3080: the picture on screen is three times closer to the
+view and pins complete two to three times as often. The Radeon shows a few more frames between 33
+and 48 ms in the zoomtest (17 → 21, none past 50): the priced pin passes grow, and on the slower card
+a grown pass costs a frame now and then. The trap is unchanged within run-to-run spread; its worst
+frames remain single settle tiles at the cap. In the trap the opening guess (the unconfident
+admission) now sits near 5e6 steps: the storm keeps re-lowering the per-mode minimum faster than
+U23 lets it recover, as designed.
+
