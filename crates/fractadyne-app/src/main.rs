@@ -15344,12 +15344,14 @@ impl FractadyneApp {
             );
             self.perf.wall_probe[v] = probe;
             if let Some((ms, steps)) = priced {
-                // The wall fallback prices "the interval at which the queue finally STALLS" —
-                // unlike a GPU timestamp it genuinely proves the whole queue drained, so
-                // clear-to-zero is honest here (and it only runs once timestamps are starved).
-                self.perf.full_inflight[v] = 0;
-                self.perf.full_reg_pending[v] = 0;
-                self.perf.full_done[v].store(0, std::sync::atomic::Ordering::Relaxed);
+                // ⚠It does NOT clear the motion-jam backlog (`full_inflight`) any more (U46). It used
+                // to, on the grounds that "the interval at which the queue finally stalls proves the
+                // whole queue drained" — but the interval proves no such thing (the frame after a
+                // big dispatch is quick while the GPU still runs it: 7.4 ms after an 8.06e9-step
+                // tile on the RX 6800 XT), and zeroing the count, the owed registrations and the
+                // fired callbacks re-admitted full-size dispatches the GPU had not finished, the
+                // crash-1787275348-0 shape. Completion callbacks retire the backlog here as they do
+                // everywhere else; they work without timestamps.
                 self.apply_iterate_measurement(v, ms, steps, "wall_iterate");
                 self.perf.fed_frame[v] = self.perf.frame_idx;
             }
