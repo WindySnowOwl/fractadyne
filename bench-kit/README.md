@@ -489,7 +489,7 @@ us for it. Build it with `javac -cp FZMinimalRenderer.jar -d classes FzBench.jav
 on `PATH`, or `-JavaExe <java.exe>`). For each scene and rep the lane starts one JVM in a fresh
 working folder (`fz-work\<scene>-r<rep>\`), and FzBench:
 
-- starts from Fractal Zoomer's defaults: the folder has no `MRpreferences.ini`, which is where
+- starts from Fractal Zoomer's defaults: the folder has no `IEpreferences.ini`, which is where
   the Minimal Renderer keeps its preferences and the image size;
 - writes the scene's `.fzs` with Fractal Zoomer's own `Settings.save`: the `.kfr` centre, the
   iteration cap from the scene table, and the magnification as `size = 4 / Zoom` (Fractal

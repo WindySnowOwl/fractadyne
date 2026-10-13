@@ -875,7 +875,7 @@ if ($have.imaginacli) {
 # method Successive Refinement (the default, Patterned Successive Refinement, is for the main window's
 # rendering effects). FzBench writes those into each scene's .fzs; Fractal Zoomer then chooses its
 # arbitrary-precision library and uses Zhuoran's BLA by default. One JVM per image, each in a fresh
-# working folder: Fractal Zoomer reads MRpreferences.ini from there, and does not reuse a reference
+# working folder: Fractal Zoomer reads IEpreferences.ini from there, and does not reuse a reference
 # orbit between loads anyway.
 if ($have.fractalzoomer) {
     $wh = $Size -split 'x'
