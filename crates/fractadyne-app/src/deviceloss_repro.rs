@@ -34,6 +34,69 @@
 
 use crate::FractadyneApp;
 
+#[cfg(test)]
+#[path = "deviceloss_repro_tests.rs"]
+mod tests;
+
+/// The field's STALE budget (2026-09-27): learned at 1.515e11 steps and carried to the crash view, it
+/// sized whole-frame dispatches of 1.0–2.0 s on the RX 6800 XT. The criterion's second arm injects
+/// it, confident, to ask what the live path does with a stale budget at this view.
+const FIELD_STALE_BUDGET: u64 = 151_500_000_000;
+
+/// How long the criterion waits for the LIVE reference at the view (the measurements above use the
+/// export path's own, which the live decision cannot see). A view without one cannot be judged.
+const LIVE_REF_WAIT_S: u64 = 180;
+
+/// The cost model the verdict fits from this run's measurements: a floor window costs
+/// `~ area^a`, and at the safe area `safe_px` one window of `W` iterations costs `exp(winter) · W^b`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CostModel {
+    pub(crate) a: f64,
+    pub(crate) b: f64,
+    pub(crate) winter: f64,
+    pub(crate) safe_px: f64,
+}
+
+impl CostModel {
+    /// The predicted wall of ONE dispatch of `window` iterations over `px` samples, ms.
+    pub(crate) fn predict_ms(&self, window: f64, px: f64) -> f64 {
+        (self.winter + self.b * window.max(1.0).ln()).exp() * (px.max(1.0) / self.safe_px).powf(self.a)
+    }
+}
+
+/// What the live path would dispatch first at the view, read from `build_params`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LiveDispatch {
+    /// The frame walks iteration windows (a chunk range).
+    pub(crate) chunked: bool,
+    /// The frame is split into spatial tiles (without chunking).
+    pub(crate) tiled: bool,
+    /// Iterations of real work in the first dispatch (past the SA seed).
+    pub(crate) window: u32,
+    /// Samples it covers (pixels × ss²).
+    pub(crate) px: u64,
+}
+
+/// `--deviceloss-repro`'s criterion (design §7.3 gate 3): the reasons it fails. RED when an arm's
+/// first dispatch is predicted to reach `lethal_ms` WHILE the live path would not have chunked it —
+/// a chunked frame's passes are bounded by the window actuator the rest of this harness prices, an
+/// unchunked one is not. An exit code without a criterion is the vacuous gate the plan abolishes.
+pub(crate) fn repro_criterion(arms: &[(&str, LiveDispatch, f64)], lethal_ms: f64) -> Vec<String> {
+    let mut red = Vec::new();
+    for (label, d, ms) in arms {
+        if !d.chunked && *ms >= lethal_ms {
+            red.push(format!(
+                "{label}: the live path sends {} of {} iterations over {:.2e} samples UNCHUNKED, predicted {ms:.0} ms \
+                 (lethal band {lethal_ms:.0} ms)",
+                if d.tiled { "a tile" } else { "the whole frame" },
+                d.window,
+                d.px as f64
+            ));
+        }
+    }
+    red
+}
+
 /// The Seahorse period-998 nucleus — the deep test battery's `NX/NY`, an EXACT interior point (its
 /// critical orbit is periodic ⇒ bounded ⇒ the reference never escapes ⇒ it builds to the device cap,
 /// `partial=true`, which is the specimen). Carried to full precision so it lands on the nucleus.
@@ -151,8 +214,9 @@ impl FractadyneApp {
         let (zoom_log2, ref_iter, center, m_jump, throttled_iter) =
             (r.zoom_log2, r.ref_iter, r.center.clone(), r.m_jump, r.throttled_iter);
         self.harness.deviceloss_repro.as_mut().unwrap().done = true;
-        self.run_deviceloss_repro(device, queue, zoom_log2, ref_iter, center, m_jump, throttled_iter);
-        true
+        // The criterion IS the exit code (design §7.3 gate 3): 0 pass, 2 red or vacuous.
+        let code = self.run_deviceloss_repro(device, queue, zoom_log2, ref_iter, center, m_jump, throttled_iter);
+        crate::exit(code)
     }
 
     fn run_deviceloss_repro(
@@ -164,7 +228,7 @@ impl FractadyneApp {
         center: Option<(String, String)>,
         m_jump: bool,
         throttled_iter: Option<u32>,
-    ) {
+    ) -> i32 {
         println!(
             "Fractadyne device-loss repro — {}\n\
              Safe, deterministic reproduction of the deep-interior device loss: measures the honest\n\
@@ -184,7 +248,8 @@ impl FractadyneApp {
             (fractadyne_core::parse_bf(&cx_s), fractadyne_core::parse_bf(&cy_s))
         else {
             println!("ABORT: the centre coordinates did not parse.");
-            return;
+            println!("--deviceloss-repro: VERDICT FAIL: VACUOUS - no view");
+            return 2;
         };
         self.fractal = crate::FractalKind::Mandelbrot;
         self.julia_mode = false;
@@ -255,7 +320,8 @@ impl FractadyneApp {
         );
         if base.orbit_len == 0 {
             println!("ABORT: no reference (orbit_len=0) — a non-perturbation view. Pick a deeper zoom.");
-            return;
+            println!("--deviceloss-repro: VERDICT FAIL: VACUOUS - no reference");
+            return 2;
         }
         if base.mode > 2 || !base.resumable() {
             println!(
@@ -263,7 +329,8 @@ impl FractadyneApp {
                  would fall back to one unbounded dispatch and measure nothing.",
                 base.mode, base.formula
             );
-            return;
+            println!("--deviceloss-repro: VERDICT FAIL: VACUOUS - outside the chunk shaders' scope");
+            return 2;
         }
 
         // Bracket a couple of REAL floor windows just past the SA skip (windows ending at/below
@@ -474,7 +541,113 @@ impl FractadyneApp {
             safe_w,
             safe_h,
         );
-        self.report_deviceloss_verdict(&pts, &win_pts, hot_ms, safe_px, target_px, inversion.as_ref());
+        let model = self.report_deviceloss_verdict(&pts, &win_pts, hot_ms, safe_px, target_px, inversion.as_ref());
+        self.report_live_criterion(model, ref_iter)
+    }
+
+    /// The live path's first dispatch at this view, with the frame budget at `budget` (`None` = fresh,
+    /// the opening guess) - read from `build_params` once the LIVE reference exists. `None` when it
+    /// never did.
+    fn live_dispatch(&mut self, iter: u32, budget: Option<u64>) -> Option<LiveDispatch> {
+        self.perf.tile_state = [None, None];
+        self.perf.tile_pending = [false, false];
+        self.perf.chunk_sig = [(0, 0, [0, 0], 0); 2];
+        self.perf.chunk_cursor = [0, 0];
+        self.perf.chunk_idx = [0, 0];
+        self.perf.chunk_inflight = [None, None];
+        self.perf.chunk_bands = [[0; crate::tunables::CHUNK_BANDS], [0; crate::tunables::CHUNK_BANDS]];
+        let mut last = None;
+        for _ in 0..3 {
+            self.perf.frame_idx += 1;
+            match budget {
+                Some(b) => {
+                    self.perf.fe_budget = [b, b];
+                    self.perf.fe_budget_ok = [true, true];
+                    self.perf.fed_frame = [self.perf.frame_idx; 2];
+                }
+                None => {
+                    self.perf.fe_budget = [0, 0];
+                    self.perf.fe_budget_ok = [false, false];
+                }
+            }
+            let center_bf = [self.viewport.center_x.clone(), self.viewport.center_y.clone()];
+            let center = self.viewport.center_f64();
+            let span = self.viewport.complex_span_fe();
+            let mag = self.viewport.magnification();
+            let l2 = self.viewport.log2_magnification();
+            let pr = self.build_params(
+                center_bf, center, span, mag, l2, self.fractal, false, iter, false, 1, [TARGET_W, TARGET_H], 0, None,
+            );
+            if self.ref_cache[0].ref_pt.is_none() {
+                continue;
+            }
+            let per_iter = (pr.resolution[0] as u64) * (pr.resolution[1] as u64) * (pr.ss as u64).pow(2);
+            let real = |s: u32, e: u32| e.saturating_sub(s.max(pr.sa_skip)).max(1);
+            last = Some(match (pr.chunk_range, pr.tile) {
+                (Some([s, e]), _) => LiveDispatch { chunked: true, tiled: pr.tile.is_some(), window: real(s, e), px: per_iter },
+                (None, Some(r)) => {
+                    let window = real(0, iter);
+                    let steps = crate::render::tile_steps(r, pr.ss, iter);
+                    LiveDispatch { chunked: false, tiled: true, window, px: steps / (iter.max(1) as u64) }
+                }
+                (None, None) => LiveDispatch { chunked: false, tiled: false, window: real(0, iter), px: per_iter },
+            });
+        }
+        last
+    }
+
+    /// The criterion (design §7.3 gate 3), printed, and the exit code.
+    fn report_live_criterion(&mut self, model: Option<CostModel>, iter: u32) -> i32 {
+        println!("\n── criterion: what the LIVE path would dispatch here (design §7.3 gate 3) ──");
+        let Some(model) = model else {
+            println!("--deviceloss-repro: VERDICT FAIL: VACUOUS - too few measurements to price a dispatch");
+            return 2;
+        };
+        // The live reference at this view: the measurements above used the export path's own.
+        let t0 = std::time::Instant::now();
+        while self.ref_cache[0].ref_pt.is_none() && t0.elapsed().as_secs() < LIVE_REF_WAIT_S {
+            let _ = self.live_dispatch(iter, None);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        if self.ref_cache[0].ref_pt.is_none() {
+            println!(
+                "--deviceloss-repro: VERDICT FAIL: VACUOUS - the live reference never arrived in {LIVE_REF_WAIT_S} s"
+            );
+            return 2;
+        }
+        let lethal = crate::tunables::cost().tdr_lethal_ms;
+        let mut arms: Vec<(&str, LiveDispatch, f64)> = Vec::new();
+        for (label, budget) in [("fresh budget", None), ("the field's stale budget (1.515e11, confident)", Some(FIELD_STALE_BUDGET))] {
+            match self.live_dispatch(iter, budget) {
+                Some(d) => {
+                    let ms = model.predict_ms(d.window as f64, d.px as f64);
+                    println!(
+                        "  {label}: {} — first dispatch {} iterations over {:.2e} samples ⇒ predicted ~{ms:.0} ms",
+                        match (d.chunked, d.tiled) {
+                            (true, _) => "CHUNKED",
+                            (false, true) => "tiled, unchunked",
+                            (false, false) => "ONE unchunked whole-frame dispatch",
+                        },
+                        d.window,
+                        d.px as f64
+                    );
+                    arms.push((label, d, ms));
+                }
+                None => println!("  {label}: no decision (the live reference was lost)"),
+            }
+        }
+        if arms.is_empty() {
+            println!("--deviceloss-repro: VERDICT FAIL: VACUOUS - no live decision to judge");
+            return 2;
+        }
+        let red = repro_criterion(&arms, lethal);
+        if red.is_empty() {
+            println!("--deviceloss-repro: VERDICT PASS");
+            0
+        } else {
+            println!("--deviceloss-repro: VERDICT FAIL: {}", red.join("; "));
+            2
+        }
     }
 
     /// Reproduce the SA-skip inversion against the built reference: what the live throttle's budget
@@ -571,11 +744,11 @@ impl FractadyneApp {
         safe_px: f64,
         target_px: f64,
         inversion: Option<&Inversion>,
-    ) {
+    ) -> Option<CostModel> {
         println!("\n── verdict ──");
         if pts.len() < 2 {
             println!("  Not enough points to fit. No verdict.");
-            return;
+            return None;
         }
         // Fit worst_ms ~ px^a in log-log (least squares), and separately take the highest measured
         // rate (ms per pixel) as a conservative linear predictor — a≈1 is the expectation for a
@@ -653,6 +826,7 @@ impl FractadyneApp {
         // This is the field's real question — its lethal in-flight pass was a large window, not the
         // floor. Fit worst ~ window^b at the safe area, scale to full res by the AREA exponent above,
         // and solve for the window that reaches ~1 s.
+        let mut model = None;
         if win_pts.len() >= 2 {
             let m = win_pts.len() as f64;
             let wx: f64 = win_pts.iter().map(|(w, _)| w.ln()).sum();
@@ -661,6 +835,9 @@ impl FractadyneApp {
             let wxy: f64 = win_pts.iter().map(|(w, t)| w.ln() * t.ln()).sum();
             let b = (m * wxy - wx * wy) / (m * wxx - wx * wx);
             let winter = (wy - b * wx) / m;
+            if a.is_finite() && b.is_finite() && winter.is_finite() {
+                model = Some(CostModel { a, b, winter, safe_px });
+            }
             // Scale the safe-area window fit to full res by the area exponent measured above.
             let area_factor = (target_px / safe_px).powf(a);
             println!(
@@ -729,5 +906,6 @@ impl FractadyneApp {
             self.gpu_name.trim(),
             self.gpu_backend.trim(),
         );
+        model
     }
 }
