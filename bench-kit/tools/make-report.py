@@ -459,13 +459,13 @@ def guess_output(d, renderer, scene):
 
 
 # TWO CLOCKS, NEVER MIXED (README, "Fairness protocol"). Most lanes compete on the WALL, process start
-# to image on disk. Fractal Zoomer renders a whole round in one batch, so it has no per-image process;
-# it competes on its OWN figure (Total Elapsed Time: reference + pixels, without Java's start-up, the
+# to image on disk. Fractal Zoomer's process carries ~10 s of start-up a user pays once per session,
+# so it competes on its OWN figure (Total Elapsed Time: reference + pixels, without Java's start-up, the
 # user-code compile and saving the image - start-up a user pays once per session). Put beside the
 # walls, that figure would win every scene by the other renderers' start-up alone, so it never is:
 # the report adds Fractadyne's own figure as the pseudo-lane OWN_FD (the fractadyne rows'
 # reported_s: render + PNG save, without the process start) and each clock picks its own fastest.
-# Fractal Zoomer's wall_s in results.csv is the time since its batch's previous image was written.
+# Fractal Zoomer's wall_s in results.csv is its process, start to exit (a fresh one per scene).
 OWN_FD = "fractadyne-own"
 REPORTED_LANES = {"fractalzoomer", OWN_FD}
 
@@ -799,12 +799,12 @@ def main():
         a("<p class='note'>The (reported) columns are each renderer's own figure, and they compete "
           "only with each other, never with a wall-clock column. Fractal Zoomer's is its Total "
           "Elapsed Time: the reference and the pixels, without Java's start-up, the user-code "
-          "compile it runs at start-up (this kit runs one batch per round, as a user starts it "
-          "once per session) or saving the image. Fractadyne's is the render and the PNG save, "
+          "compile it runs at start-up (this kit starts a fresh process per scene; a user starts "
+          "it once per session) or saving the image. Fractadyne's is the render and the PNG save, "
           "without the process start. The rendering method Fractal Zoomer's author asked for, "
           "Successive Refinement, guesses flat regions instead of iterating every pixel; "
-          "Fractadyne iterates every pixel. Fractal Zoomer's per-image wall clock (since the "
-          "previous image of its batch was written) is in results.csv.</p>")
+          "Fractadyne iterates every pixel. Fractal Zoomer's wall clock (its process, start to "
+          "exit) is in results.csv.</p>")
 
     # ---- results table
     a("<h2>Results</h2>")

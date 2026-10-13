@@ -500,12 +500,21 @@ What the lane does:
   `Settings.save`: the `.kfr` centre, the iteration cap from the scene table, and the
   magnification as `size = 4 / Zoom` (Fractal Zoomer's `size` spans the shorter side of the image,
   the height here), at the precision Fractal Zoomer itself derives from those strings;
-- per round, renders them all in ONE batch (`--cli_batch_dir`, `--cli_width`/`--cli_height` from
-  `-Size`, `--cli_output_dir`), one Java process, in a fresh working folder (`fz-batch\r<rep>\`):
-  the start-up is paid once per round, as a user pays it once per session. The command line reads
-  no preferences file; everything comes from the `.fzs` and the arguments. Each batch opens with an
-  untimed warm-up image at a view outside the set (`00-warmup`, the first in name order), as the
-  FractalShark server gets one;
+- renders each scene of each round in a FRESH Java process of its own, through the command line
+  (`--cli_batch_dir` holding just that scene's `.fzs`, `--cli_width`/`--cli_height` from `-Size`,
+  `--cli_output_dir`), in a fresh working folder (`fz-batch\r<rep>\<scene>\`). The command line
+  reads no preferences file; everything comes from the `.fzs` and the arguments.
+
+  ⚠**Why a fresh process per scene, with no warm-up.** Fractal Zoomer's pixel loop runs at a speed
+  that depends on what the same Java process rendered before it (measured 2026-10-13 at 4K, on
+  Java 8 and 11, with the heap size making no difference). Rendered in one batch after scene 14,
+  scenes 17 and 35 took 2-3x as long (17: 9.3-10.9 s against 4.3 s in a fresh process). After a
+  cheap warm-up image, scenes 58 and 59 took 3.4x as long (59: 250 s against 73.5 s fresh, every
+  round within 1%), so the warm-up meant to help hurt. A fresh process times each scene by itself,
+  as a user opening that location sees it. On the shortest scenes the Java compiler's first-run
+  cost, a few hundred milliseconds, is part of that. `-FractalZoomerSharedBatch` (one batch per
+  round) and `-FractalZoomerWarmup` (an untimed warm-up image at a view outside the set first)
+  reproduce the effects;
 - reads each scene's time from the `<scene>.stats` file the batch writes beside the image, checks
   the image is complete (`Test-PngComplete`) and has structure, and keeps every `.stats` and the
   batch's output. The command line exits 0 even when a file fails, so a missing image or `.stats`,
@@ -520,13 +529,13 @@ does less work for the same picture. Fractadyne iterates every pixel.
 
 **The lane competes on Fractal Zoomer's own time, not the wall.** Its Total Elapsed Time is the
 reference orbit plus the pixels, measured inside the program, without saving the image; the
-reference alone is in each row's note. Its `wall_s` in `results.csv` is the time since the previous
-image of its batch was written: loading the `.fzs`, rendering and saving, without Java's start-up,
-which is not the other lanes' process-start-to-image clock. So the report never ranks Fractal
-Zoomer against a wall-clock column (see "Fairness protocol"); it puts it beside Fractadyne's own
+reference alone is in each row's note. Its `wall_s` in `results.csv` is its process, start to exit:
+starting Java, compiling its user code, rendering and saving, about 10 s more than its own time on
+the test machine, which a user pays once per session. So the report never ranks Fractal Zoomer
+against a wall-clock column (see "Fairness protocol"); it puts it beside Fractadyne's own
 figure instead, which is the render and the PNG save without the process start. Fractal Zoomer does
-not reuse a reference orbit between loads, and every round is a new process, so the reps of a scene
-are independent. The view check (`fz-view-check.json`) compares each image with Fractadyne's
+not reuse a reference orbit between loads, and every scene of every round is a new process, so the
+reps of a scene are independent. The view check (`fz-view-check.json`) compares each image with Fractadyne's
 render of the same scene, as for FractalShark and Imagina.
 
 Before the command line existed (Fractal Zoomer 1.0.9.5), the lane drove the Minimal Renderer
