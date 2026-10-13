@@ -3090,3 +3090,27 @@ cut), and on the RX 6800 XT trap with B4 (dev.3) every moving pass was fast (wor
 settled tile). A gate needs §7.2's gate 3 (an extra-GPU-load rung that raises the real per-step cost
 under unchanged pass sizes), which is W9's instrument and not built.
 
+**2026-10-12 — without GPU timestamps, pins never adopted a refresh: fixed.** Found while testing
+U46: `--motiontest` with `FRACTADYNE_NO_TIMESTAMPS=1` failed A2 ("no complete refresh was adopted
+during motion") on the RTX 3080, on the dev.1 field build (main's behaviour) too. Two defects:
+
+- **No pin pass was ever priced.** A pin pass is priced by its own GPU timestamp, or by its completion
+  stamp after `PIN_PRICE_WAIT_FRAMES` (5). Up to `PIN_INFLIGHT_MAX` (2) pin passes may be queued, so
+  a new one went out every frame and restarted the wait; without timestamps none was priced (0
+  pin-price lines in a traced run, against 34 with timestamps), the band licence never grew from its
+  opening value, and a pin crawled ~1,500 iterations a frame toward a 1,000,000 ask until it drifted
+  out. `pin_pass_priceable`: without timestamps a pass is priced as soon as its completion has been
+  seen, and `pin_inflight_max` holds the pin to one pass in flight so that it can be.
+- **The completion-stamp price counted the pipeline as cost.** It subtracts `PIN_PASS_FRAMES` frames
+  of latency, measured in `frame_ms`, which excludes the frame cap's sleep: ~3 ms at a capped 60 Hz
+  where a frame takes ~16.7. Every pin pass then read ~25 ms against the 20 ms target and its licence
+  halved. `Perf::frame_period_ms` is the raw period, sleep included, and the price now subtracts it
+  (prices of 0–1 ms for the same passes; licences grow ×2 a pass).
+
+Without timestamps the motiontest now passes, three runs of three, adopting 36–40 complete refreshes
+(0 before); with timestamps it passes as before (12–14). That the no-timestamps path now adopts more
+is itself a finding: with timestamps only 34 of 622 pin passes were priced (readings pair to the
+latest pass, and a new pass usually replaced it first), so the timestamp path's pins are
+under-priced too. Follow-up, not done: price pin passes by completion with timestamps as well, and
+measure cadence at 4.0×, the reason `PIN_INFLIGHT_MAX` is 2.
+
