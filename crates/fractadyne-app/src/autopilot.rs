@@ -552,7 +552,14 @@ impl FractadyneApp {
         } else if ready && now - self.autopilot.eval_t > eval_interval {
             self.autopilot.eval_t = now;
             if let Some((dev, q)) = gpu {
+                // ⚠A synchronous GPU render on the UI thread (U38): timed into `offscreen_ms`, so
+                // the tripwire subtracts it from this frame's interval as it does a CLI render, and
+                // recorded (`probe_ms`), so its cost is no longer invisible to every accounting.
+                let t0 = std::time::Instant::now();
                 let probe = self.autopilot_probe(dev, q);
+                let probe_ms = t0.elapsed().as_secs_f64() * 1000.0;
+                self.perf.offscreen_ms += probe_ms;
+                self.perf.probe_ms = self.perf.probe_ms.max(0.0) + probe_ms;
                 let aspect = self.viewport.width_px / self.viewport.height_px;
                 let may_retarget = now - self.autopilot.retarget_t > RETARGET_COOLDOWN;
                 let steer = probe.as_ref().and_then(|p| {

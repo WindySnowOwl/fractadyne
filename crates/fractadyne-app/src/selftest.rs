@@ -7349,7 +7349,7 @@ impl FractadyneApp {
                 self.perf.fe_budget_ok,
                 self.perf.chunk_bands,
                 self.perf.retreat_last,
-                self.perf.retreat_frame,
+                self.perf.retreat_pending,
                 self.perf.last_iterate_ms,
                 self.perf.witness_pending[0].take(),
             );
@@ -7370,7 +7370,7 @@ impl FractadyneApp {
             self.perf.fe_budget_ok = saved.1;
             self.perf.chunk_bands = saved.2;
             self.perf.retreat_last = saved.3;
-            self.perf.retreat_frame = saved.4;
+            self.perf.retreat_pending = saved.4;
             self.perf.last_iterate_ms = saved.5;
             self.perf.witness_pending[0] = saved.6;
             let floor_ok = matches!(at_floor, Some(crate::render::RetreatOutcome::NoActuatorReachable { .. }));

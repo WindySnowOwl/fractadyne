@@ -52,7 +52,7 @@ use std::time::Duration;
 
 /// Bumped whenever a field is added, removed, retyped or reordered. Every record and every file
 /// header carries it, and a reader must refuse a schema it does not know rather than guess.
-pub(crate) const SCHEMA: u16 = 8;
+pub(crate) const SCHEMA: u16 = 9;
 /// Records the in-memory ring (and `frames.bin`) holds. At the 1–5 fps of the failing cadence
 /// that is 14–68 minutes of one view — the ring lengthens in TIME exactly as the app slows down,
 /// the opposite of the 24-entry decision ring it supersedes.
@@ -339,6 +339,9 @@ frame_record! {
     /// 0 none, 1 applied (the next dispatch can be smaller than the lethal one), 2 NO ACTUATOR
     /// REACHABLE (what the retreat drives was already at its floor).
     retreat: u8,
+    /// The autopilot's steering probe this frame, ms (schema 9; U38): a synchronous render on the
+    /// UI thread, also counted in the tripwire's offscreen time. -1 = none this frame.
+    probe_ms: f32,
     present_throttle: u32,
 
     // ---- the state (as dispatched, not as requested)

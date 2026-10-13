@@ -5838,7 +5838,7 @@ impl FractadyneApp {
                         // walk's floor, so it is smaller than this one only if the floor is.
                         let outcome = crate::render::retreat_outcome(size as u64, floor as u64);
                         self.perf.retreat_last[vs] = Some(outcome);
-                        self.perf.retreat_frame[vs] = self.perf.frame_idx;
+                        self.perf.retreat_pending[vs] = self.perf.retreat_pending[vs].max(outcome.code());
                         crate::diag::log_line(
                             "render",
                             &format!(

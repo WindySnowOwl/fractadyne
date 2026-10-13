@@ -1423,10 +1423,18 @@ struct Perf {
     /// each one is a second pass released onto a queue still running the first (U3/U47); the
     /// first per view is logged.
     pin_escapes: [u32; 2],
-    /// The last emergency retreat's outcome per view, and the frame it happened in (frame record
-    /// `retreat`, schema 8; `render::retreat_outcome`, W3 gate 2).
+    /// The last emergency retreat's outcome per view (`render::retreat_outcome`, W3 gate 2), and
+    /// the outcome code PENDING for the next frame record (`retreat`, schema 8; the worse of any
+    /// this frame), cleared when the record is written.
+    ///
+    /// ⚠PENDING, not stamped with the frame: the records are written at the end of `update`, after
+    /// `frame_idx` has advanced, so a stamp taken earlier in the frame never matched (the probe's
+    /// `probe_ms` read -1 on every frame of a 112 s autodive).
     retreat_last: [Option<render::RetreatOutcome>; 2],
-    retreat_frame: [u64; 2],
+    retreat_pending: [u8; 2],
+    /// The autopilot's steering probe since the last frame record, ms (-1 = none; frame record
+    /// `probe_ms`, schema 9; U38). A synchronous render on the UI thread.
+    probe_ms: f64,
     /// SETTLE-TILE SERIALIZATION (`render::settle_tile_waits`): how much of this view's work is
     /// still in the GPU queue, and what the last completed piece cost. Every real dispatch of the
     /// view sets `view_reg_pending` and stamps `view_dispatch_at` / `view_dispatch_steps`; the next
@@ -2192,7 +2200,8 @@ impl Default for Perf {
             pin_dispatch_at: [0, 0],
             pin_escapes: [0, 0],
             retreat_last: [None, None],
-            retreat_frame: [0, 0],
+            retreat_pending: [0, 0],
+            probe_ms: -1.0,
             view_reg_pending: [false, false],
             view_dispatch_at: [0, 0],
             view_dispatch_steps: [0, 0],
@@ -15009,10 +15018,8 @@ impl FractadyneApp {
             r.full_inflight = p.full_inflight[v];
             r.pin_inflight = p.pin_inflight[v];
             r.pin_escapes = p.pin_escapes[v];
-            r.retreat = match p.retreat_last[v] {
-                Some(o) if p.retreat_frame[v] == p.frame_idx => o.code(),
-                _ => 0,
-            };
+            r.retreat = p.retreat_pending[v];
+            r.probe_ms = if v == 0 { p.probe_ms as f32 } else { -1.0 };
             r.present_throttle = p.present_throttle;
             r.visible_res = p.visible_res[v];
             r.motion_res = p.motion_res;
@@ -15063,6 +15070,9 @@ impl FractadyneApp {
             diag::frame_record::record(r);
         }
         self.perf.rec = Default::default();
+        // The pending per-frame events are this record's; the next one starts empty.
+        self.perf.retreat_pending = [0, 0];
+        self.perf.probe_ms = -1.0;
         self.perf.rec_us = t0.elapsed().as_secs_f32() * 1e6;
     }
 
@@ -15261,7 +15271,7 @@ impl FractadyneApp {
             let outcome = render::retreat_outcome(steps, next);
             let vb = v.min(1);
             self.perf.retreat_last[vb] = Some(outcome);
-            self.perf.retreat_frame[vb] = self.perf.frame_idx;
+            self.perf.retreat_pending[vb] = self.perf.retreat_pending[vb].max(outcome.code());
             diag::log_line(
                 "render",
                 &format!(
