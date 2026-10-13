@@ -52,7 +52,7 @@ use std::time::Duration;
 
 /// Bumped whenever a field is added, removed, retyped or reordered. Every record and every file
 /// header carries it, and a reader must refuse a schema it does not know rather than guess.
-pub(crate) const SCHEMA: u16 = 5;
+pub(crate) const SCHEMA: u16 = 6;
 /// Records the in-memory ring (and `frames.bin`) holds. At the 1–5 fps of the failing cadence
 /// that is 14–68 minutes of one view — the ring lengthens in TIME exactly as the app slows down,
 /// the opposite of the 24-entry decision ring it supersedes.
@@ -451,6 +451,12 @@ frame_record! {
     in_space: bool,
     in_keys: u8,
     autopilot: bool,
+    /// While the autopilot is on (schema 6; U53): seconds between its target re-evaluations, its
+    /// zoom speed and the Quality priority's cap on it, nepers/s (-1 = uncapped). The cost loop sets
+    /// the first (slow frames stretch it) and the third (refreshes that stop landing lower it).
+    ap_eval_s: f32,
+    ap_speed: f32,
+    ap_cap: f32,
     zoom_oct_s: f64,
 
     // ---- the instrument's own cost
