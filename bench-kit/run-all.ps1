@@ -114,6 +114,9 @@ param(
     [string]$FzsWriterPath = '',
     [string]$JavaExe = 'java',
     [string]$FractalZoomerJavaArgs = '-XX:+UseG1GC',
+    # One batch for a whole round instead of one per scene (see the lane): start-up once per round,
+    # but a scene's time then depends on the scenes before it in the process.
+    [switch]$FractalZoomerSharedBatch,
     # imagina-cli is built with msys2 mingw and needs that toolchain's DLLs on PATH; without them
     # it exits 0xC0000135 (DLL not found) with no message at all, which reads exactly like a
     # crash. Prepended for this lane only, never for the process. Autodetected when left empty.
@@ -879,17 +882,15 @@ if ($have.imaginacli) {
 # perturbation on, the rendering method Successive Refinement. Fractal Zoomer then picks its
 # arbitrary-precision library and uses Zhuoran's BLA by default.
 #
-# ONE BATCH PER ROUND, one Java process each, as its author intends the command line to be used: the
-# start-up (Java, the user-code compile, the colour maps) is paid once per round, as a user pays it
-# once per session. Each round opens with an untimed warm-up image at a view outside the set (the
-# FractalShark server's warm-up, for the same reason); rounds are separate processes, so nothing is
-# carried from one rep to the next. Java: its author's main target is 1.8, with -XX:+UseG1GC.
+# Each scene of each round is its own batch: an untimed warm-up image at a view outside the set (the
+# FractalShark server's warm-up, for the same reason), then the scene, in one Java process; nothing
+# is carried from one scene or rep to the next (see below for why, and -FractalZoomerSharedBatch). Java: its author's main target is 1.8, with -XX:+UseG1GC.
 # ⚠A JDK, not a JRE: Fractal Zoomer compiles its user code at start-up, and without a compiler it
 # opens a MODAL "Java Compiler was not found" dialog that the batch waits on forever.
 if ($have.fractalzoomer) {
     $wh = $Size -split 'x'
     $fzCp = $FractalZoomerJar + ';' + $FzsWriterPath
-    Write-Host ('Fractal Zoomer: its command line, one batch per round (' + $FractalZoomerJar + ', ' + $JavaExe + ' ' + $FractalZoomerJavaArgs + ')')
+    Write-Host ('Fractal Zoomer: its command line, ' + $(if ($FractalZoomerSharedBatch) { 'one batch per round' } else { 'one batch per scene after a warm-up' }) + ' (' + $FractalZoomerJar + ', ' + $JavaExe + ' ' + $FractalZoomerJavaArgs + ')')
     # The inputs, once per run: every scene's .fzs, and the warm-up view's.
     $fzsDir = Join-Path $outDir 'fz-fzs'
     New-Item -ItemType Directory -Force -Path $fzsDir | Out-Null
@@ -906,73 +907,88 @@ if ($have.fractalzoomer) {
     # FzsWriter runs Fractal Zoomer's static set-up, which unpacks libraries beside it; only the .fzs matter.
     Get-ChildItem -LiteralPath $fzsDir | Where-Object { $_.Extension -notin '.fzs', '.kfr' } |
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    # ⚠ONE BATCH PER SCENE by default (a warm-up image, then the scene, one process): measured
+    # 2026-10-13, scene 14 (1.6e148x, 800,000 iterations) rendered earlier in the same process makes
+    # 17 and 35 render 2-3x slower, on Java 8 and 11 alike and with a 24 GB heap too (17: 9.3-10.9 s
+    # after it, 3.7-5.2 s after only the warm-up). A scene's time must not depend on which scenes
+    # ran before it - the reason FractalShark gets a fresh server per image. -FractalZoomerSharedBatch
+    # renders each round as one batch instead (start-up once per round), to measure that effect.
     foreach ($rep in 1..$Reps) {
-        $b = Join-Path $outDir ('fz-batch\r' + $rep)
-        $in = Join-Path $b 'in'; $out = Join-Path $b 'out'; $cwd = Join-Path $b 'cwd'
-        foreach ($d in $in, $out, $cwd) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
-        foreach ($slug in @('00-warmup') + @($sceneRows | ForEach-Object { $_.slug })) {
-            if ($fzsOk[$slug]) { Copy-Item -Force (Join-Path $fzsDir ($slug + '.fzs')) $in }
+        $groups = @()
+        if ($FractalZoomerSharedBatch) {
+            $groups += @{ tag = 'all'; rows = @($sceneRows) }
+        } else {
+            foreach ($sr in $sceneRows) { $groups += @{ tag = $sr.slug; rows = @($sr) } }
         }
-        $argLine = ('{0} -jar "{1}" --cli_batch_dir "{2}" --cli_width {3} --cli_height {4} --cli_output_dir "{5}"' -f
-                    $FractalZoomerJavaArgs, $FractalZoomerJar, $in, $wh[0], $wh[1], $out)
-        $r = Invoke-TimedRender $JavaExe $argLine ($TimeoutS * ($sceneRows.Count + 1)) $cwd
-        # Per image, the time since the PREVIOUS image was written: loading its .fzs, rendering and
-        # saving, without Java's start-up. The warm-up is written first (the batch walks its folder in
-        # name order on NTFS, and 00-warmup sorts first); an image with no image before it gets none.
-        $pngs = @(Get-ChildItem -LiteralPath $out -Filter '*.png' | Sort-Object LastWriteTimeUtc)
-        $since = @{}
-        for ($i = 1; $i -lt $pngs.Count; $i++) {
-            $since[$pngs[$i].BaseName] = [math]::Round(($pngs[$i].LastWriteTimeUtc - $pngs[$i - 1].LastWriteTimeUtc).TotalSeconds, 2)
-        }
-        $failed = @([regex]::Matches([string]$r.stdout, 'Failed to render: (.+)') | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_.Groups[1].Value.Trim()) })
-        foreach ($s in $sceneRows) {
-            $stats = Join-Path $out ($s.slug + '.stats')
-            $src = Join-Path $out ($s.slug + '.png')
-            $png = Join-Path $outDir ('fz-' + $s.slug + '.png')
-            $status = 'ok'; $reported = ''; $wall = ''
-            $note = 'Fractal Zoomer command line, batch of round ' + $rep + '; reported = its Total Elapsed Time; wall = since the previous image was written'
-            if (-not $fzsOk[$s.slug]) {
-                $status = 'DNF-no-input'; $note = 'FzsWriter could not write the .fzs'
-            } elseif ($failed -contains $s.slug) {
-                $status = 'DNF-failed'; $note = 'Fractal Zoomer printed "Failed to render" for it'
-            } elseif (-not (Test-Path $stats) -or -not (Test-Path $src)) {
-                $status = $(if ($r.status -eq 'DNF-timeout') { 'DNF-timeout' } else { 'DNF-no-output' })
-                $note = 'no .stats or image for it (batch ' + $r.status + ')'
-            } else {
-                $t = [IO.File]::ReadAllText($stats)
-                $m = [regex]::Match($t, 'Total Elapsed Time:\s*([0-9]+)')
-                $mr = [regex]::Match($t, 'Reference Calculation Elapsed Time:\s*([0-9]+)')
-                if (-not $m.Success) {
-                    $status = 'DNF-no-stats'; $note = 'no Total Elapsed Time in its .stats'
+        foreach ($g in $groups) {
+            $b = Join-Path $outDir ('fz-batch\r' + $rep + '\' + $g.tag)
+            $in = Join-Path $b 'in'; $out = Join-Path $b 'out'; $cwd = Join-Path $b 'cwd'
+            foreach ($d in $in, $out, $cwd) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
+            foreach ($slug in @('00-warmup') + @($g.rows | ForEach-Object { $_.slug })) {
+                if ($fzsOk[$slug]) { Copy-Item -Force (Join-Path $fzsDir ($slug + '.fzs')) $in }
+            }
+            $argLine = ('{0} -jar "{1}" --cli_batch_dir "{2}" --cli_width {3} --cli_height {4} --cli_output_dir "{5}"' -f
+                        $FractalZoomerJavaArgs, $FractalZoomerJar, $in, $wh[0], $wh[1], $out)
+            $r = Invoke-TimedRender $JavaExe $argLine ($TimeoutS * ($g.rows.Count + 1)) $cwd
+            # Per image, the time since the PREVIOUS image was written: loading its .fzs, rendering and
+            # saving, without Java's start-up. The warm-up is written first (the batch walks its folder in
+            # name order on NTFS, and 00-warmup sorts first); an image with no image before it gets none.
+            $pngs = @(Get-ChildItem -LiteralPath $out -Filter '*.png' | Sort-Object LastWriteTimeUtc)
+            $since = @{}
+            for ($i = 1; $i -lt $pngs.Count; $i++) {
+                $since[$pngs[$i].BaseName] = [math]::Round(($pngs[$i].LastWriteTimeUtc - $pngs[$i - 1].LastWriteTimeUtc).TotalSeconds, 2)
+            }
+            $failed = @([regex]::Matches([string]$r.stdout, 'Failed to render: (.+)') | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_.Groups[1].Value.Trim()) })
+            foreach ($s in $g.rows) {
+                $stats = Join-Path $out ($s.slug + '.stats')
+                $src = Join-Path $out ($s.slug + '.png')
+                $png = Join-Path $outDir ('fz-' + $s.slug + '.png')
+                $status = 'ok'; $reported = ''; $wall = ''
+                $note = 'Fractal Zoomer command line, round ' + $rep + ', ' + $(if ($FractalZoomerSharedBatch) { 'one batch for the round' } else { 'its own batch after a warm-up' }) + '; reported = its Total Elapsed Time; wall = since the previous image was written'
+                if (-not $fzsOk[$s.slug]) {
+                    $status = 'DNF-no-input'; $note = 'FzsWriter could not write the .fzs'
+                } elseif ($failed -contains $s.slug) {
+                    $status = 'DNF-failed'; $note = 'Fractal Zoomer printed "Failed to render" for it'
+                } elseif (-not (Test-Path $stats) -or -not (Test-Path $src)) {
+                    $status = $(if ($r.status -eq 'DNF-timeout') { 'DNF-timeout' } else { 'DNF-no-output' })
+                    $note = 'no .stats or image for it (batch ' + $r.status + ')'
                 } else {
-                    $reported = [math]::Round([double]$m.Groups[1].Value / 1000.0, 3)
-                    if ($mr.Success) { $note += ('; reference ' + [math]::Round([double]$mr.Groups[1].Value / 1000.0, 3) + ' s') }
-                    if ($since.ContainsKey($s.slug)) { $wall = $since[$s.slug] }
-                    Copy-Item -Force $src $png
-                    if (-not (Test-PngComplete $png)) {
-                        $status = 'DNF-truncated'; $note = 'the PNG is incomplete (no IEND chunk)'; $reported = ''
-                    } elseif (-not (Test-RenderHasStructure $png)) {
-                        $status = 'DNF-blank'; $note = 'the image is uniform - a time here would be meaningless'; $reported = ''
+                    $t = [IO.File]::ReadAllText($stats)
+                    $m = [regex]::Match($t, 'Total Elapsed Time:\s*([0-9]+)')
+                    $mr = [regex]::Match($t, 'Reference Calculation Elapsed Time:\s*([0-9]+)')
+                    if (-not $m.Success) {
+                        $status = 'DNF-no-stats'; $note = 'no Total Elapsed Time in its .stats'
+                    } else {
+                        $reported = [math]::Round([double]$m.Groups[1].Value / 1000.0, 3)
+                        if ($mr.Success) { $note += ('; reference ' + [math]::Round([double]$mr.Groups[1].Value / 1000.0, 3) + ' s') }
+                        if ($since.ContainsKey($s.slug)) { $wall = $since[$s.slug] }
+                        Copy-Item -Force $src $png
+                        if (-not (Test-PngComplete $png)) {
+                            $status = 'DNF-truncated'; $note = 'the PNG is incomplete (no IEND chunk)'; $reported = ''
+                        } elseif (-not (Test-RenderHasStructure $png)) {
+                            $status = 'DNF-blank'; $note = 'the image is uniform - a time here would be meaningless'; $reported = ''
+                        }
                     }
                 }
+                Write-Result $csv 'fractalzoomer' $s.slug $rep $status $wall $reported $note
+                Add-RunRecord @{
+                    renderer = 'fractalzoomer'; scene = $s.slug; rep = $rep
+                    exe = $JavaExe; args = $argLine; cwd = $cwd
+                    source = ('scenes\' + $s.slug + '.kfr')
+                    inputs = @{ iterations = $s.iterations; size = $Size; jar = $FractalZoomerJar; fzs = ('fz-fzs\' + $s.slug + '.fzs')
+                                java = $JavaExe; java_args = $FractalZoomerJavaArgs; batch_wall_s = $r.wall_s }
+                    output = ('fz-' + $s.slug + '.png')
+                    status = $status; wall_s = $wall; reported_s = $reported; note = $note
+                }
             }
-            Write-Result $csv 'fractalzoomer' $s.slug $rep $status $wall $reported $note
-            Add-RunRecord @{
-                renderer = 'fractalzoomer'; scene = $s.slug; rep = $rep
-                exe = $JavaExe; args = $argLine; cwd = $cwd
-                source = ('scenes\' + $s.slug + '.kfr')
-                inputs = @{ iterations = $s.iterations; size = $Size; jar = $FractalZoomerJar; fzs = ('fz-fzs\' + $s.slug + '.fzs')
-                            java = $JavaExe; java_args = $FractalZoomerJavaArgs; batch_wall_s = $r.wall_s }
-                output = ('fz-' + $s.slug + '.png')
-                status = $status; wall_s = $wall; reported_s = $reported; note = $note
-            }
+            # Keep each image's .stats and the batch's own output; the images are copied out above, and
+            # the working folder holds what Fractal Zoomer unpacks at every start (~15 MB of colour maps).
+            Get-ChildItem -LiteralPath $out -Filter '*.png' | Remove-Item -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $cwd -Recurse -Force -ErrorAction SilentlyContinue
+            [IO.File]::WriteAllText((Join-Path $b 'stdout.txt'), [string]$r.stdout + "`r`n--- stderr ---`r`n" + [string]$r.stderr)
+            if ($FractalZoomerSharedBatch) { Write-Host ('  round ' + $rep + ': batch ' + $r.status + ' in ' + $r.wall_s + ' s') }
         }
-        # Keep each image's .stats and the batch's own output; the images are copied out above, and
-        # the working folder holds what Fractal Zoomer unpacks at every start (~15 MB of colour maps).
-        Get-ChildItem -LiteralPath $out -Filter '*.png' | Remove-Item -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $cwd -Recurse -Force -ErrorAction SilentlyContinue
-        [IO.File]::WriteAllText((Join-Path $b 'stdout.txt'), [string]$r.stdout + "`r`n--- stderr ---`r`n" + [string]$r.stderr)
-        Write-Host ('  round ' + $rep + ': batch ' + $r.status + ' in ' + $r.wall_s + ' s')
+        Write-Host ('  round ' + $rep + ' done')
     }
     if ($PythonExe -and (Test-Path $vv) -and $have.fractadyne) {
         Write-Host 'Fractal Zoomer: checking the renders are the scenes that were ASKED for'
