@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$AgentVersion = 23   # 23: an explicitly named DEV build (vX.Y.Z-beta.N.dev.M, a test build published under its own tag) is accepted; "latest" still skips them. 22: coordinates up to 5000 characters (a 6.8e3999 view's centre has 4031 digits). 21: a --render's image comes back (PNGs the run wrote in its folder, up to 1 GB each): a still split across this machine's cards with --gpus (design/multi-gpu.md Phase 2) is checked against each card alone. 20: frames delivered up to 4 GB (a 30 fps tour at 1280x720 is about 2 GB). 19: --render-tour (a tour shipped in the package; the agent names --out and delivers the frames up to 1 GB, the folder's farm state and the local client's logs), --gpus (design/multi-gpu.md Phase 1: a tour on every graphics card through a farm on this machine), --fps, --ss and -y. 18: --shot (a location, captured once its supersampling converges; the agent names --out and delivers shot.png), --list-adapters, --adapter and --worker-gpu (design/multi-gpu-live.md L2: a second GPU in the live view). 17: farm-client "adapters" (--adapters: all of this machine's GPUs, or some, each its own session) and a 24 h ceiling (a long tour render; was 4 h). 16: farm-client "discover": first run --discover from the package and return what answered this machine's broadcast (the farm's network discovery). 15: farm-client in share mode (request "share": the client writes its frames to this agent's share). 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
+$AgentVersion = 24   # 24: record_decide (a harness request may ask its runs to record their lifted live decisions, FRACTADYNE_RECORD_DECIDE, into a file in each run's own folder; delivered as decide.jsonl, up to 2 GB; observes only, the path is the agent's, never the request's). 23: an explicitly named DEV build (vX.Y.Z-beta.N.dev.M, a test build published under its own tag) is accepted; "latest" still skips them. 22: coordinates up to 5000 characters (a 6.8e3999 view's centre has 4031 digits). 21: a --render's image comes back (PNGs the run wrote in its folder, up to 1 GB each): a still split across this machine's cards with --gpus (design/multi-gpu.md Phase 2) is checked against each card alone. 20: frames delivered up to 4 GB (a 30 fps tour at 1280x720 is about 2 GB). 19: --render-tour (a tour shipped in the package; the agent names --out and delivers the frames up to 1 GB, the folder's farm state and the local client's logs), --gpus (design/multi-gpu.md Phase 1: a tour on every graphics card through a farm on this machine), --fps, --ss and -y. 18: --shot (a location, captured once its supersampling converges; the agent names --out and delivers shot.png), --list-adapters, --adapter and --worker-gpu (design/multi-gpu-live.md L2: a second GPU in the live view). 17: farm-client "adapters" (--adapters: all of this machine's GPUs, or some, each its own session) and a 24 h ceiling (a long tour render; was 4 h). 16: farm-client "discover": first run --discover from the package and return what answered this machine's broadcast (the farm's network discovery). 15: farm-client in share mode (request "share": the client writes its frames to this agent's share). 14: farm-client (one render-farm job as a client of a controller) and --farmtest. 13: the FRACTADYNE_TRACE instrument, one category by name (observes only; the live-refresh verdicts on AMD). 12: --no-bla (the step-bounded worst case: every mode-2 step a full floatexp step). 2: screens; "used during run" only with the idle wait on. 3: request "view"; self-update. 4: request "env" (instruments); --soak-depth session. 5: --zoomtest-location session, --zoomtest-taps, --zoomtest-hold, --window (W9 motion rung). 6: the battery's screen step in the status. 7: the FRACTADYNE_PASS_CLOCK instrument. 8: FRACTADYNE_SEED_BUDGET. 9: recover jobs orphaned by a hang or reboot. 10: --tail-audit / --glitch-audit (headless, write no file; send with --render); coordinates up to 2000 characters (a 1e1105 view's centre has 1141 digits). 11: plain --render as a mode (the [fd-perf] step counters; the image stays in the local run folder)
 $PollSeconds = 30
 $Home_ = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Cache = Join-Path $Home_ "cache"
@@ -72,6 +72,8 @@ $AgentDir = Join-Path $Field "agent"
 $Computer = $env:COMPUTERNAME
 # Every run gets its own config dir, and its logs must land there to be collected.
 Remove-Item Env:FRACTADYNE_LOG_DIR -ErrorAction SilentlyContinue
+# A decision recording is armed per run, by the agent, only when a request asks (v24).
+Remove-Item Env:FRACTADYNE_RECORD_DECIDE -ErrorAction SilentlyContinue
 
 # --- one agent per user session ---------------------------------------------------------------
 $mutex = New-Object System.Threading.Mutex($false, "Local\FractadyneFieldAgent")
@@ -443,6 +445,10 @@ function Invoke-Harness($r, [string]$dir, $status) {
     $session = New-ViewSession $r
     $instr = Get-RequestEnv $r
     $status.env = $instr
+    # v24: record the run's lifted live decisions (design/live-render-robustness.md W5) - a field
+    # capture that `fractadyne --replay` recomputes on another machine. The file is the agent's.
+    $recordDecide = [bool](Get-Field $r "record_decide" $false)
+    $status.record_decide = $recordDecide
     $builds = @(Get-Field $r "builds" @())
     if ($builds.Count -eq 0) { $builds = @([string](Get-Field $r "build" "latest")) }
     if ($builds.Count -gt 4) { Stop-Refused "at most 4 builds per request" }
@@ -478,6 +484,9 @@ function Invoke-Harness($r, [string]$dir, $status) {
             $env:FRACTADYNE_NO_SOUND = "1"
             foreach ($k in $InstrumentEnv) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
             foreach ($k in $instr.Keys) { Set-Item "Env:$k" $instr[$k] }
+            $decideFile = Join-Path $local "decide.jsonl"
+            Remove-Item Env:FRACTADYNE_RECORD_DECIDE -ErrorAction SilentlyContinue
+            if ($recordDecide) { $env:FRACTADYNE_RECORD_DECIDE = $decideFile }
             $idle0 = [FdField]::IdleSeconds()
             $screens = @(Get-Screens)
             $res = Invoke-Bounded -File $exe -Arguments @($resolved | ForEach-Object { Format-Arg $_ }) -Cwd $local -Out (Join-Path $local "stdout.txt") -Err (Join-Path $local "stderr.txt") -TimeoutMin $timeout
@@ -486,6 +495,7 @@ function Invoke-Harness($r, [string]$dir, $status) {
             $touched = if ($IdleMinutes -gt 0 -and $idle0 -ge 0) { [FdField]::IdleSeconds() -lt $res.seconds } else { $null }
             Remove-Item Env:FRACTADYNE_CONFIG_DIR -ErrorAction SilentlyContinue
             foreach ($k in $InstrumentEnv) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
+            Remove-Item Env:FRACTADYNE_RECORD_DECIDE -ErrorAction SilentlyContinue
             # Deliver: the output, and the logs (fractadyne.log, frames.bin/.jsonl, any crash report).
             $to = Join-Path $dir $name
             New-Item -ItemType Directory -Force -Path $to | Out-Null
@@ -497,6 +507,15 @@ function Invoke-Harness($r, [string]$dir, $status) {
                 if (Test-Path $logs) { Copy-Item -Path (Join-Path $logs "*") -Destination $to -Recurse -Force -ErrorAction SilentlyContinue }
             }
             if (Test-Path -LiteralPath $shotPng) { Copy-Item -LiteralPath $shotPng -Destination $to -Force }
+            # v24: the decision recording.
+            if ($recordDecide) {
+                if (Test-Path -LiteralPath $decideFile) {
+                    $len = (Get-Item -LiteralPath $decideFile).Length
+                    if ($len -le 2GB) { Copy-Item -LiteralPath $decideFile -Destination $to -Force }
+                    else { "decide.jsonl: $len bytes, over 2 GB, not copied" | Out-File (Join-Path $to "decide-not-copied.txt") -Encoding utf8 }
+                }
+                else { "decide.jsonl: the run wrote none (a build without FRACTADYNE_RECORD_DECIDE, before 0.3.0-beta.19.dev.8?)" | Out-File (Join-Path $to "decide-not-copied.txt") -Encoding utf8 }
+            }
             # v21: a --render's image (written into the run's folder: fractadyne_render.png).
             if ($resolved -contains "--render") {
                 Get-ChildItem -LiteralPath $local -Filter "*.png" -File -ErrorAction SilentlyContinue | Where-Object { $_.Length -le 1GB } | Copy-Item -Destination $to -Force

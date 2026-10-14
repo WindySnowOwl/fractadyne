@@ -2036,6 +2036,9 @@ fn recorder() -> Option<&'static std::sync::Mutex<std::io::LineWriter<std::fs::F
                 "schema": DECIDE_SCHEMA,
                 "version": crate::sysinfo::version_string(),
                 "tunables": crate::tunables::status_line(),
+                // The card it ran on, once the calibration has named it (a GUI run always has by its
+                // first decision): a fixture set's recordings must span more than one.
+                "adapter": crate::calibration::adapter(),
             });
             writeln!(w, "{header}").ok()?;
             crate::diag::log_line(

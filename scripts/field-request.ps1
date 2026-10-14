@@ -23,6 +23,9 @@
 #   .\scripts\field-request.ps1 -Action harness -Run "--render-tour tours/deep-minibrot-dive.toml --size 1280x720 --fps 6 --gpus all" -Wait
 #                                                                 # a tour on every GPU (agent v19): the frames (up to
 #                                                                 # 1 GB), the farm state and the client's logs come back
+#   .\scripts\field-request.ps1 -Action harness -Run "--motiontest" -RecordDecide -Wait
+#                                                                 # a field capture (agent v24): the run's lifted live
+#                                                                 # decisions come back as decide.jsonl for --replay
 #   .\scripts\field-request.ps1 -Cancel <id>                      # withdraw a request not yet started
 #
 # The agent is the authority on what it will run (field-agent.ps1 $Allowed); this only checks the
@@ -48,6 +51,9 @@ param(
     # harness: arm diagnostic instruments, "NAME=N[,NAME=N]" (e.g. FRACTADYNE_REF_ESCAPE_AT=655).
     # WARNING: these exist to reach regimes that have caused device losses.
     [string]$Instrument = "",
+    # harness (agent v24+): record each run's lifted live decisions (FRACTADYNE_RECORD_DECIDE) and
+    # return them as decide.jsonl - a field capture for `fractadyne --replay` / validation/replays.
+    [switch]$RecordDecide,
     [int]$Days = 30,
     # farm-client: the controller to dial (HOST:PORT) and the file holding the farm key (fdn1-...).
     # The key travels in the request on the share and is redacted from the results.
@@ -154,6 +160,7 @@ switch ($Action) {
         $req.args = @($Run -split '\s+' | Where-Object { $_ })
         if ($Builds.Count -gt 0) { $req.builds = @($Builds) } else { $req.build = $Build }
         $req.repeat = $Repeat
+        if ($RecordDecide) { $req.record_decide = $true }
         if ($Instrument) {
             $req.env = [ordered]@{}
             foreach ($pair in ($Instrument -split ',' | Where-Object { $_ })) {
