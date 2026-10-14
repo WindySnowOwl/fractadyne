@@ -28,7 +28,9 @@ toml.workspace = true
 thiserror.workspace = true
 # Update check: a single blocking HTTPS GET to the GitHub Releases API (rustls, bundled roots).
 ureq = "2"
-serde_json = "1"
+# `float_roundtrip`: a replayed decision (`render::decide`) must read back the exact f64 it recorded;
+# the default parser can land one ulp off.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 # SHA-256 of each frame a render-farm run writes (`--farm-child`), for the controller to verify the
 # file it receives. Already linked — rustls, the update check's TLS above, is built on it — so this
 # adds no third-party code; the render farm's channel (design/remote-rendering.md) will use it too.

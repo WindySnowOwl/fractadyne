@@ -15118,6 +15118,8 @@ impl FractadyneApp {
             r.zoom_oct_s = p.zoom_oct_s;
             r.rec_us = p.rec_us;
             diag::frame_record::record(r);
+            // Beside the lifted decisions, when they are being recorded: the §6.7 regime facts.
+            crate::render::decide::record_regime(&r);
         }
         // U39's session counts (`--motiontest` A5/A6): frames by the held frame's floor, and the
         // frames it was shown at the jump floor's clamped scale while the view was MOVING.

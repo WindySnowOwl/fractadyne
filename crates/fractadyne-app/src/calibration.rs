@@ -71,6 +71,8 @@ const TABLE: &str = include_str!("../../../validation/calibration/ceilings.toml"
 struct Active {
     cal: Calibration,
     factors: Vec<Factor>,
+    /// The adapter the calibration was resolved for, as `init` was given it.
+    adapter: String,
 }
 
 static ACTIVE: OnceLock<Active> = OnceLock::new();
@@ -192,7 +194,7 @@ fn custom_factor() -> f64 {
 pub(crate) fn init(adapter: &str) -> &'static Calibration {
     &ACTIVE
         .get_or_init(|| match parse(TABLE) {
-            Ok(t) => Active { cal: lookup(&t, adapter), factors: t.formula },
+            Ok(t) => Active { cal: lookup(&t, adapter), factors: t.formula, adapter: adapter.to_string() },
             Err(e) => Active {
                 cal: Calibration {
                     costs: Costs::default(),
@@ -202,9 +204,17 @@ pub(crate) fn init(adapter: &str) -> &'static Calibration {
                     pass_fixed_calibrated: false,
                 },
                 factors: Vec::new(),
+                adapter: adapter.to_string(),
             },
         })
         .cal
+}
+
+/// The adapter this run's calibration was resolved for (`None` before `init`, e.g. a headless
+/// harness): the name a decision recording's header carries, so a fixture set can say which cards
+/// its recordings come from.
+pub(crate) fn adapter() -> Option<&'static str> {
+    ACTIVE.get().map(|a| a.adapter.as_str())
 }
 
 /// The nominal-step ceiling a worst per-step `cost` (ms) supports at `px` dispatch pixels:

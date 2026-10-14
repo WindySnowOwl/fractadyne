@@ -3422,3 +3422,240 @@ returning a `Plan` through a shim) — B7's invariant is held instead by `Resolu
 the `bp_moving_scale` stage in `frame_plan`, which is the part §5.3 says must not be half-applied;
 `--zoomtest` driving a WHEEL gesture (A5/A6 cover the jump and the programmatic glides instead);
 U51's boost-seed half (needs `--livetest`).
+
+**2026-10-13 — W5 begins: a decision replays from its recording** (`feat/w5-decide`, off local main after
+W3 and W4 merged). The first stage lifted is the moving frame's scale (W4's `bp_moving_scale`: the work
+budget's bound, the rate-aware refresh cap, the AIMD and the visible-frame ladder): `render/decide.rs`
+holds `MovingInputs` — every value it reads, the per-view state it carries between frames, and the three
+overridable tunables it consults — and the pure `decide_moving`, whose body is the stage's own, notes and
+all, moved by a script that asserted every substitution; `bp_moving_scale` now gathers the inputs,
+applies the state the decision writes, emits the traces and records it. `FRACTADYNE_RECORD_DECIDE=<file>`
+(off by default) records every decision as a JSON line after a header naming the build and the tunables;
+`--replay <file>` recomputes each and diffs it field by field (exit 0 only when every one is exact and
+there are at least 200, some of a moving frame). ⚠The first replay of a real recording differed in the
+last digit of a few values: serde_json's default float parser can land one ulp off, so the inputs read
+back were not the inputs recorded; its `float_roundtrip` feature fixed it, and since then two
+recordings — `--motiontest` (1,262 decisions) and the 2^800 autodive (2,978) — replay exactly. Trimmed
+to 570 and 608 decisions (every decision of a rare branch kept), they are the fixtures in
+`validation/replays/`, and `cargo test` replays them on the CPU (CI runs it): RED on any field of any
+decision, and VACUOUS with no recording, a recording under 200 decisions or none of a moving frame, or a
+branch no fixture replays (settled, a pin frame, prefer detail, the rate cap measured and modelled, the
+AIMD stepping, the ladder's rung moving and binding, direct-mode motion — the autodive alone never
+reaches direct mode, the motiontest never prefer detail). A one-character change to the controller (the
+pin growth cap 1.25 → 1.26) turned it red, naming the frame and the field.
+
+U52's two mirrors are gone. `--livetest` kept its own copy of the budget loop — by W5 it still lacked
+the reading pool, the short-reading and dead-man clamps and the lethal-band retreat — and now calls
+`apply_iterate_measurement`, the function the GUI's event loop calls. `--resizetest` declared its own
+`SETTLE_DELAY = 0.35` against the app's 0.18 and now uses the app's.
+Gates: workspace 1,474 / 0 / 11; self-test 518/518, goldens 31/31; `--motiontest` PASS ×3; the
+grand-tour `--livetest` 24/24 with 0 drifted against the blessed baseline, as before the mirror was
+replaced. Still to lift, one stage at a time (§5.4's M8): the frame budget, the chunk walk and the
+present gate; the regime predicate (§6.7) and a field capture are not yet terms of the fixture set.
+
+**2026-10-13 — W5: the present gate lifted** (`decide_present`): whether the display serves the held
+snapshot while compose work runs underneath, whether this frame takes the snapshot, the settled-cost
+probe and the colour-pass filter — `PresentInputs` (the frame's flags, the grid's composing state, the
+view's hold, pin, dirty and verified state) to `PresentDecision` (the four outputs, plus the hold flag,
+the snapshot's verified flag and the armed probe it writes), moved by the same asserting script. The
+fixtures were re-recorded with both stages (`--motiontest` 2,666 decisions, the 2^800 autodive 5,900,
+both replaying exactly) and trimmed to 913 and 926; the coverage term now also requires a settled
+compose hold, a pin hold, a snapshot, an armed probe and a widened filter. Gates: workspace 1,474 / 0 /
+11, self-test 518/518 with goldens 31/31, `--motiontest` PASS ×3, `--livetest` 24/24 with 0 drifted.
+Remaining: `bp_frame_budget` (~650 lines, with the reading drains §5.4 keeps imperative) and
+`bp_chunk_tiling` (~850: the walk, pins, the band ledger, serialization) — each to be split into
+sub-stages before it can lift.
+
+**2026-10-13 — W5: the iteration climb lifted, and replay finds its first hidden input** (`decide_iter`).
+The adaptive live-iteration climb — the boost's seed from the reference, the probe's raises, the
+plateau, the appetite re-pick and the exhausted revert, the verdict, and the frame's iteration ask — is
+`IterInputs` (the MAXITER reading drained this frame, the reference's length and whether it escaped,
+whether a reference build is in flight, the view's climb state) to `IterDecision` (the state it writes,
+the budget the reading is judged at, the re-pick request, the ask, and the climb's steps as events the
+caller traces exactly as before), moved by the same asserting script. The normalization drains that sat
+between the climb's two halves stay imperative in `bp_frame_budget` (§5.4's boundary: GPU sinks): neither
+side reads what the other writes, so the climb decides whole before them and its conclusions are traced
+after them, in the old order.
+
+None of the fixtures could grade it. The motiontest (a 1M ask), the 2^800 autodive (10,000) and the grand
+tour (per-keyframe budgets) run at EXPLICIT counts, and the `--uitest`'s auto-iteration bands resolve at
+the depth cap: 17,773 recorded climb decisions across the four, not one raise. `zoomtest-climb.jsonl` is three
+`--zoomtest` runs under auto-iterations from `validation/replays/locations/`: the 9.3e78 black-minibrot
+repro (seeded 1.0→2.1 from a 140,503-sample escaped reference, raises, a flat run that motion ends), an
+all-interior cardioid view (three fully capped raises, the appetite re-pick, exhausted), and the home view
+(three raises at 2.9% capped, the last two flat, then the plateau). The coverage term requires all eleven of the
+climb's branches, and the uitest and the grand tour joined the fixture set (§7.5 names a `--zoomtest`
+run as a seed; it is in now).
+
+⭐**The `--uitest` recording found what replay is for.** One `moving` decision of 8,943 recomputed
+differently: a rate cap of 0.65395 recorded, 0.65429 recomputed. `decide_moving` reached
+`calibration::pass_fixed_ms()` through `motion_pass_steps` — the RTX 3080's calibrated 0.21 ms in the
+session that recorded it, the 0.2 default in the replay process, which has no adapter. The first two
+fixtures missed it because their model-branch frames had no measured rate yet. It is an input now
+(`MovingInputs::pass_fixed_ms`, recording schema 2), and `a_lifted_decision_reads_no_global` scans every
+`decide_*` and every free function it reaches, transitively, for a global read (a tunable read in place,
+the calibration, a clock, an atomic, the environment); putting the old call back turns it red, naming
+`motion_pass_steps` and the read. (`budget_base` reads two tunables in place, so the probe, which calls it,
+will carry them as inputs.)
+
+A pre-existing oddity, read off the decisions and left alone (a move changes no behaviour): the plateau
+leaves `iter_stall` at its count, so the next motion traces "motion ends a flat run (2/3) — boost
+1.0→1.0", a revert to where the boost already is.
+
+Fixtures (decisions kept of those recorded, every one replaying exactly): motiontest 1,075 of 4,032,
+autodive 1,032 of 8,808, uitest 1,008 of 9,114, grand tour 1,014 of 31,365, zoomtest-climb 1,393 of
+17,574. Gates: workspace 1,483 / 0 / 11 (the climb's eight tests and the global-read guard are new);
+self-test 518/518, goldens 31/31; `--motiontest` PASS ×3; `--livetest` 24/24 with 0 drifted; `--uitest`
+74 pass / 1 warn (the known deep-floatexp step) / 0 fail. Remaining: the climb probe and the chunk walk
+(`bp_chunk_tiling`, as three sub-stages: the in-flight pass's pricing, the walk's identity and sizing,
+the dispatch); the regime predicate (§6.7) and a field capture as terms of the fixture set.
+
+**2026-10-14 — W5: the climb probe lifted, and §7.5's companion red-check goes red** (`decide_probe`):
+whether a settled view whose work budget has not converged, with nothing else dispatching, forces a
+re-measure — paced three frames apart, only for a reading the pricing rule would keep
+(`probe_would_price`), and only below the explicit-dispatch ceiling. `ProbeInputs` carries the two
+tunables `budget_base` reads in place (`TDR_MIN_STEPS`, `TDR_STEPS_CEIL`), through a new `budget_base_in`
+that `budget_base` delegates to. Only the uitest's fixture sees it fire (4 times, at the home view):
+everywhere else a chunk walk dispatches every settled frame, so the probe has nothing to unstick.
+
+The companion red-check: with `PRICE_REPRESENTATIVE_FRAC` at 0.5 in a scratch build (never blessed,
+thrown away) the fixture gate goes red on 35 decisions of the uitest fixture — `fired: recorded false,
+recomputed true` at ~4.2e8 nominal steps, the default home view of the 2026-09-04 never-terminating-probe
+finding. The fixture set pins the threshold, but on a maintainer's trace: a field capture is still not in
+the set.
+
+Trimming now samples each stage evenly. A frame records its decisions in a fixed order, so the old
+every-k-th-line sample kept one stage whenever its step was a multiple of the period (the climb fixture
+had kept 472 climb decisions and 16 probe ones). All five fixtures re-recorded at this build: motiontest
+1,072 of 5,356, autodive 1,026 of 11,952, uitest 1,008 of 12,096, grand tour 1,006 of 43,512,
+zoomtest-climb 1,378 of 23,476, every one replaying exactly; the climb fixture's three runs reproduced
+the first recording's climb step for step. Gates: workspace 1,487 / 0 / 11 (four probe tests new);
+self-test 518/518, goldens 31/31; `--motiontest` PASS ×3; `--livetest` 24/24 with 0 drifted; `--uitest`
+74 pass / 1 warn / 0 fail. Remaining: the chunk walk (`bp_chunk_tiling`: the in-flight pass's pricing,
+the walk's identity and sizing, the dispatch — every helper it calls reads only constants; its globals
+are read in the stage itself and enter as inputs), the regime predicate (§6.7) and a field capture.
+
+**2026-10-14 — W5: the chunk walk's pricing and sizing lifted** (`decide_walk_price`), the first of
+`bp_chunk_tiling`'s three sub-stages: the wall-aware floor, the pass's wall-clock target, the in-flight
+pass's price (the wall-clock retreat into the lethal band, the quick-present drain, the pin pass's
+timestamp price, the band ledger), the pass's step budget and the growth-limited iteration step.
+`WalkPriceInputs` carries the view's `WalkLedger` (the pass in flight, the band licences, the last price,
+the last moving step), the frame's timing, the pin pass's stamps, the measured rates, five overridable
+tunables and the adapter's per-pass fixed cost — every global the stage read in place (`cost()`, the
+calibration through `motion_pass_steps`, the completion stamp's atomic) is read by the caller now. The
+lethal-band shed returns as an event the caller logs, always on, exactly as before, and its outcome as
+the `retreat` the frame record takes. `RetreatOutcome` serializes.
+
+No stock run on this card reaches the lethal band, so the zoomtest fixture gained a fourth run, the
+minibrot under W8's recipe (`--set TDR_LETHAL_MS=30`; the inputs carry the tunable, so the replay is
+exact), and became `zoomtest.jsonl`. The coverage term requires seven of its branches (a settled pass
+priced, a pass held unpriced, a pin pass priced, the lethal shed, motion abandoning a pass, the growth
+limiter binding, an unmeasured walk). The stock source of shed decisions is the grand tour, whose five or
+six lethal-band lines a run are logcheck's KNOWN livetest allowance (a tour segment plays inside one
+`update()`, so a pass's time accumulates with no drain); the forced zoomtest run is the real loop's.
+Fixtures: motiontest 704 of 6,790, autodive 704 of 15,020, uitest 702 of 13,324, grand tour 786 of
+54,070, zoomtest 1,962 of 32,496, every one replaying exactly; trimming now keeps at most 40 decisions
+per branch (every branch a recording reaches survives), so the set is 4.3 MB where the climb's re-record
+had made it 6.6. Gates: workspace 1,492 / 0 / 11 (five pricing tests new); self-test 518/518, goldens
+31/31 on a re-run; `--motiontest` PASS ×3; `--livetest` 24/24 with 0 drifted; `--uitest` 74 pass / 1 warn
+/ 0 fail. ⚠The first self-test run failed one check, the twin-device still ("both rendering": tiles per
+device `[12, 0]`, the twin rendered none, pixels identical). Every full run before it read `[11, 1]`, and
+the same binary read `[11, 1]` five times in a row on the `worker` group and again on the full re-run:
+the check's both-devices term has always had a ONE-TILE margin, and the race tipped once. Not this change
+(the still never reaches the chunk walk), but a check one tile from flaking, worth widening. Remaining in
+`bp_chunk_tiling`: the walk's identity (the signature, the restart and its ledger rule, the SA-skip
+floor) and the dispatch (the serialized hold, the pin gate, the licence, the charge, the cursor).
+
+**2026-10-14 — W5: the chunk walk's identity lifted** (`decide_walk_id`), the second of
+`bp_chunk_tiling`'s sub-stages: the signature that keys the walk and the jitter-free one that keys its
+band ledger, composed inside the decision from everything they fold (the f64 centre and magnification,
+the reference length, the exact position, the settings hash, the series seed, the jitter's bits, the ask,
+the texture, the ss) — §7.5's "replay pins the sig composition per frame" — the restart and whether it
+clears the ledger, the counted restart that lost progress (A4), and the live range the walk covers (the
+SA-skip floor, a partial reference's capped end). `WalkSig` and `Resolution` serialize for the
+recordings; a replayed one is one this module made in the session that recorded it, so B7's single
+constructor still holds where it matters, and B7's scan test passes unchanged. A unit test pins the
+composition: each of the eleven inputs, alone, moves the signature and restarts a part-way walk, counted.
+The coverage term requires six of its branches (a settled walk resumed, a restart that threw a part-way
+walk away, a supersampling sample keeping the band ledger, another view clearing it, a pin frame keeping
+its walk, the SA-skip floor); a partial reference capping a settled walk is unit-tested only, since no
+recorded source settles on one. The sample's restart needed a fifth zoomtest run: a `--zoomtest-hold`
+never supersamples (`accumulation_allowed` admits a harness only with the settle tail), so the minibrot
+runs again under `FRACTADYNE_ZOOMTEST_SETTLE` and converges at 24 samples — 23 jittered restarts, each
+keeping the ledger. Fixtures: motiontest 604 of 8,112, autodive 605 of 17,898, uitest 604 of 14,644,
+grand tour 624 of 64,600, zoomtest 2,110 of 41,172, every one replaying exactly (at most 25 decisions per
+branch now: 4.4 MB). Gates: workspace 1,497 / 0 / 11 (five identity tests new); self-test 518/518,
+goldens 31/31 (the twin still at `[11, 1]`); `--motiontest` PASS ×3; `--livetest` 24/24 with 0 drifted;
+`--uitest` 74 pass / 1 warn / 0 fail. Remaining in `bp_chunk_tiling`: the dispatch.
+
+**2026-10-14 — W5: the chunk walk's dispatch lifted, and with it every decision of `bp_chunk_tiling`**
+(`decide_walk_dispatch`): the serialized hold (the settled walk's one unpriced pass; the pin gate and its
+wall-clock escape), the regional licence, the running-pixel charge, the step and the window's end, the
+cursor's advance and the pin pass's bookkeeping, the finished walk's tail and its read retry, and whether
+the pass's reading will describe the picture on screen. The stage read the clock twice — the pin gate's
+age, then the dispatch stamp — and the decision takes one reading (`now_us`) for the age while the caller
+stamps the dispatch on the clock, as before, when the decision says a pin pass went out; the
+calibration's occupancy knee and three tunables enter as inputs. What `bp_chunk_tiling` keeps is
+imperative by §5.4's boundary: its state resets, the frame's cost trace, the clock reads and the record.
+The coverage term requires eight of its branches (a settled pass out, the one-unpriced-pass hold, a pin
+pass out, the pin gate holding, a moving preview, a pass charged for its running pixels, the tail, the
+tail's read retry); the pin gate's wall-clock escape is unit-tested only — W3 measured none on either
+card. Fixtures: motiontest 602 of 9,289, autodive 603 of 20,580, uitest 603 of 15,724, grand tour 602 of
+66,893, zoomtest 1,794 of 46,800 — 159,286 recorded decisions, every one replaying exactly; at most 15
+kept per branch (4.4 MB). Across the set, 52 of the 54 branches the scripts track are replayed; the two
+that are not (the partial reference's capped walk, the pin escape) are unit-tested. The companion
+red-check still goes red on this set (35 probe decisions). Gates: workspace 1,502 / 0 / 11 (five dispatch
+tests new); self-test 518/518, goldens 31/31 (the twin still at `[11, 1]`); `--motiontest` PASS ×3;
+`--livetest` 24/24 with 0 drifted; `--uitest` 74 pass / 1 warn / 0 fail.
+
+W5's M8 now covers the moving frame's scale, the present gate, the iteration climb, the climb probe and
+the chunk walk's pricing, identity and dispatch — seven lifted decisions, 36 tests in `render/decide.rs`, five fixtures
+replayed by `cargo test`. Remaining for W5: the regime predicate (§6.7) and a field capture as terms of
+the fixture set, and §7.5's `--selftest replay` (the gate runs as a `cargo test` today, which CI runs).
+
+**2026-10-14 — W5: the regime term, and `--selftest replay`.** The recorder writes, beside the decisions,
+each frame record's §6.7 regime facts (`"kind":"regime"`: the fields the soak's escaped-reference
+predicate reads), and `--replay` folds them through `soak::RegimeAcc` itself — one definition of
+"entered", the soak's, read from the frame record and never from a timing instrument. That makes §7.5's
+third anti-vacuity term live: some recording in the set must ENTER the regime. `escaped-ref.jsonl` does —
+W9's motion rung on the 2026-09-21 RX 6800 XT crash view (`locations/crash-4627.fdn`), the safe variant
+(no seeded budget), under `REF_ESCAPE_AT=655`, on the RTX 3080: 2,133 frames on the 655-sample escaped
+reference, 319 storm readings (up to 11.5M rebases), 0 of 327 dispatches un-chunked, no slow frame,
+logcheck PASS. Its 17,336 decisions replay exactly; trimmed to 600 decisions and 80 regime lines, its
+replay still reads ENTERED, and with the file moved aside the gate goes VACUOUS. A unit test pins the
+predicate's use (a storm frame enters; the shape without a storm reading, a reference long enough for its
+ask, and BLA on do not; the facts round-trip through the record).
+
+The coverage terms moved out of the test into `decide::fixture_coverage` (49 terms), which `cargo test`
+and a new self-test group both call: `replay` (`--selftest-filter replay`, and every full run) replays
+each fixture, requires every term and the regime, and fails — never skips — when the directory is
+missing. Gates: workspace 1,503 / 0 / 11; self-test 526/526, goldens 31/31 (the eight `replay` checks are
+new: six fixtures, the coverage, the regime); `--motiontest` PASS ×3; `--livetest` 24/24 with 0 drifted.
+Remaining for W5: a field capture as a fixture-set term (the field agent takes harness arguments only, so
+it cannot set `FRACTADYNE_RECORD_DECIDE`: an agent change, or a recording made in a user's own session).
+
+**2026-10-14 — W5: a field capture, recorded on the RX 6800 XT and replayed exactly on the RTX 3080.**
+The field agent (v24, which PLUTO's agent took from the share by its self-update) accepts `record_decide`
+on a harness request: it points `FRACTADYNE_RECORD_DECIDE` at a file in the run's own folder — the
+agent's path, never the request's — clears it before and after every run, and returns `decide.jsonl` with
+the results (`field-request.ps1 -RecordDecide`). It was run end to end first on the dev box against a
+private share (the published dev.8 zip, a `--motiontest`), then on PLUTO with the dev.8 field build:
+`--motiontest`, and the auto-iteration climb at the 9.3e78 minibrot (12 octaves into it, a 30 s hold).
+The Radeon's 26,187 recorded decisions replay exactly on the 3080 — the cross-card check the hidden-input
+finding called for: a lifted decision that read a card's state would differ here. Its climb seeded and
+raised; its motiontest passed its verdict. A recording's header now names the adapter
+(`calibration::adapter`), and the fixture set's last anti-vacuity term is live: its recordings must name
+at least two cards (`field-rx6800xt.jsonl` beside the 3080's `motiontest.jsonl`, re-recorded through the
+agent at dev.8); with the Radeon file moved aside, the gate reads VACUOUS. Also seen: the stock
+`--motiontest` enters the §6.7 regime on both cards, uninstrumented — a 317-sample escaped reference
+against its 1M ask during motion (3080: 335 frames, 71 storm readings; RX 6800 XT: 293 and 51) — so the
+regime term does not rest on the instrument run alone.
+
+W5 is complete against §7.5: M8 (seven lifted decisions), B9 (U52's mirrors), `--replay`, and seven
+fixtures (the motiontest, the 2^800 autodive, the uitest, the grand tour, the zoomtest runs, the
+escaped-reference rung, the RX 6800 XT capture) replayed by `cargo test` and by `--selftest replay`,
+under all of §7.5's anti-vacuity terms (at least 200 decisions with motion per file, every branch, the
+regime, more than one card), with the companion red-check red and the global-read guard. Gates: workspace
+1,503 / 0 / 11; self-test 528/528, goldens 31/31 (the regime entered by three recordings, two cards
+named); `--motiontest` PASS ×3 (the live path is unchanged since the last `--livetest`, 24/24 with 0
+drifted). `feat/w5-decide` is not merged.

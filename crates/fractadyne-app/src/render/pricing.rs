@@ -48,9 +48,20 @@ pub(crate) fn bootstrap_steps(rate_this_mode: f64, rate_other_mode: f64) -> u64 
 ///
 /// `bootstrap` is what `bootstrap_steps` derived for this view and mode.
 pub(crate) fn budget_base(fe_budget: u64, bootstrap: u64) -> u64 {
+    budget_base_in(
+        fe_budget,
+        bootstrap,
+        crate::tunables::cost().tdr_min_steps,
+        crate::tunables::cost().tdr_steps_ceil,
+    )
+}
+
+/// [`budget_base`] with its two overridable bounds (`TDR_MIN_STEPS`, `TDR_STEPS_CEIL`) passed in: the
+/// form a lifted decision calls, since it may read only its inputs (`render::decide`).
+pub(crate) fn budget_base_in(fe_budget: u64, bootstrap: u64, min_steps: u64, ceil: u64) -> u64 {
     match fe_budget {
         0 => bootstrap,
-        b => b.clamp(crate::tunables::cost().tdr_min_steps, crate::tunables::cost().tdr_steps_ceil),
+        b => b.clamp(min_steps, ceil),
     }
 }
 
@@ -678,7 +689,7 @@ pub(crate) fn bounded_motion_cut(cur: f64, wall_rate: f64) -> Option<f64> {
 /// the budget and log the same line whether or not that could make the next dispatch any smaller
 /// than the one that came back lethal; a retreat at the floor reported a retreat. Now each one says
 /// which it was, in its always-on log line and in the frame record (`retreat`, schema 8).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum RetreatOutcome {
     /// The next dispatch can be smaller than the lethal one: `from` → `to` (iterations for an
     /// in-flight chunk pass, nominal steps for a frame's reading).

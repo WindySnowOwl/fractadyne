@@ -362,51 +362,31 @@ impl FractadyneApp {
                 let ms = if ts.captured { ts.iterate_ms } else { gpu_ms };
                 let steps = self.perf.fe_steps_last[0];
                 if ms > 0.01 && steps > 0 {
-                    // Same rule as the app's: only a real timestamp reading may set a per-step
-                    // rate. `gpu_ms` is the wall-clock proxy and would latch a pessimistic rate.
-                    // The shared function also feeds the smoothness pacer and prices a pinned
-                    // pass, exactly as `apply_iterate_measurement` does.
-                    if ts.captured {
-                        self.perf.record_gpu_reading(0, ms, steps);
-                    }
-                    let cur = crate::render::budget_base(
-                        self.perf.fe_budget[0],
-                        self.perf.bootstrap_steps(0),
-                    );
-                    let stepped = crate::render::budget_step(
-                        cur,
-                        steps,
-                        ms,
-                        !self.render_cfg.auto_iter,
-                    );
-                    if let Some((next, ok)) = stepped {
-                        // ⚠MUST mirror `apply_iterate_measurement` exactly. This harness keeps its
-                        // own copy of the controller loop, and the banked beta.40 lesson is that a
-                        // harness whose controller differs from the app's measures a view the app
-                        // never renders. The build gate was added to the app first and this line
-                        // was missed for one commit; the livetest then reported 0 drift on a path
-                        // that did not contain the change at all — a green gate for a code path it
-                        // was not exercising, which is worse than a red one.
-                        let building = self.recompute_rx[0].is_some();
-                        let (next, ok) =
-                            crate::render::budget_after_build_gate(cur, next, ok, building);
-                        self.perf.fe_budget_ok[0] = ok;
-                        self.perf.fe_budget[0] = next;
-                    }
-                    // The harness's budget walk is otherwise invisible (it bypasses the app's
-                    // traced controller); the 16×16 deep-hold regression was undiagnosable
-                    // without frame-level sight of it.
+                    // ⭐THE APP'S CONTROLLER, not a copy of it (W5's B9; U52). This harness used to
+                    // keep its own copy of the budget loop, and a copy drifts: a build gate was once
+                    // added to the app and missed here for a commit — the livetest then reported 0
+                    // drift on a path that did not contain the change at all — and by W5 the copy
+                    // still lacked the reading pool, the short-reading and dead-man clamps and the
+                    // lethal-band retreat. `apply_iterate_measurement` is exactly what the GUI's
+                    // event loop calls with a reading. Only a real timestamp is a GPU reading:
+                    // `gpu_ms` is the harness's wall clock, priced as the app prices one.
+                    let before = self.perf.fe_budget[0];
+                    let src = if ts.captured { Self::SRC_GPU_ITERATE } else { "wall_iterate" };
+                    let priced = self.apply_iterate_measurement(0, ms, steps, src);
+                    // The harness's budget walk is otherwise invisible; the 16×16 deep-hold
+                    // regression was undiagnosable without frame-level sight of it.
                     if crate::diag::trace_on("gpu") {
                         crate::diag::trace(
                             "gpu",
                             format!(
-                                "lt e={e:.1} res={}x{} iter={} steps={:.2e} ms={ms:.1} \
-                                 cur={cur:.2e} -> {:?} tiling={} tile={:?}",
+                                "lt e={e:.1} res={}x{} iter={} steps={:.2e} ms={ms:.1} src={src} \
+                                 budget {:.2e} -> {:.2e} priced={priced} tiling={} tile={:?}",
                                 params.resolution[0],
                                 params.resolution[1],
                                 params.max_iter,
                                 steps as f64,
-                                stepped.map(|(n, ok)| format!("{:.2e} ok={ok}", n as f64)),
+                                before as f64,
+                                self.perf.fe_budget[0] as f64,
                                 self.perf.tile_state[0].is_some(),
                                 params.tile,
                             ),

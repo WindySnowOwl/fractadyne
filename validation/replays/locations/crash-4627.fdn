@@ -1,0 +1,15 @@
+# REPLAY FIXTURE SOURCE (validation/replays/escaped-ref.jsonl): the 2026-09-21 RX 6800 XT crash view
+# (1.76e6x, an explicit 4,627 iterations). Recorded under FRACTADYNE_REF_ESCAPE_AT=655, which cuts every
+# reference to 655 samples, complete and BLA-free: the field shape that enters the §6.7 escaped-reference
+# regime. See validation/replays/README.md for the command.
+app=Fractadyne
+fractal=Mandelbrot
+julia=0
+julia_c_re=-7.90924385965502408e-1
+julia_c_im=2.27364941001560711e-1
+center_re=-2.25240826233419888831467612841290233455e-1
+center_im=8.13056118118977733159569954453056386421e-1
+upp_log2=-2.90839364408849477e1
+zoom=1.7576089021848e6
+max_iter=4627
+auto_iter=0
