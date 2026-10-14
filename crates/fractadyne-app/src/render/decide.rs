@@ -2168,6 +2168,8 @@ pub(crate) struct ReplayReport {
     pub(crate) regime_lines: u64,
     pub(crate) regime_entered: bool,
     pub(crate) regime_line: Option<String>,
+    /// The adapters its header lines name (a file may hold several recordings, a header each).
+    pub(crate) adapters: Vec<String>,
 }
 
 impl ReplayReport {
@@ -2199,6 +2201,11 @@ pub(crate) fn replay_lines(text: &str) -> ReplayReport {
                 if schema != DECIDE_SCHEMA as u64 {
                     rep.wrong_schema = Some(schema);
                     return rep;
+                }
+                if let Some(a) = v.get("adapter").and_then(|a| a.as_str()) {
+                    if !rep.adapters.iter().any(|x| x == a) {
+                        rep.adapters.push(a.to_string());
+                    }
                 }
                 rep.header = Some(v);
             }
@@ -2613,6 +2620,12 @@ mod tests {
             texts.iter().any(|t| replay_lines(t).regime_entered),
             "VACUOUS: no fixture entered the §6.7 escaped-reference regime"
         );
+        // …and the field term: the set's recordings come from more than one card (a field capture),
+        // so a hidden input that differs between cards turns a replay red here, on the CPU.
+        let mut adapters: Vec<String> = texts.iter().flat_map(|t| replay_lines(t).adapters).collect();
+        adapters.sort();
+        adapters.dedup();
+        assert!(adapters.len() >= 2, "VACUOUS: the fixtures name fewer than two adapters: {adapters:?}");
         for (f, text) in files.iter().zip(&texts) {
             let rep = replay_lines(text);
             assert!(

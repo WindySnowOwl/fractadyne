@@ -9157,11 +9157,17 @@ zoom = \"1e94\"
             let texts: Vec<String> =
                 files.iter().map(|f| std::fs::read_to_string(f).unwrap_or_default()).collect();
             let mut entered = Vec::new();
+            let mut adapters: Vec<String> = Vec::new();
             for (f, text) in files.iter().zip(&texts) {
                 let rep = replay_lines(text);
                 let name = f.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned());
                 if rep.regime_entered {
                     entered.push(name.clone());
+                }
+                for a in &rep.adapters {
+                    if !adapters.contains(a) {
+                        adapters.push(a.clone());
+                    }
                 }
                 push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "Replay",
@@ -9204,6 +9210,14 @@ zoom = \"1e94\"
                 result: if entered.is_empty() { "VACUOUS: none entered it".into() } else { format!("entered: {}", entered.join(", ")) },
                 threshold: "at least one recording",
                 pass: !entered.is_empty(),
+            });
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Replay",
+                name: "the recordings come from more than one card".into(),
+                params: "the adapters the recordings' headers name".into(),
+                result: if adapters.is_empty() { "VACUOUS: no header names an adapter".into() } else { adapters.join(", ") },
+                threshold: "at least two adapters",
+                pass: adapters.len() >= 2,
             });
         }
 

@@ -3633,3 +3633,29 @@ missing. Gates: workspace 1,503 / 0 / 11; self-test 526/526, goldens 31/31 (the 
 new: six fixtures, the coverage, the regime); `--motiontest` PASS ×3; `--livetest` 24/24 with 0 drifted.
 Remaining for W5: a field capture as a fixture-set term (the field agent takes harness arguments only, so
 it cannot set `FRACTADYNE_RECORD_DECIDE`: an agent change, or a recording made in a user's own session).
+
+**2026-10-14 — W5: a field capture, recorded on the RX 6800 XT and replayed exactly on the RTX 3080.**
+The field agent (v24, which PLUTO's agent took from the share by its self-update) accepts `record_decide`
+on a harness request: it points `FRACTADYNE_RECORD_DECIDE` at a file in the run's own folder — the
+agent's path, never the request's — clears it before and after every run, and returns `decide.jsonl` with
+the results (`field-request.ps1 -RecordDecide`). It was run end to end first on the dev box against a
+private share (the published dev.8 zip, a `--motiontest`), then on PLUTO with the dev.8 field build:
+`--motiontest`, and the auto-iteration climb at the 9.3e78 minibrot (12 octaves into it, a 30 s hold).
+The Radeon's 26,187 recorded decisions replay exactly on the 3080 — the cross-card check the hidden-input
+finding called for: a lifted decision that read a card's state would differ here. Its climb seeded and
+raised; its motiontest passed its verdict. A recording's header now names the adapter
+(`calibration::adapter`), and the fixture set's last anti-vacuity term is live: its recordings must name
+at least two cards (`field-rx6800xt.jsonl` beside the 3080's `motiontest.jsonl`, re-recorded through the
+agent at dev.8); with the Radeon file moved aside, the gate reads VACUOUS. Also seen: the stock
+`--motiontest` enters the §6.7 regime on both cards, uninstrumented — a 317-sample escaped reference
+against its 1M ask during motion (3080: 335 frames, 71 storm readings; RX 6800 XT: 293 and 51) — so the
+regime term does not rest on the instrument run alone.
+
+W5 is complete against §7.5: M8 (seven lifted decisions), B9 (U52's mirrors), `--replay`, and seven
+fixtures (the motiontest, the 2^800 autodive, the uitest, the grand tour, the zoomtest runs, the
+escaped-reference rung, the RX 6800 XT capture) replayed by `cargo test` and by `--selftest replay`,
+under all of §7.5's anti-vacuity terms (at least 200 decisions with motion per file, every branch, the
+regime, more than one card), with the companion red-check red and the global-read guard. Gates: workspace
+1,503 / 0 / 11; self-test 528/528, goldens 31/31 (the regime entered by three recordings, two cards
+named); `--motiontest` PASS ×3 (the live path is unchanged since the last `--livetest`, 24/24 with 0
+drifted). `feat/w5-decide` is not merged.
