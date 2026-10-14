@@ -5121,6 +5121,23 @@ impl FractadyneApp {
             }
         };
         let climb = decide::decide_iter(&climb_in);
+        // W6 (U54): the climb's verdict on this frame's MAXITER reading, into the record — a reading
+        // judged at another budget used to be dropped without a trace. Why it was not judged comes
+        // from the reading's provenance (the counter readback that published it, still on the
+        // content sink this frame): the shader ran to a count other than the ask (a missing or
+        // partial reference caps it, the SA-skip rescue raises it), or the ask has moved since.
+        {
+            use crate::diag::frame_record::climb_read;
+            let code = if !climb.reached_ask {
+                climb_read::NONE
+            } else if !climb.stale {
+                climb_read::JUDGED
+            } else {
+                let prov = self.perf.content_sink[vb].lock().ok().and_then(|g| g.as_ref().map(|r| r.prov));
+                if prov.is_some_and(|p| p.shader_iter != p.ask) { climb_read::SHADER_CAP } else { climb_read::OTHER_ASK }
+            };
+            self.perf.rec[vb].climb_read = code;
+        }
         {
             let (p, s) = (&mut self.perf, &climb.state);
             p.iter_boost[vb] = s.boost;
@@ -5174,6 +5191,8 @@ impl FractadyneApp {
                 self.perf.norm_locked[vb] = false;
             }
             if !reading_current {
+                // W6 (U54's family): a discard is counted in the record, not only traced.
+                self.perf.rec[vb].norm_discard = true;
                 // Drop it rather than feed it: it describes a view that is no longer on screen.
                 // Clearing (not peeking) so the next frame sees a genuinely fresh one.
                 self.perf.grad_sink[vb].store(0, SeqCst);
@@ -5250,6 +5269,10 @@ impl FractadyneApp {
                     rec.ctr_px = r.px;
                     rec.ctr_rebase = rebase;
                     rec.ctr_bla_skip = bla_skip;
+                    // W6: the dispatch it measured, and the ask against the count the shader ran to.
+                    rec.ctr_prov_frame = r.prov.frame;
+                    rec.ctr_prov_ask = r.prov.ask;
+                    rec.ctr_prov_shader = r.prov.shader_iter;
                 }
                 // The escape distribution of a COMPLETE walk only (see `Perf::esc_hist`): the
                 // cursor reached the ask the view was last planned at, and the histogram is not
@@ -6271,15 +6294,17 @@ impl FractadyneApp {
             Some(p) if pin_frame || p.started_frame == self.perf.frame_idx => p.started_frame,
             _ => self.perf.frame_idx,
         };
-        let params = MandelbrotParams {
+        let mut params = MandelbrotParams {
             iterate_ms,
             iterate_steps,
             iterate_frame,
             iterate_armed_us,
+            iterate_prov: Some(self.perf.iterate_prov[vs].clone()),
             live_timing: self.perf.live_pass[vs.min(1)] && chunk_range.is_none() && tile.is_none(),
             live_ms: Some(self.perf.live_ms[vs.min(1)].clone()),
             live_steps: Some(self.perf.live_steps[vs.min(1)].clone()),
             live_frame: Some(self.perf.live_frame[vs.min(1)].clone()),
+            live_prov: Some(self.perf.live_prov[vs.min(1)].clone()),
             split,
             now_us: Some(crate::app_micros),
             nominal_steps,
@@ -6391,6 +6416,8 @@ impl FractadyneApp {
             // the exponent and the span — not the f64 centre, which stops telling neighbouring
             // deep views apart. See `ViewResources::content_stamp`.
             view_stamp: pos_sig,
+            provenance: Default::default(), // completed below, once the frame's kind is classified
+            ran_out: Some(self.perf.gpu_ran[vsub].clone()),
             content_stamp_out: Some(self.perf.content_stamp[vsub].clone()),
             adopt: None,
             adopt_hold: false,
@@ -6521,6 +6548,19 @@ impl FractadyneApp {
             chunked: chunk_range.is_some(),
             accum: self.perf.accum_cmd[vsub].jitter != [0.0, 0.0],
         });
+        // W6: the dispatch every reading armed this frame carries back (`fractadyne_gpu::Provenance`),
+        // from the values just handed the GPU. The GPU completes it with the pass's own frame, nominal
+        // steps and shader iteration count when it arms the reading.
+        params.provenance = fractadyne_gpu::Provenance {
+            view: vsub.min(u8::MAX as usize) as u8,
+            res: [resolution[0], resolution[1]],
+            ss,
+            kind: kind.code(),
+            walk_sig: if chunk_range.is_some() { self.perf.chunk_sig[vs].word() } else { 0 },
+            view_stamp: pos_sig,
+            ask: gpu_iter,
+            ..Default::default()
+        };
         // THE FRAME RECORD'S PLAN HALF (diag::frame_record), written from the values this
         // function just handed the GPU — never re-derived later. A second call in the same frame
         // (tiled settles can) overwrites the first; `plan_calls` says how many there were.

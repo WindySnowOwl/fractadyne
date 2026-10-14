@@ -1247,6 +1247,12 @@ struct Perf {
     live_ms: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     live_steps: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     live_frame: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// W6: the [`fractadyne_gpu::Provenance`] of the pass the iterate timer and the live-refresh
+    /// timer measured — which dispatch a timing reading describes (U14), published before its time.
+    iterate_prov: [fractadyne_gpu::ProvenanceSink; 2],
+    live_prov: [fractadyne_gpu::ProvenanceSink; 2],
+    /// W6: where the GPU says a frame RAN an iterate pass (`MandelbrotParams::ran_out`).
+    gpu_ran: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     /// Whether the frame being built is a live-refresh pass (set in `build_params`, read where the
     /// params are assembled).
     live_pass: [bool; 2],
@@ -2182,6 +2188,9 @@ impl Default for Perf {
             live_ms: [Default::default(), Default::default()],
             live_steps: [Default::default(), Default::default()],
             live_frame: [Default::default(), Default::default()],
+            iterate_prov: [Default::default(), Default::default()],
+            live_prov: [Default::default(), Default::default()],
+            gpu_ran: [Default::default(), Default::default()],
             live_pass: [false, false],
             witness: Default::default(),
             witness_pending: [None, None],
@@ -15044,6 +15053,13 @@ impl FractadyneApp {
             let mut r = p.rec[v];
             r.kind = diag::frame_record::kind::FRAME;
             r.frame = p.frame_idx;
+            // W6 (U14): what the GPU did with the PREVIOUS frame (its `prepare` ran after that
+            // frame's record was emitted) — the truth to hold the app's dispatch stamp against.
+            {
+                let ran = p.gpu_ran[v].load(std::sync::atomic::Ordering::SeqCst);
+                r.prev_gpu_ran = p.frame_idx > 0 && ran >> 8 == p.frame_idx - 1;
+                r.prev_gpu_why = if r.prev_gpu_ran { (ran & 0xff) as u8 } else { 0 };
+            }
             r.t_ms = t_ms;
             r.view = v as u8;
             r.dual = self.dual;
@@ -16023,6 +16039,13 @@ impl eframe::App for FractadyneApp {
                 0 => self.perf.fe_steps_last[v],
                 n => n,
             };
+            // W6 (U14): WHICH dispatch this reading timed, into the record — published with the
+            // reading, before its time, so it cannot describe another pass.
+            if let Ok(p) = self.perf.iterate_prov[v].lock() {
+                let r = &mut self.perf.rec[v];
+                r.read_prov_frame = p.frame;
+                r.read_prov_kind = p.kind;
+            }
             // The timing witness (measure only): the reading against its pass's CPU-side window.
             let frame = self.perf.iterate_frame[v].swap(0, std::sync::atomic::Ordering::SeqCst);
             let armed = self.perf.iterate_armed[v].swap(0, std::sync::atomic::Ordering::SeqCst);

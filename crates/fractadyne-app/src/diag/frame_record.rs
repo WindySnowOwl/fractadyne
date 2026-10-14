@@ -52,7 +52,7 @@ use std::time::Duration;
 
 /// Bumped whenever a field is added, removed, retyped or reordered. Every record and every file
 /// header carries it, and a reader must refuse a schema it does not know rather than guess.
-pub(crate) const SCHEMA: u16 = 10;
+pub(crate) const SCHEMA: u16 = 11;
 /// Records the in-memory ring (and `frames.bin`) holds. At the 1–5 fps of the failing cadence
 /// that is 14–68 minutes of one view — the ring lengthens in TIME exactly as the app slows down,
 /// the opposite of the 24-entry decision ring it supersedes.
@@ -101,6 +101,18 @@ pub(crate) mod verdict {
     /// Longer than the CPU-side window its pass ran inside (`timing_witness`): it did not happen,
     /// and prices nothing (beta.129).
     pub(crate) const IMPOSSIBLE: u8 = 4;
+}
+/// What the adaptive-iteration climb did with the frame's MAXITER reading (schema 11, W6/U54).
+pub(crate) mod climb_read {
+    /// No reading reached its ask this frame.
+    pub(crate) const NONE: u8 = 0;
+    /// Judged at the budget it was measured at.
+    pub(crate) const JUDGED: u8 = 1;
+    /// Discarded: measured at another ask (the readback lands 2-3 frames late; the ask moved).
+    pub(crate) const OTHER_ASK: u8 = 2;
+    /// Discarded: the shader ran to a count other than the ask (a missing or partial reference
+    /// caps it, the SA-skip rescue raises it), so the reading judges that cap, not the ask.
+    pub(crate) const SHADER_CAP: u8 = 3;
 }
 /// Why a reading that asked for growth did not get it. `0` = no refusal. A REASON, recorded
 /// rather than inferred from an "(unchanged)" line: the refusal used to be visible only under
@@ -432,6 +444,16 @@ frame_record! {
     ctr_px: u32,
     ctr_rebase: u64,
     ctr_bla_skip: u64,
+    /// Schema 11 (W6, U14/U54): the dispatch that reading measured (`fractadyne_gpu::Provenance`) —
+    /// its frame, the frame's iteration ask, and the count the shader ran to (they differ under a
+    /// missing or partial reference, or the SA-skip rescue).
+    ctr_prov_frame: u64,
+    ctr_prov_ask: u32,
+    ctr_prov_shader: u32,
+    /// What the adaptive-iteration climb did with this frame's MAXITER reading ([`climb_read`]).
+    climb_read: u8,
+    /// A normalization reading arrived from another view and was discarded.
+    norm_discard: bool,
 
     // ---- colour and normalization (absent from every diagnostic artefact before this)
     norm_set: bool,
@@ -464,6 +486,16 @@ frame_record! {
     /// The previous frame's work had completed before the timer was armed, so the window is this
     /// frame's own GPU work plus callback latency.
     read_queue_empty: bool,
+    /// Schema 11 (W6, U14): the frame that DISPATCHED the pass this GPU reading timed, and that
+    /// frame's kind (`render::FrameKind`), from the reading's own provenance. 0 = no GPU reading.
+    read_prov_frame: u64,
+    read_prov_kind: u8,
+    /// Schema 11 (W6, U14): whether the GPU actually RAN an iterate pass for the PREVIOUS frame of this
+    /// view, and why (`fractadyne_gpu::ran_why` bits: 1 forced — a new orbit, BLA tree or resize —, 2
+    /// key, 4 tile, 8 chunk range, 16 probe nonce, 32 split). The app's `dispatched` is a plan; this is
+    /// what happened, a frame late because the GPU prepares a frame after its record is written.
+    prev_gpu_ran: bool,
+    prev_gpu_why: u8,
 
     // ---- the user's input this frame (window-wide; the same on both views' records)
     in_wheel: f32,

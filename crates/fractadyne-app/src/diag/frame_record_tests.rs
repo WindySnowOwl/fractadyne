@@ -393,3 +393,28 @@ fn numbered_log_names_append_the_slot() {
     assert_eq!(numbered(&base, 0), base);
     assert_eq!(numbered(&base, 3), Path::new("logs").join("frames.jsonl.3"));
 }
+
+#[test]
+fn framelog_names_the_schema_11_codes_as_the_code_does() {
+    // `framelog.py` decodes `climb_read` and `prev_gpu_why` by these names; a code added here and
+    // not there would print as "?" (or vanish from a reason) in every summary.
+    let script = include_str!("../../../../scripts/framelog.py");
+    for (code, name) in [
+        (climb_read::JUDGED, "judged"),
+        (climb_read::OTHER_ASK, "DISCARDED: another ask"),
+        (climb_read::SHADER_CAP, "DISCARDED: shader cap"),
+    ] {
+        assert!(script.contains(&format!("{code}: \"{name}\"")), "framelog.py CLIMB_READ lacks {code}: {name:?}");
+    }
+    use fractadyne_gpu::ran_why;
+    for (bit, name) in [
+        (ran_why::FORCED, "forced"),
+        (ran_why::KEY, "key"),
+        (ran_why::TILE, "tile"),
+        (ran_why::CHUNK, "chunk"),
+        (ran_why::PROBE, "probe"),
+        (ran_why::SPLIT, "split"),
+    ] {
+        assert!(script.contains(&format!("{bit}: \"{name}\"")), "framelog.py RAN_WHY lacks {bit}: {name:?}");
+    }
+}

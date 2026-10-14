@@ -345,6 +345,8 @@ struct IterTiming {
     /// The app's clock (µs) when the timer was armed — after one poll, before the frame's submit —
     /// published with the reading: the start of the app's CPU-side window for this pass (0 = none).
     armed_us: u64,
+    /// The timed pass's [`Provenance`], published with the reading.
+    prov: Provenance,
     state: TimingState,
     /// `map_async` outcome for the in-flight readback, written by the callback thread:
     /// [`MAP_PENDING`] / [`MAP_OK`] / [`MAP_ERR`]. Distinguishing error from pending is what lets a
@@ -400,6 +402,7 @@ impl IterTiming {
             steps: 0,
             frame: 0,
             armed_us: 0,
+            prov: Provenance::default(),
             state: TimingState::Idle,
             status: Arc::new(std::sync::atomic::AtomicU8::new(MAP_PENDING)),
             fails: 0,
@@ -416,6 +419,7 @@ impl IterTiming {
         out_steps: Option<&Arc<std::sync::atomic::AtomicU64>>,
         out_frame: Option<&Arc<std::sync::atomic::AtomicU64>>,
         out_armed: Option<&Arc<std::sync::atomic::AtomicU64>>,
+        out_prov: Option<&ProvenanceSink>,
     ) {
         use std::sync::atomic::Ordering::SeqCst;
         match self.state {
@@ -441,6 +445,11 @@ impl IterTiming {
                             // Steps FIRST: the app treats a non-zero `iterate_ms` as "a reading is
                             // ready" and reads the paired count in the same breath, so publishing the
                             // time first would expose one frame's timing against the previous count.
+                            if let Some(o) = out_prov {
+                                if let Ok(mut g) = o.lock() {
+                                    *g = self.prov;
+                                }
+                            }
                             if let Some(o) = out_steps {
                                 o.store(self.steps, SeqCst);
                             }
@@ -749,6 +758,8 @@ struct CounterRead {
     content_cursor: u32,
     /// The armed pass's [`MandelbrotParams::chunk_walk`] when it COUNTED its running pixels, else 0.
     walk: u64,
+    /// The armed pass's [`Provenance`], published in the [`ContentReading`].
+    prov: Provenance,
 }
 
 impl CounterRead {
@@ -770,6 +781,7 @@ impl CounterRead {
             content_tag: 0,
             content_cursor: 0,
             walk: 0,
+            prov: Provenance::default(),
         }
     }
 
@@ -859,6 +871,7 @@ impl CounterRead {
                                     },
                                     walk: self.walk,
                                     running: if self.walk != 0 { slots[CTR_CHUNK_RUNNING] } else { 0 },
+                                    prov: self.prov,
                                 });
                             }
                         }
@@ -1400,6 +1413,49 @@ mod grad_hist_tests;
 /// the other sinks because twelve counts do not fit one word; it is touched once per readback.
 pub type GradHistSink = Arc<std::sync::Mutex<Option<GradHist>>>;
 
+/// WHICH DISPATCH a reading measured (design/live-render-robustness.md §5.5, W6). The app sets it on
+/// every frame's params ([`MandelbrotParams::provenance`]); each reading captures it when it is ARMED,
+/// with the pass's own nominal steps, frame and shader iteration count, and publishes it with the
+/// reading. A reading lands 2-3 frames after its pass, so without this a consumer can only guess which
+/// dispatch it describes; with it, the consumer compares what it steers against what was measured and
+/// counts what it refuses, rather than dropping it silently.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Provenance {
+    /// The app's frame that dispatched the pass ([`MandelbrotParams::pass_frame`]).
+    pub frame: u64,
+    pub view: u8,
+    /// The pass's nominal steps ([`MandelbrotParams::nominal_steps`]).
+    pub pass_steps: u64,
+    /// The iteration texture's size and supersampling.
+    pub res: [u32; 2],
+    pub ss: u32,
+    /// The app's frame kind and walk signature (opaque here: codes and a word).
+    pub kind: u8,
+    pub walk_sig: u64,
+    /// The view the pass drew ([`MandelbrotParams::view_stamp`]).
+    pub view_stamp: u64,
+    /// The frame's iteration ask, and the count the shader actually ran to (`max_iter`): below the
+    /// ask under a missing or partial reference, above it under the SA-skip rescue. A reading taken
+    /// where the two differ judges the shader's cap, not the ask.
+    pub ask: u32,
+    pub shader_iter: u32,
+}
+
+/// Where a timing reading's [`Provenance`] is published (stored BEFORE the reading's milliseconds).
+pub type ProvenanceSink = Arc<std::sync::Mutex<Provenance>>;
+
+/// Why a frame RAN an iterate pass ([`MandelbrotParams::ran_out`], W6/U14): the GPU re-iterates when
+/// any of these changed since its last pass, and serves the texture otherwise.
+pub mod ran_why {
+    /// No previous pass to compare with: a new orbit or BLA tree, a resize, the first frame.
+    pub const FORCED: u64 = 1;
+    pub const KEY: u64 = 2;
+    pub const TILE: u64 = 4;
+    pub const CHUNK: u64 = 8;
+    pub const PROBE: u64 = 16;
+    pub const SPLIT: u64 = 32;
+}
+
 /// One armed frame's CONTENT, as read back: how many of its pixels have escaped, tagged with the
 /// app's [`MandelbrotParams::content_tag`] for the render that produced it and the iteration
 /// cursor that render's pass ended at. The app decides from this whether the texture may be shown
@@ -1425,6 +1481,8 @@ pub struct ContentReading {
     pub walk: u64,
     /// Texels (resolution × ss²) the armed pass left still RUNNING ([`CTR_CHUNK_RUNNING`]).
     pub running: u32,
+    /// The dispatch this reading measured (W6).
+    pub prov: Provenance,
 }
 
 /// Where the live path publishes a [`ContentReading`] — the `GradHistSink` idiom, one lock per
@@ -2483,6 +2541,8 @@ pub struct MandelbrotParams {
     pub iterate_frame: Option<Arc<std::sync::atomic::AtomicU64>>,
     /// Sink for the app-clock µs at which that pass's timer was armed (see `IterTiming::armed_us`).
     pub iterate_armed_us: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Sink for the [`Provenance`] of the pass `iterate_ms` timed (W6), published before the time.
+    pub iterate_prov: Option<ProvenanceSink>,
     /// ⭐This pass is a LIVE REFRESH, whose own GPU time prices the ones after it (the app's
     /// `live_refresh_verdict`). The iterate timer above is one slot and times about one pass in
     /// three, so a lone probe usually went unpriced; a live pass is bracketed by its OWN timer
@@ -2495,6 +2555,7 @@ pub struct MandelbrotParams {
     pub live_ms: Option<Arc<std::sync::atomic::AtomicU64>>,
     pub live_steps: Option<Arc<std::sync::atomic::AtomicU64>>,
     pub live_frame: Option<Arc<std::sync::atomic::AtomicU64>>,
+    pub live_prov: Option<ProvenanceSink>,
     /// `[passes, this pass]` of a SPLIT live refresh: a single pass (no chunk range, no tile) that
     /// renders only checkerboard set `split[1]` of `split[0]` sets of 16-texel tiles, over the
     /// texture's existing content (it loads rather than clears), so `split[0]` consecutive passes
@@ -2561,6 +2622,13 @@ pub struct MandelbrotParams {
     /// matches what that content was drawn at; across a view change it clears instead, so another
     /// location's pixels can never survive underneath the new one.
     pub view_stamp: u64,
+    /// Where the GPU says a frame RAN an iterate pass (W6/U14): `pass_frame << 8 | ran_why bits`,
+    /// stored when it records one. The app's dispatch stamp is a PLAN; this is what happened — the
+    /// GPU's dedupe and its forced re-iterate on a new orbit can disagree with the plan.
+    pub ran_out: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// This frame's [`Provenance`], as the app knows it (frame, view, res, ss, kind, walk, stamp, ask).
+    /// Every reading armed this frame captures it, with the pass's own steps and shader count.
+    pub provenance: Provenance,
     /// Sink for the view stamp this view's iteration texture is WHOLLY drawn at, or `u64::MAX`
     /// when older pixels may remain under the newest writes. The app reads it a frame later and
     /// refuses to start a progressive-supersampling average on anything but a clean match — the
@@ -2767,6 +2835,17 @@ impl MandelbrotParams {
         };
         rn
     }
+
+    /// The [`Provenance`] a reading armed this frame captures: the app's, completed with the pass's
+    /// own frame, nominal steps and shader iteration count.
+    fn armed_provenance(&self) -> Provenance {
+        Provenance {
+            frame: self.pass_frame,
+            pass_steps: self.nominal_steps,
+            shader_iter: self.max_iter,
+            ..self.provenance
+        }
+    }
 }
 
 impl Default for MandelbrotParams {
@@ -2776,10 +2855,12 @@ impl Default for MandelbrotParams {
             iterate_steps: None,
             iterate_frame: None,
             iterate_armed_us: None,
+            iterate_prov: None,
             live_timing: false,
             live_ms: None,
             live_steps: None,
             live_frame: None,
+            live_prov: None,
             split: [1, 0],
             now_us: None,
             nominal_steps: 0,
@@ -2797,6 +2878,8 @@ impl Default for MandelbrotParams {
             content_tag: 0,
             content_out: None,
             view_stamp: 0,
+            provenance: Provenance::default(),
+            ran_out: None,
             content_stamp_out: None,
             tile: None,
             chunk_range: None,
@@ -2976,6 +3059,7 @@ impl CallbackTrait for MandelbrotParams {
                 self.iterate_steps.as_ref(),
                 self.iterate_frame.as_ref(),
                 self.iterate_armed_us.as_ref(),
+                self.iterate_prov.as_ref(),
             );
         }
         if let Some(t) = view.live_timing.as_mut() {
@@ -2986,6 +3070,7 @@ impl CallbackTrait for MandelbrotParams {
                 self.live_steps.as_ref(),
                 self.live_frame.as_ref(),
                 None,
+                self.live_prov.as_ref(),
             );
         }
         if self.pass_clock.is_some() && view.pass_clock.is_none() {
@@ -3293,6 +3378,18 @@ impl CallbackTrait for MandelbrotParams {
                 || view.last_probe != self.probe_nonce
                 || view.last_split != self.split)
         {
+            // W6 (U14): this frame RAN a pass — say so, and why, before anything else is recorded.
+            if let Some(o) = &self.ran_out {
+                let why = match &view.last_iter_key {
+                    None => ran_why::FORCED,
+                    Some(k) if *k != key => ran_why::KEY,
+                    Some(_) => 0,
+                } | if view.last_tile != self.tile { ran_why::TILE } else { 0 }
+                    | if view.last_chunk != self.chunk_range { ran_why::CHUNK } else { 0 }
+                    | if view.last_probe != self.probe_nonce { ran_why::PROBE } else { 0 }
+                    | if view.last_split != self.split { ran_why::SPLIT } else { 0 };
+                o.store((self.pass_frame << 8) | why, std::sync::atomic::Ordering::SeqCst);
+            }
             // Per-texel step *mantissa*: span_mantissa (= span · 2^-delta_exp, already O(1))
             // divided by the texture dim. The shared exponent carries the true scale, so no
             // tiny span / huge 2^-delta_exp ever appears here → no underflow/overflow at depth.
@@ -3639,6 +3736,7 @@ impl CallbackTrait for MandelbrotParams {
                     encoder.copy_buffer_to_buffer(&s.resolve, 0, &t.read, 0, 16);
                     t.steps = self.nominal_steps;
                     t.frame = self.pass_frame;
+                    t.prov = self.armed_provenance();
                     t.armed_us = witness_stamp(device, self.now_us);
                     t.state = TimingState::Recorded;
                 }
@@ -3647,6 +3745,7 @@ impl CallbackTrait for MandelbrotParams {
                     encoder.copy_buffer_to_buffer(&s.resolve, 0, &lt.read, 0, 16);
                     lt.steps = self.nominal_steps;
                     lt.frame = self.pass_frame;
+                    lt.prov = self.armed_provenance();
                     lt.state = TimingState::Recorded;
                 }
             } else if arm_live {
@@ -3655,6 +3754,7 @@ impl CallbackTrait for MandelbrotParams {
                 encoder.copy_buffer_to_buffer(&lt.resolve, 0, &lt.read, 0, 16);
                 lt.steps = self.nominal_steps;
                 lt.frame = self.pass_frame;
+                lt.prov = self.armed_provenance();
                 lt.state = TimingState::Recorded;
                 if arm_ts {
                     // The same ticks, for the frame budget — as if its own timer had bracketed it.
@@ -3663,6 +3763,7 @@ impl CallbackTrait for MandelbrotParams {
                     encoder.copy_buffer_to_buffer(live_resolve, 0, &t.read, 0, 16);
                     t.steps = self.nominal_steps;
                     t.frame = self.pass_frame;
+                    t.prov = self.armed_provenance();
                     t.armed_us = witness_stamp(device, self.now_us);
                     t.state = TimingState::Recorded;
                 }
@@ -3672,6 +3773,7 @@ impl CallbackTrait for MandelbrotParams {
                 encoder.copy_buffer_to_buffer(&t.resolve, 0, &t.read, 0, 16);
                 t.steps = self.nominal_steps; // pair the cost with the time it took
                 t.frame = self.pass_frame;
+                t.prov = self.armed_provenance();
                 t.armed_us = witness_stamp(device, self.now_us);
                 t.state = TimingState::Recorded;
             }
@@ -3694,6 +3796,7 @@ impl CallbackTrait for MandelbrotParams {
                 view.counter_read.content_cursor =
                     self.chunk_range.map_or(self.max_iter, |[_, e]| e);
                 view.counter_read.walk = count_walk;
+                view.counter_read.prov = self.armed_provenance();
                 view.counter_read.state = TimingState::Recorded;
             }
             view.last_iter_key = Some(key);

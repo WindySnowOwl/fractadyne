@@ -3659,3 +3659,38 @@ regime, more than one card), with the companion red-check red and the global-rea
 1,503 / 0 / 11; self-test 528/528, goldens 31/31 (the regime entered by three recordings, two cards
 named); `--motiontest` PASS ×3 (the live path is unchanged since the last `--livetest`, 24/24 with 0
 drifted). `feat/w5-decide` is not merged.
+
+**2026-10-14 — W6 begins: provenance on every reading, and what the GPU actually ran**
+(`feat/w6-provenance`, off local main after W5 merged). §5.5's `ReadingProvenance` was meant to land with
+W2's B4 and never did, so W6 builds the whole of it. `fractadyne_gpu::Provenance` — frame, view, pass
+steps, resolution, ss, frame kind, walk signature, view stamp, the iteration ask, and the count the
+shader actually ran to — is set by the app on every frame's params once the frame is classified, captured
+by each reading when it is ARMED (the iterate timer at its five arming sites, the live-refresh timer, the
+counter readback), completed there with the pass's own frame, steps and shader count, and published with
+the reading before its ready signal (U14: nothing recorded which dispatch a reading timed). The GPU also
+says, per view, whether it RAN an iterate pass and why (`ran_out`: forced by a new orbit, BLA tree or
+resize; the key; a tile; the chunk range; the probe nonce; the split) — the truth the app's dispatch
+stamp, which is a plan, is held against. Frame record schema 11 carries all of it
+(`read_prov_frame/kind`, `ctr_prov_frame/ask/shader`, `prev_gpu_ran/why`) and the two silent discards
+(`climb_read`, `norm_discard`); `framelog.py summarize` reconciles them. Behaviour unchanged.
+
+What the record says on the first runs (RTX 3080):
+- **U54, the climb's silent discard, quantified.** The MAXITER reading carries the shader's count, not
+  the ask, and three rules make them differ — a missing reference caps it, a partial reference caps it
+  at its length, the SA-skip rescue raises it. Every reading under those is discarded, which is right
+  (it judges the cap, not the ask) and was silent. Over the minibrot zoomtest the climb judged 6 readings
+  and discarded 40 as measured at another ask; `climb_read` now says which, and why.
+- **The plan and the GPU disagree, both ways.** The GPU ran passes the app did not plan (zoomtest 41,
+  motiontest 27): mostly re-iterates FORCED by a reference landing (25 and 19), the rest probe-nonce tail
+  re-sends. At every pin start whose reference was still building, the orbit landed on the next frame
+  and the GPU re-ran the pin's first pass against it — 6.0e10 steps, 12 ms — while the app, holding for
+  the pass in flight, stamped no dispatch. And the app planned passes the GPU never ran (motiontest 10):
+  moving frames whose pass was identical to the last, which the GPU served from the texture.
+- **Readings name frames that did not dispatch** (motiontest 14 of 434): exactly those unplanned passes,
+  timed. The budget is not mis-priced by them — every reading carries its own steps — but the app's
+  idea of when it dispatched is off in both directions, and its starvation check reads it.
+
+Gates: workspace 1,504 / 0 / 11; self-test 528/528, goldens 31/31; `--motiontest` PASS ×3; `--livetest`
+24/24 with 0 drifted. Next: the starvation check reads the plan, and the wall-clock fallback trips on
+this card, with working timestamps, in about ten of today's runs — logcheck's KNOWN `timing-starved`
+allowance, uninvestigated since beta.111. The record can now say what the GPU ran before each trip.
