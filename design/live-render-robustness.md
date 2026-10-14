@@ -3389,3 +3389,36 @@ and on a `Resolution::panel` outside tests anywhere but the one. A sabotage line
 (`let res_scale = res_scale.min(0.999)`) turned it red with the file and line. (The design's literal
 grep could not be the test: it also matches the config's `min_motion_res =` and the frame record's
 copy.) Byte-neutral: goldens 31/31, `--motiontest` unchanged.
+
+**2026-10-13 — W4's screen gate, RTX 3080; and a metric that lied.** The 2^800 fixture (`dive-2p800.kfr`,
+session-seed, 10,000 iterations), interleaved against the W4 step-1 binary (`adba77b`: W3's behaviour
+plus the record): `screengate.py` PASS on both arms, and on W4 again in a second session — 0% blank,
+flat, flash and stale in every valid run. ⚠The first launch of each binary in a session dives ~28
+octaves instead of ~61 and captures under 60 frames, which the gate rightly calls VACUOUS: score from
+the second run on. The record then showed W4 starting HALF as many pins per octave (0.5–0.9 against
+1.4–1.7), and a round-robin bisect over six binaries put the step at U39 + the one stamp — but it was
+the metric, not the build. Every pin was adopted in every run, and the refreshes that were not pins
+were single-pass moving refreshes, latched directly and shown live; counting both, every W4 run landed
+as many refreshes per octave as the control or more (1.89–2.41 against 1.91–1.96), the pinned ones with
+less lag at adoption (0.14–0.25 octaves against 0.38–0.43). And the split between the two is bimodal
+by ROUTE, not by build: in a later session HEAD came out pin-heavy like the control (1.76–1.97 pins and
+1–11 single passes per run), and an experiment build with U39's inference restored came out mixed.
+⇒ On an autopilot dive, a refresh rate is pins adopted PLUS single-pass refreshes, per octave; a pin
+count alone moves with where the autopilot goes. (Also measured on the way: W4 is unconfident on 2–3%
+of moving frames against the control's 5–6%, and neither arm ever bound on the wall cap or jammed.)
+
+**2026-10-13 — W4 on the RX 6800 XT** (dev.7 = `d5c2240`, against dev.6 = W3 at `11a0a84`; PLUTO, the
+user's standing go-ahead). Quick batteries interleaved dev.6, dev.7, dev.6, dev.7: the screen step
+PASS in all four (twelve runs, 0% blank, flat, flash and stale); `selftest` 517/518 and `gputest` 1 in
+ALL FOUR, both builds — the two known RX 6800 XT results (the Windows-only "wider canvas" direct-f64
+check, and the df32 EFTs the compiler folds), not W4's. `--motiontest` A,B,A,B,A,B: 6/6 PASS; dev.7 A4
+dive 1–3, A5 9–10 frames held at the jump floor, A6 0; complete adoptions 48–58 against dev.6's
+49–55.
+
+W4's gates, where they stand: the screen, median of three, both cards, control scored — PASS on both;
+`--motiontest` A4 green on both cards; `WalkSig` resolution property and the one-owner rule are unit
+tests (the second scans the crate and was seen to fail). Not done: the full M6 (`build_params`
+returning a `Plan` through a shim) — B7's invariant is held instead by `Resolution`, `WalkSig::of` and
+the `bp_moving_scale` stage in `frame_plan`, which is the part §5.3 says must not be half-applied;
+`--zoomtest` driving a WHEEL gesture (A5/A6 cover the jump and the programmatic glides instead);
+U51's boost-seed half (needs `--livetest`).
