@@ -3878,3 +3878,76 @@ on both. The provenance gate is green on the Radeon.
 - **`hold_verified` has a consumer that is not a `format!`.** It does: the GPU's display gate.
 
 W6 is complete.
+
+**2026-10-14 — W7: typed capabilities, and a relaunch that does not walk back into the load**
+(`feat/w7-capabilities`, off local main after W6 merged).
+
+*§5.6, the capabilities.* Two pieces were already built in W3: the retreat that names what it
+reached (`RetreatOutcome`, the `RETREAT REACHED NOTHING` line, schema 8) and the pin timeout demoted
+to a "the callback is not coming" escape (U3/U47). What remained was U1's latch. `chunk_ok` and
+`chunk_fe_ok` were booleans defaulting to false, set by a probe that ran on frame 0 only. Had the GPU
+not been ready on that frame, the session would have run without the resumable walk all session, and
+nothing would have said so.
+- `render::Actuators` replaces them: the walk as `Option<ChunkCap { mode2 }>`, plus GPU timing.
+  `Perf::actuators` is `None` until probed, and `None` cannot walk (`actuators::can_chunk`).
+- The probe runs on the first frame that HAS a device.
+- An always-on `actuators:` line names everything a retreat can reach, and says so when the probe
+  was late.
+- The retreat's own enum keeps its shape: it is serialized in the walk-price replay fixtures, and its
+  outcome was already the value §5.6 asked for.
+
+*§5.7, the relaunch.* After a session that did not end cleanly, the iteration setting it ended with
+came back verbatim. The device-loss relaunch already reopened at Home, but at Home an explicit
+10,000,000 (or auto-iterations from a base that large, which adds the depth bonus on top) iterates
+the whole cardioid to that count: the re-grind of MEM-38 and U18. Now:
+- `session_outcome::quarantine` sets the setting aside when it asks more of a pixel, at the depth
+  where the session ended, than the default would there. The session starts on the default (auto
+  from 256).
+- A notice says so and offers the old setting back in one click (P17): "Iteration setting set
+  aside", below the crash-report prompt.
+- One method, `apply_session_outcome`, changes the setting and raises the notice together.
+- A clean ending, a harness, or a setting at or under the default is never touched. The
+  2026-09-21 RX 6800 XT loss (an explicit 4,627 at 1.76e6×, under the default's 4,810 there; its
+  cause was the escaped reference) keeps its setting.
+
+The outcome is assembled at launch, not written by a crash path, which a kill never reaches. It
+departs from §5.7's `SessionOutcome` in the session file:
+- the `session.running` marker already knows clean from not for every ending, kills included;
+- the relaunch's environment variable says "device lost";
+- the saved session holds the setting and the depth, autosaved within a second of any change;
+- the dead session's frame record says what its controller had admitted at its last frame.
+
+A copy in `session.toml` would only be as current as the last autosave.
+
+*The gates.*
+- **`relaunch_policy.rs`:**
+  - the 2026-09-10 field loop is set aside;
+  - a clean ending, the default and the crash-4627 setting are not;
+  - the notice names both settings;
+  - §7.7's RED criterion: over four outcomes whose frame price exceeded the dispatch their
+    controller admitted, the relaunch's price at that depth is below the one the session died at.
+    This departs from "below the wall budget": the default's own frame at depth costs more than one
+    dispatch too, which is what the walk splits.
+- **`--selftest settings-quarantine`:** drives `apply_session_outcome` through four outcomes, RED if
+  the setting moves without the notice or the notice comes up with it unmoved.
+- **Both controls RED:** with the quarantine disabled, 4 of the policy tests fail; with the notice
+  dropped, the self-test fails ("set aside" with no notice).
+- **`--uitest`:** gains the `iteration-quarantine` screen, 76 steps.
+
+*End to end* (RTX 3080, a scratch config): a saved session at auto from 10,000,000 at about 1e9×,
+and a leftover marker whose pid is dead.
+- The launch logged `[fd-unclean]`, then the set-aside line.
+- It opened at auto from 256: 6,856 a pixel at the saved depth by the policy, and 6,751 on the
+  status bar at the window's own height, against 10,006,600.
+- The window, captured by PrintWindow with no input sent, showed the crash-report prompt with the
+  notice below it.
+
+Gates (RTX 3080):
+- Workspace tests: 1,524 / 0 / 11, the +8 being the new tests.
+- Self-test: 529/529, goldens 31/31.
+- `--motiontest` ×3: PASS; A7 checked 403–435 readings, every count 0.
+- `--livetest`: 24/24, 0 drifted.
+- `--uitest`: 75 pass / 1 warn / 0 fail across 76 steps.
+- Logcheck: PASS throughout.
+
+The quarantine is the plan's only user-visible change, so the next beta's release notes must say it.

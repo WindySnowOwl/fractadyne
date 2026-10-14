@@ -136,6 +136,8 @@ pub(crate) mod orbit_blob;
 /// (design/live-render-robustness.md §5.1). Re-exported, so every caller names it as before.
 pub(crate) mod pricing;
 pub(crate) use pricing::*;
+pub(crate) mod actuators;
+pub(crate) use actuators::Actuators;
 /// What a live frame is, and the identity of the walk it belongs to (design/live-render-robustness.md
 /// §5.3, W4): `FrameKind`, decided once from what the frame handed the GPU, and `WalkSig`, built in
 /// one place.
@@ -7868,7 +7870,7 @@ impl FractadyneApp {
         // only actuator is RESOLUTION. The emergency retreat cut steps 2.5× (417×571 → 264×361) and
         // the frame time went 1004 → 1003 ms. Removing pixels cannot bound a chain, so the
         // iteration axis had to become splittable. Mode 2 needs FOUR state targets rather than
-        // three (`chunk_fe_ok`), because floatexp state is 13 floats against 12 — see
+        // three (`ChunkCap::mode2`), because floatexp state is 13 floats against 12 — see
         // `fs_iterate_chunk_fe` and design/mode2-chunking.md.
         //
         // ⚠With mode 2 the iteration axis and the COST axis come apart: a BLA skip advances `iter`
@@ -7877,12 +7879,9 @@ impl FractadyneApp {
         // past the requested `end` idles in later passes until the cursor catches up, costing some
         // wasted passes, never an over-budget dispatch.
         let chunk_mode = self.render_mode(fractal, julia, magnification);
-        let chunk_over = (chunk_mode.is_direct()
-            || chunk_mode == RenderMode::Df32Pert
-            || (chunk_mode == RenderMode::Floatexp && self.perf.chunk_fe_ok))
+        let chunk_over = actuators::can_chunk(self.perf.actuators.as_ref(), chunk_mode)
             && self.resumable(fractal)
             && !self.coloring.color_method.needs_aux()
-            && self.perf.chunk_ok
             && !offscreen
             // ⚠ONE budget — `tdr_steps`, NOT the multi-tile allowance. This gate used the
             // allowance, which handed the settled compose to TILES whenever the converged

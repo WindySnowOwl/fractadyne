@@ -99,6 +99,7 @@ mod reusetest;
 mod update;
 mod scripting;
 mod selftest;
+mod session_outcome;
 mod sysinfo;
 mod theme;
 mod torture;
@@ -1537,16 +1538,14 @@ struct Perf {
     bla_suppress_until: [u64; 2],
     /// Tiled-settle progress per view (see `render::TileGrid`); `None` = no grid armed or running.
     tile_state: [Option<render::TileGrid>; 2],
-    /// Iteration-range tiling. `chunk_ok`: the device granted the 48-byte color-attachment limit
-    /// the three-target resumable pass needs (probed once). `chunk_fe_ok`: it also granted the 64
-    /// bytes MODE 2 needs, because floatexp state does not fit in three targets — kept separate so
-    /// a device that can do one and not the other loses only the one. `chunk_cursor`: the next
-    /// iteration to resume from per view (0 = fresh). `chunk_idx`: pass counter (ping-pong
-    /// parity). `chunk_sig`: the view identity the cursor belongs to — any change restarts the
-    /// progression. `chunk_pending`: a progression is mid-flight (drives repaints, like
+    /// What the device can do to make a frame cheaper (`render::Actuators`, W7): the resumable walk
+    /// (three state targets; floatexp needs a fourth) and GPU timing. `None` until probed — on the
+    /// first frame that has a device — and `None` cannot walk. Iteration-range tiling:
+    /// `chunk_cursor`: the next iteration to resume from per view (0 = fresh). `chunk_idx`: pass
+    /// counter (ping-pong parity). `chunk_sig`: the view identity the cursor belongs to — any change
+    /// restarts the progression. `chunk_pending`: a progression is mid-flight (drives repaints, like
     /// `tile_pending`).
-    chunk_ok: bool,
-    chunk_fe_ok: bool,
+    actuators: Option<render::Actuators>,
     chunk_cursor: [u32; 2],
     chunk_idx: [u32; 2],
     chunk_sig: [render::WalkSig; 2],
@@ -2343,8 +2342,7 @@ impl Default for Perf {
             view_prev: [None, None],
             nav_epoch: 0,
             view_jump_logged: [false, false],
-            chunk_ok: false,
-            chunk_fe_ok: false,
+            actuators: None,
             chunk_cursor: [0, 0],
             chunk_idx: [0, 0],
             chunk_sig: [render::WalkSig::NONE; 2],
@@ -5875,6 +5873,9 @@ struct DialogState {
     /// second device is opened (`drive_worker_setting`). Shown whether or not the crash-report
     /// prompt is silenced; never in front of a harness.
     second_device_prompt: Option<String>,
+    /// W7 (§5.7): the iteration setting the previous session ended with, set aside because it did not
+    /// end cleanly — the notice that says so and offers it back (`session_outcome::Quarantine`).
+    iteration_quarantine: Option<session_outcome::Quarantine>,
     /// A view whose checksum did not match, held UNAPPLIED while the user is asked whether to
     /// load it anyway. ⭐Parked rather than loaded-then-undone: a half-applied view would have
     /// already moved them, and "undo" is not a thing a jump has.
@@ -6982,6 +6983,10 @@ impl FractadyneApp {
         // which is trivially renderable, so the restart RECOVERS instead of re-crashing. The lost
         // location is still in the session file and the crash report if the user wants to return to
         // it deliberately. Detected by the same env var the relaunch handler sets on the child.
+        // W7 (§5.7): the depth and the iteration setting the previous session was saved with, read
+        // before a device-loss relaunch resets the view (`apply_session_outcome`, once the app is built).
+        let ended_at_log2mag = viewport.log2_magnification();
+        let saved_ask = session_outcome::Ask { max_iter: s.max_iter, auto_iter: s.auto_iter };
         if std::env::var_os("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS").is_some() {
             viewport.reset();
             diag::log_line(
@@ -7191,6 +7196,7 @@ impl FractadyneApp {
                         && !gpu_worker::setting_spec(&s.live_worker_gpu).is_empty()
                         && !std::env::args().any(|a| a == "--worker-gpu")
                 }),
+                iteration_quarantine: None, // `apply_session_outcome`, once the app is built
                 accelerated_open: false,
                 open_fractal_dropdown: false,
                 help_open: false,
@@ -7466,6 +7472,24 @@ impl FractadyneApp {
             if let Err(e) = app.apply_lsystem_lines(&lsystem_text, false) {
                 diag::log_line("start", &format!("saved L-system dropped: {e}"));
             }
+        }
+        // W7 (§5.7): how the previous session ended, and whether its iteration setting comes back.
+        if !launched_for_a_task {
+            let end = if std::env::var_os("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS").is_some() {
+                session_outcome::SessionEnd::DeviceLost
+            } else if diag::previous_session_unclean() {
+                session_outcome::SessionEnd::Unclean
+            } else {
+                session_outcome::SessionEnd::Clean
+            };
+            let last = diag::frame_record::previous_session_last_plan();
+            app.apply_session_outcome(session_outcome::SessionOutcome {
+                end,
+                at_log2mag: ended_at_log2mag,
+                ask: saved_ask,
+                admitted_budget: last.map(|(b, _)| b),
+                mode_rate: last.map(|(_, r)| r),
+            });
         }
         let (formulas, unreadable) = formula_library::load();
         app.saved_formulas = formulas;
@@ -7908,6 +7932,21 @@ impl FractadyneApp {
 // ================================================================================================
 
 impl FractadyneApp {
+    /// W7 (§5.7): take the previous session's outcome. A setting `session_outcome::quarantine` sets
+    /// aside is replaced by the default ask HERE, and only here, together with the notice that says
+    /// so — the one path, so a quarantine cannot happen without its notice (`--selftest
+    /// settings-quarantine` drives this same method). Returns the quarantine, if any.
+    pub(crate) fn apply_session_outcome(
+        &mut self,
+        outcome: session_outcome::SessionOutcome,
+    ) -> Option<session_outcome::Quarantine> {
+        let q = session_outcome::quarantine(&outcome, session_outcome::Ask::default_ask())?;
+        self.render_cfg.max_iter = q.restored.max_iter;
+        self.render_cfg.auto_iter = q.restored.auto_iter;
+        self.dialogs.iteration_quarantine = Some(q);
+        diag::log_line("start", &q.log_line());
+        Some(q)
+    }
 
     /// Snapshot current state and save it ~1 s after the last change (or on close).
     fn autosave(&mut self, ctx: &egui::Context) {
@@ -15876,13 +15915,21 @@ impl eframe::App for FractadyneApp {
         // nominal step count measured 114 ms at one location and 1147 ms at another on the SAME
         // GPU), so a capability-derived cost model would be confidently wrong exactly where it
         // matters.
-        if self.perf.frame_idx == 0 {
+        //
+        // ⭐On the first frame that HAS a device, not on frame 0 (W7, U1's capability latch): a
+        // probe that ran once and found no device left the walk off for the whole session, silently.
+        if self.perf.actuators.is_none() {
             if let Some((dev, _)) = &gpu {
                 self.perf.ts_supported =
                     dev.features().contains(eframe::wgpu::Features::TIMESTAMP_QUERY);
-                // Whether the live iteration-range (chunked) path can run — see `Perf::chunk_ok`.
-                self.perf.chunk_ok = fractadyne_gpu::chunking_available(dev);
-                self.perf.chunk_fe_ok = fractadyne_gpu::chunking_mode2_available(dev);
+                // Whether the live iteration-range (chunked) path can run — see `Perf::actuators`.
+                let actuators = render::Actuators::new(
+                    fractadyne_gpu::chunking_available(dev),
+                    fractadyne_gpu::chunking_mode2_available(dev),
+                    self.perf.ts_supported,
+                    self.perf.frame_idx,
+                );
+                self.perf.actuators = Some(actuators);
                 self.attach_bytes_per_sample = (
                     dev.limits().max_color_attachment_bytes_per_sample,
                     adapter_attach.unwrap_or(0),
@@ -15903,6 +15950,8 @@ impl eframe::App for FractadyneApp {
                         self.attach_bytes_per_sample.1
                     ),
                 );
+                // …and what that leaves the frame controller able to reach (`render::Actuators`).
+                diag::log_line("wgpu", &actuators.verdict_line());
                 // The DRIVER, on a line of its own (the adapter line's shape is parsed elsewhere):
                 // the same GPU on two driver versions can render different pixels, and a render
                 // farm warns when its machines' drivers differ (`farm::gpu_facts`).
@@ -15957,8 +16006,9 @@ impl eframe::App for FractadyneApp {
                         "timestamp_query": self.perf.ts_supported,
                         "attach_bytes_granted": self.attach_bytes_per_sample.0,
                         "attach_bytes_available": self.attach_bytes_per_sample.1,
-                        "chunk_ok": self.perf.chunk_ok,
-                        "chunk_fe_ok": self.perf.chunk_fe_ok,
+                        "chunk_ok": actuators.chunk.is_some(),
+                        "chunk_fe_ok": actuators.chunk.is_some_and(|c| c.mode2),
+                        "actuators_probed_at": actuators.probed_at,
                         "tunables": crate::tunables::status_line(),
                         "bignum": fractadyne_core::built_in_backends(),
                         "window": [sz.x, sz.y],

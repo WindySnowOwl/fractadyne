@@ -1324,6 +1324,19 @@ pub(crate) fn previous_session_frames() -> Option<BinFile> {
     read_bin(&bin_path()?).ok().flatten().filter(|b| !b.records.is_empty())
 }
 
+/// The previous session's last PLANNED frame (view 0): the steps its admission let one dispatch
+/// carry, and its measured rate (steps a millisecond) in that frame's mode — what its controller had
+/// learned when it ended (W7, `session_outcome`). Read at launch, before this session records a frame
+/// and truncates the file.
+pub(crate) fn previous_session_last_plan() -> Option<(u64, f64)> {
+    let b = previous_session_frames()?;
+    b.records
+        .iter()
+        .filter(|r| r.kind == kind::FRAME && r.view == 0 && r.plan_calls > 0)
+        .max_by_key(|r| r.seq)
+        .map(|r| (r.admitted, r.mode_rate))
+}
+
 // ------------------------------------------------------------------------------------------------
 // The crash report's view.
 

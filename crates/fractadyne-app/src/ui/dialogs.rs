@@ -160,6 +160,47 @@ impl FractadyneApp {
         }
     }
 
+    /// W7 (§5.7): "Iteration setting set aside" (`DialogState::iteration_quarantine`): the previous
+    /// session did not end cleanly while asking more of a pixel than the default would, so this one
+    /// started on the default. Keeping it changes nothing; restoring puts the old setting back, which
+    /// is saved like any change. Below the other start-up prompts when they are up.
+    pub(crate) fn draw_iteration_quarantine(&mut self, ctx: &egui::Context) {
+        let Some(q) = self.dialogs.iteration_quarantine else { return };
+        let mut open = true;
+        let below = if self.dialogs.crash_prompt_open { 200.0 } else { 0.0 }
+            + if self.dialogs.second_device_prompt.is_some() { 150.0 } else { 0.0 };
+        egui::Window::new("Iteration setting set aside")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, below])
+            .show(ctx, |ui| {
+                ui.set_max_width(460.0);
+                ui.label(q.notice());
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new("You can change it any time in Controls ▸ Quality.").weak().small(),
+                );
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.button(egui::RichText::new("Keep the default").strong()).clicked() {
+                        self.dialogs.iteration_quarantine = None;
+                        crate::diag::log_line("start", &format!("kept {} after the set-aside notice", q.restored.describe()));
+                    }
+                    if ui.button(format!("Restore {}", q.outcome.ask.describe())).clicked() {
+                        self.render_cfg.max_iter = q.outcome.ask.max_iter;
+                        self.render_cfg.auto_iter = q.outcome.ask.auto_iter;
+                        self.dialogs.iteration_quarantine = None;
+                        crate::diag::log_line("start", &format!("restored {} from the set-aside notice", q.outcome.ask.describe()));
+                    }
+                });
+            });
+        if !open {
+            // Closing the window keeps the default, like "Keep the default".
+            self.dialogs.iteration_quarantine = None;
+        }
+    }
+
     /// First-run welcome overlay: a short quick-start shown once on a fresh install (and
     /// re-openable from Help). Deep-zoom explorers are opaque to newcomers — this covers the
     /// first-two-minutes controls and offers a couple of one-click destinations, then gets out of

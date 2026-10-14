@@ -231,8 +231,8 @@ impl FractadyneApp {
                     crate::diag::log_line(
                         "motiontest",
                         &format!(
-                            "reference ready (orbit_len={} chunk_ok={} chunk_fe_ok={}) — driving",
-                            rc.orbit_len, self.perf.chunk_ok, self.perf.chunk_fe_ok
+                            "reference ready (orbit_len={} actuators={:?}) — driving",
+                            rc.orbit_len, self.perf.actuators
                         ),
                     );
                     advance(&mut mt, Phase::Dive);
@@ -313,8 +313,8 @@ impl FractadyneApp {
                     let home_restarts = self.perf.walk_restarts[0].wrapping_sub(mt.restarts_at_home);
                     eprintln!();
                     eprintln!(
-                        "--motiontest: frames={} motion-chunk-frames={} (chunk_ok={} chunk_fe_ok={})",
-                        mt.frames, motion, self.perf.chunk_ok, self.perf.chunk_fe_ok
+                        "--motiontest: frames={} motion-chunk-frames={} (actuators {:?})",
+                        mt.frames, motion, self.perf.actuators
                     );
                     eprintln!(
                         "--motiontest: adopt partial={partial} complete={complete} worker={worker} dirty-shown={dirty} \

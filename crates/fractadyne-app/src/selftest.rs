@@ -502,7 +502,7 @@ impl FractadyneApp {
             "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "worker", "nr-zoom", "coords",
             "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
-            "checklist", "replay",
+            "checklist", "replay", "settings-quarantine",
         ];
         /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` above so a bare
         /// `--selftest` never pays for them — each costs minutes, not milliseconds.
@@ -1540,8 +1540,7 @@ impl FractadyneApp {
                 let fresh = crate::Perf {
                     ts_supported: self.perf.ts_supported,
                     wall_fallback: self.perf.wall_fallback,
-                    chunk_ok: self.perf.chunk_ok,
-                    chunk_fe_ok: self.perf.chunk_fe_ok,
+                    actuators: self.perf.actuators,
                     ..Default::default()
                 };
                 let saved_perf = std::mem::replace(&mut self.perf, fresh);
@@ -7025,7 +7024,7 @@ impl FractadyneApp {
                 // authorising 24,457 — and its growth is a ×2 fast lane, so the invariant has to
                 // hold not on one frame but along the whole ladder.
                 //
-                // ⚠`chunk_fe_ok` is FORCED, not probed. It is false on a device that granted only
+                // ⚠The mode-2 walk (`ChunkCap::mode2`) is FORCED, not probed. It is false on a device that granted only
                 // 48 color-attachment bytes, and this view is mode 2 — so on such a machine the
                 // mode-2 sizing arithmetic would never be reached and the check would pass without
                 // testing it. `build_params` computes a dispatch rather than issuing one, so
@@ -7039,10 +7038,9 @@ impl FractadyneApp {
                 // ⚠ANTI-VACUITY: the run must actually have been chunk-governed, and the ladder
                 // must actually have MOVED — a walk pinned at the 256 floor would satisfy the
                 // budget bound trivially while testing none of the growth this exists to cover.
-                let saved_chunk = (self.perf.chunk_ok, self.perf.chunk_fe_ok);
+                let saved_chunk = self.perf.actuators;
                 let saved_method = self.coloring.color_method;
-                self.perf.chunk_ok = true;
-                self.perf.chunk_fe_ok = true;
+                self.perf.actuators = Some(crate::render::Actuators::new(true, true, self.perf.ts_supported, 0));
                 // Aux colorings are out of chunk scope by design; pin a non-aux method so the case
                 // exercises the path regardless of what the loaded session left selected.
                 self.coloring.color_method = crate::ColorMethod::Smooth;
@@ -7073,7 +7071,7 @@ impl FractadyneApp {
                     category: "Live budget",
                     name: "a growing chunk band license never outgrows one dispatch budget".into(),
                     params: format!(
-                        "{}×{} panel, {DEEP_ITER} iter @1.3e30×, converged budget {:.3e},                          24 settled frames, chunk_fe_ok forced",
+                        "{}×{} panel, {DEEP_ITER} iter @1.3e30×, converged budget {:.3e},                          24 settled frames, the mode-2 walk forced",
                         DEEP[0], DEEP[1], FIELD_BUDGET as f64
                     ),
                     result: format!(
@@ -7090,8 +7088,7 @@ impl FractadyneApp {
                     );
                 }
                 self.coloring.color_method = saved_method;
-                self.perf.chunk_ok = saved_chunk.0;
-                self.perf.chunk_fe_ok = saved_chunk.1;
+                self.perf.actuators = saved_chunk;
 
                 // ---- one chunked pass = ONE dispatch budget, even with the tile allowance up ----
                 // ⭐Field device loss 2026-08-19 17:01 UTC (crash-1787158916-0, RTX 3080,
@@ -7187,10 +7184,9 @@ impl FractadyneApp {
                 // with dispatches going out, and the confident leg must actually chunk, or the
                 // check says nothing about the reaction it exists for.
                 {
-                    let saved_chunk = (self.perf.chunk_ok, self.perf.chunk_fe_ok);
+                    let saved_chunk = self.perf.actuators;
                     let saved_method = self.coloring.color_method;
-                    self.perf.chunk_ok = true;
-                    self.perf.chunk_fe_ok = true;
+                    self.perf.actuators = Some(crate::render::Actuators::new(true, true, self.perf.ts_supported, 0));
                     self.coloring.color_method = crate::ColorMethod::Smooth;
                     self.perf.chunk_sig = [crate::render::WalkSig::NONE; 2];
                     self.perf.chunk_cursor = [0, 0];
@@ -7290,8 +7286,7 @@ impl FractadyneApp {
                             && recovered,
                     });
                     self.coloring.color_method = saved_method;
-                    self.perf.chunk_ok = saved_chunk.0;
-                    self.perf.chunk_fe_ok = saved_chunk.1;
+                    self.perf.actuators = saved_chunk;
                 }
                 self.viewport.set_size(PANEL[0] as f64, PANEL[1] as f64);
                 self.perf.fe_budget = [0, 0];
@@ -7386,6 +7381,58 @@ impl FractadyneApp {
                 threshold: "NoActuatorReachable with the RETREAT REACHED NOTHING line at the floor; Applied to a \
                             smaller budget above it",
                 pass: floor_ok && logged && control_ok,
+            });
+        }
+
+        // ⭐design/live-render-robustness.md §7.7 (W7): a relaunch after a session that did not end
+        // cleanly never comes back with the iteration setting it died at, and never changes the
+        // setting without the notice that says so. Driven through `apply_session_outcome`, the one
+        // path a launch takes. RED if the setting moved without the notice (or the notice is up with
+        // the setting unmoved), if a heavy setting comes back, or if a clean or light one is touched.
+        if want("settings-quarantine") {
+            use crate::session_outcome::{Ask, SessionEnd, SessionOutcome};
+            let saved = (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.dialogs.iteration_quarantine.take());
+            let run = |app: &mut Self, end: SessionEnd, l2: f64, ask: Ask| -> (Ask, bool) {
+                app.dialogs.iteration_quarantine = None;
+                (app.render_cfg.max_iter, app.render_cfg.auto_iter) = (ask.max_iter, ask.auto_iter);
+                let _ = app.apply_session_outcome(SessionOutcome {
+                    end,
+                    at_log2mag: l2,
+                    ask,
+                    admitted_budget: Some(400_000_000),
+                    mode_rate: None,
+                });
+                (
+                    Ask { max_iter: app.render_cfg.max_iter, auto_iter: app.render_cfg.auto_iter },
+                    app.dialogs.iteration_quarantine.is_some(),
+                )
+            };
+            let heavy = Ask { max_iter: 10_000_000, auto_iter: true };
+            let light = Ask { max_iter: 4_627, auto_iter: false };
+            let cases = [
+                ("device lost, auto from 10,000,000 at 2^269", SessionEnd::DeviceLost, 269.0, heavy, true),
+                ("unclean, an explicit 10,000,000 at Home", SessionEnd::Unclean, 0.0, Ask { max_iter: 10_000_000, auto_iter: false }, true),
+                ("clean, auto from 10,000,000 at 2^269", SessionEnd::Clean, 269.0, heavy, false),
+                ("device lost, an explicit 4,627 at 1.76e6x", SessionEnd::DeviceLost, 1.76e6f64.log2(), light, false),
+            ];
+            let mut results = Vec::new();
+            let mut pass = true;
+            for (name, end, l2, ask, set_aside) in cases {
+                let (now, notice) = run(self, end, l2, ask);
+                let moved = now != ask;
+                let ok = moved == notice && moved == set_aside && (!moved || now == Ask::default_ask());
+                pass &= ok;
+                results.push(format!("{name}: {} {}", if moved { "set aside" } else { "kept" }, if notice { "(notice)" } else { "" }));
+            }
+            (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.dialogs.iteration_quarantine) = saved;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Settings",
+                name: "a relaunch sets a lethal iteration setting aside, and says so".into(),
+                params: "four previous-session outcomes, through apply_session_outcome".into(),
+                result: results.join("; "),
+                threshold: "the two heavy settings after an unclean end set aside to the default WITH the notice; \
+                            the clean and the light one kept, with no notice",
+                pass,
             });
         }
 
