@@ -38,6 +38,9 @@ enum Screen {
     /// The offer to turn off the second graphics device after a session it was in use for ended
     /// unexpectedly (seeded: the walk ends no session).
     SecondDevicePrompt,
+    /// The notice that the previous session's iteration setting was set aside after it did not end
+    /// cleanly (W7; seeded: the walk ends no session).
+    IterationQuarantine,
     Bookmarks,
     BenchConfig,
     BenchResults,  // seeded with a synthetic report so the populated layout renders
@@ -759,6 +762,7 @@ fn build_steps() -> Vec<Step> {
         screen("help-acknowledgments", Screen::HelpAcknowledgments),
         screen("welcome", Screen::Welcome),
         screen("second-device-prompt", Screen::SecondDevicePrompt),
+        screen("iteration-quarantine", Screen::IterationQuarantine),
         screen("bookmarks", Screen::Bookmarks),
         screen("benchmark-config", Screen::BenchConfig),
         screen("benchmark-results", Screen::BenchResults),
@@ -1145,6 +1149,7 @@ impl FractadyneApp {
         self.dialogs.help_open = false;
         self.dialogs.welcome_open = false;
         self.dialogs.second_device_prompt = None;
+        self.dialogs.iteration_quarantine = None;
         self.dialogs.bookmarks_open = false;
         self.dialogs.bench_open = false;
         self.dialogs.bench_dialog_open = false;
@@ -1254,6 +1259,19 @@ impl FractadyneApp {
             Screen::Welcome => self.dialogs.welcome_open = true,
             Screen::SecondDevicePrompt => {
                 self.dialogs.second_device_prompt = Some(format!("same card, {} · Vulkan", self.gpu_name));
+            }
+            Screen::IterationQuarantine => {
+                // The 2026-09-10 shape: auto-iterations from a base of 10,000,000 at a deep minibrot.
+                // Through the one path a launch takes, then the walk's own setting put back.
+                let saved = (self.render_cfg.max_iter, self.render_cfg.auto_iter);
+                let _ = self.apply_session_outcome(crate::session_outcome::SessionOutcome {
+                    end: crate::session_outcome::SessionEnd::DeviceLost,
+                    at_log2mag: 269.0,
+                    ask: crate::session_outcome::Ask { max_iter: 10_000_000, auto_iter: true },
+                    admitted_budget: Some(400_000_000),
+                    mode_rate: None,
+                });
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter) = saved;
             }
             Screen::Bookmarks => self.dialogs.bookmarks_open = true,
             Screen::BenchConfig => self.dialogs.bench_dialog_open = true,

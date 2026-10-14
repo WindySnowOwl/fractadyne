@@ -284,7 +284,6 @@ impl Viewport {
     }
 
     pub fn recommended_max_iter(&self, base: u32) -> u32 {
-        let octaves = self.log2_magnification().max(0.0);
         // The iteration count a given depth genuinely wants (~220 per octave), ADDED to the user's
         // base. This is the *export* / full-quality appetite; the live preview caps it lower (see
         // `build_params`) for responsiveness, so deep views can look smoother on screen than in an
@@ -300,7 +299,7 @@ impl Viewport {
         // reverting boost 33.5→1.0".) Bounding only the bonus keeps a small DEFAULT base from a
         // runaway ask at extreme depth (e21000-class wants ~15M of bonus → still capped to 2M)
         // without ever pulling the appetite below what the user explicitly asked for.
-        base.saturating_add(((octaves * 220.0) as u32).min(2_000_000))
+        recommended_iterations(base, self.log2_magnification())
     }
 
     /// Center as `f64` (for display / coarse use).
@@ -329,3 +328,10 @@ mod click_zoom_tests;
 #[cfg(test)]
 #[path = "viewport/precision_guard_tests.rs"]
 mod precision_guard_tests;
+
+/// The iteration count auto-iterations ask at `log2mag` from a `base`: the base plus about 220 an
+/// octave of depth bonus, the BONUS (not the total) capped at 2,000,000 — see
+/// `Viewport::recommended_max_iter`, which reads its own depth, for why.
+pub fn recommended_iterations(base: u32, log2mag: f64) -> u32 {
+    base.saturating_add(((log2mag.max(0.0) * 220.0) as u32).min(2_000_000))
+}

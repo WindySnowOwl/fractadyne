@@ -13,8 +13,6 @@
 //! built in ONE place ([`WalkSig::of`]); its fields are private, so a walk identity cannot be
 //! assembled by hand somewhere that forgets an input.
 
-use super::*;
-
 /// What a live frame did, decided from what it handed the GPU (not from what was requested).
 ///
 /// The codes are the frame record's `frame_kind` and are part of the schema: append, never
@@ -335,12 +333,9 @@ impl crate::FractadyneApp {
         // a formula past the chunk shaders' scope or a device without the state targets renders
         // each refresh as ONE dispatch, and then one pass is all there is.
         let chunk_mode = self.render_mode(fractal, julia, magnification);
-        let can_chunk = (chunk_mode.is_direct()
-            || chunk_mode == RenderMode::Df32Pert
-            || (chunk_mode == RenderMode::Floatexp && self.perf.chunk_fe_ok))
+        let can_chunk = super::actuators::can_chunk(self.perf.actuators.as_ref(), chunk_mode)
             && self.resumable(fractal)
-            && !self.coloring.color_method.needs_aux()
-            && self.perf.chunk_ok;
+            && !self.coloring.color_method.needs_aux();
         let c = crate::tunables::cost();
         // W5: every value the decision reads, gathered — the decision itself is the pure
         // `decide::decide_moving`, so a recording of these inputs replays it exactly.
