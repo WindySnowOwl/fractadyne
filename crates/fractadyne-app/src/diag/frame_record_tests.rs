@@ -414,6 +414,7 @@ fn framelog_names_the_schema_11_codes_as_the_code_does() {
         (ran_why::CHUNK, "chunk"),
         (ran_why::PROBE, "probe"),
         (ran_why::SPLIT, "split"),
+        (ran_why::EMPTY, "empty"),
     ] {
         assert!(script.contains(&format!("{bit}: \"{name}\"")), "framelog.py RAN_WHY lacks {bit}: {name:?}");
     }

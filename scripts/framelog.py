@@ -59,7 +59,7 @@ SRC = {0: "-", 1: "gpu", 2: "wall"}
 # `climb_read` (schema 11; W6/U54): what the adaptive-iteration climb did with the frame's MAXITER reading.
 CLIMB_READ = {0: "-", 1: "judged", 2: "DISCARDED: another ask", 3: "DISCARDED: shader cap"}
 # `prev_gpu_why` (schema 11; `fractadyne_gpu::ran_why`): why the GPU re-iterated.
-RAN_WHY = {1: "forced", 2: "key", 4: "tile", 8: "chunk", 16: "probe", 32: "split"}
+RAN_WHY = {1: "forced", 2: "key", 4: "tile", 8: "chunk", 16: "probe", 32: "split", 64: "empty"}
 
 
 def ran_why(bits):

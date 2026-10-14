@@ -1454,6 +1454,10 @@ pub mod ran_why {
     pub const CHUNK: u64 = 8;
     pub const PROBE: u64 = 16;
     pub const SPLIT: u64 = 32;
+    /// Not a reason: the pass iterated NOTHING — a chunked walk's empty tail (`[end, end)`), re-sent
+    /// for the climb's probe once a walk ends. It arms no iterate timer (there is no cost to
+    /// measure), so no timing will ever answer it, and the timestamps-starved check must not wait.
+    pub const EMPTY: u64 = 64;
 }
 
 /// One armed frame's CONTENT, as read back: how many of its pixels have escaped, tagged with the
@@ -3387,7 +3391,17 @@ impl CallbackTrait for MandelbrotParams {
                 } | if view.last_tile != self.tile { ran_why::TILE } else { 0 }
                     | if view.last_chunk != self.chunk_range { ran_why::CHUNK } else { 0 }
                     | if view.last_probe != self.probe_nonce { ran_why::PROBE } else { 0 }
-                    | if view.last_split != self.split { ran_why::SPLIT } else { 0 };
+                    | if view.last_split != self.split { ran_why::SPLIT } else { 0 }
+                    // The same test as the timer's `arm_ts` below: a chunk pass (the pipelines
+                    // exist) whose range is empty.
+                    | if matches!(
+                        (self.chunk_range, chunk_pipeline, resolve_pipeline),
+                        (Some([s, e]), Some(_), Some(_)) if s >= e
+                    ) {
+                        ran_why::EMPTY
+                    } else {
+                        0
+                    };
                 o.store((self.pass_frame << 8) | why, std::sync::atomic::Ordering::SeqCst);
             }
             // Per-texel step *mantissa*: span_mantissa (= span · 2^-delta_exp, already O(1))

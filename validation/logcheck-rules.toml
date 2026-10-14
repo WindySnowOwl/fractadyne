@@ -53,8 +53,7 @@ mode.livetest = { max = 15, known = true, why = "livetest plays each tour segmen
 name = "timing-starved"
 token = "no GPU iterate timing after"
 max_per_min = 6.0
-why = "GPU timing readings stopped arriving and the frame budget fell back to the wall clock (harness runs outside uitest: at most 5 in a minute; the 2026-09-21 field loss: 58 in about 35 s)"
-mode.uitest = { max_per_min = 30.0, known = true, why = "21 a minute in every uitest run on both cards since beta.111; not investigated" }
+why = "GPU timing readings stopped arriving and the frame budget fell back to the wall clock (none in a harness run with working timestamps since W6 measured it from the first unread pass: the 21 a minute every uitest had since beta.111 were the first pass after each idle hold and a walk's untimed empty tail; the 2026-09-21 field loss: 58 in about 35 s)"
 
 [[rule]]
 name = "motion-jam"

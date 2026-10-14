@@ -3694,3 +3694,41 @@ Gates: workspace 1,504 / 0 / 11; self-test 528/528, goldens 31/31; `--motiontest
 24/24 with 0 drifted. Next: the starvation check reads the plan, and the wall-clock fallback trips on
 this card, with working timestamps, in about ten of today's runs — logcheck's KNOWN `timing-starved`
 allowance, uninvestigated since beta.111. The record can now say what the GPU ran before each trip.
+
+**2026-10-14 — W6 rung 1b: the starvation checks wait on the first unread pass, and logcheck's
+uitest allowance goes.** The schema-11 record put the fallback's trips side by side with what the GPU
+ran, and every one of them was false. All 14 wall-clock fallback trips of a `--uitest` on the RTX 3080,
+whose timestamps work, sat on the FIRST pass after an idle hold. The check measured from the last
+reading ("a settling view dispatches every frame, so measure from the reading, not the newest
+dispatch"), and after any hold longer than 30 frames that reading is already old when the next pass
+goes out, so the pass tripped it on the spot, before its reading could land 2–3 frames later. That is
+logcheck's KNOWN `timing-starved` allowance, 21 a minute in every uitest on both cards since beta.111,
+never investigated. B4's `budget_confident` shared the predicate with a 16-frame window, so the same
+shape made the second frame after every hold unconfident: 136 unconfident frames over three runs,
+34 of them with the dispatch bounded by the opening guess, and not one that had actually waited.
+
+Both now measure from the FIRST pass to go out after the last reading: not from the newest pass
+(the settling-view case still trips), and not from the reading. One predicate,
+`render::unread_too_long(since, now, limit)`, replaces `measurement_starved`. The fallback feeds it
+from the GPU's own account (`Perf::unpriced_since`, from `ran_out`), since a deduped "dispatch" never
+yields a reading. Confidence feeds it from the app's one dispatch stamp
+(`Perf::first_unfed_dispatch`), since its question is whether the budget is fed by readings of the work
+it sends, and the self-test's stale-budget check drives it that way. That left 3 trips in the uitest
+and the 1 every motiontest and zoomtest had: each came 30 frames after a walk's EMPTY tail, the
+`[end, end)` pass re-sent for the climb's probe once a walk ends. The GPU deliberately arms no timer
+on it (the 2026-09-27 witness fix: nothing to measure), yet it reported the pass as run. `ran_why`
+gains `EMPTY` (64) for a pass that iterated nothing, and the check skips it.
+
+Measured on the RTX 3080, rung 1 → this rung:
+- **Wall-clock fallback trips:** `--uitest` 14 → 0, `--motiontest` 1 → 0, minibrot `--zoomtest` 1 → 0.
+- **Unconfident frames:** 130 / 2 / 4 → 0 / 0 / 0 that planned anything.
+  - Those 130 include 29 where the opening guess bound the dispatch.
+  - The uitest's 91 remaining "unconfident" rows are frames where view 0 planned nothing: the record's
+    default.
+- **Control:** `FRACTADYNE_NO_TIMESTAMPS=1 --motiontest` still trips the fallback, at 1.471 s against
+  rung 1's 1.456 s (one frame later, as designed), and passes.
+
+logcheck's uitest allowance for `timing-starved` (30 a minute, KNOWN) is removed, so the stock bound
+of 6 a minute applies. On rung 1's uitest log the gate now FAILS (14 in a minute); on this build it
+passes, with no line at all. The Radeon's uitest is to be confirmed with W6's field build: the
+allowance said both cards, and only this one has been measured.

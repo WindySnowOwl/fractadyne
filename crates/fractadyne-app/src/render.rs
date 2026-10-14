@@ -6439,6 +6439,12 @@ impl FractadyneApp {
         let planned = planned_pass || key_pass;
         let dispatches = planned && params.reproject == 0;
         if dispatches {
+            // W6: the first dispatch since a reading last fed the budget — what `budget_confident`
+            // ages (the newest stays in `fe_dispatch_frame`). A dispatch on the frame a reading
+            // arrived counts as fed, as `budget_confident` has always taken it.
+            if self.perf.fe_dispatch_frame[vs] <= self.perf.fed_frame[vs] {
+                self.perf.first_unfed_dispatch[vs] = self.perf.frame_idx;
+            }
             self.perf.fe_dispatch_frame[vs] = self.perf.frame_idx;
         } else if planned {
             // ⭐Planned, then frozen: nothing ran, so nothing may pair a reading with its steps.
@@ -7525,6 +7531,7 @@ impl FractadyneApp {
         // logged when its binding term changes; with `ADMISSION=0` it is only recorded.
         let adm = if !offscreen && !will_reproject {
             let confident = budget_confident(
+                self.perf.first_unfed_dispatch[vidx],
                 self.perf.fe_dispatch_frame[vidx],
                 self.perf.fed_frame[vidx],
                 self.perf.frame_idx,

@@ -1253,6 +1253,9 @@ struct Perf {
     live_prov: [fractadyne_gpu::ProvenanceSink; 2],
     /// W6: where the GPU says a frame RAN an iterate pass (`MandelbrotParams::ran_out`).
     gpu_ran: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// W6: the first frame, since the last GPU reading arrived, at which the GPU RAN a pass — what the
+    /// timestamps-starved check ages (`render::unread_too_long`). `None` = nothing outstanding.
+    unpriced_since: [Option<u64>; 2],
     /// Whether the frame being built is a live-refresh pass (set in `build_params`, read where the
     /// params are assembled).
     live_pass: [bool; 2],
@@ -1365,6 +1368,9 @@ struct Perf {
     /// The last frame a reading reached this view's learned budget: a GPU reading, or the wall
     /// clock while the fallback stands in for one. What `render::budget_confident` reads.
     fed_frame: [u64; 2],
+    /// W6: the first frame this view dispatched since `fed_frame` — what `render::budget_confident`
+    /// ages (`render::unread_too_long`), stamped with `fe_dispatch_frame`.
+    first_unfed_dispatch: [u64; 2],
     /// The shadow admission of the frame last planned per view: `(steps, bound, confident)`.
     admission: [(u64, render::AdmitBound, bool); 2],
     /// Rate-limits the admission's binding-term line (`render::AdmitBound` can flap frame to frame).
@@ -2191,6 +2197,7 @@ impl Default for Perf {
             iterate_prov: [Default::default(), Default::default()],
             live_prov: [Default::default(), Default::default()],
             gpu_ran: [Default::default(), Default::default()],
+            unpriced_since: [None, None],
             live_pass: [false, false],
             witness: Default::default(),
             witness_pending: [None, None],
@@ -2224,6 +2231,7 @@ impl Default for Perf {
             wall_cap: [0, 0],
             view_priced_seq: [0, 0],
             fed_frame: [0, 0],
+            first_unfed_dispatch: [0, 0],
             admission: [(0, render::AdmitBound::Learned, true); 2],
             admission_line: Default::default(),
             ts_supported: false,
@@ -15943,6 +15951,21 @@ impl eframe::App for FractadyneApp {
         // the UI thread are unforgiving. Nothing is tuned to a particular GPU — a slower part measures
         // a longer pass and settles at a smaller budget for the same target.
         for v in 0..2 {
+            // W6: a pass the GPU actually RAN since the last reading is what the timestamps-starved
+            // check below waits on (the GPU's account: a deduped "dispatch" never yields a reading,
+            // and nor does a pass that iterated nothing — a walk's empty tail, re-sent for the probe
+            // once the walk ends, arms no timer: 3 trips in a `--uitest`, each 30 frames after one).
+            {
+                let word = self.perf.gpu_ran[v].load(std::sync::atomic::Ordering::SeqCst);
+                let ran = word >> 8;
+                if ran > 0
+                    && word & fractadyne_gpu::ran_why::EMPTY == 0
+                    && ran > self.perf.ts_reading_frame[v]
+                    && self.perf.unpriced_since[v].is_none()
+                {
+                    self.perf.unpriced_since[v] = Some(ran);
+                }
+            }
             let bits = self.perf.iterate_ms[v].swap(0, std::sync::atomic::Ordering::SeqCst);
             let ms = f64::from_bits(bits);
             if bits == 0 || !(ms > 0.01) || self.perf.fe_steps_last[v] == 0 {
@@ -15964,6 +15987,7 @@ impl eframe::App for FractadyneApp {
                         // 0.3.0-beta.8: 7 in a minute, past the logcheck's `timing-starved` limit;
                         // beta.3 2–4; with this, 1 — the direct-mode start every build has).
                         self.perf.ts_reading_frame[v] = self.perf.frame_idx;
+                        self.perf.unpriced_since[v] = None;
                         self.perf.fed_frame[v] = self.perf.frame_idx;
                     }
                 }
@@ -15989,17 +16013,17 @@ impl eframe::App for FractadyneApp {
                 // mode: 1920×1080 at 2k iterations is 4.1e9 nominal steps against 4.0e8, so the
                 // view renders at ~600×337 upscaled to the panel, permanently. `can_tile` used to
                 // require a non-zero budget too, so the tiled settle could not recover it either.
-                // Measured from the last READING, not the last dispatch. A settling view
-                // dispatches a tile every frame, so "frames since the newest dispatch" is 0 or 1
-                // forever and never trips however starved the loop is; what matters is how long
-                // the unpriced work has been piling up. The first clause keeps an idle view (no
-                // dispatches at all, so nothing to price) from tripping it.
+                // Measured from the FIRST pass the GPU ran since the last reading (`unpriced_since`,
+                // the GPU's own account): not from the newest — a settling view dispatches a tile
+                // every frame, so that is 0 or 1 forever — and not from the reading, which after any
+                // idle hold is already old when the next pass goes out (until W6 that pass tripped
+                // this on the spot, every time; `render::unread_too_long`). An idle view has nothing
+                // outstanding and never trips it.
                 const TS_STARVE_FRAMES: u64 = 30;
                 if !self.perf.wall_fallback
                     && self.perf.present_throttle < render::PRESENT_THROTTLE_FRAMES
-                    && render::measurement_starved(
-                        self.perf.fe_dispatch_frame[v],
-                        self.perf.ts_reading_frame[v],
+                    && render::unread_too_long(
+                        self.perf.unpriced_since[v],
                         self.perf.frame_idx,
                         TS_STARVE_FRAMES,
                     )
@@ -16021,6 +16045,7 @@ impl eframe::App for FractadyneApp {
                 continue;
             }
             self.perf.ts_reading_frame[v] = self.perf.frame_idx;
+            self.perf.unpriced_since[v] = None;
             self.perf.fed_frame[v] = self.perf.frame_idx;
             // A real GPU timing arrived, so the fallback's premise is gone — UNLATCH it. It used to
             // be a one-way switch, so a single 30-frame gap (a settle, a long reference install, an

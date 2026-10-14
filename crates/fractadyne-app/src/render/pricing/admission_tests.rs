@@ -36,11 +36,22 @@ fn an_unconfident_budget_admits_at_most_the_opening_guess() {
 #[test]
 fn confidence_is_lost_only_by_an_outstanding_dispatch_going_unread() {
     // Idle: the last reading is newer than the last dispatch.
-    assert!(budget_confident(100, 102, 500));
-    // A dispatch whose reading is still in flight.
-    assert!(budget_confident(500, 498, 500 + CONFIDENT_FRAMES - 1 - 2));
-    // …and one that went CONFIDENT_FRAMES since the last reading without one.
-    assert!(!budget_confident(500, 498, 498 + CONFIDENT_FRAMES));
+    assert!(budget_confident(100, 100, 102, 500));
+    // Dispatching every frame since 499 (the first after the reading at 498): still in flight…
+    assert!(budget_confident(499, 510, 498, 499 + CONFIDENT_FRAMES - 1));
+    // …and CONFIDENT_FRAMES after that first unread dispatch, however recent the newest.
+    assert!(!budget_confident(499, 499 + CONFIDENT_FRAMES - 1, 498, 499 + CONFIDENT_FRAMES));
+}
+
+#[test]
+fn the_first_dispatch_after_an_idle_hold_keeps_the_learned_budget() {
+    // The last reading fed the budget at 100; the view sat idle until it dispatched at 400. Measured
+    // from the reading, as it was until W6, the next frame was unconfident on the spot and the
+    // opening guess bound it (34 such frames in three RTX 3080 runs, and not one unconfident frame
+    // that had waited) — before the reading could land.
+    assert!(budget_confident(400, 400, 100, 401));
+    assert!(budget_confident(400, 410, 100, 400 + CONFIDENT_FRAMES - 1));
+    assert!(!budget_confident(400, 410, 100, 400 + CONFIDENT_FRAMES));
 }
 
 #[test]
