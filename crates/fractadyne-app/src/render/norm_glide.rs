@@ -61,3 +61,20 @@ fn another_location_is_re_acquired_but_a_zoom_s_own_drift_is_not() {
     assert!(stepped.0 > shown.0 && stepped.0 < 46_200.0, "glided too far: {stepped:?}");
     assert!(stepped.1 > shown.1 && stepped.1 < 65_000.0, "glided too far: {stepped:?}");
 }
+
+#[test]
+fn the_glide_arrives_exactly_in_finite_frames() {
+    // W6 (U58): the SSAA average's colour signature includes the shown window, so a glide that only
+    // APPROACHES (an f32 ulp at a time) would hold the average off for ~100 frames.
+    let mut shown = (100.0_f32, 200.0_f32);
+    let target = (300.0, 500.0);
+    let mut frames = 0;
+    while shown != target {
+        shown = norm_glide_step(Some(shown), target, false);
+        frames += 1;
+        assert!(frames < 120, "still gliding after {frames} frames: {shown:?}");
+    }
+    // …and the final snap is invisible: under half a percent of the window.
+    let near = (299.5_f32, 499.5_f32);
+    assert_eq!(norm_glide_step(Some(near), target, false), target);
+}

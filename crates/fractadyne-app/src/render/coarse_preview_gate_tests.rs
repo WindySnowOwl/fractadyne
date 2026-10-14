@@ -34,10 +34,11 @@ fn a_preview_with_content_still_installs() {
     assert!(keep, "the boundary case must keep — the gate removes only flat frames");
 }
 
-/// A probe the gate cannot read must FAIL OPEN: the gate exists to remove a black frame and
-/// must never be able to remove a good one on a hiccup of its own.
+/// A probe the gate cannot read FAILS CLOSED (W6, U45). It failed open, so a hiccup put an
+/// unverified frame over the reprojected image the user had; closed, it costs a preview, and the
+/// full reference lands through the same channel regardless.
 #[test]
-fn an_unreadable_probe_fails_open() {
-    assert!(coarse_preview_has_content(&[], 56, 56).1);
-    assert!(coarse_preview_has_content(&frame(10, 0), 56, 56).1); // short buffer
+fn an_unreadable_probe_fails_closed() {
+    assert!(!coarse_preview_has_content(&[], 56, 56).1);
+    assert!(!coarse_preview_has_content(&frame(10, 0), 56, 56).1); // short buffer
 }

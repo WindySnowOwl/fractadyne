@@ -56,6 +56,22 @@ KIND = {0: "-", 1: "placeholder", 2: "reproject", 3: "pin-walk", 4: "motion", 5:
 # `hold_floor` (schema 10; U39): the bound the held frame's magnification took.
 HOLD_FLOOR = {0: "-", 1: "dive", 2: "jump", 3: "jump-BOUND", 4: "dive-deep"}
 SRC = {0: "-", 1: "gpu", 2: "wall"}
+# `climb_read` (schema 11; W6/U54): what the adaptive-iteration climb did with the frame's MAXITER reading.
+CLIMB_READ = {0: "-", 1: "judged", 2: "DISCARDED: another ask", 3: "DISCARDED: shader cap"}
+# `prev_gpu_why` (schema 11; `fractadyne_gpu::ran_why`): why the GPU re-iterated.
+RAN_WHY = {1: "forced", 2: "key", 4: "tile", 8: "chunk", 16: "probe", 32: "split", 64: "empty"}
+
+
+def ran_why(bits):
+    return "+".join(n for b, n in RAN_WHY.items() if bits & b) or "-"
+
+
+# `prev_gpu_hold` (schema 12; `fractadyne_gpu::hold_why`): what the display gate did with an asked-for hold.
+HOLD_WHY = {1: "served", 2: "no snapshot", 4: "unverified", 8: "stamp"}
+
+
+def hold_why(bits):
+    return "+".join(n for b, n in HOLD_WHY.items() if bits & b) or "-"
 VERDICT = {0: "-", 1: "DISCARDED", 2: "moved", 3: "unchanged"}
 # The minimum a summary needs before it will state a verdict (design 6.6.2's anti-vacuity).
 MIN_FRAMES = 30
@@ -347,6 +363,60 @@ def summarize(path, view=0, target_ms=400.0, out=sys.stdout):
         vh[k] = vh.get(k, 0) + 1
     p(f"  readings judged        {len(reads)} {vh}  lethal {sum(r['read_lethal'] for r in reads)}"
       f"  growth refused (building) {sum(1 for r in reads if r['refusal'] == 1)}")
+    if "climb_read" in recs[0]:
+        # Schema 11 (W6, U14/U54): what each reading measured, and what was discarded rather than
+        # dropped in silence. A GPU budget reading names the frame that dispatched its pass: it must
+        # be a frame of this view that DID dispatch (frames older than the ring cannot be checked).
+        cr = {}
+        for r in recs:
+            if r["climb_read"]:
+                k = CLIMB_READ.get(r["climb_read"], "?")
+                cr[k] = cr.get(k, 0) + 1
+        first = min(r["frame"] for r in recs)
+        dispatched = {r["frame"] for r in recs if r["dispatched"]}
+        timed = [r for r in recs if r["read_prov_frame"] and r["read_prov_frame"] >= first]
+        unpaired = sum(1 for r in timed if r["read_prov_frame"] not in dispatched)
+        p(f"  climb readings         {cr}  normalization readings of another view {sum(r['norm_discard'] for r in recs)}")
+        p(f"  timed dispatches       {len(timed)} GPU readings checked; {unpaired} name a frame that did not dispatch")
+        # The app's dispatch stamp (a plan) against the GPU's own account of the frame, which arrives
+        # on the NEXT frame's record. They disagree when the GPU dedupes a planned pass, or re-iterates
+        # one the app did not plan (a new orbit forces it).
+        byf = {r["frame"]: r for r in recs}
+        both = gpu_only = app_only = 0
+        why = {}
+        for r in recs:
+            n = byf.get(r["frame"] + 1)
+            if n is None:
+                continue
+            a, g = r["dispatched"], n["prev_gpu_ran"]
+            if a and g:
+                both += 1
+            elif g:
+                gpu_only += 1
+                k = ran_why(n["prev_gpu_why"])
+                why[k] = why.get(k, 0) + 1
+            elif a:
+                app_only += 1
+        p(f"  dispatch vs GPU        both {both}; GPU ran unplanned {gpu_only} {why}; planned but the GPU ran none {app_only}")
+        if "prev_gpu_hold" in recs[0]:
+            # The app's request (`present`) against what the screen got, a frame late (schema 12).
+            asked = served = 0
+            refused = {}
+            for r in recs:
+                n = byf.get(r["frame"] + 1)
+                if n is None or not r["display_hold"]:
+                    continue
+                asked += 1
+                bits = n["prev_gpu_hold"]
+                if bits & 1:
+                    served += 1
+                else:
+                    k = hold_why(bits)
+                    refused[k] = refused.get(k, 0) + 1
+            stale = sum(1 for r in recs if r["interacting"] and not r["live_pixels_ok"])
+            p(f"  holds asked / served   {asked} / {served}; shown live instead {refused}")
+            p(f"  reuse-hold refused     {sum(1 for r in recs if r['reuse_refused'])} (the live texture not a verified picture of the believed view); "
+              f"moving frames whose pixels were not the believed view {stale}")
     fb = [r["fe_budget"] for r in recs]
     p(f"  budget                 first {fb[0]:.3e}  last {fb[-1]:.3e}  min {min(fb):.3e}  max {max(fb):.3e}")
     ctr = [r for r in recs if r["ctr_new"]]

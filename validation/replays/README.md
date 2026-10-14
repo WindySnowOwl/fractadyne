@@ -10,7 +10,7 @@ inputs and compared with the recorded one, field by field. It runs on the CPU al
 A line carries its complete inputs, so any subset of a recording replays on its own; the fixtures are
 trimmed recordings. Anti-vacuity: every file holds at least 200 decisions, some of them of a moving
 frame (`REPLAY_MIN_DECISIONS`); across the set every branch of every lifted decision is replayed at
-least once (`decide::fixture_coverage`, 49 terms); and at least one recording ENTERED the §6.7
+least once (`decide::fixture_coverage`, 50 terms); and at least one recording ENTERED the §6.7
 escaped-reference regime, judged by the soak's own predicate over its regime lines; and the set's
 recordings come from more than one card (their headers name the adapter), so a hidden input that
 differs between cards turns a replay red on the CPU. The same verdict
@@ -59,7 +59,7 @@ become a regression test without anyone transcribing numbers.
 | file | recorded from |
 |------|---------------|
 | `motiontest.jsonl` | `--motiontest` (corpus loc 07, 1.3e31, mode 2, a 1M ask): the 100× click, the dive and the Home glide; recorded on the RTX 3080 through the field agent (dev.8). It also ENTERS the §6.7 regime, uninstrumented: a 317-sample escaped reference against the 1M ask during motion |
-| `field-rx6800xt.jsonl` | a field capture on the AMD Radeon RX 6800 XT (PLUTO) through the field agent (v24, `field-request.ps1 -RecordDecide`, dev.8): `--motiontest`, and the auto-iteration climb at the 9.3e78 minibrot (`--zoomtest 12 --zoomtest-location session --zoomtest-start-log2 250 --zoomtest-hold 30 -ViewFdn locations/minibrot-9.3e78-auto.fdn`). Recorded on one card, replayed exactly on another |
+| `field-rx6800xt.jsonl` | a field capture on the AMD Radeon RX 6800 XT (PLUTO) through the field agent (v24, `field-request.ps1 -RecordDecide`; re-recorded with W6's dev.9 field build): `--motiontest`, and the auto-iteration climb at the 9.3e78 minibrot (`--zoomtest 12 --zoomtest-location session --zoomtest-start-log2 250 --zoomtest-hold 30 -ViewFdn locations/minibrot-9.3e78-auto.fdn`). Recorded on one card, replayed exactly on another |
 | `autodive-2p800.jsonl` | the screen gate's fixture: `--autodive` from `scripts/dive-capture/dive-2p800.kfr` with `session-seed.toml`, 10,000 iterations |
 | `uitest.jsonl` | `--uitest`: every UI screen, and the live bands (direct 1e2, df32 1e6 and 1e12, floatexp 1e30 on the seahorse) settled under auto-iterations |
 | `livetest-grand-tour.jsonl` | `--livetest tours/grand-tour.toml --size 480x270`: the scripted tour's glides and holds |

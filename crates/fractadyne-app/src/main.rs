@@ -1247,6 +1247,30 @@ struct Perf {
     live_ms: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     live_steps: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     live_frame: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// W6: the [`fractadyne_gpu::Provenance`] of the pass the iterate timer and the live-refresh
+    /// timer measured — which dispatch a timing reading describes (U14), published before its time.
+    iterate_prov: [fractadyne_gpu::ProvenanceSink; 2],
+    live_prov: [fractadyne_gpu::ProvenanceSink; 2],
+    /// W6: where the GPU says a frame RAN an iterate pass (`MandelbrotParams::ran_out`).
+    gpu_ran: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// W6: the first frame, since the last GPU reading arrived, at which the GPU RAN a pass — what the
+    /// timestamps-starved check ages (`render::unread_too_long`). `None` = nothing outstanding.
+    unpriced_since: [Option<u64>; 2],
+    /// W6: the view the GPU says each live texture's pixels wholly are after its last frame
+    /// (`MandelbrotParams::pixels_stamp_out`; `u64::MAX` = blank or mixed), and what its display gate
+    /// did with an asked-for hold (`MandelbrotParams::hold_out`: `frame << 8 | hold_why`).
+    pixels_stamp: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    gpu_hold: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
+    /// W6 (U20): the reuse-hold wanted to reproject the live texture this frame and was refused,
+    /// because it was not a verified picture of the view the app believes (`render::reuse_source_ok`).
+    reuse_refused: [bool; 2],
+    /// W6 (§7.6 gate 1): the provenance gate's tally per view (`render::ProvTally`); the frames the GPU
+    /// says it ran a pass for (the last 256), against which every applied reading's frame is held;
+    /// and the `hold_verified` each view's params last carried, with its frame.
+    prov: [render::ProvTally; 2],
+    gpu_ran_frames: [std::collections::VecDeque<u64>; 2],
+    hold_verified_sent: [(u64, bool); 2],
+    hold_checked: [u64; 2],
     /// Whether the frame being built is a live-refresh pass (set in `build_params`, read where the
     /// params are assembled).
     live_pass: [bool; 2],
@@ -1359,6 +1383,9 @@ struct Perf {
     /// The last frame a reading reached this view's learned budget: a GPU reading, or the wall
     /// clock while the fallback stands in for one. What `render::budget_confident` reads.
     fed_frame: [u64; 2],
+    /// W6: the first frame this view dispatched since `fed_frame` — what `render::budget_confident`
+    /// ages (`render::unread_too_long`), stamped with `fe_dispatch_frame`.
+    first_unfed_dispatch: [u64; 2],
     /// The shadow admission of the frame last planned per view: `(steps, bound, confident)`.
     admission: [(u64, render::AdmitBound, bool); 2],
     /// Rate-limits the admission's binding-term line (`render::AdmitBound` can flap frame to frame).
@@ -1922,6 +1949,11 @@ struct Perf {
     /// around"; gliding turns the same information into a continuous drift. See
     /// `render::norm_glide_step`.
     norm_shown: [Option<(f32, f32)>; 2],
+    /// W6 (U43): the palette-range map the LIVE texture was last shown under, and the one a hold
+    /// snapshot was taken under (with the user's colouring then, `norm_user_sig`) — the map the
+    /// held frame keeps while it is served.
+    shown_norm: [Option<render::NormMap>; 2],
+    hold_norm: [Option<(render::NormMap, u64)>; 2],
     /// This view's frames are currently chunk-governed (`chunk_over`), stamped every
     /// `build_params`. The norm drain keys on THIS, not on the cursor: escape readings lag their
     /// dispatches by 2-3 frames, so a completed walk's LAST band lands with the cursor already at
@@ -2182,6 +2214,20 @@ impl Default for Perf {
             live_ms: [Default::default(), Default::default()],
             live_steps: [Default::default(), Default::default()],
             live_frame: [Default::default(), Default::default()],
+            iterate_prov: [Default::default(), Default::default()],
+            live_prov: [Default::default(), Default::default()],
+            gpu_ran: [Default::default(), Default::default()],
+            unpriced_since: [None, None],
+            pixels_stamp: [
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+                std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+            ],
+            gpu_hold: [Default::default(), Default::default()],
+            reuse_refused: [false, false],
+            prov: [Default::default(); 2],
+            gpu_ran_frames: [std::collections::VecDeque::new(), std::collections::VecDeque::new()],
+            hold_verified_sent: [(0, false); 2],
+            hold_checked: [0, 0],
             live_pass: [false, false],
             witness: Default::default(),
             witness_pending: [None, None],
@@ -2215,6 +2261,7 @@ impl Default for Perf {
             wall_cap: [0, 0],
             view_priced_seq: [0, 0],
             fed_frame: [0, 0],
+            first_unfed_dispatch: [0, 0],
             admission: [(0, render::AdmitBound::Learned, true); 2],
             admission_line: Default::default(),
             ts_supported: false,
@@ -2405,6 +2452,8 @@ impl Default for Perf {
             vis_sizing: [[0.0; 3]; 2],
             reading_pool: [render::ReadingPool::default(); 2],
             norm_shown: [None, None],
+            shown_norm: [None, None],
+            hold_norm: [None, None],
             chunk_governed: [false, false],
             motion_res: [0.6, 0.6],
             visible_res: [1.0, 1.0],
@@ -14955,6 +15004,15 @@ impl FractadyneApp {
             lo.to_bits().hash(&mut h);
             hi.to_bits().hash(&mut h);
         }
+        // ⭐W6 (U58): and the window actually MAPPED — the shown one, which glides toward the fed
+        // `norm_range` above over many frames. Without it an average begun mid-glide went on
+        // folding frames coloured under a moving window and was presented under a signature that
+        // said nothing had changed. The glide lands exactly (`render::norm_glide_step`), so this
+        // settles.
+        if let Some((lo, hi)) = self.perf.norm_shown[view] {
+            lo.to_bits().hash(&mut h);
+            hi.to_bits().hash(&mut h);
+        }
         self.perf.norm_sig[view].hash(&mut h);
         self.perf.norm_locked[view].hash(&mut h);
         h.finish()
@@ -15044,6 +15102,16 @@ impl FractadyneApp {
             let mut r = p.rec[v];
             r.kind = diag::frame_record::kind::FRAME;
             r.frame = p.frame_idx;
+            // W6 (U14): what the GPU did with the PREVIOUS frame (its `prepare` ran after that
+            // frame's record was emitted) — the truth to hold the app's dispatch stamp against.
+            {
+                let ran = p.gpu_ran[v].load(std::sync::atomic::Ordering::SeqCst);
+                r.prev_gpu_ran = p.frame_idx > 0 && ran >> 8 == p.frame_idx - 1;
+                r.prev_gpu_why = if r.prev_gpu_ran { (ran & 0xff) as u8 } else { 0 };
+                // …and what its display gate did with the hold the app asked for (W6, schema 12).
+                let hold = p.gpu_hold[v].load(std::sync::atomic::Ordering::SeqCst);
+                r.prev_gpu_hold = if p.frame_idx > 0 && hold >> 8 == p.frame_idx - 1 { (hold & 0xff) as u8 } else { 0 };
+            }
             r.t_ms = t_ms;
             r.view = v as u8;
             r.dual = self.dual;
@@ -15927,6 +15995,42 @@ impl eframe::App for FractadyneApp {
         // the UI thread are unforgiving. Nothing is tuned to a particular GPU — a slower part measures
         // a longer pass and settles at a smaller budget for the same target.
         for v in 0..2 {
+            // W6: a pass the GPU actually RAN since the last reading is what the timestamps-starved
+            // check below waits on (the GPU's account: a deduped "dispatch" never yields a reading,
+            // and nor does a pass that iterated nothing — a walk's empty tail, re-sent for the probe
+            // once the walk ends, arms no timer: 3 trips in a `--uitest`, each 30 frames after one).
+            {
+                let word = self.perf.gpu_ran[v].load(std::sync::atomic::Ordering::SeqCst);
+                let ran = word >> 8;
+                // The provenance gate's record of the passes the GPU ran (one a frame at most, and
+                // this drain runs every frame, before the frame's own paint).
+                if ran > 0 && self.perf.gpu_ran_frames[v].back() != Some(&ran) {
+                    self.perf.gpu_ran_frames[v].push_back(ran);
+                    if self.perf.gpu_ran_frames[v].len() > 256 {
+                        self.perf.gpu_ran_frames[v].pop_front();
+                    }
+                }
+                // …and its check that the display gate served no hold the app had not verified.
+                let hold = self.perf.gpu_hold[v].load(std::sync::atomic::Ordering::SeqCst);
+                let hold_frame = hold >> 8;
+                if hold_frame > 0 && hold_frame != self.perf.hold_checked[v] {
+                    self.perf.hold_checked[v] = hold_frame;
+                    if hold & fractadyne_gpu::hold_why::SERVED != 0 && self.perf.hold_verified_sent[v] == (hold_frame, false) {
+                        self.perf.prov[v].unverified_served += 1;
+                        diag::log_line(
+                            "wgpu",
+                            &format!("⚠PROVENANCE: view {v}: the display served a hold the app had not verified (frame {hold_frame})"),
+                        );
+                    }
+                }
+                if ran > 0
+                    && word & fractadyne_gpu::ran_why::EMPTY == 0
+                    && ran > self.perf.ts_reading_frame[v]
+                    && self.perf.unpriced_since[v].is_none()
+                {
+                    self.perf.unpriced_since[v] = Some(ran);
+                }
+            }
             let bits = self.perf.iterate_ms[v].swap(0, std::sync::atomic::Ordering::SeqCst);
             let ms = f64::from_bits(bits);
             if bits == 0 || !(ms > 0.01) || self.perf.fe_steps_last[v] == 0 {
@@ -15948,6 +16052,7 @@ impl eframe::App for FractadyneApp {
                         // 0.3.0-beta.8: 7 in a minute, past the logcheck's `timing-starved` limit;
                         // beta.3 2–4; with this, 1 — the direct-mode start every build has).
                         self.perf.ts_reading_frame[v] = self.perf.frame_idx;
+                        self.perf.unpriced_since[v] = None;
                         self.perf.fed_frame[v] = self.perf.frame_idx;
                     }
                 }
@@ -15973,17 +16078,17 @@ impl eframe::App for FractadyneApp {
                 // mode: 1920×1080 at 2k iterations is 4.1e9 nominal steps against 4.0e8, so the
                 // view renders at ~600×337 upscaled to the panel, permanently. `can_tile` used to
                 // require a non-zero budget too, so the tiled settle could not recover it either.
-                // Measured from the last READING, not the last dispatch. A settling view
-                // dispatches a tile every frame, so "frames since the newest dispatch" is 0 or 1
-                // forever and never trips however starved the loop is; what matters is how long
-                // the unpriced work has been piling up. The first clause keeps an idle view (no
-                // dispatches at all, so nothing to price) from tripping it.
+                // Measured from the FIRST pass the GPU ran since the last reading (`unpriced_since`,
+                // the GPU's own account): not from the newest — a settling view dispatches a tile
+                // every frame, so that is 0 or 1 forever — and not from the reading, which after any
+                // idle hold is already old when the next pass goes out (until W6 that pass tripped
+                // this on the spot, every time; `render::unread_too_long`). An idle view has nothing
+                // outstanding and never trips it.
                 const TS_STARVE_FRAMES: u64 = 30;
                 if !self.perf.wall_fallback
                     && self.perf.present_throttle < render::PRESENT_THROTTLE_FRAMES
-                    && render::measurement_starved(
-                        self.perf.fe_dispatch_frame[v],
-                        self.perf.ts_reading_frame[v],
+                    && render::unread_too_long(
+                        self.perf.unpriced_since[v],
                         self.perf.frame_idx,
                         TS_STARVE_FRAMES,
                     )
@@ -16005,6 +16110,7 @@ impl eframe::App for FractadyneApp {
                 continue;
             }
             self.perf.ts_reading_frame[v] = self.perf.frame_idx;
+            self.perf.unpriced_since[v] = None;
             self.perf.fed_frame[v] = self.perf.frame_idx;
             // A real GPU timing arrived, so the fallback's premise is gone — UNLATCH it. It used to
             // be a one-way switch, so a single 30-frame gap (a settle, a long reference install, an
@@ -16023,6 +16129,26 @@ impl eframe::App for FractadyneApp {
                 0 => self.perf.fe_steps_last[v],
                 n => n,
             };
+            // W6 (U14): WHICH dispatch this reading timed, into the record — published with the
+            // reading, before its time, so it cannot describe another pass.
+            if let Ok(p) = self.perf.iterate_prov[v].lock() {
+                let r = &mut self.perf.rec[v];
+                r.read_prov_frame = p.frame;
+                r.read_prov_kind = p.kind;
+                // The provenance gate: the reading must name a frame at which the GPU ran a pass.
+                let t = &mut self.perf.prov[v];
+                t.checked += 1;
+                if !self.perf.gpu_ran_frames[v].contains(&p.frame) {
+                    t.unran += 1;
+                    diag::log_line(
+                        "wgpu",
+                        &format!(
+                            "⚠PROVENANCE MISMATCH: view {v}: a GPU reading names frame {}, where the GPU ran no pass",
+                            p.frame
+                        ),
+                    );
+                }
+            }
             // The timing witness (measure only): the reading against its pass's CPU-side window.
             let frame = self.perf.iterate_frame[v].swap(0, std::sync::atomic::Ordering::SeqCst);
             let armed = self.perf.iterate_armed[v].swap(0, std::sync::atomic::Ordering::SeqCst);

@@ -578,21 +578,32 @@ fn explicit_budget_measures_past_the_nominal_cap_and_stops_at_its_ceiling() {
 }
 
 #[test]
-fn starvation_needs_an_outstanding_dispatch() {
-    // Idle view: the last dispatch was already priced. Never starved, however long it sits.
-    assert!(!measurement_starved(10, 10, 10_000, 30));
-    assert!(!measurement_starved(5, 10, 10_000, 30));
-    // A dispatch went out after the last reading and nothing came back.
-    assert!(measurement_starved(11, 10, 40, 30));
-    assert!(!measurement_starved(11, 10, 39, 30));
+fn starvation_needs_an_outstanding_pass() {
+    // Idle view: nothing went out since the last reading. Never starved, however long it sits.
+    assert!(!unread_too_long(None, 10_000, 30));
+    // A pass went out at 11 and nothing came back.
+    assert!(unread_too_long(Some(11), 41, 30));
+    assert!(!unread_too_long(Some(11), 40, 30));
 }
 
 #[test]
-fn starvation_is_measured_from_the_reading_not_the_dispatch() {
+fn the_first_pass_after_an_idle_hold_is_not_starved() {
+    // The last reading was at frame 0; the view then sat idle until a pass went out at 500. Its
+    // reading lands 2–3 frames later, and the check must wait for it — measured from the reading,
+    // as it was until W6, it tripped at 500 on the spot (every wall-clock fallback trip of a
+    // `--uitest` on hardware whose timestamps worked).
+    assert!(!unread_too_long(Some(500), 500, 30));
+    assert!(!unread_too_long(Some(500), 529, 30));
+    // …and if it never comes, the check trips `limit` frames after that pass.
+    assert!(unread_too_long(Some(500), 530, 30));
+}
+
+#[test]
+fn starvation_is_measured_from_the_first_unread_pass_not_the_newest() {
     // A settling view dispatches a tile EVERY frame, so "frames since the newest dispatch" is
     // 0 or 1 forever and would never trip however starved the loop is.
     let now = 500;
-    assert!(measurement_starved(now, 10, now, 30));
+    assert!(unread_too_long(Some(10), now, 30));
 }
 
 #[test]

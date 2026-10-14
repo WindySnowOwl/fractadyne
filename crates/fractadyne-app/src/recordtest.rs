@@ -248,7 +248,14 @@ impl crate::FractadyneApp {
                 if !matches!(r.read_src, read_src::GPU | read_src::WALL) {
                     bad.push("read_src unset");
                 }
-                if !matches!(r.read_verdict, verdict::DISCARDED | verdict::MOVED | verdict::UNCHANGED) {
+                // IMPOSSIBLE is a verdict too: the timing witness's "longer than the window its pass
+                // ran inside" (beta.129). Left out of this list, the first RX 6800 XT run whose
+                // witness fired on a recordtest reading failed it for a field that WAS set (W6's
+                // dev.9 battery, frame 7: 22.6 ms inside an 18.4 ms window).
+                if !matches!(
+                    r.read_verdict,
+                    verdict::DISCARDED | verdict::MOVED | verdict::UNCHANGED | verdict::IMPOSSIBLE
+                ) {
                     bad.push("read_verdict unset");
                 }
             }

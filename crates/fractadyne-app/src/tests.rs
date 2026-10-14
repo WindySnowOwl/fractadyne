@@ -1324,3 +1324,20 @@ fn stopping_playback_restores_interaction() {
     assert_eq!(r.max_iter, 12_345);
     assert!((r.dual_split - 0.34).abs() < 1.0e-6);
 }
+
+#[test]
+fn every_package_ships_the_replay_fixtures() {
+    // `--selftest`'s replay group reads `validation/replays/*.jsonl` beside the binary (`anchored`).
+    // A package that leaves them out turns three of its checks VACUOUS on every installed copy —
+    // which is how W6's field build found it (dev.9, RX 6800 XT, 2026-10-14). Every recipe that
+    // builds a package must carry them.
+    for (recipe, text) in [
+        (".github/workflows/release.yml", include_str!("../../../.github/workflows/release.yml")),
+        ("scripts/publish-share.ps1", include_str!("../../../scripts/publish-share.ps1")),
+        ("scripts/build-accelerated.ps1", include_str!("../../../scripts/build-accelerated.ps1")),
+    ] {
+        let n = text.matches("validation/replays/*.jsonl").count() + text.matches("validation\\replays\\*.jsonl").count();
+        let jobs = if recipe.ends_with(".yml") { 2 } else { 1 }; // the windows and the linux job
+        assert_eq!(n, jobs, "{recipe} copies the replay fixtures {n} time(s), expected {jobs}");
+    }
+}

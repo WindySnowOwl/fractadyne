@@ -87,6 +87,9 @@ enum Phase {
     Click,
 }
 
+/// A7 is vacuous under this many GPU readings checked (a run measures ~400 on the RTX 3080).
+const A7_MIN_READINGS: u64 = 50;
+
 /// Counter snapshot taken when the motion window opens, so the verdict reads deltas over exactly
 /// the driven phases (boot-time settling is not part of the experiment).
 #[derive(Clone, Copy, Default)]
@@ -350,6 +353,34 @@ impl FractadyneApp {
                     if dive_restarts > MAX_DIVE_RESTARTS {
                         fails.push(format!(
                             "A4: {dive_restarts} walks restarted with progress thrown away during the dive (more than {MAX_DIVE_RESTARTS}: the iteration-starvation shape)"
+                        ));
+                    }
+                    // A7, provenance (W6, design/live-render-robustness.md §7.6 gate 1), over the whole
+                    // session from its first frame — boot included, where the cold-start holds are.
+                    let pt = self.perf.prov[0];
+                    eprintln!(
+                        "--motiontest: A7 provenance: {} GPU readings checked, {} named a frame with no pass; \
+                         {} unverified holds served; {} climb readings judged at a cap; {} settled climb starvations",
+                        pt.checked, pt.unran, pt.unverified_served, pt.judged_capped, pt.climb_starved
+                    );
+                    crate::diag::log_line(
+                        "motiontest",
+                        &format!(
+                            "A7 provenance: checked={} unran={} unverified_served={} judged_capped={} climb_starved={}",
+                            pt.checked, pt.unran, pt.unverified_served, pt.judged_capped, pt.climb_starved
+                        ),
+                    );
+                    if pt.checked < A7_MIN_READINGS {
+                        fails.push(format!(
+                            "VACUOUS A7: only {} GPU readings checked (need >= {A7_MIN_READINGS})",
+                            pt.checked
+                        ));
+                    }
+                    if pt.unran + pt.unverified_served + pt.judged_capped + pt.climb_starved != 0 {
+                        fails.push(format!(
+                            "A7: provenance — {} reading(s) named a frame with no pass, {} unverified hold(s) served, \
+                             {} climb reading(s) judged at a cap, {} settled climb starvation(s)",
+                            pt.unran, pt.unverified_served, pt.judged_capped, pt.climb_starved
                         ));
                     }
                     let hold_moving = self.perf.hold_bound_moving[0].wrapping_sub(b.hold_moving);

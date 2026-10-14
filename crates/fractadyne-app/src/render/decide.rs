@@ -504,7 +504,16 @@ pub(crate) fn decide_present(i: &PresentInputs) -> PresentDecision {
     let mut hold_active = i.hold_active;
     let mut hold_verified = None;
     let (hold_copy, display_hold) = if gate_capable && composing {
-        let fresh = !hold_active;
+        // ⭐W6 (U42): a snapshot only of a texture KNOWN to hold a picture, exactly as the pin
+        // branch below takes one. This branch took it of whatever the texture held — a cleared
+        // texture's blank, an abandoned walk's residue — and served it for the whole compose. With
+        // nothing verified the display shows the compose live (the GPU gate needs a snapshot), the
+        // honest progressive-plus-spinner; the GPU also checks the snapshot's pixels are the view
+        // the app names (`MandelbrotParams::hold_stamp`).
+        let fresh = !hold_active && i.live_verified;
+        if fresh {
+            hold_verified = Some(true);
+        }
         hold_active = true;
         (fresh, true)
     } else if interacting
@@ -2395,8 +2404,12 @@ pub(crate) fn fixture_coverage<'a>(texts: impl IntoIterator<Item = &'a str>) -> 
         ("the ladder bound the scale", |_, d| d.res_scale < d.motion_scale),
         ("direct-mode motion", |i, _| i.interacting && !i.is_pert),
     ];
-    let present: [(&'static str, fn(&PresentInputs, &PresentDecision) -> bool); 5] = [
+    let present: [(&'static str, fn(&PresentInputs, &PresentDecision) -> bool); 6] = [
         ("a settled compose held the display", |_, d| d.display_hold && !d.pin_gate),
+        (
+            "a settled compose refused an unverified snapshot",
+            |i, d| d.display_hold && !d.pin_gate && !i.hold_active && !i.live_verified,
+        ),
         ("a pin held the display", |_, d| d.pin_gate),
         ("a snapshot was taken", |_, d| d.hold_copy),
         ("the settled-cost probe armed", |_, d| d.aa_probe.is_some()),
@@ -3018,6 +3031,58 @@ mod tests {
 
     /// A settled view whose budget has not converged, nothing else dispatching, the last real
     /// dispatch 10 frames ago, the bootstrap budget (4e8) in force, and a frame of 8e8 nominal steps.
+    /// A settled prefer-detail view whose chunked walk composes this frame, nothing held yet.
+    fn composing() -> PresentInputs {
+        PresentInputs {
+            direct: false,
+            chunk_over: true,
+            chunk_range: Some([0, 4_096]),
+            probe_fired: false,
+            tile_work: false,
+            grid_composing: false,
+            res_scale: 1.0,
+            interacting: false,
+            offscreen: false,
+            will_reproject: false,
+            key_changed: false,
+            gpu_iter: 50_000,
+            ss: 1,
+            spx: 1_000_000,
+            prefer_detail: true,
+            tour_playing: false,
+            aa: 1,
+            hold_active: false,
+            pin_active: false,
+            chunk_dirty: false,
+            live_verified: true,
+            aa_unmeasured: false,
+            frame: 100,
+        }
+    }
+
+    #[test]
+    fn a_settled_compose_snapshots_a_verified_texture() {
+        let d = decide_present(&composing());
+        assert!(d.display_hold && !d.pin_gate);
+        assert!(d.hold_copy);
+        assert_eq!(d.hold_verified, Some(true));
+    }
+
+    #[test]
+    fn a_settled_compose_never_snapshots_an_unverified_texture() {
+        // U42: it took the snapshot of whatever the texture held and served it for the whole
+        // compose. Now it takes none — the display shows the compose live — and says nothing new
+        // about the hold (the frame that dropped the last one already called it unverified).
+        let d = decide_present(&PresentInputs { live_verified: false, ..composing() });
+        assert!(d.display_hold && !d.pin_gate, "still gated: the GPU shows live for want of a snapshot");
+        assert!(!d.hold_copy);
+        assert_eq!(d.hold_verified, None);
+        assert!(d.hold_active, "and not retaken mid-compose, over the composing texture");
+        // …and a compose already under way keeps the snapshot it took, verified or not.
+        let d = decide_present(&PresentInputs { live_verified: false, hold_active: true, ..composing() });
+        assert!(!d.hold_copy && d.display_hold);
+    }
+
     fn probe() -> ProbeInputs {
         ProbeInputs {
             interacting: false,

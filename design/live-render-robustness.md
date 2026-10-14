@@ -3659,3 +3659,222 @@ regime, more than one card), with the companion red-check red and the global-rea
 1,503 / 0 / 11; self-test 528/528, goldens 31/31 (the regime entered by three recordings, two cards
 named); `--motiontest` PASS ×3 (the live path is unchanged since the last `--livetest`, 24/24 with 0
 drifted). `feat/w5-decide` is not merged.
+
+**2026-10-14 — W6 begins: provenance on every reading, and what the GPU actually ran**
+(`feat/w6-provenance`, off local main after W5 merged). §5.5's `ReadingProvenance` was meant to land with
+W2's B4 and never did, so W6 builds the whole of it. `fractadyne_gpu::Provenance` — frame, view, pass
+steps, resolution, ss, frame kind, walk signature, view stamp, the iteration ask, and the count the
+shader actually ran to — is set by the app on every frame's params once the frame is classified, captured
+by each reading when it is ARMED (the iterate timer at its five arming sites, the live-refresh timer, the
+counter readback), completed there with the pass's own frame, steps and shader count, and published with
+the reading before its ready signal (U14: nothing recorded which dispatch a reading timed). The GPU also
+says, per view, whether it RAN an iterate pass and why (`ran_out`: forced by a new orbit, BLA tree or
+resize; the key; a tile; the chunk range; the probe nonce; the split) — the truth the app's dispatch
+stamp, which is a plan, is held against. Frame record schema 11 carries all of it
+(`read_prov_frame/kind`, `ctr_prov_frame/ask/shader`, `prev_gpu_ran/why`) and the two silent discards
+(`climb_read`, `norm_discard`); `framelog.py summarize` reconciles them. Behaviour unchanged.
+
+What the record says on the first runs (RTX 3080):
+- **U54, the climb's silent discard, quantified.** The MAXITER reading carries the shader's count, not
+  the ask, and three rules make them differ — a missing reference caps it, a partial reference caps it
+  at its length, the SA-skip rescue raises it. Every reading under those is discarded, which is right
+  (it judges the cap, not the ask) and was silent. Over the minibrot zoomtest the climb judged 6 readings
+  and discarded 40 as measured at another ask; `climb_read` now says which, and why.
+- **The plan and the GPU disagree, both ways.** The GPU ran passes the app did not plan (zoomtest 41,
+  motiontest 27): mostly re-iterates FORCED by a reference landing (25 and 19), the rest probe-nonce tail
+  re-sends. At every pin start whose reference was still building, the orbit landed on the next frame
+  and the GPU re-ran the pin's first pass against it — 6.0e10 steps, 12 ms — while the app, holding for
+  the pass in flight, stamped no dispatch. And the app planned passes the GPU never ran (motiontest 10):
+  moving frames whose pass was identical to the last, which the GPU served from the texture.
+- **Readings name frames that did not dispatch** (motiontest 14 of 434): exactly those unplanned passes,
+  timed. The budget is not mis-priced by them — every reading carries its own steps — but the app's
+  idea of when it dispatched is off in both directions, and its starvation check reads it.
+
+Gates: workspace 1,504 / 0 / 11; self-test 528/528, goldens 31/31; `--motiontest` PASS ×3; `--livetest`
+24/24 with 0 drifted. Next: the starvation check reads the plan, and the wall-clock fallback trips on
+this card, with working timestamps, in about ten of today's runs — logcheck's KNOWN `timing-starved`
+allowance, uninvestigated since beta.111. The record can now say what the GPU ran before each trip.
+
+**2026-10-14 — W6 rung 1b: the starvation checks wait on the first unread pass, and logcheck's
+uitest allowance goes.** The schema-11 record put the fallback's trips side by side with what the GPU
+ran, and every one of them was false. All 14 wall-clock fallback trips of a `--uitest` on the RTX 3080,
+whose timestamps work, sat on the FIRST pass after an idle hold. The check measured from the last
+reading ("a settling view dispatches every frame, so measure from the reading, not the newest
+dispatch"), and after any hold longer than 30 frames that reading is already old when the next pass
+goes out, so the pass tripped it on the spot, before its reading could land 2–3 frames later. That is
+logcheck's KNOWN `timing-starved` allowance, 21 a minute in every uitest on both cards since beta.111,
+never investigated. B4's `budget_confident` shared the predicate with a 16-frame window, so the same
+shape made the second frame after every hold unconfident: 136 unconfident frames over three runs,
+34 of them with the dispatch bounded by the opening guess, and not one that had actually waited.
+
+Both now measure from the FIRST pass to go out after the last reading: not from the newest pass
+(the settling-view case still trips), and not from the reading. One predicate,
+`render::unread_too_long(since, now, limit)`, replaces `measurement_starved`. The fallback feeds it
+from the GPU's own account (`Perf::unpriced_since`, from `ran_out`), since a deduped "dispatch" never
+yields a reading. Confidence feeds it from the app's one dispatch stamp
+(`Perf::first_unfed_dispatch`), since its question is whether the budget is fed by readings of the work
+it sends, and the self-test's stale-budget check drives it that way. That left 3 trips in the uitest
+and the 1 every motiontest and zoomtest had: each came 30 frames after a walk's EMPTY tail, the
+`[end, end)` pass re-sent for the climb's probe once a walk ends. The GPU deliberately arms no timer
+on it (the 2026-09-27 witness fix: nothing to measure), yet it reported the pass as run. `ran_why`
+gains `EMPTY` (64) for a pass that iterated nothing, and the check skips it.
+
+Measured on the RTX 3080, rung 1 → this rung:
+- **Wall-clock fallback trips:** `--uitest` 14 → 0, `--motiontest` 1 → 0, minibrot `--zoomtest` 1 → 0.
+- **Unconfident frames:** 130 / 2 / 4 → 0 / 0 / 0 that planned anything.
+  - Those 130 include 29 where the opening guess bound the dispatch.
+  - The uitest's 91 remaining "unconfident" rows are frames where view 0 planned nothing: the record's
+    default.
+- **Control:** `FRACTADYNE_NO_TIMESTAMPS=1 --motiontest` still trips the fallback, at 1.471 s against
+  rung 1's 1.456 s (one frame later, as designed), and passes.
+
+logcheck's uitest allowance for `timing-starved` (30 a minute, KNOWN) is removed, so the stock bound
+of 6 a minute applies. On rung 1's uitest log the gate now FAILS (14 in a minute); on this build it
+passes, with no line at all. The Radeon's uitest is to be confirmed with W6's field build: the
+allowance said both cards, and only this one has been measured.
+
+**2026-10-14 — W6 rungs 2–3 and the provenance gate: one question for every presenter, the hold's
+own colours, and a tally held to zero.** (R1b's gates, for the record: workspace 1,506 / 0 / 11,
+self-test 528/528 with goldens 31/31, `--motiontest` PASS ×3, `--livetest` 24/24 with 0 drifted.)
+
+*The question.* Every presenter now asks the same two things of the pixels it puts on screen. Is
+the render they hold a picture? That is `ContentTrack::live_verified`: a reading of that very render
+shows detail, or the render is complete by construction. Are they the view the app believes they
+are? The GPU now keeps a stamp of the view its PIXELS wholly are (`ViewResources::pixels_stamp`;
+`None` when cleared or mixed). That is a different thing from `content_stamp`, which judges the
+displayed frame against the current viewport and calls every reprojection foreign. The app holds it
+against `ContentTrack::live_stamp`: the `pos_sig` of the render it last put there, or the stamp it
+named an adopted worker frame with (`adopt_stamp`).
+- **U19.** "Complete by construction" now means complete at the ASK (`complete_by_construction`).
+  A partial reference caps the shader at `orbit_len - 1`, and that capped all-interior frame used
+  to pass as a verified picture. A render complete at its true ask that shows nothing escaped is an
+  honest interior picture, and stays one. This departs from §5.5's "content_has_detail on the fast
+  path": refusing those renders would refuse the reuse-hold at every interior view, the costliest
+  frames there are, and widen `CONTENT_MIN_ESCAPED`'s reach (U57) for no picture gained.
+- **U42.** The settled compose takes a snapshot only of a verified texture, as the pin always did,
+  and records its verdict. With nothing verified, the compose shows live.
+- **U59.** The GPU's display gate requires `hold_verified`, that field's first consumer that is not
+  a `format!`. It also requires the snapshot's pixels to be the view the app named for them
+  (`hold_stamp`, checked by the GPU at the copy). It reports what it did (`hold_out`: served, no
+  snapshot, unverified, stamp).
+- **U20.** The reuse-hold reprojects the live texture only when it is a verified picture of the
+  believed view (`reuse_source_ok`); otherwise the frame renders.
+- **U45.** The coarse preview fails CLOSED on an unreadable probe. It keeps its higher bar (2% of a
+  56×56 probe against 0.1%) on purpose: it asks whether the probe beats the picture already shown,
+  not whether a texture is a picture.
+
+*The colours.* U43: a held snapshot keeps the palette-range map it was seen under (`Perf::hold_norm`).
+While a hold is served, the escape-range readings are the composing walk's, so the snapshot was
+recoloured every frame under another picture's window; under the log map everything below the new
+`norm_lo` went to one colour. Any change to the user's own colouring un-freezes it
+(`norm_user_sig`). U58: the SSAA average's colour signature includes the window actually mapped
+(`norm_shown`). The glide toward a new window now lands exactly once the residual is under 0.5% of
+the window's width, so the signature settles and the average can begin.
+
+*The gate (§7.6 gate 1).* The self-test has no frame loop through the GPU's paint path, so the gate
+is a tally the app keeps in every session (`ProvTally`). Each term is also an always-on line that
+logcheck holds to zero:
+- a GPU budget reading that names a frame where the GPU ran no pass for that view;
+- a hold the display served without the app's verdict;
+- a climb reading JUDGED at a shader cap;
+- a settled climb that discarded 8 readings in a row (P13).
+
+`--motiontest` A7 holds the session's totals to zero, and is vacuous under 50 readings checked.
+That is the deviation from `--selftest provenance`. The discard bound is on SETTLED readings: the
+9.3e78 minibrot zoomtest discards 40 MAXITER readings in a row, every one during the glide, where
+the ask grows each frame and motion resets the climb. A settled hold discards one after each raise
+(the old ask's reading, already in flight).
+
+*U57, calibrated in the middle.* Over 1,723 settled MAXITER readings at their ask on the RTX 3080,
+the escaped fraction is BIMODAL: 512 are exactly 0 and the lowest picture is 1.05%. The sources:
+the uitest, the motiontest, five zoomtests, the escaped-reference rung, and two ladders, the corpus
+nuclei and the 9.3e78 minibrot at ×1–×1024. Nothing lies between, so `CONTENT_MIN_ESCAPED` stays at
+0.1%, in an empty gap 10× below the lowest genuine picture. The six lowest views are pinned
+(`the_content_bar_sits_in_the_measured_gap`):
+- the 9.3e78 minibrot, 1.05%;
+- the 2026-09-21 crash view, 2.9%;
+- the 9.3e78 minibrot ×1024, 3.4%;
+- the 9.3e78 minibrot ×16, 16.5%;
+- the period-4 nucleus, 18.8%;
+- the airplane nucleus, 27.2%.
+
+A ladder 65,536× into the period-145 nucleus stayed 100% escaped: exterior dendrites, its minibrot
+still far below a pixel. So the frames U57 fears (a minibrot filling the view) did not occur in any
+measured run.
+
+*What changed on screen (RTX 3080).*
+- `--uitest`: 97 of 97 holds served.
+- `--motiontest`: 638 of 744 served. The other 106 had no snapshot to serve: the session's first two
+  pin walks, before anything was verified. That branch is unchanged; rung 1 had one such episode of
+  81 frames.
+- Minibrot zoomtest: 816 of 935 served. The new refusal is the U42 case itself: for 73 frames at
+  the cold start, rung 1 served a snapshot of the placeholder fill (256 iterations against a 65,842
+  ask, no reference), and now the walk shows live.
+- The reuse-hold refused once per run, both times at a pin start over an unverified walk.
+
+*Fixtures.* The change to `decide_present` is deliberate. On the old fixtures it moved exactly two
+kinds of decision:
+- 8 settled-compose snapshots of an unverified texture, now refused: autodive 1, field 3,
+  motiontest 1, zoomtest 3;
+- settled snapshots that now record their verdict (`hold_verified` null → true).
+
+The six local fixtures are re-recorded with this build. The field capture, `field-rx6800xt.jsonl`,
+cannot be re-recorded from here: its 8 changed decisions are re-blessed IN PLACE, inputs untouched,
+and a fresh capture from W6's field build replaces it. The coverage set gains "a settled compose
+refused an unverified snapshot" (50 terms).
+
+Gates (RTX 3080):
+- Workspace tests: 1,515 / 0 / 11.
+- Self-test: 528/528, goldens 31/31.
+- `--motiontest` ×3: PASS; A7 checked 411, 432 and 424 GPU readings, every count 0.
+- `--livetest`: 24/24, 0 drifted.
+- `--uitest`: 74 pass / 1 warn / 0 fail.
+- Logcheck: PASS on the motiontests, the uitest and the minibrot zoomtest, with no `⚠PROVENANCE` or
+  `⚠CLIMB STARVED` line anywhere.
+
+Next, W6's field build:
+- the screen gate's RX 6800 XT arm (the battery's three captured dives);
+- the Radeon uitest without its `timing-starved` allowance;
+- a fresh field capture to replace the re-blessed one.
+
+**2026-10-14 — W6's field build (dev.9, `fbdc508`, published and reverted) on the RX 6800 XT, and
+W6's exit criteria.**
+
+*A fresh field capture* replaces the re-blessed one. On PLUTO, the same pair as dev.8 was recorded
+through the agent with `-RecordDecide`: `--motiontest`, and the 12-octave glide into the 9.3e78
+minibrot with a 30 s hold. The 897 decisions replay exactly on the RTX 3080, and every anti-vacuity
+term holds with them, coverage of the 50 terms included. Both runs passed their own gates: the
+motiontest's verdict, with A7 checking 396 GPU readings and every provenance count 0, and logcheck
+on both. The provenance gate is green on the Radeon.
+
+*The battery* (full, `w6-battery`):
+- PASS: the livetest, the uitest (logcheck PASS with the `timing-starved` allowance gone, so R1b
+  holds on the Radeon too), the screen captures, live-res and bench-matrix.
+- Three steps exited 1, and none is W6's code:
+  - **gputest:** the card's df32 error-free transforms are compiler-folded (known; the capability
+    is detected).
+  - **self-test:** the known Windows-Radeon "wider canvas" difference at 1e2, plus three new FAILs.
+    W5's replay group reported VACUOUS, "no recording": no package ever shipped
+    `validation/replays/`, so `--selftest` from any installed copy would show them. Fixed: all four
+    package recipes (release.yml's windows and linux jobs, `publish-share.ps1`,
+    `build-accelerated.ps1`) now ship the fixtures, and `every_package_ships_the_replay_fixtures`
+    holds each recipe to it.
+  - **recordtest:** a gate defect since beta.129. Its required-field check accepted three of the
+    four reading verdicts. The fourth, IMPOSSIBLE (the timing witness's "longer than the window its
+    pass ran inside"), failed a field that WAS set. The Radeon's witness fires on 2.3–6.7% of
+    uitest readings in every battery since b129 (12 of 178 here, the top of that band with more
+    readings), but never before on the recordtest's 13–18; this run's first was frame 7, 22.6 ms
+    inside an 18.4 ms window. Fixed: IMPOSSIBLE is accepted.
+
+*The screen gate's Radeon arm* (the battery's three captured dives at 2^800, scored by `screengate.py`):
+114–116 captures each; median blank 0.0% in 0 episodes, flat 0%, flash 0, stale streak 0. PASS.
+
+*Exit criteria.*
+- **Zero provenance mismatches over a 20-minute dive.** Two consecutive 15-minute `--zoomtest` legs
+  toward the e4000 Misiurewicz point on the RTX 3080, from 1× and from 2^600: 1,198 octaves over 30 minutes, 100,293 frames at 55.7 fps. Not one
+  `⚠PROVENANCE` or `⚠CLIMB STARVED` line, and logcheck passed both.
+- **Blank fraction under 7% over three pairs.** RTX 3080: 0.0% median over three runs (102–104
+  captures each), flat 0%, flash 0, stale streak 0, PASS. RX 6800 XT: 0.0% median over three runs (114–116 captures), PASS.
+- **`hold_verified` has a consumer that is not a `format!`.** It does: the GPU's display gate.
+
+W6 is complete.

@@ -182,6 +182,10 @@ if (-not $SkipWindows) {
     Copy-Item (Join-Path $root "validation\golden\*.png") -Destination (Join-Path $stage "validation\golden")
     Copy-Item (Join-Path $root "validation\golden\BLESSED-GPU.txt") -Destination (Join-Path $stage "validation\golden") -ErrorAction SilentlyContinue
     Copy-Item (Join-Path $root "validation\catalog.toml") -Destination (Join-Path $stage "validation")
+    # The replay fixtures, so --selftest's replay group recomputes the recorded decisions here
+    # (without them it reports VACUOUS: three FAILs from a published package, W6 dev.9 on PLUTO).
+    New-Item -ItemType Directory -Force -Path (Join-Path $stage "validation\replays") | Out-Null
+    Copy-Item (Join-Path $root "validation\replays\*.jsonl") -Destination (Join-Path $stage "validation\replays")
     New-Item -ItemType Directory -Force -Path (Join-Path $stage "benchmarks") | Out-Null
     Copy-Item (Join-Path $root "benchmarks\bench-matrix-baseline.json") -Destination (Join-Path $stage "benchmarks")
     $zip = "$stage.zip"

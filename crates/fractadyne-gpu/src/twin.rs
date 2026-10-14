@@ -465,6 +465,8 @@ impl MandelbrotParams {
         p.norm_complete_out = None;
         p.content_out = None;
         p.content_stamp_out = None;
+        p.pixels_stamp_out = None;
+        p.hold_out = None;
         p.hold_copy = false;
         p.display_hold = false;
         p.reproject = 0;

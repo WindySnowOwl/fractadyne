@@ -275,16 +275,25 @@ pub(crate) fn budget_after_build_gate(cur: u64, next: u64, ok: bool, building: b
     }
 }
 
-/// Has measurement STARVED for this view? True when a real dispatch has gone out since the last
-/// timing came back and nothing has arrived for `limit` frames. An idle view (no dispatch since
-/// the last reading) is never starved — there is nothing outstanding to price.
-pub(crate) fn measurement_starved(
-    dispatch_frame: u64,
-    reading_frame: u64,
-    now: u64,
-    limit: u64,
-) -> bool {
-    dispatch_frame > reading_frame && now.saturating_sub(reading_frame) >= limit
+/// Has work gone UNREAD too long? `unread_since` is the first pass that went out after the last
+/// reading arrived (`None`: nothing outstanding — an idle view is never starved, however long it
+/// sits); true once it has waited `limit` frames. Both of the loop's starvation checks ask this: the
+/// wall-clock fallback (have the GPU's timestamps stopped coming? — from the GPU's own account of the
+/// passes it RAN, `Perf::unpriced_since`, since a pass it deduped never yields a reading) and B4's
+/// [`budget_confident`] (has no reading fed the learned budget? — from the app's one dispatch stamp,
+/// `Perf::first_unfed_dispatch`).
+///
+/// ⭐Measured from that FIRST pass: not from the newest (a settling view dispatches a tile every
+/// frame, so "frames since the newest dispatch" is 0 or 1 forever and never trips however starved the
+/// loop is), and not from the last reading. ⛔Until W6 both checks measured from the reading, which
+/// after any idle stretch is already old when the next pass goes out, so the first pass tripped them
+/// on the spot, before its reading could land 2–3 frames later. The frame record found it (W6, RTX 3080
+/// with working timestamps): all 14 wall-clock fallback trips of a `--uitest` sat on the first pass
+/// after an idle hold (logcheck's standing "timing-starved" allowance), and every unconfident frame of
+/// three runs — 136, 34 of them bounding a dispatch by the opening guess — had that shape; not one was
+/// work that had waited.
+pub(crate) fn unread_too_long(unread_since: Option<u64>, now: u64, limit: u64) -> bool {
+    unread_since.is_some_and(|f| now.saturating_sub(f) >= limit)
 }
 
 /// One step of the WALL-CLOCK cost probe: fold `dt` into the in-flight probe and, once two frames
@@ -1096,13 +1105,14 @@ pub(crate) fn settle_tile_waits(outstanding: u64, last: ViewDone, next_steps: u6
 pub(crate) const CONFIDENT_FRAMES: u64 = 16;
 
 /// `budget_confident` (design/live-render-robustness.md §5.1, B4): is this view's learned budget
-/// fed by readings of the work it is sending? False once a real dispatch (`dispatch_frame`) has gone
-/// [`CONFIDENT_FRAMES`] without any reading reaching the learned budget (`fed_frame`: a GPU reading,
-/// or the wall clock while it stands in for one). An idle view is never unconfident: nothing is
-/// outstanding. An unfed budget may be stale in either direction, and the opening guess is the
-/// only size chosen to be safe without a measurement, so [`admit`] bounds such a frame by it.
-pub(crate) fn budget_confident(dispatch_frame: u64, fed_frame: u64, now: u64) -> bool {
-    !measurement_starved(dispatch_frame, fed_frame, now, CONFIDENT_FRAMES)
+/// fed by readings of the work it is sending? False once the first dispatch since a reading last
+/// reached the learned budget (`first_unfed`; `fed_frame`: a GPU reading, or the wall clock while it
+/// stands in for one) has gone [`CONFIDENT_FRAMES`] without another ([`unread_too_long`]). An idle
+/// view is never unconfident: nothing is outstanding (`dispatch_frame`, the newest, is not past
+/// `fed_frame`). An unfed budget may be stale in either direction, and the opening guess is the only
+/// size chosen to be safe without a measurement, so [`admit`] bounds such a frame by it.
+pub(crate) fn budget_confident(first_unfed: u64, dispatch_frame: u64, fed_frame: u64, now: u64) -> bool {
+    !unread_too_long((dispatch_frame > fed_frame).then_some(first_unfed), now, CONFIDENT_FRAMES)
 }
 
 /// Which term bounds an admission ([`admit`]).
