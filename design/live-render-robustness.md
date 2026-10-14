@@ -3453,7 +3453,7 @@ grand-tour `--livetest` 24/24 with 0 drifted against the blessed baseline, as be
 replaced. Still to lift, one stage at a time (§5.4's M8): the frame budget, the chunk walk and the
 present gate; the regime predicate (§6.7) and a field capture are not yet terms of the fixture set.
 
-**2026-10-14 — W5: the present gate lifted** (`decide_present`): whether the display serves the held
+**2026-10-13 — W5: the present gate lifted** (`decide_present`): whether the display serves the held
 snapshot while compose work runs underneath, whether this frame takes the snapshot, the settled-cost
 probe and the colour-pass filter — `PresentInputs` (the frame's flags, the grid's composing state, the
 view's hold, pin, dirty and verified state) to `PresentDecision` (the four outputs, plus the hold flag,
@@ -3465,3 +3465,47 @@ compose hold, a pin hold, a snapshot, an armed probe and a widened filter. Gates
 Remaining: `bp_frame_budget` (~650 lines, with the reading drains §5.4 keeps imperative) and
 `bp_chunk_tiling` (~850: the walk, pins, the band ledger, serialization) — each to be split into
 sub-stages before it can lift.
+
+**2026-10-13 — W5: the iteration climb lifted, and replay finds its first hidden input** (`decide_iter`).
+The adaptive live-iteration climb — the boost's seed from the reference, the probe's raises, the
+plateau, the appetite re-pick and the exhausted revert, the verdict, and the frame's iteration ask — is
+`IterInputs` (the MAXITER reading drained this frame, the reference's length and whether it escaped,
+whether a reference build is in flight, the view's climb state) to `IterDecision` (the state it writes,
+the budget the reading is judged at, the re-pick request, the ask, and the climb's steps as events the
+caller traces exactly as before), moved by the same asserting script. The normalization drains that sat
+between the climb's two halves stay imperative in `bp_frame_budget` (§5.4's boundary: GPU sinks): neither
+side reads what the other writes, so the climb decides whole before them and its conclusions are traced
+after them, in the old order.
+
+None of the fixtures could grade it. The motiontest (a 1M ask), the 2^800 autodive (10,000) and the grand
+tour (per-keyframe budgets) run at EXPLICIT counts, and the `--uitest`'s auto-iteration bands resolve at
+the depth cap: 17,773 recorded climb decisions across the four, not one raise. `zoomtest-climb.jsonl` is three
+`--zoomtest` runs under auto-iterations from `validation/replays/locations/`: the 9.3e78 black-minibrot
+repro (seeded 1.0→2.1 from a 140,503-sample escaped reference, raises, a flat run that motion ends), an
+all-interior cardioid view (three fully capped raises, the appetite re-pick, exhausted), and the home view
+(three raises at 2.9% capped, the last two flat, then the plateau). The coverage term requires all eleven of the
+climb's branches, and the uitest and the grand tour joined the fixture set (§7.5 names a `--zoomtest`
+run as a seed; it is in now).
+
+⭐**The `--uitest` recording found what replay is for.** One `moving` decision of 8,943 recomputed
+differently: a rate cap of 0.65395 recorded, 0.65429 recomputed. `decide_moving` reached
+`calibration::pass_fixed_ms()` through `motion_pass_steps` — the RTX 3080's calibrated 0.21 ms in the
+session that recorded it, the 0.2 default in the replay process, which has no adapter. The first two
+fixtures missed it because their model-branch frames had no measured rate yet. It is an input now
+(`MovingInputs::pass_fixed_ms`, recording schema 2), and `a_lifted_decision_reads_no_global` scans every
+`decide_*` and every free function it reaches, transitively, for a global read (a tunable read in place,
+the calibration, a clock, an atomic, the environment); putting the old call back turns it red, naming
+`motion_pass_steps` and the read. (`budget_base` reads two tunables in place, so the probe, which calls it,
+will carry them as inputs.)
+
+A pre-existing oddity, read off the decisions and left alone (a move changes no behaviour): the plateau
+leaves `iter_stall` at its count, so the next motion traces "motion ends a flat run (2/3) — boost
+1.0→1.0", a revert to where the boost already is.
+
+Fixtures (decisions kept of those recorded, every one replaying exactly): motiontest 1,075 of 4,032,
+autodive 1,032 of 8,808, uitest 1,008 of 9,114, grand tour 1,014 of 31,365, zoomtest-climb 1,393 of
+17,574. Gates: workspace 1,483 / 0 / 11 (the climb's eight tests and the global-read guard are new);
+self-test 518/518, goldens 31/31; `--motiontest` PASS ×3; `--livetest` 24/24 with 0 drifted; `--uitest`
+74 pass / 1 warn (the known deep-floatexp step) / 0 fail. Remaining: the climb probe and the chunk walk
+(`bp_chunk_tiling`, as three sub-stages: the in-flight pass's pricing, the walk's identity and sizing,
+the dispatch); the regime predicate (§6.7) and a field capture as terms of the fixture set.

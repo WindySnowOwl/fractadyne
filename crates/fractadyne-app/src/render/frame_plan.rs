@@ -368,6 +368,7 @@ impl crate::FractadyneApp {
             tdr_bootstrap_steps: c.tdr_bootstrap_steps,
             motion_need_source: c.motion_need_source,
             motion_need_quantile: c.motion_need_quantile,
+            pass_fixed_ms: crate::calibration::pass_fixed_ms(),
         };
         let d = super::decide::decide_moving(&inputs);
         if view_id == 0 && crate::diag::trace_on("gpu") {

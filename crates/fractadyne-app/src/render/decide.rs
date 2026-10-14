@@ -61,6 +61,11 @@ pub(crate) struct MovingInputs {
     pub(crate) tdr_bootstrap_steps: u64,
     pub(crate) motion_need_source: u64,
     pub(crate) motion_need_quantile: f64,
+    /// The per-pass fixed cost, ms: this adapter's calibration (`calibration::pass_fixed_ms`, or
+    /// `PASS_FIXED_MS` under `--set`). ⚠An input, never read in here: a replay runs in a process with
+    /// no adapter, where the calibration reads the default — the first `--uitest` recording's one
+    /// mismatch (0.21 ms on the RTX 3080 against the 0.2 default).
+    pub(crate) pass_fixed_ms: f64,
 }
 
 /// What [`decide_moving`] decides, and the state it writes.
@@ -97,7 +102,7 @@ pub(crate) struct RateCap {
 #[must_use]
 pub(crate) fn decide_moving(i: &MovingInputs) -> MovingDecision {
     use super::{
-        motion_need, motion_pass_steps, motion_res_step, refresh_passes_allowed, refresh_res_cap,
+        motion_need, motion_pass_steps_fixed, motion_res_step, refresh_passes_allowed, refresh_res_cap,
         visible_frame_reaches, visible_res_hold, visible_res_target,
     };
     let (px, gpu_iter, budget) = (i.px, i.gpu_iter, i.budget);
@@ -231,9 +236,10 @@ pub(crate) fn decide_moving(i: &MovingInputs) -> MovingDecision {
         let cap = measured.unwrap_or_else(|| {
             // Nothing measured in this regime yet — the opening guess, so the first refresh
             // after a jump or a mode switch is not a native-resolution TDR-sized dispatch.
-            let pass = motion_pass_steps(
+            let pass = motion_pass_steps_fixed(
                 i.motion_rate,
                 crate::tunables::MOTION_PASS_MS,
+                i.pass_fixed_ms,
                 u64::MAX,
                 i.tdr_bootstrap_steps,
             );
@@ -562,9 +568,387 @@ pub(crate) fn decide_present(i: &PresentInputs) -> PresentDecision {
     PresentDecision { hold_copy, display_hold, pin_gate, aa_filter, hold_active, hold_verified, aa_probe }
 }
 
+/// The adaptive live-iteration climb's state, one view, carried between frames (`Perf::iter_boost`,
+/// `iter_probe`, `iter_plateau`, `iter_stall`, `iter_stall_base`, `iter_exhausted`, `iter_repicked`,
+/// `iter_verdict`, and the settled reading published for the status bar: `capped_frac`,
+/// `budget_measured`, `budget_maxed`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct IterState {
+    pub(crate) boost: f64,
+    pub(crate) probe: Option<(f64, f64)>,
+    pub(crate) plateau: bool,
+    pub(crate) stall: u8,
+    pub(crate) stall_base: f64,
+    pub(crate) exhausted: bool,
+    pub(crate) repicked: bool,
+    pub(crate) verdict: Option<u32>,
+    pub(crate) capped_frac: Option<f64>,
+    pub(crate) budget_measured: u32,
+    pub(crate) budget_maxed: bool,
+}
+
+/// What [`decide_iter`] reads: `bp_frame_budget`'s climb inputs, one view, one frame.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct IterInputs {
+    pub(crate) interacting: bool,
+    /// Auto-iterations (the zoom cap × the boost) rather than the user's explicit count.
+    pub(crate) auto_iter: bool,
+    pub(crate) eff_iter: u32,
+    pub(crate) log2mag: f64,
+    /// The frame cost's hard iteration ceiling (`FrameCost::iter_cap`).
+    pub(crate) iter_cap: u32,
+    /// The MAXITER reading drained this frame, `(frac_f32_bits << 32) | armed_max_iter`; `None` when
+    /// nothing was published (only a pass that reached its ask publishes).
+    pub(crate) reading: Option<u64>,
+    /// The view's reference: its length in samples, and whether it is evidence for the seed (an
+    /// orbit that escaped on its own, not a truncated partial — see `boost_seed_from_reference`).
+    pub(crate) ref_len: u32,
+    pub(crate) ref_escaped: bool,
+    /// A reference build for this view is in flight (`recompute_rx`).
+    pub(crate) recompute_in_flight: bool,
+    pub(crate) state: IterState,
+}
+
+/// What [`decide_iter`] decides, and the state it writes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct IterDecision {
+    pub(crate) state: IterState,
+    /// The budget the reading is judged at (the boost after any seed) — the normalization
+    /// signature's ask — and whether a reading reached its ask this frame, and whether it was then
+    /// discarded as measured at another budget.
+    pub(crate) budget_now: u32,
+    pub(crate) reached_ask: bool,
+    pub(crate) stale: bool,
+    /// Re-pick the view's reference at the full ask: the caller clears the incumbent (no
+    /// reuse-extend) and drops any in-flight extend of it.
+    pub(crate) repick: bool,
+    /// The frame's ask from the climb's final boost (`Perf::iter_planned`), and that ask under the
+    /// frame cost's ceiling.
+    pub(crate) planned: u32,
+    pub(crate) gpu_iter: u32,
+    /// What the climb did, in order, for the trace.
+    pub(crate) events: Vec<IterEvent>,
+}
+
+/// One step of the climb, for the `gpu` trace (`IterEvent::trace`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) enum IterEvent {
+    /// Motion ended a run of raises that had bought nothing: the boost went back to where it began.
+    FlatRunEnded { stall: u8, from: f64, to: f64 },
+    /// The boost was seeded from the reference orbit's length.
+    Seeded { from: f64, to: f64, ref_len: u32 },
+    /// All-capped at the full appetite: the reference is re-picked at the full ask.
+    Repick { frac: f64, budget: u32 },
+    /// Still all-capped after that re-pick: interior; the boost reverts to 1.
+    Exhausted { frac: f64, budget: u32, from: f64 },
+    /// Several raises bought nothing on a partly capped frame: interior; back to where the run began.
+    Plateau { to: f64 },
+    /// Capped: the boost was raised (`flat`: the run of fruitless raises so far, if this was one).
+    Raised { frac: f64, from: f64, to: f64, flat: Option<u8> },
+}
+
+impl IterEvent {
+    /// Traced before the frame's normalization drains (as the climb's first half always was); the
+    /// conclusions are traced after them.
+    pub(crate) fn before_drains(&self) -> bool {
+        matches!(self, IterEvent::FlatRunEnded { .. } | IterEvent::Seeded { .. })
+    }
+
+    pub(crate) fn trace(&self) {
+        let line = match *self {
+            IterEvent::FlatRunEnded { stall, from, to: back } => format!(
+                "adaptive iter: motion ends a flat run ({}/{}) — boost {:.1}→{back:.1}",
+                stall,
+                crate::ITER_STALL_LIMIT,
+                from
+            ),
+            IterEvent::Seeded { from: old, to: seed, ref_len } => {
+                format!("adaptive iter: seeded boost {old:.1}→{seed:.1} from reference len {ref_len}")
+            }
+            IterEvent::Repick { frac, budget: budget_now } => format!(
+                "adaptive iter: {:.1}% capped at the full appetite ({budget_now}) — \
+                 re-picking the reference at the full ask before concluding interior",
+                frac * 100.0
+            ),
+            IterEvent::Exhausted { frac, budget: budget_now, from: boost } => format!(
+                "adaptive iter: exhausted — {:.1}% capped at the full appetite \
+                 ({budget_now}) even after a fresh appetite pick; reverting boost {boost:.1}→1.0",
+                frac * 100.0
+            ),
+            IterEvent::Plateau { to: back } => format!("adaptive iter: plateau (interior) — boost back to {back:.1}"),
+            IterEvent::Raised { frac, from: boost, to, flat } => format!(
+                "adaptive iter: {:.1}% capped — boost {boost:.1}→{:.1}{}",
+                frac * 100.0,
+                to,
+                if let Some(stall) = flat {
+                    format!(" (flat {}/{})", stall, crate::ITER_STALL_LIMIT)
+                } else {
+                    String::new()
+                }
+            ),
+        };
+        crate::diag::trace("gpu", line);
+    }
+}
+
+/// The ADAPTIVE LIVE ITERATION climb (`bp_frame_budget`'s, lifted): the boost on the zoom cap, its
+/// seed from the reference, the probe that raises it while raising helps, the plateau and the
+/// exhausted revert, the appetite re-pick, the verdict, and the frame's resulting ask. Pure.
+#[must_use]
+pub(crate) fn decide_iter(i: &IterInputs) -> IterDecision {
+    use super::{boost_seed_from_reference, live_iter_budget};
+    // ADAPTIVE LIVE ITERATION BUDGET (settled frames only). `zoom_iter_cap`'s 256/octave slope
+    // under-budgets dense near-Misiurewicz fields (escape counts run ~226–300/octave there), so
+    // a settled deep view can show smooth "capped blobs" where the export shows dendrites — at
+    // the reported 1.7e55× spar view, 40% of pixels hit the cap (maxiter counter) while the
+    // full appetite escapes every one. The GPU's MAXITER event counter (read back per settled
+    // full-frame iterate) drives a probe: raise the cap multiplier while raising measurably
+    // reduces the capped fraction; a raise that doesn't help means TRUE interior in view (a
+    // minibrot) → revert and stop (`iter_plateau`), so interior views never pay a runaway
+    // budget.
+    //
+    // "Doesn't help" needs EVIDENCE, not one flat step. Measured at the 3.3e61× three-spar:
+    // the capped fraction is exactly 100% at ×1.0, ×1.6 AND ×2.6, then collapses to 12% at
+    // ×4.1 and 0.6% at ×6.6. Latching on the first flat step reverted to boost 1.0 and left
+    // the view permanently BLACK — every pixel capped, painted as interior. So the probe must
+    // see `crate::ITER_STALL_LIMIT` flat steps in a row before concluding there is nothing to find.
+    let mut s = i.state;
+    let interacting = i.interacting;
+    let mut events = Vec::new();
+    let mut repick = false;
+    // Where the climb stood before this frame — its verdict below asks whether it moved.
+    let (boost_in, repicked_in) = (s.boost, s.repicked);
+    // The probe baseline and the interior plateau are properties of ONE settled view: any
+    // motion invalidates both (comparing a new view's capped fraction against another
+    // view's baseline falsely reads "the raise didn't help" and latches the plateau —
+    // navigating to a starved view then stuck at boost 1.0 forever). The boost itself is
+    // kept: it's a multiplier on the depth-scaled cap, so it carries sensibly and the
+    // probe re-converges from wherever it is.
+    if interacting {
+        // ⭐…except a run of raises that has so far bought NOTHING (`iter_stall` > 0: every
+        // raise since `iter_stall_base` measured flat). Motion used to interrupt it keeping
+        // the boost it had reached: a glide that began while the 1× view's interior (3.0%
+        // capped at every step) was still being probed carried ×4.1 into every frame after —
+        // 22k iterations at the df32 switch where 5.4k resolve the picture, 2.5× over the
+        // dispatch ceiling. Revert to where the fruitless run began, as its conclusion would.
+        if s.stall > 0 {
+            let back = s.stall_base;
+            events.push(IterEvent::FlatRunEnded { stall: s.stall, from: s.boost, to: back });
+            s.boost = back;
+        }
+        s.probe = None;
+        s.plateau = false;
+        s.stall = 0;
+        s.exhausted = false;
+        s.repicked = false; // a new settle earns a fresh appetite re-pick
+        s.capped_frac = None; // a moving frame's reading describes another view
+    }
+    let v = i.reading.unwrap_or(u64::MAX);
+    // The GPU publishes this reading only from a pass that REACHED ITS ASK (the walk's end),
+    // whatever budget it was armed at — the one test of "this reading saw the whole walk".
+    let reached_ask = v != u64::MAX;
+    // The reading is `(frac_f32_bits << 32) | armed_max_iter`. Only adapt on readings
+    // measured AT the current boost's budget: the readback lands ~2 frames late, and a
+    // stale pre-raise reading ("still 100% capped") right after a raise falsely reads as
+    // "the raise didn't help" → the interior plateau latches and the view sticks black at
+    // fully-starved views (observed live at a 100%-capped spar session).
+    // ⭐SEED THE BOOST FROM THE REFERENCE ORBIT, so the budget reaches this location's real
+    // need in ONE settle instead of climbing there blind. The depth slope (`zoom_iter_cap`)
+    // leaves a settled deep view capping pixels at, say, 69k while the reference we already
+    // built for it is 256k+ samples long — pure waste, and the direct cause of a minibrot
+    // rendering solid black under auto-iterations when a forced high count resolves it. The
+    // reference length is the honest per-location estimate (no pixel can outrun the orbit),
+    // so jump the boost to it rather than walking up in slow 2.5× steps that a deep mode-2
+    // view spends seconds on and that the interior-plateau guard can abandon before arriving.
+    //
+    // Raise-only, settled-only, auto-only, and never past a latched interior plateau: the
+    // existing climb/plateau/exhausted logic keeps ownership of termination. A genuine
+    // interior seeded high is still fully capped, so it climbs the rest to the appetite and
+    // reverts to the cheap budget exactly as before — just without the long black stare on
+    // the way. The seed feeds `boost_now` below, so the probe's `budget_now` and the frame's
+    // dispatched budget (which reads `iter_boost[vb]` afresh) stay the one shared value.
+    if !interacting && i.auto_iter && !s.plateau {
+        let cap = crate::zoom_iter_cap(i.log2mag).max(256) as f64;
+        let ref_len = i.ref_len;
+        // The orbit's length is evidence only if the orbit ENDED ON ITS OWN (see
+        // `boost_seed_from_reference`). A truncated coarse reference is not a finished
+        // orbit at all, so it never qualifies either (`IterInputs::ref_escaped`).
+        let escaped = i.ref_escaped;
+        let seed = boost_seed_from_reference(ref_len, cap, escaped);
+        if seed > s.boost {
+            let old = s.boost;
+            s.boost = seed;
+            // The climb, if the seed is not enough, re-measures from here; a stale baseline
+            // from before the jump would read the first post-seed frame as "unhelpful".
+            s.probe = None;
+            s.stall = 0;
+            events.push(IterEvent::Seeded { from: old, to: seed, ref_len });
+        }
+    }
+    let boost_now = s.boost;
+    let budget_now = live_iter_budget(i.eff_iter, i.log2mag, boost_now, !i.auto_iter);
+    let (v, frac_bits) = match v {
+        u64::MAX => (u64::MAX, 0u32),
+        packed => {
+            let armed_iter = packed as u32;
+            if armed_iter == budget_now {
+                (packed, (packed >> 32) as u32)
+            } else {
+                (u64::MAX, 0) // stale budget — discard
+            }
+        }
+    };
+    let stale = reached_ask && v == u64::MAX;
+    // Adapt only while settled and only when the zoom cap is the binding constraint
+    // (a frame already at the full appetite can't be helped by raising it).
+    let boost = boost_now;
+    let cap_bound = budget_now < i.eff_iter.min(crate::MAX_ITER_LIMIT);
+    // Publish the capped fraction for the status-bar limit diagnostic — INDEPENDENT of the
+    // adapt path below. When the user's own Iterations setting is the binding constraint
+    // (`cap_bound` false) the probe never runs, and that is precisely when they most need
+    // to be told the budget is the limit: the probe can't raise past their setting.
+    if v != u64::MAX && !interacting {
+        let frac = f32::from_bits(frac_bits) as f64;
+        if frac.is_finite() {
+            s.capped_frac = Some(frac);
+            // Can the app still raise this budget on its own? Only while the zoom cap
+            // binds AND the boost has headroom.
+            s.budget_maxed = !cap_bound || boost_now >= crate::ITER_BOOST_MAX * 0.99;
+            s.budget_measured = budget_now;
+        }
+    }
+    // (`bp_frame_budget` drains the escape-range, gradient and content readings between the
+    // publish above and the conclusions below. Neither side reads what the other writes, so
+    // the climb decides whole, before them, and its conclusions' traces follow them.)
+    if v != u64::MAX && !interacting && !cap_bound && !s.plateau {
+        // At FULL APPETITE and still essentially all-capped: raising is no longer
+        // possible, so the frame is flat at the most this view can be given. Whether that
+        // is deep interior (normal) or a view needing more than the app can offer, the
+        // IMAGE is identical at a cheaper budget — so revert to the cheap one, stop
+        // probing, and record it for the status bar to report honestly. Without this the
+        // budget stays pinned at the appetite forever, paying millions of iterations per
+        // pixel to render the same flat frame.
+        let frac = f32::from_bits(frac_bits) as f64;
+        if frac.is_finite() && frac > 0.98 && boost > 1.0 {
+            // ⭐Before concluding INTERIOR and reverting to black, try ONE fresh reference
+            // pick at the full appetite. The reference in hand may have been chosen cheaply
+            // during motion — the view CENTRE, which escapes early and covers this view
+            // badly — and the settled path reuse-EXTENDED it rather than re-picking. A pick
+            // at the appetite runs the deep-perturb engine and finds a better point (measured
+            // 2026-09-10 at 9.34e80×: the export/appetite pick lands OFF-CENTRE, offset
+            // ≈(−0.04,+0.02), and resolves where the reused motion pick stays solid black).
+            // Clearing `ref_pt` forces the next build to pick fresh instead of reuse — and it
+            // picks at the appetite ask, because the boost is at the appetite right here.
+            // ⚠Wait for that build to land before deciding: reverting while it is in flight
+            // would drop the boost, and the re-pick would then rebuild at the throttled ask
+            // and pick the poor centre all over again. Once per settle (`iter_repicked`): if
+            // the appetite-picked reference is STILL all-capped, the view is genuinely
+            // interior and the revert below stands.
+            if !s.repicked {
+                s.repicked = true;
+                // The caller forces a fresh pick (no reuse-extend) and drops any in-flight
+                // extend of the poor incumbent.
+                repick = true;
+                s.probe = None; // re-measure cleanly against the new reference
+                s.stall = 0;
+                events.push(IterEvent::Repick { frac, budget: budget_now });
+            } else if !i.recompute_in_flight {
+                // The appetite re-pick has landed and it is still all-capped: genuinely
+                // interior. Revert to the cheap budget (same flat image) as before.
+                s.plateau = true;
+                s.exhausted = true;
+                s.boost = 1.0;
+                events.push(IterEvent::Exhausted { frac, budget: budget_now, from: boost });
+            }
+        }
+    }
+    if v != u64::MAX && !interacting && cap_bound && !s.plateau {
+        let frac = f32::from_bits(frac_bits) as f64;
+        // 0.05%: low enough to chase a thin Misiurewicz-spar core (the 1.7e55× case
+        // converges 43% → 0.12% → 0.001% over two raises), high enough to ignore stray
+        // undecided pixels; the plateau probe still stops true interiors regardless.
+        if frac.is_finite() && frac > 0.0005 {
+            let unhelpful = s.probe.is_some_and(|(pb, pf)| boost > pb && frac > pf * 0.8);
+            // Step size scales with how far from resolved we are. A nearly all-capped
+            // frame is a flat/black screen and may need several times the budget, so
+            // walking up in 1.6× steps spends many settle cycles showing the user
+            // nothing; once mostly resolved, fine steps avoid overshooting the cost.
+            let step = if frac > 0.9 { 2.5 } else { 1.6 };
+            // A frame that is essentially ALL capped looks identical whether we revert or
+            // keep climbing, so a flat step there is NOT evidence of interior — it can
+            // simply mean the budget is still orders of magnitude short. Measured at
+            // 6.5e94×: that view needs ~121× the depth-scaled cap, so three flat 2.5×
+            // steps only reached 15.6×, "proved" interior, reverted to 1.0 — and left a
+            // permanently BLACK screen on a view that resolves fine at 10M. While fully
+            // capped, climb to the ceiling; the `!cap_bound` branch above concludes it.
+            let fully_capped = frac > 0.98;
+            if !fully_capped && unhelpful && s.stall + 1 >= crate::ITER_STALL_LIMIT {
+                // Several raises bought nothing on a PARTIALLY capped frame — the
+                // remaining capped pixels are interior. Revert to where the run began.
+                let back = s.stall_base;
+                s.plateau = true;
+                s.boost = back;
+                events.push(IterEvent::Plateau { to: back });
+            } else {
+                if unhelpful && !fully_capped {
+                    if s.stall == 0 {
+                        // Remember where to fall back to if this run stays fruitless.
+                        s.stall_base = s.probe.map_or(boost, |(pb, _)| pb);
+                    }
+                    s.stall += 1;
+                } else {
+                    s.stall = 0;
+                }
+                s.probe = Some((boost, frac));
+                s.boost = (boost * step).min(crate::ITER_BOOST_MAX);
+                events.push(IterEvent::Raised {
+                    frac,
+                    from: boost,
+                    to: s.boost,
+                    flat: unhelpful.then_some(s.stall),
+                });
+            }
+        } else if frac.is_finite() {
+            s.probe = Some((boost, frac));
+            s.stall = 0;
+        }
+    }
+    // ⭐THE CLIMB'S VERDICT (`Perf::iter_verdict`): a reading measured at this budget that
+    // left it where it was. Supersampling begins on nothing less (`accum_inputs_pending`):
+    // every raise and revert re-decides the colour range and restarts a run.
+    let moved = s.boost != boost_in || s.repicked != repicked_in;
+    if interacting || moved {
+        s.verdict = None;
+    } else if v != u64::MAX {
+        s.verdict = Some(budget_now);
+    }
+    // The boost applies to ALL frames, motion included: gating it to settled frames made every
+    // MOTION refresh frame render at the unboosted cap — at a starved view (43–96% capped)
+    // that frame is nearly all-interior, so zooming painted BLACK over the good reprojection
+    // until settle re-boosted ("screen goes black until it repaints"). A boosted motion frame
+    // costs up to boost× more, which the motion-res controller absorbs as resolution — softer
+    // beats black. (ADAPTATION stays settled-only; this is only the budget's application.)
+    // ✅A1 RESOLVED (v0.2.40-beta.53): an explicit iteration count is honoured verbatim, in
+    // auto mode the zoom cap × boost applies as before — one shared formula with the boost
+    // probe's `budget_now`, so the two can never drift (`live_iter_budget`; the drift failure
+    // mode and the freeze-guard coupling that blocked this for two releases are documented on
+    // the function). `iter_cap` (= MAX_ITER_LIMIT on both branches) folds into it.
+    // ⛔TOUR GLIDES MUST PRICE THE SCRIPT'S ASK TOO (attempted beta.80, REVERTED same day):
+    // pricing glide frames at the zoom cap × boost rendered the grand tour's hard spar holds
+    // 100% BLACK on `--livetest` (hold-e82: cap ~80k where the field needs the scripted 2M —
+    // per-keyframe budgets exist precisely because the depth formula under-budgets hard
+    // fields), and an ease-out approach is nominally "gliding" while visually parked, so the
+    // starved frames are exactly the ones the viewer stares at.
+    // `planned` is what the climb's verdict must name (`Perf::iter_planned`).
+    let planned = live_iter_budget(i.eff_iter, i.log2mag, s.boost, !i.auto_iter);
+    let gpu_iter = planned.min(i.iter_cap);
+    IterDecision { state: s, budget_now, reached_ask, stale, repick, planned, gpu_iter, events }
+}
+
 /// The recording's format version: bumped whenever an inputs or decision struct changes shape, and a
-/// replay refuses a recording of another (it would compare the wrong things).
-pub(crate) const DECIDE_SCHEMA: u32 = 1;
+/// replay refuses a recording of another (it would compare the wrong things). 2: `MovingInputs`
+/// carries `pass_fixed_ms`.
+pub(crate) const DECIDE_SCHEMA: u32 = 2;
 
 /// `FRACTADYNE_RECORD_DECIDE=<file>`: every lifted decision of every built frame, one JSON line each
 /// (`{"kind":"decision","frame","view","stage","inputs","decision"}`) after a header line naming the
@@ -690,6 +1074,15 @@ pub(crate) fn replay_lines(text: &str) -> ReplayReport {
                         };
                         serde_json::to_value(decide_present(&inputs)).unwrap_or(serde_json::Value::Null)
                     }
+                    "iter" => {
+                        let Ok(inputs) = serde_json::from_value::<IterInputs>(
+                            v.get("inputs").cloned().unwrap_or(serde_json::Value::Null),
+                        ) else {
+                            rep.unreadable += 1;
+                            continue;
+                        };
+                        serde_json::to_value(decide_iter(&inputs)).unwrap_or(serde_json::Value::Null)
+                    }
                     _ => {
                         rep.unreadable += 1;
                         continue;
@@ -801,6 +1194,7 @@ mod tests {
             tdr_bootstrap_steps: crate::tunables::cost().tdr_bootstrap_steps,
             motion_need_source: 0,
             motion_need_quantile: 1.0,
+            pass_fixed_ms: crate::tunables::PASS_FIXED_MS_DEFAULT,
         }
     }
 
@@ -840,11 +1234,33 @@ mod tests {
             ("the settled-cost probe armed", |_, d| d.aa_probe.is_some()),
             ("the colour-pass filter widened", |_, d| d.aa_filter > 1),
         ];
+        let climb_terms: [(&str, fn(&IterInputs, &IterDecision) -> bool); 11] = [
+            ("a settled reading was judged", |i, d| !i.interacting && d.reached_ask && !d.stale),
+            ("motion reset the climb", |i, _| i.interacting),
+            ("a stale reading was discarded", |_, d| d.stale),
+            ("the boost was raised", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::Raised { .. }))),
+            ("the boost was seeded", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::Seeded { .. }))),
+            ("the verdict was reached", |i, d| d.state.verdict.is_some() && i.state.verdict.is_none()),
+            ("an explicit count", |i, _| !i.auto_iter),
+            ("the climb plateaued", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::Plateau { .. }))),
+            ("the appetite re-pick", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::Repick { .. }))),
+            ("the climb was exhausted", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::Exhausted { .. }))),
+            ("motion ended a flat run", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::FlatRunEnded { .. }))),
+        ];
         let mut hits = [0u64; 9];
         let mut present_hits = [0u64; 5];
+        let mut climb_hits = [0u64; 11];
         for f in &files {
             for line in std::fs::read_to_string(f).expect("readable fixture").lines() {
                 let v: serde_json::Value = serde_json::from_str(line).expect("a JSON line");
+                if v["kind"] == "decision" && v["stage"] == "iter" {
+                    let i: IterInputs = serde_json::from_value(v["inputs"].clone()).expect("inputs");
+                    let d: IterDecision = serde_json::from_value(v["decision"].clone()).expect("decision");
+                    for (h, (_, f)) in climb_hits.iter_mut().zip(climb_terms.iter()) {
+                        *h += f(&i, &d) as u64;
+                    }
+                    continue;
+                }
                 if v["kind"] == "decision" && v["stage"] == "present" {
                     let i: PresentInputs = serde_json::from_value(v["inputs"].clone()).expect("inputs");
                     let d: PresentDecision = serde_json::from_value(v["decision"].clone()).expect("decision");
@@ -869,6 +1285,9 @@ mod tests {
         for (h, (name, _)) in present_hits.iter().zip(present.iter()) {
             assert!(*h > 0, "VACUOUS: no replayed present decision where {name}");
         }
+        for (h, (name, _)) in climb_hits.iter().zip(climb_terms.iter()) {
+            assert!(*h > 0, "VACUOUS: no replayed climb decision where {name}");
+        }
         for f in &files {
             let rep = replay_lines(&std::fs::read_to_string(f).expect("readable fixture"));
             assert!(
@@ -882,6 +1301,92 @@ mod tests {
                 rep.wrong_schema,
                 rep.first.join("\n")
             );
+        }
+    }
+
+    /// The replay's premise, checked where it can break silently: a lifted decision reads ONLY its
+    /// inputs. A global it reaches — a tunable read in place, the adapter's calibration, a clock —
+    /// is an input the recording does not carry, so the replay recomputes it in another process
+    /// (another card, CI with none) and differs, or worse, agrees only on the machine that recorded.
+    /// The first `--uitest` recording found one: `decide_moving` reached
+    /// `calibration::pass_fixed_ms()` through `motion_pass_steps`. Every `decide_*` body here and
+    /// every free function it reaches (transitively, by name, across the render sources and
+    /// `main.rs`) is scanned for the ways a global is read.
+    #[test]
+    fn a_lifted_decision_reads_no_global() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut sources = vec![root.join("render.rs"), root.join("main.rs")];
+        for e in std::fs::read_dir(root.join("render")).expect("render/").flatten() {
+            if e.path().extension().is_some_and(|x| x == "rs") {
+                sources.push(e.path());
+            }
+        }
+        // Free functions (column 0) by name → body, comments stripped.
+        let strip = |l: &str| l.split("//").next().unwrap_or("").to_string();
+        let mut fns: std::collections::HashMap<String, String> = Default::default();
+        for p in &sources {
+            let text = std::fs::read_to_string(p).expect("source").replace("\r\n", "\n");
+            let lines: Vec<&str> = text.lines().collect();
+            let mut k = 0;
+            while k < lines.len() {
+                let l = lines[k];
+                let head = ["pub(crate) fn ", "pub(super) fn ", "pub fn ", "fn "]
+                    .iter()
+                    .find_map(|p| l.strip_prefix(p));
+                if let Some(name) = head.and_then(|h| h.split(['(', '<']).next()) {
+                    let start = k;
+                    while k < lines.len() && lines[k] != "}" {
+                        k += 1;
+                    }
+                    let body: Vec<String> = lines[start..k.min(lines.len())].iter().map(|l| strip(l)).collect();
+                    fns.entry(name.to_string()).or_insert_with(|| body.join("\n"));
+                }
+                k += 1;
+            }
+        }
+        let decide: Vec<String> = fns.keys().filter(|n| n.starts_with("decide_")).cloned().collect();
+        assert!(decide.len() >= 3, "VACUOUS: found the lifted decisions {decide:?}");
+        let forbidden = [
+            "cost()",
+            "calibration::",
+            "overridden(",
+            "app_micros(",
+            "Instant::now",
+            "SystemTime",
+            ".load(",
+            "env::var",
+            "trace_on(",
+        ];
+        for d in &decide {
+            let mut seen = std::collections::BTreeSet::new();
+            let mut todo = vec![d.clone()];
+            while let Some(name) = todo.pop() {
+                if !seen.insert(name.clone()) {
+                    continue;
+                }
+                let body = &fns[&name];
+                for bad in forbidden {
+                    assert!(
+                        !body.contains(bad),
+                        "{d} reaches `{name}`, which reads a global (`{bad}`): make it an input"
+                    );
+                }
+                // Every identifier called here that is a free function of the scanned sources.
+                let bytes = body.as_bytes();
+                let mut s = 0;
+                for (j, &b) in bytes.iter().enumerate() {
+                    if !(b.is_ascii_alphanumeric() || b == b'_') {
+                        if b == b'(' && j > s {
+                            let id = &body[s..j];
+                            if fns.contains_key(id) && !seen.contains(id) {
+                                todo.push(id.to_string());
+                            }
+                        }
+                        s = j + 1;
+                    }
+                }
+            }
+            assert!(seen.len() > 1 || d == "decide_present", "VACUOUS: {d} reached no helper");
         }
     }
 
@@ -953,6 +1458,189 @@ mod tests {
         assert_eq!(other, d, "source 0 ignores esc_top");
         let walk = decide_moving(&MovingInputs { esc_top: 50.0, motion_need_source: 1, ..i });
         assert_eq!(walk.vis_sizing[0], 50.0);
+    }
+
+    /// A settled view at 2^200 (zoom cap 2,000 + 200 × 256 = 53,200) under auto-iterations, with
+    /// the full 10M appetite, nothing climbed yet.
+    fn climb() -> IterInputs {
+        IterInputs {
+            interacting: false,
+            auto_iter: true,
+            eff_iter: crate::MAX_ITER_LIMIT,
+            log2mag: 200.0,
+            iter_cap: crate::MAX_ITER_LIMIT,
+            reading: None,
+            ref_len: 0,
+            ref_escaped: false,
+            recompute_in_flight: false,
+            state: IterState {
+                boost: 1.0,
+                probe: None,
+                plateau: false,
+                stall: 0,
+                stall_base: 1.0,
+                exhausted: false,
+                repicked: false,
+                verdict: None,
+                capped_frac: None,
+                budget_measured: 0,
+                budget_maxed: false,
+            },
+        }
+    }
+
+    /// A MAXITER reading: this capped fraction, measured by a pass armed at `armed` iterations.
+    fn capped(frac: f32, armed: u32) -> Option<u64> {
+        Some(((frac.to_bits() as u64) << 32) | armed as u64)
+    }
+
+    /// The next frame of the same settled view, its reading measured at the budget the last one planned.
+    fn next(i: &IterInputs, d: &IterDecision, frac: f32) -> IterInputs {
+        IterInputs { reading: capped(frac, d.planned), state: d.state, ..i.clone() }
+    }
+
+    #[test]
+    fn a_raise_that_helps_climbs_and_a_resolved_reading_is_the_verdict() {
+        let i = IterInputs { reading: capped(0.5, 53_200), ..climb() };
+        let d = decide_iter(&i);
+        assert_eq!(d.budget_now, 53_200);
+        assert_eq!(d.events, vec![IterEvent::Raised { frac: 0.5, from: 1.0, to: 1.6, flat: None }]);
+        assert_eq!((d.state.probe, d.state.capped_frac, d.state.budget_measured), (Some((1.0, 0.5)), Some(0.5), 53_200));
+        assert_eq!(d.state.verdict, None, "a raise is no verdict");
+        assert_eq!((d.planned, d.gpu_iter), (85_120, 85_120));
+        // Resolved at the raised budget: the boost stays, and that budget is the verdict.
+        let d2 = decide_iter(&next(&i, &d, 0.0001));
+        assert!(d2.events.is_empty());
+        assert_eq!(d2.state.boost, 1.6);
+        assert_eq!(d2.state.verdict, Some(85_120));
+    }
+
+    #[test]
+    fn three_fruitless_raises_on_a_partly_capped_frame_are_interior() {
+        let mut i = IterInputs { reading: capped(0.5, 53_200), ..climb() };
+        let mut d = decide_iter(&i);
+        let mut steps = vec![];
+        for _ in 0..3 {
+            i = next(&i, &d, 0.5);
+            d = decide_iter(&i);
+            steps.extend(d.events.iter().copied());
+        }
+        let flats: Vec<_> = steps
+            .iter()
+            .map(|e| match e {
+                IterEvent::Raised { flat, .. } => *flat,
+                _ => None,
+            })
+            .collect();
+        assert_eq!(flats, vec![Some(1), Some(2), None]);
+        assert_eq!(steps[2], IterEvent::Plateau { to: 1.0 });
+        assert!(d.state.plateau);
+        assert_eq!(d.state.boost, 1.0, "back to where the fruitless run began");
+        // A latched plateau stops the climb: the same reading again changes nothing.
+        let after = decide_iter(&next(&i, &d, 0.5));
+        assert!(after.events.is_empty());
+        assert_eq!(after.state.boost, 1.0);
+    }
+
+    #[test]
+    fn a_fully_capped_frame_keeps_climbing_through_flat_steps() {
+        // 100% capped looks the same at every budget short of the need, so flat steps there prove
+        // nothing (the 6.5e94× view needed ~121×): no plateau, the climb goes on in 2.5× steps.
+        let mut i = IterInputs { reading: capped(1.0, 53_200), ..climb() };
+        let mut d = decide_iter(&i);
+        for _ in 0..4 {
+            i = next(&i, &d, 1.0);
+            d = decide_iter(&i);
+        }
+        assert!(!d.state.plateau);
+        assert_eq!(d.state.boost, 2.5f64.powi(5));
+    }
+
+    #[test]
+    fn motion_ends_a_fruitless_run_where_it_began() {
+        let i = IterInputs {
+            interacting: true,
+            reading: capped(0.5, 218_009),
+            state: IterState {
+                boost: 4.096,
+                probe: Some((2.56, 0.5)),
+                stall: 2,
+                stall_base: 1.0,
+                verdict: Some(53_200),
+                capped_frac: Some(0.5),
+                ..climb().state
+            },
+            ..climb()
+        };
+        let d = decide_iter(&i);
+        assert_eq!(d.events, vec![IterEvent::FlatRunEnded { stall: 2, from: 4.096, to: 1.0 }]);
+        assert_eq!((d.state.boost, d.state.probe, d.state.stall), (1.0, None, 0));
+        assert_eq!((d.state.verdict, d.state.capped_frac), (None, None), "a moving frame judges nothing");
+        // A run that had not stalled keeps its boost through motion.
+        let kept = decide_iter(&IterInputs { state: IterState { stall: 0, ..i.state }, ..i.clone() });
+        assert_eq!(kept.state.boost, 4.096);
+    }
+
+    #[test]
+    fn the_seed_needs_an_orbit_that_escaped() {
+        let i = IterInputs { ref_len: 20 * 53_200, ref_escaped: true, ..climb() };
+        let d = decide_iter(&i);
+        assert_eq!(d.events, vec![IterEvent::Seeded { from: 1.0, to: 20.0, ref_len: 20 * 53_200 }]);
+        assert_eq!((d.budget_now, d.planned), (20 * 53_200, 20 * 53_200));
+        // An orbit that stopped at the length we asked for measures the ask, not the location.
+        assert!(decide_iter(&IterInputs { ref_escaped: false, ..i.clone() }).events.is_empty());
+        // Nor past a latched plateau, nor while moving, nor under an explicit count.
+        let plateau = IterState { plateau: true, ..i.state };
+        assert!(decide_iter(&IterInputs { state: plateau, ..i.clone() }).events.is_empty());
+        assert!(decide_iter(&IterInputs { interacting: true, ..i.clone() }).events.is_empty());
+        let explicit = decide_iter(&IterInputs { auto_iter: false, eff_iter: 70_000, ..i });
+        assert!(explicit.events.is_empty());
+        assert_eq!(explicit.planned, 70_000, "an explicit count is honoured verbatim");
+    }
+
+    #[test]
+    fn a_reading_measured_at_another_budget_is_discarded() {
+        // The readback lands frames late: a pre-raise "still capped" must not read as "the raise
+        // did not help".
+        let i = IterInputs { reading: capped(1.0, 33_250), ..climb() };
+        let d = decide_iter(&i);
+        assert!(d.reached_ask && d.stale);
+        assert!(d.events.is_empty());
+        assert_eq!((d.state.capped_frac, d.state.verdict), (None, None));
+    }
+
+    #[test]
+    fn all_capped_at_the_full_appetite_repicks_once_then_reverts() {
+        // The appetite (53,200) binds at boost 2, and every pixel is still capped there.
+        let i = IterInputs {
+            eff_iter: 53_200,
+            reading: capped(1.0, 53_200),
+            state: IterState { boost: 2.0, ..climb().state },
+            ..climb()
+        };
+        let d = decide_iter(&i);
+        assert!(d.repick && d.state.repicked);
+        assert_eq!(d.events, vec![IterEvent::Repick { frac: 1.0, budget: 53_200 }]);
+        assert_eq!(d.state.boost, 2.0, "the boost stays at the appetite while the re-pick builds");
+        // Still in flight: wait, decide nothing.
+        let wait = decide_iter(&IterInputs { recompute_in_flight: true, ..next(&i, &d, 1.0) });
+        assert!(!wait.repick && wait.events.is_empty());
+        assert_eq!(wait.state.boost, 2.0);
+        // Landed and still all-capped: interior; the cheap budget paints the same flat frame.
+        let done = decide_iter(&next(&i, &wait, 1.0));
+        assert_eq!(done.events, vec![IterEvent::Exhausted { frac: 1.0, budget: 53_200, from: 2.0 }]);
+        assert!(done.state.plateau && done.state.exhausted && !done.repick);
+        assert_eq!(done.state.boost, 1.0);
+    }
+
+    #[test]
+    fn a_recorded_climb_round_trips() {
+        let i = IterInputs { reading: capped(0.37, 53_200), ref_len: 9_999, ..climb() };
+        let d = decide_iter(&i);
+        let line = serde_json::json!({"kind": "decision", "frame": 1, "view": 0, "stage": "iter",
+            "inputs": i, "decision": d}).to_string();
+        let rep = replay_lines(&line);
+        assert_eq!((rep.decisions, rep.mismatches, rep.unreadable), (1, 0, 0));
     }
 
     #[test]

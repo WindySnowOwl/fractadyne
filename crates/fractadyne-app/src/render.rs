@@ -5028,7 +5028,10 @@ impl FractadyneApp {
     /// `build_params` stage: bound this frame's GPU work (watchdog budget), run the
     /// adaptive live-iteration probe + the escape-range/gradient drains, and derive the
     /// frame's iteration ask. Body moved verbatim from `build_params`; the stage's whole
-    /// interface is scalars in, [`BudgetPlan`] out (every `self` effect is on `perf`).
+    /// interface is scalars in, [`BudgetPlan`] out (every `self` effect is on `perf`, except
+    /// the appetite re-pick, which clears the view's reference). W5: the climb is the pure
+    /// `decide::decide_iter` over a recorded inputs struct; this gathers its inputs, applies the
+    /// state it writes, runs the drains between its traces and records it.
     #[allow(clippy::too_many_arguments)]
     fn bp_frame_budget(
         &mut self,
@@ -5083,140 +5086,66 @@ impl FractadyneApp {
             self.perturbs(fractal),
             interacting,
         );
-        // ADAPTIVE LIVE ITERATION BUDGET (settled frames only). `zoom_iter_cap`'s 256/octave slope
-        // under-budgets dense near-Misiurewicz fields (escape counts run ~226–300/octave there), so
-        // a settled deep view can show smooth "capped blobs" where the export shows dendrites — at
-        // the reported 1.7e55× spar view, 40% of pixels hit the cap (maxiter counter) while the
-        // full appetite escapes every one. The GPU's MAXITER event counter (read back per settled
-        // full-frame iterate) drives a probe: raise the cap multiplier while raising measurably
-        // reduces the capped fraction; a raise that doesn't help means TRUE interior in view (a
-        // minibrot) → revert and stop (`iter_plateau`), so interior views never pay a runaway
-        // budget.
-        //
-        // "Doesn't help" needs EVIDENCE, not one flat step. Measured at the 3.3e61× three-spar:
-        // the capped fraction is exactly 100% at ×1.0, ×1.6 AND ×2.6, then collapses to 12% at
-        // ×4.1 and 0.6% at ×6.6. Latching on the first flat step reverted to boost 1.0 and left
-        // the view permanently BLACK — every pixel capped, painted as interior. So the probe must
-        // see `crate::ITER_STALL_LIMIT` flat steps in a row before concluding there is nothing to find.
+        // ADAPTIVE LIVE ITERATION BUDGET (settled frames only): the climb is the pure
+        // `decide::decide_iter` (its notes moved with it), so a recording replays it exactly. Gathered
+        // here: the MAXITER reading drained this frame, the reference's evidence for the boost seed,
+        // whether a reference build is in flight, and the view's climb state.
+        let vb = (view_id as usize).min(1);
+        let climb_in = {
+            use std::sync::atomic::Ordering::SeqCst;
+            let rc = &self.ref_cache[vb];
+            let p = &self.perf;
+            decide::IterInputs {
+                interacting,
+                auto_iter: self.render_cfg.auto_iter,
+                eff_iter,
+                log2mag,
+                iter_cap,
+                reading: Some(p.maxiter_sink[vb].swap(u64::MAX, SeqCst)).filter(|&r| r != u64::MAX),
+                ref_len: rc.orbit_len,
+                ref_escaped: !rc.partial && rc.orbit_tail.as_ref().is_some_and(|t| t.escaped),
+                recompute_in_flight: self.recompute_rx[vb].is_some(),
+                state: decide::IterState {
+                    boost: p.iter_boost[vb],
+                    probe: p.iter_probe[vb],
+                    plateau: p.iter_plateau[vb],
+                    stall: p.iter_stall[vb],
+                    stall_base: p.iter_stall_base[vb],
+                    exhausted: p.iter_exhausted[vb],
+                    repicked: p.iter_repicked[vb],
+                    verdict: p.iter_verdict[vb],
+                    capped_frac: p.capped_frac[vb],
+                    budget_measured: p.budget_measured[vb],
+                    budget_maxed: p.budget_maxed[vb],
+                },
+            }
+        };
+        let climb = decide::decide_iter(&climb_in);
+        {
+            let (p, s) = (&mut self.perf, &climb.state);
+            p.iter_boost[vb] = s.boost;
+            p.iter_probe[vb] = s.probe;
+            p.iter_plateau[vb] = s.plateau;
+            p.iter_stall[vb] = s.stall;
+            p.iter_stall_base[vb] = s.stall_base;
+            p.iter_exhausted[vb] = s.exhausted;
+            p.iter_repicked[vb] = s.repicked;
+            p.iter_verdict[vb] = s.verdict;
+            p.capped_frac[vb] = s.capped_frac;
+            p.budget_measured[vb] = s.budget_measured;
+            p.budget_maxed[vb] = s.budget_maxed;
+            p.iter_planned[vb] = climb.planned;
+        }
+        if climb.repick {
+            self.ref_cache[vb].ref_pt = None; // force a fresh pick (no reuse-extend)
+            self.recompute_rx[vb] = None; // drop any in-flight extend of the poor incumbent
+        }
+        for e in climb.events.iter().filter(|e| e.before_drains()) {
+            e.trace();
+        }
         {
             use std::sync::atomic::Ordering::SeqCst;
-            let vb = (view_id as usize).min(1);
-            // Where the climb stood before this frame — its verdict below asks whether it moved.
-            let (boost_in, repicked_in) = (self.perf.iter_boost[vb], self.perf.iter_repicked[vb]);
-            // The probe baseline and the interior plateau are properties of ONE settled view: any
-            // motion invalidates both (comparing a new view's capped fraction against another
-            // view's baseline falsely reads "the raise didn't help" and latches the plateau —
-            // navigating to a starved view then stuck at boost 1.0 forever). The boost itself is
-            // kept: it's a multiplier on the depth-scaled cap, so it carries sensibly and the
-            // probe re-converges from wherever it is.
-            if interacting {
-                // ⭐…except a run of raises that has so far bought NOTHING (`iter_stall` > 0: every
-                // raise since `iter_stall_base` measured flat). Motion used to interrupt it keeping
-                // the boost it had reached: a glide that began while the 1× view's interior (3.0%
-                // capped at every step) was still being probed carried ×4.1 into every frame after —
-                // 22k iterations at the df32 switch where 5.4k resolve the picture, 2.5× over the
-                // dispatch ceiling. Revert to where the fruitless run began, as its conclusion would.
-                if self.perf.iter_stall[vb] > 0 {
-                    let back = self.perf.iter_stall_base[vb];
-                    crate::diag::trace(
-                        "gpu",
-                        format!(
-                            "adaptive iter: motion ends a flat run ({}/{}) — boost {:.1}→{back:.1}",
-                            self.perf.iter_stall[vb],
-                            crate::ITER_STALL_LIMIT,
-                            self.perf.iter_boost[vb]
-                        ),
-                    );
-                    self.perf.iter_boost[vb] = back;
-                }
-                self.perf.iter_probe[vb] = None;
-                self.perf.iter_plateau[vb] = false;
-                self.perf.iter_stall[vb] = 0;
-                self.perf.iter_exhausted[vb] = false;
-                self.perf.iter_repicked[vb] = false; // a new settle earns a fresh appetite re-pick
-                self.perf.capped_frac[vb] = None; // a moving frame's reading describes another view
-            }
-            let v = self.perf.maxiter_sink[vb].swap(u64::MAX, SeqCst);
-            // The GPU publishes this reading only from a pass that REACHED ITS ASK (the walk's end),
-            // whatever budget it was armed at — the one test of "this reading saw the whole walk".
-            let reached_ask = v != u64::MAX;
-            // The reading is `(frac_f32_bits << 32) | armed_max_iter`. Only adapt on readings
-            // measured AT the current boost's budget: the readback lands ~2 frames late, and a
-            // stale pre-raise reading ("still 100% capped") right after a raise falsely reads as
-            // "the raise didn't help" → the interior plateau latches and the view sticks black at
-            // fully-starved views (observed live at a 100%-capped spar session).
-            // ⭐SEED THE BOOST FROM THE REFERENCE ORBIT, so the budget reaches this location's real
-            // need in ONE settle instead of climbing there blind. The depth slope (`zoom_iter_cap`)
-            // leaves a settled deep view capping pixels at, say, 69k while the reference we already
-            // built for it is 256k+ samples long — pure waste, and the direct cause of a minibrot
-            // rendering solid black under auto-iterations when a forced high count resolves it. The
-            // reference length is the honest per-location estimate (no pixel can outrun the orbit),
-            // so jump the boost to it rather than walking up in slow 2.5× steps that a deep mode-2
-            // view spends seconds on and that the interior-plateau guard can abandon before arriving.
-            //
-            // Raise-only, settled-only, auto-only, and never past a latched interior plateau: the
-            // existing climb/plateau/exhausted logic keeps ownership of termination. A genuine
-            // interior seeded high is still fully capped, so it climbs the rest to the appetite and
-            // reverts to the cheap budget exactly as before — just without the long black stare on
-            // the way. The seed feeds `boost_now` below, so the probe's `budget_now` and the frame's
-            // dispatched budget (which reads `iter_boost[vb]` afresh) stay the one shared value.
-            if !interacting && self.render_cfg.auto_iter && !self.perf.iter_plateau[vb] {
-                let cap = zoom_iter_cap(log2mag).max(256) as f64;
-                let rc = &self.ref_cache[vb];
-                let ref_len = rc.orbit_len;
-                // The orbit's length is evidence only if the orbit ENDED ON ITS OWN (see
-                // `boost_seed_from_reference`). A truncated coarse reference is not a finished
-                // orbit at all, so it never qualifies either.
-                let escaped = !rc.partial && rc.orbit_tail.as_ref().is_some_and(|t| t.escaped);
-                let seed = boost_seed_from_reference(ref_len, cap, escaped);
-                if seed > self.perf.iter_boost[vb] {
-                    let old = self.perf.iter_boost[vb];
-                    self.perf.iter_boost[vb] = seed;
-                    // The climb, if the seed is not enough, re-measures from here; a stale baseline
-                    // from before the jump would read the first post-seed frame as "unhelpful".
-                    self.perf.iter_probe[vb] = None;
-                    self.perf.iter_stall[vb] = 0;
-                    crate::diag::trace(
-                        "gpu",
-                        format!(
-                            "adaptive iter: seeded boost {old:.1}→{seed:.1} from reference len {ref_len}"
-                        ),
-                    );
-                }
-            }
-            let boost_now = self.perf.iter_boost[vb];
-            let budget_now =
-                live_iter_budget(eff_iter, log2mag, boost_now, !self.render_cfg.auto_iter);
-            let (v, frac_bits) = match v {
-                u64::MAX => (u64::MAX, 0u32),
-                packed => {
-                    let armed_iter = packed as u32;
-                    if armed_iter == budget_now {
-                        (packed, (packed >> 32) as u32)
-                    } else {
-                        (u64::MAX, 0) // stale budget — discard
-                    }
-                }
-            };
-            // Adapt only while settled and only when the zoom cap is the binding constraint
-            // (a frame already at the full appetite can't be helped by raising it).
-            let boost = boost_now;
-            let cap_bound = budget_now < eff_iter.min(crate::MAX_ITER_LIMIT);
-            // Publish the capped fraction for the status-bar limit diagnostic — INDEPENDENT of the
-            // adapt path below. When the user's own Iterations setting is the binding constraint
-            // (`cap_bound` false) the probe never runs, and that is precisely when they most need
-            // to be told the budget is the limit: the probe can't raise past their setting.
-            if v != u64::MAX && !interacting {
-                let frac = f32::from_bits(frac_bits) as f64;
-                if frac.is_finite() {
-                    self.perf.capped_frac[vb] = Some(frac);
-                    // Can the app still raise this budget on its own? Only while the zoom cap
-                    // binds AND the boost has headroom.
-                    self.perf.budget_maxed[vb] =
-                        !cap_bound || boost_now >= crate::ITER_BOOST_MAX * 0.99;
-                    self.perf.budget_measured[vb] = budget_now;
-                }
-            }
+            let (budget_now, reached_ask) = (climb.budget_now, climb.reached_ask);
             // Drain the escape-range reading (live auto-normalization input) and EMA it — the
             // range moves smoothly with the view, and the EMA keeps the derived palette mapping
             // from flickering frame to frame.
@@ -5522,171 +5451,12 @@ impl FractadyneApp {
                 .perf
                 .norm_range[vb]
                 .map(|target| norm_glide_step(self.perf.norm_shown[vb], target, norm_snap));
-            if v != u64::MAX && !interacting && !cap_bound && !self.perf.iter_plateau[vb] {
-                // At FULL APPETITE and still essentially all-capped: raising is no longer
-                // possible, so the frame is flat at the most this view can be given. Whether that
-                // is deep interior (normal) or a view needing more than the app can offer, the
-                // IMAGE is identical at a cheaper budget — so revert to the cheap one, stop
-                // probing, and record it for the status bar to report honestly. Without this the
-                // budget stays pinned at the appetite forever, paying millions of iterations per
-                // pixel to render the same flat frame.
-                let frac = f32::from_bits(frac_bits) as f64;
-                if frac.is_finite() && frac > 0.98 && boost > 1.0 {
-                    // ⭐Before concluding INTERIOR and reverting to black, try ONE fresh reference
-                    // pick at the full appetite. The reference in hand may have been chosen cheaply
-                    // during motion — the view CENTRE, which escapes early and covers this view
-                    // badly — and the settled path reuse-EXTENDED it rather than re-picking. A pick
-                    // at the appetite runs the deep-perturb engine and finds a better point (measured
-                    // 2026-09-10 at 9.34e80×: the export/appetite pick lands OFF-CENTRE, offset
-                    // ≈(−0.04,+0.02), and resolves where the reused motion pick stays solid black).
-                    // Clearing `ref_pt` forces the next build to pick fresh instead of reuse — and it
-                    // picks at the appetite ask, because the boost is at the appetite right here.
-                    // ⚠Wait for that build to land before deciding: reverting while it is in flight
-                    // would drop the boost, and the re-pick would then rebuild at the throttled ask
-                    // and pick the poor centre all over again. Once per settle (`iter_repicked`): if
-                    // the appetite-picked reference is STILL all-capped, the view is genuinely
-                    // interior and the revert below stands.
-                    if !self.perf.iter_repicked[vb] {
-                        self.perf.iter_repicked[vb] = true;
-                        self.ref_cache[vb].ref_pt = None; // force a fresh pick (no reuse-extend)
-                        self.recompute_rx[vb] = None; // drop any in-flight extend of the poor incumbent
-                        self.perf.iter_probe[vb] = None; // re-measure cleanly against the new reference
-                        self.perf.iter_stall[vb] = 0;
-                        crate::diag::trace(
-                            "gpu",
-                            format!(
-                                "adaptive iter: {:.1}% capped at the full appetite ({budget_now}) — \
-                                 re-picking the reference at the full ask before concluding interior",
-                                frac * 100.0
-                            ),
-                        );
-                    } else if self.recompute_rx[vb].is_none() {
-                        // The appetite re-pick has landed and it is still all-capped: genuinely
-                        // interior. Revert to the cheap budget (same flat image) as before.
-                        self.perf.iter_plateau[vb] = true;
-                        self.perf.iter_exhausted[vb] = true;
-                        self.perf.iter_boost[vb] = 1.0;
-                        crate::diag::trace(
-                            "gpu",
-                            format!(
-                                "adaptive iter: exhausted — {:.1}% capped at the full appetite \
-                                 ({budget_now}) even after a fresh appetite pick; reverting boost {boost:.1}→1.0",
-                                frac * 100.0
-                            ),
-                        );
-                    }
-                }
-            }
-            if v != u64::MAX && !interacting && cap_bound && !self.perf.iter_plateau[vb] {
-                let frac = f32::from_bits(frac_bits) as f64;
-                // 0.05%: low enough to chase a thin Misiurewicz-spar core (the 1.7e55× case
-                // converges 43% → 0.12% → 0.001% over two raises), high enough to ignore stray
-                // undecided pixels; the plateau probe still stops true interiors regardless.
-                if frac.is_finite() && frac > 0.0005 {
-                    let unhelpful = self.perf.iter_probe[vb]
-                        .is_some_and(|(pb, pf)| boost > pb && frac > pf * 0.8);
-                    // Step size scales with how far from resolved we are. A nearly all-capped
-                    // frame is a flat/black screen and may need several times the budget, so
-                    // walking up in 1.6× steps spends many settle cycles showing the user
-                    // nothing; once mostly resolved, fine steps avoid overshooting the cost.
-                    let step = if frac > 0.9 { 2.5 } else { 1.6 };
-                    // A frame that is essentially ALL capped looks identical whether we revert or
-                    // keep climbing, so a flat step there is NOT evidence of interior — it can
-                    // simply mean the budget is still orders of magnitude short. Measured at
-                    // 6.5e94×: that view needs ~121× the depth-scaled cap, so three flat 2.5×
-                    // steps only reached 15.6×, "proved" interior, reverted to 1.0 — and left a
-                    // permanently BLACK screen on a view that resolves fine at 10M. While fully
-                    // capped, climb to the ceiling; the `!cap_bound` branch above concludes it.
-                    let fully_capped = frac > 0.98;
-                    if !fully_capped
-                        && unhelpful
-                        && self.perf.iter_stall[vb] + 1 >= crate::ITER_STALL_LIMIT
-                    {
-                        // Several raises bought nothing on a PARTIALLY capped frame — the
-                        // remaining capped pixels are interior. Revert to where the run began.
-                        let back = self.perf.iter_stall_base[vb];
-                        self.perf.iter_plateau[vb] = true;
-                        self.perf.iter_boost[vb] = back;
-                        crate::diag::trace(
-                            "gpu",
-                            format!("adaptive iter: plateau (interior) — boost back to {back:.1}"),
-                        );
-                    } else {
-                        if unhelpful && !fully_capped {
-                            if self.perf.iter_stall[vb] == 0 {
-                                // Remember where to fall back to if this run stays fruitless.
-                                self.perf.iter_stall_base[vb] =
-                                    self.perf.iter_probe[vb].map_or(boost, |(pb, _)| pb);
-                            }
-                            self.perf.iter_stall[vb] += 1;
-                        } else {
-                            self.perf.iter_stall[vb] = 0;
-                        }
-                        self.perf.iter_probe[vb] = Some((boost, frac));
-                        self.perf.iter_boost[vb] = (boost * step).min(crate::ITER_BOOST_MAX);
-                        crate::diag::trace(
-                            "gpu",
-                            format!(
-                                "adaptive iter: {:.1}% capped — boost {boost:.1}→{:.1}{}",
-                                frac * 100.0,
-                                self.perf.iter_boost[vb],
-                                if unhelpful {
-                                    format!(
-                                        " (flat {}/{})",
-                                        self.perf.iter_stall[vb],
-                                        crate::ITER_STALL_LIMIT
-                                    )
-                                } else {
-                                    String::new()
-                                }
-                            ),
-                        );
-                    }
-                } else if frac.is_finite() {
-                    self.perf.iter_probe[vb] = Some((boost, frac));
-                    self.perf.iter_stall[vb] = 0;
-                }
-            }
-            // ⭐THE CLIMB'S VERDICT (`Perf::iter_verdict`): a reading measured at this budget that
-            // left it where it was. Supersampling begins on nothing less (`accum_inputs_pending`):
-            // every raise and revert re-decides the colour range and restarts a run.
-            let moved =
-                self.perf.iter_boost[vb] != boost_in || self.perf.iter_repicked[vb] != repicked_in;
-            if interacting || moved {
-                self.perf.iter_verdict[vb] = None;
-            } else if v != u64::MAX {
-                self.perf.iter_verdict[vb] = Some(budget_now);
-            }
         }
-        // The boost applies to ALL frames, motion included: gating it to settled frames made every
-        // MOTION refresh frame render at the unboosted cap — at a starved view (43–96% capped)
-        // that frame is nearly all-interior, so zooming painted BLACK over the good reprojection
-        // until settle re-boosted ("screen goes black until it repaints"). A boosted motion frame
-        // costs up to boost× more, which the motion-res controller absorbs as resolution — softer
-        // beats black. (ADAPTATION stays settled-only; this is only the budget's application.)
-        // ✅A1 RESOLVED (v0.2.40-beta.53): an explicit iteration count is honoured verbatim, in
-        // auto mode the zoom cap × boost applies as before — one shared formula with the boost
-        // probe's `budget_now`, so the two can never drift (`live_iter_budget`; the drift failure
-        // mode and the freeze-guard coupling that blocked this for two releases are documented on
-        // the function). `iter_cap` (= MAX_ITER_LIMIT on both branches) folds into it.
-        // ⛔TOUR GLIDES MUST PRICE THE SCRIPT'S ASK TOO (attempted beta.80, REVERTED same day):
-        // pricing glide frames at the zoom cap × boost rendered the grand tour's hard spar holds
-        // 100% BLACK on `--livetest` (hold-e82: cap ~80k where the field needs the scripted 2M —
-        // per-keyframe budgets exist precisely because the depth formula under-budgets hard
-        // fields), and an ease-out approach is nominally "gliding" while visually parked, so the
-        // starved frames are exactly the ones the viewer stares at.
-        let gpu_iter = {
-            let vb = (view_id as usize).min(1);
-            let planned = live_iter_budget(
-                eff_iter,
-                log2mag,
-                self.perf.iter_boost[vb],
-                !self.render_cfg.auto_iter,
-            );
-            self.perf.iter_planned[vb] = planned; // what the climb's verdict must name
-            planned.min(iter_cap)
-        };
-        BudgetPlan { px, is_pert, budget, iter_cap, gpu_iter }
+        for e in climb.events.iter().filter(|e| !e.before_drains()) {
+            e.trace();
+        }
+        self.record_decision("iter", vb, &climb_in, &climb);
+        BudgetPlan { px, is_pert, budget, iter_cap, gpu_iter: climb.gpu_iter }
     }
 
     /// `build_params` stage: the iteration-range (chunked) walk — price-serialized pass
