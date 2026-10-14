@@ -3422,3 +3422,33 @@ returning a `Plan` through a shim) — B7's invariant is held instead by `Resolu
 the `bp_moving_scale` stage in `frame_plan`, which is the part §5.3 says must not be half-applied;
 `--zoomtest` driving a WHEEL gesture (A5/A6 cover the jump and the programmatic glides instead);
 U51's boost-seed half (needs `--livetest`).
+
+**2026-10-13 — W5 begins: a decision replays from its recording** (`feat/w5-decide`, off local main after
+W3 and W4 merged). The first stage lifted is the moving frame's scale (W4's `bp_moving_scale`: the work
+budget's bound, the rate-aware refresh cap, the AIMD and the visible-frame ladder): `render/decide.rs`
+holds `MovingInputs` — every value it reads, the per-view state it carries between frames, and the three
+overridable tunables it consults — and the pure `decide_moving`, whose body is the stage's own, notes and
+all, moved by a script that asserted every substitution; `bp_moving_scale` now gathers the inputs,
+applies the state the decision writes, emits the traces and records it. `FRACTADYNE_RECORD_DECIDE=<file>`
+(off by default) records every decision as a JSON line after a header naming the build and the tunables;
+`--replay <file>` recomputes each and diffs it field by field (exit 0 only when every one is exact and
+there are at least 200, some of a moving frame). ⚠The first replay of a real recording differed in the
+last digit of a few values: serde_json's default float parser can land one ulp off, so the inputs read
+back were not the inputs recorded; its `float_roundtrip` feature fixed it, and since then two
+recordings — `--motiontest` (1,262 decisions) and the 2^800 autodive (2,978) — replay exactly. Trimmed
+to 570 and 608 decisions (every decision of a rare branch kept), they are the fixtures in
+`validation/replays/`, and `cargo test` replays them on the CPU (CI runs it): RED on any field of any
+decision, and VACUOUS with no recording, a recording under 200 decisions or none of a moving frame, or a
+branch no fixture replays (settled, a pin frame, prefer detail, the rate cap measured and modelled, the
+AIMD stepping, the ladder's rung moving and binding, direct-mode motion — the autodive alone never
+reaches direct mode, the motiontest never prefer detail). A one-character change to the controller (the
+pin growth cap 1.25 → 1.26) turned it red, naming the frame and the field.
+
+U52's two mirrors are gone. `--livetest` kept its own copy of the budget loop — by W5 it still lacked
+the reading pool, the short-reading and dead-man clamps and the lethal-band retreat — and now calls
+`apply_iterate_measurement`, the function the GUI's event loop calls. `--resizetest` declared its own
+`SETTLE_DELAY = 0.35` against the app's 0.18 and now uses the app's.
+Gates: workspace 1,474 / 0 / 11; self-test 518/518, goldens 31/31; `--motiontest` PASS ×3; the
+grand-tour `--livetest` 24/24 with 0 drifted against the blessed baseline, as before the mirror was
+replaced. Still to lift, one stage at a time (§5.4's M8): the frame budget, the chunk walk and the
+present gate; the regime predicate (§6.7) and a field capture are not yet terms of the fixture set.

@@ -165,6 +165,17 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
         print!("{}", crate::diag::frame_record::schema_json());
         return true;
     }
+    // Recompute every decision in a FRACTADYNE_RECORD_DECIDE recording and diff it against the
+    // recorded one (design/live-render-robustness.md §5.4, W5). CPU only; exit 0 = identical.
+    if let Some(pos) = args.iter().position(|a| a == "--replay") {
+        match args.get(pos + 1).filter(|a| !a.starts_with('-')) {
+            Some(path) => crate::render::decide::run_replay(path),
+            None => {
+                eprintln!("--replay: name the recording (a FRACTADYNE_RECORD_DECIDE .jsonl)");
+                crate::exit(2);
+            }
+        }
+    }
     // Check GitHub for a newer release, print the result, and exit (validates the in-app update
     // check headlessly; handy for automation). Optional track: `--check-updates beta` or
     // `--check-updates=beta`; with none named it follows the build's own track — beta for a

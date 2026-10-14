@@ -141,6 +141,9 @@ pub(crate) use pricing::*;
 /// one place.
 pub(crate) mod frame_plan;
 pub(crate) use frame_plan::{Resolution, WalkSig};
+/// The live frame's decisions as pure functions over a recorded inputs struct, and their replay
+/// (design/live-render-robustness.md §5.4, W5).
+pub(crate) mod decide;
 
 /// A completed reference recompute (orbit + series-approximation + BLA), ready to install into a
 /// view's reference cache. Produced by [`recompute_worker`], off the render thread, so the slow
