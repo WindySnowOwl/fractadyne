@@ -10,7 +10,7 @@ inputs and compared with the recorded one, field by field. It runs on the CPU al
 A line carries its complete inputs, so any subset of a recording replays on its own; the fixtures are
 trimmed recordings. Anti-vacuity: every file holds at least 200 decisions, some of them of a moving
 frame (`REPLAY_MIN_DECISIONS`); across the set every branch of every lifted decision is replayed at
-least once (`decide::fixture_coverage`, 49 terms); and at least one recording ENTERED the §6.7
+least once (`decide::fixture_coverage`, 50 terms); and at least one recording ENTERED the §6.7
 escaped-reference regime, judged by the soak's own predicate over its regime lines; and the set's
 recordings come from more than one card (their headers name the adapter), so a hidden input that
 differs between cards turns a replay red on the CPU. The same verdict

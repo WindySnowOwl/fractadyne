@@ -1015,6 +1015,14 @@ struct ViewResources {
     /// guards cannot: is every pixel here from the view we are about to average?
     content_stamp: Option<u64>,
     content_foreign: bool,
+    /// ⭐W6: the view the texture's PIXELS wholly are, whatever is displayed from them — `None` when
+    /// they are blank (cleared), or mixed (a tile over another view). Not `content_stamp`, which
+    /// asks about the DISPLAYED frame against the current viewport (a reprojection makes that
+    /// foreign while the pixels are untouched). A hold snapshot is taken of exactly these pixels and
+    /// displayed under the app's transform from the view it believes they are (`hold_stamp`), so a
+    /// snapshot is shown only when the two agree (`HoldState::stamp_ok`); the app reads it back
+    /// (`pixels_stamp_out`) for the reuse-hold, which reprojects them directly (U20, U42).
+    pixels_stamp: Option<u64>,
 }
 
 /// Snapshot bind group for present-gated composition (see `MandelbrotParams::hold_copy`).
@@ -1023,6 +1031,9 @@ struct HoldState {
     bg: wgpu::BindGroup,
     size: [u32; 2],
     ss: u32,
+    /// The snapshot's pixels were wholly the view the app named for them (`hold_stamp`) when it was
+    /// taken: the display gate serves nothing else.
+    stamp_ok: bool,
 }
 
 /// Progressive on-settle supersampling accumulator (see `MandelbrotParams::accum_*`). While the
@@ -1460,6 +1471,19 @@ pub mod ran_why {
     pub const EMPTY: u64 = 64;
 }
 
+/// What the display gate did with a hold the app asked for (`MandelbrotParams::hold_out`, W6): the
+/// low byte of `pass_frame << 8 | bits`, 0 when no hold was asked for.
+pub mod hold_why {
+    /// The display served the snapshot.
+    pub const SERVED: u64 = 1;
+    /// None to serve (a cold start, or an unverified texture the app would not snapshot): live.
+    pub const NO_SNAPSHOT: u64 = 2;
+    /// The app's content verdict on the snapshot was not a picture (`hold_verified` false): live.
+    pub const UNVERIFIED: u64 = 4;
+    /// The snapshot's pixels were not the view the app named for them (`HoldState::stamp_ok`): live.
+    pub const STAMP: u64 = 8;
+}
+
 /// One armed frame's CONTENT, as read back: how many of its pixels have escaped, tagged with the
 /// app's [`MandelbrotParams::content_tag`] for the render that produced it and the iteration
 /// cursor that render's pass ended at. The app decides from this whether the texture may be shown
@@ -1855,6 +1879,18 @@ pub(crate) fn content_after_frame(
     }
 }
 
+/// W6: which view a texture's PIXELS wholly are after an iterate pass (`ViewResources::pixels_stamp`).
+/// A full-frame pass (a chunk pass resolves the whole frame too) makes them wholly this view. A tile
+/// rewrites only its rect: over this same view they stay wholly it; over blank or another view they
+/// are mixed. A reprojection does not write them and is not a pass.
+pub(crate) fn pixels_after_pass(prev: Option<u64>, view_stamp: u64, whole_frame: bool) -> Option<u64> {
+    if whole_frame {
+        Some(view_stamp)
+    } else {
+        prev.filter(|&s| s == view_stamp)
+    }
+}
+
 #[cfg(test)]
 #[path = "content_stamp_tests.rs"]
 mod content_stamp_tests;
@@ -2233,6 +2269,7 @@ impl ViewResources {
             accum: None,
             content_stamp: None,
             content_foreign: false,
+            pixels_stamp: None,
         }
     }
 
@@ -2256,6 +2293,8 @@ impl ViewResources {
         // Blank is not foreign: there is nothing under the next writes to bleed through.
         self.content_stamp = None;
         self.content_foreign = false;
+        // …but blank is not a picture of any view.
+        self.pixels_stamp = None;
     }
 
     /// Build (or resize) the progressive-SSAA accumulator at `size` display pixels: a `frame`
@@ -2427,7 +2466,8 @@ impl ViewResources {
     /// pass, as `hold_copy`'s copy is.
     fn hold_of(&self, device: &wgpu::Device, color_bgl: &wgpu::BindGroupLayout, f: &AdoptFrame) -> HoldState {
         let bg = make_color_bg(device, color_bgl, &self.color_uniform, &self.lut_buf, &f.iter, &f.aux);
-        HoldState { bg, size: [f.width, f.height], ss: f.ss }
+        // A whole frame, checked on the worker and named by the app as it adopts it.
+        HoldState { bg, size: [f.width, f.height], ss: f.ss, stamp_ok: true }
     }
 
     fn ensure_orbit_capacity(
@@ -2815,6 +2855,21 @@ pub struct MandelbrotParams {
     ///   display serves while a walk composes underneath, which it does not touch.
     pub adopt: Option<Arc<AdoptFrame>>,
     pub adopt_hold: bool,
+    /// W6: the stamp a frame adopted into the LIVE G-buffer of another view is wholly drawn at — an
+    /// opaque identity the app names for it (`ContentTrack::live_stamp`); 0 = unnamed (mixed).
+    pub adopt_stamp: u64,
+    /// W6 (U42): the view the app believes the live texture's pixels wholly are as this frame begins —
+    /// what its transform will display a snapshot taken this frame from. `hold_copy` records whether
+    /// they are (`ViewResources::pixels_stamp`). 0 = unknown, never matched.
+    pub hold_stamp: u64,
+    /// W6 (U59): the app's content verdict on the hold snapshot it asks the display to serve
+    /// (`ContentTrack::hold_verified`). The display gate serves no snapshot without it.
+    pub hold_verified: bool,
+    /// Sink for the view the iteration texture's pixels wholly are after this frame
+    /// (`ViewResources::pixels_stamp`; `u64::MAX` = blank or mixed). Read by the app a frame later.
+    pub pixels_stamp_out: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Sink for what the display gate did: `pass_frame << 8 | hold_why` bits.
+    pub hold_out: Option<Arc<std::sync::atomic::AtomicU64>>,
 }
 
 /// A frame that asks for nothing: no sinks, no reference, the direct mode, one sample a pixel, no
@@ -2885,6 +2940,11 @@ impl Default for MandelbrotParams {
             provenance: Provenance::default(),
             ran_out: None,
             content_stamp_out: None,
+            adopt_stamp: 0,
+            hold_stamp: 0,
+            hold_verified: false,
+            pixels_stamp_out: None,
+            hold_out: None,
             tile: None,
             chunk_range: None,
             chunk_idx: 0,
@@ -3148,6 +3208,8 @@ impl CallbackTrait for MandelbrotParams {
                 // Another view's pixels: nothing may seed from them or average over them.
                 view.content_stamp = None;
                 view.content_foreign = true;
+                // …yet wholly ONE view's, the one the app names for it (`adopt_stamp`).
+                view.pixels_stamp = (self.adopt_stamp != 0).then_some(self.adopt_stamp);
             }
         }
         // Pan reprojection: keep the frozen iteration texture (only valid once something has
@@ -3194,7 +3256,10 @@ impl CallbackTrait for MandelbrotParams {
                 pass.draw(0..3, 0..1);
             }
             let bg = make_color_bg(device, color_bgl, &view.color_uniform, &view.lut_buf, &ht, &ha);
-            view.hold = Some(HoldState { bg, size: view.size, ss: view.last_ss.max(1) });
+            // ⭐W6 (U42): the snapshot is of the pixels as they are — the app's transform displays
+            // it from the view the app believes they are (`hold_stamp`); record whether they are.
+            let stamp_ok = self.hold_stamp != 0 && view.pixels_stamp == Some(self.hold_stamp);
+            view.hold = Some(HoldState { bg, size: view.size, ss: view.last_ss.max(1), stamp_ok });
         }
         // …or for the HOLD (`adopt_hold`): it becomes what the display serves, over any snapshot.
         if let Some(f) = self.adopt.as_deref().filter(|_| self.adopt_hold && self.display_hold) {
@@ -3234,7 +3299,24 @@ impl CallbackTrait for MandelbrotParams {
         // The gate only engages while the app asserts it AND a snapshot exists (a cold start has
         // nothing to hold — composition shows live, the graceful fallback). A frame without the
         // flag drops the snapshot: memory back, display live.
-        let gate = self.display_hold && view.hold.is_some();
+        //
+        // ⭐W6 (U59, U42): …and only a snapshot the app verified as a picture (`hold_verified`, its
+        // first consumer that is not a `format!`) whose pixels are the view the app named. Otherwise
+        // the display shows live — the cold-start fallback — and says why (`hold_out`).
+        let stamp_ok = view.hold.as_ref().is_some_and(|h| h.stamp_ok);
+        let gate = self.display_hold && view.hold.is_some() && self.hold_verified && stamp_ok;
+        if let Some(o) = &self.hold_out {
+            let why = if !self.display_hold {
+                0
+            } else if view.hold.is_none() {
+                hold_why::NO_SNAPSHOT
+            } else {
+                (if gate { hold_why::SERVED } else { 0 })
+                    | (if self.hold_verified { 0 } else { hold_why::UNVERIFIED })
+                    | (if stamp_ok { 0 } else { hold_why::STAMP })
+            };
+            o.store((self.pass_frame << 8) | why, std::sync::atomic::Ordering::SeqCst);
+        }
         if !self.display_hold {
             view.hold = None;
         }
@@ -3833,6 +3915,7 @@ impl CallbackTrait for MandelbrotParams {
             );
             view.content_stamp = stamp;
             view.content_foreign = foreign;
+            view.pixels_stamp = pixels_after_pass(view.pixels_stamp, self.view_stamp, self.tile.is_none());
         }
         if adopted {
             view.last_iter_key = Some(key);
@@ -3845,6 +3928,7 @@ impl CallbackTrait for MandelbrotParams {
             // A whole frame of this view.
             view.content_stamp = Some(self.view_stamp);
             view.content_foreign = false;
+            view.pixels_stamp = Some(self.view_stamp);
         }
         if reproject {
             let (stamp, foreign) = content_after_frame(
@@ -3860,6 +3944,9 @@ impl CallbackTrait for MandelbrotParams {
         // Publish the provenance for the app to read next frame. `u64::MAX` means "do not start an
         // average on this": either older pixels may remain, or the newest writes were made at a
         // different view than the one now being asked about.
+        if let Some(sink) = self.pixels_stamp_out.as_ref() {
+            sink.store(view.pixels_stamp.unwrap_or(u64::MAX), std::sync::atomic::Ordering::SeqCst);
+        }
         if let Some(sink) = self.content_stamp_out.as_ref() {
             let clean = !view.content_foreign && view.content_stamp == Some(self.view_stamp);
             sink.store(

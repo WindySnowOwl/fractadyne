@@ -7,7 +7,7 @@
 //! silent through 41 accumulation runs, which leaves exactly one place for the stale pixels to be:
 //! the texture itself, carried across a view change by a resize that seeded from the old content.
 
-use super::{content_after_frame, seed_allowed};
+use super::{content_after_frame, pixels_after_pass, seed_allowed};
 
 const A: u64 = 0x1111_2222_3333_4444; // one view
 const B: u64 = 0x5555_6666_7777_8888; // another
@@ -122,4 +122,21 @@ fn a_deep_view_that_only_ever_settles_by_tiles_can_still_accumulate() {
         f = next.1;
     }
     assert_eq!((s, f), (Some(A), false));
+}
+
+#[test]
+fn a_full_pass_makes_the_pixels_wholly_its_view() {
+    assert_eq!(pixels_after_pass(Some(B), A, true), Some(A));
+    assert_eq!(pixels_after_pass(None, A, true), Some(A));
+}
+
+#[test]
+fn a_tile_keeps_the_pixels_whole_only_over_its_own_view() {
+    // More of the same view: still wholly it.
+    assert_eq!(pixels_after_pass(Some(A), A, false), Some(A));
+    // Over another view, or over blank, the pixels are mixed — a picture of no single view, so no
+    // hold may be taken of them and displayed as one (`content_after_frame` calls blank-under-a-tile
+    // CLEAN, rightly for an average that waits for the grid; a snapshot does not wait).
+    assert_eq!(pixels_after_pass(Some(B), A, false), None);
+    assert_eq!(pixels_after_pass(None, A, false), None);
 }

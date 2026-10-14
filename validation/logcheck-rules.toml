@@ -56,6 +56,18 @@ max_per_min = 6.0
 why = "GPU timing readings stopped arriving and the frame budget fell back to the wall clock (none in a harness run with working timestamps since W6 measured it from the first unread pass: the 21 a minute every uitest had since beta.111 were the first pass after each idle hold and a walk's untimed empty tail; the 2026-09-21 field loss: 58 in about 35 s)"
 
 [[rule]]
+name = "provenance"
+token = "⚠PROVENANCE"
+max = 0
+why = "W6 (§7.6 gate 1): a GPU reading named a frame where the GPU ran no pass, the display served a hold the app had not verified, or the climb judged a reading the shader ran to a cap"
+
+[[rule]]
+name = "climb-starved"
+token = "⚠CLIMB STARVED"
+max = 0
+why = "W6 (P13): a settled view's adaptive-iteration climb discarded 8 MAXITER readings in a row and judged none — a probe whose readings are all discarded never terminates"
+
+[[rule]]
 name = "motion-jam"
 token = "motion jam:"
 max_per_min = 2.0

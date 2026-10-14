@@ -97,3 +97,72 @@ fn the_refresh_period_tracks_adoptions_and_sees_a_stall() {
     // …but two seconds without one IS the period now.
     assert!((t.refresh_period_now(3_800_000) - 2.0).abs() < 1e-9);
 }
+
+#[test]
+fn the_live_pixels_are_the_believed_view_only_when_the_gpu_says_so() {
+    let mut t = ContentTrack::default();
+    assert!(!t.live_pixels_ok(0), "nothing named yet: never a match, not even with 0");
+    t.live_stamp = 0xA;
+    assert!(t.live_pixels_ok(0xA));
+    assert!(!t.live_pixels_ok(0xB), "another view's pixels");
+    assert!(!t.live_pixels_ok(u64::MAX), "blank or mixed");
+}
+
+#[test]
+fn completeness_vouches_only_at_the_ask() {
+    use crate::render::complete_by_construction as c;
+    // An unchunked frame at its ask with a reference: complete, whatever it shows.
+    assert!(c(false, None, 50_000, 50_000, true));
+    // U19: the same frame capped by a partial reference (`orbit_len - 1`) is not — its blank
+    // interior may be pixels the cap stopped short of escaping.
+    assert!(!c(false, None, 50_000, 31_999, true));
+    // The SA-skip rescue RAISES the count: still complete.
+    assert!(c(false, None, 50_000, 50_400, true));
+    // A walk short of its ask, a pin, a placeholder: never.
+    assert!(!c(false, Some([0, 20_000]), 50_000, 50_000, true));
+    assert!(c(false, Some([50_000, 50_000]), 50_000, 50_000, true), "a finished walk's empty tail");
+    assert!(!c(true, None, 50_000, 50_000, true));
+    assert!(!c(false, None, 50_000, 50_000, false));
+}
+
+#[test]
+fn the_reuse_hold_reprojects_only_a_verified_picture_of_the_believed_view() {
+    use crate::render::reuse_source_ok;
+    let mut t = ContentTrack::default();
+    t.live_tag = 7;
+    t.live_stamp = 0xA;
+    t.live_complete = true;
+    assert!(reuse_source_ok(&t, 0xA));
+    // Cleared (a resize) or mixed: the GPU says no view at all.
+    assert!(!reuse_source_ok(&t, u64::MAX));
+    // A picture, but of another view than the transform assumes.
+    assert!(!reuse_source_ok(&t, 0xB));
+    // The right view, but not known to be a picture (a walk short of its first escape).
+    t.live_complete = false;
+    t.feed(reading(7, 300, 0));
+    assert!(!reuse_source_ok(&t, 0xA));
+}
+
+#[test]
+fn the_content_bar_sits_in_the_measured_gap() {
+    // W6 (U57): the lowest genuine pictures measured in the middle of the range — settled MAXITER
+    // readings at their ask, escaped as the content guard sees it (the 4×4 grid, scaled), RTX 3080,
+    // 2026-10-14. A bar raised to within 4× of any of them would start calling real frames blank,
+    // and three blank walks stop the autopilot's dive.
+    const MEASURED: [(&str, f64); 6] = [
+        ("minibrot 9.3e78 (the black-minibrot repro), settled", 0.010532),
+        ("the 2026-09-21 crash view, 1.76e6x, a 655-sample escaped reference", 0.029154),
+        ("minibrot 9.3e78 x1024", 0.033858),
+        ("minibrot 9.3e78 x16", 0.164701),
+        ("period-4 nucleus, corpus 32", 0.187887),
+        ("period-3 airplane nucleus, corpus 30", 0.271918),
+    ];
+    let px = 1_615_532u32; // a 1468x1101 frame
+    for (view, frac) in MEASURED {
+        assert!(frac >= 4.0 * crate::tunables::CONTENT_MIN_ESCAPED, "{view}: {frac} is within 4x of the bar");
+        assert!(content_has_detail((frac * px as f64) as u32, px), "{view}");
+    }
+    // …and the other side of the gap is exactly zero, with one grid sample (16 px) of noise under it.
+    assert!(!content_has_detail(0, px));
+    assert!(!content_has_detail(16, px));
+}

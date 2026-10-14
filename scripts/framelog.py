@@ -64,6 +64,14 @@ RAN_WHY = {1: "forced", 2: "key", 4: "tile", 8: "chunk", 16: "probe", 32: "split
 
 def ran_why(bits):
     return "+".join(n for b, n in RAN_WHY.items() if bits & b) or "-"
+
+
+# `prev_gpu_hold` (schema 12; `fractadyne_gpu::hold_why`): what the display gate did with an asked-for hold.
+HOLD_WHY = {1: "served", 2: "no snapshot", 4: "unverified", 8: "stamp"}
+
+
+def hold_why(bits):
+    return "+".join(n for b, n in HOLD_WHY.items() if bits & b) or "-"
 VERDICT = {0: "-", 1: "DISCARDED", 2: "moved", 3: "unchanged"}
 # The minimum a summary needs before it will state a verdict (design 6.6.2's anti-vacuity).
 MIN_FRAMES = 30
@@ -390,6 +398,25 @@ def summarize(path, view=0, target_ms=400.0, out=sys.stdout):
             elif a:
                 app_only += 1
         p(f"  dispatch vs GPU        both {both}; GPU ran unplanned {gpu_only} {why}; planned but the GPU ran none {app_only}")
+        if "prev_gpu_hold" in recs[0]:
+            # The app's request (`present`) against what the screen got, a frame late (schema 12).
+            asked = served = 0
+            refused = {}
+            for r in recs:
+                n = byf.get(r["frame"] + 1)
+                if n is None or not r["display_hold"]:
+                    continue
+                asked += 1
+                bits = n["prev_gpu_hold"]
+                if bits & 1:
+                    served += 1
+                else:
+                    k = hold_why(bits)
+                    refused[k] = refused.get(k, 0) + 1
+            stale = sum(1 for r in recs if r["interacting"] and not r["live_pixels_ok"])
+            p(f"  holds asked / served   {asked} / {served}; shown live instead {refused}")
+            p(f"  reuse-hold refused     {sum(1 for r in recs if r['reuse_refused'])} (the live texture not a verified picture of the believed view); "
+              f"moving frames whose pixels were not the believed view {stale}")
     fb = [r["fe_budget"] for r in recs]
     p(f"  budget                 first {fb[0]:.3e}  last {fb[-1]:.3e}  min {min(fb):.3e}  max {max(fb):.3e}")
     ctr = [r for r in recs if r["ctr_new"]]

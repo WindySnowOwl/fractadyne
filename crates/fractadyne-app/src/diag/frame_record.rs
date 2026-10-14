@@ -52,7 +52,7 @@ use std::time::Duration;
 
 /// Bumped whenever a field is added, removed, retyped or reordered. Every record and every file
 /// header carries it, and a reader must refuse a schema it does not know rather than guess.
-pub(crate) const SCHEMA: u16 = 11;
+pub(crate) const SCHEMA: u16 = 12;
 /// Records the in-memory ring (and `frames.bin`) holds. At the 1–5 fps of the failing cadence
 /// that is 14–68 minutes of one view — the ring lengthens in TIME exactly as the app slows down,
 /// the opposite of the 24-entry decision ring it supersedes.
@@ -496,6 +496,19 @@ frame_record! {
     /// what happened, a frame late because the GPU prepares a frame after its record is written.
     prev_gpu_ran: bool,
     prev_gpu_why: u8,
+    /// Schema 12 (W6, U59/U42/U20): what the GPU's display gate did with a hold the app asked for on
+    /// the PREVIOUS frame (`fractadyne_gpu::hold_why` bits: 1 served, 2 no snapshot, 4 the app's
+    /// verdict was not a picture, 8 the snapshot's pixels were not the view the app named; 0 = none
+    /// asked) — `present` is the app's request, this is what the screen got. Whether the live
+    /// texture's pixels were the view the app believes as this frame began (`live_stamp` against the
+    /// GPU's `pixels_stamp`). And whether the reuse-hold wanted to reproject them and was refused
+    /// because they were not that view, or not a verified picture.
+    prev_gpu_hold: u8,
+    live_pixels_ok: bool,
+    reuse_refused: bool,
+    /// Schema 12 (W6, U43): this frame coloured a held snapshot under the map it was taken under,
+    /// not the live one.
+    norm_frozen: bool,
 
     // ---- the user's input this frame (window-wide; the same on both views' records)
     in_wheel: f32,

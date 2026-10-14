@@ -418,4 +418,13 @@ fn framelog_names_the_schema_11_codes_as_the_code_does() {
     ] {
         assert!(script.contains(&format!("{bit}: \"{name}\"")), "framelog.py RAN_WHY lacks {bit}: {name:?}");
     }
+    use fractadyne_gpu::hold_why;
+    for (bit, name) in [
+        (hold_why::SERVED, "served"),
+        (hold_why::NO_SNAPSHOT, "no snapshot"),
+        (hold_why::UNVERIFIED, "unverified"),
+        (hold_why::STAMP, "stamp"),
+    ] {
+        assert!(script.contains(&format!("{bit}: \"{name}\"")), "framelog.py HOLD_WHY lacks {bit}: {name:?}");
+    }
 }

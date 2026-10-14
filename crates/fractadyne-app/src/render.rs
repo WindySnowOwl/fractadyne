@@ -1759,12 +1759,19 @@ fn refwaste_log(origin: &str, outcome: &str, cost_ms: f64) {
 /// `px` is `render_iter` output — `r < 0` = did not escape (interior OR capped; at the coarse
 /// cap the two are indistinguishable and equally invisible). A frame where ~nothing escapes is a
 /// single flat colour, and a flat colour must not replace the reprojected image the user still
-/// has. ⚠An unreadable probe fails OPEN (worth showing): the gate exists to remove a black frame,
-/// and it must never be able to remove a good one on a probe hiccup.
+/// has.
+///
+/// ⛔An unreadable probe fails CLOSED (W6, U45): not worth showing. It used to fail open, on the
+/// grounds that the gate must never remove a good preview on a hiccup of its own — but what it
+/// guards is the reprojected image the user already has, and the full reference lands through the
+/// same channel whatever this says, so a refusal costs a preview while a wrong yes puts an
+/// unverified frame on screen. Its bar is higher than the live presenters'
+/// (`COARSE_PREVIEW_MIN_ESCAPED` against `CONTENT_MIN_ESCAPED`) on purpose: they ask whether a
+/// texture is a picture at all, this asks whether a 56×56 probe beats the picture already shown.
 pub(crate) fn coarse_preview_has_content(px: &[f32], w: u32, h: u32) -> (f64, bool) {
     let n = (w as usize) * (h as usize);
     if n == 0 || px.len() < n * 4 {
-        return (0.0, true);
+        return (f64::NAN, false);
     }
     let escaped = (0..n).filter(|i| px[i * 4] >= 0.0).count();
     let frac = escaped as f64 / n as f64;
@@ -1869,9 +1876,27 @@ fn assemble_ref_fields(vp: &Viewport, precision: usize, delta_exp: i32, res: Rec
     }
 }
 
+impl FractadyneApp {
+    /// What the USER set that decides the palette-range map (not the measured window, which the
+    /// map follows on its own): a held frame's frozen map gives way the moment this changes (W6, U43).
+    pub(crate) fn norm_user_sig(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let c = &self.coloring;
+        c.cycle.to_bits().hash(&mut h);
+        c.offset.to_bits().hash(&mut h);
+        c.color_method.to_u32().hash(&mut h);
+        c.log_palette.hash(&mut h);
+        c.normalize_live.hash(&mut h);
+        c.normalize_fit.hash(&mut h);
+        self.color_cycle().to_bits().hash(&mut h);
+        h.finish()
+    }
+}
+
 /// A resolved palette-range mapping: the affine `cycle`/`offset` the shader applies, plus which
 /// transform to apply first (`mode` 0 = linear, 1 = log about `lo`).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NormMap {
     pub(crate) cycle: f32,
     pub(crate) offset: f32,
@@ -2442,7 +2467,7 @@ impl FractadyneApp {
             ));
             let (frac, keep) = match fractadyne_gpu::render_iter(dev, q, &req) {
                 Ok(r) => coarse_preview_has_content(&r.pixels, N, N),
-                Err(_) => (f64::NAN, true), // unreadable probe → fail open
+                Err(_) => (f64::NAN, false), // unreadable probe → fail closed (U45)
             };
             if crate::diag::trace_on("ref") {
                 crate::diag::trace(
@@ -5128,15 +5153,42 @@ impl FractadyneApp {
         // partial reference caps it, the SA-skip rescue raises it), or the ask has moved since.
         {
             use crate::diag::frame_record::climb_read;
+            let prov = self.perf.content_sink[vb].lock().ok().and_then(|g| g.as_ref().map(|r| r.prov));
+            let capped = prov.is_some_and(|p| p.shader_iter != p.ask);
             let code = if !climb.reached_ask {
                 climb_read::NONE
             } else if !climb.stale {
                 climb_read::JUDGED
+            } else if capped {
+                climb_read::SHADER_CAP
             } else {
-                let prov = self.perf.content_sink[vb].lock().ok().and_then(|g| g.as_ref().map(|r| r.prov));
-                if prov.is_some_and(|p| p.shader_iter != p.ask) { climb_read::SHADER_CAP } else { climb_read::OTHER_ASK }
+                climb_read::OTHER_ASK
             };
             self.perf.rec[vb].climb_read = code;
+            // The provenance gate's two climb terms (`ProvTally`).
+            let t = &mut self.perf.prov[vb];
+            if code == climb_read::JUDGED && capped {
+                t.judged_capped += 1;
+                crate::diag::log_line(
+                    "render",
+                    &format!("⚠PROVENANCE: view {vb}: the climb JUDGED a MAXITER reading the shader ran to a cap, not the ask"),
+                );
+            }
+            if climb_in.interacting || code == climb_read::JUDGED {
+                t.settled_discards = 0;
+            } else if code == climb_read::OTHER_ASK || code == climb_read::SHADER_CAP {
+                t.settled_discards += 1;
+                if t.settled_discards == CLIMB_STARVE_READS {
+                    t.climb_starved += 1;
+                    crate::diag::log_line(
+                        "render",
+                        &format!(
+                            "⚠CLIMB STARVED: view {vb}: {CLIMB_STARVE_READS} settled MAXITER readings discarded in a row, none judged (the last: {})",
+                            if code == climb_read::SHADER_CAP { "the shader ran to a cap" } else { "measured at another ask" }
+                        ),
+                    );
+                }
+            }
         }
         {
             let (p, s) = (&mut self.perf, &climb.state);
@@ -6256,12 +6308,29 @@ impl FractadyneApp {
         // adjacent pixels and a CORRECT dense escape field reads as speckle "noise pools" (the
         // corpus-14/15 aliasing, now surfacing live since the adaptive budget resolves these
         // fields). Smooth method only; range-thresholded so ordinary views keep classic coloring.
-        let nm = self.live_norm_cycle_offset(vs).unwrap_or(NormMap {
+        let nm_live = self.live_norm_cycle_offset(vs).unwrap_or(NormMap {
             cycle: self.color_cycle(),
             offset: self.coloring.offset,
             mode: 0,
             lo: 0.0,
         });
+        // ⭐W6 (U43): a HELD snapshot keeps the colour map it was seen under. The map follows the
+        // escape-range readings, and while a hold is served those readings are the composing walk's
+        // — a picture nobody sees yet — so the snapshot was recoloured every frame under another
+        // picture's window; under the log map every value below the new `norm_lo` collapsed to one
+        // colour. The snapshot is of the frame the screen last showed live (`hold_copy` fires only
+        // with no hold up), so its map is the one that frame used (`Perf::shown_norm`). The user's
+        // own colouring still applies at once: a change to it un-freezes (`norm_user_sig`).
+        let user_sig = self.norm_user_sig();
+        if hold_copy {
+            self.perf.hold_norm[vs] = self.perf.shown_norm[vs].map(|m| (m, user_sig));
+        }
+        let held_map = self.perf.hold_norm[vs].filter(|&(_, u)| display_hold && u == user_sig).map(|(m, _)| m);
+        let nm = held_map.unwrap_or(nm_live);
+        if !display_hold {
+            self.perf.hold_norm[vs] = None;
+            self.perf.shown_norm[vs] = Some(nm_live);
+        }
         let (cycle_eff, offset_eff) = (nm.cycle, nm.offset);
 
         // This dispatch's nominal cost: the TILE's pixels under a settle grid, the whole frame
@@ -6294,6 +6363,10 @@ impl FractadyneApp {
             Some(p) if pin_frame || p.started_frame == self.perf.frame_idx => p.started_frame,
             _ => self.perf.frame_idx,
         };
+        // W6: were the live texture's pixels the view the app believes, as this frame began? (For
+        // the record; `live_stamp` moves to this frame's own pass further down.)
+        let live_pixels_ok = self.perf.content[vsub]
+            .live_pixels_ok(self.perf.pixels_stamp[vsub].load(std::sync::atomic::Ordering::SeqCst));
         let mut params = MandelbrotParams {
             iterate_ms,
             iterate_steps,
@@ -6421,6 +6494,15 @@ impl FractadyneApp {
             content_stamp_out: Some(self.perf.content_stamp[vsub].clone()),
             adopt: None,
             adopt_hold: false,
+            adopt_stamp: 0, // set with `adopt`, below `build_params`' call of this
+            // W6 (U42/U59): a snapshot taken this frame copies the pixels as the frame BEGINS, which
+            // the app believes are `live_stamp` (set by the last real frame, or by an adoption
+            // earlier in this one — it is updated for this frame's own pass only further down);
+            // and the display gate serves a snapshot only with the app's verdict on it.
+            hold_stamp: self.perf.content[vsub].live_stamp,
+            hold_verified: self.perf.content[vsub].hold_verified,
+            pixels_stamp_out: Some(self.perf.pixels_stamp[vsub].clone()),
+            hold_out: Some(self.perf.gpu_hold[vsub].clone()),
         };
         // Record whether THIS frame really re-iterates (vs reprojecting a held frame) — the
         // motion-res controller adapts only on the interval that FOLLOWS a real frame, since
@@ -6513,12 +6595,13 @@ impl FractadyneApp {
         // (unchunked, or a walk's completing pass / tail) with a real reference behind it is
         // verified without waiting; a pin's passes and a placeholder fill are not.
         if params.reproject == 0 {
+            let pin_started = self.perf.pin[vsub].as_ref().is_some_and(|p| p.started_frame == self.perf.frame_idx);
+            let has_ref = mode.is_direct() || self.ref_cache[vi].ref_pt.is_some();
             let ct = &mut self.perf.content[vsub];
             ct.live_tag = content_tag;
-            ct.live_complete = !pin_frame
-                && self.perf.pin[vsub].as_ref().is_none_or(|p| p.started_frame != self.perf.frame_idx)
-                && chunk_range.is_none_or(|[s, e]| s == e || e >= gpu_iter)
-                && (mode.is_direct() || self.ref_cache[vi].ref_pt.is_some());
+            ct.live_stamp = pos_sig;
+            ct.live_complete =
+                complete_by_construction(pin_frame || pin_started, chunk_range, gpu_iter, shader_iter, has_ref);
         }
         if crate::diag::trace_on("tile") {
             let ct = &self.perf.content[vsub];
@@ -6554,6 +6637,9 @@ impl FractadyneApp {
             chunked: chunk_range.is_some(),
             accum: self.perf.accum_cmd[vsub].jitter != [0.0, 0.0],
         });
+        // W6: the verdict the display gate is handed this frame, for the provenance gate's check that
+        // the GPU never serves a hold the app has not verified (`ProvTally::unverified_served`).
+        self.perf.hold_verified_sent[vsub] = (self.perf.frame_idx, params.hold_verified);
         // W6: the dispatch every reading armed this frame carries back (`fractadyne_gpu::Provenance`),
         // from the values just handed the GPU. The GPU completes it with the pass's own frame, nominal
         // steps and shader iteration count when it arms the reading.
@@ -6617,6 +6703,9 @@ impl FractadyneApp {
             };
             r.content_tag = content_tag;
             r.live_complete = self.perf.content[vsub].live_complete;
+            r.live_pixels_ok = live_pixels_ok;
+            r.norm_frozen = held_map.is_some();
+            r.reuse_refused = self.perf.reuse_refused[vsub];
             r.norm_complete = self.perf.norm_complete_submit[vsub];
             r.accum_present = self.perf.accum_cmd[vsub].present;
             r.frame_kind = kind.code();
@@ -7215,11 +7304,20 @@ impl FractadyneApp {
         // resolution it would render, could not show better (`motion_worker`): a walk started now
         // would only be abandoned for it.
         let worker_hold = worker_q.is_some_and(|q| q >= res_scale.min(1.0).log2() - 1.0e-9);
-        let reuse_hold = is_pert
+        let reuse_wanted = is_pert
             && interacting
             && !live_refresh
             && !self.autopilot.stepping
             && ((frozen_drift < REFRESH_OCTAVES && (frozen_fresh || zoom_drift < REFRESH_MIN_DRIFT)) || worker_hold);
+        // ⭐W6 (U20): the reuse-hold reprojects the LIVE texture itself — outside every content check
+        // until now — so it holds only a texture that is a verified picture of the view the app
+        // believes it is; otherwise the frame is a real one (fail closed). Not while a hold is up or
+        // a pin renders: the display serves the snapshot then, not these pixels.
+        let reuse_src_ok = self.perf.hold_active[view_id as usize]
+            || pin_frame
+            || reuse_source_ok(&self.perf.content[vsub], self.perf.pixels_stamp[vsub].load(std::sync::atomic::Ordering::SeqCst));
+        let reuse_hold = reuse_wanted && reuse_src_ok;
+        self.perf.reuse_refused[vsub] = reuse_wanted && !reuse_src_ok;
         // A reprojection/freeze frame runs NO iterate (it re-samples the frozen texture), so the
         // motion res_scale saves nothing on it — and worse, it shrinks the frame's base below the
         // frozen texture's settle-time resolution, so the color-pass aspect-fit `fit = out_res /
@@ -8100,7 +8198,7 @@ impl FractadyneApp {
         // the freeze below to zoom the held frame as the view keeps diving (zoom-reprojection).
         let mut reproject_scale = 1.0_f32;
         // A worker frame adopted on this frame (`motion_worker`), and whether into the hold.
-        let mut worker_adopt: Option<(std::sync::Arc<fractadyne_gpu::AdoptFrame>, bool)> = None;
+        let mut worker_adopt: Option<(std::sync::Arc<fractadyne_gpu::AdoptFrame>, bool, u64)> = None;
 
         let mut ref_offset = RefOffset::ZERO;
         let mut sa = fractadyne_core::SeriesSkip::NONE;
@@ -8690,6 +8788,9 @@ impl FractadyneApp {
                     let ct = &mut self.perf.content[vsub];
                     ct.live_tag = crate::motion_worker::LIVE_TAG_BIT | t.gen;
                     ct.live_complete = true;
+                    // Its pixels are wholly the worker's view, which no `pos_sig` of this device
+                    // names: name them with the render's own tag (`MandelbrotParams::adopt_stamp`).
+                    ct.live_stamp = ct.live_tag;
                     if !display_hold {
                         // Nothing gates the display: the texture it reprojects is now whole, and
                         // this frame's transform is taken from the worker frame's view.
@@ -8718,7 +8819,8 @@ impl FractadyneApp {
                         ),
                     );
                 }
-                worker_adopt = Some((d.frame, into_hold));
+                let stamp = if into_hold { 0 } else { self.perf.content[vsub].live_stamp };
+                worker_adopt = Some((d.frame, into_hold, stamp));
             }
             // Present-gate snapshot transform: captured ONCE from the same math as the freeze —
             // the snapshot holds the frame `frozen_center` still describes at this instant, and
@@ -8992,9 +9094,10 @@ impl FractadyneApp {
             chunk_pass || tile_work,
         );
         // The worker's frame for this frame, and its next motion refresh (`motion_worker`).
-        if let Some((g, hold)) = worker_adopt {
+        if let Some((g, hold, stamp)) = worker_adopt {
             params.adopt = Some(g);
             params.adopt_hold = hold;
+            params.adopt_stamp = stamp;
         }
         if vi == 0 {
             let real = !caller_pan
@@ -9237,6 +9340,60 @@ pub(crate) fn content_has_detail(escaped: u32, px: u32) -> bool {
     px > 0 && escaped as f64 >= (px as f64 * CONTENT_MIN_ESCAPED).max(1.0)
 }
 
+/// Is a render COMPLETE by construction — verified as a picture before its reading lands? Not a
+/// pin's pass or its start (`pinned`), not a walk short of its ask, not a placeholder without a
+/// reference (`has_ref`; direct mode needs none) — and, W6 (U19), not a render the shader ran to a
+/// CAP short of the ask (`shader_iter < gpu_iter`: a partial reference stops at `orbit_len - 1`).
+/// "Complete" used to mean complete for whatever count the shader ran, so a capped, all-interior
+/// frame was a verified picture. A render complete at its true ask that shows nothing escaped is
+/// an honest picture of an interior view, and stays verified: refusing it would refuse the
+/// reuse-hold at every interior view, the costliest frames there are, and widen
+/// `CONTENT_MIN_ESCAPED`'s reach (U57) for no picture gained.
+pub(crate) fn complete_by_construction(
+    pinned: bool,
+    chunk_range: Option<[u32; 2]>,
+    gpu_iter: u32,
+    shader_iter: u32,
+    has_ref: bool,
+) -> bool {
+    !pinned && chunk_range.is_none_or(|[s, e]| s == e || e >= gpu_iter) && has_ref && shader_iter >= gpu_iter
+}
+
+/// May the reuse-hold reproject the live texture (W6, U20)? Only a verified picture
+/// ([`ContentTrack::live_verified`]) of the view the app believes it is
+/// ([`ContentTrack::live_pixels_ok`] against the GPU's `reported` stamp).
+pub(crate) fn reuse_source_ok(ct: &ContentTrack, reported: u64) -> bool {
+    ct.live_verified() && ct.live_pixels_ok(reported)
+}
+
+/// W6 (design/live-render-robustness.md §7.6, gate 1): what the provenance gate counts, per view.
+/// Every count but `checked` and `settled_discards` is held to zero — by `--motiontest` A7 over the
+/// session, and by logcheck, since each is also an always-on log line.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ProvTally {
+    /// GPU budget readings applied, and those whose provenance named a frame at which the GPU ran
+    /// no pass for this view (`fractadyne_gpu::MandelbrotParams::ran_out`): a reading attributed to
+    /// work that never ran (U14).
+    pub(crate) checked: u64,
+    pub(crate) unran: u64,
+    /// Holds the GPU's display gate served although the app had not verified them (U59; impossible
+    /// while the gate requires `hold_verified` — this is the check that it still does).
+    pub(crate) unverified_served: u64,
+    /// MAXITER readings the climb JUDGED although the shader ran to a count other than the ask (U54).
+    pub(crate) judged_capped: u64,
+    /// Settled MAXITER readings discarded in a row, now; and the times such a run reached
+    /// [`CLIMB_STARVE_READS`] — a probe whose every reading another rule discards never terminates
+    /// (P13), and a gate counting only the readings it applied would be green exactly then.
+    pub(crate) settled_discards: u32,
+    pub(crate) climb_starved: u64,
+}
+
+/// Settled MAXITER readings discarded in a row that count as a starved climb ([`ProvTally`]). A
+/// settled hold discards ONE after each raise (the reading of the old ask, already in flight; RTX
+/// 3080, the 9.3e78 minibrot zoomtest, W6); a glide discards dozens, but motion resets the climb and
+/// the run with it.
+pub(crate) const CLIMB_STARVE_READS: u32 = 8;
+
 /// Has a chunked walk's picture stopped changing between two readings of the SAME render? The
 /// later reading must come from a pass well past the earlier one (`CONVERGE_CURSOR_GROWTH`, and
 /// at least a floor pass further — one more pass at a tiny licence proves nothing) and add no
@@ -9272,7 +9429,12 @@ pub(crate) struct ContentTrack {
     pub(crate) live_tag: u64,
     /// That render was COMPLETE for its ask by construction (an unchunked frame, or a walk's
     /// completing pass) with a real reference behind it — verified without waiting for a reading.
+    /// ⭐Complete at the ASK, not at a cap ([`complete_by_construction`], U19).
     pub(crate) live_complete: bool,
+    /// W6: the view the live texture's pixels are, as the app believes: the `pos_sig` of the render
+    /// that set `live_tag`, or the stamp an adopted worker frame was named with. Held against the
+    /// GPU's own account (`MandelbrotParams::pixels_stamp_out`) by [`Self::live_pixels_ok`].
+    pub(crate) live_stamp: u64,
     /// The latest reading, whatever render it describes.
     pub(crate) last: Option<ContentReading>,
     /// The reading before `last`, if it described the same render (the convergence pair).
@@ -9291,6 +9453,14 @@ impl ContentTrack {
     pub(crate) fn feed(&mut self, r: ContentReading) {
         self.prev_same = self.last.filter(|l| l.tag == r.tag);
         self.last = Some(r);
+    }
+
+    /// Are the live texture's pixels the view the app believes they are? `reported` is the GPU's
+    /// account after the last frame (`u64::MAX` = blank, or mixed views). The other half of every
+    /// presenter's question ([`Self::live_verified`] is the content half): a snapshot or reprojection
+    /// of pixels that are another view, or none, is displayed under a transform that is not theirs.
+    pub(crate) fn live_pixels_ok(&self, reported: u64) -> bool {
+        self.live_stamp != 0 && reported != u64::MAX && reported == self.live_stamp
     }
 
     /// Does the live texture hold a picture — by construction, or by a reading of the very
@@ -10288,9 +10458,18 @@ pub(crate) fn norm_glide_step(shown: Option<(f32, f32)>, target: (f32, f32), sna
     if norm_glide_is_reacquire((slo, shi), target) {
         return target; // another picture, not this one drifting
     }
-    let cap = (shi - slo).max(1.0) * MAX_STEP;
+    /// W6 (U58): the residual, as a fraction of the window's width, under which the glide lands
+    /// exactly. Geometric alone only approaches, an f32 ulp at a time for ~100 frames, and the SSAA
+    /// average — whose colour signature now includes this window — could not begin until it stopped.
+    const ARRIVE: f32 = 0.005;
+    let width = (shi - slo).max(1.0);
+    let cap = width * MAX_STEP;
     let step = |cur: f32, tgt: f32| cur + ((tgt - cur) * GLIDE).clamp(-cap, cap);
-    (step(slo, target.0), step(shi, target.1))
+    let next = (step(slo, target.0), step(shi, target.1));
+    if (target.0 - next.0).abs() <= width * ARRIVE && (target.1 - next.1).abs() <= width * ARRIVE {
+        return target;
+    }
+    next
 }
 
 #[cfg(test)]

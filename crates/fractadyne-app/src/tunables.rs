@@ -1383,6 +1383,13 @@ pub(crate) const PIN_MAX_FRAMES: u64 = 240;
 /// off the screen has ZERO — a walk short of the view's first escape resolves every pixel to
 /// the interior colour — so this is margin, not a quality bar: 0.1% of a 1456×1102 frame is
 /// 1,600 pixels, a thin filament in an otherwise interior view.
+///
+/// ⭐Calibrated in the MIDDLE of its range (W6, U57; P10's rule — a calibration checked only at its
+/// extremes once regressed the middle). Over 1,723 settled MAXITER readings at their ask on the RTX
+/// 3080 (the uitest, the motiontest, five zoomtests, the escaped-reference rung, and minibrot and
+/// nucleus ladders), the fraction is BIMODAL: 512 exactly 0, and the lowest picture 1.05% (the
+/// 9.3e78 minibrot). Nothing lies between, so 0.1% sits in an empty gap with 10× to spare; the six
+/// lowest views are pinned (`render::content_policy`'s `the_content_bar_sits_in_the_measured_gap`).
 pub(crate) const CONTENT_MIN_ESCAPED: f64 = 0.001;
 
 /// `RefreshPolicy::Converged`: the later of two readings of one walk must come from a pass at

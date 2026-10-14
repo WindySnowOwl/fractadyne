@@ -3732,3 +3732,107 @@ logcheck's uitest allowance for `timing-starved` (30 a minute, KNOWN) is removed
 of 6 a minute applies. On rung 1's uitest log the gate now FAILS (14 in a minute); on this build it
 passes, with no line at all. The Radeon's uitest is to be confirmed with W6's field build: the
 allowance said both cards, and only this one has been measured.
+
+**2026-10-14 — W6 rungs 2–3 and the provenance gate: one question for every presenter, the hold's
+own colours, and a tally held to zero.** (R1b's gates, for the record: workspace 1,506 / 0 / 11,
+self-test 528/528 with goldens 31/31, `--motiontest` PASS ×3, `--livetest` 24/24 with 0 drifted.)
+
+*The question.* Every presenter now asks the same two things of the pixels it puts on screen. Is
+the render they hold a picture? That is `ContentTrack::live_verified`: a reading of that very render
+shows detail, or the render is complete by construction. Are they the view the app believes they
+are? The GPU now keeps a stamp of the view its PIXELS wholly are (`ViewResources::pixels_stamp`;
+`None` when cleared or mixed). That is a different thing from `content_stamp`, which judges the
+displayed frame against the current viewport and calls every reprojection foreign. The app holds it
+against `ContentTrack::live_stamp`: the `pos_sig` of the render it last put there, or the stamp it
+named an adopted worker frame with (`adopt_stamp`).
+- **U19.** "Complete by construction" now means complete at the ASK (`complete_by_construction`).
+  A partial reference caps the shader at `orbit_len - 1`, and that capped all-interior frame used
+  to pass as a verified picture. A render complete at its true ask that shows nothing escaped is an
+  honest interior picture, and stays one. This departs from §5.5's "content_has_detail on the fast
+  path": refusing those renders would refuse the reuse-hold at every interior view, the costliest
+  frames there are, and widen `CONTENT_MIN_ESCAPED`'s reach (U57) for no picture gained.
+- **U42.** The settled compose takes a snapshot only of a verified texture, as the pin always did,
+  and records its verdict. With nothing verified, the compose shows live.
+- **U59.** The GPU's display gate requires `hold_verified`, that field's first consumer that is not
+  a `format!`. It also requires the snapshot's pixels to be the view the app named for them
+  (`hold_stamp`, checked by the GPU at the copy). It reports what it did (`hold_out`: served, no
+  snapshot, unverified, stamp).
+- **U20.** The reuse-hold reprojects the live texture only when it is a verified picture of the
+  believed view (`reuse_source_ok`); otherwise the frame renders.
+- **U45.** The coarse preview fails CLOSED on an unreadable probe. It keeps its higher bar (2% of a
+  56×56 probe against 0.1%) on purpose: it asks whether the probe beats the picture already shown,
+  not whether a texture is a picture.
+
+*The colours.* U43: a held snapshot keeps the palette-range map it was seen under (`Perf::hold_norm`).
+While a hold is served, the escape-range readings are the composing walk's, so the snapshot was
+recoloured every frame under another picture's window; under the log map everything below the new
+`norm_lo` went to one colour. Any change to the user's own colouring un-freezes it
+(`norm_user_sig`). U58: the SSAA average's colour signature includes the window actually mapped
+(`norm_shown`). The glide toward a new window now lands exactly once the residual is under 0.5% of
+the window's width, so the signature settles and the average can begin.
+
+*The gate (§7.6 gate 1).* The self-test has no frame loop through the GPU's paint path, so the gate
+is a tally the app keeps in every session (`ProvTally`). Each term is also an always-on line that
+logcheck holds to zero:
+- a GPU budget reading that names a frame where the GPU ran no pass for that view;
+- a hold the display served without the app's verdict;
+- a climb reading JUDGED at a shader cap;
+- a settled climb that discarded 8 readings in a row (P13).
+
+`--motiontest` A7 holds the session's totals to zero, and is vacuous under 50 readings checked.
+That is the deviation from `--selftest provenance`. The discard bound is on SETTLED readings: the
+9.3e78 minibrot zoomtest discards 40 MAXITER readings in a row, every one during the glide, where
+the ask grows each frame and motion resets the climb. A settled hold discards one after each raise
+(the old ask's reading, already in flight).
+
+*U57, calibrated in the middle.* Over 1,723 settled MAXITER readings at their ask on the RTX 3080,
+the escaped fraction is BIMODAL: 512 are exactly 0 and the lowest picture is 1.05%. The sources:
+the uitest, the motiontest, five zoomtests, the escaped-reference rung, and two ladders, the corpus
+nuclei and the 9.3e78 minibrot at ×1–×1024. Nothing lies between, so `CONTENT_MIN_ESCAPED` stays at
+0.1%, in an empty gap 10× below the lowest genuine picture. The six lowest views are pinned
+(`the_content_bar_sits_in_the_measured_gap`):
+- the 9.3e78 minibrot, 1.05%;
+- the 2026-09-21 crash view, 2.9%;
+- the 9.3e78 minibrot ×1024, 3.4%;
+- the 9.3e78 minibrot ×16, 16.5%;
+- the period-4 nucleus, 18.8%;
+- the airplane nucleus, 27.2%.
+
+A ladder 65,536× into the period-145 nucleus stayed 100% escaped: exterior dendrites, its minibrot
+still far below a pixel. So the frames U57 fears (a minibrot filling the view) did not occur in any
+measured run.
+
+*What changed on screen (RTX 3080).*
+- `--uitest`: 97 of 97 holds served.
+- `--motiontest`: 638 of 744 served. The other 106 had no snapshot to serve: the session's first two
+  pin walks, before anything was verified. That branch is unchanged; rung 1 had one such episode of
+  81 frames.
+- Minibrot zoomtest: 816 of 935 served. The new refusal is the U42 case itself: for 73 frames at
+  the cold start, rung 1 served a snapshot of the placeholder fill (256 iterations against a 65,842
+  ask, no reference), and now the walk shows live.
+- The reuse-hold refused once per run, both times at a pin start over an unverified walk.
+
+*Fixtures.* The change to `decide_present` is deliberate. On the old fixtures it moved exactly two
+kinds of decision:
+- 8 settled-compose snapshots of an unverified texture, now refused: autodive 1, field 3,
+  motiontest 1, zoomtest 3;
+- settled snapshots that now record their verdict (`hold_verified` null → true).
+
+The six local fixtures are re-recorded with this build. The field capture, `field-rx6800xt.jsonl`,
+cannot be re-recorded from here: its 8 changed decisions are re-blessed IN PLACE, inputs untouched,
+and a fresh capture from W6's field build replaces it. The coverage set gains "a settled compose
+refused an unverified snapshot" (50 terms).
+
+Gates (RTX 3080):
+- Workspace tests: 1,515 / 0 / 11.
+- Self-test: 528/528, goldens 31/31.
+- `--motiontest` ×3: PASS; A7 checked 411, 432 and 424 GPU readings, every count 0.
+- `--livetest`: 24/24, 0 drifted.
+- `--uitest`: 74 pass / 1 warn / 0 fail.
+- Logcheck: PASS on the motiontests, the uitest and the minibrot zoomtest, with no `⚠PROVENANCE` or
+  `⚠CLIMB STARVED` line anywhere.
+
+Next, W6's field build:
+- the screen gate's RX 6800 XT arm (the battery's three captured dives);
+- the Radeon uitest without its `timing-starved` allowance;
+- a fresh field capture to replace the re-blessed one.
