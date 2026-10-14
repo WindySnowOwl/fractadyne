@@ -151,6 +151,10 @@ jobs:
           # gracefully; it just wastes the feature.)
           Copy-Item validation/golden/BLESSED-GPU.txt -Destination "$dir/validation/golden/" -ErrorAction SilentlyContinue
           Copy-Item validation/catalog.toml -Destination "$dir/validation/"
+          # The replay fixtures: `--selftest`'s replay group recomputes every recorded live decision
+          # on the machine it runs on (design/live-render-robustness.md 7.5); without them it is VACUOUS.
+          New-Item -ItemType Directory -Force -Path "$dir/validation/replays" | Out-Null
+          Copy-Item validation/replays/*.jsonl -Destination "$dir/validation/replays/"
           New-Item -ItemType Directory -Force -Path "$dir/benchmarks" | Out-Null
           Copy-Item benchmarks/bench-matrix-baseline.json -Destination "$dir/benchmarks/"
           Compress-Archive -Path $dir -DestinationPath "$dir.zip" -Force
@@ -217,7 +221,7 @@ jobs:
           tag="${tag//\//-}"
           [ -z "$tag" ] && tag="dev"
           dir="fractadyne-$tag-linux-x64"
-          mkdir -p "$dir/tours" "$dir/scripts" "$dir/validation/golden" "$dir/benchmarks"
+          mkdir -p "$dir/tours" "$dir/scripts" "$dir/validation/golden" "$dir/validation/replays" "$dir/benchmarks"
           cp target/release/fractadyne "$dir/"
           cp README.md CHANGELOG.md TOURS.md DIAGNOSTICS.md THIRD-PARTY-NOTICES.md LICENSE-APACHE LICENSE-MIT "$dir/"
           cp tours/*.toml "$dir/tours/"
@@ -236,6 +240,8 @@ jobs:
           # direction, so its absence degraded gracefully — it just wasted the feature.)
           cp validation/golden/BLESSED-GPU.txt "$dir/validation/golden/" 2>/dev/null || true
           cp validation/catalog.toml "$dir/validation/"
+          # The replay fixtures, for `--selftest`'s replay group (as the windows job).
+          cp validation/replays/*.jsonl "$dir/validation/replays/"
           cp benchmarks/bench-matrix-baseline.json "$dir/benchmarks/"
           tar czf "$dir.tar.gz" "$dir"
           sha256sum "$dir.tar.gz" > "$dir.tar.gz.sha256"

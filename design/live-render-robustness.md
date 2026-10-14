@@ -3836,3 +3836,45 @@ Next, W6's field build:
 - the screen gate's RX 6800 XT arm (the battery's three captured dives);
 - the Radeon uitest without its `timing-starved` allowance;
 - a fresh field capture to replace the re-blessed one.
+
+**2026-10-14 — W6's field build (dev.9, `fbdc508`, published and reverted) on the RX 6800 XT, and
+W6's exit criteria.**
+
+*A fresh field capture* replaces the re-blessed one. On PLUTO, the same pair as dev.8 was recorded
+through the agent with `-RecordDecide`: `--motiontest`, and the 12-octave glide into the 9.3e78
+minibrot with a 30 s hold. The 897 decisions replay exactly on the RTX 3080, and every anti-vacuity
+term holds with them, coverage of the 50 terms included. Both runs passed their own gates: the
+motiontest's verdict, with A7 checking 396 GPU readings and every provenance count 0, and logcheck
+on both. The provenance gate is green on the Radeon.
+
+*The battery* (full, `w6-battery`):
+- PASS: the livetest, the uitest (logcheck PASS with the `timing-starved` allowance gone, so R1b
+  holds on the Radeon too), the screen captures, live-res and bench-matrix.
+- Three steps exited 1, and none is W6's code:
+  - **gputest:** the card's df32 error-free transforms are compiler-folded (known; the capability
+    is detected).
+  - **self-test:** the known Windows-Radeon "wider canvas" difference at 1e2, plus three new FAILs.
+    W5's replay group reported VACUOUS, "no recording": no package ever shipped
+    `validation/replays/`, so `--selftest` from any installed copy would show them. Fixed: all four
+    package recipes (release.yml's windows and linux jobs, `publish-share.ps1`,
+    `build-accelerated.ps1`) now ship the fixtures, and `every_package_ships_the_replay_fixtures`
+    holds each recipe to it.
+  - **recordtest:** a gate defect since beta.129. Its required-field check accepted three of the
+    four reading verdicts. The fourth, IMPOSSIBLE (the timing witness's "longer than the window its
+    pass ran inside"), failed a field that WAS set. The Radeon's witness fires on 2.3–6.7% of
+    uitest readings in every battery since b129 (12 of 178 here, the top of that band with more
+    readings), but never before on the recordtest's 13–18; this run's first was frame 7, 22.6 ms
+    inside an 18.4 ms window. Fixed: IMPOSSIBLE is accepted.
+
+*The screen gate's Radeon arm* (the battery's three captured dives at 2^800, scored by `screengate.py`):
+114–116 captures each; median blank 0.0% in 0 episodes, flat 0%, flash 0, stale streak 0. PASS.
+
+*Exit criteria.*
+- **Zero provenance mismatches over a 20-minute dive.** Two consecutive 15-minute `--zoomtest` legs
+  toward the e4000 Misiurewicz point on the RTX 3080, from 1× and from 2^600: 1,198 octaves over 30 minutes, 100,293 frames at 55.7 fps. Not one
+  `⚠PROVENANCE` or `⚠CLIMB STARVED` line, and logcheck passed both.
+- **Blank fraction under 7% over three pairs.** RTX 3080: 0.0% median over three runs (102–104
+  captures each), flat 0%, flash 0, stale streak 0, PASS. RX 6800 XT: 0.0% median over three runs (114–116 captures), PASS.
+- **`hold_verified` has a consumer that is not a `format!`.** It does: the GPU's display gate.
+
+W6 is complete.

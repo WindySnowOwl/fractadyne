@@ -264,6 +264,9 @@ Copy-Item (Join-Path $root "validation\golden\*.png") -Destination (Join-Path $d
 # tolerance (the safe direction), so its absence degrades gracefully.
 Copy-Item (Join-Path $root "validation\golden\BLESSED-GPU.txt") -Destination (Join-Path $dir "validation\golden") -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $root "validation\catalog.toml") -Destination (Join-Path $dir "validation")
+# The replay fixtures, for --selftest's replay group (as release.yml and publish-share.ps1).
+New-Item -ItemType Directory -Force (Join-Path $dir "validation\replays") | Out-Null
+Copy-Item (Join-Path $root "validation\replays\*.jsonl") -Destination (Join-Path $dir "validation\replays")
 New-Item -ItemType Directory -Force (Join-Path $dir "benchmarks") | Out-Null
 Copy-Item (Join-Path $root "benchmarks\bench-matrix-baseline.json") -Destination (Join-Path $dir "benchmarks")
 
