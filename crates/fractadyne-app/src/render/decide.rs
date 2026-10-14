@@ -2012,7 +2012,8 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
 
 /// The recording's format version: bumped whenever an inputs or decision struct changes shape, and a
 /// replay refuses a recording of another (it would compare the wrong things). 2: `MovingInputs`
-/// carries `pass_fixed_ms`.
+/// carries `pass_fixed_ms`. (The `regime` context lines are additive: a replay that cannot read them
+/// counts them unreadable and fails, which is the safe direction.)
 pub(crate) const DECIDE_SCHEMA: u32 = 2;
 
 /// `FRACTADYNE_RECORD_DECIDE=<file>`: every lifted decision of every built frame, one JSON line each
@@ -2065,6 +2066,84 @@ impl crate::FractadyneApp {
     }
 }
 
+/// The §6.7 regime facts of one frame record, written beside the decisions as a `"kind":"regime"`
+/// line: the fields `soak::RegimeAcc` folds, so a recording says whether its run ENTERED the
+/// escaped-reference regime — judged by the soak's own predicate, read from the frame record, never
+/// from a timing instrument. Context, not a decision: nothing is recomputed from it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct RegimeFacts {
+    pub(crate) frame: u64,
+    pub(crate) t_ms: u64,
+    pub(crate) view: u8,
+    pub(crate) has_ref: bool,
+    pub(crate) ref_partial: bool,
+    pub(crate) ref_len: u32,
+    pub(crate) gpu_iter: u32,
+    pub(crate) bla_on: bool,
+    pub(crate) ctr_new: bool,
+    pub(crate) ctr_rebase: u64,
+    pub(crate) ctr_bla_skip: u64,
+    pub(crate) dispatched: bool,
+    pub(crate) chunked: bool,
+    pub(crate) fe_budget: u64,
+}
+
+impl RegimeFacts {
+    pub(crate) fn of(r: &crate::diag::frame_record::FrameRecord) -> RegimeFacts {
+        RegimeFacts {
+            frame: r.frame,
+            t_ms: r.t_ms,
+            view: r.view,
+            has_ref: r.has_ref,
+            ref_partial: r.ref_partial,
+            ref_len: r.ref_len,
+            gpu_iter: r.gpu_iter,
+            bla_on: r.bla_on,
+            ctr_new: r.ctr_new,
+            ctr_rebase: r.ctr_rebase,
+            ctr_bla_skip: r.ctr_bla_skip,
+            dispatched: r.dispatched,
+            chunked: r.chunked,
+            fe_budget: r.fe_budget,
+        }
+    }
+
+    /// Back to a frame record, every other field at its default, for `RegimeAcc::add`.
+    pub(crate) fn record(&self) -> crate::diag::frame_record::FrameRecord {
+        crate::diag::frame_record::FrameRecord {
+            kind: crate::diag::frame_record::kind::FRAME,
+            frame: self.frame,
+            t_ms: self.t_ms,
+            view: self.view,
+            has_ref: self.has_ref,
+            ref_partial: self.ref_partial,
+            ref_len: self.ref_len,
+            gpu_iter: self.gpu_iter,
+            bla_on: self.bla_on,
+            ctr_new: self.ctr_new,
+            ctr_rebase: self.ctr_rebase,
+            ctr_bla_skip: self.ctr_bla_skip,
+            dispatched: self.dispatched,
+            chunked: self.chunked,
+            fe_budget: self.fe_budget,
+            ..Default::default()
+        }
+    }
+}
+
+/// Write a frame record's regime facts, if `FRACTADYNE_RECORD_DECIDE` is recording (frames only).
+pub(crate) fn record_regime(r: &crate::diag::frame_record::FrameRecord) {
+    use std::io::Write;
+    if r.kind != crate::diag::frame_record::kind::FRAME {
+        return;
+    }
+    let Some(w) = recorder() else { return };
+    let line = serde_json::json!({ "kind": "regime", "facts": RegimeFacts::of(r) });
+    if let Ok(mut w) = w.lock() {
+        let _ = writeln!(w, "{line}");
+    }
+}
+
 /// What a replay found.
 #[derive(Debug, Default)]
 pub(crate) struct ReplayReport {
@@ -2081,6 +2160,11 @@ pub(crate) struct ReplayReport {
     pub(crate) unreadable: u64,
     /// The recording is of another schema: nothing was compared.
     pub(crate) wrong_schema: Option<u64>,
+    /// Its regime context lines, and the soak predicate's verdict over them (§6.7): whether the run
+    /// ENTERED the escaped-reference regime, and the soak's own line saying how.
+    pub(crate) regime_lines: u64,
+    pub(crate) regime_entered: bool,
+    pub(crate) regime_line: Option<String>,
 }
 
 impl ReplayReport {
@@ -2097,6 +2181,7 @@ impl ReplayReport {
 /// Recompute every recorded decision and compare it with the one recorded, field by field.
 pub(crate) fn replay_lines(text: &str) -> ReplayReport {
     let mut rep = ReplayReport::default();
+    let mut regime = crate::soak::RegimeAcc::default();
     for (n, line) in text.lines().enumerate() {
         if line.trim().is_empty() {
             continue;
@@ -2114,6 +2199,13 @@ pub(crate) fn replay_lines(text: &str) -> ReplayReport {
                 }
                 rep.header = Some(v);
             }
+            Some("regime") => match serde_json::from_value::<RegimeFacts>(v.get("facts").cloned().unwrap_or_default()) {
+                Ok(f) => {
+                    rep.regime_lines += 1;
+                    regime.add(&f.record());
+                }
+                Err(_) => rep.unreadable += 1,
+            },
             Some("decision") => {
                 let stage = v.get("stage").and_then(|s| s.as_str()).unwrap_or("");
                 let recorded = v.get("decision").cloned().unwrap_or(serde_json::Value::Null);
@@ -2223,7 +2315,186 @@ pub(crate) fn replay_lines(text: &str) -> ReplayReport {
             _ => rep.unreadable += 1,
         }
     }
+    if rep.regime_lines > 0 {
+        let r = regime.report();
+        rep.regime_entered = r.entered;
+        rep.regime_line = Some(r.line);
+    }
     rep
+}
+
+/// One coverage term of a fixture set (§7.5): a branch of a lifted decision, and how many of the set's
+/// recorded decisions took it.
+#[derive(Debug)]
+pub(crate) struct Coverage {
+    pub(crate) stage: &'static str,
+    pub(crate) term: &'static str,
+    pub(crate) hits: u64,
+}
+
+/// Tally one recorded decision of a stage against that stage's terms (an unreadable one is the
+/// replay's to count, not this).
+fn tally<I: serde::de::DeserializeOwned, D: serde::de::DeserializeOwned>(
+    v: &serde_json::Value,
+    terms: &[(&'static str, fn(&I, &D) -> bool)],
+    hits: &mut [u64],
+) {
+    let (Ok(i), Ok(d)) = (
+        serde_json::from_value::<I>(v["inputs"].clone()),
+        serde_json::from_value::<D>(v["decision"].clone()),
+    ) else {
+        return;
+    };
+    for (h, (_, f)) in hits.iter_mut().zip(terms) {
+        *h += f(&i, &d) as u64;
+    }
+}
+
+fn collect(out: &mut Vec<Coverage>, stage: &'static str, terms: impl Iterator<Item = &'static str>, hits: &[u64]) {
+    out.extend(terms.zip(hits).map(|(term, &hits)| Coverage { stage, term, hits }));
+}
+
+/// A settled view the climb probe would consider: nothing else dispatching, the budget unconverged.
+fn probe_idle(i: &ProbeInputs) -> bool {
+    !i.interacting
+        && !i.offscreen
+        && !i.will_reproject
+        && !i.tour_playing
+        && !i.key_changed
+        && !i.tile
+        && i.chunk_range.is_none()
+        && !i.budget_ok
+}
+
+/// §7.5's coverage term over a fixture set: for every branch of every lifted decision, how many of
+/// the recordings' decisions took it. Across the set every one must be replayed at least once — a
+/// fixture set satisfied by one regime grades the controller only where it is easy. The one place
+/// the terms are stated: `cargo test` (`every_recorded_session_replays_to_its_decisions`) and
+/// `--selftest replay` both read them here.
+pub(crate) fn fixture_coverage<'a>(texts: impl IntoIterator<Item = &'a str>) -> Vec<Coverage> {
+    // §7.5's coverage term: across the set, every branch of the decision is replayed at least
+    // once — a fixture set satisfied by one regime grades the controller only where it is easy.
+    let branches: [(&'static str, fn(&MovingInputs, &MovingDecision) -> bool); 9] = [
+        ("settled", |i, _| !i.interacting),
+        ("a pin frame", |i, _| i.pin_frame),
+        ("prefer detail", |i, _| i.interacting && i.prefer_detail && !i.pin_frame),
+        ("the rate cap measured", |_, d| d.rate_cap.is_some_and(|c| c.measured)),
+        ("the rate cap's model", |_, d| d.rate_cap.is_some_and(|c| !c.measured)),
+        ("the AIMD stepped", |_, d| d.aimd_stepped),
+        ("the ladder's rung moved", |i, d| d.visible_res != i.visible_res),
+        ("the ladder bound the scale", |_, d| d.res_scale < d.motion_scale),
+        ("direct-mode motion", |i, _| i.interacting && !i.is_pert),
+    ];
+    let present: [(&'static str, fn(&PresentInputs, &PresentDecision) -> bool); 5] = [
+        ("a settled compose held the display", |_, d| d.display_hold && !d.pin_gate),
+        ("a pin held the display", |_, d| d.pin_gate),
+        ("a snapshot was taken", |_, d| d.hold_copy),
+        ("the settled-cost probe armed", |_, d| d.aa_probe.is_some()),
+        ("the colour-pass filter widened", |_, d| d.aa_filter > 1),
+    ];
+    let climb_terms: [(&'static str, fn(&IterInputs, &IterDecision) -> bool); 11] = [
+        ("a settled reading was judged", |i, d| !i.interacting && d.reached_ask && !d.stale),
+        ("motion reset the climb", |i, _| i.interacting),
+        ("a stale reading was discarded", |_, d| d.stale),
+        ("the boost was raised", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::Raised { .. }))),
+        ("the boost was seeded", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::Seeded { .. }))),
+        ("the verdict was reached", |i, d| d.state.verdict.is_some() && i.state.verdict.is_none()),
+        ("an explicit count", |i, _| !i.auto_iter),
+        ("the climb plateaued", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::Plateau { .. }))),
+        ("the appetite re-pick", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::Repick { .. }))),
+        ("the climb was exhausted", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::Exhausted { .. }))),
+        ("motion ended a flat run", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::FlatRunEnded { .. }))),
+    ];
+    let probe_terms: [(&'static str, fn(&ProbeInputs, &ProbeDecision) -> bool); 3] = [
+        ("the probe fired", |_, d| d.fired),
+        ("an idle unconverged view waited for the pacing", |i, _| {
+            probe_idle(i) && i.frame.saturating_sub(i.dispatch_frame) < 3
+        }),
+        ("an idle unconverged view the pricing rule or the ceiling held", |i, d| {
+            probe_idle(i) && i.frame.saturating_sub(i.dispatch_frame) >= 3 && !d.fired
+        }),
+    ];
+    let price_terms: [(&'static str, fn(&WalkPriceInputs, &WalkPriceDecision) -> bool); 7] = [
+        ("a settled pass was priced", |i, d| {
+            !i.interacting && !i.pin_frame && i.ledger.inflight.is_some() && d.ledger.inflight.is_none()
+        }),
+        ("a pass was held unpriced", |i, d| i.ledger.inflight.is_some() && d.ledger.inflight.is_some()),
+        ("a pin pass was priced", |_, d| {
+            d.events.iter().any(|e| matches!(e, WalkPriceEvent::PinPriced { .. }))
+        }),
+        ("the lethal band shed the licences", |_, d| {
+            d.events.iter().any(|e| matches!(e, WalkPriceEvent::LethalShed { .. }))
+        }),
+        ("motion abandoned a pass", |i, _| i.interacting && !i.pin_frame && i.ledger.inflight.is_some()),
+        ("the growth limiter bound the step", |i, d| {
+            (i.interacting || i.pin_frame)
+                && i.ledger.motion_step_last > 0
+                && d.budget_step == (2 * i.ledger.motion_step_last).max(d.floor)
+        }),
+        ("an unmeasured walk", |i, _| !i.budget_measured),
+    ];
+    // (A partial reference capping a settled walk is unit-tested only: no recorded source settles on
+    // one — `a_settled_walk_covers_only_its_live_range`.)
+    let id_terms: [(&'static str, fn(&WalkIdInputs, &WalkIdDecision) -> bool); 6] = [
+        ("a settled walk resumed", |i, d| !d.restarted && !i.pin_frame && !i.interacting),
+        ("a restart threw a part-way walk away", |_, d| d.restart_lost.is_some()),
+        ("a supersampling sample kept the band ledger", |i, d| {
+            d.restarted && !d.clear_ledger && !i.interacting && !i.pin_frame
+        }),
+        ("another view cleared the band ledger", |_, d| d.clear_ledger),
+        ("a pin frame kept its walk", |i, _| i.pin_frame),
+        ("the SA-skip floor", |_, d| d.walk_floor > 0),
+    ];
+    // (The pin gate's wall-clock escape is unit-tested only: W3 measured none on either card —
+    // `a_pin_pass_escapes_a_completion_that_never_comes`.)
+    let dispatch_terms: [(&'static str, fn(&WalkDispatchInputs, &WalkDispatchDecision) -> bool); 8] = [
+        ("a settled pass went out", |i, d| !i.interacting && !i.pin_frame && d.pass),
+        ("one unpriced pass held the walk", |i, d| !i.pin_frame && !d.pass && i.cur < i.walk_end),
+        ("a pin pass went out", |_, d| d.pin_dispatched),
+        ("the pin gate held", |i, d| i.pin_frame && !d.pass && i.cur < i.walk_end),
+        ("a moving frame previewed", |i, d| i.interacting && !i.pin_frame && d.pass),
+        ("a pass was charged for its running pixels", |_, d| {
+            d.events.iter().any(|e| matches!(e, DispatchEvent::Charge { .. }))
+        }),
+        ("a finished walk emitted its tail", |i, _| i.cur >= i.walk_end),
+        ("the tail re-sent for its reading", |i, d| {
+            i.cur >= i.walk_end && d.state.tail_retries > i.state.tail_retries
+        }),
+    ];
+    let mut h_branches = [0u64; 9];
+    let mut h_present = [0u64; 5];
+    let mut h_climb_terms = [0u64; 11];
+    let mut h_probe_terms = [0u64; 3];
+    let mut h_price_terms = [0u64; 7];
+    let mut h_id_terms = [0u64; 6];
+    let mut h_dispatch_terms = [0u64; 8];
+    for text in texts {
+        for line in text.lines() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+            if v["kind"] != "decision" {
+                continue;
+            }
+            match v["stage"].as_str() {
+                Some("moving") => tally(&v, &branches, &mut h_branches),
+                Some("present") => tally(&v, &present, &mut h_present),
+                Some("iter") => tally(&v, &climb_terms, &mut h_climb_terms),
+                Some("probe") => tally(&v, &probe_terms, &mut h_probe_terms),
+                Some("walk-price") => tally(&v, &price_terms, &mut h_price_terms),
+                Some("walk-id") => tally(&v, &id_terms, &mut h_id_terms),
+                Some("walk-dispatch") => tally(&v, &dispatch_terms, &mut h_dispatch_terms),
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    collect(&mut out, "moving", branches.iter().map(|(t, _)| *t), &h_branches);
+    collect(&mut out, "present", present.iter().map(|(t, _)| *t), &h_present);
+    collect(&mut out, "iter", climb_terms.iter().map(|(t, _)| *t), &h_climb_terms);
+    collect(&mut out, "probe", probe_terms.iter().map(|(t, _)| *t), &h_probe_terms);
+    collect(&mut out, "walk-price", price_terms.iter().map(|(t, _)| *t), &h_price_terms);
+    collect(&mut out, "walk-id", id_terms.iter().map(|(t, _)| *t), &h_id_terms);
+    collect(&mut out, "walk-dispatch", dispatch_terms.iter().map(|(t, _)| *t), &h_dispatch_terms);
+    out
 }
 
 /// A replay fixture must hold at least this many decisions to mean anything (§7.5's anti-vacuity).
@@ -2258,6 +2529,9 @@ pub(crate) fn run_replay(path: &str) -> ! {
     );
     for m in &rep.first {
         println!("  {m}");
+    }
+    if let Some(r) = &rep.regime_line {
+        println!("--replay: regime ({} frame lines): {r}", rep.regime_lines);
     }
     let pass = rep.passed(REPLAY_MIN_DECISIONS);
     if !pass && rep.mismatches == 0 && rep.unreadable == 0 {
@@ -2313,18 +2587,6 @@ mod tests {
     /// recording, and each must carry at least `REPLAY_MIN_DECISIONS` decisions, some of a moving
     /// frame. A deliberate change to a lifted decision turns this red, and the fixtures are then
     /// re-recorded (`FRACTADYNE_RECORD_DECIDE`, see `validation/replays/README.md`).
-    /// A settled view the climb probe would consider: nothing else dispatching, the budget unconverged.
-    fn probe_idle(i: &ProbeInputs) -> bool {
-        !i.interacting
-            && !i.offscreen
-            && !i.will_reproject
-            && !i.tour_playing
-            && !i.key_changed
-            && !i.tile
-            && i.chunk_range.is_none()
-            && !i.budget_ok
-    }
-
     #[test]
     fn every_recorded_session_replays_to_its_decisions() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../validation/replays");
@@ -2336,186 +2598,20 @@ mod tests {
             .collect();
         files.sort();
         assert!(!files.is_empty(), "VACUOUS: no recording in {}", dir.display());
-        // §7.5's coverage term: across the set, every branch of the decision is replayed at least
-        // once — a fixture set satisfied by one regime grades the controller only where it is easy.
-        let branches: [(&str, fn(&MovingInputs, &MovingDecision) -> bool); 9] = [
-            ("settled", |i, _| !i.interacting),
-            ("a pin frame", |i, _| i.pin_frame),
-            ("prefer detail", |i, _| i.interacting && i.prefer_detail && !i.pin_frame),
-            ("the rate cap measured", |_, d| d.rate_cap.is_some_and(|c| c.measured)),
-            ("the rate cap's model", |_, d| d.rate_cap.is_some_and(|c| !c.measured)),
-            ("the AIMD stepped", |_, d| d.aimd_stepped),
-            ("the ladder's rung moved", |i, d| d.visible_res != i.visible_res),
-            ("the ladder bound the scale", |_, d| d.res_scale < d.motion_scale),
-            ("direct-mode motion", |i, _| i.interacting && !i.is_pert),
-        ];
-        let present: [(&str, fn(&PresentInputs, &PresentDecision) -> bool); 5] = [
-            ("a settled compose held the display", |_, d| d.display_hold && !d.pin_gate),
-            ("a pin held the display", |_, d| d.pin_gate),
-            ("a snapshot was taken", |_, d| d.hold_copy),
-            ("the settled-cost probe armed", |_, d| d.aa_probe.is_some()),
-            ("the colour-pass filter widened", |_, d| d.aa_filter > 1),
-        ];
-        let climb_terms: [(&str, fn(&IterInputs, &IterDecision) -> bool); 11] = [
-            ("a settled reading was judged", |i, d| !i.interacting && d.reached_ask && !d.stale),
-            ("motion reset the climb", |i, _| i.interacting),
-            ("a stale reading was discarded", |_, d| d.stale),
-            ("the boost was raised", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::Raised { .. }))),
-            ("the boost was seeded", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::Seeded { .. }))),
-            ("the verdict was reached", |i, d| d.state.verdict.is_some() && i.state.verdict.is_none()),
-            ("an explicit count", |i, _| !i.auto_iter),
-            ("the climb plateaued", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::Plateau { .. }))),
-            ("the appetite re-pick", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::Repick { .. }))),
-            ("the climb was exhausted", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::Exhausted { .. }))),
-            ("motion ended a flat run", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::FlatRunEnded { .. }))),
-        ];
-        let probe_terms: [(&str, fn(&ProbeInputs, &ProbeDecision) -> bool); 3] = [
-            ("the probe fired", |_, d| d.fired),
-            ("an idle unconverged view waited for the pacing", |i, _| {
-                probe_idle(i) && i.frame.saturating_sub(i.dispatch_frame) < 3
-            }),
-            ("an idle unconverged view the pricing rule or the ceiling held", |i, d| {
-                probe_idle(i) && i.frame.saturating_sub(i.dispatch_frame) >= 3 && !d.fired
-            }),
-        ];
-        let price_terms: [(&str, fn(&WalkPriceInputs, &WalkPriceDecision) -> bool); 7] = [
-            ("a settled pass was priced", |i, d| {
-                !i.interacting && !i.pin_frame && i.ledger.inflight.is_some() && d.ledger.inflight.is_none()
-            }),
-            ("a pass was held unpriced", |i, d| i.ledger.inflight.is_some() && d.ledger.inflight.is_some()),
-            ("a pin pass was priced", |_, d| {
-                d.events.iter().any(|e| matches!(e, WalkPriceEvent::PinPriced { .. }))
-            }),
-            ("the lethal band shed the licences", |_, d| {
-                d.events.iter().any(|e| matches!(e, WalkPriceEvent::LethalShed { .. }))
-            }),
-            ("motion abandoned a pass", |i, _| i.interacting && !i.pin_frame && i.ledger.inflight.is_some()),
-            ("the growth limiter bound the step", |i, d| {
-                (i.interacting || i.pin_frame)
-                    && i.ledger.motion_step_last > 0
-                    && d.budget_step == (2 * i.ledger.motion_step_last).max(d.floor)
-            }),
-            ("an unmeasured walk", |i, _| !i.budget_measured),
-        ];
-        let mut hits = [0u64; 9];
-        let mut present_hits = [0u64; 5];
-        let mut climb_hits = [0u64; 11];
-        let mut probe_hits = [0u64; 3];
-        let mut price_hits = [0u64; 7];
-        // (A partial reference capping a settled walk is unit-tested only: no recorded source settles on
-        // one — `a_settled_walk_covers_only_its_live_range`.)
-        let id_terms: [(&str, fn(&WalkIdInputs, &WalkIdDecision) -> bool); 6] = [
-            ("a settled walk resumed", |i, d| !d.restarted && !i.pin_frame && !i.interacting),
-            ("a restart threw a part-way walk away", |_, d| d.restart_lost.is_some()),
-            ("a supersampling sample kept the band ledger", |i, d| {
-                d.restarted && !d.clear_ledger && !i.interacting && !i.pin_frame
-            }),
-            ("another view cleared the band ledger", |_, d| d.clear_ledger),
-            ("a pin frame kept its walk", |i, _| i.pin_frame),
-            ("the SA-skip floor", |_, d| d.walk_floor > 0),
-        ];
-        let mut id_hits = [0u64; 6];
-        // (The pin gate's wall-clock escape is unit-tested only: W3 measured none on either card —
-        // `a_pin_pass_escapes_a_completion_that_never_comes`.)
-        let dispatch_terms: [(&str, fn(&WalkDispatchInputs, &WalkDispatchDecision) -> bool); 8] = [
-            ("a settled pass went out", |i, d| !i.interacting && !i.pin_frame && d.pass),
-            ("one unpriced pass held the walk", |i, d| !i.pin_frame && !d.pass && i.cur < i.walk_end),
-            ("a pin pass went out", |_, d| d.pin_dispatched),
-            ("the pin gate held", |i, d| i.pin_frame && !d.pass && i.cur < i.walk_end),
-            ("a moving frame previewed", |i, d| i.interacting && !i.pin_frame && d.pass),
-            ("a pass was charged for its running pixels", |_, d| {
-                d.events.iter().any(|e| matches!(e, DispatchEvent::Charge { .. }))
-            }),
-            ("a finished walk emitted its tail", |i, _| i.cur >= i.walk_end),
-            ("the tail re-sent for its reading", |i, d| {
-                i.cur >= i.walk_end && d.state.tail_retries > i.state.tail_retries
-            }),
-        ];
-        let mut dispatch_hits = [0u64; 8];
-        for f in &files {
-            for line in std::fs::read_to_string(f).expect("readable fixture").lines() {
-                let v: serde_json::Value = serde_json::from_str(line).expect("a JSON line");
-                if v["kind"] == "decision" && v["stage"] == "walk-dispatch" {
-                    let i: WalkDispatchInputs = serde_json::from_value(v["inputs"].clone()).expect("inputs");
-                    let d: WalkDispatchDecision = serde_json::from_value(v["decision"].clone()).expect("decision");
-                    for (h, (_, f)) in dispatch_hits.iter_mut().zip(dispatch_terms.iter()) {
-                        *h += f(&i, &d) as u64;
-                    }
-                    continue;
-                }
-                if v["kind"] == "decision" && v["stage"] == "walk-id" {
-                    let i: WalkIdInputs = serde_json::from_value(v["inputs"].clone()).expect("inputs");
-                    let d: WalkIdDecision = serde_json::from_value(v["decision"].clone()).expect("decision");
-                    for (h, (_, f)) in id_hits.iter_mut().zip(id_terms.iter()) {
-                        *h += f(&i, &d) as u64;
-                    }
-                    continue;
-                }
-                if v["kind"] == "decision" && v["stage"] == "walk-price" {
-                    let i: WalkPriceInputs = serde_json::from_value(v["inputs"].clone()).expect("inputs");
-                    let d: WalkPriceDecision = serde_json::from_value(v["decision"].clone()).expect("decision");
-                    for (h, (_, f)) in price_hits.iter_mut().zip(price_terms.iter()) {
-                        *h += f(&i, &d) as u64;
-                    }
-                    continue;
-                }
-                if v["kind"] == "decision" && v["stage"] == "probe" {
-                    let i: ProbeInputs = serde_json::from_value(v["inputs"].clone()).expect("inputs");
-                    let d: ProbeDecision = serde_json::from_value(v["decision"].clone()).expect("decision");
-                    for (h, (_, f)) in probe_hits.iter_mut().zip(probe_terms.iter()) {
-                        *h += f(&i, &d) as u64;
-                    }
-                    continue;
-                }
-                if v["kind"] == "decision" && v["stage"] == "iter" {
-                    let i: IterInputs = serde_json::from_value(v["inputs"].clone()).expect("inputs");
-                    let d: IterDecision = serde_json::from_value(v["decision"].clone()).expect("decision");
-                    for (h, (_, f)) in climb_hits.iter_mut().zip(climb_terms.iter()) {
-                        *h += f(&i, &d) as u64;
-                    }
-                    continue;
-                }
-                if v["kind"] == "decision" && v["stage"] == "present" {
-                    let i: PresentInputs = serde_json::from_value(v["inputs"].clone()).expect("inputs");
-                    let d: PresentDecision = serde_json::from_value(v["decision"].clone()).expect("decision");
-                    for (h, (_, f)) in present_hits.iter_mut().zip(present.iter()) {
-                        *h += f(&i, &d) as u64;
-                    }
-                    continue;
-                }
-                if v["kind"] != "decision" || v["stage"] != "moving" {
-                    continue;
-                }
-                let i: MovingInputs = serde_json::from_value(v["inputs"].clone()).expect("inputs");
-                let d: MovingDecision = serde_json::from_value(v["decision"].clone()).expect("decision");
-                for (h, (_, f)) in hits.iter_mut().zip(branches.iter()) {
-                    *h += f(&i, &d) as u64;
-                }
-            }
+        let texts: Vec<String> = files.iter().map(|f| std::fs::read_to_string(f).expect("readable fixture")).collect();
+        // §7.5's coverage term (`fixture_coverage`): every branch of every lifted decision replayed.
+        for c in fixture_coverage(texts.iter().map(String::as_str)) {
+            assert!(c.hits > 0, "VACUOUS: no replayed {} decision where {}", c.stage, c.term);
         }
-        for (h, (name, _)) in hits.iter().zip(branches.iter()) {
-            assert!(*h > 0, "VACUOUS: no replayed decision where {name}");
-        }
-        for (h, (name, _)) in present_hits.iter().zip(present.iter()) {
-            assert!(*h > 0, "VACUOUS: no replayed present decision where {name}");
-        }
-        for (h, (name, _)) in climb_hits.iter().zip(climb_terms.iter()) {
-            assert!(*h > 0, "VACUOUS: no replayed climb decision where {name}");
-        }
-        for (h, (name, _)) in probe_hits.iter().zip(probe_terms.iter()) {
-            assert!(*h > 0, "VACUOUS: no replayed probe decision where {name}");
-        }
-        for (h, (name, _)) in price_hits.iter().zip(price_terms.iter()) {
-            assert!(*h > 0, "VACUOUS: no replayed walk-price decision where {name}");
-        }
-        for (h, (name, _)) in id_hits.iter().zip(id_terms.iter()) {
-            assert!(*h > 0, "VACUOUS: no replayed walk-id decision where {name}");
-        }
-        for (h, (name, _)) in dispatch_hits.iter().zip(dispatch_terms.iter()) {
-            assert!(*h > 0, "VACUOUS: no replayed walk-dispatch decision where {name}");
-        }
-        for f in &files {
-            let rep = replay_lines(&std::fs::read_to_string(f).expect("readable fixture"));
+        // §7.5's regime term: a fixture ENTERED the §6.7 escaped-reference regime — the soak's own
+        // predicate over the recordings' regime lines — so the set does not grade the controller only
+        // where it is easy (`escaped-ref.jsonl`, the 2026-09-21 crash view under REF_ESCAPE_AT).
+        assert!(
+            texts.iter().any(|t| replay_lines(t).regime_entered),
+            "VACUOUS: no fixture entered the §6.7 escaped-reference regime"
+        );
+        for (f, text) in files.iter().zip(&texts) {
+            let rep = replay_lines(text);
             assert!(
                 rep.passed(REPLAY_MIN_DECISIONS),
                 "{}: {} decisions ({} moving), {} differ, {} unreadable, schema {:?}\n{}",
@@ -2614,6 +2710,41 @@ mod tests {
             }
             assert!(seen.len() > 1 || d == "decide_present", "VACUOUS: {d} reached no helper");
         }
+    }
+
+    #[test]
+    fn a_recorded_regime_is_judged_by_the_soaks_predicate() {
+        // A storm frame: a short COMPLETE reference (655 against a 4,627 ask), BLA off, and a counter
+        // reading with rebases and no BLA skips. Recorded as a regime line, it enters the regime.
+        let storm = RegimeFacts {
+            frame: 358,
+            t_ms: 22_600,
+            view: 0,
+            has_ref: true,
+            ref_partial: false,
+            ref_len: 655,
+            gpu_iter: 4_627,
+            bla_on: false,
+            ctr_new: true,
+            ctr_rebase: 11_492_892,
+            ctr_bla_skip: 0,
+            dispatched: true,
+            chunked: true,
+            fe_budget: 1_779_000_000,
+        };
+        let line = |f: RegimeFacts| serde_json::json!({"kind": "regime", "facts": f}).to_string();
+        let rep = replay_lines(&line(storm));
+        assert_eq!((rep.regime_lines, rep.regime_entered, rep.unreadable), (1, true, 0));
+        assert!(rep.regime_line.as_deref().is_some_and(|l| l.starts_with("ENTERED")), "{:?}", rep.regime_line);
+        // The controls: the shape without a storm reading, and a reference long enough for its ask.
+        assert!(!replay_lines(&line(RegimeFacts { ctr_new: false, ..storm })).regime_entered);
+        assert!(!replay_lines(&line(RegimeFacts { ref_len: 2_000, ..storm })).regime_entered);
+        assert!(!replay_lines(&line(RegimeFacts { bla_on: true, ..storm })).regime_entered);
+        // And it is judged by the soak's predicate itself, on the record it came from.
+        let mut acc = crate::soak::RegimeAcc::default();
+        acc.add(&storm.record());
+        assert!(acc.report().entered);
+        assert_eq!(RegimeFacts::of(&storm.record()), storm, "the facts round-trip through the record");
     }
 
     #[test]

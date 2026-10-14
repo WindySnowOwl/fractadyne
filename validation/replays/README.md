@@ -2,14 +2,17 @@
 
 Each `.jsonl` here is a recording of the live frame's lifted decisions (design/live-render-robustness.md
 §5.4, W5): a header line, then one line per decision with every input the decision read and what it
-decided. `cargo test` replays every file (`render::decide`'s
+decided, and beside them each frame's §6.7 regime facts (`"kind":"regime"`: the frame-record fields the
+soak's escaped-reference predicate reads). `cargo test` replays every file (`render::decide`'s
 `every_recorded_session_replays_to_its_decisions`): each decision is recomputed from its recorded
 inputs and compared with the recorded one, field by field. It runs on the CPU alone, so CI runs it.
 
 A line carries its complete inputs, so any subset of a recording replays on its own; the fixtures are
 trimmed recordings. Anti-vacuity: every file holds at least 200 decisions, some of them of a moving
-frame (`REPLAY_MIN_DECISIONS`), and across the set every branch of every lifted decision is replayed
-at least once.
+frame (`REPLAY_MIN_DECISIONS`); across the set every branch of every lifted decision is replayed at
+least once (`decide::fixture_coverage`, 49 terms); and at least one recording ENTERED the §6.7
+escaped-reference regime, judged by the soak's own predicate over its regime lines. The same verdict
+runs in the app as `--selftest-filter replay` (a group of the full self-test too).
 
 Lifted so far (schema 2): `moving` (the moving frame's scale: the work budget's bound, the rate-aware refresh
 cap, the AIMD, the visible-frame ladder), `present` (the present gate: the held snapshot, the
@@ -54,6 +57,7 @@ become a regression test without anyone transcribing numbers.
 | `autodive-2p800.jsonl` | the screen gate's fixture: `--autodive` from `scripts/dive-capture/dive-2p800.kfr` with `session-seed.toml`, 10,000 iterations |
 | `uitest.jsonl` | `--uitest`: every UI screen, and the live bands (direct 1e2, df32 1e6 and 1e12, floatexp 1e30 on the seahorse) settled under auto-iterations |
 | `livetest-grand-tour.jsonl` | `--livetest tours/grand-tour.toml --size 480x270`: the scripted tour's glides and holds |
+| `escaped-ref.jsonl` | W9's motion rung on the 2026-09-21 RX 6800 XT crash view (`locations/crash-4627.fdn`, 1.76e6×, an explicit 4,627), safe variant (no seeded budget), under `FRACTADYNE_REF_ESCAPE_AT=655`: `--zoomtest 7.45 --zoomtest-location locations/crash-4627.fdn --zoomtest-start-log2 13.3 --zoomtest-taps 40,0.08,1.0 --zoomtest-hold 15 --zoomtest-rate 4.0 --window 1676x1360`. ENTERED on the RTX 3080: 2,133 frames on the 655-sample escaped reference, 319 storm readings (up to 11.5M rebases), 0 of 327 dispatches un-chunked, no slow frame. ⚠An instrument run (its header says so): never for a golden or a baseline |
 | `zoomtest.jsonl` | five `--zoomtest` runs (a header each) from `locations/`. Three under AUTO-iterations: a 12-octave glide into the 9.3e78 black-minibrot repro and 30 s there (the boost seeded from the reference, raises, a flat run that motion ends); a glide into an all-interior cardioid view (the appetite re-pick, then exhausted); the home view, a third of it interior (the plateau). The minibrot under `--set TDR_LETHAL_MS=30` (W8's recipe), for the lethal-band shed no stock run on this card reaches. And the minibrot with the settle tail (`FRACTADYNE_ZOOMTEST_SETTLE`), where on-settle supersampling runs to convergence: each sample's jittered restart, which keeps the band ledger (a `--zoomtest-hold` never supersamples) |
 
 ⚠The iteration climb never raises in the other four: three run under an EXPLICIT iteration count (the

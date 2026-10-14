@@ -502,7 +502,7 @@ impl FractadyneApp {
             "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "worker", "nr-zoom", "coords",
             "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata",
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
-            "checklist",
+            "checklist", "replay",
         ];
         /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` above so a bare
         /// `--selftest` never pays for them — each costs minutes, not milliseconds.
@@ -9135,6 +9135,77 @@ zoom = \"1e94\"
             }
         }
 
+
+        // ---- replay: the live frame's lifted decisions, recomputed from their recordings ----
+        // §7.5's gate (W5): every recording under `validation/replays/` replays to the decisions it
+        // recorded, field by field; across the set every branch of every lifted decision is replayed
+        // (`decide::fixture_coverage`, the same terms `cargo test` asserts); and a fixture ENTERED the
+        // §6.7 escaped-reference regime (the soak's predicate over the recordings' regime lines).
+        // CPU only. A missing directory is a FAIL, never a silent skip.
+        if want("replay") {
+            use crate::render::decide::{fixture_coverage, replay_lines, REPLAY_MIN_DECISIONS};
+            let dir = anchored("validation/replays");
+            let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+                .map(|rd| {
+                    rd.flatten()
+                        .map(|e| e.path())
+                        .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+                        .collect()
+                })
+                .unwrap_or_default();
+            files.sort();
+            let texts: Vec<String> =
+                files.iter().map(|f| std::fs::read_to_string(f).unwrap_or_default()).collect();
+            let mut entered = Vec::new();
+            for (f, text) in files.iter().zip(&texts) {
+                let rep = replay_lines(text);
+                let name = f.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned());
+                if rep.regime_entered {
+                    entered.push(name.clone());
+                }
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Replay",
+                    name: format!("{name} replays to its decisions"),
+                    params: format!("{} decisions ({} of a moving frame)", rep.decisions, rep.moving),
+                    result: match rep.wrong_schema {
+                        Some(w) => format!("VACUOUS: schema {w} recording"),
+                        None => format!(
+                            "{} differ, {} unreadable{}",
+                            rep.mismatches,
+                            rep.unreadable,
+                            rep.first.first().map_or(String::new(), |m| format!(" — first: {m}"))
+                        ),
+                    },
+                    threshold: "0 differ, 0 unreadable, at least 200 decisions, some of a moving frame",
+                    pass: rep.passed(REPLAY_MIN_DECISIONS),
+                });
+            }
+            let cov = fixture_coverage(texts.iter().map(String::as_str));
+            let missing: Vec<String> =
+                cov.iter().filter(|c| c.hits == 0).map(|c| format!("{}: {}", c.stage, c.term)).collect();
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Replay",
+                name: "every branch of every lifted decision is replayed".into(),
+                params: format!("{} terms over {} recording(s) in {}", cov.len(), files.len(), dir.display()),
+                result: if files.is_empty() {
+                    "VACUOUS: no recording".into()
+                } else if missing.is_empty() {
+                    "every term replayed".into()
+                } else {
+                    format!("VACUOUS: never replayed — {}", missing.join("; "))
+                },
+                threshold: "every term at least once",
+                pass: !files.is_empty() && missing.is_empty(),
+            });
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "Replay",
+                name: "a recording entered the §6.7 escaped-reference regime".into(),
+                params: "the soak's predicate over the recordings' regime lines".into(),
+                result: if entered.is_empty() { "VACUOUS: none entered it".into() } else { format!("entered: {}", entered.join(", ")) },
+                threshold: "at least one recording",
+                pass: !entered.is_empty(),
+            });
+        }
 
         // ---- manual-checklist rows the other groups do not reach ----
         //

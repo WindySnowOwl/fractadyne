@@ -3612,3 +3612,24 @@ W5's M8 now covers the moving frame's scale, the present gate, the iteration cli
 the chunk walk's pricing, identity and dispatch — seven lifted decisions, 36 tests in `render/decide.rs`, five fixtures
 replayed by `cargo test`. Remaining for W5: the regime predicate (§6.7) and a field capture as terms of
 the fixture set, and §7.5's `--selftest replay` (the gate runs as a `cargo test` today, which CI runs).
+
+**2026-10-14 — W5: the regime term, and `--selftest replay`.** The recorder writes, beside the decisions,
+each frame record's §6.7 regime facts (`"kind":"regime"`: the fields the soak's escaped-reference
+predicate reads), and `--replay` folds them through `soak::RegimeAcc` itself — one definition of
+"entered", the soak's, read from the frame record and never from a timing instrument. That makes §7.5's
+third anti-vacuity term live: some recording in the set must ENTER the regime. `escaped-ref.jsonl` does —
+W9's motion rung on the 2026-09-21 RX 6800 XT crash view (`locations/crash-4627.fdn`), the safe variant
+(no seeded budget), under `REF_ESCAPE_AT=655`, on the RTX 3080: 2,133 frames on the 655-sample escaped
+reference, 319 storm readings (up to 11.5M rebases), 0 of 327 dispatches un-chunked, no slow frame,
+logcheck PASS. Its 17,336 decisions replay exactly; trimmed to 600 decisions and 80 regime lines, its
+replay still reads ENTERED, and with the file moved aside the gate goes VACUOUS. A unit test pins the
+predicate's use (a storm frame enters; the shape without a storm reading, a reference long enough for its
+ask, and BLA on do not; the facts round-trip through the record).
+
+The coverage terms moved out of the test into `decide::fixture_coverage` (49 terms), which `cargo test`
+and a new self-test group both call: `replay` (`--selftest-filter replay`, and every full run) replays
+each fixture, requires every term and the regime, and fails — never skips — when the directory is
+missing. Gates: workspace 1,503 / 0 / 11; self-test 526/526, goldens 31/31 (the eight `replay` checks are
+new: six fixtures, the coverage, the regime); `--motiontest` PASS ×3; `--livetest` 24/24 with 0 drifted.
+Remaining for W5: a field capture as a fixture-set term (the field agent takes harness arguments only, so
+it cannot set `FRACTADYNE_RECORD_DECIDE`: an agent change, or a recording made in a user's own session).
