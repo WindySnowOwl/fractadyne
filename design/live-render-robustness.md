@@ -3565,3 +3565,25 @@ the check's both-devices term has always had a ONE-TILE margin, and the race tip
 (the still never reaches the chunk walk), but a check one tile from flaking, worth widening. Remaining in
 `bp_chunk_tiling`: the walk's identity (the signature, the restart and its ledger rule, the SA-skip
 floor) and the dispatch (the serialized hold, the pin gate, the licence, the charge, the cursor).
+
+**2026-10-14 — W5: the chunk walk's identity lifted** (`decide_walk_id`), the second of
+`bp_chunk_tiling`'s sub-stages: the signature that keys the walk and the jitter-free one that keys its
+band ledger, composed inside the decision from everything they fold (the f64 centre and magnification,
+the reference length, the exact position, the settings hash, the series seed, the jitter's bits, the ask,
+the texture, the ss) — §7.5's "replay pins the sig composition per frame" — the restart and whether it
+clears the ledger, the counted restart that lost progress (A4), and the live range the walk covers (the
+SA-skip floor, a partial reference's capped end). `WalkSig` and `Resolution` serialize for the
+recordings; a replayed one is one this module made in the session that recorded it, so B7's single
+constructor still holds where it matters, and B7's scan test passes unchanged. A unit test pins the
+composition: each of the eleven inputs, alone, moves the signature and restarts a part-way walk, counted.
+The coverage term requires six of its branches (a settled walk resumed, a restart that threw a part-way
+walk away, a supersampling sample keeping the band ledger, another view clearing it, a pin frame keeping
+its walk, the SA-skip floor); a partial reference capping a settled walk is unit-tested only, since no
+recorded source settles on one. The sample's restart needed a fifth zoomtest run: a `--zoomtest-hold`
+never supersamples (`accumulation_allowed` admits a harness only with the settle tail), so the minibrot
+runs again under `FRACTADYNE_ZOOMTEST_SETTLE` and converges at 24 samples — 23 jittered restarts, each
+keeping the ledger. Fixtures: motiontest 604 of 8,112, autodive 605 of 17,898, uitest 604 of 14,644,
+grand tour 624 of 64,600, zoomtest 2,110 of 41,172, every one replaying exactly (at most 25 decisions per
+branch now: 4.4 MB). Gates: workspace 1,497 / 0 / 11 (five identity tests new); self-test 518/518,
+goldens 31/31 (the twin still at `[11, 1]`); `--motiontest` PASS ×3; `--livetest` 24/24 with 0 drifted;
+`--uitest` 74 pass / 1 warn / 0 fail. Remaining in `bp_chunk_tiling`: the dispatch.

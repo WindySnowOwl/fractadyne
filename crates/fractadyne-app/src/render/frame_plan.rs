@@ -117,7 +117,10 @@ pub(crate) fn classify(f: FrameFacts) -> FrameKind {
 /// resolution a walk's identity carries can only have come through here: §5.3's B7, "nothing else can
 /// restart a walk", held by the type rather than by review — resolution is part of the walk's
 /// identity, so every place that may change it is a place that may restart the walk.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// It serializes for the decision recordings (`render::decide`): a replayed `Resolution` is one this
+/// module made in the session that recorded it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Resolution([u32; 2]);
 
 impl Resolution {
@@ -157,7 +160,10 @@ impl std::ops::Index<usize> for Resolution {
 ///
 /// ⭐[`WalkSig::of`] is the ONLY constructor, and the fields are private to this module: a walk
 /// identity assembled anywhere else would be the place an input gets forgotten.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+///
+/// It serializes for the decision recordings (`render::decide`): a replayed `WalkSig` is one
+/// [`WalkSig::of`] made in the session that recorded it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct WalkSig {
     /// The view, the reference length, the exact position, the settings and the series seed,
     /// folded together (`bp_chunk_tiling`'s `view_bits`), with any supersampling jitter.

@@ -1402,6 +1402,260 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
     WalkPriceDecision { floor, target_ms, pass_steps, budget_step, ledger: led, retreat, events }
 }
 
+/// The chunk walk's progression, one view, carried between frames (`Perf::chunk_sig`,
+/// `chunk_walk_view`, `chunk_walk_epoch`, `chunk_running`, `tail_retries`, `chunk_cursor`, `chunk_idx`,
+/// `chunk_last_range`, `chunk_walk_end`, `walk_restarts`, `walk_restart_pending`, `chunk_count_walk`,
+/// `motion_pass_steps_last`, `chunk_motion_frames`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct WalkState {
+    pub(crate) sig: super::WalkSig,
+    pub(crate) walk_view: super::WalkSig,
+    pub(crate) epoch: u64,
+    pub(crate) running: Option<(u64, u32, u32)>,
+    pub(crate) tail_retries: u32,
+    pub(crate) cursor: u32,
+    pub(crate) idx: u32,
+    pub(crate) last_range: Option<[u32; 2]>,
+    pub(crate) walk_end: u32,
+    pub(crate) restarts: u64,
+    pub(crate) restart_pending: bool,
+    pub(crate) count_walk: u64,
+    pub(crate) motion_pass_steps_last: u64,
+    pub(crate) motion_frames: u64,
+}
+
+/// What [`decide_walk_id`] reads: the walk identity's inputs (`bp_chunk_tiling`), one view, one frame
+/// of a chunk-governed compose.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct WalkIdInputs {
+    pub(crate) interacting: bool,
+    pub(crate) pin_frame: bool,
+    /// A settled mode-2 walk (it counts its running pixels).
+    pub(crate) fe_walk: bool,
+    /// Everything the signature folds: the f64 centre and magnification, the exact position
+    /// (`pos_sig`), the settings hash (`view_key.4`), the series seed (`series_seed_bits`), the
+    /// supersampling jitter's bits, the ask, the texture and its ss.
+    pub(crate) center: [f64; 2],
+    pub(crate) magnification: f64,
+    pub(crate) pos_sig: u64,
+    pub(crate) settings_hash: u64,
+    pub(crate) series_seed: u64,
+    pub(crate) jitter_bits: [u32; 2],
+    pub(crate) gpu_iter: u32,
+    pub(crate) resolution: super::Resolution,
+    pub(crate) ss: u32,
+    /// The pass budget this frame was given (`decide_walk_price`'s `pass_steps`).
+    pub(crate) pass_steps: u64,
+    /// The view's reference: present, its length, its SA skip, and whether it is a partial.
+    pub(crate) has_ref: bool,
+    pub(crate) orbit_len: u32,
+    pub(crate) sa_skip: u32,
+    pub(crate) partial: bool,
+    /// The overridable `CHUNK_CHARGE`.
+    pub(crate) chunk_charge: u64,
+    pub(crate) state: WalkState,
+}
+
+/// What [`decide_walk_id`] decides, and the state it writes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct WalkIdDecision {
+    pub(crate) state: WalkState,
+    /// This frame's walk signature (on a pin frame, the one its captured inputs make).
+    pub(crate) sig: super::WalkSig,
+    /// The cursor this frame's pass starts at, and the live range of the walk: `[walk_floor, walk_end)`.
+    pub(crate) cur: u32,
+    pub(crate) walk_floor: u32,
+    pub(crate) walk_end: u32,
+    /// The walk restarted (the caller drops the pass in flight); and whether its band ledger goes with
+    /// it (another view or ask, not a supersampling sample's restart).
+    pub(crate) restarted: bool,
+    pub(crate) clear_ledger: bool,
+    /// A restart that threw away progress: the cursor lost, of what end, and the old signature.
+    pub(crate) restart_lost: Option<(u32, u32, super::WalkSig)>,
+}
+
+/// The chunk walk's IDENTITY (`bp_chunk_tiling`'s, lifted): the signature that keys the walk (and the
+/// jitter-free one that keys its band ledger), the restart and whether it clears the ledger, the
+/// counted restart that lost progress, and the live range the walk covers (the SA-skip floor, the
+/// partial reference's capped end). Pure.
+#[must_use]
+pub(crate) fn decide_walk_id(i: &WalkIdInputs) -> WalkIdDecision {
+    use super::{chunk_restart_clears_ledger, sa_skip_rescue, usable_sa_skip, WalkSig};
+    let (interacting, pin_frame, fe_walk, gpu_iter, ss) = (i.interacting, i.pin_frame, i.fe_walk, i.gpu_iter, i.ss);
+    let mut st = i.state;
+    let mut restarted = false;
+    let mut clear_ledger = false;
+    let mut restart_lost = None;
+    // View signature: anything that shapes the render restarts the progression.
+    // ⚠The REFERENCE LENGTH is part of it. `orbit_len` feeds both the per-pass BLA table
+    // (mode 2 rebuilds it every pass) and the `ref_n + 1 >= orbit_len` rebase trigger, so a
+    // reference extended mid-settle — the e72/e82/e94 shape, and mode 2 is exactly where
+    // that happens — would have a pass resume `ref_n` against a DIFFERENT orbit than the
+    // pass that stored it. The install runs later in this frame than this check, so the
+    // change is seen one frame late; that is harmless, because a sig change resets the
+    // cursor to 0 and the offending pass's state is discarded rather than resumed.
+    // Progressive-SSAA jitter is part of the walk's identity: each accumulation sample is a
+    // sub-pixel-shifted view, so a new jitter must RESTART the chunk walk from scratch (else
+    // the resumable per-pixel state carries the previous sample's positions and every sample
+    // comes out identical — no de-speckle). Fold the jitter bits into the sig hash.
+    let jbits = (i.jitter_bits[0] as u64) ^ (i.jitter_bits[1] as u64).rotate_left(23);
+    // ⚠`pos_sig` (the caller's exact view position: offset from the reference, span
+    // exponent + mantissa) is part of it, not just the f64 centre. The f64 centre stops
+    // distinguishing nearby views at depth (its ulp is 1/190 of the view width at 2^49;
+    // one value covers the whole neighbourhood at 2^800), so a small pan or a re-picked
+    // reference at the same f64 point kept the signature, the walk RESUMED its per-pixel
+    // state against the moved view, and the old view's escaped pixels stayed on screen
+    // under the new one — a translucent copy of another location (field report
+    // 2026-09-16). Restarting the walk is output-neutral (bit-identity contract); only
+    // its cost is paid, and only when the view really moved.
+    // ⚠And WHAT is iterated: the settings hash (`view_key.4` — formula id, custom shader
+    // key, Julia and its c, the iterate-affecting colour inputs). It was missing, so a
+    // formula switch at an unchanged view resumed the previous formula's finished walk and
+    // re-showed its image: measured when custom formulas gained resumable passes — the
+    // uitest's Custom step at home (−0.5+0i, Mandelbrot's home too) kept showing the
+    // formula applied three steps earlier. The tiled settle's key had the same hole once
+    // (`settings_hash`'s own note).
+    // ⚠And the SERIES SEED (`series_seed_bits`). The first pass seeds every pixel from the
+    // series at `sa.skip` and later passes only resume, so a series refined mid-walk
+    // (9.3e78×: skip 5513 → 5535 four frames after the walk began, 2026-10-07) left that
+    // walk's pixels seeded from the old one while any later walk seeds from the new: the
+    // settled picture then depended on whether the walk happened to start before the
+    // refinement — 79 pixels of a converged supersampling average, run to run.
+    let view_bits = i.center[0].to_bits()
+        ^ i.center[1].to_bits().rotate_left(17)
+        ^ i.magnification.to_bits().rotate_left(34)
+        ^ (i.orbit_len as u64).rotate_left(51)
+        ^ i.pos_sig.rotate_left(41)
+        ^ i.settings_hash.rotate_left(29)
+        ^ i.series_seed.rotate_left(13);
+    let walk_view = WalkSig::of(view_bits, 0, gpu_iter, i.resolution, ss);
+    let sig = WalkSig::of(view_bits, jbits, gpu_iter, i.resolution, ss);
+    if pin_frame {
+        // The pin owns the progression: every sig input above is captured, so the sig is
+        // constant by construction, and the interacting reset below — the §10 defect — is
+        // bypassed. The freeze verdict cannot flip a pin frame into a reprojection (the
+        // pre-step abandons on every input that could: orbit change, caller reproject,
+        // drift, pan, panel), so the cursor advance further down is safe — and
+        // belt-checked at the commit point after the freeze anyway.
+    } else if st.sig != sig || interacting {
+        restarted = true;
+        // ⭐⭐A NEW SUPERSAMPLING SAMPLE KEEPS THE LEDGER. Each sample of a settled view's
+        // progressive supersampling is the same view at a new sub-pixel jitter: the walk
+        // must restart (its per-pixel state is position-specific), but the bands' prices
+        // are the ORBIT's, the reason the ledger already survives pins and same-sig
+        // restarts. Clearing it made every sample re-climb every band from the floor, ×2 a
+        // pass: ~90 of a sample's ~158 frames at 9.3e78× were 256..65536-iteration passes
+        // at one a frame (2026-10-07). Output-neutral: the window size never changes a
+        // pixel (the chunked iterate's bit-identity contract).
+        if chunk_restart_clears_ledger(
+            st.sig,
+            st.walk_view,
+            sig,
+            walk_view,
+            interacting,
+        ) {
+            // Another view/ask: its prices describe another walk entirely.
+            // ⭐Not during INTERACTION: successive pinned refreshes of a glide are the
+            // same orbit a few hundredths of an octave apart, and the band ledger is a
+            // property of the ORBIT's iteration bands, not of the view. Clearing it per
+            // pin made every pin re-climb from the floor in every band (~50 passes,
+            // 0.8 s) — at 4.0× that is past the 2-octave drift abandon, so no pin ever
+            // adopted (traced: 14 started, 7 adopted, 6 abandoned for drift, the frozen
+            // frame aged 13 octaves on screen). The ledger is cleared when the reference
+            // POINT changes instead (`install_recompute`).
+            // (The caller zeroes the band licences and the last price: `clear_ledger`.)
+            clear_ledger = true;
+        }
+        // ⭐The band ledger SURVIVES a same-sig restart on purpose: every hold/refresh
+        // cycle restarts the walk, and re-crossing the wrap-storm band with amnesia is
+        // how the cliff got re-rolled dozens of times in one session.
+        // W4's A4: a restart that throws a part-way walk away is the iteration-starvation
+        // shape (a resolution rung re-chosen every few frames restarted the walk every few
+        // frames, and 36% of a dive was blank). Counted and recorded, pending until the
+        // frame record is written.
+        if super::frame_plan::walk_restart_discards(st.cursor, st.walk_end) {
+            st.restart_pending = true;
+            st.restarts = st.restarts.wrapping_add(1);
+            // Traced by the caller under `tile`: what was lost, and the signatures.
+            restart_lost = Some((st.cursor, st.walk_end, st.sig));
+        }
+        st.sig = sig;
+        st.walk_view = walk_view;
+        st.epoch = st.epoch.wrapping_add(1).max(1);
+        st.running = None;
+        st.tail_retries = 0;
+        st.cursor = 0;
+        st.idx = 0;
+        st.last_range = None;
+        // (The caller drops the pass in flight: `restarted`.)
+        // A restarted walk's escape bands are a different progression's data.
+    }
+    let cur = st.cursor;
+    // A walk is never behind its own reading: a cursor that went back was reset somewhere
+    // this stage did not see, so its bound describes another walk — drop it.
+    if st.running.is_some_and(|(_, at, _)| cur < at) {
+        st.running = None;
+    }
+    // A settled mode-2 walk counts its running pixels (`walk_charged_px` sizes by them).
+    if fe_walk && !interacting && !pin_frame && i.chunk_charge == 1 {
+        st.count_walk = st.epoch;
+    }
+    if interacting && !pin_frame {
+        // The pass budget a MOVING frame was actually given, which is what decides whether
+        // it can walk far enough to commit a pixel at all. Recorded BEFORE the growth
+        // limiter, because the limiter bounds how fast the step may climb, not how much
+        // work the frame is allowed — and `visible_res_target` must size pixels against
+        // the allowance, not against a step still on its way up to it. Pins are excluded:
+        // their small per-dispatch band accumulates across passes, so one pin step says
+        // nothing about whether a single frame can stand on its own.
+        st.motion_pass_steps_last = i.pass_steps;
+    }
+    // ⭐⭐THE SA-SKIP FLOOR. When a reference is SA-seeded, the `start_iter==0` pass places
+    // EVERY pixel at `iter = sa_skip` in one dispatch — so iterations [0, sa_skip) are
+    // covered for free by that single pass. Marching the cursor from 0 through them in
+    // floor windows dispatches thousands of full-frame NO-OPS (each pixel loads its state,
+    // sees iter=sa_skip ≥ the window end, and stores it back unchanged) — every one paying
+    // a full-resolution chunk+resolve pass and a present cycle. At the period-3 bulb root
+    // sa_skip≈7.45M and the floor window is 256, so ~29,000 dead passes at ~1 s each: the
+    // "still spinning" crawl (crash-1789092955 / the 5.1e10× field report). The walk must
+    // cover only the LIVE range [sa_skip, walk_end): the first pass keeps its START at 0
+    // (so the shader SA-seeds), but jumps its END past the skip; windows past it resume
+    // from state as before.
+    //
+    // `walk_end` mirrors `build_mandelbrot_params`' `shader_iter` cap. A PARTIAL reference
+    // caps the shader at orbit_len-1 (it cannot iterate past the orbit it holds), so
+    // [shader_iter, gpu_iter) is a SECOND dead range; targeting the uncapped `gpu_iter`
+    // marched that too. `sa_skip_rescue` keeps the two in lockstep with the params builder.
+    // ⚠MOTION frames are EXEMPT — `(0, gpu_iter)` keeps them bit-for-bit on the historical
+    // path. They reset the cursor to 0 every frame (the sig/interacting reset above), so they
+    // never accumulate the dead prefix: there is no crawl to fix, and a motion preview is
+    // meant to be `[0, step]`. Confirmed by an A/B: the `--motiontest` A2 adoption flake rate
+    // is identical with and without this fix (baseline failed MORE often than the fix under
+    // the same load). The floor/cap is strictly a SETTLED-walk fix; pins inherit it only once
+    // they settle (`interacting` false).
+    let (walk_floor, walk_end) = if interacting || !i.has_ref {
+        (0u32, gpu_iter)
+    } else {
+        let raw_skip = i.sa_skip;
+        let capped = if i.partial {
+            gpu_iter.min(i.orbit_len.saturating_sub(1))
+        } else {
+            gpu_iter
+        };
+        let we = sa_skip_rescue(capped, raw_skip, i.orbit_len);
+        (usable_sa_skip(raw_skip, we), we)
+    };
+    // Where this walk ends, for the next restart to judge whether it lost anything.
+    st.walk_end = walk_end;
+    // Gate observability (design/mode2-chunking.md §11): a chunk-eligible frame built
+    // during interaction is the regime the motion-presentation assertions cover —
+    // `--motiontest` fails a run that never produced any (anti-vacuity).
+    if interacting {
+        st.motion_frames = st.motion_frames.wrapping_add(1);
+    }
+    WalkIdDecision { state: st, sig, cur, walk_floor, walk_end, restarted, clear_ledger, restart_lost }
+}
+
 /// The recording's format version: bumped whenever an inputs or decision struct changes shape, and a
 /// replay refuses a recording of another (it would compare the wrong things). 2: `MovingInputs`
 /// carries `pass_fixed_ms`.
@@ -1548,6 +1802,18 @@ pub(crate) fn replay_lines(text: &str) -> ReplayReport {
                             continue;
                         };
                         serde_json::to_value(decide_probe(&inputs)).unwrap_or(serde_json::Value::Null)
+                    }
+                    "walk-id" => {
+                        let Ok(inputs) = serde_json::from_value::<WalkIdInputs>(
+                            v.get("inputs").cloned().unwrap_or(serde_json::Value::Null),
+                        ) else {
+                            rep.unreadable += 1;
+                            continue;
+                        };
+                        if inputs.interacting {
+                            rep.moving += 1;
+                        }
+                        serde_json::to_value(decide_walk_id(&inputs)).unwrap_or(serde_json::Value::Null)
                     }
                     "walk-price" => {
                         let Ok(inputs) = serde_json::from_value::<WalkPriceInputs>(
@@ -1770,9 +2036,30 @@ mod tests {
         let mut climb_hits = [0u64; 11];
         let mut probe_hits = [0u64; 3];
         let mut price_hits = [0u64; 7];
+        // (A partial reference capping a settled walk is unit-tested only: no recorded source settles on
+        // one — `a_settled_walk_covers_only_its_live_range`.)
+        let id_terms: [(&str, fn(&WalkIdInputs, &WalkIdDecision) -> bool); 6] = [
+            ("a settled walk resumed", |i, d| !d.restarted && !i.pin_frame && !i.interacting),
+            ("a restart threw a part-way walk away", |_, d| d.restart_lost.is_some()),
+            ("a supersampling sample kept the band ledger", |i, d| {
+                d.restarted && !d.clear_ledger && !i.interacting && !i.pin_frame
+            }),
+            ("another view cleared the band ledger", |_, d| d.clear_ledger),
+            ("a pin frame kept its walk", |i, _| i.pin_frame),
+            ("the SA-skip floor", |_, d| d.walk_floor > 0),
+        ];
+        let mut id_hits = [0u64; 6];
         for f in &files {
             for line in std::fs::read_to_string(f).expect("readable fixture").lines() {
                 let v: serde_json::Value = serde_json::from_str(line).expect("a JSON line");
+                if v["kind"] == "decision" && v["stage"] == "walk-id" {
+                    let i: WalkIdInputs = serde_json::from_value(v["inputs"].clone()).expect("inputs");
+                    let d: WalkIdDecision = serde_json::from_value(v["decision"].clone()).expect("decision");
+                    for (h, (_, f)) in id_hits.iter_mut().zip(id_terms.iter()) {
+                        *h += f(&i, &d) as u64;
+                    }
+                    continue;
+                }
                 if v["kind"] == "decision" && v["stage"] == "walk-price" {
                     let i: WalkPriceInputs = serde_json::from_value(v["inputs"].clone()).expect("inputs");
                     let d: WalkPriceDecision = serde_json::from_value(v["decision"].clone()).expect("decision");
@@ -1829,6 +2116,9 @@ mod tests {
         }
         for (h, (name, _)) in price_hits.iter().zip(price_terms.iter()) {
             assert!(*h > 0, "VACUOUS: no replayed walk-price decision where {name}");
+        }
+        for (h, (name, _)) in id_hits.iter().zip(id_terms.iter()) {
+            assert!(*h > 0, "VACUOUS: no replayed walk-id decision where {name}");
         }
         for f in &files {
             let rep = replay_lines(&std::fs::read_to_string(f).expect("readable fixture"));
@@ -2361,6 +2651,127 @@ mod tests {
         // panel size (the 256 floor is earned by a measured budget).
         assert_eq!(decide_walk_price(&WalkPriceInputs { budget_measured: false, ..walk() }).floor, 1);
         assert_eq!(decide_walk_price(&walk()).floor, 256);
+    }
+
+    /// A settled view mid-walk (cursor 3,000 of 20,000) whose signature is already this frame's, with an
+    /// SA-seeded complete reference of 50,000 samples.
+    fn walk_id() -> WalkIdInputs {
+        let mut i = WalkIdInputs {
+            interacting: false,
+            pin_frame: false,
+            fe_walk: true,
+            center: [-0.75, 0.1],
+            magnification: 1.0e30,
+            pos_sig: 0x1234_5678,
+            settings_hash: 0xabcd,
+            series_seed: 0x5eed,
+            jitter_bits: [0, 0],
+            gpu_iter: 20_000,
+            resolution: super::super::Resolution::panel([1000, 800]),
+            ss: 1,
+            pass_steps: 4_000_000_000,
+            has_ref: true,
+            orbit_len: 50_000,
+            sa_skip: 5_000,
+            partial: false,
+            chunk_charge: 1,
+            state: WalkState {
+                sig: super::super::WalkSig::NONE,
+                walk_view: super::super::WalkSig::NONE,
+                epoch: 7,
+                running: None,
+                tail_retries: 0,
+                cursor: 3_000,
+                idx: 4,
+                last_range: Some([2_000, 3_000]),
+                walk_end: 20_000,
+                restarts: 0,
+                restart_pending: false,
+                count_walk: 0,
+                motion_pass_steps_last: 0,
+                motion_frames: 0,
+            },
+        };
+        // Already this view's walk: its signatures are the ones this frame makes.
+        let d = decide_walk_id(&WalkIdInputs { pin_frame: true, ..i.clone() });
+        i.state.sig = d.sig;
+        i.state.walk_view = decide_walk_id(&WalkIdInputs { pin_frame: true, jitter_bits: [0, 0], ..i.clone() }).sig;
+        i
+    }
+
+    #[test]
+    fn the_same_view_resumes_its_walk() {
+        let i = walk_id();
+        let d = decide_walk_id(&i);
+        assert!(!d.restarted && !d.clear_ledger && d.restart_lost.is_none());
+        assert_eq!((d.cur, d.state.cursor, d.state.idx, d.state.epoch), (3_000, 3_000, 4, 7));
+        assert_eq!(d.state.count_walk, 7, "a settled mode-2 walk counts its running pixels");
+    }
+
+    #[test]
+    fn every_input_the_signature_folds_restarts_the_walk() {
+        // The composition, pinned: each input on its own moves the signature.
+        let i = walk_id();
+        let base = decide_walk_id(&i).sig;
+        for (what, j) in [
+            ("the centre's re", WalkIdInputs { center: [-0.7500001, 0.1], ..i.clone() }),
+            ("the centre's im", WalkIdInputs { center: [-0.75, 0.1000001], ..i.clone() }),
+            ("the magnification", WalkIdInputs { magnification: 1.1e30, ..i.clone() }),
+            ("the reference length", WalkIdInputs { orbit_len: 50_001, ..i.clone() }),
+            ("the exact position", WalkIdInputs { pos_sig: 0x1234_5679, ..i.clone() }),
+            ("the settings", WalkIdInputs { settings_hash: 0xabce, ..i.clone() }),
+            ("the series seed", WalkIdInputs { series_seed: 0x5eee, ..i.clone() }),
+            ("the jitter", WalkIdInputs { jitter_bits: [1, 0], ..i.clone() }),
+            ("the ask", WalkIdInputs { gpu_iter: 20_001, ..i.clone() }),
+            ("the texture", WalkIdInputs { resolution: super::super::Resolution::panel([1000, 801]), ..i.clone() }),
+            ("the ss", WalkIdInputs { ss: 2, ..i.clone() }),
+        ] {
+            let d = decide_walk_id(&j);
+            assert_ne!(d.sig, base, "{what}");
+            assert!(d.restarted && d.cur == 0, "{what}");
+            assert_eq!(d.restart_lost, Some((3_000, 20_000, base)), "{what}: a part-way walk is counted lost");
+            assert_eq!((d.state.restarts, d.state.epoch), (1, 8), "{what}");
+        }
+    }
+
+    #[test]
+    fn a_new_supersampling_sample_keeps_the_band_ledger() {
+        // The same view at a new jitter restarts the walk but keeps the ORBIT's prices; another view
+        // clears them.
+        let i = walk_id();
+        let sample = decide_walk_id(&WalkIdInputs { jitter_bits: [0x3e9e_b852, 0xbe61_47ae], ..i.clone() });
+        assert!(sample.restarted && !sample.clear_ledger);
+        let other = decide_walk_id(&WalkIdInputs { magnification: 2.0e30, ..i });
+        assert!(other.restarted && other.clear_ledger);
+    }
+
+    #[test]
+    fn motion_restarts_every_frame_and_a_pin_never_does() {
+        let i = walk_id();
+        let moving = decide_walk_id(&WalkIdInputs { interacting: true, ..i.clone() });
+        assert!(moving.restarted && !moving.clear_ledger, "the ledger survives the pins of a glide");
+        assert_eq!((moving.walk_floor, moving.walk_end), (0, 20_000), "motion walks [0, ask)");
+        assert_eq!(moving.state.motion_pass_steps_last, 4_000_000_000);
+        assert_eq!(moving.state.motion_frames, 1);
+        // A pin owns its progression: a moved signature does not restart it.
+        let pin = decide_walk_id(&WalkIdInputs { pin_frame: true, interacting: true, magnification: 2.0e30, ..i });
+        assert!(!pin.restarted);
+        assert_eq!(pin.cur, 3_000);
+    }
+
+    #[test]
+    fn a_settled_walk_covers_only_its_live_range() {
+        let i = walk_id();
+        let d = decide_walk_id(&i);
+        let we = super::super::sa_skip_rescue(20_000, 5_000, 50_000);
+        assert_eq!((d.walk_floor, d.walk_end), (super::super::usable_sa_skip(5_000, we), we));
+        assert_eq!(d.state.walk_end, d.walk_end);
+        // A partial reference caps the walk at the orbit it holds.
+        let partial = decide_walk_id(&WalkIdInputs { partial: true, orbit_len: 12_000, ..i.clone() });
+        assert!(partial.walk_end <= 11_999, "{}", partial.walk_end);
+        // No reference yet: the whole ask from 0.
+        let none = decide_walk_id(&WalkIdInputs { has_ref: false, ..i });
+        assert_eq!((none.walk_floor, none.walk_end), (0, 20_000));
     }
 
     #[test]

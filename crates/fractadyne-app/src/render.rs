@@ -5600,189 +5600,85 @@ impl FractadyneApp {
             }
             self.record_decision("walk-price", vs, &price_in, &price);
             let (floor, pass_steps, budget_step) = (price.floor, price.pass_steps, price.budget_step);
-            // View signature: anything that shapes the render restarts the progression.
-            // ⚠The REFERENCE LENGTH is part of it. `orbit_len` feeds both the per-pass BLA table
-            // (mode 2 rebuilds it every pass) and the `ref_n + 1 >= orbit_len` rebase trigger, so a
-            // reference extended mid-settle — the e72/e82/e94 shape, and mode 2 is exactly where
-            // that happens — would have a pass resume `ref_n` against a DIFFERENT orbit than the
-            // pass that stored it. The install runs later in this frame than this check, so the
-            // change is seen one frame late; that is harmless, because a sig change resets the
-            // cursor to 0 and the offending pass's state is discarded rather than resumed.
-            // Progressive-SSAA jitter is part of the walk's identity: each accumulation sample is a
-            // sub-pixel-shifted view, so a new jitter must RESTART the chunk walk from scratch (else
-            // the resumable per-pixel state carries the previous sample's positions and every sample
-            // comes out identical — no de-speckle). Fold the jitter bits into the sig hash.
-            let jitter = self.perf.accum_cmd[vs.min(1)].jitter;
-            let jbits = (jitter[0].to_bits() as u64) ^ (jitter[1].to_bits() as u64).rotate_left(23);
-            // ⚠`pos_sig` (the caller's exact view position: offset from the reference, span
-            // exponent + mantissa) is part of it, not just the f64 centre. The f64 centre stops
-            // distinguishing nearby views at depth (its ulp is 1/190 of the view width at 2^49;
-            // one value covers the whole neighbourhood at 2^800), so a small pan or a re-picked
-            // reference at the same f64 point kept the signature, the walk RESUMED its per-pixel
-            // state against the moved view, and the old view's escaped pixels stayed on screen
-            // under the new one — a translucent copy of another location (field report
-            // 2026-09-16). Restarting the walk is output-neutral (bit-identity contract); only
-            // its cost is paid, and only when the view really moved.
-            // ⚠And WHAT is iterated: the settings hash (`view_key.4` — formula id, custom shader
-            // key, Julia and its c, the iterate-affecting colour inputs). It was missing, so a
-            // formula switch at an unchanged view resumed the previous formula's finished walk and
-            // re-showed its image: measured when custom formulas gained resumable passes — the
-            // uitest's Custom step at home (−0.5+0i, Mandelbrot's home too) kept showing the
-            // formula applied three steps earlier. The tiled settle's key had the same hole once
-            // (`settings_hash`'s own note).
-            // ⚠And the SERIES SEED (`series_seed_bits`). The first pass seeds every pixel from the
-            // series at `sa.skip` and later passes only resume, so a series refined mid-walk
-            // (9.3e78×: skip 5513 → 5535 four frames after the walk began, 2026-10-07) left that
-            // walk's pixels seeded from the old one while any later walk seeds from the new: the
-            // settled picture then depended on whether the walk happened to start before the
-            // refinement — 79 pixels of a converged supersampling average, run to run.
-            let view_bits = center.0.to_bits()
-                ^ center.1.to_bits().rotate_left(17)
-                ^ magnification.to_bits().rotate_left(34)
-                ^ (self.ref_cache[vidx].orbit_len as u64).rotate_left(51)
-                ^ pos_sig.rotate_left(41)
-                ^ view_key.4.rotate_left(29)
-                ^ series_seed_bits(&self.ref_cache[vidx].sa).rotate_left(13);
-            let walk_view = WalkSig::of(view_bits, 0, gpu_iter, resolution, ss);
-            let sig = WalkSig::of(view_bits, jbits, gpu_iter, resolution, ss);
-            if pin_frame {
-                // The pin owns the progression: every sig input above is captured, so the sig is
-                // constant by construction, and the interacting reset below — the §10 defect — is
-                // bypassed. The freeze verdict cannot flip a pin frame into a reprojection (the
-                // pre-step abandons on every input that could: orbit change, caller reproject,
-                // drift, pan, panel), so the cursor advance further down is safe — and
-                // belt-checked at the commit point after the freeze anyway.
-            } else if self.perf.chunk_sig[vs] != sig || interacting {
-                // ⭐⭐A NEW SUPERSAMPLING SAMPLE KEEPS THE LEDGER. Each sample of a settled view's
-                // progressive supersampling is the same view at a new sub-pixel jitter: the walk
-                // must restart (its per-pixel state is position-specific), but the bands' prices
-                // are the ORBIT's, the reason the ledger already survives pins and same-sig
-                // restarts. Clearing it made every sample re-climb every band from the floor, ×2 a
-                // pass: ~90 of a sample's ~158 frames at 9.3e78× were 256..65536-iteration passes
-                // at one a frame (2026-10-07). Output-neutral: the window size never changes a
-                // pixel (the chunked iterate's bit-identity contract).
-                if chunk_restart_clears_ledger(
-                    self.perf.chunk_sig[vs],
-                    self.perf.chunk_walk_view[vs],
-                    sig,
-                    walk_view,
-                    interacting,
-                ) {
-                    // Another view/ask: its prices describe another walk entirely.
-                    // ⭐Not during INTERACTION: successive pinned refreshes of a glide are the
-                    // same orbit a few hundredths of an octave apart, and the band ledger is a
-                    // property of the ORBIT's iteration bands, not of the view. Clearing it per
-                    // pin made every pin re-climb from the floor in every band (~50 passes,
-                    // 0.8 s) — at 4.0× that is past the 2-octave drift abandon, so no pin ever
-                    // adopted (traced: 14 started, 7 adopted, 6 abandoned for drift, the frozen
-                    // frame aged 13 octaves on screen). The ledger is cleared when the reference
-                    // POINT changes instead (`install_recompute`).
-                    self.perf.chunk_bands[vs] = [0; crate::tunables::CHUNK_BANDS];
-                    self.perf.chunk_pass_dt[vs] = 0.0;
-                }
-                // ⭐The band ledger SURVIVES a same-sig restart on purpose: every hold/refresh
-                // cycle restarts the walk, and re-crossing the wrap-storm band with amnesia is
-                // how the cliff got re-rolled dozens of times in one session.
-                // W4's A4: a restart that throws a part-way walk away is the iteration-starvation
-                // shape (a resolution rung re-chosen every few frames restarted the walk every few
-                // frames, and 36% of a dive was blank). Counted and recorded, pending until the
-                // frame record is written.
-                if crate::render::frame_plan::walk_restart_discards(
-                    self.perf.chunk_cursor[vs],
-                    self.perf.chunk_walk_end[vs],
-                ) {
-                    self.perf.walk_restart_pending[vs] = true;
-                    self.perf.walk_restarts[vs] = self.perf.walk_restarts[vs].wrapping_add(1);
-                    if crate::diag::trace_on("tile") {
-                        crate::diag::trace(
-                            "tile",
-                            format!(
-                                "walk-restart v={vs} f={} lost cur={} of {} interacting={interacting} \
-                                 sig {:016x} -> {:016x}",
-                                self.perf.frame_idx,
-                                self.perf.chunk_cursor[vs],
-                                self.perf.chunk_walk_end[vs],
-                                self.perf.chunk_sig[vs].word(),
-                                sig.word(),
-                            ),
-                        );
-                    }
-                }
-                self.perf.chunk_sig[vs] = sig;
-                self.perf.chunk_walk_view[vs] = walk_view;
-                self.perf.chunk_walk_epoch[vs] = self.perf.chunk_walk_epoch[vs].wrapping_add(1).max(1);
-                self.perf.chunk_running[vs] = None;
-                self.perf.tail_retries[vs] = 0;
-                self.perf.chunk_cursor[vs] = 0;
-                self.perf.chunk_idx[vs] = 0;
-                self.perf.chunk_last_range[vs] = None;
-                self.perf.chunk_inflight[vs] = None;
-                // A restarted walk's escape bands are a different progression's data.
-            }
-            let cur = self.perf.chunk_cursor[vs];
-            // A walk is never behind its own reading: a cursor that went back was reset somewhere
-            // this stage did not see, so its bound describes another walk — drop it.
-            if self.perf.chunk_running[vs].is_some_and(|(_, at, _)| cur < at) {
-                self.perf.chunk_running[vs] = None;
-            }
-            // A settled mode-2 walk counts its running pixels (`walk_charged_px` sizes by them).
-            if fe_walk && !interacting && !pin_frame && crate::tunables::cost().chunk_charge == 1 {
-                self.perf.chunk_count_walk[vs] = self.perf.chunk_walk_epoch[vs];
-            }
-            if interacting && !pin_frame {
-                // The pass budget a MOVING frame was actually given, which is what decides whether
-                // it can walk far enough to commit a pixel at all. Recorded BEFORE the growth
-                // limiter, because the limiter bounds how fast the step may climb, not how much
-                // work the frame is allowed — and `visible_res_target` must size pixels against
-                // the allowance, not against a step still on its way up to it. Pins are excluded:
-                // their small per-dispatch band accumulates across passes, so one pin step says
-                // nothing about whether a single frame can stand on its own.
-                self.perf.motion_pass_steps_last[vs] = pass_steps;
-            }
-            // ⭐⭐THE SA-SKIP FLOOR. When a reference is SA-seeded, the `start_iter==0` pass places
-            // EVERY pixel at `iter = sa_skip` in one dispatch — so iterations [0, sa_skip) are
-            // covered for free by that single pass. Marching the cursor from 0 through them in
-            // floor windows dispatches thousands of full-frame NO-OPS (each pixel loads its state,
-            // sees iter=sa_skip ≥ the window end, and stores it back unchanged) — every one paying
-            // a full-resolution chunk+resolve pass and a present cycle. At the period-3 bulb root
-            // sa_skip≈7.45M and the floor window is 256, so ~29,000 dead passes at ~1 s each: the
-            // "still spinning" crawl (crash-1789092955 / the 5.1e10× field report). The walk must
-            // cover only the LIVE range [sa_skip, walk_end): the first pass keeps its START at 0
-            // (so the shader SA-seeds), but jumps its END past the skip; windows past it resume
-            // from state as before.
-            //
-            // `walk_end` mirrors `build_mandelbrot_params`' `shader_iter` cap. A PARTIAL reference
-            // caps the shader at orbit_len-1 (it cannot iterate past the orbit it holds), so
-            // [shader_iter, gpu_iter) is a SECOND dead range; targeting the uncapped `gpu_iter`
-            // marched that too. `sa_skip_rescue` keeps the two in lockstep with the params builder.
-            // ⚠MOTION frames are EXEMPT — `(0, gpu_iter)` keeps them bit-for-bit on the historical
-            // path. They reset the cursor to 0 every frame (the sig/interacting reset above), so they
-            // never accumulate the dead prefix: there is no crawl to fix, and a motion preview is
-            // meant to be `[0, step]`. Confirmed by an A/B: the `--motiontest` A2 adoption flake rate
-            // is identical with and without this fix (baseline failed MORE often than the fix under
-            // the same load). The floor/cap is strictly a SETTLED-walk fix; pins inherit it only once
-            // they settle (`interacting` false).
-            let (walk_floor, walk_end) = if interacting || self.ref_cache[vidx].ref_pt.is_none() {
-                (0u32, gpu_iter)
-            } else {
-                let raw_skip = self.ref_cache[vidx].sa.skip;
-                let capped = if self.ref_cache[vidx].partial {
-                    gpu_iter.min(self.ref_cache[vidx].orbit_len.saturating_sub(1))
-                } else {
-                    gpu_iter
-                };
-                let we = sa_skip_rescue(capped, raw_skip, self.ref_cache[vidx].orbit_len);
-                (usable_sa_skip(raw_skip, we), we)
+            // The walk's IDENTITY: the pure `decide::decide_walk_id` (its notes moved with it), so a
+            // recording replays the signature's composition and the restart rule exactly.
+            let id_in = decide::WalkIdInputs {
+                interacting,
+                pin_frame,
+                fe_walk,
+                center: [center.0, center.1],
+                magnification,
+                pos_sig,
+                settings_hash: view_key.4,
+                series_seed: series_seed_bits(&self.ref_cache[vidx].sa),
+                jitter_bits: self.perf.accum_cmd[vs.min(1)].jitter.map(f32::to_bits),
+                gpu_iter,
+                resolution,
+                ss,
+                pass_steps,
+                has_ref: self.ref_cache[vidx].ref_pt.is_some(),
+                orbit_len: self.ref_cache[vidx].orbit_len,
+                sa_skip: self.ref_cache[vidx].sa.skip,
+                partial: self.ref_cache[vidx].partial,
+                chunk_charge: crate::tunables::cost().chunk_charge,
+                state: decide::WalkState {
+                    sig: self.perf.chunk_sig[vs],
+                    walk_view: self.perf.chunk_walk_view[vs],
+                    epoch: self.perf.chunk_walk_epoch[vs],
+                    running: self.perf.chunk_running[vs],
+                    tail_retries: self.perf.tail_retries[vs],
+                    cursor: self.perf.chunk_cursor[vs],
+                    idx: self.perf.chunk_idx[vs],
+                    last_range: self.perf.chunk_last_range[vs],
+                    walk_end: self.perf.chunk_walk_end[vs],
+                    restarts: self.perf.walk_restarts[vs],
+                    restart_pending: self.perf.walk_restart_pending[vs],
+                    count_walk: self.perf.chunk_count_walk[vs],
+                    motion_pass_steps_last: self.perf.motion_pass_steps_last[vs],
+                    motion_frames: self.perf.chunk_motion_frames[vs],
+                },
             };
-            // Where this walk ends, for the next restart to judge whether it lost anything.
-            self.perf.chunk_walk_end[vs] = walk_end;
-            // Gate observability (design/mode2-chunking.md §11): a chunk-eligible frame built
-            // during interaction is the regime the motion-presentation assertions cover —
-            // `--motiontest` fails a run that never produced any (anti-vacuity).
-            if interacting {
-                self.perf.chunk_motion_frames[vs] =
-                    self.perf.chunk_motion_frames[vs].wrapping_add(1);
+            let id = decide::decide_walk_id(&id_in);
+            if let Some((lost, of, from)) = id.restart_lost {
+                if crate::diag::trace_on("tile") {
+                    crate::diag::trace(
+                        "tile",
+                        format!(
+                            "walk-restart v={vs} f={} lost cur={lost} of {of} interacting={interacting} \
+                             sig {:016x} -> {:016x}",
+                            self.perf.frame_idx,
+                            from.word(),
+                            id.sig.word(),
+                        ),
+                    );
+                }
             }
+            if id.clear_ledger {
+                self.perf.chunk_bands[vs] = [0; crate::tunables::CHUNK_BANDS];
+                self.perf.chunk_pass_dt[vs] = 0.0;
+            }
+            if id.restarted {
+                self.perf.chunk_inflight[vs] = None;
+            }
+            {
+                let (p, s) = (&mut self.perf, &id.state);
+                p.chunk_sig[vs] = s.sig;
+                p.chunk_walk_view[vs] = s.walk_view;
+                p.chunk_walk_epoch[vs] = s.epoch;
+                p.chunk_running[vs] = s.running;
+                p.tail_retries[vs] = s.tail_retries;
+                p.chunk_cursor[vs] = s.cursor;
+                p.chunk_idx[vs] = s.idx;
+                p.chunk_last_range[vs] = s.last_range;
+                p.chunk_walk_end[vs] = s.walk_end;
+                p.walk_restarts[vs] = s.restarts;
+                p.walk_restart_pending[vs] = s.restart_pending;
+                p.chunk_count_walk[vs] = s.count_walk;
+                p.motion_pass_steps_last[vs] = s.motion_pass_steps_last;
+                p.chunk_motion_frames[vs] = s.motion_frames;
+            }
+            self.record_decision("walk-id", vs, &id_in, &id);
+            let (sig, cur, walk_floor, walk_end) = (id.sig, id.cur, id.walk_floor, id.walk_end);
             if crate::diag::trace_on("tile") {
                 crate::diag::trace(
                     "tile",
