@@ -5522,7 +5522,6 @@ impl FractadyneApp {
                 self.perf.tile_state[vidx] = None;
                 self.perf.tile_pending[vidx] = false;
             }
-            let ss2 = (ss as u64).saturating_mul(ss as u64);
             // The pass's PRICING and SIZING: the pure `decide::decide_walk_price` (its notes moved
             // with it), so a recording replays it exactly.
             let price_in = decide::WalkPriceInputs {
@@ -5695,34 +5694,83 @@ impl FractadyneApp {
                     ),
                 );
             }
-            if cur < walk_end {
-                // ---- PRICE-SERIALIZED WALKING, dispatch half ----
-                // A settled pass may only launch when the previous one has been PRICED
-                // (chunk_inflight is None). While one is in flight, hold the LAST DISPATCHED
-                // range — the (key, tile, chunk, probe) triple stays unchanged, the GPU dedupes
-                // it, zero work runs, and the drain frame this produces is the very measurement
-                // that releases the next pass. Motion frames keep their per-frame cadence
-                // (the cursor resets each frame anyway) and PIN frames their own (§10-§11).
-                let serialized_hold = if pin_frame {
-                    // A pin holds while `PIN_INFLIGHT_MAX` of its passes are still in the queue
-                    // (completion-counted), not while one is unpriced. A completion that never
-                    // comes (a harness with no `update`, a lost device) times out on the wall
-                    // clock: the gate must never depend on a signal that can fail to arrive.
-                    let age_us = crate::app_micros().saturating_sub(self.perf.pin_dispatch_at[vs]);
-                    // `registered`: `update` has armed this pass's completion callback (the
-                    // registrations it owes are drained there), so the completion WILL come and
-                    // the wait scales with the frames (`pin_gate_timeout_us`, U3/U47).
-                    let registered = self.perf.pin_reg_pending[vs] == 0;
-                    let limit_us = crate::render::pin_gate_timeout_us(
-                        registered,
-                        self.perf.last_dt_ms,
-                        crate::tunables::cost().pin_timeout_scaled == 1,
-                    );
-                    if self.perf.pin_inflight[vs] > 0 && age_us > limit_us {
-                        // ⚠An ESCAPE, counted and (the first per view) logged: the next pin pass
-                        // goes out with this one possibly still running.
-                        self.perf.pin_escapes[vs] = self.perf.pin_escapes[vs].saturating_add(1);
-                        if self.perf.pin_escapes[vs] == 1 {
+            // The DISPATCH: the pure `decide::decide_walk_dispatch` (its notes moved with it), so a
+            // recording replays the serialized hold, the licence and the cursor exactly.
+            let dispatch_in = decide::WalkDispatchInputs {
+                interacting,
+                pin_frame,
+                fe_walk,
+                cur,
+                walk_floor,
+                walk_end,
+                floor,
+                pass_steps,
+                budget_step,
+                gpu_iter,
+                spx,
+                ss,
+                frame: self.perf.frame_idx,
+                now_us: crate::app_micros(),
+                last_dt_ms: self.perf.last_dt_ms,
+                worst_rate: self.perf.worst_rate_steps_per_ms(vidx),
+                bands: self.perf.chunk_bands[vs],
+                orbit_len: self.ref_cache[vidx].orbit_len,
+                epoch: self.perf.chunk_walk_epoch[vs],
+                running: self.perf.chunk_running[vs],
+                knee_px: crate::calibration::knee_px(),
+                accum_active: self.perf.accum_active[vs],
+                walk_read_sig: self.perf.walk_read_sig[vs],
+                norm_sig_submit: self.perf.norm_sig_submit[vs],
+                pin_timeout_scaled: crate::tunables::cost().pin_timeout_scaled,
+                chunk_charge: crate::tunables::cost().chunk_charge,
+                chunk_shuffle: crate::tunables::cost().chunk_shuffle,
+                state: decide::DispatchState {
+                    pin_inflight: self.perf.pin_inflight[vs],
+                    pin_reg_pending: self.perf.pin_reg_pending[vs],
+                    pin_dispatch_at: self.perf.pin_dispatch_at[vs],
+                    pin_escapes: self.perf.pin_escapes[vs],
+                    pin_pass_steps: self.perf.pin_pass_steps[vs],
+                    pin_pass_frame: self.perf.pin_pass_frame[vs],
+                    pin_pass_gpu_ms: self.perf.pin_pass_gpu_ms[vs],
+                    last_range: self.perf.chunk_last_range[vs],
+                    inflight: self.perf.chunk_inflight[vs],
+                    idx: self.perf.chunk_idx[vs],
+                    cursor: self.perf.chunk_cursor[vs],
+                    pending: self.perf.chunk_pending[vs],
+                    charged_px: self.perf.chunk_charged_px[vs],
+                    fe_steps_last: self.perf.fe_steps_last[vs],
+                    tail_retries: self.perf.tail_retries[vs],
+                    probe_nonce: self.perf.probe_nonce[vs],
+                    norm_complete_submit: self.perf.norm_complete_submit[vs],
+                },
+            };
+            let dispatch = decide::decide_walk_dispatch(&dispatch_in);
+            {
+                let (p, s) = (&mut self.perf, &dispatch.state);
+                p.pin_inflight[vs] = s.pin_inflight;
+                p.pin_reg_pending[vs] = s.pin_reg_pending;
+                p.pin_escapes[vs] = s.pin_escapes;
+                p.pin_pass_steps[vs] = s.pin_pass_steps;
+                p.pin_pass_frame[vs] = s.pin_pass_frame;
+                p.pin_pass_gpu_ms[vs] = s.pin_pass_gpu_ms;
+                p.chunk_last_range[vs] = s.last_range;
+                p.chunk_inflight[vs] = s.inflight;
+                p.chunk_idx[vs] = s.idx;
+                p.chunk_cursor[vs] = s.cursor;
+                p.chunk_pending[vs] = s.pending;
+                p.chunk_charged_px[vs] = s.charged_px;
+                p.fe_steps_last[vs] = s.fe_steps_last;
+                p.tail_retries[vs] = s.tail_retries;
+                p.probe_nonce[vs] = s.probe_nonce;
+                p.norm_complete_submit[vs] = s.norm_complete_submit;
+            }
+            if dispatch.pin_dispatched {
+                self.perf.pin_dispatch_at[vs] = crate::app_micros();
+            }
+            for e in &dispatch.events {
+                match *e {
+                    decide::DispatchEvent::PinEscape { age_us, limit_us, registered, n } => {
+                        if n == 1 {
                             crate::diag::log_line(
                                 "render",
                                 &format!(
@@ -5739,230 +5787,28 @@ impl FractadyneApp {
                             crate::diag::trace(
                                 "tile",
                                 format!(
-                                    "pin-escape v={vs} f={} age={:.0}ms registered={registered} n={}",
+                                    "pin-escape v={vs} f={} age={:.0}ms registered={registered} n={n}",
                                     self.perf.frame_idx,
                                     age_us as f64 / 1000.0,
-                                    self.perf.pin_escapes[vs]
                                 ),
                             );
                         }
-                        self.perf.pin_inflight[vs] = 0;
                     }
-                    self.perf.pin_inflight[vs] >= crate::tunables::PIN_INFLIGHT_MAX
-                        && self.perf.chunk_last_range[vs].is_some()
-                } else {
-                    !interacting
-                        && self.perf.chunk_inflight[vs].is_some()
-                        && self.perf.chunk_last_range[vs].is_some()
-                };
-                if serialized_hold {
-                    chunk_range = self.perf.chunk_last_range[vs];
-                    chunk_idx = self.perf.chunk_idx[vs];
-                    // Still mid-flight: keep repaints coming so the drain frames actually happen.
-                    self.perf.chunk_pending[vs] = true;
-                } else {
-                    // The REGIONAL license (see chunk_band_license): the walk may spend the
-                    // budget's sizing only where prices have earned it; new territory starts at
-                    // half its predecessor's license, so a cost cliff is met with at most ONE
-                    // modestly-sized unpriced pass — and serialization guarantees its price is
-                    // seen before anything else launches.
-                    // The first settling pass has cur=0 but does its real work at `walk_floor` (the
-                    // SA seed); every later pass has cur ≥ walk_floor. `real_lo` is where this
-                    // window's real iterations begin, so the band, the step count and the price all
-                    // describe the work actually done, not the free prefix folded into the first
-                    // dispatch. (Motion frames carry `walk_floor = 0`, so `real_lo = cur` there.)
-                    let real_lo = cur.max(walk_floor);
-                    let band = chunk_band_of(real_lo) as u8;
-                    // EVERY pass takes the regional licence — settled, pinned, and the moving
-                    // frame that OPENS a pin. A band's price is earned by its own passes, and a
-                    // walk crossing into a hot band meets it with one floor-sized pass, not a
-                    // licence-sized one. The opening pass used to be exempt ("motion frames
-                    // restart each frame"), and with the nominal-rate hint inflated by a deduped
-                    // reading it went out at the TDR budget's size: 400–440 ms, once per pin, at
-                    // every zoom rate (build 3222). The ledger persists across the pins of a
-                    // glide, so an opening pass in a priced band is already a full-sized one.
-                    // A PIN's floor is sized from ITS target, the way the settled floor is sized
-                    // from the TDR target: the worst rate ever measured in this mode, times
-                    // `MOTION_PIN_TARGET_MS`, over this frame's pixels — capped at 256. In a
-                    // benign regime that is ≥ 256 (no effect); in the rebase storm at the end of
-                    // an ESCAPED reference (cur ≈ orbit_len, every iteration a rebase, measured
-                    // ~2e6 nominal steps/ms) it lets the ledger's cliff rule shrink a pass to a
-                    // few dozen iterations instead of stopping at 256 ≈ 200 ms. Never below the
-                    // wall-aware TDR floor's own minimum of 1, never above 256: a pin crawling
-                    // at a handful of iterations per frame in a benign region never adopts, and
-                    // the frozen frame then ages on screen without bound (measured 13 octaves,
-                    // 11,000×, before a pin floor existed).
-                    let pin_floor = if pin_frame {
-                        let per_iter = spx.saturating_mul(ss2).max(1) as f64;
-                        self.perf
-                            .worst_rate_steps_per_ms(vidx)
-                            .map(|rate| {
-                                ((crate::tunables::MOTION_PIN_TARGET_MS * rate) / per_iter) as u32
-                            })
-                            .map_or(crate::tunables::MOTION_STEP_OPEN / 2, |f| {
-                                f.clamp(1, crate::tunables::MOTION_STEP_OPEN / 2)
-                            })
-                    } else {
-                        floor.max(256)
-                    };
-                    let licence = if pin_frame {
-                        // A pin inherits past the first-wrap storm (see `pin_band_license`);
-                        // the settled walk opens every cold band at the floor.
-                        pin_band_license(
-                            &self.perf.chunk_bands[vs],
-                            band as usize,
-                            pin_floor,
-                            real_lo,
-                            self.ref_cache[vidx].orbit_len,
-                        )
-                    } else {
-                        chunk_band_license(&self.perf.chunk_bands[vs], band as usize, pin_floor)
-                    };
-                    // ⭐⭐CHARGE THE PIXELS STILL RUNNING (settled mode-2 walk). `budget_step` divides the
-                    // pass budget by EVERY texel, but a walk's later passes iterate only the texels
-                    // still running: at 9.3e78× the tail passes were ~5 ms of a 400 ms-model budget
-                    // (2026-10-07), one a frame. This walk's own count (`chunk_running`) is an UPPER
-                    // bound for every later pass (a pixel never restarts), and below the occupancy
-                    // knee a pass is charged the knee, as the calibration ceiling charges it: the
-                    // worst-case model is unchanged, only the pixel count is honest. Unknown (no
-                    // reading of THIS walk yet, no knee) charges the whole frame, as before. The band
-                    // licence below still caps every pass by its own band's prices.
-                    let all_px = spx.saturating_mul(ss2);
-                    let charged = if fe_walk && !interacting && !pin_frame && crate::tunables::cost().chunk_charge == 1 {
-                        walk_charged_px(
-                            all_px,
-                            crate::calibration::knee_px(),
-                            self.perf.chunk_walk_epoch[vs],
-                            real_lo,
-                            self.perf.chunk_running[vs],
-                        )
-                    } else {
-                        all_px
-                    };
-                    let budget_step = if charged < all_px {
-                        self.perf.chunk_charged_px[vs] = charged;
-                        let charged_step =
-                            ((pass_steps / charged.max(1)) as u32).clamp(floor, gpu_iter.max(floor));
+                    decide::DispatchEvent::Charge { running, charged, all_px, from, to } => {
                         if crate::diag::trace_on("tile") {
                             crate::diag::trace(
                                 "tile",
                                 format!(
-                                    "chunk-charge f={} vs={vs} running={} charged={charged} of {all_px} step {budget_step} -> {charged_step}",
+                                    "chunk-charge f={} vs={vs} running={running} charged={charged} of {all_px} step {from} -> {to}",
                                     self.perf.frame_idx,
-                                    self.perf.chunk_running[vs].map_or(0, |(_, _, n)| n),
                                 ),
                             );
                         }
-                        charged_step
-                    } else {
-                        budget_step
-                    };
-                    let step = budget_step.min(licence);
-                    let step = if crate::tunables::cost().chunk_shuffle == 1 && !interacting && !pin_frame {
-                        // Test hook (`CHUNK_SHUFFLE`): an uneven window, the same every run.
-                        let h = (self.perf.chunk_idx[vs] as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 60;
-                        ((step as u64 * (16 + h) / 32) as u32).max(1)
-                    } else {
-                        step
-                    };
-                    let step = if pin_frame { step.max(pin_floor.min(gpu_iter.max(1))) } else { step };
-                    let end = real_lo.saturating_add(step).min(walk_end);
-                    // A PIN pass stops at the end of the band it started in. The licence is the
-                    // START band's, and a pass that runs on into unvisited bands carries it there
-                    // — traced: a 21,480-iteration pass licensed in [8k,16k) ran through the
-                    // orbit's rebase storm at cur ≈ orbit_len (10–70× the cold rate) and cost
-                    // 380 ms. Entering each band with that band's own licence (the floor when
-                    // unvisited) is what the ledger was built for; it costs a pin at most one
-                    // extra pass per band. Output is unchanged by pass boundaries (the chunked
-                    // iterate's bit-identity contract).
-                    let end = if pin_frame { end.min(chunk_band_end(real_lo)).max(real_lo + 1).min(walk_end) } else { end };
-                    // START stays `cur` (0 on the first pass) so the shader takes its SA-seed
-                    // branch; the live work is [real_lo, end).
-                    chunk_range = Some([cur, end]);
-                    chunk_idx = self.perf.chunk_idx[vs];
-                    // Moving frames restart at 0 next frame (the sig reset above); settled frames
-                    // and PIN frames advance until the full count is honoured. A pin keeps
-                    // `chunk_pending` up through its completing pass, so repaints keep coming for
-                    // the adoption frame even if the user's input pauses inside the settle window.
-                    if !interacting || pin_frame {
-                        self.perf.chunk_cursor[vs] = end;
-                        self.perf.chunk_idx[vs] = chunk_idx.wrapping_add(1);
-                        self.perf.chunk_pending[vs] = end < walk_end || pin_frame;
-                        // THE COMPLETION EVENT: the walk's whole-ask escape range feeds the
-                        // palette window here, once. The completing pass's own band is still in
-                        // flight (readings lag) — it folds into the NEXT walk's accumulator,
-                        // which at the same view is a head start, not pollution. A restarted
-                        // walk that never completed feeds nothing (its accumulator is cleared
-                        // with the reset above).
-                        // (The walk-COMPLETION feed that used to live here is gone: readings are
-                        // whole-frame now, so they feed the EMA directly at the drain. The event
-                        // it waited for did not reliably fire — see the drain's note.)
                     }
-                    self.perf.chunk_last_range[vs] = chunk_range;
-                    if !interacting || pin_frame {
-                        self.perf.chunk_inflight[vs] =
-                            Some((end.saturating_sub(real_lo), band, 0.0, false));
-                    }
-                    if pin_frame {
-                        // One pin pass in the queue: the completion callback (armed next frame,
-                        // once eframe has submitted this one) is what releases the next.
-                        self.perf.pin_inflight[vs] = self.perf.pin_inflight[vs].saturating_add(1);
-                        self.perf.pin_reg_pending[vs] = self.perf.pin_reg_pending[vs].saturating_add(1);
-                        self.perf.pin_dispatch_at[vs] = crate::app_micros();
-                        self.perf.pin_pass_steps[vs] =
-                            spx.saturating_mul(ss2).saturating_mul((end - real_lo).max(1) as u64);
-                        self.perf.pin_pass_frame[vs] = self.perf.frame_idx;
-                        self.perf.pin_pass_gpu_ms[vs] = -1.0;
-                    }
-                    // This frame runs a real bounded pass; pair the measurement with ITS cost —
-                    // the iterations past the SA seed, not the free [0, sa_skip) prefix — over the
-                    // texels it was CHARGED for (the whole frame unless the running count applied).
-                    self.perf.fe_steps_last[vs] = charged.saturating_mul((end - real_lo).max(1) as u64);
-                    chunk_pass = true;
-                }
-            } else {
-                // Progression complete: emit the empty tail range — the (key, tile, chunk) triple
-                // stops changing after one cheap pass-through frame, and the view is served from
-                // the texture like any settled one. The tail sits at `walk_end` (the capped ask),
-                // not the raw `gpu_iter`, so a partial reference completes instead of marching the
-                // dead [shader_iter, gpu_iter) range forever.
-                chunk_range = Some([walk_end, walk_end]);
-                chunk_idx = self.perf.chunk_idx[vs];
-                // A finished PIN waits for the reading that proves its picture (`pin_verdict`).
-                // The counter readback arms only when idle, so the completing pass may have gone
-                // out unarmed; re-dispatching the (empty, cheap) tail under a fresh probe nonce
-                // keeps readings coming until one carries the finished cursor.
-                // ⭐So does a finished SETTLED walk, until its complete reading lands: the iteration
-                // climb and the colour range both decide on it, and supersampling waits for both
-                // (`accum_inputs_pending`). Missed, nothing else dispatched on a still view, and the
-                // run that began anyway was what retried it — restarting at every reading it brought.
-                let retry = tail_read_retry(
-                    interacting,
-                    self.perf.accum_active[vs],
-                    self.perf.walk_read_sig[vs],
-                    self.perf.norm_sig_submit[vs],
-                    self.perf.tail_retries[vs],
-                );
-                if pin_frame || retry {
-                    self.perf.probe_nonce[vs] = self.perf.probe_nonce[vs].wrapping_add(1);
-                }
-                if retry && !pin_frame {
-                    self.perf.tail_retries[vs] += 1;
                 }
             }
-            // ⭐Does this pass's escape-range reading describe the picture that will be ON SCREEN?
-            // The resolve commits the range of everything escaped SO FAR, so a pass that stops
-            // short of the walk's end reports a top no higher than the walk has got. That is the
-            // picture when it is what gets displayed — a moving view's one-pass preview, which is
-            // `[0, step]` by design — but not for a pinned refresh (the screen holds the last
-            // complete frame until the walk lands; the pin-start below re-marks its opening pass)
-            // nor for a settled walk, whose partials fill in toward a range they have not reached.
-            // Fed as if whole, a pinned walk's readings made the palette window a SAWTOOTH,
-            // measured 2026-09-19 on a 2e13 autopilot dive: tops of 1,758 → 3,150 → 6,582 →
-            // 10,238 and back to 1,758, about 2.5 times a second, which the EMA and the glide
-            // turned into a rhythmic "breathing" of every colour on screen.
-            self.perf.norm_complete_submit[vs] = (interacting && !pin_frame)
-                || chunk_range.is_none_or(|[_, end]| end >= walk_end);
+            self.record_decision("walk-dispatch", vs, &dispatch_in, &dispatch);
+            (chunk_range, chunk_idx, chunk_pass) = (dispatch.chunk_range, dispatch.chunk_idx, dispatch.pass);
         }
         // Every mode — this trace is how a frame's cost bound is inspected, and the df32 path is
         // now budgeted and tileable too, so hiding it there would hide the case that crashed.

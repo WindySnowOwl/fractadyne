@@ -1656,6 +1656,360 @@ pub(crate) fn decide_walk_id(i: &WalkIdInputs) -> WalkIdDecision {
     WalkIdDecision { state: st, sig, cur, walk_floor, walk_end, restarted, clear_ledger, restart_lost }
 }
 
+/// The chunk walk's dispatch bookkeeping, one view, carried between frames (`Perf::pin_inflight`,
+/// `pin_reg_pending`, `pin_dispatch_at`, `pin_escapes`, `pin_pass_steps`, `pin_pass_frame`,
+/// `pin_pass_gpu_ms`, `chunk_last_range`, `chunk_inflight`, `chunk_idx`, `chunk_cursor`, `chunk_pending`,
+/// `chunk_charged_px`, `fe_steps_last`, `tail_retries`, `probe_nonce`, `norm_complete_submit`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct DispatchState {
+    pub(crate) pin_inflight: u32,
+    pub(crate) pin_reg_pending: u8,
+    pub(crate) pin_dispatch_at: u64,
+    pub(crate) pin_escapes: u32,
+    pub(crate) pin_pass_steps: u64,
+    pub(crate) pin_pass_frame: u64,
+    pub(crate) pin_pass_gpu_ms: f64,
+    pub(crate) last_range: Option<[u32; 2]>,
+    pub(crate) inflight: Option<(u32, u8, f64, bool)>,
+    pub(crate) idx: u32,
+    pub(crate) cursor: u32,
+    pub(crate) pending: bool,
+    pub(crate) charged_px: u64,
+    pub(crate) fe_steps_last: u64,
+    pub(crate) tail_retries: u32,
+    pub(crate) probe_nonce: u32,
+    pub(crate) norm_complete_submit: bool,
+}
+
+/// What [`decide_walk_dispatch`] reads: the chunk walk's dispatch inputs (`bp_chunk_tiling`), one view,
+/// one frame of a chunk-governed compose.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct WalkDispatchInputs {
+    pub(crate) interacting: bool,
+    pub(crate) pin_frame: bool,
+    pub(crate) fe_walk: bool,
+    /// The walk (`decide_walk_id`): its cursor and live range.
+    pub(crate) cur: u32,
+    pub(crate) walk_floor: u32,
+    pub(crate) walk_end: u32,
+    /// The pass's sizing (`decide_walk_price`): the floor, the step budget and the iteration step.
+    pub(crate) floor: u32,
+    pub(crate) pass_steps: u64,
+    pub(crate) budget_step: u32,
+    pub(crate) gpu_iter: u32,
+    pub(crate) spx: u64,
+    pub(crate) ss: u32,
+    /// This frame, the clock (µs, `app_micros`), and the last frame interval.
+    pub(crate) frame: u64,
+    pub(crate) now_us: u64,
+    pub(crate) last_dt_ms: f64,
+    /// The worst rate measured in this mode; the band licences after this frame's pricing; the
+    /// reference's length; the walk's epoch and its running-pixel reading; the calibration's occupancy
+    /// knee (`calibration::knee_px`).
+    pub(crate) worst_rate: Option<f64>,
+    pub(crate) bands: [u32; crate::tunables::CHUNK_BANDS],
+    pub(crate) orbit_len: u32,
+    pub(crate) epoch: u64,
+    pub(crate) running: Option<(u64, u32, u32)>,
+    pub(crate) knee_px: u64,
+    /// Supersampling runs on the view; the signature of the walk's last complete reading, and of the
+    /// frame being submitted (the tail's read retry).
+    pub(crate) accum_active: bool,
+    pub(crate) walk_read_sig: u64,
+    pub(crate) norm_sig_submit: u64,
+    /// The overridable tunables it reads.
+    pub(crate) pin_timeout_scaled: u64,
+    pub(crate) chunk_charge: u64,
+    pub(crate) chunk_shuffle: u64,
+    pub(crate) state: DispatchState,
+}
+
+/// What [`decide_walk_dispatch`] decides, and the state it writes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct WalkDispatchDecision {
+    /// The iteration range this frame dispatches and the walk's pass index; a real pass is planned.
+    pub(crate) chunk_range: Option<[u32; 2]>,
+    pub(crate) chunk_idx: u32,
+    pub(crate) pass: bool,
+    pub(crate) state: DispatchState,
+    /// A pin pass went out: the caller stamps its dispatch time.
+    pub(crate) pin_dispatched: bool,
+    pub(crate) events: Vec<DispatchEvent>,
+}
+
+/// What the dispatch did, for the caller's log and trace.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) enum DispatchEvent {
+    /// The pin gate escaped on the wall clock (`n`: the view's escapes so far).
+    PinEscape { age_us: u64, limit_us: u64, registered: bool, n: u32 },
+    /// The pass was charged for the pixels still running, not the frame.
+    Charge { running: u32, charged: u64, all_px: u64, from: u32, to: u32 },
+}
+
+/// The chunk walk's DISPATCH (`bp_chunk_tiling`'s, lifted): the serialized hold (the settled walk's
+/// one unpriced pass; the pin gate, and its wall-clock escape), the regional licence, the
+/// running-pixel charge, the step and the window's end, the cursor's advance and the pin pass's
+/// bookkeeping, the finished walk's tail and its read retry, and whether this pass's reading will
+/// describe the picture on screen. Pure.
+#[must_use]
+pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecision {
+    use super::{chunk_band_end, chunk_band_license, chunk_band_of, pin_band_license, tail_read_retry, walk_charged_px};
+    let (interacting, pin_frame, fe_walk) = (i.interacting, i.pin_frame, i.fe_walk);
+    let (cur, walk_floor, walk_end) = (i.cur, i.walk_floor, i.walk_end);
+    let (floor, pass_steps, budget_step, gpu_iter, spx) = (i.floor, i.pass_steps, i.budget_step, i.gpu_iter, i.spx);
+    let ss2 = (i.ss as u64).saturating_mul(i.ss as u64);
+    let mut st = i.state;
+    let chunk_range: Option<[u32; 2]>;
+    let chunk_idx: u32;
+    let mut chunk_pass = false;
+    let mut pin_dispatched = false;
+    let mut events = Vec::new();
+    if cur < walk_end {
+        // ---- PRICE-SERIALIZED WALKING, dispatch half ----
+        // A settled pass may only launch when the previous one has been PRICED
+        // (chunk_inflight is None). While one is in flight, hold the LAST DISPATCHED
+        // range — the (key, tile, chunk, probe) triple stays unchanged, the GPU dedupes
+        // it, zero work runs, and the drain frame this produces is the very measurement
+        // that releases the next pass. Motion frames keep their per-frame cadence
+        // (the cursor resets each frame anyway) and PIN frames their own (§10-§11).
+        let serialized_hold = if pin_frame {
+            // A pin holds while `PIN_INFLIGHT_MAX` of its passes are still in the queue
+            // (completion-counted), not while one is unpriced. A completion that never
+            // comes (a harness with no `update`, a lost device) times out on the wall
+            // clock: the gate must never depend on a signal that can fail to arrive.
+            let age_us = i.now_us.saturating_sub(st.pin_dispatch_at);
+            // `registered`: `update` has armed this pass's completion callback (the
+            // registrations it owes are drained there), so the completion WILL come and
+            // the wait scales with the frames (`pin_gate_timeout_us`, U3/U47).
+            let registered = st.pin_reg_pending == 0;
+            let limit_us = super::pin_gate_timeout_us(
+                registered,
+                i.last_dt_ms,
+                i.pin_timeout_scaled == 1,
+            );
+            if st.pin_inflight > 0 && age_us > limit_us {
+                // ⚠An ESCAPE, counted and (the first per view) logged: the next pin pass
+                // goes out with this one possibly still running.
+                st.pin_escapes = st.pin_escapes.saturating_add(1);
+                // The caller logs the first per view, always on, and traces the rest under `tile`.
+                events.push(DispatchEvent::PinEscape { age_us, limit_us, registered, n: st.pin_escapes });
+                st.pin_inflight = 0;
+            }
+            st.pin_inflight >= crate::tunables::PIN_INFLIGHT_MAX
+                && st.last_range.is_some()
+        } else {
+            !interacting
+                && st.inflight.is_some()
+                && st.last_range.is_some()
+        };
+        if serialized_hold {
+            chunk_range = st.last_range;
+            chunk_idx = st.idx;
+            // Still mid-flight: keep repaints coming so the drain frames actually happen.
+            st.pending = true;
+        } else {
+            // The REGIONAL license (see chunk_band_license): the walk may spend the
+            // budget's sizing only where prices have earned it; new territory starts at
+            // half its predecessor's license, so a cost cliff is met with at most ONE
+            // modestly-sized unpriced pass — and serialization guarantees its price is
+            // seen before anything else launches.
+            // The first settling pass has cur=0 but does its real work at `walk_floor` (the
+            // SA seed); every later pass has cur ≥ walk_floor. `real_lo` is where this
+            // window's real iterations begin, so the band, the step count and the price all
+            // describe the work actually done, not the free prefix folded into the first
+            // dispatch. (Motion frames carry `walk_floor = 0`, so `real_lo = cur` there.)
+            let real_lo = cur.max(walk_floor);
+            let band = chunk_band_of(real_lo) as u8;
+            // EVERY pass takes the regional licence — settled, pinned, and the moving
+            // frame that OPENS a pin. A band's price is earned by its own passes, and a
+            // walk crossing into a hot band meets it with one floor-sized pass, not a
+            // licence-sized one. The opening pass used to be exempt ("motion frames
+            // restart each frame"), and with the nominal-rate hint inflated by a deduped
+            // reading it went out at the TDR budget's size: 400–440 ms, once per pin, at
+            // every zoom rate (build 3222). The ledger persists across the pins of a
+            // glide, so an opening pass in a priced band is already a full-sized one.
+            // A PIN's floor is sized from ITS target, the way the settled floor is sized
+            // from the TDR target: the worst rate ever measured in this mode, times
+            // `MOTION_PIN_TARGET_MS`, over this frame's pixels — capped at 256. In a
+            // benign regime that is ≥ 256 (no effect); in the rebase storm at the end of
+            // an ESCAPED reference (cur ≈ orbit_len, every iteration a rebase, measured
+            // ~2e6 nominal steps/ms) it lets the ledger's cliff rule shrink a pass to a
+            // few dozen iterations instead of stopping at 256 ≈ 200 ms. Never below the
+            // wall-aware TDR floor's own minimum of 1, never above 256: a pin crawling
+            // at a handful of iterations per frame in a benign region never adopts, and
+            // the frozen frame then ages on screen without bound (measured 13 octaves,
+            // 11,000×, before a pin floor existed).
+            let pin_floor = if pin_frame {
+                let per_iter = spx.saturating_mul(ss2).max(1) as f64;
+                i.worst_rate
+                    .map(|rate| {
+                        ((crate::tunables::MOTION_PIN_TARGET_MS * rate) / per_iter) as u32
+                    })
+                    .map_or(crate::tunables::MOTION_STEP_OPEN / 2, |f| {
+                        f.clamp(1, crate::tunables::MOTION_STEP_OPEN / 2)
+                    })
+            } else {
+                floor.max(256)
+            };
+            let licence = if pin_frame {
+                // A pin inherits past the first-wrap storm (see `pin_band_license`);
+                // the settled walk opens every cold band at the floor.
+                pin_band_license(
+                    &i.bands,
+                    band as usize,
+                    pin_floor,
+                    real_lo,
+                    i.orbit_len,
+                )
+            } else {
+                chunk_band_license(&i.bands, band as usize, pin_floor)
+            };
+            // ⭐⭐CHARGE THE PIXELS STILL RUNNING (settled mode-2 walk). `budget_step` divides the
+            // pass budget by EVERY texel, but a walk's later passes iterate only the texels
+            // still running: at 9.3e78× the tail passes were ~5 ms of a 400 ms-model budget
+            // (2026-10-07), one a frame. This walk's own count (`chunk_running`) is an UPPER
+            // bound for every later pass (a pixel never restarts), and below the occupancy
+            // knee a pass is charged the knee, as the calibration ceiling charges it: the
+            // worst-case model is unchanged, only the pixel count is honest. Unknown (no
+            // reading of THIS walk yet, no knee) charges the whole frame, as before. The band
+            // licence below still caps every pass by its own band's prices.
+            let all_px = spx.saturating_mul(ss2);
+            let charged = if fe_walk && !interacting && !pin_frame && i.chunk_charge == 1 {
+                walk_charged_px(
+                    all_px,
+                    i.knee_px,
+                    i.epoch,
+                    real_lo,
+                    i.running,
+                )
+            } else {
+                all_px
+            };
+            let budget_step = if charged < all_px {
+                st.charged_px = charged;
+                let charged_step =
+                    ((pass_steps / charged.max(1)) as u32).clamp(floor, gpu_iter.max(floor));
+                // Traced by the caller under `tile`.
+                events.push(DispatchEvent::Charge {
+                    running: i.running.map_or(0, |(_, _, n)| n),
+                    charged,
+                    all_px,
+                    from: budget_step,
+                    to: charged_step,
+                });
+                charged_step
+            } else {
+                budget_step
+            };
+            let step = budget_step.min(licence);
+            let step = if i.chunk_shuffle == 1 && !interacting && !pin_frame {
+                // Test hook (`CHUNK_SHUFFLE`): an uneven window, the same every run.
+                let h = (st.idx as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 60;
+                ((step as u64 * (16 + h) / 32) as u32).max(1)
+            } else {
+                step
+            };
+            let step = if pin_frame { step.max(pin_floor.min(gpu_iter.max(1))) } else { step };
+            let end = real_lo.saturating_add(step).min(walk_end);
+            // A PIN pass stops at the end of the band it started in. The licence is the
+            // START band's, and a pass that runs on into unvisited bands carries it there
+            // — traced: a 21,480-iteration pass licensed in [8k,16k) ran through the
+            // orbit's rebase storm at cur ≈ orbit_len (10–70× the cold rate) and cost
+            // 380 ms. Entering each band with that band's own licence (the floor when
+            // unvisited) is what the ledger was built for; it costs a pin at most one
+            // extra pass per band. Output is unchanged by pass boundaries (the chunked
+            // iterate's bit-identity contract).
+            let end = if pin_frame { end.min(chunk_band_end(real_lo)).max(real_lo + 1).min(walk_end) } else { end };
+            // START stays `cur` (0 on the first pass) so the shader takes its SA-seed
+            // branch; the live work is [real_lo, end).
+            chunk_range = Some([cur, end]);
+            chunk_idx = st.idx;
+            // Moving frames restart at 0 next frame (the sig reset above); settled frames
+            // and PIN frames advance until the full count is honoured. A pin keeps
+            // `chunk_pending` up through its completing pass, so repaints keep coming for
+            // the adoption frame even if the user's input pauses inside the settle window.
+            if !interacting || pin_frame {
+                st.cursor = end;
+                st.idx = chunk_idx.wrapping_add(1);
+                st.pending = end < walk_end || pin_frame;
+                // THE COMPLETION EVENT: the walk's whole-ask escape range feeds the
+                // palette window here, once. The completing pass's own band is still in
+                // flight (readings lag) — it folds into the NEXT walk's accumulator,
+                // which at the same view is a head start, not pollution. A restarted
+                // walk that never completed feeds nothing (its accumulator is cleared
+                // with the reset above).
+                // (The walk-COMPLETION feed that used to live here is gone: readings are
+                // whole-frame now, so they feed the EMA directly at the drain. The event
+                // it waited for did not reliably fire — see the drain's note.)
+            }
+            st.last_range = chunk_range;
+            if !interacting || pin_frame {
+                st.inflight =
+                    Some((end.saturating_sub(real_lo), band, 0.0, false));
+            }
+            if pin_frame {
+                // One pin pass in the queue: the completion callback (armed next frame,
+                // once eframe has submitted this one) is what releases the next.
+                st.pin_inflight = st.pin_inflight.saturating_add(1);
+                st.pin_reg_pending = st.pin_reg_pending.saturating_add(1);
+                pin_dispatched = true; // the caller stamps it on the clock (`Perf::pin_dispatch_at`)
+                st.pin_pass_steps =
+                    spx.saturating_mul(ss2).saturating_mul((end - real_lo).max(1) as u64);
+                st.pin_pass_frame = i.frame;
+                st.pin_pass_gpu_ms = -1.0;
+            }
+            // This frame runs a real bounded pass; pair the measurement with ITS cost —
+            // the iterations past the SA seed, not the free [0, sa_skip) prefix — over the
+            // texels it was CHARGED for (the whole frame unless the running count applied).
+            st.fe_steps_last = charged.saturating_mul((end - real_lo).max(1) as u64);
+            chunk_pass = true;
+        }
+    } else {
+        // Progression complete: emit the empty tail range — the (key, tile, chunk) triple
+        // stops changing after one cheap pass-through frame, and the view is served from
+        // the texture like any settled one. The tail sits at `walk_end` (the capped ask),
+        // not the raw `gpu_iter`, so a partial reference completes instead of marching the
+        // dead [shader_iter, gpu_iter) range forever.
+        chunk_range = Some([walk_end, walk_end]);
+        chunk_idx = st.idx;
+        // A finished PIN waits for the reading that proves its picture (`pin_verdict`).
+        // The counter readback arms only when idle, so the completing pass may have gone
+        // out unarmed; re-dispatching the (empty, cheap) tail under a fresh probe nonce
+        // keeps readings coming until one carries the finished cursor.
+        // ⭐So does a finished SETTLED walk, until its complete reading lands: the iteration
+        // climb and the colour range both decide on it, and supersampling waits for both
+        // (`accum_inputs_pending`). Missed, nothing else dispatched on a still view, and the
+        // run that began anyway was what retried it — restarting at every reading it brought.
+        let retry = tail_read_retry(
+            interacting,
+            i.accum_active,
+            i.walk_read_sig,
+            i.norm_sig_submit,
+            st.tail_retries,
+        );
+        if pin_frame || retry {
+            st.probe_nonce = st.probe_nonce.wrapping_add(1);
+        }
+        if retry && !pin_frame {
+            st.tail_retries += 1;
+        }
+    }
+    // ⭐Does this pass's escape-range reading describe the picture that will be ON SCREEN?
+    // The resolve commits the range of everything escaped SO FAR, so a pass that stops
+    // short of the walk's end reports a top no higher than the walk has got. That is the
+    // picture when it is what gets displayed — a moving view's one-pass preview, which is
+    // `[0, step]` by design — but not for a pinned refresh (the screen holds the last
+    // complete frame until the walk lands; the pin-start below re-marks its opening pass)
+    // nor for a settled walk, whose partials fill in toward a range they have not reached.
+    // Fed as if whole, a pinned walk's readings made the palette window a SAWTOOTH,
+    // measured 2026-09-19 on a 2e13 autopilot dive: tops of 1,758 → 3,150 → 6,582 →
+    // 10,238 and back to 1,758, about 2.5 times a second, which the EMA and the glide
+    // turned into a rhythmic "breathing" of every colour on screen.
+    st.norm_complete_submit = (interacting && !pin_frame)
+        || chunk_range.is_none_or(|[_, end]| end >= walk_end);
+    WalkDispatchDecision { chunk_range, chunk_idx, pass: chunk_pass, state: st, pin_dispatched, events }
+}
+
 /// The recording's format version: bumped whenever an inputs or decision struct changes shape, and a
 /// replay refuses a recording of another (it would compare the wrong things). 2: `MovingInputs`
 /// carries `pass_fixed_ms`.
@@ -1802,6 +2156,18 @@ pub(crate) fn replay_lines(text: &str) -> ReplayReport {
                             continue;
                         };
                         serde_json::to_value(decide_probe(&inputs)).unwrap_or(serde_json::Value::Null)
+                    }
+                    "walk-dispatch" => {
+                        let Ok(inputs) = serde_json::from_value::<WalkDispatchInputs>(
+                            v.get("inputs").cloned().unwrap_or(serde_json::Value::Null),
+                        ) else {
+                            rep.unreadable += 1;
+                            continue;
+                        };
+                        if inputs.interacting {
+                            rep.moving += 1;
+                        }
+                        serde_json::to_value(decide_walk_dispatch(&inputs)).unwrap_or(serde_json::Value::Null)
                     }
                     "walk-id" => {
                         let Ok(inputs) = serde_json::from_value::<WalkIdInputs>(
@@ -2049,9 +2415,34 @@ mod tests {
             ("the SA-skip floor", |_, d| d.walk_floor > 0),
         ];
         let mut id_hits = [0u64; 6];
+        // (The pin gate's wall-clock escape is unit-tested only: W3 measured none on either card —
+        // `a_pin_pass_escapes_a_completion_that_never_comes`.)
+        let dispatch_terms: [(&str, fn(&WalkDispatchInputs, &WalkDispatchDecision) -> bool); 8] = [
+            ("a settled pass went out", |i, d| !i.interacting && !i.pin_frame && d.pass),
+            ("one unpriced pass held the walk", |i, d| !i.pin_frame && !d.pass && i.cur < i.walk_end),
+            ("a pin pass went out", |_, d| d.pin_dispatched),
+            ("the pin gate held", |i, d| i.pin_frame && !d.pass && i.cur < i.walk_end),
+            ("a moving frame previewed", |i, d| i.interacting && !i.pin_frame && d.pass),
+            ("a pass was charged for its running pixels", |_, d| {
+                d.events.iter().any(|e| matches!(e, DispatchEvent::Charge { .. }))
+            }),
+            ("a finished walk emitted its tail", |i, _| i.cur >= i.walk_end),
+            ("the tail re-sent for its reading", |i, d| {
+                i.cur >= i.walk_end && d.state.tail_retries > i.state.tail_retries
+            }),
+        ];
+        let mut dispatch_hits = [0u64; 8];
         for f in &files {
             for line in std::fs::read_to_string(f).expect("readable fixture").lines() {
                 let v: serde_json::Value = serde_json::from_str(line).expect("a JSON line");
+                if v["kind"] == "decision" && v["stage"] == "walk-dispatch" {
+                    let i: WalkDispatchInputs = serde_json::from_value(v["inputs"].clone()).expect("inputs");
+                    let d: WalkDispatchDecision = serde_json::from_value(v["decision"].clone()).expect("decision");
+                    for (h, (_, f)) in dispatch_hits.iter_mut().zip(dispatch_terms.iter()) {
+                        *h += f(&i, &d) as u64;
+                    }
+                    continue;
+                }
                 if v["kind"] == "decision" && v["stage"] == "walk-id" {
                     let i: WalkIdInputs = serde_json::from_value(v["inputs"].clone()).expect("inputs");
                     let d: WalkIdDecision = serde_json::from_value(v["decision"].clone()).expect("decision");
@@ -2119,6 +2510,9 @@ mod tests {
         }
         for (h, (name, _)) in id_hits.iter().zip(id_terms.iter()) {
             assert!(*h > 0, "VACUOUS: no replayed walk-id decision where {name}");
+        }
+        for (h, (name, _)) in dispatch_hits.iter().zip(dispatch_terms.iter()) {
+            assert!(*h > 0, "VACUOUS: no replayed walk-dispatch decision where {name}");
         }
         for f in &files {
             let rep = replay_lines(&std::fs::read_to_string(f).expect("readable fixture"));
@@ -2772,6 +3166,123 @@ mod tests {
         // No reference yet: the whole ask from 0.
         let none = decide_walk_id(&WalkIdInputs { has_ref: false, ..i });
         assert_eq!((none.walk_floor, none.walk_end), (0, 20_000));
+    }
+
+    /// A settled walk at cursor 3,000 of [0, 20,000), its last pass priced (nothing in flight), every
+    /// band still cold, a 1000×800 panel at ss 1.
+    fn dispatch() -> WalkDispatchInputs {
+        WalkDispatchInputs {
+            interacting: false,
+            pin_frame: false,
+            fe_walk: false,
+            cur: 3_000,
+            walk_floor: 0,
+            walk_end: 20_000,
+            floor: 256,
+            pass_steps: 4_000_000_000,
+            budget_step: 5_000,
+            gpu_iter: 20_000,
+            spx: 1000 * 800,
+            ss: 1,
+            frame: 500,
+            now_us: 1_000_000,
+            last_dt_ms: 16.7,
+            worst_rate: Some(2.0e7),
+            bands: [0; crate::tunables::CHUNK_BANDS],
+            orbit_len: 50_000,
+            epoch: 7,
+            running: None,
+            knee_px: 0,
+            accum_active: false,
+            walk_read_sig: 0,
+            norm_sig_submit: 0,
+            pin_timeout_scaled: 1,
+            chunk_charge: 1,
+            chunk_shuffle: 0,
+            state: DispatchState {
+                pin_inflight: 0,
+                pin_reg_pending: 0,
+                pin_dispatch_at: 0,
+                pin_escapes: 0,
+                pin_pass_steps: 0,
+                pin_pass_frame: 0,
+                pin_pass_gpu_ms: -1.0,
+                last_range: Some([2_000, 3_000]),
+                inflight: None,
+                idx: 4,
+                cursor: 3_000,
+                pending: false,
+                charged_px: 0,
+                fe_steps_last: 0,
+                tail_retries: 0,
+                probe_nonce: 0,
+                norm_complete_submit: true,
+            },
+        }
+    }
+
+    #[test]
+    fn a_settled_pass_goes_out_at_its_band_licence_and_waits_to_be_priced() {
+        let d = decide_walk_dispatch(&dispatch());
+        // A cold band licenses the floor: one floor-sized pass meets a cost cliff, not a budget-sized one.
+        assert_eq!(d.chunk_range, Some([3_000, 3_256]));
+        assert_eq!((d.chunk_idx, d.pass), (4, true));
+        assert_eq!((d.state.cursor, d.state.idx, d.state.pending), (3_256, 5, true));
+        assert_eq!(d.state.inflight, Some((256, 4, 0.0, false)), "in flight, unpriced, in band 4");
+        assert_eq!(d.state.last_range, d.chunk_range);
+        assert_eq!(d.state.fe_steps_last, 800_000 * 256, "the measurement pairs with the work done");
+        assert!(!d.state.norm_complete_submit, "a part of the walk is not the picture");
+    }
+
+    #[test]
+    fn one_unpriced_pass_holds_the_settled_walk() {
+        // Hold the last dispatched range: the GPU dedupes it and the drain frame prices the pass.
+        let mut i = dispatch();
+        i.state.inflight = Some((256, 4, 30.0, false));
+        let d = decide_walk_dispatch(&i);
+        assert_eq!((d.chunk_range, d.chunk_idx, d.pass), (Some([2_000, 3_000]), 4, false));
+        assert_eq!((d.state.cursor, d.state.pending), (3_000, true));
+    }
+
+    #[test]
+    fn a_moving_frame_previews_without_advancing_the_walk() {
+        let d = decide_walk_dispatch(&WalkDispatchInputs { interacting: true, ..dispatch() });
+        assert!(d.pass && d.chunk_range.is_some_and(|[s, e]| s == 3_000 && e > s));
+        assert_eq!((d.state.cursor, d.state.idx, d.state.inflight), (3_000, 4, None));
+        assert!(d.state.norm_complete_submit, "a moving frame's one-pass preview IS what is displayed");
+    }
+
+    #[test]
+    fn a_pin_pass_escapes_a_completion_that_never_comes() {
+        // One pin pass in the queue for 500 ms, registered, at a 16.7 ms frame: past the 170 ms gate.
+        let mut i = WalkDispatchInputs { pin_frame: true, interacting: true, ..dispatch() };
+        i.state.pin_inflight = 1;
+        i.state.pin_dispatch_at = 500_000;
+        let d = decide_walk_dispatch(&i);
+        assert_eq!(
+            d.events.first(),
+            Some(&DispatchEvent::PinEscape { age_us: 500_000, limit_us: 170_000, registered: true, n: 1 })
+        );
+        assert!(d.pass && d.pin_dispatched, "released: the next pin pass goes out");
+        assert_eq!((d.state.pin_inflight, d.state.pin_reg_pending, d.state.pin_escapes), (1, 1, 1));
+        assert_eq!((d.state.pin_pass_frame, d.state.pin_pass_gpu_ms), (500, -1.0));
+        assert_eq!(Some(d.state.cursor), d.chunk_range.map(|[_, e]| e), "a pin advances its walk");
+        // Inside the gate it holds.
+        i.state.pin_dispatch_at = 900_000;
+        let held = decide_walk_dispatch(&i);
+        assert!(!held.pass && held.events.is_empty() && !held.pin_dispatched);
+    }
+
+    #[test]
+    fn a_finished_walk_resends_its_tail_until_its_reading_lands() {
+        let i = WalkDispatchInputs { cur: 20_000, walk_read_sig: 1, norm_sig_submit: 2, ..dispatch() };
+        let d = decide_walk_dispatch(&i);
+        assert_eq!((d.chunk_range, d.pass), (Some([20_000, 20_000]), false));
+        assert_eq!((d.state.probe_nonce, d.state.tail_retries), (1, 1), "a fresh nonce re-sends the tail");
+        assert!(d.state.norm_complete_submit);
+        // Its reading has landed: nothing more to send.
+        let landed = decide_walk_dispatch(&WalkDispatchInputs { walk_read_sig: 2, ..i });
+        assert_eq!((landed.state.probe_nonce, landed.state.tail_retries), (0, 0));
     }
 
     #[test]

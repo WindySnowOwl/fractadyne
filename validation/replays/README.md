@@ -20,7 +20,11 @@ work budget has not converged, with nothing else dispatching, forces a re-measur
 chunk walk's pricing and sizing: the wall-aware floor, the in-flight pass's price — the lethal-band shed,
 the drain, the band ledger — the pass's step budget and the growth-limited iteration step) and `walk-id`
 (the walk's identity: the signature composed from everything it folds, the restart and whether it clears
-the band ledger, the counted lost walk, the SA-skip floor and a partial reference's capped end).
+the band ledger, the counted lost walk, the SA-skip floor and a partial reference's capped end) and
+`walk-dispatch` (the walk's dispatch: the serialized hold, the pin gate and its wall-clock escape, the
+regional licence, the running-pixel charge, the window, the cursor, the pin pass's bookkeeping, the
+finished walk's tail and its read retry). With the last three, `bp_chunk_tiling`'s decisions are all
+lifted; what stays imperative is its state resets, the frame's cost trace and the clock reads (§5.4).
 
 §7.5's companion red-check: set `PRICE_REPRESENTATIVE_FRAC` to 0.5 in a scratch build (never blessed,
 thrown away) and the gate goes red on 35 probe decisions of `uitest.jsonl`, at the default home view.

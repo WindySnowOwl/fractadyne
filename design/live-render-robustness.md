@@ -3587,3 +3587,28 @@ grand tour 624 of 64,600, zoomtest 2,110 of 41,172, every one replaying exactly 
 branch now: 4.4 MB). Gates: workspace 1,497 / 0 / 11 (five identity tests new); self-test 518/518,
 goldens 31/31 (the twin still at `[11, 1]`); `--motiontest` PASS ×3; `--livetest` 24/24 with 0 drifted;
 `--uitest` 74 pass / 1 warn / 0 fail. Remaining in `bp_chunk_tiling`: the dispatch.
+
+**2026-10-14 — W5: the chunk walk's dispatch lifted, and with it every decision of `bp_chunk_tiling`**
+(`decide_walk_dispatch`): the serialized hold (the settled walk's one unpriced pass; the pin gate and its
+wall-clock escape), the regional licence, the running-pixel charge, the step and the window's end, the
+cursor's advance and the pin pass's bookkeeping, the finished walk's tail and its read retry, and whether
+the pass's reading will describe the picture on screen. The stage read the clock twice — the pin gate's
+age, then the dispatch stamp — and the decision takes one reading (`now_us`) for the age while the caller
+stamps the dispatch on the clock, as before, when the decision says a pin pass went out; the
+calibration's occupancy knee and three tunables enter as inputs. What `bp_chunk_tiling` keeps is
+imperative by §5.4's boundary: its state resets, the frame's cost trace, the clock reads and the record.
+The coverage term requires eight of its branches (a settled pass out, the one-unpriced-pass hold, a pin
+pass out, the pin gate holding, a moving preview, a pass charged for its running pixels, the tail, the
+tail's read retry); the pin gate's wall-clock escape is unit-tested only — W3 measured none on either
+card. Fixtures: motiontest 602 of 9,289, autodive 603 of 20,580, uitest 603 of 15,724, grand tour 602 of
+66,893, zoomtest 1,794 of 46,800 — 159,286 recorded decisions, every one replaying exactly; at most 15
+kept per branch (4.4 MB). Across the set, 52 of the 54 branches the scripts track are replayed; the two
+that are not (the partial reference's capped walk, the pin escape) are unit-tested. The companion
+red-check still goes red on this set (35 probe decisions). Gates: workspace 1,502 / 0 / 11 (five dispatch
+tests new); self-test 518/518, goldens 31/31 (the twin still at `[11, 1]`); `--motiontest` PASS ×3;
+`--livetest` 24/24 with 0 drifted; `--uitest` 74 pass / 1 warn / 0 fail.
+
+W5's M8 now covers the moving frame's scale, the present gate, the iteration climb, the climb probe and
+the chunk walk's pricing, identity and dispatch — seven lifted decisions, 36 tests in `render/decide.rs`, five fixtures
+replayed by `cargo test`. Remaining for W5: the regime predicate (§6.7) and a field capture as terms of
+the fixture set, and §7.5's `--selftest replay` (the gate runs as a `cargo test` today, which CI runs).
