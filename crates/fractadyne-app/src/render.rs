@@ -6290,62 +6290,36 @@ impl FractadyneApp {
                 ),
             );
         }
-        let mut probe_fired = false;
-        // Budget-climb probe: on a settled view whose budget hasn't converged and where NOTHING
-        // else will dispatch this frame, force a re-measure. Without this the climb deadlocks at
-        // the resolution floor: one ×1.5 budget step is too small to unfloor a 16×16 frame under a
-        // huge iteration count, so the key never changes → no dispatch → no measurement → the
-        // budget freezes one step off the bootstrap and the view stays pixellated forever (seen
-        // at the 197k× spar with an explicit 4M count after restart — interaction used to mask it
-        // by re-keying every frame, and before beta.65/66 this state usually crashed first).
-        // Each forced dispatch is budget-sized by the shrink above, so it is TDR-safe by
-        // construction; convergence (`fe_budget_ok`) stops the probe and hands off to the settle.
-        if !interacting
-            && !offscreen
-            && !will_reproject
-            && !self.tour_playing()
-            && !key_changed
-            && tile.is_none()
-            && chunk_range.is_none()
-            && !self.perf.fe_budget_ok[vidx]
-            // PACED: at least 3 frames since the last real dispatch. An unpaced probe re-created
-            // the beta.48 death — near convergence each dispatch is ~TDR_BUDGET_MS (400 ms since
-            // 2026-08-16; it was 900 ms when this was written, which is what made it lethal), and
-            // firing one EVERY frame ran ~1 s dispatches back-to-back with zero idle → device lost
-            // at f=68 of the first climb soak. The gap leaves present-able frames between
-            // dispatches (~⅓ duty), which is the profile the converged controller already runs.
-            && self.perf.frame_idx.saturating_sub(self.perf.fe_dispatch_frame[vs]) >= 3
-            // ⭐AND ONLY IF THE READING WOULD BE PRICED. A frame far under budget cannot converge
-            // it — the pricing rule discards exactly that reading — so probing for one is an
-            // infinite loop of real GPU dispatches on a static view. See `probe_would_price`;
-            // this is the same threshold, read from the same constant, so the rule that spends
-            // the dispatch and the rule that spends the reading can never disagree.
-            && probe_would_price(
-                spx.saturating_mul((ss as u64).saturating_mul(ss as u64))
-                    .saturating_mul(gpu_iter.max(1) as u64),
-                budget_base(self.perf.fe_budget[vidx], self.perf.bootstrap_steps(vidx)),
-            )
-            // CEILINGED: the probe stops growing the budget at ~2e10 nominal (~60–90 ms real in
-            // the no-skip regime) instead of riding the controller to its target. The
-            // second climb soak PROVED the target is lethal in this regime even paced: at a
-            // 99-sample escaped reference with bla_skip=0 (nominal = real, zero preemption inside
-            // the fullscreen draw), the ×1.5 growth step from ~600 ms landed a ~1.3 s dispatch and
-            // lost the device — the intermittent Event-153 marginality of the beta.48 saga, made
-            // reproducible. Below the ceiling the deadlock is still broken (16×16 → ~84×66 at a
-            // 4M explicit ask, stable and alive); a native-res render of such an ask needs the
-            // chunked path extended to perturbation modes (TODO), not bigger single dispatches.
-            && budget_base(self.perf.fe_budget[vidx], self.perf.bootstrap_steps(vidx))
-                < crate::tunables::cost().explicit_dispatch_cap
-        {
+        // Budget-climb probe: the pure `decide::decide_probe` (its notes moved with it), so a
+        // recording replays it exactly.
+        let probe_in = decide::ProbeInputs {
+            interacting,
+            offscreen,
+            will_reproject,
+            tour_playing: self.tour_playing(),
+            key_changed,
+            tile: tile.is_some(),
+            chunk_range,
+            budget_ok: self.perf.fe_budget_ok[vidx],
+            frame: self.perf.frame_idx,
+            dispatch_frame: self.perf.fe_dispatch_frame[vs],
+            spx,
+            ss,
+            gpu_iter,
+            fe_budget: self.perf.fe_budget[vidx],
+            bootstrap_steps: self.perf.bootstrap_steps(vidx),
+            explicit_dispatch_cap: crate::tunables::cost().explicit_dispatch_cap,
+            tdr_min_steps: crate::tunables::cost().tdr_min_steps,
+            tdr_steps_ceil: crate::tunables::cost().tdr_steps_ceil,
+        };
+        let probe = decide::decide_probe(&probe_in);
+        if probe.fired {
             self.perf.probe_nonce[vs] = self.perf.probe_nonce[vs].wrapping_add(1);
-            probe_fired = true;
-            // This frame now runs a real pass under an unchanged key — pair the measurement
-            // with its cost (the same bookkeeping the `key_changed` block below does).
-            self.perf.fe_steps_last[vs] = spx
-                .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                .saturating_mul(gpu_iter.max(1) as u64);
+            self.perf.fe_steps_last[vs] = probe.steps;
             self.perf.fe_iter_frame[vs] = self.perf.frame_idx;
         }
+        self.record_decision("probe", vs, &probe_in, &probe);
+        let probe_fired = probe.fired;
         ChunkPlan { chunk_range, chunk_idx, probe_fired, pass: chunk_pass || probe_fired }
     }
 

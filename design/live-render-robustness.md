@@ -3509,3 +3509,28 @@ self-test 518/518, goldens 31/31; `--motiontest` PASS ×3; `--livetest` 24/24 wi
 74 pass / 1 warn (the known deep-floatexp step) / 0 fail. Remaining: the climb probe and the chunk walk
 (`bp_chunk_tiling`, as three sub-stages: the in-flight pass's pricing, the walk's identity and sizing,
 the dispatch); the regime predicate (§6.7) and a field capture as terms of the fixture set.
+
+**2026-10-14 — W5: the climb probe lifted, and §7.5's companion red-check goes red** (`decide_probe`):
+whether a settled view whose work budget has not converged, with nothing else dispatching, forces a
+re-measure — paced three frames apart, only for a reading the pricing rule would keep
+(`probe_would_price`), and only below the explicit-dispatch ceiling. `ProbeInputs` carries the two
+tunables `budget_base` reads in place (`TDR_MIN_STEPS`, `TDR_STEPS_CEIL`), through a new `budget_base_in`
+that `budget_base` delegates to. Only the uitest's fixture sees it fire (4 times, at the home view):
+everywhere else a chunk walk dispatches every settled frame, so the probe has nothing to unstick.
+
+The companion red-check: with `PRICE_REPRESENTATIVE_FRAC` at 0.5 in a scratch build (never blessed,
+thrown away) the fixture gate goes red on 35 decisions of the uitest fixture — `fired: recorded false,
+recomputed true` at ~4.2e8 nominal steps, the default home view of the 2026-09-04 never-terminating-probe
+finding. The fixture set pins the threshold, but on a maintainer's trace: a field capture is still not in
+the set.
+
+Trimming now samples each stage evenly. A frame records its decisions in a fixed order, so the old
+every-k-th-line sample kept one stage whenever its step was a multiple of the period (the climb fixture
+had kept 472 climb decisions and 16 probe ones). All five fixtures re-recorded at this build: motiontest
+1,072 of 5,356, autodive 1,026 of 11,952, uitest 1,008 of 12,096, grand tour 1,006 of 43,512,
+zoomtest-climb 1,378 of 23,476, every one replaying exactly; the climb fixture's three runs reproduced
+the first recording's climb step for step. Gates: workspace 1,487 / 0 / 11 (four probe tests new);
+self-test 518/518, goldens 31/31; `--motiontest` PASS ×3; `--livetest` 24/24 with 0 drifted; `--uitest`
+74 pass / 1 warn / 0 fail. Remaining: the chunk walk (`bp_chunk_tiling`: the in-flight pass's pricing,
+the walk's identity and sizing, the dispatch — every helper it calls reads only constants; its globals
+are read in the stage itself and enter as inputs), the regime predicate (§6.7) and a field capture.

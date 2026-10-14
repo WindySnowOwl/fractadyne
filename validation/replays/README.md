@@ -15,7 +15,11 @@ Lifted so far (schema 2): `moving` (the moving frame's scale: the work budget's 
 cap, the AIMD, the visible-frame ladder), `present` (the present gate: the held snapshot, the
 settled-cost probe, the colour-pass filter) and `iter` (the adaptive live-iteration climb: the boost's
 seed from the reference, the raises, the plateau, the appetite re-pick and the exhausted revert, the
-verdict, and the frame's iteration ask).
+verdict, and the frame's iteration ask) and `probe` (the budget-climb probe: whether a settled view whose
+work budget has not converged, with nothing else dispatching, forces a re-measure).
+
+§7.5's companion red-check: set `PRICE_REPRESENTATIVE_FRAC` to 0.5 in a scratch build (never blessed,
+thrown away) and the gate goes red on 35 probe decisions of `uitest.jsonl`, at the default home view.
 
 ## When it goes red
 

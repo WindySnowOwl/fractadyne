@@ -945,6 +945,113 @@ pub(crate) fn decide_iter(i: &IterInputs) -> IterDecision {
     IterDecision { state: s, budget_now, reached_ask, stale, repick, planned, gpu_iter, events }
 }
 
+/// What [`decide_probe`] reads: the budget-climb probe's inputs (`bp_chunk_tiling`), one view, one
+/// frame.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ProbeInputs {
+    pub(crate) interacting: bool,
+    pub(crate) offscreen: bool,
+    pub(crate) will_reproject: bool,
+    pub(crate) tour_playing: bool,
+    pub(crate) key_changed: bool,
+    /// A settle tile dispatches this frame; the chunk range this frame dispatches.
+    pub(crate) tile: bool,
+    pub(crate) chunk_range: Option<[u32; 2]>,
+    /// The view's work budget has converged (`fe_budget_ok`).
+    pub(crate) budget_ok: bool,
+    /// This frame, and the frame of the view's last real dispatch (`fe_dispatch_frame`).
+    pub(crate) frame: u64,
+    pub(crate) dispatch_frame: u64,
+    pub(crate) spx: u64,
+    pub(crate) ss: u32,
+    pub(crate) gpu_iter: u32,
+    /// The view's measured work budget (0 = none yet) and the bootstrap that stands in for it.
+    pub(crate) fe_budget: u64,
+    pub(crate) bootstrap_steps: u64,
+    /// The overridable tunables it reads: `EXPLICIT_DISPATCH_CAP`, and the bounds a measured budget
+    /// is clamped to (`TDR_MIN_STEPS`, `TDR_STEPS_CEIL`; see `budget_base`).
+    pub(crate) explicit_dispatch_cap: u64,
+    pub(crate) tdr_min_steps: u64,
+    pub(crate) tdr_steps_ceil: u64,
+}
+
+/// What [`decide_probe`] decides.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ProbeDecision {
+    /// Force a re-measure this frame: a fresh probe nonce under an unchanged key.
+    pub(crate) fired: bool,
+    /// The nominal steps the forced pass carries, which its measurement is paired with (0 unless
+    /// fired).
+    pub(crate) steps: u64,
+}
+
+/// The BUDGET-CLIMB PROBE (`bp_chunk_tiling`'s, lifted): whether a settled view whose work budget has
+/// not converged, and where nothing else dispatches this frame, forces a re-measure. Pure.
+#[must_use]
+pub(crate) fn decide_probe(i: &ProbeInputs) -> ProbeDecision {
+    use super::{budget_base_in, probe_would_price};
+    let (interacting, offscreen, will_reproject, key_changed) =
+        (i.interacting, i.offscreen, i.will_reproject, i.key_changed);
+    let (spx, ss, gpu_iter) = (i.spx, i.ss, i.gpu_iter);
+    let mut probe_fired = false;
+    let mut steps = 0;
+    // Budget-climb probe: on a settled view whose budget hasn't converged and where NOTHING
+    // else will dispatch this frame, force a re-measure. Without this the climb deadlocks at
+    // the resolution floor: one ×1.5 budget step is too small to unfloor a 16×16 frame under a
+    // huge iteration count, so the key never changes → no dispatch → no measurement → the
+    // budget freezes one step off the bootstrap and the view stays pixellated forever (seen
+    // at the 197k× spar with an explicit 4M count after restart — interaction used to mask it
+    // by re-keying every frame, and before beta.65/66 this state usually crashed first).
+    // Each forced dispatch is budget-sized by the shrink above, so it is TDR-safe by
+    // construction; convergence (`fe_budget_ok`) stops the probe and hands off to the settle.
+    if !interacting
+        && !offscreen
+        && !will_reproject
+        && !i.tour_playing
+        && !key_changed
+        && !i.tile
+        && i.chunk_range.is_none()
+        && !i.budget_ok
+        // PACED: at least 3 frames since the last real dispatch. An unpaced probe re-created
+        // the beta.48 death — near convergence each dispatch is ~TDR_BUDGET_MS (400 ms since
+        // 2026-08-16; it was 900 ms when this was written, which is what made it lethal), and
+        // firing one EVERY frame ran ~1 s dispatches back-to-back with zero idle → device lost
+        // at f=68 of the first climb soak. The gap leaves present-able frames between
+        // dispatches (~⅓ duty), which is the profile the converged controller already runs.
+        && i.frame.saturating_sub(i.dispatch_frame) >= 3
+        // ⭐AND ONLY IF THE READING WOULD BE PRICED. A frame far under budget cannot converge
+        // it — the pricing rule discards exactly that reading — so probing for one is an
+        // infinite loop of real GPU dispatches on a static view. See `probe_would_price`;
+        // this is the same threshold, read from the same constant, so the rule that spends
+        // the dispatch and the rule that spends the reading can never disagree.
+        && probe_would_price(
+            spx.saturating_mul((ss as u64).saturating_mul(ss as u64))
+                .saturating_mul(gpu_iter.max(1) as u64),
+            budget_base_in(i.fe_budget, i.bootstrap_steps, i.tdr_min_steps, i.tdr_steps_ceil),
+        )
+        // CEILINGED: the probe stops growing the budget at ~2e10 nominal (~60–90 ms real in
+        // the no-skip regime) instead of riding the controller to its target. The
+        // second climb soak PROVED the target is lethal in this regime even paced: at a
+        // 99-sample escaped reference with bla_skip=0 (nominal = real, zero preemption inside
+        // the fullscreen draw), the ×1.5 growth step from ~600 ms landed a ~1.3 s dispatch and
+        // lost the device — the intermittent Event-153 marginality of the beta.48 saga, made
+        // reproducible. Below the ceiling the deadlock is still broken (16×16 → ~84×66 at a
+        // 4M explicit ask, stable and alive); a native-res render of such an ask needs the
+        // chunked path extended to perturbation modes (TODO), not bigger single dispatches.
+        && budget_base_in(i.fe_budget, i.bootstrap_steps, i.tdr_min_steps, i.tdr_steps_ceil)
+            < i.explicit_dispatch_cap
+    {
+        // The caller takes a fresh probe nonce (a re-measure under an unchanged key).
+        probe_fired = true;
+        // This frame now runs a real pass under an unchanged key — pair the measurement
+        // with its cost (the same bookkeeping the `key_changed` block below does).
+        steps = spx
+            .saturating_mul((ss as u64).saturating_mul(ss as u64))
+            .saturating_mul(gpu_iter.max(1) as u64);
+    }
+    ProbeDecision { fired: probe_fired, steps }
+}
+
 /// The recording's format version: bumped whenever an inputs or decision struct changes shape, and a
 /// replay refuses a recording of another (it would compare the wrong things). 2: `MovingInputs`
 /// carries `pass_fixed_ms`.
@@ -1083,6 +1190,15 @@ pub(crate) fn replay_lines(text: &str) -> ReplayReport {
                         };
                         serde_json::to_value(decide_iter(&inputs)).unwrap_or(serde_json::Value::Null)
                     }
+                    "probe" => {
+                        let Ok(inputs) = serde_json::from_value::<ProbeInputs>(
+                            v.get("inputs").cloned().unwrap_or(serde_json::Value::Null),
+                        ) else {
+                            rep.unreadable += 1;
+                            continue;
+                        };
+                        serde_json::to_value(decide_probe(&inputs)).unwrap_or(serde_json::Value::Null)
+                    }
                     _ => {
                         rep.unreadable += 1;
                         continue;
@@ -1203,6 +1319,18 @@ mod tests {
     /// recording, and each must carry at least `REPLAY_MIN_DECISIONS` decisions, some of a moving
     /// frame. A deliberate change to a lifted decision turns this red, and the fixtures are then
     /// re-recorded (`FRACTADYNE_RECORD_DECIDE`, see `validation/replays/README.md`).
+    /// A settled view the climb probe would consider: nothing else dispatching, the budget unconverged.
+    fn probe_idle(i: &ProbeInputs) -> bool {
+        !i.interacting
+            && !i.offscreen
+            && !i.will_reproject
+            && !i.tour_playing
+            && !i.key_changed
+            && !i.tile
+            && i.chunk_range.is_none()
+            && !i.budget_ok
+    }
+
     #[test]
     fn every_recorded_session_replays_to_its_decisions() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../validation/replays");
@@ -1247,12 +1375,30 @@ mod tests {
             ("the climb was exhausted", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::Exhausted { .. }))),
             ("motion ended a flat run", |_, d| d.events.iter().any(|e| matches!(e, IterEvent::FlatRunEnded { .. }))),
         ];
+        let probe_terms: [(&str, fn(&ProbeInputs, &ProbeDecision) -> bool); 3] = [
+            ("the probe fired", |_, d| d.fired),
+            ("an idle unconverged view waited for the pacing", |i, _| {
+                probe_idle(i) && i.frame.saturating_sub(i.dispatch_frame) < 3
+            }),
+            ("an idle unconverged view the pricing rule or the ceiling held", |i, d| {
+                probe_idle(i) && i.frame.saturating_sub(i.dispatch_frame) >= 3 && !d.fired
+            }),
+        ];
         let mut hits = [0u64; 9];
         let mut present_hits = [0u64; 5];
         let mut climb_hits = [0u64; 11];
+        let mut probe_hits = [0u64; 3];
         for f in &files {
             for line in std::fs::read_to_string(f).expect("readable fixture").lines() {
                 let v: serde_json::Value = serde_json::from_str(line).expect("a JSON line");
+                if v["kind"] == "decision" && v["stage"] == "probe" {
+                    let i: ProbeInputs = serde_json::from_value(v["inputs"].clone()).expect("inputs");
+                    let d: ProbeDecision = serde_json::from_value(v["decision"].clone()).expect("decision");
+                    for (h, (_, f)) in probe_hits.iter_mut().zip(probe_terms.iter()) {
+                        *h += f(&i, &d) as u64;
+                    }
+                    continue;
+                }
                 if v["kind"] == "decision" && v["stage"] == "iter" {
                     let i: IterInputs = serde_json::from_value(v["inputs"].clone()).expect("inputs");
                     let d: IterDecision = serde_json::from_value(v["decision"].clone()).expect("decision");
@@ -1287,6 +1433,9 @@ mod tests {
         }
         for (h, (name, _)) in climb_hits.iter().zip(climb_terms.iter()) {
             assert!(*h > 0, "VACUOUS: no replayed climb decision where {name}");
+        }
+        for (h, (name, _)) in probe_hits.iter().zip(probe_terms.iter()) {
+            assert!(*h > 0, "VACUOUS: no replayed probe decision where {name}");
         }
         for f in &files {
             let rep = replay_lines(&std::fs::read_to_string(f).expect("readable fixture"));
@@ -1641,6 +1790,79 @@ mod tests {
             "inputs": i, "decision": d}).to_string();
         let rep = replay_lines(&line);
         assert_eq!((rep.decisions, rep.mismatches, rep.unreadable), (1, 0, 0));
+    }
+
+    /// A settled view whose budget has not converged, nothing else dispatching, the last real
+    /// dispatch 10 frames ago, the bootstrap budget (4e8) in force, and a frame of 8e8 nominal steps.
+    fn probe() -> ProbeInputs {
+        ProbeInputs {
+            interacting: false,
+            offscreen: false,
+            will_reproject: false,
+            tour_playing: false,
+            key_changed: false,
+            tile: false,
+            chunk_range: None,
+            budget_ok: false,
+            frame: 100,
+            dispatch_frame: 90,
+            spx: 1000 * 800,
+            ss: 1,
+            gpu_iter: 1000,
+            fe_budget: 0,
+            bootstrap_steps: 400_000_000,
+            explicit_dispatch_cap: crate::tunables::EXPLICIT_DISPATCH_CAP_DEFAULT,
+            tdr_min_steps: crate::tunables::TDR_MIN_STEPS_DEFAULT,
+            tdr_steps_ceil: crate::tunables::TDR_STEPS_CEIL_DEFAULT,
+        }
+    }
+
+    #[test]
+    fn the_probe_re_measures_an_unconverged_idle_view() {
+        let d = decide_probe(&probe());
+        assert!(d.fired);
+        assert_eq!(d.steps, 800_000_000, "the forced pass's nominal steps, for its measurement");
+        // Anything else dispatching this frame, any motion, or a converged budget: no probe.
+        for (what, i) in [
+            ("moving", ProbeInputs { interacting: true, ..probe() }),
+            ("a changed key", ProbeInputs { key_changed: true, ..probe() }),
+            ("a settle tile", ProbeInputs { tile: true, ..probe() }),
+            ("a chunk range", ProbeInputs { chunk_range: Some([0, 256]), ..probe() }),
+            ("a converged budget", ProbeInputs { budget_ok: true, ..probe() }),
+            ("a reprojection", ProbeInputs { will_reproject: true, ..probe() }),
+            ("offscreen", ProbeInputs { offscreen: true, ..probe() }),
+            ("a playing tour", ProbeInputs { tour_playing: true, ..probe() }),
+        ] {
+            assert_eq!(decide_probe(&i), ProbeDecision { fired: false, steps: 0 }, "{what}");
+        }
+    }
+
+    #[test]
+    fn the_probe_is_paced_three_frames_apart() {
+        assert!(!decide_probe(&ProbeInputs { dispatch_frame: 98, ..probe() }).fired);
+        assert!(decide_probe(&ProbeInputs { dispatch_frame: 97, ..probe() }).fired);
+    }
+
+    #[test]
+    fn the_probe_fires_only_for_a_reading_the_pricing_rule_keeps() {
+        // The boundary is `PRICE_REPRESENTATIVE_FRAC` of the budget, read from the constant (the
+        // rule that discards a reading and the rule that spends a dispatch on one cannot split).
+        let at = (400_000_000f64 * super::super::PRICE_REPRESENTATIVE_FRAC).ceil() as u64;
+        let spx = at / 1000;
+        assert_eq!(spx * 1000, at, "the boundary lands on a whole pixel count");
+        assert!(decide_probe(&ProbeInputs { spx, ..probe() }).fired);
+        assert!(!decide_probe(&ProbeInputs { spx: spx - 1, ..probe() }).fired);
+    }
+
+    #[test]
+    fn the_probe_stops_at_the_explicit_dispatch_ceiling() {
+        // A measured budget at the ceiling: the next ×1.5 step was the lethal one (beta.48).
+        let cap = crate::tunables::EXPLICIT_DISPATCH_CAP_DEFAULT;
+        let big = ProbeInputs { fe_budget: cap, spx: cap / 1000, ..probe() };
+        assert!(!decide_probe(&big).fired);
+        assert!(decide_probe(&ProbeInputs { fe_budget: cap - 1, ..big.clone() }).fired);
+        // The budget is clamped to the tunable bounds first, and those are inputs.
+        assert!(!decide_probe(&ProbeInputs { fe_budget: cap - 1, tdr_min_steps: cap, ..big }).fired);
     }
 
     #[test]
