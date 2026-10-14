@@ -689,7 +689,7 @@ pub(crate) fn bounded_motion_cut(cur: f64, wall_rate: f64) -> Option<f64> {
 /// the budget and log the same line whether or not that could make the next dispatch any smaller
 /// than the one that came back lethal; a retreat at the floor reported a retreat. Now each one says
 /// which it was, in its always-on log line and in the frame record (`retreat`, schema 8).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum RetreatOutcome {
     /// The next dispatch can be smaller than the lethal one: `from` → `to` (iterations for an
     /// in-flight chunk pass, nominal steps for a frame's reading).

@@ -3534,3 +3534,34 @@ self-test 518/518, goldens 31/31; `--motiontest` PASS ×3; `--livetest` 24/24 wi
 74 pass / 1 warn / 0 fail. Remaining: the chunk walk (`bp_chunk_tiling`: the in-flight pass's pricing,
 the walk's identity and sizing, the dispatch — every helper it calls reads only constants; its globals
 are read in the stage itself and enter as inputs), the regime predicate (§6.7) and a field capture.
+
+**2026-10-14 — W5: the chunk walk's pricing and sizing lifted** (`decide_walk_price`), the first of
+`bp_chunk_tiling`'s three sub-stages: the wall-aware floor, the pass's wall-clock target, the in-flight
+pass's price (the wall-clock retreat into the lethal band, the quick-present drain, the pin pass's
+timestamp price, the band ledger), the pass's step budget and the growth-limited iteration step.
+`WalkPriceInputs` carries the view's `WalkLedger` (the pass in flight, the band licences, the last price,
+the last moving step), the frame's timing, the pin pass's stamps, the measured rates, five overridable
+tunables and the adapter's per-pass fixed cost — every global the stage read in place (`cost()`, the
+calibration through `motion_pass_steps`, the completion stamp's atomic) is read by the caller now. The
+lethal-band shed returns as an event the caller logs, always on, exactly as before, and its outcome as
+the `retreat` the frame record takes. `RetreatOutcome` serializes.
+
+No stock run on this card reaches the lethal band, so the zoomtest fixture gained a fourth run, the
+minibrot under W8's recipe (`--set TDR_LETHAL_MS=30`; the inputs carry the tunable, so the replay is
+exact), and became `zoomtest.jsonl`. The coverage term requires seven of its branches (a settled pass
+priced, a pass held unpriced, a pin pass priced, the lethal shed, motion abandoning a pass, the growth
+limiter binding, an unmeasured walk). The stock source of shed decisions is the grand tour, whose five or
+six lethal-band lines a run are logcheck's KNOWN livetest allowance (a tour segment plays inside one
+`update()`, so a pass's time accumulates with no drain); the forced zoomtest run is the real loop's.
+Fixtures: motiontest 704 of 6,790, autodive 704 of 15,020, uitest 702 of 13,324, grand tour 786 of
+54,070, zoomtest 1,962 of 32,496, every one replaying exactly; trimming now keeps at most 40 decisions
+per branch (every branch a recording reaches survives), so the set is 4.3 MB where the climb's re-record
+had made it 6.6. Gates: workspace 1,492 / 0 / 11 (five pricing tests new); self-test 518/518, goldens
+31/31 on a re-run; `--motiontest` PASS ×3; `--livetest` 24/24 with 0 drifted; `--uitest` 74 pass / 1 warn
+/ 0 fail. ⚠The first self-test run failed one check, the twin-device still ("both rendering": tiles per
+device `[12, 0]`, the twin rendered none, pixels identical). Every full run before it read `[11, 1]`, and
+the same binary read `[11, 1]` five times in a row on the `worker` group and again on the full re-run:
+the check's both-devices term has always had a ONE-TILE margin, and the race tipped once. Not this change
+(the still never reaches the chunk walk), but a check one tile from flaking, worth widening. Remaining in
+`bp_chunk_tiling`: the walk's identity (the signature, the restart and its ledger rule, the SA-skip
+floor) and the dispatch (the serialized hold, the pin gate, the licence, the charge, the cursor).

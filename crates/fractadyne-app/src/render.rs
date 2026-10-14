@@ -5523,117 +5523,58 @@ impl FractadyneApp {
                 self.perf.tile_pending[vidx] = false;
             }
             let ss2 = (ss as u64).saturating_mul(ss as u64);
-            // The 256-iteration floor keeps a MEASURED progression from thrashing in slivers, but
-            // an UNMEASURED opening dispatch must honour the bootstrap bound at ANY panel size —
-            // floor × a large panel exceeds it severalfold (1445×1134 × 256 = 4.195e8 vs the 4e8
-            // bootstrap, caught by the "unmeasured budget bounds the FIRST dispatch" selftest; a
-            // 4K panel would be 5×). Until a measurement exists the plain division is the bound;
-            // the floor applies from the first measured budget onward.
-            // ⭐⭐**A WALL-AWARE FLOOR, AND IT CAN ONLY EVER GO LOWER THAN 256.**
-            //
-            // `budget_step` below is wall-derived (it divides a measured step budget by the pixel
-            // count), so the controller already sizes itself from evidence — right up until this
-            // floor overrides it. And the floor binds precisely when `budget_step` wants to go
-            // BELOW 256, i.e. exactly when the measurement is saying "this region is hostile, go
-            // smaller". A fixed ITERATION count cannot bound WALL time, because cost per iteration
-            // varies by orders of magnitude between regions.
-            //
-            // ⛔The 256 rested on a claim that has gone stale: "~256 iterations is ~70 ms even at
-            // the worst rate ever measured on this hardware" (see `chunk_band_license`). The
-            // 2026-08-22 field loss ran **1024 iterations in 1216 ms** — 1.19 ms/iteration — so 256
-            // there is **~304 ms**, not ~70, and a region only **3× more hostile than that** makes
-            // the floor ITSELF lethal (900 ms / 256 = 3.5 ms per iteration).
-            //
-            // So derive it from the worst rate actually measured for this mode (`mode_rate` is
-            // kept as a running MINIMUM, i.e. already pessimistic) and take whichever is SMALLER.
-            // ⚠`min`, deliberately: in a benign region the computed value is far above 256 and
-            // this changes nothing, so the blast radius is confined to regions whose own
-            // measurements say the old floor was too big. It can never raise the floor, never
-            // enlarge a pass, and never slow a healthy walk.
-            let floor = if self.perf.fe_budget[vidx] == 0 {
-                1
-            } else {
-                let affordable = self.perf.worst_rate_steps_per_ms(vidx).map(|rate| {
-                    // steps/ms ÷ steps-per-iteration = iterations per ms, times the target wall.
-                    let per_iter = spx.saturating_mul(ss2).max(1) as f64;
-                    ((crate::tunables::cost().tdr_budget_ms * rate) / per_iter) as u32
-                });
-                affordable.map_or(256, |a| a.clamp(1, 256))
+            // The pass's PRICING and SIZING: the pure `decide::decide_walk_price` (its notes moved
+            // with it), so a recording replays it exactly.
+            let price_in = decide::WalkPriceInputs {
+                interacting,
+                pin_frame,
+                auto_iter: self.render_cfg.auto_iter,
+                spx,
+                ss,
+                tdr_steps,
+                gpu_iter,
+                budget_measured: self.perf.fe_budget[vidx] != 0,
+                worst_rate: self.perf.worst_rate_steps_per_ms(vidx),
+                motion_rate: self.perf.motion_rate_now(vidx),
+                last_dt_ms: self.perf.last_dt_ms,
+                frame_period_ms: self.perf.frame_period_ms,
+                present_throttle: self.perf.present_throttle,
+                frame: self.perf.frame_idx,
+                pin_pass_gpu_ms: self.perf.pin_pass_gpu_ms[vs],
+                pin_pass_frame: self.perf.pin_pass_frame[vs],
+                pin_inflight: self.perf.pin_inflight[vs],
+                pin_done_at: self.perf.pin_done_at[vs].load(std::sync::atomic::Ordering::Relaxed),
+                pin_dispatch_at: self.perf.pin_dispatch_at[vs],
+                ledger: decide::WalkLedger {
+                    inflight: self.perf.chunk_inflight[vs],
+                    bands: self.perf.chunk_bands[vs],
+                    pass_dt: self.perf.chunk_pass_dt[vs],
+                    motion_step_last: self.perf.motion_step_last[vs],
+                },
+                tdr_budget_ms: crate::tunables::cost().tdr_budget_ms,
+                tdr_explicit_budget_ms: crate::tunables::cost().tdr_explicit_budget_ms,
+                tdr_lethal_ms: crate::tunables::cost().tdr_lethal_ms,
+                tdr_bootstrap_steps: crate::tunables::cost().tdr_bootstrap_steps,
+                admission: crate::tunables::cost().admission,
+                pass_fixed_ms: crate::calibration::pass_fixed_ms(),
             };
-            // ⭐…and never above what B4's admission lets one pass carry (`tdr_steps` is the
-            // admission here). The floor is the least a pass may carry and the admission the most;
-            // where they cross, the admission wins. Without this an unconfident settle on the
-            // RTX 3080 trap walked 256-iteration passes (3.9e8 steps) against an admission of
-            // 4.8e7: the pass size was admitted and the floor lifted it straight back.
-            let floor = if crate::tunables::cost().admission == 1 {
-                let per_iter = spx.saturating_mul(ss2).max(1);
-                floor.min(((tdr_steps / per_iter) as u32).max(1))
-            } else {
-                floor
-            };
-            // ---- PRICE-SERIALIZED WALKING, pricing half (design/mode2-chunking.md §12) ----
-            // The settled walk holds AT MOST ONE unpriced pass in flight. The in-flight pass
-            // accumulates every following frame interval until a frame comes back quicker than
-            // CHUNK_DRAIN_DT_MS — with one pass in flight, a quick present is PROOF the queue
-            // drained — and that sum is the pass's wall price (conservative: it includes present
-            // overhead, which is the safe direction). This is the signal a saturated queue
-            // cannot silence; the fatal sessions' timestamps were silent precisely because
-            // saturation never let them arm.
-            // A PIN is priced and serialized exactly like the settled walk (design/live-zoom-
-            // smoothing.md P-A, second round), against the smoothness target rather than the
-            // TDR one: its passes are what the viewer's cadence is made of.
-            let target_ms = if pin_frame {
-                crate::tunables::MOTION_PIN_TARGET_MS
-            } else if self.render_cfg.auto_iter {
-                crate::tunables::cost().tdr_budget_ms
-            } else {
-                crate::tunables::cost().tdr_explicit_budget_ms
-            };
-            if !interacting || pin_frame {
-                if let Some((size, band, acc, shed)) = self.perf.chunk_inflight[vs] {
-                    let acc = acc + self.perf.last_dt_ms.max(0.0);
-                    // ⭐⭐WALL-CLOCK RETREAT. Until this existed the ledger learned NOTHING about a
-                    // pass until it drained or hit the wedge backstop — and the backstop is
-                    // `target × 60`, i.e. ~24 s at a 400 ms target, long after a device would be
-                    // gone. That is the gap the 2026-08-22 field loss fell through: the release
-                    // gate below wants a QUICK PRESENT as proof the queue drained, and a queue on
-                    // its way to losing the device never produces one, so the one pass whose price
-                    // would shed the licence is exactly the pass that cannot be priced.
-                    //
-                    // Accumulated wall is a conservative LOWER BOUND on what this pass has already
-                    // cost: if `acc` has reached the lethal band the pass has *already* been that
-                    // expensive, no drain required to know it. So shed the ledger on that alone.
-                    //
-                    // ⚠SHED, DO NOT RELEASE. The next dispatch stays blocked until the genuine
-                    // drain below — "releasing the next dispatch onto a pass that is merely SLOW is
-                    // how a 10 s single got company on its way to the TDR", and that reasoning is
-                    // untouched. This only updates what the NEXT pass would be allowed to ask for.
-                    // ⚠LATCHED (`shed`) so a pass sitting in the band for many frames sheds once
-                    // rather than re-shedding every frame — the ledger is already at the floor.
-                    // Under present throttling the wall accumulator measures the
-                    // COMPOSITOR (see `present_throttle_step`): a shed on it would floor the
-                    // licences off an idle GPU — the 2026-09-04 field log's exact lines.
-                    // ⭐The decision itself is `wall_shed_now` — a pure predicate with its own
-                    // tests, so the rule that runs here and the rule under test cannot drift.
-                    let throttled =
-                        self.perf.present_throttle >= crate::render::PRESENT_THROTTLE_FRAMES;
-                    let shed = if wall_shed_now(
-                        shed,
-                        throttled,
-                        acc,
-                        crate::tunables::cost().tdr_lethal_ms,
-                    ) {
-                        chunk_band_retreat(&mut self.perf.chunk_bands[vs]);
-                        // What the shed REACHED (W3 gate 2): the next pass opens no lower than the
-                        // walk's floor, so it is smaller than this one only if the floor is.
-                        let outcome = crate::render::retreat_outcome(size as u64, floor as u64);
-                        self.perf.retreat_last[vs] = Some(outcome);
-                        self.perf.retreat_pending[vs] = self.perf.retreat_pending[vs].max(outcome.code());
+            let price = decide::decide_walk_price(&price_in);
+            self.perf.chunk_inflight[vs] = price.ledger.inflight;
+            self.perf.chunk_bands[vs] = price.ledger.bands;
+            self.perf.chunk_pass_dt[vs] = price.ledger.pass_dt;
+            self.perf.motion_step_last[vs] = price.ledger.motion_step_last;
+            if let Some(outcome) = price.retreat {
+                self.perf.retreat_last[vs] = Some(outcome);
+                self.perf.retreat_pending[vs] = self.perf.retreat_pending[vs].max(outcome.code());
+            }
+            for e in &price.events {
+                match *e {
+                    decide::WalkPriceEvent::LethalShed { size, band, acc, floor, outcome } => {
                         crate::diag::log_line(
                             "render",
                             &format!(
                                 "⚠IN-FLIGHT PASS IN THE LETHAL BAND: view={vs} size={size} band={band} acc={acc:.0}ms (band ≥{:.0}ms, no drain yet) — chunk-band licences shed{}",
-                                crate::tunables::cost().tdr_lethal_ms,
+                                price_in.tdr_lethal_ms,
                                 match outcome {
                                     crate::render::RetreatOutcome::Applied { .. } => String::new(),
                                     crate::render::RetreatOutcome::NoActuatorReachable { .. } => format!(
@@ -5642,156 +5583,23 @@ impl FractadyneApp {
                                 }
                             ),
                         );
-                        true
-                    } else {
-                        shed
-                    };
-                    // ⚠The backstop is a WEDGE escape only (a compositor that never goes
-                    // idle), far beyond any survivable pass — releasing the next dispatch onto
-                    // a pass that is merely SLOW is how a 10 s single got company on its way
-                    // to the TDR. The genuine release is the quick frame.
-                    if throttled && acc > target_ms * 6.0 {
-                        // Present-throttled: the quick present this gate waits for CANNOT
-                        // arrive, and `acc` is present-wait, not cost. Release on a short
-                        // backstop WITHOUT feeding either ledger — a poisoned price would
-                        // floor the very licences the shed above is protected from. Still
-                        // serialized-in-effect: at most one pass per backstop interval, so
-                        // passes cannot stack toward a TDR while throttled.
-                        self.perf.chunk_inflight[vs] = None;
-                    } else if (if pin_frame {
-                        // A PIN pass is PRICED by its own GPU timestamp reading (a few frames;
-                        // bounded, then the completion stamp stands in) — never by a quick
-                        // present: the swap chain hides a pass's cost for two frames, so the
-                        // quick interval that follows a 100 ms pass proves nothing about it.
-                        // Dispatch is gated separately, on completions (`Perf::pin_inflight`,
-                        // `PIN_INFLIGHT_MAX`), and once its completion is seen the completion
-                        // stamp prices it if no reading has (`pin_pass_priceable`).
-                        pin_pass_priceable(
-                            self.perf.pin_pass_gpu_ms[vs],
-                            self.perf.frame_idx.saturating_sub(self.perf.pin_pass_frame[vs]),
-                            self.perf.pin_inflight[vs],
-                        )
-                    } else {
-                        self.perf.last_dt_ms < crate::tunables::CHUNK_DRAIN_DT_MS
-                    }) || acc > target_ms * 60.0
-                    {
-                        // Drained (or the absolute backstop, so a machine whose presents never
-                        // come back quick cannot wedge the walk): price the pass, feed both
-                        // ledgers, release the next dispatch. A pin's price is its GPU timestamp
-                        // reading when it landed; otherwise the wall time from dispatch to the
-                        // completion stamp (`Perf::pin_done_at`), or the frame-accumulated `acc`,
-                        // each less the pipeline latency every pass pays regardless — those two
-                        // are quantized to the queue's poll cadence and stand in only when the
-                        // reading never came.
-                        let price = if pin_frame {
-                            let gpu = self.perf.pin_pass_gpu_ms[vs];
-                            if gpu >= 0.0 {
-                                gpu
-                            } else {
-                                let done = self.perf.pin_done_at[vs].load(std::sync::atomic::Ordering::Relaxed);
-                                let sent = self.perf.pin_dispatch_at[vs];
-                                let wall = if done > sent && sent > 0 { (done - sent) as f64 / 1000.0 } else { acc };
-                                // Real frame periods (`Perf::frame_period_ms`): a completion is
-                                // seen at the poll, which comes once a frame INCLUDING the cap's
-                                // sleep. `frame_ms` (sleep excluded, ~3 ms at a capped 60 Hz)
-                                // left ~27 ms of pipeline latency in every price, and without GPU
-                                // timestamps — where this stamp is the only price — every pin pass
-                                // read ~25 ms against a 20 ms target and its licence halved.
-                                (wall - crate::tunables::PIN_PASS_FRAMES as f64 * self.perf.frame_period_ms)
-                                    .max(0.0)
-                            }
-                        } else {
-                            acc
-                        };
-                        self.perf.chunk_pass_dt[vs] = price;
-                        chunk_band_update_with_lane(
-                            &mut self.perf.chunk_bands[vs],
-                            band as usize,
-                            size,
-                            price,
-                            target_ms,
-                            if pin_frame { pin_fast_lane(price, target_ms) } else { 2 },
-                        );
-                        if pin_frame && crate::diag::trace_on("tile") {
+                    }
+                    decide::WalkPriceEvent::PinPriced { band, size, price: p, acc } => {
+                        if crate::diag::trace_on("tile") {
                             crate::diag::trace(
                                 "tile",
                                 format!(
-                                    "pin-price v={vs} f={} band={band} size={size} price={price:.1}ms acc={acc:.1} licence={}",
+                                    "pin-price v={vs} f={} band={band} size={size} price={p:.1}ms acc={acc:.1} licence={}",
                                     self.perf.frame_idx,
                                     self.perf.chunk_bands[vs][(band as usize).min(crate::tunables::CHUNK_BANDS - 1)]
                                 ),
                             );
                         }
-                        self.perf.chunk_inflight[vs] = None;
-                    } else {
-                        self.perf.chunk_inflight[vs] = Some((size, band, acc, shed));
                     }
                 }
-            } else {
-                // Motion abandons the walk (the cursor resets below); a stale in-flight record
-                // must not price itself against unrelated frames after the next settle.
-                self.perf.chunk_inflight[vs] = None;
             }
-            // Wall-clock pass pricing: a settled pass is the budget scaled by what the previous
-            // pass actually cost. MOTION and PIN passes are paced for SMOOTHNESS instead
-            // (design/live-zoom-smoothing.md P-A): `tdr_steps` targets TDR safety (400 ms real),
-            // and sizing a moving pass to it was the 200–445 ms refresh stall after every jump and
-            // mode switch. `motion_pass_steps` sizes the pass from the mode's measured
-            // steps-per-ms to `MOTION_PASS_MS`, with the rate-derived bootstrap as the opening
-            // guess and the TDR budget as the ceiling — a pin's first pass is no longer "the
-            // budget's size".
-            let pass_steps = if interacting || pin_frame {
-                let nominal = motion_pass_steps(
-                    self.perf.motion_rate_now(vidx),
-                    crate::tunables::MOTION_PASS_MS,
-                    tdr_steps,
-                    crate::tunables::cost().tdr_bootstrap_steps,
-                );
-                if pin_frame {
-                    // The nominal rate is one model of cost; the wall price of the previous pass
-                    // is the other, and where the GPU is chain-bound (fast-escape regions) only
-                    // the wall price is right. Both bound the pass.
-                    (nominal as f64 * chunk_step_factor(self.perf.chunk_pass_dt[vs], target_ms))
-                        as u64
-                } else {
-                    nominal
-                }
-            } else {
-                (tdr_steps as f64 * chunk_step_factor(self.perf.chunk_pass_dt[vs], target_ms))
-                    as u64
-            };
-            // Per-frame iteration step that keeps this frame's dispatch inside the budget.
-            // ⚠`tdr_steps` — ONE dispatch budget — NOT `tdr_allowed`. The allowance multiplies
-            // the budget by `max_tiles` on a settled tiling-eligible frame because TILES spend it
-            // as many bounded dispatches; a chunk pass is ONE submission, and sizing it from the
-            // allowance dispatched single passes worth exactly 16 budgets — field device loss
-            // 2026-08-19 (crash-1787158916-0, RTX 3080, minibrot interior at an explicit 4M,
-            // settled with the budget still CLIMBING so the allowance was pinned at
-            // TDR_MAX_TILES): 9.600e11-step passes against a 6.000e10 budget, 1136 ms and 912 ms
-            // lethal-band readings, and the emergency retreat could not help because the next
-            // pass was again 16× the retreated budget. `bla_skip` collapsing to 0 at the interior
-            // made nominal cost real cost at exactly that moment. Pinned by the "a settled
-            // chunked pass stays inside ONE dispatch budget" selftest.
-            let budget_step = ((pass_steps / spx.saturating_mul(ss2).max(1)) as u32)
-                .clamp(floor, gpu_iter.max(floor));
-            // GROWTH LIMITER (motion / pin passes only): at most double the previous pass. The
-            // rate estimate above lags its dispatches by 2–3 frames, so a cheap sliver can prime
-            // a pass 20× its size before the reading that would have said otherwise lands —
-            // measured as a 257 ms pass right after a 256-iteration one. Doubling meets a cost
-            // cliff with one ~2× overshoot, and the wall-clock cut halves the memory next frame.
-            let budget_step = if interacting || pin_frame {
-                let last = self.perf.motion_step_last[vs];
-                let lim = if last == 0 {
-                    crate::tunables::MOTION_STEP_OPEN
-                } else {
-                    last.saturating_mul(2)
-                };
-                let s = budget_step.min(lim.max(floor));
-                self.perf.motion_step_last[vs] = s;
-                s
-            } else {
-                budget_step
-            };
+            self.record_decision("walk-price", vs, &price_in, &price);
+            let (floor, pass_steps, budget_step) = (price.floor, price.pass_steps, price.budget_step);
             // View signature: anything that shapes the render restarts the progression.
             // ⚠The REFERENCE LENGTH is part of it. `orbit_len` feeds both the per-pass BLA table
             // (mode 2 rebuilds it every pass) and the `ref_n + 1 >= orbit_len` rebase trigger, so a

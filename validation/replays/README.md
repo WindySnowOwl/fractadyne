@@ -16,7 +16,9 @@ cap, the AIMD, the visible-frame ladder), `present` (the present gate: the held 
 settled-cost probe, the colour-pass filter) and `iter` (the adaptive live-iteration climb: the boost's
 seed from the reference, the raises, the plateau, the appetite re-pick and the exhausted revert, the
 verdict, and the frame's iteration ask) and `probe` (the budget-climb probe: whether a settled view whose
-work budget has not converged, with nothing else dispatching, forces a re-measure).
+work budget has not converged, with nothing else dispatching, forces a re-measure) and `walk-price` (the
+chunk walk's pricing and sizing: the wall-aware floor, the in-flight pass's price — the lethal-band shed,
+the drain, the band ledger — the pass's step budget and the growth-limited iteration step).
 
 §7.5's companion red-check: set `PRICE_REPRESENTATIVE_FRAC` to 0.5 in a scratch build (never blessed,
 thrown away) and the gate goes red on 35 probe decisions of `uitest.jsonl`, at the default home view.
@@ -46,12 +48,12 @@ become a regression test without anyone transcribing numbers.
 | `autodive-2p800.jsonl` | the screen gate's fixture: `--autodive` from `scripts/dive-capture/dive-2p800.kfr` with `session-seed.toml`, 10,000 iterations |
 | `uitest.jsonl` | `--uitest`: every UI screen, and the live bands (direct 1e2, df32 1e6 and 1e12, floatexp 1e30 on the seahorse) settled under auto-iterations |
 | `livetest-grand-tour.jsonl` | `--livetest tours/grand-tour.toml --size 480x270`: the scripted tour's glides and holds |
-| `zoomtest-climb.jsonl` | three `--zoomtest` runs (a header each) under AUTO-iterations, from `locations/`: a 12-octave glide into the 9.3e78 black-minibrot repro and 30 s there (the boost seeded from the reference, raises, a flat run that motion ends); a glide into an all-interior cardioid view (the appetite re-pick, then exhausted); the home view, a third of it interior (the plateau) |
+| `zoomtest.jsonl` | four `--zoomtest` runs (a header each) from `locations/`. Three under AUTO-iterations: a 12-octave glide into the 9.3e78 black-minibrot repro and 30 s there (the boost seeded from the reference, raises, a flat run that motion ends); a glide into an all-interior cardioid view (the appetite re-pick, then exhausted); the home view, a third of it interior (the plateau). And the minibrot under `--set TDR_LETHAL_MS=30` (W8's recipe), for the lethal-band shed no stock run on this card reaches |
 
 ⚠The iteration climb never raises in the other four: three run under an EXPLICIT iteration count (the
 motiontest's 1M ask, the autodive's 10,000, the tour's per-keyframe budgets), and the uitest's
 auto-iteration bands resolve at the depth cap. No seed, no raise, no plateau. The climb's decisions come
-from `zoomtest-climb.jsonl`, and the `.fdn` files in `locations/` are its sources (the minibrot file is
+from `zoomtest.jsonl`, and the `.fdn` files in `locations/` are its sources (the minibrot file is
 `validation/minibrot-auto-iter-9.3e78.fdn` with `auto_iter=1`).
 
 A decision must read only its inputs: the first `--uitest` recording replayed with one mismatch, because

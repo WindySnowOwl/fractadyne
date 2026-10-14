@@ -11,7 +11,7 @@
 # should reach it rather than sitting at the depth cap. Verify live under
 # FRACTADYNE_TRACE=gpu (look for "adaptive iter: seeded boost …").
 #
-# REPLAY FIXTURE SOURCE (validation/replays/zoomtest-climb.jsonl): this copy has auto_iter=1, so the
+# REPLAY FIXTURE SOURCE (validation/replays/zoomtest.jsonl): this copy has auto_iter=1, so the
 # live iteration climb runs here; its checksum line was dropped with the edit.
 # ----- BEGIN FRACTADYNE VIEW -----
 app=Fractadyne
