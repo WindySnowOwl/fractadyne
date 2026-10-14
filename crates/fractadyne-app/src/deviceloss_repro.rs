@@ -551,7 +551,7 @@ impl FractadyneApp {
     fn live_dispatch(&mut self, iter: u32, budget: Option<u64>) -> Option<LiveDispatch> {
         self.perf.tile_state = [None, None];
         self.perf.tile_pending = [false, false];
-        self.perf.chunk_sig = [(0, 0, [0, 0], 0); 2];
+        self.perf.chunk_sig = [crate::render::WalkSig::NONE; 2];
         self.perf.chunk_cursor = [0, 0];
         self.perf.chunk_idx = [0, 0];
         self.perf.chunk_inflight = [None, None];

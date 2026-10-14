@@ -1522,11 +1522,35 @@ struct Perf {
     chunk_fe_ok: bool,
     chunk_cursor: [u32; 2],
     chunk_idx: [u32; 2],
-    chunk_sig: [(u64, u32, [u32; 2], u32); 2],
+    chunk_sig: [render::WalkSig; 2],
     /// `chunk_sig` without the supersampling jitter: the walk's VIEW. A new sample changes only the
     /// jitter, so it restarts the walk (`chunk_sig`) but keeps the band ledger, which belongs to the
     /// orbit's iteration bands, not to a sub-pixel position.
-    chunk_walk_view: [(u64, u32, [u32; 2], u32); 2],
+    chunk_walk_view: [render::WalkSig; 2],
+    /// Where each view's current walk ends (`walk_end`, the capped ask), for the next restart to
+    /// judge whether it threw progress away (`frame_plan::walk_restart_discards`); 0 once a pin's
+    /// walk is adopted (it was used, not lost).
+    chunk_walk_end: [u32; 2],
+    /// W4's A4: walks restarted with part of their progress thrown away — per view since start,
+    /// and PENDING for the next frame record (`walk_restarted`), cleared when it is written.
+    walk_restarts: [u64; 2],
+    walk_restart_pending: [bool; 2],
+    /// The worst bound a held frame's magnification took since the last frame record
+    /// (`frame_plan::hold_floor`; record `hold_floor`, U39), cleared when it is written.
+    hold_floor_pending: [u8; 2],
+    /// U39: each view's magnification (log2) at its last built frame (NaN before the first), that
+    /// frame's step (|change|), the frame it was taken on, and whether the view's HELD frame now
+    /// stands across a jump (`frame_plan::hold_jump_next`): set by a frame that jumped in
+    /// (`frame_plan::is_jump_in`), cleared by a latch.
+    hold_l2_last: [f64; 2],
+    hold_step_last: [f64; 2],
+    hold_seen_frame: [u64; 2],
+    hold_jump: [bool; 2],
+    /// Frames since start by the bound their held frame's magnification took (indexed by
+    /// `frame_plan::hold_floor` code; 0 = no hold transform), and the frames the jump floor BOUND
+    /// while the view was moving — U39's failure, a clamped transform sliding against the view.
+    hold_floor_frames: [[u64; 5]; 2],
+    hold_bound_moving: [u64; 2],
     /// The walk's NUMBER: +1 at every restart of the walk (`bp_chunk_tiling`, and a pin's start or
     /// discard). A counted pass carries it (`MandelbrotParams::chunk_walk`), and its reading is
     /// believed only for the same number — a new walk starts with every pixel running.
@@ -1876,6 +1900,13 @@ struct Perf {
     /// against. Only complete walks: a moving preview walks `[0, step]` and would report only the
     /// escapes it reached, which is exactly the bias to keep out of a quantile. Held while moving.
     esc_hist: [Option<fractadyne_gpu::EscHist>; 2],
+    /// The top of that same complete walk's escapes (smooth iterations), per view: what a moving
+    /// frame is sized to reach under `MOTION_NEED_SOURCE=1` (U24) — a property of the view, set
+    /// only by a walk that reached its ask, never by the moving frame being sized.
+    esc_top: [Option<f32>; 2],
+    /// The iteration ask each view was last planned at (on a frame that iterates), persisting across
+    /// frames: what a content reading's cursor must reach to describe a complete walk.
+    planned_ask: [u32; 2],
     /// A moving frame's sizing this frame, per view: `[need, ladder target, pre-ladder scale]` —
     /// how far its walk had to reach (`render::motion_need`), the scale `visible_res_target` asked
     /// for, and `res_scale` before the ladder's rung was applied. Zero when the frame was not sized
@@ -1903,13 +1934,17 @@ struct Perf {
     /// WORK_BUDGET `res_scale` sizes moving frames from the *no-BLA-skip* cost and over-shrinks them
     /// where the BLA skips; this measured scale grows toward native while frames stay near vsync and
     /// backs off when they run long. Only deep perturbation motion reads it.
-    motion_res: f64,
+    ///
+    /// ⭐PER VIEW (U56). It was one scale stepped only by view 0's frames, so the dual view's second
+    /// panel moved at a resolution decided by the first panel's frames — and while only the second
+    /// panel moved (the Julia panel under a moving cursor), nothing stepped it at all.
+    motion_res: [f64; 2],
     /// Has `motion_res` been stepped on a REAL frame's own interval yet (in the current arithmetic
     /// mode)? Until it has, an unpinned refresh is sized by the rate model's opening guess; once
     /// it has, that guess is retired and this measured loop owns the size. A model that keeps
     /// bounding a measurement after the measurement exists is the bug this flag ends — see the
-    /// `rate_res_cap` block in `render.rs`.
-    motion_res_measured: bool,
+    /// `rate_res_cap` block in `render.rs`. Per view, as `motion_res` is.
+    motion_res_measured: [bool; 2],
     /// Resolution cap that keeps a MOVING frame able to commit a pixel at all, per view.
     ///
     /// ⭐⭐**BLANK IS NOT CHEAP, IT IS FREE — so every controller sized by frame TIME reads a blank
@@ -2265,8 +2300,18 @@ impl Default for Perf {
             chunk_fe_ok: false,
             chunk_cursor: [0, 0],
             chunk_idx: [0, 0],
-            chunk_sig: [(0, 0, [0, 0], 0), (0, 0, [0, 0], 0)],
-            chunk_walk_view: [(0, 0, [0, 0], 0), (0, 0, [0, 0], 0)],
+            chunk_sig: [render::WalkSig::NONE; 2],
+            chunk_walk_view: [render::WalkSig::NONE; 2],
+            chunk_walk_end: [0, 0],
+            walk_restarts: [0, 0],
+            walk_restart_pending: [false, false],
+            hold_floor_pending: [0, 0],
+            hold_l2_last: [f64::NAN; 2],
+            hold_step_last: [f64::NAN; 2],
+            hold_seen_frame: [u64::MAX; 2],
+            hold_jump: [false, false],
+            hold_floor_frames: [[0; 5]; 2],
+            hold_bound_moving: [0, 0],
             chunk_walk_epoch: [0, 0],
             chunk_running: [None, None],
             chunk_count_walk: [0, 0],
@@ -2355,14 +2400,16 @@ impl Default for Perf {
             norm_grad: [None, None],
             norm_hist: [None, None],
             esc_hist: [None, None],
+            esc_top: [None, None],
+            planned_ask: [0, 0],
             vis_sizing: [[0.0; 3]; 2],
             reading_pool: [render::ReadingPool::default(); 2],
             norm_shown: [None, None],
             chunk_governed: [false, false],
-            motion_res: 0.6,
+            motion_res: [0.6, 0.6],
             visible_res: [1.0, 1.0],
             motion_pass_steps_last: [0, 0],
-            motion_res_measured: false,
+            motion_res_measured: [false, false],
             rec: [Default::default(), Default::default()],
             rec_us: 0.0,
             accum_begin_line: Default::default(),
@@ -8476,6 +8523,7 @@ impl FractadyneApp {
         self.perf.iter_exhausted = [false, false];
         self.perf.norm_range = [None, None];
         self.perf.esc_hist = [None, None];
+        self.perf.esc_top = [None, None];
         self.perf.reading_pool = [render::ReadingPool::default(); 2];
         self.perf.norm_sig = [0, 0];
         self.perf.norm_locked = [false, false];
@@ -13809,7 +13857,7 @@ impl FractadyneApp {
                 None => "refining (arming)".to_string(),
             }
         } else if p.chunk_pending[0] {
-            let ask = p.chunk_sig[0].1.max(1);
+            let ask = p.chunk_sig[0].ask().max(1);
             let pct = 100.0 * p.chunk_cursor[0].min(ask) as f64 / ask as f64;
             format!("refining {pct:.1}%")
         } else if self.recompute_rx[0].is_some() {
@@ -15020,9 +15068,11 @@ impl FractadyneApp {
             r.pin_escapes = p.pin_escapes[v];
             r.retreat = p.retreat_pending[v];
             r.probe_ms = if v == 0 { p.probe_ms as f32 } else { -1.0 };
+            r.walk_restarted = p.walk_restart_pending[v];
+            r.hold_floor = p.hold_floor_pending[v];
             r.present_throttle = p.present_throttle;
             r.visible_res = p.visible_res[v];
-            r.motion_res = p.motion_res;
+            r.motion_res = p.motion_res[v];
             r.vis_pass = p.motion_pass_steps_last[v];
             [r.vis_need, r.vis_target, r.vis_pre_scale] = p.vis_sizing[v];
             r.chunk_cursor = p.chunk_cursor[v];
@@ -15069,9 +15119,20 @@ impl FractadyneApp {
             r.rec_us = p.rec_us;
             diag::frame_record::record(r);
         }
+        // U39's session counts (`--motiontest` A5/A6): frames by the held frame's floor, and the
+        // frames it was shown at the jump floor's clamped scale while the view was MOVING.
+        for v in 0..2 {
+            let code = self.perf.hold_floor_pending[v].min(4) as usize;
+            self.perf.hold_floor_frames[v][code] = self.perf.hold_floor_frames[v][code].wrapping_add(1);
+            if code == render::frame_plan::hold_floor::JUMP_BOUND as usize && self.perf.rec[v].interacting {
+                self.perf.hold_bound_moving[v] = self.perf.hold_bound_moving[v].wrapping_add(1);
+            }
+        }
         self.perf.rec = Default::default();
         // The pending per-frame events are this record's; the next one starts empty.
         self.perf.retreat_pending = [0, 0];
+        self.perf.walk_restart_pending = [false, false];
+        self.perf.hold_floor_pending = [0, 0];
         self.perf.probe_ms = -1.0;
         self.perf.rec_us = t0.elapsed().as_secs_f32() * 1e6;
     }

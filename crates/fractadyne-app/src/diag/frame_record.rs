@@ -52,7 +52,7 @@ use std::time::Duration;
 
 /// Bumped whenever a field is added, removed, retyped or reordered. Every record and every file
 /// header carries it, and a reader must refuse a schema it does not know rather than guess.
-pub(crate) const SCHEMA: u16 = 9;
+pub(crate) const SCHEMA: u16 = 10;
 /// Records the in-memory ring (and `frames.bin`) holds. At the 1–5 fps of the failing cadence
 /// that is 14–68 minutes of one view — the ring lengthens in TIME exactly as the app slows down,
 /// the opposite of the 24-entry decision ring it supersedes.
@@ -389,6 +389,21 @@ frame_record! {
     /// begin is rate-limited (it once made up ~65% of a crashing session's log, restarting ~31
     /// times a second); this count is not, so a flapping run stays visible in the record.
     accum_begins: u8,
+    /// What this frame IS (schema 10; `render::FrameKind`, W4), decided once from what it handed
+    /// the GPU: 1 placeholder, 2 reproject, 3 pin-walk, 4 motion, 5 hold, 6 settled-walk, 7 tile,
+    /// 8 accum, 9 settled. 0 = the view was not built this frame.
+    frame_kind: u8,
+    /// The walk this frame's pass belongs to (`WalkSig::word`): equal while the walk resumes, a new
+    /// value when it restarts. 0 when the frame is not a walk pass.
+    walk_sig: u64,
+    /// A walk restarted this frame and threw part of its progress away (`frame_plan::
+    /// walk_restart_discards`) — the iteration-starvation shape `--motiontest` A4 counts.
+    walk_restarted: bool,
+    /// The bound the held frame's magnification took this frame (`frame_plan::hold_floor`, U39):
+    /// 0 none, 1 the dive floor, 2 the jump floor, 3 the jump floor BINDING (the held frame shown
+    /// at less magnification than the view's), 4 the dive floor with the held frame magnified past
+    /// the jump floor (true scale, a large flat patch).
+    hold_floor: u8,
 
     // ---- the signals
     /// The interval that ENDED at this frame's start, and this frame's own `update` body. The

@@ -7046,7 +7046,7 @@ impl FractadyneApp {
                 // Aux colorings are out of chunk scope by design; pin a non-aux method so the case
                 // exercises the path regardless of what the loaded session left selected.
                 self.coloring.color_method = crate::ColorMethod::Smooth;
-                self.perf.chunk_sig = [(0, 0, [0, 0], 0); 2];
+                self.perf.chunk_sig = [crate::render::WalkSig::NONE; 2];
                 self.perf.chunk_cursor = [0, 0];
                 self.perf.chunk_bands = [[0; crate::tunables::CHUNK_BANDS], [0; crate::tunables::CHUNK_BANDS]];
                 self.perf.chunk_inflight = [None, None];
@@ -7107,7 +7107,7 @@ impl FractadyneApp {
                 // interior made nominal cost real cost at exactly the wrong moment — the regime
                 // iteration chunking exists for, met with a 16× dispatch.
                 {
-                    self.perf.chunk_sig[0] = (0, 0, [0, 0], 0);
+                    self.perf.chunk_sig[0] = crate::render::WalkSig::NONE;
                     self.perf.chunk_cursor = [0, 0];
                     self.perf.chunk_idx = [0, 0];
                     self.perf.tile_state = [None, None];
@@ -7192,7 +7192,7 @@ impl FractadyneApp {
                     self.perf.chunk_ok = true;
                     self.perf.chunk_fe_ok = true;
                     self.coloring.color_method = crate::ColorMethod::Smooth;
-                    self.perf.chunk_sig = [(0, 0, [0, 0], 0); 2];
+                    self.perf.chunk_sig = [crate::render::WalkSig::NONE; 2];
                     self.perf.chunk_cursor = [0, 0];
                     self.perf.chunk_idx = [0, 0];
                     self.perf.chunk_inflight = [None, None];

@@ -19,6 +19,25 @@
 //!   ever-larger-blocks bug) fails here.
 //! - **A3 (display honesty)**: `dirty_shown == 0` — no frame displayed the live texture while it
 //!   diverged from the frozen bookkeeping during interaction.
+//! - **A4 (walk restarts)**: walks restarted with part of their progress thrown away
+//!   (`Perf::walk_restarts`, the frame record's `walk_restarted`). The iteration-starvation shape: a
+//!   controller that re-chose the resolution every few frames restarted the walk every few frames,
+//!   and 36% of a dive went blank while every per-pass metric improved. RED past
+//!   [`MAX_DIVE_RESTARTS`] in the DIVE (design/live-render-robustness.md §7.4; 3–4 measured on the
+//!   RTX 3080, 2026-10-13). The Home glide is reported, not gated: at 1M iterations its pins are
+//!   outrun by the glide (~6 frames each, 30–36 per glide) — abandons, not a re-chosen walk.
+//!   Explanatory: the screen is the verdict on a motion fix, never this count alone.
+//! - **A5 (a jump keeps the jump floor, U39)**: first, at depth, a 100× click-to-zoom from the
+//!   settled view (the real actuator, at the panel's centre), watched for [`CLICK_S`] and then
+//!   clicked back out by the same factor before the motion begins. Until a frame at the new view is
+//!   latched the display holds the old frame 6.64 octaves magnified, and that is what the jump floor
+//!   bounds (`HELD_JUMP_MAX_OCT`: the 2026-09-18 "goes black" report was that frame unbounded, an
+//!   11-pixel patch). RED if any held frame in the click window took the DIVE floor past 8× — the
+//!   jump read as motion. Reported as not reached when no frame was held across the click.
+//! - **A6 (no clamp in motion, U39)**: no frame of the dive or the Home glide showed its held frame
+//!   at the jump floor's clamped scale (`Perf::hold_bound_moving`). Before U39 every moving frame
+//!   that was not a Space glide took the jump floor, the Home glide included, and it bound on 7
+//!   frames of one baseline run of three.
 //! - **Anti-vacuity**: the run FAILS unless it produced interacting chunk-eligible frames — a
 //!   harness that never reached the regime proves nothing (the `--autodive 22` lesson: it cited
 //!   the mode-2 crash while measuring 0 mode-2 frames).
@@ -47,12 +66,16 @@ const WAIT_REF_S: f64 = 180.0;
 const DIVE_S: f64 = 6.0;
 const HOME_S: f64 = 90.0;
 const SETTLE_S: f64 = 5.0;
+/// How long A5 watches after the click.
+const CLICK_S: f64 = 4.0;
 /// Whole-run hard deadline, enforced by a watchdog THREAD (the `--autodive` lesson: every in-frame
 /// check needs frames to still be delivered, which is exactly not the case that needs bounding).
 const DEADLINE_S: f64 = 360.0;
 /// A run whose motion phases produced fewer interacting chunk-eligible frames than this tested
 /// nothing and fails regardless of the assertion counters.
 const MIN_MOTION_FRAMES: u64 = 100;
+/// A4's line for the dive phase (design §7.4: "more than 12 restarts per dive").
+const MAX_DIVE_RESTARTS: u64 = 12;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Phase {
@@ -61,6 +84,7 @@ enum Phase {
     Dive,
     Home,
     Settle,
+    Click,
 }
 
 /// Counter snapshot taken when the motion window opens, so the verdict reads deltas over exactly
@@ -72,6 +96,8 @@ struct Base {
     worker: u64,
     motion_frames: u64,
     dirty: u64,
+    restarts: u64,
+    hold_moving: u64,
 }
 
 pub(crate) struct MotionTest {
@@ -80,6 +106,14 @@ pub(crate) struct MotionTest {
     phase_t0: Instant,
     frames: u64,
     base: Base,
+    /// `Perf::walk_restarts[0]` when the Home glide began (A4 splits the dive from the glide).
+    restarts_at_home: u64,
+    /// The motion phases' failures, carried past the click to the one verdict.
+    fails: Vec<String>,
+    /// `Perf::hold_floor_frames[0]` when the click went in (A5 reads the click window's deltas).
+    click_base: [u64; 5],
+    /// A5's click has been made (the second `WaitRef` leads to the dive).
+    clicked: bool,
     /// Cleared by the verdict paths so the watchdog thread stands down.
     done: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
@@ -115,6 +149,10 @@ impl MotionTest {
             phase_t0: Instant::now(),
             frames: 0,
             base: Base::default(),
+            restarts_at_home: 0,
+            fails: Vec::new(),
+            click_base: [0; 5],
+            clicked: false,
             done,
         }
     }
@@ -166,14 +204,27 @@ impl FractadyneApp {
                     && self.recompute_rx[0].is_none()
                     && rc.frozen_center.is_some()
                     && mt.frames > 30;
-                if ready {
+                if ready && !mt.clicked {
+                    // A5 first, at depth: a 100× click from the settled deep view, through the real
+                    // actuator. (After the Home glide the view is at 1×, in direct mode, where
+                    // nothing is ever held.)
+                    mt.clicked = true;
+                    mt.click_base = self.perf.hold_floor_frames[0];
+                    self.render_cfg.click_zoom_factor = 100.0;
+                    let (px, py) = (self.viewport.width_px * 0.5, self.viewport.height_px * 0.5);
+                    self.click_zoom_at(px, py, false, now);
+                    advance(&mut mt, Phase::Click);
+                } else if ready {
                     mt.base = Base {
                         partial: self.perf.adopt_partial[0],
                         complete: self.perf.adopt_complete[0],
                         worker: self.perf.live_adopted_total[0],
                         motion_frames: self.perf.chunk_motion_frames[0],
                         dirty: self.perf.dirty_shown[0],
+                        restarts: self.perf.walk_restarts[0],
+                        hold_moving: self.perf.hold_bound_moving[0],
                     };
+                    let rc = &self.ref_cache[0];
                     crate::diag::log_line(
                         "motiontest",
                         &format!(
@@ -184,6 +235,44 @@ impl FractadyneApp {
                     advance(&mut mt, Phase::Dive);
                 } else if in_phase > WAIT_REF_S {
                     self.motiontest_verdict(mt, false, "boot never completed: no full reference");
+                }
+            }
+            Phase::Click => {
+                if in_phase > CLICK_S {
+                    use crate::render::frame_plan::hold_floor;
+                    let d = |code: u8| {
+                        self.perf.hold_floor_frames[0][code as usize]
+                            .wrapping_sub(mt.click_base[code as usize])
+                    };
+                    let (bound, deep, held) = (
+                        d(hold_floor::JUMP_BOUND),
+                        d(hold_floor::DIVE_DEEP),
+                        d(hold_floor::DIVE) + d(hold_floor::JUMP) + d(hold_floor::JUMP_BOUND) + d(hold_floor::DIVE_DEEP),
+                    );
+                    let a5 = if deep > 0 {
+                        "RED"
+                    } else if bound > 0 {
+                        "held at the jump floor"
+                    } else {
+                        "not reached (no frame held across the click)"
+                    };
+                    eprintln!(
+                        "--motiontest: A5 100x click: {held} held frame(s), {bound} at the jump floor binding, {deep} at the dive floor past 8x — {a5}"
+                    );
+                    crate::diag::log_line(
+                        "motiontest",
+                        &format!("A5 click: held={held} jump-bound={bound} dive-deep={deep} ({a5})"),
+                    );
+                    if deep > 0 {
+                        mt.fails.push(format!(
+                            "A5: {deep} frame(s) after a 100x click held the old frame at the DIVE floor past 8x — the jump was read as motion (the 11-pixel patch)"
+                        ));
+                    }
+                    // Back out by the same factor at the centre: the view the motion phases were
+                    // calibrated at, without dropping the references (an undo would).
+                    let (px, py) = (self.viewport.width_px * 0.5, self.viewport.height_px * 0.5);
+                    self.click_zoom_at(px, py, true, now);
+                    advance(&mut mt, Phase::WaitRef);
                 }
             }
             Phase::Dive => {
@@ -197,6 +286,7 @@ impl FractadyneApp {
                     // Straight into the Home glide with no settle gap — the glide stamps
                     // `settle_t` every frame, so interaction is continuous across the seam.
                     self.zoom_home(now);
+                    mt.restarts_at_home = self.perf.walk_restarts[0];
                     advance(&mut mt, Phase::Home);
                 }
             }
@@ -216,6 +306,8 @@ impl FractadyneApp {
                     let motion =
                         self.perf.chunk_motion_frames[0].wrapping_sub(b.motion_frames);
                     let dirty = self.perf.dirty_shown[0].wrapping_sub(b.dirty);
+                    let dive_restarts = mt.restarts_at_home.wrapping_sub(b.restarts);
+                    let home_restarts = self.perf.walk_restarts[0].wrapping_sub(mt.restarts_at_home);
                     eprintln!();
                     eprintln!(
                         "--motiontest: frames={} motion-chunk-frames={} (chunk_ok={} chunk_fe_ok={})",
@@ -226,7 +318,15 @@ impl FractadyneApp {
                          (session totals: converged={} blank-walks={})",
                         self.perf.adopt_converged[0], self.perf.blank_walks_total[0]
                     );
-                    let mut fails: Vec<String> = Vec::new();
+                    eprintln!(
+                        "--motiontest: A4 walk restarts (progress thrown away): dive={dive_restarts} (RED past {MAX_DIVE_RESTARTS}) home={home_restarts} (reported)"
+                    );
+                    crate::diag::log_line(
+                        "motiontest",
+                        &format!("A4 walk restarts: dive={dive_restarts} home={home_restarts}"),
+                    );
+                    // A5's failure, if any, came from the click before the motion.
+                    let mut fails = std::mem::take(&mut mt.fails);
                     if motion < MIN_MOTION_FRAMES {
                         fails.push(format!(
                             "VACUOUS: only {motion} interacting chunk-eligible frames (need >= {MIN_MOTION_FRAMES}) — the regime was not reached"
@@ -245,6 +345,18 @@ impl FractadyneApp {
                     if dirty != 0 {
                         fails.push(format!(
                             "A3: {dirty} frame(s) displayed the live texture while it diverged from the frozen bookkeeping"
+                        ));
+                    }
+                    if dive_restarts > MAX_DIVE_RESTARTS {
+                        fails.push(format!(
+                            "A4: {dive_restarts} walks restarted with progress thrown away during the dive (more than {MAX_DIVE_RESTARTS}: the iteration-starvation shape)"
+                        ));
+                    }
+                    let hold_moving = self.perf.hold_bound_moving[0].wrapping_sub(b.hold_moving);
+                    eprintln!("--motiontest: A6 moving frames shown at the jump floor's clamped scale: {hold_moving}");
+                    if hold_moving != 0 {
+                        fails.push(format!(
+                            "A6: {hold_moving} moving frame(s) showed the held frame at the jump floor's clamped scale (U39: it slides against the view)"
                         ));
                     }
                     let pass = fails.is_empty();
