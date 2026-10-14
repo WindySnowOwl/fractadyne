@@ -8,7 +8,12 @@ inputs and compared with the recorded one, field by field. It runs on the CPU al
 
 A line carries its complete inputs, so any subset of a recording replays on its own; the fixtures are
 trimmed recordings. Anti-vacuity: every file holds at least 200 decisions, some of them of a moving
-frame (`REPLAY_MIN_DECISIONS`).
+frame (`REPLAY_MIN_DECISIONS`), and across the set every branch of every lifted decision is replayed
+at least once.
+
+Lifted so far: `moving` (the moving frame's scale: the work budget's bound, the rate-aware refresh
+cap, the AIMD, the visible-frame ladder) and `present` (the present gate: the held snapshot, the
+settled-cost probe, the colour-pass filter).
 
 ## When it goes red
 

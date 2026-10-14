@@ -6581,8 +6581,9 @@ impl FractadyneApp {
 
     /// `build_params` stage: present-gating ("prefer detail", stage B) — decide whether
     /// this frame's display serves the held snapshot while compose work runs underneath,
-    /// arm the settled-cost probe, and choose the color-pass AA widening. Body moved
-    /// verbatim from `build_params`; outs in [`PresentGate`].
+    /// arm the settled-cost probe, and choose the color-pass AA widening; outs in
+    /// [`PresentGate`]. W5: the decision is the pure `decide::decide_present` (the notes moved
+    /// with it); this gathers its inputs, applies the state it writes and records it for replay.
     #[allow(clippy::too_many_arguments)]
     fn bp_present_gate(
         &mut self,
@@ -6603,114 +6604,50 @@ impl FractadyneApp {
         vs: usize,
         vsub: usize,
     ) -> PresentGate {
-        // ---- present-gating ("prefer detail", stage B) ----
-        // While ANY compose work runs on a settled prefer-detail view — a settle tile, an armed
-        // grid's coarse full frame, a chunk range, or a climb-probe re-measure — the display
-        // serves a snapshot of the last complete frame (`hold_copy` takes it on the FIRST such
-        // frame, before the compose pass lands) and the composite builds invisibly underneath.
-        // When nothing composes, the flag drops and the finished frame reveals whole. Interaction
-        // breaks the gate (Stage A's motion reprojection takes over); direct mode is excluded
-        // (cheap and sharp live). Between ss-ramp stages the gate re-engages per stage, so each
-        // REVEALED image is complete at its quality level — a stage-wise progressive reveal.
-        // Settled CHUNKED walks hold-then-reveal BY DEFAULT (`|| chunk_over`), prefer-detail or
-        // not: a walk's progressive display shows nothing until the cursor crosses the view's
-        // minimum dwell — which at a deep view sits near the orbit length, so the screen is
-        // solid interior color for most of the walk, indistinguishable from a hang (field
-        // report: black at "refining 19.8%"). The gate serves the previous complete content
-        // under its captured transform and reveals the finished frame whole; a fresh view with
-        // nothing rendered falls through gracefully (the GPU gate needs `view.rendered`) to the
-        // honest progressive-plus-spinner. Non-chunked tiled settles keep their progressive
-        // default — each landed tile is complete content, which reads as sharpening, not as a
-        // hang.
-        let gate_capable = (self.render_cfg.prefer_detail || chunk_over)
-            && !offscreen
-            && !interacting
-            && !chunk_mode.is_direct();
-        // ⚠`tile_work`, NOT `tile.is_some()`. A COMPLETED grid goes on emitting its final rect
-        // every frame by design, so `tile.is_some()` is true forever after the first grid finishes
-        // — the gate never dropped, the display kept serving the snapshot it took when the grid
-        // ARMED (a coarse, budget-shrunk frame), and the sharp composite sat in the texture unseen.
-        // That is the 2026-08-15 field report in full: "it does the computation but doesn't update
-        // the image; it shows up as soon as I resize slightly smaller" — a resize interacts, and
-        // interaction breaks the gate, revealing the texture that was finished all along. The
-        // chunked path's own term already excludes its completed tail (`e > s`, and the tail emits
-        // `[iter, iter]`); this is the same care, which the tile path was missing.
-        // Pinned by `--selftest live-res` → "a completed tiled settle REVEALS".
-        let composing = tile_work
-            || chunk_range.is_some_and(|[s, e]| e > s)
-            || probe_fired
-            || self.perf.tile_state[vidx].as_ref().is_some_and(|g| match g.geo {
+        // W5: every value the gate reads, gathered — the decision is the pure
+        // `decide::decide_present` (its notes moved with it), so a recording replays it exactly.
+        let inputs = crate::render::decide::PresentInputs {
+            direct: chunk_mode.is_direct(),
+            chunk_over,
+            chunk_range,
+            probe_fired,
+            tile_work,
+            grid_composing: self.perf.tile_state[vidx].as_ref().is_some_and(|g| match g.geo {
                 None => true, // armed — the coarse arm frame is about to render
                 Some((gres, _, side)) => {
-                    let total =
-                        gres[0].div_ceil(side).max(1) * gres[1].div_ceil(side).max(1);
+                    let total = gres[0].div_ceil(side).max(1) * gres[1].div_ceil(side).max(1);
                     g.next < total
                 }
-            });
-        let mut pin_gate = false;
-        let (hold_copy, display_hold) = if gate_capable && composing {
-            let fresh = !self.perf.hold_active[vs];
-            self.perf.hold_active[vs] = true;
-            (fresh, true)
-        } else if interacting
-            && (self.perf.pin[vsub].is_some()
-                // Not in DIRECT mode: nothing there can ever clear it (no pin adopts, the latch is
-                // perturbation-only), so a stale flag would hold every moving frame forever. The
-                // mode switch clears it; this keeps any other path from reaching that state.
-                || (self.perf.chunk_dirty[vsub] && !chunk_mode.is_direct()))
-        {
-            // Pin CONTINUE frames, and any interacting frame while the live texture diverges
-            // from the frozen bookkeeping (an abandoned pin's residue — holds, freezes, pan
-            // reprojections): serve the hold snapshot, never the diverged texture. `fresh` fires
-            // only on the FIRST such frame — an abandoned pin's re-pin must NOT retake the
-            // snapshot over the dirty texture, and `hold_active` staying up is what prevents it.
-            // (A pin START cannot be seen here — it is decided at the commit point after the
-            // freeze verdict, which flips these flags itself.)
-            pin_gate = true;
-            // …and a snapshot may only be taken of a texture KNOWN to hold a picture (see
-            // `ContentTrack`); otherwise the existing snapshot stays, or — with none — the
-            // display shows live, the honest cold-start fallback.
-            let fresh = !self.perf.hold_active[vs] && self.perf.content[vs.min(1)].live_verified();
-            if fresh {
-                self.perf.content[vs.min(1)].hold_verified = true;
-            }
-            self.perf.hold_active[vs] = true;
-            (fresh, true)
-        } else {
-            self.perf.hold_active[vs] = false;
-            // The GPU drops the snapshot on a frame without the flag.
-            self.perf.content[vs.min(1)].hold_verified = false;
-            (false, false)
+            }),
+            res_scale,
+            interacting,
+            offscreen,
+            will_reproject,
+            key_changed,
+            gpu_iter,
+            ss,
+            spx,
+            prefer_detail: self.render_cfg.prefer_detail,
+            tour_playing: self.tour_playing(),
+            aa: self.render_cfg.aa,
+            hold_active: self.perf.hold_active[vs],
+            pin_active: self.perf.pin[vsub].is_some(),
+            chunk_dirty: self.perf.chunk_dirty[vsub],
+            live_verified: self.perf.content[vs.min(1)].live_verified(),
+            aa_unmeasured: self.perf.aa_measured[vs].is_none() && self.perf.aa_probe[vs].is_none(),
+            frame: self.perf.frame_idx,
         };
-        let bootstrap =
-            self.perf.aa_measured[vs].is_none() && self.perf.aa_probe[vs].is_none();
-        // Armed on EVERY mode. While this was floatexp-only, a df32 view's budget never left the
-        // 4e8 bootstrap, so both bounds above were computed from a number that had measured
-        // nothing — and the shrink they gate was itself floatexp-only, so nothing bound the frame.
-        if !interacting
-            && !will_reproject
-            && !self.tour_playing() // tour frames move every keyframe — not settled-cost data
-            && (key_changed || bootstrap)
-        {
-            // Carry this frame's nominal step count: both arming conditions re-iterate (a changed key
-            // re-runs the iterate; a bootstrap frame is the first settled one after the view moved), so
-            // the interval that resolves the probe prices real GPU work and yields `fe_rate_spm`.
-            let steps = spx
-                .saturating_mul((ss as u64).saturating_mul(ss as u64))
-                .saturating_mul(gpu_iter.max(1) as u64);
-            self.perf.aa_probe[vs] = Some((ss, self.perf.frame_idx, 0.0, steps));
+        let d = crate::render::decide::decide_present(&inputs);
+        // The state the decision writes.
+        self.perf.hold_active[vs] = d.hold_active;
+        if let Some(v) = d.hold_verified {
+            self.perf.content[vs.min(1)].hold_verified = v;
         }
-        // Color-pass anti-aliasing when true supersampling wasn't affordable: widen the box
-        // to match an upscaled (resolution-reduced) texture, or apply a gentle 2× box when
-        // the budget forced ss=1 on a settled view the user wanted anti-aliased.
-        let aa_filter = if res_scale < 1.0 && !will_reproject {
-            ((1.0 / res_scale).round() as u32).clamp(2, 4)
-        } else if ss == 1 && self.render_cfg.aa > 1 && !interacting {
-            2
-        } else {
-            1
-        };
-        PresentGate { hold_copy, display_hold, pin_gate, aa_filter }
+        if let Some(p) = d.aa_probe {
+            self.perf.aa_probe[vs] = Some((p.ss, p.frame, 0.0, p.steps));
+        }
+        self.record_decision("present", vsub, &inputs, &d);
+        PresentGate { hold_copy: d.hold_copy, display_hold: d.display_hold, pin_gate: d.pin_gate, aa_filter: d.aa_filter }
     }
 
     /// The generated shader module `fractal` renders with: the custom formula's for

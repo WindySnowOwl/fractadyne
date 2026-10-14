@@ -3452,3 +3452,16 @@ Gates: workspace 1,474 / 0 / 11; self-test 518/518, goldens 31/31; `--motiontest
 grand-tour `--livetest` 24/24 with 0 drifted against the blessed baseline, as before the mirror was
 replaced. Still to lift, one stage at a time (§5.4's M8): the frame budget, the chunk walk and the
 present gate; the regime predicate (§6.7) and a field capture are not yet terms of the fixture set.
+
+**2026-10-14 — W5: the present gate lifted** (`decide_present`): whether the display serves the held
+snapshot while compose work runs underneath, whether this frame takes the snapshot, the settled-cost
+probe and the colour-pass filter — `PresentInputs` (the frame's flags, the grid's composing state, the
+view's hold, pin, dirty and verified state) to `PresentDecision` (the four outputs, plus the hold flag,
+the snapshot's verified flag and the armed probe it writes), moved by the same asserting script. The
+fixtures were re-recorded with both stages (`--motiontest` 2,666 decisions, the 2^800 autodive 5,900,
+both replaying exactly) and trimmed to 913 and 926; the coverage term now also requires a settled
+compose hold, a pin hold, a snapshot, an armed probe and a widened filter. Gates: workspace 1,474 / 0 /
+11, self-test 518/518 with goldens 31/31, `--motiontest` PASS ×3, `--livetest` 24/24 with 0 drifted.
+Remaining: `bp_frame_budget` (~650 lines, with the reading drains §5.4 keeps imperative) and
+`bp_chunk_tiling` (~850: the walk, pins, the band ledger, serialization) — each to be split into
+sub-stages before it can lift.

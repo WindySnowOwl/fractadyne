@@ -384,6 +384,184 @@ pub(crate) fn decide_moving(i: &MovingInputs) -> MovingDecision {
     }
 }
 
+/// What [`decide_present`] reads: `bp_present_gate`'s inputs, one view, one frame.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct PresentInputs {
+    /// The arithmetic mode renders directly (no reference, nothing to hold or pin).
+    pub(crate) direct: bool,
+    /// The iteration axis owns this compose, and the range this frame dispatches.
+    pub(crate) chunk_over: bool,
+    pub(crate) chunk_range: Option<[u32; 2]>,
+    /// The climb probe re-measures this frame; a settle tile is dispatched this frame.
+    pub(crate) probe_fired: bool,
+    pub(crate) tile_work: bool,
+    /// An armed settle grid (its coarse frame about to render) or one with tiles left.
+    pub(crate) grid_composing: bool,
+    pub(crate) res_scale: f64,
+    pub(crate) interacting: bool,
+    pub(crate) offscreen: bool,
+    pub(crate) will_reproject: bool,
+    pub(crate) key_changed: bool,
+    pub(crate) gpu_iter: u32,
+    pub(crate) ss: u32,
+    pub(crate) spx: u64,
+    /// The user's "prefer detail" (the setting itself, not the auto-zoom's effective one).
+    pub(crate) prefer_detail: bool,
+    pub(crate) tour_playing: bool,
+    /// Anti-aliasing the user asked for.
+    pub(crate) aa: u32,
+    /// Carried per view: the hold snapshot is up; a pin is running; the live texture diverges from
+    /// the frozen bookkeeping; the live texture is known to hold a picture; no settled-cost
+    /// measurement or probe exists yet.
+    pub(crate) hold_active: bool,
+    pub(crate) pin_active: bool,
+    pub(crate) chunk_dirty: bool,
+    pub(crate) live_verified: bool,
+    pub(crate) aa_unmeasured: bool,
+    /// The frame, which an armed probe is stamped with.
+    pub(crate) frame: u64,
+}
+
+/// What [`decide_present`] decides, and the state it writes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct PresentDecision {
+    /// Take the hold snapshot this frame; serve it instead of the live texture; and whether the hold
+    /// is a pin's (or a diverged texture's) rather than a settled compose's.
+    pub(crate) hold_copy: bool,
+    pub(crate) display_hold: bool,
+    pub(crate) pin_gate: bool,
+    /// Colour-pass box-filter width when true supersampling wasn't affordable.
+    pub(crate) aa_filter: u32,
+    /// The view's hold flag after this frame; the snapshot's verified flag if this frame sets it
+    /// (`None` = unchanged); the settled-cost probe this frame arms, if any.
+    pub(crate) hold_active: bool,
+    pub(crate) hold_verified: Option<bool>,
+    pub(crate) aa_probe: Option<AaProbe>,
+}
+
+/// A settled-cost probe armed this frame: at this ss, on this frame, pricing these nominal steps.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct AaProbe {
+    pub(crate) ss: u32,
+    pub(crate) frame: u64,
+    pub(crate) steps: u64,
+}
+
+/// The PRESENT gate (`bp_present_gate`, lifted): whether the display serves the held snapshot while
+/// compose work runs underneath, whether this frame takes the snapshot, the settled-cost probe, and
+/// the colour-pass filter. Pure.
+#[must_use]
+pub(crate) fn decide_present(i: &PresentInputs) -> PresentDecision {
+    let (chunk_over, chunk_range, probe_fired, tile_work) = (i.chunk_over, i.chunk_range, i.probe_fired, i.tile_work);
+    let (res_scale, interacting, offscreen, will_reproject) = (i.res_scale, i.interacting, i.offscreen, i.will_reproject);
+    let (key_changed, gpu_iter, ss, spx) = (i.key_changed, i.gpu_iter, i.ss, i.spx);
+    // ---- present-gating ("prefer detail", stage B) ----
+    // While ANY compose work runs on a settled prefer-detail view — a settle tile, an armed
+    // grid's coarse full frame, a chunk range, or a climb-probe re-measure — the display
+    // serves a snapshot of the last complete frame (`hold_copy` takes it on the FIRST such
+    // frame, before the compose pass lands) and the composite builds invisibly underneath.
+    // When nothing composes, the flag drops and the finished frame reveals whole. Interaction
+    // breaks the gate (Stage A's motion reprojection takes over); direct mode is excluded
+    // (cheap and sharp live). Between ss-ramp stages the gate re-engages per stage, so each
+    // REVEALED image is complete at its quality level — a stage-wise progressive reveal.
+    // Settled CHUNKED walks hold-then-reveal BY DEFAULT (`|| chunk_over`), prefer-detail or
+    // not: a walk's progressive display shows nothing until the cursor crosses the view's
+    // minimum dwell — which at a deep view sits near the orbit length, so the screen is
+    // solid interior color for most of the walk, indistinguishable from a hang (field
+    // report: black at "refining 19.8%"). The gate serves the previous complete content
+    // under its captured transform and reveals the finished frame whole; a fresh view with
+    // nothing rendered falls through gracefully (the GPU gate needs `view.rendered`) to the
+    // honest progressive-plus-spinner. Non-chunked tiled settles keep their progressive
+    // default — each landed tile is complete content, which reads as sharpening, not as a
+    // hang.
+    let gate_capable = (i.prefer_detail || chunk_over)
+        && !offscreen
+        && !interacting
+        && !i.direct;
+    // ⚠`tile_work`, NOT `tile.is_some()`. A COMPLETED grid goes on emitting its final rect
+    // every frame by design, so `tile.is_some()` is true forever after the first grid finishes
+    // — the gate never dropped, the display kept serving the snapshot it took when the grid
+    // ARMED (a coarse, budget-shrunk frame), and the sharp composite sat in the texture unseen.
+    // That is the 2026-08-15 field report in full: "it does the computation but doesn't update
+    // the image; it shows up as soon as I resize slightly smaller" — a resize interacts, and
+    // interaction breaks the gate, revealing the texture that was finished all along. The
+    // chunked path's own term already excludes its completed tail (`e > s`, and the tail emits
+    // `[iter, iter]`); this is the same care, which the tile path was missing.
+    // Pinned by `--selftest live-res` → "a completed tiled settle REVEALS".
+    let composing = tile_work
+        || chunk_range.is_some_and(|[s, e]| e > s)
+        || probe_fired
+        // An armed grid (the coarse arm frame is about to render) or one with tiles left
+        // (`PresentInputs::grid_composing`, read from the grid by the caller).
+        || i.grid_composing;
+    let mut pin_gate = false;
+    let mut hold_active = i.hold_active;
+    let mut hold_verified = None;
+    let (hold_copy, display_hold) = if gate_capable && composing {
+        let fresh = !hold_active;
+        hold_active = true;
+        (fresh, true)
+    } else if interacting
+        && (i.pin_active
+            // Not in DIRECT mode: nothing there can ever clear it (no pin adopts, the latch is
+            // perturbation-only), so a stale flag would hold every moving frame forever. The
+            // mode switch clears it; this keeps any other path from reaching that state.
+            || (i.chunk_dirty && !i.direct))
+    {
+        // Pin CONTINUE frames, and any interacting frame while the live texture diverges
+        // from the frozen bookkeeping (an abandoned pin's residue — holds, freezes, pan
+        // reprojections): serve the hold snapshot, never the diverged texture. `fresh` fires
+        // only on the FIRST such frame — an abandoned pin's re-pin must NOT retake the
+        // snapshot over the dirty texture, and `hold_active` staying up is what prevents it.
+        // (A pin START cannot be seen here — it is decided at the commit point after the
+        // freeze verdict, which flips these flags itself.)
+        pin_gate = true;
+        // …and a snapshot may only be taken of a texture KNOWN to hold a picture (see
+        // `ContentTrack`); otherwise the existing snapshot stays, or — with none — the
+        // display shows live, the honest cold-start fallback.
+        let fresh = !hold_active && i.live_verified;
+        if fresh {
+            hold_verified = Some(true);
+        }
+        hold_active = true;
+        (fresh, true)
+    } else {
+        hold_active = false;
+        // The GPU drops the snapshot on a frame without the flag.
+        hold_verified = Some(false);
+        (false, false)
+    };
+    let bootstrap = i.aa_unmeasured;
+    let mut aa_probe = None;
+    // Armed on EVERY mode. While this was floatexp-only, a df32 view's budget never left the
+    // 4e8 bootstrap, so both bounds above were computed from a number that had measured
+    // nothing — and the shrink they gate was itself floatexp-only, so nothing bound the frame.
+    if !interacting
+        && !will_reproject
+        && !i.tour_playing // tour frames move every keyframe — not settled-cost data
+        && (key_changed || bootstrap)
+    {
+        // Carry this frame's nominal step count: both arming conditions re-iterate (a changed key
+        // re-runs the iterate; a bootstrap frame is the first settled one after the view moved), so
+        // the interval that resolves the probe prices real GPU work and yields `fe_rate_spm`.
+        let steps = spx
+            .saturating_mul((ss as u64).saturating_mul(ss as u64))
+            .saturating_mul(gpu_iter.max(1) as u64);
+        aa_probe = Some(AaProbe { ss, frame: i.frame, steps });
+    }
+    // Color-pass anti-aliasing when true supersampling wasn't affordable: widen the box
+    // to match an upscaled (resolution-reduced) texture, or apply a gentle 2× box when
+    // the budget forced ss=1 on a settled view the user wanted anti-aliased.
+    let aa_filter = if res_scale < 1.0 && !will_reproject {
+        ((1.0 / res_scale).round() as u32).clamp(2, 4)
+    } else if ss == 1 && i.aa > 1 && !interacting {
+        2
+    } else {
+        1
+    };
+    PresentDecision { hold_copy, display_hold, pin_gate, aa_filter, hold_active, hold_verified, aa_probe }
+}
+
 /// The recording's format version: bumped whenever an inputs or decision struct changes shape, and a
 /// replay refuses a recording of another (it would compare the wrong things).
 pub(crate) const DECIDE_SCHEMA: u32 = 1;
@@ -502,6 +680,15 @@ pub(crate) fn replay_lines(text: &str) -> ReplayReport {
                             rep.moving += 1;
                         }
                         serde_json::to_value(decide_moving(&inputs)).unwrap_or(serde_json::Value::Null)
+                    }
+                    "present" => {
+                        let Ok(inputs) = serde_json::from_value::<PresentInputs>(
+                            v.get("inputs").cloned().unwrap_or(serde_json::Value::Null),
+                        ) else {
+                            rep.unreadable += 1;
+                            continue;
+                        };
+                        serde_json::to_value(decide_present(&inputs)).unwrap_or(serde_json::Value::Null)
                     }
                     _ => {
                         rep.unreadable += 1;
@@ -646,10 +833,26 @@ mod tests {
             ("the ladder bound the scale", |_, d| d.res_scale < d.motion_scale),
             ("direct-mode motion", |i, _| i.interacting && !i.is_pert),
         ];
+        let present: [(&str, fn(&PresentInputs, &PresentDecision) -> bool); 5] = [
+            ("a settled compose held the display", |_, d| d.display_hold && !d.pin_gate),
+            ("a pin held the display", |_, d| d.pin_gate),
+            ("a snapshot was taken", |_, d| d.hold_copy),
+            ("the settled-cost probe armed", |_, d| d.aa_probe.is_some()),
+            ("the colour-pass filter widened", |_, d| d.aa_filter > 1),
+        ];
         let mut hits = [0u64; 9];
+        let mut present_hits = [0u64; 5];
         for f in &files {
             for line in std::fs::read_to_string(f).expect("readable fixture").lines() {
                 let v: serde_json::Value = serde_json::from_str(line).expect("a JSON line");
+                if v["kind"] == "decision" && v["stage"] == "present" {
+                    let i: PresentInputs = serde_json::from_value(v["inputs"].clone()).expect("inputs");
+                    let d: PresentDecision = serde_json::from_value(v["decision"].clone()).expect("decision");
+                    for (h, (_, f)) in present_hits.iter_mut().zip(present.iter()) {
+                        *h += f(&i, &d) as u64;
+                    }
+                    continue;
+                }
                 if v["kind"] != "decision" || v["stage"] != "moving" {
                     continue;
                 }
@@ -662,6 +865,9 @@ mod tests {
         }
         for (h, (name, _)) in hits.iter().zip(branches.iter()) {
             assert!(*h > 0, "VACUOUS: no replayed decision where {name}");
+        }
+        for (h, (name, _)) in present_hits.iter().zip(present.iter()) {
+            assert!(*h > 0, "VACUOUS: no replayed present decision where {name}");
         }
         for f in &files {
             let rep = replay_lines(&std::fs::read_to_string(f).expect("readable fixture"));
