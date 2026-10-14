@@ -3182,3 +3182,126 @@ trap's instruments, never stretched it (worst frame 37 ms: with B4 and the seria
 harnesses no longer reach sustained slow frames), so the line itself is not yet exercised. The first
 field log in which the cost loop slows a dive will show it.
 
+**2026-10-13 — W3 begins. U3/U47 (the pin gate's wall-clock escape opens on the hardware it
+protects): built as §5.6 specifies, inert on the RTX 3080, awaiting the RX 6800 XT** (`8de994d`,
+`feat/w3-pin-timeout`). The gate now waits `pin_gate_timeout_us(registered, last_dt_ms, scaled)`:
+with the pass's completion callback registered (`update` has drained its registration), four frame
+intervals, never under the flat 170 ms nor past `SETTLE_COMPLETION_TIMEOUT_US` (3 s); never
+registered (a harness without the event loop), the flat 170 ms. `PIN_TIMEOUT_SCALED` (default 1;
+0 = flat) is the A/B arm. Because §5.6 warns that changing this without a measurement changes pin
+serialization on hardware we cannot observe, it is measured either way: `Perf::pin_escapes` counts
+each release before a completion, frame record schema 7 carries it, the first per view is an
+always-on line. RTX 3080, wiped config: 0 escapes under either rule in 3,465 frames (20-octave
+zoomtest at 1.0× and 4.0×, motiontest; ~1,500 frames with a pin in flight) and in the
+no-timestamps motiontest (PASS, 38 complete adoptions), so on this card the two rules behave
+identically. The dev.4 PLUTO records cannot answer whether the RX 6800 XT escapes: `pin_inflight`
+stays at 1 across back-to-back passes (a new pass goes out in the frame the last completes), so its
+spans are trains of passes, not passes; the 3080's own median span is 231 ms with 0 escapes.
+
+**2026-10-13 — U48 (one band ledger, two targets, two lanes): not reproduced on the RTX 3080; behaviour
+unchanged.** Pins (20 ms target, ×4 fast lane) and the settled walk (400 ms, ×2) share each view's
+ledger, so a licence the walk earned could size a pin pass ~20× its target. Traced (`TRACE=tile`
+`pin-price`): the budget trap's taps (1 s settles between 0.08-octave taps at 4.0×), 154 pin passes,
+worst 28 ms; the motiontest (1M ask, settle then dive and glide), 275 pin passes, 5 over twice the
+target, worst 74 ms, and all five are band-0 first passes whose size includes the free series-skip
+prefix (size 4× the licence), not passes sized by an inherited licence. Two things keep inheritance
+cheap: a pin pass stops at its band's edge (`chunk_band_end`), so in the narrow low bands no licence
+can make it long, and the ledger SURVIVES interaction on purpose (clearing it per pin made every pin
+re-climb from the floor and drift out before adopting). Keying the ledger per lane would bring that
+re-climb back after every settle, on a mechanism argument. The RX 6800 XT's pin-price trace on a
+deep, high-iteration motion run is the evidence still wanted.
+
+**2026-10-13 — W3 on the RX 6800 XT (dev.5, PLUTO; the user's standing go-ahead to queue).** Both
+arms of `PIN_TIMEOUT_SCALED`, one run each, plus the motiontest's pin-price trace:
+
+- **U3/U47: inert on this card too.** `pin_escapes` 0 in all six runs. Scaled against flat:
+  motiontest 52 against 56 complete adoptions (PASS both); 20-octave zoomtest lag 0.098 against
+  0.108 octaves, 160 against 158 pinned refreshes; the budget trap lag 0.138 against 0.120, worst
+  frame 392 against 497 ms. With no escape in either arm the two rules behaved identically, so these
+  differences are the runs' own spread. The scaled rule stays (§5.6), and the counter will show it
+  the first time a field log reaches it.
+- **U48: not reproduced on this card either.** 226 and 228 traced pin passes, median 0 ms, p95
+  ~20 ms, worst 44 ms; the 3 over twice the target are band-0 first passes carrying the series-skip
+  prefix (size 4× the licence), as on the RTX 3080 — none sized by an inherited licence. Closed as
+  not reproduced on either card; the shared ledger stays.
+
+**2026-10-13 — U4 (the chunk-pass price has no constant term): measured, small on both cards;
+closed by measurement** (`1b817c3`). `--chunk-sweep` now fits the per-pass fixed cost (each window
+size walks the same bracket, so total = passes × fixed + rest; the least-squares slope, with its
+standard error), warms the card up first, and exits with a verdict (§7.3 gate 1: vacuous, a
+resolved fit outside 0.5–2× the adapter's calibrated value, or an odd/even height cliff past 10×).
+The value is a calibration (`validation/calibration/ceilings.toml` `pass_fixed_ms`, read through
+`calibration::pass_fixed_ms()`; `--set PASS_FIXED_MS` still wins). RTX 3080: 0.193 ± 0.043 ms at
+the all-interior view, 0.223 ± 0.043 at the structured crash view, 0.209 on a third run — two views
+15% apart, so MEM-16's exemption holds; calibrated at 0.21, which the gate now holds it to. RX 6800
+XT: −0.06 and +0.01 ms at the same views (dev.5, no warm-up) and 0.28 ± 0.10 on 2026-09-27, all
+inside its ~±10 ms run-to-run noise on ~12 ms of signal: UNRESOLVED, so it stays on the default 0.2.
+⚠The "~1 ms on the RX 6800 XT" this document and `PASS_FIXED_MS`'s note took from live readings is
+not borne out by the wall clock: those readings pair with the wrong dispatch on that card. So U4's
+premise — a retreat asymptotes at a cost the model wrongly calls ~zero — does not hold: the floor
+pass's fixed cost really is ~0.2 ms. Not built, because a ~0.2 ms term against 10–400 ms pass
+targets moves nothing: §5.2's session-learned intercept (W3 step 3) and applying the term beyond the
+motion pacing (step 4). The sweep's first pass carries ~4–5 ms (RTX 3080) to ~11 ms (RX 6800 XT) of
+one-off cost; the harness allocates the walk's state textures per call, which the live path keeps,
+so that is the harness, not a per-walk cost of the live walk.
+
+**2026-10-13 — W3 gate 2: a retreat says what it reached** (`a64c9f1`). `render::retreat_outcome`
+(`Applied { from, to }` or `NoActuatorReachable { at }`, `#[must_use]`) at both emergency retreats:
+the in-flight lethal-band shed compares the pass's window with the walk's floor, the lethal-band
+frame reading compares its steps with the budget it retreats to. Each records the outcome per view
+(frame record `retreat`, schema 8) and, when nothing was reachable, says `RETREAT REACHED NOTHING`
+in its always-on line. Self-test "a retreat that reaches nothing says so"
+(`--selftest-filter retreat`): a 1,125 ms reading with the budget at its floor comes back
+NoActuatorReachable with the line logged; at 1e10 steps it is Applied, to 3.56e9. It feeds
+`wall_iterate` (prices the budget like a GPU reading without latching the mode's worst rate) and
+restores what it touches; its two deliberate lethal lines get a self-test allowance of exactly 2 in
+the `lethal-band-frame` log rule. B5 stays unmade: with the admission feeding the chunk decision, the
+floor a retreat reaches is the admission-bounded walk floor, so `NoActuatorReachable` is the rare
+answer it should be — if field records show it often, that reopens B5.
+
+**2026-10-13 — W3 gate 3: `--deviceloss-repro` has a criterion and an exit code** (`35ef1a0`). The
+verdict now returns its cost model (a window costs `exp(winter)·W^b` at the safe area, scaled by
+`area^a`), and the harness asks the LIVE path what it would dispatch first at the view — it waits for
+the live reference, reads `build_params` with a fresh budget and with the field's stale 1.515e11
+(confident), and prices each first dispatch. RED (exit 2) when one is predicted to reach
+`TDR_LETHAL_MS` while the live path would not have chunked it; vacuous is a fail too. RTX 3080 at the
+default view (Seahorse p998 nucleus, 2^54, 1728×1201): PASS — fresh, chunked, first pass 192
+iterations ~6 ms; stale, the dispatch ceiling binds it to 1.45e10 steps and the frame chunks, first
+pass 256 iterations ~8 ms. The gate can go red: with `DISPATCH_CEILING=0` and the explicit cap and
+ceiling lifted, at a 50,000-iteration ask the stale arm sends the whole frame unchunked, predicted
+1,357 ms — FAIL (predicted, never submitted). Three layers stood between the stale budget and that
+dispatch here: the per-adapter ceiling, the explicit dispatch cap, and the admission's chunking.
+⚠Not yet on the RX 6800 XT: the field agent deliberately refuses `--deviceloss-repro` (its window
+axis reaches a ~1.4 s dispatch on the RTX 3080); widening its allow-list is the user's call.
+
+**2026-10-13 — W3 closes.** The rest of it:
+
+- **U38 (the steering probe, accounting half)** (`fe8fac4`): the autopilot's synchronous probe is
+  timed into `offscreen_ms` (the tripwire subtracts it, as it does a CLI render) and recorded,
+  `probe_ms` in schema 9. On the RTX 3080 a 1e8 `--autodive` ran 116 probes, median 22.6 ms, up to
+  43.3 ms: a frame and a half of UI-thread time every 0.35 s that no accounting had seen. Not routed
+  through `admit()`: it is one ≤128×128 dispatch, and its cost is now visible. The aggregate half
+  stays a named non-goal. ⚠Fixed on the way: the record's per-frame events are PENDING (set by the
+  event, cleared by the record) — `emit_frame_records` runs after `frame_idx` advances, so a stamp
+  taken earlier in the frame never matched, and `retreat` (`a64c9f1`) had the same flaw.
+- **U17 (recorded half)** (`dca59ac`): the record already carried `ctr_rebase` and `ctr_px` (W1);
+  `framelog.py summarize` now reports rebases per sampled pixel and how many readings exceed 4 while
+  the frame was not chunked (W9's criterion). The same autodive: 82 such readings, max 4.89, on
+  frames whose worst was ~250 ms — so a threshold of 4 may be too sensitive at shallow df32 depths,
+  where a rebase is cheap. W9's to settle. The refusal half stays §5.8's reference fitness.
+- **The RX 6800 XT's fixed term, with the warm-up** (dev.6, two requests × 2):
+  −0.23 ± 0.20 and −0.22 ± 0.20 ms at the all-interior view, 0.06 ± 0.21 and 0.004 ± 0.10 ms at the
+  crash view — UNRESOLVED every time, so PASS (an unresolved fit is not judged) and no calibration
+  entry; odd/even 1.01–1.10×. The warm-up does not change the Radeon's answer: its per-pass fixed cost
+  is below its noise, |F| ≲ 0.4 ms. The default 0.2 stands for it.
+
+W3's gates, where they stand: (1) `--chunk-sweep` is a gate — vacuous, a resolved fixed cost outside
+0.5–2× the calibration, or an odd/even cliff past 10× exit 2; (2) `--selftest-filter retreat`; (3)
+`--deviceloss-repro`'s criterion, PASS on the RTX 3080 with a control that goes red, not yet run on
+the RX 6800 XT (the field agent's allow-list refuses the harness). Not built, by measurement: the
+session-learned intercept and the fixed term beyond motion pacing (U4's premise does not hold on
+either card). Not changed, by evidence: U48's shared ledger (not reproduced on either card). Exit
+criterion "a shed to the window floor measurably reduces wall time per pass on the Radeon": with a
+~0.2 ms fixed term, a floor pass costs its iterations, so a shed does reduce it; the "243 sheds at
+size=2 over 700 s" memory note it was written against remains unverified.
+

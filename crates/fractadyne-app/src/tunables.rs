@@ -91,6 +91,9 @@ pub(crate) struct Cost {
     pub settle_serialize: u64,
     /// B4's admission sizes each dispatch (`ADMISSION_DEFAULT`; 0 = recorded only, 1 = on).
     pub admission: u64,
+    /// The pin gate's wait scales with the frame interval (`PIN_TIMEOUT_SCALED_DEFAULT`; 0 = the
+    /// flat `PIN_COMPLETION_TIMEOUT_US`, 1 = scaled).
+    pub pin_timeout_scaled: u64,
     /// The mode-2 df32 tail phase (`TAIL_DF32_DEFAULT`; 0 = off, 1 = on).
     pub tail_df32: u64,
     /// The overlapped pick + centre build (`REF_OVERLAP_DEFAULT`; 0 = off, 1 = on).
@@ -153,6 +156,7 @@ impl Default for Cost {
             dispatch_ceiling: DISPATCH_CEILING_DEFAULT,
             settle_serialize: SETTLE_SERIALIZE_DEFAULT,
             admission: ADMISSION_DEFAULT,
+            pin_timeout_scaled: PIN_TIMEOUT_SCALED_DEFAULT,
             tail_df32: TAIL_DF32_DEFAULT,
             ref_overlap: REF_OVERLAP_DEFAULT,
             early_ref: EARLY_REF_DEFAULT,
@@ -198,6 +202,15 @@ pub(crate) fn status_line() -> String {
     } else {
         parts.join("; ")
     }
+}
+
+/// Was `--set NAME=...` given for this tunable? For values whose stock source is not the constant
+/// (`PASS_FIXED_MS` is calibrated per adapter, `calibration::pass_fixed_ms`): an override must
+/// still win, so the reader has to know one was made.
+pub(crate) fn overridden(name: &str) -> bool {
+    APPLIED
+        .get()
+        .is_some_and(|v| v.iter().any(|s| s.split(' ').next() == Some(name)))
 }
 
 /// Are the tunables stock? The gates assert this: a self-test or benchmark run under an override
@@ -365,6 +378,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                     "0" => 0,
                     "1" => 1,
                     _ => return Err(format!("--set SETTLE_SERIALIZE: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
+            "PIN_TIMEOUT_SCALED" => {
+                let p = c.pin_timeout_scaled;
+                c.pin_timeout_scaled = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set PIN_TIMEOUT_SCALED: '{raw}' is not 0 (flat) or 1 (scaled)")),
                 };
                 p.to_string()
             }
@@ -547,7 +569,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     TDR_BOOTSTRAP_MS, MOTION_UNPRICED_MAX, \
     MODE_RATE_UNKNOWN_MARGIN, TDR_MIN_STEPS, TDR_STEPS_CEIL, EXPLICIT_STEPS_CEIL, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, READING_POOL, \
-    DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
+    DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
     CHUNK_SHUFFLE, WORKER_MOTION, WORKER_PASS_MS";
 
@@ -926,8 +948,16 @@ pub(crate) const LIVE_PRICE_DROP_MAX: f64 = 4.0;
 pub(crate) const MOTION_PASS_MS: f64 = 10.0;
 
 /// The part of every GPU pass's time that does NOT scale with its steps, ms — clearing and storing
-/// the chunk-state attachments and the resolve (design/live-render-robustness.md §5.2). 0 = off, the
-/// shipped behaviour: a motion pass's price is proportional to its steps.
+/// the chunk-state attachments and the resolve (design/live-render-robustness.md §5.2). 0 = off: a
+/// motion pass's price is proportional to its steps.
+///
+/// ⭐NOW A CALIBRATION (W3, 2026-10-13): what the pacing reads is `calibration::pass_fixed_ms()`,
+/// the adapter's `pass_fixed_ms` in `validation/calibration/ceilings.toml` (else the table
+/// default's), measured by `--chunk-sweep`'s wall-clock fit. This constant is the value before the
+/// adapter is known, and `--set PASS_FIXED_MS` still overrides everything (the A/B arm). The sweep
+/// measures 0.19–0.22 ms on the RTX 3080 at two views and cannot resolve the RX 6800 XT's from its
+/// noise (fits of -0.06 to 0.28 ms): ⚠the "~1 ms on the RX 6800 XT" below was read off live
+/// readings that pair with the wrong dispatch on that card, and the wall clock does not bear it out.
 ///
 /// ⭐WHY IT MATTERS ON SOME CARDS. The motion rate is learned from readings of mostly SMALL passes.
 /// On the RX 6800 XT (2026-09-26, 594 readings at the 2026-09-21 crash view) a pass of 1.6e7 steps
@@ -1007,6 +1037,20 @@ pub(crate) const SETTLE_SERIALIZE_DEFAULT: u64 = 1;
 /// aimed for. 0 = computed and recorded only (the shadow of `c3907dd`), for the before/after
 /// measurement and as a field fallback.
 pub(crate) const ADMISSION_DEFAULT: u64 = 1;
+
+/// 1 = the pin gate waits for a pass's completion callback up to `PIN_TIMEOUT_FRAMES` frame
+/// intervals (at least `PIN_COMPLETION_TIMEOUT_US`, at most `SETTLE_COMPLETION_TIMEOUT_US`) once
+/// that callback is registered; the flat `PIN_COMPLETION_TIMEOUT_US` then applies only to a pass
+/// whose callback never was (a harness without the event loop). Design §5.6, findings U3/U47: a
+/// flat 170 ms released the next pin pass onto a queue still running the last on exactly the
+/// hardware whose passes outlive it. 0 = the flat timeout, for the before/after measurement and as
+/// a field fallback; the frame record's `pin_escapes` counts each release either way.
+pub(crate) const PIN_TIMEOUT_SCALED_DEFAULT: u64 = 1;
+
+/// How many frame intervals the pin gate waits for a registered completion (`PIN_TIMEOUT_SCALED`).
+/// A pass that long in the queue has stretched the frames around it (presents wait on the queue),
+/// so four of them is past the pass itself rather than a guess at it (design §5.6).
+pub(crate) const PIN_TIMEOUT_FRAMES: f64 = 4.0;
 
 /// Seconds over which `Meter::mode_rate`'s pessimistic minimum may at most double once readings
 /// say the mode has got faster (U23; `render::mode_rate_step`). Slow enough that a storm still in

@@ -58,6 +58,12 @@ pub(crate) struct Calibration {
     pub(crate) costs: Costs,
     pub(crate) knee_px: u64,
     pub(crate) source: String,
+    /// The per-pass fixed GPU cost, ms (design §5.2): this adapter's `pass_fixed_ms`, else the
+    /// table default's. `None` only when neither is in the table.
+    pub(crate) pass_fixed_ms: Option<f64>,
+    /// `pass_fixed_ms` was measured on THIS adapter (its own entry has one), so `--chunk-sweep` can
+    /// hold a new measurement to it.
+    pub(crate) pass_fixed_calibrated: bool,
 }
 
 const TABLE: &str = include_str!("../../../validation/calibration/ceilings.toml");
@@ -85,6 +91,9 @@ struct Card {
     direct_ms_per_step: f64,
     df32_pert_ms_per_step: f64,
     knee_px: u64,
+    /// The per-pass fixed cost, ms, from `--chunk-sweep`'s fit (absent = the default's).
+    #[serde(default)]
+    pass_fixed_ms: Option<f64>,
 }
 
 #[derive(serde::Deserialize, Clone)]
@@ -101,6 +110,8 @@ impl Card {
             costs: Costs { df32_pert: c(self.df32_pert_ms_per_step), direct: c(self.direct_ms_per_step) },
             knee_px: self.knee_px,
             source,
+            pass_fixed_ms: positive(self.pass_fixed_ms),
+            pass_fixed_calibrated: false,
         }
     }
 }
@@ -123,11 +134,21 @@ pub(crate) fn parse(table: &str) -> Result<Table, String> {
     toml::from_str::<Table>(table).map_err(|e| e.to_string())
 }
 
+/// A measured value, or `None` for a missing, non-finite or non-positive one.
+fn positive(v: Option<f64>) -> Option<f64> {
+    v.filter(|v| v.is_finite() && *v > 0.0)
+}
+
 /// Look `adapter` up in a parsed table.
 pub(crate) fn lookup(t: &Table, adapter: &str) -> Calibration {
     let key = slug(adapter);
     match t.adapter.iter().find(|e| e.slug == key) {
-        Some(e) => e.calibration(format!("calibrated for {key}")),
+        Some(e) => {
+            let mut c = e.calibration(format!("calibrated for {key}"));
+            c.pass_fixed_calibrated = c.pass_fixed_ms.is_some();
+            c.pass_fixed_ms = c.pass_fixed_ms.or(positive(t.default.pass_fixed_ms));
+            c
+        }
         None => t.default.calibration(format!("default (no entry for {key})")),
     }
 }
@@ -177,6 +198,8 @@ pub(crate) fn init(adapter: &str) -> &'static Calibration {
                     costs: Costs::default(),
                     knee_px: 0,
                     source: format!("none (calibration table unreadable: {e})"),
+                    pass_fixed_ms: None,
+                    pass_fixed_calibrated: false,
                 },
                 factors: Vec::new(),
             },
@@ -210,6 +233,31 @@ pub(crate) fn ceiling_for(mode: RenderMode, formula: FractalKind, px: u64) -> Op
         return None;
     };
     ceiling(cost, factor_of(&a.factors, formula, mode), a.cal.knee_px, px)
+}
+
+/// The per-pass fixed GPU cost the pacing subtracts from a pass's time, ms (design §5.2;
+/// `render::variable_pass_ms`, `render::motion_pass_steps`): `--set PASS_FIXED_MS` when given (the
+/// A/B arm, and the way to try a value), else this adapter's calibrated `pass_fixed_ms`, else the
+/// table default's, else `PASS_FIXED_MS_DEFAULT` (before the adapter is known).
+///
+/// A CALIBRATION, not a tunable (§5.2): a per-card value delivered as `--set` would make every gate
+/// on that card non-stock. It does not depend on content (it is the cost of clearing and storing
+/// the walk's state attachments and the resolve), which is what exempts it from MEM-16's rule
+/// against calibrating the cost model at startup; `--chunk-sweep` at two views tests that.
+pub(crate) fn pass_fixed_ms() -> f64 {
+    if crate::tunables::overridden("PASS_FIXED_MS") {
+        return crate::tunables::cost().pass_fixed_ms;
+    }
+    ACTIVE
+        .get()
+        .and_then(|a| a.cal.pass_fixed_ms)
+        .unwrap_or(crate::tunables::PASS_FIXED_MS_DEFAULT)
+}
+
+/// This adapter's own measured per-pass fixed cost, ms, if the table has one (`--chunk-sweep`'s
+/// gate holds a new measurement to it); `None` for a card on the default.
+pub(crate) fn calibrated_pass_fixed_ms() -> Option<f64> {
+    ACTIVE.get().filter(|a| a.cal.pass_fixed_calibrated).and_then(|a| a.cal.pass_fixed_ms)
 }
 
 /// The running adapter's occupancy knee, px (0 = unknown, or no knee term).

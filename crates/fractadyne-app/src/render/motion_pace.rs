@@ -5,11 +5,13 @@ const DT60: f64 = 1.0 / 60.0;
 #[test]
 fn a_pass_is_sized_from_the_measured_rate_to_the_target() {
     // 1e8 nominal steps/ms at a 10 ms target = 1e9 steps — not the 4e10 TDR budget. (With no fixed
-    // term; the shipped default sets 0.2 ms of every pass aside, leaving 9.8 ms of steps.)
+    // term; with one, its ms are set aside first.) ⚠The fixed term is the ADAPTER's calibration
+    // (`calibration::pass_fixed_ms`), a process global another test may have initialised (the
+    // calibration tests init the RTX 3080's 0.21), so the expectation reads the active value.
     assert_eq!(motion_pass_steps_fixed(1.0e8, 10.0, 0.0, 4.0e10 as u64, 4.0e8 as u64), 1.0e9 as u64);
     assert_eq!(
         motion_pass_steps(1.0e8, 10.0, 4.0e10 as u64, 4.0e8 as u64),
-        (1.0e8 * (10.0 - crate::tunables::PASS_FIXED_MS_DEFAULT)) as u64
+        (1.0e8 * (10.0 - crate::calibration::pass_fixed_ms())) as u64
     );
     // The TDR budget stays the ceiling: a fast regime cannot size a dispatch past it.
     assert_eq!(motion_pass_steps(1.0e12, 10.0, 4.0e10 as u64, 4.0e8 as u64), 4.0e10 as u64);

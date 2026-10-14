@@ -60,6 +60,10 @@
 
 use crate::FractadyneApp;
 
+#[cfg(test)]
+#[path = "chunksweep_tests.rs"]
+mod tests;
+
 /// Window sizes walked on the size axis, smallest first. 256 is the live path's own floor
 /// (`render.rs`'s `floor` when `fe_budget != 0`) and 1024 is what the fatal pass ran; the sizes
 /// either side of them are what make the trend readable rather than a two-point line.
@@ -116,6 +120,129 @@ impl ChunkSweep {
     }
 }
 
+/// One window size's whole walk over the bracket: how many passes did real work (past the skip) and
+/// what they cost together. Every size walks the SAME bracket, so their totals differ only by the
+/// per-pass terms, which is what [`fit_fixed_term`] reads.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Walk {
+    pub(crate) window: u32,
+    pub(crate) passes: usize,
+    pub(crate) total_ms: f64,
+}
+
+/// [`fit_fixed_term`]'s result: the per-pass fixed cost and the rest of a walk, ms, and the fixed
+/// cost's standard error.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Fit {
+    pub(crate) fixed: f64,
+    pub(crate) rest: f64,
+    pub(crate) se: f64,
+}
+
+impl Fit {
+    /// The fixed cost stands out of its own noise (more than twice its standard error, and
+    /// positive). ⚠On the RX 6800 XT it does not: its walk totals wander ~±10 ms run to run, against
+    /// ~0.2 ms × 62 passes of signal (2026-10-13: slopes of -0.06 and +0.01 ms at two views, where
+    /// the RTX 3080 fits 0.19 and 0.22 ms cleanly). An unresolved fit is reported as such, never
+    /// judged against a calibration and never written into one.
+    pub(crate) fn resolved(&self) -> bool {
+        self.fixed > 0.0 && self.fixed > 2.0 * self.se
+    }
+}
+
+/// The per-pass fixed cost and the rest of a walk's cost, by least squares over walks of one bracket
+/// at different window sizes: `total = passes × fixed + rest`. A walk's first pass pays a one-off
+/// setup (~4–5 ms on the RTX 3080, ~11 ms on the RX 6800 XT, 2026-10-13; this harness allocates the
+/// walk's state textures per call, which the live path keeps); it is in every walk alike, so it
+/// lands in `rest` and leaves the slope alone. `None` with fewer than three walks or no spread in
+/// their pass counts.
+pub(crate) fn fit_fixed_term(walks: &[Walk]) -> Option<Fit> {
+    let pts: Vec<(f64, f64)> = walks
+        .iter()
+        .filter(|w| w.passes > 0 && w.total_ms.is_finite())
+        .map(|w| (w.passes as f64, w.total_ms))
+        .collect();
+    if pts.len() < 3 {
+        return None;
+    }
+    let n = pts.len() as f64;
+    let mx = pts.iter().map(|p| p.0).sum::<f64>() / n;
+    let my = pts.iter().map(|p| p.1).sum::<f64>() / n;
+    let sxx: f64 = pts.iter().map(|p| (p.0 - mx) * (p.0 - mx)).sum();
+    if sxx <= 0.0 {
+        return None;
+    }
+    let sxy: f64 = pts.iter().map(|p| (p.0 - mx) * (p.1 - my)).sum();
+    let fixed = sxy / sxx;
+    let rest = my - fixed * mx;
+    let ssr: f64 = pts.iter().map(|p| (p.1 - (rest + fixed * p.0)).powi(2)).sum();
+    let se = if pts.len() > 2 { (ssr / (n - 2.0) / sxx).sqrt() } else { f64::INFINITY };
+    Some(Fit { fixed, rest, se })
+}
+
+/// The worst odd-height total against the median even-height total at one scale, from the height
+/// axis's rows `(scale, height, total_ms)`; the largest over the scales. The odd-height defect once
+/// cost ~25x here; `make_state_textures` pads it away, and this is what says it stayed away.
+pub(crate) fn parity_ratio(rows: &[(f64, u32, f64)]) -> Option<f64> {
+    let mut scales: Vec<f64> = rows.iter().map(|r| r.0).collect();
+    scales.sort_by(|a, b| a.total_cmp(b));
+    scales.dedup();
+    let mut worst: Option<f64> = None;
+    for s in scales {
+        let mut even: Vec<f64> = rows.iter().filter(|r| r.0 == s && r.1 % 2 == 0).map(|r| r.2).collect();
+        let odd = rows.iter().filter(|r| r.0 == s && r.1 % 2 == 1).map(|r| r.2).fold(f64::NAN, f64::max);
+        if even.is_empty() || odd.is_nan() {
+            continue;
+        }
+        even.sort_by(|a, b| a.total_cmp(b));
+        let med = even[even.len() / 2];
+        if med > 0.0 {
+            let r = odd / med;
+            worst = Some(worst.map_or(r, |w: f64| w.max(r)));
+        }
+    }
+    worst
+}
+
+/// `--chunk-sweep`'s gate (design §7.3 gate 1): the reasons it fails, empty for a pass.
+/// - VACUOUS when fewer than three window sizes did real work: chunking did not happen, and a
+///   clean, confident zero from a sweep that measured nothing is how four A/Bs on chunking once
+///   "passed" (P7).
+/// - the fixed cost per pass more than 2x either side of this adapter's calibrated value;
+/// - an odd/even height cliff past 10x on the height axis.
+pub(crate) fn sweep_gate(
+    walks: &[Walk],
+    fit: Option<Fit>,
+    calibrated: Option<f64>,
+    parity: Option<f64>,
+) -> Vec<String> {
+    let mut red = Vec::new();
+    let real = walks.iter().filter(|w| w.passes > 0).count();
+    if real < 3 {
+        red.push(format!(
+            "VACUOUS: only {real} window size(s) did real work past the skip (3 needed) - chunking did not happen"
+        ));
+    }
+    // Only a RESOLVED fit is held to the calibration: an unresolved one cannot say it differs.
+    match (fit, calibrated) {
+        (Some(f), Some(c)) if c > 0.0 && f.resolved() => {
+            let r = f.fixed / c;
+            if !(0.5..=2.0).contains(&r) {
+                red.push(format!(
+                    "fixed cost per pass {:.3} ms is {r:.2}x this adapter's calibrated {c:.3} ms (allowed 0.5x to 2x)",
+                    f.fixed
+                ));
+            }
+        }
+        (None, _) if real >= 3 => red.push("no fixed-cost fit (no spread in the walks' pass counts)".to_string()),
+        _ => {}
+    }
+    if let Some(p) = parity.filter(|p| *p > 10.0) {
+        red.push(format!("odd render-target height costs {p:.1}x the even median (allowed 10x)"));
+    }
+    red
+}
+
 /// One measured (window size, cursor position) cell.
 struct Cell {
     window: u32,
@@ -162,16 +289,20 @@ impl FractadyneApp {
                 "⚠NOT SETTLED after {waited} frames — orbit_len is still moving (now {len},                  partial={partial}). Measuring anyway, but the reference is not the one a rested                  view uses, and a growing reference rebases differently."
             );
         }
-        self.run_chunk_sweep(device, queue, iters);
-        true
+        // The verdict IS the exit code (design §7.3 gate 1): 0 pass, 2 a red reason or vacuous.
+        // Exiting here, inside the frame that measured, also keeps the measurement's own long frame
+        // from reaching the live budget's tripwire as a slow frame nobody priced.
+        let code = self.run_chunk_sweep(device, queue, iters);
+        crate::exit(code)
     }
 
+    /// Measure, report, and return the exit code (0 = pass, 2 = fail or vacuous).
     fn run_chunk_sweep(
         &mut self,
         device: &eframe::wgpu::Device,
         queue: &eframe::wgpu::Queue,
         iters: u32,
-    ) {
+    ) -> i32 {
         println!(
             "Fractadyne chunk sweep — {}\n\
              Per-window wall cost of a chunked iterate, measured submission-alone against its own\n\
@@ -214,11 +345,23 @@ impl FractadyneApp {
                 "ABORT: the request carries NO reference (orbit_len=0). Nothing measured — a sweep\n\
                  without the live reference measures a regime the view never renders."
             );
-            return;
+            println!("--chunk-sweep: VERDICT FAIL: VACUOUS - no reference, nothing measured");
+            return 2;
+        }
+
+        // ⚠WARM-UP, untimed. On the RTX 3080 the first walk ran at idle clocks: every 64-iteration
+        // window cost ~16 ms against ~4 ms for 128 a moment later (2026-10-13, both views), which a
+        // fit reads as a per-pass cost. One throwaway walk brings the card up before anything counts.
+        {
+            let mut req = base.clone();
+            req.max_iter = iters;
+            let mut passes = Vec::new();
+            let _ = fractadyne_gpu::render_iter_chunked_timed(device, queue, &req, WINDOWS[0], &mut passes);
         }
 
         // ---- axis 1: window size, fixed resolution ----------------------------------------
         let mut cells: Vec<Cell> = Vec::new();
+        let mut walks: Vec<Walk> = Vec::new();
         let mut reference_pixels: Option<(u32, Vec<f32>)> = None;
         let mut stopped_at: Option<u32> = None;
 
@@ -250,6 +393,7 @@ impl FractadyneApp {
                 passes.iter().filter(|p| p.end_iter > skip).collect();
             let max = real.iter().map(|p| p.wall_ms).fold(0.0_f64, f64::max);
             let sum: f64 = real.iter().map(|p| p.wall_ms).sum();
+            walks.push(Walk { window: w, passes: real.len(), total_ms: sum });
             print!(
                 "  window {w:>5}: {:>3} passes ({:>3} past skip)  total {sum:8.1} ms  worst {max:7.1} ms  |",
                 passes.len(),
@@ -304,7 +448,8 @@ impl FractadyneApp {
 
         if cells.is_empty() {
             println!("\nNothing measured. No verdict.");
-            return;
+            println!("--chunk-sweep: VERDICT FAIL: VACUOUS - no window did real work past the skip");
+            return 2;
         }
 
         // ---- axis 2: pixel area, fixed window ---------------------------------------------
@@ -418,6 +563,7 @@ impl FractadyneApp {
 ── height axis · window {h_window}, [0,{iters}) ──");
         println!("      target        chunked                      unchunked control");
         let saved_export_w = self.export.width;
+        let mut parity_rows: Vec<(f64, u32, f64)> = Vec::new();
         for &hs in &[1.0_f64, 0.5_f64, 0.25_f64] {
         // Scale the WIDTH with the height, so a row is a smaller render rather than a squashed
         // one — the filed 25x was at 640x483 and 320x241, both halvings of 1280x966.
@@ -487,6 +633,9 @@ impl FractadyneApp {
             } else {
                 "ODD  "
             };
+            if let Some((sum, _, _)) = chunked {
+                parity_rows.push((hs, h, sum));
+            }
             match chunked {
                 Some((sum, worst, n)) => println!(
                     "  {:>5}x{:<5} {tag}  total {sum:8.1} ms  worst {worst:7.1} ms ({n:>3} win)                        {control}",
@@ -554,6 +703,63 @@ impl FractadyneApp {
         self.export.width = saved_export_w;
 
         self.report_verdict(&cells, &area_pts, stopped_at);
+        self.report_gate(&walks, &parity_rows, (panel[0], panel[1]))
+    }
+
+    /// The fixed cost per pass, the calibration entry it implies, and the gate (design §7.3 gate 1).
+    /// Returns the exit code.
+    fn report_gate(&self, walks: &[Walk], parity_rows: &[(f64, u32, f64)], px: (u32, u32)) -> i32 {
+        println!("\n── fixed cost per pass (design §5.2) ──");
+        let fit = fit_fixed_term(walks);
+        let calibrated = crate::calibration::calibrated_pass_fixed_ms();
+        match fit {
+            Some(f) => {
+                println!(
+                    "  fixed cost per pass: {:.3} ± {:.3} ms  (the rest of a walk: {:.1} ms; least squares of \
+                     each window size's total against its pass count, windows {})",
+                    f.fixed,
+                    f.se,
+                    f.rest,
+                    walks
+                        .iter()
+                        .filter(|w| w.passes > 0)
+                        .map(|w| w.window.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                if f.resolved() {
+                    println!(
+                        "  calibration entry for {} ({}x{} px):  pass_fixed_ms = {:.3}",
+                        crate::calibration::slug(&self.gpu_name),
+                        px.0,
+                        px.1,
+                        f.fixed
+                    );
+                } else {
+                    println!(
+                        "  UNRESOLVED: the fixed cost is within twice its standard error, i.e. below this run's \
+                         noise; no calibration entry from it"
+                    );
+                }
+                match calibrated {
+                    Some(c) => println!("  this adapter's calibrated value: {c:.3} ms ({:.2}x)", f.fixed / c),
+                    None => println!("  this adapter has no calibrated value yet (the table default applies)"),
+                }
+            }
+            None => println!("  no fit: fewer than three window sizes, or no spread in their pass counts"),
+        }
+        let parity = parity_ratio(parity_rows);
+        if let Some(p) = parity {
+            println!("  odd/even height: worst odd total {p:.2}x the even median");
+        }
+        let red = sweep_gate(walks, fit, calibrated, parity);
+        if red.is_empty() {
+            println!("--chunk-sweep: VERDICT PASS");
+            0
+        } else {
+            println!("--chunk-sweep: VERDICT FAIL: {}", red.join("; "));
+            2
+        }
     }
 
     /// Turn the measurements into the two statements the design decision needs. Deliberately

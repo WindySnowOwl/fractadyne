@@ -1417,6 +1417,24 @@ struct Perf {
     /// of a 1.0× dive at native resolution).
     pin_done_at: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
     pin_dispatch_at: [u64; 2],
+    /// Times the pin gate gave up waiting for a pass's completion on the wall clock
+    /// (`PIN_COMPLETION_TIMEOUT_US`) with that pass still counted in flight, per view, since start
+    /// (frame record `pin_escapes`, schema 7). On hardware whose pin passes outlive the timeout,
+    /// each one is a second pass released onto a queue still running the first (U3/U47); the
+    /// first per view is logged.
+    pin_escapes: [u32; 2],
+    /// The last emergency retreat's outcome per view (`render::retreat_outcome`, W3 gate 2), and
+    /// the outcome code PENDING for the next frame record (`retreat`, schema 8; the worse of any
+    /// this frame), cleared when the record is written.
+    ///
+    /// ⚠PENDING, not stamped with the frame: the records are written at the end of `update`, after
+    /// `frame_idx` has advanced, so a stamp taken earlier in the frame never matched (the probe's
+    /// `probe_ms` read -1 on every frame of a 112 s autodive).
+    retreat_last: [Option<render::RetreatOutcome>; 2],
+    retreat_pending: [u8; 2],
+    /// The autopilot's steering probe since the last frame record, ms (-1 = none; frame record
+    /// `probe_ms`, schema 9; U38). A synchronous render on the UI thread.
+    probe_ms: f64,
     /// SETTLE-TILE SERIALIZATION (`render::settle_tile_waits`): how much of this view's work is
     /// still in the GPU queue, and what the last completed piece cost. Every real dispatch of the
     /// view sets `view_reg_pending` and stamps `view_dispatch_at` / `view_dispatch_steps`; the next
@@ -2180,6 +2198,10 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             ],
             pin_dispatch_at: [0, 0],
+            pin_escapes: [0, 0],
+            retreat_last: [None, None],
+            retreat_pending: [0, 0],
+            probe_ms: -1.0,
             view_reg_pending: [false, false],
             view_dispatch_at: [0, 0],
             view_dispatch_steps: [0, 0],
@@ -14995,6 +15017,9 @@ impl FractadyneApp {
             r.queue_busy = p.view_outstanding(v) > 0;
             r.full_inflight = p.full_inflight[v];
             r.pin_inflight = p.pin_inflight[v];
+            r.pin_escapes = p.pin_escapes[v];
+            r.retreat = p.retreat_pending[v];
+            r.probe_ms = if v == 0 { p.probe_ms as f32 } else { -1.0 };
             r.present_throttle = p.present_throttle;
             r.visible_res = p.visible_res[v];
             r.motion_res = p.motion_res;
@@ -15045,6 +15070,9 @@ impl FractadyneApp {
             diag::frame_record::record(r);
         }
         self.perf.rec = Default::default();
+        // The pending per-frame events are this record's; the next one starts empty.
+        self.perf.retreat_pending = [0, 0];
+        self.perf.probe_ms = -1.0;
         self.perf.rec_us = t0.elapsed().as_secs_f32() * 1e6;
     }
 
@@ -15238,18 +15266,33 @@ impl FractadyneApp {
             // on a pass the walk judged drained, which a saturated queue stops producing exactly
             // when this fires. Output-neutral (see `chunk_band_retreat`).
             render::chunk_band_retreat(&mut self.perf.chunk_bands[v.min(1)]);
+            // What the retreat REACHED (W3 gate 2): every live dispatch sizes from the budget, so
+            // the next one is below the lethal one only if the new budget is.
+            let outcome = render::retreat_outcome(steps, next);
+            let vb = v.min(1);
+            self.perf.retreat_last[vb] = Some(outcome);
+            self.perf.retreat_pending[vb] = self.perf.retreat_pending[vb].max(outcome.code());
             diag::log_line(
                 "render",
                 &format!(
                     "⚠LETHAL-BAND FRAME: view={v} {src}={ms:.0}ms (band ≥{:.0}ms) steps={:.3e} \
-                     budget={:.3e} sa_skip={} res={}x{} — emergency retreat to {:.3e}",
+                     budget={:.3e} sa_skip={} res={}x{} — emergency retreat to {:.3e}{}",
                     crate::tunables::cost().tdr_lethal_ms,
                     steps as f64,
                     cur as f64,
-                    self.perf.last_sa_skip_v[v.min(1)],
-                    self.perf.last_res_v[v.min(1)][0],
-                    self.perf.last_res_v[v.min(1)][1],
-                    next as f64
+                    self.perf.last_sa_skip_v[vb],
+                    self.perf.last_res_v[vb][0],
+                    self.perf.last_res_v[vb][1],
+                    next as f64,
+                    match outcome {
+                        render::RetreatOutcome::Applied { .. } => String::new(),
+                        render::RetreatOutcome::NoActuatorReachable { .. } => format!(
+                            " — ⚠RETREAT REACHED NOTHING: the budget is at its floor ({:.3e}), not below \
+                             the lethal dispatch ({:.3e}); no actuator the retreat drives can make the \
+                             next one smaller",
+                            next as f64, steps as f64
+                        ),
+                    }
                 ),
             );
         }
@@ -15753,6 +15796,20 @@ impl eframe::App for FractadyneApp {
                         calibration::TARGET_MS,
                         cal.knee_px,
                         if crate::tunables::cost().dispatch_ceiling == 1 { "" } else { " — OFF (DISPATCH_CEILING=0)" }
+                    ),
+                );
+                diag::log_line(
+                    "wgpu",
+                    &format!(
+                        "pass fixed cost: {:.3} ms ({})",
+                        calibration::pass_fixed_ms(),
+                        if crate::tunables::overridden("PASS_FIXED_MS") {
+                            "--set PASS_FIXED_MS"
+                        } else if cal.pass_fixed_calibrated {
+                            "calibrated for this adapter"
+                        } else {
+                            "the table default"
+                        }
                     ),
                 );
                 // The frame record's session header: WHICH code produced the records that

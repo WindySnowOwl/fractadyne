@@ -18,6 +18,11 @@
 #      reference, which direct mode does not have.) Only valid on a card whose live readings pair
 #      with their own dispatch - check with the same tool's df32 run against step 1.
 #   3. The knee: the sweep's area axis. The knee is where cost per pixel stops falling.
+#   4. pass_fixed_ms (the per-pass fixed cost the pacing subtracts, design §5.2): the same sweep's
+#      "fixed cost per pass" line, which fits each window size's total over the bracket against its
+#      pass count (the slope). Run it at a SECOND view too (the structured crash view): the value is
+#      supposed not to depend on content, and two views more than 4x apart say it does.
+#      The sweep prints the entry; the gate then holds later runs to it within 2x.
 #
 # Both views are ALL-INTERIOR (inside the main cardioid, explicit 100,000 iterations): every pixel
 # walks every step, so nominal == real and nothing escapes early. On the RTX 3080 that costs MORE
@@ -31,6 +36,8 @@
 df32_pert_ms_per_step = 9.9e-8
 direct_ms_per_step = 1.92e-8
 knee_px = 524288
+# The value every card used before it was measured per card (PASS_FIXED_MS_DEFAULT).
+pass_fixed_ms = 0.2
 
 [[adapter]]
 slug = "nvidia-geforce-rtx-3080"
@@ -42,6 +49,11 @@ slug = "nvidia-geforce-rtx-3080"
 df32_pert_ms_per_step = 2.76e-8
 direct_ms_per_step = 5.35e-9
 knee_px = 262144
+# pass_fixed_ms: 2026-10-13, the warm-up chunk sweep (`--chunk-sweep 4096 --window 1287x835`):
+#   0.193 +- 0.043 ms at the all-interior view (1280x787) and 0.223 +- 0.043 ms at the crash view
+#   (crash-view-4627, 1280x766): two views 15% apart, so the term does not depend on content here.
+#   Without the warm-up the first window size ran at idle clocks (~16 ms per 64-iteration pass).
+pass_fixed_ms = 0.21
 
 [[adapter]]
 slug = "amd-radeon-rx-6800-xt"
@@ -58,6 +70,11 @@ slug = "amd-radeon-rx-6800-xt"
 #   (the 3080: 1.16x). 2x the 3080's knee over-covers that point.
 df32_pert_ms_per_step = 4.95e-8
 direct_ms_per_step = 9.6e-9
+# No pass_fixed_ms: the sweep cannot resolve it on this card. Its walk totals wander ~+-10 ms run to
+#   run against ~12 ms of fixed-term signal; on 2026-10-13 (dev.5, requests 20261013-090937-7wue and
+#   -090938-v8rm) the fits were -0.06 and +0.01 ms, and the 2026-09-27 sweep fits 0.28 +- 0.10. All
+#   say it is small - nothing like the ~1 ms once read off this card's live readings, which pair
+#   with the wrong dispatch here - so the default's 0.2 stands.
 knee_px = 524288
 
 # Each formula's cost per step relative to Mandelbrot, per mode: RTX 3080, 2026-09-27, beta.134,
