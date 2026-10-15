@@ -4574,3 +4574,48 @@ PLUTO):
     only one. That is one fewer row than on dev.14, because the "no baseline for this card" note is
     gone.
   - The battery's verdict was PASS (exit 0), the first battery whose exit code is a judgement.
+
+**2026-10-15 — W8: the meta-gate, `scripts/gate_selfcheck.py` (first version).** §7.8's gate, for a
+workstream whose product is gates: each ARM runs one gate twice, in a scratch copy of the data it
+reads (the app prefers the working directory's `validation/`, so the repository is never touched).
+- The **control**, unmodified, must pass.
+- The **sabotage**, one deliberate breakage of exactly what the gate guards, must:
+  - exit non-zero;
+  - reach its end (an `[fd-exit]` line: a crash is not a catch);
+  - name the breakage in its output (red for the wrong reason proves nothing).
+
+The script exits 2 if an arm goes wrong, 3 if every arm is right but gates remain unarmed, and 0
+otherwise. It is Python rather than §7.8's `.ps1`: it drives other processes and edits files
+byte-exactly, which PowerShell 5.1 makes error-prone, and nothing here runs on the field machine.
+
+| arm | sabotage | control | sabotage exit, and what it named |
+|---|---|---|---|
+| selftest/golden | the `home` golden replaced by the seahorse image | 0 | 1, `[FAIL] golden home` |
+| selftest/replay | the first recorded decision of `escaped-ref.jsonl` off by one iteration | 0 | 1, its replay check |
+| bench-matrix/signature | the baseline's first segment claims one more rebase | 0 | 2, ALGORITHMIC DRIFT |
+| livetest/baseline | the blessed `open` checkpoint 30 points blacker | 0 | 2, drift |
+| livetest/lethal-band | `--set TDR_LETHAL_MS=1`, landmarks chapter | 0 | 1, logcheck FAIL: 11 lethal-band frames, 134 in-flight lines over the livetest's 15 |
+| checklist/broken-claim | a row's enforcer renamed to a missing test | 0 | 1, BROKEN CLAIM |
+| screengate/own-fixtures | (self-armed: its `--selftest` trips every criterion on synthetic captures) | — | 0, every criterion as declared |
+
+*What the first runs found.*
+- **The design's own red-check arm was vacuous at first.** On the grand tour's whole-set chapter,
+  `--set TDR_LETHAL_MS=1` changed nothing: the override applied (`TDR_LETHAL_MS 900 → 1`), but at
+  the home view no pass reaches even 1 ms. Nothing was shed, logcheck passed, and the meta-gate
+  reported the arm WRONG. On the landmarks chapter, with passes of a few ms, it goes red through
+  logcheck as §7.8 requires. The livetest's own pixel verdict stays PASS, which is correct: the
+  pixels are fine and the log is what the sabotage broke. An arm must reach its regime as surely as
+  a harness must.
+- The checklist arm's first control failed because its scratch tree lacked scripts that `script:`
+  and `run:` rows name; the tree now copies `scripts/` whole.
+
+*Gaps, filed rather than normalised (§7.8's risk).* No arm yet for:
+- `--motiontest`;
+- `--uitest`;
+- `--recordtest`;
+- the `--zoomtest-gate` rows (planned anyway: their fixture `misi-49-3.fdn` is not in the tree);
+- `--autodive`;
+- `--soak`;
+- the F3 corpus `--check`. That gate's control is itself known red: 28/38 since beta.141, the df32
+  tail phase, whose re-bless is the user's call. Meanwhile the release checklist still says
+  "38/38 MATCH".
