@@ -3951,3 +3951,115 @@ Gates (RTX 3080):
 - Logcheck: PASS throughout.
 
 The quarantine is the plan's only user-visible change, so the next beta's release notes must say it.
+
+**2026-10-14 — W8 rung 1: one exit convention for the gating harnesses, and the first gated
+`--zoomtest` matrix, which found a regression on unreleased main** (`feat/w8-gates`, off local main
+after W7 merged).
+
+*The convention* (`crate::verdict`): 0 PASS, 2 RED (the experiment ran and what it tests failed),
+3 VACUOUS (it did not run: the regime was never reached, or too little was measured to judge),
+4 WATCHDOG. A real failure beside a vacuous term is RED. Logcheck's own 1 stays outside it.
+- **`--autodive`** is judged from the frame record over the whole run (`DiveTally`, fed from
+  `frame_record::since` every frame), not from the last iterate time it sampled (U8):
+  - VACUOUS with no lethal reading;
+  - RED when a retreat reached nothing, a lethal reading had no retreat, or more than
+    `SLOW_AFTER_RETREAT_MAX` (2) lethal-band intervals followed a retreat in a row;
+  - PASS otherwise, and only if the record lost nothing to the ring (else VACUOUS).
+  The 2 is the RX 6800 XT's beta.132 AFTER arms: one ~1,400 ms frame after each derate (its
+  dispatch was already queued), then 92–105 ms. Six unit tests, from the field shapes.
+- **`--motiontest`** keeps the VACUOUS it already computed (boot never completed → 3), and gains A8:
+  a pinned walk that completes blank during the driven phases fails it.
+- **`--zoomtest`**: `--zoomtest-gate [smooth|appetite]` holds a glide to a row of
+  design/live-zoom-smoothing.md's P-G matrix. Smooth: max interval ≤ 50 ms, none over 100 ms, held
+  max ≤ 0.5·√rate octaves (0.5 at 1×, 1 at 4×, the matrix's two points). Appetite: none over 33 ms.
+  The held reading is now taken over the frames that displayed a held picture (`held_oct_max`:
+  a reprojection or the snapshot served), beside the frozen bookkeeping's age. Its vacuous exits
+  are 3.
+- **`--soak`**: a soak too short to judge, or armed and never in the regime, is 3; failures are 2
+  (were 1).
+- **The torture ladder** maps 3 to `FailVacuous`, which counts as a failure. The autodive rung's
+  motivation text said "exits 3" while the code exited 2; both now agree.
+- **REPORT-ONLY**: `--reusetest`, `--divetest`, `--frametest`, `--juliadive` and `--dualsettle` have
+  no criterion. They say so in their begin line and their help text (`logcheck::REPORT_ONLY`, with a
+  test that each is a real task mode).
+
+*The regression the gate found.* The first gated glide toward the e4000 Misiurewicz point at 4×
+(ask 2,008,192 on a 1,999-sample escaped reference) adopted 1–3 pinned refreshes in 100 octaves,
+against 46–51 for beta.19 through dev.3:
+- The held picture fell 81 octaves behind, and the snapshot was served on 86% of frames.
+- Bisected to `c012f32` (dev.4, `PIN_INFLIGHT_MAX` 2 → 1): with 2 the adoptions return (48).
+- The tile trace: 40 of 44 pins were abandoned for drift at ~43 frames (2 octaves at 2.64 oct/s),
+  62–88% done. Each successor opened with a smaller step, and the screen kept the first snapshot,
+  since an abandoned pin's successor does not retake it.
+- At cap 1 a pin completes about one pass every two frames: the next frame's update starts before
+  the GPU has finished. So a pin's progress per octave halved, and the drift rule, which abandoned
+  at 2 octaves whatever the progress, began firing on pins that were nearly done.
+
+Reverting the cap would give back what it bought (A/B, interleaved: motiontest complete adoptions
+43–50 at cap 1 against 13–15 at cap 2; the 20-octave 4× zoomtest lag 0.60–0.66 against
+0.86–0.91 octaves). Instead, the drift rule now abandons only a pin short of half its work
+(`render::drift_finishes_sooner`; a split pin by its sets). Abandoning buys freshness only if the
+new pin lands first, and past halfway it never does: the rest of this pin is less work than all of
+the next, and meanwhile the screen holds the older snapshot either way. The age backstop
+(`PIN_MAX_FRAMES`) still ends a pin that stalls. A/B against cap 1, interleaved:
+
+| | fix | cap 1 |
+|---|---|---|
+| e4000 4×: adopted / held max | 32, 29 / 6.68 oct | 3, 2 / 80.7 oct |
+| motiontest complete adoptions | 46, 36 | 45, 41 |
+| 20-octave zoom at 1×: lag (oct) | 0.148, 0.168 | 0.154, 0.136 |
+| 20-octave zoom at 4×: lag (oct), 5 reps | 0.563–0.792, median 0.725 | 0.494–0.776, median 0.653 |
+
+The 4× difference is inside the spread (rank sum 31 against 24, n = 5 + 5; nowhere near
+significant). Cap 2's was 0.86–0.91. The e4000 held max is back to cap 2's 6.35–6.64 (beta.18:
+5.47).
+
+*The P-G matrix, gated, on the RTX 3080.* The continuous rows' `misi-49-3.fdn` was never in the
+tree. It is rebuilt from `local/hero.fdn` (the same (49,3) centre, base 500k, auto-iter on), and the
+appetite row runs on it as the design says.
+
+| row (one run per build) | fix | cap 1 (main) | beta.19 |
+|---|---|---|---|
+| continuous 1×, 332 oct | RED: max 84.7 ms (53 > 50), held 0.96 | RED: 85.8 ms (55 > 50), held 0.60 | max 53.5 ms (2 > 50), held 0.53 |
+| continuous 4× | RED: max 52.5 ms (1), held 2.18 | RED: held 2.93 | held 2.51 |
+| jump-start 1× | RED: held 0.79 | RED: held 0.53 | |
+| jump-start 4× | RED: held 2.87 | RED: held 3.46 | |
+| hand-over 4× | RED: held 1.10 | RED: held 1.11 | |
+| appetite | PASS (max 28.7 ms) | PASS (29.2 ms) | |
+
+(beta.19 ran ungated: it predates the flag; its numbers are read against the same bounds. It is the
+accelerated package, whose pixels match the standard one.)
+
+Three findings, filed here rather than re-normalised (§7.8's risk):
+- **The held criterion fails on every Smooth row, on beta.19 too.** At 4× the held picture reaches
+  2.2–3.5 octaves against a bound of 1; at 1× 0.53–0.96 against 0.5. The jump-start 1× row reads
+  0.53–0.93 on four runs of each build, with no pin abandoned for drift on either (the tile trace).
+  The shipped refresh sizing does not meet the matrix's own bound (`HELD_MAX_OCT`, 0.5 at 1×). The
+  gate keeps the bound the design states; this is open work for the sizing, not for the gate.
+- **The 1× continuous row's slow frames are a regression on unreleased main.** On a 95-octave leg
+  from 1× of the same glide: beta.19 had 0, 0 and 2 frames over 50 ms in three runs; dev.1, dev.3,
+  dev.4, dev.5 (one of two runs), dev.6, dev.7 and main had 36–143. The effect is bimodal from run to
+  run: the same build's per-step cost differs by more than 10× between runs (mode rate 3e7 against
+  7.4e8 steps/ms), and in the cheap state nothing is slow. So single-run bisects lie: one dev.5 run
+  was clean, the next had 45; dev.2 and one main run were clean. On main the mechanism is
+  `c012f32`'s completion clause. The trace (`TRACE=tile` plus `frames.bin`) shows every pin pass
+  priced by a GPU reading at exactly its reading (11.6, 37.2, 21.3 ms), and every pass released at
+  its completion before its reading landed priced 0.0 ms by the stand-in. Each 0.0 took the ×16 fast
+  lane (545 → 8,720 iterations), and the next pin opened at 8,720: 69–115 ms. dev.1–3 have a
+  different shape (256-iteration openings and a 4,096 → 8,192 pass at 1.6 Mpx), which main no longer
+  shows. Waiting for the reading instead (the pre-dev.4 rule, measured as an experiment build, not
+  kept) removes the slow frames (2 and 0) but costs a frame per pass, and the pins fall behind:
+  - motiontest complete adoptions 6 and 9 against 42 and 45;
+  - e4000 at 4×: 0 and 2 adoptions against 35 and 37;
+  - the 20-octave 4× lag 1.20–1.30 octaves against 0.46–0.61.
+
+  The fix that keeps both is the next commit.
+- **The `--autodive` verdict on real runs.** `--autodive 6 --autodive-home 0` stops at 1e6× and exits
+  3 (VACUOUS: no lethal reading). With `--set TDR_LETHAL_MS=30 --autodive 12 --autodive-home 0`, 17
+  retreats applied and none reached nothing, with at most 1 lethal-band interval in a row after a
+  retreat: VERDICT PASS. The process exits 1, because logcheck flags the override's own startup
+  blind-budget line (a 56 ms frame before any reading exists, against a 30 ms band).
+
+Gates (RTX 3080): workspace tests 1,537 / 0 / 11 (+13); self-test 529/529, goldens 31/31; `--motiontest` ×3 PASS
+(A7: 411–434 readings, every count 0; A8: 0 blank walks); `--livetest` 24/24, 0 drifted; `--uitest`
+75 pass / 1 warn / 0 fail across 76 steps.

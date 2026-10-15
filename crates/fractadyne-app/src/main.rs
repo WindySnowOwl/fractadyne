@@ -99,6 +99,7 @@ mod reusetest;
 mod update;
 mod scripting;
 mod selftest;
+mod verdict;
 mod session_outcome;
 mod sysinfo;
 mod theme;
@@ -6771,7 +6772,19 @@ impl FractadyneApp {
                 })
             });
             let then_log2 = val("--zoomtest-then-log2").map(|_| num("--zoomtest-then-log2", "a log2 magnification", 0.0));
-            Some(zoomtest::ZoomTest::new(octaves, rate, location, start_log2, taps, hold_s).with_then(then_log2))
+            // W8: `--zoomtest-gate [smooth|appetite]` holds the glide to a P-G matrix row's criteria.
+            let gate = args.iter().any(|a| a == "--zoomtest-gate").then(|| {
+                let v = val("--zoomtest-gate").filter(|s| !s.starts_with('-')).map(String::as_str);
+                zoomtest::parse_zoom_gate(v).unwrap_or_else(|| {
+                    eprintln!("fractadyne: --zoomtest-gate: expected smooth or appetite, got \"{}\"", v.unwrap_or(""));
+                    crate::exit(2)
+                })
+            });
+            Some(
+                zoomtest::ZoomTest::new(octaves, rate, location, start_log2, taps, hold_s)
+                    .with_then(then_log2)
+                    .with_gate(gate),
+            )
         } else {
             None
         };

@@ -247,3 +247,24 @@ fn the_thresholds_are_boundaries_not_bands() {
     i.frame_idx = 1_000 + crate::tunables::PIN_MAX_FRAMES;
     assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Continue);
 }
+
+#[test]
+fn a_pin_past_halfway_finishes_rather_than_drift_away() {
+    // W8 (the e4000 4x glide): drift past PIN_ABANDON_OCTAVES abandons a pin only BEFORE halfway.
+    let mut i = inputs();
+    i.drift_oct = 2.1;
+    i.cursor = 499_999;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Stop(PinStop::Drift));
+    i.cursor = 500_000;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Continue, "past halfway it finishes");
+    i.cursor = 880_000; // where the glide's pins were when drift threw them away
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Continue);
+    // …and the age backstop still ends one that stalls there.
+    i.frame_idx = 1_000 + crate::tunables::PIN_MAX_FRAMES + 1;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Stop(PinStop::Age));
+    // A split pin by its sets: one of four is short of half, three of four past it.
+    let mut j = inputs();
+    j.drift_oct = 2.1;
+    assert_eq!(pin_verdict(&split_pin(4, 1), &j), PinVerdict::Stop(PinStop::Drift));
+    assert_eq!(pin_verdict(&split_pin(4, 3), &j), PinVerdict::Continue);
+}

@@ -100,6 +100,9 @@ pub(crate) enum Outcome {
     Pass,
     /// Ran to completion but the harness reported a failure (drift, Δ, verdict).
     FailAssert,
+    /// Ran, but never reached what it tests (`crate::verdict::VACUOUS`, exit 3): not a pass, and not
+    /// a failure of the code under test either — the rung's regime needs reaching (W8).
+    FailVacuous,
     /// Exceeded its deadline and was killed.
     FailDeadline,
     /// Lost the GPU device.
@@ -131,6 +134,7 @@ impl Outcome {
         match self {
             Outcome::Pass => "pass",
             Outcome::FailAssert => "fail-assert",
+            Outcome::FailVacuous => "fail-vacuous",
             Outcome::FailDeadline => "fail-deadline",
             Outcome::FailDeviceLost => "fail-device-lost",
             Outcome::FailCrash => "fail-crash",
@@ -551,7 +555,7 @@ pub(crate) const LADDER: &[Rung] = &[
     Rung {
         id: "live/home/glide-from-depth",
         lane: Lane::Live,
-        motivation: "ZOOM HOME FROM DEPTH — the only automated reproduction of the device-loss regime,                      and the button that actually lost a device (2026-08-18, crash-1787014795-0.txt).                      One continuous sweep from depth to 1x crosses every mode boundary while the budget                      is still sized for the deep regime, which is the shape of both field losses: a                      frame ALREADY SIZED by the old regime going out at 405x over budget (3040 ms)                      after a mode switch reset it, and bla_skip collapsing 4,457,481 -> 9,343 so                      per-step cost jumped ~100x under a stale budget. Measured 3/3 glides from 1e22                      each produced a lethal reading (peaks 1025/1042/1605 ms against a 900 ms band);                      the emergency retreat survived all three. A MONOTONIC DIVE CANNOT DO THIS - it                      peaked at 36 ms on the RX 6800 XT at 1e150 because the controller was starved,                      not stressed. --autodive exits 3 if no lethal reading occurs, so this rung fails                      loudly when it stops reproducing rather than passing vacuously.",
+        motivation: "ZOOM HOME FROM DEPTH — the only automated reproduction of the device-loss regime,                      and the button that actually lost a device (2026-08-18, crash-1787014795-0.txt).                      One continuous sweep from depth to 1x crosses every mode boundary while the budget                      is still sized for the deep regime, which is the shape of both field losses: a                      frame ALREADY SIZED by the old regime going out at 405x over budget (3040 ms)                      after a mode switch reset it, and bla_skip collapsing 4,457,481 -> 9,343 so                      per-step cost jumped ~100x under a stale budget. Measured 3/3 glides from 1e22                      each produced a lethal reading (peaks 1025/1042/1605 ms against a 900 ms band);                      the emergency retreat survived all three. A MONOTONIC DIVE CANNOT DO THIS - it                      peaked at 36 ms on the RX 6800 XT at 1e150 because the controller was starved,                      not stressed. --autodive exits 3 (fail-vacuous) if no lethal reading occurs, so this rung                      fails loudly when it stops reproducing rather than passing vacuously, and 2 if it                      reached the regime and a retreat did not hold (judged from the frame record).",
         // 600 s, not 420: the Radeon run reached 1e22 in 113 s and each further cycle costs ~135 s
         // (dive + glide + re-dive), so 3 cycles do not fit 420 s — it timed out after 2. The rung still
         // PASSED (it only needs one lethal reading), but a cycle count the run cannot finish is a
@@ -659,6 +663,8 @@ pub(crate) fn classify(timed_out: bool, exit_code: Option<i32>, output: &str) ->
         // The harnesses use a distinct code for "ran fine, result is wrong" where they can
         // (`--bench-matrix` exits 2 on algorithmic drift); everything else non-zero is a crash.
         Some(2) => Outcome::FailAssert,
+        // `crate::verdict::VACUOUS`: the run never reached what it tests (W8).
+        Some(3) => Outcome::FailVacuous,
         Some(_) | None => Outcome::FailCrash,
     }
 }

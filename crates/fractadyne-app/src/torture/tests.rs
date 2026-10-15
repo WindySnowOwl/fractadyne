@@ -121,6 +121,9 @@ fn a_watchdog_hang_is_a_failure_not_a_pass() {
 fn clean_and_drifted_runs_are_told_apart() {
     assert_eq!(classify(false, Some(0), "checks 116/116 — OK"), Outcome::Pass);
     assert_eq!(classify(false, Some(2), "algorithmic drift"), Outcome::FailAssert);
+    // W8: a harness that never reached what it tests is neither a pass nor a crash.
+    assert_eq!(classify(false, Some(3), "VACUOUS"), Outcome::FailVacuous);
+    assert!(Outcome::FailVacuous.is_failure() && !Outcome::FailVacuous.is_pass());
     assert_eq!(classify(false, Some(101), "panicked"), Outcome::FailCrash);
 }
 

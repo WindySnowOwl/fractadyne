@@ -9568,7 +9568,7 @@ pub(crate) fn pin_verdict(pin: &PinnedRefresh, i: &PinInputs) -> PinVerdict {
     if i.caller_reproject {
         return PinVerdict::Stop(PinStop::CallerReproject);
     }
-    if i.drift_oct > crate::tunables::PIN_ABANDON_OCTAVES {
+    if i.drift_oct > crate::tunables::PIN_ABANDON_OCTAVES && !drift_finishes_sooner(i.cursor as u64, pin.gpu_iter as u64) {
         return PinVerdict::Stop(PinStop::Drift);
     }
     if i.pan_spans > crate::tunables::PIN_ABANDON_SPANS {
@@ -9578,6 +9578,20 @@ pub(crate) fn pin_verdict(pin: &PinnedRefresh, i: &PinInputs) -> PinVerdict {
         return PinVerdict::Stop(PinStop::Age);
     }
     PinVerdict::Continue
+}
+
+/// May a pin the live view has zoomed past (`PIN_ABANDON_OCTAVES`) FINISH, rather than be abandoned
+/// for one at the live view? Yes once it has done at least half its work (`done` of `total`).
+///
+/// ⭐Abandoning buys freshness only if the new pin lands first, and past halfway it never does: the
+/// rest of this one is less work than all of the next. Meanwhile the screen holds the older snapshot
+/// either way — an abandoned pin's successor does not retake it — so a drift abandon past halfway
+/// only makes the held picture older. Found by W8's zoomtest gate (2026-10-14): a 4x glide toward
+/// the e4000 Misiurewicz point, in the escaped-reference regime, abandoned 40 of 44 pins for drift
+/// at 62–88% done; each new one opened smaller, and the screen held one picture for ~30 s while
+/// the view went 80 octaves deeper. The age backstop (`PIN_MAX_FRAMES`) still ends a pin that stalls.
+pub(crate) fn drift_finishes_sooner(done: u64, total: u64) -> bool {
+    total > 0 && done.saturating_mul(2) >= total
 }
 
 /// A SPLIT pin's decision (`PinnedRefresh::split`). Complete once every set has run — and then
@@ -9599,7 +9613,9 @@ fn split_verdict(pin: &PinnedRefresh, i: &PinInputs) -> PinVerdict {
     if i.caller_reproject {
         return PinVerdict::Stop(PinStop::CallerReproject);
     }
-    if i.drift_oct > crate::tunables::PIN_ABANDON_OCTAVES {
+    if i.drift_oct > crate::tunables::PIN_ABANDON_OCTAVES
+        && !drift_finishes_sooner(pin.split_next as u64, pin.split as u64)
+    {
         return PinVerdict::Stop(PinStop::Drift);
     }
     if i.pan_spans > crate::tunables::PIN_ABANDON_SPANS {

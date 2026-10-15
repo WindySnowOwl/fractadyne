@@ -176,13 +176,9 @@ impl crate::FractadyneApp {
             .filter(|n| !s.crashes_at_start.contains(n))
             .collect();
         let mut fails: Vec<String> = Vec::new();
-        // A soak too short to have been judged proves nothing, and must not report success.
-        if s.samples == 0 {
-            fails.push(format!(
-                "no liveness window completed in {elapsed:.0}s — run for at least {}s",
-                WINDOW.as_secs() * 2
-            ));
-        }
+        // A soak too short to have been judged proves nothing, and must not report success — nor a
+        // failure of liveness: it is VACUOUS (W8, `crate::verdict`).
+        let short = s.samples == 0;
         if growth > GROWTH_LIMIT_MB {
             fails.push(format!("resident set grew {growth} MB (limit {GROWTH_LIMIT_MB})"));
         }
@@ -203,22 +199,28 @@ impl crate::FractadyneApp {
             s.regime.folded, s.regime.lost
         );
         let escape_armed = crate::Perf::ref_escape_at() > 0;
-        if fails.is_empty() && escape_armed && !regime.entered {
-            crate::diag::verdict(
-                "soak-liveness: VACUOUS (exit 2) — FRACTADYNE_REF_ESCAPE_AT is armed but the regime was never \
-                 entered, so surviving it proves nothing",
-            );
-            return 2;
-        }
-        if fails.is_empty() {
-            crate::diag::verdict("soak-liveness: PASS (frames advanced in every window, memory held)");
-            0
-        } else {
+        if !fails.is_empty() {
             for f in &fails {
                 crate::diag::verdict(&format!("soak-liveness: FAIL — {f}"));
             }
-            1
+            return crate::verdict::RED;
         }
+        if short {
+            crate::diag::verdict(&format!(
+                "soak-liveness: VACUOUS (exit 3) — no liveness window completed in {elapsed:.0}s; run for at least {}s",
+                WINDOW.as_secs() * 2
+            ));
+            return crate::verdict::VACUOUS;
+        }
+        if escape_armed && !regime.entered {
+            crate::diag::verdict(
+                "soak-liveness: VACUOUS (exit 3) — FRACTADYNE_REF_ESCAPE_AT is armed but the regime was never \
+                 entered, so surviving it proves nothing",
+            );
+            return crate::verdict::VACUOUS;
+        }
+        crate::diag::verdict("soak-liveness: PASS (frames advanced in every window, memory held)");
+        crate::verdict::PASS
     }
 }
 
