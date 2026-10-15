@@ -1326,6 +1326,48 @@ fn stopping_playback_restores_interaction() {
 }
 
 #[test]
+fn the_battery_ships_and_declares_what_it_expects_of_every_step() {
+    // gpu-validate.ps1 judges its own bundle against gpu-validate-expected.json beside it (W8):
+    // a package that ships the battery without the file judges nothing, and a step the file does not
+    // declare is held to exit 0 by default, which would turn a known-failing step red on every card.
+    let publish = include_str!("../../../scripts/publish-share.ps1");
+    assert!(
+        publish.contains("scripts\\gpu-validate-expected.json"),
+        "publish-share.ps1 ships gpu-validate.ps1 but not gpu-validate-expected.json"
+    );
+    let battery = include_str!("../../../scripts/gpu-validate.ps1");
+    let exp: serde_json::Value =
+        serde_json::from_str(include_str!("../../../scripts/gpu-validate-expected.json")).expect("the file parses");
+    // Every step the battery records: `Invoke-Step "name"` and the two recorded by hand (`Step = "name"`).
+    let mut steps: Vec<String> = Vec::new();
+    for marker in ["Invoke-Step \"", "Step = \""] {
+        for (i, _) in battery.match_indices(marker) {
+            let rest = &battery[i + marker.len()..];
+            if let Some(end) = rest.find('"') {
+                let name = &rest[..end];
+                if !name.is_empty() && !name.contains('$') && !steps.iter().any(|s| s == name) {
+                    steps.push(name.to_string());
+                }
+            }
+        }
+    }
+    assert!(steps.len() >= 9, "read {steps:?} from gpu-validate.ps1: the scan is not finding its steps");
+    for s in &steps {
+        let rule = &exp["default"][s.as_str()];
+        assert!(rule["exit"].as_array().is_some_and(|a| !a.is_empty()), "no default expectation for step {s}");
+    }
+    // Card keys are what the battery derives from the adapter line (the app's own slug), and every
+    // rule names a step the battery runs.
+    for (card, rules) in exp["adapters"].as_object().expect("adapters") {
+        assert_eq!(&crate::calibration::slug(card), card, "{card} is not an adapter slug");
+        for (step, rule) in rules.as_object().expect("a card's rules") {
+            assert!(steps.contains(step), "{card} declares {step}, which the battery does not run");
+            assert!(rule["exit"].as_array().is_some_and(|a| !a.is_empty()), "{card}/{step} declares no exit");
+        }
+    }
+}
+
+#[test]
 fn every_package_ships_the_replay_fixtures() {
     // `--selftest`'s replay group reads `validation/replays/*.jsonl` beside the binary (`anchored`).
     // A package that leaves them out turns three of its checks VACUOUS on every installed copy —

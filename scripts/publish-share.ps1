@@ -169,9 +169,10 @@ if (-not $SkipWindows) {
     New-Item -ItemType Directory -Force -Path (Join-Path $stage "scripts") | Out-Null
     Copy-Item (Join-Path $root "scripts\*.example.toml") -Destination (Join-Path $stage "scripts")
     Copy-Item (Join-Path $root "scripts\deep-sample.fdn") -Destination (Join-Path $stage "scripts")
-    # The validation battery itself, so a tester can run it from the extracted zip.
-    Copy-Item (Join-Path $root "scripts\gpu-validate.ps1"), (Join-Path $root "scripts\gpu-validate.sh") `
-              -Destination (Join-Path $stage "scripts")
+    # The validation battery itself, so a tester can run it from the extracted zip, and what it
+    # expects of each card (without the file the battery judges nothing and exits 3).
+    Copy-Item (Join-Path $root "scripts\gpu-validate.ps1"), (Join-Path $root "scripts\gpu-validate.sh"), `
+              (Join-Path $root "scripts\gpu-validate-expected.json") -Destination (Join-Path $stage "scripts")
     # ...and its screen step: the capture script, the fixture it dives, and the scorer.
     New-Item -ItemType Directory -Force -Path (Join-Path $stage "scripts\dive-capture") | Out-Null
     Copy-Item (Join-Path $root "scripts\dive-capture\capdive.ps1"), (Join-Path $root "scripts\dive-capture\grab.ps1"), `

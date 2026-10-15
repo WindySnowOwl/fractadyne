@@ -4474,3 +4474,45 @@ Gates (RTX 3080): workspace tests 1,550 / 0 / 11 (+5); `--livetest` grand tour 2
 
 ⚠ `deep-location` is about 9 hours. Requiring it once per release is what §7.8 asks, and it is
 the user's call whether that stays a gate or becomes a decision recorded at sign-off.
+
+**2026-10-15 — W8: the battery judges itself (`gpu-validate-expected.json`).** `gpu-validate.ps1`
+exited 0 whatever its steps did, and `summary.txt` explained the reds away in prose. Now:
+- `scripts/gpu-validate-expected.json` declares, per card (by the adapter slug the app's
+  `calibration::slug` makes) over a default, each step's expected exit codes. Where a step is known
+  to fail, it also lists WHICH checks: a `[FAIL]` line not in the list is a new failure.
+- The battery reads its card from the bundle's adapter line and judges each step it ran. Each step
+  is named in a Verdict section of `summary.txt`, as expected or UNEXPECTED. A card that now PASSES
+  a step expected to fail is also UNEXPECTED, because the file is then stale. The battery exits 0
+  (all as declared), 2 (something UNEXPECTED) or 3 (no readable file: nothing judged).
+- `publish-share.ps1` ships the file beside the battery. A test holds that recipe to it, and holds
+  the file to the battery: every step it runs has a default, and every card key is a slug of a step
+  the battery runs. Control: deleting the `screen` default turns the test red.
+- Declared today:
+  - gputest exits 1 on both known cards (their compilers fold the transforms; the app detects
+    that).
+  - The RX 6800 XT's self-test may exit 1 with only "a wider canvas contains the narrower one"
+    failing.
+  - Everything else must exit 0.
+
+*Checked against the last real Radeon battery* (dev.9, 2026-10-14), its verdict block extracted
+verbatim and run over fixture bundles under `pwsh` and Windows PowerShell 5.1. All 12 cases are as
+intended (6 cases × 2 shells), and the dev.9 bundle as run is UNEXPECTED on two steps:
+- selftest: the three replay checks that were VACUOUS with "no recording";
+- recordtest: exit 1.
+
+Those are exactly the two defects W6 found by reading the prose (fixtures not packaged; the
+recordtest's IMPOSSIBLE verdict). The battery would have named them itself.
+
+⛔*An encoding trap, caught by the hygiene rule.* A regex escape I wrote for U+00B7 (the middle dot)
+reached the file as the literal character: the editing tool decodes backslash-u escapes. Windows PowerShell 5.1 reads a BOM-less
+file as CP1252, so the pattern became two characters that never match, and every card was silently
+judged by the defaults. The first judge test missed it because its test script carried a BOM;
+`pwsh` 7 hides it too. Fixed by building the character from its code point (`[char]0x00B7`); the
+file is ASCII again. The test now writes the script BOM-less, as it ships. Control: the literal dot
+put back fails under 5.1 on 4 of 6 cases (cards mis-detected) while `pwsh` passes them all.
+
+Residue:
+- The field agent copies only `gpu-validate.ps1` for an accelerated-package battery, so those runs
+  are NOT JUDGED (exit 3) until the agent also copies the file (a change for the next agent
+  version).
+- `gpu-validate.sh` (Linux) does not judge yet.

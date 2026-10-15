@@ -336,10 +336,83 @@ $head | Out-File $sum -Encoding utf8
 ($results | Format-Table Step, Exit, Seconds, File -AutoSize | Out-String).TrimEnd() |
 Out-File $sum -Encoding utf8 -Append
 
+# --- verdict: every step against gpu-validate-expected.json --------------------------------------
+# Until this, the battery exited 0 whatever its steps did, and the prose below explained the reds
+# away. Each card's expected exits (and, where a step is known to fail, WHICH checks) are declared
+# in gpu-validate-expected.json beside this script; anything else is named here and makes the
+# battery exit 2. A missing or unreadable file judges nothing and exits 3. (These lines are indented
+# on purpose: the field agent reads the table above by lines that START with a step name.)
+$verdictCode = 0
+$verdictLines = @()
+$slug = ""
+$adapterTxt = Join-Path $dir "adapter.txt"
+if (Test-Path $adapterTxt) {
+    # "... adapter: AMD Radeon RX 6800 XT <middle dot> Vulkan ..." -> the app's calibration::slug.
+    # The dot is built from its code point: this file must stay ASCII (see the NOTE at the top), and
+    # a literal one would be read by Windows PowerShell 5.1 as two CP1252 characters that never match.
+    $dot = [string][char]0x00B7
+    foreach ($l in @(Get-Content $adapterTxt -Encoding utf8)) {
+        if ($l -match ('adapter:\s*([^' + $dot + ']+?)\s*' + $dot)) {
+            $slug = ($Matches[1].ToLowerInvariant() -creplace '[^a-z0-9]+', '-').Trim('-')
+            break
+        }
+    }
+}
+$expPath = Join-Path $root "gpu-validate-expected.json"
+$exp = $null
+try { $exp = Get-Content $expPath -Raw -Encoding utf8 -ErrorAction Stop | ConvertFrom-Json } catch { $exp = $null }
+if (-not $exp) {
+    $verdictCode = 3
+    $verdictLines += "  NOT JUDGED: $expPath is missing or unreadable, so no step's exit code was checked."
+}
+else {
+    $card = $null
+    if ($slug -and $exp.adapters.PSObject.Properties[$slug]) { $card = $exp.adapters.$slug }
+    $cardNote = if ($card) { "" } else { " (not in the file: judged by its defaults)" }
+    $verdictLines += "  card: $(if ($slug) { $slug } else { '(no adapter line in the log)' })$cardNote"
+    foreach ($r in $results) {
+        $rule = $null
+        if ($card -and $card.PSObject.Properties[$r.Step]) { $rule = $card.($r.Step) }
+        elseif ($exp.default.PSObject.Properties[$r.Step]) { $rule = $exp.default.($r.Step) }
+        $allowed = if ($rule) { @($rule.exit | ForEach-Object { [int]$_ }) } else { @(0) }
+        $problem = ""
+        if ($allowed -notcontains [int]$r.Exit) {
+            $problem = "exit $($r.Exit), expected $($allowed -join ' or ')"
+            if ([int]$r.Exit -eq 0) { $problem += " - it now PASSES: update gpu-validate-expected.json" }
+        }
+        elseif ([int]$r.Exit -ne 0 -and $rule -and $rule.known_fails) {
+            $known = @($rule.known_fails)
+            $fails = @(Get-Content (Join-Path $dir $r.File) -Encoding utf8 -ErrorAction SilentlyContinue |
+                ForEach-Object { if ($_ -match '^\s*\[FAIL\]\s+(.+)$') { $Matches[1].Trim() } })
+            $new = @($fails | Where-Object { $f = $_; -not ($known | Where-Object { $f.StartsWith($_, [StringComparison]::Ordinal) }) })
+            if ($fails.Count -eq 0) { $problem = "exit $($r.Exit) with no [FAIL] line to hold against the known failures" }
+            elseif ($new.Count -gt 0) { $problem = "NEW failure(s): " + ($new -join "; ") }
+        }
+        if ($problem) {
+            $verdictCode = 2
+            $verdictLines += ("  UNEXPECTED   {0,-13} {1}" -f $r.Step, $problem)
+        }
+        else {
+            $verdictLines += ("  as expected  {0,-13} exit {1}" -f $r.Step, $r.Exit)
+        }
+    }
+}
+$verdictWord = switch ($verdictCode) {
+    0 { "PASS - every step did what gpu-validate-expected.json declares for this card" }
+    2 { "FAIL - a step did not do what gpu-validate-expected.json declares (UNEXPECTED above)" }
+    default { "NOT JUDGED" }
+}
+@("", "Verdict (gpu-validate-expected.json)", "------------------------------------") + $verdictLines + @("  VERDICT: $verdictWord") |
+Out-File $sum -Encoding utf8 -Append
+
 @"
 
 How to read this
 ----------------
+verdict      The battery's own judgement, above: each step's exit code (and, for a step known to
+             fail, which checks failed) against what gpu-validate-expected.json declares for this
+             card. Exit 0 = all as declared, 2 = something UNEXPECTED (named), 3 = not judged. The
+             notes below say why each declaration is what it is.
 build-id     Read this line FIRST. 0 = the binary tested is the one the share published. 1 = it is
              not (a stale extraction, or a different build): every other result is then about an
              unknown binary. 2 = no BUILD-ID.txt was found, so nobody can say which build this is -
@@ -414,3 +487,7 @@ Write-Host "bundle : $bundle"
 if ($zip) { Write-Host "zip    : $zip" }
 Write-Host ""
 Write-Host "Read summary.txt first - it explains which failures are expected off the reference card." -ForegroundColor Cyan
+Write-Host ""
+$verdictLines | ForEach-Object { Write-Host $_ }
+Write-Host ("VERDICT: {0}" -f $verdictWord) -ForegroundColor $(if ($verdictCode -eq 0) { "Green" } else { "Red" })
+exit $verdictCode
