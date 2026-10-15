@@ -4103,3 +4103,42 @@ when none). Re-recorded the local fixtures (motiontest, autodive-2p800, uitest, 
 Coverage gains two terms (52): a pin price deferred, and a released pass priced by its own reading.
 
 Gates (RTX 3080): workspace tests 1,540 / 0 / 11 (+3); self-test 529/529, goldens 31/31; `--motiontest` ×3 PASS (complete adoptions 49 and 45, and the recording run's); `--livetest` 24/24, 0 drifted; `--uitest` 75 pass / 1 warn / 0 fail over 76 steps.
+
+**2026-10-14 — W8's field build (dev.10, `8d1da4a`, published and reverted in `114d5cd`) on the
+RX 6800 XT.**
+
+*A fresh field capture* replaces the trimmed one. On PLUTO, the same pair as dev.9 was recorded
+through the agent with `-RecordDecide`: `--motiontest`, and the 12-octave glide into the 9.3e78
+minibrot with a 30 s hold. Trimmed to 941 decisions, they replay exactly on the RTX 3080 (workspace
+tests 1,540 / 0 / 11 with them). The motiontest passes on the Radeon:
+- 58 complete adoptions;
+- A7 checked 391 GPU readings, every provenance count 0;
+- A8: 0 blank walks.
+
+*The deferred feed on the Radeon.* Readings there are known to pair oddly with dispatches. The
+feed pairs by the frame a reading names, and it pairs on this card as well:
+- motiontest: 169 of 185 released passes priced by their own reading, 16 by the stand-in after
+  the wait;
+- minibrot glide: 215 of 218 by their own reading.
+
+*The 1× leg on the Radeon* (95 octaves on the (49,3) spiral from 1×; the agent caps a centre at
+400 characters, so the view went with its centre cut to 300 digits, ample for 2^95): an A/B against beta.18 (on the share; beta.19 changed only credits and bench-kit code, 0 px), interleaved, two runs each:
+
+| RX 6800 XT, 1× leg | beta.18 | dev.10 |
+|---|---|---|
+| frames > 50 ms | 185, 111 | 480, 488 |
+| frames > 100 ms | 1, 1 | 288, 289 |
+| p95 interval | 46.0, 33.4 ms | 109.1, 109.4 ms |
+| fps | 45.4, 48.1 | 37.5, 37.9 |
+| mean lag (oct) | 0.281, 0.232 | 0.160, 0.158 |
+
+**An open regression on the Radeon, in the live-refresh path.** It is not the deferred feed, whose
+pins are not involved. The record (`frames.bin`) shows, every three frames, a whole refresh in one
+dispatch: iterations 0–13,761 at 905×519 (motion scale 0.71 of 1280×735), 6.5e9 steps, read at
+112–115 ms. Its reading lands four frames after its dispatch (provenance frame 2878, read at 2882).
+By then the next one is out (2881). The working hypothesis, unconfirmed: the whole-refresh price is
+paired with `full_pass` (`note_refresh_reading`), which the next dispatch has already overwritten,
+so each 115 ms reading prices nothing and the stale price keeps admitting the frame. That is the
+"a probe whose reading another rule discards never terminates" shape. On the RTX 3080 the reading
+lands within three frames, and nothing like it shows. NEXT: confirm, and find which change since
+beta.18 made it reachable.
