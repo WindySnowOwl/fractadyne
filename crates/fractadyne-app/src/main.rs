@@ -1497,6 +1497,11 @@ struct Perf {
     pin_pass_steps: [u64; 2],
     pin_pass_frame: [u64; 2],
     pin_pass_gpu_ms: [f64; 2],
+    /// A pin pass released at its completion before its reading landed (`decide::WalkLedger::late`:
+    /// size, band, dispatch frame, stand-in), and that reading once it has (< 0 = not yet) — paired
+    /// by the frame the reading NAMES (W6 provenance), so a same-size successor cannot take it.
+    chunk_late: [Option<(u32, u8, u64, f64)>; 2],
+    pin_late_gpu_ms: [f64; 2],
     /// Frames the last pinned refresh took from start to adoption (or abandonment), and the
     /// resolution scale it ran at — the measured input of the refresh-resolution feedback
     /// (`refresh_res_cap` is a model; this is what actually happened). Zero = no pin yet.
@@ -2296,6 +2301,8 @@ impl Default for Perf {
             pin_pass_steps: [0, 0],
             pin_pass_frame: [0, 0],
             pin_pass_gpu_ms: [-1.0, -1.0],
+            chunk_late: [None, None],
+            pin_late_gpu_ms: [-1.0, -1.0],
             pin_done: [
                 std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
@@ -16195,6 +16202,12 @@ impl eframe::App for FractadyneApp {
             // W6 (U14): WHICH dispatch this reading timed, into the record — published with the
             // reading, before its time, so it cannot describe another pass.
             if let Ok(p) = self.perf.iterate_prov[v].lock() {
+                // The released pin pass's own reading (the deferred feed): it names that pass's
+                // dispatch frame. Taken here, before `apply_iterate_measurement` can pair it with the
+                // pass now in flight by its step count.
+                if self.perf.chunk_late[v].is_some_and(|l| l.2 == p.frame) && self.perf.pin_late_gpu_ms[v] < 0.0 {
+                    self.perf.pin_late_gpu_ms[v] = ms;
+                }
                 let r = &mut self.perf.rec[v];
                 r.read_prov_frame = p.frame;
                 r.read_prov_kind = p.kind;

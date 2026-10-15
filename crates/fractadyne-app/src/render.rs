@@ -5621,11 +5621,14 @@ impl FractadyneApp {
                 pin_inflight: self.perf.pin_inflight[vs],
                 pin_done_at: self.perf.pin_done_at[vs].load(std::sync::atomic::Ordering::Relaxed),
                 pin_dispatch_at: self.perf.pin_dispatch_at[vs],
+                late_gpu_ms: self.perf.pin_late_gpu_ms[vs],
+                no_timestamps: !self.perf.ts_supported,
                 ledger: decide::WalkLedger {
                     inflight: self.perf.chunk_inflight[vs],
                     bands: self.perf.chunk_bands[vs],
                     pass_dt: self.perf.chunk_pass_dt[vs],
                     motion_step_last: self.perf.motion_step_last[vs],
+                    late: self.perf.chunk_late[vs],
                 },
                 tdr_budget_ms: crate::tunables::cost().tdr_budget_ms,
                 tdr_explicit_budget_ms: crate::tunables::cost().tdr_explicit_budget_ms,
@@ -5639,6 +5642,11 @@ impl FractadyneApp {
             self.perf.chunk_bands[vs] = price.ledger.bands;
             self.perf.chunk_pass_dt[vs] = price.ledger.pass_dt;
             self.perf.motion_step_last[vs] = price.ledger.motion_step_last;
+            // A newly parked pass (or none) waits for a reading of ITS dispatch.
+            if price.ledger.late.map(|l| l.2) != self.perf.chunk_late[vs].map(|l| l.2) || price.ledger.late.is_none() {
+                self.perf.pin_late_gpu_ms[vs] = -1.0;
+            }
+            self.perf.chunk_late[vs] = price.ledger.late;
             if let Some(outcome) = price.retreat {
                 self.perf.retreat_last[vs] = Some(outcome);
                 self.perf.retreat_pending[vs] = self.perf.retreat_pending[vs].max(outcome.code());
@@ -5659,6 +5667,17 @@ impl FractadyneApp {
                                 }
                             ),
                         );
+                    }
+                    decide::WalkPriceEvent::PinDeferred { band, size, stand_in } => {
+                        if crate::diag::trace_on("tile") {
+                            crate::diag::trace(
+                                "tile",
+                                format!(
+                                    "pin-defer v={vs} f={} band={band} size={size} stand_in={stand_in:.1}ms (released; priced by its reading)",
+                                    self.perf.frame_idx
+                                ),
+                            );
+                        }
                     }
                     decide::WalkPriceEvent::PinPriced { band, size, price: p, acc } => {
                         if crate::diag::trace_on("tile") {
@@ -5732,6 +5751,9 @@ impl FractadyneApp {
             if id.clear_ledger {
                 self.perf.chunk_bands[vs] = [0; crate::tunables::CHUNK_BANDS];
                 self.perf.chunk_pass_dt[vs] = 0.0;
+                // A parked price belongs to the ledger it was earned in.
+                self.perf.chunk_late[vs] = None;
+                self.perf.pin_late_gpu_ms[vs] = -1.0;
             }
             if id.restarted {
                 self.perf.chunk_inflight[vs] = None;

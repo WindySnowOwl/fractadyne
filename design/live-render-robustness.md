@@ -4063,3 +4063,43 @@ Three findings, filed here rather than re-normalised (§7.8's risk):
 Gates (RTX 3080): workspace tests 1,537 / 0 / 11 (+13); self-test 529/529, goldens 31/31; `--motiontest` ×3 PASS
 (A7: 411–434 readings, every count 0; A8: 0 blank walks); `--livetest` 24/24, 0 drifted; `--uitest`
 75 pass / 1 warn / 0 fail across 76 steps.
+
+**2026-10-14 — W8 rung 1b: a released pin pass is priced by its own reading (the deferred feed)**
+(`feat/w8-gates`).
+
+The mechanism is rung 1's third finding. A pin pass is released at its completion (one pass in
+flight). On the RTX 3080 the completion is seen two frames after the dispatch, a frame before the
+GPU reading lands. Priced there by the completion stand-in (the wall time less two frame periods of
+pipeline latency, floored at 0), a 12.5 ms pass read 0.0 ms and took the ×16 fast lane. The next
+pin opened at 8,720 iterations, and that pass cost 69–115 ms.
+
+Now the pass is still released at its completion, but its price is parked (`WalkLedger::late`:
+size, band, dispatch frame and stand-in). It is fed when the reading that names that dispatch
+frame lands. The pairing uses W6's provenance, so a same-size successor cannot take the reading.
+If no reading comes within `PIN_PRICE_WAIT_FRAMES`, the stand-in is fed as before, and a device
+without timestamps feeds it at once (`WalkPriceInputs::no_timestamps`). A ledger reset drops a
+parked price with the bands it would have fed. The trace adds a `pin-defer` line, and a late price
+reads `acc=-1.0` on its `pin-price` line (`-2.0` when the stand-in stood).
+
+A/B on the RTX 3080, interleaved against rung 1:
+
+| | deferred feed | rung 1 |
+|---|---|---|
+| 95-octave 1× leg (49,3) from 1×: frames > 50 ms | 0, 0 | 50, 46 |
+| …pins adopted / mean lag (oct) | 8 / 0.009 (cheap state), 273 / 0.296 | 325 / 0.224, 319 / 0.231 |
+| motiontest complete adoptions | 45, 45 | 46, 46 |
+| e4000 4×: adopted / held max (oct) | 33 / 7.96, 33 / 6.63 | 35 / 7.23, 36 / 6.37 |
+| 20-octave 4× zoom: mean lag (oct) | 0.592, 0.688, 0.783 | 0.656, 0.541, 0.574 |
+
+The cost is detail that lands a little later: about 0.07 octaves of mean lag at 1× and 0.1 at 4×
+(three reps each, the same direction every time, not significant at that count). It comes from
+passes that now grow by their real prices instead of 16× jumps. The 60–115 ms hitch that bought it
+is the P-G matrix's first criterion, so the trade stands. If the lag is to be won back, the pin
+pass target (`MOTION_PIN_TARGET_MS`, 20 ms) is the knob, not the stand-in.
+
+Replays. Every fixture's walk-price decisions changed wherever a released pass had been priced by
+its stand-in (the autodive fixture: 11 of 602 before re-recording, after `late` was made absent
+when none). Re-recorded the local fixtures (motiontest, autodive-2p800, uitest, livetest-grand-tour, escaped-ref and zoomtest): each replays exactly. The field fixture is trimmed for now. The 35 of its 897 decisions that the change moves are dropped, all walk-price with a stand-in price now deferred. The other 862 still replay exactly, until a capture from a field build replaces it.
+Coverage gains two terms (52): a pin price deferred, and a released pass priced by its own reading.
+
+Gates (RTX 3080): workspace tests 1,540 / 0 / 11 (+3); self-test 529/529, goldens 31/31; `--motiontest` ×3 PASS (complete adoptions 49 and 45, and the recording run's); `--livetest` 24/24, 0 drifted; `--uitest` 75 pass / 1 warn / 0 fail over 76 steps.
