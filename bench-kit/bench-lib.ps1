@@ -444,6 +444,27 @@ function Test-RenderHasStructure($path) {
     }
 }
 
+# Is this PNG COMPLETE? `Test-RenderHasStructure` cannot tell: GDI+ decodes a PNG that was cut off
+# part-way and fills the missing rows, so half an image still has plenty of colours and passes "is
+# this a picture". That is how every Fractal Zoomer image of the first 4K run (2026-10-12) passed
+# with the bottom half missing: its driver exited the JVM on the stats file, which Fractal Zoomer
+# writes BEFORE it saves the image. A finished PNG ends with its IEND chunk; check for it. Anything
+# that is not a .png is not this check's business and passes.
+function Test-PngComplete($path) {
+    if (-not (Test-Path $path)) { return $false }
+    if ([System.IO.Path]::GetExtension($path) -ne '.png') { return $true }
+    $iend = [byte[]](0, 0, 0, 0, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82)
+    $fs = [System.IO.File]::OpenRead((Resolve-Path $path).Path)
+    try {
+        if ($fs.Length -lt 12) { return $false }
+        $tail = New-Object byte[] 12
+        [void]$fs.Seek(-12, [System.IO.SeekOrigin]::End)
+        [void]$fs.Read($tail, 0, 12)
+        for ($i = 0; $i -lt 12; $i++) { if ($tail[$i] -ne $iend[$i]) { return $false } }
+        return $true
+    } finally { $fs.Dispose() }
+}
+
 # System facts for the results header: honest hardware disclosure or the numbers mean nothing.
 function Write-SysInfo($path) {
     $lines = @()
