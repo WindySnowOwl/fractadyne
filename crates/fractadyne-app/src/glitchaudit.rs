@@ -367,6 +367,29 @@ impl crate::FractadyneApp {
             t2.elapsed().as_secs_f64()
         );
 
+        // FRACTADYNE_AUDIT_PIXELS="x,y;x,y": also report these pixels, sampled or not, beside their
+        // oracle — how an investigation follows ONE pixel through variants of the code (the corpus
+        // row 13 point the tail phase sent 20 iterations late, 2026-10-15).
+        if let Ok(list) = std::env::var("FRACTADYNE_AUDIT_PIXELS") {
+            for pt in list.split(';') {
+                let mut it = pt.split(',').map(|s| s.trim().parse::<usize>());
+                if let (Some(Ok(x)), Some(Ok(y))) = (it.next(), it.next()) {
+                    if x < w && y < h {
+                        let i = y * w + x;
+                        let o = match oracle_at(i, 0.0, 0.0) {
+                            Some((_, sm)) => Value::Escaped(sm),
+                            None => Value::Interior,
+                        };
+                        println!(
+                            "  watch    ({x:>5},{y:>5})   {la} {}   {lb} {}   oracle {o}",
+                            Value::from_channel(first[4 * i]),
+                            Value::from_channel(second[4 * i]),
+                        );
+                    }
+                }
+            }
+        }
+
         // The table and the tallies.
         use std::collections::HashMap;
         let mut tally: [HashMap<Verdict, usize>; 2] = [HashMap::new(), HashMap::new()];

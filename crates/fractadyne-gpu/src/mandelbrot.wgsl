@@ -342,18 +342,40 @@ fn sf_lt(a: Sf, b: Sf) -> bool {
 }
 
 // ⭐⭐THE df32 TAIL PHASE of the mode-2 loops (beta.141). Floatexp exists only for a δz too small
-// for df32's f32 exponent (~1e-38). Once |δz| has grown past 2^-60, a full step can run in plain
+// for df32's f32 exponent (~1e-38). Once |δz| is large enough, a full step can run in plain
 // df32 — about 383 lane-instructions against floatexp's 955 per iteration (RTX 3080, TODO.md).
 // The step counters (beta.137) found 84–100% of mode-2 full steps had |δz| >= 2^-100 at every deep
 // corpus scene, and full steps were 33–99% of all executed steps.
-// ⭐MEMORYLESS: a step runs in df32 exactly when |δz| >= 2^-60, whatever the previous step did, so
-// a chunked walk cannot depend on where a frame split. Every conversion between the two forms is
-// an exact power-of-two scaling at those magnitudes. BLA still works in floatexp: the δz is handed
-// back before each attempt, so skip decisions are unchanged. Mandelbrot only (the scope the corpus
-// measured), and never while glitch detection runs, so correction passes stay bit-identical.
-const TAIL_DF32_MIN: f32 = 8.673617379884035e-19; // 2^-60
-const TAIL_DF32_MIN_E: i32 = -60;
-// δc below 2^-120 is dropped in the tail: against |δz| >= 2^-60 it is under 2^-60 relative, below
+// ⭐MEMORYLESS: a step runs in df32 exactly when |δz| >= 2^-50 and Z is 0 or |Z| >= 2^-50 (see
+// `tail_step_ok`), whatever the previous step did, so a chunked walk cannot depend on where a frame
+// split. Every conversion
+// between the two forms is an exact power-of-two scaling at those magnitudes. BLA still works in
+// floatexp: the δz is handed back before each attempt, so skip decisions are unchanged. Mandelbrot
+// only (the scope the corpus measured), and never while glitch detection runs, so correction
+// passes stay bit-identical.
+// ⭐⭐BIT-IDENTICAL TO THE ALL-FLOATEXP LOOP, and it must stay so (2026-10-15). As first shipped
+// (|δz| >= 2^-60, its own rebase test, any Z) it changed 10 of the 38 corpus rows, and the
+// exact-arithmetic audit found 9 of 462 changed pixels WRONG (one 20.3 iterations late, corpus row
+// 13), against 0 the other way: floatexp keeps its mantissa near 1 under a shared exponent, and
+// plain df32 does not. Three causes, each found by bisecting on the corpus (`--tail-audit` with
+// FRACTADYNE_AUDIT_PIXELS on the row-13 point):
+//  - δz from 2^-60: a term of δz² or 2Z·δz falls under f32's normal range (2^-126) and flushes.
+//    Differing pixels at row 13: 1,556 at 2^-60, 25 at 2^-56, 0 at 2^-52. 2^-50 keeps even the
+//    low limbs of δz² (>= 2^-100) normal on hardware that computes them exactly (the RX 6800 XT).
+//  - Z near the reference orbit's close approaches (above the 1e-36 dip marker, below ~2^-79):
+//    2Z·δz flushes there whatever δz is. TAIL_Z_MIN sends those rare steps to floatexp (rows 35,
+//    37 matched only with it) — but NOT Z = 0: guarding Z₀ = 0 too sent the step after every
+//    rebase to floatexp and cost a third of the speed-up, for nothing (`tail_step_ok`).
+//  - The rebase test: comparing f32 SQUARES split the |z| ~ |δz| ties the other way; it takes the
+//    square roots floatexp's comparison takes now (`tail_rebase`; rows 11, 12, 34, 36 matched only
+//    with it). Calling floatexp's own `fe_abs_sf`/`sf_lt` instead also matched, at half the gain.
+// With all three the corpus is 38/38 against the pre-tail baselines, and the speed-up holds (RTX
+// 3080, 4K: 6.6e43 167 -> 60 ms, 1.2e148 2,359 -> 1,670, 4.2e275 741 -> 297, 4.6e1105 343 -> 107;
+// the same as at 2^-60). A change here is checked by `generate_corpus.py --check` and `--tail-audit`.
+const TAIL_DF32_MIN: f32 = 8.881784197001252e-16; // 2^-50
+const TAIL_DF32_MIN_E: i32 = -50;
+const TAIL_Z_MIN: f32 = 8.881784197001252e-16; // 2^-50: the reference value, as above
+// δc below 2^-120 is dropped in the tail: against |δz| >= 2^-50 it is under 2^-70 relative, below
 // df32 precision, and f32 could not hold it anyway.
 const TAIL_DC_MIN_E: i32 = -120;
 fn tail_df32_ok() -> bool {
@@ -368,14 +390,24 @@ fn tail_dc(dc: Fe) -> Cdf {
 fn df_max_abs(z: Cdf) -> f32 {
     return max(abs(z.re.x), abs(z.im.x));
 }
-// Zhuoran's rebase test |z| < |δz| in df32, on the hi limbs — the same Euclidean comparison
-// `fe_abs_sf`/`sf_lt` make in floatexp. Lifted by 2^64 when δz is small so neither square flushes
-// (an overflow to +inf on the z side only ever answers "no rebase", which is then correct).
-fn tail_rebase(zf: vec2<f32>, dzf: vec2<f32>) -> bool {
-    let lift = select(1.0, 1.8446744073709552e19, max(abs(dzf.x), abs(dzf.y)) < 1.0e-9);
-    let a = zf * lift;
-    let b = dzf * lift;
-    return dot(a, a) < dot(b, b);
+// Zhuoran's rebase test |z| < |δz| — the decision floatexp's own comparison makes (`fe_abs_sf` +
+// `sf_lt`: f32 square roots of the hi limbs' squared sums, compared exactly). Rounding commutes
+// with the power-of-two scaling between the two forms while no square underflows, so the same
+// square roots on the df32 hi limbs decide alike (a |z| whose square flushes reads 0 < |δz|, as
+// floatexp's tiny |z| does). As first shipped this compared the SQUARES, which split the ties where
+// two square roots round to one f32 the other way: an equally valid trajectory, but not floatexp's.
+fn tail_rebase(zfull: Cdf, dz: Cdf) -> bool {
+    let a = vec2<f32>(zfull.re.x, zfull.im.x);
+    let b = vec2<f32>(dz.re.x, dz.im.x);
+    return sqrt(dot(a, a)) < sqrt(dot(b, b));
+}
+// May this full step run in the tail? (Mirrored by both mode-2 kernels.) Z = 0 is fine: Z₀ = 0 after
+// every rebase makes 2Z·δz exactly 0, and an extended dip reads 0 where 2Z·δz sits over 60 binary
+// orders under δz², so floatexp's own fe_add drops it too. Only a SMALL NONZERO Z is sent to floatexp.
+fn tail_step_ok(Z: Cdf, dz: Fe, dzd: Cdf, d_now: bool) -> bool {
+    let zm = df_max_abs(Z);
+    return tail_df32_ok() && (zm == 0.0 || zm >= TAIL_Z_MIN)
+        && select(dz.e >= TAIL_DF32_MIN_E, df_max_abs(dzd) >= TAIL_DF32_MIN, d_now);
 }
 
 // Slope normal for distance-estimate lighting: direction of u = z / (dz/dc).
@@ -1397,13 +1429,13 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         var d_now = false;
         loop {
             if (iter >= iu.max_iter) { break; }
-            // BLA works in floatexp: hand a df32 δz back first (exact at |δz| >= 2^-60), so every
+            // BLA works in floatexp: hand a df32 δz back first (exact at |δz| >= 2^-50), so every
             // skip decision is the one the all-floatexp loop would make.
             // In the df32 tail phase most steps cannot take a skip, and finding that out cost a floatexp
             // round trip and a search. No level's radius at ref_n exceeds level 0's (a merged radius is
             // at most its first child's), so a δz already past it rules every level out and the step
             // keeps its df32 δz. Exact either way: the round trip is a power-of-two scaling there, and
-            // the tail test reads |δz| ≥ 2^-60 the same in both forms.
+            // the tail test reads |δz| ≥ 2^-50 the same in both forms.
             var no_skip = false;
             if (d_now && bla_levels > 0u && ref_n < bla_len[0]) {
                 let r0 = reference[iu.orbit_len + (bla_off[0] + ref_n) * 4u + 2u];
@@ -1518,7 +1550,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             let Z = orbit_cdf(r); // reference Z_n (df32; an extended dip reads (0,0) here)
 
             // ⭐THE df32 TAIL PHASE (see TAIL_DF32_MIN). Mirrored exactly in fs_iterate_chunk_fe.
-            if (tail_df32_ok() && select(dz.e >= TAIL_DF32_MIN_E, df_max_abs(dzd) >= TAIL_DF32_MIN, d_now)) {
+            if (tail_step_ok(Z, dz, dzd, d_now)) {
                 if (!d_now) {
                     dzd = fe_to_cdf(dz);
                     d_now = true;
@@ -1529,17 +1561,17 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 let fp = deriv_factor(0u, zfn);
                 D = fe_mul_c(D, fp.x, fp.y);
                 if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
-                // δz' = 2Z·δz + δz² + δc. An extended dip (|Z| < 1e-36) reads 0 here, and then
-                // 2Z·δz is under 2^-58 of δz² — below df32 precision.
+                // δz' = 2Z·δz + δz² + δc. |Z| and |δz| are both >= 2^-50 here (`tail_step_ok`;
+                // an extended dip reads 0 and so never gets here), so every term stays in f32 range.
                 dzd = c_add(c_add(c_two(c_mul(Z, dzd)), c_sqr(dzd)), tail_dc(dc));
                 ref_n = ref_n + 1u;
                 iter = iter + 1u;
-                // Z_{n+1} + δz: an extended dip reads 0, under 2^-60 of δz.
+                // Z_{n+1} + δz: an extended dip reads 0, under 2^-70 of δz (below df32's reach).
                 let zfull_d = c_add(orbit_cdf(reference[ref_n]), dzd);
                 zf = vec2<f32>(zfull_d.re.x, zfull_d.im.x);
                 if ((iu.aux_on & 1u) == 1u) { aux_step(&aux, zf, cmag, power_f); }
                 if (dot(zf, zf) > bail2) { escaped = true; break; }
-                if (tail_rebase(zf, vec2<f32>(dzd.re.x, dzd.im.x)) || ref_n + 1u >= iu.orbit_len) {
+                if (tail_rebase(zfull_d, dzd) || ref_n + 1u >= iu.orbit_len) {
                     n_rebase = n_rebase + 1u;
                     dzd = c_sub(zfull_d, orbit_cdf(reference[0]));
                     ref_n = 0u;
@@ -2707,7 +2739,7 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
         // round trip and a search. No level's radius at ref_n exceeds level 0's (a merged radius is
         // at most its first child's), so a δz already past it rules every level out and the step
         // keeps its df32 δz. Exact either way: the round trip is a power-of-two scaling there, and
-        // the tail test reads |δz| ≥ 2^-60 the same in both forms.
+        // the tail test reads |δz| ≥ 2^-50 the same in both forms.
         var no_skip = false;
         if (d_now && bla_levels > 0u && ref_n < bla_len[0]) {
             let r0 = reference[iu.orbit_len + (bla_off[0] + ref_n) * 4u + 2u];
@@ -2781,7 +2813,7 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
         let Z = orbit_cdf(r); // reference Z_n (df32; an extended dip reads (0,0) here)
 
         // ⭐THE df32 TAIL PHASE — verbatim from fs_iterate's mode-2 branch (TAIL_DF32_MIN).
-        if (tail_df32_ok() && select(dz.e >= TAIL_DF32_MIN_E, df_max_abs(dzd) >= TAIL_DF32_MIN, d_now)) {
+        if (tail_step_ok(Z, dz, dzd, d_now)) {
             if (!d_now) {
                 dzd = fe_to_cdf(dz);
                 d_now = true;
@@ -2802,7 +2834,7 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
                 escaped = true;
                 break;
             }
-            if (tail_rebase(zf, vec2<f32>(dzd.re.x, dzd.im.x)) || ref_n + 1u >= iu.orbit_len) {
+            if (tail_rebase(zfull_d, dzd) || ref_n + 1u >= iu.orbit_len) {
                 n_rebase = n_rebase + 1u;
                 dzd = c_sub(zfull_d, orbit_cdf(reference[0]));
                 ref_n = 0u;

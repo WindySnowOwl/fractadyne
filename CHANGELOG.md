@@ -59,6 +59,15 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Deep renders are exact again where the cheaper arithmetic took over (0.3.0-beta.20).** Since
+  0.2.41-beta.141 the deepest render mode switches each pixel to faster arithmetic once its
+  values are large enough. The switch came too early: a few terms became too small for that
+  arithmetic and were rounded to zero, so a scattered handful of pixels at extreme depth came
+  out wrong, one of them 20 iterations late, and 10 of the 38 comparison images against
+  Fraktaler-3 changed. The switch now waits until nothing can underflow, and decides when to
+  restart a pixel's orbit exactly as the slower arithmetic does. Deep renders are pixel-identical
+  to the full-precision path again (38 of 38), at the same speed: 4.2e275× at 4K still takes
+  0.30 s of GPU time against 0.74 s without the faster arithmetic.
 - **Zooming out and back in keeps a deep location (0.3.0-beta.20).** Each zoom step recomputed
   the view's centre at the precision the current depth needs, so zooming out rounded away the
   digits a deeper view had needed. Zooming back in about the centre then went somewhere else: a
