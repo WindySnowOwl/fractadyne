@@ -5622,7 +5622,8 @@ impl FractadyneApp {
                 pin_inflight: self.perf.pin_inflight[vs],
                 pin_done_at: self.perf.pin_done_at[vs].load(std::sync::atomic::Ordering::Relaxed),
                 pin_dispatch_at: self.perf.pin_dispatch_at[vs],
-                late_gpu_ms: self.perf.pin_late_gpu_ms[vs],
+                late_readings: self.perf.late_readings[vs].clone(),
+                pin_inflight_max: crate::tunables::pin_inflight_max(self.perf.ts_supported),
                 no_timestamps: !self.perf.ts_supported,
                 ledger: decide::WalkLedger {
                     inflight: self.perf.chunk_inflight[vs],
@@ -5643,11 +5644,10 @@ impl FractadyneApp {
             self.perf.chunk_bands[vs] = price.ledger.bands;
             self.perf.chunk_pass_dt[vs] = price.ledger.pass_dt;
             self.perf.motion_step_last[vs] = price.ledger.motion_step_last;
-            // A newly parked pass (or none) waits for a reading of ITS dispatch.
-            if price.ledger.late.map(|l| l.2) != self.perf.chunk_late[vs].map(|l| l.2) || price.ledger.late.is_none() {
-                self.perf.pin_late_gpu_ms[vs] = -1.0;
-            }
+            // Readings keep only while their pass is still parked.
             self.perf.chunk_late[vs] = price.ledger.late;
+            let parked = price.ledger.late;
+            self.perf.late_readings[vs].retain(|r| parked.iter().flatten().any(|l| l.2 == r.0));
             if let Some(outcome) = price.retreat {
                 self.perf.retreat_last[vs] = Some(outcome);
                 self.perf.retreat_pending[vs] = self.perf.retreat_pending[vs].max(outcome.code());
@@ -5674,9 +5674,22 @@ impl FractadyneApp {
                             crate::diag::trace(
                                 "tile",
                                 format!(
-                                    "pin-defer v={vs} f={} band={band} size={size} stand_in={stand_in:.1}ms (released; priced by its reading)",
-                                    self.perf.frame_idx
+                                    "pin-defer v={vs} f={} band={band} size={size} {} (priced by its reading)",
+                                    self.perf.frame_idx,
+                                    if stand_in >= 0.0 {
+                                        format!("released, stand_in={stand_in:.1}ms")
+                                    } else {
+                                        "still in flight".to_string()
+                                    },
                                 ),
+                            );
+                        }
+                    }
+                    decide::WalkPriceEvent::PinUnpriced { band, size } => {
+                        if crate::diag::trace_on("tile") {
+                            crate::diag::trace(
+                                "tile",
+                                format!("pin-unpriced v={vs} f={} band={band} size={size} (no reading came)", self.perf.frame_idx),
                             );
                         }
                     }
@@ -5753,8 +5766,8 @@ impl FractadyneApp {
                 self.perf.chunk_bands[vs] = [0; crate::tunables::CHUNK_BANDS];
                 self.perf.chunk_pass_dt[vs] = 0.0;
                 // A parked price belongs to the ledger it was earned in.
-                self.perf.chunk_late[vs] = None;
-                self.perf.pin_late_gpu_ms[vs] = -1.0;
+                self.perf.chunk_late[vs] = [None; decide::LATE_MAX];
+                self.perf.late_readings[vs].clear();
             }
             if id.restarted {
                 self.perf.chunk_inflight[vs] = None;
@@ -5821,6 +5834,7 @@ impl FractadyneApp {
                 accum_active: self.perf.accum_active[vs],
                 walk_read_sig: self.perf.walk_read_sig[vs],
                 norm_sig_submit: self.perf.norm_sig_submit[vs],
+                pin_inflight_max: crate::tunables::pin_inflight_max(self.perf.ts_supported),
                 pin_timeout_scaled: crate::tunables::cost().pin_timeout_scaled,
                 chunk_charge: crate::tunables::cost().chunk_charge,
                 chunk_shuffle: crate::tunables::cost().chunk_shuffle,

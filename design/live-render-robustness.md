@@ -4213,3 +4213,79 @@ rate. Open: why pins are slow on the RX 6800 XT. A suspect is `c012f32`'s one pa
 the Radeon's later completions; this leg has not measured it.
 
 Gates (RTX 3080): workspace 1,543 / 0 / 11; self-test 529/529, goldens 31/31; `--motiontest` ×3 PASS (A7: 454–463 readings, every count 0; A8: 0); `--livetest` 24/24, 0 drifted; `--uitest` 75 / 1 / 0 over 76 steps.
+
+**2026-10-15 — W8 rung 1d: every pin pass in flight is priced by its own reading, and two are in flight
+again (`feat/w8-gates`).** And a correction to rungs 1–1c.
+
+*Why not adapt the cap to latency.* The two cards seemed to want different caps (RX 6800 XT: two,
+RTX 3080: one), and the first plan was a cap chosen from each session's completion latency. The
+records say otherwise: at one in flight both cards dispatch a pin pass every two frames (RX 6800 XT:
+366 of 528 gaps; RTX 3080: 708 of 1,119), so their completions are seen equally soon. What separated
+the caps was the regime, not the card. On the RTX 3080 two in flight won the 1× glide (lag 0.20
+against 0.29–0.33 octaves, e4000 48–49 adoptions against 26) and lost the motiontest (13–20 against
+42–45). The traced motiontest showed why: 26 pin passes priced across 70 pins against 285 across 85,
+because each new pass rewrote the in-flight record of the one before it, so the licences barely grew
+and 50 pins drifted out.
+
+*The change.* The deferred feed's single parked pass becomes a queue (`WalkLedger::late`, four slots:
+size, band, dispatch frame, stand-in). A pass still in flight as the next one goes out is parked rather
+than rewritten (no stand-in). The readings that land are kept by the dispatch frame they name
+(`Perf::late_readings`, from W6's provenance) and price whichever parked pass they belong to. A pass
+whose reading never comes is fed its stand-in after `PIN_PRICE_WAIT_FRAMES`, or, with none, dropped
+after twice that (`pin-unpriced` in the tile trace). `PIN_INFLIGHT_MAX` is 2 where the device gives GPU
+timestamps and 1 where it does not (`tunables::pin_inflight_max`); the dispatch and the pricing take
+it as an input that recordings made before it read as 1, under which nothing changes.
+
+A/B on the RTX 3080 against rung 1c (one in flight), interleaved:
+
+| | rung 1d | rung 1c |
+|---|---|---|
+| motiontest complete adoptions | 63, 65 | 41, 44 |
+| 95-octave 1× leg (49,3): lag (oct) / pins adopted | 0.167 / 395 | 0.290 / 275, 0.360 / 241 |
+| e4000 4×: adopted / lag (oct) | 54 / 1.96, 53 / 2.03 | 26 / 3.74, 24 / 3.94 |
+| 20-octave 4× zoom: lag (oct) | 0.624, 0.673, 0.680 | 0.760, 0.736, 0.841 |
+
+(One of the rung-1d 1× legs was a solid-colour run; see below. It is left out of the lag figure.) A traced
+motiontest: 268 pin passes priced, 180 by their own reading, 444 parked in flight, 263 never read. The
+timestamp readback does not time every pass at two in flight, but enough are priced for the licences
+to grow.
+
+*A correction: the solid-colour runs.* The user saw the screen go to one flat colour in some of these
+zoomtests. In those runs the zoom renders, for about two-thirds of the glide, from a reference that
+escapes after 7–8 iterations. It is picked about 24 s in and then reused by every lookahead build,
+since `try_reuse_reference` accepts a complete (escaped) orbit. Every pixel reads as escaped (458,242
+of 458,242), no rebase is recorded, palette normalisation never engages, and the frame is close to one
+colour. The content guard passes it, because it asks whether anything escaped. This happened in 2 of
+about 45 long legs (`ab5/l95-late-1`, length 7; `ab9/l95-pe-2`, length 8), and partly in three more
+(lengths 1,292–4,187 for 2,600–6,200 frames). Every run spends about 1,850 frames early on on a
+4,999-sample escaped reference, beta.19's included, and renders correctly there.
+
+**This revises rung 1's "bimodal per-step cost".** Several of the clean runs it explained were these
+renders: cheap because almost nothing iterates. They include the first dev.5 run, the
+`PASS_FIXED_MS=0.2` run, and rung 1b's "cheap state" leg with lag 0.009. The fixes do not rest on
+them. The ×16 licence (1b) and the 115 ms visible frames (1c) were traced in the record of the runs
+they fix, and the RX 6800 XT bisect's runs need checking against this before its counts are
+quoted again. The bug itself is next.
+
+*Every run is now checked for detail and resolution before its numbers count* (the user's request,
+2026-10-15; `validity.py` in the session scratchpad). Per run it reads:
+- the zoomtest's regime line (a short escaped reference);
+- each recorded frame's escape range from its own readings;
+- the median render size, against the same scene's other runs.
+
+A run is FLAT when it shows a short reference, more than 20% of frames with a range under 2
+iterations, or a median range under a tenth of the scene's. It is BLURRY when its median render is
+under half the scene's. Applied to the runs behind this log:
+- **The motiontest, the e4000 glide and the 20-octave 4× zoom are valid on every build.** Rung 1d's
+  case rests on them. One rung-1c 4× leg rendered at 280k against the scene's 797k px.
+- **Every 95-octave 1× leg on the (49,3) spiral ends on a near-flat stretch,** beta.19 and the RX
+  6800 XT's beta.18 included: the last ~1,370 frames (~25 s) escape within 2 iterations of the
+  4,999-sample reference's end (range 4,993.8–4,995.7). That is 30–40% of the recorded frames on the
+  RTX 3080 and 15–32% on the RX 6800 XT. Those legs' numbers are comparable between arms but partly
+  measured on a broken render. The 100%-flat legs (dev.5's first, `PASS_FIXED_MS=0.2`, `l95-pe-2`,
+  `ab5/l95-late-1`) are excluded.
+- **The RX 6800 XT's builds render the 1× leg at different sizes:** beta.18 and dev.12 at ~235k px,
+  dev.4, dev.10 and dev.11 at ~470k. Part of the cadence difference between them is twice the pixels.
+
+Gates (RTX 3080): workspace tests 1,544 / 0 / 11; self-test 529/529, goldens 31/31; `--motiontest` ×3 PASS (63 and 63 complete adoptions, and the recording run's; A7: 438–452 readings, every count 0; A8 0; all three valid); `--livetest` 24/24, 0 drifted; `--uitest` 75 / 1 / 0 over 76 steps. Fixtures re-recorded (all seven replay exactly; the RX 6800 XT capture re-encoded to the new shape, less the two decisions the queue changes by design, until dev.13's capture replaces it); coverage 53 terms.
+

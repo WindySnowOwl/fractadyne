@@ -1317,8 +1317,19 @@ pub(crate) const PIN_PASS_FRAMES: u32 = 2;
 /// must not wedge the pin).
 pub(crate) const PIN_PRICE_WAIT_FRAMES: u64 = 5;
 
-/// Pin passes allowed in the GPU queue at once: ONE, each priced (by its GPU reading if one lands
-/// first, otherwise by its completion stamp, `render::pin_pass_priceable`) before the next goes.
+/// Pin passes allowed in the GPU queue at once on a device that gives GPU timestamps: TWO, each
+/// priced by the reading that names its dispatch frame (`WalkLedger::late`, the deferred feed);
+/// one where the completion stamp is the only price ([`pin_inflight_max`]).
+///
+/// ⭐**Two again, now that both are priced (W8 rung 1d, 2026-10-15).** One in flight (below) bought
+/// "every pass priced", but it is a pass every two frames on both cards, and on the RX 6800 XT,
+/// whose passes are dearer, the pins fell behind: a 1x glide on the (49,3) spiral adopted 130–144
+/// refreshes against beta.18's 290–314 and the screen lagged 0.84–0.94 octaves against 0.24–0.27.
+/// Two in flight restored beta.18's figures there, and on the RTX 3080 the same glide lagged 0.20
+/// against 0.29–0.33 octaves — but the motiontest adopted 13–20 against 42–45, because each new pass
+/// overwrote the record of the one before it and only 26 passes were priced across 70 pins. So the
+/// record no longer is overwritten: a pass still in flight when the next goes out is parked and
+/// priced by its own reading.
 ///
 /// ⚠It was two, on the evidence that strict serialization made a pass every third frame and at
 /// 4.0× a 60k-iteration refresh outlived the 2-octave drift abandon. That was before a pass could
@@ -1330,7 +1341,17 @@ pub(crate) const PIN_PRICE_WAIT_FRAMES: u64 = 5;
 /// frame on screen lags the view 0.11 against 0.30 octaves (worst 1.5× against 2.1× magnified)
 /// with twice the pinned refreshes adopted; at 4.0× it lags 0.55–0.65 against 0.77–0.89 octaves
 /// with as many adopted. Fewer passes are dispatched, so the GPU does less for it.
-pub(crate) const PIN_INFLIGHT_MAX: u32 = 1;
+pub(crate) const PIN_INFLIGHT_MAX: u32 = 2;
+
+/// [`PIN_INFLIGHT_MAX`] where the device gives GPU timestamps; one where it does not, since there a
+/// pass is priced by its completion, which two in flight would rarely let it see alone.
+pub(crate) fn pin_inflight_max(timestamps: bool) -> u32 {
+    if timestamps {
+        PIN_INFLIGHT_MAX
+    } else {
+        1
+    }
+}
 
 /// Wall time after which a pin pass still "in flight" is deemed complete, microseconds. The
 /// completion callback is registered in `update`; a headless harness (`--livetest`,

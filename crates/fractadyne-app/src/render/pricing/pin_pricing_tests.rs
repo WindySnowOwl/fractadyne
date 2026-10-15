@@ -21,6 +21,8 @@ fn a_completion_that_is_not_coming_releases_after_the_wait() {
 }
 
 #[test]
-fn one_pin_pass_is_in_flight() {
-    const { assert!(PIN_INFLIGHT_MAX == 1) };
+fn two_pin_passes_are_in_flight_with_timestamps_and_one_without() {
+    const { assert!(PIN_INFLIGHT_MAX == 2) };
+    assert_eq!(crate::tunables::pin_inflight_max(true), 2);
+    assert_eq!(crate::tunables::pin_inflight_max(false), 1);
 }
