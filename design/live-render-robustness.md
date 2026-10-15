@@ -4181,3 +4181,35 @@ Open, with three candidate fixes:
 2. Size the visible frame from its own last measured price rather than from a rate.
 3. Revert `PIN_INFLIGHT_MAX` to 2 and give back `c012f32`'s lag gain, keeping the drift rule and
    the deferred feed.
+
+**2026-10-14 — W8 rung 1c: the frame rate's bound (`a88f731`), and what it costs on the Radeon
+(dev.11, `cca58f7`, published and reverted in `cbf9b9a`).**
+
+The fix chosen: `Meter::frame_rate` is fed only by readings and lifts of whole moving frames (never a
+pin pass) and counted at the occupancy knee. `decide_walk_price` uses it only to bound a non-pin
+moving frame's iteration step. The resolution keeps `motion_rate`. Two attempts that sized more
+from the frame rate were measured on the RTX 3080 and dropped:
+- uncorrected for the knee, moving frames spiralled to 145×110;
+- corrected for it, the pins' resolution still halved (514×389 against 1028×779), because the 3080
+  dispatches no whole moving frame, has no frame rate, and the ladder fell back to the opening guess.
+
+On the RTX 3080 the bound changes nothing (no frame rate): the 95-octave 1× leg had 0 frames over
+50 ms, pins at 800,812 px, 317 adopted.
+
+On the RX 6800 XT (the 1× leg against beta.18, interleaved, two runs each):
+
+| | beta.18 | dev.11 |
+|---|---|---|
+| frames > 100 ms | 0, 0 | 0, 0 (dev.10: 288, 289) |
+| frames > 50 ms | 112, 98 | 8, 19 |
+| p95 interval | 33.5, 33.4 ms | 28.9, 30.5 ms |
+| fps | 47.4, 48.6 | 49.7, 49.2 |
+| mean lag (oct) | 0.248, 0.242 | 0.841, 0.942 (dev.10: 0.16) |
+| pins adopted | 307, 314 | 142, 130 |
+
+The cadence is now better than beta.18's, and the freshness much worse. The frames that went out
+whole in one 115 ms pass now start pin walks, and on this card a pin walk adopts at half beta.18's
+rate. Open: why pins are slow on the RX 6800 XT. A suspect is `c012f32`'s one pass in flight with
+the Radeon's later completions; this leg has not measured it.
+
+Gates (RTX 3080): workspace 1,543 / 0 / 11; self-test 529/529, goldens 31/31; `--motiontest` ×3 PASS (A7: 454–463 readings, every count 0; A8: 0); `--livetest` 24/24, 0 drifted; `--uitest` 75 / 1 / 0 over 76 steps.
