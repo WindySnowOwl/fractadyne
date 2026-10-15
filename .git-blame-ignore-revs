@@ -7,3 +7,6 @@
 
 # Pricing family out of render.rs into render/pricing.rs, W2 step M2 (2026-10-12)
 f9b07d178cd4123d9353295bd973fac342b1abe4
+
+# Line-ending normalization: the last nine CRLF/mixed blobs to LF (.gitattributes `* text=auto`), no content change.
+dcee178542dc76ef7c1bd8a1242b0fac99ffb496
