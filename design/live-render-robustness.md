@@ -4664,6 +4664,9 @@ method-switch-no-reiterate. Then move on to the meta gate."
     regime, which is the exit that row accepts.
   - The zoomtest P-G rows and torture increment 2 are listed as PLANNED, not as gaps, as in the
     checklist.
-  - **The one gap left is the F3 corpus `--check`, re-run today: 28/38.** Rows 34–38, the deep field
-    dives, differ by 21 to 1,070 pixels (maxΔ 41–132, meanΔ ≤ 0.01). Its control is red, so no arm
-    can stand on it until those rows are reviewed against F3 and re-blessed: the user's call.
+  - **The one gap left is the F3 corpus `--check`, re-run today: 28/38.** Rows 11–15 (the deep
+    saved locations) and 34–38 (the field dives) differ by 21 to 1,907 pixels (maxΔ 1–132, meanΔ ≤
+    0.02): the same ten rows the 2026-10-06 bisect traced to the beta.141 df32 tail phase. (This
+    entry first said "rows 34–38" alone, read from the end of the output; corrected the same day.)
+    Its control is red, so no arm can stand on it until those rows are reviewed against F3 and
+    re-blessed: the user's call.

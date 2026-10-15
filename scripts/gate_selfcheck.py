@@ -209,9 +209,9 @@ INVENTORY = [
     ("autodive", None),
     ("soak", None),
     ("screengate.py", None),
-    ("corpus --check", "no arm yet - its CONTROL is red: 28/38 (re-checked 2026-10-15: rows 34-38, the "
-                       "deep field dives, differ by 21-1,070 px since the beta.141 df32 tail phase; reviewing "
-                       "them against F3 and re-blessing is the user's call) where the checklist expects 38/38"),
+    ("corpus --check", "no arm yet - its CONTROL is red: 28/38 (re-checked 2026-10-15: rows 11-15 and "
+                       "34-38 differ by 21-1,907 px since the beta.141 df32 tail phase; reviewing them "
+                       "against F3 and re-blessing is the user's call) where the checklist expects 38/38"),
     ("checklist_coverage.py", None),
 ]
 
