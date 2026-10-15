@@ -124,7 +124,9 @@ if ($popup -ne [IntPtr]::Zero) {
 Start-Sleep -Milliseconds 400
 "=== MENU TREE ($($script:tree.Count) lines) ==="
 $script:tree
-$script:tree | Set-Content -Encoding UTF8 (Join-Path $OutDir 'menu-tree.txt')
+# UTF-8 without a BOM under both shells: Windows PowerShell 5.1's `-Encoding UTF8` writes one, and
+# scripts/check_text_hygiene.py refuses a BOM outside .ps1 files.
+[System.IO.File]::WriteAllLines((Join-Path $OutDir 'menu-tree.txt'), [string[]]$script:tree, (New-Object System.Text.UTF8Encoding $false))
 
 function Post-Command($name) {
     $id = $script:ids[$name]

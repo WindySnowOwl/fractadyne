@@ -21,6 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # Line endings, BOMs, UTF-8 and stray control bytes in every tracked text file: the damage tool
+      # edits leave (scripts/check_text_hygiene.py says which failure each check is the signature of).
+      - run: python3 scripts/check_text_hygiene.py
       - run: rustup default stable
       # fractadyne-core and fractadyne-state are pure Rust (no GUI/GPU/system deps), so they
       # test cleanly on Linux. Release build keeps the bignum tests fast.

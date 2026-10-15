@@ -37,6 +37,14 @@ reason until 2026-08-15. The scripts a stranger runs (`setup.ps1`,
 `windows-build.ps1`, `gpu-validate.ps1`) are kept ASCII-only, since a BOM may not
 survive being copied or downloaded raw.
 
+⚠**Text files are stored with LF line endings** (`.gitattributes`: `* text=auto`). A checkout
+converts them for your platform, and `git add` turns a file saved with CRLF back into LF, so no
+file needs special handling when you stage it. Before committing, run
+`python scripts/check_text_hygiene.py --staged`. It fails on a CRLF or mixed blob, a byte-order
+mark outside `.ps1`, text that is not UTF-8, a `.ps1` that is neither ASCII nor BOM-marked, and
+stray control bytes: the trace a backslash sequence such as `\f` or `\v` leaves after passing
+through a shell. CI runs it as well.
+
 Otherwise (or on Linux/macOS), all you need is the Rust toolchain (stable, via
 [rustup](https://rustup.rs)); on Linux also install the GTK/X11/Wayland dev
 packages that eframe/`rfd` link against. The first build fetches wgpu/egui and
@@ -142,11 +150,9 @@ performed because something moved, fix the step — do not skip it.
   use `// ====` section banners, and a large type's methods split into one bannered
   `impl` block per topic (see `main.rs` / `render.rs`). A `#[cfg(test)] mod x;` decl sits
   directly after its subject; whole-file test decls go last.
-- **Don't use `\` line-continuations inside Rust string literals here.** The repo is CRLF, and a
-  continuation followed by `
-` does not strip the next line's indentation the way it does with a
-  bare `
-` — so the text reaches the user with a long run of spaces mid-sentence. Three user-facing
+- **Don't use `\` line-continuations inside Rust string literals here.** Files are checked out with
+  CRLF on Windows, and a continuation followed by `\r\n` does not strip the next line's indentation
+  the way it does with a bare `\n` — so the text reaches the user with a long run of spaces mid-sentence. Three user-facing
   messages shipped that way in one day before this was written down. Put the string on one line (long
   lines are fine for messages), or build it with `concat!` / separate pushes. Doc comments and normal
   code wrapping are unaffected; this is only about `"..."` string bodies.
