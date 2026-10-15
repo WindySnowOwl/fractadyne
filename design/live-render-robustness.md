@@ -4142,3 +4142,42 @@ so each 115 ms reading prices nothing and the stale price keeps admitting the fr
 "a probe whose reading another rule discards never terminates" shape. On the RTX 3080 the reading
 lands within three frames, and nothing like it shows. NEXT: confirm, and find which change since
 beta.18 made it reachable.
+
+**2026-10-14 — The Radeon live-refresh regression, root-caused; a first fix rejected.**
+
+*Bisected on PLUTO* (the 95-octave 1× leg; old dev zips re-published to the share for the purpose,
+then removed): dev.1 0 frames over 100 ms, dev.3 1, dev.4 200 (204 on a rerun), dev.7 162, dev.10
+288–289. A build of `c012f32`'s parent (`1e79df5`, published as dev.91) ran 0 beside dev.4's 204 in
+the same session. **`c012f32` (one pin pass in flight) is the cause on this card too**, through a
+second channel the deferred feed does not touch.
+
+*The mechanism* (dev.10's `frames.bin`, readings attributed by their provenance frame).
+`Meter::motion_rate`, one smoothness rate per mode, sizes both pin passes and whole moving frames,
+and it learns from every GPU reading and every "lift". On this glide:
+
+| readings | count | median rate (nominal steps/ms) | max |
+|---|---|---|---|
+| pin passes | 529 | 9.9e8 | 1.7e11 |
+| whole moving frames | 83 | 5.6e7 | 5.7e7 |
+
+The pin passes run deep in a walk, where most pixels have escaped, so a nominal step costs them a
+fraction of a whole frame's. The shared rate sat at a median 1.7e10, and the visible ladder, which
+sizes a moving frame to reach its escape range in one pass at `MOTION_PASS_MS`, asked for 300× more
+than a 10 ms pass. The admission capped it at 5.9–7.2e9 steps: on the RX 6800 XT, 112–115 ms, every
+three frames. With one pin pass in flight every pass is read, so the pin readings now dominate. (This
+rate's comment already records the downward version: one pin reading once cut the motion budget 9×.)
+
+*A first fix, rejected* (stashed, not committed). A second rate, `Meter::frame_rate`, learned only
+from Motion-kind readings and lifts, sizing non-pin moving frames. On the RTX 3080 the slow frames
+stayed at 0, the 1× lag recovered (0.22 octaves against 0.30) and e4000 adoptions rose (55 against
+33). But moving frames past 2^30 collapsed to a median of 15,950 pixels (about 145×110) against
+800,812. Below the occupancy knee a small frame costs nearly what a full one does, so a small frame
+reads as a low rate, which sizes the next frame smaller: the spiral the ladder's own notes warn of. A
+rate in nominal steps cannot serve both a pin pass and a whole frame, and cannot serve a whole frame
+across the knee without normalising for it.
+
+Open, with three candidate fixes:
+1. Normalise the frame rate for the occupancy knee (steps × max(px, knee) / px).
+2. Size the visible frame from its own last measured price rather than from a rate.
+3. Revert `PIN_INFLIGHT_MAX` to 2 and give back `c012f32`'s lag gain, keeping the drift rule and
+   the deferred feed.
