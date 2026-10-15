@@ -889,7 +889,7 @@ if ($have.imaginacli) {
 # Zoomer and renders that location: nothing is carried from one scene or rep to the next, and a scene's
 # time depends on that scene alone (see below for why, and -FractalZoomerSharedBatch /
 # -FractalZoomerWarmup). Java: its author's main target is 1.8, with -XX:+UseG1GC.
-# ⚠A JDK, not a JRE: Fractal Zoomer compiles its user code at start-up, and without a compiler it
+# NOTE: A JDK, not a JRE: Fractal Zoomer compiles its user code at start-up, and without a compiler it
 # opens a MODAL "Java Compiler was not found" dialog that the batch waits on forever.
 if ($have.fractalzoomer) {
     $wh = $Size -split 'x'
@@ -911,7 +911,7 @@ if ($have.fractalzoomer) {
     # FzsWriter runs Fractal Zoomer's static set-up, which unpacks libraries beside it; only the .fzs matter.
     Get-ChildItem -LiteralPath $fzsDir | Where-Object { $_.Extension -notin '.fzs', '.kfr' } |
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-    # ⚠ONE FRESH PROCESS PER SCENE, NO WARM-UP, by default. Fractal Zoomer's pixel loop runs at a
+    # NOTE: ONE FRESH PROCESS PER SCENE, NO WARM-UP, by default. Fractal Zoomer's pixel loop runs at a
     # speed that depends on what that Java process rendered BEFORE it (2026-10-13, 4K, Java 8 and 11,
     # heap size irrelevant): after scene 14 (1.6e148x, 800,000 iterations), 17 and 35 render 2-3x
     # slower (17: 9.3-10.9 s against 4.3 s fresh); after a cheap warm-up image, 58 and 59 render 3.4x
