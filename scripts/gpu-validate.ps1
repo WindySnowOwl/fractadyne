@@ -364,7 +364,9 @@ bench-matrix Timings vary by card and mean nothing across machines. Signature di
              vendors. Exit 2 means drift on the baseline's OWN card, which does matter.
 livetest     Self-contained: compares the live view against an offline render on THIS machine, so
              its pass/fail is meaningful here. "drift" lines compare against an RTX 3080 baseline
-             and can be ignored on other hardware; FAIL lines cannot.
+             and can be ignored on other hardware; FAIL and STARVED lines cannot (STARVED: a render
+             at 4x the iteration ask resolves what the screen left black, and the app did not say
+             why). Exit 2 = drift, 3 = nothing judged.
 uitest       Screenshots for eyeballing. The deep floatexp band is WARN-not-FAIL by design.
 recordtest   Must pass everywhere: 0 pass, 1 fail, 2 VACUOUS (nothing exercised - not a pass). The
              per-frame record is what diagnoses the next crash, so a failure here matters even if

@@ -937,7 +937,7 @@ def build(out_path):
         "fractadyne --uitest DIR          -> 29/29 steps, no-crash-files PASS, exit 0",
         "fractadyne --soak 300            -> soak-liveness PASS (frames advance, memory holds)",
         "python validation/corpus/generate_corpus.py --check  -> 38/38 MATCH",
-        "fractadyne --livetest tours/grand-tour.toml --size 480x270  -> 24/24, 0 drifted",
+        "fractadyne --livetest tours/grand-tour.toml --size 480x270  -> 24/24, 0 drifted, VERDICT PASS",
         "fractadyne --motiontest          -> VERDICT PASS",
         "cargo test --workspace --release -> all green",
         "cargo build --release            -> warning-free",

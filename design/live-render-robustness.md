@@ -4356,3 +4356,79 @@ absolute figures they are partly of the wrong picture. The decisive scenes (the 
 e4000 glide, the 20-octave 4× zoom) were valid throughout.
 
 Gates (RTX 3080): workspace tests 1,545 / 0 / 11 (+1, the round trip); self-test 529/529, goldens 31/31; `--motiontest` ×3 PASS (A7: 434–462 readings, every count 0); `--livetest` 24/24, 0 drifted (the extra centre digits change no blessed tour frame); `--uitest` 75 / 1 / 0 over 76 steps.
+
+**2026-10-15 — W8: `--livetest`'s second oracle at 4× the ask, and the app's own account in the
+verdict (U34).** The oracle renders "the same view at the same iteration budget", so a view that the
+ask itself starves was black on both sides and graded ok.
+
+*What changed.*
+- Where the live frame is at least 3% black (below that, starvation cannot change the grade), the
+  view is rendered a second time at 4× the oracle's iteration count. The count is honoured verbatim,
+  with a reference built for it. Black that the bigger budget resolves is starvation.
+- Whether starvation is a defect depends on what the user is told. At the checkpoint the harness
+  reads the fields the frame record carries (`capped_frac`, `iter_exhausted`, the plateau, `budget_maxed`)
+  and asks `limit_status`, the status bar's own diagnosis, what it would show. The harness renders
+  offscreen, so it supplies the frame's escape maximum itself.
+- The grades:
+  - `FAIL`: the live frame is ≥10 points blacker than the oracle at the ask. This is unchanged and
+    outranks starvation.
+  - `STARVED`, a failure: the live frame is ≥10 points blacker than the 4× oracle, and the app is
+    silent or concludes interior (plateau, "iter exhausted"), which 4× contradicts.
+  - `capped`, not a failure: as STARVED, but the status bar names the limit ("iter capped", "depth
+    limit").
+  - `warn`: 3 points against either oracle, or 24 sRGB.
+  - Without the second oracle the grade is the old verdict word for word, so old baselines still
+    compare.
+- The baseline gains the 4× black fraction (optional, so old files load).
+- The log gains: both asks, the 4× black fraction, the app's account, and the escape ranges of live
+  and oracle. The ranges make a flat live frame visible even where the black fractions agree.
+- Exit codes join `crate::verdict`:
+  - 2 for drift, or for a failing checkpoint when there is no baseline (it was 1, which the torture
+    ladder classified as a crash);
+  - 3 for nothing judged: `--quick`, no checkpoint captured, a checkpoint in the window the tour
+    never reached, or a tour with no holds.
+
+*Red-checks (RTX 3080, 480×270), the grand tour's 3.3e61 three-spar.*
+
+| run | live / at the ask / at 4× | app says | grade, exit |
+|---|---|---|---|
+| exact budget 60,000 | 100.0% / 100.0% / 0.1% (240,000) | "iter capped" | `capped`, 0 |
+| auto-iter, base 256 | 100.0% / 100.0% / 5.1% (179,344) | "iter capped" (appetite 44,836 binds) | `capped`, 0 |
+| auto-iter, base 105,000 | 26.3% / 26.3% / 0.0% (598,320) | "iter capped" (boost 6.25 reached the appetite) | `capped`, 0 |
+| auto-iter, base 75,000 | 100.0% / 100.0% / 0.5% (215,500) | "iter exhausted" (plateau + exhausted at the 119,580 appetite, budget reverted to 53,875) | **`STARVED`, 2** |
+
+- Every row would have graded ok before.
+- The last row is U27's case: a solid-black view the status bar calls "inside the set, or more
+  than the app can currently provide". Raising the Iterations base resolves it. Its dumped images were
+  checked by eye: the live frame is solid black; the 4× render shows the spar field and a small
+  central disc.
+- The live budget comes from the viewer's own Iterations base, not the script's: `[render]` sets
+  `max_iter` / `auto_iter` for offline renders only. So the auto rows seed the run's config with a
+  session file (scratch, `lt.sh` with `SEED_SESSION`).
+- `livetest` unit tests:
+  - the grade's precedence;
+  - the old-verdict equivalence;
+  - the status-bar labels the grade reads, taken from `limit_status`'s measured regimes. Made to
+    accept "exhausted" as a report, this one goes red.
+
+*A finding, filed rather than graded: the status bar cries "iter capped" at views with interior in
+them.* On the grand tour, 12 of the 12 holds where the second oracle ran have the status bar saying
+"iter capped … raise Iterations to resolve it", but 4× the ask resolves less than a tenth of the
+black there. Examples:
+- the home view: 9.42% black at 2,000, 9.41% at 8,000;
+- seahorse-2: 70.1% at 12,000, 68.9% at 48,000.
+
+`limit_status` takes "the escaped pixels finish near the ceiling" as the sign of starvation. But
+pixels just outside the set escape arbitrarily late, so any view containing interior at an exact
+budget passes that test. With auto-iterations the plateau probe settles the question by experiment
+first, so these are exact-budget views (every tour keyframe's budget is exact).
+
+The harness reports these as false alarms: context, not a grade, because the grade is about the
+screen. It is seen with the harness supplying the escape maximum; whether the GUI shows it depends on
+its escape-range reading being populated at such a view, so it is **not yet reproduced in the GUI**.
+Fixing it changes a user-facing diagnostic, which makes it a product decision.
+
+*Validity:* every checkpoint's live escape range equals its oracle's (no FLAT), and the lowest
+resolution is 0.83 per axis (no BLURRY).
+
+Gates (RTX 3080): workspace tests 1,550 / 0 / 11 (+5); `--livetest` grand tour 24/24, 0 drifted, VERDICT PASS (the 4× oracle ran at 12 holds, none starved; 410 s).
