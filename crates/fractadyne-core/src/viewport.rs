@@ -162,11 +162,26 @@ impl Viewport {
     }
 
     /// Zoom by `factor` (< 1 zooms in) keeping the complex point under `(px,py)` fixed.
+    ///
+    /// ⭐**The centre keeps every bit it already has.** The arithmetic runs at the depth's
+    /// precision or the centre's own, whichever is greater: extending a centre to a deeper view is
+    /// the point of re-precisioning, but rounding one DOWN throws away the location it names. A
+    /// glide from 1× toward a 1,600-digit point (the (49,3) hero `.fdn`) rounded it to 64 bits on
+    /// the first step and zoomed into a point ~1e-20 away: past ~2^75 the view was empty exterior,
+    /// every pixel escaping within 2 iterations of the next — the solid colour at the end of every
+    /// 1× zoomtest on it (2026-10-15). Zooming out from a deep view and back in about the centre
+    /// lost the view the same way.
     pub fn zoom_at(&mut self, px: f64, py: f64, factor: f64) {
-        let (cx, cy) = self.pixel_to_complex(px, py);
+        let keep = self.center_x.precision().unwrap_or(0).max(self.center_y.precision().unwrap_or(0));
+        let p_in = self.precision.max(keep);
+        let (cx, cy) = {
+            let ox = self.pixel_offset(px - self.width_px * 0.5);
+            let oy = self.pixel_offset(py - self.height_px * 0.5);
+            (self.center_x.add(&ox, p_in, RM), self.center_y.sub(&oy, p_in, RM))
+        };
         self.units_per_pixel = self.units_per_pixel.mul_f64(factor);
         self.refresh_precision();
-        let p = self.precision;
+        let p = self.precision.max(keep);
         let ox = self.pixel_offset(px - self.width_px * 0.5);
         let oy = self.pixel_offset(py - self.height_px * 0.5);
         self.center_x = cx.sub(&ox, p, RM);

@@ -59,6 +59,12 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Zooming out and back in keeps a deep location (0.3.0-beta.20).** Each zoom step recomputed
+  the view's centre at the precision the current depth needs, so zooming out rounded away the
+  digits a deeper view had needed. Zooming back in about the centre then went somewhere else: a
+  Space glide from 1× toward the 1e500× spiral on the website's front page ended about 1e-20 away
+  from it, in empty space, and the last stretch of the glide was one flat colour. The centre now
+  keeps every digit it has, and a zoom out to 1× and back in returns to exactly the same point.
 - **Faster reference orbits at extreme depth (0.3.0-beta.20).** Choosing the reference point no
   longer competes with building it: the first round of the choice used to walk about a hundred
   candidate points at full precision on every core while the reference was being computed, and

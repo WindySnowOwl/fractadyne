@@ -4309,3 +4309,50 @@ The motiontest and the 4× zoom are valid everywhere and decisive, both fresher 
 leg carries the pre-existing flat end-stretch in every run (16–24% of recorded frames here), so its
 small freshness difference is not a reliable reading. W8's live-path regressions from `c012f32` are
 closed on both cards. The solid-colour bug (a reused escaped reference) is next.
+
+**2026-10-15 — The solid-colour zoomtests, root-caused: two harness-visible defects, neither in the
+renderer.** This corrects the rung-1d entry's account, which blamed a reused escaped reference.
+
+*The end-of-glide flat stretch: the zoom rounded the target away (a real bug, in beta.19 too).*
+`Viewport::zoom_at` recomputed the centre at the precision the new depth needs (depth + 64 bits).
+At 1× that is 64 bits, so the first step of a glide from 1× rounded the 1,600-digit (49,3) hero
+point to 64 bits, and the glide zoomed into a point about 1e-20 away from it. Two consequences
+follow:
+- That point is outside the set: a reference there escapes near iteration 5,000. These are the
+  4,999-sample escaped references every 1× leg ran on.
+- Past about 2^75 the view is smaller than that distance, so every pixel escapes within 2 iterations
+  of every other: a correct render of empty exterior, and on screen one colour, for the last ~25 s of
+  every 95-octave leg on both cards.
+
+A jump-start at 2^80 kept the file's precision and rendered full detail (escape range ~13,000).
+The same rounding lost a user's deep view on any zoom out and back in about the centre. Fixed: the
+centre keeps every bit it already has (`zoom_at` works at the greater of the depth's precision and
+the centre's own). A core test zooms the hero point out from 2^300 to 1× and back in glide-sized
+steps. It returns exactly; under the old rounding it drifts by 2^-64 to 2^-67, so the test goes red
+without the fix. Two 95-octave legs with the fix: 0% flat frames, escape ranges 2,350–2,520, an
+11,412-sample reference that does not escape, and the regime is never entered.
+
+*The wholly flat runs: a real cursor steered the glide (a harness defect).* The zoomtest holds a
+virtual Space key, but the Space glide anchors on the cursor whenever one hovers the view. The
+frame record's input fields show it:
+- `ab5/l95-late-1`: the pointer at (673, 325) on every one of its 4,096 recorded frames, and the
+  glide flat for two-thirds of its length;
+- `ab9/l95-pe-2`: a pointer over the window, the glide ending at (−0.786, 1.081), nowhere near
+  the hero point;
+- the clean runs: no pointer.
+
+The user was watching these windows. Fixed: under a harness's virtual Space the glide anchors on the
+view centre. The validity check now also flags a run with a real pointer over its window
+(STEERED).
+
+So the "short escaped reference" seen in these runs was a symptom: the steered or rounded glide was
+over empty space, where every reference escapes early. The reuse rule was not at fault. An
+experiment that refused to reuse a short escaped reference changed nothing (40–42% flat), and is
+not kept.
+
+What this does to earlier figures: every 95-octave 1× leg in this log, on both cards and in every
+arm, measured its last ~25 s on that flat render. Between arms the figures stay comparable; as
+absolute figures they are partly of the wrong picture. The decisive scenes (the motiontest, the
+e4000 glide, the 20-octave 4× zoom) were valid throughout.
+
+Gates (RTX 3080): workspace tests 1,545 / 0 / 11 (+1, the round trip); self-test 529/529, goldens 31/31; `--motiontest` ×3 PASS (A7: 434–462 readings, every count 0); `--livetest` 24/24, 0 drifted (the extra centre digits change no blessed tour frame); `--uitest` 75 / 1 / 0 over 76 steps.
