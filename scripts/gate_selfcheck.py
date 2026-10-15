@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -124,6 +125,56 @@ ARMS = [
         "expect": r"logcheck: FAIL lethal-band",
     },
     {
+        # A reachability fixture for the soak's crash criterion: a crash report appears in the run's
+        # own log folder while it runs (the soak judges reports that appeared DURING it). 45 s: two
+        # 20 s liveness windows, so the run is judged at all rather than VACUOUS.
+        "gate": "soak", "name": "soak/crash-report",
+        "args": ["--soak", "45"],
+        "midrun": (15, lambda cfg: open(os.path.join(cfg, "logs", "crash-gate-selfcheck.txt"), "w").write(
+            "a crash report planted by scripts/gate_selfcheck.py\n")),
+        "sabotage": None, "why": "a crash report written into the run's log folder 15 s in",
+        "expect": r"soak-liveness: FAIL .*crash report\(s\) appeared: crash-gate-selfcheck\.txt",
+    },
+    {
+        # The same fixture for the UI walk's no-crash-files criterion, which fails the RUN (a crash
+        # report from a worker thread while every step passes is exactly what it exists to catch).
+        "gate": "uitest", "name": "uitest/crash-report",
+        "args": ["--uitest", "{sb}/ui"],
+        "midrun": (30, lambda cfg: open(os.path.join(cfg, "logs", "crash-gate-selfcheck.txt"), "w").write(
+            "a crash report planted by scripts/gate_selfcheck.py\n")),
+        "sabotage": None, "why": "a crash report written into the run's log folder 30 s into the walk",
+        "expect": r"no-crash-files: FAIL .*crash-gate-selfcheck\.txt",
+    },
+    {
+        # A 1 ms lethal band: every reading is lethal and no retreat can bring a pass under it, so
+        # the dive reaches the regime and the retreat does not hold - --autodive's RED. The control
+        # is the checklist's row 32 run, which on a card that never reaches the regime is VACUOUS
+        # (3), the exit that row accepts.
+        "gate": "autodive", "name": "autodive/retreat-cannot-hold",
+        "args": ["--autodive", "12", "--autodive-home", "0"], "control_ok": [0, 3],
+        "extra": ["--set", "TDR_LETHAL_MS=1"],
+        "sabotage": None, "why": "--set TDR_LETHAL_MS=1 (no retreat can leave the lethal band)",
+        "expect": r"REACHED THE REGIME AND THE RETREAT DID NOT HOLD",
+    },
+    {
+        # The step budget starved to 1: no pinned refresh can complete, so detail stops streaming
+        # during motion - exactly A2's "option-B freeze shape". (TDR_STEPS_CEIL alone is refused at
+        # startup, below TDR_MIN_STEPS: an argument error, which this script never counts as a catch.)
+        "gate": "motiontest", "name": "motiontest/starved-refresh",
+        "args": ["--motiontest"], "extra": ["--set", "TDR_MIN_STEPS=1", "--set", "TDR_STEPS_CEIL=1"],
+        "sabotage": None, "why": "--set TDR_MIN_STEPS=1 TDR_STEPS_CEIL=1 (no refresh can complete)",
+        "expect": r"A2: no complete refresh was adopted during motion",
+    },
+    {
+        # Coarse: the frame record switched off altogether (FRACTADYNE_LOG=0), not a field left
+        # unset - the app has no knob for the subtler breakage. It proves the gate reads the record
+        # it guards rather than passing on its absence.
+        "gate": "recordtest", "name": "recordtest/no-record",
+        "args": ["--recordtest"], "env": {"FRACTADYNE_LOG": "0"},
+        "sabotage": None, "why": "FRACTADYNE_LOG=0: no log directory, so no frame record",
+        "expect": r"no logs directory, so no frames\.bin",
+    },
+    {
         # A SCRIPT gate, in a copy of exactly the files it reads (it resolves everything from its
         # own location): one row's enforcer renamed to a test that does not exist.
         "gate": "checklist_coverage.py", "name": "checklist/broken-claim", "kind": "script",
@@ -152,16 +203,25 @@ INVENTORY = [
     ("selftest", None),
     ("bench-matrix", None),
     ("livetest", None),
-    ("motiontest", "no arm yet: needs an override or fixture that breaks A1-A8 for a named reason"),
-    ("uitest", "no arm yet: its checks read the live UI; needs a reachability fixture"),
-    ("recordtest", "no arm yet: needs a fixture with a record field left unset"),
-    ("zoomtest-gate", "no arm yet: an override that slows frames past the appetite row's 33 ms"),
-    ("autodive", "no arm yet: a retreat that does not hold needs an actuator sabotage"),
-    ("soak", "no arm yet"),
+    ("motiontest", None),
+    ("uitest", None),
+    ("recordtest", None),
+    ("autodive", None),
+    ("soak", None),
     ("screengate.py", None),
-    ("corpus --check", "no arm yet - and its CONTROL is known red: 28/38 since beta.141 (the df32 tail "
-                       "phase; re-blessing is the user's call) where the checklist expects 38/38"),
+    ("corpus --check", "no arm yet - its CONTROL is red: 28/38 (re-checked 2026-10-15: rows 34-38, the "
+                       "deep field dives, differ by 21-1,070 px since the beta.141 df32 tail phase; reviewing "
+                       "them against F3 and re-blessing is the user's call) where the checklist expects 38/38"),
     ("checklist_coverage.py", None),
+]
+
+
+# Gates the checklist only PLANS (its planned: rows): listed, not counted as gaps, armed when they
+# become gates.
+PLANNED = [
+    ("zoomtest-gate", "the P-G matrix: RED on every Smooth row on beta.19 too, and its fixture "
+                      "misi-49-3.fdn is not in the tree"),
+    ("torture increment 2", "the ladder has no such rung"),
 ]
 
 
@@ -178,16 +238,27 @@ def run(arm, sb, sabotaged):
     cfg = tempfile.mkdtemp(prefix="gate-cfg-")
     args = [a.replace("{sb}", sb) for a in arm["args"]] + (arm.get("extra", []) if sabotaged else [])
     env = dict(os.environ, FRACTADYNE_CONFIG_DIR=cfg, FRACTADYNE_NO_SOUND="1")
+    if sabotaged:
+        env.update(arm.get("env", {}))
+    timer = None
+    if sabotaged and arm.get("midrun"):
+        delay, act = arm["midrun"]
+        timer = threading.Timer(delay, act, args=[cfg])
+        timer.start()
     t0 = time.time()
     p = subprocess.run([EXE] + args, cwd=sb, env=env, capture_output=True, text=True,
                        encoding="utf-8", errors="replace", timeout=1800)
     out = p.stdout + "\n" + p.stderr
+    if timer:
+        timer.cancel()
     try:
         log = open(os.path.join(cfg, "logs", "fractadyne.log"), encoding="utf-8", errors="replace").read()
     except OSError:
         log = ""
     shutil.rmtree(cfg, ignore_errors=True)
-    return p.returncode, out, "[fd-exit]" in log, time.time() - t0
+    # Reached its end: the [fd-exit] line, in the log or (when the sabotage turns the log off) on
+    # the console, which carries it too.
+    return p.returncode, out, "[fd-exit]" in log or "[fd-exit]" in out, time.time() - t0
 
 
 def main():
@@ -203,6 +274,8 @@ def main():
         for g, why in INVENTORY:
             names = [arm["name"] for arm in ARMS if arm["gate"] == g]
             print("  %-22s %s" % (g, ", ".join(names) if names else "GAP - " + why))
+        for g, why in PLANNED:
+            print("  %-22s planned, not yet a gate - %s" % (g, why))
         return 0
     if not os.path.exists(EXE):
         sys.exit("gate_selfcheck: no binary at %s (cargo build --release)" % EXE)
@@ -255,7 +328,7 @@ def main():
                     print("\n".join("     | " + l for l in out.strip().splitlines()[-12:]))
                 continue
             code, out, ended, secs = run(arm, sb, sabotaged=False)
-            ok = code == 0 and ended
+            ok = code in arm.get("control_ok", [0]) and ended
             print("   control   exit %d in %.0fs%s" % (code, secs, "" if ok else "  <- the CONTROL must pass"), flush=True)
             if not ok:
                 wrong.append((arm["name"], "control exit %d%s" % (code, "" if ended else ", no [fd-exit]")))
@@ -269,13 +342,14 @@ def main():
                 arm["sabotage"](sb)
             code, out, ended, secs = run(arm, sb, sabotaged=True)
             named = re.search(arm["expect"], out) is not None
-            ok = code != 0 and ended and named
+            ok = code not in arm.get("control_ok", [0]) and ended and named
             why = []
-            if code == 0:
-                why.append("still exits 0")
+            passing = arm.get("control_ok", [0])
+            if code in passing:
+                why.append("still exits %d, a passing code" % code)
             if not ended:
                 why.append("no [fd-exit]: it crashed or was killed, which is not a catch")
-            if code != 0 and not named:
+            if code not in passing and not named:
                 why.append("red, but its output does not name the breakage (/%s/)" % arm["expect"])
             print("   sabotage  exit %d in %.0fs  %s" % (code, secs, "RED, for the named reason" if ok else "<- " + "; ".join(why)), flush=True)
             if not ok:
@@ -293,6 +367,9 @@ def main():
 
     print("\nGaps - gates the checklist relies on with no sabotage arm yet:")
     for g, why in gaps:
+        print("  %-22s %s" % (g, why))
+    print("Planned in the checklist, not yet gates (not counted):")
+    for g, why in PLANNED:
         print("  %-22s %s" % (g, why))
     if wrong:
         print("\nWRONG: %d arm(s) - a gate that cannot go red for its reason is not a gate:" % len(wrong))

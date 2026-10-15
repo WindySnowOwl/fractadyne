@@ -4619,3 +4619,51 @@ byte-exactly, which PowerShell 5.1 makes error-prone, and nothing here runs on t
 - the F3 corpus `--check`. That gate's control is itself known red: 28/38 since beta.141, the df32
   tail phase, whose re-bless is the user's call. Meanwhile the release checklist still says
   "38/38 MATCH".
+
+**2026-10-15 — W8: the user's three decisions, and the meta-gate armed further.** The user said:
+"1. Full set per card — it may help diagnose regressions. 2. Rebless. 3. Remove GitHub copy of
+method-switch-no-reiterate. Then move on to the meta gate."
+
+- **The GitHub copy** of `feat/method-switch-no-reiterate` (`4e9616e`) is deleted. `origin` has only
+  `main`.
+- **The reference bench-matrix baseline is re-blessed** (`4adec0f`, at `5ea46fc`). The 28 segments
+  it had keep identical signatures. The 15 power-family segments are now judged on the RTX 3080 too.
+  The run that checked it: 43 segments, 0 drift, 0 new.
+- **Per-card golden sets** (`5d0d567`):
+  - A card's own set is `validation/golden/<slug>/`, with a marker naming the card. The card is
+    judged against it at the strict tolerance. A golden missing from the set falls back to the
+    reference image at the cross-GPU tolerance, so adding a golden does not break every other card.
+  - `--bless` on another card writes that card's set instead of being refused. `--bless-new-adapter`
+    still moves the reference.
+  - The battery runs the self-test with `--out` into its bundle, so `02-selftest/current/` holds the
+    card's would-be set.
+  - Only the share's packages carry per-card sets. The release packages stay at the reference set,
+    because each set is about 90 MB (the dev.17 share package is 103.5 MB against 58).
+  - The report no longer calls a cross-GPU pass a "match".
+  - Checked end to end on the RTX 3080 with the reference marker faked to another card:
+    - the bless wrote the 3080's own set and left the reference untouched;
+    - the next run was strict against that set, 31/31;
+    - with one image deleted, that golden fell back to CROSS-GPU.
+  - **The RX 6800 XT's set** (`2d05c08`) was adopted from the dev.16 battery's renders, checked side
+    by side: the largest mean difference from the 3080, 19.2 on multibrot4-1e6, is the speckle field.
+  - The dev.17 battery (`1c110c0`, reverted in `896afc9`) judged the Radeon strictly against its own
+    set: all 31 goldens at max Δ 0 and mean Δ 0.0, pixel-identical to a run on another build, with
+    no cross-GPU fallback. VERDICT PASS.
+- **The meta-gate armed further** (bench-matrix, livetest, selftest and checklist as before):
+  - motiontest/starved-refresh: `TDR_MIN_STEPS=1 TDR_STEPS_CEIL=1` turns A2 red, "no complete
+    refresh was adopted during motion". `TDR_STEPS_CEIL=1` alone is refused at startup as an
+    argument error, which the script correctly never counts as a catch.
+  - recordtest/no-record: `FRACTADYNE_LOG=0` gives "no logs directory, so no frames.bin". Coarse,
+    since the app has no knob for a single unset field. Its exits (1 fail, 2 vacuous) still predate
+    `crate::verdict`.
+  - soak/crash-report and uitest/crash-report: a crash report planted in the run's log folder
+    mid-run fails "crash report(s) appeared" (exit 2) and "no-crash-files" (exit 1), each a
+    reachability fixture for exactly that criterion.
+  - autodive/retreat-cannot-hold: `TDR_LETHAL_MS=1` gives REACHED THE REGIME AND THE RETREAT DID NOT
+    HOLD (exit 2). The control is row 32's stock run, VACUOUS (3) on a card that never reaches the
+    regime, which is the exit that row accepts.
+  - The zoomtest P-G rows and torture increment 2 are listed as PLANNED, not as gaps, as in the
+    checklist.
+  - **The one gap left is the F3 corpus `--check`, re-run today: 28/38.** Rows 34–38, the deep field
+    dives, differ by 21 to 1,070 pixels (maxΔ 41–132, meanΔ ≤ 0.01). Its control is red, so no arm
+    can stand on it until those rows are reviewed against F3 and re-blessed: the user's call.
