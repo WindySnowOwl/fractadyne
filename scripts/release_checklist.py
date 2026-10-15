@@ -650,6 +650,35 @@ STEPS = [
      "of each other. RED or "
      "VACUOUS is not a pass: every per-pass metric once said the blank-frame fix worked while the "
      "screen got worse."),
+    # ------------------------------------------------------------ release gates (run:)
+    # Each is a command whose RECORDED exit code is the evidence: run it through
+    # scripts/run_ledger.py, and checklist_coverage.py --release VERSION finds the row.
+    ("Release gates",
+     "Run the live-output gate with the release binary: python scripts/run_ledger.py run -- "
+     "--livetest tours/grand-tour.toml --size 480x270",
+     "VERDICT PASS (exit 0): 24/24 checkpoints, 0 drifted, 0 STARVED. Recorded in "
+     "validation/runs/<version>.tsv."),
+    ("Release gates",
+     "Run the self-test's opt-in deep-location group: python scripts/run_ledger.py run -- "
+     "--selftest --selftest-filter deep-location --out logs/optin/report.md",
+     "Every check passes (exit 0). A full --selftest never runs this group (it costs minutes), so "
+     "this is the only run it gets. --out keeps the full run's validation/report.md."),
+    ("Release gates",
+     "Run the self-test's opt-in fe-df32-probe group: python scripts/run_ledger.py run -- "
+     "--selftest --selftest-filter fe-df32-probe --out logs/optin/report.md",
+     "Every check passes (exit 0). Where the floatexp and df32 paths agree exactly (the RTX 3080) "
+     "only the control carries a verdict; the RX 6800 XT under Linux is where it arbitrates."),
+    ("Release gates",
+     "Hold the zoom-smoothness matrix: fractadyne --zoomtest --zoomtest-gate smooth on each "
+     "continuous, jump-start and hand-over row of design/live-zoom-smoothing.md's P-G matrix, "
+     "and --zoomtest-gate appetite on its appetite row.",
+     "Every row exits 0. Not yet a gate: the held-picture bound fails on every Smooth row, on "
+     "beta.19 too - open sizing work (design/live-render-robustness.md, W8 rung 1)."),
+    ("Release gates",
+     "Run the torture ladder's increment 2 on the RX 6800 XT: the no-BLA regime that actually "
+     "loses the device.",
+     "Not yet a gate: the ladder has no such rung (crates/fractadyne-app/src/torture.rs, the "
+     "design's increment 2)."),
     ("Sign-off",
      "Review every FAIL and BLOCKED row above with the release decision in mind.",
      "Either all rows PASS, or each non-PASS has an agreed decision (fix before release / accept "
@@ -672,6 +701,10 @@ STEPS = [
 #   uitest:<name>    a --uitest check name, must appear in uitest.rs
 #   harness:<flag>   a CLI flag that must exist in the argument parser
 #   script:<path>    a repo file that must exist
+#   run:<command>    a gate whose RECORDED run is the evidence: the command must exist, and
+#                    `checklist_coverage.py --release VERSION` requires an exit 0 (or the exits an
+#                    `[exit …]` suffix lists) from VERSION's binary in validation/runs/VERSION.tsv,
+#                    recorded by scripts/run_ledger.py
 #   partial:<e>      the effect is enforced; a gesture or an aesthetic judgement is not
 #   manual/process   no machine enforcer is possible - the reason is in the plan document
 ENFORCERS = [
@@ -706,7 +739,7 @@ ENFORCERS = [
     ("Deep zoom", "partial:selftest:normalize-reduces-speckle"),
     ("Deep zoom", "partial:selftest:normalize-reduces-speckle"),
     ("Deep zoom", "partial:selftest:pan consistency"),
-    ("Deep zoom", "harness:--autodive-home"),
+    ("Deep zoom", "run:--autodive-home [exit 0,3]"),
     ("Fractal types", "selftest:home"),
     ("Fractal types", "selftest:multibrot3"),
     ("Fractal types", "selftest:multibrot4"),
@@ -827,7 +860,12 @@ ENFORCERS = [
     ("Reference cache", "uitest:reference-cache"),
     ("Reference cache", "partial:test:eviction_drops_the_cheapest_orbit_not_the_oldest"),
     ("Reference cache", "partial:test:clear_removes_every_entry_and_stray_temp_files"),
-    ("Screen", "planned:run:screengate.py over gpu-validate's screen step (needs the run: class)"),
+    ("Screen", "run:scripts/dive-capture/screengate.py"),
+    ("Release gates", "run:--livetest tours/grand-tour.toml"),
+    ("Release gates", "run:--selftest-filter deep-location"),
+    ("Release gates", "run:--selftest-filter fe-df32-probe"),
+    ("Release gates", "planned:run:--zoomtest-gate (the P-G matrix; Smooth rows RED on beta.19 too)"),
+    ("Release gates", "planned:torture increment 2 (the no-BLA lethal regime, RX 6800 XT)"),
     ("Sign-off", "process"),
 ]
 
@@ -852,6 +890,9 @@ def enforcer_label(enf):
         return "—", "none"
     if enf == "manual":
         return "MANUAL — needs a person (see design/checklist-automation.md)", "manual"
+    # (A `planned:` row used to fall through to "AUTO — planned: …" and count as automated.)
+    if enf.startswith("planned:"):
+        return ("NOT YET AUTOMATED — planned: %s" % enf[len("planned:"):]), "manual"
     partial = enf.startswith("partial:")
     rest = enf[len("partial:"):] if partial else enf
     kind, _, name = rest.partition(":")
@@ -861,6 +902,7 @@ def enforcer_label(enf):
         "uitest": "--uitest",
         "harness": "CLI",
         "script": "script",
+        "run": "a recorded run of this release (scripts/run_ledger.py)",
     }.get(kind, kind)
     if partial:
         # Deliberately generic about WHAT is left over: it differs per row — the gesture, the
@@ -942,6 +984,9 @@ def build(out_path):
         "cargo test --workspace --release -> all green",
         "cargo build --release            -> warning-free",
         "python scripts/checklist_coverage.py -> exit 0 (no row claims coverage it lacks)",
+        "python scripts/checklist_coverage.py --release <version> -> exit 0 (every run: row was",
+        "   run through scripts/run_ledger.py from this version's committed build; commit",
+        "   validation/runs/<version>.tsv with the report)",
     ]):
         cov.cell(row=r + 2 + i, column=1, value=g)
 
