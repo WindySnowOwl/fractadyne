@@ -4516,3 +4516,53 @@ Residue:
   are NOT JUDGED (exit 3) until the agent also copies the file (a change for the next agent
   version).
 - `gpu-validate.sh` (Linux) does not judge yet.
+
+**2026-10-15 — W8: per-card bench-matrix baselines** (`79b2dcd`). The path signatures are exact per
+build and card, and every card was compared against the one baseline the RTX 3080 blessed. On any
+other card nothing could go red, so the card that fails was exactly the one with nothing to fail
+against.
+
+What changed:
+- A card's baseline is its own `benchmarks/bench-matrix-baseline-<adapter slug>.json`, or else the
+  reference file if that was blessed on this card. `--bless` writes the card's own file unless the
+  reference is absent or already this card's.
+- `--bench-matrix` exits by `crate::verdict`:
+  - 2 for drift against this card's baseline;
+  - 3 when the card has no baseline ("NO BASELINE FOR THIS CARD": it reports against another card's
+    file but judges nothing), or when the file is unreadable;
+  - 0 otherwise. It used to exit 0 on any other card.
+- Every run writes itself as a would-be baseline, `bench-matrix-run.json` beside the log. The battery
+  collects it as `04-bench-matrix-run.json`. That is how a field machine gets a baseline: it runs only
+  allow-listed flags, so it cannot `--bless`, but its run file can be reviewed and committed.
+- All five package recipes ship every card's baseline, held by a test.
+
+⚠ *Deviation from §7.8* ("delete `|| !same_gpu` at bench_matrix.rs:732 and make 'no baseline for
+this adapter' a distinct, loud, non-passing outcome"):
+- **Kept as specified:**
+  - The self-test is exact wherever the card has its own baseline.
+  - `--bench-matrix`, a developer gate, reports a card with no baseline as VACUOUS.
+- **Changed:** in the self-test, a card with no baseline is still compared informationally and NOT
+  failed; its first row says so. The reason is that testers run `--selftest` on whatever card they
+  have (the release checklist's Linux rows do), and a card nobody has blessed is not a defect of the
+  build they are testing.
+- **Where non-passing lives instead:** on the cards that gate releases, it lives in `--bench-matrix`
+  and in the battery's verdict, which holds bench-matrix to exit 0 by default. So the RX 6800 XT's
+  battery is UNEXPECTED until it has a baseline.
+
+The reference baseline dates from beta.143. 15 of today's 43 segments were added since, and are not
+judged even on the RTX 3080 ("15 new"). Re-blessing it is a decision about what is correct now,
+left to the user.
+
+*On the RX 6800 XT* (dev.14 = `3341dfb`, published and reverted in `8de4058`; the full battery,
+PLUTO):
+- The battery judged itself. It read the card as `amd-radeon-rx-6800-xt`, so the code-point middle
+  dot works there.
+- Self-test: only the declared "wider canvas" check failed, so as expected. recordtest exits 0 again
+  (W6's fix).
+- bench-matrix exited 3: "NO BASELINE FOR THIS CARD", 18 cross-GPU differences reported, not judged.
+  The verdict was therefore UNEXPECTED, and the battery exited 2: the pressure §7.8 asks for.
+- **The Radeon's baseline is adopted from that run's `04-bench-matrix-run.json`** as
+  `benchmarks/bench-matrix-baseline-amd-radeon-rx-6800-xt.json`. Determinism first: all 43
+  segments' signatures (mode, eff-it, sa-skip, the four counters) are identical to the dev.9
+  battery's a day earlier, on another build. Control: the same record against the RTX 3080's table
+  differs on 18, which is the battery's own count.

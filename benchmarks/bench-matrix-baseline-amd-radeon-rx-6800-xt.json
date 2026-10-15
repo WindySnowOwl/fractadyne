@@ -1,0 +1,652 @@
+{
+  "version": "0.3.0-beta.19.dev.14 (build 5043, g3341dfb)",
+  "gpu": "AMD Radeon RX 6800 XT",
+  "utc": "2026-10-15 17:54:21 UTC",
+  "segments": {
+    "color-decomposition": {
+      "mode": 0,
+      "sa_skip": 0,
+      "orbit_len": 8008,
+      "eff_iter": 15000,
+      "counters": [
+        1345934,
+        0,
+        0,
+        0,
+        63
+      ],
+      "ref_ms": 15.6056,
+      "gpu_ms": 195.9226
+    },
+    "color-smooth": {
+      "mode": 0,
+      "sa_skip": 7954,
+      "orbit_len": 8008,
+      "eff_iter": 15000,
+      "counters": [
+        1346341,
+        0,
+        0,
+        0,
+        67
+      ],
+      "ref_ms": 15.0488,
+      "gpu_ms": 127.7461
+    },
+    "color-stripe": {
+      "mode": 0,
+      "sa_skip": 0,
+      "orbit_len": 8008,
+      "eff_iter": 15000,
+      "counters": [
+        1345934,
+        0,
+        0,
+        0,
+        63
+      ],
+      "ref_ms": 17.110799999999998,
+      "gpu_ms": 223.29479999999998
+    },
+    "color-trap": {
+      "mode": 0,
+      "sa_skip": 0,
+      "orbit_len": 8008,
+      "eff_iter": 15000,
+      "counters": [
+        1345934,
+        0,
+        0,
+        0,
+        63
+      ],
+      "ref_ms": 21.485899999999997,
+      "gpu_ms": 196.3232
+    },
+    "deep-interior-1e148": {
+      "mode": 2,
+      "sa_skip": 0,
+      "orbit_len": 720892,
+      "eff_iter": 800000,
+      "counters": [
+        1286574,
+        10553890,
+        0,
+        140002176,
+        623
+      ],
+      "ref_ms": 1421.6317000000001,
+      "gpu_ms": 201.62189999999998
+    },
+    "df32-1e20": {
+      "mode": 0,
+      "sa_skip": 7954,
+      "orbit_len": 8008,
+      "eff_iter": 15000,
+      "counters": [
+        1346341,
+        0,
+        0,
+        0,
+        67
+      ],
+      "ref_ms": 20.7141,
+      "gpu_ms": 120.2429
+    },
+    "df32-1e8": {
+      "mode": 0,
+      "sa_skip": 78,
+      "orbit_len": 3001,
+      "eff_iter": 3000,
+      "counters": [
+        1036926,
+        0,
+        0,
+        0,
+        11000
+      ],
+      "ref_ms": 6.213299999999999,
+      "gpu_ms": 133.00629999999998
+    },
+    "direct-1e2": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 512,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        58132
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 109.9705
+    },
+    "floatexp-1e30-nobla": {
+      "mode": 2,
+      "sa_skip": 16014,
+      "orbit_len": 30001,
+      "eff_iter": 30000,
+      "counters": [
+        889225,
+        0,
+        0,
+        0,
+        35598
+      ],
+      "ref_ms": 67.38619999999999,
+      "gpu_ms": 314.4224
+    },
+    "floatexp-1e30-nosa": {
+      "mode": 2,
+      "sa_skip": 0,
+      "orbit_len": 30001,
+      "eff_iter": 30000,
+      "counters": [
+        1021211,
+        0,
+        0,
+        39678078,
+        35592
+      ],
+      "ref_ms": 58.1283,
+      "gpu_ms": 195.2783
+    },
+    "floatexp-1e30-sa": {
+      "mode": 2,
+      "sa_skip": 0,
+      "orbit_len": 30001,
+      "eff_iter": 30000,
+      "counters": [
+        1021211,
+        0,
+        0,
+        39678078,
+        35592
+      ],
+      "ref_ms": 61.0258,
+      "gpu_ms": 189.7353
+    },
+    "floatexp-1e300": {
+      "mode": 2,
+      "sa_skip": 2411,
+      "orbit_len": 2766,
+      "eff_iter": 200000,
+      "counters": [
+        359171,
+        0,
+        0,
+        0,
+        0
+      ],
+      "ref_ms": 9.4089,
+      "gpu_ms": 76.0565
+    },
+    "fractal-buffalo": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 55.464600000000004
+    },
+    "fractal-buffalo3": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 59.554
+    },
+    "fractal-buffalo4": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 60.2008
+    },
+    "fractal-buffalo5": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 62.2122
+    },
+    "fractal-burningship": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        141584
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 55.989200000000004
+    },
+    "fractal-burningship3": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 60.1965
+    },
+    "fractal-burningship4": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 61.330200000000005
+    },
+    "fractal-burningship5": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 62.454299999999996
+    },
+    "fractal-celtic": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        146862
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 55.4085
+    },
+    "fractal-celtic3": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 59.7714
+    },
+    "fractal-celtic4": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 60.5259
+    },
+    "fractal-celtic5": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 62.9634
+    },
+    "fractal-mandelbrot": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        142790
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 130.2746
+    },
+    "fractal-multibrot3": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 139.7159
+    },
+    "fractal-multibrot4": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 137.3098
+    },
+    "fractal-multibrot5": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 140.70940000000002
+    },
+    "fractal-multibrot6": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 162.9343
+    },
+    "fractal-multibrot7": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 165.5338
+    },
+    "fractal-multibrot8": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 165.72729999999999
+    },
+    "fractal-newton": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 38.9739
+    },
+    "fractal-phoenix": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 62.914300000000004
+    },
+    "fractal-tricorn": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        135828
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 55.4657
+    },
+    "fractal-tricorn3": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 59.5798
+    },
+    "fractal-tricorn4": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 59.996300000000005
+    },
+    "fractal-tricorn5": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 2000,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        147456
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 62.3517
+    },
+    "interior-n51-df32-1e27.71": {
+      "mode": 0,
+      "sa_skip": 137,
+      "orbit_len": 30001,
+      "eff_iter": 30000,
+      "counters": [
+        329335,
+        0,
+        0,
+        0,
+        0
+      ],
+      "ref_ms": 56.4082,
+      "gpu_ms": 63.8527
+    },
+    "interior-n52-fe-1e28.25": {
+      "mode": 2,
+      "sa_skip": 0,
+      "orbit_len": 30001,
+      "eff_iter": 30000,
+      "counters": [
+        322300,
+        0,
+        0,
+        1614854,
+        0
+      ],
+      "ref_ms": 55.7563,
+      "gpu_ms": 88.427
+    },
+    "m43-n51-df32-1e27.71": {
+      "mode": 0,
+      "sa_skip": 137,
+      "orbit_len": 539,
+      "eff_iter": 30000,
+      "counters": [
+        301626,
+        0,
+        0,
+        0,
+        0
+      ],
+      "ref_ms": 1.157,
+      "gpu_ms": 63.67
+    },
+    "m43-n52-fe-1e28.25": {
+      "mode": 2,
+      "sa_skip": 140,
+      "orbit_len": 539,
+      "eff_iter": 30000,
+      "counters": [
+        306728,
+        0,
+        0,
+        0,
+        0
+      ],
+      "ref_ms": 1.0809000000000002,
+      "gpu_ms": 73.9794
+    },
+    "m43-n7-direct-1e3.80": {
+      "mode": 1,
+      "sa_skip": 0,
+      "orbit_len": 0,
+      "eff_iter": 1500,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "ref_ms": 0.0,
+      "gpu_ms": 114.23049999999999
+    },
+    "m43-n8-df32-1e4.35": {
+      "mode": 0,
+      "sa_skip": 0,
+      "orbit_len": 429,
+      "eff_iter": 1500,
+      "counters": [
+        305307,
+        0,
+        0,
+        0,
+        0
+      ],
+      "ref_ms": 0.7456,
+      "gpu_ms": 115.033
+    }
+  }
+}
