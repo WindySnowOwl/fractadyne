@@ -193,9 +193,11 @@ build_id_step
 step "gputest" "01-gputest.txt" \
   "df32/floatexp primitives vs CPU oracles, every backend" \
   "$BIN" --gputest
+# --out puts the report and this run's golden renders (current/*.png) in the bundle: this card's
+# would-be golden set (as gpu-validate.ps1).
 step "selftest" "02-selftest.txt" \
-  "full suite + 19 goldens (goldens blessed on an RTX 3080; deltas elsewhere are expected)" \
-  $XVFB "$BIN" --selftest
+  "full suite + goldens: strict against this card's own set if it has one, else cross-GPU against the RTX 3080's" \
+  $XVFB "$BIN" --selftest --out "$DIR/02-selftest/report.md"
 step "live-res" "03-live-res.txt" \
   "settled-resolution invariant - the B6 core, never yet run on hardware truly lacking TIMESTAMP_QUERY" \
   $XVFB "$BIN" --selftest --selftest-filter live-res
@@ -249,12 +251,13 @@ gputest      A failing two_sum/two_prod means this stack's shader compiler folds
              transforms, so every extended-precision path silently degrades to plain f32. Every
              stack tested so far fails here: all NVIDIA backends, and the RX 6800 XT on every
              backend under both Windows and Linux (Mesa). Exit 1 is expected; the file is the data.
-selftest     The 19 goldens were blessed on an RTX 3080 and are compared with a wider, measured
-             tolerance on other hardware; the path-signature checks likewise report cross-GPU
-             differences rather than failing them. So a FAILURE here is a real signal. Known, under
-             investigation: the RX 6800 XT fails two checks, and which two depends on the system -
-             "a wider canvas contains the narrower one" under Windows, "floatexp vs df32" under
-             Linux (Mesa RADV). Any other failure is new.
+selftest     A card with its OWN golden set (validation/golden/<card>/) and bench-matrix baseline
+             is held to them exactly. Any other card is compared with the RTX 3080's goldens at a
+             wider, measured tolerance, and its path signatures are reported rather than failed.
+             So a FAILURE here is a real signal. Known, under investigation: the RX 6800 XT fails
+             one check, which depends on the system - "a wider canvas contains the narrower one"
+             under Windows, "floatexp vs df32" under Linux (Mesa RADV). Any other failure is new.
+             02-selftest/current/ holds this run's golden renders: this card's would-be set.
 live-res     Must pass everywhere. This is the invariant that a GPU without TIMESTAMP_QUERY still
              settles at native resolution instead of being stuck at ~1/3 forever. On Linux this
              is the FIRST time it runs on hardware that genuinely lacks the feature (GL, and

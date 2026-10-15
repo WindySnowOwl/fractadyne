@@ -182,6 +182,12 @@ if (-not $SkipWindows) {
     New-Item -ItemType Directory -Force -Path (Join-Path $stage "validation\golden") | Out-Null
     Copy-Item (Join-Path $root "validation\golden\*.png") -Destination (Join-Path $stage "validation\golden")
     Copy-Item (Join-Path $root "validation\golden\BLESSED-GPU.txt") -Destination (Join-Path $stage "validation\golden") -ErrorAction SilentlyContinue
+    # ...and every card's OWN golden set (validation\golden\<card>\), which the field battery
+    # compares that card against strictly. Only these share packages carry them: a release package
+    # ships the reference set alone (each set is ~90 MB, and a user's card has none of its own).
+    Get-ChildItem (Join-Path $root "validation\golden") -Directory | ForEach-Object {
+        Copy-Item $_.FullName -Destination (Join-Path $stage "validation\golden") -Recurse -Force
+    }
     Copy-Item (Join-Path $root "validation\catalog.toml") -Destination (Join-Path $stage "validation")
     # The replay fixtures, so --selftest's replay group recomputes the recorded decisions here
     # (without them it reports VACUOUS: three FAILs from a published package, W6 dev.9 on PLUTO).

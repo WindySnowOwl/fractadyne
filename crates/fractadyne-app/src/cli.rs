@@ -1238,8 +1238,9 @@ pub(crate) struct SelftestCli {
     pub(crate) filter: Option<String>,
     pub(crate) list: bool,
     pub(crate) bless: bool,
-    /// `--bless-new-adapter`: allow `--bless` to move the goldens to a card other than the one
-    /// `validation/golden/BLESSED-GPU.txt` names (W8). Without it such a bless is refused.
+    /// `--bless-new-adapter`: let `--bless` on a card other than the one
+    /// `validation/golden/BLESSED-GPU.txt` names overwrite the REFERENCE set, moving the release
+    /// gate's reference adapter (W8). Without it, such a bless writes that card's own set.
     pub(crate) bless_new_adapter: bool,
 }
 

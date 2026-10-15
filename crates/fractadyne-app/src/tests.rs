@@ -1385,6 +1385,30 @@ fn every_package_ships_every_cards_bench_matrix_baseline() {
 }
 
 #[test]
+fn only_the_share_package_ships_every_cards_golden_set() {
+    // The field battery runs from the share's package and compares a card against its own golden
+    // set, validation/golden/<card>/ (W8): that package must carry every card's set. A release
+    // package ships the reference set alone — each set is ~90 MB and a user's card has none.
+    let publish = include_str!("../../../scripts/publish-share.ps1");
+    assert!(
+        publish.contains("Get-ChildItem (Join-Path $root \"validation\\golden\") -Directory"),
+        "publish-share.ps1 does not copy the per-card golden sets"
+    );
+    for (recipe, text) in [
+        (".github/workflows/release.yml", include_str!("../../../.github/workflows/release.yml")),
+        ("scripts/build-accelerated.ps1", include_str!("../../../scripts/build-accelerated.ps1")),
+        ("scripts/build-accelerated.sh", include_str!("../../../scripts/build-accelerated.sh")),
+    ] {
+        for line in text.lines().filter(|l| l.contains("validation/golden") || l.contains("validation\\golden")) {
+            assert!(
+                !line.contains("-Recurse") && !line.contains("cp -r") && !line.contains("-Directory"),
+                "{recipe} copies golden subfolders into a release package: {line}"
+            );
+        }
+    }
+}
+
+#[test]
 fn every_package_ships_the_replay_fixtures() {
     // `--selftest`'s replay group reads `validation/replays/*.jsonl` beside the binary (`anchored`).
     // A package that leaves them out turns three of its checks VACUOUS on every installed copy —

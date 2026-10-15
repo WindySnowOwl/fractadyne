@@ -121,8 +121,13 @@ Residue, stated rather than hidden:
   that card is the release gate's reference, and blessing on another card silently moves it.
   - `REFERENCE_ADAPTER` in `scripts/release_checklist.py` declares the card, and
     `checklist_coverage.py` fails when the file names another.
-  - `--selftest --bless` on a different card is refused (exit 2, before the suite runs) unless
-    `--bless-new-adapter` is given.
+  - `--selftest --bless` on a different card writes that card's OWN set,
+    `validation/golden/<card slug>/`, and the reference set is untouched. Only `--bless-new-adapter`
+    overwrites the reference set from another card. (Until per-card sets existed, such a bless was
+    refused outright.)
+  - A card with its own set is compared against it at the strict tolerance. A golden missing from
+    it falls back to the reference image at the cross-GPU tolerance. Release packages ship only the
+    reference set; the share's packages, which the field battery runs, ship every card's.
 
   Moving the reference takes both keys.
 - **The opt-in groups are named when they do not run.** A full `--selftest` never runs its opt-in

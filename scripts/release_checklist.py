@@ -689,8 +689,9 @@ STEPS = [
 
 # The card the goldens are blessed on. The self-test compares exactly only there (anywhere else on
 # a loose mean), so this is the release gate's reference: checklist_coverage.py fails when
-# validation/golden/BLESSED-GPU.txt names another card, and `--selftest --bless` refuses to move it
-# without --bless-new-adapter. Moving it is a decision; it takes both keys.
+# validation/golden/BLESSED-GPU.txt names another card, and `--selftest --bless` on another card
+# writes that card's own set (validation/golden/<card>/) unless --bless-new-adapter says to move the
+# reference. Moving it is a decision; it takes both keys.
 REFERENCE_ADAPTER = "NVIDIA GeForce RTX 3080"
 
 
