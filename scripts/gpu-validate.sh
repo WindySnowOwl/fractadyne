@@ -200,8 +200,11 @@ step "live-res" "03-live-res.txt" \
   "settled-resolution invariant - the B6 core, never yet run on hardware truly lacking TIMESTAMP_QUERY" \
   $XVFB "$BIN" --selftest --selftest-filter live-res
 step "bench-matrix" "04-bench-matrix.txt" \
-  "22-segment perf + determinism; exit 2 signals algorithmic drift, not merely slower" \
+  "perf + determinism vs THIS card's baseline; 2 = algorithmic drift, 3 = no baseline for this card" \
   $XVFB "$BIN" --bench-matrix
+# The run's own would-be baseline (as gpu-validate.ps1): review it, then commit it as
+# benchmarks/bench-matrix-baseline-<card slug>.json.
+[ -f "$CFG/logs/bench-matrix-run.json" ] && cp "$CFG/logs/bench-matrix-run.json" "$DIR/04-bench-matrix-run.json"
 
 if [ "$QUICK" -eq 0 ]; then
   step "livetest" "05-livetest.txt" \
@@ -257,9 +260,10 @@ live-res     Must pass everywhere. This is the invariant that a GPU without TIME
              is the FIRST time it runs on hardware that genuinely lacks the feature (GL, and
              several Mesa/RADV/ANV combinations) rather than on an NVIDIA card faking it via
              FRACTADYNE_NO_TIMESTAMPS=1.
-bench-matrix Timings vary by card and mean nothing across machines. Signature differences against
-             a baseline recorded on another GPU are EXPECTED and are reported, not failed. Exit 2
-             means drift on the baseline's OWN card, which does matter.
+bench-matrix Timings vary by card and mean nothing across machines. The path signatures are
+             compared EXACTLY against this card's own baseline: exit 2 = drift. A card with no
+             baseline of its own exits 3 (nothing could be judged). 04-bench-matrix-run.json is
+             this run as a would-be baseline for this card.
 livetest     Self-contained: live view vs an offline render on THIS machine, so its pass/fail is
              meaningful here. "drift" lines compare against an RTX 3080 baseline and can be
              ignored on other hardware; FAIL and STARVED lines cannot (STARVED: a render at 4x

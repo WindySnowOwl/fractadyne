@@ -29,8 +29,63 @@ const LOG2_10: f64 = std::f64::consts::LOG2_10;
 /// Render size for every segment — small so the whole matrix runs in seconds, big enough that the
 /// path machinery (references, BLA, rebasing) is genuinely exercised.
 const SIZE: u32 = 384;
-/// Baseline file (repo-relative). Written by `--bless`, read for regression comparison.
-const BASELINE_PATH: &str = "benchmarks/bench-matrix-baseline.json";
+/// The REFERENCE card's baseline, `benchmarks/bench-matrix-baseline.json`: the file every package has
+/// shipped. Any other card has its own, `bench-matrix-baseline-<adapter slug>.json` beside it (W8):
+/// the path signatures are exact per build AND card, so a card compared against another card's file
+/// can never go red, and the card that fails was exactly the one with nothing to fail against.
+const REFERENCE_FILE: &str = "bench-matrix-baseline.json";
+
+/// The folder the baselines live in (the repo's, or an install's).
+fn baselines_dir() -> std::path::PathBuf {
+    crate::selftest::anchored("benchmarks")
+}
+
+/// The reference card's baseline in `dir`.
+fn reference_in(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.join(REFERENCE_FILE)
+}
+
+/// `gpu`'s own baseline file in `dir` (it need not exist).
+fn card_baseline_in(dir: &std::path::Path, gpu: &str) -> std::path::PathBuf {
+    dir.join(format!("bench-matrix-baseline-{}.json", crate::calibration::slug(gpu)))
+}
+
+fn card_baseline_path(gpu: &str) -> std::path::PathBuf {
+    card_baseline_in(&baselines_dir(), gpu)
+}
+
+/// The baseline in `dir` that describes `gpu`, if any: its own file, else the reference file when
+/// that was blessed on this card. `Ok(None)`: nothing was ever blessed on this card.
+fn baseline_in(dir: &std::path::Path, gpu: &str) -> Result<Option<std::path::PathBuf>, String> {
+    let own = card_baseline_in(dir, gpu);
+    if own.exists() {
+        return Ok(Some(own));
+    }
+    let reference = reference_in(dir);
+    Ok(load_baseline(&reference)?.filter(|b| b.gpu == gpu).map(|_| reference))
+}
+
+fn baseline_path_for(gpu: &str) -> Result<Option<std::path::PathBuf>, String> {
+    baseline_in(&baselines_dir(), gpu)
+}
+
+/// Where `--bless` on `gpu` writes in `dir`: this card's own file, unless the reference file is
+/// absent (the first bless anywhere) or was blessed on this very card.
+fn bless_in(dir: &std::path::Path, gpu: &str) -> std::path::PathBuf {
+    let own = card_baseline_in(dir, gpu);
+    if own.exists() {
+        return own;
+    }
+    let reference = reference_in(dir);
+    match load_baseline(&reference) {
+        Ok(Some(b)) if b.gpu != gpu => own,
+        _ => reference,
+    }
+}
+
+fn bless_path_for(gpu: &str) -> std::path::PathBuf {
+    bless_in(&baselines_dir(), gpu)
+}
 /// A segment slower than `baseline × (1 + this)` is flagged as a performance regression. Generous
 /// because run-to-run variance on the small CPU bignum builds (~10-30 ms) is real — only
 /// *substantial* slowdowns should warn.
@@ -318,6 +373,43 @@ fn scale_and_fixed(pts: &[(f64, f64)]) -> Option<(f64, f64)> {
 #[cfg(test)]
 mod fit_tests;
 
+#[cfg(test)]
+mod per_card_tests {
+    use super::*;
+
+    fn write(dir: &std::path::Path, file: &str, gpu: &str) {
+        let b = Baseline { version: "t".into(), gpu: gpu.into(), utc: "t".into(), segments: Default::default() };
+        std::fs::write(dir.join(file), serde_json::to_string(&b).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn each_card_is_judged_against_its_own_baseline_or_none() {
+        let tmp = std::env::temp_dir().join(format!("fd-bm-per-card-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let (a, b) = ("NVIDIA GeForce RTX 3080", "AMD Radeon RX 6800 XT");
+        let own_b = tmp.join("bench-matrix-baseline-amd-radeon-rx-6800-xt.json");
+        // Nothing blessed anywhere: no card has a baseline, and the first bless writes the reference.
+        assert_eq!(baseline_in(&tmp, a), Ok(None));
+        assert_eq!(bless_in(&tmp, b), reference_in(&tmp));
+        // The reference blessed on A: it is A's, NOT B's (B used to be "compared" against it and pass).
+        write(&tmp, REFERENCE_FILE, a);
+        assert_eq!(baseline_in(&tmp, a), Ok(Some(reference_in(&tmp))));
+        assert_eq!(baseline_in(&tmp, b), Ok(None));
+        assert_eq!(bless_in(&tmp, a), reference_in(&tmp));
+        assert_eq!(bless_in(&tmp, b), own_b);
+        // B's own file, once it exists, is B's — and A's stays the reference.
+        write(&tmp, "bench-matrix-baseline-amd-radeon-rx-6800-xt.json", b);
+        assert_eq!(baseline_in(&tmp, b), Ok(Some(own_b.clone())));
+        assert_eq!(bless_in(&tmp, b), own_b);
+        assert_eq!(baseline_in(&tmp, a), Ok(Some(reference_in(&tmp))));
+        // An unreadable reference is an error, not "no baseline".
+        std::fs::write(reference_in(&tmp), "{not json").unwrap();
+        assert!(baseline_in(&tmp, a).is_err());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
 fn median(v: &mut [f64]) -> f64 {
     if v.is_empty() {
         return 0.0;
@@ -446,13 +538,27 @@ impl crate::FractadyneApp {
             results.push(r);
         }
 
+        // Every run also leaves itself as a would-be baseline beside the log (`bench-matrix-run.json`,
+        // the baseline schema): the battery collects it, so a card that cannot be asked to `--bless`
+        // (a field machine runs only allow-listed flags) can still be given a baseline from a run.
+        if let Some(dir) = crate::diag::log_path().as_deref().and_then(std::path::Path::parent) {
+            let path = dir.join("bench-matrix-run.json");
+            let written = serde_json::to_string_pretty(&self.baseline_of(&results))
+                .is_ok_and(|j| std::fs::write(&path, j + "\n").is_ok());
+            if written {
+                println!("run record → {}", path.display());
+            } else {
+                eprintln!("could not write the run record {}", path.display());
+            }
+        }
         if bless {
             return self.bless_baseline(&results);
         }
         self.compare_baseline(&results)
     }
 
-    fn bless_baseline(&self, results: &[SegResult]) -> i32 {
+    /// `results` in the baseline's schema, stamped with this build and card.
+    fn baseline_of(&self, results: &[SegResult]) -> Baseline {
         let segments = results
             .iter()
             .map(|r| {
@@ -470,44 +576,63 @@ impl crate::FractadyneApp {
                 )
             })
             .collect();
-        let baseline = Baseline {
+        Baseline {
             version: crate::version_string(),
             gpu: self.gpu_name.clone(),
             utc: crate::utc_string(now_unix()),
             segments,
-        };
-        let path = std::path::Path::new(BASELINE_PATH);
+        }
+    }
+
+    fn bless_baseline(&self, results: &[SegResult]) -> i32 {
+        let baseline = self.baseline_of(results);
+        let path = bless_path_for(&self.gpu_name);
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
         match serde_json::to_string_pretty(&baseline)
             .map_err(|e| e.to_string())
-            .and_then(|j| std::fs::write(path, j).map_err(|e| e.to_string()))
+            .and_then(|j| std::fs::write(&path, j).map_err(|e| e.to_string()))
         {
             Ok(()) => {
-                println!("\nBlessed baseline ({} segments) → {BASELINE_PATH}", results.len());
+                println!("\nBlessed baseline ({} segments, {}) → {}", results.len(), self.gpu_name, path.display());
                 0
             }
             Err(e) => {
-                eprintln!("\nFailed to write baseline {BASELINE_PATH}: {e}");
+                eprintln!("\nFailed to write baseline {}: {e}", path.display());
                 1
             }
         }
     }
 
+    /// Exit codes follow `crate::verdict`: 2 algorithmic drift against THIS card's baseline, 3 no
+    /// baseline for this card (nothing could be judged: another card's signatures are reported, not
+    /// compared), 0 otherwise. A slower time is a warning, never a failure.
     fn compare_baseline(&self, results: &[SegResult]) -> i32 {
-        let baseline = match load_baseline(std::path::Path::new(BASELINE_PATH)) {
+        let reference = reference_in(&baselines_dir());
+        let path = match baseline_path_for(&self.gpu_name) {
+            Ok(own) => own.unwrap_or_else(|| reference.clone()),
+            Err(e) => {
+                eprintln!("\nBaseline {} is unreadable: {e}", reference.display());
+                return crate::verdict::VACUOUS;
+            }
+        };
+        let baseline = match load_baseline(&path) {
             Ok(Some(b)) => b,
             Ok(None) => {
                 println!(
-                    "\nNo baseline at {BASELINE_PATH} — run `--bench-matrix --bless` to record one \
-                     (needed to flag regressions)."
+                    concat!(
+                        "\nNO BASELINE: none at {} or {} — run `--bench-matrix --bless` on this card to ",
+                        "record one (or adopt a run's bench-matrix-run.json). Nothing was judged."
+                    ),
+                    card_baseline_path(&self.gpu_name).display(),
+                    reference.display()
                 );
-                return 0;
+                return crate::verdict::VACUOUS;
             }
             Err(e) => {
-                eprintln!("\nBaseline {BASELINE_PATH} is unreadable: {e}");
-                return 1;
+                eprintln!("\nBaseline {} is unreadable: {e}", path.display());
+                return crate::verdict::VACUOUS;
             }
         };
         let same_gpu = baseline.gpu == self.gpu_name;
@@ -645,19 +770,33 @@ impl crate::FractadyneApp {
                 "ALGORITHMIC REGRESSION: a rendering path changed its exact output signature. If \
                  intended, re-bless with `--bench-matrix --bless`."
             );
-            2
-        } else {
+            crate::verdict::RED
+        } else if !same_gpu {
             if cross > 0 {
                 println!(
                     "The baseline was recorded on {}; this is {}. Signature differences on \
                      another GPU are EXPECTED — escape decisions, and the rebase/skip counts that \
                      follow from them, legitimately differ between vendors. This is not a \
-                     regression, and the tripwire remains exact on the baseline's own card.",
+                     regression.",
                     baseline.gpu, self.gpu_name
                 );
             }
+            // ⭐Not a pass: on another card's baseline nothing here could have gone red, which is
+            // how the card that fails used to report "No algorithmic regressions" (W8).
+            println!(
+                concat!(
+                    "NO BASELINE FOR THIS CARD ({}): the signatures above were reported against {}'s, ",
+                    "not judged. Bless one here (`--bench-matrix --bless` writes {}), or adopt this ",
+                    "run's bench-matrix-run.json as that file."
+                ),
+                self.gpu_name,
+                baseline.gpu,
+                card_baseline_path(&self.gpu_name).display()
+            );
+            crate::verdict::VACUOUS
+        } else {
             println!("No algorithmic regressions.{}", if slower > 0 { " (performance warnings above.)" } else { "" });
-            0
+            crate::verdict::PASS
         }
     }
 }
@@ -679,18 +818,33 @@ pub(crate) struct MatrixCheck {
 }
 
 impl crate::FractadyneApp {
-    /// Run the fast/deterministic matrix segments and compare each one's machine-independent path
-    /// signature (mode / sa_skip / orbit_len / eff_iter / counters) against the blessed baseline —
-    /// an algorithmic-regression tripwire for `--selftest`. One `MatrixCheck` per segment. With no
-    /// baseline present, returns a single passing note (nothing to diff against yet). Dirties render
-    /// config, so the selftest must call this LAST.
+    /// Run the fast/deterministic matrix segments and compare each one's path signature (mode /
+    /// sa_skip / orbit_len / eff_iter / counters) against THIS CARD's blessed baseline — an
+    /// algorithmic-regression tripwire for `--selftest`, exact wherever the card has one. One
+    /// `MatrixCheck` per segment. Dirties render config, so the selftest must call this LAST.
+    ///
+    /// ⚠A card with no baseline of its own is compared against the reference card's and NOT failed:
+    /// testers run `--selftest` on whatever card they have, and a card nobody has blessed is not a
+    /// defect. Its first row says so loudly. (`--bench-matrix` itself, a developer gate, reports the
+    /// same situation as VACUOUS rather than a pass.)
     pub(crate) fn bench_matrix_selftest_checks(
         &mut self,
         device: &eframe::wgpu::Device,
         queue: &eframe::wgpu::Queue,
-        baseline_path: &std::path::Path,
     ) -> Vec<MatrixCheck> {
-        let baseline = match load_baseline(baseline_path) {
+        let reference = reference_in(&baselines_dir());
+        let own = match baseline_path_for(&self.gpu_name) {
+            Ok(own) => own,
+            Err(e) => {
+                return vec![MatrixCheck {
+                    name: "bench-matrix baseline".into(),
+                    pass: false,
+                    detail: format!("baseline unreadable: {e}"),
+                }]
+            }
+        };
+        let path = own.clone().unwrap_or_else(|| reference.clone());
+        let baseline = match load_baseline(&path) {
             Ok(Some(b)) => b,
             Ok(None) => {
                 return vec![MatrixCheck {
@@ -698,7 +852,7 @@ impl crate::FractadyneApp {
                     pass: true,
                     detail: format!(
                         "no baseline at {} — skipped (bless with `--bench-matrix --bless`)",
-                        baseline_path.display()
+                        path.display()
                     ),
                 }]
             }
@@ -710,16 +864,21 @@ impl crate::FractadyneApp {
                 }]
             }
         };
-        let same_gpu = baseline.gpu == self.gpu_name;
+        // Exact only against this card's own baseline.
+        let strict = own.is_some();
         let mut out = Vec::new();
-        if !same_gpu {
+        if !strict {
             out.push(MatrixCheck {
                 name: "bench-matrix baseline GPU".into(),
                 pass: true,
                 detail: format!(
-                    "baseline recorded on {}; this is {} — signature differences below are \
-                     EXPECTED and reported, not failed",
-                    baseline.gpu, self.gpu_name
+                    concat!(
+                        "NO BASELINE FOR THIS CARD: recorded on {}; this is {} — signature differences ",
+                        "below are EXPECTED and reported, not failed (bless {} to make them exact here)"
+                    ),
+                    baseline.gpu,
+                    self.gpu_name,
+                    card_baseline_path(&self.gpu_name).display()
                 ),
             });
         }
@@ -729,19 +888,19 @@ impl crate::FractadyneApp {
                 Some(b) => {
                     let cur = (r.mode, r.sa_skip, r.orbit_len, r.eff_iter, r.counters);
                     let base = (b.mode, b.sa_skip, b.orbit_len, b.eff_iter, b.counters);
-                    // Exact on the GPU that blessed the baseline; informational on any other.
-                    // These signatures are deterministic per build+GPU but NOT machine-
+                    // Exact against this card's own baseline; informational against another
+                    // card's. These signatures are deterministic per build+GPU but NOT machine-
                     // independent: an RX 6800 XT reported twelve of these as DRIFT purely because
                     // its compiler keeps the df32 error-free transforms NVIDIA folds, moving
                     // escape decisions and the counts that follow. See the `--bench-matrix`
                     // comparison for the full reasoning.
-                    let pass = cur == base || !same_gpu;
+                    let pass = cur == base || !strict;
                     let detail = if cur == base {
                         format!("mode {} eff-it {} sa-skip {} counters ok", r.mode, r.eff_iter, r.sa_skip)
                     } else {
                         format!(
                             "{} mode {}→{} sa-skip {}→{} orbit {}→{} counters {:?}→{:?}",
-                            if same_gpu { "DRIFT" } else { "cross-GPU (expected)" },
+                            if strict { "DRIFT" } else { "cross-GPU (expected)" },
                             b.mode, r.mode, b.sa_skip, r.sa_skip, b.orbit_len, r.orbit_len,
                             b.counters, r.counters
                         )

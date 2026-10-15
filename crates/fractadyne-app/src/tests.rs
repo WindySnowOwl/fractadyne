@@ -1368,6 +1368,23 @@ fn the_battery_ships_and_declares_what_it_expects_of_every_step() {
 }
 
 #[test]
+fn every_package_ships_every_cards_bench_matrix_baseline() {
+    // `--bench-matrix` and the self-test judge a card against its OWN baseline,
+    // `benchmarks/bench-matrix-baseline-<slug>.json`, when it has one (W8). A package that copies
+    // only the reference card's file leaves every other card with nothing to go red against.
+    for (recipe, text, jobs) in [
+        (".github/workflows/release.yml", include_str!("../../../.github/workflows/release.yml"), 2), // windows + linux
+        ("scripts/publish-share.ps1", include_str!("../../../scripts/publish-share.ps1"), 1),
+        ("scripts/build-accelerated.ps1", include_str!("../../../scripts/build-accelerated.ps1"), 1),
+        ("scripts/build-accelerated.sh", include_str!("../../../scripts/build-accelerated.sh"), 1),
+    ] {
+        let n = text.matches("benchmarks/bench-matrix-baseline*.json").count()
+            + text.matches("benchmarks\\bench-matrix-baseline*.json").count();
+        assert_eq!(n, jobs, "{recipe} copies every card's baseline {n} time(s), expected {jobs}");
+    }
+}
+
+#[test]
 fn every_package_ships_the_replay_fixtures() {
     // `--selftest`'s replay group reads `validation/replays/*.jsonl` beside the binary (`anchored`).
     // A package that leaves them out turns three of its checks VACUOUS on every installed copy —

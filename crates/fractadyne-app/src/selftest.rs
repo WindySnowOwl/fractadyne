@@ -10349,8 +10349,9 @@ zoom = \"1e94\"
         // executed work trips it here. Runs LAST: it dirties render config (fractal / coloring /
         // deep zoom) and nothing after needs the clean hermetic state.
         if want("bench-matrix") {
-            let base = anchored("benchmarks/bench-matrix-baseline.json");
-            for mc in self.bench_matrix_selftest_checks(device, queue, &base) {
+            // This card's own baseline when it has one (exact), else the reference card's
+            // (informational) — see `bench_matrix_selftest_checks`.
+            for mc in self.bench_matrix_selftest_checks(device, queue) {
                 push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "bench-matrix",
                     name: mc.name,

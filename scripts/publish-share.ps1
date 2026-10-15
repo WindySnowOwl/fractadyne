@@ -188,7 +188,8 @@ if (-not $SkipWindows) {
     New-Item -ItemType Directory -Force -Path (Join-Path $stage "validation\replays") | Out-Null
     Copy-Item (Join-Path $root "validation\replays\*.jsonl") -Destination (Join-Path $stage "validation\replays")
     New-Item -ItemType Directory -Force -Path (Join-Path $stage "benchmarks") | Out-Null
-    Copy-Item (Join-Path $root "benchmarks\bench-matrix-baseline.json") -Destination (Join-Path $stage "benchmarks")
+    # Every card's bench-matrix baseline (the reference card's file and the per-card ones).
+    Copy-Item (Join-Path $root "benchmarks\bench-matrix-baseline*.json") -Destination (Join-Path $stage "benchmarks")
     $zip = "$stage.zip"
     if (Test-Path $zip) { Remove-Item -Force $zip }
     Compress-Archive -Path $stage -DestinationPath $zip

@@ -35,7 +35,8 @@
 #   01-gputest.txt       df32/floatexp primitives vs CPU oracles, swept over every backend
 #   02-selftest.txt      full suite + 19 goldens
 #   03-live-res.txt      --selftest-filter live-res - the settled-resolution invariant
-#   04-bench-matrix.txt  22-segment perf + determinism vs the blessed baseline
+#   04-bench-matrix.txt  perf + determinism vs this card's blessed baseline
+#   04-bench-matrix-run.json  the same run as a would-be baseline for this card
 #   05-livetest.txt      live-vs-offline truth at every tour hold       (skipped by -Quick)
 #   uitest-*/            25-step UI + live-render screenshot bundle     (skipped by -Quick)
 #   07-recordtest.txt    the per-frame record's own gate (~20 s)
@@ -261,7 +262,11 @@ Invoke-Step "selftest" "02-selftest.txt" @("--selftest") `
 Invoke-Step "live-res" "03-live-res.txt" @("--selftest", "--selftest-filter", "live-res") `
     "settled-resolution invariant - the B6 core, never yet run on hardware truly lacking TIMESTAMP_QUERY"
 Invoke-Step "bench-matrix" "04-bench-matrix.txt" @("--bench-matrix") `
-    "22-segment perf + determinism; exit 2 signals algorithmic drift, not merely slower"
+    "perf + determinism vs THIS card's baseline; 2 = algorithmic drift, 3 = no baseline for this card"
+# The run's own would-be baseline (the baseline schema): how a card that cannot be asked to --bless
+# gets a baseline - review it, then commit it as benchmarks\bench-matrix-baseline-<card slug>.json.
+$benchRun = Join-Path (Join-Path $cfg "logs") "bench-matrix-run.json"
+if (Test-Path $benchRun) { Copy-Item $benchRun (Join-Path $dir "04-bench-matrix-run.json") -Force }
 
 if (-not $Quick) {
     Invoke-Step "livetest" "05-livetest.txt" `
@@ -431,10 +436,12 @@ selftest     The 19 goldens were blessed on an RTX 3080 and are compared with a 
              were expected cross-vendor differences rather than defects.)
 live-res     Must pass everywhere. This is the invariant that a GPU without TIMESTAMP_QUERY still
              settles at native resolution instead of being stuck at ~1/3 forever.
-bench-matrix Timings vary by card and mean nothing across machines. Signature differences against
-             a baseline recorded on another GPU are EXPECTED and are reported, not failed - the
-             escape decisions (and the rebase/skip counts that follow) legitimately differ between
-             vendors. Exit 2 means drift on the baseline's OWN card, which does matter.
+bench-matrix Timings vary by card and mean nothing across machines. The path signatures are
+             compared EXACTLY against this card's own baseline (benchmarks\bench-matrix-baseline-
+             <card>.json, or the reference file when it was blessed here): exit 2 = drift. A card
+             with no baseline of its own exits 3 - its signatures are reported against another
+             card's, where escape decisions legitimately differ, so nothing could be judged.
+             04-bench-matrix-run.json is this run as a would-be baseline for this card.
 livetest     Self-contained: compares the live view against an offline render on THIS machine, so
              its pass/fail is meaningful here. "drift" lines compare against an RTX 3080 baseline
              and can be ignored on other hardware; FAIL and STARVED lines cannot (STARVED: a render
