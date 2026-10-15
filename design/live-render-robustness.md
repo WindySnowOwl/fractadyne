@@ -4432,3 +4432,45 @@ Fixing it changes a user-facing diagnostic, which makes it a product decision.
 resolution is 0.83 per axis (no BLURRY).
 
 Gates (RTX 3080): workspace tests 1,550 / 0 / 11 (+5); `--livetest` grand tour 24/24, 0 drifted, VERDICT PASS (the 4× oracle ran at 12 holds, none starved; 410 s).
+
+**2026-10-15 — W8: checklist enforcers — `run:` rows, the reference adapter, the opt-in groups**
+(design/checklist-automation.md, sections 5–6).
+
+*`run:` rows (`00d355a`).*
+- `harness:<flag>` proved only that a flag parses. `run:<command>` is satisfied by a recorded run:
+  - `scripts/run_ledger.py run -- …` records the exit code into `validation/runs/<version>.tsv`,
+    against the binary's own `--version` identity (or, for a script, the tree's HEAD), plus the log's
+    `[fd-exit]` and logcheck verdict;
+  - `checklist_coverage.py --release VERSION` requires a matching command from VERSION, from a
+    committed tree, with exit 0 or the exits an `[exit …]` suffix lists. It reports the closest
+    evidence ("ran from an uncommitted tree", "exit 2") rather than "never run".
+- App runs always start from a fresh config. My shell's `FRACTADYNE_CONFIG_DIR` points at a
+  persistent scratch config, and a session's Iterations base changes what `--livetest` measures (the
+  red-check above), so inheriting a config would make the gate depend on whatever ran before.
+- The device-loss row (32) moved to `run:--autodive-home [exit 0,3]`. Exit 3 is accepted there
+  because the row asks whether the dive and the zoom home end without device loss; the retreat needs
+  the card that reaches the regime.
+- The screen row (144) moved from `planned:` to `run:`.
+- A Release gates area: the grand-tour livetest and the self-test's two opt-in groups (`run:`), plus
+  two `planned:` rows: the zoomtest P-G matrix (RED on beta.19 too) and torture increment 2. T-6's
+  job watcher shipped as the field agent, so it gets no row.
+- CI runs `checklist_coverage.py`.
+- Checks:
+  - a scratch ledger covering a clean pass, a dirty tree, exit 3 with and without the suffix,
+    exit 2, backslash paths and token order (8/8);
+  - a real recorded livetest from a dirty build, refused as "ran from an uncommitted tree".
+
+*The reference adapter and the opt-in groups.*
+- `REFERENCE_ADAPTER` (the RTX 3080) is declared in `release_checklist.py`, and the coverage check
+  fails when `BLESSED-GPU.txt` names another card. Control: the file set to the RX 6800 XT makes it
+  exit 1.
+- `--selftest --bless` on another card is refused before the suite runs unless
+  `--bless-new-adapter` is given. End to end, with the marker faked to the RX 6800 XT: exit 2,
+  nothing written.
+- A full self-test now ends by naming the opt-in groups it did not run, in the console and in
+  `report.md`.
+- A unit test reads `selftest.rs`' own `opt_in("…")` calls and holds `OPT_IN_GROUPS` to them.
+  Control: one registry entry renamed turns it red.
+
+⚠ `deep-location` is about 9 hours. Requiring it once per release is what §7.8 asks, and it is
+the user's call whether that stays a gate or becomes a decision recorded at sign-off.

@@ -259,6 +259,16 @@ def main():
         for area, doc_range, real in stale:
             print("  %-20s doc says %-10s checklist is %s" % (area, doc_range, real))
         return 1
+    # The goldens' exact comparison holds only on the card that blessed them, so that card IS the
+    # release gate's reference (release_checklist.REFERENCE_ADAPTER).
+    blessed = (read("validation/golden/BLESSED-GPU.txt") or "").strip()
+    if blessed != m.REFERENCE_ADAPTER:
+        print("\nThe goldens were blessed on %r, not the declared reference adapter %r"
+              % (blessed or "(no BLESSED-GPU.txt)", m.REFERENCE_ADAPTER))
+        print("(validation/golden/BLESSED-GPU.txt vs REFERENCE_ADAPTER in scripts/release_checklist.py).")
+        print("Re-bless on the reference card, or change both on purpose.")
+        return 1
+    print("  goldens blessed on the reference adapter (%s)" % blessed)
     if planned:
         print("\nOutstanding, in step order:")
         for i, area, _enf, detail in planned:

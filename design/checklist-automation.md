@@ -114,6 +114,23 @@ Residue, stated rather than hidden:
   captures that `gpu-validate` made, and the ledger cannot see which build made them.
 - One recorded run satisfies a row that asks for two cards (row 144).
 
+### 6. The reference adapter and the opt-in groups (2026-10-15, W8)
+
+- **The goldens' card is declared.** The self-test compares goldens exactly only on the card that
+  blessed them (`validation/golden/BLESSED-GPU.txt`); anywhere else it compares a loose mean. So
+  that card is the release gate's reference, and blessing on another card silently moves it.
+  - `REFERENCE_ADAPTER` in `scripts/release_checklist.py` declares the card, and
+    `checklist_coverage.py` fails when the file names another.
+  - `--selftest --bless` on a different card is refused (exit 2, before the suite runs) unless
+    `--bless-new-adapter` is given.
+
+  Moving the reference takes both keys.
+- **The opt-in groups are named when they do not run.** A full `--selftest` never runs its opt-in
+  groups (`deep-location`, about 9 hours; `fe-df32-probe`, about a minute), so its "ALL CHECKS
+  PASSED" says nothing about them. The run now ends by naming them, in its console summary and in
+  `report.md`. Rows 146–147 require each to have run once per release. A unit test keeps the
+  registry (`OPT_IN_GROUPS`) and the `opt_in("…")` calls in step.
+
 ---
 
 ## Per-step plan

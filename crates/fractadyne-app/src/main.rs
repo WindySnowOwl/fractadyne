@@ -6541,6 +6541,7 @@ impl FractadyneApp {
         let selftest_filter = val("--selftest-filter").map(|s| s.to_ascii_lowercase());
         let selftest_list = args.iter().any(|a| a == "--selftest-list");
         let selftest_bless = args.iter().any(|a| a == "--bless");
+        let selftest_bless_new_adapter = args.iter().any(|a| a == "--bless-new-adapter");
         // Standardized benchmark: --benchmark-std, or implied by --res / --burnin.
         let std_res = val("--res")
             .map(|s| arg_token("--res", s, BenchRes::from_token, "720p | 1080p | 4k | 5k"))
@@ -7141,6 +7142,7 @@ impl FractadyneApp {
                 filter: selftest_filter,
                 list: selftest_list,
                 bless: selftest_bless,
+                bless_new_adapter: selftest_bless_new_adapter,
             },
             profile: cli::ProfileCli {
                 run: profile,

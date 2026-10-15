@@ -63,6 +63,52 @@ const GOLDEN_MEAN_STRICT: f64 = 2.0;
 /// the report always prints the numbers so a human can judge.
 const GOLDEN_MEAN_CROSS_GPU: f64 = 24.0;
 
+/// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
+/// them — each costs minutes, not milliseconds. Which means a full run never runs them either: it
+/// says so at its end (`opt_in_not_run`), and the release checklist requires each to have been run
+/// once per release (its Release gates rows, `run:--selftest-filter NAME`). Every `opt_in("…")` in
+/// this file must be named here (`every_opt_in_group_is_registered`).
+pub(crate) const OPT_IN_GROUPS: &[(&str, &str)] = &[
+    (
+        "deep-location",
+        "the deepest tracked location (9.98e60205×) — ~9 HOURS: a ~200,000-bit orbit to a 2,000,000 ask",
+    ),
+    (
+        "fe-df32-probe",
+        "diagnostic: where df32 and floatexp disagree, which one a bignum oracle sides with (~1 min)",
+    ),
+];
+
+/// May a `--bless` on `this_gpu` overwrite goldens blessed on `blessed`? The goldens are exact on
+/// the card that blessed them and only cross-GPU-tolerant elsewhere, so blessing on another card
+/// silently MOVES the release gate's reference adapter — the strict comparison then holds a
+/// different card's arithmetic, and the old reference card drops to the loose tolerance. That
+/// takes `--bless-new-adapter`, and `scripts/checklist_coverage.py` checks the file against the
+/// checklist's declared reference adapter (W8).
+fn bless_guard(blessed: Option<&str>, this_gpu: &str, new_adapter: bool) -> Result<(), String> {
+    match blessed.map(str::trim) {
+        Some(g) if !g.is_empty() && g != this_gpu.trim() && !new_adapter => Err(format!(
+            concat!(
+                "the goldens were blessed on {}; this is {}. Blessing here would move the reference ",
+                "adapter. Pass --bless-new-adapter to do that on purpose (and update REFERENCE_ADAPTER ",
+                "in scripts/release_checklist.py)."
+            ),
+            g,
+            this_gpu.trim()
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// The opt-in groups a run with this `--selftest-filter` does NOT run (the rule `opt_in` applies).
+fn opt_in_not_run(filter: Option<&str>) -> Vec<&'static str> {
+    OPT_IN_GROUPS
+        .iter()
+        .map(|(g, _)| *g)
+        .filter(|g| !filter.is_some_and(|f| g.to_ascii_lowercase().contains(f)))
+        .collect()
+}
+
 /// Per-channel 8-bit image difference: `(max abs, mean abs)`. Mismatched sizes → worst.
 fn img_diff(a: &[u8], b: &[u8]) -> (u32, f64) {
     if a.len() != b.len() || a.is_empty() {
@@ -504,18 +550,6 @@ impl FractadyneApp {
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
             "checklist", "replay", "settings-quarantine",
         ];
-        /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` above so a bare
-        /// `--selftest` never pays for them — each costs minutes, not milliseconds.
-        const OPT_IN_GROUPS: &[(&str, &str)] = &[
-            (
-                "deep-location",
-                "the deepest tracked location (9.98e60205×) — ~9 HOURS: a ~200,000-bit orbit to a 2,000,000 ask",
-            ),
-            (
-                "fe-df32-probe",
-                "diagnostic: where df32 and floatexp disagree, which one a bignum oracle sides with (~1 min)",
-            ),
-        ];
         if self.selftest.list {
             println!("selftest groups (use with --selftest-filter <substr>):");
             for g in GROUPS {
@@ -526,6 +560,15 @@ impl FractadyneApp {
                 println!("  {g}  — {why}");
             }
             crate::exit(0);
+        }
+        // Refuse a bless that would move the goldens' reference adapter BEFORE spending the suite
+        // on it (`bless_guard`).
+        if self.selftest.bless {
+            let blessed = std::fs::read_to_string(anchored("validation/golden").join("BLESSED-GPU.txt")).ok();
+            if let Err(why) = bless_guard(blessed.as_deref(), &self.gpu_name, self.selftest.bless_new_adapter) {
+                eprintln!("[selftest] refusing --bless: {why}");
+                crate::exit(2);
+            }
         }
         // (A filter that runs ZERO checks is rejected AFTER the suite — see the guard just
         // before the report is written. Doing it post-hoc matches on what actually ran, so
@@ -10429,6 +10472,21 @@ zoom = \"1e94\"
             if bless { "recorded" } else { "within tolerance" },
             if ok { "✅ ALL CHECKS PASSED" } else { "❌ FAILURES PRESENT — see table above" }
         ));
+        // A full run never runs the opt-in groups, and "ALL CHECKS PASSED" must not read as if it
+        // had: name what was not run, and how to run it.
+        let not_run = opt_in_not_run(filter.as_deref());
+        let not_run_line = (!not_run.is_empty()).then(|| {
+            format!(
+                concat!(
+                    "Opt-in groups NOT run: {} (each runs only when named: --selftest --selftest-filter NAME; ",
+                    "the release checklist requires each once per release)."
+                ),
+                not_run.join(", ")
+            )
+        });
+        if let Some(l) = &not_run_line {
+            md.push_str(&format!("\n{l}\n"));
+        }
 
         if let Err(e) = std::fs::write(&report_path, &md) {
             eprintln!("Failed to write report to {}: {e}", report_path.display());
@@ -10451,7 +10509,61 @@ zoom = \"1e94\"
         println!("{}", "=".repeat(48));
         println!("checks {checks_pass}/{}, goldens {gold_pass}/{} — {}", checks.len(), goldens.len(),
             if ok { "OK" } else { "FAILURES PRESENT" });
+        if let Some(l) = &not_run_line {
+            println!("{l}");
+        }
         println!("report → {}\n", report_path.display());
         ok
+    }
+}
+
+#[cfg(test)]
+mod opt_in_tests {
+    use super::*;
+
+    /// The names this file passes to `opt_in("…")`, read from its own source.
+    fn opt_in_calls() -> Vec<String> {
+        let src = include_str!("selftest.rs");
+        let needle = ["opt_in", "(\""].concat(); // split so this line is not itself a match
+        src.match_indices(needle.as_str())
+            .filter_map(|(i, _)| {
+                let rest = &src[i + needle.len()..];
+                let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
+                (!name.is_empty() && rest[name.len()..].starts_with('"')).then_some(name)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_opt_in_group_is_registered() {
+        let calls = opt_in_calls();
+        let registered: Vec<&str> = OPT_IN_GROUPS.iter().map(|(g, _)| *g).collect();
+        assert!(calls.len() >= 2, "the source scan found {calls:?}: it is not reading the opt_in calls");
+        for c in &calls {
+            assert!(registered.contains(&c.as_str()), "opt_in(\"{c}\") is not in OPT_IN_GROUPS: a full run would not say it skipped it");
+        }
+        for g in &registered {
+            assert!(calls.iter().any(|c| c == g), "OPT_IN_GROUPS names {g}, which no opt_in call runs");
+        }
+    }
+
+    #[test]
+    fn a_bless_on_another_card_needs_bless_new_adapter() {
+        let ref_gpu = Some("NVIDIA GeForce RTX 3080\n");
+        assert!(bless_guard(ref_gpu, "NVIDIA GeForce RTX 3080", false).is_ok());
+        assert!(bless_guard(ref_gpu, "AMD Radeon RX 6800 XT", false).is_err());
+        assert!(bless_guard(ref_gpu, "AMD Radeon RX 6800 XT", true).is_ok());
+        // No marker yet (or an empty one): nothing to move.
+        assert!(bless_guard(None, "AMD Radeon RX 6800 XT", false).is_ok());
+        assert!(bless_guard(Some("  "), "AMD Radeon RX 6800 XT", false).is_ok());
+    }
+
+    #[test]
+    fn a_run_names_the_opt_in_groups_it_did_not_run() {
+        assert_eq!(opt_in_not_run(None), vec!["deep-location", "fe-df32-probe"]);
+        assert_eq!(opt_in_not_run(Some("deep-location")), vec!["fe-df32-probe"]);
+        assert_eq!(opt_in_not_run(Some("probe")), vec!["deep-location"]);
+        // A filter naming an ordinary group runs no opt-in group either.
+        assert_eq!(opt_in_not_run(Some("goldens")), vec!["deep-location", "fe-df32-probe"]);
     }
 }
