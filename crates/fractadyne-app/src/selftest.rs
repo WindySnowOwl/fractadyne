@@ -7352,14 +7352,14 @@ impl FractadyneApp {
             let floor = crate::tunables::cost().tdr_min_steps;
             self.perf.fe_budget[0] = floor;
             self.perf.retreat_last[0] = None;
-            self.apply_iterate_measurement(0, lethal_ms, floor, "wall_iterate");
+            self.apply_iterate_measurement(0, lethal_ms, floor, "wall_iterate", crate::ReadShape::default());
             let at_floor = self.perf.retreat_last[0];
             let logged = crate::diag::recent_log(256 * 1024)
                 .is_some_and(|l| l.contains("RETREAT REACHED NOTHING"));
             let big: u64 = 10_000_000_000;
             self.perf.fe_budget[0] = big;
             self.perf.retreat_last[0] = None;
-            self.apply_iterate_measurement(0, lethal_ms, big, "wall_iterate");
+            self.apply_iterate_measurement(0, lethal_ms, big, "wall_iterate", crate::ReadShape::default());
             let control = self.perf.retreat_last[0];
             self.perf.fe_budget = saved.0;
             self.perf.fe_budget_ok = saved.1;

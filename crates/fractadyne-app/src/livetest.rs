@@ -372,7 +372,7 @@ impl FractadyneApp {
                     // `gpu_ms` is the harness's wall clock, priced as the app prices one.
                     let before = self.perf.fe_budget[0];
                     let src = if ts.captured { Self::SRC_GPU_ITERATE } else { "wall_iterate" };
-                    let priced = self.apply_iterate_measurement(0, ms, steps, src);
+                    let priced = self.apply_iterate_measurement(0, ms, steps, src, crate::ReadShape::default());
                     // The harness's budget walk is otherwise invisible; the 16×16 deep-hold
                     // regression was undiagnosable without frame-level sight of it.
                     if crate::diag::trace_on("gpu") {

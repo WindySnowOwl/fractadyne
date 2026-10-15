@@ -831,6 +831,74 @@ pub(crate) struct Meter {
     /// the CURRENT regime is the honest number and the TDR budget remains the ceiling. GPU
     /// timestamps only, like `mode_rate` (see `apply_iterate_measurement`).
     pub(crate) motion_rate: [[f64; MODE_RATE_SLOTS]; 2],
+    /// `motion_rate` as only a WHOLE MOVING FRAME measures it: the same readings and lifts, less
+    /// every one from a pin pass (W8 rung 1c). It sizes the non-pin moving frame — the visible
+    /// ladder's one pass over the whole ask, and the "one smoothness pass" a moving frame must fit.
+    ///
+    /// ⭐**A pin pass is a different kind of pass.** Deep in a walk most of its pixels have escaped,
+    /// so its nominal steps cost a fraction of a whole frame's: on the RX 6800 XT, 529 pin readings
+    /// of one 1x glide ran at a median 9.9e8 nominal steps per ms (up to 1.7e11), the 83 whole moving
+    /// frames' at 5.6e7. One shared rate sat at a median 1.7e10 and sized the visible frame at the
+    /// admission — 6.5e9 steps, 112–115 ms, every three frames: 288 frames over 100 ms in a glide
+    /// beta.18 ran with 1. Since `c012f32` every pin pass is read and lifts it; `c012f32`'s parent
+    /// ran the same glide with 0.
+    ///
+    /// ⭐**Counted at the occupancy knee.** Below the adapter's knee (`calibration::knee_px`) a pass
+    /// costs its iterations over the knee's pixels whatever its own, so this rate counts such a pass
+    /// as the knee's pixels ([`knee_steps`]). Uncorrected, a small frame read as a slow rate, which
+    /// sized the next frame smaller: on the RTX 3080 the moving frames past 2^30 collapsed to a
+    /// median 15,950 pixels (about 145×110) against 800,812 — the spiral the visible ladder's own
+    /// notes warn of. (The pin passes' `motion_rate` keeps nominal steps: a pin's sizing is in them.)
+    pub(crate) frame_rate: [[f64; MODE_RATE_SLOTS]; 2],
+}
+
+/// `steps` of a pass over `samples` pixels, counted at the occupancy `knee` when the pass is smaller
+/// (`Meter::frame_rate`): what the pass cost in the knee's pixels. Unknown size or knee (0): as given.
+pub(crate) fn knee_steps(steps: u64, samples: u64, knee: u64) -> f64 {
+    if samples > 0 && knee > samples {
+        steps as f64 * knee as f64 / samples as f64
+    } else {
+        steps as f64
+    }
+}
+
+/// One reading's step for a smoothness rate (`Meter::motion_rate`, `Meter::frame_rate`): a slower
+/// reading pulls it down at once, bounded by `MOTION_CUT_MAX` ([`bounded_motion_cut`]), and a faster
+/// one is blended in at `MOTION_RATE_GROW`. See `Meter::record_motion_rate`.
+fn motion_rate_step(cur: f64, rate: f64) -> f64 {
+    const MOTION_RATE_GROW: f64 = 0.3;
+    match bounded_motion_cut(cur, rate) {
+        Some(cut) => cut,
+        None if cur <= 0.0 => rate,
+        None => cur + (rate - cur) * MOTION_RATE_GROW,
+    }
+}
+
+/// A smoothness rate for `mode`'s slot of `rates`, else the most pessimistic of the other modes'
+/// under the unknown-mode margin, else 0.0 (no measurement: the caller's opening guess).
+fn smoothness_rate_now(rates: &[f64; MODE_RATE_SLOTS], mode: u32) -> f64 {
+    let slot = slot(mode);
+    let this = slot.map_or(0.0, |s| rates[s]);
+    if this.is_finite() && this > 0.0 {
+        return this;
+    }
+    // Nothing measured in this mode yet — the frames right after a crossover, where the
+    // first refreshes are sized. The most pessimistic rate seen in any OTHER mode, under
+    // the same margin the safety controller applies to the same gap (`bootstrap_steps`),
+    // beats a constant: measured at the 1e4 hand-over, the constant opening guess floored at
+    // `TDR_MIN_STEPS` sized 7-iteration passes and the pin never completed at 4.0×.
+    let other = rates
+        .iter()
+        .enumerate()
+        .filter(|(s, _)| slot != Some(*s))
+        .map(|(_, r)| *r)
+        .filter(|r| r.is_finite() && *r > 0.0)
+        .fold(0.0_f64, |acc, r| if acc == 0.0 { r } else { acc.min(r) });
+    if other > 0.0 {
+        other / crate::tunables::cost().mode_rate_unknown_margin.max(1.0)
+    } else {
+        0.0
+    }
 }
 
 impl Meter {
@@ -882,28 +950,12 @@ impl Meter {
     /// when nothing has been measured in it yet — the caller then falls back to the opening
     /// guess (`bootstrap_steps`), never to the full budget. See `Perf::motion_rate`.
     pub(crate) fn motion_rate_now(&self, v: usize, mode: u32) -> f64 {
-        let slot = slot(mode);
-        let this = slot.map_or(0.0, |s| self.motion_rate[v][s]);
-        if this.is_finite() && this > 0.0 {
-            return this;
-        }
-        // Nothing measured in this mode yet — the frames right after a crossover, where the
-        // first refreshes are sized. The most pessimistic rate seen in any OTHER mode, under
-        // the same margin the safety controller applies to the same gap (`bootstrap_steps`),
-        // beats a constant: measured at the 1e4 hand-over, the constant opening guess floored at
-        // `TDR_MIN_STEPS` sized 7-iteration passes and the pin never completed at 4.0×.
-        let other = self.motion_rate[v]
-            .iter()
-            .enumerate()
-            .filter(|(s, _)| slot != Some(*s))
-            .map(|(_, r)| *r)
-            .filter(|r| r.is_finite() && *r > 0.0)
-            .fold(0.0_f64, |acc, r| if acc == 0.0 { r } else { acc.min(r) });
-        if other > 0.0 {
-            other / crate::tunables::cost().mode_rate_unknown_margin.max(1.0)
-        } else {
-            0.0
-        }
+        smoothness_rate_now(&self.motion_rate[v], mode)
+    }
+
+    /// The rate a whole moving frame is sized from (`Meter::frame_rate`), by the same rules.
+    pub(crate) fn frame_rate_now(&self, v: usize, mode: u32) -> f64 {
+        smoothness_rate_now(&self.frame_rate[v], mode)
     }
 
     /// Fold one priced dispatch into this view's per-mode SMOOTHNESS rate. Asymmetric on
@@ -912,8 +964,20 @@ impl Meter {
     /// that stopped skipping), a faster one is blended in at `MOTION_RATE_GROW` so one lucky
     /// early-escape pass cannot size the next one at a hundred times the work. The same
     /// mode-switch straddle rule as `record_mode_rate`.
-    pub(crate) fn record_motion_rate(&mut self, v: usize, mode: u32, straddles_switch: bool, ms: f64, steps: u64) {
-        const MOTION_RATE_GROW: f64 = 0.3;
+    /// `pin`: the reading timed a pin pass, which `frame_rate` never learns from; `samples` its size,
+    /// which `frame_rate` counts at the occupancy `knee` ([`knee_steps`]; 0 = unknown).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn record_motion_rate(
+        &mut self,
+        v: usize,
+        mode: u32,
+        straddles_switch: bool,
+        ms: f64,
+        steps: u64,
+        pin: bool,
+        samples: u64,
+        knee: u64,
+    ) {
         let (Some(s), true) = (slot(mode), ms > 0.0 && steps > 0) else {
             return;
         };
@@ -941,21 +1005,50 @@ impl Meter {
         // and the next motion frame painted one flat colour. Three such readings still find a
         // 9× slower regime; one reading no longer does, because one reading from a different
         // kind of pass is not a measurement of this one.
-        self.motion_rate[v][s] = match bounded_motion_cut(cur, rate) {
-            Some(cut) => cut,
-            None if cur <= 0.0 => rate,
-            None => cur + (rate - cur) * MOTION_RATE_GROW,
-        };
+        self.motion_rate[v][s] = motion_rate_step(cur, rate);
+        if !pin {
+            let frame = rate * knee_steps(steps, samples, knee) / steps as f64;
+            self.frame_rate[v][s] = motion_rate_step(self.frame_rate[v][s], frame);
+        }
     }
 
     /// The rate half of `Perf::motion_wall_cut`: `steps_last` is the view's last dispatch, `dt_ms` the
     /// interval that followed it, `moving` whether that dispatch was made while the view moved.
     /// Returns whether the interval was long enough to count against the pass, in which case the
     /// caller halves its motion step too.
-    pub(crate) fn motion_wall_cut(&mut self, v: usize, mode: u32, steps_last: u64, dt_ms: f64, moving: bool) -> bool {
+    /// `pin`: that dispatch was a pin pass, which moves `frame_rate` neither way; `samples` and
+    /// `knee` count a small one at the knee for `frame_rate` ([`knee_steps`]).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn motion_wall_cut(
+        &mut self,
+        v: usize,
+        mode: u32,
+        steps_last: u64,
+        dt_ms: f64,
+        moving: bool,
+        pin: bool,
+        samples: u64,
+        knee: u64,
+    ) -> bool {
         let Some(s) = slot(mode) else {
             return false;
         };
+        // The frame rate, by the same rules, from a whole moving frame's own dispatch only.
+        if !pin {
+            let fcur = self.frame_rate[v][s];
+            let fsteps = knee_steps(steps_last, samples, knee);
+            if dt_ms <= crate::tunables::MOTION_PASS_MS * 2.0 {
+                if let Some(rate) = bounded_motion_lift(fcur, fsteps / dt_ms).filter(|_| moving) {
+                    self.frame_rate[v][s] = rate;
+                }
+            } else if dt_ms > crate::tunables::MOTION_PASS_MS * 2.5
+                && !(fcur > 0.0 && fsteps < 0.5 * fcur * crate::tunables::MOTION_PASS_MS)
+            {
+                if let Some(rate) = bounded_motion_cut(fcur, fsteps / dt_ms) {
+                    self.frame_rate[v][s] = rate;
+                }
+            }
+        }
         let cur = self.motion_rate[v][s];
         // THE LIFT: a MOTION dispatch followed by a frame that fit its present interval proves the
         // rate was at least steps / interval. It is the deadlock-proof half of this estimator —

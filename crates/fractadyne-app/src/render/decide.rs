@@ -1099,6 +1099,11 @@ pub(crate) struct WalkPriceInputs {
     pub(crate) budget_measured: bool,
     pub(crate) worst_rate: Option<f64>,
     pub(crate) motion_rate: f64,
+    /// The rate whole moving frames run at (`Perf::frame_rate_now`, `Meter::frame_rate`; 0 = none
+    /// measured, as on a card whose moving frames all start pins): it bounds a non-pin moving frame's
+    /// pass, never the ladder's resolution. Recordings made before it read 0, which bounds nothing.
+    #[serde(default)]
+    pub(crate) frame_rate: f64,
     /// Frame timing: the last frame interval, the real frame period, the present-throttle count,
     /// and this frame.
     pub(crate) last_dt_ms: f64,
@@ -1472,6 +1477,26 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
     // chunked pass stays inside ONE dispatch budget" selftest.
     let budget_step = ((pass_steps / spx.saturating_mul(ss2).max(1)) as u32)
         .clamp(floor, gpu_iter.max(floor));
+    // ⭐THE FRAME RATE'S BOUND (W8 rung 1c): a whole moving frame's pass carries no more iterations
+    // than the rate whole moving frames run at affords in one `MOTION_PASS_MS` pass. The pass size
+    // above comes from `motion_rate`, which pin passes inflate (most of a deep pin pass's pixels have
+    // escaped, so its nominal steps are cheap): on the RX 6800 XT it sized the visible ladder's frame
+    // at the admission, and the whole ask went out in one 112–115 ms pass every three frames. Bounded,
+    // the frame's first pass stops short of the ask and the frame becomes a pin walk at the same
+    // resolution. The resolution is not touched: it keeps `motion_rate` (sized from the frame rate it
+    // fell 4–8× on the RTX 3080, which measures no whole moving frame and so has no frame rate).
+    let budget_step = if interacting && !pin_frame && i.frame_rate > 0.0 {
+        let frame_pass = motion_pass_steps_fixed(
+            i.frame_rate,
+            crate::tunables::MOTION_PASS_MS,
+            i.pass_fixed_ms,
+            tdr_steps,
+            i.tdr_bootstrap_steps,
+        );
+        budget_step.min(((frame_pass / spx.saturating_mul(ss2).max(1)) as u32).max(floor))
+    } else {
+        budget_step
+    };
     // GROWTH LIMITER (motion / pin passes only): at most double the previous pass. The
     // rate estimate above lags its dispatches by 2–3 frames, so a cheap sliver can prime
     // a pass 20× its size before the reading that would have said otherwise lands —
@@ -3257,6 +3282,7 @@ mod tests {
             budget_measured: true,
             worst_rate: Some(2.0e7),
             motion_rate: 2.0e7,
+            frame_rate: 0.0,
             last_dt_ms: 16.7,
             frame_period_ms: 16.7,
             present_throttle: 0,
@@ -3350,6 +3376,34 @@ mod tests {
         let e = decide_walk_price(&quiet(498 + wait));
         assert_eq!(e.ledger.late, None);
         assert_eq!(e.ledger.bands[0], 545 * 16);
+    }
+
+    #[test]
+    fn the_frame_rate_bounds_a_whole_moving_frame_but_not_a_pin() {
+        // The RX 6800 XT's frame: 905×519 against a 13,761-iteration ask, motion_rate inflated by pin
+        // readings (1.7e10 steps/ms) against whole moving frames' 6.2e7 (counted at the knee).
+        let moving = WalkPriceInputs {
+            interacting: true,
+            spx: 905 * 519,
+            gpu_iter: 13_761,
+            tdr_steps: 6_000_000_000,
+            motion_rate: 1.7e10,
+            // A growth limiter far above the ask, so only the frame rate can bound the pass.
+            ledger: WalkLedger { inflight: None, motion_step_last: 10_000, ..walk().ledger },
+            ..walk()
+        };
+        let free = decide_walk_price(&moving);
+        let bound = decide_walk_price(&WalkPriceInputs { frame_rate: 6.2e7, ..moving.clone() });
+        assert!(bound.budget_step < free.budget_step, "{} vs {}", bound.budget_step, free.budget_step);
+        assert!(bound.budget_step < 13_761, "the first pass stops short of the ask: a walk");
+        // The pass size the ladder reads is unchanged.
+        assert_eq!(bound.pass_steps, free.pass_steps);
+        // A pin is untouched, and so is a card with no frame rate.
+        let pin = WalkPriceInputs { pin_frame: true, ..moving.clone() };
+        assert_eq!(
+            decide_walk_price(&WalkPriceInputs { frame_rate: 6.2e7, ..pin.clone() }).budget_step,
+            decide_walk_price(&pin).budget_step
+        );
     }
 
     #[test]

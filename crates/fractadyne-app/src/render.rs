@@ -5612,6 +5612,7 @@ impl FractadyneApp {
                 budget_measured: self.perf.fe_budget[vidx] != 0,
                 worst_rate: self.perf.worst_rate_steps_per_ms(vidx),
                 motion_rate: self.perf.motion_rate_now(vidx),
+                frame_rate: self.perf.frame_rate_now(vidx),
                 last_dt_ms: self.perf.last_dt_ms,
                 frame_period_ms: self.perf.frame_period_ms,
                 present_throttle: self.perf.present_throttle,
@@ -6568,6 +6569,8 @@ impl FractadyneApp {
             self.perf.view_dispatch_at[vs] = crate::app_micros();
             self.perf.view_dispatch_steps[vs] = self.perf.fe_steps_last[vs];
             self.perf.view_dispatch_moving[vs] = interacting;
+            self.perf.view_dispatch_pin[vs] = self.perf.pin_pass_frame[vs] == self.perf.frame_idx;
+            self.perf.view_dispatch_samples[vs] = resolution[0] as u64 * resolution[1] as u64 * (ss.max(1) as u64).pow(2);
         }
         // MOTION-JAM ACCOUNTING — one site, after the one dispatch stamp above.
         // Whatever shape this frame dispatched (full frame, settle tile, chunk range, climb
