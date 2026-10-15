@@ -4566,3 +4566,11 @@ PLUTO):
   segments' signatures (mode, eff-it, sa-skip, the four counters) are identical to the dev.9
   battery's a day earlier, on another build. Control: the same record against the RTX 3080's table
   differs on 18, which is the battery's own count.
+- **The loop, closed** (dev.15 = `21d403c`, published and reverted in `f22fc9a`; the full battery
+  on PLUTO):
+  - bench-matrix was judged exactly against the Radeon's own baseline: 43 segments, 0 drift, 0 new,
+    exit 0.
+  - The self-test's bench-matrix rows were exact there too: 528 checks, the declared failure the
+    only one. That is one fewer row than on dev.14, because the "no baseline for this card" note is
+    gone.
+  - The battery's verdict was PASS (exit 0), the first battery whose exit code is a judgement.
