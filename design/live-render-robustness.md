@@ -4289,3 +4289,23 @@ under half the scene's. Applied to the runs behind this log:
 
 Gates (RTX 3080): workspace tests 1,544 / 0 / 11; self-test 529/529, goldens 31/31; `--motiontest` ×3 PASS (63 and 63 complete adoptions, and the recording run's; A7: 438–452 readings, every count 0; A8 0; all three valid); `--livetest` 24/24, 0 drifted; `--uitest` 75 / 1 / 0 over 76 steps. Fixtures re-recorded (all seven replay exactly; the RX 6800 XT capture re-encoded to the new shape, less the two decisions the queue changes by design, until dev.13's capture replaces it); coverage 53 terms.
 
+**2026-10-15 — W8 rung 1d on the RX 6800 XT (dev.13, `06ad3fa`, published and reverted in `6d99b91`).**
+
+A fresh field capture: the motiontest and the 9.3e78 minibrot climb, both checked for detail and
+resolution and both valid, recorded by dev.13, trimmed to 975 decisions, replay exactly on the RTX
+3080. They exercise the queue on this card: 104 passes parked in flight, 100 priced by their own
+reading. The motiontest passes (A7: 328 readings, every count 0).
+
+Against beta.18, interleaved, two runs each, every run checked:
+
+| RX 6800 XT | beta.18 | dev.13 |
+|---|---|---|
+| motiontest complete adoptions | 14, 12 (64k px) | 62, 62 (129–137k px) |
+| 20-octave 4× zoom: lag (oct) | 0.833, 0.815 (64k px, BLURRY against dev.13) | 0.541, 0.472 (215–386k px) |
+| 95-octave 1× leg: frames > 50 / > 100 ms | 156 / 0, 79 / 0 | 45 / 0, 54 / 0 |
+| …lag (oct) / pins adopted / fps | 0.283 / 277 / 46.6, 0.267 / 293 / 48.0 | 0.327 / 273 / 48.8, 0.367 / 257 / 48.5 |
+
+The motiontest and the 4× zoom are valid everywhere and decisive, both fresher and sharper. The 1×
+leg carries the pre-existing flat end-stretch in every run (16–24% of recorded frames here), so its
+small freshness difference is not a reliable reading. W8's live-path regressions from `c012f32` are
+closed on both cards. The solid-colour bug (a reused escaped reference) is next.
