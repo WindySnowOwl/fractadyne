@@ -1,3 +1,10 @@
+# Line endings: git decides, not the editor or the tool that last wrote the file. Every text file
+# is stored with LF; a checkout converts per the platform (core.autocrlf), and a file saved with CRLF
+# is normalized back on `git add`. Before this (2026-10-15) nine blobs were CRLF or mixed, and staging
+# one with the wrong core.autocrlf flipped the whole file: thousands of phantom lines, blame
+# destroyed, at least five times. `scripts/check_text_hygiene.py` holds the line.
+* text=auto
+
 # Shell scripts must keep LF endings — a CRLF in the shebang (`#!/usr/bin/env bash\r`) makes
 # Linux refuse to run them ("bad interpreter"). This holds regardless of a committer's platform
 # or core.autocrlf setting.
