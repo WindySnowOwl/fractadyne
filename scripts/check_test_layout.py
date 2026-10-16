@@ -29,6 +29,13 @@ The rules (the 2026-09-02 convention allowed exceptions and had no check, and er
   nothing declares, so a dead test would sit there looking alive.
 - `cargo-target`: `tests/unit/main.rs`, which Cargo would build as its own integration test.
 
+And one about direction, for the harnesses that ship in the binary (`src/harness/`): the product
+calls into them only at known hooks.
+
+- `harness-direction`: a functional file (under `src/`, not `src/harness/`) names `harness::`
+  more often than HARNESS_HOOKS allows it.
+- `stale-hook`: it names it LESS often: lower the allowance, so the hook list only shrinks.
+
 Exit 0 clean, 1 with a list. Standard library only.
 """
 import pathlib
@@ -41,6 +48,23 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 # (crate-relative path, item name) -> why this test-only item must stay in `src/`.
 ALLOWED_ITEMS = {}
+
+# Functional file (repo-relative) -> how many times it may name `harness::`: the product's hooks
+# into the harnesses (src/harness.rs lists them). Exact, so the list shrinks as hooks go.
+HARNESS_HOOKS = {
+    # logcheck at start and exit, the profiler's timings field, and the windowed harness flags'
+    # parsing in new_state (phase 4 moves the parsing out).
+    'crates/fractadyne-app/src/main.rs': 27,
+    # the headless dispatch, HarnessModes and the frame hooks (phase 4 moves them out).
+    'crates/fractadyne-app/src/cli.rs': 15,
+    # --autodive's verdicts (phase 4 moves --autodive out).
+    'crates/fractadyne-app/src/autopilot.rs': 5,
+    # --replay's regime accumulator (phase 4 moves --replay out).
+    'crates/fractadyne-app/src/render/decide.rs': 1,
+    # the export-request builder records the profiler's setup timings.
+    'crates/fractadyne-app/src/render.rs': 1,
+}
+HARNESS_REF = re.compile(r'\bharness::')
 
 MOD_DECL = re.compile(r'(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*([;{])')
 PATH_ATTR = re.compile(r'#\[\s*path\s*=\s*"([^"]+)"\s*\]$')
@@ -129,14 +153,23 @@ def nested_declarations(f):
     return out
 
 
-def check(root):
-    """Every violation under `root` (a workspace) as (rule, where, what)."""
+def check(root, hooks=None):
+    """Every violation under `root` (a workspace) as (rule, where, what). `hooks`: the allowed
+    `harness::` references per functional file (default HARNESS_HOOKS)."""
+    hooks = HARNESS_HOOKS if hooks is None else hooks
     found = []
     for crate in sorted(p for p in (root / 'crates').iterdir() if (p / 'src').is_dir()):
         reached = set()
         for f in sorted((crate / 'src').rglob('*.rs')):
             rel = f.relative_to(root).as_posix()
-            lines = f.read_text(encoding='utf-8').splitlines()
+            text = f.read_text(encoding='utf-8')
+            lines = text.splitlines()
+            if f != crate / 'src' / 'harness.rs' and crate / 'src' / 'harness' not in f.parents:
+                refs, allowed = len(HARNESS_REF.findall(text)), hooks.get(rel, 0)
+                if refs > allowed:
+                    found.append(('harness-direction', rel, f'names `harness::` {refs}x; HARNESS_HOOKS allows {allowed}'))
+                elif refs < allowed:
+                    found.append(('stale-hook', rel, f'names `harness::` {refs}x; lower its HARNESS_HOOKS allowance from {allowed}'))
             i = 0
             while i < len(lines):
                 if not lines[i].strip().startswith('#['):
@@ -186,6 +219,9 @@ def check(root):
         if (unit / 'main.rs').exists():
             found.append(('cargo-target', (unit / 'main.rs').relative_to(root).as_posix(),
                           'Cargo builds tests/*/main.rs as an integration test'))
+    for rel in sorted(hooks):
+        if not (root / rel).exists():
+            found.append(('stale-hook', rel, 'HARNESS_HOOKS names a file that no longer exists'))
     return found
 
 
@@ -200,25 +236,31 @@ def selfcheck():
         'crates/demo/tests/unit/a/helper.rs': 'pub fn h() {}\n',
     }
     a = clean['crates/demo/src/a.rs']
+    call = 'pub fn g() { crate::harness::x::run() }\n'
+    hooked = {'crates/demo/src/a.rs': 1}
     cases = {
-        'clean': ({}, None),
-        'inline-test': ({'crates/demo/src/a.rs': a + '#[cfg(test)]\nmod more {\n    #[test]\n    fn t() {}\n}\n'}, 'inline-test'),
-        'test-only-item': ({'crates/demo/src/a.rs': a + '#[cfg(test)]\nfn helper() {}\n'}, 'test-only-item'),
-        'test-only-marker': ({'crates/demo/src/a.rs': a + '#[cfg_attr(not(test), allow(dead_code))]\nfn only_tests_call() {}\n'}, 'test-only-item'),
-        'no-path': ({'crates/demo/src/a.rs': a + '#[cfg(test)]\nmod beside;\n', 'crates/demo/src/a/beside.rs': '#[test]\nfn t() {}\n'}, 'no-path'),
-        'not-canonical': ({'crates/demo/src/a.rs': a.replace('a/tests.rs', 'a_tests.rs'), 'crates/demo/tests/unit/a_tests.rs': '#[test]\nfn t() {}\n'}, 'not-canonical'),
-        'missing': ({'crates/demo/src/a.rs': a + '#[cfg(test)]\n#[path = "../tests/unit/a/gone.rs"]\nmod gone;\n'}, 'missing'),
-        'orphan': ({'crates/demo/tests/unit/a/stray.rs': '#[test]\nfn t() {}\n'}, 'orphan'),
-        'cargo-target': ({'crates/demo/tests/unit/main.rs': 'fn main() {}\n'}, 'cargo-target'),
+        'clean': ({}, None, {}),
+        'inline-test': ({'crates/demo/src/a.rs': a + '#[cfg(test)]\nmod more {\n    #[test]\n    fn t() {}\n}\n'}, 'inline-test', {}),
+        'test-only-item': ({'crates/demo/src/a.rs': a + '#[cfg(test)]\nfn helper() {}\n'}, 'test-only-item', {}),
+        'test-only-marker': ({'crates/demo/src/a.rs': a + '#[cfg_attr(not(test), allow(dead_code))]\nfn only_tests_call() {}\n'}, 'test-only-item', {}),
+        'no-path': ({'crates/demo/src/a.rs': a + '#[cfg(test)]\nmod beside;\n', 'crates/demo/src/a/beside.rs': '#[test]\nfn t() {}\n'}, 'no-path', {}),
+        'not-canonical': ({'crates/demo/src/a.rs': a.replace('a/tests.rs', 'a_tests.rs'), 'crates/demo/tests/unit/a_tests.rs': '#[test]\nfn t() {}\n'}, 'not-canonical', {}),
+        'missing': ({'crates/demo/src/a.rs': a + '#[cfg(test)]\n#[path = "../tests/unit/a/gone.rs"]\nmod gone;\n'}, 'missing', {}),
+        'orphan': ({'crates/demo/tests/unit/a/stray.rs': '#[test]\nfn t() {}\n'}, 'orphan', {}),
+        'cargo-target': ({'crates/demo/tests/unit/main.rs': 'fn main() {}\n'}, 'cargo-target', {}),
+        'harness-direction': ({'crates/demo/src/a.rs': a + call}, 'harness-direction', {}),
+        'an allowed hook': ({'crates/demo/src/a.rs': a + call}, None, hooked),
+        'stale-hook': ({}, 'stale-hook', hooked),
+        'a harness naming harness::': ({'crates/demo/src/harness/x.rs': call}, None, {}),
     }
     failures = 0
-    for name, (extra, rule) in cases.items():
+    for name, (extra, rule, hooks) in cases.items():
         tmp = pathlib.Path(tempfile.mkdtemp(prefix='layout-'))
         try:
             for path, text in {**clean, **extra}.items():
                 (tmp / path).parent.mkdir(parents=True, exist_ok=True)
                 (tmp / path).write_text(text, encoding='utf-8', newline='\n')
-            rules = sorted({r for r, _, _ in check(tmp)})
+            rules = sorted({r for r, _, _ in check(tmp, hooks)})
             ok = rules == [] if rule is None else rule in rules
             print(f'  {"ok  " if ok else "FAIL"} {name}: reported {rules or "nothing"}')
             failures += not ok

@@ -180,9 +180,16 @@ def main():
 
     m = load_checklist()
     rs = rust_sources()
-    selftest = read("crates/fractadyne-app/src/selftest.rs") or ""
-    uitest = read("crates/fractadyne-app/src/uitest.rs") or ""
-    argparse_src = read("crates/fractadyne-app/src/main.rs") or ""
+    def source(rel):
+        text = read(rel)
+        if text is None:
+            sys.exit(f"checklist_coverage: {rel} is missing - a moved source file must be followed here")
+        return text
+
+    selftest = source("crates/fractadyne-app/src/harness/selftest.rs")
+    uitest = source("crates/fractadyne-app/src/harness/uitest.rs")
+    # Flags are parsed in main.rs (windowed modes), cli.rs (headless) and harness.rs.
+    argparse_src = "".join(source(f"crates/fractadyne-app/src/{f}") for f in ("main.rs", "cli.rs", "harness.rs"))
     listed = cargo_test_names() if args.cargo else None
     if args.cargo and listed is None:
         print("warning: `cargo test -- --list` did not run; falling back to a source scan")

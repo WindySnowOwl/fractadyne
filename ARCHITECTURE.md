@@ -57,19 +57,28 @@ freeze-reproject + export requests + the staged `build_params` frame builder), `
 structs, and `update()`'s harness hooks + mode ladder), `export.rs` (view-metadata / `.fdn`),
 `tunables.rs` (every frame-cost constant; `--set` overrides), `fractal.rs`
 (`FractalKind`), `refcache_persist.rs` (the on-disk reference-orbit cache), `error.rs`
-(`AppError`), `selftest.rs` (GPU validation), `theme.rs`, `profile.rs` (profiling + the
-`--frametest`/`--divetest` harnesses), `livetest.rs` (the live-vs-offline output harness),
-`sysinfo.rs`, `diag.rs` (log/crash/watchdog/trace), `alloc.rs` (allocation-failure hook),
-`update.rs` (GitHub-Releases update check, Stable/Beta tracks), `bench_matrix.rs` (the
-`--bench-matrix` path-coverage perf/regression suite), `motiontest.rs` (`--motiontest`:
-the motion-presentation gate), `chunksweep.rs` (`--chunk-sweep`), `torture.rs` (`--torture`
-escalation suite), `soak.rs` (`--soak` liveness), `shot.rs` (`--shot` screenshot regen),
-`farm/` (the render farm's headless `--farm-render` controller, `--render-client` and `--farmtest`),
-`tone.rs` (finish sound), `icons.rs` (generated Lucide subset), `gputest.rs` (`--gputest`: the WGSL
-df32/floatexp primitives against CPU oracles, swept over every backend — the harness that found
-NVIDIA's shader compiler folding the error-free transforms), `uitest.rs` (`--uitest`: the scripted
-UI + live-render walk), `reusetest.rs`, and a `ui/` submodule tree (`central.rs`, `menus.rs`,
-`panels.rs`, `dialogs.rs`, `tour_render.rs`, `diagnostics.rs`) from the intra-crate UI split.
+(`AppError`), `theme.rs`, `sysinfo.rs`, `diag.rs` (log/crash/watchdog/trace), `alloc.rs`
+(allocation-failure hook), `update.rs` (GitHub-Releases update check, Stable/Beta tracks),
+`farm/` (the render farm's headless `--farm-render` controller and `--render-client`),
+`tone.rs` (finish sound), `icons.rs` (generated Lucide subset), and a `ui/` submodule tree
+(`central.rs`, `menus.rs`, `panels.rs`, `dialogs.rs`, `tour_render.rs`, `diagnostics.rs`) from
+the intra-crate UI split.
+
+**`harness/`** holds the test harnesses and developer tools that ship in the binary — Help ▸
+Diagnostics runs `--selftest`, `--uitest` and `--gputest` from the installed exe — with
+[`harness.rs`](crates/fractadyne-app/src/harness.rs) as the index (every flag, its module, the
+exit-code convention, and where the product calls in): `selftest.rs` (GPU validation),
+`uitest.rs` (the scripted UI + live-render walk), `gputest.rs` (the WGSL df32/floatexp primitives
+against CPU oracles, swept over every backend — the harness that found NVIDIA's shader compiler
+folding the error-free transforms), `livetest.rs` (the live-vs-offline output harness),
+`profile.rs` (profiling + the `--frametest`/`--divetest` harnesses), `bench_matrix.rs` (the
+`--bench-matrix` path-coverage perf/regression suite), `motiontest.rs`, `zoomtest.rs`,
+`recordtest.rs`, `soak.rs`, `chunksweep.rs`, `deviceloss_repro.rs`, `reusetest.rs`,
+`glitchaudit.rs`, `torture.rs` (the escalation suite), `logcheck.rs`, `shot.rs` (screenshot
+regen), `verdict.rs` (the gating harnesses' exit codes), and `farm/farmtest.rs` (`--farmtest`,
+still the module `farm::farmtest`). The product calls into them only at the hooks `harness.rs`
+lists; `scripts/check_test_layout.py` holds each functional file to its count.
+
 Unit tests live under each crate's `tests/unit/`, mirroring `src/` (the tests for
 `src/render/pricing.rs` are in `tests/unit/render/pricing/`), declared from the code they test
 with `#[cfg(test)] #[path = "…"] mod name;` — see `CONTRIBUTING.md` for the layout and
