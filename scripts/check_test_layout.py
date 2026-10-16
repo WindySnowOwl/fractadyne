@@ -55,8 +55,9 @@ HARNESS_HOOKS = {
     # logcheck at start and exit, the profiler's timings field, and the windowed harness flags'
     # parsing in new_state (phase 4 moves the parsing out).
     'crates/fractadyne-app/src/main.rs': 27,
-    # the headless dispatch, HarnessModes and the frame hooks (phase 4 moves them out).
-    'crates/fractadyne-app/src/cli.rs': 15,
+    # the headless dispatch (one call per developer mode), HarnessModes and the frame hooks
+    # (phase 4 moves the last two out).
+    'crates/fractadyne-app/src/cli.rs': 21,
     # --autodive's verdicts (phase 4 moves --autodive out).
     'crates/fractadyne-app/src/autopilot.rs': 5,
     # --replay's regime accumulator (phase 4 moves --replay out).

@@ -47,21 +47,27 @@
 //! - the export-request builder (`render.rs`) records the profiler's setup timings
 //!   ([`profile::ProfSetup`], `FractadyneApp::prof`).
 
+pub(crate) mod bench_bignum;
 pub(crate) mod bench_matrix;
 pub(crate) mod chunksweep;
+pub(crate) mod compare;
+pub(crate) mod crosscheck_f3;
 pub(crate) mod deviceloss_repro;
 pub(crate) mod glitchaudit;
 pub(crate) mod gputest;
 pub(crate) mod livetest;
 pub(crate) mod logcheck;
 pub(crate) mod motiontest;
+pub(crate) mod pickcheck;
 pub(crate) mod profile;
 pub(crate) mod recordtest;
+pub(crate) mod refdiag;
 pub(crate) mod reusetest;
 pub(crate) mod selftest;
 pub(crate) mod shot;
 pub(crate) mod soak;
 pub(crate) mod torture;
 pub(crate) mod uitest;
+pub(crate) mod validate_deep;
 pub(crate) mod verdict;
 pub(crate) mod zoomtest;
