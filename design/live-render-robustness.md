@@ -4721,3 +4721,32 @@ and 38):
 - §7.8's exit criterion "every harness in the checklist returns non-zero on its sabotage arm" holds
   for every gate the checklist relies on. The zoomtest P-G rows and torture increment 2 remain
   planned, as in the checklist.
+
+*The RX 6800 XT's own references, re-adopted* (`655d37a`).
+- The dev.18 battery failed on the Radeon only where its references predate the fix:
+  - The signatures of four bench-matrix segments drifted (`floatexp-1e30-sa`, `-nosa`, `-nobla`,
+    `deep-interior-1e148`). The rebase counters fell, as on the 3080. The self-test's DRIFT lines
+    read the same baseline.
+  - The golden `custom-zsq-spiral-1e100` changed in 2,035 px (0.098%), every one on the speckled
+    filaments and none in a smooth region. The custom-formula tail shares the 2^-50 threshold.
+- The baseline came from a clean run, not from the battery's own run: PLUTO's CPU was loaded
+  during that battery (reference times +39–126%, two short screen dives).
+  - Three clean `--bench-matrix` runs on dev.18 gave counters identical to the battery's. The
+    median run was adopted, and exactly those four segments changed.
+  - The dev.19 battery (`db8121f`, reverted in `9e34475`): VERDICT PASS. 0 drift, goldens 31/31,
+    and the screen gate PASS (3 × 111–117 captures, 0% blank, 0% flat, 0 flashes).
+- Speed on the Radeon: 4K GPU iterate, dev.17 (2^-60) against dev.18 interleaved three times.
+
+  | scene | dev.17 → dev.18 | of the tail's speed-up |
+  |---|---|---|
+  | 6.6e43 | 152.2 → 155.1 ms | 98.6% kept |
+  | 1.2e148 | 2,994 → 3,010 ms | 98.9% kept |
+  | 4.2e275 | 747.2 → 753.1 ms | 99.3% kept |
+  | 4.6e1105 | 319.0 → 319.2 ms | 100% kept |
+
+  - The one measurable cost is the bench-matrix no-BLA 1e30 segment: +7% GPU (314–317 ms on
+    dev.14–17, 335–338 ms on dev.18).
+  - CPU reference time is equal between the builds when interleaved. The rise in the batteries'
+    `ref ms` across dev.14–18 is the machine's state, not a build.
+- On this card the fix also moves the output toward the all-floatexp loop. At 1.2e148 dev.18
+  differs from it in 43,242 px, where dev.17 differed in 121,835.
