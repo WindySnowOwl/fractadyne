@@ -3,7 +3,7 @@
 //! skip, and assembles the live (`MandelbrotParams`) and offscreen (`ExportRequest`) jobs,
 //! choosing the direct / df32-perturbation / floatexp render mode by depth.
 
-use crate::{profile, zoom_iter_cap, FractadyneApp, FractalKind, RenderMode, PERT_FE_THRESHOLD};
+use crate::{harness::profile, zoom_iter_cap, FractadyneApp, FractalKind, RenderMode, PERT_FE_THRESHOLD};
 use fractadyne_core::Viewport;
 use fractadyne_gpu::{ContentReading, MandelbrotParams, RefOffset};
 use std::time::{Duration, Instant};

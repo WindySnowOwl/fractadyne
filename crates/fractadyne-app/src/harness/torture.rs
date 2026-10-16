@@ -108,7 +108,7 @@ pub(crate) enum Outcome {
     Pass,
     /// Ran to completion but the harness reported a failure (drift, Δ, verdict).
     FailAssert,
-    /// Ran, but never reached what it tests (`crate::verdict::VACUOUS`, exit 3): not a pass, and not
+    /// Ran, but never reached what it tests (`crate::harness::verdict::VACUOUS`, exit 3): not a pass, and not
     /// a failure of the code under test either — the rung's regime needs reaching (W8).
     FailVacuous,
     /// Exceeded its deadline and was killed.
@@ -723,7 +723,7 @@ pub(crate) fn classify(timed_out: bool, exit_code: Option<i32>, output: &str) ->
         // The harnesses use a distinct code for "ran fine, result is wrong" where they can
         // (`--bench-matrix` exits 2 on algorithmic drift); everything else non-zero is a crash.
         Some(2) => Outcome::FailAssert,
-        // `crate::verdict::VACUOUS`: the run never reached what it tests (W8).
+        // `crate::harness::verdict::VACUOUS`: the run never reached what it tests (W8).
         Some(3) => Outcome::FailVacuous,
         Some(_) | None => Outcome::FailCrash,
     }
@@ -1226,5 +1226,5 @@ fn summarize(records: &[RunRecord], out_dir: &Path) -> i32 {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/torture/tests.rs"]
+#[path = "../../tests/unit/harness/torture/tests.rs"]
 mod tests;

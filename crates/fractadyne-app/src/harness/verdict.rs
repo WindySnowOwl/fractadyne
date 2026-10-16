@@ -43,5 +43,5 @@ pub(crate) fn word(code: i32) -> &'static str {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/verdict/tests.rs"]
+#[path = "../../tests/unit/harness/verdict/tests.rs"]
 mod tests;

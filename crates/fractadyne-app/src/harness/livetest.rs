@@ -313,7 +313,7 @@ struct LivetestBaseline {
 /// only those, but a different SIZE is a different live path and deserves its own baseline.
 fn baseline_path(tour: &std::path::Path, size: [u32; 2]) -> std::path::PathBuf {
     let stem = tour.file_stem().and_then(|s| s.to_str()).unwrap_or("tour");
-    crate::selftest::anchored(LIVETEST_BASELINE_DIR)
+    crate::harness::selftest::anchored(LIVETEST_BASELINE_DIR)
         .join(format!("livetest-{stem}-{}x{}.json", size[0], size[1]))
 }
 
@@ -396,7 +396,7 @@ impl FractadyneApp {
                 tour.display(),
                 segment.map(|s| format!(" segment \"{s}\"")).unwrap_or_default()
             );
-            crate::exit(crate::verdict::VACUOUS);
+            crate::exit(crate::harness::verdict::VACUOUS);
         }
         pending.reverse(); // pop() takes the earliest
 
@@ -880,14 +880,14 @@ impl FractadyneApp {
             // The oracle is off, so every grade is `----`: nothing was judged, and a baseline
             // blessed from it would record nothing either.
             println!("\n--quick: the oracle is off, so nothing was judged (not compared, not blessed).");
-            crate::verdict::VACUOUS
+            crate::harness::verdict::VACUOUS
         } else if self.selftest.bless {
-            if self.bless_livetest(&results, tour, resolution) == 0 { crate::verdict::PASS } else { crate::verdict::RED }
+            if self.bless_livetest(&results, tour, resolution) == 0 { crate::harness::verdict::PASS } else { crate::harness::verdict::RED }
         } else {
             let drift = self.compare_livetest(&results, tour, resolution, fails);
-            crate::verdict::code(drift > 0, vacuous)
+            crate::harness::verdict::code(drift > 0, vacuous)
         };
-        println!("--livetest: VERDICT {}", crate::verdict::word(code));
+        println!("--livetest: VERDICT {}", crate::harness::verdict::word(code));
         code
     }
 
@@ -1097,5 +1097,5 @@ impl FractadyneApp {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/livetest/tests.rs"]
+#[path = "../../tests/unit/harness/livetest/tests.rs"]
 mod tests;

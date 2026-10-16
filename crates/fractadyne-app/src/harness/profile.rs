@@ -1049,5 +1049,5 @@ impl FractadyneApp {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/profile/region_loader_tests.rs"]
+#[path = "../../tests/unit/harness/profile/region_loader_tests.rs"]
 mod region_loader_tests;

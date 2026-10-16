@@ -1,6 +1,6 @@
 //! `--autodive`'s verdict, judged from the frame record (W8, design §7.8).
 use super::{autodive_verdict, DiveTally, SLOW_AFTER_RETREAT_MAX};
-use crate::verdict::{PASS, RED, VACUOUS};
+use crate::harness::verdict::{PASS, RED, VACUOUS};
 
 const LETHAL_MS: f64 = 900.0;
 

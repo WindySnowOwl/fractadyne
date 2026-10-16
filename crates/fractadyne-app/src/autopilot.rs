@@ -1337,7 +1337,7 @@ impl DiveTally {
 pub(crate) fn autodive_verdict(t: &DiveTally) -> (i32, String) {
     if t.lethal == 0 && t.applied + t.unreached == 0 {
         return (
-            crate::verdict::VACUOUS,
+            crate::harness::verdict::VACUOUS,
             "DID NOT REACH THE REGIME - no lethal reading, so nothing was tested".to_string(),
         );
     }
@@ -1356,20 +1356,20 @@ pub(crate) fn autodive_verdict(t: &DiveTally) -> (i32, String) {
     }
     if red.is_empty() && t.lost > 0 {
         return (
-            crate::verdict::VACUOUS,
+            crate::harness::verdict::VACUOUS,
             format!("{} frame record(s) LOST to the ring before they were read - the run was not judged whole", t.lost),
         );
     }
     if red.is_empty() {
         (
-            crate::verdict::PASS,
+            crate::harness::verdict::PASS,
             format!(
                 "REACHED THE REGIME AND THE RETREAT HELD: {} lethal reading(s), {} retreat(s) applied, {} lethal-band interval(s), at most {} in a row after a retreat",
                 t.lethal, t.applied, t.wall_slow, t.slow_run_after
             ),
         )
     } else {
-        (crate::verdict::RED, format!("REACHED THE REGIME AND THE RETREAT DID NOT HOLD: {}", red.join("; ")))
+        (crate::harness::verdict::RED, format!("REACHED THE REGIME AND THE RETREAT DID NOT HOLD: {}", red.join("; ")))
     }
 }
 
@@ -1650,7 +1650,7 @@ impl crate::FractadyneApp {
                 if d.tally.lost > 0 { format!(" · {} record(s) LOST to the ring", d.tally.lost) } else { String::new() }
             );
             println!("  {verdict}");
-            println!("--autodive: VERDICT {}", crate::verdict::word(code));
+            println!("--autodive: VERDICT {}", crate::harness::verdict::word(code));
             d.done.store(true, std::sync::atomic::Ordering::Relaxed);
             crate::exit(code);
         }

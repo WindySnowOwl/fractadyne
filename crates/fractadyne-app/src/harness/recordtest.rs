@@ -11,7 +11,7 @@
 //! ⚠The design names this `--selftest record`, but `--selftest` renders offline inside one
 //! `update()` call and never drives a live frame, so the check lives in its own harness.
 //!
-//! RED (exit 2, [`crate::verdict::RED`]), each on its own:
+//! RED (exit 2, [`crate::harness::verdict::RED`]), each on its own:
 //!   * **count** — every frame the harness drove has exactly one view-0 record: no gap, no
 //!     duplicate, and the sequence numbers are contiguous;
 //!   * **fields** — a required field at its unset sentinel (a built view with no `present`, no
@@ -36,7 +36,7 @@
 //!   * **log budget** — any log category ran above 10 lines/s over a 5 s window (design W10);
 //!   * a crash report appears during the run.
 //!
-//! VACUOUS (exit 3, [`crate::verdict::VACUOUS`] — never 0, and never the same as a failure): the run recorded no dispatch, no
+//! VACUOUS (exit 3, [`crate::harness::verdict::VACUOUS`] — never 0, and never the same as a failure): the run recorded no dispatch, no
 //! judged reading or no counter reading, or ran under `--set` overrides. A gate that passes
 //! having exercised nothing has told you nothing.
 
@@ -794,16 +794,16 @@ impl crate::FractadyneApp {
                 crate::diag::verdict(&format!("recordtest: FAIL — {f}"));
             }
             crate::diag::verdict("recordtest: FAIL");
-            crate::verdict::RED
+            crate::harness::verdict::RED
         } else if !vacuous.is_empty() {
             for v in &vacuous {
                 crate::diag::verdict(&format!("recordtest: VACUOUS — {v}"));
             }
             crate::diag::verdict("recordtest: VACUOUS (exit 3) — this run cannot vouch for the record of the shipped build (see above)");
-            crate::verdict::VACUOUS
+            crate::harness::verdict::VACUOUS
         } else {
             crate::diag::verdict("recordtest: PASS — every driven frame recorded once, every required field set, frames.bin exact, and it survived an abort");
-            crate::verdict::PASS
+            crate::harness::verdict::PASS
         }
     }
 }

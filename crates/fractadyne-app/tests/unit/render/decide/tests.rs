@@ -200,7 +200,7 @@ fn a_recorded_regime_is_judged_by_the_soaks_predicate() {
     assert!(!replay_lines(&line(RegimeFacts { ref_len: 2_000, ..storm })).regime_entered);
     assert!(!replay_lines(&line(RegimeFacts { bla_on: true, ..storm })).regime_entered);
     // And it is judged by the soak's predicate itself, on the record it came from.
-    let mut acc = crate::soak::RegimeAcc::default();
+    let mut acc = crate::harness::soak::RegimeAcc::default();
     acc.add(&storm.record());
     assert!(acc.report().entered);
     assert_eq!(RegimeFacts::of(&storm.record()), storm, "the facts round-trip through the record");

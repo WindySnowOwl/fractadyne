@@ -212,7 +212,7 @@ impl FractadyneApp {
                 let cx = fractadyne_core::parse_bf_prec(CX, 192);
                 let cy = fractadyne_core::parse_bf_prec(CY, 192);
                 let (Some(cx), Some(cy)) = (cx, cy) else {
-                    self.motiontest_verdict(mt, crate::verdict::RED, "internal: corpus center failed to parse");
+                    self.motiontest_verdict(mt, crate::harness::verdict::RED, "internal: corpus center failed to parse");
                 };
                 self.render_cfg.max_iter = ASK;
                 self.render_cfg.auto_iter = false;
@@ -263,7 +263,7 @@ impl FractadyneApp {
                     advance(&mut mt, Phase::Dive);
                 } else if in_phase > WAIT_REF_S {
                     // Nothing was driven: the experiment never started (W8 — not a failure of motion).
-                    self.motiontest_verdict(mt, crate::verdict::VACUOUS, "boot never completed: no full reference");
+                    self.motiontest_verdict(mt, crate::harness::verdict::VACUOUS, "boot never completed: no full reference");
                 }
             }
             Phase::Click => {
@@ -323,7 +323,7 @@ impl FractadyneApp {
                 if self.home_anim.is_none() {
                     advance(&mut mt, Phase::Settle);
                 } else if in_phase > HOME_S {
-                    self.motiontest_verdict(mt, crate::verdict::RED, "home glide never finished");
+                    self.motiontest_verdict(mt, crate::harness::verdict::RED, "home glide never finished");
                 }
             }
             Phase::Settle => {
@@ -439,9 +439,9 @@ impl FractadyneApp {
                         ));
                     }
                     // W8: a VACUOUS term alone is not a failure of what this tests, and a real failure
-                    // beside one is still a failure (`crate::verdict::code`).
+                    // beside one is still a failure (`crate::harness::verdict::code`).
                     let pass = fails.is_empty();
-                    let code = crate::verdict::code(
+                    let code = crate::harness::verdict::code(
                         fails.iter().any(|f| !f.starts_with("VACUOUS")),
                         fails.iter().any(|f| f.starts_with("VACUOUS")),
                     );
@@ -466,7 +466,7 @@ impl FractadyneApp {
     /// never reached, so nothing was tested).
     fn motiontest_verdict(&mut self, mt: MotionTest, code: i32, msg: &str) -> ! {
         mt.done.store(true, std::sync::atomic::Ordering::Relaxed);
-        let verdict = crate::verdict::word(code);
+        let verdict = crate::harness::verdict::word(code);
         crate::diag::log_line("motiontest", &format!("{verdict}: {msg}"));
         eprintln!("--motiontest: VERDICT {verdict}: {msg}");
         crate::exit(code);

@@ -61,7 +61,7 @@
 use crate::FractadyneApp;
 
 #[cfg(test)]
-#[path = "../tests/unit/chunksweep/tests.rs"]
+#[path = "../../tests/unit/harness/chunksweep/tests.rs"]
 mod tests;
 
 /// Window sizes walked on the size axis, smallest first. 256 is the live path's own floor

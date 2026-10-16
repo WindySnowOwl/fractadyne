@@ -2,7 +2,7 @@ use super::*;
 
 /// The names this file passes to `opt_in("…")`, read from its own source.
 fn opt_in_calls() -> Vec<String> {
-    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/selftest.rs"));
+    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/harness/selftest.rs"));
     let needle = ["opt_in", "(\""].concat(); // split so this line is not itself a match
     src.match_indices(needle.as_str())
         .filter_map(|(i, _)| {

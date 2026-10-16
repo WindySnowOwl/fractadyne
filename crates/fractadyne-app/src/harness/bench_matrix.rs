@@ -5,7 +5,7 @@
 //! rebasing machinery and never varies fractal or coloring. This suite instead runs a MATRIX of
 //! short renders, each pinned to exercise one rendering path, and reports for every segment:
 //!
-//! * the **CPU bignum-setup split** (`ref` / `series` / `bla` ms — from [`crate::profile::ProfSetup`],
+//! * the **CPU bignum-setup split** (`ref` / `series` / `bla` ms — from [`crate::harness::profile::ProfSetup`],
 //!   the reference build that dominates cold deep renders), and
 //! * the **pure-GPU pass times** (`gpu-it` / `gpu-col`, via `TIMESTAMP_QUERY`), and
 //! * the **deterministic shader event counters** (`rebase` / `ext` / `bla` / `maxiter` — the
@@ -37,7 +37,7 @@ const REFERENCE_FILE: &str = "bench-matrix-baseline.json";
 
 /// The folder the baselines live in (the repo's, or an install's).
 fn baselines_dir() -> std::path::PathBuf {
-    crate::selftest::anchored("benchmarks")
+    crate::harness::selftest::anchored("benchmarks")
 }
 
 /// The reference card's baseline in `dir`.
@@ -371,11 +371,11 @@ fn scale_and_fixed(pts: &[(f64, f64)]) -> Option<(f64, f64)> {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/bench_matrix/fit_tests.rs"]
+#[path = "../../tests/unit/harness/bench_matrix/fit_tests.rs"]
 mod fit_tests;
 
 #[cfg(test)]
-#[path = "../tests/unit/bench_matrix/per_card_tests.rs"]
+#[path = "../../tests/unit/harness/bench_matrix/per_card_tests.rs"]
 mod per_card_tests;
 
 fn median(v: &mut [f64]) -> f64 {
@@ -423,7 +423,7 @@ impl crate::FractadyneApp {
         // Build the request once (records reference/series/bla timings in self.prof). Reset first:
         // direct mode never calls prof.set(), so without this it would inherit the previous
         // (perturbation) segment's stale reference time.
-        self.prof.set(crate::profile::ProfSetup::default());
+        self.prof.set(crate::harness::profile::ProfSetup::default());
         let req = self.current_export_request_for(&vp, false);
         let setup = self.prof.get();
         let progress = AtomicU32::new(0);
@@ -582,7 +582,7 @@ impl crate::FractadyneApp {
             Ok(own) => own.unwrap_or_else(|| reference.clone()),
             Err(e) => {
                 eprintln!("\nBaseline {} is unreadable: {e}", reference.display());
-                return crate::verdict::VACUOUS;
+                return crate::harness::verdict::VACUOUS;
             }
         };
         let baseline = match load_baseline(&path) {
@@ -596,11 +596,11 @@ impl crate::FractadyneApp {
                     card_baseline_path(&self.gpu_name).display(),
                     reference.display()
                 );
-                return crate::verdict::VACUOUS;
+                return crate::harness::verdict::VACUOUS;
             }
             Err(e) => {
                 eprintln!("\nBaseline {} is unreadable: {e}", path.display());
-                return crate::verdict::VACUOUS;
+                return crate::harness::verdict::VACUOUS;
             }
         };
         let same_gpu = baseline.gpu == self.gpu_name;
@@ -738,7 +738,7 @@ impl crate::FractadyneApp {
                 "ALGORITHMIC REGRESSION: a rendering path changed its exact output signature. If \
                  intended, re-bless with `--bench-matrix --bless`."
             );
-            crate::verdict::RED
+            crate::harness::verdict::RED
         } else if !same_gpu {
             if cross > 0 {
                 println!(
@@ -761,10 +761,10 @@ impl crate::FractadyneApp {
                 baseline.gpu,
                 card_baseline_path(&self.gpu_name).display()
             );
-            crate::verdict::VACUOUS
+            crate::harness::verdict::VACUOUS
         } else {
             println!("No algorithmic regressions.{}", if slower > 0 { " (performance warnings above.)" } else { "" });
-            crate::verdict::PASS
+            crate::harness::verdict::PASS
         }
     }
 }

@@ -10579,5 +10579,5 @@ zoom = \"1e94\"
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/selftest/opt_in_tests.rs"]
+#[path = "../../tests/unit/harness/selftest/opt_in_tests.rs"]
 mod opt_in_tests;

@@ -138,7 +138,7 @@ impl crate::FractadyneApp {
                             loc.display()
                         ));
                         DONE.store(true, Ordering::Relaxed);
-                        crate::exit(crate::verdict::VACUOUS);
+                        crate::exit(crate::harness::verdict::VACUOUS);
                     }
                 }
             } else if s.decades.is_nan() {
@@ -239,24 +239,24 @@ impl crate::FractadyneApp {
             for f in &fails {
                 crate::diag::verdict(&format!("soak-liveness: FAIL — {f}"));
             }
-            return crate::verdict::RED;
+            return crate::harness::verdict::RED;
         }
         if short {
             crate::diag::verdict(&format!(
                 "soak-liveness: VACUOUS (exit 3) — no liveness window completed in {elapsed:.0}s; run for at least {}s",
                 WINDOW.as_secs() * 2
             ));
-            return crate::verdict::VACUOUS;
+            return crate::harness::verdict::VACUOUS;
         }
         if escape_armed && !regime.entered {
             crate::diag::verdict(
                 "soak-liveness: VACUOUS (exit 3) — FRACTADYNE_REF_ESCAPE_AT is armed but the regime was never \
                  entered, so surviving it proves nothing",
             );
-            return crate::verdict::VACUOUS;
+            return crate::harness::verdict::VACUOUS;
         }
         crate::diag::verdict("soak-liveness: PASS (frames advanced in every window, memory held)");
-        crate::verdict::PASS
+        crate::harness::verdict::PASS
     }
 }
 
@@ -500,5 +500,5 @@ impl RegimeAcc {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/soak/tests.rs"]
+#[path = "../../tests/unit/harness/soak/tests.rs"]
 mod tests;

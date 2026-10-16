@@ -1363,10 +1363,10 @@ fn the_share_package_ships_the_field_views_the_regime_rungs_soak() {
     // every view a rung names.
     let publish = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/publish-share.ps1"));
     assert!(publish.contains("validation\\field\\*.fdn"), "publish-share.ps1 does not ship validation/field");
-    for r in crate::torture::LADDER {
+    for r in crate::harness::torture::LADDER {
         let args: &[&str] = match &r.cmd {
-            crate::torture::Cmd::SelfExe(a) | crate::torture::Cmd::Instrumented(_, a) => a,
-            crate::torture::Cmd::External(..) => continue,
+            crate::harness::torture::Cmd::SelfExe(a) | crate::harness::torture::Cmd::Instrumented(_, a) => a,
+            crate::harness::torture::Cmd::External(..) => continue,
         };
         for w in args.windows(2).filter(|w| w[0] == "--soak-location") {
             assert!(w[1].starts_with("validation/field/") && w[1].ends_with(".fdn"), "{}: {} is not a shipped field view", r.id, w[1]);

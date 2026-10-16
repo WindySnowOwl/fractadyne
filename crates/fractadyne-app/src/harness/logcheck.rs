@@ -613,5 +613,5 @@ pub(crate) fn run_cli(args: &[String]) -> i32 {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/logcheck/tests.rs"]
+#[path = "../../tests/unit/harness/logcheck/tests.rs"]
 mod tests;

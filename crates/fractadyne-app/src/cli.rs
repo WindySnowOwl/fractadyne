@@ -143,7 +143,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
     // launches each rung as a child process precisely so that a rung which loses the device or
     // wedges cannot take the runner down with it.
     if args.iter().any(|a| a == "--torture") {
-        crate::exit(crate::torture::run(args));
+        crate::exit(crate::harness::torture::run(args));
     }
     // The render farm (design/remote-rendering.md): the controller, a client, and their harness.
     // Headless for the same reason as `--torture` — they render nothing themselves; every frame
@@ -154,7 +154,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
     // `--logcheck [LOG]`: hold a log (default: this app's own) to validation/logcheck-rules.toml.
     // Headless and deviceless, so it can judge the log a killed or wedged run left behind.
     if args.iter().any(|a| a == "--logcheck") {
-        crate::exit(crate::logcheck::run_cli(args));
+        crate::exit(crate::harness::logcheck::run_cli(args));
     }
     // Print the tour-script schema reference (Markdown) and exit — used to (re)generate TOURS.md.
     if args.iter().any(|a| a == "--dump-tour-schema") {
@@ -225,7 +225,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
             .position(|a| a == "--out")
             .and_then(|i| args.get(i + 1))
             .map(std::path::PathBuf::from);
-        let fails = crate::gputest::run_gputest_sweep(out.as_deref());
+        let fails = crate::harness::gputest::run_gputest_sweep(out.as_deref());
         crate::exit(if fails > 0 { 1 } else { 0 });
     }
     // --discover: the render-farm controllers answering on this network (and this machine).
@@ -1221,7 +1221,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
 }
 
 
-use crate::{diag, profile, scripting};
+use crate::{diag, harness::profile, scripting};
 
 // ==== CLI-launched mode state ====
 // The flags parsed from argv that drive `update()`'s mode ladder, grouped out of
@@ -1300,7 +1300,7 @@ pub(crate) struct RenderCli {
     /// where two renders differ (and N controls) against the arbitrary-precision oracle
     /// (`glitchaudit`); `audit_kind` says which two.
     pub(crate) audit: Option<usize>,
-    pub(crate) audit_kind: crate::glitchaudit::AuditKind,
+    pub(crate) audit_kind: crate::harness::glitchaudit::AuditKind,
     /// CLI `--render-tour FILE`: render a keyframe tour to a PNG frame sequence, then quit.
     pub(crate) tour: Option<std::path::PathBuf>,
     pub(crate) tour_done: bool,
@@ -1321,7 +1321,7 @@ pub(crate) struct RenderCli {
 pub(crate) struct HarnessModes {
     /// CLI `--uitest [DIR]`: scripted walk through every UI screen + the live-render bands,
     /// screenshotting each and writing a review bundle (see `mod uitest`), then exit.
-    pub(crate) uitest: Option<crate::uitest::UiTest>,
+    pub(crate) uitest: Option<crate::harness::uitest::UiTest>,
     /// `--uitest` scratch for the control-panel toggle step: the canvas and panel widths measured
     /// while the panel was still open, so the reflow after hiding it can be compared against what
     /// the layout actually did rather than against the panel's nominal width.
@@ -1333,38 +1333,38 @@ pub(crate) struct HarnessModes {
     /// Pointer events the `life-draw` step feeds the app, one a frame, at CELLS of the Life view
     /// (turned into positions as they are fed, so they land on the cell whatever the layout).
     pub(crate) uitest_pointer: std::collections::VecDeque<crate::UiPointer>,
-    pub(crate) soak: Option<crate::soak::Soak>,
+    pub(crate) soak: Option<crate::harness::soak::Soak>,
     /// `--recordtest [FRAMES]`: the frame record's own gate — does it record every frame, fill
     /// every required field, and survive an abort? See `mod recordtest`.
-    pub(crate) recordtest: Option<crate::recordtest::RecordTest>,
+    pub(crate) recordtest: Option<crate::harness::recordtest::RecordTest>,
     /// `--shot`: regenerate the published screenshot from a saved location, then exit.
-    pub(crate) shot: Option<crate::shot::Shot>,
+    pub(crate) shot: Option<crate::harness::shot::Shot>,
     /// CLI `--juliadive [DIR]`: dev harness — dual view, continuous in-app Julia zoom to ~1400×
     /// with periodic screenshots (see `uitest::JuliaDive`). Reproduces the dual-view Julia motion
     /// path deterministically (synthetic OS input proved unreliable for wheel/focus).
-    pub(crate) juliadive: Option<crate::uitest::JuliaDive>,
+    pub(crate) juliadive: Option<crate::harness::uitest::JuliaDive>,
     /// CLI `--dualsettle [DIR]`: dev harness — dual view, live-hover c motion then idle, timed
     /// settled screenshots (the 2026-09-04 blurry-Julia field report).
-    pub(crate) dualsettle: Option<crate::uitest::DualSettle>,
+    pub(crate) dualsettle: Option<crate::harness::uitest::DualSettle>,
     /// CLI `--autodive [LOG10]`: unpaced autopilot dive that hammers the frame-cost controller and
     /// reports whether the lethal regime was reached. See `autopilot::AutoDive`.
     pub(crate) autodive: Option<crate::autopilot::AutoDive>,
     /// CLI `--chunk-sweep [ITERS]`: measure the UNCENSORED per-window wall cost of a chunked
     /// iterate at the current view. The one measurement that separates the two branches of the
     /// 2026-08-22 device loss — see `mod chunksweep`.
-    pub(crate) chunk_sweep: Option<crate::chunksweep::ChunkSweep>,
+    pub(crate) chunk_sweep: Option<crate::harness::chunksweep::ChunkSweep>,
     /// CLI `--deviceloss-repro [ZOOM_LOG2] [REF_ITER]`: a SAFE reproduction of the deep-interior
     /// device loss — measures the honest floor-window submission cost at small areas and extrapolates
     /// to full resolution, predicting the lethal dispatch without running it. See `mod deviceloss_repro`.
-    pub(crate) deviceloss_repro: Option<crate::deviceloss_repro::DeviceLossRepro>,
+    pub(crate) deviceloss_repro: Option<crate::harness::deviceloss_repro::DeviceLossRepro>,
     /// CLI `--motiontest`: the motion-presentation gate (design/mode2-chunking.md §11) — the
     /// in-loop harness that can see what `--livetest`'s settled checkpoints cannot: what a
     /// chunked view ADOPTS as its frozen texture while the camera is moving.
-    pub(crate) motiontest: Option<crate::motiontest::MotionTest>,
+    pub(crate) motiontest: Option<crate::harness::motiontest::MotionTest>,
     /// CLI `--zoomtest [OCTAVES]`: on-screen update-latency harness for live zooms — the real
     /// window, a virtual Space key through the production glide, every presented frame's wall
     /// interval + what it showed, JSON + summary, exit. See `mod zoomtest`.
-    pub(crate) zoomtest: Option<crate::zoomtest::ZoomTest>,
+    pub(crate) zoomtest: Option<crate::harness::zoomtest::ZoomTest>,
     /// CLI `--divetest FILE`: headless live-dive performance harness (real-time tour windows at
     /// increasing depths through the ACTUAL playback machinery), report + JSON, exit.
     pub(crate) divetest: Option<std::path::PathBuf>,

@@ -577,7 +577,7 @@ fn decision_rows(texel: &dyn Fn(u32, u32) -> [f32; 4]) -> Vec<OpCheck> {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/gputest/decision_row_tests.rs"]
+#[path = "../../tests/unit/harness/gputest/decision_row_tests.rs"]
 mod decision_row_tests;
 
 /// A tee: every line goes to stdout (so a terminal and the Diagnostics dialog's stream see it as

@@ -11,6 +11,7 @@
 
 pub(crate) mod client;
 pub(crate) mod controller;
+#[path = "harness/farm/farmtest.rs"]
 pub(crate) mod farmtest;
 pub(crate) mod local;
 pub(crate) mod status;

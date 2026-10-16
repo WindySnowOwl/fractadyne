@@ -208,7 +208,7 @@ pub(crate) struct ZoomTest {
     done: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// W9's regime predicate and the budget-stall measure over every record of the run, and the
     /// next record `seq` to fold (the soak's `RegimeAcc`, so the two rungs read alike).
-    regime: crate::soak::RegimeAcc,
+    regime: crate::harness::soak::RegimeAcc,
     regime_next: u64,
     /// OCTAVES was given on the command line (else a `session` start derives it).
     octaves_given: bool,
@@ -275,7 +275,7 @@ pub(crate) fn zoom_gate_failures(gate: ZoomGate, rate: f32, dt_max: f64, gt33: u
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/zoomtest/gate_tests.rs"]
+#[path = "../../tests/unit/harness/zoomtest/gate_tests.rs"]
 mod gate_tests;
 
 impl ZoomTest {
@@ -351,7 +351,7 @@ impl ZoomTest {
             tap_start_l2: 0.0,
             pause_until: None,
             done,
-            regime: crate::soak::RegimeAcc::default(),
+            regime: crate::harness::soak::RegimeAcc::default(),
             regime_next: 0,
         }
     }
@@ -452,12 +452,12 @@ impl FractadyneApp {
                     // before anything is.
                     StartView::Session => {}
                     StartView::Corpus => {
-                        let cx = fractadyne_core::parse_bf_prec(crate::motiontest::CX, 192);
-                        let cy = fractadyne_core::parse_bf_prec(crate::motiontest::CY, 192);
+                        let cx = fractadyne_core::parse_bf_prec(crate::harness::motiontest::CX, 192);
+                        let cy = fractadyne_core::parse_bf_prec(crate::harness::motiontest::CY, 192);
                         let (Some(cx), Some(cy)) = (cx, cy) else {
                             self.zoomtest_abort(zt, "internal: corpus centre failed to parse");
                         };
-                        self.viewport.set_center_log2mag(cx, cy, crate::motiontest::LOG2_MAG);
+                        self.viewport.set_center_log2mag(cx, cy, crate::harness::motiontest::LOG2_MAG);
                     }
                 }
                 if let Some(l2) = zt.start_log2 {
@@ -809,7 +809,7 @@ impl FractadyneApp {
         crate::diag::log_line("zoomtest", &format!("ABORT: {msg}"));
         eprintln!("--zoomtest: ABORT: {msg}");
         Self::zoomtest_regime_lines(&zt);
-        crate::exit(crate::verdict::RED);
+        crate::exit(crate::harness::verdict::RED);
     }
 
     /// W9's two verdict lines and the coverage line, to stderr and the log as `[fd-verdict]` (which
@@ -841,7 +841,7 @@ impl FractadyneApp {
         let n = f.len();
         if n < MIN_FRAMES {
             eprintln!("--zoomtest: VACUOUS: only {n} glide frames (need >= {MIN_FRAMES}) — nothing measured");
-            crate::exit(crate::verdict::VACUOUS);
+            crate::exit(crate::harness::verdict::VACUOUS);
         }
         let secs = f.last().map(|r| r.t).unwrap_or(0.0) - f.first().map(|r| r.t).unwrap_or(0.0);
         let oct = f.last().unwrap().l2 - zt.start_l2;
@@ -992,7 +992,7 @@ impl FractadyneApp {
                 "--zoomtest: VACUOUS (exit 3) — FRACTADYNE_REF_ESCAPE_AT is armed but the regime was never entered, \
                  so this run says nothing about it"
             );
-            crate::exit(crate::verdict::VACUOUS);
+            crate::exit(crate::harness::verdict::VACUOUS);
         }
         if let Some(gate) = zt.gate {
             let fails = zoom_gate_failures(gate, zt.rate, dt_max, gt33, gt100, held_oct_max);
@@ -1002,13 +1002,13 @@ impl FractadyneApp {
             } else {
                 eprintln!("--zoomtest: GATE FAIL ({gate:?}) — {}", fails.join("; "));
                 crate::diag::verdict(&format!("zoomtest-gate: FAIL ({gate:?}) — {}", fails.join("; ")));
-                crate::exit(crate::verdict::RED);
+                crate::exit(crate::harness::verdict::RED);
             }
         }
-        crate::exit(crate::verdict::PASS);
+        crate::exit(crate::harness::verdict::PASS);
     }
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/zoomtest/tests.rs"]
+#[path = "../../tests/unit/harness/zoomtest/tests.rs"]
 mod tests;

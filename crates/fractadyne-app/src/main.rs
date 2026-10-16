@@ -70,18 +70,14 @@ mod exec_resolve;
 mod eyedropper;
 mod export;
 mod farm;
-mod bench_matrix;
+mod harness;
 mod custom_formula;
 mod formula_library;
 mod fractal;
 mod life_view;
 pub(crate) use life_view::UiPointer;
 mod lsystem_view;
-mod chunksweep;
-mod glitchaudit;
-mod deviceloss_repro;
 mod gpu_choice;
-mod gputest;
 mod gpu_worker;
 mod motion_worker;
 mod help;
@@ -89,31 +85,18 @@ mod icons;
 #[cfg(test)]
 #[path = "../tests/unit/icons_coverage.rs"]
 mod icons_coverage;
-mod livetest;
-mod motiontest;
-mod zoomtest;
-mod logcheck;
-mod profile;
 mod refcache_persist;
 mod render;
-mod reusetest;
 mod update;
 mod scripting;
-mod selftest;
-mod verdict;
 mod session_outcome;
 mod sysinfo;
 mod theme;
-mod torture;
 mod tone;
 mod calibration;
 mod timing_witness;
 mod tunables;
 mod ui;
-mod shot;
-mod soak;
-mod recordtest;
-mod uitest;
 
 // ⭐The tunables live in ONE module now (a user requirement — see `tunables.rs`), and are
 // re-exported from here and from `render` so that every existing `crate::NAME` /
@@ -284,7 +267,7 @@ fn main() -> eframe::Result<()> {
     // (no `[fd-exit]`), from one that passed — and the only record of an INSTRUMENT, which arms
     // from the environment and prints nothing at startup on its own.
     if let Some(mode) = task_mode() {
-        logcheck::harness_begin(mode, &tunables::status_line());
+        harness::logcheck::harness_begin(mode, &tunables::status_line());
     }
     if cli::run_headless(&args) {
         // A headless task that returns rather than exiting still owes its `[fd-exit]` line.
@@ -510,8 +493,8 @@ fn main() -> eframe::Result<()> {
 /// only way to be sure none was missed.
 pub(crate) fn exit(code: i32) -> ! {
     // A task logs its exit code and holds its own log to `validation/logcheck-rules.toml`; a rule
-    // it broke turns a 0 into a 1 (`logcheck::at_exit`).
-    let code = logcheck::at_exit(code);
+    // it broke turns a 0 into a 1 (`harness::logcheck::at_exit`).
+    let code = harness::logcheck::at_exit(code);
     diag::end_session();
     std::process::exit(code)
 }
@@ -6101,7 +6084,7 @@ struct FractadyneApp {
     allow_tiled_settle: bool,
     /// Per-render setup timings (reference / series-skip), recorded by
     /// `current_export_request_for` via a `Cell` and read by the profiler.
-    prof: std::cell::Cell<profile::ProfSetup>,
+    prof: std::cell::Cell<harness::profile::ProfSetup>,
     /// Frame-rate cap (FPS); `None` = uncapped.
     fps_cap: Option<f64>,
     /// Export dialog + in-flight background export state.
@@ -6529,14 +6512,14 @@ impl FractadyneApp {
         // takes the default; PRESENT but unreadable is an error, never a silent default.
         let audit_count = |flag: &str| {
             args.iter().position(|a| a == flag).map(|i| match args.get(i + 1).filter(|s| !s.starts_with('-')) {
-                None => crate::glitchaudit::DEFAULT_SAMPLES,
+                None => crate::harness::glitchaudit::DEFAULT_SAMPLES,
                 Some(s) => crate::arg_parse::<usize>(flag, s, "a whole number of pixels").max(1),
             })
         };
         let audits = [
-            (audit_count("--glitch-audit"), crate::glitchaudit::AuditKind::Correction),
-            (audit_count("--tail-audit"), crate::glitchaudit::AuditKind::Tail),
-            (audit_count("--renorm-audit"), crate::glitchaudit::AuditKind::Renorm),
+            (audit_count("--glitch-audit"), crate::harness::glitchaudit::AuditKind::Correction),
+            (audit_count("--tail-audit"), crate::harness::glitchaudit::AuditKind::Tail),
+            (audit_count("--renorm-audit"), crate::harness::glitchaudit::AuditKind::Renorm),
         ];
         let chosen: Vec<_> = audits.iter().filter_map(|(n, k)| n.map(|n| (n, *k))).collect();
         if chosen.len() > 1 {
@@ -6545,7 +6528,7 @@ impl FractadyneApp {
         }
         let (glitch_audit, audit_kind) = match chosen.first() {
             Some(&(n, k)) => (Some(n), k),
-            None => (None, crate::glitchaudit::AuditKind::Correction),
+            None => (None, crate::harness::glitchaudit::AuditKind::Correction),
         };
         let auto_render = args.iter().any(|a| a == "--render") || render_iter_mode || glitch_audit.is_some();
         let selftest = args.iter().any(|a| a == "--selftest" || a == "--selftest-list");
@@ -6713,7 +6696,7 @@ impl FractadyneApp {
             let budget = val("--shot-timeout")
                 .map(|s| arg_parse::<u64>("--shot-timeout", s, "seconds"))
                 .unwrap_or(180);
-            let mut s = shot::Shot::new(loc, out, (w, h), budget);
+            let mut s = harness::shot::Shot::new(loc, out, (w, h), budget);
             s.svg = val("--svg").map(std::path::PathBuf::from);
             s.image = val("--image").map(std::path::PathBuf::from);
             Some(s)
@@ -6722,7 +6705,7 @@ impl FractadyneApp {
         };
         let uitest = if args.iter().any(|a| a == "--uitest") {
             let out = val("--uitest").filter(|s| !s.starts_with('-')).map(std::path::PathBuf::from);
-            Some(uitest::UiTest::new(out))
+            Some(harness::uitest::UiTest::new(out))
         } else {
             None
         };
@@ -6734,7 +6717,7 @@ impl FractadyneApp {
             // than jumping to a depth: NaN is that sentinel.
             // `--soak-location FILE` = soak a view file's view (W9's rungs open the field crash view
             // this way on any machine); it and a depth cannot both say where.
-            let location = val("--soak-location").map(|p| crate::selftest::anchored(&p));
+            let location = val("--soak-location").map(|p| crate::harness::selftest::anchored(&p));
             if location.is_some() && val("--soak-depth").is_some() {
                 eprintln!("fractadyne: --soak-location and --soak-depth both set where to soak; give one");
                 crate::exit(2);
@@ -6745,7 +6728,7 @@ impl FractadyneApp {
                 None if location.is_some() => f64::NAN,
                 None => 30.0,
             };
-            Some(soak::Soak::new(secs, decades, location))
+            Some(harness::soak::Soak::new(secs, decades, location))
         } else {
             None
         };
@@ -6755,10 +6738,10 @@ impl FractadyneApp {
             let frames = val("--recordtest")
                 .filter(|s| !s.starts_with('-'))
                 .map(|s| arg_parse::<u64>("--recordtest", &s, "frames"))
-                .unwrap_or(recordtest::DEFAULT_FRAMES);
+                .unwrap_or(harness::recordtest::DEFAULT_FRAMES);
             let abort_after = val("--recordtest-abort-after")
                 .map(|s| arg_parse::<u64>("--recordtest-abort-after", &s, "frames"));
-            Some(recordtest::RecordTest::new(frames, abort_after))
+            Some(harness::recordtest::RecordTest::new(frames, abort_after))
         } else {
             None
         };
@@ -6793,7 +6776,7 @@ impl FractadyneApp {
         // partial chunk progression is never adopted as the frozen texture during motion, and that
         // complete refreshes keep streaming. Self-contained: it jumps its own deep view.
         let motiontest = if args.iter().any(|a| a == "--motiontest") {
-            Some(motiontest::MotionTest::new())
+            Some(harness::motiontest::MotionTest::new())
         } else {
             None
         };
@@ -6816,13 +6799,13 @@ impl FractadyneApp {
             let hold_s = num("--zoomtest-hold", "a number of seconds", 0.0);
             let rate = num("--zoomtest-rate", "a zoom rate (0.25..4)", 1.0) as f32;
             let location = match val("--zoomtest-location").map(String::as_str) {
-                None => zoomtest::StartView::Corpus,
-                Some("session") => zoomtest::StartView::Session,
-                Some(p) => zoomtest::StartView::File(std::path::PathBuf::from(p)),
+                None => harness::zoomtest::StartView::Corpus,
+                Some("session") => harness::zoomtest::StartView::Session,
+                Some(p) => harness::zoomtest::StartView::File(std::path::PathBuf::from(p)),
             };
             let start_log2 = val("--zoomtest-start-log2").map(|_| num("--zoomtest-start-log2", "a log2 magnification", 0.0));
             let taps = val("--zoomtest-taps").map(|s| {
-                zoomtest::parse_taps(s).unwrap_or_else(|| {
+                harness::zoomtest::parse_taps(s).unwrap_or_else(|| {
                     eprintln!("fractadyne: --zoomtest-taps: expected N,OCTAVES,PAUSE_S (e.g. 30,0.25,1.0), got \"{s}\"");
                     crate::exit(2)
                 })
@@ -6831,13 +6814,13 @@ impl FractadyneApp {
             // W8: `--zoomtest-gate [smooth|appetite]` holds the glide to a P-G matrix row's criteria.
             let gate = args.iter().any(|a| a == "--zoomtest-gate").then(|| {
                 let v = val("--zoomtest-gate").filter(|s| !s.starts_with('-')).map(String::as_str);
-                zoomtest::parse_zoom_gate(v).unwrap_or_else(|| {
+                harness::zoomtest::parse_zoom_gate(v).unwrap_or_else(|| {
                     eprintln!("fractadyne: --zoomtest-gate: expected smooth or appetite, got \"{}\"", v.unwrap_or(""));
                     crate::exit(2)
                 })
             });
             Some(
-                zoomtest::ZoomTest::new(octaves, rate, location, start_log2, taps, hold_s)
+                harness::zoomtest::ZoomTest::new(octaves, rate, location, start_log2, taps, hold_s)
                     .with_then(then_log2)
                     .with_gate(gate),
             )
@@ -6847,19 +6830,19 @@ impl FractadyneApp {
         let juliadive = if args.iter().any(|a| a == "--juliadive") {
             let out =
                 val("--juliadive").filter(|s| !s.starts_with('-')).map(std::path::PathBuf::from);
-            Some(uitest::JuliaDive::new(out))
+            Some(harness::uitest::JuliaDive::new(out))
         } else {
             None
         };
         let dualsettle = if args.iter().any(|a| a == "--dualsettle") {
             let out =
                 val("--dualsettle").filter(|s| !s.starts_with('-')).map(std::path::PathBuf::from);
-            Some(uitest::DualSettle::new(out))
+            Some(harness::uitest::DualSettle::new(out))
         } else {
             None
         };
-        let chunk_sweep = chunksweep::ChunkSweep::from_args(args);
-        let deviceloss_repro = deviceloss_repro::DeviceLossRepro::from_args(args);
+        let chunk_sweep = harness::chunksweep::ChunkSweep::from_args(args);
+        let deviceloss_repro = harness::deviceloss_repro::DeviceLossRepro::from_args(args);
         let play_tour = val("--play").map(std::path::PathBuf::from);
         // Was the app launched to DO something specific, rather than to be explored? If so, no
         // first-run onboarding: a modal is either something nobody will ever click (a headless
@@ -7305,7 +7288,7 @@ impl FractadyneApp {
             report: ReportState::default(),
             feature_solve: None,
             allow_tiled_settle: false,
-            prof: std::cell::Cell::new(profile::ProfSetup::default()),
+            prof: std::cell::Cell::new(harness::profile::ProfSetup::default()),
             fps_cap: (s.fps_cap > 0.0).then_some(s.fps_cap), // 0 = uncapped
             export: ExportState {
                 open: false,

@@ -2349,7 +2349,7 @@ impl ReplayReport {
 /// Recompute every recorded decision and compare it with the one recorded, field by field.
 pub(crate) fn replay_lines(text: &str) -> ReplayReport {
     let mut rep = ReplayReport::default();
-    let mut regime = crate::soak::RegimeAcc::default();
+    let mut regime = crate::harness::soak::RegimeAcc::default();
     for (n, line) in text.lines().enumerate() {
         if line.trim().is_empty() {
             continue;

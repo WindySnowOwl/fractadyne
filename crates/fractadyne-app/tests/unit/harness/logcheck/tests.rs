@@ -290,7 +290,7 @@ fn bounds_print_as_the_file_writes_them() {
 #[test]
 fn every_report_only_harness_is_a_task_mode() {
     // W8: a name here that is not a harness's would silently tag nothing.
-    for m in crate::logcheck::REPORT_ONLY {
+    for m in crate::harness::logcheck::REPORT_ONLY {
         assert!(crate::task_mode_names().any(|n| n == *m), "{m} is not a task mode");
     }
 }

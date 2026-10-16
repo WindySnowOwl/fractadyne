@@ -450,5 +450,5 @@ impl crate::FractadyneApp {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/glitchaudit/tests.rs"]
+#[path = "../../tests/unit/harness/glitchaudit/tests.rs"]
 mod tests;
