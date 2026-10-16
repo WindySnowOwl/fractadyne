@@ -833,6 +833,7 @@ fn read_back(device: &wgpu::Device, buffer: &wgpu::Buffer, len: u64) -> Result<V
 }
 
 /// Device checks (the self-test's `life` rows).
+#[path = "harness/life/check.rs"]
 pub mod check;
 
 #[cfg(test)]

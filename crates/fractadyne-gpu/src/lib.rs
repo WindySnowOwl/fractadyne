@@ -18,6 +18,7 @@ pub use export::*;
 /// The live renderer on a second device (design/multi-gpu-live.md L3).
 mod twin;
 pub use twin::*;
+#[path = "harness/timing.rs"]
 pub mod timing;
 /// Custom formulas: WGSL generated from the formula IR and spliced into the fixed shader.
 pub mod custom;
