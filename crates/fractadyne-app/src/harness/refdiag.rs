@@ -53,5 +53,5 @@ pub(crate) fn run(args: &[String]) -> bool {
     ], [vp.complex_span_fe().0, vp.complex_span_fe().1], 0, false, [0.0,0.0], max_iter, p);
     let (_bo, blen) = fc::reference_orbit(&zero, &zero, &best[0], &best[1], 0, max_iter, p);
     println!("  best_reference orbit length = {blen}  (if << max_iter, pixels rebase past it)");
-    return true;
+    true
 }

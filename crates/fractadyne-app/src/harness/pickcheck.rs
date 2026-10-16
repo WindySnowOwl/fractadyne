@@ -182,5 +182,5 @@ pub(crate) fn run(args: &[String]) -> bool {
     } else if skipped > 0 || matched == 0 {
         crate::exit(2);
     }
-    return true;
+    true
 }

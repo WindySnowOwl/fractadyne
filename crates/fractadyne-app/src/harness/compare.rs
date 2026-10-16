@@ -75,5 +75,5 @@ pub(crate) fn run(args: &[String], i: usize) -> bool {
             return true;
         }
     }
-    return true;
+    true
 }
