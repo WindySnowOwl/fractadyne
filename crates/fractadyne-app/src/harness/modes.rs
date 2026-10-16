@@ -1,8 +1,10 @@
-//! The harness modes the command line turns on: their state (parsed in `FractadyneApp::new_state`),
-//! the per-frame hooks `update()` runs for the in-loop harnesses, and the branches of the mode
-//! ladder that run a suite and exit. Moved from `cli.rs`.
+//! The harness modes the command line turns on: their state and the windowed harnesses' flag
+//! parsing ([`Windowed::from_args`], moved from `FractadyneApp::new_state`), the per-frame hooks
+//! `update()` runs for the in-loop harnesses, and the branches of the mode ladder that run a suite
+//! and exit (moved from `cli.rs`).
 
 use super::profile;
+use crate::{arg_parse, arg_size};
 
 /// `--selftest` mode state, parsed from the EXPANDED argv (see `selftest_filter`'s
 /// old note: raw `std::env::args()` would bypass `@response-file` expansion).
@@ -317,5 +319,199 @@ impl crate::FractadyneApp {
                 crate::exit(0);
             }
         }
+    }
+}
+
+/// The windowed harnesses the command line turns on, parsed in one place; `FractadyneApp::new_state`
+/// destructures it into the [`HarnessModes`] fields of the same names. Moved from `new_state`.
+pub(crate) struct Windowed {
+    pub(crate) shot: Option<super::shot::Shot>,
+    pub(crate) uitest: Option<super::uitest::UiTest>,
+    pub(crate) soak: Option<super::soak::Soak>,
+    pub(crate) recordtest: Option<super::recordtest::RecordTest>,
+    pub(crate) autodive: Option<super::autodive::AutoDive>,
+    pub(crate) motiontest: Option<super::motiontest::MotionTest>,
+    pub(crate) zoomtest: Option<super::zoomtest::ZoomTest>,
+    pub(crate) juliadive: Option<super::uitest::JuliaDive>,
+    pub(crate) dualsettle: Option<super::uitest::DualSettle>,
+    pub(crate) chunk_sweep: Option<super::chunksweep::ChunkSweep>,
+    pub(crate) deviceloss_repro: Option<super::deviceloss_repro::DeviceLossRepro>,
+}
+
+impl Windowed {
+    /// Each windowed harness's flags, or `None` when it was not asked for. A malformed value
+    /// exits 2 here, as it did in `new_state`.
+    pub(crate) fn from_args(args: &[String]) -> Windowed {
+        let val = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
+        let shot = if args.iter().any(|a| a == "--shot") {
+            let loc = match val("--shot").filter(|s| !s.starts_with('-')) {
+                Some(s) => std::path::PathBuf::from(s),
+                None => {
+                    eprintln!("fractadyne: --shot needs a location file (.fdn or an exported view).");
+                    crate::exit(2)
+                }
+            };
+            let out = val("--out")
+                .or_else(|| val("-o"))
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from("shot.png"));
+            let (w, h) = match val("--size") {
+                Some(s) => {
+                    let (w, h) = arg_size("--size", s);
+                    (w.unwrap_or(1920) as f32, h.unwrap_or(1200) as f32)
+                }
+                None => (1920.0, 1200.0),
+            };
+            let budget = val("--shot-timeout")
+                .map(|s| arg_parse::<u64>("--shot-timeout", s, "seconds"))
+                .unwrap_or(180);
+            let mut s = super::shot::Shot::new(loc, out, (w, h), budget);
+            s.svg = val("--svg").map(std::path::PathBuf::from);
+            s.image = val("--image").map(std::path::PathBuf::from);
+            Some(s)
+        } else {
+            None
+        };
+        let uitest = if args.iter().any(|a| a == "--uitest") {
+            let out = val("--uitest").filter(|s| !s.starts_with('-')).map(std::path::PathBuf::from);
+            Some(super::uitest::UiTest::new(out))
+        } else {
+            None
+        };
+        let soak = if args.iter().any(|a| a == "--soak") {
+            let secs = val("--soak")
+                .map(|s| arg_parse::<f64>("--soak", &s, "seconds"))
+                .unwrap_or(300.0);
+            // `session` = soak the view the session opened at (a staged crash view, say) rather
+            // than jumping to a depth: NaN is that sentinel.
+            // `--soak-location FILE` = soak a view file's view (W9's rungs open the field crash view
+            // this way on any machine); it and a depth cannot both say where.
+            let location = val("--soak-location").map(|p| crate::harness::selftest::anchored(&p));
+            if location.is_some() && val("--soak-depth").is_some() {
+                eprintln!("fractadyne: --soak-location and --soak-depth both set where to soak; give one");
+                crate::exit(2);
+            }
+            let decades = match val("--soak-depth") {
+                Some(s) if s == "session" => f64::NAN,
+                Some(s) => arg_parse::<f64>("--soak-depth", &s, "decades of magnification, or 'session'"),
+                None if location.is_some() => f64::NAN,
+                None => 30.0,
+            };
+            Some(super::soak::Soak::new(secs, decades, location))
+        } else {
+            None
+        };
+        // --recordtest [FRAMES]: the frame record's own gate. An unreadable FRAMES is fatal, never
+        // a silent default (the `.parse().ok()` lesson).
+        let recordtest = if args.iter().any(|a| a == "--recordtest") {
+            let frames = val("--recordtest")
+                .filter(|s| !s.starts_with('-'))
+                .map(|s| arg_parse::<u64>("--recordtest", &s, "frames"))
+                .unwrap_or(super::recordtest::DEFAULT_FRAMES);
+            let abort_after = val("--recordtest-abort-after")
+                .map(|s| arg_parse::<u64>("--recordtest-abort-after", &s, "frames"));
+            Some(super::recordtest::RecordTest::new(frames, abort_after))
+        } else {
+            None
+        };
+        let autodive = if args.iter().any(|a| a == "--autodive") {
+            let target = val("--autodive")
+                .and_then(|v| v.parse::<f64>().ok())
+                .filter(|v| v.is_finite() && *v > 1.0)
+                .unwrap_or(320.0);
+            let secs = val("--autodive-timeout")
+                .and_then(|v| v.parse::<f64>().ok())
+                .filter(|v| v.is_finite() && *v > 0.0)
+                .unwrap_or(900.0);
+            // Default 250_000 = the field crash manifest's explicit count. `--autodive-iter 0`
+            // selects auto-iter instead, which is kept only so the two can be COMPARED: it is what
+            // the first version forced, and it could not reach the regime.
+            let iter = match val("--autodive-iter").and_then(|v| v.parse::<u32>().ok()) {
+                Some(0) => None,
+                Some(n) => Some(n),
+                None => Some(250_000),
+            };
+            // Default 1 Home cycle: the zoom-home glide is the part that stresses the controller
+            // (and the button that lost the device on 2026-08-18). `--autodive-home 0` dives only.
+            let homes = val("--autodive-home")
+                .and_then(|v| v.parse::<u32>().ok())
+                .unwrap_or(1)
+                .min(20);
+            Some(super::autodive::AutoDive::new(target, secs, iter, homes))
+        } else {
+            None
+        };
+        // --motiontest: the motion-presentation gate (design/mode2-chunking.md §11) — asserts a
+        // partial chunk progression is never adopted as the frozen texture during motion, and that
+        // complete refreshes keep streaming. Self-contained: it jumps its own deep view.
+        let motiontest = if args.iter().any(|a| a == "--motiontest") {
+            Some(super::motiontest::MotionTest::new())
+        } else {
+            None
+        };
+        // --zoomtest [OCTAVES]: on-screen update-latency harness for live zooms — holds a virtual
+        // Space key through the production glide and records every presented frame's interval.
+        let zoomtest = if args.iter().any(|a| a == "--zoomtest") {
+            let num = |flag: &str, what: &str, default: f64| -> f64 {
+                match val(flag).filter(|s| !s.starts_with('-')) {
+                    None => default,
+                    Some(s) => s.parse::<f64>().unwrap_or_else(|_| {
+                        eprintln!("fractadyne: {flag}: expected {what}, got \"{s}\"");
+                        crate::exit(2)
+                    }),
+                }
+            };
+            // None = not given: 40, or with a `session` start, the distance to the session's depth.
+            let octaves = val("--zoomtest")
+                .filter(|s| !s.starts_with('-'))
+                .map(|_| num("--zoomtest", "a number of octaves", 40.0));
+            let hold_s = num("--zoomtest-hold", "a number of seconds", 0.0);
+            let rate = num("--zoomtest-rate", "a zoom rate (0.25..4)", 1.0) as f32;
+            let location = match val("--zoomtest-location").map(String::as_str) {
+                None => super::zoomtest::StartView::Corpus,
+                Some("session") => super::zoomtest::StartView::Session,
+                Some(p) => super::zoomtest::StartView::File(std::path::PathBuf::from(p)),
+            };
+            let start_log2 = val("--zoomtest-start-log2").map(|_| num("--zoomtest-start-log2", "a log2 magnification", 0.0));
+            let taps = val("--zoomtest-taps").map(|s| {
+                super::zoomtest::parse_taps(s).unwrap_or_else(|| {
+                    eprintln!("fractadyne: --zoomtest-taps: expected N,OCTAVES,PAUSE_S (e.g. 30,0.25,1.0), got \"{s}\"");
+                    crate::exit(2)
+                })
+            });
+            let then_log2 = val("--zoomtest-then-log2").map(|_| num("--zoomtest-then-log2", "a log2 magnification", 0.0));
+            // W8: `--zoomtest-gate [smooth|appetite]` holds the glide to a P-G matrix row's criteria.
+            let gate = args.iter().any(|a| a == "--zoomtest-gate").then(|| {
+                let v = val("--zoomtest-gate").filter(|s| !s.starts_with('-')).map(String::as_str);
+                super::zoomtest::parse_zoom_gate(v).unwrap_or_else(|| {
+                    eprintln!("fractadyne: --zoomtest-gate: expected smooth or appetite, got \"{}\"", v.unwrap_or(""));
+                    crate::exit(2)
+                })
+            });
+            Some(
+                super::zoomtest::ZoomTest::new(octaves, rate, location, start_log2, taps, hold_s)
+                    .with_then(then_log2)
+                    .with_gate(gate),
+            )
+        } else {
+            None
+        };
+        let juliadive = if args.iter().any(|a| a == "--juliadive") {
+            let out =
+                val("--juliadive").filter(|s| !s.starts_with('-')).map(std::path::PathBuf::from);
+            Some(super::uitest::JuliaDive::new(out))
+        } else {
+            None
+        };
+        let dualsettle = if args.iter().any(|a| a == "--dualsettle") {
+            let out =
+                val("--dualsettle").filter(|s| !s.starts_with('-')).map(std::path::PathBuf::from);
+            Some(super::uitest::DualSettle::new(out))
+        } else {
+            None
+        };
+        let chunk_sweep = super::chunksweep::ChunkSweep::from_args(args);
+        let deviceloss_repro = super::deviceloss_repro::DeviceLossRepro::from_args(args);
+        Windowed { shot, uitest, soak, recordtest, autodive, motiontest, zoomtest, juliadive, dualsettle, chunk_sweep, deviceloss_repro }
     }
 }
