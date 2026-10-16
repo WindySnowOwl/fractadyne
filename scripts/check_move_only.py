@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""check_move_only.py [RANGE] [--each] [--rewrite OLD=NEW ...] [--selfcheck] - prove a commit only
+"""check_move_only.py [RANGE] [--each] [--rewrite OLD NEW ...] [--selfcheck] - prove a commit only
 MOVES code: every line it removes comes back, in order, where it adds, and nothing else changes
 (design/test-code-separation.md, section 5).
 
     python scripts/check_move_only.py                      # the last commit (HEAD~1..HEAD)
     python scripts/check_move_only.py main..HEAD --each    # every commit in the range, one by one
-    python scripts/check_move_only.py --rewrite crate::selftest::=crate::harness::selftest::
+    python scripts/check_move_only.py --rewrite crate::selftest:: crate::harness::selftest::
     python scripts/check_move_only.py --selfcheck          # prove it goes red on an edit hidden in a move
 
 How: the diff is read with rename detection OFF, so a moved file is a whole-file removal plus a
@@ -18,8 +18,8 @@ dropping the lines a move legitimately adds or removes: blank lines, `#[cfg(test
 - each run of consecutive removed lines must appear, in order, inside one run of added lines, so a
   move cannot reorder code inside a block or splice a line into it.
 
-`--rewrite OLD=NEW` substitutes on the removed side first, for a mechanical change that comes with
-the move (a module path). Binary files must move byte-identical. A move commit carries nothing
+`--rewrite OLD NEW` (two arguments: either may contain `=`) substitutes on the removed side first,
+in the order given, for a mechanical change that comes with the move (a module path). Binary files must move byte-identical. A move commit carries nothing
 else: a content change, however small, goes in a commit of its own.
 
 Exit 0 a pure move, 1 not (with the lines that break it). Standard library only.
@@ -139,6 +139,8 @@ def selfcheck():
         ('rewrite without --rewrite', {'src/a.rs': decl, 'tests/unit/a/tests.rs': body.replace('use super::*;', 'use crate::moved::*;')}, (), False),
         ('rewrite with --rewrite', {'src/a.rs': decl, 'tests/unit/a/tests.rs': body.replace('use super::*;', 'use crate::moved::*;')},
          (('use super::*;', 'use crate::moved::*;'),), True),
+        ('a rewrite whose text holds "="', {'src/a.rs': decl, 'tests/unit/a/tests.rs': body.replace('let x = f();', 'let x = crate::moved::f();')},
+         (('let x = f();', 'let x = crate::moved::f();'),), True),
     ]
     failures = 0
     for name, files, rewrites, want_pure in cases:
@@ -171,9 +173,11 @@ def main(argv):
     rewrites, rng, each, i = [], 'HEAD~1..HEAD', False, 0
     while i < len(argv):
         if argv[i] == '--rewrite':
-            old, _, new = argv[i + 1].partition('=')
-            rewrites.append((old, new))
-            i += 2
+            if i + 2 >= len(argv) or not argv[i + 1]:
+                print('check_move_only: --rewrite takes two arguments, OLD (not empty) and NEW')
+                return 2
+            rewrites.append((argv[i + 1], argv[i + 2]))
+            i += 3
             continue
         if argv[i] == '--each':
             each = True

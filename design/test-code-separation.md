@@ -163,7 +163,7 @@ moved file is a whole-file removal plus a whole-file addition. It passes only if
   reordered or spliced;
 - binary files move byte-identical.
 
-`--rewrite OLD=NEW` declares a mechanical substitution that comes with a move (a module path).
+`--rewrite OLD NEW` declares a mechanical substitution that comes with a move (a module path).
 `--selfcheck` proves that an edit, a reorder, an added line and a dropped line hidden in a move
 all fail. This makes "pure move" something checked, not claimed.
 
