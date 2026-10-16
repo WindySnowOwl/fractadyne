@@ -9,6 +9,13 @@ use crate::floatexp::*;
 use crate::formula;
 use astro_float::BigFloat;
 
+/// The independent bignum dwell oracles the harnesses judge a render by. Harness code, filed under
+/// `src/harness/`, attached here for this module's private arithmetic and re-exported, so every
+/// caller names it as before.
+#[path = "harness/reference/oracle.rs"]
+mod oracle;
+pub use oracle::*;
+
 /// Bignum reference steps this process has taken: every reference-orbit build and every
 /// candidate-length walk adds [`REFERENCE_STEP_BATCH`] per that many steps. A deep build is one
 /// blocking call that finishes no tile for minutes, so this is its only sign of life: a headless
@@ -3507,64 +3514,6 @@ pub fn add_f64(a: &BigFloat, b: f64, p: usize) -> BigFloat {
 /// (a pixel offset at 1e1105× is ~1e-1108, which an `f64` flushes to zero).
 pub fn add_floatexp(a: &BigFloat, b: crate::FloatExp, p: usize) -> BigFloat {
     a.add(&b.to_bf(p), p, RM)
-}
-
-/// Naïve **arbitrary-precision** Mandelbrot dwell — an independent oracle (no perturbation,
-/// no reference orbit) valid at *any* depth, since the center is bignum. Iterates `z → z² + c`
-/// entirely in `astro_float`. Returns `Some((n, smooth))` on escape — `n` is the first
-/// iteration with `|zₙ|² > bailout2`, `smooth = n + 1 − log₂(½·ln|z|²/ln2)` — or `None` for
-/// interior (reached `max`). `bailout2` must match the renderer's (256² = 65536) for `n` to
-/// agree exactly.
-pub fn naive_dwell_bf(
-    cx: &BigFloat,
-    cy: &BigFloat,
-    max: u32,
-    bailout2: f64,
-    p: usize,
-) -> Option<(u32, f32)> {
-    let mut zx = bf(0.0, p);
-    let mut zy = bf(0.0, p);
-    for iter in 1..=max {
-        let x2 = zx.mul(&zx, p, RM);
-        let y2 = zy.mul(&zy, p, RM);
-        // zy = 2·zx·zy + cy ; zx = x² − y² + cx
-        let nzy = zx.mul(&zy, p, RM).mul(&bf(2.0, p), p, RM).add(cy, p, RM);
-        zx = x2.sub(&y2, p, RM).add(cx, p, RM);
-        zy = nzy;
-        let m2 = to_f64(&zx) * to_f64(&zx) + to_f64(&zy) * to_f64(&zy);
-        if m2 > bailout2 {
-            let nu = (m2.ln() * 0.5 / std::f64::consts::LN_2).ln() / std::f64::consts::LN_2;
-            return Some((iter, iter as f32 + 1.0 - nu as f32));
-        }
-    }
-    None
-}
-
-/// [`naive_dwell_bf`] for every formula the reference builder iterates (Mandelbrot mode:
-/// `Z₀ = 0`, `c` = the point). It is the point's OWN orbit in arbitrary precision
-/// ([`reference_orbit`]), scanned for the first sample past `bailout2` — no perturbation, no
-/// rebasing, no BLA, so it can judge a perturbation render of any family. The smooth count takes
-/// the formula's degree as its log base, as the shader's `power_f` does ([`formula::power`]).
-pub fn formula_dwell(
-    cx: &BigFloat,
-    cy: &BigFloat,
-    formula: u32,
-    max: u32,
-    bailout2: f64,
-    p: usize,
-) -> Option<(u32, f32)> {
-    let zero = bf(0.0, p);
-    let (orbit, len) = reference_orbit(&zero, &zero, cx, cy, formula, max, p);
-    let power = f64::from(formula::power(formula));
-    for (n, s) in orbit.iter().enumerate().take(len as usize).skip(1) {
-        let (x, y) = sample_xy(s);
-        let m2 = x * x + y * y;
-        if m2 > bailout2 {
-            let nu = (m2.ln() * 0.5 / std::f64::consts::LN_2).ln() / power.ln();
-            return Some((n as u32, n as f32 + 1.0 - nu as f32));
-        }
-    }
-    None
 }
 
 // ---------------- period / minibrot-nucleus finder --------------------------------
