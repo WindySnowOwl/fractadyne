@@ -6714,12 +6714,20 @@ impl FractadyneApp {
                 .unwrap_or(300.0);
             // `session` = soak the view the session opened at (a staged crash view, say) rather
             // than jumping to a depth: NaN is that sentinel.
+            // `--soak-location FILE` = soak a view file's view (W9's rungs open the field crash view
+            // this way on any machine); it and a depth cannot both say where.
+            let location = val("--soak-location").map(|p| crate::selftest::anchored(&p));
+            if location.is_some() && val("--soak-depth").is_some() {
+                eprintln!("fractadyne: --soak-location and --soak-depth both set where to soak; give one");
+                crate::exit(2);
+            }
             let decades = match val("--soak-depth") {
                 Some(s) if s == "session" => f64::NAN,
                 Some(s) => arg_parse::<f64>("--soak-depth", &s, "decades of magnification, or 'session'"),
+                None if location.is_some() => f64::NAN,
                 None => 30.0,
             };
-            Some(soak::Soak::new(secs, decades))
+            Some(soak::Soak::new(secs, decades, location))
         } else {
             None
         };

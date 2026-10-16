@@ -356,7 +356,7 @@ declared but cannot gate yet.
 | 145 | R | `run:--livetest tours/grand-tour.toml`: the live view against an offline render at the ask and, where it is black, at 4× the ask (W8): exit 0 = no drift from the blessed baseline. A STARVED checkpoint (the bigger budget resolves black the app does not explain) fails it. |
 | 146–147 | R | `run:--selftest-filter deep-location` and `run:--selftest-filter fe-df32-probe`: the self-test's two OPT-IN groups, which a full `--selftest` never runs (they cost minutes). Without these rows nothing ever required them to run. |
 | 148 | planned | The `--zoomtest-gate` P-G matrix (design/live-zoom-smoothing.md). The gate exists (W8 rung 1), but the held-picture bound fails on every Smooth row, on beta.19 too. That is open sizing work, and a row that can never go green teaches people to skip it. |
-| 149 | planned | The torture ladder's increment 2: the no-BLA regime that actually loses the RX 6800 XT. The ladder has no such rung (`torture.rs`). |
+| 149 | planned | The torture ladder's increment 2: the no-BLA regime that actually loses the RX 6800 XT. The rung exists (`live/regime/*`, W9) but is not yet a gate: it has not run on the RX 6800 XT three times running (`torture.rs`). |
 
 (The design's third `planned:` item, TODO T-6's job watcher, shipped as `scripts/field-agent.ps1` and
 `scripts/field-request.ps1`. That is infrastructure, not a release check, so it has no row.)

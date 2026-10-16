@@ -245,7 +245,7 @@ INVENTORY = [
 PLANNED = [
     ("zoomtest-gate", "the P-G matrix: RED on every Smooth row on beta.19 too, and its fixture "
                       "misi-49-3.fdn is not in the tree"),
-    ("torture increment 2", "the ladder has no such rung"),
+    ("torture increment 2", "the rung exists (live/regime, W9) but is not yet a gate: not run on the RX 6800 XT three times running"),
 ]
 
 

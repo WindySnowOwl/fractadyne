@@ -50,6 +50,10 @@ impl Lane {
 pub(crate) enum Cmd {
     /// Re-invoke this same binary with these arguments.
     SelfExe(&'static [&'static str]),
+    /// Re-invoke this binary with a regime instrument armed in its environment (W9, design §6.7):
+    /// `FRACTADYNE_REF_ESCAPE_AT` and its kin are read once at startup, from the environment only,
+    /// so a rung that needs one cannot be written as arguments.
+    Instrumented(&'static [(&'static str, &'static str)], &'static [&'static str]),
     /// Run another program (program, args).
     External(&'static str, &'static [&'static str]),
 }
@@ -58,6 +62,10 @@ impl Cmd {
     fn display(&self) -> String {
         match self {
             Cmd::SelfExe(a) => format!("fractadyne {}", a.join(" ")),
+            Cmd::Instrumented(env, a) => {
+                let env: Vec<String> = env.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                format!("{} fractadyne {}", env.join(" "), a.join(" "))
+            }
             Cmd::External(p, a) => format!("{p} {}", a.join(" ")),
         }
     }
@@ -214,11 +222,11 @@ const MIN: u64 = 60;
 
 /// ⭐THE LADDER. Ordered within each lane from easiest to hardest.
 ///
-/// This first increment deliberately composes rungs ONLY from flags that already exist, so the
-/// supervisor can be landed and trusted before any engine surface changes. The regimes nothing can
-/// currently reach — above all a forced short-escaped reference (`bla_skip=0`), which is what lost
-/// the device on the RX 6800 XT on 2026-08-15 — are increment 2 in the design doc and are absent
-/// here ON PURPOSE. A green run of this ladder does NOT mean that regime is covered.
+/// The first increment deliberately composed rungs ONLY from flags that already existed, so the
+/// supervisor could be landed and trusted before any engine surface changed. Increment 2 (W9) adds
+/// the regimes that lose the device, beginning with a forced short-escaped reference (`bla_skip=0`)
+/// at the 2026-09-21 RX 6800 XT field view (`live/regime/*`). A green run on the RTX 3080 does NOT
+/// mean that regime is covered: it is covered on the card that fails, three runs running.
 pub(crate) const LADDER: &[Rung] = &[
     // ==================== OFFLINE — deterministic, no GPU timing, cheapest ====================
     // Ordered so a broken build fails in seconds rather than after a 40-minute live rung.
@@ -629,6 +637,41 @@ pub(crate) const LADDER: &[Rung] = &[
         requires: &["live/tour/grand-full"],
         needs_disk: 128 * MB,
     },
+    // ==================== W9: the regime that has lost the device ====================
+    // Increment 2 begins. The view, the geometry and the truncation are the 2026-09-21 RX 6800 XT
+    // field session's; the instrument perturbs the reference, never the controller (it skips the
+    // install derate it would otherwise trigger: `instrument_truncated`).
+    Rung {
+        id: "live/regime/escaped-ref-control",
+        lane: Lane::Live,
+        motivation: "The escaped-reference rung's control: the field crash view, the same command, no \
+                     instrument. Scored on the same lines (soak-regime, soak-stall), so a red on the \
+                     armed rung can be told from the view's own cost.",
+        cmd: Cmd::SelfExe(&[
+            "--soak", "120", "--soak-location", "validation/field/radeon-crash-2026-09-21.fdn", "--window", "1676x1360",
+        ]),
+        deadline: Duration::from_secs(5 * MIN),
+        requires: &["live/ui/walk"],
+        needs_disk: 64 * MB,
+    },
+    Rung {
+        id: "live/regime/escaped-ref-shallow",
+        lane: Lane::Live,
+        motivation: "The regime that lost the RX 6800 XT on 2026-09-21 (beta.111): the field crash view \
+                     (1.76e6x, mode 0, auto-iter on) with the live reference truncated to the 655 \
+                     samples it escaped at, so every pixel runs ~7x past it and rebases with BLA off. \
+                     VACUOUS unless the regime is entered; RED on a budget stall (8+ slow frames the \
+                     budget never came down across: the field signature), a stalled frame loop, a leak \
+                     or a crash report. A pass proves the app survives the cost shape, not that the \
+                     picker produces it; never a golden.",
+        cmd: Cmd::Instrumented(
+            &[("FRACTADYNE_REF_ESCAPE_AT", "655")],
+            &["--soak", "120", "--soak-location", "validation/field/radeon-crash-2026-09-21.fdn", "--window", "1676x1360"],
+        ),
+        deadline: Duration::from_secs(5 * MIN),
+        requires: &["live/regime/escaped-ref-control"],
+        needs_disk: 64 * MB,
+    },
 ];
 
 /// Resolve selectors to rungs, preserving ladder order. An empty selector list means everything.
@@ -847,6 +890,12 @@ fn run_rung(exe: &Path, rung: &Rung, out_dir: &Path) -> RunRecord {
         Cmd::SelfExe(a) => {
             let mut c = Command::new(exe);
             c.args(a.iter().map(subst));
+            c
+        }
+        Cmd::Instrumented(env, a) => {
+            let mut c = Command::new(exe);
+            c.args(a.iter().map(subst));
+            c.envs(env.iter().copied());
             c
         }
         Cmd::External(prog, a) => {

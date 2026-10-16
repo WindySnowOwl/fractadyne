@@ -1427,6 +1427,26 @@ fn only_the_share_package_ships_every_cards_golden_set() {
 }
 
 #[test]
+fn the_share_package_ships_the_field_views_the_regime_rungs_soak() {
+    // W9's regime rungs soak `validation/field/*.fdn` (torture.rs, live/regime/*). They run on the
+    // card that fails, through the field agent and the share package, so that package must carry
+    // every view a rung names.
+    let publish = include_str!("../../../scripts/publish-share.ps1");
+    assert!(publish.contains("validation\\field\\*.fdn"), "publish-share.ps1 does not ship validation/field");
+    for r in crate::torture::LADDER {
+        let args: &[&str] = match &r.cmd {
+            crate::torture::Cmd::SelfExe(a) | crate::torture::Cmd::Instrumented(_, a) => a,
+            crate::torture::Cmd::External(..) => continue,
+        };
+        for w in args.windows(2).filter(|w| w[0] == "--soak-location") {
+            assert!(w[1].starts_with("validation/field/") && w[1].ends_with(".fdn"), "{}: {} is not a shipped field view", r.id, w[1]);
+            let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(w[1]);
+            assert!(file.exists(), "{}: {} is not in the tree", r.id, w[1]);
+        }
+    }
+}
+
+#[test]
 fn every_package_ships_the_replay_fixtures() {
     // `--selftest`'s replay group reads `validation/replays/*.jsonl` beside the binary (`anchored`).
     // A package that leaves them out turns three of its checks VACUOUS on every installed copy —

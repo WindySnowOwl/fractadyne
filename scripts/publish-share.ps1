@@ -193,6 +193,10 @@ if (-not $SkipWindows) {
     # (without them it reports VACUOUS: three FAILs from a published package, W6 dev.9 on PLUTO).
     New-Item -ItemType Directory -Force -Path (Join-Path $stage "validation\replays") | Out-Null
     Copy-Item (Join-Path $root "validation\replays\*.jsonl") -Destination (Join-Path $stage "validation\replays")
+    # The field views W9's regime rungs soak (`--soak-location validation\field\...`), so the field
+    # agent can run them on the card that fails.
+    New-Item -ItemType Directory -Force -Path (Join-Path $stage "validation\field") | Out-Null
+    Copy-Item (Join-Path $root "validation\field\*.fdn") -Destination (Join-Path $stage "validation\field")
     New-Item -ItemType Directory -Force -Path (Join-Path $stage "benchmarks") | Out-Null
     # Every card's bench-matrix baseline (the reference card's file and the per-card ones).
     Copy-Item (Join-Path $root "benchmarks\bench-matrix-baseline*.json") -Destination (Join-Path $stage "benchmarks")

@@ -1,0 +1,12 @@
+app=Fractadyne
+notes=RX 6800 XT device loss, beta.111, 2026-09-21: the crash view the app wrote (1.76e6x, mode 0, auto-iter on). The live reference escaped at 655 while auto-iter asked 4,627. W9's rungs soak it with FRACTADYNE_REF_ESCAPE_AT=655.
+fractal=Mandelbrot
+julia=0
+julia_c_re=-7.90924385965502408e-1
+julia_c_im=2.27364941001560711e-1
+center_re=-2.25240826233419888831467612841290233455e-1
+center_im=8.13056118118977733159569954453056386421e-1
+upp_log2=-2.90839364408849477e1
+zoom=1.7576089021848e6
+max_iter=25000
+auto_iter=1
