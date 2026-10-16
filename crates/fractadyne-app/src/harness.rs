@@ -44,6 +44,11 @@
 //! The decision recorder `--replay` reads (`FRACTADYNE_RECORD_DECIDE`, in `render/decide.rs`)
 //! stays with the product: the live path writes it, and a field session is diagnosed with it.
 //!
+//! Two files here stay modules of the functional code they need the private parts of, attached
+//! with `#[path]`: `harness/render/selfcheck.rs` is `crate::render::selfcheck` (the self-test's
+//! and the UI test's ways into the live reference pipeline), and `harness/farm/farmtest.rs` is
+//! `crate::farm::farmtest`.
+//!
 //! **Where the product calls in.** `scripts/check_test_layout.py` holds each functional file to the
 //! number of times it names `harness::` (HARNESS_HOOKS), so a new call into a harness is a decision,
 //! not an accident:

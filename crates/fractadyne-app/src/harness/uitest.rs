@@ -1375,7 +1375,7 @@ impl FractadyneApp {
                     false,
                     crate::render::IterBudget { max_iter: 20_000, auto_iter: false },
                 ) {
-                    crate::render::seed_orbit_cache_for_uitest(inp);
+                    crate::render::selfcheck::seed_orbit_cache_for_uitest(inp);
                 }
                 self.dialogs.orbit_cache_open = true;
             }
