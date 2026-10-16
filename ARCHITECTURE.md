@@ -70,8 +70,10 @@ df32/floatexp primitives against CPU oracles, swept over every backend — the h
 NVIDIA's shader compiler folding the error-free transforms), `uitest.rs` (`--uitest`: the scripted
 UI + live-render walk), `reusetest.rs`, and a `ui/` submodule tree (`central.rs`, `menus.rs`,
 `panels.rs`, `dialogs.rs`, `tour_render.rs`, `diagnostics.rs`) from the intra-crate UI split.
-Unit tests live in sibling files (`#[cfg(test)] mod name;` beside the code under test — see
-`CONTRIBUTING.md` for the layout and item-order conventions).
+Unit tests live under each crate's `tests/unit/`, mirroring `src/` (the tests for
+`src/render/pricing.rs` are in `tests/unit/render/pricing/`), declared from the code they test
+with `#[cfg(test)] #[path = "…"] mod name;` — see `CONTRIBUTING.md` for the layout and
+item-order conventions. Nothing under `src/` is test code.
 
 ---
 

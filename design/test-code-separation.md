@@ -1,6 +1,8 @@
 # Separating test code from functional code
 
-Status: proposal, 2026-10-16. Nothing has moved yet.
+Status (2026-10-16): Phases 0–2 done on `refactor/test-separation` — no test code under any
+`src/`, every test name kept (one declared rename), each move checked pure. Phases 3–5 (the
+harnesses) not started.
 
 ## 1. Goal
 

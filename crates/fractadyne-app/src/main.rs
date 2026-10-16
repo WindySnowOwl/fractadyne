@@ -17011,3 +17011,7 @@ impl eframe::App for FractadyneApp {
 #[cfg(test)]
 #[path = "../tests/unit/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/test_layout.rs"]
+mod test_layout;

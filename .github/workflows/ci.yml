@@ -27,6 +27,9 @@ jobs:
       # Every release-checklist row's claimed enforcer still exists (a test, a selftest check, a
       # flag, a script); a row claiming coverage it lost is worse than one claiming none.
       - run: python3 scripts/checklist_coverage.py
+      # No test code in any crate's src/: every unit test lives under tests/unit/, declared with the
+      # canonical #[path], and no file there is an orphan (design/test-code-separation.md).
+      - run: python3 scripts/check_test_layout.py
       - run: rustup default stable
       # fractadyne-core and fractadyne-state are pure Rust (no GUI/GPU/system deps), so they
       # test cleanly on Linux. Release build keeps the bignum tests fast.
