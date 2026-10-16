@@ -159,6 +159,14 @@ performed because something moved, fix the step — do not skip it.
   use goes in the test file; an `impl` block there reaches the type's private fields.
   Integration tests (public API only) stay in `tests/*.rs`. See
   `design/test-code-separation.md`.
+- Code that ships in the binary but exists only to test, measure, audit or reproduce — a
+  harness mode (`--selftest`, `--uitest`, …), a dev tool, a self-check, an oracle — goes in the
+  crate's `src/harness/`, never in a functional file. A new mode is `crate::harness::<mode>`,
+  declared in `src/harness.rs` with a row in its index. Code that needs a functional module's
+  private items stays that module's child, attached with `#[path]` from
+  `src/harness/<path of the file it attaches to>/<module>.rs`. Functional code calls into the
+  harnesses only at counted hooks (`HARNESS_HOOKS` in `scripts/check_test_layout.py`): a new
+  call means raising that file's count, deliberately.
 - Item order within a file: module doc → imports/`mod` decls → file-scoped consts → the
   file's primary entry (`fn main`, the main API) → types with their `impl`s immediately
   adjacent (never separated) → helpers next to their callers, grouped by topic. Big files
