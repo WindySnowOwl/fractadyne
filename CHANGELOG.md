@@ -68,6 +68,13 @@ Changes after 0.3.0-beta.1:
   restart a pixel's orbit exactly as the slower arithmetic does. Deep renders are pixel-identical
   to the full-precision path again (38 of 38), at the same speed: 4.2e275× at 4K still takes
   0.30 s of GPU time against 0.74 s without the faster arithmetic.
+- **A view that cannot be drawn is put back (0.3.0-beta.20).** Twice in October the view's
+  magnification became "not a number" near 2^16,600 and stayed that way until the user moved
+  elsewhere. Saving the session refused to keep it, 900 to 1,100 times each, but nothing said
+  where it came from. Each frame's view is now checked after every step that can move it. A view
+  that cannot be drawn is replaced by the last one that could, a running autopilot or zoom glide
+  stops, and the log names the step and what the frame knew, so the next occurrence identifies
+  the cause.
 - **A second graphics card no longer muddles the live view's timing (0.3.0-beta.20).** With
   Advanced > Second graphics card on, every motion frame the second card rendered also reported
   itself as a pass of the window's own card. It overwrote the window's record of which passes its

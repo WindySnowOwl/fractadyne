@@ -237,6 +237,9 @@ pub(crate) const INSTRUMENTS: &[&str] = &[
     "FRACTADYNE_BLA_DROP_FRAMES",
     "FRACTADYNE_PASS_CLOCK",
     "FRACTADYNE_SEED_BUDGET",
+    // Frame N's view gets a NaN scale, as three field sessions' did, so `FractadyneApp::view_guard`
+    // and `--logcheck`'s `unusable-view` rule can be seen to fire (W8's meta-gate arm).
+    "FRACTADYNE_POISON_VIEW_AT",
     // A render-farm client sends its first N frames corrupted, so `--farmtest` can prove the
     // controller's verification catches them (`farm::client::CORRUPT_INSTRUMENT`).
     "FRACTADYNE_FARM_CORRUPT_FRAMES",

@@ -166,6 +166,16 @@ ARMS = [
         "expect": r"A2: no complete refresh was adopted during motion",
     },
     {
+        # A NaN scale planted after the autopilot's step at frame 300: the shape of three field
+        # sessions, which reached one with nothing naming the cause. The guard must catch it the
+        # frame it appears and put back the last usable view; logcheck's unusable-view rule fails
+        # the run (the motiontest's own verdict passes, because the view was put back).
+        "gate": "motiontest", "name": "motiontest/unusable-view",
+        "args": ["--motiontest"], "env": {"FRACTADYNE_POISON_VIEW_AT": "300"},
+        "sabotage": None, "why": "FRACTADYNE_POISON_VIEW_AT=300 (the view's scale set to NaN at frame 300)",
+        "expect": r"logcheck: FAIL unusable-view",
+    },
+    {
         # Coarse: the frame record switched off altogether (FRACTADYNE_LOG=0), not a field left
         # unset - the app has no knob for the subtler breakage. It proves the gate reads the record
         # it guards rather than passing on its absence.

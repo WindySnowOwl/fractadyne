@@ -298,6 +298,18 @@ impl Viewport {
         .to_f64()
     }
 
+    /// Whether this view can be rendered at all: a finite, positive scale and a finite centre.
+    /// `FloatExp::norm` passes a non-finite mantissa straight through, so a NaN or infinite factor
+    /// handed to [`zoom_at`](Self::zoom_at) poisons every later step without a word; the app holds
+    /// each frame's view to this and puts back the last view that passed.
+    pub fn is_usable(&self) -> bool {
+        let finite = |b: &BigFloat| !b.is_nan() && !b.is_inf();
+        self.units_per_pixel.m.is_finite()
+            && self.units_per_pixel.m > 0.0
+            && finite(&self.center_x)
+            && finite(&self.center_y)
+    }
+
     pub fn recommended_max_iter(&self, base: u32) -> u32 {
         // The iteration count a given depth genuinely wants (~220 per octave), ADDED to the user's
         // base. This is the *export* / full-quality appetite; the live preview caps it lower (see
@@ -344,6 +356,10 @@ mod click_zoom_tests;
 #[cfg(test)]
 #[path = "../tests/unit/viewport/precision_guard_tests.rs"]
 mod precision_guard_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/viewport/usable_tests.rs"]
+mod usable_tests;
 
 /// The iteration count auto-iterations ask at `log2mag` from a `base`: the base plus about 220 an
 /// octave of depth bonus, the BONUS (not the total) capped at 2,000,000 — see

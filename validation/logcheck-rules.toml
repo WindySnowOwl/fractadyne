@@ -62,6 +62,12 @@ max = 0
 why = "W6 (§7.6 gate 1): a GPU reading named a frame where the GPU ran no pass, the display served a hold the app had not verified, or the climb judged a reading the shader ran to a cap"
 
 [[rule]]
+name = "unusable-view"
+token = "⚠UNUSABLE VIEW"
+max = 0
+why = "a frame's view had a NaN, infinite or zero scale or a non-finite centre, and the guard put back the last usable one (FractadyneApp::view_guard; three field sessions reached a NaN scale with nothing naming the cause). Never allowed, not even under an instrument: FRACTADYNE_POISON_VIEW_AT is this rule's red-check"
+
+[[rule]]
 name = "climb-starved"
 token = "⚠CLIMB STARVED"
 max = 0

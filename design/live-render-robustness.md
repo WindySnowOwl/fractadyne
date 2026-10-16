@@ -5014,3 +5014,61 @@ ladder, RED on the budget stall.**
   install identity is still "longer wins", which can re-open the build-storm family (U55;
   CL-102, CL-127). Turning it on needs, first, a rung that produces the natural shape, and then
   install identity by fitness.
+
+**2026-10-16 — The maintainer's own logs: a second GPU's frames in the window's provenance, a NaN
+view caught and put back, and W10 measured** (`fix/worker-sinks`, off main `510c3796`).
+
+Before building the rest, I read the logs of the maintainer's own sessions (the app's config
+folder, read only: four rotated logs and `frames.jsonl` going back to 2026-09-25). They run what no
+harness runs: a second graphics device (the same RTX 3080, "same card"), the autopilot with a dive
+target of 2^16,609.6, and a randomly animated palette. Three findings came out of them.
+
+*A second GPU's motion frames wrote into the window's W6 sinks* (`1c818810`).
+- The session on main `9135c29` logged 78 `⚠PROVENANCE MISMATCH` lines in 7 minutes, where W6's
+  exit criterion was 0.
+- `MandelbrotParams::headless()` is the copy of a frame's params the second device renders from,
+  through the window's own `prepare` (`gpu_worker::render_live`). It dropped the timing sinks but
+  not the three W6 added (`iterate_prov`, `live_prov`, `ran_out`). So every pass the worker ran
+  wrote its frame into `gpu_ran`, the window's record of the passes its own GPU ran, and into the
+  provenance the window's readings carry.
+- No gate saw it, because every harness keeps one GPU unless `--worker-gpu` is given.
+- Reproduced with `--motiontest --worker-gpu same`: A7 RED, 21 of 309 readings named a frame where
+  the GPU ran no pass, and 2 switches to wall-clock pricing. With the fix, three runs: 0 of 258,
+  277 and 292, and no switch.
+- The test `headless_drops_every_sink_the_params_carry` reads the struct's sink fields from the
+  source and requires `headless()` to drop each. On the old code it was red, naming exactly the
+  three.
+- Still RED with the worker, and unchanged by the fix: A4, 22-28 walk restarts in the dive against
+  2 without the worker. With the worker present but `WORKER_MOTION=0` it is 2 again. These are window
+  pins that the worker's frames supersede, which L3 does by design (`PinStop::Superseded`). Whether
+  that is waste on a same-card worker or A4 counting a deliberate stop as starvation is a design
+  question for the multi-GPU work. It is left to the maintainer.
+
+*A NaN view, caught the frame it appears and put back* (`view_guard`).
+- `REFUSING to persist a non-finite zoom` was put in on 2026-08-18 to identify an unreproduced NaN
+  view. It has fired in two of the maintainer's sessions, and nobody had read them:
+  - beta.17 build 4336, 2026-10-04, at 711 s: 1,082 times.
+  - build 4550, 2026-10-06, at 106 s: 902 times.
+- Both were near 2^16,600 (the autopilot's dive target), and both came seconds after a frame that
+  had waited 12-72 s for the window to present. The view then stayed at `mag 2^NaN` until the user
+  moved elsewhere.
+- The refusal fires when the session is SAVED. It names nothing about what made the NaN, and the
+  frame record of those days is gone. Ruled out by the code:
+  - a minimized window: no window-size change was logged, and `set_size` clamps to 1 px;
+  - a long frame through the glide or the autopilot: both clamp dt to 0.1 s.
+- `Viewport::is_usable` asks for a finite, positive scale and a finite centre. `FractadyneApp::view_guard(stage)`
+  runs it after the feature solves, after the autopilot, after navigation in both draw paths
+  (before `build_params` reads the view), and at the end of the frame, where a passing view is
+  saved.
+  - The first check that fails logs `⚠UNUSABLE VIEW after <stage>`, with dt, the window, and the
+    glide and the autopilot's goal, aim and speed.
+  - It then puts back the last usable view and stops the motion that may carry the NaN.
+- The instrument `FRACTADYNE_POISON_VIEW_AT=N` plants a NaN scale after the autopilot's step at
+  frame N.
+  - Measured: caught as `after the autopilot`, the view restored (2^104.99), no refusal from the
+    autosave, and the motiontest's own verdict PASS.
+  - logcheck's new `unusable-view` rule (max 0, not lifted by any instrument) fails the run.
+  - It is the meta-gate's arm `motiontest/unusable-view`: control exit 0, sabotage RED for its
+    reason.
+- The cause is still open. The next field occurrence names its stage and inputs, and does not
+  leave the user at a broken view.

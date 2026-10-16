@@ -2168,6 +2168,12 @@ impl Perf {
         crate::tunables::instrument("FRACTADYNE_SEED_BUDGET")
     }
 
+    /// `FRACTADYNE_POISON_VIEW_AT=N`: frame N's view gets a NaN scale after the autopilot's step,
+    /// for `FractadyneApp::view_guard` to catch. Zero, the default, disables it.
+    pub(crate) fn poison_view_at() -> u32 {
+        crate::tunables::instrument("FRACTADYNE_POISON_VIEW_AT")
+    }
+
     /// See `render::Meter::bootstrap_steps`.
     fn bootstrap_steps(&self, v: usize) -> u64 {
         self.meter.bootstrap_steps(v, self.budget_mode[v])
@@ -6167,6 +6173,11 @@ struct FractadyneApp {
     /// Last logged `(width_pt, height_pt, pixels_per_point)`, so the size log records CHANGES
     /// rather than a line per frame.
     last_window_geom: Option<(f32, f32, f32)>,
+    /// The last view of each pane (main, Julia) that passed `Viewport::is_usable` at the end of a
+    /// frame, and how many times a frame's view failed it ([`FractadyneApp::view_guard`]).
+    last_good_view: [Option<Viewport>; 2],
+    view_guard_trips: u32,
+    view_guard_line: diag::LineLimiter,
     /// After a scale-factor change: the logical size to restore, when the scale LAST changed (the
     /// settle clock, refreshed by every flip) and when the anchor was FIRST set (its expiry clock,
     /// which is not — or a burst that never settles would hold an anchor for ever). See the
@@ -7186,6 +7197,9 @@ impl FractadyneApp {
                 }),
             max_texture_dim: 0, // the device's, set by `attach_gpu`
             last_window_geom: None,
+            last_good_view: [None, None],
+            view_guard_trips: 0,
+            view_guard_line: diag::LineLimiter::default(),
             dpi_hold: None,
             suppress_autosave: false,
             pending_state_warning,
@@ -7813,6 +7827,94 @@ impl FractadyneApp {
     }
 
     /// Snapshot current state and save it ~1 s after the last change (or on close).
+    /// ⭐⭐**A VIEW THAT CANNOT BE RENDERED IS CAUGHT THE FRAME IT APPEARS, NAMED, AND PUT BACK.**
+    /// Three field sessions (2026-08-18, and 2026-10-04 and 2026-10-06 on beta.17, both near
+    /// 2^16,600 where the autopilot's dive target was set) reached a NaN scale with no line naming
+    /// what set it. The only witness was `autosave`'s refusal below, written when SAVING — 900 to
+    /// 1,100 times — while the view stayed unusable (`arithmetic mode 2 → 1 … (mag 2^NaN)`) until
+    /// the user went somewhere else. `update` calls this after each stage that can move a view,
+    /// `stage` naming it: the first call to find a pane's view unusable says which stage and what
+    /// the frame knew, stops the motion that may carry the poison, and restores the last view that
+    /// passed. With `save`, a view that passes becomes that view.
+    fn view_guard(&mut self, ctx: &egui::Context, stage: &str, save: bool) {
+        for pane in 0..2 {
+            let vp = if pane == 0 { &self.viewport } else { &self.julia_viewport };
+            if vp.is_usable() {
+                let same = self.last_good_view[pane].as_ref().is_some_and(|g| {
+                    g.units_per_pixel == vp.units_per_pixel
+                        && g.width_px == vp.width_px
+                        && g.height_px == vp.height_px
+                        && g.precision == vp.precision
+                        && g.center_x == vp.center_x
+                        && g.center_y == vp.center_y
+                });
+                if save && !same {
+                    self.last_good_view[pane] = Some(vp.clone());
+                }
+                continue;
+            }
+            self.view_guard_trips = self.view_guard_trips.saturating_add(1);
+            let (dt, screen, focused, minimized) =
+                ctx.input(|i| (i.stable_dt, i.screen_rect(), i.focused, i.viewport().minimized));
+            let a = &self.autopilot;
+            let restored = self.last_good_view[pane].clone();
+            if let Some(held) = self.view_guard_line.admit(diag::elapsed_ms(), 5000) {
+                diag::log_line(
+                    "view",
+                    &format!(
+                        concat!(
+                            "⚠UNUSABLE VIEW after {stage}: pane {pane} scale m={} e={}, centre finite {}/{}, {:.0}x{:.0} px",
+                            " — frame {}, dt {dt:.3} s, window {:.0}x{:.0} pt focused={focused} minimized={minimized:?};",
+                            " zoom_vel {:.4}, autopilot active={} stepping={} speed={:.4} goal={:?} aim={:?} lead={:?},",
+                            " playback={}, tour={}; {}{}",
+                        ),
+                        vp.units_per_pixel.m,
+                        vp.units_per_pixel.e,
+                        !vp.center_x.is_nan() && !vp.center_x.is_inf(),
+                        !vp.center_y.is_nan() && !vp.center_y.is_inf(),
+                        vp.width_px,
+                        vp.height_px,
+                        self.perf.frame_idx,
+                        screen.width(),
+                        screen.height(),
+                        self.pointer.zoom_vel,
+                        a.active,
+                        a.stepping,
+                        a.speed,
+                        a.goal,
+                        a.aim,
+                        a.lead,
+                        self.playback.is_some(),
+                        self.tour_playing(),
+                        match &restored {
+                            Some(g) => format!("restored the last usable view (2^{:.2})", g.log2_magnification()),
+                            None => "no usable view yet: reset to the default view".to_string(),
+                        },
+                        held_note(held),
+                        stage = stage,
+                        pane = pane,
+                        dt = dt,
+                        focused = focused,
+                        minimized = minimized,
+                    ),
+                );
+            }
+            let vp = if pane == 0 { &mut self.viewport } else { &mut self.julia_viewport };
+            match restored {
+                Some(g) => *vp = g,
+                None => vp.reset(),
+            }
+            // Motion that produced the poison would produce it again next frame.
+            self.pointer.zoom_vel = 0.0;
+            if self.autopilot.active {
+                self.autopilot.active = false;
+                self.autopilot.stepping = false;
+                self.set_toast("Autopilot stopped: the view became unusable and was put back (logged)".to_string(), ctx);
+            }
+            self.schedule_repaint(ctx);
+        }
+    }
+
     fn autosave(&mut self, ctx: &egui::Context) {
         // After a state reset the user chose not to persist this session — don't recreate the
         // file we just deleted (on the idle timer or on close).
@@ -9271,6 +9373,8 @@ impl FractadyneApp {
             self.pointer.settle_t[view] = now;
         }
         let interacting = now - self.pointer.settle_t[view] < SETTLE_DELAY;
+        self.view_guard(ctx, "navigation (wheel, Space glide, drag, click or box zoom)", false);
+        let vp = if is_julia { &self.julia_viewport } else { &self.viewport };
 
         let eff_iter = if self.render_cfg.auto_iter {
             // Full depth-appropriate pixel appetite; freeze safety comes from the reference-length
@@ -16101,6 +16205,7 @@ impl eframe::App for FractadyneApp {
         self.poll_snap_solve(ctx);
         self.poll_feature_solve(ctx);
         self.poll_misiurewicz_explorer(ctx, gpu.as_ref());
+        self.view_guard(ctx, "the feature solves (Go to: nearest minibrot / Misiurewicz)", false);
 
         self.harness_frame_hooks(ctx, &gpu, &gpu_name);
 
@@ -16206,6 +16311,11 @@ impl eframe::App for FractadyneApp {
         // Auto-zoom autopilot — dive toward detail (advance before drawing so this frame
         // reflects the new view).
         self.autopilot_step(ctx, &gpu);
+        if Perf::poison_view_at() != 0 && self.perf.frame_idx == u64::from(Perf::poison_view_at()) {
+            diag::log_line("instrument", &format!("POISON_VIEW_AT={}: the view's scale set to NaN", self.perf.frame_idx));
+            self.viewport.units_per_pixel = self.viewport.units_per_pixel.mul_f64(f64::NAN);
+        }
+        self.view_guard(ctx, "the autopilot", false);
 
         // Interactive reference LOOKAHEAD: a hold-Space glide or autopilot dive is predictable
         // from the zoom-rate slider, so build the references it is about to need on idle cores
@@ -16482,6 +16592,9 @@ impl eframe::App for FractadyneApp {
         self.draw_checksum_dialog(ctx);
 
         self.draw_export_dialog(ctx, &gpu);
+        // Menus, dialogs and tours run after the draw: what they set is checked, then kept as the
+        // last usable view.
+        self.view_guard(ctx, "the menus and dialogs (Go to, bookmarks, history, tours)", true);
 
         // ---- performance overlay + frame timing finalization ----
         let nowi = Instant::now();
