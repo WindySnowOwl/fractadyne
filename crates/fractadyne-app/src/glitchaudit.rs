@@ -169,6 +169,19 @@ impl crate::FractadyneApp {
             // The oracles iterate Mandelbrot mode (z₀ = 0, c = the pixel).
             return Err(AppError::Message("--glitch-audit covers Mandelbrot-mode views, not Julia".into()));
         }
+        // A custom formula's oracle is its own bignum orbit. The id-keyed one (`formula_dwell`)
+        // does not know id 1000 and iterates z² + c in its place, so it would judge every custom
+        // render against the Mandelbrot set.
+        let custom = match (req.formula == fractadyne_core::formula::CUSTOM, &self.custom, &req.custom) {
+            (false, _, _) => None,
+            (true, Some(cf), Some(shader)) if cf.formula.bignum_evaluable() => Some((cf.clone(), f64::from(shader.power))),
+            (true, Some(_), Some(_)) => {
+                return Err(AppError::Message(
+                    "--glitch-audit: this custom formula has no bignum oracle (it uses an operation the bignum interpreter does not evaluate)".into(),
+                ));
+            }
+            (true, _, _) => return Err(AppError::Message("--glitch-audit: a custom-formula view without its formula".into())),
+        };
         let (w, h) = (req.width as usize, req.height as usize);
         println!(
             "Fractadyne audit ({:?}) — {}\n  {}x{} px, mode {}, iter {}",
@@ -326,7 +339,10 @@ impl crate::FractadyneApp {
             let cx = fractadyne_core::add_floatexp(cx0, step_x.mul_f64(x + 0.5 + dx - w as f64 * 0.5), p);
             let cy = fractadyne_core::add_floatexp(cy0, step_y.mul_f64(h as f64 * 0.5 - (y + 0.5 + dy)), p);
             // Mandelbrot keeps the plain z²+c oracle; every other family iterates its own formula.
-            if formula == fractadyne_core::formula::MANDELBROT {
+            if let Some((cf, power)) = &custom {
+                fractadyne_core::ir::dwell(&cf.formula, &cf.params, *power, &cx, &cy, max_iter, 256.0 * 256.0, p)
+                    .expect("the custom formula's bignum orbit failed at an audited point")
+            } else if formula == fractadyne_core::formula::MANDELBROT {
                 fractadyne_core::naive_dwell_bf(&cx, &cy, max_iter, 256.0 * 256.0, p)
             } else {
                 fractadyne_core::formula_dwell(&cx, &cy, formula, max_iter, 256.0 * 256.0, p)

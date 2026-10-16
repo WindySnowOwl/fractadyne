@@ -4750,3 +4750,59 @@ and 38):
     `ref ms` across dev.14–18 is the machine's state, not a build.
 - On this card the fix also moves the output toward the all-floatexp loop. At 1.2e148 dev.18
   differs from it in 43,242 px, where dev.17 differed in 121,835.
+
+**2026-10-15 — The custom-formula tail measured (user: "measure the custom formulas"): exact on the
+RTX 3080, no guard needed; a deep-dip gap found on the way.**
+
+The custom mode-2 loop has a df32 tail of its own (custom.rs `fe_advance`). It shares
+`TAIL_DF32_MIN_E`, so 28ca088's 2^-50 already applies to it. It rebases in floatexp, so the tie
+cause cannot arise. It has no small-Z guard (`TAIL_Z_MIN`), and that is what this measured.
+
+*The oracle first.*
+- `--tail-audit` judged a custom formula against z² + c. `formula_dwell` builds its orbit by
+  formula id, and id 1000 falls to the Mandelbrot default arm.
+- It now takes the formula's own bignum orbit, the new `ir::dwell`. A formula the bignum
+  interpreter cannot evaluate is refused.
+- The test `a_custom_formula_s_dwell_iterates_its_own_formula` holds `dwell` to `formula_dwell`
+  where both apply. It went red on a mutant that iterates z² + c for every formula.
+
+*The views.* Every view had to show the tail running (its df32 share of full steps) and a real
+picture (grey levels, edge pixels, looked at).
+- Custom z² + c on the ten corpus rows the fixed tail had changed.
+- The self-test's two mode-2 custom goldens.
+- New deep views at 1e40× and 1e80×, found in mpmath for z³ + c, z⁴ + c, the Burning Ship
+  `sqr(abs(z)) + c` and sin z + c:
+  - The cubic and quartic views are Misiurewicz points: c = √(ω − 1) for z³ + c (multiplier 3√3)
+    and −2^(1/3) for z⁴ + c.
+  - The Burning Ship and sin views come from bisection.
+  - A bisection from c = 0 ends on a parabolic boundary. There a pixel's offset never reaches
+    2^-50, so the tail never runs. Three such views (cubic and quartic) were all interior and are
+    not counted.
+
+| formula | views (tail share of full steps) | tail vs floatexp |
+|---|---|---|
+| z² + c | spiral golden 1e100 (11.9%); corpus 34–38 (35, 4.4, 2.8, 2.4, 1.4%) | bit-identical |
+| z² + p1·z + c | golden 1e40 (83.6%) | bit-identical |
+| z³ + c | Misiurewicz 1e40, 1e80 (40.0, 20.7%) | bit-identical |
+| z⁴ + c | tip 1e40, 1e80 (40.4, 20.9%) | bit-identical |
+| sqr(abs(z)) + c | 1e40, 1e80 (38.0, 20.1%) | bit-identical |
+| sin z + c | 1e40, 1e80 (60.5, 32.7%) | bit-identical |
+
+- Fourteen valid views across six formulas, and every pixel agrees.
+- Control: the saved 2^-60 build changes custom z² + c pixels on corpus rows 35, 37 and 38 (1, 19
+  and 54). So the audit sees a custom-tail difference, and the threshold change removed them.
+- No small-Z guard is added: nothing measured calls for one.
+- Not measured on the RX 6800 XT. The field agent's allow-list has no `--formula`, and a `.fdn`
+  view passes its centre and iterations but not its formula.
+
+*Found on the way: custom formulas cannot follow a reference through an extended dip.*
+- On corpus rows 11–15, custom z² + c renders 47–100% interior where the built-in renders 0–11%
+  (rows 11–13). Rows 14 and 15 come out flat, and the tail never runs on any of the five.
+- These are exactly the five rows whose built-in render decodes extended dips (`ext` 57,600 to
+  4,656,512). The five without dips render correctly.
+- The reference passes closer to 0 than f32 holds. The built-in records those samples in extended
+  range (the fe record, built only when `inp.custom.is_none()`); the custom loop reads them as 0.
+  Treating Z as exactly 0 at the dip makes the period's multiplier zero, so every pixel collapses
+  onto the reference's cycle.
+- Pre-existing and separate from the tail: the custom mode-2 loop has had it since it was built.
+  Not fixed here.
