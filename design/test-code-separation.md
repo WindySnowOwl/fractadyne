@@ -1,8 +1,9 @@
 # Separating test code from functional code
 
-Status (2026-10-16): Phases 0–2 done on `refactor/test-separation` — no test code under any
-`src/`, every test name kept (one declared rename), each move checked pure. Phases 3–5 (the
-harnesses) not started.
+Status (2026-10-16): Phases 0–4 done on `refactor/test-separation`. No test code under any
+`src/`; the app's harnesses in `src/harness/` (34 files, 27,959 lines), the product calling in only
+at counted hooks; every test name kept (renames declared); each move checked by
+`scripts/check_move_only.py`. Phase 5 (the gpu and core crates) not started.
 
 ## 1. Goal
 
@@ -305,6 +306,47 @@ One commit per row. Each moves whole functions or impl blocks.
 - **Risk:** extracting the `new_state` flag parsing is the one step that is not a plain move,
   because it splits a function body. Do it last and alone.
 
+**As done (2026-10-16).** Where it differs from the table above:
+
+| File | Before (lines) | After (lines) |
+|---|---|---|
+| `cli.rs` | 1,802 | 765 |
+| `autopilot.rs` | 1,661 | 1,196 |
+| `render/decide.rs` | 3,789 | 2,315 |
+| `render.rs` | 11,106 | 10,781 |
+| `main.rs` | 16,994 | 16,811 |
+
+- The harness modes' state, frame hooks and ladder branches went to `harness/modes.rs`, not
+  `harness.rs`, which stays a pure index.
+- `--replay` moved; the `FRACTADYNE_RECORD_DECIDE` recorder **stayed** in `render/decide.rs`. The live
+  path calls it at every lifted decision, and it is the product's opt-in diagnostics (the field
+  agent's `-RecordDecide` captures a real session with it), not a test.
+- The flag parsing moved as one verbatim block into `harness::modes::Windowed::from_args`, which
+  `new_state` destructures into the same eleven local names. Nothing after it changed, and the flags
+  still parse in the same order.
+- Attached harness code (code that needs a functional module's private items) lives at
+  `src/harness/<path of the file it attaches to>/<module>.rs`, the same rule unit tests follow
+  under `tests/unit/`: `harness/render/selfcheck.rs`, `harness/farm/farmtest.rs`,
+  `harness/ui/<window>/uitest_seed.rs`.
+- The direction rule is a ratchet. `main.rs` names the harness 26 times and `cli.rs` 11, every one
+  a hook; `autopilot.rs` and `render/decide.rs` no longer name it.
+- Gates as planned, plus a smoke run of each kind of move (`--refdiag`, `--compare`, `--replay`, a
+  `--shot` error path).
+
+**Gate results for phases 3–4 (2026-10-16).**
+
+- **RTX 3080, at the phase 3 and phase 4 tips:**
+  - `--selftest`: 529/529 checks, 31/31 goldens.
+  - `--gputest`: its 52 failure lines identical to the card's declared list.
+  - `--uitest`: 75 pass, 1 warn, 0 fail. The warn is `live-floatexp-1e30`, the same in every run
+    since 2026-10-14.
+- **RX 6800 XT** (field battery on dev.25, `20261016-143316-u6n9`): VERDICT PASS, every step as in
+  dev.24's battery, `regime` included.
+- **`--bench-matrix`, main against the tip, interleaved ABABAB×5 on the RTX 3080:**
+  - every deterministic column identical in all ten runs, and 0 algorithmic drift in each;
+  - GPU time, as the sum of per-segment medians, −0.36% (noise; segments moved both ways).
+- **Clippy** (`--keep-going`, unique findings against `254e5f5b`): nothing new.
+
 ### Phase 5: the library crates
 
 - **gpu → `gpu/src/harness/`.** Move `render_iter_chunked_timed` (271 lines), `render_iter_chunked`,
@@ -355,3 +397,10 @@ Each phase stands alone. Stopping after Phase 2 already gives "no test code unde
 4. **Two core probe files are mislabelled.** `core/tests/probe_escape.rs` and `probe_orbit.rs` say
    "TEMPORARY diagnostic (not committed)" but are tracked. Keep them (and fix the header) or delete
    them.
+5. **Three docs had been separated from their functions** (fixed in the move commits, wording
+   unchanged). An item had been inserted between a doc comment and the function it describes:
+   `install_recompute_now`'s (under the self-test shim), `zoom_iter_cap`'s (under
+   `test_banner_on` and `app_micros`), and `draw_status_bar`'s (under `draw_test_banner`).
+6. **`install_recompute_now`'s doc is stale.** Its FREEZE GUARD paragraph says a long partial
+   reference is REFUSED; the function's own comment says that became an acceptance at the floor
+   budget on 2026-08-09.
