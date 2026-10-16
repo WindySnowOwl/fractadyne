@@ -1186,10 +1186,13 @@ pub(crate) fn glide_step(
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/autopilot/steering_tests.rs"]
 mod steering_tests;
 #[cfg(test)]
+#[path = "../tests/unit/autopilot/priority_tests.rs"]
 mod priority_tests;
 #[cfg(test)]
+#[path = "../tests/unit/autopilot/target_tests.rs"]
 mod target_tests;
 
 /// CLI `--autodive`: drive the autopilot dive from the command line so the frame-cost controller can
@@ -1371,7 +1374,7 @@ pub(crate) fn autodive_verdict(t: &DiveTally) -> (i32, String) {
 }
 
 #[cfg(test)]
-#[path = "autopilot/dive_verdict_tests.rs"]
+#[path = "../tests/unit/autopilot/dive_verdict_tests.rs"]
 mod dive_verdict_tests;
 
 /// Depth at which `--autodive` switches from auto-iter to its explicit iteration count.

@@ -1203,5 +1203,5 @@ impl Editor {
 }
 
 #[cfg(test)]
-#[path = "edit_tests.rs"]
+#[path = "../../../tests/unit/ui/textbook/edit/tests.rs"]
 mod tests;

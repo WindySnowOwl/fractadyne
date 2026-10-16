@@ -267,4 +267,5 @@ pub(crate) fn show(ui: &mut egui::Ui, tab: &mut Tab) -> Option<Action> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/ui/formula_keypad/tests.rs"]
 mod tests;

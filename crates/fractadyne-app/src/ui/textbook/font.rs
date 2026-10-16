@@ -225,5 +225,5 @@ impl MathFont {
 }
 
 #[cfg(test)]
-#[path = "font_tests.rs"]
+#[path = "../../../tests/unit/ui/textbook/font/tests.rs"]
 mod tests;

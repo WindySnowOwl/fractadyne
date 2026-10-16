@@ -1197,4 +1197,5 @@ pub(crate) mod export;
 mod svg;
 
 #[cfg(test)]
+#[path = "../tests/unit/lsystem_view/tests.rs"]
 mod tests;

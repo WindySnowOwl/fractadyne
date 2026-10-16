@@ -2199,10 +2199,13 @@ fn lsystem_export_note(stopped: bool) -> &'static str {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/export/palette_embed.rs"]
 mod palette_embed;
 #[cfg(test)]
+#[path = "../tests/unit/export/view_text.rs"]
 mod view_text;
 #[cfg(test)]
+#[path = "../tests/unit/export/shipped_files.rs"]
 mod shipped_files;
 
 /// The plain export across the window's card and `extra` (`render_export_multi`), with a line

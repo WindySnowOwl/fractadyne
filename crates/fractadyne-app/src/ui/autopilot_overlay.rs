@@ -56,4 +56,5 @@ pub(crate) fn draw(ctx: &egui::Context, rect: egui::Rect, aim: (f64, f64), goal:
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/ui/autopilot_overlay/tests.rs"]
 mod tests;

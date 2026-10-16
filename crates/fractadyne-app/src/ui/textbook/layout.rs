@@ -682,5 +682,5 @@ pub(crate) fn rows(rows: &[Vec<Node>], ctx: &Ctx) -> Laid {
 }
 
 #[cfg(test)]
-#[path = "layout_tests.rs"]
+#[path = "../../../tests/unit/ui/textbook/layout/tests.rs"]
 mod tests;

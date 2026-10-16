@@ -402,4 +402,5 @@ impl<S: DeserializeOwned + Clone + StatusSlot> Link<S> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/farm/status/tests.rs"]
 mod tests;

@@ -496,14 +496,15 @@ pub(crate) fn log_dir_override(
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/diag/log_dir.rs"]
 mod log_dir;
 
 #[cfg(test)]
-#[path = "diag/console.rs"]
+#[path = "../tests/unit/diag/console_tests.rs"]
 mod console_tests;
 
 #[cfg(test)]
-#[path = "diag/device_loss_hint.rs"]
+#[path = "../tests/unit/diag/device_loss_hint_tests.rs"]
 mod device_loss_hint_tests;
 
 /// The always-on per-frame record (design/live-render-robustness.md W1).

@@ -52,4 +52,5 @@ pub(crate) fn draw(ctx: &egui::Context, rect: egui::Rect, elapsed_s: f64, frame:
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/ui/timestamp_overlay/tests.rs"]
 mod tests;

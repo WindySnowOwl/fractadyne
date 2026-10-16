@@ -510,5 +510,5 @@ pub(crate) fn regime_report(recs: &[crate::diag::frame_record::FrameRecord]) -> 
 }
 
 #[cfg(test)]
-#[path = "soak_tests.rs"]
+#[path = "../tests/unit/soak/tests.rs"]
 mod tests;

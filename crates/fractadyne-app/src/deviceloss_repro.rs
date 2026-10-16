@@ -35,7 +35,7 @@
 use crate::FractadyneApp;
 
 #[cfg(test)]
-#[path = "deviceloss_repro_tests.rs"]
+#[path = "../tests/unit/deviceloss_repro/tests.rs"]
 mod tests;
 
 /// The field's STALE budget (2026-09-27): learned at 1.515e11 steps and carried to the crash view, it

@@ -164,5 +164,5 @@ fn summary(t: &Tally) -> String {
 }
 
 #[cfg(test)]
-#[path = "timing_witness_tests.rs"]
+#[path = "../tests/unit/timing_witness/tests.rs"]
 mod tests;

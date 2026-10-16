@@ -71,6 +71,7 @@ pub(crate) fn frame_cost(
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/render/frame_cost_tests.rs"]
 mod frame_cost_tests;
 
 /// One view's tiled-settle progress. `None` geometry = ARMED: the view has rendered its coarse
@@ -9704,8 +9705,10 @@ fn split_verdict(pin: &PinnedRefresh, i: &PinInputs) -> PinVerdict {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/render/pin_policy.rs"]
 mod pin_policy;
 #[cfg(test)]
+#[path = "../tests/unit/render/content_policy.rs"]
 mod content_policy;
 
 /// Wall-clock step factor for a settled chunk pass — the fraction of one dispatch budget the
@@ -9734,6 +9737,7 @@ pub(crate) fn chunk_step_factor(pass_dt_ms: f64, target_ms: f64) -> f64 {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/render/chunk_pace.rs"]
 mod chunk_pace;
 
 /// Nominal steps ONE motion / pinned-refresh chunk pass may spend so its GPU time lands near
@@ -10025,6 +10029,7 @@ pub(crate) fn pin_band_license(
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/render/motion_pace.rs"]
 mod motion_pace;
 
 /// What a moving perturbation frame may do under the live-refresh rule (see
@@ -10389,6 +10394,7 @@ pub(crate) fn live_fit(steps: u64, cap: u64, floor: f64) -> Option<f64> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/render/live_refresh_tests.rs"]
 mod live_refresh_tests;
 
 /// Fold one drained escape-range reading into the auto-normalization state. Chunked frames
@@ -10497,8 +10503,10 @@ pub(crate) fn norm_hold_break(held: (f32, f32), reading: (f32, f32)) -> bool {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/render/norm_hold.rs"]
 mod norm_hold;
 #[cfg(test)]
+#[path = "../tests/unit/render/norm_attribution.rs"]
 mod norm_attribution;
 
 /// One frame's step of the SHOWN palette window toward the fed target.
@@ -10564,6 +10572,7 @@ pub(crate) fn norm_glide_step(shown: Option<(f32, f32)>, target: (f32, f32), sna
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/render/norm_glide.rs"]
 mod norm_glide;
 
 /// Lower bound for the held-frame reprojection scale — how far the last good frame may be MAGNIFIED
@@ -10585,6 +10594,7 @@ pub(crate) fn hold_scale_floor(jumped: bool) -> f32 {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/render/hold_scale_floor_tests.rs"]
 mod hold_scale_floor_tests;
 
 /// ⭐**0.5 is Nyquist.** A palette step of more than half a period between neighbouring pixels
@@ -10633,6 +10643,7 @@ pub(crate) fn alias_fraction(
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/render/alias_fraction_tests.rs"]
 mod alias_fraction_tests;
 
 pub(crate) fn norm_window_feed(
@@ -10657,6 +10668,7 @@ pub(crate) fn norm_window_feed(
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/render/norm_window.rs"]
 mod norm_window;
 
 /// The escape range a reading may feed to the palette window.
@@ -10685,6 +10697,7 @@ pub(crate) fn norm_reading_bound(
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/render/norm_partial.rs"]
 mod norm_partial;
 
 /// The regional license: how many iterations one settled pass may cover in this cursor BAND.
@@ -10726,6 +10739,7 @@ pub(crate) fn norm_map_is_log(mn: f32, mx: f32, log_palette: bool) -> bool {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/render/norm_map_choice.rs"]
 mod norm_map_choice;
 
 /// `std::thread::spawn` with a NAME. Every `[crumb]` line and every crash report names the thread
@@ -10768,6 +10782,7 @@ pub(crate) fn sa_skip_rescue(shader_iter: u32, sa_skip: u32, orbit_len: u32) -> 
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/render/sa_skip_budget.rs"]
 mod sa_skip_budget;
 
 #[cfg(test)]
@@ -10897,8 +10912,10 @@ pub(crate) fn chunk_restart_clears_ledger(
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/render/chunk_bands.rs"]
 mod chunk_bands;
 #[cfg(test)]
+#[path = "../tests/unit/render/wall_shed.rs"]
 mod wall_shed;
 
 /// Reference-length COLLAPSE: the new orbit is short-and-COMPLETE (`!partial` — the rebase
@@ -10924,14 +10941,18 @@ pub(crate) fn escape_instrument_plan(orbit_len: u32, sa_skip: u32, n: u32) -> Op
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/render/probe_price_tests.rs"]
 mod probe_price_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/render/budget_blind_tests.rs"]
 mod budget_blind_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/render/motion_jam.rs"]
 mod motion_jam;
 #[cfg(test)]
+#[path = "../tests/unit/render/trajectory_tests.rs"]
 mod trajectory_tests;
 
 /// One AIMD step of the deep-motion resolution scale, from a REAL re-iterate frame's interval.
@@ -10973,6 +10994,7 @@ pub(crate) fn motion_res_step(cur: f64, dt_ms: f64, floor: f64) -> f64 {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/render/present_throttle_tests.rs"]
 mod present_throttle_tests;
 
 /// The settled repaint beat while the view is not quiescent. Ordinarily 4× the frame EMA held to
@@ -10999,6 +11021,7 @@ pub(crate) fn walk_repaint_ms(pass_in_flight: bool, frame_ms: f64) -> f64 {
 pub(crate) const WALK_REPAINT_MS: f64 = 16.0;
 
 #[cfg(test)]
+#[path = "../tests/unit/render/walk_repaint.rs"]
 mod walk_repaint;
 
 /// A window's DPI state for one frame: the scale factor and the LOGICAL size egui reports.
@@ -11033,6 +11056,7 @@ pub(crate) fn dpi_changed(prev: DpiState, now: DpiState) -> bool {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/render/dpi_trace_tests.rs"]
 mod dpi_trace_tests;
 
 /// One view's activity, as the quiescence test reads it.
@@ -11094,13 +11118,17 @@ pub(crate) fn render_quiescent(
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/render/render_quiescent_tests.rs"]
 mod render_quiescent_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/render/controller_props.rs"]
 mod controller_props;
 
 #[cfg(test)]
+#[path = "../tests/unit/render/reuse_tests.rs"]
 mod reuse_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/render/coarse_preview_gate_tests.rs"]
 mod coarse_preview_gate_tests;

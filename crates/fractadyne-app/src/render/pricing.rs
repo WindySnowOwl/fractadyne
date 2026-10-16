@@ -1307,18 +1307,26 @@ pub(crate) fn wall_cap_step(cap: u64, steps: u64, ms: f64, explicit: bool) -> u6
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/render/pricing/admission_tests.rs"]
 mod admission_tests;
 #[cfg(test)]
+#[path = "../../tests/unit/render/pricing/settle_tile_tests.rs"]
 mod settle_tile_tests;
 #[cfg(test)]
+#[path = "../../tests/unit/render/pricing/settle_strip_tests.rs"]
 mod settle_strip_tests;
 #[cfg(test)]
+#[path = "../../tests/unit/render/pricing/mode_rate_tests.rs"]
 mod mode_rate_tests;
 #[cfg(test)]
+#[path = "../../tests/unit/render/pricing/motion_lift_tests.rs"]
 mod motion_lift_tests;
 #[cfg(test)]
+#[path = "../../tests/unit/render/pricing/pin_pricing_tests.rs"]
 mod pin_pricing_tests;
 #[cfg(test)]
+#[path = "../../tests/unit/render/pricing/pin_gate_timeout_tests.rs"]
 mod pin_gate_timeout_tests;
 #[cfg(test)]
+#[path = "../../tests/unit/render/pricing/retreat_tests.rs"]
 mod retreat_tests;

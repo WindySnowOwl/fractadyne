@@ -275,7 +275,7 @@ pub(crate) fn zoom_gate_failures(gate: ZoomGate, rate: f32, dt_max: f64, gt33: u
 }
 
 #[cfg(test)]
-#[path = "zoomtest/gate_tests.rs"]
+#[path = "../tests/unit/zoomtest/gate_tests.rs"]
 mod gate_tests;
 
 impl ZoomTest {
@@ -1010,5 +1010,5 @@ impl FractadyneApp {
 }
 
 #[cfg(test)]
-#[path = "zoomtest_tests.rs"]
+#[path = "../tests/unit/zoomtest/tests.rs"]
 mod tests;

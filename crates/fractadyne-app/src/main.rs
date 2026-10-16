@@ -87,6 +87,7 @@ mod motion_worker;
 mod help;
 mod icons;
 #[cfg(test)]
+#[path = "../tests/unit/icons_coverage.rs"]
 mod icons_coverage;
 mod livetest;
 mod motiontest;
@@ -726,6 +727,7 @@ fn expand_arg_files(raw: &[String]) -> Result<Vec<String>, String> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/arg_files.rs"]
 mod arg_files;
 
 /// The command line after `@file` / `--args-file` expansion, set once at the top of `main`.
@@ -811,6 +813,7 @@ pub(crate) fn palette_aa_enabled() -> bool {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/task_invocation.rs"]
 mod task_invocation;
 
 /// The main view, stashed each frame so the device-lost handler can write it as a loadable `.fdn`
@@ -892,6 +895,7 @@ pub(crate) fn relaunch_decision(generation: u32, elapsed_s: f64) -> Option<u32> 
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/relaunch_policy.rs"]
 mod relaunch_policy;
 
 /// The `max_texture_dimension_2d` to ask a device for, given what the adapter reports.
@@ -931,6 +935,7 @@ const DPI_ANCHOR_MAX_SECS: f64 = 20.0;
 const DPI_GROWTH_TRIP: f32 = 1.06;
 
 #[cfg(test)]
+#[path = "../tests/unit/wgpu_error_policy.rs"]
 mod wgpu_error_policy;
 
 /// A session's saved zoom, validated. `None` means "unusable — open at the default view instead".
@@ -966,6 +971,7 @@ pub(crate) fn restored_units_per_pixel(mantissa: f64, exp: i32) -> Option<fracta
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/session_zoom.rs"]
 mod session_zoom;
 
 /// Direct download URL for the accelerated package matching `version`.
@@ -1005,6 +1011,7 @@ fn accelerated_package_exists_for_platform() -> bool {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/accelerated_link.rs"]
 mod accelerated_link;
 
 // ================================================================================================
@@ -2567,6 +2574,7 @@ pub(crate) fn deep_jump_iter_shortfall(
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/deep_jump_warning.rs"]
 mod deep_jump_warning;
 
 /// `--render … --gpus SPEC` on this command line (`FractadyneApp::open_export_cards`).
@@ -2702,6 +2710,7 @@ pub(crate) fn accum_fold_clean(
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/accum_fold_tests.rs"]
 mod accum_fold_tests;
 
 /// Sub-pixel jitter for accumulation sample `i` — a 2D Halton (base 2, 3) sequence mapped to
@@ -3131,8 +3140,10 @@ fn pick_stop_ring(
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/gradient_library.rs"]
 mod gradient_library;
 #[cfg(test)]
+#[path = "../tests/unit/gradient_strip.rs"]
 mod gradient_strip;
 
 /// Paint a baked gradient across `rect`, one column per pixel.
@@ -3242,6 +3253,7 @@ fn parse_hex_rgb(s: &str) -> Option<[f32; 3]> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/color_values.rs"]
 mod color_values;
 
 /// A swatch + editable hex field for one colour. Returns the new colour when it changed.
@@ -3628,6 +3640,7 @@ pub(crate) fn parse_grouped_number(s: &str) -> Option<f64> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/number_grouping_tests.rs"]
 mod number_grouping_tests;
 
 /// Space-group the fractional digits of a scientific-notation string's mantissa (in 5s),
@@ -3694,6 +3707,7 @@ pub(crate) fn fmt_log2_count(log2n: f64) -> String {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/log2_count_tests.rs"]
 mod log2_count_tests;
 
 /// Playback-speed label for the transport button: `0.5`, `1`, `2`, `4` — no trailing `.0`, since
@@ -3763,6 +3777,7 @@ pub(crate) fn period_readout(period: Option<u32>) -> String {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/status_bar_slots.rs"]
 mod status_bar_slots;
 
 pub(crate) fn fmt_zoom_log2(log2mag: f64) -> String {
@@ -3798,6 +3813,7 @@ pub(crate) fn gallery_zoom_label(field: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/gallery_zoom_label_tests.rs"]
 mod gallery_zoom_label_tests;
 
 /// Magnification as a plain scientific string (no grouping), parseable by
@@ -4961,6 +4977,7 @@ fn reticle_mark(dx: f32, dy: f32, r: f32) -> ReticleMark {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/reticle_mark_tests.rs"]
 mod reticle_mark_tests;
 
 /// What the draw phase saw under the cursor, for the update phase to render a reticle from.
@@ -5301,6 +5318,7 @@ struct Bookmark {
 /// thumbnail id rather than deleting the file here keeps the list surgery pure and testable
 /// while leaving exactly one caller responsible for the file system.
 #[cfg(test)]
+#[path = "../tests/unit/bookmark_thumb_crop.rs"]
 mod bookmark_thumb_crop;
 
 /// The screenshot crop for a bookmark thumbnail: the central-panel rect clamped into the shot,
@@ -16991,4 +17009,5 @@ impl eframe::App for FractadyneApp {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/tests.rs"]
 mod tests;

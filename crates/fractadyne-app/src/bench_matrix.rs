@@ -371,6 +371,7 @@ fn scale_and_fixed(pts: &[(f64, f64)]) -> Option<(f64, f64)> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/bench_matrix/fit_tests.rs"]
 mod fit_tests;
 
 #[cfg(test)]

@@ -162,5 +162,5 @@ pub(crate) fn parse_params_line(line: &str) -> Option<Vec<(f64, f64)>> {
 }
 
 #[cfg(test)]
-#[path = "custom_formula_tests.rs"]
+#[path = "../tests/unit/custom_formula/tests.rs"]
 mod tests;

@@ -281,5 +281,5 @@ pub(crate) fn capped(budget: u64, ceiling: Option<u64>) -> u64 {
 }
 
 #[cfg(test)]
-#[path = "calibration_tests.rs"]
+#[path = "../tests/unit/calibration/tests.rs"]
 mod tests;

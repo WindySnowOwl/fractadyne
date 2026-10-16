@@ -1464,7 +1464,9 @@ impl FractadyneApp {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/ui/central/tests.rs"]
 mod tests;
 
 #[cfg(test)]
+#[path = "../../tests/unit/ui/central/decor_layer_tests.rs"]
 mod decor_layer_tests;

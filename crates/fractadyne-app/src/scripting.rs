@@ -1161,9 +1161,11 @@ pub(crate) fn progressive_frame_order(first: u64, last: u64, keyframes: &[u64]) 
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/resume_vetting_tests.rs"]
 mod resume_vetting_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/order_tests.rs"]
 mod order_tests;
 
 /// The normalize range for tour time `t`, interpolated piecewise-linearly between the
@@ -1191,6 +1193,7 @@ pub(crate) fn norm_anchor_range(anchors: &[(f64, (f32, f32))], t: f64) -> Option
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/norm_anchor_tests.rs"]
 mod norm_anchor_tests;
 
 /// The normalize-anchor file (`--dump-norm-anchors` / `--norm-anchors`).
@@ -1273,6 +1276,7 @@ pub(crate) fn parse_frame_range(s: &str) -> Result<(u64, u64), String> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/frame_range_tests.rs"]
 mod frame_range_tests;
 
 pub(crate) fn segment_range(frames: u64, n: u64, k: u64) -> (u64, u64) {
@@ -1282,6 +1286,7 @@ pub(crate) fn segment_range(frames: u64, n: u64, k: u64) -> (u64, u64) {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/segment_props.rs"]
 mod segment_props;
 
 /// Everything the tour renderer needs, after merging the CLI over the script's `[render]` block.
@@ -5043,16 +5048,21 @@ impl FractadyneApp {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/bench_depth_tests.rs"]
 mod bench_depth_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/transition_tests.rs"]
 mod transition_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/formula_tests.rs"]
 mod formula_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/lsystem_tests.rs"]
 mod lsystem_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/schema_tests.rs"]
 mod schema_tests;

@@ -485,4 +485,5 @@ pub(crate) fn unix_ms() -> u64 {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/farm/farm_tests.rs"]
 mod farm_tests;

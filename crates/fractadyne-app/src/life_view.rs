@@ -976,4 +976,5 @@ fn write_pattern(path: &std::path::Path, u: &Universe) -> Result<(), String> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/life_view/tests.rs"]
 mod tests;

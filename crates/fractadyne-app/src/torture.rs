@@ -1226,4 +1226,5 @@ fn summarize(records: &[RunRecord], out_dir: &Path) -> i32 {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/torture/tests.rs"]
 mod tests;

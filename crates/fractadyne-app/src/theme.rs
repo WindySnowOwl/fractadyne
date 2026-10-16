@@ -521,4 +521,5 @@ fn procedural_icon() -> egui::IconData {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/theme/theme_tests.rs"]
 mod theme_tests;

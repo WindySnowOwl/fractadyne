@@ -1008,5 +1008,5 @@ fn emit_from(row: &[Atom], from: usize, path: &mut Vec<(usize, u8)>, m: &mut Mar
 }
 
 #[cfg(test)]
-#[path = "model_tests.rs"]
+#[path = "../../../tests/unit/ui/textbook/model/tests.rs"]
 pub(super) mod tests;

@@ -89,6 +89,7 @@ fn first_bad_option(args: &[String]) -> Option<BadOption> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/cli/bad_options.rs"]
 mod bad_options;
 
 /// A harness flag that names a tour FILE but was given none. `--livetest` / `--divetest` take the
@@ -112,6 +113,7 @@ pub(crate) fn missing_tour_flag(args: &[String]) -> Option<&'static str> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/cli/missing_tour_flag_tests.rs"]
 mod missing_tour_flag_tests;
 
 /// Dispatch the headless CLI modes. Returns true if one ran (caller should exit).

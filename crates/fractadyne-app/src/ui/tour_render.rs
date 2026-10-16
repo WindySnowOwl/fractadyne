@@ -43,6 +43,7 @@ pub(crate) fn parse_frame_progress(line: &str) -> Option<(u64, u64)> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/ui/tour_render/tests.rs"]
 mod tests;
 
 impl FractadyneApp {
