@@ -118,12 +118,16 @@ def check(base, head, rewrites=(), cwd=None):
     for line, n in (new - lost).items():
         where = next(p for p, ls in added if line in ls)
         problems.append(f'added, not moved from anywhere ({n}x, {where}): {line[:110]}')
-    if not problems:
-        targets = ['\n' + '\n'.join(ls) + '\n' for _, ls in added]
-        for path, ls in removed:
-            run = '\n' + '\n'.join(ls) + '\n'
-            if not any(run in t for t in targets):
-                problems.append(f'a block from {path} ({len(ls)} lines from "{ls[0][:60]}") does not reappear in one piece, in order')
+    # Order, even when lines were also added: a commit that moves blocks AND adds a few declared
+    # lines must still move each block in one piece. Removed lines no added run holds (reported
+    # above) are left out of their block for this test.
+    targets = ['\n' + '\n'.join(ls) + '\n' for _, ls in added]
+    unmatched = lost - new
+    for path, ls in removed:
+        ls = [l for l in ls if l not in unmatched]
+        run = '\n' + '\n'.join(ls) + '\n'
+        if ls and not any(run in t for t in targets):
+            problems.append(f'a block from {path} ({len(ls)} lines from "{ls[0][:60]}") does not reappear in one piece, in order')
     gone, came = binary_moves(base, head, cwd)
     if gone != came:
         problems.append(f'binary files changed, not moved: removed {sorted(gone - came)}, added {sorted(came - gone)}')
