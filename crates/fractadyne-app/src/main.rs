@@ -2008,6 +2008,8 @@ struct Perf {
     /// `diag::LineLimiter`; every begin is still counted in the frame record).
     accum_begin_line: [diag::LineLimiter; 2],
     accum_abandon_line: [diag::LineLimiter; 2],
+    /// `converged` too: a run restarted every second (an animated palette) converges every second.
+    accum_converged_line: [diag::LineLimiter; 2],
 }
 
 impl Perf {
@@ -2477,6 +2479,7 @@ impl Default for Perf {
             rec_us: 0.0,
             accum_begin_line: Default::default(),
             accum_abandon_line: Default::default(),
+            accum_converged_line: Default::default(),
         }
     }
 }
@@ -14489,8 +14492,8 @@ impl FractadyneApp {
                         "accum",
                         &format!("⚠view {view}: converged at {count} samples, but the average holds {gpu}"),
                     );
-                } else if self.gpu_worker.is_some() {
-                    crate::diag::log_line("accum", &format!("view {view}: the average holds all {gpu} samples"));
+                } else if self.gpu_worker.is_some() && crate::diag::trace_on("accum") {
+                    crate::diag::trace("accum", format!("view {view}: the average holds all {gpu} samples"));
                 }
             }
         } else if busy {
@@ -14529,7 +14532,12 @@ impl FractadyneApp {
                 let folded = self.perf.accum_count[view] + 1;
                 self.perf.accum_count[view] = folded;
                 if folded >= accum_target() {
-                    crate::diag::log_line("accum", &format!("view {view}: converged at {folded} samples (with the worker GPU)"));
+                    if let Some(held) = self.perf.accum_converged_line[view].admit(diag::elapsed_ms(), ACCUM_LINE_GAP_MS) {
+                        crate::diag::log_line(
+                            "accum",
+                            &format!("view {view}: converged at {folded} samples (with the worker GPU){}", held_note(held)),
+                        );
+                    }
                 }
                 self.schedule_repaint(ctx);
             }
@@ -14779,13 +14787,17 @@ impl FractadyneApp {
                     let hash = s.rgba.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, v| {
                         (h ^ u64::from(v.to_bits())).wrapping_mul(0x0000_0100_0000_01b3)
                     });
-                    crate::diag::log_line(
-                        "accum",
-                        &format!(
-                            "view {}: sample {} rendered on the worker GPU in {:.0} ms (#{hash:016x})",
-                            d.view, d.index, d.ms
-                        ),
-                    );
+                    // Per sample, so behind the trace: 5 of every 24-sample run, and most of the
+                    // supersampling share of a worker session's log (W10, 2026-10-16).
+                    if crate::diag::trace_on("accum") {
+                        crate::diag::trace(
+                            "accum",
+                            format!(
+                                "view {}: sample {} rendered on the worker GPU in {:.0} ms (#{hash:016x})",
+                                d.view, d.index, d.ms
+                            ),
+                        );
+                    }
                     self.perf.accum_ext_ready[d.view].push(s);
                 }
                 None => {
@@ -14902,8 +14914,8 @@ impl FractadyneApp {
             params.ss
         );
         if count == 0 {
-            if self.gpu_worker.is_some() {
-                crate::diag::log_line("accum", &format!("view {view}: sample 0, the worker's template: {key}"));
+            if self.gpu_worker.is_some() && crate::diag::trace_on("accum") {
+                crate::diag::trace("accum", format!("view {view}: sample 0, the worker's template: {key}"));
             }
             self.perf.accum_key[view] = key;
             self.perf.accum_key_warned[view] = false;
@@ -14964,7 +14976,9 @@ impl FractadyneApp {
             );
         }
         if folded >= accum_target() {
-            crate::diag::log_line("accum", &format!("view {view}: converged at {folded} samples"));
+            if let Some(held) = self.perf.accum_converged_line[view].admit(diag::elapsed_ms(), ACCUM_LINE_GAP_MS) {
+                crate::diag::log_line("accum", &format!("view {view}: converged at {folded} samples{}", held_note(held)));
+            }
         }
         self.schedule_repaint(ctx); // advance (or reach the terminal state) next frame
     }

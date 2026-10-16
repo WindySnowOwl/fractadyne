@@ -733,12 +733,80 @@ pub(crate) fn alive() {
 /// thread-local registry snapshotted in the hook) are the full fix — deferred as a larger,
 /// deliberate change; the full-timeline `[crumb]` log lines below already disambiguate.
 pub(crate) fn breadcrumb(msg: String) {
+    crumb(msg, true);
+}
+
+/// A breadcrumb: the slot the panic hook and the watchdog read is always set; the log gets the
+/// line when `to_log`.
+fn crumb(msg: String, to_log: bool) {
     alive();
     let thread = std::thread::current().name().unwrap_or("?").to_string();
-    file_line(&format!("[crumb] ({thread}) {msg}"));
+    if to_log {
+        file_line(&format!("[crumb] ({thread}) {msg}"));
+    }
     if let Ok(mut b) = BREADCRUMB.lock() {
         *b = format!("{msg} [{thread}]");
     }
+}
+
+/// ⭐**A SMALL REFERENCE BUILD IS RATE-LIMITED IN THE LOG, NEVER IN THE CRASH SLOT.** W10's exit
+/// criterion, measured on the maintainer's own sessions (2026-10-16): 300 to 1,450 KB per 14
+/// minutes, 70-86% of it `building reference` / `reference built` crumbs: four to eight builds a
+/// second of a few hundred samples each while zooming at shallow depth. Such a build is routine. A
+/// large one is what an out-of-memory abort dies inside (2026-08-08: `iter=10000000 prec=380` was
+/// the last line of the log), and an abort leaves only the log, so a build of at least
+/// `QUIET_BUILD_BIT_STEPS` (iterations x precision bits) always logs both lines. A smaller one logs
+/// its pair at most once per `QUIET_BUILD_GAP_MS` per thread, and the next start line printed says
+/// how many it held. Replayed over the logs that measured it: 167-257 KB per 14 minutes.
+pub(crate) const QUIET_BUILD_BIT_STEPS: f64 = 1.0e8;
+pub(crate) const QUIET_BUILD_GAP_MS: u64 = 5000;
+
+thread_local! {
+    /// Whether this thread's last `building reference` crumb was held, so its `reference built`
+    /// crumb is too: the pair stays a pair.
+    static BUILD_CRUMB_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// One limiter per build thread (`fd-ref-live`, `fd-ref-lookahead`, ...): the threads are spawned
+/// per build, so the limiter cannot live on the thread itself.
+static BUILD_CRUMB_LINES: Mutex<Vec<(String, LineLimiter)>> = Mutex::new(Vec::new());
+
+/// Whether a build of `iter` iterations at `prec` bits is small enough to be rate-limited.
+pub(crate) fn quiet_build(iter: u64, prec: usize) -> bool {
+    (iter as f64) * (prec as f64) < QUIET_BUILD_BIT_STEPS
+}
+
+/// The `building reference` crumb (see [`QUIET_BUILD_BIT_STEPS`]).
+pub(crate) fn build_crumb_start(msg: String, iter: u64, prec: usize) {
+    let mut note = String::new();
+    let held = quiet_build(iter, prec) && {
+        let thread = std::thread::current().name().unwrap_or("?").to_string();
+        let mut lines = BUILD_CRUMB_LINES.lock().unwrap_or_else(|e| e.into_inner());
+        let i = match lines.iter().position(|(t, _)| *t == thread) {
+            Some(i) => i,
+            None => {
+                lines.push((thread, LineLimiter::default()));
+                lines.len() - 1
+            }
+        };
+        match lines[i].1.admit(elapsed_ms(), QUIET_BUILD_GAP_MS) {
+            None => true,
+            Some(n) => {
+                if n > 0 {
+                    note = format!(" - and {n} more small build(s) on this thread since the last line like this (rate-limited)");
+                }
+                false
+            }
+        }
+    };
+    BUILD_CRUMB_HELD.with(|c| c.set(held));
+    crumb(format!("{msg}{note}"), !held);
+}
+
+/// The `reference built` crumb: in the log exactly when its `building reference` crumb was.
+pub(crate) fn build_crumb_done(msg: String) {
+    let held = BUILD_CRUMB_HELD.with(|c| c.replace(false));
+    crumb(msg, !held);
 }
 
 /// Current breadcrumb (empty string when none was set yet).

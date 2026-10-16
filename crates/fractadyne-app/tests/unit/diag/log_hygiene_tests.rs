@@ -1,4 +1,4 @@
-use super::LineLimiter;
+use super::{quiet_build, LineLimiter};
 
 /// A flapping transition prints once per gap, and the next line that prints carries the count.
 #[test]
@@ -59,4 +59,16 @@ fn every_log_category_is_documented() {
     assert!(cats.len() >= 20, "the scan found only {} categories — it has stopped seeing the calls: {cats:?}", cats.len());
     let missing: Vec<_> = cats.iter().filter(|c| !docs.contains(&format!("[fd-{c}]"))).collect();
     assert!(missing.is_empty(), "logged but not in DIAGNOSTICS.md's prefix table: {missing:?}");
+}
+
+/// Which reference builds' crumbs may be rate-limited (W10, 2026-10-16), on builds from the logs
+/// that measured it. The shallow zoom's builds, four to eight a second, are small; a deep live
+/// view's and the build an out-of-memory abort died in (2026-08-08) always log.
+#[test]
+fn only_small_reference_builds_are_rate_limited() {
+    assert!(quiet_build(12_315, 206), "a shallow lookahead build (len 285 of 12,315 at 206 bits)");
+    assert!(quiet_build(21_181, 435), "the deepest small build in the 2026-10-16 session");
+    assert!(!quiet_build(10_000_000, 380), "the build the 2026-08-08 abort died in");
+    assert!(!quiet_build(2_158_192, 16_810), "a 2^16,600 live view's reference");
+    assert!(!quiet_build(2_009_392, 200_064), "a 2^200,000 view's reference");
 }

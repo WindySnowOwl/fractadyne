@@ -5072,3 +5072,34 @@ target of 2^16,609.6, and a randomly animated palette. Three findings came out o
     reason.
 - The cause is still open. The next field occurrence names its stage and inputs, and does not
   leave the user at a broken view.
+
+*W10's exit criterion, measured* (a 14-minute session's log under 300 KB, accumulation under 5%).
+- Measured on the maintainer's sessions, not a harness. Accumulation is off under every harness
+  but the zoomtest's settle, so a harness reading 0% would be vacuous.
+- The accumulation half was met: 0-6% across the sessions since beta.113, against the 65%
+  baseline. The size half failed: busy sessions logged 300-1,450 KB per 14 minutes.
+- The flood had moved: 70-86% of it was `[crumb] (fd-ref-live|fd-ref-lookahead) building
+  reference` / `reference built`. While zooming at shallow depth the app builds four to eight
+  escaped references a second (a few hundred samples against asks of 12-21k, 37-80 ms each), two
+  lines apiece.
+- `--recordtest`'s log-budget check could not see it. It judges its own run, which never zooms
+  at shallow depth: a guard that checks only what its run exercises.
+- The change:
+  - A build smaller than 1e8 iterations x precision bits logs its pair at most once per 5 s per
+    thread. The next start line printed says how many it held (`diag::build_crumb_start` /
+    `build_crumb_done`; the pair stays a pair through a thread-local).
+  - Larger builds always log both lines: the 2026-08-08 out-of-memory abort died inside
+    `iter=10000000 prec=380`, and an abort leaves only the log.
+  - Every crumb still sets the crash report's and the watchdog's breadcrumb.
+  - With a second device, the per-sample `rendered on the worker GPU` lines, the template line
+    and `the average holds all` are behind `FRACTADYNE_TRACE=accum`. Once the crumbs were gone,
+    they were the accumulation share (12-17%).
+  - `converged` is rate-limited like `begin`: an animated palette restarts and converges a run
+    every second.
+- Zoomtest A/B (100 octaves from 1x, two runs per arm, interleaved):
+  - before: 62.0/62.2 KB and 490/494 crumb lines;
+  - after: 20.3/21.4 KB and 82/84 crumb lines, the pairs 41/41 and 42/42, 187/181 builds held and
+    counted.
+  - Other categories unchanged.
+- Replayed over the maintainer's beta.18/beta.19 sessions: 102-235 KB per 14 minutes,
+  accumulation 0.9-4.8%. Both halves of the criterion are met.

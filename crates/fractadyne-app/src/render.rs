@@ -619,13 +619,17 @@ pub(crate) fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
     // abort dies inside — 2026-08-08, `iter=10000000 prec=380` was the last thing the log held
     // before the process vanished. Without a size here the report can name the phase but not say
     // how close it was to the wall.
-    crate::diag::breadcrumb(format!(
-        "building reference [{}]: iter={} prec={} ({})",
-        inp.origin,
-        inp.gpu_iter,
+    crate::diag::build_crumb_start(
+        format!(
+            "building reference [{}]: iter={} prec={} ({})",
+            inp.origin,
+            inp.gpu_iter,
+            inp.precision,
+            crate::diag::memory_summary()
+        ),
+        u64::from(inp.gpu_iter),
         inp.precision,
-        crate::diag::memory_summary()
-    ));
+    );
     if inp.custom.is_some() {
         return custom_reference(&inp);
     }
@@ -1535,7 +1539,7 @@ fn finish_reference(
         _ => std::sync::Arc::new(Vec::new()),
     };
     let rn_ms = t_rn.elapsed().as_secs_f64() * 1000.0;
-    crate::diag::breadcrumb(format!(
+    crate::diag::build_crumb_done(format!(
         "reference built [{}]: len={len} iter={orbit_iter} prec={orbit_prec}",
         inp.origin
     ));

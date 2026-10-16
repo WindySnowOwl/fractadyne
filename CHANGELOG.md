@@ -68,6 +68,14 @@ Changes after 0.3.0-beta.1:
   restart a pixel's orbit exactly as the slower arithmetic does. Deep renders are pixel-identical
   to the full-precision path again (38 of 38), at the same speed: 4.2e275× at 4K still takes
   0.30 s of GPU time against 0.74 s without the faster arithmetic.
+- **A busy session's log is a quarter of the size (0.3.0-beta.20).** While zooming, the app
+  builds four to eight small reference orbits a second, and each wrote two lines to the log: 70 to
+  86% of a busy session's log, 300 KB to 1.4 MB per 14 minutes. A small build now logs at most
+  once per 5 seconds per kind, saying how many it held back. A large one, the kind an
+  out-of-memory crash dies inside, always logs. With a second graphics card, the per-sample
+  supersampling lines are now behind `FRACTADYNE_TRACE=accum`. Replayed over the sessions that
+  measured it, a busy 14 minutes logs 100 to 235 KB; a 2.5-minute zoom from 1x logs 21 KB
+  instead of 62 KB.
 - **A view that cannot be drawn is put back (0.3.0-beta.20).** Twice in October the view's
   magnification became "not a number" near 2^16,600 and stayed that way until the user moved
   elsewhere. Saving the session refused to keep it, 900 to 1,100 times each, but nothing said
