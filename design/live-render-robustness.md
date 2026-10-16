@@ -4807,4 +4807,89 @@ picture (grey levels, edge pixels, looked at).
   Treating Z as exactly 0 at the dip makes the period's multiplier zero, so every pixel collapses
   onto the reference's cycle.
 - Pre-existing and separate from the tail: the custom mode-2 loop has had it since it was built.
-  Not fixed here.
+  Not fixed here; filed as GitHub #5 (user: "flag the deep dip bug"), reproduced in the live view
+  on beta.19 and the current build with the view file in the issue.
+
+*On the RX 6800 XT* (field agent v25, which takes `--formula`; dev.20): the same fifteen views,
+`--tail-audit 48`. Of all audited differing pixels: tail right 1, floatexp right 0, "neither" 3–5 on
+four views (late escapers near 167,000 iterations, where both paths drift; not the tail).
+- The Burning Ship and sin views are bit-identical even on this card. Cubic and quartic differ in
+  1–8 px.
+- Custom z² + c on corpus rows 34–38 differs in 6.8–17.5% of pixels, against 0.09–1.1% for the
+  built-in Mandelbrot on this card. A custom formula's df32 and floatexp steps are generated
+  separately, so on a card that keeps the error-free transforms their operation orders part in the
+  chaotic pixels. Nothing is wrong there; the two paths simply differ.
+
+**2026-10-16 — W8 finished: U26's detection, the Linux battery's verdict, the last loose ends.**
+
+*U26: the counters' decisions graded per backend* (`7e4d56e4`). §7.8 asked for the rebase and
+BLA-skip counter arithmetic to join `--gputest`'s op families.
+- A counter counts decisions, so the new rows 13–17 run the renderer's own predicates. 1,024
+  decisions each, mostly near ties, built from hashes and bitcasts only:
+
+  | row | predicate |
+  |---|---|
+  | 13 | `rebase_df32`, the mode-0 rebase test |
+  | 14 | the floatexp rebase, `sf_lt(fe_abs_sf(z), fe_abs_sf(δz))` |
+  | 15 | `tail_rebase` |
+  | 16 | the BLA radius test |
+  | 17 | `tail_no_skip`, the df32 tail's BLA exit |
+
+  `rebase_df32` and `tail_no_skip` were lifted out of their two kernels each, which also enforces
+  the lockstep the old comment demanded.
+- The CPU names every modeled arithmetic that reproduces all the decisions: the sum of squares
+  plain or fused either way, subnormals flushed or kept, sqrt and log2 correctly rounded, the
+  constant associated either way.
+- Matching IEEE f32 (unfused, flushed) is a PASS. Anything else is a FAIL that names the arithmetic.
+  An input far from the tie that comes out wrong is WRONG under any arithmetic.
+- `--gputest` prints one `[FAIL] <backend>: <id>` line per failing row, and each card declares its
+  lines in `gpu-validate-expected.json`. Until now `--gputest`'s exit 1 was accepted wholesale on
+  both cards, so a newly failing family could never go red.
+- The reading U26 could only suspect is now measured. On Vulkan, the backend the app renders with,
+  the RTX 3080 fuses both rebase sums as `fma(x,x,y*y)`, while the RX 6800 XT fuses the dot as
+  `fma(y,y,x*x)` and δz's sum as `fma(x,x,y*y)`. **The rebase counter is computed differently on
+  the two cards.** No backend on either card rounds sqrt or log2 correctly: 6–48 of 1,024 near ties
+  decide otherwise. Both readings are deterministic run to run.
+- Found on the way:
+  - FXC (DX12) aborts on the rows written as loops over a dynamically indexed vec4, so each row is
+    one function called four times.
+  - My first log2 margin was scaled to the threshold (~0.01), but `log2(2^j)` is an intermediate of
+    magnitude |j|. One ulp there (1.9e-6 at j = −18) moved the threshold past an input the margin
+    had called decisive, on all three RTX 3080 backends.
+  - The anti-vacuity test went red on a real gap: row 16 could not tell two models apart and had no
+    decisive inputs.
+- Renders unchanged by the lift: bench-matrix 0 algorithmic drift, self-test 529/529 with goldens
+  31/31, F3 corpus 38/38.
+
+*The Linux battery judges itself* (`dd8b1409`).
+- `gpu-validate.sh` always exited 0. It now mirrors `gpu-validate.ps1`'s verdict and exits 0, 2
+  or 3, with the judge in Python. A `python3` on PATH can be an install stub, so it uses the first
+  interpreter that actually runs.
+- The two judges agree line for line and exit for exit on eleven fixture bundles: both cards' real
+  `--gputest` output and sabotaged copies, known and new self-test failures, an unknown card, no
+  file, a step that newly passes.
+- A Linux card has its own slug (RADV adds the chip), so it is judged by the defaults until it
+  declares an entry.
+
+*Smaller items.*
+- `--recordtest` exits in `crate::verdict`'s convention (`c840c059`). Its VACUOUS was 2, which the
+  other gates and the torture ladder read as RED. Checked live: PASS 0, record off 2, `--set` 3.
+- Field agent v25 (`e694a772`) takes `--formula` and `--formula-params`, written without spaces.
+  Agent v26 (`27ab15b8`): an accelerated battery takes the expectations file and `dive-capture`
+  from the standard package; it could not judge itself and skipped the screen step. Both were
+  tested on a private share first.
+
+*Verified on the RX 6800 XT* (dev.22 = `8f0f334a`, reverted in `3b28e3da`).
+- The battery judged `--gputest` row by row against the card's declared lines: as expected.
+- It FAILED on another step. `--recordtest`'s record-cost check read p99 85.2 µs, 0.511% of a
+  60 Hz frame, against a 0.5% limit. The p50 is unchanged at 45 µs, and nothing in dev.20–22
+  touches the record.
+- Five reruns of the same build: PASS, p99 0.37–0.46%. Across the 18 Radeon runs on record, p99 is
+  0.36–0.48% and this is the only one over the limit.
+- **A finding about the gate, filed rather than normalised:** p99 over ~240 frames is the third
+  largest sample, so two or three preempted frames decide it, and on this card the limit sits only
+  5–30% above the usual reading. It goes red without cause about once in eighteen runs. Options:
+  more frames, re-measure a near miss, or a cost that excludes preemption. Not changed here.
+
+§7.8's change list is now done, except the rows planned in the checklist (the zoomtest P-G matrix,
+torture increment 2). Next: W9.
