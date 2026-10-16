@@ -4788,7 +4788,9 @@ picture (grey levels, edge pixels, looked at).
 | sqr(abs(z)) + c | 1e40, 1e80 (38.0, 20.1%) | bit-identical |
 | sin z + c | 1e40, 1e80 (60.5, 32.7%) | bit-identical |
 
-- Fourteen valid views across six formulas, and every pixel agrees.
+- Fifteen valid views across six formulas, from 1e28× to 1e140×, and every pixel agrees. (First
+  written as fourteen, in this entry, `6bbf64e`'s message and GitHub #5: a miscount of the table's
+  rows.)
 - Control: the saved 2^-60 build changes custom z² + c pixels on corpus rows 35, 37 and 38 (1, 19
   and 54). So the audit sees a custom-tail difference, and the threshold change removed them.
 - No small-Z guard is added: nothing measured calls for one.
