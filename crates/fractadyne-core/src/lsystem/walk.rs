@@ -443,4 +443,5 @@ pub(crate) fn shape(t: &Tables) -> (u32, Vec<f64>, f64) {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/lsystem/walk/tests.rs"]
 mod tests;

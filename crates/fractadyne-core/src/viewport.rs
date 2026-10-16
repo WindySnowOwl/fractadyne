@@ -334,14 +334,15 @@ impl Viewport {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/viewport/pan_complex_tests.rs"]
 mod pan_complex_tests;
 
 #[cfg(test)]
-#[path = "viewport/click_zoom_tests.rs"]
+#[path = "../tests/unit/viewport/click_zoom_tests.rs"]
 mod click_zoom_tests;
 
 #[cfg(test)]
-#[path = "viewport/precision_guard_tests.rs"]
+#[path = "../tests/unit/viewport/precision_guard_tests.rs"]
 mod precision_guard_tests;
 
 /// The iteration count auto-iterations ask at `log2mag` from a `base`: the base plus about 220 an

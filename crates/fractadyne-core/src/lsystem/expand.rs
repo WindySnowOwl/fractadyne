@@ -651,4 +651,5 @@ pub fn bounds(sys: &LSystem, x: &Expansion) -> Option<[f64; 4]> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/lsystem/expand/tests.rs"]
 mod tests;

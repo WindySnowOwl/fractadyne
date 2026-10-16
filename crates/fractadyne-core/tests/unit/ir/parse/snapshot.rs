@@ -185,7 +185,7 @@ fn parse_snapshot() {
     let corpus = corpus();
     let lines: Vec<String> = corpus.iter().map(|s| format!("{:016x}", fnv(&fingerprint(s)))).collect();
     if std::env::var_os("FRACTADYNE_BLESS_PARSE").is_some() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/ir/parse/snapshot.txt");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/unit/ir/parse/snapshot.txt");
         std::fs::write(path, lines.join("\n") + "\n").unwrap();
         return;
     }

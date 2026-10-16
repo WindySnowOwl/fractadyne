@@ -343,4 +343,5 @@ pub fn perturbed(prog: &Program) -> Result<Program, NotPerturbable> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/ir/perturb/tests.rs"]
 mod tests;

@@ -149,4 +149,5 @@ pub(crate) fn letters_of(count: u8) -> impl Iterator<Item = char> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/life/hensel/tests.rs"]
 mod tests;

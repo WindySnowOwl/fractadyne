@@ -33,4 +33,5 @@ pub mod polygon;
 pub mod library;
 
 #[cfg(test)]
+#[path = "../tests/unit/lsystem/exercises.rs"]
 mod exercises;

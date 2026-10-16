@@ -450,4 +450,5 @@ impl std::str::FromStr for Rule {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/life/rule/tests.rs"]
 mod tests;

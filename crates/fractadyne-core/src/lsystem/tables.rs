@@ -713,4 +713,5 @@ pub(crate) fn unit(a: f64) -> [f64; 2] {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/lsystem/tables/tests.rs"]
 mod tests;

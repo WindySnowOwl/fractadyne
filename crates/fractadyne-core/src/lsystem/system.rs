@@ -812,4 +812,5 @@ fn parse_angle(v: &str) -> Option<Angle> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/lsystem/system/tests.rs"]
 mod tests;

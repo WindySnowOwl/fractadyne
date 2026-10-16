@@ -764,4 +764,5 @@ pub fn deep_walk_all(
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/lsystem/deep/tests.rs"]
 mod tests;

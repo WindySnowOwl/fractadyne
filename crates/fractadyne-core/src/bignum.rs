@@ -1125,6 +1125,7 @@ pub fn parse_imagina_text(text: &str) -> Option<KfrView> {
 pub const IMAGINA_BINARY_MAGIC: [u8; 8] = [0xFF, 0x49, 0x4D, 0x50, 0x56, 0x0D, 0x0A, 0x00];
 
 #[cfg(test)]
+#[path = "../tests/unit/bignum/location_format_tests.rs"]
 mod location_format_tests;
 
 /// Mantissa bits needed to position sub-pixel at the given magnification (+ guard).

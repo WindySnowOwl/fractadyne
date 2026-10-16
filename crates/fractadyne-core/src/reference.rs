@@ -4899,16 +4899,21 @@ mod renorm;
 pub use renorm::*;
 
 #[cfg(test)]
+#[path = "../tests/unit/reference/pick_deep_scoring.rs"]
 mod pick_deep_scoring;
 
 #[cfg(test)]
+#[path = "../tests/unit/reference/misiurewicz_detection.rs"]
 mod misiurewicz_detection;
 
 #[cfg(test)]
+#[path = "../tests/unit/reference/aux_bla_oracle.rs"]
 mod aux_bla_oracle;
 
 #[cfg(test)]
+#[path = "../tests/unit/reference/sched_tests.rs"]
 mod sched_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/reference/sa_budget_tests.rs"]
 mod sa_budget_tests;

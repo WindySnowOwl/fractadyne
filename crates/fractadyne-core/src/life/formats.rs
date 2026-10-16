@@ -432,4 +432,5 @@ pub fn write_life106(cells: &[(i64, i64, u8)]) -> String {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/life/formats/tests.rs"]
 mod tests;
