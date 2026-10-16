@@ -468,7 +468,7 @@ impl FractadyneApp {
             let build_ms = ft.elapsed().as_secs_f64() * 1000.0;
             let mut gpu_ms = 0.0;
             if real {
-                let req = crate::profile::params_to_request(&params);
+                let req = crate::render::params_to_request(&params);
                 let t_gpu = Instant::now();
                 // Pure-GPU iterate time via TIMESTAMP_QUERY (as `--divetest` does): `render_iter`'s
                 // wall time includes a full texture readback the GUI never pays, and that time

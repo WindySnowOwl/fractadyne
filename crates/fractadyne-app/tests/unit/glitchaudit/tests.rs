@@ -1,4 +1,5 @@
 use super::*;
+use crate::export::correction_applies;
 
 #[test]
 fn a_verdict_names_the_render_the_oracle_agrees_with() {

@@ -4152,6 +4152,84 @@ impl FractadyneApp {
     }
 }
 
+/// Convert a live `MandelbrotParams` into an `ExportRequest` that renders the SAME view reusing
+/// its already-computed reference orbit (no recompute) — lets the frame-timing harness render each
+/// frame exactly as the live view would, without paying the reference cost twice.
+pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractadyne_gpu::ExportRequest {
+    fractadyne_gpu::ExportRequest {
+        width: p.resolution[0].max(1),
+        height: p.resolution[1].max(1),
+        work_budget: None,
+        pass_ms: None,
+        tile_px_max: None,
+        jitter: [0.0, 0.0],
+        ss: p.ss.max(1),
+        span_mantissa: p.span_mantissa,
+        center: p.center,
+        ref_offset: p.ref_offset,
+        delta_exp: p.delta_exp,
+        sa_skip: p.sa_skip,
+        // Profiling measures cost, not colour: the mapping never affects iterate time, so this
+        // path stays on the classic linear map regardless of the session's setting.
+        norm_mode: 0,
+        norm_lo: 0.0,
+        aa_palette: false,
+        glitch_on: 0,
+        vignette: p.vignette,
+        sa_a: p.sa_a,
+        sa_a_exp: p.sa_a_exp,
+        sa_b: p.sa_b,
+        sa_b_exp: p.sa_b_exp,
+        sa_c: p.sa_c,
+        sa_c_exp: p.sa_c_exp,
+        rn: p.rn,
+        rn_bla: p.rn_bla.clone(),
+        julia_c: p.julia_c,
+        orbit: p.orbit.clone(),
+        orbit_len: p.orbit_len,
+        bla: p.bla.clone(),
+        bla_on: p.bla_on,
+        max_iter: p.max_iter,
+        mode: p.mode,
+        formula: p.formula,
+        custom: None,
+        julia: p.julia,
+        cycle: p.cycle,
+        offset: p.offset,
+        lut: p.lut.clone(),
+        lut_smooth: p.lut_smooth,
+        light: p.light,
+        light_angle: p.light_angle,
+        light_height: p.light_height,
+        de_on: p.de_on,
+        de_strength: p.de_strength,
+        de_width: p.de_width,
+        de_phase: p.de_phase,
+        color_method: p.color_method,
+        stripe_freq: p.stripe_freq,
+        stripe_tail: p.stripe_tail,
+        stripe_tail_len: p.stripe_tail_len,
+        trap_type: p.trap_type,
+        aa_filter: p.aa_filter,
+        interior_col: p.interior_col,
+    }
+}
+
+/// [`params_to_request`] for COLOUR too, at sample position `jitter` (display pixels): the frame's
+/// own normalization map, palette anti-aliasing and custom formula. What a supersampling sample
+/// rendered on another device must use to fold into the live average (`gpu_worker`,
+/// `design/multi-gpu-live.md` L2) — the profiling conversion keeps the linear map on purpose.
+pub(crate) fn params_to_request_exact(p: &fractadyne_gpu::MandelbrotParams, jitter: [f32; 2]) -> fractadyne_gpu::ExportRequest {
+    fractadyne_gpu::ExportRequest {
+        norm_mode: p.norm_mode,
+        norm_lo: p.norm_lo,
+        aa_palette: p.aa_palette,
+        custom: p.custom.clone(),
+        jitter,
+        ..params_to_request(p)
+    }
+}
+
 // ================================================================================================
 // impl FractadyneApp - glitch-corrected + normalized offline renders
 // ================================================================================================

@@ -228,6 +228,19 @@ pub(crate) struct Headless {
     pub(crate) alive: Arc<AtomicBool>,
 }
 
+/// Block on a wgpu native future. Adapter/device requests resolve immediately on native, so a
+/// busy poll with a no-op waker is sufficient (and keeps the crate free of an async runtime).
+pub(crate) fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+    let mut fut = std::pin::pin!(fut);
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    loop {
+        match fut.as_mut().poll(&mut cx) {
+            std::task::Poll::Ready(v) => return v,
+            std::task::Poll::Pending => std::thread::yield_now(),
+        }
+    }
+}
+
 /// Open a [`Headless`] device on the adapter `spec` names (as `--adapter` takes it, see
 /// `gpu_choice::pick`; `same` = the window's), with the window device's limits, so the same
 /// renders fit. `label` names the device in driver diagnostics.
@@ -269,7 +282,7 @@ pub(crate) fn open_headless(spec: &str, window: &wgpu::AdapterInfo, backends: wg
     if adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
         features |= wgpu::Features::TIMESTAMP_QUERY;
     }
-    let (device, queue) = crate::gputest::block_on(adapter.request_device(
+    let (device, queue) = block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: Some(label),
             required_features: features,

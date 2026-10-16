@@ -14700,7 +14700,7 @@ impl FractadyneApp {
             return;
         }
         let Some(index) = (if shadow { Some(1) } else { self.accum_take_index(view) }) else { return };
-        let mut req = crate::profile::params_to_request_exact(
+        let mut req = crate::render::params_to_request_exact(
             self.perf.accum_template[view].as_ref().expect("checked above"),
             accum_jitter_seq(index),
         );

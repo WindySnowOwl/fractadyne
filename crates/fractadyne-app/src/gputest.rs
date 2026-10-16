@@ -653,19 +653,6 @@ fn report(sink: &mut Sink, label: &str, w: u32, h: u32, px: &[f32]) -> usize {
     failed
 }
 
-/// Block on a wgpu native future. Adapter/device requests resolve immediately on native, so a
-/// busy poll with a no-op waker is sufficient (and keeps the crate free of an async runtime).
-pub(crate) fn block_on<F: std::future::Future>(fut: F) -> F::Output {
-    let mut fut = std::pin::pin!(fut);
-    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
-    loop {
-        match fut.as_mut().poll(&mut cx) {
-            std::task::Poll::Ready(v) => return v,
-            std::task::Poll::Pending => std::thread::yield_now(),
-        }
-    }
-}
-
 /// `--gputest`: run the shader's primitive self-test on EVERY backend this machine offers.
 ///
 /// Headless by construction — the test renders to an offscreen texture, so it needs no window and
@@ -709,7 +696,7 @@ pub(crate) fn run_gputest_sweep(out: Option<&std::path::Path>) -> usize {
             backends,
             ..Default::default()
         });
-        let Some(adapter) = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        let Some(adapter) = crate::gpu_worker::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             force_fallback_adapter: false,
             compatible_surface: None,
@@ -720,7 +707,7 @@ pub(crate) fn run_gputest_sweep(out: Option<&std::path::Path>) -> usize {
         let info = adapter.get_info();
         // Downlevel (GL) adapters cannot satisfy the default limits; ask for what they have.
         let limits = wgpu::Limits::default().using_resolution(adapter.limits());
-        let dev = block_on(adapter.request_device(
+        let dev = crate::gpu_worker::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("gputest.device"),
                 required_features: wgpu::Features::empty(),

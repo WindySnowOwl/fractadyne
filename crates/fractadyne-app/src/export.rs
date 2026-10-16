@@ -1837,7 +1837,7 @@ impl FractadyneApp {
     /// inconclusive (nothing flagged at 1e5×; the deep views tried were noise, where no pixel can
     /// be judged).
     pub(crate) fn correction_wanted(&self, julia: bool) -> bool {
-        crate::glitchaudit::correction_applies(self.render_cfg.glitch_correct, self.fractal.formula_id(), julia)
+        correction_applies(self.render_cfg.glitch_correct, self.fractal.formula_id(), julia)
     }
 
     /// [`Self::correction_wanted`] for a whole job: the synchronous corrected path is all-or-nothing, so
@@ -2187,6 +2187,14 @@ impl FractadyneApp {
             });
         });
     }
+}
+
+/// The export policy this audit produced (`FractadyneApp::correction_wanted` has the evidence):
+/// glitch correction runs when the user's `setting` asks for it, EXCEPT for the holomorphic
+/// families (Mandelbrot, Multibrot 3–5 — `FormulaCaps::export_glitch_correction` false) outside
+/// Julia mode, where it repaired nothing and blackened what it gave up on.
+pub(crate) fn correction_applies(setting: bool, formula_id: u32, julia: bool) -> bool {
+    setting && (julia || fractadyne_core::formula::caps(formula_id).export_glitch_correction)
 }
 
 /// What an L-system export's status adds when its walk stopped at the segment budget.

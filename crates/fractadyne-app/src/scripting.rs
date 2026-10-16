@@ -4825,7 +4825,7 @@ impl FractadyneApp {
             [w, h], 0, None,
         );
         let build_ms = t.elapsed().as_secs_f64() * 1000.0;
-        let req = crate::profile::params_to_request(&params);
+        let req = crate::render::params_to_request(&params);
         let t = Instant::now();
         let _ = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel);
         let gpu_ms = t.elapsed().as_secs_f64() * 1000.0;

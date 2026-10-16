@@ -128,14 +128,6 @@ pub(crate) fn stable(answers: &[Option<(u32, f32)>]) -> bool {
     }
 }
 
-/// The export policy this audit produced (`FractadyneApp::correction_wanted` has the evidence):
-/// glitch correction runs when the user's `setting` asks for it, EXCEPT for the holomorphic
-/// families (Mandelbrot, Multibrot 3–5 — `FormulaCaps::export_glitch_correction` false) outside
-/// Julia mode, where it repaired nothing and blackened what it gave up on.
-pub(crate) fn correction_applies(setting: bool, formula_id: u32, julia: bool) -> bool {
-    setting && (julia || fractadyne_core::formula::caps(formula_id).export_glitch_correction)
-}
-
 /// `count` indices spread evenly over `pool` (all of it when it is smaller).
 pub(crate) fn spread(pool: &[usize], count: usize) -> Vec<usize> {
     if pool.len() <= count {
