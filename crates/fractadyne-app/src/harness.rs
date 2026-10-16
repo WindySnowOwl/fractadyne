@@ -25,6 +25,7 @@
 //! | `--torture` | [`torture`] | the escalating failure-hunting ladder, each rung a child process |
 //! | `--logcheck` | [`logcheck`] | a session's log against `validation/logcheck-rules.toml` |
 //! | `--shot` | [`shot`] | the site screenshot, regenerated from a saved location |
+//! | `--autodive` | [`autodive`] | the autopilot's dive driven unpaced, to hammer the frame-cost controller |
 //! | `--farmtest` | `crate::farm::farmtest` (file `harness/farm/farmtest.rs`) | the render farm end to end on one machine |
 //!
 //! [`verdict`] is the exit-code convention the gating harnesses share: 0 PASS, 2 RED, 3 VACUOUS
@@ -39,8 +40,8 @@
 //! [`modes`] holds the windowed harnesses' state, the per-frame hooks `update()` runs for them
 //! (`harness_frame_hooks`), and the mode ladder's harness branches (`harness_ladder`).
 //!
-//! Still in functional files until phase 4 moves them: `--autodive` (`autopilot.rs`), and
-//! `--replay` and the decision recorder (`render/decide.rs`).
+//! Still in a functional file until phase 4 moves them: `--replay` and the decision recorder
+//! (`render/decide.rs`).
 //!
 //! **Where the product calls in.** `scripts/check_test_layout.py` holds each functional file to the
 //! number of times it names `harness::` (HARNESS_HOOKS), so a new call into a harness is a decision,
@@ -54,6 +55,7 @@
 //! - the export-request builder (`render.rs`) records the profiler's setup timings
 //!   ([`profile::ProfSetup`], `FractadyneApp::prof`).
 
+pub(crate) mod autodive;
 pub(crate) mod bench_bignum;
 pub(crate) mod bench_matrix;
 pub(crate) mod chunksweep;

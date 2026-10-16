@@ -25,7 +25,7 @@
 //!   the staged `build_params` (frame budget → chunk walk → present gate → params), and
 //!   `ExportRequest` assembly (the performance-critical bridge to the GPU).
 //! - [`export`]   — render-to-file (PNG/EXR), the reloadable view-metadata blob, Open-view.
-//! - [`autopilot`]— the hands-free auto-zoom dive (+ the `--autodive` controller hammer).
+//! - [`autopilot`]— the hands-free auto-zoom dive.
 //! - [`fractal`]  — the [`FractalKind`] domain enum (families, formula ids, descriptions).
 //! - [`help`]     — the in-app Help window content.
 //! - [`theme`]    — branding colors, dark/light visuals, fonts, wordmark, window icon.
@@ -6764,7 +6764,7 @@ impl FractadyneApp {
                 .and_then(|v| v.parse::<u32>().ok())
                 .unwrap_or(1)
                 .min(20);
-            Some(autopilot::AutoDive::new(target, secs, iter, homes))
+            Some(harness::autodive::AutoDive::new(target, secs, iter, homes))
         } else {
             None
         };

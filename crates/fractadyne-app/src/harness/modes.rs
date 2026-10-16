@@ -75,8 +75,8 @@ pub(crate) struct HarnessModes {
     /// settled screenshots (the 2026-09-04 blurry-Julia field report).
     pub(crate) dualsettle: Option<crate::harness::uitest::DualSettle>,
     /// CLI `--autodive [LOG10]`: unpaced autopilot dive that hammers the frame-cost controller and
-    /// reports whether the lethal regime was reached. See `autopilot::AutoDive`.
-    pub(crate) autodive: Option<crate::autopilot::AutoDive>,
+    /// reports whether the lethal regime was reached. See `autodive::AutoDive`.
+    pub(crate) autodive: Option<crate::harness::autodive::AutoDive>,
     /// CLI `--chunk-sweep [ITERS]`: measure the UNCENSORED per-window wall cost of a chunked
     /// iterate at the current view. The one measurement that separates the two branches of the
     /// 2026-08-22 device loss — see `mod chunksweep`.
