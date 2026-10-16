@@ -17,7 +17,7 @@ fn a_rate_limited_line_prints_once_per_gap_and_counts_what_it_held() {
 /// Every category the app logs under must appear as `[fd-<cat>]` in DIAGNOSTICS.md's prefix
 /// table — a documentation check that can genuinely go red (design W10). The source is scanned
 /// for `log_line("…"`, `diag::trace("…"` and `trace_on("…"` with a literal category, ignoring
-/// comment lines (a doc example) and the test-only files.
+/// comment lines (a doc example). `src/` holds no test file: the tests live under `tests/unit/`.
 #[test]
 fn every_log_category_is_documented() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -30,13 +30,7 @@ fn every_log_category_is_documented() {
             if p.is_dir() {
                 stack.push(p);
             } else if p.extension().is_some_and(|x| x == "rs") {
-                let name = p.file_name().unwrap().to_string_lossy().into_owned();
-                let test_only = name.ends_with("_tests.rs")
-                    || ["console.rs", "device_loss_hint.rs", "log_dir.rs"].contains(&name.as_str())
-                        && p.parent().is_some_and(|q| q.ends_with("diag"));
-                if !test_only {
-                    files.push(p);
-                }
+                files.push(p);
             }
         }
     }

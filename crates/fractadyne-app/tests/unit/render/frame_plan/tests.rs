@@ -108,30 +108,15 @@ fn nothing_outside_frame_plan_writes_a_frames_scale_or_makes_its_resolution() {
     let mut all = Vec::new();
     files(&src, &mut all);
     assert!(all.len() > 20, "the scan must see the crate (found {} files)", all.len());
+    // `src/` holds no test file (the tests, which make their own, live under `tests/unit/`).
     let texts: Vec<(std::path::PathBuf, String)> =
         all.iter().map(|p| (p.clone(), std::fs::read_to_string(p).expect("readable source"))).collect();
-    // Test-only files: those declared `#[cfg(test)] mod NAME;` anywhere in the crate, with or
-    // without a `#[path]` (or any attribute or comment) between the two.
-    let mut test_mods = std::collections::HashSet::new();
-    for (_, text) in &texts {
-        let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
-        for (i, l) in lines.iter().enumerate() {
-            if *l == "#[cfg(test)]" {
-                let item = lines[i + 1..].iter().find(|l| !l.starts_with("#[") && !l.starts_with("//"));
-                if let Some(name) = item.and_then(|l| l.split("mod ").nth(1)).and_then(|r| r.strip_suffix(';')) {
-                    test_mods.insert(name.to_string());
-                }
-            }
-        }
-    }
-    assert!(test_mods.contains("chunk_bands"), "the test-module scan must see `mod chunk_bands`");
     let mut writers = Vec::new();
     let mut panel_makers = 0;
     for (p, text) in &texts {
         if p.file_name().is_some_and(|n| n == "frame_plan.rs" || n == "decide.rs") {
             continue;
         }
-        let test_only = p.file_stem().is_some_and(|s| test_mods.contains(&*s.to_string_lossy()));
         for (i, line) in text.lines().enumerate() {
             let code = line.split("//").next().unwrap_or("");
             let binds = ["let res_scale =", "let budget_res_scale ="].iter().any(|k| code.contains(k));
@@ -147,7 +132,7 @@ fn nothing_outside_frame_plan_writes_a_frames_scale_or_makes_its_resolution() {
             if (binds || assigns) && !code.contains("frame_plan::") {
                 writers.push(format!("{}:{}: {}", p.display(), i + 1, line.trim()));
             }
-            if code.contains("Resolution::panel(") && !test_only {
+            if code.contains("Resolution::panel(") {
                 panel_makers += 1;
             }
         }

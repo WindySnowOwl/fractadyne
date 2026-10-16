@@ -56,9 +56,8 @@ fn every_token_is_something_the_code_logs() {
             let p = e.path();
             if p.is_dir() {
                 stack.push(p);
-            } else if p.extension().is_some_and(|x| x == "rs")
-                && !p.file_name().unwrap().to_string_lossy().contains("tests")
-            {
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                // src/ holds no test file (they live under tests/unit/), so all of it is the code.
                 src.push_str(&std::fs::read_to_string(&p).unwrap());
             }
         }
