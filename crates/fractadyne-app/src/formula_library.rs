@@ -475,5 +475,5 @@ pub(crate) fn save_to(path: &Path, list: &[SavedFormula]) -> Result<(), String> 
 }
 
 #[cfg(test)]
-#[path = "formula_library_tests.rs"]
+#[path = "../tests/unit/formula_library/tests.rs"]
 mod tests;

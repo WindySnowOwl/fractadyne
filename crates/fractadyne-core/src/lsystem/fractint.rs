@@ -141,4 +141,5 @@ fn keyword<'a>(s: &'a str, key: &str) -> Option<&'a str> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/lsystem/fractint/tests.rs"]
 mod tests;

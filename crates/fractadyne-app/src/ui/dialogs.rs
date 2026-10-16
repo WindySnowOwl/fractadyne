@@ -53,6 +53,7 @@ fn open_in_file_manager(dir: &std::path::Path) -> std::io::Result<()> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/ui/dialogs/welcome_tests.rs"]
 mod welcome_tests;
 
 impl FractadyneApp {

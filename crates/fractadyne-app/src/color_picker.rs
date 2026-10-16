@@ -318,5 +318,5 @@ pub(crate) fn picker_body(ui: &mut egui::Ui, id: egui::Id, rgb: &mut [f32; 3]) -
 // compiling into the RELEASE binary — caught by "unused import" warnings that could only
 // appear if a test-only module was being built for real.
 #[cfg(test)]
-#[path = "color_picker_tests.rs"]
+#[path = "../tests/unit/color_picker/color_picker_tests.rs"]
 mod color_picker_tests;

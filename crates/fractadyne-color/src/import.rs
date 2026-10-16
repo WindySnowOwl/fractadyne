@@ -572,4 +572,5 @@ pub fn parse_ase(bytes: &[u8]) -> Result<Vec<[f32; 3]>, String> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/import/import_tests.rs"]
 mod import_tests;

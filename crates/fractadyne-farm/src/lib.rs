@@ -63,4 +63,5 @@ impl Sha256 {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/lib_tests.rs"]
 mod lib_tests;

@@ -417,4 +417,5 @@ pub fn bla_fold_walk(
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/reference/bla_fold/tests.rs"]
 mod tests;

@@ -122,4 +122,5 @@ pub fn triangulate(pts: &[[f64; 2]]) -> Vec<[usize; 3]> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/lsystem/polygon/tests.rs"]
 mod tests;

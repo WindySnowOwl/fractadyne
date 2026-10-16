@@ -1962,4 +1962,5 @@ fn fmt_secs(s: f64) -> String {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/farm/controller/tests.rs"]
 mod tests;

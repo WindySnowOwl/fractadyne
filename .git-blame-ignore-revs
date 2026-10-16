@@ -10,3 +10,13 @@ f9b07d178cd4123d9353295bd973fac342b1abe4
 
 # Line-ending normalization: the last nine CRLF/mixed blobs to LF (.gitattributes `* text=auto`), no content change.
 dcee178542dc76ef7c1bd8a1242b0fac99ffb496
+
+# Test layout: every test module's file moves under its crate's tests/unit/, and the inline test
+# blocks move out of the functional files (design/test-code-separation.md, phases 1-2, 2026-10-16;
+# each commit checked by scripts/check_move_only.py)
+43399f1af77cdf76dfa1a6e4b3644a77934e7a14
+dcd78f1d481084a0cb400125582b85d5e7fb269b
+8789e9d18c4a6d48fe55f60e24675a4c47f40f29
+61c882bcbcd2c6abcdedc7f5e48425ad4557c3d1
+4a833650627b11f969ccaa27a845a5840f7aa8d1
+20244ca6be6cfcbebd2a21adefcd4c201c747ddf

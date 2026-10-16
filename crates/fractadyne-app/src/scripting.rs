@@ -1161,9 +1161,11 @@ pub(crate) fn progressive_frame_order(first: u64, last: u64, keyframes: &[u64]) 
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/resume_vetting_tests.rs"]
 mod resume_vetting_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/order_tests.rs"]
 mod order_tests;
 
 /// The normalize range for tour time `t`, interpolated piecewise-linearly between the
@@ -1191,6 +1193,7 @@ pub(crate) fn norm_anchor_range(anchors: &[(f64, (f32, f32))], t: f64) -> Option
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/norm_anchor_tests.rs"]
 mod norm_anchor_tests;
 
 /// The normalize-anchor file (`--dump-norm-anchors` / `--norm-anchors`).
@@ -1273,6 +1276,7 @@ pub(crate) fn parse_frame_range(s: &str) -> Result<(u64, u64), String> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/frame_range_tests.rs"]
 mod frame_range_tests;
 
 pub(crate) fn segment_range(frames: u64, n: u64, k: u64) -> (u64, u64) {
@@ -1282,6 +1286,7 @@ pub(crate) fn segment_range(frames: u64, n: u64, k: u64) -> (u64, u64) {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/segment_props.rs"]
 mod segment_props;
 
 /// Everything the tour renderer needs, after merging the CLI over the script's `[render]` block.
@@ -1363,20 +1368,6 @@ pub(crate) struct PlaybackRestore {
     /// The viewer's own dual-view divider position, handed back when the tour ends — a script that
     /// widens the Julia panel is doing it for the presentation, not editing the session.
     pub(crate) dual_split: f32,
-}
-
-/// The `[[keyframe]]` table's field names, from the schema `--script-schema` prints.
-///
-/// Exposed so a test can ask what a script is ABLE to set: a keyframe field that writes one of
-/// the viewer's own settings must also be handed back when the tour ends, and the only way to
-/// keep that true as fields are added is to check the two lists against each other.
-#[cfg(test)]
-pub(crate) fn keyframe_field_names() -> Vec<&'static str> {
-    TOUR_SCHEMA
-        .iter()
-        .find(|t| t.toml == "[[keyframe]]")
-        .map(|t| t.fields.iter().map(|f| f.name).collect())
-        .unwrap_or_default()
 }
 
 /// A resolved chapter: `[start, end)` in tour seconds.
@@ -4834,7 +4825,7 @@ impl FractadyneApp {
             [w, h], 0, None,
         );
         let build_ms = t.elapsed().as_secs_f64() * 1000.0;
-        let req = crate::profile::params_to_request(&params);
+        let req = crate::render::params_to_request(&params);
         let t = Instant::now();
         let _ = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel);
         let gpu_ms = t.elapsed().as_secs_f64() * 1000.0;
@@ -5043,16 +5034,21 @@ impl FractadyneApp {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/bench_depth_tests.rs"]
 mod bench_depth_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/transition_tests.rs"]
 mod transition_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/formula_tests.rs"]
 mod formula_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/lsystem_tests.rs"]
 mod lsystem_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/scripting/schema_tests.rs"]
 mod schema_tests;

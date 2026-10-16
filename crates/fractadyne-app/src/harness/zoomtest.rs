@@ -1,0 +1,1014 @@
+//! `--zoomtest [OCTAVES]` — on-screen update-latency harness for LIVE zooms.
+//!
+//! WHY THIS EXISTS: "the zoom feels jerky" is a statement about the interval between the frames
+//! a person actually SEES, and none of the other harnesses measures that. `--divetest` is
+//! headless — its cadence columns sit on a synthetic clock reconstructed from frame costs —
+//! `FRACTADYNE_PERF=1` records tour-playback frames only, and `--motiontest` runs the real window
+//! but asserts presentation invariants, not timing. This one runs the real windowed app, holds a
+//! virtual Space key (the production glide, pacer and interactive reference lookahead included —
+//! `harness_holds_space`), and stamps every `update()` with the wall-clock interval since the
+//! previous one: that interval IS the on-screen update cadence, because the glide requests a
+//! repaint every frame and each `update()` ends in a present. Per frame it also records what the
+//! frame showed (a real re-iterate or a held reprojection, and how many octaves old the held
+//! frame was), the reference-pipeline state (depth lag, installs, lookahead installs, pacer
+//! throttle) and the per-frame zoom step — a long frame followed by a big step is the jerk a
+//! viewer feels. Everything goes to a JSON file (`--out`, else `logs/zoomtest-<stamp>.json`) with
+//! a summary — mean / p50 / p95 / p99 / max interval, hitch counts, the longest stall and where
+//! it happened, real-refresh cadence, held-frame magnification, zoom-step spread — so runs across
+//! builds can be diffed and a stutter attributed.
+//!
+//! Options: `--zoomtest [OCTAVES]` (default 40; 1e100 from 1× is 332.2), `--zoomtest-rate R`
+//! (the Zoom speed slider, default 1.0), `--zoomtest-location FILE.fdn` (start view; default
+//! corpus location 07 at 2^103.3 ≈ 1.3e31×, the same structure-rich deep centre `--motiontest`
+//! drives, so the glide runs in the floatexp regime from its first frame), and
+//! `--zoomtest-start-log2 L` (override the start magnification to 2^L while keeping the file's
+//! centre — `0` starts at 1× on a deep location's centre, so the whole descent to it is measured). Exit codes follow the torture `classify`
+//! contract: 0 = measured and reported, 2 = never reached the regime (fewer than `MIN_FRAMES`
+//! frames, or the start reference never built), 4 = the watchdog (frame loop stopped).
+//! Run it with a wiped `FRACTADYNE_CONFIG_DIR` like every other gate; `FRACTADYNE_NO_PREFETCH=1`
+//! is the A/B without the interactive lookahead.
+//!
+//! ⭐**W9's MOTION rung** (design/live-render-robustness.md §7.9): `--zoomtest-location session`
+//! starts from the view the session opened at — a staged crash view, as `--soak-depth session`
+//! does — and `--zoomtest-taps N,OCT,PAUSE` zooms in taps the way the 2026-09-21 field session did
+//! (0.15–0.3 oct each, about a second apart). Every run folds the frame record over its WHOLE
+//! length and prints `zoomtest-regime:` (the escaped-reference predicate, as the soak's) and
+//! `zoomtest-stall:` (the longest run of slow frames across which the frame budget never came
+//! down — the field loss's signature, which the still rung never produced). With
+//! `FRACTADYNE_REF_ESCAPE_AT` armed and the regime never entered, the run exits 3 (VACUOUS; `crate::verdict`).
+
+use std::time::Instant;
+
+use crate::FractadyneApp;
+
+/// Wall-clock phase budgets. The reference build is the only genuinely open-ended wait.
+const WAIT_REF_S: f64 = 180.0;
+/// After the start reference lands, let the view settle before the glide begins, so the run does
+/// not start on a mid-settle grid (which would be measured as a stall it did not cause).
+const QUIET_S: f64 = 2.0;
+/// Cap on the glide itself — a 1× → 1e100 dive (332 octaves) at the 1.0× slider is ~500 s.
+const GLIDE_MAX_S: f64 = 900.0;
+/// Whole-run hard deadline, enforced by a watchdog THREAD (the `--autodive` lesson: an in-frame
+/// check needs frames to still be delivered, which is exactly not the case that needs bounding).
+const DEADLINE_S: f64 = 1200.0;
+/// A glide that produced fewer frames than this measured nothing.
+const MIN_FRAMES: usize = 120;
+
+/// Cap on the settle tail (`FRACTADYNE_ZOOMTEST_SETTLE`): the on-settle supersampling at a deep
+/// view is 24 samples of a full re-render each, seconds apiece at depth.
+const SETTLE_MAX_S: f64 = 120.0;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Phase {
+    Jump,
+    WaitRef,
+    Quiet,
+    Glide,
+    /// `--zoomtest-hold S`: the key is up and the view rests where the glide ended for S seconds
+    /// before the report. The 2026-09-21 RX 6800 XT was lost ~20 s after the user stopped tapping
+    /// at the crash depth (`settled=true` in its manifest), so a rung that reports on arrival
+    /// would leave before the moment it exists to reach. Not part of the glide statistics.
+    Hold,
+    /// `FRACTADYNE_ZOOMTEST_SETTLE=<png>`: after the glide, release the key, let the view settle
+    /// and the on-settle supersampling converge, capture the window to `<png>`, then report. The
+    /// field report this exists for (2026-09-16): "when zooming, it still sometimes finishes with
+    /// something that looks like a transparent overlay of another location/zoom level" — a
+    /// converged average that folded a sample from a different view. The capture is the evidence;
+    /// the tile trace's `accum … FOLD` lines say which sample.
+    Settle,
+}
+
+/// One presented frame of the glide. `dt_ms` is the wall interval since the previous `update()`
+/// (the on-screen cadence); `real` says whether the frame just shown was a real re-iterate
+/// (`perf.prev_real`, stamped when its params were built) or a held reprojection.
+struct Frame {
+    t: f64,
+    dt_ms: f64,
+    l2: f64,
+    dl2: f64,
+    real: bool,
+    /// Octaves the frame ON SCREEN lags the view (`l2 − frozen_l2`; the display magnifies the last
+    /// complete frame by 2^gap). This holds on `real` frames too: a PINNED refresh re-iterates
+    /// every frame into the G-buffer but the display keeps serving the hold snapshot of the last
+    /// complete frame until the pin adopts. Before design/live-zoom-smoothing.md P-B every
+    /// reference install abandoned the pin, so at 4.0× (an install every ~0.2 s) the 1e28
+    /// hand-over frame was shown at 24–53× (4.5–5.7 oct, measured 2026-09-16); the rate-aware
+    /// refresh sizing bounds this at `HELD_MAX_OCT`.
+    gap_oct: f64,
+    lag: f64,
+    orbit_id: u64,
+    look: u64,
+    /// Share of the selected zoom speed the pacer let through this frame.
+    vel_frac: f64,
+    res: f64,
+    /// The iterate resolution actually dispatched last (`perf.last_res_v[0]`, pixels) — the
+    /// rate-aware refresh cap shows up here, not in `res` (the AIMD scale it is a cap on).
+    res_px: [u32; 2],
+    /// Observed zoom speed the sizing used, octaves/s (`perf.zoom_oct_s`).
+    oct_s: f64,
+    /// Pinned refreshes ADOPTED so far (`perf.adopt_complete[0]`): the count that proves the
+    /// held frame is being replaced, not merely re-iterated into a G-buffer nobody sees.
+    adopts: u64,
+    /// …adopted short of their ask because the picture had stopped changing
+    /// (`perf.adopt_converged[0]`, the autopilot's Speed priority), and pinned walks that
+    /// completed with no escaped pixel and were kept OFF the screen (`perf.blank_walks_total[0]`).
+    converged: u64,
+    blank: u64,
+    /// Frames from the second GPU adopted so far (`perf.live_adopted_total[0]`, `motion_worker`).
+    worker: u64,
+    /// The display served the HOLD SNAPSHOT (`perf.hold_active[0]`, the present gate's own state)
+    /// rather than the live texture. `real` and `gap_oct` cannot see this: `real` counts
+    /// re-iterates (a held frame's pass still runs underneath), and `gap_oct` reads the frozen
+    /// bookkeeping, which no direct-mode frame writes — the 2026-09-27 report held the snapshot for
+    /// every moving frame of a direct-mode glide while both read "held 0%, 0.00 oct".
+    snap: bool,
+    /// LIVE AUTO-NORMALIZATION state, for the 2026-09-17 reports ("sometimes doesn't normalize",
+    /// "the colours bounce around on zoom", "it may go to a flat colour panel"). The palette
+    /// mapping is decided from the escape RANGE and an aliasing predicate on the local GRADIENT,
+    /// and the gradient is measured between adjacent texels of the RENDER — so it scales with the
+    /// dispatch resolution. `norm_on` flipping frame to frame IS the bounce; `norm_lo`/`norm_hi`
+    /// jumping is the range chasing a reading from another view.
+    norm_lo: f32,
+    norm_hi: f32,
+    norm_grad: f32,
+    norm_on: bool,
+    /// 0 = linear map, 1 = log map, 2 = not engaged (the raw palette).
+    norm_map: u8,
+    mode: u32,
+    /// The app's own interval measure (`perf.last_dt_ms`, includes present waits).
+    gui_dt_ms: f64,
+}
+
+/// Where the glide starts (`--zoomtest-location`).
+pub(crate) enum StartView {
+    /// Corpus location 07 at 2^103.3, the deep centre `--motiontest` drives (the default).
+    Corpus,
+    /// A `.fdn`, through the same allow-listed loader the Open dialog uses.
+    File(std::path::PathBuf),
+    /// `session`: the view the session opened at — a staged crash view.
+    Session,
+}
+
+impl StartView {
+    fn describe(&self) -> String {
+        match self {
+            StartView::Corpus => "corpus-07 @ 2^103.3".into(),
+            StartView::File(p) => p.display().to_string(),
+            StartView::Session => "the session's view".into(),
+        }
+    }
+}
+
+/// `N,OCTAVES,PAUSE_S` — `N` taps of `OCTAVES` each, resting `PAUSE_S` between them. `None` for
+/// anything else, including a zero tap count or a non-positive tap.
+pub(crate) fn parse_taps(s: &str) -> Option<(u32, f64, f64)> {
+    let mut it = s.split(',');
+    let n = it.next()?.trim().parse::<u32>().ok()?;
+    let oct = it.next()?.trim().parse::<f64>().ok()?;
+    let pause = it.next()?.trim().parse::<f64>().ok()?;
+    (it.next().is_none() && n > 0 && oct > 0.0 && pause >= 0.0 && oct.is_finite() && pause.is_finite())
+        .then_some((n, oct, pause))
+}
+
+pub(crate) struct ZoomTest {
+    octaves: f64,
+    rate: f32,
+    location: StartView,
+    /// Start magnification override (log2), keeping the location's centre.
+    start_log2: Option<f64>,
+    phase: Phase,
+    t0: Instant,
+    phase_t0: Instant,
+    frames_total: u64,
+    last_frame: Option<Instant>,
+    start_l2: f64,
+    prev_l2: f64,
+    records: Vec<Frame>,
+    /// True while the harness holds the virtual Space key — read by `draw_central` and the
+    /// interactive lookahead pump exactly where they read the real key.
+    driving: bool,
+    /// `FRACTADYNE_ZOOMTEST_SETTLE=<png>`: where the settled, converged window goes (see
+    /// `Phase::Settle`). Accumulation — off under every task invocation — is admitted for this
+    /// run when set (`FractadyneApp::zoomtest_settling`).
+    settle: Option<std::path::PathBuf>,
+    /// A window capture has been requested and its reply is due next frame.
+    settle_pending: bool,
+    /// 0 = the one-sample capture (`<png>-s0.png`) is still owed; 1 = the converged capture.
+    settle_stage: u8,
+    /// `FRACTADYNE_ZOOMTEST_TAPS=<n>,<octaves>,<pause_s>`: instead of one continuous glide, `n`
+    /// short glides of `<octaves>` each with a `<pause_s>` rest between them — the wheel-tap
+    /// pattern in the field log behind the ghost report (accumulation begins at every rest and
+    /// is interrupted by the next tap). `taps_left` counts down; `tap_start_l2` is where the
+    /// current tap began; `pause_until` is the rest's end.
+    taps: Option<(u32, f64, f64)>,
+    taps_left: u32,
+    tap_start_l2: f64,
+    pause_until: Option<Instant>,
+    /// Cleared by the report path so the watchdog thread stands down.
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// W9's regime predicate and the budget-stall measure over every record of the run, and the
+    /// next record `seq` to fold (the soak's `RegimeAcc`, so the two rungs read alike).
+    regime: crate::harness::soak::RegimeAcc,
+    regime_next: u64,
+    /// OCTAVES was given on the command line (else a `session` start derives it).
+    octaves_given: bool,
+    /// `--zoomtest-hold S` (see `Phase::Hold`).
+    hold_s: f64,
+    /// `--zoomtest-then-log2 L`: when the first glide arrives, JUMP to 2^L on the same centre while
+    /// it is still moving, then glide again from there; only that second leg is reported. The
+    /// 2026-09-27 report ("pressing space to zoom goes to a solid color", 179× direct mode) came
+    /// after zooming OUT in jumps from a perturbation depth: a pin abandoned by such a jump left
+    /// `chunk_dirty` set, and in direct mode nothing ever cleared it. A single glide from a fresh
+    /// session cannot reach that state; this sequence can.
+    then_log2: Option<f64>,
+    /// W8: the criteria a P-G matrix row holds this glide to (`--zoomtest-gate`); `None` reports only.
+    gate: Option<ZoomGate>,
+}
+
+/// The criteria of design/live-zoom-smoothing.md's P-G matrix (W8): `Smooth` for its continuous,
+/// jump-start and hand-over rows, `Appetite` for its auto-iteration appetite row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ZoomGate {
+    Smooth,
+    Appetite,
+}
+
+/// `--zoomtest-gate [smooth|appetite]` (no value: smooth).
+pub(crate) fn parse_zoom_gate(v: Option<&str>) -> Option<ZoomGate> {
+    match v {
+        None | Some("smooth") => Some(ZoomGate::Smooth),
+        Some("appetite") => Some(ZoomGate::Appetite),
+        Some(_) => None,
+    }
+}
+
+/// The held-frame bound of the `Smooth` row at zoom `rate`: 0.5 octave at 1×, 1 at 4× (the matrix's
+/// two points), as 0.5·√rate between and beyond them.
+pub(crate) fn held_max_oct(rate: f32) -> f64 {
+    0.5 * (rate.max(0.01) as f64).sqrt()
+}
+
+/// What a gated glide failed (empty = it held): `Smooth` — no interval over 50 ms, none over 100 ms,
+/// the held frame never more than [`held_max_oct`] behind; `Appetite` — no interval over 33 ms.
+pub(crate) fn zoom_gate_failures(gate: ZoomGate, rate: f32, dt_max: f64, gt33: usize, gt100: usize, held_oct: f64) -> Vec<String> {
+    let mut f = Vec::new();
+    match gate {
+        ZoomGate::Smooth => {
+            if dt_max > 50.0 {
+                f.push(format!("max frame interval {dt_max:.1} ms > 50"));
+            }
+            if gt100 > 0 {
+                f.push(format!("{gt100} interval(s) over 100 ms"));
+            }
+            let bound = held_max_oct(rate);
+            if held_oct > bound {
+                f.push(format!("held frame {held_oct:.2} octaves behind > {bound:.2} at {rate:.2}x"));
+            }
+        }
+        ZoomGate::Appetite => {
+            if gt33 > 0 {
+                f.push(format!("{gt33} interval(s) over 33 ms"));
+            }
+        }
+    }
+    f
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/harness/zoomtest/gate_tests.rs"]
+mod gate_tests;
+
+impl ZoomTest {
+    /// `--zoomtest-then-log2` (see `ZoomTest::then_log2`).
+    pub(crate) fn with_then(mut self, then_log2: Option<f64>) -> Self {
+        self.then_log2 = then_log2;
+        self
+    }
+
+    /// `--zoomtest-gate` (see [`ZoomGate`]).
+    pub(crate) fn with_gate(mut self, gate: Option<ZoomGate>) -> Self {
+        self.gate = gate;
+        self
+    }
+
+    pub(crate) fn new(
+        octaves: Option<f64>,
+        rate: f32,
+        location: StartView,
+        start_log2: Option<f64>,
+        taps: Option<(u32, f64, f64)>,
+        hold_s: f64,
+    ) -> Self {
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        {
+            let done = std::sync::Arc::clone(&done);
+            std::thread::spawn(move || {
+                let start = Instant::now();
+                while start.elapsed().as_secs_f64() < DEADLINE_S {
+                    if done.load(std::sync::atomic::Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                }
+                if done.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+                let msg = format!(
+                    "WATCHDOG: no report within {DEADLINE_S:.0}s — the frame loop stopped delivering (deep reference build on the main thread, or a wedge). Nothing was measured."
+                );
+                crate::diag::log_line("zoomtest", &msg);
+                eprintln!();
+                eprintln!("--zoomtest: {msg}");
+                crate::exit(4);
+            });
+        }
+        Self {
+            octaves: octaves.unwrap_or(40.0).max(1.0),
+            octaves_given: octaves.is_some(),
+            hold_s: hold_s.clamp(0.0, 600.0),
+            then_log2: None,
+            gate: None,
+            rate: rate.clamp(0.25, 4.0),
+            location,
+            start_log2,
+            phase: Phase::Jump,
+            t0: Instant::now(),
+            phase_t0: Instant::now(),
+            frames_total: 0,
+            last_frame: None,
+            start_l2: 0.0,
+            prev_l2: 0.0,
+            records: Vec::with_capacity(8192),
+            driving: false,
+            settle: std::env::var_os("FRACTADYNE_ZOOMTEST_SETTLE")
+                .filter(|v| !v.is_empty())
+                .map(std::path::PathBuf::from),
+            settle_pending: false,
+            settle_stage: 0,
+            // `--zoomtest-taps` outranks the older env var (which a field request cannot set).
+            taps: taps.or_else(|| std::env::var("FRACTADYNE_ZOOMTEST_TAPS").ok().and_then(|s| parse_taps(&s))),
+            taps_left: 0,
+            tap_start_l2: 0.0,
+            pause_until: None,
+            done,
+            regime: crate::harness::soak::RegimeAcc::default(),
+            regime_next: 0,
+        }
+    }
+}
+
+/// Nearest-rank percentile over a SORTED slice (no interpolation — matches `--divetest`).
+fn pct(sorted: &[f64], q: f64) -> f64 {
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    sorted[((sorted.len() as f64 * q) as usize).min(sorted.len() - 1)]
+}
+
+/// JSON has no NaN literal, and a NaN here is meaningful: the normalization has no reading yet.
+fn json_f32(v: f32) -> String {
+    if v.is_finite() { format!("{v:.2}") } else { "null".into() }
+}
+
+fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+impl FractadyneApp {
+    /// The harness's virtual Space key: `draw_central` and the interactive lookahead pump read it
+    /// exactly where they read the real key, so the driven glide eases in, runs and eases out
+    /// through the production path — pacer and prefetch included.
+    pub(crate) fn harness_holds_space(&self) -> bool {
+        self.harness.zoomtest.as_ref().is_some_and(|z| z.driving)
+    }
+
+    /// A `--zoomtest` run with a settle tail (`FRACTADYNE_ZOOMTEST_SETTLE`): progressive on-settle
+    /// supersampling is admitted for it, exactly as for `--shot`, since the converged average is
+    /// what it captures.
+    pub(crate) fn zoomtest_settling(&self) -> bool {
+        self.harness.zoomtest.as_ref().is_some_and(|z| z.settle.is_some())
+    }
+
+    /// One step per frame, called from `update()` BEFORE the lookahead pump and the central draw
+    /// (same in-loop shape as `motiontest_frame`), so the key state it sets shapes this frame and
+    /// the interval it records belongs to the frame just presented.
+    pub(crate) fn zoomtest_frame(&mut self, ctx: &egui::Context) {
+        let Some(mut zt) = self.harness.zoomtest.take() else { return };
+        zt.frames_total += 1;
+        // Fold every record since the last frame, in EVERY phase: a storm during the start
+        // view's boot is as much the run's as one during the glide.
+        let (recs, next, lost) = crate::diag::frame_record::since(zt.regime_next);
+        for r in &recs {
+            zt.regime.add(r);
+        }
+        zt.regime_next = next;
+        zt.regime.lost += lost;
+        let now = Instant::now();
+        let in_phase = zt.phase_t0.elapsed().as_secs_f64();
+
+        let advance = |zt: &mut ZoomTest, p: Phase| {
+            crate::diag::log_line(
+                "zoomtest",
+                &format!("phase {:?} -> {:?} at +{:.1}s", zt.phase, p, zt.t0.elapsed().as_secs_f64()),
+            );
+            zt.phase = p;
+            zt.phase_t0 = Instant::now();
+        };
+
+        match zt.phase {
+            Phase::Jump => {
+                // The start view, in-process. A `.fdn` when given (the same allow-listed loader the
+                // Open dialog and `--shot` use), the session's own view for `session`, else the
+                // corpus-07 deep centre `--motiontest` drives.
+                match &zt.location {
+                    StartView::File(loc) => match std::fs::read_to_string(loc) {
+                        Ok(text) => {
+                            let load = self.load_view_metadata(&text);
+                            if !load.clamped.is_empty() {
+                                eprintln!("--zoomtest: clamped {}", load.clamped.join(", "));
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("fractadyne: --zoomtest: cannot read {}: {e}", loc.display());
+                            self.zoomtest_abort(zt, "start location unreadable");
+                        }
+                    },
+                    // Nothing to load: this is the first frame, so nothing has been dispatched at
+                    // the session's view yet, and a `--zoomtest-start-log2` below moves off it
+                    // before anything is.
+                    StartView::Session => {}
+                    StartView::Corpus => {
+                        let cx = fractadyne_core::parse_bf_prec(crate::harness::motiontest::CX, 192);
+                        let cy = fractadyne_core::parse_bf_prec(crate::harness::motiontest::CY, 192);
+                        let (Some(cx), Some(cy)) = (cx, cy) else {
+                            self.zoomtest_abort(zt, "internal: corpus centre failed to parse");
+                        };
+                        self.viewport.set_center_log2mag(cx, cy, crate::harness::motiontest::LOG2_MAG);
+                    }
+                }
+                if let Some(l2) = zt.start_log2 {
+                    // Keep the location's centre (the TARGET of a centred glide) and start the
+                    // descent at 2^l2 — `0` = the 1× home framing of that point.
+                    let (cx, cy) = (self.viewport.center_x.clone(), self.viewport.center_y.clone());
+                    let session_l2 = self.viewport.log2_magnification();
+                    crate::diag::log_line(
+                        "zoomtest",
+                        &format!(
+                            "at the jump: upp 2^{:.3}, height {:.0} px, 2^{session_l2:.2}",
+                            self.viewport.units_per_pixel.log2(),
+                            self.viewport.height_px
+                        ),
+                    );
+                    self.viewport.set_center_log2mag(cx, cy, l2);
+                    // Zooming INTO a staged view: without an explicit OCTAVES the glide ends on
+                    // arriving at the session view's own depth. Both magnifications are read here,
+                    // before the first layout sizes the panel, so the size change that follows
+                    // (0.4–0.6 oct at 1000–1280 pt wide, measured) moves them together and their
+                    // difference is the distance to the staged view's scale. A tap COUNT cannot
+                    // promise that: that shift depends on the window, and the pacer shortens taps
+                    // on a card that renders slowly.
+                    if matches!(zt.location, StartView::Session) && !zt.octaves_given {
+                        zt.octaves = (session_l2 - l2).max(1.0);
+                        crate::diag::log_line(
+                            "zoomtest",
+                            &format!("the glide ends at the session view's depth: {:.2} octaves", zt.octaves),
+                        );
+                    }
+                }
+                self.render_cfg.zoom_rate = zt.rate;
+                self.pointer.zoom_vel = 0.0;
+                self.pointer.last_cursor = None; // a centred glide, like a user with the mouse parked
+                // `FRACTADYNE_ZOOMTEST_PROFILE=user`: the reporting user's settings that shape
+                // the refresh path (their 2026-09-16 session): native-resolution refreshes while
+                // zooming, 2× AA, the dual view, a high motion-resolution floor, live
+                // normalization. A ghost seen under those settings must be reproduced under them.
+                if std::env::var("FRACTADYNE_ZOOMTEST_PROFILE").is_ok_and(|p| p == "user") {
+                    self.render_cfg.prefer_detail = true;
+                    self.render_cfg.aa = 2;
+                    self.render_cfg.min_motion_res = 0.83;
+                    self.coloring.normalize_live = true;
+                    self.coloring.log_palette = true; // "Log color scale", as the report's screenshots show
+                    self.dual = self.fractal.supports_julia();
+                    self.dual_split = 0.588;
+                    crate::diag::log_line(
+                        "zoomtest",
+                        "profile 'user': prefer_detail, aa=2, min_motion_res=0.83, normalize_live, dual (split 0.588)",
+                    );
+                }
+                self.invalidate_refs();
+                crate::diag::log_line(
+                    "zoomtest",
+                    &format!(
+                        "start 2^{:.1} on {} · {} octaves at zoom rate {:.2}x ({:.2} oct/s) · prefetch {}",
+                        self.viewport.log2_magnification(),
+                        zt.location.describe(),
+                        zt.octaves,
+                        zt.rate,
+                        crate::ZOOM_RATE * zt.rate as f64 / std::f64::consts::LN_2,
+                        if crate::render::no_prefetch() { "OFF (FRACTADYNE_NO_PREFETCH)" } else { "on" }
+                    ),
+                );
+                advance(&mut zt, Phase::WaitRef);
+            }
+            Phase::WaitRef => {
+                // A start at 1× renders DIRECT — no reference is ever built there, so requiring
+                // one would wait forever (it did: 180 s aborts on the first 1× → 1e100 runs).
+                // Demand a reference only where the start view is a perturbation view.
+                let needs_ref = !self.render_mode(self.fractal, false, self.viewport.magnification()).is_direct();
+                // Likewise the frozen-frame latch belongs to the perturbation freeze machinery
+                // (`render.rs`, the reuse-hold/pin block) and is never written for a direct view.
+                let rc = &self.ref_cache[0];
+                let ready = (!needs_ref || (rc.ref_pt.is_some() && rc.frozen_center.is_some()))
+                    && self.recompute_rx[0].is_none()
+                    && zt.frames_total > 30;
+                if ready {
+                    crate::diag::log_line(
+                        "zoomtest",
+                        &format!("reference ready (orbit_len={} partial={}) — settling", rc.orbit_len, rc.partial),
+                    );
+                    advance(&mut zt, Phase::Quiet);
+                } else if in_phase > WAIT_REF_S {
+                    self.zoomtest_abort(zt, "boot never completed: no start reference");
+                }
+            }
+            Phase::Quiet => {
+                if in_phase > QUIET_S {
+                    zt.start_l2 = self.viewport.log2_magnification();
+                    crate::diag::log_line(
+                        "zoomtest",
+                        &format!(
+                            "glide starts: upp 2^{:.3}, height {:.0} px, 2^{:.2}",
+                            self.viewport.units_per_pixel.log2(),
+                            self.viewport.height_px,
+                            zt.start_l2
+                        ),
+                    );
+                    zt.prev_l2 = zt.start_l2;
+                    zt.last_frame = None;
+                    zt.driving = true; // the virtual key goes down THIS frame
+                    if let Some((n, _, _)) = zt.taps {
+                        zt.taps_left = n;
+                        zt.tap_start_l2 = zt.start_l2;
+                        crate::diag::log_line("zoomtest", &format!("tap 1 of {n} begins at 2^{:.2}", zt.start_l2));
+                    }
+                    advance(&mut zt, Phase::Glide);
+                }
+            }
+            Phase::Glide => {
+                let l2 = self.viewport.log2_magnification();
+                // The interval that ends now belongs to the frame just presented — the one whose
+                // params `prev_real` describes and whose zoom step is l2 − prev_l2.
+                if let Some(prev) = zt.last_frame {
+                    let dt_ms = now.duration_since(prev).as_secs_f64() * 1000.0;
+                    // The mapping as the colour pass would take it this frame (None = the raw
+                    // palette, i.e. "Normalize deep colors" is on but not engaged).
+                    let nm = self.live_norm_cycle_offset(0);
+                    let rc = &self.ref_cache[0];
+                    let gap_oct = if rc.frozen_center.is_some() { (l2 - rc.frozen_l2).max(0.0) } else { 0.0 };
+                    let v = self.pointer.zoom_vel;
+                    let vel_frac = if v > 1e-6 { self.paced_zoom_vel() / v } else { 1.0 };
+                    zt.records.push(Frame {
+                        t: zt.phase_t0.elapsed().as_secs_f64(),
+                        dt_ms,
+                        l2,
+                        dl2: l2 - zt.prev_l2,
+                        real: self.perf.prev_real[0],
+                        gap_oct,
+                        lag: rc.last_depth_lag,
+                        orbit_id: rc.orbit_id,
+                        look: self.perf.lookahead_installs,
+                        vel_frac,
+                        res: self.perf.motion_res[0],
+                        res_px: self.perf.last_res_v[0],
+                        oct_s: self.perf.zoom_oct_s,
+                        adopts: self.perf.adopt_complete[0],
+                        converged: self.perf.adopt_converged[0],
+                        blank: self.perf.blank_walks_total[0],
+                        worker: self.perf.live_adopted_total[0],
+                        snap: self.perf.hold_active[0],
+                        // The window the colour pass USES (`norm_shown`), not the fed target:
+                        // the glide sits between them, and it is the shown one the eye sees.
+                        norm_lo: self.perf.norm_shown[0].map_or(f32::NAN, |r| r.0),
+                        norm_hi: self.perf.norm_shown[0].map_or(f32::NAN, |r| r.1),
+                        norm_grad: self.perf.norm_grad[0].unwrap_or(f32::NAN),
+                        norm_on: nm.is_some(),
+                        norm_map: nm.map_or(2, |m| m.mode as u8),
+                        mode: self.perf.last_mode,
+                        gui_dt_ms: self.perf.last_dt_ms,
+                    });
+                }
+                zt.last_frame = Some(now);
+                zt.prev_l2 = l2;
+                // The tap pattern: release after `<octaves>`, rest, press again. The rest is
+                // long enough for the view to settle and the accumulation to BEGIN, and the
+                // next tap interrupts it — the field log's shape (six begins in 15 s).
+                // Where the glide goes when it ends: the hold, the settle tail, or the report.
+                let after = if zt.hold_s > 0.0 {
+                    Some(Phase::Hold)
+                } else if zt.settle.is_some() {
+                    Some(Phase::Settle)
+                } else {
+                    None
+                };
+                // Taps stop at N taps or OCTAVES, whichever comes first.
+                let arrived = l2 - zt.start_l2 >= zt.octaves;
+                if let Some((n, oct, pause)) = zt.taps {
+                    if let Some(until) = zt.pause_until {
+                        if now >= until {
+                            zt.pause_until = None;
+                            zt.taps_left = zt.taps_left.saturating_sub(1);
+                            if zt.taps_left == 0 || arrived {
+                                crate::diag::log_line(
+                                    "zoomtest",
+                                    &format!("taps done at 2^{l2:.2} ({} of {n})", n - zt.taps_left),
+                                );
+                                match after {
+                                    Some(p) => advance(&mut zt, p),
+                                    None => self.zoomtest_report(zt), // exits
+                                }
+                            } else {
+                                zt.tap_start_l2 = l2;
+                                zt.driving = true;
+                                crate::diag::log_line(
+                                    "zoomtest",
+                                    &format!("tap {} of {n} begins at 2^{l2:.2}", n + 1 - zt.taps_left),
+                                );
+                            }
+                        }
+                    } else if zt.driving && (l2 - zt.tap_start_l2 >= oct || arrived || in_phase > GLIDE_MAX_S) {
+                        zt.driving = false; // the key comes up; the glide eases out during the rest
+                        crate::diag::log_line(
+                            "zoomtest",
+                            &format!("tap {} of {n} released at 2^{l2:.2}, resting {pause:.1} s", n + 1 - zt.taps_left),
+                        );
+                        if zt.taps_left <= 1 && zt.settle.is_some() && zt.hold_s == 0.0 {
+                            // The last release goes straight to the settle tail, so its
+                            // one-sample capture can catch the average before it grows.
+                            zt.taps_left = 0;
+                            advance(&mut zt, Phase::Settle);
+                        } else {
+                            zt.pause_until = Some(now + std::time::Duration::from_secs_f64(pause));
+                        }
+                    }
+                } else if (arrived || in_phase > GLIDE_MAX_S)
+                    && zt.then_log2.is_some()
+                    && self.perf.pin[0].is_none()
+                    && in_phase <= GLIDE_MAX_S
+                {
+                    // Keep the key down until a pinned refresh is IN FLIGHT: the state under test
+                    // is a pin the jump abandons (it leaves `chunk_dirty` set). Jumping between
+                    // pins reproduced it once in two runs; waiting for one makes it every run.
+                } else if arrived || in_phase > GLIDE_MAX_S {
+                    zt.driving = false; // the virtual key comes up THIS frame; the glide eases out
+                    if let Some(l2_then) = zt.then_log2.take() {
+                        // The second leg: JUMP while still moving — the view lands at 2^l2_then on
+                        // the same centre mid-glide, as a user's zoom-out step does — then rest and
+                        // glide again. Only the second leg's frames are reported.
+                        let (cx, cy) = (self.viewport.center_x.clone(), self.viewport.center_y.clone());
+                        crate::diag::log_line(
+                            "zoomtest",
+                            &format!(
+                                "second leg: jump from 2^{l2:.2} to 2^{l2_then:.2} while moving (zoom_vel {:.3}, pin in flight: {})",
+                                self.pointer.zoom_vel,
+                                self.perf.pin[0].is_some()
+                            ),
+                        );
+                        self.viewport.set_center_log2mag(cx, cy, l2_then);
+                        zt.records.clear();
+                        zt.last_frame = None;
+                        advance(&mut zt, Phase::Quiet);
+                    } else {
+                        match after {
+                            Some(p) => advance(&mut zt, p),
+                            None => self.zoomtest_report(zt), // exits
+                        }
+                    }
+                }
+            }
+            Phase::Hold => {
+                if in_phase >= zt.hold_s {
+                    crate::diag::log_line(
+                        "zoomtest",
+                        &format!("held {:.1} s at 2^{:.2}", in_phase, self.viewport.log2_magnification()),
+                    );
+                    if zt.settle.is_some() {
+                        advance(&mut zt, Phase::Settle);
+                    } else {
+                        self.zoomtest_report(zt); // exits
+                    }
+                }
+            }
+            Phase::Settle => {
+                // Two captures of the SAME view: `<png>-s0.png` when the average holds exactly
+                // one sample (the classic settled frame, presented through the accumulator),
+                // and `<png>` once it has converged. Their difference is the de-speckle change
+                // — high-frequency, cancelling under a blur — plus any ghost, which does not.
+                // Capturing a control in a second run does not work: the tap sequence lands at
+                // a slightly different depth each run and the whole image shifts.
+                let no_accum = std::env::var_os("FRACTADYNE_NO_ACCUM").is_some();
+                // Harvest a capture already in flight (the `--shot` idiom: the reply lands a
+                // frame later as `Event::Screenshot`).
+                if zt.settle_pending {
+                    let image = ctx.input(|i| {
+                        i.events.iter().find_map(|e| match e {
+                            egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                            _ => None,
+                        })
+                    });
+                    if let Some(image) = image {
+                        let (w, h) = (image.size[0] as u32, image.size[1] as u32);
+                        let mut bytes = Vec::with_capacity(image.pixels.len() * 4);
+                        for px in &image.pixels {
+                            bytes.extend_from_slice(&[px.r(), px.g(), px.b(), px.a()]);
+                        }
+                        let final_stage = zt.settle_stage == 1 || no_accum;
+                        let out = {
+                            let p = zt.settle.clone().unwrap();
+                            if final_stage {
+                                p
+                            } else {
+                                let mut s = p.with_extension("").into_os_string();
+                                s.push("-s0.png");
+                                std::path::PathBuf::from(s)
+                            }
+                        };
+                        if let Some(dir) = out.parent() {
+                            let _ = std::fs::create_dir_all(dir);
+                        }
+                        match fractadyne_export::write_png_rgba8(&out, w, h, &bytes, None) {
+                            Ok(()) => {
+                                let msg = format!(
+                                    "settle capture → {} ({w}x{h}) at 2^{:.4}, accumulated {} sample(s)",
+                                    out.display(),
+                                    self.viewport.log2_magnification(),
+                                    self.perf.accum_count[0]
+                                );
+                                crate::diag::log_line("zoomtest", &msg);
+                                eprintln!("--zoomtest: {msg}");
+                            }
+                            Err(e) => eprintln!("--zoomtest: settle capture write failed: {e}"),
+                        }
+                        zt.settle_pending = false;
+                        if final_stage {
+                            self.zoomtest_report(zt); // exits
+                        }
+                        zt.settle_stage = 1;
+                    }
+                } else {
+                    let count = self.perf.accum_count[0];
+                    let active = self.perf.accum_active[0];
+                    let converged = active && count >= crate::accum_target();
+                    // With accumulation off (`FRACTADYNE_NO_ACCUM=1`) there is nothing to
+                    // converge: capture once the settled render has been quiet for a while.
+                    let quiet_single = no_accum
+                        && in_phase > 6.0
+                        && !self.perf.tile_pending[0]
+                        && !self.perf.chunk_pending[0]
+                        && self.recompute_rx[0].is_none();
+                    // Stage 0 fires on the first folded sample this tail observes (ideally the
+                    // one-sample average; the log line says how many it actually holds).
+                    let due = match zt.settle_stage {
+                        0 if !no_accum => active && count >= 1 && self.perf.accum_committed[0],
+                        _ => converged || quiet_single,
+                    };
+                    if due || in_phase > SETTLE_MAX_S {
+                        if !due {
+                            eprintln!(
+                                "--zoomtest: settle stage {} did not complete within {SETTLE_MAX_S:.0} s (accum active {active}, {count} sample(s)) — capturing anyway",
+                                zt.settle_stage
+                            );
+                            zt.settle_stage = 1;
+                        }
+                        zt.settle_pending = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+                    }
+                }
+            }
+        }
+
+        self.harness.zoomtest = Some(zt);
+        ctx.request_repaint();
+    }
+
+    fn zoomtest_abort(&mut self, zt: ZoomTest, msg: &str) -> ! {
+        zt.done.store(true, std::sync::atomic::Ordering::Relaxed);
+        crate::diag::log_line("zoomtest", &format!("ABORT: {msg}"));
+        eprintln!("--zoomtest: ABORT: {msg}");
+        Self::zoomtest_regime_lines(&zt);
+        crate::exit(crate::harness::verdict::RED);
+    }
+
+    /// W9's two verdict lines and the coverage line, to stderr and the log as `[fd-verdict]` (which
+    /// `--logcheck` requires of every finished zoomtest). Returns whether the
+    /// escaped-reference regime was entered.
+    fn zoomtest_regime_lines(zt: &ZoomTest) -> bool {
+        let regime = zt.regime.report();
+        let lines = [
+            format!("zoomtest-regime: {}", regime.line),
+            format!("zoomtest-stall: {}", zt.regime.stall_line()),
+            format!(
+                "zoomtest-regime-coverage: {} record(s) read over the whole run, {} lost to the ring",
+                zt.regime.folded, zt.regime.lost
+            ),
+        ];
+        for l in &lines {
+            crate::diag::verdict(l);
+        }
+        regime.entered
+    }
+
+    /// Summarise, write the JSON, print the table, exit (`crate::verdict`): 3, VACUOUS, when the glide
+    /// produced too few frames to mean anything, or when the escape instrument was armed and the regime
+    /// it exists to reach was never entered; under `--zoomtest-gate`, 2 when a criterion failed.
+    fn zoomtest_report(&mut self, zt: ZoomTest) -> ! {
+        zt.done.store(true, std::sync::atomic::Ordering::Relaxed);
+        let entered = Self::zoomtest_regime_lines(&zt);
+        let f = &zt.records;
+        let n = f.len();
+        if n < MIN_FRAMES {
+            eprintln!("--zoomtest: VACUOUS: only {n} glide frames (need >= {MIN_FRAMES}) — nothing measured");
+            crate::exit(crate::harness::verdict::VACUOUS);
+        }
+        let secs = f.last().map(|r| r.t).unwrap_or(0.0) - f.first().map(|r| r.t).unwrap_or(0.0);
+        let oct = f.last().unwrap().l2 - zt.start_l2;
+        let mut dts: Vec<f64> = f.iter().map(|r| r.dt_ms).collect();
+        dts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let dt_mean = dts.iter().sum::<f64>() / n as f64;
+        let (dt_p50, dt_p95, dt_p99, dt_max) = (pct(&dts, 0.5), pct(&dts, 0.95), pct(&dts, 0.99), *dts.last().unwrap());
+        let gt = |ms: f64| f.iter().filter(|r| r.dt_ms > ms).count();
+        let (gt33, gt50, gt100) = (gt(33.0), gt(50.0), gt(100.0));
+        let longest = f.iter().max_by(|a, b| a.dt_ms.partial_cmp(&b.dt_ms).unwrap()).unwrap();
+        // Real-refresh cadence: wall time from one real frame's present to the next.
+        let mut gaps: Vec<f64> = Vec::new();
+        let mut acc = 0.0;
+        let mut seen = false;
+        for r in f {
+            if r.real {
+                if seen {
+                    gaps.push(acc);
+                }
+                seen = true;
+                acc = 0.0;
+            }
+            acc += r.dt_ms;
+        }
+        gaps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let reals = f.iter().filter(|r| r.real).count();
+        let gap_mean = if gaps.is_empty() { 0.0 } else { gaps.iter().sum::<f64>() / gaps.len() as f64 };
+        let (gap_p95, gap_max) = (pct(&gaps, 0.95), gaps.last().copied().unwrap_or(0.0));
+        let mut steps: Vec<f64> = f.iter().map(|r| r.dl2.max(0.0)).collect();
+        steps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let (step_p95, step_max) = (pct(&steps, 0.95), steps.last().copied().unwrap_or(0.0));
+        let gap_oct_max = f.iter().map(|r| r.gap_oct).fold(0.0, f64::max);
+        // ⭐W8: how far behind the view a HELD picture was — over the frames that displayed one (a
+        // reprojection, or the snapshot served), the frames the matrix's "held max" is about. A
+        // frame shown live displays its own render, whatever the frozen bookkeeping's age; the gate
+        // reads this one. (On the e4000 Misiurewicz 4x glide, 2026-10-14, the two agreed at 81
+        // octaves and it WAS the screen: the snapshot was served on 86% of frames and two pins were
+        // adopted in 100 octaves, the rest drifting away unfinished — `render::drift_finishes_sooner`.)
+        let held_oct_max = f.iter().filter(|r| !r.real || r.snap).map(|r| r.gap_oct).fold(0.0, f64::max);
+        // How old the frame on screen is, frame by frame — what a second GPU's refreshes lower.
+        let mut gap_octs: Vec<f64> = f.iter().map(|r| r.gap_oct).collect();
+        gap_octs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let gap_oct_mean = gap_octs.iter().sum::<f64>() / n as f64;
+        let gap_oct_p95 = pct(&gap_octs, 0.95);
+        let lag_max = f.iter().map(|r| r.lag).fold(0.0, f64::max);
+        let installs = f.last().unwrap().orbit_id.saturating_sub(f.first().unwrap().orbit_id);
+        let look = f.last().unwrap().look.saturating_sub(f.first().unwrap().look);
+        let adopts = f.last().unwrap().adopts.saturating_sub(f.first().unwrap().adopts);
+        let converged = f.last().unwrap().converged.saturating_sub(f.first().unwrap().converged);
+        let blank = f.last().unwrap().blank.saturating_sub(f.first().unwrap().blank);
+        let worker = f.last().unwrap().worker.saturating_sub(f.first().unwrap().worker);
+        let paced_pct = f.iter().filter(|r| r.vel_frac < 0.999).count() as f64 / n as f64 * 100.0;
+        let hold_pct = f.iter().filter(|r| !r.real).count() as f64 / n as f64 * 100.0;
+        // The snapshot hold (see `Frame::snap`): its share, and its longest unbroken run — how long
+        // the eye watched a picture that was not the view, magnifying.
+        let snap_pct = f.iter().filter(|r| r.snap).count() as f64 / n as f64 * 100.0;
+        let (mut snap_run, mut snap_best, mut snap_t0, mut snap_best_s) = (0usize, 0usize, 0.0, 0.0);
+        for r in f.iter() {
+            if r.snap {
+                if snap_run == 0 {
+                    snap_t0 = r.t;
+                }
+                snap_run += 1;
+                if snap_run > snap_best {
+                    snap_best = snap_run;
+                    snap_best_s = r.t - snap_t0;
+                }
+            } else {
+                snap_run = 0;
+            }
+        }
+        let fps = n as f64 / secs.max(1e-9);
+        let oct_s = oct / secs.max(1e-9);
+
+        eprintln!();
+        eprintln!(
+            "--zoomtest: {oct:.1} octaves in {secs:.1} s ({oct_s:.2} oct/s, {fps:.1} fps) · {n} frames · zoom rate {:.2}x · prefetch {}",
+            zt.rate,
+            if crate::render::no_prefetch() { "off" } else { "on" }
+        );
+        eprintln!(
+            "  frame interval ms: mean {dt_mean:.1}  p50 {dt_p50:.1}  p95 {dt_p95:.1}  p99 {dt_p99:.1}  max {dt_max:.1}   >33ms {gt33}  >50ms {gt50}  >100ms {gt100}"
+        );
+        eprintln!(
+            "  longest stall {:.0} ms at t={:.1} s (1e{:.1}x) · zoom step per frame p95 {step_p95:.4} oct  max {step_max:.3} oct",
+            longest.dt_ms,
+            longest.t,
+            longest.l2 / std::f64::consts::LOG2_10
+        );
+        eprintln!(
+            "  real refreshes {reals} ({:.1}/s), held frames {hold_pct:.0}% · real interval ms: mean {gap_mean:.0}  p95 {gap_p95:.0}  max {gap_max:.0} · held frame max {held_oct_max:.2} oct ({:.2}x; the frozen bookkeeping's age {gap_oct_max:.2})",
+            reals as f64 / secs.max(1e-9),
+            held_oct_max.exp2()
+        );
+        eprintln!(
+            "  frame on screen lags the view: mean {gap_oct_mean:.3} oct  p95 {gap_oct_p95:.3} oct · worker GPU frames adopted {worker} ({:.1}/s)",
+            worker as f64 / secs.max(1e-9)
+        );
+        eprintln!(
+            "  snapshot served {snap_pct:.0}% of frames · longest run {snap_best} frames ({snap_best_s:.2} s)"
+        );
+        eprintln!(
+            "  reference installs {installs} (lookahead {look}) · pinned refreshes adopted {adopts} (+{converged} converged) · blank walks kept off screen {blank} · depth lag max {lag_max:.2} · pacer throttled {paced_pct:.1}% of frames"
+        );
+
+        let mut rows = String::with_capacity(n * 160);
+        for (i, r) in f.iter().enumerate() {
+            if i > 0 {
+                rows.push_str(",\n");
+            }
+            rows.push_str(&format!(
+                "{{\"t\":{:.4},\"dt_ms\":{:.3},\"gui_dt_ms\":{:.3},\"l2\":{:.4},\"dl2\":{:.5},\"real\":{},\"gap_oct\":{:.4},\"lag\":{:.3},\"orbit_id\":{},\"look\":{},\"vel_frac\":{:.3},\"res\":{:.3},\"res_px\":[{},{}],\"oct_s\":{:.3},\"adopts\":{},\"norm_lo\":{},\"norm_hi\":{},\"norm_grad\":{},\"norm_on\":{},\"norm_map\":{},\"mode\":{}}}",
+                r.t, r.dt_ms, r.gui_dt_ms, r.l2, r.dl2, r.real, r.gap_oct, r.lag, r.orbit_id, r.look, r.vel_frac, r.res, r.res_px[0], r.res_px[1], r.oct_s, r.adopts,
+                json_f32(r.norm_lo), json_f32(r.norm_hi), json_f32(r.norm_grad), r.norm_on, r.norm_map, r.mode
+            ));
+        }
+        let json = format!(
+            "{{\n\"tool\": \"fractadyne --zoomtest\",\n\"version\": {},\n\"location\": {},\n\"zoom_rate\": {:.3},\n\"prefetch\": {},\n\"start_l2\": {:.4},\n\"octaves\": {oct:.4},\n\"secs\": {secs:.3},\n\"summary\": {{\"frames\":{n},\"fps\":{fps:.2},\"oct_s\":{oct_s:.4},\"dt_mean\":{dt_mean:.3},\"dt_p50\":{dt_p50:.3},\"dt_p95\":{dt_p95:.3},\"dt_p99\":{dt_p99:.3},\"dt_max\":{dt_max:.3},\"gt33\":{gt33},\"gt50\":{gt50},\"gt100\":{gt100},\"longest_ms\":{:.3},\"longest_t\":{:.3},\"longest_l2\":{:.3},\"reals\":{reals},\"hold_pct\":{hold_pct:.2},\"real_gap_mean\":{gap_mean:.3},\"real_gap_p95\":{gap_p95:.3},\"real_gap_max\":{gap_max:.3},\"step_p95\":{step_p95:.5},\"step_max\":{step_max:.5},\"gap_oct_max\":{gap_oct_max:.4},\"held_oct_max\":{held_oct_max:.4},\"gap_oct_mean\":{gap_oct_mean:.4},\"gap_oct_p95\":{gap_oct_p95:.4},\"worker\":{worker},\"lag_max\":{lag_max:.3},\"installs\":{installs},\"lookahead\":{look},\"adopts\":{adopts},\"paced_pct\":{paced_pct:.2}}},\n\"frames\": [\n{rows}\n]\n}}\n",
+            json_str(&crate::version_string()),
+            json_str(&zt.location.describe()),
+            zt.rate,
+            !crate::render::no_prefetch(),
+            zt.start_l2,
+            longest.dt_ms,
+            longest.t,
+            longest.l2,
+        );
+        let secs_now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let out = self.profile.out.clone().unwrap_or_else(|| {
+            std::path::PathBuf::from(format!("logs/zoomtest-{}.json", Self::file_stamp(secs_now)))
+        });
+        if let Some(dir) = out.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        match std::fs::write(&out, &json) {
+            Ok(()) => eprintln!("  zoomtest log → {}", out.display()),
+            Err(e) => eprintln!("  zoomtest log write failed: {e}"),
+        }
+        crate::diag::log_line(
+            "zoomtest",
+            &format!("report: {n} frames, dt mean {dt_mean:.1} p95 {dt_p95:.1} max {dt_max:.1} ms, >33ms {gt33}, installs {installs} (lookahead {look})"),
+        );
+        if crate::Perf::ref_escape_at() > 0 && !entered {
+            eprintln!(
+                "--zoomtest: VACUOUS (exit 3) — FRACTADYNE_REF_ESCAPE_AT is armed but the regime was never entered, \
+                 so this run says nothing about it"
+            );
+            crate::exit(crate::harness::verdict::VACUOUS);
+        }
+        if let Some(gate) = zt.gate {
+            let fails = zoom_gate_failures(gate, zt.rate, dt_max, gt33, gt100, held_oct_max);
+            if fails.is_empty() {
+                eprintln!("--zoomtest: GATE PASS ({gate:?})");
+                crate::diag::verdict(&format!("zoomtest-gate: PASS ({gate:?})"));
+            } else {
+                eprintln!("--zoomtest: GATE FAIL ({gate:?}) — {}", fails.join("; "));
+                crate::diag::verdict(&format!("zoomtest-gate: FAIL ({gate:?}) — {}", fails.join("; ")));
+                crate::exit(crate::harness::verdict::RED);
+            }
+        }
+        crate::exit(crate::harness::verdict::PASS);
+    }
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/harness/zoomtest/tests.rs"]
+mod tests;

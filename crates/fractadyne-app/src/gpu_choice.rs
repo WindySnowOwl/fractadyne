@@ -146,4 +146,5 @@ pub(crate) fn check(spec: &str) -> Result<String, String> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/gpu_choice/gpu_choice_tests.rs"]
 mod gpu_choice_tests;

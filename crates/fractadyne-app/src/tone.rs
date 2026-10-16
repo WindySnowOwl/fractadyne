@@ -188,12 +188,6 @@ pub(crate) fn muted() -> bool {
     }
 }
 
-/// Clear the command-line override (tests only — production sets it once at startup).
-#[cfg(test)]
-fn clear_override() {
-    OVERRIDE.store(UNSET, std::sync::atomic::Ordering::Relaxed);
-}
-
 /// Play the finish tone. `blocking`: the GUI passes false (the tune must not stall `update`);
 /// the CLI `--render` path passes true — the process exits right after the completion message,
 /// which would cut an async tune mid-note.
@@ -229,4 +223,5 @@ fn play_finish_sound_impl(blocking: bool) {
 fn play_finish_sound_impl(_blocking: bool) {}
 
 #[cfg(test)]
+#[path = "../tests/unit/tone/tests.rs"]
 mod tests;

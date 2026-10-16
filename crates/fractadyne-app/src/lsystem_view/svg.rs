@@ -105,4 +105,5 @@ pub(crate) fn document(p: &Picture) -> String {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/lsystem_view/svg/tests.rs"]
 mod tests;

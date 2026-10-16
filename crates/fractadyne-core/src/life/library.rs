@@ -106,4 +106,5 @@ pub fn pattern_named(name: &str) -> Option<&'static NamedPattern> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/life/library/tests.rs"]
 mod tests;

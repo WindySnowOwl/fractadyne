@@ -140,10 +140,33 @@ performed because something moved, fix the step — do not skip it.
   version in `Cargo.toml`.
 - New behaviour should come with a test or a validation step (a core unit test, a
   `--selftest` case, or a documented manual check).
-- Unit tests live next to the code, not in it: a `#[cfg(test)] mod` body goes in its own
-  sibling file, declared `mod name;` under `#[cfg(test)]` where it is used (see
-  `render/*.rs` beside `render.rs`, or `icons_coverage.rs` beside `main.rs`), so module
-  files stay mainline code. A few short tail modules in small leaf files remain inline.
+- Unit tests live under `crates/<crate>/tests/unit/`, never in `src/`. The tests for
+  `src/<path>.rs` sit in `tests/unit/<path>/<module>.rs`, declared at the bottom of the file
+  they test:
+
+  ```rust
+  // crates/fractadyne-app/src/render/pricing.rs
+  #[cfg(test)]
+  #[path = "../../tests/unit/render/pricing/admission_tests.rs"]
+  mod admission_tests;
+  ```
+
+  The module stays a child of the code it tests (it sees private items, and a test's name
+  follows the module path), but its source sits outside `src/`, so `src/` holds only the
+  product. A crate root's (`main.rs`, `lib.rs`) test modules sit at the top of `tests/unit/`.
+  No exceptions: a `#[test]`, an inline test module or a `#[cfg(test)]` helper in `src/`
+  fails `scripts/check_test_layout.py` (CI runs it; so does a unit test). A helper only tests
+  use goes in the test file; an `impl` block there reaches the type's private fields.
+  Integration tests (public API only) stay in `tests/*.rs`. See
+  `design/test-code-separation.md`.
+- Code that ships in the binary but exists only to test, measure, audit or reproduce — a
+  harness mode (`--selftest`, `--uitest`, …), a dev tool, a self-check, an oracle — goes in the
+  crate's `src/harness/`, never in a functional file. A new mode is `crate::harness::<mode>`,
+  declared in `src/harness.rs` with a row in its index. Code that needs a functional module's
+  private items stays that module's child, attached with `#[path]` from
+  `src/harness/<path of the file it attaches to>/<module>.rs`. Functional code calls into the
+  harnesses only at counted hooks (`HARNESS_HOOKS` in `scripts/check_test_layout.py`): a new
+  call means raising that file's count, deliberately.
 - Item order within a file: module doc → imports/`mod` decls → file-scoped consts → the
   file's primary entry (`fn main`, the main API) → types with their `impl`s immediately
   adjacent (never separated) → helpers next to their callers, grouped by topic. Big files

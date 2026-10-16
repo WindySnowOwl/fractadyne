@@ -163,31 +163,6 @@ impl Palette {
     }
 }
 
-/// WCAG relative luminance of an opaque colour (sRGB, gamma-decoded).
-#[cfg(test)]
-fn relative_luminance(c: egui::Color32) -> f32 {
-    fn chan(v: u8) -> f32 {
-        let s = v as f32 / 255.0;
-        if s <= 0.04045 {
-            s / 12.92
-        } else {
-            ((s + 0.055) / 1.055).powf(2.4)
-        }
-    }
-    0.2126 * chan(c.r()) + 0.7152 * chan(c.g()) + 0.0722 * chan(c.b())
-}
-
-/// WCAG contrast ratio between two opaque colours, 1.0 (identical) to 21.0 (black on white).
-///
-/// Used to hold the theme to a floor rather than to a taste: "sufficient contrast to read every
-/// label" is checkable, "consistent theme throughout" is not.
-#[cfg(test)]
-pub(crate) fn contrast_ratio(a: egui::Color32, b: egui::Color32) -> f32 {
-    let (la, lb) = (relative_luminance(a), relative_luminance(b));
-    let (hi, lo) = if la > lb { (la, lb) } else { (lb, la) };
-    (hi + 0.05) / (lo + 0.05)
-}
-
 /// The active theme's amber accent for brand *chrome* (wordmark, help headers, panel accents) — it
 /// tracks light/dark, unlike the fixed [`BRAND_ACCENT`] used for overlays drawn on the render.
 /// Stored in `Visuals::hyperlink_color` by [`apply_theme`].
@@ -521,4 +496,5 @@ fn procedural_icon() -> egui::IconData {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/theme/theme_tests.rs"]
 mod theme_tests;

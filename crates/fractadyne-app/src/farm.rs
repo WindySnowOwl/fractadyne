@@ -11,6 +11,7 @@
 
 pub(crate) mod client;
 pub(crate) mod controller;
+#[path = "harness/farm/farmtest.rs"]
 pub(crate) mod farmtest;
 pub(crate) mod local;
 pub(crate) mod status;
@@ -485,4 +486,5 @@ pub(crate) fn unix_ms() -> u64 {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/farm/farm_tests.rs"]
 mod farm_tests;

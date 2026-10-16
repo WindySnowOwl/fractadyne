@@ -22,9 +22,6 @@ pub(crate) const M_SE: Mask = 1;
 
 /// The orthogonal neighbours: what a von Neumann rule counts.
 pub(crate) const M_EDGES: Mask = M_N | M_W | M_E | M_S;
-/// The diagonal neighbours.
-#[cfg(test)]
-pub(crate) const M_CORNERS: Mask = M_NW | M_NE | M_SW | M_SE;
 
 /// The letters in the chart's order, which is also the order a canonical rule string lists them in.
 pub(crate) const LETTERS: [char; 13] = ['c', 'e', 'k', 'a', 'i', 'n', 'y', 'q', 'j', 'r', 't', 'w', 'z'];
@@ -149,4 +146,5 @@ pub(crate) fn letters_of(count: u8) -> impl Iterator<Item = char> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/life/hensel/tests.rs"]
 mod tests;

@@ -310,4 +310,5 @@ pub const SYSTEMS: &[NamedSystem] = &[
 ];
 
 #[cfg(test)]
+#[path = "../../tests/unit/lsystem/library/tests.rs"]
 mod tests;

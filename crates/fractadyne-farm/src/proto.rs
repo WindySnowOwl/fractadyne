@@ -669,4 +669,5 @@ pub fn chunks(bytes: &[u8]) -> impl Iterator<Item = (u64, &[u8])> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/proto/tests.rs"]
 mod tests;

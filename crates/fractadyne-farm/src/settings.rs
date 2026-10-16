@@ -213,4 +213,5 @@ impl RenderSettings {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/settings/tests.rs"]
 mod tests;

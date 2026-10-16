@@ -43,7 +43,7 @@ regardless of GPU *speed*. The **timings** are only comparable on the same hardw
 
 ## The matrix
 
-Defined in [`crates/fractadyne-app/src/bench_matrix.rs`](../crates/fractadyne-app/src/bench_matrix.rs)
+Defined in [`crates/fractadyne-app/src/harness/bench_matrix.rs`](../crates/fractadyne-app/src/harness/bench_matrix.rs)
 `matrix()`. Three groups:
 
 - **zoom-band** — a Mandelbrot sweep across the numeric regimes plus accelerator variants:

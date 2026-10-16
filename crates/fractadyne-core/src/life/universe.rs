@@ -409,4 +409,5 @@ fn mask_outside(key: (i64, i64), out: &mut [u8; CELLS], x: i64, y: i64, width: u
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/life/universe/tests.rs"]
 mod tests;

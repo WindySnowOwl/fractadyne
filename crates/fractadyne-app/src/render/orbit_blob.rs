@@ -384,4 +384,5 @@ pub(crate) fn decode(buf: &[u8]) -> Option<DecodedOrbit> {
 
 /// `pub(crate)` so the store's tests (`refcache_persist`) can build blobs the same way.
 #[cfg(test)]
+#[path = "../../tests/unit/render/orbit_blob/tests.rs"]
 pub(crate) mod tests;

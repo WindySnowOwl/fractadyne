@@ -205,4 +205,5 @@ pub(crate) fn decode(text: &str, want: &AnchorContext) -> Result<Decoded, String
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/scripting/anchor_file/tests.rs"]
 mod tests;

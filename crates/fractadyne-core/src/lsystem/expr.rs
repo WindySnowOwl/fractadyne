@@ -398,4 +398,5 @@ impl Expr {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/lsystem/expr/tests.rs"]
 mod tests;

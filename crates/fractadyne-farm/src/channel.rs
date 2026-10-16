@@ -353,4 +353,5 @@ impl PinStore {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/channel/tests.rs"]
 mod tests;

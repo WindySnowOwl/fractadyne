@@ -1965,4 +1965,5 @@ pub mod perturb;
 pub mod frm;
 
 #[cfg(test)]
+#[path = "../tests/unit/ir/tests.rs"]
 mod tests;

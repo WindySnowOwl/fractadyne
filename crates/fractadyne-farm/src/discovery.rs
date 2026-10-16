@@ -190,4 +190,5 @@ pub fn discover(wait: Duration) -> Result<Vec<Found>, String> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/discovery/tests.rs"]
 mod tests;

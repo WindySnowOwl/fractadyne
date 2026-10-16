@@ -18,26 +18,23 @@
 //! # This crate's modules
 //!
 //! Extracted modules (cohesive units lifted out to keep `main.rs` navigable):
-//! - [`cli`]      — the CLI surface: headless commands (`--find-minibrot`, `--compare`,
-//!   `--crosscheck-f3`, `--validate-deep`), the CLI-launched mode state
-//!   (`SelftestCli`/`ProfileCli`/`FrametestCli`/`BenchState`/`RenderCli`/`HarnessModes`),
-//!   and `update()`'s per-frame harness hooks + mode ladder — `fn main` stays dispatch +
-//!   window setup.
+//! - [`cli`]      — the CLI surface: the headless commands (`--find-minibrot`, `--discover`,
+//!   `--reset-state`, …), the render and benchmark mode state (`BenchState`/`RenderCli`), and
+//!   `update()`'s mode ladder — `fn main` stays dispatch + window setup.
 //! - [`render`]   — the render-request builders: reference orbit, series-skip, mode select,
 //!   the staged `build_params` (frame budget → chunk walk → present gate → params), and
 //!   `ExportRequest` assembly (the performance-critical bridge to the GPU).
 //! - [`export`]   — render-to-file (PNG/EXR), the reloadable view-metadata blob, Open-view.
-//! - [`autopilot`]— the hands-free auto-zoom dive (+ the `--autodive` controller hammer).
+//! - [`autopilot`]— the hands-free auto-zoom dive.
 //! - [`fractal`]  — the [`FractalKind`] domain enum (families, formula ids, descriptions).
 //! - [`help`]     — the in-app Help window content.
 //! - [`theme`]    — branding colors, dark/light visuals, fonts, wordmark, window icon.
 //! - [`tunables`] — every frame-cost constant, centralized; `--set NAME=VALUE` overrides.
 //! - [`sysinfo`]  — version string, UTC formatter, CPU/VRAM/RAM probes.
-//! - [`selftest`] — the `--selftest` GPU validation suite (render-path cross-checks + goldens).
-//! - [`profile`]  — `--profile`, plus the `--frametest`/`--divetest`/`--resizetest` harnesses.
-//! - dev harnesses in their own files: [`livetest`], [`uitest`] (+ `--juliadive`),
-//!   [`motiontest`], [`chunksweep`], [`torture`], [`soak`], [`shot`], [`gputest`],
-//!   [`reusetest`], [`bench_matrix`]; UI draw surfaces under `ui/`.
+//! - UI draw surfaces under `ui/`.
+//! - [`harness`]  — the test harnesses and developer tools that ship in the binary
+//!   (`--selftest`, `--uitest`, `--gputest`, `--livetest`, …), their mode state and the hooks
+//!   `update()` drives them through; `harness.rs` is the index.
 //!
 //! `main.rs` itself holds, in banner-sectioned reading order: `fn main` + startup; the
 //! render-regime/perf bookkeeping types (`Perf`, `RenderMode`); coloring + palette types;
@@ -50,11 +47,10 @@
 //! candidates. Moving items between modules in one crate has no runtime cost (no added
 //! indirection; inlining is unaffected) — purely an organization/readability change.
 //!
-//! Test layout: a `#[cfg(test)] mod` body does not share a file with the code it tests. Each
-//! is declared `mod name;` under `#[cfg(test)]` and its body lives in a sibling file —
-//! `tests.rs`, `session_zoom.rs`, `icons_coverage.rs`, … beside `main.rs`; `render/*.rs`
-//! beside `render.rs` — so a module file is mainline code end to end. A few sub-100-line
-//! tail modules in small leaf files remain inline.
+//! Test layout: nothing under `src/` is test code. The unit tests for `src/<path>.rs` live in
+//! `tests/unit/<path>/`, each declared at the bottom of the file it tests with
+//! `#[cfg(test)] #[path = "…"] mod name;` (this file's own are at the top of `tests/unit/`), so
+//! they stay children of the code they test while `src/` stays the product. See CONTRIBUTING.md.
 
 use eframe::egui;
 use fractadyne_core::Viewport;
@@ -70,49 +66,33 @@ mod exec_resolve;
 mod eyedropper;
 mod export;
 mod farm;
-mod bench_matrix;
+mod harness;
 mod custom_formula;
 mod formula_library;
 mod fractal;
 mod life_view;
 pub(crate) use life_view::UiPointer;
 mod lsystem_view;
-mod chunksweep;
-mod glitchaudit;
-mod deviceloss_repro;
 mod gpu_choice;
-mod gputest;
 mod gpu_worker;
 mod motion_worker;
 mod help;
 mod icons;
 #[cfg(test)]
+#[path = "../tests/unit/icons_coverage.rs"]
 mod icons_coverage;
-mod livetest;
-mod motiontest;
-mod zoomtest;
-mod logcheck;
-mod profile;
 mod refcache_persist;
 mod render;
-mod reusetest;
 mod update;
 mod scripting;
-mod selftest;
-mod verdict;
 mod session_outcome;
 mod sysinfo;
 mod theme;
-mod torture;
 mod tone;
 mod calibration;
 mod timing_witness;
 mod tunables;
 mod ui;
-mod shot;
-mod soak;
-mod recordtest;
-mod uitest;
 
 // ⭐The tunables live in ONE module now (a user requirement — see `tunables.rs`), and are
 // re-exported from here and from `render` so that every existing `crate::NAME` /
@@ -270,20 +250,14 @@ fn main() -> eframe::Result<()> {
     // which is the whole reason this machinery exists, and waiting for a genuine OOM means waiting
     // for the deep reference build to die again.
     if args.iter().any(|a| a == "--oomtest") {
-        diag::breadcrumb("oomtest: requesting an impossible allocation".into());
-        let n = usize::MAX / 2;
-        // Deliberately unsatisfiable: the allocator returns null, `ReportingAlloc` reports, and
-        // the runtime aborts on it exactly as a real exhaustion would.
-        let v: Vec<u8> = Vec::with_capacity(n);
-        std::hint::black_box(&v);
-        crate::exit(0);
+        harness::oomtest::run();
     }
     // A task run says what it is and what it runs under, in the log, before anything can fail: the
     // line `--logcheck` needs to tell a harness that never started, or never reached its verdict
     // (no `[fd-exit]`), from one that passed — and the only record of an INSTRUMENT, which arms
     // from the environment and prints nothing at startup on its own.
     if let Some(mode) = task_mode() {
-        logcheck::harness_begin(mode, &tunables::status_line());
+        harness::logcheck::harness_begin(mode, &tunables::status_line());
     }
     if cli::run_headless(&args) {
         // A headless task that returns rather than exiting still owes its `[fd-exit]` line.
@@ -509,8 +483,8 @@ fn main() -> eframe::Result<()> {
 /// only way to be sure none was missed.
 pub(crate) fn exit(code: i32) -> ! {
     // A task logs its exit code and holds its own log to `validation/logcheck-rules.toml`; a rule
-    // it broke turns a 0 into a 1 (`logcheck::at_exit`).
-    let code = logcheck::at_exit(code);
+    // it broke turns a 0 into a 1 (`harness::logcheck::at_exit`).
+    let code = harness::logcheck::at_exit(code);
     diag::end_session();
     std::process::exit(code)
 }
@@ -726,6 +700,7 @@ fn expand_arg_files(raw: &[String]) -> Result<Vec<String>, String> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/arg_files.rs"]
 mod arg_files;
 
 /// The command line after `@file` / `--args-file` expansion, set once at the top of `main`.
@@ -811,6 +786,7 @@ pub(crate) fn palette_aa_enabled() -> bool {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/task_invocation.rs"]
 mod task_invocation;
 
 /// The main view, stashed each frame so the device-lost handler can write it as a loadable `.fdn`
@@ -892,6 +868,7 @@ pub(crate) fn relaunch_decision(generation: u32, elapsed_s: f64) -> Option<u32> 
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/relaunch_policy.rs"]
 mod relaunch_policy;
 
 /// The `max_texture_dimension_2d` to ask a device for, given what the adapter reports.
@@ -931,6 +908,7 @@ const DPI_ANCHOR_MAX_SECS: f64 = 20.0;
 const DPI_GROWTH_TRIP: f32 = 1.06;
 
 #[cfg(test)]
+#[path = "../tests/unit/wgpu_error_policy.rs"]
 mod wgpu_error_policy;
 
 /// A session's saved zoom, validated. `None` means "unusable — open at the default view instead".
@@ -966,6 +944,7 @@ pub(crate) fn restored_units_per_pixel(mantissa: f64, exp: i32) -> Option<fracta
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/session_zoom.rs"]
 mod session_zoom;
 
 /// Direct download URL for the accelerated package matching `version`.
@@ -1005,6 +984,7 @@ fn accelerated_package_exists_for_platform() -> bool {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/accelerated_link.rs"]
 mod accelerated_link;
 
 // ================================================================================================
@@ -2503,25 +2483,6 @@ fn ema(prev: f64, sample: f64) -> f64 {
     }
 }
 
-/// Zoom-appropriate iteration cap. A very high manual iteration count over-resolves the
-/// boundary's sub-pixel "dust" into per-pixel noise (and starves the render budget); this
-/// caps the count at a generous, zoom-scaled value so normal auto-iteration is never
-/// limited but an inflated base is. Used for both the live view and exports so they match.
-/// Zoom-appropriate iteration cap from the zoom **octaves** (`log2(magnification)`), taken
-/// directly so it stays finite past 1e308× where `magnification()` saturates to `∞`.
-/// Whether to paint the LIVE TEST banner: on by default for a windowed harness run
-/// (`launched_for_a_task`), with `--no-test-banner` overriding off and `--test-banner` overriding
-/// on. `force_off` wins over `force_on`, so a script that sets both gets the safe (hidden) result.
-pub(crate) fn test_banner_on(launched_for_a_task: bool, force_on: bool, force_off: bool) -> bool {
-    if force_off {
-        false
-    } else if force_on {
-        true
-    } else {
-        launched_for_a_task
-    }
-}
-
 /// Microseconds since the first call — a process-wide monotonic clock that a GPU completion
 /// callback (any thread) and the frame loop can both read, for pricing a pass by its real
 /// completion time (`Perf::pin_done_at`).
@@ -2531,6 +2492,12 @@ pub(crate) fn app_micros() -> u64 {
     START.get_or_init(std::time::Instant::now).elapsed().as_micros() as u64
 }
 
+/// Zoom-appropriate iteration cap. A very high manual iteration count over-resolves the
+/// boundary's sub-pixel "dust" into per-pixel noise (and starves the render budget); this
+/// caps the count at a generous, zoom-scaled value so normal auto-iteration is never
+/// limited but an inflated base is. Used for both the live view and exports so they match.
+/// Zoom-appropriate iteration cap from the zoom **octaves** (`log2(magnification)`), taken
+/// directly so it stays finite past 1e308× where `magnification()` saturates to `∞`.
 pub(crate) fn zoom_iter_cap(octaves: f64) -> u32 {
     let o = octaves.max(0.0);
     (ZOOM_ITER_BASE + o * ZOOM_ITER_PER_OCTAVE).min(u32::MAX as f64) as u32
@@ -2567,6 +2534,7 @@ pub(crate) fn deep_jump_iter_shortfall(
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/deep_jump_warning.rs"]
 mod deep_jump_warning;
 
 /// `--render … --gpus SPEC` on this command line (`FractadyneApp::open_export_cards`).
@@ -2702,6 +2670,7 @@ pub(crate) fn accum_fold_clean(
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/accum_fold_tests.rs"]
 mod accum_fold_tests;
 
 /// Sub-pixel jitter for accumulation sample `i` — a 2D Halton (base 2, 3) sequence mapped to
@@ -3131,8 +3100,10 @@ fn pick_stop_ring(
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/gradient_library.rs"]
 mod gradient_library;
 #[cfg(test)]
+#[path = "../tests/unit/gradient_strip.rs"]
 mod gradient_strip;
 
 /// Paint a baked gradient across `rect`, one column per pixel.
@@ -3242,6 +3213,7 @@ fn parse_hex_rgb(s: &str) -> Option<[f32; 3]> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/color_values.rs"]
 mod color_values;
 
 /// A swatch + editable hex field for one colour. Returns the new colour when it changed.
@@ -3628,6 +3600,7 @@ pub(crate) fn parse_grouped_number(s: &str) -> Option<f64> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/number_grouping_tests.rs"]
 mod number_grouping_tests;
 
 /// Space-group the fractional digits of a scientific-notation string's mantissa (in 5s),
@@ -3694,6 +3667,7 @@ pub(crate) fn fmt_log2_count(log2n: f64) -> String {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/log2_count_tests.rs"]
 mod log2_count_tests;
 
 /// Playback-speed label for the transport button: `0.5`, `1`, `2`, `4` — no trailing `.0`, since
@@ -3763,6 +3737,7 @@ pub(crate) fn period_readout(period: Option<u32>) -> String {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/status_bar_slots.rs"]
 mod status_bar_slots;
 
 pub(crate) fn fmt_zoom_log2(log2mag: f64) -> String {
@@ -3798,6 +3773,7 @@ pub(crate) fn gallery_zoom_label(field: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/gallery_zoom_label_tests.rs"]
 mod gallery_zoom_label_tests;
 
 /// Magnification as a plain scientific string (no grouping), parseable by
@@ -4961,6 +4937,7 @@ fn reticle_mark(dx: f32, dy: f32, r: f32) -> ReticleMark {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/reticle_mark_tests.rs"]
 mod reticle_mark_tests;
 
 /// What the draw phase saw under the cursor, for the update phase to render a reticle from.
@@ -5301,6 +5278,7 @@ struct Bookmark {
 /// thumbnail id rather than deleting the file here keeps the list surgery pure and testable
 /// while leaving exactly one caller responsible for the file system.
 #[cfg(test)]
+#[path = "../tests/unit/bookmark_thumb_crop.rs"]
 mod bookmark_thumb_crop;
 
 /// The screenshot crop for a bookmark thumbnail: the central-panel rect clamped into the shot,
@@ -6054,12 +6032,12 @@ struct FractadyneApp {
     farm_controller: crate::ui::farm_controller::FarmControllerUi,
     /// Help → Diagnostics…: run the user-safe tests from the UI (see `ui::diagnostics`).
     diagnostics: crate::ui::diagnostics::DiagnosticsUi,
-    /// `--selftest` CLI mode: run/done plus the filter/list/bless flags (see [`cli::SelftestCli`]).
-    selftest: cli::SelftestCli,
-    /// `--profile` CLI mode: reps, regions file, output path (see [`cli::ProfileCli`]).
-    profile: cli::ProfileCli,
-    /// `--frametest` CLI mode: the dive shape knobs (see [`cli::FrametestCli`]).
-    frametest: cli::FrametestCli,
+    /// `--selftest` CLI mode: run/done plus the filter/list/bless flags (see [`harness::modes::SelftestCli`]).
+    selftest: harness::modes::SelftestCli,
+    /// `--profile` CLI mode: reps, regions file, output path (see [`harness::modes::ProfileCli`]).
+    profile: harness::modes::ProfileCli,
+    /// `--frametest` CLI mode: the dive shape knobs (see [`harness::modes::FrametestCli`]).
+    frametest: harness::modes::FrametestCli,
     /// Benchmarks — the GUI standardized bench plus the `--benchmark` / `--benchmark-std` CLI
     /// drivers (see [`cli::BenchState`]).
     bench: cli::BenchState,
@@ -6067,8 +6045,8 @@ struct FractadyneApp {
     render_cli: cli::RenderCli,
     /// One-shot dev-harness modes (`--uitest`, `--livetest`, `--autodive`, `--soak`, …) — every
     /// flag/state pair that exists to drive the app from `update()`'s ladder rather than for a
-    /// person (see [`cli::HarnessModes`]).
-    harness: cli::HarnessModes,
+    /// person (see [`harness::modes::HarnessModes`]).
+    harness: harness::modes::HarnessModes,
     /// GPU backend ("Dx12"/"Vulkan"/"Gl") — names the shader-compiler stack for `--gputest`.
     gpu_backend: String,
     /// GPU adapter name (for benchmark reports).
@@ -6083,7 +6061,7 @@ struct FractadyneApp {
     allow_tiled_settle: bool,
     /// Per-render setup timings (reference / series-skip), recorded by
     /// `current_export_request_for` via a `Cell` and read by the profiler.
-    prof: std::cell::Cell<profile::ProfSetup>,
+    prof: std::cell::Cell<harness::profile::ProfSetup>,
     /// Frame-rate cap (FPS); `None` = uncapped.
     fps_cap: Option<f64>,
     /// Export dialog + in-flight background export state.
@@ -6511,14 +6489,14 @@ impl FractadyneApp {
         // takes the default; PRESENT but unreadable is an error, never a silent default.
         let audit_count = |flag: &str| {
             args.iter().position(|a| a == flag).map(|i| match args.get(i + 1).filter(|s| !s.starts_with('-')) {
-                None => crate::glitchaudit::DEFAULT_SAMPLES,
+                None => crate::harness::glitchaudit::DEFAULT_SAMPLES,
                 Some(s) => crate::arg_parse::<usize>(flag, s, "a whole number of pixels").max(1),
             })
         };
         let audits = [
-            (audit_count("--glitch-audit"), crate::glitchaudit::AuditKind::Correction),
-            (audit_count("--tail-audit"), crate::glitchaudit::AuditKind::Tail),
-            (audit_count("--renorm-audit"), crate::glitchaudit::AuditKind::Renorm),
+            (audit_count("--glitch-audit"), crate::harness::glitchaudit::AuditKind::Correction),
+            (audit_count("--tail-audit"), crate::harness::glitchaudit::AuditKind::Tail),
+            (audit_count("--renorm-audit"), crate::harness::glitchaudit::AuditKind::Renorm),
         ];
         let chosen: Vec<_> = audits.iter().filter_map(|(n, k)| n.map(|n| (n, *k))).collect();
         if chosen.len() > 1 {
@@ -6527,7 +6505,7 @@ impl FractadyneApp {
         }
         let (glitch_audit, audit_kind) = match chosen.first() {
             Some(&(n, k)) => (Some(n), k),
-            None => (None, crate::glitchaudit::AuditKind::Correction),
+            None => (None, crate::harness::glitchaudit::AuditKind::Correction),
         };
         let auto_render = args.iter().any(|a| a == "--render") || render_iter_mode || glitch_audit.is_some();
         let selftest = args.iter().any(|a| a == "--selftest" || a == "--selftest-list");
@@ -6673,175 +6651,9 @@ impl FractadyneApp {
         // --shot LOCATION [--out PATH] [--size WxH]: the published-screenshot regenerator.
         // Fatal on a missing location rather than defaulting to one: this writes a file
         // someone is about to publish.
-        let shot = if args.iter().any(|a| a == "--shot") {
-            let loc = match val("--shot").filter(|s| !s.starts_with('-')) {
-                Some(s) => std::path::PathBuf::from(s),
-                None => {
-                    eprintln!("fractadyne: --shot needs a location file (.fdn or an exported view).");
-                    crate::exit(2)
-                }
-            };
-            let out = val("--out")
-                .or_else(|| val("-o"))
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| std::path::PathBuf::from("shot.png"));
-            let (w, h) = match val("--size") {
-                Some(s) => {
-                    let (w, h) = arg_size("--size", s);
-                    (w.unwrap_or(1920) as f32, h.unwrap_or(1200) as f32)
-                }
-                None => (1920.0, 1200.0),
-            };
-            let budget = val("--shot-timeout")
-                .map(|s| arg_parse::<u64>("--shot-timeout", s, "seconds"))
-                .unwrap_or(180);
-            let mut s = shot::Shot::new(loc, out, (w, h), budget);
-            s.svg = val("--svg").map(std::path::PathBuf::from);
-            s.image = val("--image").map(std::path::PathBuf::from);
-            Some(s)
-        } else {
-            None
-        };
-        let uitest = if args.iter().any(|a| a == "--uitest") {
-            let out = val("--uitest").filter(|s| !s.starts_with('-')).map(std::path::PathBuf::from);
-            Some(uitest::UiTest::new(out))
-        } else {
-            None
-        };
-        let soak = if args.iter().any(|a| a == "--soak") {
-            let secs = val("--soak")
-                .map(|s| arg_parse::<f64>("--soak", &s, "seconds"))
-                .unwrap_or(300.0);
-            // `session` = soak the view the session opened at (a staged crash view, say) rather
-            // than jumping to a depth: NaN is that sentinel.
-            // `--soak-location FILE` = soak a view file's view (W9's rungs open the field crash view
-            // this way on any machine); it and a depth cannot both say where.
-            let location = val("--soak-location").map(|p| crate::selftest::anchored(&p));
-            if location.is_some() && val("--soak-depth").is_some() {
-                eprintln!("fractadyne: --soak-location and --soak-depth both set where to soak; give one");
-                crate::exit(2);
-            }
-            let decades = match val("--soak-depth") {
-                Some(s) if s == "session" => f64::NAN,
-                Some(s) => arg_parse::<f64>("--soak-depth", &s, "decades of magnification, or 'session'"),
-                None if location.is_some() => f64::NAN,
-                None => 30.0,
-            };
-            Some(soak::Soak::new(secs, decades, location))
-        } else {
-            None
-        };
-        // --recordtest [FRAMES]: the frame record's own gate. An unreadable FRAMES is fatal, never
-        // a silent default (the `.parse().ok()` lesson).
-        let recordtest = if args.iter().any(|a| a == "--recordtest") {
-            let frames = val("--recordtest")
-                .filter(|s| !s.starts_with('-'))
-                .map(|s| arg_parse::<u64>("--recordtest", &s, "frames"))
-                .unwrap_or(recordtest::DEFAULT_FRAMES);
-            let abort_after = val("--recordtest-abort-after")
-                .map(|s| arg_parse::<u64>("--recordtest-abort-after", &s, "frames"));
-            Some(recordtest::RecordTest::new(frames, abort_after))
-        } else {
-            None
-        };
-        let autodive = if args.iter().any(|a| a == "--autodive") {
-            let target = val("--autodive")
-                .and_then(|v| v.parse::<f64>().ok())
-                .filter(|v| v.is_finite() && *v > 1.0)
-                .unwrap_or(320.0);
-            let secs = val("--autodive-timeout")
-                .and_then(|v| v.parse::<f64>().ok())
-                .filter(|v| v.is_finite() && *v > 0.0)
-                .unwrap_or(900.0);
-            // Default 250_000 = the field crash manifest's explicit count. `--autodive-iter 0`
-            // selects auto-iter instead, which is kept only so the two can be COMPARED: it is what
-            // the first version forced, and it could not reach the regime.
-            let iter = match val("--autodive-iter").and_then(|v| v.parse::<u32>().ok()) {
-                Some(0) => None,
-                Some(n) => Some(n),
-                None => Some(250_000),
-            };
-            // Default 1 Home cycle: the zoom-home glide is the part that stresses the controller
-            // (and the button that lost the device on 2026-08-18). `--autodive-home 0` dives only.
-            let homes = val("--autodive-home")
-                .and_then(|v| v.parse::<u32>().ok())
-                .unwrap_or(1)
-                .min(20);
-            Some(autopilot::AutoDive::new(target, secs, iter, homes))
-        } else {
-            None
-        };
-        // --motiontest: the motion-presentation gate (design/mode2-chunking.md §11) — asserts a
-        // partial chunk progression is never adopted as the frozen texture during motion, and that
-        // complete refreshes keep streaming. Self-contained: it jumps its own deep view.
-        let motiontest = if args.iter().any(|a| a == "--motiontest") {
-            Some(motiontest::MotionTest::new())
-        } else {
-            None
-        };
-        // --zoomtest [OCTAVES]: on-screen update-latency harness for live zooms — holds a virtual
-        // Space key through the production glide and records every presented frame's interval.
-        let zoomtest = if args.iter().any(|a| a == "--zoomtest") {
-            let num = |flag: &str, what: &str, default: f64| -> f64 {
-                match val(flag).filter(|s| !s.starts_with('-')) {
-                    None => default,
-                    Some(s) => s.parse::<f64>().unwrap_or_else(|_| {
-                        eprintln!("fractadyne: {flag}: expected {what}, got \"{s}\"");
-                        crate::exit(2)
-                    }),
-                }
-            };
-            // None = not given: 40, or with a `session` start, the distance to the session's depth.
-            let octaves = val("--zoomtest")
-                .filter(|s| !s.starts_with('-'))
-                .map(|_| num("--zoomtest", "a number of octaves", 40.0));
-            let hold_s = num("--zoomtest-hold", "a number of seconds", 0.0);
-            let rate = num("--zoomtest-rate", "a zoom rate (0.25..4)", 1.0) as f32;
-            let location = match val("--zoomtest-location").map(String::as_str) {
-                None => zoomtest::StartView::Corpus,
-                Some("session") => zoomtest::StartView::Session,
-                Some(p) => zoomtest::StartView::File(std::path::PathBuf::from(p)),
-            };
-            let start_log2 = val("--zoomtest-start-log2").map(|_| num("--zoomtest-start-log2", "a log2 magnification", 0.0));
-            let taps = val("--zoomtest-taps").map(|s| {
-                zoomtest::parse_taps(s).unwrap_or_else(|| {
-                    eprintln!("fractadyne: --zoomtest-taps: expected N,OCTAVES,PAUSE_S (e.g. 30,0.25,1.0), got \"{s}\"");
-                    crate::exit(2)
-                })
-            });
-            let then_log2 = val("--zoomtest-then-log2").map(|_| num("--zoomtest-then-log2", "a log2 magnification", 0.0));
-            // W8: `--zoomtest-gate [smooth|appetite]` holds the glide to a P-G matrix row's criteria.
-            let gate = args.iter().any(|a| a == "--zoomtest-gate").then(|| {
-                let v = val("--zoomtest-gate").filter(|s| !s.starts_with('-')).map(String::as_str);
-                zoomtest::parse_zoom_gate(v).unwrap_or_else(|| {
-                    eprintln!("fractadyne: --zoomtest-gate: expected smooth or appetite, got \"{}\"", v.unwrap_or(""));
-                    crate::exit(2)
-                })
-            });
-            Some(
-                zoomtest::ZoomTest::new(octaves, rate, location, start_log2, taps, hold_s)
-                    .with_then(then_log2)
-                    .with_gate(gate),
-            )
-        } else {
-            None
-        };
-        let juliadive = if args.iter().any(|a| a == "--juliadive") {
-            let out =
-                val("--juliadive").filter(|s| !s.starts_with('-')).map(std::path::PathBuf::from);
-            Some(uitest::JuliaDive::new(out))
-        } else {
-            None
-        };
-        let dualsettle = if args.iter().any(|a| a == "--dualsettle") {
-            let out =
-                val("--dualsettle").filter(|s| !s.starts_with('-')).map(std::path::PathBuf::from);
-            Some(uitest::DualSettle::new(out))
-        } else {
-            None
-        };
-        let chunk_sweep = chunksweep::ChunkSweep::from_args(args);
-        let deviceloss_repro = deviceloss_repro::DeviceLossRepro::from_args(args);
+        let harness::modes::Windowed {
+            shot, uitest, soak, recordtest, autodive, motiontest, zoomtest, juliadive, dualsettle, chunk_sweep, deviceloss_repro,
+        } = harness::modes::Windowed::from_args(args);
         let play_tour = val("--play").map(std::path::PathBuf::from);
         // Was the app launched to DO something specific, rather than to be explored? If so, no
         // first-run onboarding: a modal is either something nobody will ever click (a headless
@@ -6904,7 +6716,7 @@ impl FractadyneApp {
         let test_banner = {
             let force_on = args.iter().any(|a| a == "--test-banner");
             let force_off = args.iter().any(|a| a == "--no-test-banner");
-            test_banner_on(launched_for_a_task, force_on, force_off).then(|| {
+            harness::banner::test_banner_on(launched_for_a_task, force_on, force_off).then(|| {
                 // A best-effort specific mode name; the "LIVE TEST" umbrella already distinguishes a
                 // harness window from an interactive one, so an unmatched task is simply "harness".
                 if livetest.is_some() { "livetest" }
@@ -7144,7 +6956,7 @@ impl FractadyneApp {
             farm_client: Default::default(),
             farm_controller: Default::default(),
             diagnostics: Default::default(),
-            selftest: cli::SelftestCli {
+            selftest: harness::modes::SelftestCli {
                 run: selftest,
                 done: false,
                 filter: selftest_filter,
@@ -7152,14 +6964,14 @@ impl FractadyneApp {
                 bless: selftest_bless,
                 bless_new_adapter: selftest_bless_new_adapter,
             },
-            profile: cli::ProfileCli {
+            profile: harness::modes::ProfileCli {
                 run: profile,
                 done: false,
                 reps: profile_reps,
                 regions: profile_regions,
                 out: out_path.clone(),
             },
-            frametest: cli::FrametestCli {
+            frametest: harness::modes::FrametestCli {
                 run: frametest,
                 center: frametest_center,
                 steps: frametest_steps,
@@ -7192,7 +7004,7 @@ impl FractadyneApp {
                 play: play_tour,
                 play_done: false,
             },
-            harness: cli::HarnessModes {
+            harness: harness::modes::HarnessModes {
                 bench_matrix,
                 bench_matrix_done: false,
                 reusetest,
@@ -7287,7 +7099,7 @@ impl FractadyneApp {
             report: ReportState::default(),
             feature_solve: None,
             allow_tiled_settle: false,
-            prof: std::cell::Cell::new(profile::ProfSetup::default()),
+            prof: std::cell::Cell::new(harness::profile::ProfSetup::default()),
             fps_cap: (s.fps_cap > 0.0).then_some(s.fps_cap), // 0 = uncapped
             export: ExportState {
                 open: false,
@@ -14682,7 +14494,7 @@ impl FractadyneApp {
             return;
         }
         let Some(index) = (if shadow { Some(1) } else { self.accum_take_index(view) }) else { return };
-        let mut req = crate::profile::params_to_request_exact(
+        let mut req = crate::render::params_to_request_exact(
             self.perf.accum_template[view].as_ref().expect("checked above"),
             accum_jitter_seq(index),
         );
@@ -16991,4 +16803,9 @@ impl eframe::App for FractadyneApp {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/test_layout.rs"]
+mod test_layout;

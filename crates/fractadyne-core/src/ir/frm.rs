@@ -282,4 +282,5 @@ fn identifiers(text: &str) -> Vec<String> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/ir/frm/tests.rs"]
 mod tests;

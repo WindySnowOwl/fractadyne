@@ -1103,10 +1103,13 @@ impl Parser<'_> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/ir/parse/tests.rs"]
 mod tests;
 
 #[cfg(test)]
+#[path = "../../tests/unit/ir/parse/snapshot.rs"]
 mod snapshot;
 
 #[cfg(test)]
+#[path = "../../tests/unit/ir/parse/syntax_tests.rs"]
 mod syntax_tests;

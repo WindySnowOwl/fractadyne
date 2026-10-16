@@ -18,6 +18,7 @@ pub use export::*;
 /// The live renderer on a second device (design/multi-gpu-live.md L3).
 mod twin;
 pub use twin::*;
+#[path = "harness/timing.rs"]
 pub mod timing;
 /// Custom formulas: WGSL generated from the formula IR and spliced into the fixed shader.
 pub mod custom;
@@ -28,6 +29,7 @@ pub mod lsystem;
 
 /// The Rust/WGSL uniform-layout gate — see the module's own docs.
 #[cfg(test)]
+#[path = "../tests/unit/uniform_layout_tests.rs"]
 mod uniform_layout_tests;
 
 // RGBA: r = smooth iteration value, g/b = slope normal (x,y), a = reserved (DE).
@@ -1419,6 +1421,7 @@ pub fn grad_hist_from_slots(slots: &[u32; COUNTER_SLOTS]) -> GradHist {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/grad_hist_tests.rs"]
 mod grad_hist_tests;
 /// Where the live path publishes a [`GradHist`]. A mutex rather than the packed-`AtomicU64` idiom of
 /// the other sinks because twelve counts do not fit one word; it is touched once per readback.
@@ -1892,7 +1895,7 @@ pub(crate) fn pixels_after_pass(prev: Option<u64>, view_stamp: u64, whole_frame:
 }
 
 #[cfg(test)]
-#[path = "content_stamp_tests.rs"]
+#[path = "../tests/unit/content_stamp_tests.rs"]
 mod content_stamp_tests;
 
 /// Bind-group layout for the progressive-SSAA **accumulate** pass (`fs_accum`): the running-mean

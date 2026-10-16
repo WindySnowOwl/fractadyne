@@ -575,4 +575,5 @@ pub(crate) fn fmt_bytes(b: u64) -> String {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/refcache_persist/tests.rs"]
 mod tests;

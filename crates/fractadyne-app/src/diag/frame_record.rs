@@ -1490,5 +1490,5 @@ pub(crate) fn schema_json() -> String {
 }
 
 #[cfg(test)]
-#[path = "frame_record_tests.rs"]
+#[path = "../../tests/unit/diag/frame_record/tests.rs"]
 mod tests;

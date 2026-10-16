@@ -189,5 +189,5 @@ pub(crate) fn step(pick: Pick, down: bool, esc: bool, sample: Option<[f32; 3]>) 
 // compiling into the RELEASE binary — caught by "unused import" warnings that could only
 // appear if a test-only module was being built for real.
 #[cfg(test)]
-#[path = "eyedropper_tests.rs"]
+#[path = "../tests/unit/eyedropper/eyedropper_tests.rs"]
 mod eyedropper_tests;

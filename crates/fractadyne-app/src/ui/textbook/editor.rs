@@ -427,5 +427,5 @@ pub(crate) fn show(
 }
 
 #[cfg(test)]
-#[path = "editor_tests.rs"]
+#[path = "../../../tests/unit/ui/textbook/editor/tests.rs"]
 mod tests;

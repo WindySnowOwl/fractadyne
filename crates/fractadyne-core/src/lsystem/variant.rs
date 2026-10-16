@@ -91,4 +91,5 @@ impl Variants {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/lsystem/variant/tests.rs"]
 mod tests;

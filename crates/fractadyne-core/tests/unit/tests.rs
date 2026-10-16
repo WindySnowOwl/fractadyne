@@ -1,0 +1,2292 @@
+use super::*;
+
+/// The astro walk under the production pipeline rule, recording nothing.
+#[allow(clippy::too_many_arguments)]
+fn series_skip_astro(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    log2_max_dc: f64,
+    max_iter: u32,
+    orbit_len: u32,
+    formula: u32,
+    p: usize,
+    pc: usize,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> SeriesSkip {
+    series_skip_astro_piped(cx, cy, log2_max_dc, max_iter, orbit_len, formula, p, pc, cancel, None, None)
+}
+
+/// `formula::caps` replaced id ranges written out at each use (design/custom-formulas.md, phase 0).
+/// Each capability must answer exactly as the range it replaced, for every id — the known ones and
+/// the out-of-range ones a view file could carry — so the change moves no decision anywhere.
+#[test]
+fn formula_caps_answer_as_the_id_ranges_they_replaced() {
+    for id in 0..1000u32 {
+        let c = formula::caps(id);
+        // The `z^d + c` families: Mandelbrot and Multibrot 3–5, and since the power families'
+        // phase 2 (design/power-families.md) Multibrot 6–8, ids 10–12.
+        let polynomial = id <= 3 || (10..=12).contains(&id);
+        assert_eq!(c.series_approximation, polynomial, "series approximation, id {id}");
+        let fold = (4..=7).contains(&id) || (13..=24).contains(&id);
+        assert_eq!(c.bla, polynomial || fold, "bla, id {id}");
+        assert_eq!(c.resumable_passes, polynomial, "resumable passes, id {id}");
+        assert_eq!(c.nucleus_finder, polynomial, "nucleus finder, id {id}");
+        assert_eq!(c.feature_solvers, id == 0, "feature solvers, id {id}");
+        assert_eq!(c.export_glitch_correction, !polynomial, "export glitch correction, id {id}");
+        assert_eq!(c.convergent, id == 9, "convergent, id {id}");
+    }
+    assert!(formula::caps(formula::MULTIBROT8).series_approximation);
+    assert!(!formula::caps(formula::BURNING_SHIP3).resumable_passes);
+    // And by name, so a renumbering cannot quietly move a family's capabilities.
+    assert!(formula::caps(formula::MULTIBROT5).series_approximation);
+    assert!(!formula::caps(formula::TRICORN).resumable_passes);
+    assert!(formula::caps(formula::NEWTON).convergent);
+    // A custom formula has resumable passes (its module carries its own chunk pass) and none of
+    // the others: each is implemented per built-in id.
+    let custom = formula::caps(formula::CUSTOM);
+    assert!(custom.resumable_passes);
+    assert!(!custom.series_approximation && !custom.bla && !custom.nucleus_finder);
+    assert!(!custom.feature_solvers && !custom.export_glitch_correction && !custom.convergent);
+    // Life is not an escape-time formula: no capability at all — glitch correction included, which
+    // would build references for a picture that has none.
+    // Nor are L-systems.
+    for id in [formula::LIFE, formula::LSYSTEM] {
+        let c = formula::caps(id);
+        assert_eq!((c.series_approximation, c.bla, c.resumable_passes, c.nucleus_finder), (false, false, false, false));
+        assert!(!c.feature_solvers && !c.export_glitch_correction && !c.convergent, "{id}");
+    }
+}
+
+/// `formula_dwell` must be the same oracle as `naive_dwell_bf` where both apply (Mandelbrot): the
+/// same escape iteration, and the same smooth count to float precision — escaped and interior.
+#[test]
+fn formula_dwell_agrees_with_the_plain_mandelbrot_oracle() {
+    let p = 128;
+    for (x, y) in [(-0.75, 0.1), (0.3, 0.5), (-1.25, 0.02), (-0.1, 0.1), (0.2501, 0.0), (-2.1, 0.0)] {
+        let (cx, cy) = (BigFloat::from_f64(x, p), BigFloat::from_f64(y, p));
+        let a = naive_dwell_bf(&cx, &cy, 5000, 65536.0, p);
+        let b = formula_dwell(&cx, &cy, 0, 5000, 65536.0, p);
+        match (a, b) {
+            (None, None) => {}
+            (Some((na, sa)), Some((nb, sb))) => {
+                assert_eq!(na, nb, "escape iteration at ({x}, {y})");
+                assert!((sa - sb).abs() < 1e-3, "smooth count at ({x}, {y}): {sa} vs {sb}");
+            }
+            _ => panic!("({x}, {y}): one oracle escaped and the other did not: {a:?} vs {b:?}"),
+        }
+    }
+}
+
+// Utility (run: `cargo test -p fractadyne-core dump_deep_boundary_coords -- --ignored
+// --nocapture`): bisect a deep boundary point for each perturbation family — the deep-golden
+// coords hard-coded in selftest.rs. A point accurate to ~1e-39 sits on the boundary at every
+// scale, so one coord serves both the 1e6× and 1e30× goldens. When adding a formula, add a seed
+// row here and rerun to get its deep coordinate (see the checklist in fractal.rs).
+#[test]
+#[ignore]
+fn dump_deep_boundary_coords() {
+    // (formula, name, exterior-direction from (0,0); scaled out until it escapes)
+    let seeds: &[(u32, &str, f64, f64)] = &[
+        (formula::MANDELBROT, "mandelbrot", -0.75, 0.25),
+        (formula::MULTIBROT3, "multibrot3", 0.3, 1.0),
+        (formula::MULTIBROT4, "multibrot4", 0.3, 1.0),
+        (formula::MULTIBROT5, "multibrot5", 0.3, 1.0),
+        (formula::TRICORN, "tricorn", 0.3, 1.0),
+        (formula::BURNING_SHIP, "burning-ship", -1.0, -0.6),
+        (formula::CELTIC, "celtic", -1.0, 0.3),
+        (formula::BUFFALO, "buffalo", -0.8, -0.6),
+        (formula::PHOENIX, "phoenix", 0.5, 0.8),
+    ];
+    let p = 160usize;
+    let max_iter = 15000u32;
+    let bounded = |f: u32, cx: &BigFloat, cy: &BigFloat| -> bool {
+        let z0 = bf(0.0, p);
+        let (_, len) = reference_orbit(&z0, &z0, cx, cy, f, max_iter, p);
+        len > max_iter
+    };
+    for &(f, name, sx, sy) in seeds {
+        let (mut ax, mut ay) = (bf(0.0, p), bf(0.0, p)); // interior: (0,0) is bounded for all
+        let (mut bx, mut by) = (bf(sx, p), bf(sy, p));
+        let onehalf = bf(1.5, p);
+        let mut guard = 0;
+        while bounded(f, &bx, &by) && guard < 100 {
+            bx = bx.mul(&onehalf, p, RM);
+            by = by.mul(&onehalf, p, RM);
+            guard += 1;
+        }
+        for _ in 0..130 {
+            let mx = lerp_bf(&ax, &bx, 0.5, p);
+            let my = lerp_bf(&ay, &by, 0.5, p);
+            if bounded(f, &mx, &my) {
+                ax = mx;
+                ay = my;
+            } else {
+                bx = mx;
+                by = my;
+            }
+        }
+        println!("DEEPCOORD {name} {} {}", to_decimal_string(&ax), to_decimal_string(&ay));
+    }
+}
+
+fn approx(a: f64, b: f64) {
+    assert!((a - b).abs() < 1e-9, "{a} !≈ {b}");
+}
+
+fn octaves_for(exp_decimal: f64) -> u64 {
+    (exp_decimal * std::f64::consts::LN_10 / std::f64::consts::LN_2).ceil() as u64
+}
+
+// The arbitrary-precision Phoenix reference orbit (z' = z² + c − 0.5·z_prev, two-term recurrence)
+// must reproduce the f64 direct orbit while both are bounded — validates the bignum step +
+// z_prev threading that the deep-zoom perturbation path relies on.
+#[test]
+fn phoenix_reference_matches_direct() {
+    let p = 80;
+    let c = (0.1_f64, 0.05_f64);
+    let (cx, cy) = (BigFloat::from_f64(c.0, p), BigFloat::from_f64(c.1, p));
+    let z0 = BigFloat::from_f64(0.0, p);
+    let (orbit, _len) = reference_orbit(&z0, &z0, &cx, &cy, 8, 60, p);
+    let direct = orbit_points((0.0, 0.0), c, 8, 60, 1.0e12);
+    let mut compared = 0;
+    for i in 0..orbit.len().min(direct.len()) {
+        let (dx, dy) = direct[i];
+        if dx * dx + dy * dy > 16.0 {
+            break; // stop once it's escaping (large values make absolute compare meaningless)
+        }
+        let zx = orbit[i][0] as f64 + orbit[i][2] as f64; // df64 hi + lo
+        let zy = orbit[i][1] as f64 + orbit[i][3] as f64;
+        approx(zx, dx);
+        approx(zy, dy);
+        compared += 1;
+    }
+    assert!(compared >= 12, "only {compared} bounded Phoenix iterates compared");
+}
+
+// Extreme-depth arithmetic validation (feasible single-point form): at a magnification of
+// 1e1000× — far beyond f64 range — the arbitrary-precision z²+c iteration must be stable
+// under a precision increase (agree to ≈ p bits) and the coordinate must survive a decimal
+// round-trip. Fast (~3.4k-bit precision); the deeper 1e100000×/1e1000000× cases run via
+// `--validate-deep` (seconds–minutes) and the #[ignore]d test below.
+#[test]
+fn deep_precision_self_consistent_1e1000() {
+    let p = precision_for_octaves(octaves_for(1_000.0));
+    let agree = deep_consistency_bits(p, 256, 2_000);
+    assert!(agree >= p as i64 - 128, "self-consistency {agree} of {p} bits");
+    let rt = deep_roundtrip_bits(p);
+    assert!(rt >= p as i64 - 256, "round-trip {rt} of {p} bits");
+}
+
+// Same check at 1e100000× (~332k-bit precision). Opt-in (slow, ~seconds):
+// `cargo test -p fractadyne-core -- --ignored deep_precision_self_consistent_1e100000`.
+#[test]
+#[ignore = "slow: ~332k-bit precision, runs in seconds"]
+fn deep_precision_self_consistent_1e100000() {
+    let p = precision_for_octaves(octaves_for(100_000.0));
+    let agree = deep_consistency_bits(p, 256, 400);
+    assert!(agree >= p as i64 - 128, "self-consistency {agree} of {p} bits");
+    let rt = deep_roundtrip_bits(p);
+    assert!(rt >= p as i64 - 256, "round-trip {rt} of {p} bits");
+}
+
+// Two centers differing only at the ~34th significant digit must remain distinct
+// after parse_bf — i.e. parsing preserves deep digits (not truncated to f64).
+#[test]
+fn parse_bf_preserves_deep_digits() {
+    let s1 = "-0.7436438870371587047521915061147707";
+    let s2 = "-0.7436438870371587047521915061147000"; // differ ~digit 31
+    let a = parse_bf(s1).unwrap();
+    let b = parse_bf(s2).unwrap();
+    let diff = to_f64(&a.sub(&b, 256, RM)).abs();
+    assert!(
+        diff > 1e-40,
+        "parse_bf collapsed deep digits (diff={diff:e}) — bookmarks/exports would \
+         lose the location at deep zoom"
+    );
+}
+
+// Full round-trip: a deep center → decimal string → back must reproduce it to far
+// below any pixel size reachable at practical zoom. (`to_decimal_string` caps the
+// digit count, so it's not bit-exact, but the residual is ~1e-79 here — sub-pixel
+// even past ~1e60×, so bookmarks/exports restore the location, not a nearby zone.)
+#[test]
+fn center_string_roundtrip_subpixel() {
+    let s = "-0.74364388703715870475219150611477078529733293886840544098878";
+    let a = parse_bf(s).unwrap();
+    let b = parse_bf(&to_decimal_string(&a)).unwrap();
+    let diff = to_f64(&a.sub(&b, 512, RM)).abs();
+    // 1e-50 ≈ one pixel at ~1e47× (1000-px wide); we expect far better (~1e-79).
+    assert!(diff < 1e-50, "center string round-trip too lossy (diff={diff:e})");
+}
+
+#[test]
+fn to_f64_roundtrips_simple_values() {
+    for &v in &[-0.5, 0.0, 1.0, -2.25, 0.131825, 1234.5] {
+        approx(to_f64(&bf(v, 64)), v);
+    }
+}
+
+#[test]
+fn center_maps_to_view_center() {
+    let vp = Viewport::new(800.0, 600.0);
+    let (cx, cy) = vp.pixel_to_complex(400.0, 300.0);
+    approx(to_f64(&cx), to_f64(&vp.center_x));
+    approx(to_f64(&cy), to_f64(&vp.center_y));
+}
+
+#[test]
+fn zoom_keeps_cursor_fixed() {
+    let mut vp = Viewport::new(800.0, 600.0);
+    let (px, py) = (123.0, 456.0);
+    let before = vp.pixel_to_complex(px, py);
+    let base_upp = vp.units_per_pixel;
+    vp.zoom_at(px, py, 0.5);
+    let after = vp.pixel_to_complex(px, py);
+    approx(to_f64(&before.0), to_f64(&after.0));
+    approx(to_f64(&before.1), to_f64(&after.1));
+    assert!(vp.units_per_pixel.log2() < base_upp.log2());
+}
+
+// Box-zoom: a centered rectangle that is ¼ of the view in BOTH axes zooms uniformly to 4×,
+// and its center stays put (the constraining ratio is the same on each axis).
+#[test]
+fn zoom_to_rect_centers_and_scales() {
+    let want = Viewport::new(800.0, 600.0).pixel_to_complex(400.0, 300.0);
+    let base_upp = Viewport::new(800.0, 600.0).units_per_pixel.to_f64();
+    let mut vp = Viewport::new(800.0, 600.0);
+    vp.zoom_to_rect(300.0, 225.0, 500.0, 375.0); // ¼ w AND ¼ h, centered
+    approx(to_f64(&vp.center_x), to_f64(&want.0));
+    approx(to_f64(&vp.center_y), to_f64(&want.1));
+    approx(vp.units_per_pixel.to_f64(), base_upp * 0.25);
+    approx(vp.magnification(), 4.0);
+}
+
+// Box-zoom, general case: the rect's center becomes the view center, its larger *relative*
+// dimension exactly fills the view (the other fits within), and the drag direction is
+// irrelevant (opposite corners give the identical view).
+#[test]
+fn zoom_to_rect_fits_and_ignores_drag_direction() {
+    let base_upp = Viewport::new(800.0, 600.0).units_per_pixel.to_f64();
+    let (px0, py0, px1, py1) = (100.0, 120.0, 700.0, 270.0); // off-center, wider than tall
+    let want = Viewport::new(800.0, 600.0).pixel_to_complex((px0 + px1) * 0.5, (py0 + py1) * 0.5);
+
+    let mut vp = Viewport::new(800.0, 600.0);
+    vp.zoom_to_rect(px0, py0, px1, py1);
+    approx(to_f64(&vp.center_x), to_f64(&want.0));
+    approx(to_f64(&vp.center_y), to_f64(&want.1));
+
+    // Box extent (in the OLD units) relative to the NEW view extent: the constraining axis
+    // fills it exactly (ratio 1), the other fits within (ratio ≤ 1).
+    let new_upp = vp.units_per_pixel.to_f64();
+    let ratio_w = (px1 - px0).abs() * base_upp / (vp.width_px * new_upp);
+    let ratio_h = (py1 - py0).abs() * base_upp / (vp.height_px * new_upp);
+    approx(ratio_w.max(ratio_h), 1.0);
+    assert!(ratio_w.min(ratio_h) <= 1.0 + 1e-9, "box overflows the view: {ratio_w}, {ratio_h}");
+    assert!(ratio_w > ratio_h, "width should be the constraining axis for this box");
+
+    // Dragging the opposite corners must yield the identical view.
+    let mut rev = Viewport::new(800.0, 600.0);
+    rev.zoom_to_rect(px1, py1, px0, py0);
+    approx(rev.units_per_pixel.to_f64(), new_upp);
+    approx(to_f64(&rev.center_x), to_f64(&vp.center_x));
+    approx(to_f64(&rev.center_y), to_f64(&vp.center_y));
+}
+
+#[test]
+fn pan_moves_center() {
+    let mut vp = Viewport::new(800.0, 600.0);
+    let upp = vp.units_per_pixel.to_f64();
+    let (cx, cy) = vp.center_f64();
+    vp.pan_pixels(10.0, -4.0);
+    approx(to_f64(&vp.center_x), cx - 10.0 * upp);
+    approx(to_f64(&vp.center_y), cy - 4.0 * upp);
+}
+
+#[test]
+fn default_magnification_is_one() {
+    let vp = Viewport::new(1280.0, 720.0);
+    approx(vp.magnification(), 1.0);
+}
+
+// The viewport scale must survive past f64's ~1e308× ceiling: precision scales up, the
+// magnitude stays exact (adjacent pixels map to distinct bignum coordinates rather than
+// collapsing to the center as an f64 `units_per_pixel` would), and the GPU scale params
+// stay well-formed (O(1) span mantissa + a deep shared exponent). This is what lets the
+// renderer reach the depths `--validate-deep` validates arithmetically.
+#[test]
+fn viewport_scale_survives_past_f64_range() {
+    let mut vp = Viewport::new(1000.0, 1000.0);
+    vp.set_center_log2mag(bf(-0.5, 2048), bf(0.0, 2048), 1100.0); // ≈ 1e331× (past f64)
+    assert!(vp.precision > 1000, "precision did not scale: {}", vp.precision);
+    assert!((vp.log2_magnification() - 1100.0).abs() < 2.0, "log2mag off: {}", vp.log2_magnification());
+    // Adjacent pixels must differ (a plain-f64 upp would underflow to 0 → identical).
+    let p = vp.precision;
+    let (ax, _) = vp.pixel_to_complex(500.0, 500.0);
+    let (bx, _) = vp.pixel_to_complex(501.0, 500.0);
+    let diff = ax.sub(&bx, p, RM);
+    assert!(diff.exponent().is_some(), "adjacent pixels collapsed past 1e308×");
+    // GPU scale: O(1) span mantissa, deep shared exponent.
+    let gs = vp.gpu_scale();
+    assert!(
+        gs.span_mantissa.x.abs() >= 1.0 && gs.span_mantissa.x.abs() < 4.0,
+        "span mantissa not O(1): {}",
+        gs.span_mantissa.x
+    );
+    assert!(gs.delta_exp < -1000, "delta_exp not deep: {}", gs.delta_exp);
+    // The per-pixel offset, rescaled by 2^-delta_exp, is the O(1) mantissa the GPU needs.
+    let off = ref_offset_mantissa(&ax, &bx, gs.delta_exp, p);
+    assert!(off.is_finite() && off != 0.0, "ref-offset mantissa degenerate: {off}");
+}
+
+#[test]
+fn span_matches_extent() {
+    let vp = Viewport::new(800.0, 600.0);
+    let (sx, sy) = vp.complex_span();
+    approx(sx, vp.width_px * vp.units_per_pixel.to_f64());
+    approx(sy, vp.height_px * vp.units_per_pixel.to_f64());
+}
+
+#[test]
+fn recommended_iter_grows_with_zoom() {
+    let mut vp = Viewport::new(800.0, 600.0);
+    assert_eq!(vp.recommended_max_iter(256), 256);
+    vp.zoom_at(400.0, 300.0, 1.0 / 1024.0);
+    assert!(vp.recommended_max_iter(256) > 256);
+}
+
+#[test]
+fn precision_grows_with_zoom() {
+    assert_eq!(precision_for_magnification(1.0), 64);
+    assert!(precision_for_magnification(1e30) > precision_for_magnification(1e3));
+}
+
+// Series approximation: the order-3 polynomial A·δc + B·δc² + C·δc³ at the chosen skip
+// must reproduce the exact perturbation δz after that many iterations, for a worst-case
+// corner δc — i.e. skipping those iterations introduces negligible error.
+#[test]
+fn series_skip_matches_exact_perturbation() {
+    let p = 160;
+    let (cx, cy) = (bf(-0.745, p), bf(0.113, p)); // seahorse boundary (slow orbit)
+    let max_dc = 1.0e-9_f64; // deep-ish δc, where SA actually applies
+    let log2_max_dc = max_dc.log2();
+    let max_iter = 5000;
+    let s = series_skip(&cx, &cy, log2_max_dc, max_iter, max_iter, 0, p);
+    assert!(s.skip >= 8, "no usable skip found (skip={})", s.skip);
+
+    // Reconstruct the (f64) coefficients and evaluate the series at a worst-case δc.
+    let cof = |m: [f32; 4], e: i32| -> (f64, f64) {
+        let f = 2f64.powi(e);
+        ((m[0] as f64 + m[1] as f64) * f, (m[2] as f64 + m[3] as f64) * f)
+    };
+    let (ar, ai) = cof(s.a, s.a_exp);
+    let (br, bi) = cof(s.b, s.b_exp);
+    let (cr, ci) = cof(s.c, s.c_exp);
+    let cmul = |a: (f64, f64), b: (f64, f64)| (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0);
+    let dc = (max_dc, 0.0); // worst-case real corner
+    let dc2 = cmul(dc, dc);
+    let dc3 = cmul(dc2, dc);
+    let t1 = cmul((ar, ai), dc);
+    let t2 = cmul((br, bi), dc2);
+    let t3 = cmul((cr, ci), dc3);
+    let series = (t1.0 + t2.0 + t3.0, t1.1 + t2.1 + t3.1);
+
+    // Exact perturbation in bignum (same reference as series_skip): δz'=2Zδz+δz²+δc.
+    let (dcx, dcy) = (bf(max_dc, p), bf(0.0, p));
+    let two = bf(2.0, p);
+    let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
+    let (mut dzx, mut dzy) = (bf(0.0, p), bf(0.0, p));
+    for _ in 0..s.skip {
+        let (tzx, tzy) = cmul_bf(&zx, &zy, &dzx, &dzy, p); // Z·δz
+        let (d2x, d2y) = cmul_bf(&dzx, &dzy, &dzx, &dzy, p);
+        let ndzx = tzx.mul(&two, p, RM).add(&d2x, p, RM).add(&dcx, p, RM);
+        let ndzy = tzy.mul(&two, p, RM).add(&d2y, p, RM).add(&dcy, p, RM);
+        let (nzx, nzy) = step_bf(&zx, &zy, &cx, &cy, 0, p);
+        zx = nzx;
+        zy = nzy;
+        dzx = ndzx;
+        dzy = ndzy;
+    }
+    let (ex, ey) = (to_f64(&dzx), to_f64(&dzy));
+    let err = ((series.0 - ex).powi(2) + (series.1 - ey).powi(2)).sqrt();
+    let mag = (ex * ex + ey * ey).sqrt().max(1e-300);
+    assert!(err / mag < 1.0e-3, "series vs exact δz rel err {:.2e} at skip {}", err / mag, s.skip);
+}
+
+// Same validation for the Multibrot-3 (z³+c) coefficient recurrence — confirms the
+// generalized order-3 series (A'=3Z²A+1, B'=3Z²B+3ZA², C'=3Z²C+6ZAB+A³) reproduces the
+// exact perturbation δz' = 3Z²δz + 3Zδz² + δz³ + δc.
+#[test]
+fn series_skip_matches_exact_multibrot3() {
+    let p = 160;
+    let (cx, cy) = (bf(0.2, p), bf(0.2, p)); // interior z³ point → long bounded orbit
+    let max_dc = 1.0e-9_f64;
+    let s = series_skip(&cx, &cy, max_dc.log2(), 5000, 5000, 1, p); // formula 1 = z³
+    assert!(s.skip >= 8, "no usable skip found (skip={})", s.skip);
+
+    let cof = |m: [f32; 4], e: i32| -> (f64, f64) {
+        let f = 2f64.powi(e);
+        ((m[0] as f64 + m[1] as f64) * f, (m[2] as f64 + m[3] as f64) * f)
+    };
+    let (ar, ai) = cof(s.a, s.a_exp);
+    let (br, bi) = cof(s.b, s.b_exp);
+    let (cr, ci) = cof(s.c, s.c_exp);
+    let cmul = |a: (f64, f64), b: (f64, f64)| (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0);
+    let dc = (max_dc, 0.0);
+    let dc2 = cmul(dc, dc);
+    let dc3 = cmul(dc2, dc);
+    let t1 = cmul((ar, ai), dc);
+    let t2 = cmul((br, bi), dc2);
+    let t3 = cmul((cr, ci), dc3);
+    let series = (t1.0 + t2.0 + t3.0, t1.1 + t2.1 + t3.1);
+
+    // Exact z³ perturbation in bignum, same reference: δz' = 3Z²δz + 3Zδz² + δz³ + δc.
+    let (dcx, dcy) = (bf(max_dc, p), bf(0.0, p));
+    let three = bf(3.0, p);
+    let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
+    let (mut dzx, mut dzy) = (bf(0.0, p), bf(0.0, p));
+    for _ in 0..s.skip {
+        let (z2x, z2y) = cmul_bf(&zx, &zy, &zx, &zy, p); // Z²
+        let (zdx, zdy) = cmul_bf(&z2x, &z2y, &dzx, &dzy, p); // Z²δz
+        let (d2x, d2y) = cmul_bf(&dzx, &dzy, &dzx, &dzy, p); // δz²
+        let (zd2x, zd2y) = cmul_bf(&zx, &zy, &d2x, &d2y, p); // Zδz²
+        let (d3x, d3y) = cmul_bf(&d2x, &d2y, &dzx, &dzy, p); // δz³
+        let ndzx = zdx
+            .mul(&three, p, RM)
+            .add(&zd2x.mul(&three, p, RM), p, RM)
+            .add(&d3x, p, RM)
+            .add(&dcx, p, RM);
+        let ndzy = zdy
+            .mul(&three, p, RM)
+            .add(&zd2y.mul(&three, p, RM), p, RM)
+            .add(&d3y, p, RM)
+            .add(&dcy, p, RM);
+        dzx = ndzx;
+        dzy = ndzy;
+        let (nzx, nzy) = step_bf(&zx, &zy, &cx, &cy, 1, p); // Z³ + c
+        zx = nzx;
+        zy = nzy;
+    }
+    let (ex, ey) = (to_f64(&dzx), to_f64(&dzy));
+    let err = ((series.0 - ex).powi(2) + (series.1 - ey).powi(2)).sqrt();
+    let mag = (ex * ex + ey * ey).sqrt().max(1e-300);
+    assert!(err / mag < 1.0e-3, "z³ series vs exact rel err {:.2e} at skip {}", err / mag, s.skip);
+}
+
+// The order-3 recurrence is generic in the degree (its `d·Z^(d−1)`, `C(d,2)·Z^(d−2)` and
+// `C(d,3)·Z^(d−3)` come from `d`), so Multibrot 6–8 take it unchanged (design/power-families.md,
+// B5). The truth here is the plainest there is: the pixel's own bignum orbit minus the
+// reference's, each by the family's step. A walk at the wrong degree (the `_ => 2` the match had
+// for these ids) is off by orders of magnitude at the interior point, whose |Z| stays ~0.3.
+#[test]
+fn series_skip_matches_exact_multibrot_6_to_8() {
+    let p = 160;
+    for f in [formula::MULTIBROT6, formula::MULTIBROT7, formula::MULTIBROT8] {
+        let (cx, cy) = (bf(0.2, p), bf(0.2, p)); // interior for every power here
+        let max_dc = 1.0e-9_f64;
+        let s = series_skip(&cx, &cy, max_dc.log2(), 5000, 5000, f, p);
+        assert!(s.skip >= 8, "formula {f}: no usable skip found (skip={})", s.skip);
+
+        let cof = |m: [f32; 4], e: i32| -> (f64, f64) {
+            let k = 2f64.powi(e);
+            ((m[0] as f64 + m[1] as f64) * k, (m[2] as f64 + m[3] as f64) * k)
+        };
+        let cmul = |a: (f64, f64), b: (f64, f64)| (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0);
+        let dc = (max_dc, 0.0);
+        let dc2 = cmul(dc, dc);
+        let t1 = cmul(cof(s.a, s.a_exp), dc);
+        let t2 = cmul(cof(s.b, s.b_exp), dc2);
+        let t3 = cmul(cof(s.c, s.c_exp), cmul(dc2, dc));
+        let series = (t1.0 + t2.0 + t3.0, t1.1 + t2.1 + t3.1);
+
+        let (px, py) = (cx.add(&bf(max_dc, p), p, RM), cy.clone());
+        let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
+        let (mut wx, mut wy) = (bf(0.0, p), bf(0.0, p));
+        for _ in 0..s.skip {
+            (zx, zy) = step_bf(&zx, &zy, &cx, &cy, f, p);
+            (wx, wy) = step_bf(&wx, &wy, &px, &py, f, p);
+        }
+        let (ex, ey) = (to_f64(&wx.sub(&zx, p, RM)), to_f64(&wy.sub(&zy, p, RM)));
+        let err = ((series.0 - ex).powi(2) + (series.1 - ey).powi(2)).sqrt();
+        let mag = (ex * ex + ey * ey).sqrt().max(1e-300);
+        assert!(err / mag < 1.0e-3, "formula {f}: series vs exact rel err {:.2e} at skip {}", err / mag, s.skip);
+    }
+}
+
+// A series seed starts where the GPU's first test of it — one step later — stays inside f32
+// (`sa_seed_max2`). Each point sits just past its family's real cusp c* = (d−1)/d · d^(−1/(d−1)),
+// so the orbit creeps out for thousands of steps and then leaves fast: the walk runs to the
+// reference's end, as at the views that broke (Multibrot 5 at 1e40×, every pixel −∞). For z² and
+// z³ the bound sits above the reference's own stop, so the skip is the cap it always was; from
+// z⁴ it is the last sample inside the bound — the cap when the orbit jumps clear past it in one
+// step, which is why each power is tried at eight offsets and must BIND at one at least.
+// Mutation: without the bound, Multibrot 5 seeds at |Z|² > 2^24 here (found 2026-10-01).
+#[test]
+fn a_series_seed_starts_where_its_next_step_stays_in_f32() {
+    let p = 128;
+    for f in [
+        formula::MANDELBROT,
+        formula::MULTIBROT3,
+        formula::MULTIBROT4,
+        formula::MULTIBROT5,
+        formula::MULTIBROT6,
+        formula::MULTIBROT7,
+        formula::MULTIBROT8,
+    ] {
+        let d = formula::power(f);
+        let df = f64::from(d);
+        let cstar = (df - 1.0) / df * df.powf(-1.0 / (df - 1.0));
+        let bound = crate::reference::sa_seed_max2(d);
+        let mut binds = 0;
+        for eps in [1.0e-6, 1.3e-6, 1.7e-6, 2.2e-6, 2.9e-6, 3.7e-6, 4.8e-6, 6.2e-6] {
+            let (cx, cy) = (bf(cstar + eps, p), bf(0.0, p));
+            // The reference as the app records it: samples Z_0..=Z_n, n the first past its escape.
+            let mut m2 = vec![0.0f64];
+            let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
+            while *m2.last().unwrap() <= crate::reference::ref_escape2(f) && m2.len() < 100_000 {
+                (zx, zy) = step_bf(&zx, &zy, &cx, &cy, f, p);
+                m2.push(to_f64(&zx).powi(2) + to_f64(&zy).powi(2));
+            }
+            let len = m2.len() as u32;
+            assert!(len > 500 && len < 100_000, "formula {f}, ε {eps}: the fixture must creep out (len {len})");
+            let s = series_skip(&cx, &cy, -200.0, 100_000, len, f, p);
+            let k = s.skip as usize;
+            assert!(k > 0, "formula {f}, ε {eps}: no skip");
+            assert!(m2[k] <= bound, "formula {f}, ε {eps}: seed at {k} has |Z|² = {:e} > {bound:e}", m2[k]);
+            if d <= 3 {
+                assert_eq!(s.skip, len - 2, "formula {f}, ε {eps}: the bound must not bind below the stop");
+            } else if s.skip < len - 2 {
+                assert!(m2[k + 1] > bound, "formula {f}, ε {eps}: the seed at {k} is not the LAST inside the bound");
+                binds += 1;
+            }
+        }
+        // (z⁴'s real exit from its cusp is the same path at every offset — 984 then 9e11, |Z|²
+        // under 2^30 and then past the stop — so its bound never binds here; 5–8 bound at 3, 2,
+        // 1 and 4 of the eight when this was written.)
+        assert!(d <= 4 || binds > 0, "formula {f}: the bound never bound — the test proved nothing for it");
+    }
+}
+
+// The series coefficients ARE the exact map's Taylor coefficients, δz_n(δc) = A·δc + B·δc² +
+// C·δc³ + O(δc⁴), for every power. The tests above judge δz at one δc, where SA's own criterion
+// holds the cubic term under 2^-16 of the linear one — so a wrong C hides there, and in every
+// render: a walk that dropped the C(d,3)·Z^(d−3)·A³ term passed them all and the self-test's
+// boundary views, its skips merely longer (Multibrot 4: 49 → 67; 2026-10-01). Here each
+// coefficient is read off the map itself: the exact δz at δc = h·iᵏ (k = 0..3) from two bignum
+// orbits, and Σₖ δz_k·(−i)^(mk) / (4·hᵐ) = a_m + O(h⁴). The points are exact and so are the
+// rotations, so nothing but the h⁴ alias stands between a_m and the coefficient the walk carried.
+#[test]
+fn series_coefficients_are_the_maps_taylor_coefficients() {
+    let p = 320;
+    let n = 12u32;
+    let h_log2 = -30i32;
+    let neg = |x: &BigFloat| bf(0.0, p).sub(x, p, RM);
+    for f in [
+        formula::MANDELBROT,
+        formula::MULTIBROT3,
+        formula::MULTIBROT4,
+        formula::MULTIBROT5,
+        formula::MULTIBROT6,
+        formula::MULTIBROT7,
+        formula::MULTIBROT8,
+    ] {
+        let (cx, cy) = (bf(0.2, p), bf(0.2, p));
+        let s = series_skip(&cx, &cy, -40.0, n, 5000, f, p);
+        assert_eq!(s.skip, n, "formula {f}: the walk must run to the cap");
+        let orbit_n = |x: &BigFloat, y: &BigFloat| {
+            let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
+            for _ in 0..n {
+                (zx, zy) = step_bf(&zx, &zy, x, y, f, p);
+            }
+            (zx, zy)
+        };
+        let (rx, ry) = orbit_n(&cx, &cy);
+        let (h, zero) = (bf(2f64.powi(h_log2), p), bf(0.0, p));
+        let dz: Vec<(BigFloat, BigFloat)> = [
+            (h.clone(), zero.clone()),
+            (zero.clone(), h.clone()),
+            (neg(&h), zero.clone()),
+            (zero.clone(), neg(&h)),
+        ]
+        .iter()
+        .map(|(dx, dy)| {
+            let (zx, zy) = orbit_n(&cx.add(dx, p, RM), &cy.add(dy, p, RM));
+            (zx.sub(&rx, p, RM), zy.sub(&ry, p, RM))
+        })
+        .collect();
+        for (m, coef, e) in [(1usize, s.a, s.a_exp), (2, s.b, s.b_exp), (3, s.c, s.c_exp)] {
+            let (mut sx, mut sy) = (bf(0.0, p), bf(0.0, p));
+            for (k, (x, y)) in dz.iter().enumerate() {
+                // (x + iy)·(−i)^(mk)
+                let (tx, ty) = match (m * k) % 4 {
+                    0 => (x.clone(), y.clone()),
+                    1 => (y.clone(), neg(x)),
+                    2 => (neg(x), neg(y)),
+                    _ => (neg(y), x.clone()),
+                };
+                sx = sx.add(&tx, p, RM);
+                sy = sy.add(&ty, p, RM);
+            }
+            let scale = 2f64.powi(-h_log2 * m as i32) / 4.0;
+            let (ex, ey) = (to_f64(&sx) * scale, to_f64(&sy) * scale);
+            let k2 = 2f64.powi(e);
+            let (gx, gy) = ((coef[0] as f64 + coef[1] as f64) * k2, (coef[2] as f64 + coef[3] as f64) * k2);
+            let rel = (gx - ex).hypot(gy - ey) / ex.hypot(ey);
+            assert!(
+                rel < 1.0e-9,
+                "formula {f}: coefficient {m} is ({gx:e}, {gy:e}), the map's is ({ex:e}, {ey:e}): rel err {rel:.2e}"
+            );
+        }
+    }
+}
+
+// The series walk carries its coefficients at `SA_COEFF_BITS` while the reference `Z` stays at
+// the working precision. What leaves the walk — the skip, and each coefficient's GPU value — must
+// be BYTE-EQUAL to the historical full-width walk (`pc = p`): that equality is the whole claim of
+// the change. Anti-vacuity: every case really narrows (p > pc), skips were produced, both cut
+// regimes appeared, and some walks ran long (10-step skips say nothing about accumulation).
+// Negative control, run 2026-09-28: the same matrix at 64-bit coefficients diverged in 14 of 32
+// cases (walks of 131 steps among them); at 128 all 32 matched (20 with a skip, 10 cap-bound,
+// the longest validity cut 998 steps).
+#[test]
+fn sa_coefficient_width_is_output_neutral() {
+    let bits4 = |q: &[f32; 4]| [q[0].to_bits(), q[1].to_bits(), q[2].to_bits(), q[3].to_bits()];
+    let points = [
+        ("boundary", "-0.743643887037158704752191506114774", "0.131825904205311970493132056385139"),
+        ("interior", "-0.5", "0.1"),
+        ("misiurewicz", "-0.77568377", "0.13646737"),
+        ("seahorse", "-0.745", "0.113"),
+    ];
+    let (mi, ol) = (4000u32, 4002u32);
+    let (mut cases, mut with_skip, mut cap_bound, mut longest_break) = (0usize, 0usize, 0usize, 0u32);
+    let mut bad: Vec<String> = Vec::new();
+    for f in [formula::MANDELBROT, formula::MULTIBROT3] {
+        for (label, sx, sy) in points {
+            for p in [576usize, 1088] {
+                assert!(p > SA_COEFF_BITS, "a case that does not narrow tests nothing");
+                let cx = parse_bf_prec(sx, p).unwrap();
+                let cy = parse_bf_prec(sy, p).unwrap();
+                for dc in [-40.0f64, -400.0] {
+                    let full = series_skip_astro(&cx, &cy, dc, mi, ol, f, p, p, None);
+                    let narrow = series_skip_astro(&cx, &cy, dc, mi, ol, f, p, SA_COEFF_BITS, None);
+                    cases += 1;
+                    let same = full.skip == narrow.skip
+                        && bits4(&full.a) == bits4(&narrow.a) && full.a_exp == narrow.a_exp
+                        && bits4(&full.b) == bits4(&narrow.b) && full.b_exp == narrow.b_exp
+                        && bits4(&full.c) == bits4(&narrow.c) && full.c_exp == narrow.c_exp;
+                    if !same {
+                        bad.push(format!(
+                            "{label} f={f} p={p} dc={dc}: skip {} vs {}",
+                            full.skip, narrow.skip
+                        ));
+                    }
+                    if full.skip > 0 {
+                        with_skip += 1;
+                        if full.skip == mi.min(ol - 2) {
+                            cap_bound += 1;
+                        } else {
+                            longest_break = longest_break.max(full.skip);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{} of {cases} cases diverged:\n{}", bad.len(), bad.join("\n"));
+    assert!(with_skip >= cases / 2, "vacuous: only {with_skip} of {cases} cases produced a skip");
+    assert!(cap_bound >= 2, "vacuous: no walk ran to the cap ({cap_bound})");
+    assert!(longest_break >= 100, "vacuous: the longest validity-cut walk was {longest_break} steps");
+}
+
+// The pipelined series walk (Z chain on its own thread, coefficients here) is the sequential walk,
+// byte for byte — the same values meet the same operations in the same order. Covers validity
+// cuts, cap-bound walks, an escaping reference (the Z chain stops at the escape), multibrot, and a
+// cancelled walk. Anti-vacuity: real skips, and walks long enough to exercise the channel.
+#[test]
+fn the_pipelined_sa_walk_is_the_sequential_one() {
+    let bits4 = |q: &[f32; 4]| [q[0].to_bits(), q[1].to_bits(), q[2].to_bits(), q[3].to_bits()];
+    let key = |s: &SeriesSkip| {
+        (s.skip, bits4(&s.a), s.a_exp, bits4(&s.b), s.b_exp, bits4(&s.c), s.c_exp)
+    };
+    let (p, pc) = (576usize, SA_COEFF_BITS);
+    let (mut cases, mut real, mut longest) = (0, 0, 0u32);
+    for f in [formula::MANDELBROT, formula::MULTIBROT3] {
+        for (sx, sy) in [("-0.5", "0.1"), ("-0.77568377", "0.13646737"), ("-0.745", "0.113"), ("0.26", "0.0015")] {
+            let cx = parse_bf_prec(sx, p).unwrap();
+            let cy = parse_bf_prec(sy, p).unwrap();
+            for dc in [-40.0f64, -400.0] {
+                let run = |pipe| series_skip_astro_piped(&cx, &cy, dc, 3000, 3002, f, p, pc, None, Some(pipe), None);
+                let (seq, piped) = (run(false), run(true));
+                assert_eq!(key(&seq), key(&piped), "{sx},{sy} f={f} dc={dc}");
+                cases += 1;
+                real += (seq.skip > 0) as u32;
+                longest = longest.max(seq.skip);
+            }
+        }
+    }
+    assert!(real >= cases / 2 && longest >= 1000, "vacuous: {real}/{cases} with a skip, longest {longest}");
+    // A cancelled pipelined walk returns NONE and does not hang on its Z chain.
+    let on = std::sync::atomic::AtomicBool::new(true);
+    let (cx, cy) = (bf(-0.5, p), bf(0.1, p));
+    let dead = series_skip_astro_piped(&cx, &cy, -40.0, 3000, 3002, 0, p, pc, Some(&on), Some(true), None);
+    assert_eq!(dead.skip, 0);
+}
+
+// The centre rescue may take its score from the app's build of the centre instead of walking it
+// again (`best_reference_diag_from_build` + `centre_walk_from_build`). The pick must come out
+// byte-identical to the plain one — point, score, scoring precision, rescue verdict — whatever
+// the build's cap: past the escape (read off the build), short of it (continued from the tail),
+// and exactly at it. Anti-vacuity: the rescue branch really ran (the oracle was consulted), and
+// the direct comparison below covers a bounded orbit whose continuation runs to `max_iter`.
+#[test]
+fn the_rescue_can_come_from_a_build() {
+    let p = 128;
+    let p2 = p + REF_RESCUE_EXTRA_BITS;
+    // Seahorse valley: every candidate escapes after ~2π/0.0005 ≈ 6,300 iterations — past the
+    // quick scan (4,096), so phase 1 has survivors, and short of `max_iter`, so the winner
+    // escapes early and the centre rescue runs.
+    let center = [bf(-0.75, p), bf(0.0005, p)];
+    let span = [FloatExp::from_f64(1e-9), FloatExp::from_f64(1e-9)];
+    let max_iter = 20_000;
+    let (plain, plain_diag) = best_reference_diag(&center, span, 0, false, [0.0, 0.0], max_iter, p);
+    let zero = bf(0.0, p2);
+    let eq = |a: &BigFloat, b: &BigFloat| a.cmp(b).is_some_and(|o| o == 0);
+    let full = orbit_length_in(crate::backend::selected(), &zero, &zero, &center[0], &center[1], 0, max_iter, p2, None);
+    assert!(full > 4096 && full < max_iter, "the view no longer exercises the rescue ({full})");
+    for cap in [max_iter, full, full - 1, 3000, 1] {
+        let (_, len, tail) = reference_orbit_t(&zero, &zero, &center[0], &center[1], 0, cap, p2);
+        let asked = std::cell::Cell::new(0u32);
+        let centre = |want: bool| {
+            asked.set(asked.get() + 1);
+            centre_walk_from_build(len, &tail, None, &center[0], &center[1], 0, max_iter, p2, want)
+        };
+        let src = CentreSource { walk: &centre, whole: cap >= max_iter };
+        let (got, diag) = best_reference_diag_from_build(&center, span, 0, false, [0.0, 0.0], max_iter, p, src);
+        assert!(asked.get() > 0, "cap {cap}: the rescue never ran — this compared nothing");
+        assert!(eq(&got[0], &plain[0]) && eq(&got[1], &plain[1]), "cap {cap}: a different point");
+        assert_eq!(
+            (diag.winner_len, diag.scoring_prec, diag.rescued, diag.survivors),
+            (plain_diag.winner_len, plain_diag.scoring_prec, plain_diag.rescued, plain_diag.survivors),
+            "cap {cap}"
+        );
+        assert_eq!(centre(false).map(|w| w.len), Some(full), "cap {cap}: the build's score is not the walk's");
+    }
+    // A bounded orbit (main cardioid) never escapes: the build's cap decides everything, and a
+    // short build must be continued to exactly `max_iter`.
+    let (ix, iy) = (bf(-0.1, p2), bf(0.1, p2));
+    for cap in [max_iter, 7000, 1] {
+        let (_, len, tail) = reference_orbit_t(&zero, &zero, &ix, &iy, 0, cap, p2);
+        assert_eq!(
+            scoring_len_from_build(len, &tail, &ix, &iy, 0, max_iter, p2),
+            Some(orbit_length_in(crate::backend::selected(), &zero, &zero, &ix, &iy, 0, max_iter, p2, None)),
+            "bounded orbit, cap {cap}"
+        );
+    }
+}
+
+// Phase 2 may take the CENTRE's deep walk — its score AND the samples the perturbation scorer
+// rates the other survivors against — from the app's build of the centre (the build records into
+// `reference_orbit_periodic_until`'s sink; `centre_walk_from_build`). The pick must come out
+// byte-identical to the plain one whatever the build's cap: a build that walked the whole of the
+// centre's walk answers it, one cut short does not (the pick walks the centre itself); a build
+// not known to hold the whole walk (`whole` false) is not waited for at all. And the recording
+// must be the walk's own samples, bit for bit. Anti-vacuity: the scorer really ran against the
+// centre's walk, the samples were really asked for, and taken exactly where they should be.
+#[test]
+fn the_centre_walk_can_come_from_a_build() {
+    let p = 128;
+    let p2 = p + REF_RESCUE_EXTRA_BITS;
+    // Seahorse valley at a 1e-20 span: past 2^-44, so phase 2 scores the other survivors by
+    // perturbation against the centre's recorded walk; every candidate escapes after ~π/1e-4 ≈
+    // 31,400 iterations — past the quick scan (4,096), short of `max_iter` — so the centre is the
+    // first of many survivors and the winner escapes early (the rescue runs too).
+    let center = [bf(-0.75, p), bf(0.0001, p)];
+    let span = [FloatExp::from_f64(1e-20), FloatExp::from_f64(1e-20)];
+    let max_iter = 50_000;
+    assert!(pick_records_centre(0, false, span), "the view no longer engages the perturbation scorer");
+    let (plain, plain_diag) = best_reference_diag(&center, span, 0, false, [0.0, 0.0], max_iter, p);
+    assert!(plain_diag.deep_perturb && plain_diag.deep_scored > 0, "nothing was scored against the centre's walk");
+    assert!(!plain_diag.centre_from_build);
+    let zero = bf(0.0, p2);
+    let log2_span = span[0].log2().max(span[1].log2());
+    let mut walked = Vec::new();
+    let full = orbit_length_in(
+        crate::backend::selected(), &zero, &zero, &center[0], &center[1], 0, max_iter, p2, Some(&mut walked),
+    );
+    assert!(full > 4096 && full < max_iter, "the view no longer exercises phase 2 ({full})");
+    let eq = |a: &BigFloat, b: &BigFloat| a.cmp(b).is_some_and(|o| o == 0);
+    // (cap, `whole` as claimed, phase 2 takes the walk from the build): a build that ran to
+    // `max_iter`; one that escaped inside its cap, claimed whole and not; one cut a step short,
+    // even when (wrongly) claimed whole — it then walks the centre after phase 1; and a stub.
+    for (cap, whole, taken) in
+        [(max_iter, true, true), (full, true, true), (full, false, false), (full - 1, true, false), (1, false, false)]
+    {
+        let mut fe = Vec::new();
+        let (_, len, tail) =
+            reference_orbit_periodic_until(&zero, &zero, &center[0], &center[1], 0, cap, p2, log2_span, None, Some(&mut fe));
+        if cap >= full {
+            assert!(fe == walked, "cap {cap}: the build's recording is not the walk's samples");
+        }
+        let fe = std::cell::RefCell::new(Some(fe));
+        let sampled = std::cell::Cell::new(false);
+        let centre = |want: bool| {
+            sampled.set(sampled.get() | want);
+            let fe = if want { fe.borrow_mut().take() } else { None };
+            centre_walk_from_build(len, &tail, fe, &center[0], &center[1], 0, max_iter, p2, want)
+        };
+        let src = CentreSource { walk: &centre, whole };
+        let (got, diag) = best_reference_diag_from_build(&center, span, 0, false, [0.0, 0.0], max_iter, p, src);
+        assert_eq!(sampled.get(), whole, "cap {cap}: phase 2 asked for the samples, or not, wrongly");
+        assert_eq!(diag.centre_from_build, taken, "cap {cap}: taken from the build, or not, wrongly");
+        assert!(eq(&got[0], &plain[0]) && eq(&got[1], &plain[1]), "cap {cap}: a different point");
+        let key = |d: &RefPickDiag| {
+            (d.winner_len, d.scoring_prec, d.rescued, d.survivors, d.deep_scored, d.perturb_rebases, d.perturb_fallbacks)
+        };
+        assert_eq!(key(&diag), key(&plain_diag), "cap {cap}");
+    }
+}
+
+/// Every field of a `SeriesSkip`, bitwise.
+fn sa_bits(s: &SeriesSkip) -> (u32, [u32; 4], i32, [u32; 4], i32, [u32; 4], i32) {
+    let b = |q: &[f32; 4]| q.map(f32::to_bits);
+    (s.skip, b(&s.a), s.a_exp, b(&s.b), s.b_exp, b(&s.c), s.c_exp)
+}
+
+/// A point ~1e-271 from the Misiurewicz point `c = i`: its orbit follows i's for ~700 steps with
+/// |dZ/dc| growing ~1.25 bits a step, so the series stays valid a long way at a small view, and
+/// the walk's coefficients feel the working precision (`Z` is cut from it every step).
+fn sa_near_i(p: usize) -> (BigFloat, BigFloat) {
+    let im = format!("1.{}95", "0".repeat(271));
+    (parse_bf_prec("7.07e-272", p).unwrap(), parse_bf_prec(&im, p).unwrap())
+}
+
+// The series walk's TRACE (`SaTraces`, `sa_replay`): a walk recorded once answers every later
+// frame by replaying the loop's own stop rules. Against the direct walk, bit for bit, over view
+// sizes from "stops at once" to "never stops for validity" (those walks run on to the seed bound
+// by the reference's escape), step limits from the orbit length, the iteration count and the
+// budget, in every compiled backend — through ONE cache, so most answers are replays of the first
+// call's record. Anti-vacuity: real skips of many lengths, some ended by the seed bound.
+#[test]
+fn the_sa_trace_replays_the_walk() {
+    let p = 1024;
+    let (cx, cy) = sa_near_i(p);
+    for backend in crate::available_backends() {
+        let traces = crate::reference::SaTraces::new();
+        let (mut cases, mut skips, mut seed_ended) = (0u32, std::collections::BTreeSet::new(), 0u32);
+        let dcs: Vec<f64> = (0..48).map(|i| -20.0 - 20.0 * f64::from(i)).chain([-1500.0, -2000.0, -5000.0]).collect();
+        for &(max_iter, orbit_len) in &[(3000u32, 3002u32), (900, 3002), (3000, 500), (60, 3002)] {
+            for &dc in &dcs {
+                let direct = crate::reference::series_skip_walk(backend, &cx, &cy, dc, max_iter, orbit_len, 0, p, None, None);
+                let traced = traces.series_skip(backend, &cx, &cy, dc, max_iter, orbit_len, 0, p, None);
+                assert_eq!(sa_bits(&traced), sa_bits(&direct), "{backend:?} dc={dc} max_iter={max_iter} orbit_len={orbit_len}");
+                cases += 1;
+                skips.insert(direct.skip);
+                // A walk at a view this small stops at the seed bound, short of the reference's escape.
+                let never_invalid = crate::reference::series_skip_walk(backend, &cx, &cy, -1.0e300, max_iter, orbit_len, 0, p, None, None);
+                seed_ended += u32::from(dc <= -1500.0 && direct.skip == never_invalid.skip && direct.skip > 0);
+            }
+        }
+        assert!(skips.len() >= 20 && skips.iter().any(|&k| k >= 500), "{backend:?}: too few distinct skips to mean anything: {skips:?}");
+        assert!(seed_ended > 0, "{backend:?}: no walk ran on to the seed bound — its rule went untested");
+        assert_eq!(cases, 204);
+    }
+}
+
+// The same, where the SEED BOUND decides: for z⁴ + c it is |Z|² ≤ 2^30, inside the reference's
+// 1e12 bailout (for z² it is 2^60, past the bailout, so a Mandelbrot walk never meets it). A walk
+// that never fails validity must stop there, short of the escape — else the rule went untested.
+#[test]
+fn the_sa_trace_replays_the_seed_bound() {
+    let p = 256;
+    let (cx, cy) = (parse_bf_prec("0.54", p).unwrap(), parse_bf_prec("0.585", p).unwrap());
+    let f = 2; // z⁴ + c
+    let zero = bf(0.0, p);
+    let esc = orbit_length_in(crate::backend::selected(), &zero, &zero, &cx, &cy, f, 5000, p, None);
+    assert!(esc > 200 && esc < 5000, "the point no longer escapes late ({esc})");
+    for backend in crate::available_backends() {
+        let open = crate::reference::series_skip_walk(backend, &cx, &cy, -1.0e300, 5000, esc + 1, f, p, None, None);
+        assert!(
+            open.skip > 0 && open.skip + 1 < esc,
+            "{backend:?}: the never-invalid walk ({}) did not stop at the seed bound before the escape at {esc}",
+            open.skip
+        );
+        let traces = crate::reference::SaTraces::new();
+        for i in 0..40 {
+            let dc = -5.0 - 10.0 * f64::from(i);
+            for (max_iter, orbit_len) in [(5000, esc + 1), (esc / 2, esc + 1)] {
+                let direct = crate::reference::series_skip_walk(backend, &cx, &cy, dc, max_iter, orbit_len, f, p, None, None);
+                let traced = traces.series_skip(backend, &cx, &cy, dc, max_iter, orbit_len, f, p, None);
+                assert_eq!(sa_bits(&traced), sa_bits(&direct), "{backend:?} dc={dc} max_iter={max_iter}");
+            }
+        }
+    }
+}
+
+// The trace cache keys on the precision in 64-bit WORDS: both arithmetics round a working precision
+// up to whole words, so every `p` in one word walks the same — which is what lets one record serve
+// a deep dive's frames as their precision creeps up a bit per octave. Control: the next word
+// walks DIFFERENTLY here, so the point does feel the precision and the equality is not vacuous.
+// The point is `i + 7.07e-300` (exact at every precision, so only the walk's precision varies):
+// it follows i's orbit until |dZ/dc| ~ 2^994, past the 2^(p-128) where the walk's 128-bit copy
+// of Z starts to carry the working precision's rounding, and the tiny views keep it walking there.
+#[test]
+fn sa_walks_agree_within_a_precision_word() {
+    let cx = parse_bf_prec("7.07e-300", 64).unwrap();
+    let cy = bf(1.0, 64);
+    for backend in crate::available_backends() {
+        let walk = |p: usize, dc: f64| crate::reference::series_skip_walk(backend, &cx, &cy, dc, 3000, 3002, 0, p, None, None);
+        let mut differs_next_word = false;
+        for dc in [-1000.0, -1050.0, -1100.0] {
+            let base = sa_bits(&walk(1024, dc));
+            for p in [961, 990, 1000, 1023] {
+                assert_eq!(sa_bits(&walk(p, dc)), base, "{backend:?}: p={p} walks differently from 1024 (dc={dc})");
+            }
+            differs_next_word |= sa_bits(&walk(1088, dc)) != base;
+        }
+        assert!(differs_next_word, "{backend:?}: the next word walks the same too — this point cannot show the word matters");
+    }
+}
+
+// `series_skip_holds_for`: a skip walked against an UPPER BOUND on the reference length is the
+// skip for the actual length whenever the rule says so — byte for byte. Both verdicts must occur
+// (and "holds" with a real skip), or the rule was never tested where it can fail.
+#[test]
+fn the_sa_bound_rule_is_exact() {
+    let bits4 = |q: &[f32; 4]| [q[0].to_bits(), q[1].to_bits(), q[2].to_bits(), q[3].to_bits()];
+    let same = |a: &SeriesSkip, b: &SeriesSkip| {
+        a.skip == b.skip
+            && bits4(&a.a) == bits4(&b.a) && a.a_exp == b.a_exp
+            && bits4(&a.b) == bits4(&b.b) && a.b_exp == b.b_exp
+            && bits4(&a.c) == bits4(&b.c) && a.c_exp == b.c_exp
+    };
+    let p = 256;
+    let (mi, bound) = (4000u32, 4002u32);
+    let (mut holds, mut holds_real, mut redo) = (0, 0, 0);
+    for (sx, sy) in [("-0.5", "0.1"), ("-0.77568377", "0.13646737"), ("-0.745", "0.113")] {
+        let cx = parse_bf_prec(sx, p).unwrap();
+        let cy = parse_bf_prec(sy, p).unwrap();
+        for dc in [-40.0f64, -200.0] {
+            let wide = series_skip(&cx, &cy, dc, mi, bound, 0, p);
+            for len in [2u32, 9, 10, 60, 133, 400, 1000, 4002] {
+                if series_skip_holds_for(&wide, len) {
+                    holds += 1;
+                    holds_real += (wide.skip > 0) as u32;
+                    let exact = series_skip(&cx, &cy, dc, mi, len, 0, p);
+                    assert!(same(&wide, &exact), "{sx},{sy} dc={dc} len={len}: rule said reuse, walk differs");
+                } else {
+                    redo += 1;
+                }
+            }
+        }
+    }
+    assert!(holds_real >= 3 && redo >= 3, "vacuous: holds {holds} ({holds_real} real), redo {redo}");
+}
+
+// A cancelled speculative walk stops and reports nothing usable.
+#[test]
+fn a_cancelled_sa_walk_stops() {
+    let p = 256;
+    let (cx, cy) = (bf(-0.5, p), bf(0.1, p));
+    let on = std::sync::atomic::AtomicBool::new(true);
+    let off = std::sync::atomic::AtomicBool::new(false);
+    let b = crate::BackendChoice::Astro;
+    let live = series_skip_in_cancellable(b, &cx, &cy, -40.0, 4000, 4002, 0, p, Some(&off));
+    let dead = series_skip_in_cancellable(b, &cx, &cy, -40.0, 4000, 4002, 0, p, Some(&on));
+    assert!(live.skip > 0, "the control produced no skip, so cancellation proves nothing");
+    assert_eq!(dead.skip, 0);
+}
+
+// BLA: a tree traversal must reproduce the exact (full-step) perturbation while skipping
+// most iterations. Interior reference (main cardioid) → bounded orbit, |δz| stays tiny.
+#[test]
+fn bla_reproduces_exact_perturbation() {
+    let p = 96;
+    let (cx, cy) = (bf(-0.5, p), bf(0.0, p)); // main-cardioid interior, never escapes
+    let target: u32 = 2000;
+    let (orbit, len) = reference_orbit(&bf(0.0, p), &bf(0.0, p), &cx, &cy, 0, target, p);
+    assert!(len >= target, "reference escaped early (len={len})");
+    let dc = (1.0e-9_f64, 0.0_f64); // worst-case corner δc
+    let dc_max = FloatExp::from_f64((dc.0 * dc.0 + dc.1 * dc.1).sqrt());
+    let levels = build_bla_mandel(&orbit, dc_max, 1.0e-6, AuxAggParams::default());
+    assert!(!levels.is_empty());
+
+    // BLA traversal: skip with the highest valid level, else a full perturbation step.
+    let dc_c = CFloatExp { re: FloatExp::from_f64(dc.0), im: FloatExp::from_f64(dc.1) };
+    let mut dz = CFloatExp { re: FloatExp::ZERO, im: FloatExp::ZERO };
+    let (mut m, mut ops) = (0u32, 0u32);
+    while m < target {
+        ops += 1;
+        let dzmag = dz.abs();
+        let mut used = false;
+        for l in (0..levels.len()).rev() {
+            let step = 1u32 << l;
+            if (m & (step - 1)) != 0 {
+                continue; // not aligned to 2^l
+            }
+            let j = (m >> l) as usize;
+            let Some(&node) = levels[l].get(j) else { continue };
+            if m + node.span > target || !dzmag.lt(node.r) {
+                continue;
+            }
+            dz = node.a * dz + node.b * dc_c; // δz = A·δz + B·δc
+            m += node.span;
+            used = true;
+            break;
+        }
+        if !used {
+            let zr = orbit[m as usize][0] as f64 + orbit[m as usize][2] as f64;
+            let zi = orbit[m as usize][1] as f64 + orbit[m as usize][3] as f64;
+            let z = CFloatExp { re: FloatExp::from_f64(2.0 * zr), im: FloatExp::from_f64(2.0 * zi) };
+            dz = z * dz + dz * dz + dc_c; // δz' = 2Zδz + δz² + δc
+            m += 1;
+        }
+    }
+    let (bx, by) = (dz.re.to_f64(), dz.im.to_f64());
+
+    // Exact perturbation (full steps, f64 — δz stays ~1e-9 for this interior reference).
+    let (mut ex, mut ey) = (0.0f64, 0.0f64);
+    for z in orbit.iter().take(target as usize) {
+        let (zr, zi) = (z[0] as f64 + z[2] as f64, z[1] as f64 + z[3] as f64);
+        let (nzx, nzy) = (
+            2.0 * zr * ex - 2.0 * zi * ey + (ex * ex - ey * ey) + dc.0,
+            2.0 * zr * ey + 2.0 * zi * ex + 2.0 * ex * ey + dc.1,
+        );
+        ex = nzx;
+        ey = nzy;
+    }
+
+    let err = ((bx - ex).powi(2) + (by - ey).powi(2)).sqrt();
+    let mag = (ex * ex + ey * ey).sqrt().max(1e-300);
+    assert!(err / mag < 1.0e-3, "BLA vs exact rel err {:.2e} (ops={ops})", err / mag);
+    assert!(ops < target / 4, "BLA didn't skip enough (ops={ops} of {target})");
+}
+
+// BLA end-to-end: the reference BLA render (with escape-overshoot handling) must agree
+// with a naive full-step perturbation on the escape iteration — for BLA-engaged pixels
+// (tiny δc, escape late after big skips) AND fast escapers (large δc). This validates the
+// revert-on-overshoot logic the GPU shader will mirror.
+#[test]
+fn bla_matches_naive_including_escapes() {
+    let p = 96;
+    // Seahorse-ish boundary reference: a long orbit with a dwell gradient nearby.
+    let (cx, cy) = (
+        parse_bf("-0.743643887037158704752191506114774").unwrap(),
+        parse_bf("0.131825904205311970493132056385139").unwrap(),
+    );
+    let max_iter: u32 = 5000;
+    let (orbit, _len) = reference_orbit(&bf(0.0, p), &bf(0.0, p), &cx, &cy, 0, max_iter, p);
+    let bail2 = 65536.0_f64; // 256², matching the app's smooth bailout
+
+    // Naive full-step perturbation escape count (same smooth formula as bla_iterate).
+    let naive = |dc: (f64, f64)| -> Option<f64> {
+        let nstep = orbit.len() - 1;
+        let (mut ex, mut ey) = (0.0f64, 0.0f64);
+        for m in 0..(max_iter as usize).min(nstep) {
+            let z = orbit[m];
+            let (zr, zi) = (z[0] as f64 + z[2] as f64, z[1] as f64 + z[3] as f64);
+            let (nex, ney) = (
+                2.0 * zr * ex - 2.0 * zi * ey + (ex * ex - ey * ey) + dc.0,
+                2.0 * zr * ey + 2.0 * zi * ex + 2.0 * ex * ey + dc.1,
+            );
+            ex = nex;
+            ey = ney;
+            let zn = orbit[m + 1];
+            let (zx, zy) = (zn[0] as f64 + zn[2] as f64 + ex, zn[1] as f64 + zn[3] as f64 + ey);
+            let mag2 = zx * zx + zy * zy;
+            if mag2 > bail2 {
+                let nu = (mag2.ln() * 0.5 / std::f64::consts::LN_2).ln() / std::f64::consts::LN_2;
+                return Some((m + 1) as f64 + 1.0 - nu);
+            }
+        }
+        None
+    };
+
+    let check = |dc_max: f64, dcs: &[(f64, f64)]| {
+        let levels = build_bla_mandel(&orbit, FloatExp::from_f64(dc_max), 1.0e-6, AuxAggParams::default());
+        for &dc in dcs {
+            let b = bla_iterate(&orbit, &levels, dc, bail2, max_iter);
+            let n = naive(dc);
+            match (b, n) {
+                (None, None) => {}
+                (Some(bv), Some(nv)) => assert!(
+                    (bv - nv).abs() < 0.5,
+                    "BLA {bv} vs naive {nv} at δc={dc:?} (dc_max={dc_max})"
+                ),
+                _ => panic!("BLA/naive disagree on escape at δc={dc:?}: bla={b:?} naive={n:?}"),
+            }
+        }
+    };
+
+    // BLA-engaged: tiny δc near the boundary (mix of late-escaping and bounded).
+    check(1.5e-3, &[(0.0, 0.0), (1.0e-3, 0.0), (-1.0e-3, 5.0e-4), (8.0e-4, -9.0e-4), (1.5e-3, 1.5e-3)]);
+    // Fast escapers: large δc leave the set quickly (BLA can't engage — full steps).
+    check(0.8, &[(0.2, 0.1), (0.4, -0.2), (0.5, 0.3), (-0.6, 0.0)]);
+}
+
+/// Deep boundary points of Multibrot 3–8, good to ~2^-112, whose 1e-30 neighbours escape hundreds
+/// to thousands of steps apart (6–8 are the deep-pick scorer's fixtures; all found the same way:
+/// bignum bisection of "escapes within 2,000" along the first ray of 3.75° + 7.5°·k with that
+/// spread — rays leaving through the main body meet its NEUTRAL boundary, where every neighbour
+/// escapes on the same step).
+const MULTIBROT_DEEP_FIXTURES: [(u32, &str, &str); 6] = [
+    (
+        formula::MULTIBROT3,
+        "-7.542988421659047012682575462407727648742957195599927956575e-2",
+        "1.150837642332408274574812674609472971463521952952769779238e+0",
+    ),
+    (
+        formula::MULTIBROT4,
+        "6.332712744727028788597360205303212675970690061507204539421e-1",
+        "2.149666311355967986884147897121404542351347657064834463711e-1",
+    ),
+    (
+        formula::MULTIBROT5,
+        "6.077504591516768732823798182613786336218861548355426472285e-1",
+        "3.983406962035189108405800236915385332818636675353539031671e-2",
+    ),
+    (
+        formula::MULTIBROT6,
+        "6.857394901829179081616429758180505352925479174432123629563e-1",
+        "4.494574077574449791211463579695434838514006741731437234958e-2",
+    ),
+    (
+        formula::MULTIBROT7,
+        "8.476326589810416770591545692023465481479590290010075317289e-1",
+        "1.686046188662333201185254044899073603644196631087163205889e-1",
+    ),
+    (
+        formula::MULTIBROT8,
+        "7.83482963062576633425633295165828974709342271037759608728e-1",
+        "2.659566285584885991743283420348254644023437952052363285336e-1",
+    ),
+];
+
+/// The exact perturbed step of `z^d + c` in f64: δ' = Σₖ C(d,k)·Z^(d−k)·δ^k + δc (Horner in δ).
+fn power_pert_step(d: u32, z: (f64, f64), e: (f64, f64), dc: (f64, f64)) -> (f64, f64) {
+    let mul = |a: (f64, f64), b: (f64, f64)| (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0);
+    let binom = |n: u32, k: u32| (0..k).fold(1.0, |acc, i| acc * f64::from(n - i) / f64::from(i + 1));
+    let mut zp = vec![(1.0, 0.0)];
+    for _ in 1..d {
+        zp.push(mul(*zp.last().unwrap(), z));
+    }
+    let mut acc = (0.0, 0.0);
+    for k in (1..=d).rev() {
+        let (c, t) = (binom(d, k), zp[(d - k) as usize]);
+        acc = mul(acc, e);
+        acc = (acc.0 + c * t.0, acc.1 + c * t.1);
+    }
+    let r = mul(acc, e);
+    (r.0 + dc.0, r.1 + dc.1)
+}
+
+// BLA for z^d + c (design/power-families.md phase 3, B6): at an interior reference the tree's skips
+// reproduce the exact perturbation for every power 3..8 while skipping most steps — level 0's
+// A = d·Z^(d−1) and radius 2·eps·|Z|/(d−1) are what make that so.
+#[test]
+fn bla_reproduces_exact_perturbation_for_every_power() {
+    let p = 96;
+    let target: u32 = 2000;
+    let dc = (1.0e-9_f64, 0.0_f64);
+    let dc_c = CFloatExp { re: FloatExp::from_f64(dc.0), im: FloatExp::from_f64(dc.1) };
+    for f in [
+        formula::MULTIBROT3,
+        formula::MULTIBROT4,
+        formula::MULTIBROT5,
+        formula::MULTIBROT6,
+        formula::MULTIBROT7,
+        formula::MULTIBROT8,
+    ] {
+        let d = formula::power(f);
+        let (orbit, len) = reference_orbit(&bf(0.0, p), &bf(0.0, p), &bf(0.2, p), &bf(0.2, p), f, target, p);
+        assert!(len >= target, "formula {f}: reference escaped early (len={len})");
+        let levels = build_bla(&orbit, FloatExp::from_f64(dc.0), 1.0e-6, AuxAggParams::default(), d);
+        let z_at = |m: u32| {
+            let z = orbit[m as usize];
+            (z[0] as f64 + z[2] as f64, z[1] as f64 + z[3] as f64)
+        };
+        let (mut dz, mut m, mut ops) = ((0.0f64, 0.0f64), 0u32, 0u32);
+        while m < target {
+            ops += 1;
+            let dzc = CFloatExp { re: FloatExp::from_f64(dz.0), im: FloatExp::from_f64(dz.1) };
+            let dzmag = dzc.abs();
+            let mut used = false;
+            for l in (0..levels.len()).rev() {
+                if (m & ((1u32 << l) - 1)) != 0 {
+                    continue;
+                }
+                let Some(&node) = levels[l].get((m >> l) as usize) else { continue };
+                if m + node.span > target || !dzmag.lt(node.r) {
+                    continue;
+                }
+                let n = node.a * dzc + node.b * dc_c;
+                dz = (n.re.to_f64(), n.im.to_f64());
+                m += node.span;
+                used = true;
+                break;
+            }
+            if !used {
+                dz = power_pert_step(d, z_at(m), dz, dc);
+                m += 1;
+            }
+        }
+        let mut e = (0.0f64, 0.0f64);
+        for m in 0..target {
+            e = power_pert_step(d, z_at(m), e, dc);
+        }
+        let err = ((dz.0 - e.0).powi(2) + (dz.1 - e.1).powi(2)).sqrt();
+        let mag = (e.0 * e.0 + e.1 * e.1).sqrt().max(1e-300);
+        assert!(err / mag < 1.0e-3, "formula {f}: BLA vs exact rel err {:.2e} (ops={ops})", err / mag);
+        assert!(ops < target / 4, "formula {f}: BLA didn't skip enough (ops={ops} of {target})");
+    }
+}
+
+// The same end to end at deep CHAOTIC boundary points, escapes included: `bla_iterate_power` (the
+// algorithm the shader mirrors, overshoot revert and all) against plain full-step perturbation off
+// one reference, at δc spread over 1e-30 — pixels that escape hundreds to thousands of steps apart.
+// ⚠Judged only where that plain perturbation is itself RIGHT (the bignum orbit's count): with one
+// reference and no rebasing it can glitch, and then the two approximations part for nothing to do
+// with BLA — Multibrot 8 at δc = (−0.6, 0.6)·1e-30 escapes at 2271.8, plain perturbation says
+// 2299.4 and BLA 2156.4. Anti-vacuity: at least three judged escapes a power, and a deep tree.
+#[test]
+fn bla_matches_naive_including_escapes_for_every_power() {
+    let p = 192;
+    let max_iter: u32 = 30_000;
+    for (f, sx, sy) in MULTIBROT_DEEP_FIXTURES {
+        let d = formula::power(f);
+        let bail2 = if f == formula::MULTIBROT8 { 128.0 * 128.0 } else { 256.0 * 256.0 };
+        let (cx, cy) = (parse_bf_prec(sx, p).unwrap(), parse_bf_prec(sy, p).unwrap());
+        let (orbit, _len) = reference_orbit(&bf(0.0, p), &bf(0.0, p), &cx, &cy, f, max_iter, p);
+        let nstep = orbit.len() - 1;
+        let naive = |dc: (f64, f64)| -> Option<f64> {
+            let mut e = (0.0f64, 0.0f64);
+            for m in 0..(max_iter as usize).min(nstep) {
+                // `sample_xy`: a deep dip is stored in extended range (a lane sum misreads it).
+                e = power_pert_step(d, sample_xy(&orbit[m]), e, dc);
+                let zn = sample_xy(&orbit[m + 1]);
+                let (zx, zy) = (zn.0 + e.0, zn.1 + e.1);
+                let mag2 = zx * zx + zy * zy;
+                if mag2 > bail2 {
+                    let nu = (mag2.ln() * 0.5 / std::f64::consts::LN_2).ln() / f64::from(d).ln();
+                    return Some((m + 1) as f64 + 1.0 - nu);
+                }
+            }
+            None
+        };
+        let levels = build_bla(&orbit, FloatExp::from_f64(1.0e-30), 1.0e-6, AuxAggParams::default(), d);
+        let truth = |fx: f64, fy: f64| {
+            let off = |v: f64| parse_bf_prec(&format!("{:e}", v * 1.0e-30), p).unwrap();
+            let (px, py) = (cx.add(&off(fx), p, RM), cy.add(&off(fy), p, RM));
+            formula_dwell(&px, &py, f, max_iter, bail2, p).map(|(_, s)| f64::from(s))
+        };
+        let agree = |a: Option<f64>, b: Option<f64>| match (a, b) {
+            (None, None) => true,
+            (Some(x), Some(y)) => (x - y).abs() < 0.5,
+            _ => false,
+        };
+        let mut judged = 0;
+        for (fx, fy) in [(0.0, 0.0), (0.04, 0.0), (-0.12, 0.28), (0.5, -0.5), (-0.28, -0.04), (0.12, 0.12), (-0.6, 0.6)] {
+            let dc = (fx * 1.0e-30, fy * 1.0e-30);
+            let (b, n) = (bla_iterate_power(&orbit, &levels, dc, bail2, max_iter, d), naive(dc));
+            if n.is_none() || !agree(n, truth(fx, fy)) {
+                continue; // plain perturbation glitched (or outlived the reference): no yardstick
+            }
+            judged += 1;
+            assert!(agree(b, n), "formula {f}: BLA {b:?} vs naive {n:?} (= the bignum count) at δc={dc:?}");
+        }
+        assert!(judged >= 3, "formula {f}: only {judged} δc judged — the fixture tests little");
+        assert!(levels.len() > 8, "formula {f}: a tree of {} levels skips nothing much", levels.len());
+    }
+}
+
+#[test]
+fn reference_orbit_starts_at_z0() {
+    // Mandelbrot mode: Z0 = 0, c = reference point.
+    let (orbit, len) =
+        reference_orbit(&bf(0.0, 64), &bf(0.0, 64), &bf(-0.5, 64), &bf(0.0, 64), 0, 64, 64);
+    assert_eq!(orbit[0], [0.0, 0.0, 0.0, 0.0]);
+    assert_eq!(len as usize, orbit.len());
+    assert!(len >= 2);
+}
+
+#[test]
+fn best_reference_prefers_interior_center() {
+    let r = best_reference(
+        &[bf(-0.5, 64), bf(0.0, 64)],
+        [FloatExp::from_f64(0.1), FloatExp::from_f64(0.1)],
+        0,
+        false,
+        [0.0, 0.0],
+        500,
+        64,
+    );
+    assert_eq!(
+        reference_orbit(&bf(0.0, 64), &bf(0.0, 64), &r[0], &r[1], 0, 500, 64).1,
+        501
+    );
+}
+
+// ---- multi-reference glitch correction ----
+
+/// Exact f64 direct escape smooth-iter (ground truth at shallow zoom, where f64 is exact).
+fn oracle_smooth_f64(cx: f64, cy: f64, max_iter: u32) -> f64 {
+    let (mut zx, mut zy) = (0.0f64, 0.0f64);
+    for n in 0..max_iter {
+        let (nx, ny) = (zx * zx - zy * zy + cx, 2.0 * zx * zy + cy);
+        zx = nx;
+        zy = ny;
+        let m2 = zx * zx + zy * zy;
+        if m2 > 256.0 * 256.0 {
+            let nu = (m2.ln() * 0.5 / std::f64::consts::LN_2).ln() / std::f64::consts::LN_2;
+            return (n + 1) as f64 + 1.0 - nu;
+        }
+    }
+    f64::NAN
+}
+
+/// Exact bignum direct escape smooth-iter — ground truth at any depth.
+fn oracle_smooth_bf(cx: &BigFloat, cy: &BigFloat, max_iter: u32, p: usize) -> f64 {
+    let (mut zx, mut zy) = (bf(0.0, p), bf(0.0, p));
+    for n in 0..max_iter {
+        let (nx, ny) = step_bf(&zx, &zy, cx, cy, 0, p);
+        zx = nx;
+        zy = ny;
+        let (xv, yv) = (to_f64(&zx), to_f64(&zy));
+        let m2 = xv * xv + yv * yv;
+        if m2 > 256.0 * 256.0 {
+            let nu = (m2.ln() * 0.5 / std::f64::consts::LN_2).ln() / std::f64::consts::LN_2;
+            return (n + 1) as f64 + 1.0 - nu;
+        }
+    }
+    f64::NAN
+}
+
+/// Two smooth values agree, tolerating the interior-vs-late-escape ambiguity right at the
+/// boundary (a pixel that escapes at ~max_iter and one flagged interior are indistinguishable).
+fn smooth_agrees(a: f64, b: f64, max_iter: u32) -> bool {
+    let near_max = |v: f64| v.is_nan() || v > max_iter as f64 - 5.0;
+    if a.is_nan() && b.is_nan() {
+        return true;
+    }
+    if near_max(a) && near_max(b) {
+        return true;
+    }
+    (a - b).abs() < 1.0
+}
+
+// A genuine glitch: a small view around a real minibrot. The nucleus's critical orbit dips
+// to ~0 every `period` iterations; an off-nucleus reference does NOT dip as low, so near-
+// nucleus pixels satisfy the Pauldelbrot criterion (|z| ≪ |Z| while δz stays small — a glitch
+// rebasing cannot pre-empt). Multi-reference must detect them, add a reference inside the
+// glitched region, converge, and HEAL the image back to what an accurate reference produces.
+// Compared against a nucleus-seeded render (not a bignum oracle) so it's exact per pixel: both
+// use identical f64 math, and the small δc keeps every pixel a genuine, accurate perturbation.
+#[test]
+fn multi_reference_resolves_glitches() {
+    // The large period-3 island on the real axis: low period ⇒ few iterations, so the f32-δz
+    // *cancellation* glitch (fixable by a closer reference) dominates over mere accumulation.
+    let nuc = find_nucleus(&[bf(-1.7548, 96), bf(0.0, 96)], 1.0e3f64.log2(), 0, 100)
+        .expect("expected the period-3 minibrot");
+    let p = 96;
+    let (cx, cy) = (nuc.cx.clone(), nuc.cy.clone());
+    let (w, h) = (24usize, 24usize);
+    let upp = 0.010 / w as f64; // a view spanning the island + its glitch halo
+    let max_iter = (nuc.period * 120).clamp(360, 4000);
+    let tol = 1.0e-3;
+
+    // Ground truth: per-pixel bignum direct iteration.
+    let (cx0, cy0) = (to_f64(&cx), to_f64(&cy));
+    let oracle: Vec<f64> = (0..w * h)
+        .map(|i| {
+            let (px, py) = (i % w, i / w);
+            let pcx = bf(cx0 + (px as f64 - w as f64 * 0.5) * upp, p);
+            let pcy = bf(cy0 - (py as f64 - h as f64 * 0.5) * upp, p);
+            oracle_smooth_bf(&pcx, &pcy, max_iter, p)
+        })
+        .collect();
+
+    // Off-nucleus corner reference, WITHOUT correction (single reference only, max_refs=1).
+    let single = render_multiref_mandel(&cx, &cy, upp, w, h, max_iter, tol, (0, 0), 1, p);
+    // Same corner seed, WITH multi-reference correction.
+    let multi = render_multiref_mandel(&cx, &cy, upp, w, h, max_iter, tol, (0, 0), 60, p);
+
+    let count_bad = |v: &[f64]| -> usize {
+        (0..w * h).filter(|&i| !smooth_agrees(v[i], oracle[i], max_iter)).count()
+    };
+    let (s_bad, m_bad) = (count_bad(&single.smooth), count_bad(&multi.smooth));
+    eprintln!(
+        "period {} max_iter {max_iter} | single-ref wrong {s_bad}, multi-ref wrong {m_bad}, refs {}, glitch0 {}",
+        nuc.period, multi.refs_used, multi.glitched_pass0
+    );
+    // The off-nucleus reference flags glitches; the correction adds references and converges.
+    assert!(multi.glitched_pass0 > 0, "off-nucleus seed should induce glitches");
+    assert!(multi.refs_used >= 2, "expected ≥2 references, used {}", multi.refs_used);
+    assert_eq!(multi.unresolved, 0, "{} glitches unresolved", multi.unresolved);
+    // The corrected image matches the bignum ground truth for every pixel, and never worse
+    // than single-reference. (The precision gap that makes correction *necessary* — df64
+    // reference vs df32 δz — lives on the GPU; this validates the algorithm is correct.)
+    assert_eq!(m_bad, 0, "corrected result must match the oracle (wrong: {m_bad})");
+    assert!(m_bad <= s_bad, "correction must not increase error (single {s_bad}, multi {m_bad})");
+}
+
+// Sanity on the perturbation math itself: a good central reference reproduces ground truth
+// (and multi-reference cleans up any far pixels it can't serve directly).
+#[test]
+fn perturbation_matches_direct() {
+    let p = 64;
+    let (cx, cy) = (bf(-0.5, p), bf(0.0, p));
+    let (w, h) = (16usize, 16usize);
+    let upp = 2.0 / w as f64;
+    let max_iter = 800u32;
+    let (cx0, cy0) = (to_f64(&cx), to_f64(&cy));
+    let res = render_multiref_mandel(&cx, &cy, upp, w, h, max_iter, 1.0e-3, (w / 2, h / 2), 24, p);
+    assert_eq!(res.unresolved, 0);
+    let mut bad = 0;
+    let mut worst = 0.0f64;
+    for py in 0..h {
+        for px in 0..w {
+            let o = oracle_smooth_f64(
+                cx0 + (px as f64 - w as f64 * 0.5) * upp,
+                cy0 - (py as f64 - h as f64 * 0.5) * upp,
+                max_iter,
+            );
+            let g = res.smooth[py * w + px];
+            if !smooth_agrees(g, o, max_iter) {
+                bad += 1;
+                if g.is_finite() && o.is_finite() {
+                    worst = worst.max((g - o).abs());
+                }
+                eprintln!("mismatch ({px},{py}): got {g} oracle {o}");
+            }
+        }
+    }
+    assert_eq!(bad, 0, "{bad} pixels disagree with ground truth (worst Δ {worst})");
+}
+
+// The period-2 disk's nucleus is exactly c = -1. Starting near it, the finder must
+// report period 2 and Newton-snap to (-1, 0).
+#[test]
+fn find_nucleus_period2_disk() {
+    let n = find_nucleus(&[bf(-1.01, 80), bf(0.012, 80)], 50.0f64.log2(), 0, 2000).unwrap();
+    assert_eq!(n.period, 2);
+    approx(to_f64(&n.cx), -1.0);
+    approx(to_f64(&n.cy), 0.0);
+}
+
+// The period-3 bulb's nucleus is c ≈ -0.122561 + 0.744862 i.
+#[test]
+fn find_nucleus_period3_bulb() {
+    let n = find_nucleus(&[bf(-0.12, 80), bf(0.74, 80)], 80.0f64.log2(), 0, 4000).unwrap();
+    assert_eq!(n.period, 3);
+    assert!((to_f64(&n.cx) - (-0.122561)).abs() < 1e-5, "cx={}", to_f64(&n.cx));
+    assert!((to_f64(&n.cy) - 0.744862).abs() < 1e-5, "cy={}", to_f64(&n.cy));
+}
+
+/// Field report 2026-09-12: at this view (1.8e122×) the M key said "No minibrot center found"
+/// with a period-1411 minibrot ~19 px from the centre and 8 px wide. Newton converged to its
+/// nucleus in two steps; the final `reduce_period` check then failed, because it compared
+/// `|Z_1411|` — whose computed value floors at `2^(−471 + 204)` for `|dZ/dc| ≈ 2^204` at the
+/// finder's 471 bits — against a c-plane tolerance of `2^-414`. The check now measures the
+/// c-plane distance `|Z_n / D_n|`, which is precision-floor-bound at the true period. The
+/// location is kept verbatim in `validation/minibrot-m-key-1.8e122.fdn`.
+#[test]
+fn find_nucleus_deep_period_1411_at_1e122() {
+    let cx = parse_bf("-1.0170448185864393243530511801394791066232738025125737832856691458438106787700409978947040659432857423648735888535728739962764057095040024217236318569522459e-1").unwrap();
+    let cy = parse_bf("9.2462201825922887282648293215874470644756581078631657218247070444163971710542007291172028582521584591308867541816770697639168679943957234382482501618715513e-1").unwrap();
+    // The app's own magnification for that view (`zoom=1.807897016376924e122`), as log2.
+    let log2_mag = 1.807897016376924e122f64.log2();
+    let n = find_nucleus(&[cx.clone(), cy.clone()], log2_mag, 0, 100_000)
+        .expect("the period-1411 minibrot 19 px from the centre must be found");
+    assert_eq!(n.period, 1411);
+    // The nucleus is ~2^-408 from the centre — inside the view (span 2^-404.5), off-centre.
+    let p = precision_for_octaves(log2_mag.ceil() as u64);
+    let d = log2_abs(&bf_sub(&n.cx, &cx, p)).max(log2_abs(&bf_sub(&n.cy, &cy, p)));
+    assert!((-410.0..-406.5).contains(&d), "nucleus distance log2 {d}");
+    // And it really is a nucleus: the residual there is at the precision floor, not 2^-268.
+    let res = nucleus_residual_log2(&n.cx, &n.cy, 1411, 0, p + 64).unwrap();
+    assert!(res < -300.0, "residual log2 {res}");
+}
+
+// ---- analytic ground-truth validation (no external data; exact mathematics) ----
+
+/// Plain-f64 Mandelbrot escape-time dwell (test ground truth). `None` = interior
+/// (did not escape within `max`).
+fn dwell(cx: f64, cy: f64, max: u32) -> Option<u32> {
+    let (mut zx, mut zy) = (0.0_f64, 0.0_f64);
+    for i in 0..max {
+        let (x2, y2) = (zx * zx, zy * zy);
+        if x2 + y2 > 4.0 {
+            return Some(i);
+        }
+        zy = 2.0 * zx * zy + cy;
+        zx = x2 - y2 + cx;
+    }
+    None
+}
+
+/// Exact membership of the main cardioid: a point is inside iff
+/// `q·(q + (x − ¼)) < ¼·y²` with `q = (x − ¼)² + y²`.
+fn in_main_cardioid(x: f64, y: f64) -> bool {
+    let xm = x - 0.25;
+    let q = xm * xm + y * y;
+    q * (q + xm) < 0.25 * y * y
+}
+
+/// Exact membership of the period-2 bulb: the disc of radius ¼ around c = −1.
+fn in_period2_bulb(x: f64, y: f64) -> bool {
+    (x + 1.0) * (x + 1.0) + y * y < 0.0625
+}
+
+// Points proven interior by the closed-form cardioid/bulb tests must never escape;
+// points well outside the set must escape quickly. Validates the escape iteration.
+#[test]
+fn interior_closed_form_never_escapes() {
+    let interior = [(-0.5, 0.0), (0.0, 0.0), (-0.1, 0.1), (-1.0, 0.0), (-0.9, 0.1)];
+    for (x, y) in interior {
+        assert!(in_main_cardioid(x, y) || in_period2_bulb(x, y), "({x},{y}) not classified interior");
+        assert_eq!(dwell(x, y, 20_000), None, "interior point ({x},{y}) escaped");
+    }
+    let exterior = [(2.0, 0.0), (0.4, 0.4), (-0.8, 0.4), (0.3, 0.6)];
+    for (x, y) in exterior {
+        assert!(dwell(x, y, 20_000).is_some(), "exterior point ({x},{y}) did not escape");
+    }
+}
+
+// The set is symmetric about the real axis: dwell(x, y) == dwell(x, −y).
+#[test]
+fn dwell_symmetric_about_real_axis() {
+    for &(x, y) in &[(0.3, 0.5), (-0.75, 0.13), (-0.1, 0.9), (0.28, 0.012)] {
+        assert_eq!(dwell(x, y, 5_000), dwell(x, -y, 5_000), "asymmetry at ({x},{y})");
+    }
+}
+
+// A table of exact hyperbolic-component nuclei: the finder must recover both the
+// period and the coordinates. These are mathematical constants (Munafo mu-ency / KF).
+#[test]
+fn known_nuclei_table() {
+    // (period, cx, cy, search-start offset)
+    let table: &[(u32, f64, f64)] = &[
+        (2, -1.0, 0.0),
+        (4, -1.3107026413368328, 0.0),
+        (3, -1.7548776662466927, 0.0),
+        (3, -0.1225611668766536, 0.7448617666197446),
+    ];
+    for &(period, cx, cy) in table {
+        // Start slightly off the exact nucleus so Newton has to converge to it.
+        let start = [bf(cx + 1.0e-3, 96), bf(cy + 1.0e-3, 96)];
+        let n = find_nucleus(&start, 200.0f64.log2(), 0, 8000)
+            .unwrap_or_else(|| panic!("no nucleus found near period-{period} ({cx},{cy})"));
+        assert_eq!(n.period, period, "wrong period for ({cx},{cy})");
+        assert!((to_f64(&n.cx) - cx).abs() < 1e-9, "cx off: {} vs {cx}", to_f64(&n.cx));
+        assert!((to_f64(&n.cy) - cy).abs() < 1e-9, "cy off: {} vs {cy}", to_f64(&n.cy));
+    }
+}
+
+// Misiurewicz points are pre-periodic: the critical orbit reaches a repelling cycle
+// after a transient. c = −2 lands on the fixed point 2; c = i reaches a 2-cycle.
+#[test]
+fn misiurewicz_preperiodic() {
+    // c = −2: 0 → −2 → 2 → 2 → … (fixed at 2 from iterate 2 on).
+    let o = orbit_points((0.0, 0.0), (-2.0, 0.0), 0, 30, 1.0e6);
+    assert!((o[2].0 - 2.0).abs() < 1e-9 && o[2].1.abs() < 1e-9);
+    assert!((o[10].0 - 2.0).abs() < 1e-6, "c=-2 not fixed at 2: {:?}", o[10]);
+    // c = i: 0 → i → (−1+i) → −i → (−1+i) → −i → … (pre-period 1, period 2).
+    let o = orbit_points((0.0, 0.0), (0.0, 1.0), 0, 40, 1.0e6);
+    let a = o[20];
+    let b = o[22];
+    assert!((a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6, "c=i not 2-periodic: {a:?} {b:?}");
+    let mid = o[21];
+    assert!((a.0 - mid.0).abs() + (a.1 - mid.1).abs() > 0.5, "c=i collapsed to a fixed point");
+}
+
+// ---- family symmetries (Phase 2.1; §9 claims verified here, then encoded) ----
+
+/// Escape-time dwell for any escape-time family (z₀ = 0, c = point), mirroring the
+/// shader's direct iteration. Bailout `|z| > 2` (classification is bailout-independent).
+fn dwell_family(formula: u32, cx: f64, cy: f64, max: u32) -> Option<u32> {
+    let (mut x, mut y) = (0.0_f64, 0.0_f64);
+    for i in 1..=max {
+        let (nx, ny) = match formula {
+            1 => (x * x * x - 3.0 * x * y * y + cx, 3.0 * x * x * y - y * y * y + cy), // z³
+            2 => {
+                let (ax, ay) = (x * x - y * y, 2.0 * x * y); // z²
+                (ax * ax - ay * ay + cx, 2.0 * ax * ay + cy) // (z²)²
+            }
+            3 => {
+                let (ax, ay) = (x * x - y * y, 2.0 * x * y);
+                let (bx, by) = (ax * ax - ay * ay, 2.0 * ax * ay); // z⁴
+                (bx * x - by * y + cx, bx * y + by * x + cy) // z⁴·z
+            }
+            4 => (x * x - y * y + cx, -2.0 * x * y + cy),               // Tricorn conj(z)²
+            5 => (x * x - y * y + cx, 2.0 * (x * y).abs() + cy),         // Burning Ship
+            6 => ((x * x - y * y).abs() + cx, 2.0 * x * y + cy),         // Celtic
+            7 => ((x * x - y * y).abs() + cx, (2.0 * x * y).abs() + cy), // Buffalo
+            _ => (x * x - y * y + cx, 2.0 * x * y + cy),                 // Mandelbrot
+        };
+        x = nx;
+        y = ny;
+        if x * x + y * y > 4.0 {
+            return Some(i);
+        }
+    }
+    None
+}
+
+fn rot(cx: f64, cy: f64, deg: f64) -> (f64, f64) {
+    let t = deg * std::f64::consts::PI / 180.0;
+    (cx * t.cos() - cy * t.sin(), cx * t.sin() + cy * t.cos())
+}
+
+/// Count dwell mismatches over a grid under a coordinate transform.
+fn mismatches(formula: u32, xform: &dyn Fn(f64, f64) -> (f64, f64)) -> (u32, u32) {
+    let (mut total, mut bad) = (0u32, 0u32);
+    let mut iy = -30i32;
+    while iy <= 30 {
+        let mut ix = -30i32;
+        while ix <= 30 {
+            let (cx, cy) = (ix as f64 * 0.06, iy as f64 * 0.06);
+            let (tx, ty) = xform(cx, cy);
+            total += 1;
+            if dwell_family(formula, cx, cy, 600) != dwell_family(formula, tx, ty, 600) {
+                bad += 1;
+            }
+            ix += 1;
+        }
+        iy += 1;
+    }
+    (total, bad)
+}
+
+// Multibrot z^d+c has (d−1)-fold rotational symmetry in c; the exact rotations (180°,
+// 90°) negate/swap coordinates in float, so dwell must match *exactly*. (§9: confirmed.)
+#[test]
+fn multibrot_rotational_symmetry_exact() {
+    // Multibrot-3 (d=3): 2-fold, 180° → (−cx, −cy).
+    let (_, b3) = mismatches(1, &|x, y| (-x, -y));
+    assert_eq!(b3, 0, "Multibrot-3 not 180°-symmetric ({b3} mismatches)");
+    // Multibrot-5 (d=5): 4-fold, 90° → (−cy, cx).
+    let (_, b5) = mismatches(3, &|x, y| (-y, x));
+    assert_eq!(b5, 0, "Multibrot-5 not 90°-symmetric ({b5} mismatches)");
+}
+
+// 120° rotations (Multibrot-4, Tricorn) involve an irrational sine, so allow a handful
+// of boundary flips from float error; the symmetry must otherwise hold. (§9: verified.)
+#[test]
+fn threefold_rotational_symmetry_120deg() {
+    let (t4, b4) = mismatches(2, &|x, y| rot(x, y, 120.0)); // Multibrot-4: 3-fold
+    assert!(b4 * 100 < t4, "Multibrot-4 not ~120°-symmetric ({b4}/{t4})");
+    let (tt, bt) = mismatches(4, &|x, y| rot(x, y, 120.0)); // Tricorn: 3-fold
+    assert!(bt * 100 < tt, "Tricorn not ~120°-symmetric ({bt}/{tt})");
+}
+
+// Reflection axes (§9: verify, do not assume). Celtic is symmetric about the real axis;
+// Burning Ship and Buffalo have NO axis reflection (their parts are even in x and y).
+#[test]
+fn abs_variation_reflection_axes() {
+    // Celtic (6): real-axis reflection cy → −cy is exact.
+    let (_, bc) = mismatches(6, &|x, y| (x, -y));
+    assert_eq!(bc, 0, "Celtic not real-axis-symmetric ({bc} mismatches)");
+    // Mandelbrot (0): real-axis reflection, exact.
+    let (_, bm) = mismatches(0, &|x, y| (x, -y));
+    assert_eq!(bm, 0, "Mandelbrot not real-axis-symmetric ({bm} mismatches)");
+    // Burning Ship (5) and Buffalo (7): neither axis is a symmetry — confirm both
+    // candidate reflections produce many mismatches (documents the asymmetry).
+    for formula in [5u32, 7u32] {
+        let (t, bx) = mismatches(formula, &|x, y| (-x, y));
+        let (_, by) = mismatches(formula, &|x, y| (x, -y));
+        assert!(bx * 20 > t && by * 20 > t, "formula {formula} unexpectedly symmetric (x:{bx} y:{by} / {t})");
+    }
+}
+
+// Julia symmetry (dynamical plane): for z^d+c, f_c(ωz)=f_c(z) when ωᵈ=1, so the dwell is
+// invariant under z → ωz for every c. Quadratic case: z → −z (point symmetry).
+#[test]
+fn julia_quadratic_point_symmetry() {
+    // Julia: z₀ = pixel, c fixed. dwell(−z₀) must equal dwell(z₀).
+    let jc = (-0.512_511_498_387_07_f64, 0.521_295_242_424_99);
+    let julia_dwell = |zx: f64, zy: f64| -> Option<u32> {
+        let (mut x, mut y) = (zx, zy);
+        for i in 1..=2000u32 {
+            let (nx, ny) = (x * x - y * y + jc.0, 2.0 * x * y + jc.1);
+            x = nx;
+            y = ny;
+            if x * x + y * y > 4.0 {
+                return Some(i);
+            }
+        }
+        None
+    };
+    let mut iy = -20i32;
+    while iy <= 20 {
+        let mut ix = -20i32;
+        while ix <= 20 {
+            let (zx, zy) = (ix as f64 * 0.08, iy as f64 * 0.08);
+            assert_eq!(julia_dwell(zx, zy), julia_dwell(-zx, -zy), "Julia not (−z)-symmetric at ({zx},{zy})");
+            ix += 1;
+        }
+        iy += 1;
+    }
+}
+
+// Extended landmark catalog (§2.2): exact interior/exterior across hyperbolic-component
+// boundaries — cardioid cusp c=¼, period-1↔2 neck c=−¾, period-2 disk tip c=−5/4.
+#[test]
+fn landmark_boundary_classification() {
+    // Cusp at c = 1/4: just inside is interior, just outside escapes.
+    assert_eq!(dwell_family(0, 0.24, 0.0, 5000), None, "inside cusp escaped");
+    assert!(dwell_family(0, 0.26, 0.0, 5000).is_some(), "outside cusp didn't escape");
+    // Neck c = −3/4: interior on both the cardioid and period-2 sides.
+    assert_eq!(dwell_family(0, -0.74, 0.0, 5000), None, "cardioid side escaped");
+    assert_eq!(dwell_family(0, -0.76, 0.0, 5000), None, "period-2 side escaped");
+    // Period-2 disk |c+1| < 1/4 (centered at −1): interior. (Just past the real-axis
+    // tip −5/4 is the period-4 window — also interior — so leave the disk vertically to
+    // reach the exterior.)
+    assert_eq!(dwell_family(0, -1.0, 0.0, 5000), None, "period-2 center escaped");
+    assert_eq!(dwell_family(0, -1.24, 0.0, 5000), None, "inside period-2 disk escaped");
+    assert!(dwell_family(0, -1.0, 0.5, 5000).is_some(), "exterior (−1+0.5i) didn't escape");
+    // Cardioid boundary parametrization c(θ)=e^{iθ}/2 − e^{2iθ}/4: a point pulled
+    // slightly inward from the boundary is interior.
+    for k in 0..8 {
+        let th = k as f64 * std::f64::consts::TAU / 8.0;
+        let (bx, by) = (0.5 * th.cos() - 0.25 * (2.0 * th).cos(), 0.5 * th.sin() - 0.25 * (2.0 * th).sin());
+        let (inx, iny) = (bx * 0.92 + 0.0 * 0.08, by * 0.92); // pull 8% toward interior point ~0
+        assert_eq!(dwell_family(0, inx, iny, 5000), None, "inside cardioid boundary escaped at θ={th}");
+    }
+}
+
+// ---- Phase 5.1: fuzz the untrusted coordinate parser (panic-free + round-trip) ----
+#[test]
+fn fuzz_parse_bf_panic_free_and_roundtrips() {
+    // Deterministic pseudo-random fuzzing — `parse_bf` ingests pasted/loaded text and
+    // must never panic, only return None on garbage.
+    let mut s = 0x2545_f491_4f6c_dd1du64;
+    let mut next = || {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        s
+    };
+    let charset = b"0123456789.-+eE  \t";
+    for _ in 0..20_000 {
+        let len = (next() % 48) as usize;
+        let mut buf = String::with_capacity(len);
+        for _ in 0..len {
+            buf.push(charset[(next() as usize) % charset.len()] as char);
+        }
+        let _ = parse_bf(&buf); // must not panic
+    }
+    // Adversarial explicit inputs.
+    for a in [
+        "", " ", "\t", "-", "+", ".", "-.", "e", "E", "1e", "1e+", "-1.5e-3", "1e308",
+        "1e-308", "1e1000", "-0", "0.0000", "1_000", "0x1f", "NaN", "nan", "inf", "-inf",
+        "infinity", "１２３", "1.2.3", "--1", "++1", "1e1e1", ".5", "5.", "  -3.0  ",
+    ] {
+        let _ = parse_bf(a);
+    }
+    // Long inputs: bounded work, no hang/panic.
+    let _ = parse_bf(&"9".repeat(5000));
+    let _ = parse_bf(&format!("-0.{}", "1234567890".repeat(400)));
+    // Sanity: well-formed values parse to Some; clear garbage to None. (Exact value
+    // round-trips are covered by `center_string_roundtrip_subpixel`.)
+    for v in ["0", "-0.5", "-1.7548776662466927", "1e-40", "3.14159"] {
+        assert!(parse_bf(v).is_some(), "rejected valid input {v}");
+    }
+    for v in ["", "abc", "hello", "..", "+-", "inf", "-inf", "NaN"] {
+        assert!(parse_bf(v).is_none(), "accepted garbage {v:?}");
+    }
+}
+
+// ---- Phase 6.3: Kalles Fraktaler .kfr import (hardened, fuzzed) ----
+#[test]
+fn parse_kfr_valid_and_robust() {
+    // A well-formed .kfr (unknown keys must be ignored, key case ignored).
+    let kfr = "Re: -0.743643887037151\nIm: 0.131825904205330\nZoom: 800\n\
+               Iterations: 2000\nColors: 1 2 3\nLocation: ignored\n";
+    let v = parse_kfr(kfr).expect("valid .kfr rejected");
+    assert!((to_f64(&v.cx) - (-0.743643887037151)).abs() < 1e-12);
+    assert!((to_f64(&v.cy) - 0.131825904205330).abs() < 1e-12);
+    assert_eq!(v.zoom, 800.0);
+    assert_eq!(v.iterations, Some(2000));
+    // Over-range zoom clamps; iterations clamp; case-insensitive keys.
+    let v = parse_kfr("re: -1\nIM: 0\nZOOM: 1E1000\niterations: 99999999999\n").unwrap();
+    assert_eq!(v.zoom, 1.0e300);
+    assert_eq!(v.iterations, Some(crate::LOCATION_MAX_ITERATIONS));
+    // A deep location's count is kept up to the app's ceiling: 5,000,000 was cut to 1,000,000.
+    let v = parse_kfr("Re: -1\nIm: 0\nZoom: 1E100\nIterations: 5000000\n").unwrap();
+    assert_eq!(v.iterations, Some(5_000_000));
+    // Missing required fields → None.
+    assert!(parse_kfr("Re: 0\nIm: 0\n").is_none(), "missing Zoom accepted");
+    assert!(parse_kfr("Im: 0\nZoom: 2\n").is_none(), "missing Re accepted");
+    // Invalid center → None (parse_bf rejects).
+    assert!(parse_kfr("Re: abc\nIm: 0\nZoom: 2\n").is_none());
+}
+
+#[test]
+fn fuzz_parse_kfr_panic_free() {
+    let mut s = 0x1234_5678_9abc_def1u64;
+    let mut next = || {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        s
+    };
+    let charset = b"ReImZoomIterations:-+0.9eE \n\t\0xyz";
+    for _ in 0..20_000 {
+        let len = (next() % 200) as usize;
+        let mut buf = String::with_capacity(len);
+        for _ in 0..len {
+            buf.push(charset[(next() as usize) % charset.len()] as char);
+        }
+        let _ = parse_kfr(&buf); // must not panic
+    }
+    // Oversized / adversarial inputs.
+    let _ = parse_kfr(&"Re: 1\n".repeat(100_000));
+    let _ = parse_kfr(&format!("Re: -0.{}\nIm: 0\nZoom: 2\n", "1".repeat(200_000)));
+    let _ = parse_kfr(&"X".repeat(5_000_000));
+    for m in ["", ":", "Re:", "Zoom:::", "Re: \0\0\0\nIm:\nZoom:e"] {
+        let _ = parse_kfr(m);
+    }
+}
+
+// ---- Minibrot atom size (Munafo size estimate) ----
+
+/// Two exact anchors pin the convention, and a third case pins the general recurrence.
+/// The estimate returns the embedded copy's WIDTH, so:
+///   period 1 (the whole set)   → 1.0   — the main cardioid spans −0.75 … 0.25
+///   period 2 (the disk at −1)  → 0.5   — that disk spans −1.25 … −0.75
+///   period 4 (real axis)       → ≈0.118 — the component spans ≈ −1.3681 … −1.25
+#[test]
+fn nucleus_size_known_components() {
+    let p = 256;
+    let at = |cx: f64, cy: f64, period: u32| {
+        nucleus_size(&bf(cx, p), &bf(cy, p), period, 0, p)
+            .unwrap_or_else(|| panic!("no size for period {period}"))
+    };
+    // Whole set: nucleus c = 0, period 1 → size exactly 1 (log2 = 0).
+    let a = at(0.0, 0.0, 1);
+    assert!(a.log2_size.abs() < 1e-12, "period-1 size 2^{}", a.log2_size);
+    // Period-2 disk: nucleus c = −1 → size exactly 1/2 (log2 = −1).
+    let b = at(-1.0, 0.0, 2);
+    assert!((b.log2_size + 1.0).abs() < 1e-12, "period-2 size 2^{}", b.log2_size);
+    // Period-4 nucleus on the real axis: width of its component ≈ 0.1181.
+    let c = at(-1.3107026413368326, 0.0, 4);
+    let w = c.log2_size.exp2();
+    assert!((w - 0.1181).abs() < 2.0e-3, "period-4 size {w}");
+    // Non-quadratic families must decline rather than return a wrong number.
+    assert!(nucleus_size(&bf(0.0, p), &bf(0.0, p), 1, 1, p).is_none());
+    assert!(nucleus_size(&bf(0.0, p), &bf(0.0, p), 0, 0, p).is_none());
+}
+
+/// The size estimate must stay meaningful where `f64` has no representation for it: run it
+/// on a genuinely deep nucleus and check it lands in the depth band the view sits at, and
+/// that the value is stable under a precision increase (the codebase's oracle-free idiom).
+#[test]
+fn nucleus_size_deep_and_precision_stable() {
+    // A period-3 minibrot found from a modest view — small enough to check by hand.
+    let p = 256;
+    let n = find_nucleus(&[bf(-1.7548, p), bf(0.0, p)], 1.0e3f64.log2(), 0, 100)
+        .expect("period-3 minibrot");
+    assert_eq!(n.period, 3);
+    let lo = nucleus_size(&n.cx, &n.cy, n.period, 0, 128).unwrap();
+    let hi = nucleus_size(&n.cx, &n.cy, n.period, 0, 512).unwrap();
+    assert!(
+        (lo.log2_size - hi.log2_size).abs() < 1e-9,
+        "size unstable under precision doubling: {} vs {}",
+        lo.log2_size,
+        hi.log2_size
+    );
+    // The airplane minibrot is ~1e-3 across; assert the order of magnitude, not a fit.
+    let w = lo.log2_size.exp2();
+    assert!(w > 1.0e-5 && w < 1.0e-1, "airplane minibrot width {w}");
+    // Orientation is a finite angle.
+    assert!(lo.orientation.is_finite() && lo.orientation.abs() <= std::f64::consts::PI);
+}
+
+/// The multiplier at the two Misiurewicz points with closed-form answers.
+///
+/// `c = −2` (antenna tip, k=2 p=1): the orbit reaches the fixed point 2, so λ = 4 exactly and
+/// real — the tip repeats under zoom without spiralling, the classic non-spiral self-similar
+/// case. `c = i` (k=2 p=2): the cycle is {−1+i, −i}, so λ = 4(1+i), |λ| = 4√2, arg = 45°.
+#[test]
+fn misiurewicz_multiplier_exact_cases() {
+    let p = 256;
+    let tip = misiurewicz_multiplier(&bf(-2.0, p), &bf(0.0, p), 2, 1, 0, p).unwrap();
+    assert!((tip.log2_abs - 2.0).abs() < 1e-12, "|lambda| = 2^{}", tip.log2_abs);
+    assert!(tip.arg.abs() < 1e-12, "tip must not spiral, arg = {}", tip.arg);
+
+    let dendrite = misiurewicz_multiplier(&bf(0.0, p), &bf(1.0, p), 2, 2, 0, p).unwrap();
+    // |4(1+i)| = 4*sqrt(2) → log2 = 2 + 0.5
+    assert!(
+        (dendrite.log2_abs - 2.5).abs() < 1e-12,
+        "|lambda| = 2^{}",
+        dendrite.log2_abs
+    );
+    assert!(
+        (dendrite.arg - std::f64::consts::FRAC_PI_4).abs() < 1e-12,
+        "arg = {} rad, want pi/4",
+        dendrite.arg
+    );
+    // Degenerate arguments decline.
+    assert!(misiurewicz_multiplier(&bf(-2.0, p), &bf(0.0, p), 0, 1, 0, p).is_none());
+    assert!(misiurewicz_multiplier(&bf(-2.0, p), &bf(0.0, p), 2, 0, 0, p).is_none());
+}
+
+/// The property a Newton-Raphson zoom actually rests on: after refinement, the center error
+/// must be far smaller than the atom it is about to frame, or the jump lands on empty space.
+///
+/// Self-validating — it compares the residual Newton step (which to first order *is* the
+/// center error) against the atom's own size, needing no reference coordinate. It also proves
+/// the refinement is doing something: the center `find_nucleus` returns for a 1e3× view is
+/// deliberately only view-accurate, and must NOT already pass at 512-bit tolerance.
+#[test]
+fn refine_nucleus_beats_atom_size() {
+    let seed_p = 256;
+    let n = find_nucleus(&[bf(-1.7548, seed_p), bf(0.0, seed_p)], 1.0e3f64.log2(), 0, 100)
+        .expect("period-3 minibrot");
+    let size = nucleus_size(&n.cx, &n.cy, n.period, 0, seed_p).unwrap().log2_size;
+
+    let deep = 1024;
+    let before = nucleus_residual_log2(&n.cx, &n.cy, n.period, 0, deep).unwrap();
+    let (rx, ry) = refine_nucleus(&n.cx, &n.cy, n.period, 0, deep).expect("refine failed");
+    let after = nucleus_residual_log2(&rx, &ry, n.period, 0, deep).unwrap();
+
+    assert!(after < before - 100.0, "refinement gained too little: {before} → {after}");
+    assert!(
+        after < size - 200.0,
+        "center error 2^{after} is not far below the atom size 2^{size}"
+    );
+    // The refined center must still BE the same nucleus, not a neighbouring one.
+    let moved = (sub_f64(&rx, &n.cx, deep).powi(2) + sub_f64(&ry, &n.cy, deep).powi(2)).sqrt();
+    assert!(moved < size.exp2() * 1e-3, "refinement moved off the atom: {moved}");
+}
+
+/// `log2_abs` must stay exact where `to_f64` saturates — the property the deep size estimate
+/// depends on.
+#[test]
+fn log2_abs_beyond_f64_range() {
+    let p = 128;
+    assert!((log2_abs(&bf(1.0, p)) - 0.0).abs() < 1e-12);
+    assert!((log2_abs(&bf(0.5, p)) + 1.0).abs() < 1e-12);
+    assert!((log2_abs(&bf(-8.0, p)) - 3.0).abs() < 1e-12);
+    // 2^5000 — far past f64's ~1.8e308 ceiling, where to_f64 gives +inf.
+    let mut v = bf(1.0, p);
+    let two = bf(2.0, p);
+    for _ in 0..5000 {
+        v = v.mul(&two, p, astro_float::RoundingMode::None);
+    }
+    assert!(to_f64(&v).is_infinite(), "expected f64 overflow for 2^5000");
+    assert!((log2_abs(&v) - 5000.0).abs() < 1e-9, "log2_abs(2^5000) = {}", log2_abs(&v));
+    assert_eq!(log2_abs(&bf(0.0, p)), f64::NEG_INFINITY);
+}
+
+// ---- Exact rational / complex coordinate entry ----
+
+/// `p/q` must be evaluated as a division, not truncated at the slash, and dyadic rationals
+/// must come out bit-exact (these are the parabolic landmark entrances: −3/4 and 1/4).
+#[test]
+fn parse_bf_exact_rationals() {
+    for (src, want) in [
+        ("-3/4", -0.75),
+        ("1/4", 0.25),
+        ("-5/4", -1.25),
+        ("(1+2)/8", 0.375),
+        ("-1/2 - 1/4", -0.75),
+        ("2*3/8", 0.75),
+        ("+7/8", 0.875),
+        ("1e2/8", 12.5),
+    ] {
+        let v = parse_bf(src).unwrap_or_else(|| panic!("rejected {src:?}"));
+        assert_eq!(to_f64(&v), want, "{src:?} evaluated wrong");
+    }
+    // A plain decimal still parses (and must not regress to the expression path).
+    assert_eq!(to_f64(&parse_bf("-0.75").unwrap()), -0.75);
+    assert_eq!(to_f64(&parse_bf("1.5e-2").unwrap()), 0.015);
+}
+
+/// 37/100 is not representable in binary, so the rational form must carry enough digits for
+/// the depth it will be viewed at — that's what the `min_prec` floor is for.
+#[test]
+fn parse_bf_inexact_rational_precision() {
+    // At a 1e50×-class depth the parsed value must agree with the decimal form far past f64.
+    let prec = precision_for_octaves(200);
+    let a = parse_bf_prec("37/100", prec).expect("37/100 rejected");
+    let b = parse_bf_prec("0.37", prec).expect("0.37 rejected");
+    let diff = a.sub(&b, prec, astro_float::RoundingMode::None);
+    // |a − b| must be below 2^-180 — i.e. correct to ~54 decimal digits, not just f64's 16.
+    let ok = diff.is_zero() || diff.exponent().map(|e| (e as i64) < -180).unwrap_or(true);
+    assert!(ok, "37/100 lost precision vs 0.37 (diff exponent {:?})", diff.exponent());
+}
+
+/// The canonical exactly-rational boundary point: (37+16i)/100 lies exactly on ∂M via the
+/// multiplier μ = (3+4i)/5, and cannot be typed as a terminating decimal in either coordinate.
+#[test]
+fn parse_complex_pythagorean_boundary_point() {
+    let prec = precision_for_octaves(200);
+    let (re, im) = parse_complex_prec("(37+16i)/100", prec).expect("rejected");
+    assert!((to_f64(&re) - 0.37).abs() < 1e-15, "re = {}", to_f64(&re));
+    assert!((to_f64(&im) - 0.16).abs() < 1e-15, "im = {}", to_f64(&im));
+
+    // Complex division by a complex denominator: (3+4i)/5 has |μ| = 1 exactly.
+    let (mr, mi) = parse_complex_prec("(3+4i)/5", prec).unwrap();
+    let m2 = to_f64(&mr) * to_f64(&mr) + to_f64(&mi) * to_f64(&mi);
+    assert!((m2 - 1.0).abs() < 1e-15, "|mu|^2 = {m2}");
+
+    // i·i = −1 exercises the complex multiply.
+    let (r, i) = parse_complex_prec("i*i", prec).unwrap();
+    assert_eq!(to_f64(&r), -1.0);
+    assert_eq!(to_f64(&i), 0.0);
+
+    // Bare and suffixed imaginaries; a real-only parse must reject a complex value.
+    assert_eq!(to_f64(&parse_complex_prec("i", 64).unwrap().1), 1.0);
+    assert_eq!(to_f64(&parse_complex_prec("-2.5i", 64).unwrap().1), -2.5);
+    assert!(parse_bf("(37+16i)/100").is_none(), "real parse accepted a complex value");
+    // …but a complex expression whose imaginary part cancels is a legitimate real.
+    assert_eq!(to_f64(&parse_bf("(1+i)*(1-i)/2").unwrap()), 1.0);
+}
+
+/// Malformed input must be rejected, never silently half-parsed into a wrong coordinate.
+#[test]
+fn parse_bf_rejects_malformed() {
+    for bad in [
+        "1/0",        // division by zero
+        "(37+16i/100", // unbalanced
+        "37+16i)/100",
+        "3//4",
+        "/4",
+        "4/",
+        "1 2",     // trailing garbage
+        "3/4x",
+        "abc",
+        "",
+        " ",
+        "()",
+        "1e",
+        ".",
+        "--",
+    ] {
+        assert!(parse_bf(bad).is_none(), "accepted malformed {bad:?}");
+        assert!(parse_complex_prec(bad, 64).is_none(), "complex accepted malformed {bad:?}");
+    }
+    // Deep nesting is bounded rather than blowing the stack.
+    let deep = format!("{}1{}", "(".repeat(5_000), ")".repeat(5_000));
+    assert!(parse_bf(&deep).is_none(), "unbounded nesting accepted");
+}
+
+/// The expression language beyond rationals: functions, constants and powers evaluate exactly
+/// where an exact value exists, and complex-capable cases stay on the right axes.
+#[test]
+fn parse_bf_functions_and_powers() {
+    for (src, want) in [
+        ("2^10", 1024.0),
+        ("2^-2", 0.25),
+        ("-2^2", -4.0), // unary minus binds looser than ^
+        ("(-2)^3", -8.0),
+        ("2^3^2", 512.0), // right-associative
+        ("sqrt(4)", 2.0),
+        ("cbrt(-8)", -2.0),
+        ("root(-32, 5)", -2.0),
+        ("abs(-3/4)", 0.75),
+        ("abs(3-4i)", 5.0),
+        ("cos(0)", 1.0),
+        ("ln(1)", 0.0),
+        ("log(100)", 2.0),
+        ("exp(0)", 1.0),
+        ("0^0", 1.0),
+        ("SQRT(4)", 2.0), // names are case-insensitive
+    ] {
+        let v = parse_bf(src).unwrap_or_else(|| panic!("rejected {src:?}"));
+        assert!((to_f64(&v) - want).abs() < 1e-12, "{src:?} → {}", to_f64(&v));
+    }
+    // Complex results: sqrt(-1) = i exactly, (1+i)^4 = −4, and a negative integer power of a
+    // complex base goes through the reciprocal.
+    let (r, i) = parse_complex_prec("sqrt(-1)", 64).unwrap();
+    assert_eq!((to_f64(&r), to_f64(&i)), (0.0, 1.0));
+    let (r, i) = parse_complex_prec("(1+i)^4", 64).unwrap();
+    assert!((to_f64(&r) + 4.0).abs() < 1e-12 && to_f64(&i).abs() < 1e-12);
+    let (r, i) = parse_complex_prec("(1+i)^-2", 64).unwrap();
+    assert!(to_f64(&r).abs() < 1e-12 && (to_f64(&i) + 0.5).abs() < 1e-12);
+}
+
+/// Identities must hold far past f64 when a precision floor is supplied — the whole point of
+/// evaluating at target-depth precision is that `cos(pi/3)` typed at 1e50× is usable there.
+#[test]
+fn parse_bf_function_identities_at_depth() {
+    let prec = precision_for_octaves(200);
+    let close = |a: &str, b: &str| {
+        let x = parse_bf_prec(a, prec).unwrap_or_else(|| panic!("rejected {a:?}"));
+        let y = parse_bf_prec(b, prec).unwrap_or_else(|| panic!("rejected {b:?}"));
+        let d = x.sub(&y, prec, astro_float::RoundingMode::None);
+        let ok = d.is_zero() || d.exponent().map(|e| (e as i64) < -180).unwrap_or(true);
+        assert!(ok, "{a} != {b} (diff exponent {:?})", d.exponent());
+    };
+    close("cos(pi/3)", "1/2");
+    close("sqrt(2)^2", "2");
+    close("ln(e)", "1");
+    close("tan(pi/4)", "1");
+    close("atan(1)*4", "pi");
+    close("root(2,10)", "2^(1/10)");
+    close("phi^2", "phi+1");
+    close("tau", "2*pi");
+    // The polar-entry composition: x0 + r·cos(θ), all literal values.
+    close("-1/2 + (1/4)*cos(pi/4)", "(sqrt(2)-4)/8");
+}
+
+/// Function/power inputs that must be refused: wrong arity, unknown names, complex arguments
+/// to real functions, branch-ambiguous powers, domain errors, and DoS-scale arguments.
+#[test]
+fn parse_bf_functions_reject_malformed() {
+    for bad in [
+        "sin()",       // no argument
+        "sin(1,2)",    // wrong arity
+        "root(2)",     // root needs n
+        "root(2,0)",   // n ≥ 1
+        "root(-4,2)",  // even root of a negative
+        "root(2,1/2)", // n must be an integer
+        "bogus(1)",    // unknown function
+        "pi(1)",       // a constant is not a function
+        "sin(i)",      // complex argument to a real function
+        "2^i",         // complex exponent
+        "(-2)^(1/2)",  // fractional power of a negative — branch-ambiguous
+        "(1+i)^(1/2)", // fractional power of a complex base
+        "(1+i)^99999", // complex integer-exponent cap
+        "sin(1e999)",  // transcendental argument-magnitude cap
+        "2^(1e999)",
+        "ln(-1)", // domain error must not leak NaN into a coordinate
+        "asin(2)",
+        "0^-1",
+        "sqrt 4", // parens required
+        "sin(1",  // unbalanced
+        "cos",    // bare function name
+    ] {
+        assert!(parse_complex_prec(bad, 64).is_none(), "accepted {bad:?}");
+    }
+    // A sign flood parses in constant stack (iterative unary), never by recursion.
+    let mut flood = "-".repeat(100_000);
+    flood.push('1');
+    assert_eq!(to_f64(&parse_bf(&flood).unwrap()), 1.0); // even count of '-'
+    // A ^ chain is depth-bounded like parentheses.
+    let chain = format!("2{}", "^2".repeat(5_000));
+    assert!(parse_bf(&chain).is_none(), "unbounded ^ chain accepted");
+}
+
+/// Every refusal says what was found, where, and — for the usual slips — what to type instead.
+/// The Go-to dialog shows these verbatim (prefixed by the field), so the wording is pinned here
+/// rather than left to drift into "invalid input" again.
+#[test]
+fn expr_errors_say_what_and_where() {
+    let err = |s: &str| parse_complex_expr(s, 64).expect_err(&format!("accepted {s:?}"));
+    let has = |s: &str, needle: &str| {
+        let e = err(s);
+        assert!(e.reason.contains(needle), "{s:?}: {:?} lacks {needle:?}", e.reason);
+        e
+    };
+    // Positions are CHARACTER indexes into the string as given — leading whitespace and
+    // multi-byte characters included — so a caret or "character N" lands where the eye does.
+    assert_eq!(has("1 $ 2", "unexpected '$'").pos, Some(2));
+    assert_eq!(has("  1 $ 2", "unexpected '$'").pos, Some(4));
+    assert_eq!(has("π/4", "write pi").pos, Some(0));
+    assert_eq!(has("−0.5", "typographic dash").pos, Some(0));
+    assert_eq!(has("0,5", "decimal point is '.'").pos, Some(1));
+    assert_eq!(has("2×3", "use '*'").pos, Some(1));
+    assert_eq!(has("2pi", "write '*'").pos, Some(1));
+    assert_eq!(has("pi(4)", "not a function").pos, Some(2));
+    assert_eq!(has("sin 1", "is a function").pos, Some(0));
+    assert_eq!(has("sinn(1)", "unknown function \"sinn\"").pos, Some(0));
+    assert_eq!(has("bogus", "unknown name \"bogus\"").pos, Some(0));
+    assert_eq!(has("(1+2", "never closed").pos, Some(0));
+    assert_eq!(has("sin(1", "missing ')' to close sin(").pos, Some(0));
+    assert_eq!(has("sin()", "needs an argument").pos, Some(0));
+    assert_eq!(has("sin(1,2)", "takes one argument").pos, Some(0));
+    assert_eq!(has("root(8)", "takes two arguments").pos, Some(0));
+    assert_eq!(has("root(-4,2)", "even root").pos, Some(0));
+    assert_eq!(has("1/0", "division by zero").pos, Some(1));
+    assert_eq!(has("1/", "expression ends where").pos, Some(2));
+    assert_eq!(has("1 2", "two numbers in a row").pos, Some(2));
+    assert_eq!(has("()", "nothing to evaluate").pos, Some(1));
+    assert_eq!(has("ln(-1)", "positive argument").pos, Some(0));
+    assert_eq!(has("asin(2)", "between -1 and 1").pos, Some(0));
+    assert_eq!(has("sin(i)", "real argument").pos, Some(0));
+    assert_eq!(has("(-2)^(1/2)", "use root(x, n)").pos, Some(4));
+    assert_eq!(has("2^i", "exponent must be real").pos, Some(1));
+    assert_eq!(has("0^-1", "negative power").pos, Some(1));
+    assert_eq!(has("sin(1e999)", "too large").pos, Some(0));
+    assert_eq!(has("45°", "radians").pos, Some(2));
+    assert_eq!(has("[1]", "round parentheses").pos, Some(0));
+    let deep = format!("{}1{}", "(".repeat(40), ")".repeat(40));
+    assert!(err(&deep).reason.contains("too deeply nested"));
+    // Whole-value verdicts carry no position.
+    assert_eq!(err("").pos, None);
+    assert_eq!(err("   ").pos, None);
+    let e = parse_real_expr("1+2i", 64).unwrap_err();
+    assert_eq!(e.pos, None);
+    assert!(e.reason.contains("imaginary part"), "{}", e.reason);
+    // `Display` carries the 1-based position a person counts to.
+    assert_eq!(
+        err("1 $ 2").to_string(),
+        "unexpected '$'; expected an operator (+ - * / ^) or the end of the expression (at character 3)"
+    );
+    // And the `Option` wrappers are exactly the `Result` forms with the reason dropped.
+    assert_eq!(parse_bf_prec("1 $ 2", 64), None);
+    assert!(parse_bf_prec("1/3", 64).is_some());
+}
+
+/// The help page renders `EXPR_FUNCTIONS` / `EXPR_CONSTANTS`; the evaluator has its own match
+/// chain. They must agree: every listed function evaluates and gets the "is a function" hint
+/// when written bare, every listed constant evaluates, and a plausible name in neither table is
+/// refused as unknown — so the help cannot list what the parser rejects, or omit what it accepts.
+#[test]
+fn expr_tables_match_the_evaluator() {
+    for (name, sig, what) in EXPR_FUNCTIONS {
+        let call = if *name == "root" { "root(8, 3)".to_string() } else { format!("{name}(0.5)") };
+        assert!(parse_complex_expr(&call, 64).is_ok(), "listed function {name} does not evaluate: {call}");
+        assert!(sig.starts_with(name) && sig.ends_with(')'), "signature {sig:?} is not a call of {name}");
+        assert!(!what.trim().is_empty(), "{name} has no description");
+        let e = parse_complex_expr(name, 64).unwrap_err();
+        assert!(e.reason.contains("is a function"), "{name}: {}", e.reason);
+    }
+    for (name, what) in EXPR_CONSTANTS {
+        assert!(parse_complex_expr(name, 64).is_ok(), "listed constant {name} does not evaluate");
+        assert!(!what.trim().is_empty(), "{name} has no description");
+    }
+    for decoy in ["sec", "cot", "sinh", "log2", "gamma", "floor", "re", "im", "inf", "nan"] {
+        let bare = parse_complex_expr(decoy, 64).unwrap_err();
+        assert!(bare.reason.contains("unknown name"), "{decoy}: {}", bare.reason);
+        let call = parse_complex_expr(&format!("{decoy}(1)"), 64).unwrap_err();
+        assert!(call.reason.contains("unknown function"), "{decoy}(1): {}", call.reason);
+    }
+}
+
+#[test]
+fn fuzz_parse_complex_panic_free() {
+    let mut s = 0x0bad_f00d_dead_beefu64;
+    let mut next = || {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        s
+    };
+    let charset = b"0123456789.eE+-*/()iI \t\0xyz^,sqrtcbnlogaphu";
+    for _ in 0..20_000 {
+        let len = (next() % 64) as usize;
+        let mut buf = String::with_capacity(len);
+        for _ in 0..len {
+            buf.push(charset[(next() as usize) % charset.len()] as char);
+        }
+        let _ = parse_bf(&buf); // must not panic
+        let _ = parse_complex_prec(&buf, 64);
+    }
+}
+
+/// A reference build is counted as it runs: [`REFERENCE_STEPS`] is the only sign of life a deep
+/// build gives a headless render's progress pump (a 6-minute build otherwise read as a hang). A
+/// point inside the main cardioid never escapes, so a 5,000-step build takes all 5,000 steps and
+/// must add at least its four full batches. "At least": other tests may build orbits at the same
+/// time and add theirs.
+#[test]
+fn a_reference_build_is_counted_as_it_runs() {
+    let p = 128;
+    let (z0, c) = (bf(0.0, p), [bf(-0.1, p), bf(0.1, p)]);
+    let before = reference_steps();
+    let (_, len, _) = reference_orbit_t(&z0, &z0, &c[0], &c[1], 0, 5000, p);
+    assert_eq!(len, 5001, "an interior point runs to the cap");
+    let added = reference_steps() - before;
+    assert!(added >= 4 * u64::from(REFERENCE_STEP_BATCH), "a 5,000-step build added only {added} steps");
+}

@@ -563,5 +563,5 @@ pub(crate) fn source_field(
 }
 
 #[cfg(test)]
-#[path = "formula_editor_tests.rs"]
+#[path = "../../tests/unit/ui/formula_editor/tests.rs"]
 mod tests;

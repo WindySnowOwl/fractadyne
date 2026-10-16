@@ -94,14 +94,6 @@ impl Witness {
         });
     }
 
-    /// Stamp a completion directly (tests).
-    #[cfg(test)]
-    pub(crate) fn stamp_done(&self, frame: u64, us: u64) {
-        let slot = &self.done[(frame % RING as u64) as usize];
-        slot[1].store(us, Relaxed);
-        slot[0].store(frame, Relaxed);
-    }
-
     fn done_us(&self, frame: u64) -> Option<u64> {
         let slot = &self.done[(frame % RING as u64) as usize];
         (slot[0].load(Relaxed) == frame).then(|| slot[1].load(Relaxed))
@@ -164,5 +156,5 @@ fn summary(t: &Tally) -> String {
 }
 
 #[cfg(test)]
-#[path = "timing_witness_tests.rs"]
+#[path = "../tests/unit/timing_witness/tests.rs"]
 mod tests;

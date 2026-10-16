@@ -237,4 +237,5 @@ pub fn is_valid_formula(formula: u32) -> bool {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/tests.rs"]
 mod tests;

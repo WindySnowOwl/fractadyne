@@ -71,4 +71,5 @@ pub fn cell_window(vp: &Viewport) -> Option<CellWindow> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/life/window/tests.rs"]
 mod tests;

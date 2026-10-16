@@ -98,4 +98,5 @@ pub fn bf_len(v: &BigFloat) -> usize {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/bfbytes/tests.rs"]
 mod tests;

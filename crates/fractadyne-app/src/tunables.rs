@@ -612,6 +612,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     CHUNK_SHUFFLE, WORKER_MOTION, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS";
 
 #[cfg(test)]
+#[path = "../tests/unit/tunables/override_tests.rs"]
 mod override_tests;
 
 // ----------------------------------------------------------------------------

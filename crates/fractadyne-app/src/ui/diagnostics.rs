@@ -226,6 +226,7 @@ pub(crate) fn is_progress_line(line: &str) -> bool {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/ui/diagnostics/tests.rs"]
 mod tests;
 
 impl FractadyneApp {

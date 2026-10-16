@@ -115,23 +115,6 @@ pub(crate) enum Line {
     Unread { text: String, error: String },
 }
 
-/// The source's non-blank lines, with each one's byte range (the editor reads a line at a time,
-/// through `edit::Doc`; the tests read whole sources).
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn read(src: &str) -> Vec<(Line, Span)> {
-    let mut out = Vec::new();
-    let mut start = 0;
-    for raw in src.split('\n') {
-        let span = Span { start, end: start + raw.len() };
-        start = span.end + 1;
-        if raw.trim().is_empty() {
-            continue;
-        }
-        out.push((read_line(raw, span.start), span));
-    }
-    out
-}
-
 /// One line (no line break in it) whose first byte is byte `at` of the source.
 pub(crate) fn read_line(raw: &str, at: usize) -> Line {
     match syntax(raw) {
@@ -869,7 +852,6 @@ fn needs_dot(l: Look, r: Look) -> bool {
 }
 
 /// A row as the layout's math list (no caret places).
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn math_row(row: &[Atom]) -> Vec<Node> {
     emit(row, &mut Vec::new(), &mut Marker::default(), false)
 }
@@ -1008,5 +990,5 @@ fn emit_from(row: &[Atom], from: usize, path: &mut Vec<(usize, u8)>, m: &mut Mar
 }
 
 #[cfg(test)]
-#[path = "model_tests.rs"]
+#[path = "../../../tests/unit/ui/textbook/model/tests.rs"]
 pub(super) mod tests;

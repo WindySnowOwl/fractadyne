@@ -276,4 +276,5 @@ pub fn safe_name(name: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/manifest/tests.rs"]
 mod tests;
