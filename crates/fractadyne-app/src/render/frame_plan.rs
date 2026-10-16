@@ -530,13 +530,15 @@ mod tests {
         assert!(all.len() > 20, "the scan must see the crate (found {} files)", all.len());
         let texts: Vec<(std::path::PathBuf, String)> =
             all.iter().map(|p| (p.clone(), std::fs::read_to_string(p).expect("readable source"))).collect();
-        // Test-only files: those declared `#[cfg(test)] mod NAME;` anywhere in the crate.
+        // Test-only files: those declared `#[cfg(test)] mod NAME;` anywhere in the crate, with or
+        // without a `#[path]` (or any attribute or comment) between the two.
         let mut test_mods = std::collections::HashSet::new();
         for (_, text) in &texts {
             let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
-            for w in lines.windows(2) {
-                if w[0] == "#[cfg(test)]" {
-                    if let Some(name) = w[1].strip_prefix("mod ").and_then(|r| r.strip_suffix(';')) {
+            for (i, l) in lines.iter().enumerate() {
+                if *l == "#[cfg(test)]" {
+                    let item = lines[i + 1..].iter().find(|l| !l.starts_with("#[") && !l.starts_with("//"));
+                    if let Some(name) = item.and_then(|l| l.split("mod ").nth(1)).and_then(|r| r.strip_suffix(';')) {
                         test_mods.insert(name.to_string());
                     }
                 }
