@@ -446,6 +446,7 @@ pub(crate) fn tile_trace_on() -> bool {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/export/tile_cap.rs"]
 mod tile_cap;
 
 /// Iteration-window pricing for the per-tile chunked iterate — the actuator the area cap cannot
@@ -720,15 +721,19 @@ impl ChunkPricer {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/export/chunk_pricer.rs"]
 mod chunk_pricer;
 
 #[cfg(test)]
+#[path = "../tests/unit/export/step_pricer.rs"]
 mod step_pricer;
 
 #[cfg(test)]
+#[path = "../tests/unit/export/readback.rs"]
 mod readback;
 
 #[cfg(test)]
+#[path = "../tests/unit/export/multi_grid.rs"]
 mod multi_grid;
 
 /// The largest side of a packed grid's state textures (see [`Packer`]), which is sized to hold half

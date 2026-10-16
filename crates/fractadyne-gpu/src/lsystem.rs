@@ -375,4 +375,5 @@ pub(crate) const CLEAR_AUX: wgpu::Color = wgpu::Color { r: 0.0, g: 0.0, b: 1.0e3
 pub mod check;
 
 #[cfg(test)]
+#[path = "../tests/unit/lsystem/tests.rs"]
 mod tests;

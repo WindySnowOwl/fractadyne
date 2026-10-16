@@ -836,4 +836,5 @@ fn read_back(device: &wgpu::Device, buffer: &wgpu::Buffer, len: u64) -> Result<V
 pub mod check;
 
 #[cfg(test)]
+#[path = "../tests/unit/life/tests.rs"]
 mod tests;

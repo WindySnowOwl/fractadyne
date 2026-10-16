@@ -1300,4 +1300,5 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/custom/tests.rs"]
 mod tests;
