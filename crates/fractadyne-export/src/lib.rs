@@ -292,6 +292,7 @@ pub fn to_srgb8_dithered(rgba: &[f32], width: u32) -> Vec<u8> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/dither_tests.rs"]
 mod dither_tests;
 
 /// Decode an EXR at full resolution to `(width, height, rgba_f32)` (row-major, 4 floats
@@ -493,6 +494,7 @@ pub fn write_retry_policy(
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/write_retry.rs"]
 mod write_retry;
 
 /// The name a PNG is written under until it is complete: `<path>.part`, beside it. Public so a
@@ -920,10 +922,13 @@ pub fn read_exr_metadata(path: &Path) -> Result<Option<String>, ExportError> {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/writer_roundtrip_tests.rs"]
 mod writer_roundtrip_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/atomic_write_tests.rs"]
 mod atomic_write_tests;
 
 #[cfg(test)]
+#[path = "../tests/unit/decode_limits.rs"]
 mod decode_limits;

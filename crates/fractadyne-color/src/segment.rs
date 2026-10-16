@@ -1237,6 +1237,8 @@ impl Lut {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/segment/edit_tests.rs"]
 mod edit_tests;
 #[cfg(test)]
+#[path = "../tests/unit/segment/segment_tests.rs"]
 mod segment_tests;

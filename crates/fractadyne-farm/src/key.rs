@@ -231,4 +231,5 @@ pub(crate) fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<(), S
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/key/tests.rs"]
 mod tests;

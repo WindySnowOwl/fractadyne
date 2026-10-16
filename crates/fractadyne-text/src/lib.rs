@@ -44,6 +44,7 @@
 #![forbid(unsafe_code)]
 
 #[cfg(test)]
+#[path = "../tests/unit/tests.rs"]
 mod tests;
 
 pub mod base64;

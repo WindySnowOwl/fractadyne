@@ -255,4 +255,5 @@ pub const PRESETS: &[Palette] = &[
 ];
 
 #[cfg(test)]
+#[path = "../tests/unit/tests.rs"]
 mod tests;

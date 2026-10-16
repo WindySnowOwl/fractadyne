@@ -934,4 +934,5 @@ impl Scheduler {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/sched/tests.rs"]
 mod tests;

@@ -811,4 +811,5 @@ pub fn save(state: &SessionState) {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/tests.rs"]
 mod tests;

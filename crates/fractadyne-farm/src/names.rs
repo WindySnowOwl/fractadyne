@@ -62,4 +62,5 @@ pub fn frame_file_name(prefix: &str, index: u64) -> String {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/names/tests.rs"]
 mod tests;
