@@ -68,6 +68,14 @@ Changes after 0.3.0-beta.1:
   restart a pixel's orbit exactly as the slower arithmetic does. Deep renders are pixel-identical
   to the full-precision path again (38 of 38), at the same speed: 4.2e275× at 4K still takes
   0.30 s of GPU time against 0.74 s without the faster arithmetic.
+- **A second graphics card no longer muddles the live view's timing (0.3.0-beta.20).** With
+  Advanced > Second graphics card on, every motion frame the second card rendered also reported
+  itself as a pass of the window's own card. It overwrote the window's record of which passes its
+  card had run, so the GPU timings the window sizes its frames by were credited to the wrong pass,
+  and at times the window gave up on them and priced frames by the wall clock. Found in a field
+  session's log (78 such warnings in 7 minutes). The motion test with a second device found 21 of
+  309 timings credited to a frame where the card ran nothing; now none in three runs (0 of 258 to
+  292), and no switch to wall-clock pricing.
 - **Zooming out and back in keeps a deep location (0.3.0-beta.20).** Each zoom step recomputed
   the view's centre at the precision the current depth needs, so zooming out rounded away the
   digits a deeper view had needed. Zooming back in about the centre then went somewhere else: a

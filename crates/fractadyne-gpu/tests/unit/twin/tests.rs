@@ -38,3 +38,44 @@ fn a_window_follows_its_wall_grows_at_most_twofold_and_stays_under_the_ceiling()
     assert_eq!(short.next(area, 4000, 10.0), 4000);
     assert_eq!(short.next(area, 4000, 40.0), 1000);
 }
+
+/// `headless` must drop EVERY sink a frame's params carry: a twin (the second GPU's motion
+/// refreshes, `gpu_worker::render_live`) runs the window's own `prepare`, so a sink left in place
+/// lands the twin's passes in the window's readings. Found 2026-10-16 in a field session with a
+/// worker GPU: W6's `iterate_prov`, `live_prov` and `ran_out` were kept, so the twin overwrote the
+/// window's record of the passes its GPU ran and the provenance its readings carry (78 provenance
+/// mismatches in 7 minutes; `--motiontest --worker-gpu same` RED on A7). The struct is read from
+/// the source, so a sink added later is held to this without editing the test.
+#[test]
+fn headless_drops_every_sink_the_params_carry() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib = std::fs::read_to_string(root.join("src/lib.rs")).expect("src/lib.rs");
+    let mut sinks = Vec::new();
+    let mut inside = false;
+    for line in lib.lines() {
+        if line.starts_with("pub struct MandelbrotParams {") {
+            inside = true;
+            continue;
+        }
+        if inside && line.trim_end() == "}" {
+            break;
+        }
+        let Some((name, ty)) = (if inside { line.trim().strip_prefix("pub ").and_then(|r| r.split_once(": ")) } else { None }) else {
+            continue;
+        };
+        if ty.starts_with("Option<") && (ty.contains("Atomic") || ty.contains("Sink")) {
+            sinks.push(name.to_string());
+        }
+    }
+    assert!(sinks.len() >= 20, "the scan found only {} sinks — it has stopped reading the struct: {sinks:?}", sinks.len());
+    let twin = std::fs::read_to_string(root.join("src/twin.rs")).expect("src/twin.rs");
+    let body: String = twin
+        .lines()
+        .skip_while(|l| !l.contains("pub fn headless(&self) -> Self {"))
+        .take_while(|l| l.trim_end() != "    }")
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(body.contains("self.clone()"), "headless() was not found in src/twin.rs");
+    let kept: Vec<_> = sinks.iter().filter(|n| !body.contains(&format!("p.{n} = None;"))).collect();
+    assert!(kept.is_empty(), "headless() keeps the window's sink(s) {kept:?}: a twin's passes would land in the window's readings");
+}
