@@ -39,11 +39,19 @@ fn df64(d: (f32, f32)) -> f64 {
 }
 
 struct OpCheck {
+    /// The row's ASCII name in the `[FAIL] <backend>: <id>` lines the battery holds against a
+    /// card's declared failures (scripts/gpu-validate-expected.json). The battery matches a
+    /// declared failure as a PREFIX, so no id may begin with another (`two_sum` would also cover a
+    /// `two_sum_armored`): `ids_are_prefix_free` holds them to that.
+    id: &'static str,
     name: &'static str,
     max_err: f64,
     tol: f64,
     fails: u32,
     detail: String,
+    /// For a failing decision row (13–17): what this backend's arithmetic was found to be, appended
+    /// to its `[FAIL]` line, so a change of arithmetic is a new failure rather than the same one.
+    tag: String,
 }
 
 /// One op row's verdict against its oracle. `err` is relative to the oracle magnitude (or the
@@ -61,11 +69,11 @@ fn check_rows(w: u32, h: u32, px: &[f32]) -> Vec<OpCheck> {
     // machine's compiler is REASSOCIATING float expressions (folding the residual away); if
     // both fail, the rounding itself is off. EXACT by theorem under round-to-nearest + real
     // fma: s must be fl(a+b) / fl(a·b) and e the exact residual (always representable in f32).
-    for (op, name) in [
-        (0u32, "two_sum (exact EFT)"),
-        (1u32, "two_prod (exact EFT — fma canary)"),
-        (10u32, "two_sum, bitcast-armored (reassociation discriminator)"),
-        (11u32, "quick_two_sum (exact EFT — df_mul/df_div depend on it)"),
+    for (op, id, name) in [
+        (0u32, "two_sum", "two_sum (exact EFT)"),
+        (1u32, "two_prod", "two_prod (exact EFT — fma canary)"),
+        (10u32, "armored_two_sum", "two_sum, bitcast-armored (reassociation discriminator)"),
+        (11u32, "quick_two_sum", "quick_two_sum (exact EFT — df_mul/df_div depend on it)"),
     ] {
         let mut fails = 0u32;
         let mut detail = String::new();
@@ -93,24 +101,25 @@ fn check_rows(w: u32, h: u32, px: &[f32]) -> Vec<OpCheck> {
                 }
             }
         }
-        out.push(OpCheck { name, max_err: 0.0, tol: 0.0, fails, detail });
+        out.push(OpCheck { id, name, max_err: 0.0, tol: 0.0, fails, detail, tag: String::new() });
     }
 
     // Generic relative-error rows.
     struct Rel {
         op: u32,
+        id: &'static str,
         name: &'static str,
         tol: f64,
     }
     for r in [
-        Rel { op: 2, name: "df_add", tol: 2f64.powi(-42) },
-        Rel { op: 3, name: "df_mul", tol: 2f64.powi(-42) },
-        Rel { op: 4, name: "df_div", tol: 2f64.powi(-40) },
-        Rel { op: 5, name: "c_sqr (complex square)", tol: 2f64.powi(-40) },
-        Rel { op: 6, name: "fe_mul (floatexp)", tol: 2f64.powi(-38) },
-        Rel { op: 7, name: "fe_add (floatexp align/renorm)", tol: 2f64.powi(-38) },
-        Rel { op: 8, name: "64-step df32 accumulation (Mandelbrot form)", tol: 2f64.powi(-33) },
-        Rel { op: 9, name: "64-step df32 accumulation (Julia form, z0-carried)", tol: 2f64.powi(-33) },
+        Rel { op: 2, id: "df_add", name: "df_add", tol: 2f64.powi(-42) },
+        Rel { op: 3, id: "df_mul", name: "df_mul", tol: 2f64.powi(-42) },
+        Rel { op: 4, id: "df_div", name: "df_div", tol: 2f64.powi(-40) },
+        Rel { op: 5, id: "c_sqr", name: "c_sqr (complex square)", tol: 2f64.powi(-40) },
+        Rel { op: 6, id: "fe_mul", name: "fe_mul (floatexp)", tol: 2f64.powi(-38) },
+        Rel { op: 7, id: "fe_add", name: "fe_add (floatexp align/renorm)", tol: 2f64.powi(-38) },
+        Rel { op: 8, id: "accum_mandelbrot", name: "64-step df32 accumulation (Mandelbrot form)", tol: 2f64.powi(-33) },
+        Rel { op: 9, id: "accum_julia", name: "64-step df32 accumulation (Julia form, z0-carried)", tol: 2f64.powi(-33) },
     ] {
         let mut max_err = 0f64;
         let mut fails = 0u32;
@@ -220,7 +229,7 @@ fn check_rows(w: u32, h: u32, px: &[f32]) -> Vec<OpCheck> {
                 }
             }
         }
-        out.push(OpCheck { name: r.name, max_err, tol: r.tol, fails, detail });
+        out.push(OpCheck { id: r.id, name: r.name, max_err, tol: r.tol, fails, detail, tag: String::new() });
     }
 
     // Row 12 — df_mul dissected. Not a tolerance check: it reports WHICH intermediate came back
@@ -264,14 +273,385 @@ fn check_rows(w: u32, h: u32, px: &[f32]) -> Vec<OpCheck> {
             )
         };
         out.push(OpCheck {
+            id: "dissected_df_mul",
             name: "df_mul dissected (which intermediate got folded?)",
             max_err: 0.0,
             tol: 0.0,
             fails,
             detail,
+            tag: String::new(),
         });
     }
+    out.extend(decision_rows(&texel));
     out
+}
+
+// ---- Rows 13–17: the counters' decisions (U26) ------------------------------------------------
+//
+// The rebase and BLA-skip counters count decisions, and a decision is shader arithmetic: a sum of
+// two squares a compiler may fuse into a multiply-add either way, a sqrt or log2 that need not be
+// correctly rounded, subnormals flushed or kept. Each row runs the renderer's own predicate on
+// near-tie inputs and names every modeled arithmetic that reproduces all 1,024 decisions. The
+// first model is the reference (IEEE single precision, unfused, subnormals flushed as GPUs do);
+// matching it is a PASS. Any other outcome is a FAIL whose tag names what the backend does, so a
+// card declares its arithmetic in gpu-validate-expected.json and a change of it is a NEW failure.
+// A decision whose exact answer is not in doubt (far from the tie) must match exactly whatever
+// the arithmetic: getting one of those wrong is reported as WRONG.
+
+/// How `x*x + y*y` is evaluated: rounded per operation, or fused into one multiply-add.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SumSq {
+    Plain,
+    FmaX,
+    FmaY,
+}
+
+impl SumSq {
+    const ALL: [SumSq; 3] = [SumSq::Plain, SumSq::FmaX, SumSq::FmaY];
+    fn text(self) -> &'static str {
+        match self {
+            SumSq::Plain => "x*x+y*y",
+            SumSq::FmaX => "fma(x,x,y*y)",
+            SumSq::FmaY => "fma(y,y,x*x)",
+        }
+    }
+}
+
+/// `x*x + y*y` in f32 as `v` evaluates it, results below f32's normal range flushed to zero
+/// when `ftz` (as most GPUs do).
+fn sumsq(x: f32, y: f32, v: SumSq, ftz: bool) -> f32 {
+    let f = |a: f32| if ftz && a.abs() < f32::MIN_POSITIVE { 0.0 } else { a };
+    match v {
+        SumSq::Plain => f(f(x * x) + f(y * y)),
+        SumSq::FmaX => f(x.mul_add(x, f(y * y))),
+        SumSq::FmaY => f(y.mul_add(y, f(x * x))),
+    }
+}
+
+/// Mirrors WGSL `gt_rebase_case` (see it for the classes): (z.x, z.y, δz.x, δz.y) and the class.
+fn gt_rebase_case(t: u32) -> ([f32; 4], u32) {
+    let cls = gt_hash(t ^ 0x51ED_270B) % 8;
+    let emin = if cls == 1 { -72 } else { -8 };
+    let a = gt_f32(t.wrapping_mul(4).wrapping_add(1), emin, 8);
+    let b = gt_f32(t.wrapping_mul(4).wrapping_add(2), emin, 8);
+    if cls == 0 {
+        return ([a, b, gt_f32(t.wrapping_mul(4).wrapping_add(3), -8, 8), gt_f32(t.wrapping_mul(4).wrapping_add(4), -8, 8)], cls);
+    }
+    let h = gt_hash(t ^ 0x2545_F491);
+    ([a, b, f32::from_bits(b.to_bits() ^ (h & 15)), f32::from_bits(a.to_bits() ^ ((h >> 4) & 15))], cls)
+}
+
+/// `fe_norm`'s mantissa scaling for a pair with zero low limbs: by `2^-floor(log2(max(|x|, |y|)))`
+/// (exact), returning the scaled pair and the shift.
+fn fe_norm2(x: f32, y: f32) -> (f32, f32, i32) {
+    let shift = ((x.abs().max(y.abs()).to_bits() >> 23) & 0xFF) as i32 - 127;
+    let s = 2f32.powi(-shift);
+    (x * s, y * s, shift)
+}
+
+/// The exact magnitude of (x, y), in f64 (the squares and their sum are exact for these inputs).
+fn mag64(x: f32, y: f32) -> f64 {
+    ((x as f64) * (x as f64) + (y as f64) * (y as f64)).sqrt()
+}
+
+/// One input of a decision row: its decision under each model, the exact answer, and whether
+/// that answer is beyond doubt (far enough from the tie that no plausible arithmetic flips it).
+struct Case {
+    model: Vec<bool>,
+    exact: bool,
+    decisive: bool,
+}
+
+/// Grade a decision row: `cases` in texel order (four per texel), `names` the models (index 0 the
+/// reference), `gpu` the GPU's decisions.
+fn grade_decisions(id: &'static str, name: &'static str, names: &[String], cases: &[Case], gpu: &[bool]) -> OpCheck {
+    let wrong = cases.iter().zip(gpu).filter(|(c, &g)| c.decisive && g != c.exact).count();
+    let first_wrong = cases.iter().zip(gpu).position(|(c, &g)| c.decisive && g != c.exact);
+    let mismatch: Vec<usize> =
+        (0..names.len()).map(|m| cases.iter().zip(gpu).filter(|(c, &g)| c.model[m] != g).count()).collect();
+    let matching: Vec<&str> = (0..names.len()).filter(|&m| mismatch[m] == 0).map(|m| names[m].as_str()).collect();
+    let near = cases.iter().filter(|c| !c.decisive).count();
+    let (fails, tag) = if wrong > 0 {
+        (wrong as u32, format!("WRONG on {wrong} decisive inputs"))
+    } else if mismatch[0] == 0 {
+        (0, String::new())
+    } else if !matching.is_empty() {
+        (mismatch[0] as u32, format!("decides like {}", matching.join(" | ")))
+    } else {
+        (mismatch[0] as u32, format!("matches no modeled arithmetic: {} of {} differ from {}", mismatch[0], cases.len(), names[0]))
+    };
+    let detail = format!(
+        "{} decisions ({near} near ties); differ from each model: {}{}{}",
+        cases.len(),
+        names.iter().zip(&mismatch).map(|(n, k)| format!("{n} {k}")).collect::<Vec<_>>().join(", "),
+        if tag.is_empty() { String::new() } else { format!("  => {tag}") },
+        first_wrong.map(|i| format!(" (first: input {i}, texel {} slot {})", i / 4, i % 4)).unwrap_or_default()
+    );
+    OpCheck { id, name, max_err: 0.0, tol: 0.0, fails, detail, tag }
+}
+
+/// The `t` of every decision in row `op`, in texel order (four per texel), as the WGSL forms it.
+fn row_ts(op: u32) -> Vec<u32> {
+    (0..GT_W).flat_map(|ix| (0..4u32).map(move |k| (ix + 100003 * op) * 4 + k)).collect()
+}
+
+/// Columns per row of `fs_gputest` (`gputest` in the GPU crate).
+const GT_W: u32 = 256;
+
+/// The decision rows, 13 to 17.
+const DECISION_ROWS: std::ops::RangeInclusive<u32> = 13..=17;
+
+/// Row `op`'s id, name, model names (the reference first) and cases, GPU-free.
+fn row_cases(op: u32) -> (&'static str, &'static str, Vec<String>, Vec<Case>) {
+    let ftz_text = |ftz: bool| if ftz { "subnormals flushed" } else { "subnormals kept" };
+    let ts = row_ts(op);
+    match op {
+        // `rebase_df32(dot(zf, zf), zf, dz)`. The dot and the explicit δz sum may each be fused
+        // either way; the lift's two dots go as the first.
+        13 => {
+            let mut names = Vec::new();
+            let mut models = Vec::new();
+            for ftz in [true, false] {
+                for vz in SumSq::ALL {
+                    for vd in SumSq::ALL {
+                        names.push(format!("dot {}, dz {}, {}", vz.text(), vd.text(), ftz_text(ftz)));
+                        models.push((vz, vd, ftz));
+                    }
+                }
+            }
+            let cases = ts
+                .iter()
+                .map(|&t| {
+                    let ([zx, zy, dx, dy], cls) = gt_rebase_case(t);
+                    let decide = |(vz, vd, ftz): (SumSq, SumSq, bool)| {
+                        let (z2, d2) = (sumsq(zx, zy, vz, ftz), sumsq(dx, dy, vd, ftz));
+                        if z2 == 0.0 && d2 == 0.0 {
+                            let l = 2f32.powi(64);
+                            sumsq(zx * l, zy * l, vz, ftz) < sumsq(dx * l, dy * l, vz, ftz)
+                        } else {
+                            z2 < d2
+                        }
+                    };
+                    let (ez, ed) = (mag64(zx, zy), mag64(dx, dy));
+                    // Subnormal squares keep only a few bits: the tiny class is beyond doubt only far out.
+                    let margin = if cls == 1 { 2f64.powi(-6) } else { 2f64.powi(-16) };
+                    Case {
+                        model: models.iter().map(|&m| decide(m)).collect(),
+                        exact: ez < ed,
+                        decisive: (ez - ed).abs() > margin * ez.max(ed),
+                    }
+                })
+                .collect();
+            ("rebase_df32", "rebase test, df32 path (mode 0)", names, cases)
+        }
+        // `sf_lt(fe_abs_sf(z), fe_abs_sf(dz))` on normalized mantissas (squares never subnormal).
+        14 => {
+            let names = SumSq::ALL.iter().map(|v| format!("sqrt({}) correctly rounded", v.text())).collect();
+            let cases = ts
+                .iter()
+                .map(|&t| {
+                    let ([zx, zy, dx, dy], _) = gt_rebase_case(t);
+                    let (nzx, nzy, sz) = fe_norm2(zx, zy);
+                    let (ndx, ndy, sd) = fe_norm2(dx, dy);
+                    let decide = |v: SumSq| {
+                        let mz = sumsq(nzx, nzy, v, true).sqrt() as f64 * 2f64.powi(sz);
+                        let md = sumsq(ndx, ndy, v, true).sqrt() as f64 * 2f64.powi(sd);
+                        mz < md
+                    };
+                    let (ez, ed) = (mag64(zx, zy), mag64(dx, dy));
+                    Case {
+                        model: SumSq::ALL.iter().map(|&v| decide(v)).collect(),
+                        exact: ez < ed,
+                        decisive: (ez - ed).abs() > 2f64.powi(-16) * ez.max(ed),
+                    }
+                })
+                .collect();
+            ("rebase_floatexp", "rebase test, floatexp (mode 2)", names, cases)
+        }
+        // `tail_rebase`: sqrt(dot(a, a)) < sqrt(dot(b, b)), one dot form for both sides.
+        15 => {
+            let mut names = Vec::new();
+            let mut models = Vec::new();
+            for ftz in [true, false] {
+                for v in SumSq::ALL {
+                    names.push(format!("sqrt(dot {}) correctly rounded, {}", v.text(), ftz_text(ftz)));
+                    models.push((v, ftz));
+                }
+            }
+            let cases = ts
+                .iter()
+                .map(|&t| {
+                    let ([zx, zy, dx, dy], cls) = gt_rebase_case(t);
+                    let decide = |(v, ftz): (SumSq, bool)| sumsq(zx, zy, v, ftz).sqrt() < sumsq(dx, dy, v, ftz).sqrt();
+                    let (ez, ed) = (mag64(zx, zy), mag64(dx, dy));
+                    Case {
+                        model: models.iter().map(|&m| decide(m)).collect(),
+                        exact: ez < ed,
+                        // A flushed square reads 0 < 0 whatever the margin: the tiny class is never decisive.
+                        decisive: cls != 1 && (ez - ed).abs() > 2f64.powi(-16) * ez.max(ed),
+                    }
+                })
+                .collect();
+            ("rebase_tail", "rebase test, df32 tail (mode 2)", names, cases)
+        }
+        // `sf_lt(fe_abs_sf(dz), sf_norm(r, e))`, the BLA walk's validity test.
+        16 => {
+            let names = SumSq::ALL.iter().map(|v| format!("sqrt({}) correctly rounded", v.text())).collect();
+            let cases = ts
+                .iter()
+                .map(|&t| {
+                    let x = gt_f32(t.wrapping_mul(4).wrapping_add(1), -8, 8);
+                    let ex = ((x.to_bits() >> 23) & 0xFF) as i32 - 127;
+                    let y = if gt_hash(t ^ 0x1B87_3593) & 1 == 1 {
+                        gt_f32(t.wrapping_mul(4).wrapping_add(2), ex - 13, 2)
+                    } else {
+                        0.0
+                    };
+                    let h = gt_hash(t ^ 0xCC9E_2D51);
+                    let base = x.to_bits() & 0x7FFF_FFFF;
+                    let rbits = if (h >> 8) % 8 == 0 {
+                        if (h >> 11) & 1 == 1 { base - 0x80_0000 } else { base + 0x80_0000 }
+                    } else {
+                        (base + h % 9).wrapping_sub(4)
+                    };
+                    let r = f32::from_bits(rbits);
+                    let (cx, cy) = if (h >> 12) & 1 == 1 { (y, x) } else { (x, y) };
+                    let (nx, ny, sh) = fe_norm2(cx, cy);
+                    let decide = |v: SumSq| (sumsq(nx, ny, v, true).sqrt() as f64) * 2f64.powi(sh) < r as f64;
+                    let e = mag64(x, y);
+                    Case {
+                        model: SumSq::ALL.iter().map(|&v| decide(v)).collect(),
+                        exact: e < r as f64,
+                        decisive: (e - r as f64).abs() > 2f64.powi(-16) * e,
+                    }
+                })
+                .collect();
+            ("bla_radius", "BLA validity test (mode 2)", names, cases)
+        }
+        // `tail_no_skip`: log2(max|dz|) > log2(r) + k + 0.01, as written (left to right) or with
+        // the constant folded into k first; log2 correctly rounded.
+        _ => {
+            let names = vec![
+                "log2 correctly rounded, (log2(r)+k)+0.01".to_string(),
+                "log2 correctly rounded, log2(r)+(k+0.01)".to_string(),
+            ];
+            let cases = ts
+                .iter()
+                .map(|&t| {
+                    let j = (gt_hash(t ^ 0x7FEB_352D) % 60) as i32 - 30;
+                    let kk = (gt_hash(t ^ 0x846C_A68B) % 41) as i32 - 20;
+                    let jit = gt_hash(t ^ 0x2C1B_3C6D) % 97;
+                    let sign = (gt_hash(t ^ 0x1656_67B1) & 1) << 31;
+                    let m = f32::from_bits(sign | ((((127 + j + kk) as u32) << 23) + 58300 + jit));
+                    let none = gt_hash(t ^ 0x9E37_79B1) % 16 == 0;
+                    // The larger component is always |m| (the other sits a binade below it).
+                    let lm = (m.abs() as f64).log2() as f32;
+                    let lr = j as f32; // log2 of 2^j, exact
+                    let (k32, c) = (kk as f32, 0.01f32);
+                    let thr = [(lr + k32) + c, lr + (k32 + c)];
+                    let exact_thr = (j + kk) as f64 + c as f64;
+                    // An ulp of the LARGEST intermediate, log2(r) = j: one ulp of error there moves
+                    // the threshold by f32::EPSILON·|j| (measured: input 557, j = -18, on all three
+                    // RTX 3080 backends, was 1.6e-6 past a threshold its 0.01-sized ulp called safe).
+                    let ulp = f32::EPSILON as f64 * (j.abs().max((j + kk).abs()).max(1)) as f64;
+                    Case {
+                        model: thr.iter().map(|&th| none || lm > th).collect(),
+                        exact: none || (m.abs() as f64).log2() > exact_thr,
+                        decisive: none || ((m.abs() as f64).log2() - exact_thr).abs() > 8.0 * ulp,
+                    }
+                })
+                .collect();
+            ("tail_bla_exit", "BLA exit test, df32 tail (mode 2)", names, cases)
+        }
+    }
+}
+
+fn decision_rows(texel: &dyn Fn(u32, u32) -> [f32; 4]) -> Vec<OpCheck> {
+    DECISION_ROWS
+        .map(|op| {
+            let (id, name, names, cases) = row_cases(op);
+            let gpu: Vec<bool> = (0..GT_W).flat_map(|ix| texel(ix, op).map(|v| v == 1.0)).collect();
+            grade_decisions(id, name, &names, &cases, &gpu)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod decision_row_tests {
+    use super::*;
+
+    /// A row that cannot tell two models apart cannot report which one a backend runs (a control
+    /// that cannot express the variable under test is not a control): each pair of models must
+    /// disagree somewhere in the row's inputs, and the inputs must include near ties.
+    #[test]
+    fn every_decision_row_can_tell_its_models_apart() {
+        for op in DECISION_ROWS {
+            let (id, _, names, cases) = row_cases(op);
+            assert_eq!(cases.len(), (GT_W * 4) as usize, "{id}");
+            let near = cases.iter().filter(|c| !c.decisive).count();
+            assert!(near >= 50, "{id}: only {near} near ties of {}", cases.len());
+            for a in 0..names.len() {
+                for b in a + 1..names.len() {
+                    // Two models may legitimately coincide when the inputs give no way to part
+                    // them (fma(x,x,y*y) and x*x+y*y on y = 0); row 13's and 15's subnormal
+                    // forms must still part the reference from every other model.
+                    if a != 0 {
+                        continue;
+                    }
+                    let differ = cases.iter().filter(|c| c.model[a] != c.model[b]).count();
+                    assert!(differ > 0, "{id}: '{}' and '{}' decide alike on every input", names[a], names[b]);
+                }
+            }
+        }
+    }
+
+    /// Where the answer is beyond doubt, every model gives it: a model that does not would make a
+    /// correct backend look WRONG.
+    #[test]
+    fn every_model_is_right_on_the_decisive_inputs() {
+        for op in DECISION_ROWS {
+            let (id, _, names, cases) = row_cases(op);
+            let decisive = cases.iter().filter(|c| c.decisive).count();
+            assert!(decisive >= 50, "{id}: only {decisive} decisive inputs");
+            for (m, n) in names.iter().enumerate() {
+                let wrong = cases.iter().filter(|c| c.decisive && c.model[m] != c.exact).count();
+                assert_eq!(wrong, 0, "{id}: model '{n}' is wrong on {wrong} decisive inputs");
+            }
+        }
+    }
+
+    /// The battery matches a declared failure as a prefix of a `[FAIL]` line: an id that begins
+    /// with another would let a new failure of the longer one pass as the shorter's known one.
+    #[test]
+    fn ids_are_prefix_free() {
+        let px = vec![0f32; (GT_W * 18 * 4) as usize];
+        let ids: Vec<&str> = check_rows(GT_W, 18, &px).iter().map(|c| c.id).collect();
+        assert_eq!(ids.len(), 18, "one id per row of fs_gputest");
+        for a in &ids {
+            assert!(a.is_ascii(), "{a}");
+            for b in &ids {
+                assert!(a == b || !b.starts_with(a), "'{b}' begins with '{a}'");
+            }
+        }
+    }
+
+    /// The grading: the reference model's own decisions PASS; another model's are named; a flipped
+    /// decisive answer is WRONG.
+    #[test]
+    fn grading_names_the_arithmetic() {
+        let (id, name, names, cases) = row_cases(13);
+        let as_model = |m: usize| cases.iter().map(|c| c.model[m]).collect::<Vec<_>>();
+        let pass = grade_decisions(id, name, &names, &cases, &as_model(0));
+        assert_eq!((pass.fails, pass.tag.as_str()), (0, ""));
+        let other = (1..names.len()).find(|&m| as_model(m) != as_model(0)).expect("a model unlike the reference");
+        let fused = grade_decisions(id, name, &names, &cases, &as_model(other));
+        assert!(fused.fails > 0 && fused.tag.starts_with("decides like ") && fused.tag.contains(&names[other]), "{}", fused.tag);
+        let mut flipped = as_model(0);
+        let k = cases.iter().position(|c| c.decisive).unwrap();
+        flipped[k] = !flipped[k];
+        let wrong = grade_decisions(id, name, &names, &cases, &flipped);
+        assert_eq!(wrong.tag, "WRONG on 1 decisive inputs");
+    }
 }
 
 /// A tee: every line goes to stdout (so a terminal and the Diagnostics dialog's stream see it as
@@ -294,8 +674,10 @@ impl Sink {
     }
 }
 
-/// Grade one device's results and print the verdict table. Returns failing op-family count.
-fn report(sink: &mut Sink, w: u32, h: u32, px: &[f32]) -> usize {
+/// Grade one device's results and print the verdict table, then one `[FAIL] <label>: <id>` line
+/// per failing row: the lines scripts/gpu-validate.ps1 holds against the card's declared
+/// failures. Returns failing op-family count.
+fn report(sink: &mut Sink, label: &str, w: u32, h: u32, px: &[f32]) -> usize {
     sink.line(format!("  {:<52} {:>12} {:>10} {:>6}", "op", "max rel err", "tolerance", ""));
     let checks = check_rows(w, h, px);
     let mut failed = 0usize;
@@ -306,18 +688,32 @@ fn report(sink: &mut Sink, w: u32, h: u32, px: &[f32]) -> usize {
         }
         let verdict = if ok { "PASS" } else { "FAIL" };
         if c.tol == 0.0 {
+            // A decision row (13–17) grades agreement with a model, not exactness of a value.
+            let decision = c.detail.contains("decisions (");
             sink.line(format!(
                 "  {:<52} {:>12} {:>10} {:>6}",
                 c.name,
-                if ok { "exact".to_string() } else { format!("{} wrong", c.fails) },
-                "exact",
+                match (ok, decision) {
+                    (true, false) => "exact".to_string(),
+                    (true, true) => "as IEEE".to_string(),
+                    (false, false) => format!("{} wrong", c.fails),
+                    (false, true) => format!("{} differ", c.fails),
+                },
+                if decision { "IEEE f32" } else { "exact" },
                 verdict
             ));
         } else {
             sink.line(format!("  {:<52} {:>12.2e} {:>10.1e} {:>6}", c.name, c.max_err, c.tol, verdict));
         }
-        if !ok && !c.detail.is_empty() {
+        if (!ok || c.detail.contains("decisions (")) && !c.detail.is_empty() {
             sink.line(format!("      {}", c.detail));
+        }
+    }
+    for c in checks.iter().filter(|c| c.fails > 0) {
+        if c.tag.is_empty() {
+            sink.line(format!("  [FAIL] {label}: {}", c.id));
+        } else {
+            sink.line(format!("  [FAIL] {label}: {} - {}", c.id, c.tag));
         }
     }
     if failed == 0 {
@@ -418,12 +814,13 @@ pub(crate) fn run_gputest_sweep(out: Option<&std::path::Path>) -> usize {
         ran += 1;
         match fractadyne_gpu::gputest(&device, &queue) {
             Ok((w, h, px)) => {
-                if report(&mut sink, w, h, &px) > 0 {
+                if report(&mut sink, label, w, h, &px) > 0 {
                     failed += 1;
                 }
             }
             Err(e) => {
                 sink.line(format!("  GPU run failed: {e}"));
+                sink.line(format!("  [FAIL] {label}: gpu run failed"));
                 failed += 1;
             }
         }
