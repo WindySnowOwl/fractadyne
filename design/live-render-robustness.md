@@ -4999,4 +4999,18 @@ ladder, RED on the budget stall.**
 - On the field's numbers (655 against 4,627 = 7.06 wraps): refused at 7, kept at 8, kept when off.
 - Not yet built: the fitness-ranked cache, install identity by fitness, and the per-frame install
   derate. The design says the refusal is shippable alone; the derate is not, without the tunable.
-  The flip conditions are unmeasured.
+- **The first flip condition, measured** (RTX 3080, `--livetest tours/grand-tour.toml`, off and
+  then `--set REUSE_MAX_WRAPS=7`): identical. 70 live builds, 32 lookahead and 120 in all, with 0
+  refusals.
+  - So the rebuild rate is within 10%. But the rule never acted: no escaped reference was reused
+    past 7 wraps anywhere on the tour.
+  - Fresh renders (goldens, `--bench-matrix`) build their own references, so they cannot change
+    either.
+  - What no harness produces is the field shape: an escaped orbit reused while auto-iter climbs.
+    With `REF_ESCAPE_AT` armed, every install is truncated, so refuse → rebuild → truncate would
+    loop: not a measurement.
+- **The rule stays off.** It is behaviour-neutral where measured and unexercised where it would
+  act. §5.8 itself names the risk of switching it on alone: a refused reuse asks for a build, and
+  install identity is still "longer wins", which can re-open the build-storm family (U55;
+  CL-102, CL-127). Turning it on needs, first, a rung that produces the natural shape, and then
+  install identity by fitness.
