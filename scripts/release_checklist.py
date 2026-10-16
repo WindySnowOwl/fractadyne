@@ -677,8 +677,9 @@ STEPS = [
     ("Release gates",
      "Run the torture ladder's increment 2 on the RX 6800 XT: the no-BLA regime that actually "
      "loses the device.",
-     "Not yet a gate: the rung exists (`--torture live/regime`, W9) but has not been run on the "
-     "RX 6800 XT three times running, which is W9's exit criterion (design/live-render-robustness.md 7.9)."),
+     "The rung (`--torture live/regime`, W9) passed three runs running on the RX 6800 XT (dev.23, "
+     "2026-10-16) and runs in every full field battery (step 09, declared to exit 0); not yet a "
+     "checklist gate, because the checklist cannot read a field battery's result."),
     ("Sign-off",
      "Review every FAIL and BLOCKED row above with the release decision in mind.",
      "Either all rows PASS, or each non-PASS has an agreed decision (fix before release / accept "

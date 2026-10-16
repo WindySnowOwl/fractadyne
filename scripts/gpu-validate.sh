@@ -227,6 +227,16 @@ step "recordtest" "07-recordtest.txt" \
   "the per-frame record: every frame recorded, survives an abort, watchdog + blind tripwire fire" \
   $XVFB "$BIN" --recordtest
 
+# W9: the view that lost the RX 6800 XT, its reference truncated to 655 (see gpu-validate.ps1 step 09).
+if [ "$QUICK" -eq 0 ]; then
+  step "regime" "09-regime.txt" \
+    "the field crash view with its reference truncated to 655: the escaped-reference storm (~2.5 min)" \
+    env FRACTADYNE_REF_ESCAPE_AT=655 $XVFB "$BIN" --soak 120 \
+      --soak-location validation/field/radeon-crash-2026-09-21.fdn --window 1676x1360
+else
+  echo -e "\033[2m-> skipping regime (--quick)\033[0m"
+fi
+
 # --- harvest the app's own evidence --------------------------------------------------------------
 [ -f "$CFG/logs/fractadyne.log" ] && cp "$CFG/logs/fractadyne.log" "$DIR/app.log"
 cp "$CFG"/logs/crash-*.txt "$DIR/crash/" 2>/dev/null || true
@@ -279,6 +289,10 @@ livetest     Self-contained: live view vs an offline render on THIS machine, so 
 uitest       Screenshots for eyeballing. The deep floatexp band is WARN-not-FAIL by design.
 recordtest   Must pass everywhere: 0 pass, 2 RED, 3 VACUOUS (nothing exercised - not a pass). The
              per-frame record is what diagnoses the next crash. frames/ holds each step's record.
+regime       The view that lost the RX 6800 XT (2026-09-21) with its reference truncated to 655
+             samples: the escaped-reference storm. 0 = entered and survived; 2 = the frame budget
+             never came down across 8+ slow frames, or liveness, memory or a crash report failed;
+             3 = the regime was never entered, so surviving proves nothing.
 verdict      The battery's own judgement, below: each step's exit code (and, for a step known to
              fail, which checks failed) against what gpu-validate-expected.json declares for this
              card. Exit 0 = all as declared, 2 = something UNEXPECTED (named), 3 = not judged. A

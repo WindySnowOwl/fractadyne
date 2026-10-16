@@ -24,7 +24,8 @@
     "livetest": { "exit": [0], "why": "live view vs offline render on this machine; 2 = drift or a FAIL/STARVED checkpoint" },
     "uitest": { "exit": [0], "why": "the deep floatexp band is WARN-not-FAIL by design" },
     "recordtest": { "exit": [0], "why": "must pass everywhere: the frame record diagnoses the next crash" },
-    "screen": { "exit": [0], "why": "0 = three dives captured; the verdict is screengate.py's" }
+    "screen": { "exit": [0], "why": "0 = three dives captured; the verdict is screengate.py's" },
+    "regime": { "exit": [0], "why": "the escaped-reference storm at the view that lost the RX 6800 XT: 0 = entered and survived, 2 = a budget stall or a liveness failure, 3 = never entered (W9)" }
   },
   "adapters": {
     "nvidia-geforce-rtx-3080": {

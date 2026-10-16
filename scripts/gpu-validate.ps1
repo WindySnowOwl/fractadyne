@@ -42,6 +42,7 @@
 #   uitest-*/            25-step UI + live-render screenshot bundle     (skipped by -Quick)
 #   07-recordtest.txt    the per-frame record's own gate (~20 s)
 #   08-screen.txt        three autopilot dives captured off the screen, in screen\run1-3 (~100 s)
+#   09-regime.txt        the field view in the escaped-reference storm (W9, ~2.5 min; skipped by -Quick)
 #   app.log              the app's own log across all steps
 #   frames/              each step's frame record (<step>.frames.bin, <step>.frames.jsonl) -
 #                        read with scripts/framelog.py summarize
@@ -318,6 +319,26 @@ else {
     Write-Host "-> skipping screen (no dive-capture\capdive.ps1 beside this script)" -ForegroundColor DarkGray
 }
 
+# --- step 09: the REGIME that lost the RX 6800 XT (W9, design/live-render-robustness.md 7.9) ------
+# The 2026-09-21 field view, with every installed reference truncated to the 655 samples the field's
+# escaped at: every pixel runs ~7x past it and rebases with BLA off. 0 = the regime was entered and
+# the app survived it; 2 = a budget stall (the field signature), a stalled frame loop, a leak or a
+# crash report; 3 = the regime was never entered (VACUOUS). The torture ladder's
+# live/regime/escaped-ref-shallow rung, run on the card under test at every battery.
+if (-not $Quick) {
+    $env:FRACTADYNE_REF_ESCAPE_AT = "655"
+    try {
+        Invoke-Step "regime" "09-regime.txt" @("--soak", "120", "--soak-location", "validation/field/radeon-crash-2026-09-21.fdn", "--window", "1676x1360") `
+            "the field crash view with its reference truncated to 655: the escaped-reference storm (~2.5 min)"
+    }
+    finally {
+        Remove-Item Env:FRACTADYNE_REF_ESCAPE_AT -ErrorAction SilentlyContinue
+    }
+}
+else {
+    Write-Host "-> skipping regime (-Quick)" -ForegroundColor DarkGray
+}
+
 # --- harvest the app's own evidence -------------------------------------------------------------
 $log = Join-Path $cfg "logs\fractadyne.log"
 if (Test-Path $log) { Copy-Item $log (Join-Path $dir "app.log") -Force }
@@ -455,6 +476,10 @@ recordtest   Must pass everywhere: 0 pass, 2 RED, 3 VACUOUS (nothing exercised -
              every other step is green. The frames/ folder holds each step's own record.
 screen       Captures only: 0 = three dives captured, 2 = not. The verdict is screengate.py's
              (blank / flat / flash / stale, median of three), run on the developer's machine.
+regime       The view that lost the RX 6800 XT (2026-09-21) with its reference truncated to 655
+             samples: the escaped-reference storm. 0 = entered and survived; 2 = the frame budget
+             never came down across 8+ slow frames (the field signature), or liveness, memory or a
+             crash report failed; 3 = the regime was never entered, so surviving proves nothing.
 
 Send back the whole folder (or the .zip beside it).
 "@ | Out-File $sum -Encoding utf8 -Append
