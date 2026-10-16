@@ -28,6 +28,10 @@
 //! | `--autodive` | [`autodive`] | the autopilot's dive driven unpaced, to hammer the frame-cost controller |
 //! | `--replay` | [`replay`] | every decision a `FRACTADYNE_RECORD_DECIDE` recording holds, recomputed and compared |
 //! | `--farmtest` | `crate::farm::farmtest` (file `harness/farm/farmtest.rs`) | the render farm end to end on one machine |
+//! | `--oomtest` | [`oomtest`] | a real allocation failure, to prove the out-of-memory path writes a crash report |
+//!
+//! [`banner`] is the LIVE TEST banner a harness-driven window wears (`--test-banner`,
+//! `--no-test-banner`).
 //!
 //! [`verdict`] is the exit-code convention the gating harnesses share: 0 PASS, 2 RED, 3 VACUOUS
 //! (the experiment did not run), 4 WATCHDOG. A run whose own log breaks a `--logcheck` rule turns
@@ -44,10 +48,12 @@
 //! The decision recorder `--replay` reads (`FRACTADYNE_RECORD_DECIDE`, in `render/decide.rs`)
 //! stays with the product: the live path writes it, and a field session is diagnosed with it.
 //!
-//! Two files here stay modules of the functional code they need the private parts of, attached
-//! with `#[path]`: `harness/render/selfcheck.rs` is `crate::render::selfcheck` (the self-test's
-//! and the UI test's ways into the live reference pipeline), and `harness/farm/farmtest.rs` is
-//! `crate::farm::farmtest`.
+//! Files under `harness/<path>/` stay modules of the functional file `src/<path>.rs` whose private
+//! parts they need, attached with `#[path]` from it: `harness/render/selfcheck.rs` is
+//! `crate::render::selfcheck` (the self-test's and the UI test's ways into the live reference
+//! pipeline), `harness/farm/farmtest.rs` is `crate::farm::farmtest`, and
+//! `harness/ui/{farm_client,farm_controller,tour_render}/uitest_seed.rs` fill those windows with
+//! the state `--uitest` photographs.
 //!
 //! **Where the product calls in.** `scripts/check_test_layout.py` holds each functional file to the
 //! number of times it names `harness::` (HARNESS_HOOKS), so a new call into a harness is a decision,
@@ -62,6 +68,7 @@
 //!   ([`profile::ProfSetup`], `FractadyneApp::prof`).
 
 pub(crate) mod autodive;
+pub(crate) mod banner;
 pub(crate) mod bench_bignum;
 pub(crate) mod bench_matrix;
 pub(crate) mod chunksweep;
@@ -74,6 +81,7 @@ pub(crate) mod livetest;
 pub(crate) mod logcheck;
 pub(crate) mod modes;
 pub(crate) mod motiontest;
+pub(crate) mod oomtest;
 pub(crate) mod pickcheck;
 pub(crate) mod profile;
 pub(crate) mod recordtest;

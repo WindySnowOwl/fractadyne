@@ -250,13 +250,7 @@ fn main() -> eframe::Result<()> {
     // which is the whole reason this machinery exists, and waiting for a genuine OOM means waiting
     // for the deep reference build to die again.
     if args.iter().any(|a| a == "--oomtest") {
-        diag::breadcrumb("oomtest: requesting an impossible allocation".into());
-        let n = usize::MAX / 2;
-        // Deliberately unsatisfiable: the allocator returns null, `ReportingAlloc` reports, and
-        // the runtime aborts on it exactly as a real exhaustion would.
-        let v: Vec<u8> = Vec::with_capacity(n);
-        std::hint::black_box(&v);
-        crate::exit(0);
+        harness::oomtest::run();
     }
     // A task run says what it is and what it runs under, in the log, before anything can fail: the
     // line `--logcheck` needs to tell a harness that never started, or never reached its verdict
@@ -2489,25 +2483,6 @@ fn ema(prev: f64, sample: f64) -> f64 {
     }
 }
 
-/// Zoom-appropriate iteration cap. A very high manual iteration count over-resolves the
-/// boundary's sub-pixel "dust" into per-pixel noise (and starves the render budget); this
-/// caps the count at a generous, zoom-scaled value so normal auto-iteration is never
-/// limited but an inflated base is. Used for both the live view and exports so they match.
-/// Zoom-appropriate iteration cap from the zoom **octaves** (`log2(magnification)`), taken
-/// directly so it stays finite past 1e308× where `magnification()` saturates to `∞`.
-/// Whether to paint the LIVE TEST banner: on by default for a windowed harness run
-/// (`launched_for_a_task`), with `--no-test-banner` overriding off and `--test-banner` overriding
-/// on. `force_off` wins over `force_on`, so a script that sets both gets the safe (hidden) result.
-pub(crate) fn test_banner_on(launched_for_a_task: bool, force_on: bool, force_off: bool) -> bool {
-    if force_off {
-        false
-    } else if force_on {
-        true
-    } else {
-        launched_for_a_task
-    }
-}
-
 /// Microseconds since the first call — a process-wide monotonic clock that a GPU completion
 /// callback (any thread) and the frame loop can both read, for pricing a pass by its real
 /// completion time (`Perf::pin_done_at`).
@@ -2517,6 +2492,12 @@ pub(crate) fn app_micros() -> u64 {
     START.get_or_init(std::time::Instant::now).elapsed().as_micros() as u64
 }
 
+/// Zoom-appropriate iteration cap. A very high manual iteration count over-resolves the
+/// boundary's sub-pixel "dust" into per-pixel noise (and starves the render budget); this
+/// caps the count at a generous, zoom-scaled value so normal auto-iteration is never
+/// limited but an inflated base is. Used for both the live view and exports so they match.
+/// Zoom-appropriate iteration cap from the zoom **octaves** (`log2(magnification)`), taken
+/// directly so it stays finite past 1e308× where `magnification()` saturates to `∞`.
 pub(crate) fn zoom_iter_cap(octaves: f64) -> u32 {
     let o = octaves.max(0.0);
     (ZOOM_ITER_BASE + o * ZOOM_ITER_PER_OCTAVE).min(u32::MAX as f64) as u32
@@ -6901,7 +6882,7 @@ impl FractadyneApp {
         let test_banner = {
             let force_on = args.iter().any(|a| a == "--test-banner");
             let force_off = args.iter().any(|a| a == "--no-test-banner");
-            test_banner_on(launched_for_a_task, force_on, force_off).then(|| {
+            harness::banner::test_banner_on(launched_for_a_task, force_on, force_off).then(|| {
                 // A best-effort specific mode name; the "LIVE TEST" umbrella already distinguishes a
                 // harness window from an interactive one, so an unmatched task is simply "harness".
                 if livetest.is_some() { "livetest" }

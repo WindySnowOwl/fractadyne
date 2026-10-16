@@ -1,4 +1,5 @@
 use super::*;
+use crate::harness::banner::test_banner_on;
 
 // Reference-length collapse trigger (crash-1786506241): a long orbit collapsing to a short
 // ESCAPED one must derate the budget; the smooth paths must never trip it. Pure-predicate
