@@ -175,6 +175,14 @@ ARMS = [
         "expect": r"no logs directory, so no frames\.bin",
     },
     {
+        # The record-cost limit at 1 ppm of a 60 Hz frame: over in the first window, re-measured,
+        # over in the second. Proves the near-miss re-measure still lets the check go red.
+        "gate": "recordtest", "name": "recordtest/cost-both-windows",
+        "args": ["--recordtest"], "extra": ["--set", "RECORD_COST_PPM=1"],
+        "sabotage": None, "why": "--set RECORD_COST_PPM=1 (every emit is over the limit)",
+        "expect": r"p99 costs [0-9.]+% of a 60 Hz frame \(limit [0-9.]+%\), in both windows",
+    },
+    {
         # A SCRIPT gate, in a copy of exactly the files it reads (it resolves everything from its
         # own location): one row's enforcer renamed to a test that does not exist.
         "gate": "checklist_coverage.py", "name": "checklist/broken-claim", "kind": "script",

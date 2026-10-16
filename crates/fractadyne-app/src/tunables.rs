@@ -67,6 +67,8 @@ pub(crate) struct Cost {
     pub tdr_grow_max: f64,
     pub tdr_shrink_max: f64,
     pub tdr_lethal_ms: f64,
+    /// `--recordtest`'s limit on the record's own p99 cost (`RECORD_COST_PPM_DEFAULT`).
+    pub record_cost_ppm: f64,
     pub tdr_bootstrap_steps: u64,
     pub tdr_bootstrap_ms: f64,
     pub mode_rate_unknown_margin: f64,
@@ -141,6 +143,7 @@ impl Default for Cost {
             tdr_grow_max: TDR_GROW_MAX_DEFAULT,
             tdr_shrink_max: TDR_SHRINK_MAX_DEFAULT,
             tdr_lethal_ms: TDR_LETHAL_MS_DEFAULT,
+            record_cost_ppm: RECORD_COST_PPM_DEFAULT,
             tdr_bootstrap_steps: TDR_BOOTSTRAP_STEPS_DEFAULT,
             tdr_bootstrap_ms: TDR_BOOTSTRAP_MS_DEFAULT,
             mode_rate_unknown_margin: MODE_RATE_UNKNOWN_MARGIN_DEFAULT,
@@ -297,6 +300,15 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
             "TDR_GROW_MAX" => { let p = c.tdr_grow_max; c.tdr_grow_max = f()?; p.to_string() }
             "TDR_SHRINK_MAX" => { let p = c.tdr_shrink_max; c.tdr_shrink_max = f()?; p.to_string() }
             "TDR_LETHAL_MS" => { let p = c.tdr_lethal_ms; c.tdr_lethal_ms = f()?; p.to_string() }
+            "RECORD_COST_PPM" => {
+                let p = c.record_cost_ppm;
+                let v = f()?;
+                if !(v > 0.0) {
+                    return Err(format!("--set RECORD_COST_PPM: '{raw}' is not a positive share (parts per million of a 60 Hz frame)"));
+                }
+                c.record_cost_ppm = v;
+                p.to_string()
+            }
             "BLA_EPS" => {
                 let p = c.bla_eps;
                 let v = f()?;
@@ -583,7 +595,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, MOTION_NEED_SOURCE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
-    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_PASS_MS";
+    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_PASS_MS, RECORD_COST_PPM";
 
 #[cfg(test)]
 mod override_tests;
@@ -691,6 +703,12 @@ pub(crate) const TDR_SHRINK_MAX_DEFAULT: f64 = 0.5;
 /// `TDR_MIN_STEPS`. Overshooting into a frame that is too small is cheap and self-correcting
 /// (the next reading grows it back at ×1.5); overshooting into the watchdog is not.
 pub(crate) const TDR_LETHAL_MS_DEFAULT: f64 = 900.0;
+
+/// `--recordtest`'s limit on the frame record's own cost: its p99 per-frame emit, as parts per
+/// million of a 60 Hz frame (5,000 = the design's 0.5%, W1). A tunable only so that the meta-gate can
+/// drive the cost check red for its own reason (`scripts/gate_selfcheck.py`); a run under it is not
+/// stock, so it can never PASS.
+pub(crate) const RECORD_COST_PPM_DEFAULT: f64 = 5000.0;
 
 /// Cost of the very first frame in a mode, before any measurement exists — the OPENING GUESS, not a
 /// floor. Everything above it is measured, not assumed.

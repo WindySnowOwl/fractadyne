@@ -29,8 +29,10 @@
 //!     rows than elapsed seconds, summaries counting frames that were never recorded, or no event
 //!     row at all (the wedge guarantees a slow frame and a stall); its writer thread not answering
 //!     a flush, or dropping a row;
-//!   * **cost** — the record's p99 per-frame cost exceeds 0.5% of a 60 Hz frame (with the logs on
-//!     a network share an excess is VACUOUS instead: that measures the share, not the record);
+//!   * **cost** — the record's p99 per-frame cost exceeds 0.5% of a 60 Hz frame in two windows
+//!     running: a first-window excess is re-measured over [`REMEASURE_FRAMES`] more frames, so a
+//!     few preempted frames cannot fail it (with the logs on a network share an excess is VACUOUS
+//!     instead: that measures the share, not the record);
 //!   * **log budget** — any log category ran above 10 lines/s over a 5 s window (design W10);
 //!   * a crash report appears during the run.
 //!
@@ -78,6 +80,43 @@ pub(crate) struct RecordTest {
     child: Option<(Child, PathBuf)>,
     crashes_at_start: Vec<String>,
     started: Instant,
+    /// The frame a second cost window began at, when the first window's p99 was over the limit
+    /// (see [`REMEASURE_FRAMES`]).
+    remeasure_from: Option<u64>,
+}
+
+/// Frames in the second window a near miss on the record's cost is re-measured over. p99 of the
+/// first window's ~240 emits is its third-largest sample, so two or three frames the OS preempted
+/// decide it: on the RX 6800 XT that read 0.511% once in eighteen runs (usually 0.36–0.48%, the
+/// limit 0.5%; 2026-10-15, dev.22). Preemption is random, so a second window rarely repeats it,
+/// while a record that really costs too much is over in both: the check fails only then.
+const REMEASURE_FRAMES: u64 = 240;
+
+/// The emit costs (µs) of records past frame `after` (all from the second record on, when `None`),
+/// sorted. A record carries the previous frame's emit, so the records after frame `R` hold the
+/// emits of frames from `R` on.
+fn emit_costs(recs: &[FrameRecord], after: Option<u64>) -> Vec<f32> {
+    let mut c: Vec<f32> = recs
+        .iter()
+        .filter(|r| r.seq >= 2 && after.is_none_or(|a| r.frame > a))
+        .map(|r| r.rec_us)
+        .filter(|u| *u > 0.0)
+        .collect();
+    c.sort_by(f32::total_cmp);
+    c
+}
+
+/// A sorted sample's `p` quantile (nearest rank).
+fn quantile(v: &[f32], p: f64) -> f32 {
+    v.get(((v.len() as f64 - 1.0) * p).round() as usize).copied().unwrap_or(0.0)
+}
+
+/// The cost limit as a share of a 60 Hz frame, and a p99 (µs) as that share.
+fn cost_share(p99_us: f32) -> f64 {
+    p99_us as f64 / 1000.0 / (1000.0 / 60.0)
+}
+fn cost_limit() -> f64 {
+    crate::tunables::cost().record_cost_ppm / 1e6
 }
 
 impl RecordTest {
@@ -93,6 +132,7 @@ impl RecordTest {
             child: None,
             crashes_at_start: crate::diag::crash_report_names(),
             started: Instant::now(),
+            remeasure_from: None,
         }
     }
 }
@@ -177,8 +217,23 @@ impl crate::FractadyneApp {
         }
 
         if t.seen >= t.frames && t.abort_after.is_none() {
-            let code = self.recordtest_finish(&mut t, this_frame);
-            crate::exit(code);
+            // A near miss on the record's cost is re-measured over a second window before anything
+            // is judged (see `REMEASURE_FRAMES`). Not with the logs on a network share: there an
+            // excess is VACUOUS whatever the second window says.
+            let remote = crate::diag::logs_dir().as_deref().is_some_and(crate::diag::is_network_path);
+            let first = emit_costs(&frame_record::snapshot(), None);
+            if t.remeasure_from.is_none() && !remote && !first.is_empty() && cost_share(quantile(&first, 0.99)) > cost_limit() {
+                eprintln!(
+                    "[recordtest] the record's p99 cost is over the limit in the first window ({:.3}% of a 60 Hz frame): \
+                     re-measuring over {REMEASURE_FRAMES} more frames",
+                    cost_share(quantile(&first, 0.99)) * 100.0
+                );
+                t.remeasure_from = Some(this_frame);
+                t.frames += REMEASURE_FRAMES;
+            } else {
+                let code = self.recordtest_finish(&mut t, this_frame);
+                crate::exit(code);
+            }
         }
         self.harness.recordtest = Some(t);
     }
@@ -631,7 +686,6 @@ impl crate::FractadyneApp {
         // trip per `frames.jsonl` flush (that file now has its own thread). A cost within the limit
         // on a share is a pass (a local disk is cheaper); an excess there cannot say what a user's
         // local disk costs, so it is VACUOUS, not a failure.
-        const REFERENCE_FRAME_MS: f64 = 1000.0 / 60.0;
         let logs = crate::diag::logs_dir();
         let logs_remote = logs.as_deref().is_some_and(crate::diag::is_network_path);
         let mut cost_unjudged: Option<String> = None;
@@ -644,17 +698,19 @@ impl crate::FractadyneApp {
         }
         let by_seq = |s: u64| recs.iter().find(|r| r.seq == s).map(|r| r.rec_us);
         let first_emit = by_seq(1);
-        let mut cost: Vec<f32> = recs.iter().filter(|r| r.seq >= 2).map(|r| r.rec_us).filter(|u| *u > 0.0).collect();
+        // The run's emits; and, when a near miss was re-measured, the second window's alone, which
+        // is what the limit is then held to (`REMEASURE_FRAMES`).
+        let cost = emit_costs(&recs, None);
+        let second = t.remeasure_from.map(|r| emit_costs(&recs, Some(r)));
         let mut dts: Vec<f64> = v0.iter().map(|r| r.last_dt_ms).filter(|d| *d > 0.0).collect();
-        cost.sort_by(f32::total_cmp);
         dts.sort_by(f64::total_cmp);
-        let pct = |v: &[f32], p: f64| v.get(((v.len() as f64 - 1.0) * p).round() as usize).copied().unwrap_or(0.0);
-        if cost.is_empty() || dts.is_empty() {
+        let limit = cost_limit();
+        if cost.is_empty() || dts.is_empty() || second.as_ref().is_some_and(|s| s.is_empty()) {
             fails.push("no emit cost or frame interval was recorded".into());
         } else {
-            let (p50, p99, max) = (pct(&cost, 0.5), pct(&cost, 0.99), *cost.last().unwrap());
+            let (p50, p99, max) = (quantile(&cost, 0.5), quantile(&cost, 0.99), *cost.last().unwrap());
             let median_dt = dts[dts.len() / 2];
-            let share = p99 as f64 / 1000.0 / REFERENCE_FRAME_MS;
+            let mut share = cost_share(p99);
             notes.push(format!(
                 "record cost per frame: p50 {p50:.1} µs, p99 {p99:.1} µs, max {max:.1} µs — p99 is {:.3}% of a 60 Hz frame \
                  ({:.2}% of this run's uncapped median of {median_dt:.2} ms); first emit (opens frames.bin) {:.0} µs",
@@ -662,8 +718,25 @@ impl crate::FractadyneApp {
                 p50 as f64 / 10.0 / median_dt,
                 first_emit.unwrap_or(0.0)
             ));
-            if share > 0.005 {
-                let why = format!("the record's p99 costs {:.2}% of a 60 Hz frame (limit 0.5%)", share * 100.0);
+            if let Some(s) = &second {
+                let (s50, s99, smax) = (quantile(s, 0.5), quantile(s, 0.99), *s.last().unwrap());
+                share = cost_share(s99);
+                notes.push(format!(
+                    "record cost re-measured over {} emits after the first window's p99 was over the limit: p50 {s50:.1} µs, \
+                     p99 {s99:.1} µs, max {smax:.1} µs — p99 is {:.3}% of a 60 Hz frame ({})",
+                    s.len(),
+                    share * 100.0,
+                    if share > limit { "over again: the record costs too much" } else { "within: the first window was preempted" }
+                ));
+            }
+            if share > limit {
+                let why = format!(
+                    "the record's p99 costs {:.2}% of a 60 Hz frame (limit {:.prec$}%){}",
+                    share * 100.0,
+                    limit * 100.0,
+                    if second.is_some() { ", in both windows" } else { "" },
+                    prec = if limit >= 1e-4 { 2 } else { 4 },
+                );
                 if logs_remote {
                     cost_unjudged = Some(format!(
                         "{why}, but the logs are on a network share, so that is the share's cost — \
