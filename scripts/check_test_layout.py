@@ -56,11 +56,9 @@ HARNESS_HOOKS = {
     # FractadyneApp (type, initialiser, doc), and the windowed harness flags' parsing in new_state
     # (phase 4 moves the parsing out).
     'crates/fractadyne-app/src/main.rs': 40,
-    # the headless dispatch: --torture, --logcheck, --gputest, one call per developer mode, and
-    # RenderCli's --glitch-audit kind.
-    'crates/fractadyne-app/src/cli.rs': 10,
-    # --replay's regime accumulator (phase 4 moves --replay out).
-    'crates/fractadyne-app/src/render/decide.rs': 1,
+    # the headless dispatch: --torture, --logcheck, --gputest, --replay, one call per developer
+    # mode, and RenderCli's --glitch-audit kind.
+    'crates/fractadyne-app/src/cli.rs': 11,
     # the export-request builder records the profiler's setup timings.
     'crates/fractadyne-app/src/render.rs': 1,
 }

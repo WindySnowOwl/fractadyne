@@ -1,4 +1,5 @@
 use super::*;
+use crate::harness::replay::{fixture_coverage, replay_lines, REPLAY_MIN_DECISIONS};
 
 fn moving() -> MovingInputs {
     MovingInputs {

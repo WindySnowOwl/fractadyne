@@ -171,7 +171,7 @@ pub(crate) fn run_headless(args: &[String]) -> bool {
     // recorded one (design/live-render-robustness.md §5.4, W5). CPU only; exit 0 = identical.
     if let Some(pos) = args.iter().position(|a| a == "--replay") {
         match args.get(pos + 1).filter(|a| !a.starts_with('-')) {
-            Some(path) => crate::render::decide::run_replay(path),
+            Some(path) => crate::harness::replay::run_replay(path),
             None => {
                 eprintln!("--replay: name the recording (a FRACTADYNE_RECORD_DECIDE .jsonl)");
                 crate::exit(2);

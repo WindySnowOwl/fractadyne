@@ -9268,7 +9268,7 @@ zoom = \"1e94\"
         // §6.7 escaped-reference regime (the soak's predicate over the recordings' regime lines).
         // CPU only. A missing directory is a FAIL, never a silent skip.
         if want("replay") {
-            use crate::render::decide::{fixture_coverage, replay_lines, REPLAY_MIN_DECISIONS};
+            use crate::harness::replay::{fixture_coverage, replay_lines, REPLAY_MIN_DECISIONS};
             let dir = anchored("validation/replays");
             let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
                 .map(|rd| {

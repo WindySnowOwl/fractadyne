@@ -26,6 +26,7 @@
 //! | `--logcheck` | [`logcheck`] | a session's log against `validation/logcheck-rules.toml` |
 //! | `--shot` | [`shot`] | the site screenshot, regenerated from a saved location |
 //! | `--autodive` | [`autodive`] | the autopilot's dive driven unpaced, to hammer the frame-cost controller |
+//! | `--replay` | [`replay`] | every decision a `FRACTADYNE_RECORD_DECIDE` recording holds, recomputed and compared |
 //! | `--farmtest` | `crate::farm::farmtest` (file `harness/farm/farmtest.rs`) | the render farm end to end on one machine |
 //!
 //! [`verdict`] is the exit-code convention the gating harnesses share: 0 PASS, 2 RED, 3 VACUOUS
@@ -40,8 +41,8 @@
 //! [`modes`] holds the windowed harnesses' state, the per-frame hooks `update()` runs for them
 //! (`harness_frame_hooks`), and the mode ladder's harness branches (`harness_ladder`).
 //!
-//! Still in a functional file until phase 4 moves them: `--replay` and the decision recorder
-//! (`render/decide.rs`).
+//! The decision recorder `--replay` reads (`FRACTADYNE_RECORD_DECIDE`, in `render/decide.rs`)
+//! stays with the product: the live path writes it, and a field session is diagnosed with it.
 //!
 //! **Where the product calls in.** `scripts/check_test_layout.py` holds each functional file to the
 //! number of times it names `harness::` (HARNESS_HOOKS), so a new call into a harness is a decision,
@@ -72,6 +73,7 @@ pub(crate) mod pickcheck;
 pub(crate) mod profile;
 pub(crate) mod recordtest;
 pub(crate) mod refdiag;
+pub(crate) mod replay;
 pub(crate) mod reusetest;
 pub(crate) mod selftest;
 pub(crate) mod shot;
