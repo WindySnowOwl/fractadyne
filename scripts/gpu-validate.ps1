@@ -450,7 +450,7 @@ livetest     Self-contained: compares the live view against an offline render on
              at 4x the iteration ask resolves what the screen left black, and the app did not say
              why). Exit 2 = drift, 3 = nothing judged.
 uitest       Screenshots for eyeballing. The deep floatexp band is WARN-not-FAIL by design.
-recordtest   Must pass everywhere: 0 pass, 1 fail, 2 VACUOUS (nothing exercised - not a pass). The
+recordtest   Must pass everywhere: 0 pass, 2 RED, 3 VACUOUS (nothing exercised - not a pass). The
              per-frame record is what diagnoses the next crash, so a failure here matters even if
              every other step is green. The frames/ folder holds each step's own record.
 screen       Captures only: 0 = three dives captured, 2 = not. The verdict is screengate.py's

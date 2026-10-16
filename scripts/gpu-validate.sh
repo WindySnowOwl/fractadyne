@@ -24,6 +24,8 @@
 #
 # Produces  validate-<label>-<timestamp>/  with summary.txt, system.txt, adapter.txt,
 # 00-build-id.txt, 01-gputest.txt .. 06-uitest.txt, app.log and crash/ - plus a .tar.gz beside it.
+# Exits 0 when every step did what gpu-validate-expected.json declares for this card, 2 when one
+# did not (named in summary.txt), 3 when nothing could be judged - as gpu-validate.ps1.
 
 set -uo pipefail   # NOT -e: a failing step is data; the battery must continue.
 
@@ -144,6 +146,7 @@ step() {
   if [ "$code" -eq 0 ]; then echo -e "   \033[1;32mexit $code in ${secs}s\033[0m"
   else echo -e "   \033[1;31mexit $code in ${secs}s\033[0m"; fi
   SUMMARY_ROWS="${SUMMARY_ROWS}$(printf '%-14s %6s %8s  %s\n' "$name" "$code" "${secs}s" "$file")"$'\n'
+  printf '%s\t%s\t%s\n' "$name" "$code" "$file" >> "$DIR/.steps.tsv"   # what the verdict judges
 }
 
 # --- step 00: WHICH binary is this? ----------------------------------------------------------------
@@ -186,6 +189,7 @@ build_id_step() {
   if [ "$code" -eq 0 ]; then echo -e "   \033[1;32m$(grep '^verdict' "$DIR/00-build-id.txt" | sed 's/^verdict : //')\033[0m"
   else echo -e "   \033[1;31m$(grep '^verdict' "$DIR/00-build-id.txt" | sed 's/^verdict : //')\033[0m"; fi
   SUMMARY_ROWS="${SUMMARY_ROWS}$(printf '%-14s %6s %8s  %s\n' "build-id" "$code" "$((t1 - t0))s" "00-build-id.txt")"$'\n'
+  printf '%s\t%s\t%s\n' "build-id" "$code" "00-build-id.txt" >> "$DIR/.steps.tsv"
 }
 build_id_step
 
@@ -273,12 +277,99 @@ livetest     Self-contained: live view vs an offline render on THIS machine, so 
              the iteration ask resolves what the screen left black, and the app did not say why).
              Exit 2 = drift, 3 = nothing judged.
 uitest       Screenshots for eyeballing. The deep floatexp band is WARN-not-FAIL by design.
-recordtest   Must pass everywhere: 0 pass, 1 fail, 2 VACUOUS (nothing exercised - not a pass). The
+recordtest   Must pass everywhere: 0 pass, 2 RED, 3 VACUOUS (nothing exercised - not a pass). The
              per-frame record is what diagnoses the next crash. frames/ holds each step's record.
+verdict      The battery's own judgement, below: each step's exit code (and, for a step known to
+             fail, which checks failed) against what gpu-validate-expected.json declares for this
+             card. Exit 0 = all as declared, 2 = something UNEXPECTED (named), 3 = not judged. A
+             card under Linux has its own name (RADV adds the chip: "...-radv-navi21"), so it is
+             judged by the defaults until its own entry is declared.
 
 Send back the whole folder (or the .tar.gz beside it).
 EOF
 } > "$DIR/summary.txt"
+
+
+
+# --- verdict: every step against gpu-validate-expected.json ----------------------------------------
+# The mirror of gpu-validate.ps1's verdict (see there): each card's expected exits, and where a step is
+# known to fail WHICH checks, are declared in gpu-validate-expected.json beside this script; anything
+# else is named here and makes the battery exit 2. A missing or unreadable file, or no Python to read
+# it, judges nothing and exits 3. Lines are indented, as there.
+VERDICT_CODE=3
+VERDICT_TEXT="  NOT JUDGED: no python3 to read gpu-validate-expected.json, so no exit code was checked.
+  VERDICT: NOT JUDGED"
+# The first interpreter that RUNS: a `python3` on PATH can be a stub that only prints how to install one.
+PY=""
+for c in python3 python; do
+  if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import json' >/dev/null 2>&1; then PY="$c"; break; fi
+done
+if [ -n "$PY" ]; then
+  VERDICT_TEXT="$("$PY" - "$HERE/gpu-validate-expected.json" "$DIR" <<'PYJUDGE'
+import json, re, sys
+exp_path, bundle = sys.argv[1], sys.argv[2]
+slug = ""
+try:
+    for l in open(bundle + "/adapter.txt", encoding="utf-8", errors="replace"):
+        m = re.search(r"adapter:\s*([^\u00b7]+?)\s*\u00b7", l)
+        if m:
+            slug = re.sub(r"[^a-z0-9]+", "-", m.group(1).lower()).strip("-")
+            break
+except OSError:
+    pass
+lines, code = [], 0
+try:
+    exp = json.load(open(exp_path, encoding="utf-8-sig"))
+except (OSError, ValueError):
+    exp = None
+if not exp:
+    code = 3
+    lines.append("  NOT JUDGED: %s is missing or unreadable, so no step's exit code was checked." % exp_path)
+else:
+    card = exp.get("adapters", {}).get(slug) if slug else None
+    note = "" if card else " (not in the file: judged by its defaults)"
+    lines.append("  card: %s%s" % (slug or "(no adapter line in the log)", note))
+    for row in open(bundle + "/.steps.tsv", encoding="utf-8"):
+        step, ex, f = row.rstrip("\n").split("\t")
+        ex = int(ex)
+        rule = (card or {}).get(step) or exp.get("default", {}).get(step)
+        allowed = [int(a) for a in rule["exit"]] if rule else [0]
+        problem = ""
+        if ex not in allowed:
+            problem = "exit %d, expected %s" % (ex, " or ".join(str(a) for a in allowed))
+            if ex == 0:
+                problem += " - it now PASSES: update gpu-validate-expected.json"
+        elif ex != 0 and rule and rule.get("known_fails"):
+            try:
+                text = open(bundle + "/" + f, encoding="utf-8", errors="replace").read().splitlines()
+            except OSError:
+                text = []
+            fails = [m.group(1).strip() for m in (re.match(r"^\s*\[FAIL\]\s+(.+)$", l) for l in text) if m]
+            new = [x for x in fails if not any(x.startswith(k) for k in rule["known_fails"])]
+            if not fails:
+                problem = "exit %d with no [FAIL] line to hold against the known failures" % ex
+            elif new:
+                problem = "NEW failure(s): " + "; ".join(new)
+        if problem:
+            code = 2
+            lines.append("  UNEXPECTED   %-13s %s" % (step, problem))
+        else:
+            lines.append("  as expected  %-13s exit %d" % (step, ex))
+word = {0: "PASS - every step did what gpu-validate-expected.json declares for this card",
+        2: "FAIL - a step did not do what gpu-validate-expected.json declares (UNEXPECTED above)"}.get(code, "NOT JUDGED")
+print("\n".join(lines + ["  VERDICT: " + word]))
+sys.exit(code)
+PYJUDGE
+)"
+  VERDICT_CODE=$?
+fi
+{
+  echo
+  echo "Verdict (gpu-validate-expected.json)"
+  echo "------------------------------------"
+  echo "$VERDICT_TEXT"
+} >> "$DIR/summary.txt"
+rm -f "$DIR/.steps.tsv"
 
 tar -czf "$DIR.tar.gz" -C "$(dirname "$DIR")" "$(basename "$DIR")" 2>/dev/null || \
   echo "  (tar failed; send the folder itself)"
@@ -302,4 +393,6 @@ printf '%s' "$SUMMARY_ROWS" | awk '{printf "%-14s %6s %8s\n", $1, $2, $3}'
 echo "bundle : $BUNDLE"
 [ -f "$BUNDLE.tar.gz" ] && echo "tar    : $BUNDLE.tar.gz"
 echo
+echo "$VERDICT_TEXT"
 say "Read summary.txt first - it explains which failures are expected off the reference card."
+exit "$VERDICT_CODE"

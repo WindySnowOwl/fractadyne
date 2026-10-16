@@ -1356,6 +1356,24 @@ fn the_battery_ships_and_declares_what_it_expects_of_every_step() {
         let rule = &exp["default"][s.as_str()];
         assert!(rule["exit"].as_array().is_some_and(|a| !a.is_empty()), "no default expectation for step {s}");
     }
+    // The Linux battery judges itself the same way (W8): it reads the same file, every step it
+    // records is declared, and its exit is the verdict's.
+    let linux = include_str!("../../../scripts/gpu-validate.sh");
+    assert!(linux.contains("\"$HERE/gpu-validate-expected.json\""), "gpu-validate.sh does not read the expected file");
+    assert!(linux.trim_end().ends_with("exit \"$VERDICT_CODE\""), "gpu-validate.sh does not exit with its verdict");
+    let mut linux_steps: Vec<&str> = vec!["build-id"];
+    for (i, _) in linux.match_indices("\nstep \"").chain(linux.match_indices("  step \"")) {
+        let rest = &linux[i..];
+        let rest = &rest[rest.find('"').unwrap() + 1..];
+        let name = &rest[..rest.find('"').unwrap()];
+        if !linux_steps.contains(&name) {
+            linux_steps.push(name);
+        }
+    }
+    assert!(linux_steps.len() >= 8, "read {linux_steps:?} from gpu-validate.sh: the scan is not finding its steps");
+    for s in &linux_steps {
+        assert!(steps.iter().any(|w| w == s), "gpu-validate.sh runs {s}, which gpu-validate.ps1 does not");
+    }
     // Card keys are what the battery derives from the adapter line (the app's own slug), and every
     // rule names a step the battery runs.
     for (card, rules) in exp["adapters"].as_object().expect("adapters") {
