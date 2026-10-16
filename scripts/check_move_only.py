@@ -19,7 +19,12 @@ dropping the lines a move legitimately adds or removes: blank lines, `#[cfg(test
   move cannot reorder code inside a block or splice a line into it.
 
 `--rewrite OLD NEW` (two arguments: either may contain `=`) substitutes on the removed side first,
-in the order given, for a mechanical change that comes with the move (a module path). Binary files must move byte-identical. A move commit carries nothing
+in the order given, for a mechanical change that comes with the move (a module path);
+`--rewrite-re REGEX REPL` does the same with a regular expression; `--in PATH` after either limits
+it to lines removed from that file (repo-relative, `/`). Describe what the move's script did, no
+more: a rewrite broader than the change it stands for can turn a line nobody touched into a
+mismatch, or hide an edit. (On Git Bash, a leading `/` in an argument is rewritten into a Windows
+path: set MSYS_NO_PATHCONV=1.) Binary files must move byte-identical. A move commit carries nothing
 else: a content change, however small, goes in a commit of its own.
 
 Exit 0 a pure move, 1 not (with the lines that break it). Standard library only.
@@ -85,17 +90,22 @@ def binary_moves(base, head, cwd=None):
 
 
 def check(base, head, rewrites=(), cwd=None):
-    """Problems that make base..head more than a move (empty: a pure move)."""
-    def norm(line, sign):
+    """Problems that make base..head more than a move (empty: a pure move). A rewrite is
+    (OLD, NEW) or (kind, OLD, NEW, scope): kind 'str' (substring) or 're' (regex), scope a path the
+    removed line's file must equal, or None for every file."""
+    rules = [('str', r[0], r[1], None) if len(r) == 2 else r for r in rewrites]
+
+    def norm(line, sign, path):
         s = line.strip()
         if sign == '-':
-            for old, new in rewrites:
-                s = s.replace(old, new)
+            for kind, old, new, scope in rules:
+                if scope is None or scope == path:
+                    s = re.sub(old, new, s) if kind == 're' else s.replace(old, new)
         return s
 
     removed, added = [], []
     for path, sign, lines in diff_runs(base, head, cwd):
-        kept = [norm(l, sign) for l in lines]
+        kept = [norm(l, sign, path) for l in lines]
         kept = [s for s in kept if s and not STRUCTURAL.fullmatch(s)]
         if kept:
             (removed if sign == '-' else added).append((path, kept))
@@ -141,6 +151,12 @@ def selfcheck():
          (('use super::*;', 'use crate::moved::*;'),), True),
         ('a rewrite whose text holds "="', {'src/a.rs': decl, 'tests/unit/a/tests.rs': body.replace('let x = f();', 'let x = crate::moved::f();')},
          (('let x = f();', 'let x = crate::moved::f();'),), True),
+        ('a regex rewrite', {'src/a.rs': decl, 'tests/unit/a/tests.rs': body.replace('let x = f();', 'let x = crate::moved::f();')},
+         (('re', r'(?<![\w:])f\(\)', 'crate::moved::f()', 'src/a.rs'),), False),  # also rewrites `f(), 1`
+        ('a rewrite scoped to the file it happened in', {'src/a.rs': decl, 'tests/unit/a/tests.rs': body.replace('let x = f();', 'let x = crate::moved::f();')},
+         (('re', r'let x = f\(\);', 'let x = crate::moved::f();', 'src/a.rs'),), True),
+        ('a rewrite scoped to another file', {'src/a.rs': decl, 'tests/unit/a/tests.rs': body.replace('let x = f();', 'let x = crate::moved::f();')},
+         (('str', 'let x = f();', 'let x = crate::moved::f();', 'src/b.rs'),), False),
     ]
     failures = 0
     for name, files, rewrites, want_pure in cases:
@@ -172,12 +188,20 @@ def main(argv):
         return selfcheck()
     rewrites, rng, each, i = [], 'HEAD~1..HEAD', False, 0
     while i < len(argv):
-        if argv[i] == '--rewrite':
+        if argv[i] in ('--rewrite', '--rewrite-re'):
             if i + 2 >= len(argv) or not argv[i + 1]:
-                print('check_move_only: --rewrite takes two arguments, OLD (not empty) and NEW')
+                print(f'check_move_only: {argv[i]} takes two arguments, OLD (not empty) and NEW')
                 return 2
-            rewrites.append((argv[i + 1], argv[i + 2]))
+            rewrites.append(('re' if argv[i] == '--rewrite-re' else 'str', argv[i + 1], argv[i + 2], None))
             i += 3
+            continue
+        if argv[i] == '--in':
+            if not rewrites or i + 1 >= len(argv):
+                print('check_move_only: --in PATH follows a --rewrite or --rewrite-re')
+                return 2
+            kind, old, new, _ = rewrites[-1]
+            rewrites[-1] = (kind, old, new, argv[i + 1])
+            i += 2
             continue
         if argv[i] == '--each':
             each = True
