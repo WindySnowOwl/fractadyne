@@ -69,6 +69,8 @@ pub(crate) struct Cost {
     pub tdr_lethal_ms: f64,
     /// `--recordtest`'s limit on the record's own p99 cost (`RECORD_COST_PPM_DEFAULT`).
     pub record_cost_ppm: f64,
+    /// §5.8's reference fitness (`REUSE_MAX_WRAPS_DEFAULT`; 0 = off).
+    pub reuse_max_wraps: f64,
     pub tdr_bootstrap_steps: u64,
     pub tdr_bootstrap_ms: f64,
     pub mode_rate_unknown_margin: f64,
@@ -144,6 +146,7 @@ impl Default for Cost {
             tdr_shrink_max: TDR_SHRINK_MAX_DEFAULT,
             tdr_lethal_ms: TDR_LETHAL_MS_DEFAULT,
             record_cost_ppm: RECORD_COST_PPM_DEFAULT,
+            reuse_max_wraps: REUSE_MAX_WRAPS_DEFAULT,
             tdr_bootstrap_steps: TDR_BOOTSTRAP_STEPS_DEFAULT,
             tdr_bootstrap_ms: TDR_BOOTSTRAP_MS_DEFAULT,
             mode_rate_unknown_margin: MODE_RATE_UNKNOWN_MARGIN_DEFAULT,
@@ -300,6 +303,17 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
             "TDR_GROW_MAX" => { let p = c.tdr_grow_max; c.tdr_grow_max = f()?; p.to_string() }
             "TDR_SHRINK_MAX" => { let p = c.tdr_shrink_max; c.tdr_shrink_max = f()?; p.to_string() }
             "TDR_LETHAL_MS" => { let p = c.tdr_lethal_ms; c.tdr_lethal_ms = f()?; p.to_string() }
+            "REUSE_MAX_WRAPS" => {
+                let p = c.reuse_max_wraps;
+                let v = f()?;
+                // 0 is off; a positive value is how many times the ask may run past an escaped
+                // orbit's end. Below 1 would refuse an escaped orbit the ask does not even reach.
+                if !(v == 0.0 || v >= 1.0) {
+                    return Err(format!("--set REUSE_MAX_WRAPS: '{raw}' is not 0 (off) or a wrap count of at least 1"));
+                }
+                c.reuse_max_wraps = v;
+                p.to_string()
+            }
             "RECORD_COST_PPM" => {
                 let p = c.record_cost_ppm;
                 let v = f()?;
@@ -595,7 +609,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, MOTION_NEED_SOURCE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
-    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_PASS_MS, RECORD_COST_PPM";
+    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS";
 
 #[cfg(test)]
 mod override_tests;
@@ -709,6 +723,15 @@ pub(crate) const TDR_LETHAL_MS_DEFAULT: f64 = 900.0;
 /// drive the cost check red for its own reason (`scripts/gate_selfcheck.py`); a run under it is not
 /// stock, so it can never PASS.
 pub(crate) const RECORD_COST_PPM_DEFAULT: f64 = 5000.0;
+
+/// §5.8 REFERENCE FITNESS (W9; design/live-render-robustness.md): refuse to reuse an ESCAPED
+/// reference — live or from the disk cache — when the iteration ask runs more than this many times
+/// past its end, so a fresh pick replaces it. The 2026-09-21 field loss reused an orbit that escaped
+/// at 655 against an ask of 4,627: 7.06 wraps, every pixel rebasing past the end ~7 times.
+/// ⭐**0 = OFF, the default.** It changes which reference a view gets, so it flips on only when the
+/// grand tour's reference-rebuild rate stays within 10% of beta.112, the goldens are byte-identical
+/// and `--bench-matrix` shows no algorithmic drift.
+pub(crate) const REUSE_MAX_WRAPS_DEFAULT: f64 = 0.0;
 
 /// Cost of the very first frame in a mode, before any measurement exists — the OPENING GUESS, not a
 /// floor. Everything above it is measured, not assumed.

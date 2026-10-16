@@ -915,8 +915,17 @@ fn cache_best(inp: &RecomputeInputs) -> Option<(std::path::PathBuf, u32)> {
     if !crate::refcache_persist::enabled() || inp.custom.is_some() {
         return None;
     }
-    let fits = |point: &[fractadyne_core::BigFloat; 2], prec: usize| reuse_drift(inp, point, prec);
+    let fits = |h: &orbit_blob::Header| cache_fit(inp, h);
     crate::refcache_persist::find(&crate::refcache_persist::Query { key: orbit_key_for(inp), fits: &fits }).map(|h| (h.path, h.orbit_len))
+}
+
+/// The disk cache's admissibility test for `inp`, shared by every lookup: the entry's fitness for
+/// the ask (`reuse_fit`; on disk a complete orbit is an escaped one) and its drift (`reuse_drift`).
+fn cache_fit(inp: &RecomputeInputs, h: &orbit_blob::Header) -> Option<f64> {
+    if !reuse_fit(inp.gpu_iter, h.orbit_len, !h.partial, crate::tunables::cost().reuse_max_wraps) {
+        return None;
+    }
+    reuse_drift(inp, &h.point, h.prec)
 }
 
 /// Wait for a reference building on another thread, stamping liveness once a second (`diag::alive`):
@@ -1165,6 +1174,18 @@ fn reuse_drift(inp: &RecomputeInputs, point: &[fractadyne_core::BigFloat; 2], pr
     Some(dx.abs().max(dy.abs()))
 }
 
+/// §5.8 REFERENCE FITNESS: may an orbit of `orbit_len` samples serve an iteration `ask`? An ESCAPED
+/// orbit ends where the reference escaped, so every pixel the ask runs past it rebases off it again
+/// and again; past `max_wraps` (`REUSE_MAX_WRAPS`, 0 = off) it is refused and a fresh pick replaces
+/// it. A partial orbit is extended and a periodic one wraps by design, so neither is refused.
+///
+/// ⭐The live reuse passes `tail.escaped`; the disk cache passes `!partial`, which on disk means the
+/// same thing because `orbit_blob::encode` never writes a periodic orbit (pinned by
+/// `a_cached_complete_orbit_is_an_escaped_one`). One predicate for both, as `reuse_drift` is.
+pub(crate) fn reuse_fit(ask: u32, orbit_len: u32, escaped: bool, max_wraps: f64) -> bool {
+    max_wraps <= 0.0 || !escaped || ask as f64 <= max_wraps * orbit_len as f64
+}
+
 /// Look for an orbit on disk this build could reuse. `None` when the cache is off, holds nothing
 /// admissible, or the chosen entry failed to verify (in which case it has been removed).
 fn orbit_cache_lookup(inp: &RecomputeInputs, key: orbit_blob::OrbitKey) -> Option<ReuseRef> {
@@ -1172,7 +1193,7 @@ fn orbit_cache_lookup(inp: &RecomputeInputs, key: orbit_blob::OrbitKey) -> Optio
         return None;
     }
     let t = Instant::now();
-    let fits = |point: &[fractadyne_core::BigFloat; 2], prec: usize| reuse_drift(inp, point, prec);
+    let fits = |h: &orbit_blob::Header| cache_fit(inp, h);
     let hit = crate::refcache_persist::find(&crate::refcache_persist::Query { key, fits: &fits })?;
     let decoded = crate::refcache_persist::load(&hit.path);
     // The index said `len`/`prec`; the rest comes from the file itself, once it has verified.
@@ -1608,6 +1629,22 @@ fn try_reuse_reference(inp: &RecomputeInputs) -> Option<RecomputeResult> {
     // depth; the caller already gated on `!out_of_view`, but this snapshot could in principle
     // lag). ⭐The same test the disk lookup selects by — see `reuse_drift`.
     reuse_drift(inp, &reuse.point, reuse.prec)?;
+    // §5.8: an escaped orbit the ask runs too many times past is refused, so a fresh pick replaces it
+    // (off unless REUSE_MAX_WRAPS is set). The disk lookup applies the same `reuse_fit`.
+    let wraps = crate::tunables::cost().reuse_max_wraps;
+    if !reuse_fit(inp.gpu_iter, reuse.prefix.len() as u32, reuse.tail.escaped, wraps) {
+        crate::diag::log_line(
+            "ref",
+            &format!(
+                "reuse REFUSED [{}]: escaped orbit len={} against ask={} ({:.1} wraps, REUSE_MAX_WRAPS {wraps}) - a fresh pick replaces it",
+                inp.origin,
+                reuse.prefix.len(),
+                inp.gpu_iter,
+                inp.gpu_iter as f64 / reuse.prefix.len().max(1) as f64
+            ),
+        );
+        return None;
+    }
     let t = Instant::now();
     let (cx0, cy0) = if inp.julia {
         (

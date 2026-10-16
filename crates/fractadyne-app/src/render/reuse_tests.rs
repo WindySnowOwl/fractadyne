@@ -164,3 +164,45 @@ fn live_orbit_cap_never_truncates_the_installed_orbit() {
     // re-anchor on the way out must not rebuild the deepest orbit the session ever held.
     assert_eq!(live_orbit_cap(true, 400_000, 4_000_000), 400_000);
 }
+
+/// §5.8 on the field's numbers: the 2026-09-21 RX 6800 XT session reused an orbit that escaped at
+/// 655 against an ask of 4,627 (7.06 wraps). Off (0) it is kept; at 7 wraps it is refused; at 8 it is
+/// kept. A partial (extendable) or periodic orbit is never refused, whatever the ask.
+#[test]
+fn reference_fitness_refuses_an_escaped_orbit_the_ask_wraps_past() {
+    assert!(reuse_fit(4_627, 655, true, 0.0), "off by default: the escaped orbit is reused as-is");
+    assert!(!reuse_fit(4_627, 655, true, 7.0), "7.06 wraps against a limit of 7: refused");
+    assert!(reuse_fit(4_627, 655, true, 8.0), "within 8 wraps: kept");
+    assert!(reuse_fit(4_585, 655, true, 7.0), "exactly 7 wraps: kept");
+    assert!(reuse_fit(1_000_000, 655, false, 7.0), "not escaped (partial or periodic): never refused");
+}
+
+/// `try_reuse_reference` judges a real reuse by its own prefix length and escape flag. (The tunable
+/// is process-wide, set once at startup, so a unit test cannot switch the refusal on; this checks
+/// the predicate on a real reuse's inputs, and `--set REUSE_MAX_WRAPS` exercises the path itself.
+/// The gate test above shows the escaped orbit reused as-is while it is off.)
+#[test]
+fn a_real_escaped_reuse_is_judged_by_its_length_and_escape() {
+    let a = recompute_worker(inputs_for(SX, SY, L2, 3000, None));
+    let mut tail = a.orbit_tail.clone().expect("tail");
+    tail.escaped = true;
+    let reuse = ReuseRef { point: a.rp.clone(), prefix: a.orbit.clone(), tail, prec: a.prec };
+    let ask = (a.orbit_len as f64 * 7.5) as u32;
+    assert!(!reuse_fit(ask, reuse.prefix.len() as u32, reuse.tail.escaped, 7.0), "7.5 wraps past a 7-wrap limit");
+    assert!(reuse_fit(ask, reuse.prefix.len() as u32, reuse.tail.escaped, 8.0));
+}
+
+/// ⭐Why the disk cache may test `!partial` where the live reuse tests `escaped`: `encode` never
+/// writes a periodic orbit, so a complete orbit on disk is an escaped one. If encode ever wrote one,
+/// the cache would refuse periodic orbits that wrap by design (§5.8's rule would be wrong there).
+#[test]
+fn a_cached_complete_orbit_is_an_escaped_one() {
+    let a = recompute_worker(inputs_for(SX, SY, L2, 3000, None));
+    let key = orbit_blob::OrbitKey { formula_id: 0, julia: false, julia_c: [0.0, 0.0], backend: 0 };
+    assert!(orbit_blob::encode(&a, key).is_some(), "a plain orbit is written");
+    let mut periodic = a.clone();
+    if let Some(t) = periodic.orbit_tail.as_mut() {
+        t.period = Some(fractadyne_core::OrbitPeriod { period: 7, log2_z: -60.0, log2_d: 10.0 });
+    }
+    assert!(orbit_blob::encode(&periodic, key).is_none(), "a periodic orbit must never be written to the cache");
+}

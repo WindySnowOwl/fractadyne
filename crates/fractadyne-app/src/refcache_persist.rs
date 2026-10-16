@@ -40,7 +40,6 @@ use std::sync::Mutex;
 use std::time::SystemTime;
 
 use crate::render::orbit_blob::{self, DecodedOrbit, Header, OrbitKey};
-use fractadyne_core::BigFloat;
 
 /// Directory under the config dir.
 pub(crate) const DIR_NAME: &str = "orbits";
@@ -71,7 +70,10 @@ impl Entry {
 /// given a candidate's point and build precision, the drift in spans if it may be reused.
 pub(crate) struct Query<'a> {
     pub(crate) key: OrbitKey,
-    pub(crate) fits: &'a dyn Fn(&[BigFloat; 2], usize) -> Option<f64>,
+    /// The caller's admissibility test over an entry's header: its drift in spans when the entry
+    /// may be reused, `None` when not. The header carries the point and precision (`reuse_drift`)
+    /// and the orbit's length and completeness (`reuse_fit`, §5.8).
+    pub(crate) fits: &'a dyn Fn(&Header) -> Option<f64>,
 }
 
 /// A lookup's verdict, for the trace line and the gate.
@@ -262,7 +264,7 @@ pub(crate) fn find(q: &Query) -> Option<Hit> {
             continue;
         }
         candidates += 1;
-        let Some(drift) = (q.fits)(&e.header.point, e.header.prec) else { continue };
+        let Some(drift) = (q.fits)(&e.header) else { continue };
         let better = match best {
             None => true,
             Some((b, bd)) => {

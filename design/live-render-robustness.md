@@ -4984,13 +4984,19 @@ ladder, RED on the budget stall.**
 - `queue-sat` waits on `EXTRA_GPU_LOAD` (above). `click-jump-deep` has no specification beyond its
   name.
 
-*§5.8 (reference fitness): a gap in the design, found before writing it.*
-- The refusal is written as "`!partial && ask > REUSE_MAX_WRAPS * orbit_len`". But a COMPLETE
-  reference is either escaped or periodic, and a periodic one wraps by design: that is what makes
-  it cheap. The test must be on *escaped*.
-- The live reuse knows that (`tail.escaped`). The disk cache's header does not: it carries
-  `partial` and `iter` only. So the cache cannot select by the same predicate the reuse refuses
-  by, which §5.8's own rule forbids ("a cache entry can never be selected by one rule and refused
-  by another").
-- Closing it means an `escaped` field in the orbit blob (`VERSION` 5 → 6). Old files are refused
-  by version, so every existing cache is invalidated once and rebuilt on demand. The user's call.
+*§5.8 (reference fitness): the wrap-count refusal, behind `REUSE_MAX_WRAPS` (default 0, off).*
+- The design writes the refusal as "`!partial && ask > REUSE_MAX_WRAPS * orbit_len`". But a
+  COMPLETE reference is either escaped or periodic, and a periodic one wraps by design: that is what
+  makes it cheap. The test is on *escaped*, as `reuse_fit(ask, orbit_len, escaped, max_wraps)`.
+- I first told the user the disk cache could not express *escaped* (its header has `partial`, not
+  `escaped`) and offered a format change. **That was wrong:** `orbit_blob::encode` never writes a
+  periodic orbit, so a complete orbit on disk IS an escaped one. The cache passes `!partial` to the
+  same predicate, with no format change and no cache invalidation. Test
+  `a_cached_complete_orbit_is_an_escaped_one` pins it: encode refuses a periodic orbit.
+- One predicate for every path: the live reuse (`try_reuse_reference`, logging `reuse REFUSED`) and
+  both disk lookups (`cache_fit`, shared by `orbit_cache_lookup` and `cache_best`, which says it
+  chooses "as the build's own lookup would"). The cache's `Query::fits` now takes the whole header.
+- On the field's numbers (655 against 4,627 = 7.06 wraps): refused at 7, kept at 8, kept when off.
+- Not yet built: the fitness-ranked cache, install identity by fitness, and the per-frame install
+  derate. The design says the refusal is shippable alone; the derate is not, without the tunable.
+  The flip conditions are unmeasured.
