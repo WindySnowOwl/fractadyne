@@ -67,6 +67,10 @@ pub(crate) struct Cost {
     pub tdr_grow_max: f64,
     pub tdr_shrink_max: f64,
     pub tdr_lethal_ms: f64,
+    /// `--recordtest`'s limit on the record's own p99 cost (`RECORD_COST_PPM_DEFAULT`).
+    pub record_cost_ppm: f64,
+    /// §5.8's reference fitness (`REUSE_MAX_WRAPS_DEFAULT`; 0 = off).
+    pub reuse_max_wraps: f64,
     pub tdr_bootstrap_steps: u64,
     pub tdr_bootstrap_ms: f64,
     pub mode_rate_unknown_margin: f64,
@@ -141,6 +145,8 @@ impl Default for Cost {
             tdr_grow_max: TDR_GROW_MAX_DEFAULT,
             tdr_shrink_max: TDR_SHRINK_MAX_DEFAULT,
             tdr_lethal_ms: TDR_LETHAL_MS_DEFAULT,
+            record_cost_ppm: RECORD_COST_PPM_DEFAULT,
+            reuse_max_wraps: REUSE_MAX_WRAPS_DEFAULT,
             tdr_bootstrap_steps: TDR_BOOTSTRAP_STEPS_DEFAULT,
             tdr_bootstrap_ms: TDR_BOOTSTRAP_MS_DEFAULT,
             mode_rate_unknown_margin: MODE_RATE_UNKNOWN_MARGIN_DEFAULT,
@@ -297,6 +303,26 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
             "TDR_GROW_MAX" => { let p = c.tdr_grow_max; c.tdr_grow_max = f()?; p.to_string() }
             "TDR_SHRINK_MAX" => { let p = c.tdr_shrink_max; c.tdr_shrink_max = f()?; p.to_string() }
             "TDR_LETHAL_MS" => { let p = c.tdr_lethal_ms; c.tdr_lethal_ms = f()?; p.to_string() }
+            "REUSE_MAX_WRAPS" => {
+                let p = c.reuse_max_wraps;
+                let v = f()?;
+                // 0 is off; a positive value is how many times the ask may run past an escaped
+                // orbit's end. Below 1 would refuse an escaped orbit the ask does not even reach.
+                if !(v == 0.0 || v >= 1.0) {
+                    return Err(format!("--set REUSE_MAX_WRAPS: '{raw}' is not 0 (off) or a wrap count of at least 1"));
+                }
+                c.reuse_max_wraps = v;
+                p.to_string()
+            }
+            "RECORD_COST_PPM" => {
+                let p = c.record_cost_ppm;
+                let v = f()?;
+                if !(v > 0.0) {
+                    return Err(format!("--set RECORD_COST_PPM: '{raw}' is not a positive share (parts per million of a 60 Hz frame)"));
+                }
+                c.record_cost_ppm = v;
+                p.to_string()
+            }
             "BLA_EPS" => {
                 let p = c.bla_eps;
                 let v = f()?;
@@ -583,7 +609,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, MOTION_NEED_SOURCE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
-    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_PASS_MS";
+    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS";
 
 #[cfg(test)]
 mod override_tests;
@@ -691,6 +717,21 @@ pub(crate) const TDR_SHRINK_MAX_DEFAULT: f64 = 0.5;
 /// `TDR_MIN_STEPS`. Overshooting into a frame that is too small is cheap and self-correcting
 /// (the next reading grows it back at ×1.5); overshooting into the watchdog is not.
 pub(crate) const TDR_LETHAL_MS_DEFAULT: f64 = 900.0;
+
+/// `--recordtest`'s limit on the frame record's own cost: its p99 per-frame emit, as parts per
+/// million of a 60 Hz frame (5,000 = the design's 0.5%, W1). A tunable only so that the meta-gate can
+/// drive the cost check red for its own reason (`scripts/gate_selfcheck.py`); a run under it is not
+/// stock, so it can never PASS.
+pub(crate) const RECORD_COST_PPM_DEFAULT: f64 = 5000.0;
+
+/// §5.8 REFERENCE FITNESS (W9; design/live-render-robustness.md): refuse to reuse an ESCAPED
+/// reference — live or from the disk cache — when the iteration ask runs more than this many times
+/// past its end, so a fresh pick replaces it. The 2026-09-21 field loss reused an orbit that escaped
+/// at 655 against an ask of 4,627: 7.06 wraps, every pixel rebasing past the end ~7 times.
+/// ⭐**0 = OFF, the default.** It changes which reference a view gets, so it flips on only when the
+/// grand tour's reference-rebuild rate stays within 10% of beta.112, the goldens are byte-identical
+/// and `--bench-matrix` shows no algorithmic drift.
+pub(crate) const REUSE_MAX_WRAPS_DEFAULT: f64 = 0.0;
 
 /// Cost of the very first frame in a mode, before any measurement exists — the OPENING GUESS, not a
 /// floor. Everything above it is measured, not assumed.
@@ -1317,8 +1358,19 @@ pub(crate) const PIN_PASS_FRAMES: u32 = 2;
 /// must not wedge the pin).
 pub(crate) const PIN_PRICE_WAIT_FRAMES: u64 = 5;
 
-/// Pin passes allowed in the GPU queue at once: ONE, each priced (by its GPU reading if one lands
-/// first, otherwise by its completion stamp, `render::pin_pass_priceable`) before the next goes.
+/// Pin passes allowed in the GPU queue at once on a device that gives GPU timestamps: TWO, each
+/// priced by the reading that names its dispatch frame (`WalkLedger::late`, the deferred feed);
+/// one where the completion stamp is the only price ([`pin_inflight_max`]).
+///
+/// ⭐**Two again, now that both are priced (W8 rung 1d, 2026-10-15).** One in flight (below) bought
+/// "every pass priced", but it is a pass every two frames on both cards, and on the RX 6800 XT,
+/// whose passes are dearer, the pins fell behind: a 1x glide on the (49,3) spiral adopted 130–144
+/// refreshes against beta.18's 290–314 and the screen lagged 0.84–0.94 octaves against 0.24–0.27.
+/// Two in flight restored beta.18's figures there, and on the RTX 3080 the same glide lagged 0.20
+/// against 0.29–0.33 octaves — but the motiontest adopted 13–20 against 42–45, because each new pass
+/// overwrote the record of the one before it and only 26 passes were priced across 70 pins. So the
+/// record no longer is overwritten: a pass still in flight when the next goes out is parked and
+/// priced by its own reading.
 ///
 /// ⚠It was two, on the evidence that strict serialization made a pass every third frame and at
 /// 4.0× a 60k-iteration refresh outlived the 2-octave drift abandon. That was before a pass could
@@ -1330,7 +1382,17 @@ pub(crate) const PIN_PRICE_WAIT_FRAMES: u64 = 5;
 /// frame on screen lags the view 0.11 against 0.30 octaves (worst 1.5× against 2.1× magnified)
 /// with twice the pinned refreshes adopted; at 4.0× it lags 0.55–0.65 against 0.77–0.89 octaves
 /// with as many adopted. Fewer passes are dispatched, so the GPU does less for it.
-pub(crate) const PIN_INFLIGHT_MAX: u32 = 1;
+pub(crate) const PIN_INFLIGHT_MAX: u32 = 2;
+
+/// [`PIN_INFLIGHT_MAX`] where the device gives GPU timestamps; one where it does not, since there a
+/// pass is priced by its completion, which two in flight would rarely let it see alone.
+pub(crate) fn pin_inflight_max(timestamps: bool) -> u32 {
+    if timestamps {
+        PIN_INFLIGHT_MAX
+    } else {
+        1
+    }
+}
 
 /// Wall time after which a pin pass still "in flight" is deemed complete, microseconds. The
 /// completion callback is registered in `update`; a headless harness (`--livetest`,

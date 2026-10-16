@@ -1238,6 +1238,10 @@ pub(crate) struct SelftestCli {
     pub(crate) filter: Option<String>,
     pub(crate) list: bool,
     pub(crate) bless: bool,
+    /// `--bless-new-adapter`: let `--bless` on a card other than the one
+    /// `validation/golden/BLESSED-GPU.txt` names overwrite the REFERENCE set, moving the release
+    /// gate's reference adapter (W8). Without it, such a bless writes that card's own set.
+    pub(crate) bless_new_adapter: bool,
 }
 
 /// `--profile` mode state (the profiling harness: benchmark regions -> logs/).
@@ -1557,8 +1561,8 @@ impl crate::FractadyneApp {
         }
 
         // CLI headless live-OUTPUT harness: play a tour through the live pipeline and validate the
-        // frames it puts on screen against offline renders of the same views, exit non-zero on a
-        // failing checkpoint (so it can gate a release the way the selftest does).
+        // frames it puts on screen against offline renders of the same views; exits by
+        // `crate::verdict` (2 drift from the blessed baseline, 3 nothing judged).
         if let Some(tour) = self.harness.livetest.clone() {
             if let Some((dev, q)) = gpu {
                 let (w, h) = self.tour_size_or(960, 540);
@@ -1568,9 +1572,9 @@ impl crate::FractadyneApp {
                     .clone()
                     .unwrap_or_else(|| std::path::PathBuf::from("logs"));
                 let seg = self.render_cli.tour_cfg.segment.clone();
-                let fails =
+                let code =
                     self.run_livetest(dev, q, &tour, seg.as_deref(), [w, h], &out, self.harness.livetest_quick);
-                crate::exit(if fails > 0 { 1 } else { 0 });
+                crate::exit(code);
             }
         }
 

@@ -63,6 +63,79 @@ const GOLDEN_MEAN_STRICT: f64 = 2.0;
 /// the report always prints the numbers so a human can judge.
 const GOLDEN_MEAN_CROSS_GPU: f64 = 24.0;
 
+/// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
+/// them — each costs minutes, not milliseconds. Which means a full run never runs them either: it
+/// says so at its end (`opt_in_not_run`), and the release checklist requires each to have been run
+/// once per release (its Release gates rows, `run:--selftest-filter NAME`). Every `opt_in("…")` in
+/// this file must be named here (`every_opt_in_group_is_registered`).
+pub(crate) const OPT_IN_GROUPS: &[(&str, &str)] = &[
+    (
+        "deep-location",
+        "the deepest tracked location (9.98e60205×) — ~9 HOURS: a ~200,000-bit orbit to a 2,000,000 ask",
+    ),
+    (
+        "fe-df32-probe",
+        "diagnostic: where df32 and floatexp disagree, which one a bignum oracle sides with (~1 min)",
+    ),
+];
+
+/// The golden set that judges a card, and how (W8, per-card sets).
+///
+/// The goldens are exact on the card that blessed them and only cross-GPU-tolerant elsewhere, so a
+/// card compared against another card's images can never go red on a few wrong pixels — and the
+/// card that fails was exactly the one judged loosely. A card may therefore have its OWN set,
+/// `validation/golden/<adapter slug>/`, whose `BLESSED-GPU.txt` names it; the set in
+/// `validation/golden/` itself stays the REFERENCE card's (the release gate's, declared in
+/// `scripts/release_checklist.py`), and the only set the release packages ship.
+#[derive(Debug, PartialEq)]
+struct GoldenSet {
+    /// Where this card's goldens are read from.
+    dir: std::path::PathBuf,
+    /// Compared at the strict tolerance (this card blessed `dir`).
+    strict: bool,
+    /// `dir` is this card's own set, not the reference.
+    own: bool,
+}
+
+fn marker_names(dir: &std::path::Path, gpu: &str) -> Option<bool> {
+    let g = std::fs::read_to_string(dir.join("BLESSED-GPU.txt")).ok()?;
+    let g = g.trim();
+    (!g.is_empty()).then(|| g == gpu.trim())
+}
+
+/// The set that judges `gpu` under `golden` (the reference folder): its own set when one exists,
+/// else the reference set — strict when the reference was blessed on this card, and also when its
+/// marker is absent (a missing file must never silently loosen the gate).
+fn golden_set_in(golden: &std::path::Path, gpu: &str) -> GoldenSet {
+    let own = golden.join(crate::calibration::slug(gpu));
+    if marker_names(&own, gpu) == Some(true) {
+        return GoldenSet { dir: own, strict: true, own: true };
+    }
+    GoldenSet { dir: golden.to_path_buf(), strict: marker_names(golden, gpu) != Some(false), own: false }
+}
+
+/// Where `--bless` on `gpu` writes. Blessing on the reference card (or before any bless) writes
+/// the reference set; on any other card it writes that card's OWN set, which moves nothing. Only
+/// `--bless-new-adapter` overwrites the reference set from another card — that MOVES the release
+/// gate's reference adapter, so it takes the flag, and `scripts/checklist_coverage.py` holds the
+/// marker to the checklist's declared `REFERENCE_ADAPTER`.
+fn bless_dir_in(golden: &std::path::Path, gpu: &str, new_adapter: bool) -> std::path::PathBuf {
+    if new_adapter || marker_names(golden, gpu) != Some(false) {
+        golden.to_path_buf()
+    } else {
+        golden.join(crate::calibration::slug(gpu))
+    }
+}
+
+/// The opt-in groups a run with this `--selftest-filter` does NOT run (the rule `opt_in` applies).
+fn opt_in_not_run(filter: Option<&str>) -> Vec<&'static str> {
+    OPT_IN_GROUPS
+        .iter()
+        .map(|(g, _)| *g)
+        .filter(|g| !filter.is_some_and(|f| g.to_ascii_lowercase().contains(f)))
+        .collect()
+}
+
 /// Per-channel 8-bit image difference: `(max abs, mean abs)`. Mismatched sizes → worst.
 fn img_diff(a: &[u8], b: &[u8]) -> (u32, f64) {
     if a.len() != b.len() || a.is_empty() {
@@ -504,18 +577,6 @@ impl FractadyneApp {
             "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance",
             "checklist", "replay", "settings-quarantine",
         ];
-        /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` above so a bare
-        /// `--selftest` never pays for them — each costs minutes, not milliseconds.
-        const OPT_IN_GROUPS: &[(&str, &str)] = &[
-            (
-                "deep-location",
-                "the deepest tracked location (9.98e60205×) — ~9 HOURS: a ~200,000-bit orbit to a 2,000,000 ask",
-            ),
-            (
-                "fe-df32-probe",
-                "diagnostic: where df32 and floatexp disagree, which one a bignum oracle sides with (~1 min)",
-            ),
-        ];
         if self.selftest.list {
             println!("selftest groups (use with --selftest-filter <substr>):");
             for g in GROUPS {
@@ -526,6 +587,23 @@ impl FractadyneApp {
                 println!("  {g}  — {why}");
             }
             crate::exit(0);
+        }
+        // Say where a bless will write BEFORE spending the suite on it (`bless_dir_in`).
+        if self.selftest.bless {
+            let golden = anchored("validation/golden");
+            let to = bless_dir_in(&golden, &self.gpu_name, self.selftest.bless_new_adapter);
+            eprintln!(
+                "[selftest] --bless on {} writes {}{}",
+                self.gpu_name,
+                to.display(),
+                if to == golden && marker_names(&golden, &self.gpu_name) == Some(false) {
+                    " — MOVING the reference set to this card (--bless-new-adapter)"
+                } else if to != golden {
+                    " — this card's own set (the reference set is untouched)"
+                } else {
+                    ""
+                }
+            );
         }
         // (A filter that runs ZERO checks is rejected AFTER the suite — see the guard just
         // before the report is written. Doing it post-hoc matches on what actually ran, so
@@ -7352,14 +7430,14 @@ impl FractadyneApp {
             let floor = crate::tunables::cost().tdr_min_steps;
             self.perf.fe_budget[0] = floor;
             self.perf.retreat_last[0] = None;
-            self.apply_iterate_measurement(0, lethal_ms, floor, "wall_iterate");
+            self.apply_iterate_measurement(0, lethal_ms, floor, "wall_iterate", crate::ReadShape::default());
             let at_floor = self.perf.retreat_last[0];
             let logged = crate::diag::recent_log(256 * 1024)
                 .is_some_and(|l| l.contains("RETREAT REACHED NOTHING"));
             let big: u64 = 10_000_000_000;
             self.perf.fe_budget[0] = big;
             self.perf.retreat_last[0] = None;
-            self.apply_iterate_measurement(0, lethal_ms, big, "wall_iterate");
+            self.apply_iterate_measurement(0, lethal_ms, big, "wall_iterate", crate::ReadShape::default());
             let control = self.perf.retreat_last[0];
             self.perf.fe_budget = saved.0;
             self.perf.fe_budget_ok = saved.1;
@@ -10041,8 +10119,14 @@ zoom = \"1e94\"
         // --out pointed away from validation/. The `current/` side-by-side renders still go by --out.
         // `anchored` (D2.6) finds the repo tree when the suite runs from another directory.
         let golden_dir = anchored("validation/golden");
+        // Per card (W8): the set that judges this card, and where a bless writes.
+        let golden_set = golden_set_in(&golden_dir, &self.gpu_name);
+        let bless_dir = bless_dir_in(&golden_dir, &self.gpu_name, self.selftest.bless_new_adapter);
         let current_dir = out_base.join("current");
         let _ = std::fs::create_dir_all(&golden_dir);
+        if bless {
+            let _ = std::fs::create_dir_all(&bless_dir);
+        }
         if !bless {
             let _ = std::fs::create_dir_all(&current_dir);
         }
@@ -10160,13 +10244,21 @@ zoom = \"1e94\"
         // Are we on the card these goldens were blessed on? An ABSENT marker means strict — a
         // missing file must never silently loosen the release gate; it only ever loosens when we
         // positively know the hardware differs. (Goldens blessed before this file existed simply
-        // stay strict until the next --bless, which is the safe direction.)
+        // stay strict until the next --bless, which is the safe direction.) A card with its own set
+        // is strict against it (`golden_set_in`).
         let blessed_gpu = std::fs::read_to_string(golden_dir.join("BLESSED-GPU.txt"))
             .ok()
             .map(|s| s.trim().to_string());
-        let cross_gpu = blessed_gpu
-            .as_deref()
-            .is_some_and(|g| g != self.gpu_name.trim());
+        let cross_gpu = !golden_set.strict;
+        if !bless && golden_set.own {
+            eprintln!(
+                concat!(
+                    "[selftest] goldens: this card's own set, {} (strict); a golden missing from it is ",
+                    "compared against the reference set's with the cross-GPU tolerance."
+                ),
+                golden_set.dir.display()
+            );
+        }
         if !bless {
             if let Some(g) = &blessed_gpu {
                 if cross_gpu {
@@ -10252,17 +10344,25 @@ zoom = \"1e94\"
                     // fails on the conversion rather than on the render.
                     let srgb = fractadyne_export::to_srgb8_dithered(&r.pixels, r.width);
                     let sum = fnv1a64(&srgb);
-                    let png_path = golden_dir.join(format!("{name}.png"));
                     if bless {
+                        let png_path = bless_dir.join(format!("{name}.png"));
                         let _ = fractadyne_export::write_png(&png_path, r.width, r.height, &r.pixels, Some(&reproduce));
                         goldens.push((name.to_string(), 0, 0.0, sum, true, reproduce, ""));
                         // Record WHICH GPU blessed these, so a later run on different hardware can
                         // tell "this is a different card" from "this is broken" and widen its
                         // tolerance accordingly. Written once per bless, beside the images.
-                        let _ = std::fs::write(golden_dir.join("BLESSED-GPU.txt"), &self.gpu_name);
+                        let _ = std::fs::write(bless_dir.join("BLESSED-GPU.txt"), &self.gpu_name);
                     } else {
                         let cur_path = current_dir.join(format!("{name}.png"));
                         let _ = fractadyne_export::write_png(&cur_path, r.width, r.height, &r.pixels, Some(&reproduce));
+                        // This card's own golden when its set has one; a golden added since the set
+                        // was blessed falls back to the reference image, judged cross-GPU.
+                        let own_png = golden_set.dir.join(format!("{name}.png"));
+                        let (png_path, cross) = if golden_set.own && !own_png.exists() {
+                            (golden_dir.join(format!("{name}.png")), true)
+                        } else {
+                            (own_png, cross_gpu)
+                        };
                         match fractadyne_export::read_png_rgba8(&png_path) {
                             Ok((w, h, gpx)) if w == r.width && h == r.height => {
                                 let (max, mean) = img_diff(&srgb, &gpx);
@@ -10270,7 +10370,7 @@ zoom = \"1e94\"
                                 // compare on the mean alone against the cross-GPU threshold — see
                                 // the constants for why maxΔ carries no signal off-reference, and
                                 // label the row so a pass is never mistaken for an exact match.
-                                let (pass, status) = if cross_gpu {
+                                let (pass, status) = if cross {
                                     (mean <= GOLDEN_MEAN_CROSS_GPU, "CROSS-GPU")
                                 } else {
                                     (max <= GOLDEN_MAX_STRICT && mean <= GOLDEN_MEAN_STRICT, "")
@@ -10306,8 +10406,9 @@ zoom = \"1e94\"
         // executed work trips it here. Runs LAST: it dirties render config (fractal / coloring /
         // deep zoom) and nothing after needs the clean hermetic state.
         if want("bench-matrix") {
-            let base = anchored("benchmarks/bench-matrix-baseline.json");
-            for mc in self.bench_matrix_selftest_checks(device, queue, &base) {
+            // This card's own baseline when it has one (exact), else the reference card's
+            // (informational) — see `bench_matrix_selftest_checks`.
+            for mc in self.bench_matrix_selftest_checks(device, queue) {
                 push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "bench-matrix",
                     name: mc.name,
@@ -10403,7 +10504,7 @@ zoom = \"1e94\"
         md.push_str(&format!("## Golden images ({gw}×{gh})\n\n"));
         md.push_str(&format!(
             "Stored in `{}`. {} pixel tolerance: max ≤ 10, mean ≤ 2.0 (8-bit sRGB).\n\n",
-            golden_dir.display(),
+            if bless { bless_dir.display() } else { golden_set.dir.display() },
             if bless { "Recorded this run." } else { "Compared against; current renders written to `current/` for side-by-side review." }
         ));
         md.push_str("| Image | Max Δ | Mean Δ | Checksum (FNV-1a) | Verdict | Reproduce |\n");
@@ -10411,6 +10512,9 @@ zoom = \"1e94\"
         for g in &goldens {
             let verdict = if bless {
                 "📷 recorded"
+            } else if g.4 && g.6 == "CROSS-GPU" {
+                // A pass on the loose mean against another card's image is not a match.
+                "✅ within the cross-GPU tolerance"
             } else if g.4 {
                 "✅ match"
             } else if !g.6.is_empty() {
@@ -10429,6 +10533,21 @@ zoom = \"1e94\"
             if bless { "recorded" } else { "within tolerance" },
             if ok { "✅ ALL CHECKS PASSED" } else { "❌ FAILURES PRESENT — see table above" }
         ));
+        // A full run never runs the opt-in groups, and "ALL CHECKS PASSED" must not read as if it
+        // had: name what was not run, and how to run it.
+        let not_run = opt_in_not_run(filter.as_deref());
+        let not_run_line = (!not_run.is_empty()).then(|| {
+            format!(
+                concat!(
+                    "Opt-in groups NOT run: {} (each runs only when named: --selftest --selftest-filter NAME; ",
+                    "the release checklist requires each once per release)."
+                ),
+                not_run.join(", ")
+            )
+        });
+        if let Some(l) = &not_run_line {
+            md.push_str(&format!("\n{l}\n"));
+        }
 
         if let Err(e) = std::fs::write(&report_path, &md) {
             eprintln!("Failed to write report to {}: {e}", report_path.display());
@@ -10451,7 +10570,81 @@ zoom = \"1e94\"
         println!("{}", "=".repeat(48));
         println!("checks {checks_pass}/{}, goldens {gold_pass}/{} — {}", checks.len(), goldens.len(),
             if ok { "OK" } else { "FAILURES PRESENT" });
+        if let Some(l) = &not_run_line {
+            println!("{l}");
+        }
         println!("report → {}\n", report_path.display());
         ok
+    }
+}
+
+#[cfg(test)]
+mod opt_in_tests {
+    use super::*;
+
+    /// The names this file passes to `opt_in("…")`, read from its own source.
+    fn opt_in_calls() -> Vec<String> {
+        let src = include_str!("selftest.rs");
+        let needle = ["opt_in", "(\""].concat(); // split so this line is not itself a match
+        src.match_indices(needle.as_str())
+            .filter_map(|(i, _)| {
+                let rest = &src[i + needle.len()..];
+                let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
+                (!name.is_empty() && rest[name.len()..].starts_with('"')).then_some(name)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_opt_in_group_is_registered() {
+        let calls = opt_in_calls();
+        let registered: Vec<&str> = OPT_IN_GROUPS.iter().map(|(g, _)| *g).collect();
+        assert!(calls.len() >= 2, "the source scan found {calls:?}: it is not reading the opt_in calls");
+        for c in &calls {
+            assert!(registered.contains(&c.as_str()), "opt_in(\"{c}\") is not in OPT_IN_GROUPS: a full run would not say it skipped it");
+        }
+        for g in &registered {
+            assert!(calls.iter().any(|c| c == g), "OPT_IN_GROUPS names {g}, which no opt_in call runs");
+        }
+    }
+
+    #[test]
+    fn each_card_is_judged_by_its_own_golden_set_and_blesses_its_own() {
+        let g = std::env::temp_dir().join(format!("fd-golden-sets-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&g);
+        std::fs::create_dir_all(&g).unwrap();
+        let (a, b) = ("NVIDIA GeForce RTX 3080", "AMD Radeon RX 6800 XT");
+        let own_b = g.join("amd-radeon-rx-6800-xt");
+        // No marker anywhere: the reference set, STRICT (a missing file never loosens the gate),
+        // and the first bless writes the reference set.
+        assert_eq!(golden_set_in(&g, b), GoldenSet { dir: g.clone(), strict: true, own: false });
+        assert_eq!(bless_dir_in(&g, b, false), g);
+        // The reference blessed on A: strict for A, cross-GPU for B — until B has a set of its own.
+        std::fs::write(g.join("BLESSED-GPU.txt"), format!("{a}\n")).unwrap();
+        assert_eq!(golden_set_in(&g, a), GoldenSet { dir: g.clone(), strict: true, own: false });
+        assert_eq!(golden_set_in(&g, b), GoldenSet { dir: g.clone(), strict: false, own: false });
+        // A bless on B writes B's own set; on A, the reference; only the flag moves the reference.
+        assert_eq!(bless_dir_in(&g, b, false), own_b);
+        assert_eq!(bless_dir_in(&g, a, false), g);
+        assert_eq!(bless_dir_in(&g, b, true), g);
+        // B's set counts only when its marker names B (a folder alone, or one naming another card,
+        // is not B's set).
+        std::fs::create_dir_all(&own_b).unwrap();
+        assert!(!golden_set_in(&g, b).own);
+        std::fs::write(own_b.join("BLESSED-GPU.txt"), a).unwrap();
+        assert!(!golden_set_in(&g, b).own);
+        std::fs::write(own_b.join("BLESSED-GPU.txt"), b).unwrap();
+        assert_eq!(golden_set_in(&g, b), GoldenSet { dir: own_b.clone(), strict: true, own: true });
+        assert_eq!(golden_set_in(&g, a), GoldenSet { dir: g.clone(), strict: true, own: false });
+        let _ = std::fs::remove_dir_all(&g);
+    }
+
+    #[test]
+    fn a_run_names_the_opt_in_groups_it_did_not_run() {
+        assert_eq!(opt_in_not_run(None), vec!["deep-location", "fe-df32-probe"]);
+        assert_eq!(opt_in_not_run(Some("deep-location")), vec!["fe-df32-probe"]);
+        assert_eq!(opt_in_not_run(Some("probe")), vec!["deep-location"]);
+        // A filter naming an ordinary group runs no opt-in group either.
+        assert_eq!(opt_in_not_run(Some("goldens")), vec!["deep-location", "fe-df32-probe"]);
     }
 }

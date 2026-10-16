@@ -1137,7 +1137,14 @@ impl FractadyneApp {
                     self.schedule_repaint(ctx); // animate while held and during glide-out
                 }
                 if self.pointer.zoom_vel.abs() > 1e-3 {
-                    let anchor = self.pointer.last_cursor.unwrap_or_else(|| rect.center());
+                    // A harness's virtual Space glides about the CENTRE, whatever the real cursor
+                    // does: a pointer resting over a `--zoomtest` window steered its glide into
+                    // empty space, a solid-colour run measured as if it were the scene (2026-10-15).
+                    let anchor = if self.harness_holds_space() {
+                        rect.center()
+                    } else {
+                        self.pointer.last_cursor.unwrap_or_else(|| rect.center())
+                    };
                     let local = anchor - rect.min;
                     let factor = (-self.paced_zoom_vel() * dt).exp(); // vel>0 → factor<1 → zoom in
                     self.viewport

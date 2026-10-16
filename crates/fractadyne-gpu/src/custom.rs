@@ -1023,10 +1023,12 @@ fn splice(step_fns: &str, power: f32, init: bool, bailout: bool) -> Result<Strin
 /// range, then (after the caller's escape test, [`fe_rebase`]) Zhuoran's rebase, phase-aligned.
 ///
 /// ⭐The df32 tail, as the fixed module's mode 2 has it for Mandelbrot (`TAIL_DF32_MIN`): once
-/// |δz| ≥ 2^-60 a step runs the generated df32 step instead (`custom_pstep`, ~2.5× cheaper per
+/// |δz| ≥ 2^-50 a step runs the generated df32 step instead (`custom_pstep`, ~2.5× cheaper per
 /// operation), converted exactly both ways. It is MEMORYLESS — decided by this step's δz alone — so
 /// a chunked walk cannot depend on where a pass ended. δc below 2^-120 is dropped there
-/// (`tail_dc`), under 2^-60 relative.
+/// (`tail_dc`), under 2^-70 relative. The rebase stays in floatexp ([`fe_rebase`]). Unlike the
+/// fixed module's tail it has no guard on a small NONZERO reference value (`TAIL_Z_MIN`): whether
+/// one flushes a term depends on the generated formula, and that has not been measured.
 fn fe_advance(ind: &str) -> String {
     format!(
         "{ind}n_full = n_full + 1u;

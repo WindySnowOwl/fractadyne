@@ -35,7 +35,7 @@
 //! length and prints `zoomtest-regime:` (the escaped-reference predicate, as the soak's) and
 //! `zoomtest-stall:` (the longest run of slow frames across which the frame budget never came
 //! down — the field loss's signature, which the still rung never produced). With
-//! `FRACTADYNE_REF_ESCAPE_AT` armed and the regime never entered, the run exits 2 (VACUOUS).
+//! `FRACTADYNE_REF_ESCAPE_AT` armed and the regime never entered, the run exits 3 (VACUOUS; `crate::verdict`).
 
 use std::time::Instant;
 
@@ -221,12 +221,73 @@ pub(crate) struct ZoomTest {
     /// `chunk_dirty` set, and in direct mode nothing ever cleared it. A single glide from a fresh
     /// session cannot reach that state; this sequence can.
     then_log2: Option<f64>,
+    /// W8: the criteria a P-G matrix row holds this glide to (`--zoomtest-gate`); `None` reports only.
+    gate: Option<ZoomGate>,
 }
+
+/// The criteria of design/live-zoom-smoothing.md's P-G matrix (W8): `Smooth` for its continuous,
+/// jump-start and hand-over rows, `Appetite` for its auto-iteration appetite row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ZoomGate {
+    Smooth,
+    Appetite,
+}
+
+/// `--zoomtest-gate [smooth|appetite]` (no value: smooth).
+pub(crate) fn parse_zoom_gate(v: Option<&str>) -> Option<ZoomGate> {
+    match v {
+        None | Some("smooth") => Some(ZoomGate::Smooth),
+        Some("appetite") => Some(ZoomGate::Appetite),
+        Some(_) => None,
+    }
+}
+
+/// The held-frame bound of the `Smooth` row at zoom `rate`: 0.5 octave at 1×, 1 at 4× (the matrix's
+/// two points), as 0.5·√rate between and beyond them.
+pub(crate) fn held_max_oct(rate: f32) -> f64 {
+    0.5 * (rate.max(0.01) as f64).sqrt()
+}
+
+/// What a gated glide failed (empty = it held): `Smooth` — no interval over 50 ms, none over 100 ms,
+/// the held frame never more than [`held_max_oct`] behind; `Appetite` — no interval over 33 ms.
+pub(crate) fn zoom_gate_failures(gate: ZoomGate, rate: f32, dt_max: f64, gt33: usize, gt100: usize, held_oct: f64) -> Vec<String> {
+    let mut f = Vec::new();
+    match gate {
+        ZoomGate::Smooth => {
+            if dt_max > 50.0 {
+                f.push(format!("max frame interval {dt_max:.1} ms > 50"));
+            }
+            if gt100 > 0 {
+                f.push(format!("{gt100} interval(s) over 100 ms"));
+            }
+            let bound = held_max_oct(rate);
+            if held_oct > bound {
+                f.push(format!("held frame {held_oct:.2} octaves behind > {bound:.2} at {rate:.2}x"));
+            }
+        }
+        ZoomGate::Appetite => {
+            if gt33 > 0 {
+                f.push(format!("{gt33} interval(s) over 33 ms"));
+            }
+        }
+    }
+    f
+}
+
+#[cfg(test)]
+#[path = "zoomtest/gate_tests.rs"]
+mod gate_tests;
 
 impl ZoomTest {
     /// `--zoomtest-then-log2` (see `ZoomTest::then_log2`).
     pub(crate) fn with_then(mut self, then_log2: Option<f64>) -> Self {
         self.then_log2 = then_log2;
+        self
+    }
+
+    /// `--zoomtest-gate` (see [`ZoomGate`]).
+    pub(crate) fn with_gate(mut self, gate: Option<ZoomGate>) -> Self {
+        self.gate = gate;
         self
     }
 
@@ -266,6 +327,7 @@ impl ZoomTest {
             octaves_given: octaves.is_some(),
             hold_s: hold_s.clamp(0.0, 600.0),
             then_log2: None,
+            gate: None,
             rate: rate.clamp(0.25, 4.0),
             location,
             start_log2,
@@ -747,7 +809,7 @@ impl FractadyneApp {
         crate::diag::log_line("zoomtest", &format!("ABORT: {msg}"));
         eprintln!("--zoomtest: ABORT: {msg}");
         Self::zoomtest_regime_lines(&zt);
-        crate::exit(2);
+        crate::exit(crate::verdict::RED);
     }
 
     /// W9's two verdict lines and the coverage line, to stderr and the log as `[fd-verdict]` (which
@@ -769,9 +831,9 @@ impl FractadyneApp {
         regime.entered
     }
 
-    /// Summarise, write the JSON, print the table, exit. 2 (never a pass) when the glide produced
-    /// too few frames to mean anything, or when the escape instrument was armed and the regime it
-    /// exists to reach was never entered.
+    /// Summarise, write the JSON, print the table, exit (`crate::verdict`): 3, VACUOUS, when the glide
+    /// produced too few frames to mean anything, or when the escape instrument was armed and the regime
+    /// it exists to reach was never entered; under `--zoomtest-gate`, 2 when a criterion failed.
     fn zoomtest_report(&mut self, zt: ZoomTest) -> ! {
         zt.done.store(true, std::sync::atomic::Ordering::Relaxed);
         let entered = Self::zoomtest_regime_lines(&zt);
@@ -779,7 +841,7 @@ impl FractadyneApp {
         let n = f.len();
         if n < MIN_FRAMES {
             eprintln!("--zoomtest: VACUOUS: only {n} glide frames (need >= {MIN_FRAMES}) — nothing measured");
-            crate::exit(2);
+            crate::exit(crate::verdict::VACUOUS);
         }
         let secs = f.last().map(|r| r.t).unwrap_or(0.0) - f.first().map(|r| r.t).unwrap_or(0.0);
         let oct = f.last().unwrap().l2 - zt.start_l2;
@@ -812,6 +874,13 @@ impl FractadyneApp {
         steps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let (step_p95, step_max) = (pct(&steps, 0.95), steps.last().copied().unwrap_or(0.0));
         let gap_oct_max = f.iter().map(|r| r.gap_oct).fold(0.0, f64::max);
+        // ⭐W8: how far behind the view a HELD picture was — over the frames that displayed one (a
+        // reprojection, or the snapshot served), the frames the matrix's "held max" is about. A
+        // frame shown live displays its own render, whatever the frozen bookkeeping's age; the gate
+        // reads this one. (On the e4000 Misiurewicz 4x glide, 2026-10-14, the two agreed at 81
+        // octaves and it WAS the screen: the snapshot was served on 86% of frames and two pins were
+        // adopted in 100 octaves, the rest drifting away unfinished — `render::drift_finishes_sooner`.)
+        let held_oct_max = f.iter().filter(|r| !r.real || r.snap).map(|r| r.gap_oct).fold(0.0, f64::max);
         // How old the frame on screen is, frame by frame — what a second GPU's refreshes lower.
         let mut gap_octs: Vec<f64> = f.iter().map(|r| r.gap_oct).collect();
         gap_octs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -863,9 +932,9 @@ impl FractadyneApp {
             longest.l2 / std::f64::consts::LOG2_10
         );
         eprintln!(
-            "  real refreshes {reals} ({:.1}/s), held frames {hold_pct:.0}% · real interval ms: mean {gap_mean:.0}  p95 {gap_p95:.0}  max {gap_max:.0} · held frame max {gap_oct_max:.2} oct ({:.2}x)",
+            "  real refreshes {reals} ({:.1}/s), held frames {hold_pct:.0}% · real interval ms: mean {gap_mean:.0}  p95 {gap_p95:.0}  max {gap_max:.0} · held frame max {held_oct_max:.2} oct ({:.2}x; the frozen bookkeeping's age {gap_oct_max:.2})",
             reals as f64 / secs.max(1e-9),
-            gap_oct_max.exp2()
+            held_oct_max.exp2()
         );
         eprintln!(
             "  frame on screen lags the view: mean {gap_oct_mean:.3} oct  p95 {gap_oct_p95:.3} oct · worker GPU frames adopted {worker} ({:.1}/s)",
@@ -890,7 +959,7 @@ impl FractadyneApp {
             ));
         }
         let json = format!(
-            "{{\n\"tool\": \"fractadyne --zoomtest\",\n\"version\": {},\n\"location\": {},\n\"zoom_rate\": {:.3},\n\"prefetch\": {},\n\"start_l2\": {:.4},\n\"octaves\": {oct:.4},\n\"secs\": {secs:.3},\n\"summary\": {{\"frames\":{n},\"fps\":{fps:.2},\"oct_s\":{oct_s:.4},\"dt_mean\":{dt_mean:.3},\"dt_p50\":{dt_p50:.3},\"dt_p95\":{dt_p95:.3},\"dt_p99\":{dt_p99:.3},\"dt_max\":{dt_max:.3},\"gt33\":{gt33},\"gt50\":{gt50},\"gt100\":{gt100},\"longest_ms\":{:.3},\"longest_t\":{:.3},\"longest_l2\":{:.3},\"reals\":{reals},\"hold_pct\":{hold_pct:.2},\"real_gap_mean\":{gap_mean:.3},\"real_gap_p95\":{gap_p95:.3},\"real_gap_max\":{gap_max:.3},\"step_p95\":{step_p95:.5},\"step_max\":{step_max:.5},\"gap_oct_max\":{gap_oct_max:.4},\"gap_oct_mean\":{gap_oct_mean:.4},\"gap_oct_p95\":{gap_oct_p95:.4},\"worker\":{worker},\"lag_max\":{lag_max:.3},\"installs\":{installs},\"lookahead\":{look},\"adopts\":{adopts},\"paced_pct\":{paced_pct:.2}}},\n\"frames\": [\n{rows}\n]\n}}\n",
+            "{{\n\"tool\": \"fractadyne --zoomtest\",\n\"version\": {},\n\"location\": {},\n\"zoom_rate\": {:.3},\n\"prefetch\": {},\n\"start_l2\": {:.4},\n\"octaves\": {oct:.4},\n\"secs\": {secs:.3},\n\"summary\": {{\"frames\":{n},\"fps\":{fps:.2},\"oct_s\":{oct_s:.4},\"dt_mean\":{dt_mean:.3},\"dt_p50\":{dt_p50:.3},\"dt_p95\":{dt_p95:.3},\"dt_p99\":{dt_p99:.3},\"dt_max\":{dt_max:.3},\"gt33\":{gt33},\"gt50\":{gt50},\"gt100\":{gt100},\"longest_ms\":{:.3},\"longest_t\":{:.3},\"longest_l2\":{:.3},\"reals\":{reals},\"hold_pct\":{hold_pct:.2},\"real_gap_mean\":{gap_mean:.3},\"real_gap_p95\":{gap_p95:.3},\"real_gap_max\":{gap_max:.3},\"step_p95\":{step_p95:.5},\"step_max\":{step_max:.5},\"gap_oct_max\":{gap_oct_max:.4},\"held_oct_max\":{held_oct_max:.4},\"gap_oct_mean\":{gap_oct_mean:.4},\"gap_oct_p95\":{gap_oct_p95:.4},\"worker\":{worker},\"lag_max\":{lag_max:.3},\"installs\":{installs},\"lookahead\":{look},\"adopts\":{adopts},\"paced_pct\":{paced_pct:.2}}},\n\"frames\": [\n{rows}\n]\n}}\n",
             json_str(&crate::version_string()),
             json_str(&zt.location.describe()),
             zt.rate,
@@ -920,12 +989,23 @@ impl FractadyneApp {
         );
         if crate::Perf::ref_escape_at() > 0 && !entered {
             eprintln!(
-                "--zoomtest: VACUOUS (exit 2) — FRACTADYNE_REF_ESCAPE_AT is armed but the regime was never entered, \
+                "--zoomtest: VACUOUS (exit 3) — FRACTADYNE_REF_ESCAPE_AT is armed but the regime was never entered, \
                  so this run says nothing about it"
             );
-            crate::exit(2);
+            crate::exit(crate::verdict::VACUOUS);
         }
-        crate::exit(0);
+        if let Some(gate) = zt.gate {
+            let fails = zoom_gate_failures(gate, zt.rate, dt_max, gt33, gt100, held_oct_max);
+            if fails.is_empty() {
+                eprintln!("--zoomtest: GATE PASS ({gate:?})");
+                crate::diag::verdict(&format!("zoomtest-gate: PASS ({gate:?})"));
+            } else {
+                eprintln!("--zoomtest: GATE FAIL ({gate:?}) — {}", fails.join("; "));
+                crate::diag::verdict(&format!("zoomtest-gate: FAIL ({gate:?}) — {}", fails.join("; ")));
+                crate::exit(crate::verdict::RED);
+            }
+        }
+        crate::exit(crate::verdict::PASS);
     }
 }
 

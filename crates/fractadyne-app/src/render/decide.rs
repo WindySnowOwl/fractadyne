@@ -1061,6 +1061,19 @@ pub(crate) fn decide_probe(i: &ProbeInputs) -> ProbeDecision {
     ProbeDecision { fired: probe_fired, steps }
 }
 
+/// Pin passes whose price may wait for their own reading at once (`WalkLedger::late`).
+pub(crate) const LATE_MAX: usize = 4;
+
+/// `WalkLedger::late` holds nothing (so a recording made before it compares equal).
+fn no_late(l: &[Option<(u32, u8, u64, f64)>; LATE_MAX]) -> bool {
+    l.iter().all(Option::is_none)
+}
+
+/// A recorded input's pin cap where the recording predates it: one.
+fn one() -> u32 {
+    1
+}
+
 /// The chunk walk's band ledger and pass bookkeeping, one view, carried between frames
 /// (`Perf::chunk_inflight`, `chunk_bands`, `chunk_pass_dt`, `motion_step_last`).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -1074,6 +1087,13 @@ pub(crate) struct WalkLedger {
     pub(crate) pass_dt: f64,
     /// The last moving / pin pass's iteration step (the growth limiter's memory).
     pub(crate) motion_step_last: u32,
+    /// Pin passes whose PRICE waits for their own GPU reading: `(size, band, the frame it went out,
+    /// a stand-in price in ms, < 0 = none)`. A pass is parked here when it is released at its
+    /// completion before its reading landed (its completion stand-in is the fallback), or when it is
+    /// still in flight as the next pin pass goes out (two in flight, `PIN_INFLIGHT_MAX`; no
+    /// stand-in). See [`decide_walk_price`]'s deferred feed. (Absent when empty.)
+    #[serde(default, skip_serializing_if = "no_late")]
+    pub(crate) late: [Option<(u32, u8, u64, f64)>; LATE_MAX],
 }
 
 /// What [`decide_walk_price`] reads: `bp_chunk_tiling`'s pricing and sizing inputs, one view, one frame
@@ -1093,6 +1113,11 @@ pub(crate) struct WalkPriceInputs {
     pub(crate) budget_measured: bool,
     pub(crate) worst_rate: Option<f64>,
     pub(crate) motion_rate: f64,
+    /// The rate whole moving frames run at (`Perf::frame_rate_now`, `Meter::frame_rate`; 0 = none
+    /// measured, as on a card whose moving frames all start pins): it bounds a non-pin moving frame's
+    /// pass, never the ladder's resolution. Recordings made before it read 0, which bounds nothing.
+    #[serde(default)]
+    pub(crate) frame_rate: f64,
     /// Frame timing: the last frame interval, the real frame period, the present-throttle count,
     /// and this frame.
     pub(crate) last_dt_ms: f64,
@@ -1106,6 +1131,18 @@ pub(crate) struct WalkPriceInputs {
     pub(crate) pin_inflight: u32,
     pub(crate) pin_done_at: u64,
     pub(crate) pin_dispatch_at: u64,
+    /// GPU readings landed for the passes parked in `ledger.late`: `(the dispatch frame the
+    /// reading names, ms)` (`Perf::late_readings`).
+    #[serde(default)]
+    pub(crate) late_readings: Vec<(u64, f64)>,
+    /// Pin passes allowed in flight (`tunables::pin_inflight_max`): with two, a pass still in flight
+    /// when the next goes out is parked rather than overwritten.
+    #[serde(default = "one")]
+    pub(crate) pin_inflight_max: u32,
+    /// The device gives no GPU timestamps: a pin pass's completion stand-in is the only price it
+    /// will ever have, so it is fed at once.
+    #[serde(default)]
+    pub(crate) no_timestamps: bool,
     pub(crate) ledger: WalkLedger,
     /// The overridable tunables it reads, and this adapter's per-pass fixed cost (see
     /// `MovingInputs::pass_fixed_ms`).
@@ -1137,8 +1174,45 @@ pub(crate) struct WalkPriceDecision {
 pub(crate) enum WalkPriceEvent {
     /// The in-flight pass reached the lethal band before draining: the licences were shed.
     LethalShed { size: u32, band: u8, acc: f64, floor: u32, outcome: super::RetreatOutcome },
-    /// A pin pass was priced.
+    /// A pin pass was priced (`acc` -1: a parked pass, priced by its reading when it landed;
+    /// -2: one whose reading never came, priced by its completion stand-in).
     PinPriced { band: u8, size: u32, price: f64, acc: f64 },
+    /// A pin pass's price was deferred to its reading: released at its completion (`stand_in` its
+    /// completion stand-in), or still in flight as the next went out (`stand_in` < 0).
+    PinDeferred { band: u8, size: u32, stand_in: f64 },
+    /// A parked pass whose reading never came and which had no stand-in: unpriced.
+    PinUnpriced { band: u8, size: u32 },
+}
+
+/// Feed one pin pass's price into the band ledger (`decide_walk_price`).
+fn feed_pin_price(led: &mut WalkLedger, band: u8, size: u32, price: f64, target_ms: f64) {
+    led.pass_dt = price;
+    super::chunk_band_update_with_lane(
+        &mut led.bands,
+        band as usize,
+        size,
+        price,
+        target_ms,
+        super::pin_fast_lane(price, target_ms),
+    );
+}
+
+/// Park a pin pass's price in `led.late`. Full: the oldest stands on its stand-in, or goes unpriced.
+fn park_pin_price(led: &mut WalkLedger, events: &mut Vec<WalkPriceEvent>, pass: (u32, u8, u64, f64), target_ms: f64) {
+    if let Some(slot) = led.late.iter_mut().find(|s| s.is_none()) {
+        *slot = Some(pass);
+        return;
+    }
+    let k = (0..LATE_MAX).min_by_key(|&k| led.late[k].map_or(u64::MAX, |l| l.2)).unwrap_or(0);
+    if let Some((size, band, _, stand_in)) = led.late[k] {
+        if stand_in >= 0.0 {
+            feed_pin_price(led, band, size, stand_in, target_ms);
+            events.push(WalkPriceEvent::PinPriced { band, size, price: stand_in, acc: -2.0 });
+        } else {
+            events.push(WalkPriceEvent::PinUnpriced { band, size });
+        }
+    }
+    led.late[k] = Some(pass);
 }
 
 /// The chunk walk's PRICING and SIZING (`bp_chunk_tiling`'s, lifted): the wall-aware floor, the
@@ -1222,6 +1296,43 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
     } else {
         i.tdr_explicit_budget_ms
     };
+    // ⭐THE DEFERRED FEED (W8, 2026-10-14). A pin pass is released at its completion (one pass in
+    // flight, `PIN_INFLIGHT_MAX`), which on the RTX 3080 comes two frames after its dispatch, a
+    // frame BEFORE its GPU reading. Priced there by the completion stand-in (the wall time less
+    // `PIN_PASS_FRAMES` of pipeline latency, floored at 0), a 12.5 ms pass read 0.0 ms, took the
+    // ×16 fast lane (`pin_fast_lane`), and the next pin opened at 8,720 iterations: a 60–115 ms
+    // frame per pin at 1x on the (49,3) spiral, on every run whose per-step cost was high (the 1x
+    // P-G row's > 50 ms frames: 36–143 a run since `c012f32`, against beta.19's 0–2). Waiting for
+    // the reading instead costs a frame per pass, and the pins fell behind (e4000 at 4x: 0–2
+    // adoptions in 100 octaves against 35; the 20-octave 4x lag 0.46–0.61 → 1.20–1.30 octaves).
+    // So the pass is released at its completion as before and only its PRICE waits: parked in
+    // `late`, fed here when the reading that names its dispatch frame lands, and fed its stand-in
+    // only if that reading has not come within `PIN_PRICE_WAIT_FRAMES`.
+    // ⭐…and with two in flight (rung 1d) a pass still running as the next goes out is parked the
+    // same way, with no stand-in: priced by its reading, or, after twice the wait, unpriced.
+    let pin_target = crate::tunables::MOTION_PIN_TARGET_MS;
+    for k in 0..LATE_MAX {
+        let Some((size, band, sent, stand_in)) = led.late[k] else {
+            continue;
+        };
+        let age = i.frame.saturating_sub(sent);
+        let wait = crate::tunables::PIN_PRICE_WAIT_FRAMES;
+        let price = match i.late_readings.iter().find(|r| r.0 == sent) {
+            Some(&(_, ms)) => Some((ms, -1.0)),
+            None if stand_in >= 0.0 && age >= wait => Some((stand_in, -2.0)),
+            None if stand_in < 0.0 && age >= 2 * wait => {
+                events.push(WalkPriceEvent::PinUnpriced { band, size });
+                led.late[k] = None;
+                None
+            }
+            None => None,
+        };
+        if let Some((price, acc)) = price {
+            feed_pin_price(&mut led, band, size, price, pin_target);
+            events.push(WalkPriceEvent::PinPriced { band, size, price, acc });
+            led.late[k] = None;
+        }
+    }
     if !interacting || pin_frame {
         if let Some((size, band, acc, shed)) = led.inflight {
             let acc = acc + i.last_dt_ms.max(0.0);
@@ -1324,19 +1435,39 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
                 } else {
                     acc
                 };
-                led.pass_dt = price;
-                chunk_band_update_with_lane(
-                    &mut led.bands,
-                    band as usize,
-                    size,
-                    price,
-                    target_ms,
-                    if pin_frame { pin_fast_lane(price, target_ms) } else { 2 },
-                );
-                if pin_frame {
-                    // Traced by the caller under `tile` (`WalkPriceEvent::PinPriced`).
-                    events.push(WalkPriceEvent::PinPriced { band, size, price, acc });
+                // Released at its completion with its reading still to come (the deferred feed,
+                // above): park the price, release the pass.
+                let defer = pin_frame
+                    && i.pin_pass_gpu_ms < 0.0
+                    && !i.no_timestamps
+                    && i.frame.saturating_sub(i.pin_pass_frame) < crate::tunables::PIN_PRICE_WAIT_FRAMES
+                    && acc <= target_ms * 60.0;
+                if defer {
+                    park_pin_price(&mut led, &mut events, (size, band, i.pin_pass_frame, price), target_ms);
+                    events.push(WalkPriceEvent::PinDeferred { band, size, stand_in: price });
+                } else {
+                    led.pass_dt = price;
+                    chunk_band_update_with_lane(
+                        &mut led.bands,
+                        band as usize,
+                        size,
+                        price,
+                        target_ms,
+                        if pin_frame { pin_fast_lane(price, target_ms) } else { 2 },
+                    );
+                    if pin_frame {
+                        // Traced by the caller under `tile` (`WalkPriceEvent::PinPriced`).
+                        events.push(WalkPriceEvent::PinPriced { band, size, price, acc });
+                    }
                 }
+                led.inflight = None;
+            } else if pin_frame && !i.no_timestamps && i.pin_inflight < i.pin_inflight_max {
+                // ⭐PRICE EVERY PASS (rung 1d): the next pin pass goes out this frame with this one
+                // still in flight, and its dispatch rewrites the in-flight record. Park this one's
+                // price for its own reading instead of losing it: at two in flight the motiontest
+                // priced 26 pin passes across 70 pins, the licences barely grew, and 50 pins drifted out.
+                park_pin_price(&mut led, &mut events, (size, band, i.pin_pass_frame, -1.0), target_ms);
+                events.push(WalkPriceEvent::PinDeferred { band, size, stand_in: -1.0 });
                 led.inflight = None;
             } else {
                 led.inflight = Some((size, band, acc, shed));
@@ -1390,6 +1521,26 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
     // chunked pass stays inside ONE dispatch budget" selftest.
     let budget_step = ((pass_steps / spx.saturating_mul(ss2).max(1)) as u32)
         .clamp(floor, gpu_iter.max(floor));
+    // ⭐THE FRAME RATE'S BOUND (W8 rung 1c): a whole moving frame's pass carries no more iterations
+    // than the rate whole moving frames run at affords in one `MOTION_PASS_MS` pass. The pass size
+    // above comes from `motion_rate`, which pin passes inflate (most of a deep pin pass's pixels have
+    // escaped, so its nominal steps are cheap): on the RX 6800 XT it sized the visible ladder's frame
+    // at the admission, and the whole ask went out in one 112–115 ms pass every three frames. Bounded,
+    // the frame's first pass stops short of the ask and the frame becomes a pin walk at the same
+    // resolution. The resolution is not touched: it keeps `motion_rate` (sized from the frame rate it
+    // fell 4–8× on the RTX 3080, which measures no whole moving frame and so has no frame rate).
+    let budget_step = if interacting && !pin_frame && i.frame_rate > 0.0 {
+        let frame_pass = motion_pass_steps_fixed(
+            i.frame_rate,
+            crate::tunables::MOTION_PASS_MS,
+            i.pass_fixed_ms,
+            tdr_steps,
+            i.tdr_bootstrap_steps,
+        );
+        budget_step.min(((frame_pass / spx.saturating_mul(ss2).max(1)) as u32).max(floor))
+    } else {
+        budget_step
+    };
     // GROWTH LIMITER (motion / pin passes only): at most double the previous pass. The
     // rate estimate above lags its dispatches by 2–3 frames, so a cheap sliver can prime
     // a pass 20× its size before the reading that would have said otherwise lands —
@@ -1726,6 +1877,9 @@ pub(crate) struct WalkDispatchInputs {
     pub(crate) accum_active: bool,
     pub(crate) walk_read_sig: u64,
     pub(crate) norm_sig_submit: u64,
+    /// Pin passes allowed in flight (`tunables::pin_inflight_max`); recordings made before it read 1.
+    #[serde(default = "one")]
+    pub(crate) pin_inflight_max: u32,
     /// The overridable tunables it reads.
     pub(crate) pin_timeout_scaled: u64,
     pub(crate) chunk_charge: u64,
@@ -1804,7 +1958,7 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
                 events.push(DispatchEvent::PinEscape { age_us, limit_us, registered, n: st.pin_escapes });
                 st.pin_inflight = 0;
             }
-            st.pin_inflight >= crate::tunables::PIN_INFLIGHT_MAX
+            st.pin_inflight >= i.pin_inflight_max
                 && st.last_range.is_some()
         } else {
             !interacting
@@ -2437,7 +2591,7 @@ pub(crate) fn fixture_coverage<'a>(texts: impl IntoIterator<Item = &'a str>) -> 
             probe_idle(i) && i.frame.saturating_sub(i.dispatch_frame) >= 3 && !d.fired
         }),
     ];
-    let price_terms: [(&'static str, fn(&WalkPriceInputs, &WalkPriceDecision) -> bool); 7] = [
+    let price_terms: [(&'static str, fn(&WalkPriceInputs, &WalkPriceDecision) -> bool); 10] = [
         ("a settled pass was priced", |i, d| {
             !i.interacting && !i.pin_frame && i.ledger.inflight.is_some() && d.ledger.inflight.is_none()
         }),
@@ -2447,6 +2601,15 @@ pub(crate) fn fixture_coverage<'a>(texts: impl IntoIterator<Item = &'a str>) -> 
         }),
         ("the lethal band shed the licences", |_, d| {
             d.events.iter().any(|e| matches!(e, WalkPriceEvent::LethalShed { .. }))
+        }),
+        ("a pin pass was released before its reading, its price deferred", |_, d| {
+            d.events.iter().any(|e| matches!(e, WalkPriceEvent::PinDeferred { .. }))
+        }),
+        ("a parked pin pass was priced by its own reading", |_, d| {
+            d.events.iter().any(|e| matches!(e, WalkPriceEvent::PinPriced { acc, .. } if *acc == -1.0))
+        }),
+        ("a pin pass still in flight was parked as the next went out", |_, d| {
+            d.events.iter().any(|e| matches!(e, WalkPriceEvent::PinDeferred { stand_in, .. } if *stand_in < 0.0))
         }),
         ("motion abandoned a pass", |i, _| i.interacting && !i.pin_frame && i.ledger.inflight.is_some()),
         ("the growth limiter bound the step", |i, d| {
@@ -3169,6 +3332,7 @@ mod tests {
             budget_measured: true,
             worst_rate: Some(2.0e7),
             motion_rate: 2.0e7,
+            frame_rate: 0.0,
             last_dt_ms: 16.7,
             frame_period_ms: 16.7,
             present_throttle: 0,
@@ -3178,11 +3342,15 @@ mod tests {
             pin_inflight: 0,
             pin_done_at: 0,
             pin_dispatch_at: 0,
+            late_readings: Vec::new(),
+            pin_inflight_max: 1,
+            no_timestamps: false,
             ledger: WalkLedger {
                 inflight: Some((1024, 3, 50.0, false)),
                 bands: [0; crate::tunables::CHUNK_BANDS],
                 pass_dt: 0.0,
                 motion_step_last: 0,
+                late: [None; LATE_MAX],
             },
             tdr_budget_ms: c.tdr_budget_ms,
             tdr_explicit_budget_ms: c.tdr_explicit_budget_ms,
@@ -3203,6 +3371,116 @@ mod tests {
         assert!((d.ledger.pass_dt - 66.7).abs() < 1e-9, "{}", d.ledger.pass_dt);
         assert_eq!(d.ledger.bands[3], 2048, "well under half the target: the fast lane doubles the licence");
         assert!(d.events.is_empty() && d.retreat.is_none());
+    }
+
+    /// The RTX 3080 trace at 1x on the (49,3) spiral (2026-10-14): a 545-iteration pin opening
+    /// dispatched at frame 498, its completion seen at 500 (35 ms of wall at 17.5 ms frames, so the
+    /// stand-in reads 0.0), its reading (12.5 ms) landing at 501.
+    fn released_pin_pass() -> WalkPriceInputs {
+        WalkPriceInputs {
+            interacting: true,
+            pin_frame: true,
+            frame: 500,
+            frame_period_ms: 17.5,
+            pin_pass_frame: 498,
+            pin_inflight: 0,
+            pin_dispatch_at: 1_000_000,
+            pin_done_at: 1_035_000,
+            ledger: WalkLedger { inflight: Some((545, 0, 6.7, false)), ..walk().ledger },
+            ..walk()
+        }
+    }
+
+    #[test]
+    fn a_pin_pass_released_before_its_reading_is_priced_by_that_reading() {
+        let d = decide_walk_price(&released_pin_pass());
+        assert_eq!(d.ledger.inflight, None, "released at its completion");
+        assert_eq!(d.ledger.bands[0], 0, "not priced by a stand-in floored to 0.0");
+        assert_eq!(d.ledger.late[0], Some((545, 0, 498, 0.0)));
+        assert!(matches!(d.events[..], [WalkPriceEvent::PinDeferred { size: 545, .. }]), "{:?}", d.events);
+        // The reading lands: 12.5 ms against the 20 ms target holds the licence near the pass
+        // (×1.25), where the stand-in took the ×16 lane to 8,720.
+        let next = WalkPriceInputs { frame: 501, late_readings: vec![(498, 12.5)], ledger: d.ledger, ..released_pin_pass() };
+        let e = decide_walk_price(&WalkPriceInputs { ledger: WalkLedger { inflight: None, ..next.ledger }, ..next });
+        assert_eq!(e.ledger.bands[0], 545 + 545 / 4);
+        assert_eq!(e.ledger.late, [None; LATE_MAX]);
+        assert!((e.ledger.pass_dt - 12.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn without_timestamps_the_stand_in_is_the_price_at_once() {
+        let d = decide_walk_price(&WalkPriceInputs { no_timestamps: true, ..released_pin_pass() });
+        assert_eq!(d.ledger.late, [None; LATE_MAX]);
+        assert_eq!(d.ledger.bands[0], 545 * 16, "the completion stand-in is all such a device has");
+    }
+
+    #[test]
+    fn a_reading_that_never_comes_leaves_the_stand_in_standing() {
+        let d = decide_walk_price(&released_pin_pass());
+        let wait = crate::tunables::PIN_PRICE_WAIT_FRAMES;
+        let quiet = |frame| WalkPriceInputs {
+            frame,
+            ledger: WalkLedger { inflight: None, ..d.ledger },
+            ..released_pin_pass()
+        };
+        assert_eq!(decide_walk_price(&quiet(498 + wait - 1)).ledger.late, d.ledger.late, "still waiting");
+        let e = decide_walk_price(&quiet(498 + wait));
+        assert_eq!(e.ledger.late, [None; LATE_MAX]);
+        assert_eq!(e.ledger.bands[0], 545 * 16);
+    }
+
+    #[test]
+    fn at_two_in_flight_every_pass_is_priced_by_its_own_reading() {
+        // The RTX 3080 motiontest at two in flight priced 26 pin passes across 70 pins: each new
+        // pass rewrote the in-flight record of the one before it. Frame 499: the pass sent at 498 is
+        // still running (one completion owed), and the next goes out now.
+        let i = WalkPriceInputs { frame: 499, pin_inflight: 1, pin_inflight_max: 2, ..released_pin_pass() };
+        let d = decide_walk_price(&i);
+        assert_eq!(d.ledger.inflight, None, "parked, not rewritten");
+        assert_eq!(d.ledger.late[0], Some((545, 0, 498, -1.0)));
+        // Its own reading lands two frames later and prices it.
+        let e = decide_walk_price(&WalkPriceInputs { frame: 501, late_readings: vec![(498, 12.5)], ledger: d.ledger, ..i.clone() });
+        assert_eq!(e.ledger.late, [None; LATE_MAX]);
+        assert_eq!(e.ledger.bands[0], 545 + 545 / 4);
+        // One that never gets a reading, and has no stand-in, goes unpriced after twice the wait.
+        let wait = crate::tunables::PIN_PRICE_WAIT_FRAMES;
+        let quiet = WalkPriceInputs { frame: 498 + 2 * wait, ledger: d.ledger, ..i.clone() };
+        let f = decide_walk_price(&quiet);
+        assert_eq!(f.ledger.late, [None; LATE_MAX]);
+        assert_eq!(f.ledger.bands[0], 0);
+        assert!(f.events.iter().any(|e| matches!(e, WalkPriceEvent::PinUnpriced { size: 545, .. })));
+        // At one in flight the same frame holds the pass unpriced, as before.
+        let g = decide_walk_price(&WalkPriceInputs { pin_inflight_max: 1, ..i.clone() });
+        assert_eq!(g.ledger.inflight.map(|p| p.0), Some(545));
+        assert_eq!(g.ledger.late, [None; LATE_MAX]);
+    }
+
+    #[test]
+    fn the_frame_rate_bounds_a_whole_moving_frame_but_not_a_pin() {
+        // The RX 6800 XT's frame: 905×519 against a 13,761-iteration ask, motion_rate inflated by pin
+        // readings (1.7e10 steps/ms) against whole moving frames' 6.2e7 (counted at the knee).
+        let moving = WalkPriceInputs {
+            interacting: true,
+            spx: 905 * 519,
+            gpu_iter: 13_761,
+            tdr_steps: 6_000_000_000,
+            motion_rate: 1.7e10,
+            // A growth limiter far above the ask, so only the frame rate can bound the pass.
+            ledger: WalkLedger { inflight: None, motion_step_last: 10_000, ..walk().ledger },
+            ..walk()
+        };
+        let free = decide_walk_price(&moving);
+        let bound = decide_walk_price(&WalkPriceInputs { frame_rate: 6.2e7, ..moving.clone() });
+        assert!(bound.budget_step < free.budget_step, "{} vs {}", bound.budget_step, free.budget_step);
+        assert!(bound.budget_step < 13_761, "the first pass stops short of the ask: a walk");
+        // The pass size the ladder reads is unchanged.
+        assert_eq!(bound.pass_steps, free.pass_steps);
+        // A pin is untouched, and so is a card with no frame rate.
+        let pin = WalkPriceInputs { pin_frame: true, ..moving.clone() };
+        assert_eq!(
+            decide_walk_price(&WalkPriceInputs { frame_rate: 6.2e7, ..pin.clone() }).budget_step,
+            decide_walk_price(&pin).budget_step
+        );
     }
 
     #[test]
@@ -3408,6 +3686,7 @@ mod tests {
             accum_active: false,
             walk_read_sig: 0,
             norm_sig_submit: 0,
+            pin_inflight_max: 1,
             pin_timeout_scaled: 1,
             chunk_charge: 1,
             chunk_shuffle: 0,

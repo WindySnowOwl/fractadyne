@@ -24,10 +24,14 @@ Three rules, each of them learned the hard way in this repo:
 
 | class | meaning | count |
 |---|---|---|
-| **A** | Fully enforced by a machine check; the manual row becomes a spot-check | 71 |
-| **B** | Partly enforced — the effect is checked, the gesture or the aesthetic judgement is not | 26 |
-| **C** | Not automatable here; needs a human, a second machine, or a second display | 8 |
-| **P** | Process step, not a behaviour | 1 |
+| **A** | Fully enforced by a machine check; the manual row becomes a spot-check | 81 |
+| **B** | Partly enforced — the effect is checked, the gesture or the aesthetic judgement is not | 45 |
+| **R** | Run-gated — enforced by a RECORDED run of the release's binary (`run:`, see 5. below) | 5 |
+| **C** | Not automatable here; needs a human, a second machine, or a second display | 15 |
+| **P** | Process step, not a behaviour | 2 |
+| *planned* | Declared, not yet implemented (`planned:`): OUTSTANDING, never counted as covered | 2 |
+
+(Counts as of 2026-10-15; `scripts/checklist_coverage.py` prints the live ones.)
 
 Class **B** is not a failure. For "drag to pan", a machine can assert that the pan *action* moves
 the view exactly one complex unit per pixel; whether the mouse is wired to that action is a
@@ -78,6 +82,59 @@ share-string round-trip, `.kfr` import, session save/load.
 Reads the `enforcer` field added to each step, resolves it against the actual test names in the
 tree, and fails if any named enforcer is missing. Emits the coverage summary and adds an
 "Automated by" column to the generated workbook.
+
+### 5. `run:` rows and the run ledger (2026-10-15, W8)
+
+`harness:<flag>` proves only that a flag exists in the argument parser. A harness that exists is not
+a gate that ran, so the device-loss row (32) and the screen row (144) were claiming more than they
+had. A `run:<command>` row is satisfied only by a recorded run:
+
+- `python scripts/run_ledger.py run -- <app arguments | a command>` runs it and appends a row to
+  `validation/runs/<version>.tsv`, committed with the release's report. Each row records:
+  - the time and the exit code;
+  - the binary's own `--version` identity (version, build, git sha, `-dirty`), or for a script the
+    workspace version and the repository's HEAD;
+  - for an app run, the app log's `[fd-exit]` line and logcheck's verdict.
+
+  App runs always start from a fresh config directory, whatever `FRACTADYNE_CONFIG_DIR` says. A
+  saved session's own Iterations base changes what `--livetest` measures, so a gate must not
+  inherit one. `--config DIR` is the explicit way to start from a prepared directory, and the row
+  records that it did.
+- `python scripts/checklist_coverage.py --release VERSION` fails unless every `run:` row has a
+  matching recorded command with an accepted exit, from VERSION, from a committed tree:
+  - "matching" means the row's tokens appear in order;
+  - the accepted exit is 0, or what an `[exit …]` suffix lists. A row that accepts more says
+    why below.
+
+  Without `--release` the rows only have to exist (the flag or the script), and are counted as
+  run-gated.
+
+Residue, stated rather than hidden:
+- A script's identity is the tree, not the binary that produced its input. The screen gate scores
+  captures that `gpu-validate` made, and the ledger cannot see which build made them.
+- One recorded run satisfies a row that asks for two cards (row 144).
+
+### 6. The reference adapter and the opt-in groups (2026-10-15, W8)
+
+- **The goldens' card is declared.** The self-test compares goldens exactly only on the card that
+  blessed them (`validation/golden/BLESSED-GPU.txt`); anywhere else it compares a loose mean. So
+  that card is the release gate's reference, and blessing on another card silently moves it.
+  - `REFERENCE_ADAPTER` in `scripts/release_checklist.py` declares the card, and
+    `checklist_coverage.py` fails when the file names another.
+  - `--selftest --bless` on a different card writes that card's OWN set,
+    `validation/golden/<card slug>/`, and the reference set is untouched. Only `--bless-new-adapter`
+    overwrites the reference set from another card. (Until per-card sets existed, such a bless was
+    refused outright.)
+  - A card with its own set is compared against it at the strict tolerance. A golden missing from
+    it falls back to the reference image at the cross-GPU tolerance. Release packages ship only the
+    reference set; the share's packages, which the field battery runs, ship every card's.
+
+  Moving the reference takes both keys.
+- **The opt-in groups are named when they do not run.** A full `--selftest` never runs its opt-in
+  groups (`deep-location`, about 9 hours; `fe-df32-probe`, about a minute), so its "ALL CHECKS
+  PASSED" says nothing about them. The run now ends by naming them, in its console summary and in
+  `report.md`. Rows 146–147 require each to have run once per release. A unit test keeps the
+  registry (`OPT_IN_GROUPS`) and the `opt_in("…")` calls in step.
 
 ---
 
@@ -134,7 +191,7 @@ tree, and fails if any named enforcer is missing. Emits the coverage summary and
 | 28 | A | Corpus location 09 at 6.1e500× — past the f64 magnification range — must be coherent and carry a real reference orbit. Verified to go red under the beta.125 saturation mutant (`!mag.is_finite() → Direct`): orbit_len 0, a flat frame. |
 | 29–30 | B | Differential through `render_export_normalized` (the mapping the checkbox selects) against the plain export at 1.3e24×: neighbour step 76.27 → 21.87. ⚠The earlier note was right that toggling the field against `render_export` is vacuous — the fix was to call the normalized path, not the flag. Still partial: the LIVE auto-normalization gate (Nyquist on the local gradient) decides *when* to apply this, and that is not exercised. |
 | 31 | B | Deep pan then settle: final frame coherent and equal to a direct render of the same view. |
-| 32 | A | `--autodive N --autodive-timeout T --autodive-home 3` already exists and exits 2 when the regime was never reached. |
+| 32 | R | `run:--autodive-home [exit 0,3]` — a recorded `--autodive N --autodive-home 0` from the release binary. Since W8 the dive is judged from the frame record: 0 = reached the lethal regime and the retreat held, 2 = it did not hold, 3 = never reached it. 3 is accepted HERE because this row asks whether the dive and the zoom home ran to their end with no device loss, and a run that exits 3 did. That says nothing about the retreat, which needs the card that reaches the regime (the RX 6800 XT). |
 
 ### Fractal types (33–47)
 
@@ -287,13 +344,28 @@ fast at real depth, and that the controls tell the truth.
 
 | # | class | enforcer |
 |---|---|---|
-| 144 | A | `scripts/dive-capture/screengate.py` over `gpu-validate`'s step 08 (three `capdive.ps1` dives at `dive-2p800.kfr`): blank (and mid-dive blank episodes) / flat / flash / stale, median of three, exit 0 PASS, 1 RED, 2 VACUOUS — red on the build before the 2026-09-20 blank-frame fix, green on the fixed one in twelve runs on two cards; `--selftest` proves each criterion fires (design/live-render-robustness.md §7.6). PLANNED until the checklist has a `run:` class that requires a recorded exit code from this release's binary — a script that exists is not a gate that ran. |
+| 144 | R | `run:scripts/dive-capture/screengate.py` over `gpu-validate`'s step 08 (three `capdive.ps1` dives at `dive-2p800.kfr`): blank (and mid-dive blank episodes) / flat / flash / stale, median of three, exit 0 PASS, 1 RED, 2 VACUOUS — red on the build before the 2026-09-20 blank-frame fix, green on the fixed one in twelve runs on two cards; `--selftest` proves each criterion fires (design/live-render-robustness.md §7.6). Was PLANNED until the `run:` class existed. |
 
-### Sign-off (145)
+### Release gates (145–149)
+
+Commands whose recorded exit code is the evidence (`run:`, see 5. above), and the two gates that are
+declared but cannot gate yet.
 
 | # | class | enforcer |
 |---|---|---|
-| 145 | P | Not a behaviour. `checklist_coverage.py` can assert every row carries a verdict and no row is blank, which is the mechanical half. |
+| 145 | R | `run:--livetest tours/grand-tour.toml`: the live view against an offline render at the ask and, where it is black, at 4× the ask (W8): exit 0 = no drift from the blessed baseline. A STARVED checkpoint (the bigger budget resolves black the app does not explain) fails it. |
+| 146–147 | R | `run:--selftest-filter deep-location` and `run:--selftest-filter fe-df32-probe`: the self-test's two OPT-IN groups, which a full `--selftest` never runs (they cost minutes). Without these rows nothing ever required them to run. |
+| 148 | planned | The `--zoomtest-gate` P-G matrix (design/live-zoom-smoothing.md). The gate exists (W8 rung 1), but the held-picture bound fails on every Smooth row, on beta.19 too. That is open sizing work, and a row that can never go green teaches people to skip it. |
+| 149 | planned | The torture ladder's increment 2: the no-BLA regime that actually loses the RX 6800 XT. The rung (`live/regime/*`, W9) passed three runs running on the RX 6800 XT (2026-10-16) and runs in every full field battery (step 09); not a checklist gate because the checklist cannot read a field battery's result. |
+
+(The design's third `planned:` item, TODO T-6's job watcher, shipped as `scripts/field-agent.ps1` and
+`scripts/field-request.ps1`. That is infrastructure, not a release check, so it has no row.)
+
+### Sign-off (150)
+
+| # | class | enforcer |
+|---|---|---|
+| 150 | P | Not a behaviour. `checklist_coverage.py` can assert every row carries a verdict and no row is blank, which is the mechanical half. |
 
 ---
 

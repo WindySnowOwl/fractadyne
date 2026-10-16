@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::render::orbit_blob::tests::{blob, blob_at, key, point, sample_orbit};
-use fractadyne_core::parse_bf_prec;
+use fractadyne_core::{parse_bf_prec, BigFloat};
 
 static SERIAL: Mutex<()> = Mutex::new(());
 
@@ -42,7 +42,7 @@ impl Drop for Scratch {
     }
 }
 
-fn accept_all(_: &[BigFloat; 2], _: usize) -> Option<f64> {
+fn accept_all(_: &Header) -> Option<f64> {
     Some(0.0)
 }
 
@@ -65,7 +65,7 @@ fn offer_then_find_then_load_round_trips() {
     // A different identity is invisible to this key.
     assert!(find(&Query { key: OrbitKey { formula_id: 1, ..key() }, fits: &accept_all }).is_none());
     // And an entry the caller's test refuses is not a hit, however well it matches.
-    assert!(find(&Query { key: key(), fits: &|_, _| None }).is_none());
+    assert!(find(&Query { key: key(), fits: &|_| None }).is_none());
 }
 
 #[test]
@@ -163,8 +163,8 @@ fn find_prefers_the_longest_orbit_then_the_closest_point() {
     offer(blob(&sample_orbit(64), 512, 1000, key())).unwrap().unwrap();
     offer(blob_at(&sample_orbit(256), 512, 1000, key(), other_point(512))).unwrap().unwrap();
     // Both admissible: the longer wins even though it is (by this test's reckoning) farther.
-    let far_is_long = |p: &[BigFloat; 2], _: usize| -> Option<f64> {
-        Some(if p[0].mantissa_digits() == other_point(512)[0].mantissa_digits() { 0.5 } else { 0.1 })
+    let far_is_long = |h: &Header| -> Option<f64> {
+        Some(if h.point[0].mantissa_digits() == other_point(512)[0].mantissa_digits() { 0.5 } else { 0.1 })
     };
     let hit = find(&Query { key: key(), fits: &far_is_long }).unwrap();
     assert_eq!((hit.orbit_len, hit.candidates), (256, 2));

@@ -141,6 +141,36 @@ fn a_budget_that_comes_down_ends_the_run() {
     assert!(line.contains("4 slow frame(s) over 1.0 s from frame 20"), "{line}");
 }
 
+/// The soak's RED term (§7.9) on the two recorded shapes: the field loss's stall is RED, the still
+/// rung's (its budget came down at the first reading) is not.
+#[test]
+fn the_field_stall_is_red_and_the_still_rungs_is_not() {
+    let field: Vec<FrameRecord> =
+        (0..20).map(|i| slow(45_322 + i * 10, 825_900 + i * 1_726, 151_500_000_000)).collect();
+    let still = [
+        slow(14, 4_194, 151_500_000_000),
+        slow(15, 5_223, 11_821_295_753),
+        slow(16, 6_307, 11_821_295_753),
+        slow(19, 6_805, 11_821_295_753),
+        slow(20, 7_258, 2_064_775_407),
+        slow(21, 7_657, 2_064_775_407),
+        slow(22, 7_922, 2_064_775_407),
+        slow(23, 8_230, 2_064_775_407),
+    ];
+    let max = |recs: &[FrameRecord]| {
+        let mut acc = super::RegimeAcc::default();
+        for r in recs {
+            acc.add(r);
+        }
+        acc.stall_slow_max()
+    };
+    assert_eq!(max(&field), 20);
+    assert!(max(&field) >= super::STALL_RED_FRAMES);
+    assert_eq!(max(&still), 4);
+    assert!(max(&still) < super::STALL_RED_FRAMES);
+    assert_eq!(max(&[]), 0);
+}
+
 /// A budget that RISES between slow frames has not come down: the run continues.
 #[test]
 fn a_rising_budget_does_not_end_the_run() {

@@ -478,11 +478,20 @@ pub(crate) fn check(s: &Session, rules: &Rules) -> Report {
 // In process: the begin line and the check at exit
 // ---------------------------------------------------------------------------------------------
 
+/// Harnesses with no pass/fail criterion (W8, design §7.8): they measure and report, and their exit 0
+/// means they RAN. They say so at their begin line, and no checklist row may read them as a gate.
+pub(crate) const REPORT_ONLY: &[&str] = &["reusetest", "divetest", "frametest", "juliadive", "dualsettle"];
+
 /// `[fd-harness] begin <mode> pid <pid> — tunables: <status>`, logged by `main` for every task.
 /// The pid is how `at_exit` finds its OWN session: `--torture` runs its rungs as child processes
 /// that can write the same log, so the last session in it need not be this one.
 pub(crate) fn harness_begin(mode: &str, tunables: &str) {
     crate::diag::log_line("harness", &format!("begin {mode} pid {} — tunables: {tunables}", std::process::id()));
+    if REPORT_ONLY.contains(&mode) {
+        let line = format!("{mode} is REPORT-ONLY: it has no pass/fail criterion, so exit 0 means it ran, not that anything held");
+        crate::diag::log_line("harness", &line);
+        eprintln!("--{line}");
+    }
     BEGUN.store(true, Ordering::Relaxed);
 }
 

@@ -169,9 +169,10 @@ if (-not $SkipWindows) {
     New-Item -ItemType Directory -Force -Path (Join-Path $stage "scripts") | Out-Null
     Copy-Item (Join-Path $root "scripts\*.example.toml") -Destination (Join-Path $stage "scripts")
     Copy-Item (Join-Path $root "scripts\deep-sample.fdn") -Destination (Join-Path $stage "scripts")
-    # The validation battery itself, so a tester can run it from the extracted zip.
-    Copy-Item (Join-Path $root "scripts\gpu-validate.ps1"), (Join-Path $root "scripts\gpu-validate.sh") `
-              -Destination (Join-Path $stage "scripts")
+    # The validation battery itself, so a tester can run it from the extracted zip, and what it
+    # expects of each card (without the file the battery judges nothing and exits 3).
+    Copy-Item (Join-Path $root "scripts\gpu-validate.ps1"), (Join-Path $root "scripts\gpu-validate.sh"), `
+              (Join-Path $root "scripts\gpu-validate-expected.json") -Destination (Join-Path $stage "scripts")
     # ...and its screen step: the capture script, the fixture it dives, and the scorer.
     New-Item -ItemType Directory -Force -Path (Join-Path $stage "scripts\dive-capture") | Out-Null
     Copy-Item (Join-Path $root "scripts\dive-capture\capdive.ps1"), (Join-Path $root "scripts\dive-capture\grab.ps1"), `
@@ -181,13 +182,24 @@ if (-not $SkipWindows) {
     New-Item -ItemType Directory -Force -Path (Join-Path $stage "validation\golden") | Out-Null
     Copy-Item (Join-Path $root "validation\golden\*.png") -Destination (Join-Path $stage "validation\golden")
     Copy-Item (Join-Path $root "validation\golden\BLESSED-GPU.txt") -Destination (Join-Path $stage "validation\golden") -ErrorAction SilentlyContinue
+    # ...and every card's OWN golden set (validation\golden\<card>\), which the field battery
+    # compares that card against strictly. Only these share packages carry them: a release package
+    # ships the reference set alone (each set is ~90 MB, and a user's card has none of its own).
+    Get-ChildItem (Join-Path $root "validation\golden") -Directory | ForEach-Object {
+        Copy-Item $_.FullName -Destination (Join-Path $stage "validation\golden") -Recurse -Force
+    }
     Copy-Item (Join-Path $root "validation\catalog.toml") -Destination (Join-Path $stage "validation")
     # The replay fixtures, so --selftest's replay group recomputes the recorded decisions here
     # (without them it reports VACUOUS: three FAILs from a published package, W6 dev.9 on PLUTO).
     New-Item -ItemType Directory -Force -Path (Join-Path $stage "validation\replays") | Out-Null
     Copy-Item (Join-Path $root "validation\replays\*.jsonl") -Destination (Join-Path $stage "validation\replays")
+    # The field views W9's regime rungs soak (`--soak-location validation\field\...`), so the field
+    # agent can run them on the card that fails.
+    New-Item -ItemType Directory -Force -Path (Join-Path $stage "validation\field") | Out-Null
+    Copy-Item (Join-Path $root "validation\field\*.fdn") -Destination (Join-Path $stage "validation\field")
     New-Item -ItemType Directory -Force -Path (Join-Path $stage "benchmarks") | Out-Null
-    Copy-Item (Join-Path $root "benchmarks\bench-matrix-baseline.json") -Destination (Join-Path $stage "benchmarks")
+    # Every card's bench-matrix baseline (the reference card's file and the per-card ones).
+    Copy-Item (Join-Path $root "benchmarks\bench-matrix-baseline*.json") -Destination (Join-Path $stage "benchmarks")
     $zip = "$stage.zip"
     if (Test-Path $zip) { Remove-Item -Force $zip }
     Compress-Archive -Path $stage -DestinationPath $zip

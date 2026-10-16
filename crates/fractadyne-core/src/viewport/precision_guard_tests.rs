@@ -69,3 +69,26 @@ fn precision_for_octaves_is_monotone_and_guarded() {
         prev = p;
     }
 }
+
+#[test]
+fn zooming_out_and_back_in_about_the_centre_keeps_a_deep_centre_exactly() {
+    // The (49,3) hero point to 120 digits, at 2^300: out to 1x and back, in glide-sized steps.
+    let x = crate::parse_bf_prec("-0.0887926133030986601538450523097015005697106891253792690956998351285032693708137349015830312735269435862157790706524", 512).unwrap();
+    let y = crate::parse_bf_prec("0.654809144755247929391298652387765097829500298148873521264227891688595897967629224347883397141609121876708356441134", 512).unwrap();
+    let mut vp = Viewport::new(1280.0, 800.0);
+    vp.set_center_log2mag(x.clone(), y.clone(), 300.0);
+    let step = 2f64.powf(0.05); // ~a frame of a 1x glide
+    while vp.log2_magnification() > 0.0 {
+        vp.zoom_by(step);
+    }
+    while vp.log2_magnification() < 300.0 {
+        vp.zoom_by(1.0 / step);
+    }
+    let p = 512;
+    let dx = vp.center_x.sub(&x, p, crate::bignum::RM);
+    let dy = vp.center_y.sub(&y, p, crate::bignum::RM);
+    // (Zero is exact; otherwise the exponent: |d| < 2^e.)
+    let off = |d: &BigFloat| if d.is_zero() { i64::MIN } else { d.exponent().map_or(i64::MAX, |e| e as i64) };
+    // Off by less than a hundredth of a pixel at 2^300 (a pixel there is ~2^-310): it was ~1e-20 off.
+    assert!(off(&dx) < -320 && off(&dy) < -320, "drifted: 2^{} / 2^{}", off(&dx), off(&dy));
+}

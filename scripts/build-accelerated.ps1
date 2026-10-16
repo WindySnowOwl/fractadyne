@@ -268,7 +268,8 @@ Copy-Item (Join-Path $root "validation\catalog.toml") -Destination (Join-Path $d
 New-Item -ItemType Directory -Force (Join-Path $dir "validation\replays") | Out-Null
 Copy-Item (Join-Path $root "validation\replays\*.jsonl") -Destination (Join-Path $dir "validation\replays")
 New-Item -ItemType Directory -Force (Join-Path $dir "benchmarks") | Out-Null
-Copy-Item (Join-Path $root "benchmarks\bench-matrix-baseline.json") -Destination (Join-Path $dir "benchmarks")
+# Every card's bench-matrix baseline (the reference card's file and the per-card ones).
+Copy-Item (Join-Path $root "benchmarks\bench-matrix-baseline*.json") -Destination (Join-Path $dir "benchmarks")
 
 # **Packaging gate.** A missing golden is invisible until a tester runs `--uitest` on the
 # download -- exactly how this was found. Fail the build if the user-facing payload is incomplete,

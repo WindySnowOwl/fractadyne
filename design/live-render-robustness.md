@@ -3951,3 +3951,1066 @@ Gates (RTX 3080):
 - Logcheck: PASS throughout.
 
 The quarantine is the plan's only user-visible change, so the next beta's release notes must say it.
+
+**2026-10-14 — W8 rung 1: one exit convention for the gating harnesses, and the first gated
+`--zoomtest` matrix, which found a regression on unreleased main** (`feat/w8-gates`, off local main
+after W7 merged).
+
+*The convention* (`crate::verdict`): 0 PASS, 2 RED (the experiment ran and what it tests failed),
+3 VACUOUS (it did not run: the regime was never reached, or too little was measured to judge),
+4 WATCHDOG. A real failure beside a vacuous term is RED. Logcheck's own 1 stays outside it.
+- **`--autodive`** is judged from the frame record over the whole run (`DiveTally`, fed from
+  `frame_record::since` every frame), not from the last iterate time it sampled (U8):
+  - VACUOUS with no lethal reading;
+  - RED when a retreat reached nothing, a lethal reading had no retreat, or more than
+    `SLOW_AFTER_RETREAT_MAX` (2) lethal-band intervals followed a retreat in a row;
+  - PASS otherwise, and only if the record lost nothing to the ring (else VACUOUS).
+  The 2 is the RX 6800 XT's beta.132 AFTER arms: one ~1,400 ms frame after each derate (its
+  dispatch was already queued), then 92–105 ms. Six unit tests, from the field shapes.
+- **`--motiontest`** keeps the VACUOUS it already computed (boot never completed → 3), and gains A8:
+  a pinned walk that completes blank during the driven phases fails it.
+- **`--zoomtest`**: `--zoomtest-gate [smooth|appetite]` holds a glide to a row of
+  design/live-zoom-smoothing.md's P-G matrix. Smooth: max interval ≤ 50 ms, none over 100 ms, held
+  max ≤ 0.5·√rate octaves (0.5 at 1×, 1 at 4×, the matrix's two points). Appetite: none over 33 ms.
+  The held reading is now taken over the frames that displayed a held picture (`held_oct_max`:
+  a reprojection or the snapshot served), beside the frozen bookkeeping's age. Its vacuous exits
+  are 3.
+- **`--soak`**: a soak too short to judge, or armed and never in the regime, is 3; failures are 2
+  (were 1).
+- **The torture ladder** maps 3 to `FailVacuous`, which counts as a failure. The autodive rung's
+  motivation text said "exits 3" while the code exited 2; both now agree.
+- **REPORT-ONLY**: `--reusetest`, `--divetest`, `--frametest`, `--juliadive` and `--dualsettle` have
+  no criterion. They say so in their begin line and their help text (`logcheck::REPORT_ONLY`, with a
+  test that each is a real task mode).
+
+*The regression the gate found.* The first gated glide toward the e4000 Misiurewicz point at 4×
+(ask 2,008,192 on a 1,999-sample escaped reference) adopted 1–3 pinned refreshes in 100 octaves,
+against 46–51 for beta.19 through dev.3:
+- The held picture fell 81 octaves behind, and the snapshot was served on 86% of frames.
+- Bisected to `c012f32` (dev.4, `PIN_INFLIGHT_MAX` 2 → 1): with 2 the adoptions return (48).
+- The tile trace: 40 of 44 pins were abandoned for drift at ~43 frames (2 octaves at 2.64 oct/s),
+  62–88% done. Each successor opened with a smaller step, and the screen kept the first snapshot,
+  since an abandoned pin's successor does not retake it.
+- At cap 1 a pin completes about one pass every two frames: the next frame's update starts before
+  the GPU has finished. So a pin's progress per octave halved, and the drift rule, which abandoned
+  at 2 octaves whatever the progress, began firing on pins that were nearly done.
+
+Reverting the cap would give back what it bought (A/B, interleaved: motiontest complete adoptions
+43–50 at cap 1 against 13–15 at cap 2; the 20-octave 4× zoomtest lag 0.60–0.66 against
+0.86–0.91 octaves). Instead, the drift rule now abandons only a pin short of half its work
+(`render::drift_finishes_sooner`; a split pin by its sets). Abandoning buys freshness only if the
+new pin lands first, and past halfway it never does: the rest of this pin is less work than all of
+the next, and meanwhile the screen holds the older snapshot either way. The age backstop
+(`PIN_MAX_FRAMES`) still ends a pin that stalls. A/B against cap 1, interleaved:
+
+| | fix | cap 1 |
+|---|---|---|
+| e4000 4×: adopted / held max | 32, 29 / 6.68 oct | 3, 2 / 80.7 oct |
+| motiontest complete adoptions | 46, 36 | 45, 41 |
+| 20-octave zoom at 1×: lag (oct) | 0.148, 0.168 | 0.154, 0.136 |
+| 20-octave zoom at 4×: lag (oct), 5 reps | 0.563–0.792, median 0.725 | 0.494–0.776, median 0.653 |
+
+The 4× difference is inside the spread (rank sum 31 against 24, n = 5 + 5; nowhere near
+significant). Cap 2's was 0.86–0.91. The e4000 held max is back to cap 2's 6.35–6.64 (beta.18:
+5.47).
+
+*The P-G matrix, gated, on the RTX 3080.* The continuous rows' `misi-49-3.fdn` was never in the
+tree. It is rebuilt from `local/hero.fdn` (the same (49,3) centre, base 500k, auto-iter on), and the
+appetite row runs on it as the design says.
+
+| row (one run per build) | fix | cap 1 (main) | beta.19 |
+|---|---|---|---|
+| continuous 1×, 332 oct | RED: max 84.7 ms (53 > 50), held 0.96 | RED: 85.8 ms (55 > 50), held 0.60 | max 53.5 ms (2 > 50), held 0.53 |
+| continuous 4× | RED: max 52.5 ms (1), held 2.18 | RED: held 2.93 | held 2.51 |
+| jump-start 1× | RED: held 0.79 | RED: held 0.53 | |
+| jump-start 4× | RED: held 2.87 | RED: held 3.46 | |
+| hand-over 4× | RED: held 1.10 | RED: held 1.11 | |
+| appetite | PASS (max 28.7 ms) | PASS (29.2 ms) | |
+
+(beta.19 ran ungated: it predates the flag; its numbers are read against the same bounds. It is the
+accelerated package, whose pixels match the standard one.)
+
+Three findings, filed here rather than re-normalised (§7.8's risk):
+- **The held criterion fails on every Smooth row, on beta.19 too.** At 4× the held picture reaches
+  2.2–3.5 octaves against a bound of 1; at 1× 0.53–0.96 against 0.5. The jump-start 1× row reads
+  0.53–0.93 on four runs of each build, with no pin abandoned for drift on either (the tile trace).
+  The shipped refresh sizing does not meet the matrix's own bound (`HELD_MAX_OCT`, 0.5 at 1×). The
+  gate keeps the bound the design states; this is open work for the sizing, not for the gate.
+- **The 1× continuous row's slow frames are a regression on unreleased main.** On a 95-octave leg
+  from 1× of the same glide: beta.19 had 0, 0 and 2 frames over 50 ms in three runs; dev.1, dev.3,
+  dev.4, dev.5 (one of two runs), dev.6, dev.7 and main had 36–143. The effect is bimodal from run to
+  run: the same build's per-step cost differs by more than 10× between runs (mode rate 3e7 against
+  7.4e8 steps/ms), and in the cheap state nothing is slow. So single-run bisects lie: one dev.5 run
+  was clean, the next had 45; dev.2 and one main run were clean. On main the mechanism is
+  `c012f32`'s completion clause. The trace (`TRACE=tile` plus `frames.bin`) shows every pin pass
+  priced by a GPU reading at exactly its reading (11.6, 37.2, 21.3 ms), and every pass released at
+  its completion before its reading landed priced 0.0 ms by the stand-in. Each 0.0 took the ×16 fast
+  lane (545 → 8,720 iterations), and the next pin opened at 8,720: 69–115 ms. dev.1–3 have a
+  different shape (256-iteration openings and a 4,096 → 8,192 pass at 1.6 Mpx), which main no longer
+  shows. Waiting for the reading instead (the pre-dev.4 rule, measured as an experiment build, not
+  kept) removes the slow frames (2 and 0) but costs a frame per pass, and the pins fall behind:
+  - motiontest complete adoptions 6 and 9 against 42 and 45;
+  - e4000 at 4×: 0 and 2 adoptions against 35 and 37;
+  - the 20-octave 4× lag 1.20–1.30 octaves against 0.46–0.61.
+
+  The fix that keeps both is the next commit.
+- **The `--autodive` verdict on real runs.** `--autodive 6 --autodive-home 0` stops at 1e6× and exits
+  3 (VACUOUS: no lethal reading). With `--set TDR_LETHAL_MS=30 --autodive 12 --autodive-home 0`, 17
+  retreats applied and none reached nothing, with at most 1 lethal-band interval in a row after a
+  retreat: VERDICT PASS. The process exits 1, because logcheck flags the override's own startup
+  blind-budget line (a 56 ms frame before any reading exists, against a 30 ms band).
+
+Gates (RTX 3080): workspace tests 1,537 / 0 / 11 (+13); self-test 529/529, goldens 31/31; `--motiontest` ×3 PASS
+(A7: 411–434 readings, every count 0; A8: 0 blank walks); `--livetest` 24/24, 0 drifted; `--uitest`
+75 pass / 1 warn / 0 fail across 76 steps.
+
+**2026-10-14 — W8 rung 1b: a released pin pass is priced by its own reading (the deferred feed)**
+(`feat/w8-gates`).
+
+The mechanism is rung 1's third finding. A pin pass is released at its completion (one pass in
+flight). On the RTX 3080 the completion is seen two frames after the dispatch, a frame before the
+GPU reading lands. Priced there by the completion stand-in (the wall time less two frame periods of
+pipeline latency, floored at 0), a 12.5 ms pass read 0.0 ms and took the ×16 fast lane. The next
+pin opened at 8,720 iterations, and that pass cost 69–115 ms.
+
+Now the pass is still released at its completion, but its price is parked (`WalkLedger::late`:
+size, band, dispatch frame and stand-in). It is fed when the reading that names that dispatch
+frame lands. The pairing uses W6's provenance, so a same-size successor cannot take the reading.
+If no reading comes within `PIN_PRICE_WAIT_FRAMES`, the stand-in is fed as before, and a device
+without timestamps feeds it at once (`WalkPriceInputs::no_timestamps`). A ledger reset drops a
+parked price with the bands it would have fed. The trace adds a `pin-defer` line, and a late price
+reads `acc=-1.0` on its `pin-price` line (`-2.0` when the stand-in stood).
+
+A/B on the RTX 3080, interleaved against rung 1:
+
+| | deferred feed | rung 1 |
+|---|---|---|
+| 95-octave 1× leg (49,3) from 1×: frames > 50 ms | 0, 0 | 50, 46 |
+| …pins adopted / mean lag (oct) | 8 / 0.009 (cheap state), 273 / 0.296 | 325 / 0.224, 319 / 0.231 |
+| motiontest complete adoptions | 45, 45 | 46, 46 |
+| e4000 4×: adopted / held max (oct) | 33 / 7.96, 33 / 6.63 | 35 / 7.23, 36 / 6.37 |
+| 20-octave 4× zoom: mean lag (oct) | 0.592, 0.688, 0.783 | 0.656, 0.541, 0.574 |
+
+The cost is detail that lands a little later: about 0.07 octaves of mean lag at 1× and 0.1 at 4×
+(three reps each, the same direction every time, not significant at that count). It comes from
+passes that now grow by their real prices instead of 16× jumps. The 60–115 ms hitch that bought it
+is the P-G matrix's first criterion, so the trade stands. If the lag is to be won back, the pin
+pass target (`MOTION_PIN_TARGET_MS`, 20 ms) is the knob, not the stand-in.
+
+Replays. Every fixture's walk-price decisions changed wherever a released pass had been priced by
+its stand-in (the autodive fixture: 11 of 602 before re-recording, after `late` was made absent
+when none). Re-recorded the local fixtures (motiontest, autodive-2p800, uitest, livetest-grand-tour, escaped-ref and zoomtest): each replays exactly. The field fixture is trimmed for now. The 35 of its 897 decisions that the change moves are dropped, all walk-price with a stand-in price now deferred. The other 862 still replay exactly, until a capture from a field build replaces it.
+Coverage gains two terms (52): a pin price deferred, and a released pass priced by its own reading.
+
+Gates (RTX 3080): workspace tests 1,540 / 0 / 11 (+3); self-test 529/529, goldens 31/31; `--motiontest` ×3 PASS (complete adoptions 49 and 45, and the recording run's); `--livetest` 24/24, 0 drifted; `--uitest` 75 pass / 1 warn / 0 fail over 76 steps.
+
+**2026-10-14 — W8's field build (dev.10, `8d1da4a`, published and reverted in `114d5cd`) on the
+RX 6800 XT.**
+
+*A fresh field capture* replaces the trimmed one. On PLUTO, the same pair as dev.9 was recorded
+through the agent with `-RecordDecide`: `--motiontest`, and the 12-octave glide into the 9.3e78
+minibrot with a 30 s hold. Trimmed to 941 decisions, they replay exactly on the RTX 3080 (workspace
+tests 1,540 / 0 / 11 with them). The motiontest passes on the Radeon:
+- 58 complete adoptions;
+- A7 checked 391 GPU readings, every provenance count 0;
+- A8: 0 blank walks.
+
+*The deferred feed on the Radeon.* Readings there are known to pair oddly with dispatches. The
+feed pairs by the frame a reading names, and it pairs on this card as well:
+- motiontest: 169 of 185 released passes priced by their own reading, 16 by the stand-in after
+  the wait;
+- minibrot glide: 215 of 218 by their own reading.
+
+*The 1× leg on the Radeon* (95 octaves on the (49,3) spiral from 1×; the agent caps a centre at
+400 characters, so the view went with its centre cut to 300 digits, ample for 2^95): an A/B against beta.18 (on the share; beta.19 changed only credits and bench-kit code, 0 px), interleaved, two runs each:
+
+| RX 6800 XT, 1× leg | beta.18 | dev.10 |
+|---|---|---|
+| frames > 50 ms | 185, 111 | 480, 488 |
+| frames > 100 ms | 1, 1 | 288, 289 |
+| p95 interval | 46.0, 33.4 ms | 109.1, 109.4 ms |
+| fps | 45.4, 48.1 | 37.5, 37.9 |
+| mean lag (oct) | 0.281, 0.232 | 0.160, 0.158 |
+
+**An open regression on the Radeon, in the live-refresh path.** It is not the deferred feed, whose
+pins are not involved. The record (`frames.bin`) shows, every three frames, a whole refresh in one
+dispatch: iterations 0–13,761 at 905×519 (motion scale 0.71 of 1280×735), 6.5e9 steps, read at
+112–115 ms. Its reading lands four frames after its dispatch (provenance frame 2878, read at 2882).
+By then the next one is out (2881). The working hypothesis, unconfirmed: the whole-refresh price is
+paired with `full_pass` (`note_refresh_reading`), which the next dispatch has already overwritten,
+so each 115 ms reading prices nothing and the stale price keeps admitting the frame. That is the
+"a probe whose reading another rule discards never terminates" shape. On the RTX 3080 the reading
+lands within three frames, and nothing like it shows. NEXT: confirm, and find which change since
+beta.18 made it reachable.
+
+**2026-10-14 — The Radeon live-refresh regression, root-caused; a first fix rejected.**
+
+*Bisected on PLUTO* (the 95-octave 1× leg; old dev zips re-published to the share for the purpose,
+then removed): dev.1 0 frames over 100 ms, dev.3 1, dev.4 200 (204 on a rerun), dev.7 162, dev.10
+288–289. A build of `c012f32`'s parent (`1e79df5`, published as dev.91) ran 0 beside dev.4's 204 in
+the same session. **`c012f32` (one pin pass in flight) is the cause on this card too**, through a
+second channel the deferred feed does not touch.
+
+*The mechanism* (dev.10's `frames.bin`, readings attributed by their provenance frame).
+`Meter::motion_rate`, one smoothness rate per mode, sizes both pin passes and whole moving frames,
+and it learns from every GPU reading and every "lift". On this glide:
+
+| readings | count | median rate (nominal steps/ms) | max |
+|---|---|---|---|
+| pin passes | 529 | 9.9e8 | 1.7e11 |
+| whole moving frames | 83 | 5.6e7 | 5.7e7 |
+
+The pin passes run deep in a walk, where most pixels have escaped, so a nominal step costs them a
+fraction of a whole frame's. The shared rate sat at a median 1.7e10, and the visible ladder, which
+sizes a moving frame to reach its escape range in one pass at `MOTION_PASS_MS`, asked for 300× more
+than a 10 ms pass. The admission capped it at 5.9–7.2e9 steps: on the RX 6800 XT, 112–115 ms, every
+three frames. With one pin pass in flight every pass is read, so the pin readings now dominate. (This
+rate's comment already records the downward version: one pin reading once cut the motion budget 9×.)
+
+*A first fix, rejected* (stashed, not committed). A second rate, `Meter::frame_rate`, learned only
+from Motion-kind readings and lifts, sizing non-pin moving frames. On the RTX 3080 the slow frames
+stayed at 0, the 1× lag recovered (0.22 octaves against 0.30) and e4000 adoptions rose (55 against
+33). But moving frames past 2^30 collapsed to a median of 15,950 pixels (about 145×110) against
+800,812. Below the occupancy knee a small frame costs nearly what a full one does, so a small frame
+reads as a low rate, which sizes the next frame smaller: the spiral the ladder's own notes warn of. A
+rate in nominal steps cannot serve both a pin pass and a whole frame, and cannot serve a whole frame
+across the knee without normalising for it.
+
+Open, with three candidate fixes:
+1. Normalise the frame rate for the occupancy knee (steps × max(px, knee) / px).
+2. Size the visible frame from its own last measured price rather than from a rate.
+3. Revert `PIN_INFLIGHT_MAX` to 2 and give back `c012f32`'s lag gain, keeping the drift rule and
+   the deferred feed.
+
+**2026-10-14 — W8 rung 1c: the frame rate's bound (`a88f731`), and what it costs on the Radeon
+(dev.11, `cca58f7`, published and reverted in `cbf9b9a`).**
+
+The fix chosen: `Meter::frame_rate` is fed only by readings and lifts of whole moving frames (never a
+pin pass) and counted at the occupancy knee. `decide_walk_price` uses it only to bound a non-pin
+moving frame's iteration step. The resolution keeps `motion_rate`. Two attempts that sized more
+from the frame rate were measured on the RTX 3080 and dropped:
+- uncorrected for the knee, moving frames spiralled to 145×110;
+- corrected for it, the pins' resolution still halved (514×389 against 1028×779), because the 3080
+  dispatches no whole moving frame, has no frame rate, and the ladder fell back to the opening guess.
+
+On the RTX 3080 the bound changes nothing (no frame rate): the 95-octave 1× leg had 0 frames over
+50 ms, pins at 800,812 px, 317 adopted.
+
+On the RX 6800 XT (the 1× leg against beta.18, interleaved, two runs each):
+
+| | beta.18 | dev.11 |
+|---|---|---|
+| frames > 100 ms | 0, 0 | 0, 0 (dev.10: 288, 289) |
+| frames > 50 ms | 112, 98 | 8, 19 |
+| p95 interval | 33.5, 33.4 ms | 28.9, 30.5 ms |
+| fps | 47.4, 48.6 | 49.7, 49.2 |
+| mean lag (oct) | 0.248, 0.242 | 0.841, 0.942 (dev.10: 0.16) |
+| pins adopted | 307, 314 | 142, 130 |
+
+The cadence is now better than beta.18's, and the freshness much worse. The frames that went out
+whole in one 115 ms pass now start pin walks, and on this card a pin walk adopts at half beta.18's
+rate. Open: why pins are slow on the RX 6800 XT. A suspect is `c012f32`'s one pass in flight with
+the Radeon's later completions; this leg has not measured it.
+
+Gates (RTX 3080): workspace 1,543 / 0 / 11; self-test 529/529, goldens 31/31; `--motiontest` ×3 PASS (A7: 454–463 readings, every count 0; A8: 0); `--livetest` 24/24, 0 drifted; `--uitest` 75 / 1 / 0 over 76 steps.
+
+**2026-10-15 — W8 rung 1d: every pin pass in flight is priced by its own reading, and two are in flight
+again (`feat/w8-gates`).** And a correction to rungs 1–1c.
+
+*Why not adapt the cap to latency.* The two cards seemed to want different caps (RX 6800 XT: two,
+RTX 3080: one), and the first plan was a cap chosen from each session's completion latency. The
+records say otherwise: at one in flight both cards dispatch a pin pass every two frames (RX 6800 XT:
+366 of 528 gaps; RTX 3080: 708 of 1,119), so their completions are seen equally soon. What separated
+the caps was the regime, not the card. On the RTX 3080 two in flight won the 1× glide (lag 0.20
+against 0.29–0.33 octaves, e4000 48–49 adoptions against 26) and lost the motiontest (13–20 against
+42–45). The traced motiontest showed why: 26 pin passes priced across 70 pins against 285 across 85,
+because each new pass rewrote the in-flight record of the one before it, so the licences barely grew
+and 50 pins drifted out.
+
+*The change.* The deferred feed's single parked pass becomes a queue (`WalkLedger::late`, four slots:
+size, band, dispatch frame, stand-in). A pass still in flight as the next one goes out is parked rather
+than rewritten (no stand-in). The readings that land are kept by the dispatch frame they name
+(`Perf::late_readings`, from W6's provenance) and price whichever parked pass they belong to. A pass
+whose reading never comes is fed its stand-in after `PIN_PRICE_WAIT_FRAMES`, or, with none, dropped
+after twice that (`pin-unpriced` in the tile trace). `PIN_INFLIGHT_MAX` is 2 where the device gives GPU
+timestamps and 1 where it does not (`tunables::pin_inflight_max`); the dispatch and the pricing take
+it as an input that recordings made before it read as 1, under which nothing changes.
+
+A/B on the RTX 3080 against rung 1c (one in flight), interleaved:
+
+| | rung 1d | rung 1c |
+|---|---|---|
+| motiontest complete adoptions | 63, 65 | 41, 44 |
+| 95-octave 1× leg (49,3): lag (oct) / pins adopted | 0.167 / 395 | 0.290 / 275, 0.360 / 241 |
+| e4000 4×: adopted / lag (oct) | 54 / 1.96, 53 / 2.03 | 26 / 3.74, 24 / 3.94 |
+| 20-octave 4× zoom: lag (oct) | 0.624, 0.673, 0.680 | 0.760, 0.736, 0.841 |
+
+(One of the rung-1d 1× legs was a solid-colour run; see below. It is left out of the lag figure.) A traced
+motiontest: 268 pin passes priced, 180 by their own reading, 444 parked in flight, 263 never read. The
+timestamp readback does not time every pass at two in flight, but enough are priced for the licences
+to grow.
+
+*A correction: the solid-colour runs.* The user saw the screen go to one flat colour in some of these
+zoomtests. In those runs the zoom renders, for about two-thirds of the glide, from a reference that
+escapes after 7–8 iterations. It is picked about 24 s in and then reused by every lookahead build,
+since `try_reuse_reference` accepts a complete (escaped) orbit. Every pixel reads as escaped (458,242
+of 458,242), no rebase is recorded, palette normalisation never engages, and the frame is close to one
+colour. The content guard passes it, because it asks whether anything escaped. This happened in 2 of
+about 45 long legs (`ab5/l95-late-1`, length 7; `ab9/l95-pe-2`, length 8), and partly in three more
+(lengths 1,292–4,187 for 2,600–6,200 frames). Every run spends about 1,850 frames early on on a
+4,999-sample escaped reference, beta.19's included, and renders correctly there.
+
+**This revises rung 1's "bimodal per-step cost".** Several of the clean runs it explained were these
+renders: cheap because almost nothing iterates. They include the first dev.5 run, the
+`PASS_FIXED_MS=0.2` run, and rung 1b's "cheap state" leg with lag 0.009. The fixes do not rest on
+them. The ×16 licence (1b) and the 115 ms visible frames (1c) were traced in the record of the runs
+they fix, and the RX 6800 XT bisect's runs need checking against this before its counts are
+quoted again. The bug itself is next.
+
+*Every run is now checked for detail and resolution before its numbers count* (the user's request,
+2026-10-15; `validity.py` in the session scratchpad). Per run it reads:
+- the zoomtest's regime line (a short escaped reference);
+- each recorded frame's escape range from its own readings;
+- the median render size, against the same scene's other runs.
+
+A run is FLAT when it shows a short reference, more than 20% of frames with a range under 2
+iterations, or a median range under a tenth of the scene's. It is BLURRY when its median render is
+under half the scene's. Applied to the runs behind this log:
+- **The motiontest, the e4000 glide and the 20-octave 4× zoom are valid on every build.** Rung 1d's
+  case rests on them. One rung-1c 4× leg rendered at 280k against the scene's 797k px.
+- **Every 95-octave 1× leg on the (49,3) spiral ends on a near-flat stretch,** beta.19 and the RX
+  6800 XT's beta.18 included: the last ~1,370 frames (~25 s) escape within 2 iterations of the
+  4,999-sample reference's end (range 4,993.8–4,995.7). That is 30–40% of the recorded frames on the
+  RTX 3080 and 15–32% on the RX 6800 XT. Those legs' numbers are comparable between arms but partly
+  measured on a broken render. The 100%-flat legs (dev.5's first, `PASS_FIXED_MS=0.2`, `l95-pe-2`,
+  `ab5/l95-late-1`) are excluded.
+- **The RX 6800 XT's builds render the 1× leg at different sizes:** beta.18 and dev.12 at ~235k px,
+  dev.4, dev.10 and dev.11 at ~470k. Part of the cadence difference between them is twice the pixels.
+
+Gates (RTX 3080): workspace tests 1,544 / 0 / 11; self-test 529/529, goldens 31/31; `--motiontest` ×3 PASS (63 and 63 complete adoptions, and the recording run's; A7: 438–452 readings, every count 0; A8 0; all three valid); `--livetest` 24/24, 0 drifted; `--uitest` 75 / 1 / 0 over 76 steps. Fixtures re-recorded (all seven replay exactly; the RX 6800 XT capture re-encoded to the new shape, less the two decisions the queue changes by design, until dev.13's capture replaces it); coverage 53 terms.
+
+**2026-10-15 — W8 rung 1d on the RX 6800 XT (dev.13, `06ad3fa`, published and reverted in `6d99b91`).**
+
+A fresh field capture: the motiontest and the 9.3e78 minibrot climb, both checked for detail and
+resolution and both valid, recorded by dev.13, trimmed to 975 decisions, replay exactly on the RTX
+3080. They exercise the queue on this card: 104 passes parked in flight, 100 priced by their own
+reading. The motiontest passes (A7: 328 readings, every count 0).
+
+Against beta.18, interleaved, two runs each, every run checked:
+
+| RX 6800 XT | beta.18 | dev.13 |
+|---|---|---|
+| motiontest complete adoptions | 14, 12 (64k px) | 62, 62 (129–137k px) |
+| 20-octave 4× zoom: lag (oct) | 0.833, 0.815 (64k px, BLURRY against dev.13) | 0.541, 0.472 (215–386k px) |
+| 95-octave 1× leg: frames > 50 / > 100 ms | 156 / 0, 79 / 0 | 45 / 0, 54 / 0 |
+| …lag (oct) / pins adopted / fps | 0.283 / 277 / 46.6, 0.267 / 293 / 48.0 | 0.327 / 273 / 48.8, 0.367 / 257 / 48.5 |
+
+The motiontest and the 4× zoom are valid everywhere and decisive, both fresher and sharper. The 1×
+leg carries the pre-existing flat end-stretch in every run (16–24% of recorded frames here), so its
+small freshness difference is not a reliable reading. W8's live-path regressions from `c012f32` are
+closed on both cards. The solid-colour bug (a reused escaped reference) is next.
+
+**2026-10-15 — The solid-colour zoomtests, root-caused: two harness-visible defects, neither in the
+renderer.** This corrects the rung-1d entry's account, which blamed a reused escaped reference.
+
+*The end-of-glide flat stretch: the zoom rounded the target away (a real bug, in beta.19 too).*
+`Viewport::zoom_at` recomputed the centre at the precision the new depth needs (depth + 64 bits).
+At 1× that is 64 bits, so the first step of a glide from 1× rounded the 1,600-digit (49,3) hero
+point to 64 bits, and the glide zoomed into a point about 1e-20 away from it. Two consequences
+follow:
+- That point is outside the set: a reference there escapes near iteration 5,000. These are the
+  4,999-sample escaped references every 1× leg ran on.
+- Past about 2^75 the view is smaller than that distance, so every pixel escapes within 2 iterations
+  of every other: a correct render of empty exterior, and on screen one colour, for the last ~25 s of
+  every 95-octave leg on both cards.
+
+A jump-start at 2^80 kept the file's precision and rendered full detail (escape range ~13,000).
+The same rounding lost a user's deep view on any zoom out and back in about the centre. Fixed: the
+centre keeps every bit it already has (`zoom_at` works at the greater of the depth's precision and
+the centre's own). A core test zooms the hero point out from 2^300 to 1× and back in glide-sized
+steps. It returns exactly; under the old rounding it drifts by 2^-64 to 2^-67, so the test goes red
+without the fix. Two 95-octave legs with the fix: 0% flat frames, escape ranges 2,350–2,520, an
+11,412-sample reference that does not escape, and the regime is never entered.
+
+*The wholly flat runs: a real cursor steered the glide (a harness defect).* The zoomtest holds a
+virtual Space key, but the Space glide anchors on the cursor whenever one hovers the view. The
+frame record's input fields show it:
+- `ab5/l95-late-1`: the pointer at (673, 325) on every one of its 4,096 recorded frames, and the
+  glide flat for two-thirds of its length;
+- `ab9/l95-pe-2`: a pointer over the window, the glide ending at (−0.786, 1.081), nowhere near
+  the hero point;
+- the clean runs: no pointer.
+
+The user was watching these windows. Fixed: under a harness's virtual Space the glide anchors on the
+view centre. The validity check now also flags a run with a real pointer over its window
+(STEERED).
+
+So the "short escaped reference" seen in these runs was a symptom: the steered or rounded glide was
+over empty space, where every reference escapes early. The reuse rule was not at fault. An
+experiment that refused to reuse a short escaped reference changed nothing (40–42% flat), and is
+not kept.
+
+What this does to earlier figures: every 95-octave 1× leg in this log, on both cards and in every
+arm, measured its last ~25 s on that flat render. Between arms the figures stay comparable; as
+absolute figures they are partly of the wrong picture. The decisive scenes (the motiontest, the
+e4000 glide, the 20-octave 4× zoom) were valid throughout.
+
+Gates (RTX 3080): workspace tests 1,545 / 0 / 11 (+1, the round trip); self-test 529/529, goldens 31/31; `--motiontest` ×3 PASS (A7: 434–462 readings, every count 0); `--livetest` 24/24, 0 drifted (the extra centre digits change no blessed tour frame); `--uitest` 75 / 1 / 0 over 76 steps.
+
+**2026-10-15 — W8: `--livetest`'s second oracle at 4× the ask, and the app's own account in the
+verdict (U34).** The oracle renders "the same view at the same iteration budget", so a view that the
+ask itself starves was black on both sides and graded ok.
+
+*What changed.*
+- Where the live frame is at least 3% black (below that, starvation cannot change the grade), the
+  view is rendered a second time at 4× the oracle's iteration count. The count is honoured verbatim,
+  with a reference built for it. Black that the bigger budget resolves is starvation.
+- Whether starvation is a defect depends on what the user is told. At the checkpoint the harness
+  reads the fields the frame record carries (`capped_frac`, `iter_exhausted`, the plateau, `budget_maxed`)
+  and asks `limit_status`, the status bar's own diagnosis, what it would show. The harness renders
+  offscreen, so it supplies the frame's escape maximum itself.
+- The grades:
+  - `FAIL`: the live frame is ≥10 points blacker than the oracle at the ask. This is unchanged and
+    outranks starvation.
+  - `STARVED`, a failure: the live frame is ≥10 points blacker than the 4× oracle, and the app is
+    silent or concludes interior (plateau, "iter exhausted"), which 4× contradicts.
+  - `capped`, not a failure: as STARVED, but the status bar names the limit ("iter capped", "depth
+    limit").
+  - `warn`: 3 points against either oracle, or 24 sRGB.
+  - Without the second oracle the grade is the old verdict word for word, so old baselines still
+    compare.
+- The baseline gains the 4× black fraction (optional, so old files load).
+- The log gains: both asks, the 4× black fraction, the app's account, and the escape ranges of live
+  and oracle. The ranges make a flat live frame visible even where the black fractions agree.
+- Exit codes join `crate::verdict`:
+  - 2 for drift, or for a failing checkpoint when there is no baseline (it was 1, which the torture
+    ladder classified as a crash);
+  - 3 for nothing judged: `--quick`, no checkpoint captured, a checkpoint in the window the tour
+    never reached, or a tour with no holds.
+
+*Red-checks (RTX 3080, 480×270), the grand tour's 3.3e61 three-spar.*
+
+| run | live / at the ask / at 4× | app says | grade, exit |
+|---|---|---|---|
+| exact budget 60,000 | 100.0% / 100.0% / 0.1% (240,000) | "iter capped" | `capped`, 0 |
+| auto-iter, base 256 | 100.0% / 100.0% / 5.1% (179,344) | "iter capped" (appetite 44,836 binds) | `capped`, 0 |
+| auto-iter, base 105,000 | 26.3% / 26.3% / 0.0% (598,320) | "iter capped" (boost 6.25 reached the appetite) | `capped`, 0 |
+| auto-iter, base 75,000 | 100.0% / 100.0% / 0.5% (215,500) | "iter exhausted" (plateau + exhausted at the 119,580 appetite, budget reverted to 53,875) | **`STARVED`, 2** |
+
+- Every row would have graded ok before.
+- The last row is U27's case: a solid-black view the status bar calls "inside the set, or more
+  than the app can currently provide". Raising the Iterations base resolves it. Its dumped images were
+  checked by eye: the live frame is solid black; the 4× render shows the spar field and a small
+  central disc.
+- The live budget comes from the viewer's own Iterations base, not the script's: `[render]` sets
+  `max_iter` / `auto_iter` for offline renders only. So the auto rows seed the run's config with a
+  session file (scratch, `lt.sh` with `SEED_SESSION`).
+- `livetest` unit tests:
+  - the grade's precedence;
+  - the old-verdict equivalence;
+  - the status-bar labels the grade reads, taken from `limit_status`'s measured regimes. Made to
+    accept "exhausted" as a report, this one goes red.
+
+*A finding, filed rather than graded: the status bar cries "iter capped" at views with interior in
+them.* On the grand tour, 12 of the 12 holds where the second oracle ran have the status bar saying
+"iter capped … raise Iterations to resolve it", but 4× the ask resolves less than a tenth of the
+black there. Examples:
+- the home view: 9.42% black at 2,000, 9.41% at 8,000;
+- seahorse-2: 70.1% at 12,000, 68.9% at 48,000.
+
+`limit_status` takes "the escaped pixels finish near the ceiling" as the sign of starvation. But
+pixels just outside the set escape arbitrarily late, so any view containing interior at an exact
+budget passes that test. With auto-iterations the plateau probe settles the question by experiment
+first, so these are exact-budget views (every tour keyframe's budget is exact).
+
+The harness reports these as false alarms: context, not a grade, because the grade is about the
+screen. It is seen with the harness supplying the escape maximum; whether the GUI shows it depends on
+its escape-range reading being populated at such a view, so it is **not yet reproduced in the GUI**.
+Fixing it changes a user-facing diagnostic, which makes it a product decision.
+
+*Validity:* every checkpoint's live escape range equals its oracle's (no FLAT), and the lowest
+resolution is 0.83 per axis (no BLURRY).
+
+Gates (RTX 3080): workspace tests 1,550 / 0 / 11 (+5); `--livetest` grand tour 24/24, 0 drifted, VERDICT PASS (the 4× oracle ran at 12 holds, none starved; 410 s).
+
+**2026-10-15 — W8: checklist enforcers — `run:` rows, the reference adapter, the opt-in groups**
+(design/checklist-automation.md, sections 5–6).
+
+*`run:` rows (`00d355a`).*
+- `harness:<flag>` proved only that a flag parses. `run:<command>` is satisfied by a recorded run:
+  - `scripts/run_ledger.py run -- …` records the exit code into `validation/runs/<version>.tsv`,
+    against the binary's own `--version` identity (or, for a script, the tree's HEAD), plus the log's
+    `[fd-exit]` and logcheck verdict;
+  - `checklist_coverage.py --release VERSION` requires a matching command from VERSION, from a
+    committed tree, with exit 0 or the exits an `[exit …]` suffix lists. It reports the closest
+    evidence ("ran from an uncommitted tree", "exit 2") rather than "never run".
+- App runs always start from a fresh config. My shell's `FRACTADYNE_CONFIG_DIR` points at a
+  persistent scratch config, and a session's Iterations base changes what `--livetest` measures (the
+  red-check above), so inheriting a config would make the gate depend on whatever ran before.
+- The device-loss row (32) moved to `run:--autodive-home [exit 0,3]`. Exit 3 is accepted there
+  because the row asks whether the dive and the zoom home end without device loss; the retreat needs
+  the card that reaches the regime.
+- The screen row (144) moved from `planned:` to `run:`.
+- A Release gates area: the grand-tour livetest and the self-test's two opt-in groups (`run:`), plus
+  two `planned:` rows: the zoomtest P-G matrix (RED on beta.19 too) and torture increment 2. T-6's
+  job watcher shipped as the field agent, so it gets no row.
+- CI runs `checklist_coverage.py`.
+- Checks:
+  - a scratch ledger covering a clean pass, a dirty tree, exit 3 with and without the suffix,
+    exit 2, backslash paths and token order (8/8);
+  - a real recorded livetest from a dirty build, refused as "ran from an uncommitted tree".
+
+*The reference adapter and the opt-in groups.*
+- `REFERENCE_ADAPTER` (the RTX 3080) is declared in `release_checklist.py`, and the coverage check
+  fails when `BLESSED-GPU.txt` names another card. Control: the file set to the RX 6800 XT makes it
+  exit 1.
+- `--selftest --bless` on another card is refused before the suite runs unless
+  `--bless-new-adapter` is given. End to end, with the marker faked to the RX 6800 XT: exit 2,
+  nothing written.
+- A full self-test now ends by naming the opt-in groups it did not run, in the console and in
+  `report.md`.
+- A unit test reads `selftest.rs`' own `opt_in("…")` calls and holds `OPT_IN_GROUPS` to them.
+  Control: one registry entry renamed turns it red.
+
+⚠ `deep-location` is about 9 hours. Requiring it once per release is what §7.8 asks, and it is
+the user's call whether that stays a gate or becomes a decision recorded at sign-off.
+
+**2026-10-15 — W8: the battery judges itself (`gpu-validate-expected.json`).** `gpu-validate.ps1`
+exited 0 whatever its steps did, and `summary.txt` explained the reds away in prose. Now:
+- `scripts/gpu-validate-expected.json` declares, per card (by the adapter slug the app's
+  `calibration::slug` makes) over a default, each step's expected exit codes. Where a step is known
+  to fail, it also lists WHICH checks: a `[FAIL]` line not in the list is a new failure.
+- The battery reads its card from the bundle's adapter line and judges each step it ran. Each step
+  is named in a Verdict section of `summary.txt`, as expected or UNEXPECTED. A card that now PASSES
+  a step expected to fail is also UNEXPECTED, because the file is then stale. The battery exits 0
+  (all as declared), 2 (something UNEXPECTED) or 3 (no readable file: nothing judged).
+- `publish-share.ps1` ships the file beside the battery. A test holds that recipe to it, and holds
+  the file to the battery: every step it runs has a default, and every card key is a slug of a step
+  the battery runs. Control: deleting the `screen` default turns the test red.
+- Declared today:
+  - gputest exits 1 on both known cards (their compilers fold the transforms; the app detects
+    that).
+  - The RX 6800 XT's self-test may exit 1 with only "a wider canvas contains the narrower one"
+    failing.
+  - Everything else must exit 0.
+
+*Checked against the last real Radeon battery* (dev.9, 2026-10-14), its verdict block extracted
+verbatim and run over fixture bundles under `pwsh` and Windows PowerShell 5.1. All 12 cases are as
+intended (6 cases × 2 shells), and the dev.9 bundle as run is UNEXPECTED on two steps:
+- selftest: the three replay checks that were VACUOUS with "no recording";
+- recordtest: exit 1.
+
+Those are exactly the two defects W6 found by reading the prose (fixtures not packaged; the
+recordtest's IMPOSSIBLE verdict). The battery would have named them itself.
+
+⛔*An encoding trap, caught by the hygiene rule.* A regex escape I wrote for U+00B7 (the middle dot)
+reached the file as the literal character: the editing tool decodes backslash-u escapes. Windows PowerShell 5.1 reads a BOM-less
+file as CP1252, so the pattern became two characters that never match, and every card was silently
+judged by the defaults. The first judge test missed it because its test script carried a BOM;
+`pwsh` 7 hides it too. Fixed by building the character from its code point (`[char]0x00B7`); the
+file is ASCII again. The test now writes the script BOM-less, as it ships. Control: the literal dot
+put back fails under 5.1 on 4 of 6 cases (cards mis-detected) while `pwsh` passes them all.
+
+Residue:
+- The field agent copies only `gpu-validate.ps1` for an accelerated-package battery, so those runs
+  are NOT JUDGED (exit 3) until the agent also copies the file (a change for the next agent
+  version).
+- `gpu-validate.sh` (Linux) does not judge yet.
+
+**2026-10-15 — W8: per-card bench-matrix baselines** (`79b2dcd`). The path signatures are exact per
+build and card, and every card was compared against the one baseline the RTX 3080 blessed. On any
+other card nothing could go red, so the card that fails was exactly the one with nothing to fail
+against.
+
+What changed:
+- A card's baseline is its own `benchmarks/bench-matrix-baseline-<adapter slug>.json`, or else the
+  reference file if that was blessed on this card. `--bless` writes the card's own file unless the
+  reference is absent or already this card's.
+- `--bench-matrix` exits by `crate::verdict`:
+  - 2 for drift against this card's baseline;
+  - 3 when the card has no baseline ("NO BASELINE FOR THIS CARD": it reports against another card's
+    file but judges nothing), or when the file is unreadable;
+  - 0 otherwise. It used to exit 0 on any other card.
+- Every run writes itself as a would-be baseline, `bench-matrix-run.json` beside the log. The battery
+  collects it as `04-bench-matrix-run.json`. That is how a field machine gets a baseline: it runs only
+  allow-listed flags, so it cannot `--bless`, but its run file can be reviewed and committed.
+- All five package recipes ship every card's baseline, held by a test.
+
+⚠ *Deviation from §7.8* ("delete `|| !same_gpu` at bench_matrix.rs:732 and make 'no baseline for
+this adapter' a distinct, loud, non-passing outcome"):
+- **Kept as specified:**
+  - The self-test is exact wherever the card has its own baseline.
+  - `--bench-matrix`, a developer gate, reports a card with no baseline as VACUOUS.
+- **Changed:** in the self-test, a card with no baseline is still compared informationally and NOT
+  failed; its first row says so. The reason is that testers run `--selftest` on whatever card they
+  have (the release checklist's Linux rows do), and a card nobody has blessed is not a defect of the
+  build they are testing.
+- **Where non-passing lives instead:** on the cards that gate releases, it lives in `--bench-matrix`
+  and in the battery's verdict, which holds bench-matrix to exit 0 by default. So the RX 6800 XT's
+  battery is UNEXPECTED until it has a baseline.
+
+The reference baseline dates from beta.143. 15 of today's 43 segments were added since, and are not
+judged even on the RTX 3080 ("15 new"). Re-blessing it is a decision about what is correct now,
+left to the user.
+
+*On the RX 6800 XT* (dev.14 = `3341dfb`, published and reverted in `8de4058`; the full battery,
+PLUTO):
+- The battery judged itself. It read the card as `amd-radeon-rx-6800-xt`, so the code-point middle
+  dot works there.
+- Self-test: only the declared "wider canvas" check failed, so as expected. recordtest exits 0 again
+  (W6's fix).
+- bench-matrix exited 3: "NO BASELINE FOR THIS CARD", 18 cross-GPU differences reported, not judged.
+  The verdict was therefore UNEXPECTED, and the battery exited 2: the pressure §7.8 asks for.
+- **The Radeon's baseline is adopted from that run's `04-bench-matrix-run.json`** as
+  `benchmarks/bench-matrix-baseline-amd-radeon-rx-6800-xt.json`. Determinism first: all 43
+  segments' signatures (mode, eff-it, sa-skip, the four counters) are identical to the dev.9
+  battery's a day earlier, on another build. Control: the same record against the RTX 3080's table
+  differs on 18, which is the battery's own count.
+- **The loop, closed** (dev.15 = `21d403c`, published and reverted in `f22fc9a`; the full battery
+  on PLUTO):
+  - bench-matrix was judged exactly against the Radeon's own baseline: 43 segments, 0 drift, 0 new,
+    exit 0.
+  - The self-test's bench-matrix rows were exact there too: 528 checks, the declared failure the
+    only one. That is one fewer row than on dev.14, because the "no baseline for this card" note is
+    gone.
+  - The battery's verdict was PASS (exit 0), the first battery whose exit code is a judgement.
+
+**2026-10-15 — W8: the meta-gate, `scripts/gate_selfcheck.py` (first version).** §7.8's gate, for a
+workstream whose product is gates: each ARM runs one gate twice, in a scratch copy of the data it
+reads (the app prefers the working directory's `validation/`, so the repository is never touched).
+- The **control**, unmodified, must pass.
+- The **sabotage**, one deliberate breakage of exactly what the gate guards, must:
+  - exit non-zero;
+  - reach its end (an `[fd-exit]` line: a crash is not a catch);
+  - name the breakage in its output (red for the wrong reason proves nothing).
+
+The script exits 2 if an arm goes wrong, 3 if every arm is right but gates remain unarmed, and 0
+otherwise. It is Python rather than §7.8's `.ps1`: it drives other processes and edits files
+byte-exactly, which PowerShell 5.1 makes error-prone, and nothing here runs on the field machine.
+
+| arm | sabotage | control | sabotage exit, and what it named |
+|---|---|---|---|
+| selftest/golden | the `home` golden replaced by the seahorse image | 0 | 1, `[FAIL] golden home` |
+| selftest/replay | the first recorded decision of `escaped-ref.jsonl` off by one iteration | 0 | 1, its replay check |
+| bench-matrix/signature | the baseline's first segment claims one more rebase | 0 | 2, ALGORITHMIC DRIFT |
+| livetest/baseline | the blessed `open` checkpoint 30 points blacker | 0 | 2, drift |
+| livetest/lethal-band | `--set TDR_LETHAL_MS=1`, landmarks chapter | 0 | 1, logcheck FAIL: 11 lethal-band frames, 134 in-flight lines over the livetest's 15 |
+| checklist/broken-claim | a row's enforcer renamed to a missing test | 0 | 1, BROKEN CLAIM |
+| screengate/own-fixtures | (self-armed: its `--selftest` trips every criterion on synthetic captures) | — | 0, every criterion as declared |
+
+*What the first runs found.*
+- **The design's own red-check arm was vacuous at first.** On the grand tour's whole-set chapter,
+  `--set TDR_LETHAL_MS=1` changed nothing: the override applied (`TDR_LETHAL_MS 900 → 1`), but at
+  the home view no pass reaches even 1 ms. Nothing was shed, logcheck passed, and the meta-gate
+  reported the arm WRONG. On the landmarks chapter, with passes of a few ms, it goes red through
+  logcheck as §7.8 requires. The livetest's own pixel verdict stays PASS, which is correct: the
+  pixels are fine and the log is what the sabotage broke. An arm must reach its regime as surely as
+  a harness must.
+- The checklist arm's first control failed because its scratch tree lacked scripts that `script:`
+  and `run:` rows name; the tree now copies `scripts/` whole.
+
+*Gaps, filed rather than normalised (§7.8's risk).* No arm yet for:
+- `--motiontest`;
+- `--uitest`;
+- `--recordtest`;
+- the `--zoomtest-gate` rows (planned anyway: their fixture `misi-49-3.fdn` is not in the tree);
+- `--autodive`;
+- `--soak`;
+- the F3 corpus `--check`. That gate's control is itself known red: 28/38 since beta.141, the df32
+  tail phase, whose re-bless is the user's call. Meanwhile the release checklist still says
+  "38/38 MATCH".
+
+**2026-10-15 — W8: the user's three decisions, and the meta-gate armed further.** The user said:
+"1. Full set per card — it may help diagnose regressions. 2. Rebless. 3. Remove GitHub copy of
+method-switch-no-reiterate. Then move on to the meta gate."
+
+- **The GitHub copy** of `feat/method-switch-no-reiterate` (`4e9616e`) is deleted. `origin` has only
+  `main`.
+- **The reference bench-matrix baseline is re-blessed** (`4adec0f`, at `5ea46fc`). The 28 segments
+  it had keep identical signatures. The 15 power-family segments are now judged on the RTX 3080 too.
+  The run that checked it: 43 segments, 0 drift, 0 new.
+- **Per-card golden sets** (`5d0d567`):
+  - A card's own set is `validation/golden/<slug>/`, with a marker naming the card. The card is
+    judged against it at the strict tolerance. A golden missing from the set falls back to the
+    reference image at the cross-GPU tolerance, so adding a golden does not break every other card.
+  - `--bless` on another card writes that card's set instead of being refused. `--bless-new-adapter`
+    still moves the reference.
+  - The battery runs the self-test with `--out` into its bundle, so `02-selftest/current/` holds the
+    card's would-be set.
+  - Only the share's packages carry per-card sets. The release packages stay at the reference set,
+    because each set is about 90 MB (the dev.17 share package is 103.5 MB against 58).
+  - The report no longer calls a cross-GPU pass a "match".
+  - Checked end to end on the RTX 3080 with the reference marker faked to another card:
+    - the bless wrote the 3080's own set and left the reference untouched;
+    - the next run was strict against that set, 31/31;
+    - with one image deleted, that golden fell back to CROSS-GPU.
+  - **The RX 6800 XT's set** (`2d05c08`) was adopted from the dev.16 battery's renders, checked side
+    by side: the largest mean difference from the 3080, 19.2 on multibrot4-1e6, is the speckle field.
+  - The dev.17 battery (`1c110c0`, reverted in `896afc9`) judged the Radeon strictly against its own
+    set: all 31 goldens at max Δ 0 and mean Δ 0.0, pixel-identical to a run on another build, with
+    no cross-GPU fallback. VERDICT PASS.
+- **The meta-gate armed further** (bench-matrix, livetest, selftest and checklist as before):
+  - motiontest/starved-refresh: `TDR_MIN_STEPS=1 TDR_STEPS_CEIL=1` turns A2 red, "no complete
+    refresh was adopted during motion". `TDR_STEPS_CEIL=1` alone is refused at startup as an
+    argument error, which the script correctly never counts as a catch.
+  - recordtest/no-record: `FRACTADYNE_LOG=0` gives "no logs directory, so no frames.bin". Coarse,
+    since the app has no knob for a single unset field. Its exits (1 fail, 2 vacuous) still predate
+    `crate::verdict`.
+  - soak/crash-report and uitest/crash-report: a crash report planted in the run's log folder
+    mid-run fails "crash report(s) appeared" (exit 2) and "no-crash-files" (exit 1), each a
+    reachability fixture for exactly that criterion.
+  - autodive/retreat-cannot-hold: `TDR_LETHAL_MS=1` gives REACHED THE REGIME AND THE RETREAT DID NOT
+    HOLD (exit 2). The control is row 32's stock run, VACUOUS (3) on a card that never reaches the
+    regime, which is the exit that row accepts.
+  - The zoomtest P-G rows and torture increment 2 are listed as PLANNED, not as gaps, as in the
+    checklist.
+  - **The one gap left is the F3 corpus `--check`, re-run today: 28/38.** Rows 11–15 (the deep
+    saved locations) and 34–38 (the field dives) differ by 21 to 1,907 pixels (maxΔ 1–132, meanΔ ≤
+    0.02): the same ten rows the 2026-10-06 bisect traced to the beta.141 df32 tail phase. (This
+    entry first said "rows 34–38" alone, read from the end of the output; corrected the same day.)
+    Its control is red, so no arm can stand on it until those rows are reviewed against F3 and
+    re-blessed: the user's call.
+
+**2026-10-15 — The corpus gap closed by fixing the renderer, not by re-blessing; the meta-gate
+passes.**
+
+*The review.*
+- The ten rows were re-rendered to scratch, and `--tail-audit 48` ran on every one: of 462 changed
+  pixels audited, 9 were wrong in the tail and right in floatexp, and 0 the other way.
+- One point at row 13 was 20.3 iterations late.
+- The user reviewed the comparison page (Corpus Re-bless Review, an artifact) and chose: "3, let's
+  investigate".
+
+*The investigation.* A new `FRACTADYNE_AUDIT_PIXELS` watch list makes the audit report named pixels
+beside their oracle. With it, the tail was bisected on the corpus, one change per build, in five
+steps:
+1. The entry threshold, at row 13: bit-identical at 2^-30, 2^-50 and 2^-52; 25 differing pixels at
+   2^-56 (none wrong); 1,556 at 2^-60. Below about 2^-52 a term of δz² or 2Z·δz underflows f32 and
+   flushes to zero. Floatexp keeps its mantissa near 1 under a shared exponent.
+2. At 2^-52 the whole corpus was 31/38 with nothing wrong in the audit. Rows 11, 12, 34 and 36 kept
+   the same counts, so a second cause was independent of δz: the rebase test compared f32 squares
+   and split |z| ~ |δz| ties the other way. Taking floatexp's own comparison matched them.
+3. Rows 35 and 37 still differed, fewer pixels the higher the threshold. A third cause depended on
+   Z: near the reference's close approaches a small nonzero Z flushes 2Z·δz. Sending those steps
+   to floatexp matched them.
+4. That full fix kept only 54–67% of the speed-up. Two changes recovered it:
+   - floatexp's comparison reduced to the square roots it takes, which costs nothing extra (77–89%);
+   - Z = 0 exempted from the guard (99.5–100%). After every rebase Z₀ = 0, where 2Z·δz is exactly
+     0, and the guard had sent all those steps to floatexp.
+5. Final (`28ca088`): δz ≥ 2^-50, Z = 0 or |Z| ≥ 2^-50, square-root rebase.
+   - The corpus is **38/38 against the pre-tail baselines**, and `--tail-audit` finds every pixel of
+     all ten rows bit-identical.
+   - The 4K GPU times equal the 2^-60 tail's.
+   - The bench-matrix reference was re-blessed for the intended change. Against tail-off only the
+     extended-dip decode counter differs.
+
+*On the RX 6800 XT* (dev.18 = `ec84e2c`, reverted in `7d698b8`; `--tail-audit` at rows 11, 13, 37
+and 38):
+- 0.09–1.1% of pixels differ, and of 192 audited none is wrong (172 sensitive, 20 both right).
+- That is the card's long-standing shape: beta.147 showed 0.2–8.2% and never a wrong pixel. Its
+  compiler keeps df32's error-free transforms, so the two code paths' operation orders round apart
+  in the low bits.
+- The fix's bit-identity is therefore a claim about the RTX 3080 (and any card that folds the
+  transforms). Its correctness claim, nothing wrong, holds on both.
+
+*The meta-gate.*
+- A corpus arm runs `--check --only 01` in a copy of what the script reads, with row 01's
+  committed render replaced by row 02's.
+- The full run: **13 arms across 11 gates, every one red for its named reason against a passing
+  control, no gaps, `gate_selfcheck: PASS`.**
+- §7.8's exit criterion "every harness in the checklist returns non-zero on its sabotage arm" holds
+  for every gate the checklist relies on. The zoomtest P-G rows and torture increment 2 remain
+  planned, as in the checklist.
+
+*The RX 6800 XT's own references, re-adopted* (`655d37a`).
+- The dev.18 battery failed on the Radeon only where its references predate the fix:
+  - The signatures of four bench-matrix segments drifted (`floatexp-1e30-sa`, `-nosa`, `-nobla`,
+    `deep-interior-1e148`). The rebase counters fell, as on the 3080. The self-test's DRIFT lines
+    read the same baseline.
+  - The golden `custom-zsq-spiral-1e100` changed in 2,035 px (0.098%), every one on the speckled
+    filaments and none in a smooth region. The custom-formula tail shares the 2^-50 threshold.
+- The baseline came from a clean run, not from the battery's own run: PLUTO's CPU was loaded
+  during that battery (reference times +39–126%, two short screen dives).
+  - Three clean `--bench-matrix` runs on dev.18 gave counters identical to the battery's. The
+    median run was adopted, and exactly those four segments changed.
+  - The dev.19 battery (`db8121f`, reverted in `9e34475`): VERDICT PASS. 0 drift, goldens 31/31,
+    and the screen gate PASS (3 × 111–117 captures, 0% blank, 0% flat, 0 flashes).
+- Speed on the Radeon: 4K GPU iterate, dev.17 (2^-60) against dev.18 interleaved three times.
+
+  | scene | dev.17 → dev.18 | of the tail's speed-up |
+  |---|---|---|
+  | 6.6e43 | 152.2 → 155.1 ms | 98.6% kept |
+  | 1.2e148 | 2,994 → 3,010 ms | 98.9% kept |
+  | 4.2e275 | 747.2 → 753.1 ms | 99.3% kept |
+  | 4.6e1105 | 319.0 → 319.2 ms | 100% kept |
+
+  - The one measurable cost is the bench-matrix no-BLA 1e30 segment: +7% GPU (314–317 ms on
+    dev.14–17, 335–338 ms on dev.18).
+  - CPU reference time is equal between the builds when interleaved. The rise in the batteries'
+    `ref ms` across dev.14–18 is the machine's state, not a build.
+- On this card the fix also moves the output toward the all-floatexp loop. At 1.2e148 dev.18
+  differs from it in 43,242 px, where dev.17 differed in 121,835.
+
+**2026-10-15 — The custom-formula tail measured (user: "measure the custom formulas"): exact on the
+RTX 3080, no guard needed; a deep-dip gap found on the way.**
+
+The custom mode-2 loop has a df32 tail of its own (custom.rs `fe_advance`). It shares
+`TAIL_DF32_MIN_E`, so 28ca088's 2^-50 already applies to it. It rebases in floatexp, so the tie
+cause cannot arise. It has no small-Z guard (`TAIL_Z_MIN`), and that is what this measured.
+
+*The oracle first.*
+- `--tail-audit` judged a custom formula against z² + c. `formula_dwell` builds its orbit by
+  formula id, and id 1000 falls to the Mandelbrot default arm.
+- It now takes the formula's own bignum orbit, the new `ir::dwell`. A formula the bignum
+  interpreter cannot evaluate is refused.
+- The test `a_custom_formula_s_dwell_iterates_its_own_formula` holds `dwell` to `formula_dwell`
+  where both apply. It went red on a mutant that iterates z² + c for every formula.
+
+*The views.* Every view had to show the tail running (its df32 share of full steps) and a real
+picture (grey levels, edge pixels, looked at).
+- Custom z² + c on the ten corpus rows the fixed tail had changed.
+- The self-test's two mode-2 custom goldens.
+- New deep views at 1e40× and 1e80×, found in mpmath for z³ + c, z⁴ + c, the Burning Ship
+  `sqr(abs(z)) + c` and sin z + c:
+  - The cubic and quartic views are Misiurewicz points: c = √(ω − 1) for z³ + c (multiplier 3√3)
+    and −2^(1/3) for z⁴ + c.
+  - The Burning Ship and sin views come from bisection.
+  - A bisection from c = 0 ends on a parabolic boundary. There a pixel's offset never reaches
+    2^-50, so the tail never runs. Three such views (cubic and quartic) were all interior and are
+    not counted.
+
+| formula | views (tail share of full steps) | tail vs floatexp |
+|---|---|---|
+| z² + c | spiral golden 1e100 (11.9%); corpus 34–38 (35, 4.4, 2.8, 2.4, 1.4%) | bit-identical |
+| z² + p1·z + c | golden 1e40 (83.6%) | bit-identical |
+| z³ + c | Misiurewicz 1e40, 1e80 (40.0, 20.7%) | bit-identical |
+| z⁴ + c | tip 1e40, 1e80 (40.4, 20.9%) | bit-identical |
+| sqr(abs(z)) + c | 1e40, 1e80 (38.0, 20.1%) | bit-identical |
+| sin z + c | 1e40, 1e80 (60.5, 32.7%) | bit-identical |
+
+- Fifteen valid views across six formulas, from 1e28× to 1e140×, and every pixel agrees. (First
+  written as fourteen, in this entry, `6bbf64e`'s message and GitHub #5: a miscount of the table's
+  rows.)
+- Control: the saved 2^-60 build changes custom z² + c pixels on corpus rows 35, 37 and 38 (1, 19
+  and 54). So the audit sees a custom-tail difference, and the threshold change removed them.
+- No small-Z guard is added: nothing measured calls for one.
+- Not measured on the RX 6800 XT. The field agent's allow-list has no `--formula`, and a `.fdn`
+  view passes its centre and iterations but not its formula.
+
+*Found on the way: custom formulas cannot follow a reference through an extended dip.*
+- On corpus rows 11–15, custom z² + c renders 47–100% interior where the built-in renders 0–11%
+  (rows 11–13). Rows 14 and 15 come out flat, and the tail never runs on any of the five.
+- These are exactly the five rows whose built-in render decodes extended dips (`ext` 57,600 to
+  4,656,512). The five without dips render correctly.
+- The reference passes closer to 0 than f32 holds. The built-in records those samples in extended
+  range (the fe record, built only when `inp.custom.is_none()`); the custom loop reads them as 0.
+  Treating Z as exactly 0 at the dip makes the period's multiplier zero, so every pixel collapses
+  onto the reference's cycle.
+- Pre-existing and separate from the tail: the custom mode-2 loop has had it since it was built.
+  Not fixed here; filed as GitHub #5 (user: "flag the deep dip bug"), reproduced in the live view
+  on beta.19 and the current build with the view file in the issue.
+
+*On the RX 6800 XT* (field agent v25, which takes `--formula`; dev.20): the same fifteen views,
+`--tail-audit 48`. Of all audited differing pixels: tail right 1, floatexp right 0, "neither" 3–5 on
+four views (late escapers near 167,000 iterations, where both paths drift; not the tail).
+- The Burning Ship and sin views are bit-identical even on this card. Cubic and quartic differ in
+  1–8 px.
+- Custom z² + c on corpus rows 34–38 differs in 6.8–17.5% of pixels, against 0.09–1.1% for the
+  built-in Mandelbrot on this card. A custom formula's df32 and floatexp steps are generated
+  separately, so on a card that keeps the error-free transforms their operation orders part in the
+  chaotic pixels. Nothing is wrong there; the two paths simply differ.
+
+**2026-10-16 — W8 finished: U26's detection, the Linux battery's verdict, the last loose ends.**
+
+*U26: the counters' decisions graded per backend* (`7e4d56e4`). §7.8 asked for the rebase and
+BLA-skip counter arithmetic to join `--gputest`'s op families.
+- A counter counts decisions, so the new rows 13–17 run the renderer's own predicates. 1,024
+  decisions each, mostly near ties, built from hashes and bitcasts only:
+
+  | row | predicate |
+  |---|---|
+  | 13 | `rebase_df32`, the mode-0 rebase test |
+  | 14 | the floatexp rebase, `sf_lt(fe_abs_sf(z), fe_abs_sf(δz))` |
+  | 15 | `tail_rebase` |
+  | 16 | the BLA radius test |
+  | 17 | `tail_no_skip`, the df32 tail's BLA exit |
+
+  `rebase_df32` and `tail_no_skip` were lifted out of their two kernels each, which also enforces
+  the lockstep the old comment demanded.
+- The CPU names every modeled arithmetic that reproduces all the decisions: the sum of squares
+  plain or fused either way, subnormals flushed or kept, sqrt and log2 correctly rounded, the
+  constant associated either way.
+- Matching IEEE f32 (unfused, flushed) is a PASS. Anything else is a FAIL that names the arithmetic.
+  An input far from the tie that comes out wrong is WRONG under any arithmetic.
+- `--gputest` prints one `[FAIL] <backend>: <id>` line per failing row, and each card declares its
+  lines in `gpu-validate-expected.json`. Until now `--gputest`'s exit 1 was accepted wholesale on
+  both cards, so a newly failing family could never go red.
+- The reading U26 could only suspect is now measured. On Vulkan, the backend the app renders with,
+  the RTX 3080 fuses both rebase sums as `fma(x,x,y*y)`, while the RX 6800 XT fuses the dot as
+  `fma(y,y,x*x)` and δz's sum as `fma(x,x,y*y)`. **The rebase counter is computed differently on
+  the two cards.** No backend on either card rounds sqrt or log2 correctly: 6–48 of 1,024 near ties
+  decide otherwise. Both readings are deterministic run to run.
+- Found on the way:
+  - FXC (DX12) aborts on the rows written as loops over a dynamically indexed vec4, so each row is
+    one function called four times.
+  - My first log2 margin was scaled to the threshold (~0.01), but `log2(2^j)` is an intermediate of
+    magnitude |j|. One ulp there (1.9e-6 at j = −18) moved the threshold past an input the margin
+    had called decisive, on all three RTX 3080 backends.
+  - The anti-vacuity test went red on a real gap: row 16 could not tell two models apart and had no
+    decisive inputs.
+- Renders unchanged by the lift: bench-matrix 0 algorithmic drift, self-test 529/529 with goldens
+  31/31, F3 corpus 38/38.
+
+*The Linux battery judges itself* (`dd8b1409`).
+- `gpu-validate.sh` always exited 0. It now mirrors `gpu-validate.ps1`'s verdict and exits 0, 2
+  or 3, with the judge in Python. A `python3` on PATH can be an install stub, so it uses the first
+  interpreter that actually runs.
+- The two judges agree line for line and exit for exit on eleven fixture bundles: both cards' real
+  `--gputest` output and sabotaged copies, known and new self-test failures, an unknown card, no
+  file, a step that newly passes.
+- A Linux card has its own slug (RADV adds the chip), so it is judged by the defaults until it
+  declares an entry.
+
+*Smaller items.*
+- `--recordtest` exits in `crate::verdict`'s convention (`c840c059`). Its VACUOUS was 2, which the
+  other gates and the torture ladder read as RED. Checked live: PASS 0, record off 2, `--set` 3.
+- Field agent v25 (`e694a772`) takes `--formula` and `--formula-params`, written without spaces.
+  Agent v26 (`27ab15b8`): an accelerated battery takes the expectations file and `dive-capture`
+  from the standard package; it could not judge itself and skipped the screen step. Both were
+  tested on a private share first.
+
+*Verified on the RX 6800 XT* (dev.22 = `8f0f334a`, reverted in `3b28e3da`).
+- The battery judged `--gputest` row by row against the card's declared lines: as expected.
+- It FAILED on another step. `--recordtest`'s record-cost check read p99 85.2 µs, 0.511% of a
+  60 Hz frame, against a 0.5% limit. The p50 is unchanged at 45 µs, and nothing in dev.20–22
+  touches the record.
+- Five reruns of the same build: PASS, p99 0.37–0.46%. Across the 18 Radeon runs on record, p99 is
+  0.36–0.48% and this is the only one over the limit.
+- **A finding about the gate, filed rather than normalised:** p99 over ~240 frames is the third
+  largest sample, so two or three preempted frames decide it, and on this card the limit sits only
+  5–30% above the usual reading. It goes red without cause about once in eighteen runs. Options:
+  more frames, re-measure a near miss, or a cost that excludes preemption. Not changed here.
+
+§7.8's change list is now done, except the rows planned in the checklist (the zoomtest P-G matrix,
+torture increment 2). Next: W9.
+
+*The record-cost check made sturdier* (user: "make the check sturdier", `e7a8b988`).
+- `--recordtest` re-measures a near miss. A first-window p99 over the limit drives 240 more frames,
+  and the check fails only if the second window is over too. Preemption is random and rarely
+  repeats; a record that really costs too much is over in both.
+- The limit is the tunable `RECORD_COST_PPM` (default 5,000 = 0.5%), so the meta-gate's new arm
+  `recordtest/cost-both-windows` (1 ppm) can drive it red for its own reason: over in both windows,
+  exit 2.
+
+**2026-10-16 — W9 resumes (user: "continue to w9"): rung 1, the escaped-reference rung in the
+ladder, RED on the budget stall.**
+
+*What W9 already had* (beta.115–119, before this document's W numbering reached it):
+- `FRACTADYNE_REF_ESCAPE_AT`, with the `instrument_truncated` exemption from the install derate.
+- The soak's regime predicate (`RegimeAcc`), folded over every record, and its budget-stall
+  tracking.
+- The motion rung (`--zoomtest-location session`, taps and hold).
+- The September field runs: both rungs reached the storm on the RX 6800 XT, and neither reached
+  the failure. User, 2026-09-26: "the pricing reaction waits; the verifiability work ships."
+
+*Rung 1* (`210cf282`, string continuations fixed in `9833d083`).
+- **The soak's RED term.** It printed the field signature and passed regardless. Now eight or more
+  slow frames with the frame budget never coming down is RED, on every soak (`STALL_RED_FRAMES`).
+  The field loss ran 20 such frames. The still rung's seeded September runs ran 4: their budget
+  came down at the first reading.
+- **§7.9's other RED term is not adopted.** "rebase / sampled_px above 4 while chunk_needed ==
+  false" does not separate the failure from health.
+  - At the field view the healthy control (a normal reference) reads 2.7–9.1 on the RTX 3080 and
+    up to 217 on the RX 6800 XT.
+  - A healthy autodive read up to 4.89 (`dca59ac`).
+  - The field loss itself was ~3–4 (25–33M rebases over 8.68M samples).
+  - The density is reported (median, max with its frame, count over 4) and not judged. Its
+    maximum is usually the coarse first frame, where every pixel rebases off the bootstrap
+    reference 256 times and none escapes.
+- **The view, anywhere.** `--soak-location FILE` (repo-anchored), and the crash view the app wrote
+  on 2026-09-21 as a fixture, `validation/field/radeon-crash-2026-09-21.fdn`. The share package
+  ships it (tested), and field agent v27 accepts `--soak-location`.
+- **The ladder.** `Cmd::Instrumented(env, args)` re-invokes the binary with an instrument armed:
+  instruments are read from the environment, so a rung cannot pass one as an argument. Two rungs
+  differ only by the instrument (tested): `live/regime/escaped-ref-control` and
+  `live/regime/escaped-ref-shallow` (`FRACTADYNE_REF_ESCAPE_AT=655`), each 120 s at the field
+  window.
+- **RTX 3080, through the supervisor:** both rungs PASS.
+  - The control is not entered.
+  - The armed rung is entered: 3,301 frames on the 655-sample reference, 33 storm readings up to
+    16M rebases, 0 of 81 dispatches unchunked, no slow frame.
+- **On the RX 6800 XT** (dev.23 = `d10ec466`, reverted in `a4b79826`; agent v27).
+  - The control: not entered, one slow frame at a 4e8 budget, PASS.
+  - The armed rung, **three runs running, all PASS and all ENTERED:** ~6,020 frames on the
+    655-sample reference (ask 7,304), 32 storm readings up to 399M rebases, **0 of 85 dispatches
+    unchunked**, the budget climbing to ~2.0e10 (never held at the bootstrap), no slow frame.
+  - §7.9's exit criterion is met on the card that lost the device twice: a run that provably
+    entered `bla_skip == 0` on a short escaped reference and survived, three runs running.
+  - What changed since the field loss is the controller W2–W8 built: every storm dispatch is
+    chunked, where the field's fatal one was not. A pass shows the app survives this cost shape; it
+    does not show that the picker produces it.
+
+*Two W9 items whose premise is stale:*
+- **"`FRACTADYNE_BLA_DROP_FRAMES`, armed outside the mode-switch block."** `budget_mode` starts at
+  the sentinel `u32::MAX`, so a view's first frame is itself a switch, and the instrument arms at
+  session start. Measured: `suppressing BLA for 1000000 frame(s) after the 4294967295 → 0
+  switch`. And at the field view no counter reading skipped through BLA even without it (0 of 43),
+  so `bla_skip = 0` is the view's own state there. No change.
+- **`FRACTADYNE_EXTRA_GPU_LOAD`.** §6.7 gives one reason for it: to enter the busy-queue regime
+  before §5.1 deletes three vetoes. W2 judged those deletions unneeded and never made them (B5),
+  so the instrument has nothing to precede. Deferred until a deletion is proposed.
+
+*Per release, on the card that fails* (`344d4695`).
+- Both batteries run the armed rung as step 09 (`regime`), declared to exit 0. Field agent v28
+  reads the step.
+- Checklist row 149 stays `planned`, and says why: the checklist cannot read a field battery's
+  result.
+
+*The other §7.9 rungs, each measured on the RTX 3080 before it joins the ladder (§7's P8).*
+- **`motion-mode1`, added** (`a4a2a6b2`). CL-165 is the one device loss `--motiontest` ever saw,
+  at Home → Settle in mode 1, never reproduced. §7.9 asks for a regime assertion, not a
+  reproduction.
+  - `--motiontest` folds the frame record over the whole run and counts view 0's motion frames in
+    mode 1 (direct). None is a VACUOUS term.
+  - RTX 3080: 111 such frames, PASS. The rung is `live/regime/motion-mode1`.
+- **`crossover-hold`, not added.** `--soak-depth 28` settles at 2^92.4, in mode 0. A hold sits in
+  one mode at any fixed depth, while the danger at the crossover is crossing it with a budget sized
+  for the other mode. The Home glides cross it (`live/home/glide-from-depth`).
+- **`auto-iter-deep`, not added.** `--autodive 40 --autodive-iter 0 --autodive-home 1` peaked at
+  16.4 ms and was VACUOUS, as `--autodive`'s help predicts: the live path caps auto-iter frames
+  too cheaply to reach the lethal band. A rung that is always VACUOUS fails every ladder run while
+  testing nothing. Auto-iter at the field geometry is the escaped-reference rung, which does enter
+  its regime.
+- `queue-sat` waits on `EXTRA_GPU_LOAD` (above). `click-jump-deep` has no specification beyond its
+  name.
+
+*§5.8 (reference fitness): the wrap-count refusal, behind `REUSE_MAX_WRAPS` (default 0, off).*
+- The design writes the refusal as "`!partial && ask > REUSE_MAX_WRAPS * orbit_len`". But a
+  COMPLETE reference is either escaped or periodic, and a periodic one wraps by design: that is what
+  makes it cheap. The test is on *escaped*, as `reuse_fit(ask, orbit_len, escaped, max_wraps)`.
+- I first told the user the disk cache could not express *escaped* (its header has `partial`, not
+  `escaped`) and offered a format change. **That was wrong:** `orbit_blob::encode` never writes a
+  periodic orbit, so a complete orbit on disk IS an escaped one. The cache passes `!partial` to the
+  same predicate, with no format change and no cache invalidation. Test
+  `a_cached_complete_orbit_is_an_escaped_one` pins it: encode refuses a periodic orbit.
+- One predicate for every path: the live reuse (`try_reuse_reference`, logging `reuse REFUSED`) and
+  both disk lookups (`cache_fit`, shared by `orbit_cache_lookup` and `cache_best`, which says it
+  chooses "as the build's own lookup would"). The cache's `Query::fits` now takes the whole header.
+- On the field's numbers (655 against 4,627 = 7.06 wraps): refused at 7, kept at 8, kept when off.
+- Not yet built: the fitness-ranked cache, install identity by fitness, and the per-frame install
+  derate. The design says the refusal is shippable alone; the derate is not, without the tunable.
+- **The first flip condition, measured** (RTX 3080, `--livetest tours/grand-tour.toml`, off and
+  then `--set REUSE_MAX_WRAPS=7`): identical. 70 live builds, 32 lookahead and 120 in all, with 0
+  refusals.
+  - So the rebuild rate is within 10%. But the rule never acted: no escaped reference was reused
+    past 7 wraps anywhere on the tour.
+  - Fresh renders (goldens, `--bench-matrix`) build their own references, so they cannot change
+    either.
+  - What no harness produces is the field shape: an escaped orbit reused while auto-iter climbs.
+    With `REF_ESCAPE_AT` armed, every install is truncated, so refuse → rebuild → truncate would
+    loop: not a measurement.
+- **The rule stays off.** It is behaviour-neutral where measured and unexercised where it would
+  act. §5.8 itself names the risk of switching it on alone: a refused reuse asks for a build, and
+  install identity is still "longer wins", which can re-open the build-storm family (U55;
+  CL-102, CL-127). Turning it on needs, first, a rung that produces the natural shape, and then
+  install identity by fitness.

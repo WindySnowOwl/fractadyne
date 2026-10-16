@@ -33,13 +33,16 @@
 #   adapter.txt          the adapter + capability line the app itself resolved (the B6 ask)
 #   00-build-id.txt      is this binary the one the share published? (vs BUILD-ID.txt)
 #   01-gputest.txt       df32/floatexp primitives vs CPU oracles, swept over every backend
-#   02-selftest.txt      full suite + 19 goldens
+#   02-selftest.txt      full suite + goldens
+#   02-selftest/         its report, and current/ = this run's golden renders (the card's would-be set)
 #   03-live-res.txt      --selftest-filter live-res - the settled-resolution invariant
-#   04-bench-matrix.txt  22-segment perf + determinism vs the blessed baseline
+#   04-bench-matrix.txt  perf + determinism vs this card's blessed baseline
+#   04-bench-matrix-run.json  the same run as a would-be baseline for this card
 #   05-livetest.txt      live-vs-offline truth at every tour hold       (skipped by -Quick)
 #   uitest-*/            25-step UI + live-render screenshot bundle     (skipped by -Quick)
 #   07-recordtest.txt    the per-frame record's own gate (~20 s)
 #   08-screen.txt        three autopilot dives captured off the screen, in screen\run1-3 (~100 s)
+#   09-regime.txt        the field view in the escaped-reference storm (W9, ~2.5 min; skipped by -Quick)
 #   app.log              the app's own log across all steps
 #   frames/              each step's frame record (<step>.frames.bin, <step>.frames.jsonl) -
 #                        read with scripts/framelog.py summarize
@@ -256,12 +259,18 @@ Write-Host ("   {0}" -f (($idOut | Where-Object { $_ -match '^verdict' }) -repla
 
 Invoke-Step "gputest" "01-gputest.txt" @("--gputest") `
     "df32/floatexp primitives vs CPU oracles, every backend"
-Invoke-Step "selftest" "02-selftest.txt" @("--selftest") `
-    "full suite + 19 goldens (goldens blessed on an RTX 3080; deltas elsewhere are expected)"
+# --out puts the report and this run's golden renders (current\*.png) in the bundle, not in the
+# install: they are this card's would-be golden set, adopted as validation\golden\<card slug>\.
+Invoke-Step "selftest" "02-selftest.txt" @("--selftest", "--out", (Join-Path $dir "02-selftest\report.md")) `
+    "full suite + goldens: strict against this card's own set if it has one, else cross-GPU against the RTX 3080's"
 Invoke-Step "live-res" "03-live-res.txt" @("--selftest", "--selftest-filter", "live-res") `
     "settled-resolution invariant - the B6 core, never yet run on hardware truly lacking TIMESTAMP_QUERY"
 Invoke-Step "bench-matrix" "04-bench-matrix.txt" @("--bench-matrix") `
-    "22-segment perf + determinism; exit 2 signals algorithmic drift, not merely slower"
+    "perf + determinism vs THIS card's baseline; 2 = algorithmic drift, 3 = no baseline for this card"
+# The run's own would-be baseline (the baseline schema): how a card that cannot be asked to --bless
+# gets a baseline - review it, then commit it as benchmarks\bench-matrix-baseline-<card slug>.json.
+$benchRun = Join-Path (Join-Path $cfg "logs") "bench-matrix-run.json"
+if (Test-Path $benchRun) { Copy-Item $benchRun (Join-Path $dir "04-bench-matrix-run.json") -Force }
 
 if (-not $Quick) {
     Invoke-Step "livetest" "05-livetest.txt" `
@@ -310,6 +319,26 @@ else {
     Write-Host "-> skipping screen (no dive-capture\capdive.ps1 beside this script)" -ForegroundColor DarkGray
 }
 
+# --- step 09: the REGIME that lost the RX 6800 XT (W9, design/live-render-robustness.md 7.9) ------
+# The 2026-09-21 field view, with every installed reference truncated to the 655 samples the field's
+# escaped at: every pixel runs ~7x past it and rebases with BLA off. 0 = the regime was entered and
+# the app survived it; 2 = a budget stall (the field signature), a stalled frame loop, a leak or a
+# crash report; 3 = the regime was never entered (VACUOUS). The torture ladder's
+# live/regime/escaped-ref-shallow rung, run on the card under test at every battery.
+if (-not $Quick) {
+    $env:FRACTADYNE_REF_ESCAPE_AT = "655"
+    try {
+        Invoke-Step "regime" "09-regime.txt" @("--soak", "120", "--soak-location", "validation/field/radeon-crash-2026-09-21.fdn", "--window", "1676x1360") `
+            "the field crash view with its reference truncated to 655: the escaped-reference storm (~2.5 min)"
+    }
+    finally {
+        Remove-Item Env:FRACTADYNE_REF_ESCAPE_AT -ErrorAction SilentlyContinue
+    }
+}
+else {
+    Write-Host "-> skipping regime (-Quick)" -ForegroundColor DarkGray
+}
+
 # --- harvest the app's own evidence -------------------------------------------------------------
 $log = Join-Path $cfg "logs\fractadyne.log"
 if (Test-Path $log) { Copy-Item $log (Join-Path $dir "app.log") -Force }
@@ -336,10 +365,83 @@ $head | Out-File $sum -Encoding utf8
 ($results | Format-Table Step, Exit, Seconds, File -AutoSize | Out-String).TrimEnd() |
 Out-File $sum -Encoding utf8 -Append
 
+# --- verdict: every step against gpu-validate-expected.json --------------------------------------
+# Until this, the battery exited 0 whatever its steps did, and the prose below explained the reds
+# away. Each card's expected exits (and, where a step is known to fail, WHICH checks) are declared
+# in gpu-validate-expected.json beside this script; anything else is named here and makes the
+# battery exit 2. A missing or unreadable file judges nothing and exits 3. (These lines are indented
+# on purpose: the field agent reads the table above by lines that START with a step name.)
+$verdictCode = 0
+$verdictLines = @()
+$slug = ""
+$adapterTxt = Join-Path $dir "adapter.txt"
+if (Test-Path $adapterTxt) {
+    # "... adapter: AMD Radeon RX 6800 XT <middle dot> Vulkan ..." -> the app's calibration::slug.
+    # The dot is built from its code point: this file must stay ASCII (see the NOTE at the top), and
+    # a literal one would be read by Windows PowerShell 5.1 as two CP1252 characters that never match.
+    $dot = [string][char]0x00B7
+    foreach ($l in @(Get-Content $adapterTxt -Encoding utf8)) {
+        if ($l -match ('adapter:\s*([^' + $dot + ']+?)\s*' + $dot)) {
+            $slug = ($Matches[1].ToLowerInvariant() -creplace '[^a-z0-9]+', '-').Trim('-')
+            break
+        }
+    }
+}
+$expPath = Join-Path $root "gpu-validate-expected.json"
+$exp = $null
+try { $exp = Get-Content $expPath -Raw -Encoding utf8 -ErrorAction Stop | ConvertFrom-Json } catch { $exp = $null }
+if (-not $exp) {
+    $verdictCode = 3
+    $verdictLines += "  NOT JUDGED: $expPath is missing or unreadable, so no step's exit code was checked."
+}
+else {
+    $card = $null
+    if ($slug -and $exp.adapters.PSObject.Properties[$slug]) { $card = $exp.adapters.$slug }
+    $cardNote = if ($card) { "" } else { " (not in the file: judged by its defaults)" }
+    $verdictLines += "  card: $(if ($slug) { $slug } else { '(no adapter line in the log)' })$cardNote"
+    foreach ($r in $results) {
+        $rule = $null
+        if ($card -and $card.PSObject.Properties[$r.Step]) { $rule = $card.($r.Step) }
+        elseif ($exp.default.PSObject.Properties[$r.Step]) { $rule = $exp.default.($r.Step) }
+        $allowed = if ($rule) { @($rule.exit | ForEach-Object { [int]$_ }) } else { @(0) }
+        $problem = ""
+        if ($allowed -notcontains [int]$r.Exit) {
+            $problem = "exit $($r.Exit), expected $($allowed -join ' or ')"
+            if ([int]$r.Exit -eq 0) { $problem += " - it now PASSES: update gpu-validate-expected.json" }
+        }
+        elseif ([int]$r.Exit -ne 0 -and $rule -and $rule.known_fails) {
+            $known = @($rule.known_fails)
+            $fails = @(Get-Content (Join-Path $dir $r.File) -Encoding utf8 -ErrorAction SilentlyContinue |
+                ForEach-Object { if ($_ -match '^\s*\[FAIL\]\s+(.+)$') { $Matches[1].Trim() } })
+            $new = @($fails | Where-Object { $f = $_; -not ($known | Where-Object { $f.StartsWith($_, [StringComparison]::Ordinal) }) })
+            if ($fails.Count -eq 0) { $problem = "exit $($r.Exit) with no [FAIL] line to hold against the known failures" }
+            elseif ($new.Count -gt 0) { $problem = "NEW failure(s): " + ($new -join "; ") }
+        }
+        if ($problem) {
+            $verdictCode = 2
+            $verdictLines += ("  UNEXPECTED   {0,-13} {1}" -f $r.Step, $problem)
+        }
+        else {
+            $verdictLines += ("  as expected  {0,-13} exit {1}" -f $r.Step, $r.Exit)
+        }
+    }
+}
+$verdictWord = switch ($verdictCode) {
+    0 { "PASS - every step did what gpu-validate-expected.json declares for this card" }
+    2 { "FAIL - a step did not do what gpu-validate-expected.json declares (UNEXPECTED above)" }
+    default { "NOT JUDGED" }
+}
+@("", "Verdict (gpu-validate-expected.json)", "------------------------------------") + $verdictLines + @("  VERDICT: $verdictWord") |
+Out-File $sum -Encoding utf8 -Append
+
 @"
 
 How to read this
 ----------------
+verdict      The battery's own judgement, above: each step's exit code (and, for a step known to
+             fail, which checks failed) against what gpu-validate-expected.json declares for this
+             card. Exit 0 = all as declared, 2 = something UNEXPECTED (named), 3 = not judged. The
+             notes below say why each declaration is what it is.
 build-id     Read this line FIRST. 0 = the binary tested is the one the share published. 1 = it is
              not (a stale extraction, or a different build): every other result is then about an
              unknown binary. 2 = no BUILD-ID.txt was found, so nobody can say which build this is -
@@ -348,29 +450,36 @@ gputest      A failing two_sum/two_prod means this stack's shader compiler folds
              transforms, so every extended-precision path silently degrades to plain f32. Every
              stack tested so far fails here: all NVIDIA backends, and the RX 6800 XT on every
              backend under both Windows and Linux (Mesa). Exit 1 is expected; the file is the data.
-selftest     The 19 goldens were blessed on an RTX 3080 and are compared with a wider, measured
-             tolerance on other hardware; the path-signature checks likewise report cross-GPU
-             differences rather than failing them. So a FAILURE here is a real signal. Known, under
-             investigation: the RX 6800 XT fails two checks, and which two depends on the system -
-             "a wider canvas contains the narrower one" under Windows, "floatexp vs df32" under
-             Linux (Mesa RADV). Any other failure is new. (If your build predates
-             beta.94 you will instead see "goldens 0/17" and a dozen DRIFT lines, all of which
-             were expected cross-vendor differences rather than defects.)
+selftest     A card with its OWN golden set (validation\golden\<card>\) and bench-matrix baseline
+             is held to them exactly. Any other card is compared with the RTX 3080's goldens at a
+             wider, measured tolerance, and its path signatures are reported rather than failed.
+             So a FAILURE here is a real signal. Known, under investigation: the RX 6800 XT fails
+             one check, which depends on the system - "a wider canvas contains the narrower one"
+             under Windows, "floatexp vs df32" under Linux (Mesa RADV). Any other failure is new.
+             02-selftest\current\ holds this run's golden renders: this card's would-be set.
 live-res     Must pass everywhere. This is the invariant that a GPU without TIMESTAMP_QUERY still
              settles at native resolution instead of being stuck at ~1/3 forever.
-bench-matrix Timings vary by card and mean nothing across machines. Signature differences against
-             a baseline recorded on another GPU are EXPECTED and are reported, not failed - the
-             escape decisions (and the rebase/skip counts that follow) legitimately differ between
-             vendors. Exit 2 means drift on the baseline's OWN card, which does matter.
+bench-matrix Timings vary by card and mean nothing across machines. The path signatures are
+             compared EXACTLY against this card's own baseline (benchmarks\bench-matrix-baseline-
+             <card>.json, or the reference file when it was blessed here): exit 2 = drift. A card
+             with no baseline of its own exits 3 - its signatures are reported against another
+             card's, where escape decisions legitimately differ, so nothing could be judged.
+             04-bench-matrix-run.json is this run as a would-be baseline for this card.
 livetest     Self-contained: compares the live view against an offline render on THIS machine, so
              its pass/fail is meaningful here. "drift" lines compare against an RTX 3080 baseline
-             and can be ignored on other hardware; FAIL lines cannot.
+             and can be ignored on other hardware; FAIL and STARVED lines cannot (STARVED: a render
+             at 4x the iteration ask resolves what the screen left black, and the app did not say
+             why). Exit 2 = drift, 3 = nothing judged.
 uitest       Screenshots for eyeballing. The deep floatexp band is WARN-not-FAIL by design.
-recordtest   Must pass everywhere: 0 pass, 1 fail, 2 VACUOUS (nothing exercised - not a pass). The
+recordtest   Must pass everywhere: 0 pass, 2 RED, 3 VACUOUS (nothing exercised - not a pass). The
              per-frame record is what diagnoses the next crash, so a failure here matters even if
              every other step is green. The frames/ folder holds each step's own record.
 screen       Captures only: 0 = three dives captured, 2 = not. The verdict is screengate.py's
              (blank / flat / flash / stale, median of three), run on the developer's machine.
+regime       The view that lost the RX 6800 XT (2026-09-21) with its reference truncated to 655
+             samples: the escaped-reference storm. 0 = entered and survived; 2 = the frame budget
+             never came down across 8+ slow frames (the field signature), or liveness, memory or a
+             crash report failed; 3 = the regime was never entered, so surviving proves nothing.
 
 Send back the whole folder (or the .zip beside it).
 "@ | Out-File $sum -Encoding utf8 -Append
@@ -412,3 +521,7 @@ Write-Host "bundle : $bundle"
 if ($zip) { Write-Host "zip    : $zip" }
 Write-Host ""
 Write-Host "Read summary.txt first - it explains which failures are expected off the reference card." -ForegroundColor Cyan
+Write-Host ""
+$verdictLines | ForEach-Object { Write-Host $_ }
+Write-Host ("VERDICT: {0}" -f $verdictWord) -ForegroundColor $(if ($verdictCode -eq 0) { "Green" } else { "Red" })
+exit $verdictCode

@@ -99,6 +99,7 @@ mod reusetest;
 mod update;
 mod scripting;
 mod selftest;
+mod verdict;
 mod session_outcome;
 mod sysinfo;
 mod theme;
@@ -1120,6 +1121,14 @@ pub(crate) struct RefreshPrice {
     pub(crate) at: PriceView,
 }
 
+/// What a GPU reading timed, from its provenance (W8 rung 1c): a pin pass or not, and its samples.
+/// `Meter::frame_rate` learns only from whole moving frames, counted at the occupancy knee.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ReadShape {
+    pub(crate) pin: bool,
+    pub(crate) samples: u64,
+}
+
 struct Perf {
     enabled: bool,
     /// Height (px) of the bottom status bar as of the last frame — instrumentation for `--uitest`,
@@ -1480,6 +1489,9 @@ struct Perf {
     view_dispatch_at: [u64; 2],
     view_dispatch_steps: [u64; 2],
     view_dispatch_moving: [bool; 2],
+    /// …and whether it was a pin pass (which never moves `Meter::frame_rate`), and its samples.
+    view_dispatch_pin: [bool; 2],
+    view_dispatch_samples: [u64; 2],
     view_reg_seq: [u64; 2],
     view_reg_at: [u64; 2],
     view_done: [std::sync::Arc<std::sync::Mutex<render::ViewDone>>; 2],
@@ -1496,6 +1508,11 @@ struct Perf {
     pin_pass_steps: [u64; 2],
     pin_pass_frame: [u64; 2],
     pin_pass_gpu_ms: [f64; 2],
+    /// Pin passes whose price waits for their own reading (`decide::WalkLedger::late`: size, band,
+    /// dispatch frame, stand-in), and the readings landed for them, by the dispatch frame they NAME
+    /// (W6 provenance), so a same-size successor cannot take another's.
+    chunk_late: [[Option<(u32, u8, u64, f64)>; render::decide::LATE_MAX]; 2],
+    late_readings: [Vec<(u64, f64)>; 2],
     /// Frames the last pinned refresh took from start to adoption (or abandonment), and the
     /// resolution scale it ran at — the measured input of the refresh-resolution feedback
     /// (`refresh_res_cap` is a model; this is what actually happened). Zero = no pin yet.
@@ -2039,10 +2056,16 @@ impl Perf {
         self.meter.motion_rate_now(v, self.budget_mode[v])
     }
 
+    /// See `render::Meter::frame_rate_now`.
+    pub(crate) fn frame_rate_now(&self, v: usize) -> f64 {
+        self.meter.frame_rate_now(v, self.budget_mode[v])
+    }
+
     /// See `render::Meter::record_motion_rate`.
-    fn record_motion_rate(&mut self, v: usize, ms: f64, steps: u64) {
+    fn record_motion_rate(&mut self, v: usize, ms: f64, steps: u64, shape: ReadShape) {
         let straddles = self.straddles_switch(v);
-        self.meter.record_motion_rate(v, self.budget_mode[v], straddles, ms, steps);
+        let knee = crate::calibration::knee_px();
+        self.meter.record_motion_rate(v, self.budget_mode[v], straddles, ms, steps, shape.pin, shape.samples, knee);
     }
 
     /// Everything a GPU TIMESTAMP reading feeds besides the safety budget: the per-mode
@@ -2051,9 +2074,10 @@ impl Perf {
     /// iterate and produces no reading, so the first match is the real pass). ONE function so
     /// the headless harnesses, which keep their own copy of the controller loop, cannot drift
     /// from the app on which consumers a reading reaches (see `--livetest`).
-    pub(crate) fn record_gpu_reading(&mut self, v: usize, ms: f64, steps: u64) {
+    /// `shape`: what the reading timed, from its provenance (W8 rung 1c).
+    pub(crate) fn record_gpu_reading(&mut self, v: usize, ms: f64, steps: u64, shape: ReadShape) {
         self.record_mode_rate(v, ms, steps);
-        self.record_motion_rate(v, ms, steps);
+        self.record_motion_rate(v, ms, steps, shape);
         if steps > 0 && steps == self.pin_pass_steps[v] && self.pin_pass_gpu_ms[v] < 0.0 {
             self.pin_pass_gpu_ms[v] = ms;
         }
@@ -2138,7 +2162,9 @@ impl Perf {
             return;
         }
         let moving = self.view_dispatch_moving[v];
-        if self.meter.motion_wall_cut(v, self.budget_mode[v], self.fe_steps_last[v], dt_ms, moving) {
+        let pin = self.view_dispatch_pin[v];
+        let (samples, knee) = (self.view_dispatch_samples[v], crate::calibration::knee_px());
+        if self.meter.motion_wall_cut(v, self.budget_mode[v], self.fe_steps_last[v], dt_ms, moving, pin, samples, knee) {
             self.motion_step_last[v] = (self.motion_step_last[v] / 2).max(1);
         }
     }
@@ -2287,6 +2313,8 @@ impl Default for Perf {
             view_dispatch_at: [0, 0],
             view_dispatch_steps: [0, 0],
             view_dispatch_moving: [false, false],
+            view_dispatch_pin: [false, false],
+            view_dispatch_samples: [0, 0],
             view_reg_seq: [0, 0],
             view_reg_at: [0, 0],
             view_overdue_logged: [0, 0],
@@ -2295,6 +2323,8 @@ impl Default for Perf {
             pin_pass_steps: [0, 0],
             pin_pass_frame: [0, 0],
             pin_pass_gpu_ms: [-1.0, -1.0],
+            chunk_late: [[None; render::decide::LATE_MAX]; 2],
+            late_readings: [Vec::new(), Vec::new()],
             pin_done: [
                 std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
@@ -6511,6 +6541,7 @@ impl FractadyneApp {
         let selftest_filter = val("--selftest-filter").map(|s| s.to_ascii_lowercase());
         let selftest_list = args.iter().any(|a| a == "--selftest-list");
         let selftest_bless = args.iter().any(|a| a == "--bless");
+        let selftest_bless_new_adapter = args.iter().any(|a| a == "--bless-new-adapter");
         // Standardized benchmark: --benchmark-std, or implied by --res / --burnin.
         let std_res = val("--res")
             .map(|s| arg_token("--res", s, BenchRes::from_token, "720p | 1080p | 4k | 5k"))
@@ -6683,12 +6714,20 @@ impl FractadyneApp {
                 .unwrap_or(300.0);
             // `session` = soak the view the session opened at (a staged crash view, say) rather
             // than jumping to a depth: NaN is that sentinel.
+            // `--soak-location FILE` = soak a view file's view (W9's rungs open the field crash view
+            // this way on any machine); it and a depth cannot both say where.
+            let location = val("--soak-location").map(|p| crate::selftest::anchored(&p));
+            if location.is_some() && val("--soak-depth").is_some() {
+                eprintln!("fractadyne: --soak-location and --soak-depth both set where to soak; give one");
+                crate::exit(2);
+            }
             let decades = match val("--soak-depth") {
                 Some(s) if s == "session" => f64::NAN,
                 Some(s) => arg_parse::<f64>("--soak-depth", &s, "decades of magnification, or 'session'"),
+                None if location.is_some() => f64::NAN,
                 None => 30.0,
             };
-            Some(soak::Soak::new(secs, decades))
+            Some(soak::Soak::new(secs, decades, location))
         } else {
             None
         };
@@ -6771,7 +6810,19 @@ impl FractadyneApp {
                 })
             });
             let then_log2 = val("--zoomtest-then-log2").map(|_| num("--zoomtest-then-log2", "a log2 magnification", 0.0));
-            Some(zoomtest::ZoomTest::new(octaves, rate, location, start_log2, taps, hold_s).with_then(then_log2))
+            // W8: `--zoomtest-gate [smooth|appetite]` holds the glide to a P-G matrix row's criteria.
+            let gate = args.iter().any(|a| a == "--zoomtest-gate").then(|| {
+                let v = val("--zoomtest-gate").filter(|s| !s.starts_with('-')).map(String::as_str);
+                zoomtest::parse_zoom_gate(v).unwrap_or_else(|| {
+                    eprintln!("fractadyne: --zoomtest-gate: expected smooth or appetite, got \"{}\"", v.unwrap_or(""));
+                    crate::exit(2)
+                })
+            });
+            Some(
+                zoomtest::ZoomTest::new(octaves, rate, location, start_log2, taps, hold_s)
+                    .with_then(then_log2)
+                    .with_gate(gate),
+            )
         } else {
             None
         };
@@ -7099,6 +7150,7 @@ impl FractadyneApp {
                 filter: selftest_filter,
                 list: selftest_list,
                 bless: selftest_bless,
+                bless_new_adapter: selftest_bless_new_adapter,
             },
             profile: cli::ProfileCli {
                 run: profile,
@@ -15304,7 +15356,9 @@ impl FractadyneApp {
     ///
     /// `ms` is how long the dispatch of `steps` nominal steps took. Returns whether the budget
     /// moved. The caller owns the pairing: `steps` must be the count that `ms` actually priced.
-    fn apply_iterate_measurement(&mut self, v: usize, ms: f64, steps: u64, src: &str) -> bool {
+    /// `shape`: what a GPU reading timed, from its provenance (W8 rung 1c, `Meter::frame_rate`);
+    /// `ReadShape::default()` where none is known.
+    fn apply_iterate_measurement(&mut self, v: usize, ms: f64, steps: u64, src: &str, shape: ReadShape) -> bool {
         // THE TIMING WITNESS GUARD (beta.129; `timing_witness`). A GPU reading LONGER than the
         // CPU-side window its pass ran inside did not happen. On the RX 6800 XT, 2 of 1,505 budget
         // readings were, both a walk's empty tail. It prices nothing: not the budget, not the
@@ -15346,7 +15400,7 @@ impl FractadyneApp {
         // historical constant — the honest degradation, since we genuinely cannot measure per-step
         // cost there.
         if src == Self::SRC_GPU_ITERATE {
-            self.perf.record_gpu_reading(v, ms, steps);
+            self.perf.record_gpu_reading(v, ms, steps, shape);
         }
         let cur = render::budget_base(self.perf.fe_budget[v], self.perf.bootstrap_steps(v));
         // The arithmetic lives in `render::budget_step` as a pure function so the properties that
@@ -15587,7 +15641,7 @@ impl FractadyneApp {
                 // fired callbacks re-admitted full-size dispatches the GPU had not finished, the
                 // crash-1787275348-0 shape. Completion callbacks retire the backlog here as they do
                 // everywhere else; they work without timestamps.
-                self.apply_iterate_measurement(v, ms, steps, "wall_iterate");
+                self.apply_iterate_measurement(v, ms, steps, "wall_iterate", ReadShape::default());
                 self.perf.fed_frame[v] = self.perf.frame_idx;
             }
         }
@@ -16181,7 +16235,20 @@ impl eframe::App for FractadyneApp {
             };
             // W6 (U14): WHICH dispatch this reading timed, into the record — published with the
             // reading, before its time, so it cannot describe another pass.
+            let mut shape = ReadShape::default();
             if let Ok(p) = self.perf.iterate_prov[v].lock() {
+                shape = ReadShape {
+                    pin: p.kind == render::frame_plan::FrameKind::PinWalk.code(),
+                    samples: p.res[0] as u64 * p.res[1] as u64 * (p.ss.max(1) as u64).pow(2),
+                };
+                // The released pin pass's own reading (the deferred feed): it names that pass's
+                // dispatch frame. Taken here, before `apply_iterate_measurement` can pair it with the
+                // pass now in flight by its step count.
+                if self.perf.chunk_late[v].iter().flatten().any(|l| l.2 == p.frame)
+                    && !self.perf.late_readings[v].iter().any(|r| r.0 == p.frame)
+                {
+                    self.perf.late_readings[v].push((p.frame, ms));
+                }
                 let r = &mut self.perf.rec[v];
                 r.read_prov_frame = p.frame;
                 r.read_prov_kind = p.kind;
@@ -16211,7 +16278,7 @@ impl eframe::App for FractadyneApp {
             self.perf.witness_pending[v] = verdict;
             // A whole single-pass refresh's own reading prices the live-refresh gate.
             self.perf.note_refresh_reading(v, ms, steps, frame);
-            if self.apply_iterate_measurement(v, ms, steps, Self::SRC_GPU_ITERATE) {
+            if self.apply_iterate_measurement(v, ms, steps, Self::SRC_GPU_ITERATE, shape) {
                 ctx.request_repaint();
             }
             self.perf.witness_pending[v] = None;

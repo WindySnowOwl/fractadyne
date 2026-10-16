@@ -50,6 +50,10 @@ impl Lane {
 pub(crate) enum Cmd {
     /// Re-invoke this same binary with these arguments.
     SelfExe(&'static [&'static str]),
+    /// Re-invoke this binary with a regime instrument armed in its environment (W9, design §6.7):
+    /// `FRACTADYNE_REF_ESCAPE_AT` and its kin are read once at startup, from the environment only,
+    /// so a rung that needs one cannot be written as arguments.
+    Instrumented(&'static [(&'static str, &'static str)], &'static [&'static str]),
     /// Run another program (program, args).
     External(&'static str, &'static [&'static str]),
 }
@@ -58,6 +62,10 @@ impl Cmd {
     fn display(&self) -> String {
         match self {
             Cmd::SelfExe(a) => format!("fractadyne {}", a.join(" ")),
+            Cmd::Instrumented(env, a) => {
+                let env: Vec<String> = env.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                format!("{} fractadyne {}", env.join(" "), a.join(" "))
+            }
             Cmd::External(p, a) => format!("{p} {}", a.join(" ")),
         }
     }
@@ -100,6 +108,9 @@ pub(crate) enum Outcome {
     Pass,
     /// Ran to completion but the harness reported a failure (drift, Δ, verdict).
     FailAssert,
+    /// Ran, but never reached what it tests (`crate::verdict::VACUOUS`, exit 3): not a pass, and not
+    /// a failure of the code under test either — the rung's regime needs reaching (W8).
+    FailVacuous,
     /// Exceeded its deadline and was killed.
     FailDeadline,
     /// Lost the GPU device.
@@ -131,6 +142,7 @@ impl Outcome {
         match self {
             Outcome::Pass => "pass",
             Outcome::FailAssert => "fail-assert",
+            Outcome::FailVacuous => "fail-vacuous",
             Outcome::FailDeadline => "fail-deadline",
             Outcome::FailDeviceLost => "fail-device-lost",
             Outcome::FailCrash => "fail-crash",
@@ -210,11 +222,11 @@ const MIN: u64 = 60;
 
 /// ⭐THE LADDER. Ordered within each lane from easiest to hardest.
 ///
-/// This first increment deliberately composes rungs ONLY from flags that already exist, so the
-/// supervisor can be landed and trusted before any engine surface changes. The regimes nothing can
-/// currently reach — above all a forced short-escaped reference (`bla_skip=0`), which is what lost
-/// the device on the RX 6800 XT on 2026-08-15 — are increment 2 in the design doc and are absent
-/// here ON PURPOSE. A green run of this ladder does NOT mean that regime is covered.
+/// The first increment deliberately composed rungs ONLY from flags that already existed, so the
+/// supervisor could be landed and trusted before any engine surface changed. Increment 2 (W9) adds
+/// the regimes that lose the device, beginning with a forced short-escaped reference (`bla_skip=0`)
+/// at the 2026-09-21 RX 6800 XT field view (`live/regime/*`). A green run on the RTX 3080 does NOT
+/// mean that regime is covered: it is covered on the card that fails, three runs running.
 pub(crate) const LADDER: &[Rung] = &[
     // ==================== OFFLINE — deterministic, no GPU timing, cheapest ====================
     // Ordered so a broken build fails in seconds rather than after a 40-minute live rung.
@@ -551,7 +563,7 @@ pub(crate) const LADDER: &[Rung] = &[
     Rung {
         id: "live/home/glide-from-depth",
         lane: Lane::Live,
-        motivation: "ZOOM HOME FROM DEPTH — the only automated reproduction of the device-loss regime,                      and the button that actually lost a device (2026-08-18, crash-1787014795-0.txt).                      One continuous sweep from depth to 1x crosses every mode boundary while the budget                      is still sized for the deep regime, which is the shape of both field losses: a                      frame ALREADY SIZED by the old regime going out at 405x over budget (3040 ms)                      after a mode switch reset it, and bla_skip collapsing 4,457,481 -> 9,343 so                      per-step cost jumped ~100x under a stale budget. Measured 3/3 glides from 1e22                      each produced a lethal reading (peaks 1025/1042/1605 ms against a 900 ms band);                      the emergency retreat survived all three. A MONOTONIC DIVE CANNOT DO THIS - it                      peaked at 36 ms on the RX 6800 XT at 1e150 because the controller was starved,                      not stressed. --autodive exits 3 if no lethal reading occurs, so this rung fails                      loudly when it stops reproducing rather than passing vacuously.",
+        motivation: "ZOOM HOME FROM DEPTH — the only automated reproduction of the device-loss regime,                      and the button that actually lost a device (2026-08-18, crash-1787014795-0.txt).                      One continuous sweep from depth to 1x crosses every mode boundary while the budget                      is still sized for the deep regime, which is the shape of both field losses: a                      frame ALREADY SIZED by the old regime going out at 405x over budget (3040 ms)                      after a mode switch reset it, and bla_skip collapsing 4,457,481 -> 9,343 so                      per-step cost jumped ~100x under a stale budget. Measured 3/3 glides from 1e22                      each produced a lethal reading (peaks 1025/1042/1605 ms against a 900 ms band);                      the emergency retreat survived all three. A MONOTONIC DIVE CANNOT DO THIS - it                      peaked at 36 ms on the RX 6800 XT at 1e150 because the controller was starved,                      not stressed. --autodive exits 3 (fail-vacuous) if no lethal reading occurs, so this rung                      fails loudly when it stops reproducing rather than passing vacuously, and 2 if it                      reached the regime and a retreat did not hold (judged from the frame record).",
         // 600 s, not 420: the Radeon run reached 1e22 in 113 s and each further cycle costs ~135 s
         // (dive + glide + re-dive), so 3 cycles do not fit 420 s — it timed out after 2. The rung still
         // PASSED (it only needs one lethal reading), but a cycle count the run cannot finish is a
@@ -625,6 +637,58 @@ pub(crate) const LADDER: &[Rung] = &[
         requires: &["live/tour/grand-full"],
         needs_disk: 128 * MB,
     },
+    // ==================== W9: the regime that has lost the device ====================
+    // Increment 2 begins. The view, the geometry and the truncation are the 2026-09-21 RX 6800 XT
+    // field session's; the instrument perturbs the reference, never the controller (it skips the
+    // install derate it would otherwise trigger: `instrument_truncated`).
+    Rung {
+        id: "live/regime/escaped-ref-control",
+        lane: Lane::Live,
+        motivation: concat!(
+            "The escaped-reference rung's control: the field crash view, the same command, no ",
+            "instrument. Scored on the same lines (soak-regime, soak-stall), so a red on the ",
+            "armed rung can be told from the view's own cost."
+        ),
+        cmd: Cmd::SelfExe(&[
+            "--soak", "120", "--soak-location", "validation/field/radeon-crash-2026-09-21.fdn", "--window", "1676x1360",
+        ]),
+        deadline: Duration::from_secs(5 * MIN),
+        requires: &["live/ui/walk"],
+        needs_disk: 64 * MB,
+    },
+    Rung {
+        id: "live/regime/escaped-ref-shallow",
+        lane: Lane::Live,
+        motivation: concat!(
+            "The regime that lost the RX 6800 XT on 2026-09-21 (beta.111): the field crash view ",
+            "(1.76e6x, mode 0, auto-iter on) with the live reference truncated to the 655 ",
+            "samples it escaped at, so every pixel runs ~7x past it and rebases with BLA off. ",
+            "VACUOUS unless the regime is entered; RED on a budget stall (8+ slow frames the ",
+            "budget never came down across: the field signature), a stalled frame loop, a leak ",
+            "or a crash report. A pass proves the app survives the cost shape, not that the ",
+            "picker produces it; never a golden."
+        ),
+        cmd: Cmd::Instrumented(
+            &[("FRACTADYNE_REF_ESCAPE_AT", "655")],
+            &["--soak", "120", "--soak-location", "validation/field/radeon-crash-2026-09-21.fdn", "--window", "1676x1360"],
+        ),
+        deadline: Duration::from_secs(5 * MIN),
+        requires: &["live/regime/escaped-ref-control"],
+        needs_disk: 64 * MB,
+    },
+    Rung {
+        id: "live/regime/motion-mode1",
+        lane: Lane::Live,
+        motivation: concat!(
+            "CL-165: the one device loss --motiontest ever saw, at Home -> Settle in mode 1, never ",
+            "reproduced. A regime assertion, not a reproduction: the run is VACUOUS unless view 0 ",
+            "rendered moving frames in mode 1, so a run that never entered the regime cannot pass."
+        ),
+        cmd: Cmd::SelfExe(&["--motiontest"]),
+        deadline: Duration::from_secs(10 * MIN),
+        requires: &["live/ui/walk"],
+        needs_disk: 64 * MB,
+    },
 ];
 
 /// Resolve selectors to rungs, preserving ladder order. An empty selector list means everything.
@@ -659,6 +723,8 @@ pub(crate) fn classify(timed_out: bool, exit_code: Option<i32>, output: &str) ->
         // The harnesses use a distinct code for "ran fine, result is wrong" where they can
         // (`--bench-matrix` exits 2 on algorithmic drift); everything else non-zero is a crash.
         Some(2) => Outcome::FailAssert,
+        // `crate::verdict::VACUOUS`: the run never reached what it tests (W8).
+        Some(3) => Outcome::FailVacuous,
         Some(_) | None => Outcome::FailCrash,
     }
 }
@@ -841,6 +907,12 @@ fn run_rung(exe: &Path, rung: &Rung, out_dir: &Path) -> RunRecord {
         Cmd::SelfExe(a) => {
             let mut c = Command::new(exe);
             c.args(a.iter().map(subst));
+            c
+        }
+        Cmd::Instrumented(env, a) => {
+            let mut c = Command::new(exe);
+            c.args(a.iter().map(subst));
+            c.envs(env.iter().copied());
             c
         }
         Cmd::External(prog, a) => {

@@ -1,4 +1,4 @@
-﻿- Show Help  [id 40000]
+- Show Help  [id 40000]
 - ---  [id 0]
 + Navigate
   - Back  [id 40100]

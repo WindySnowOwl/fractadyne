@@ -11,9 +11,30 @@ fn every_rung_id_is_unique_and_well_formed() {
         assert!(!r.motivation.is_empty(), "{} needs a motivation", r.id);
         match &r.cmd {
             Cmd::SelfExe(a) => assert!(!a.is_empty(), "{} needs args", r.id),
+            Cmd::Instrumented(env, a) => assert!(
+                !a.is_empty() && !env.is_empty() && env.iter().all(|(k, _)| k.starts_with("FRACTADYNE_")),
+                "{} needs args and FRACTADYNE_ instruments",
+                r.id
+            ),
             Cmd::External(p, _) => assert!(!p.is_empty(), "{} needs a program", r.id),
         }
     }
+}
+
+/// W9: the escaped-reference rung soaks the FIELD view with the field's truncation, and its control
+/// is the same command without the instrument - so a red can be told from the view's own cost.
+#[test]
+fn the_escaped_reference_rung_and_its_control_differ_only_by_the_instrument() {
+    let rung = |id: &str| LADDER.iter().find(|r| r.id == id).unwrap_or_else(|| panic!("{id} must exist (W9)"));
+    let (Cmd::Instrumented(env, armed), Cmd::SelfExe(control)) =
+        (&rung("live/regime/escaped-ref-shallow").cmd, &rung("live/regime/escaped-ref-control").cmd)
+    else {
+        panic!("the rung must be instrumented and its control must not be");
+    };
+    assert_eq!(env, &[("FRACTADYNE_REF_ESCAPE_AT", "655")], "the field reference escaped at 655");
+    assert_eq!(armed, control, "the control must run the same command");
+    assert!(armed.windows(2).any(|w| w[0] == "--soak-location" && w[1] == "validation/field/radeon-crash-2026-09-21.fdn"));
+    assert!(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../validation/field/radeon-crash-2026-09-21.fdn").exists());
 }
 
 #[test]
@@ -121,6 +142,9 @@ fn a_watchdog_hang_is_a_failure_not_a_pass() {
 fn clean_and_drifted_runs_are_told_apart() {
     assert_eq!(classify(false, Some(0), "checks 116/116 — OK"), Outcome::Pass);
     assert_eq!(classify(false, Some(2), "algorithmic drift"), Outcome::FailAssert);
+    // W8: a harness that never reached what it tests is neither a pass nor a crash.
+    assert_eq!(classify(false, Some(3), "VACUOUS"), Outcome::FailVacuous);
+    assert!(Outcome::FailVacuous.is_failure() && !Outcome::FailVacuous.is_pass());
     assert_eq!(classify(false, Some(101), "panicked"), Outcome::FailCrash);
 }
 

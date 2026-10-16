@@ -3,6 +3,7 @@
 
     python scripts/checklist_coverage.py            # report + fail on a broken claim
     python scripts/checklist_coverage.py --cargo    # also resolve test names via `cargo test --list`
+    python scripts/checklist_coverage.py --release 0.3.0-beta.20   # + every run: row was run
 
 A row that CLAIMS an automated enforcer it no longer has is worse than a row claiming none: the
 reviewer skims it, and nothing is checking. So every non-`planned:` enforcer must resolve to
@@ -10,6 +11,11 @@ something that exists, and this exits non-zero when one does not.
 
 `planned:` entries are counted as OUTSTANDING, never as covered. They are a work list, not
 coverage, and the summary keeps the two apart on purpose.
+
+`run:<command>` entries are RUN-GATED: the command must exist (a flag in the argument parser, or a
+script in the tree), and with `--release VERSION` it must also have been RUN for that release —
+a row in `validation/runs/VERSION.tsv` (`scripts/run_ledger.py`) from that version's binary, from a
+committed tree, with exit 0. A harness that exists is not a gate that ran.
 
 See design/checklist-automation.md for what each row is meant to enforce.
 """
@@ -23,12 +29,27 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def load_checklist():
-    p = os.path.join(ROOT, "scripts", "release_checklist.py")
-    spec = importlib.util.spec_from_file_location("release_checklist", p)
+def load_script(name):
+    p = os.path.join(ROOT, "scripts", name + ".py")
+    spec = importlib.util.spec_from_file_location(name, p)
     m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)  # its own asserts check STEPS/ENFORCERS alignment
+    spec.loader.exec_module(m)
     return m
+
+
+def load_checklist():
+    return load_script("release_checklist")  # its own asserts check STEPS/ENFORCERS alignment
+
+
+def run_target_exists(cmd, argparse_src):
+    """A `run:` command names something real: its first `--flag` is in the argument parser, or its
+    first path-like token is a file in the tree. (An `[exit …]` suffix is not part of it.)"""
+    for tok in cmd.split("[exit ")[0].split():
+        if tok.startswith("--"):
+            return ('"%s"' % tok) in argparse_src
+        if "/" in tok or tok.endswith((".py", ".ps1", ".sh")):
+            return os.path.exists(os.path.join(ROOT, tok.replace("/", os.sep)))
+    return False
 
 
 def read(rel):
@@ -153,6 +174,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cargo", action="store_true",
                     help="resolve test names with `cargo test -- --list` instead of a source scan")
+    ap.add_argument("--release", metavar="VERSION",
+                    help="also require every run: row to have a recorded exit 0 from VERSION's binary")
     args = ap.parse_args()
 
     m = load_checklist()
@@ -191,9 +214,11 @@ def main():
             return ('"%s"' % name) in argparse_src, "harness", name
         if kind == "script":
             return os.path.exists(os.path.join(ROOT, name.replace("/", os.sep))), "script", name
+        if kind == "run":
+            return run_target_exists(name, argparse_src), "run", name
         return False, "unknown", e
 
-    covered, partial, planned, none_possible, broken = [], [], [], [], []
+    covered, partial, planned, none_possible, broken, gated = [], [], [], [], [], []
     for i, ((_area, enf), step) in enumerate(zip(m.ENFORCERS, m.STEPS), start=1):
         ok, kind, detail = resolve(enf)
         row = (i, step[0], enf, detail)
@@ -201,6 +226,8 @@ def main():
             (planned if kind == "planned" else none_possible).append(row)
         elif not ok:
             broken.append((i, step[0], enf, "%s %r not found" % (kind, detail)))
+        elif kind.endswith("run"):
+            gated.append(row)
         elif kind.startswith("partial"):
             partial.append(row)
         else:
@@ -210,6 +237,8 @@ def main():
     print("Manual checklist: %d steps" % total)
     print("  %3d fully enforced      (a machine check fails if the behaviour breaks)" % len(covered))
     print("  %3d partly enforced     (effect checked; gesture or judgement is not)" % len(partial))
+    print("  %3d run-gated           (a recorded exit 0 from the release's binary; see --release)"
+          % len(gated))
     print("  %3d outstanding         (declared in the plan, not yet implemented)" % len(planned))
     print("  %3d cannot be automated (needs a person, a second machine, or a second display)"
           % len(none_possible))
@@ -230,10 +259,49 @@ def main():
         for area, doc_range, real in stale:
             print("  %-20s doc says %-10s checklist is %s" % (area, doc_range, real))
         return 1
+    # The goldens' exact comparison holds only on the card that blessed them, so that card IS the
+    # release gate's reference (release_checklist.REFERENCE_ADAPTER).
+    blessed = (read("validation/golden/BLESSED-GPU.txt") or "").strip()
+    if blessed != m.REFERENCE_ADAPTER:
+        print("\nThe goldens were blessed on %r, not the declared reference adapter %r"
+              % (blessed or "(no BLESSED-GPU.txt)", m.REFERENCE_ADAPTER))
+        print("(validation/golden/BLESSED-GPU.txt vs REFERENCE_ADAPTER in scripts/release_checklist.py).")
+        print("Re-bless on the reference card, or change both on purpose.")
+        return 1
+    print("  goldens blessed on the reference adapter (%s)" % blessed)
     if planned:
         print("\nOutstanding, in step order:")
         for i, area, _enf, detail in planned:
             print("  step %-3d %-18s %s" % (i, area, detail))
+    if args.release:
+        return check_release(args.release, gated)
+    if gated:
+        print("\nRun-gated (`--release VERSION` checks each was run, exit 0, from that build):")
+        for i, area, _enf, detail in gated:
+            print("  step %-3d %-18s %s" % (i, area, detail))
+    return 0
+
+
+def check_release(version, gated):
+    """Every `run:` row has a recorded exit 0 from `version`'s binary, built from a committed tree."""
+    ledger = load_script("run_ledger")
+    rows = ledger.read_ledger(version)
+    missing = []
+    print("\nRun-gated rows for %s (validation/runs/%s.tsv, %d recorded run(s)):" % (version, version, len(rows)))
+    for i, area, _enf, needle in gated:
+        verdicts = [ledger.satisfies(r, version, needle) for r in rows]
+        good = [why for ok, why in verdicts if ok]
+        if good:
+            print("  ok      step %-3d %-18s %s  [%s]" % (i, area, needle, good[-1]))
+            continue
+        # The closest evidence, so a failed or dirty run is not reported as "never run".
+        near = [why for ok, why in verdicts if not ok and why != "not this gate"]
+        print("  NOT RUN step %-3d %-18s %s  [%s]" % (i, area, needle, near[-1] if near else "no run recorded"))
+        missing.append(i)
+    if missing:
+        print("\n%d run-gated row(s) have no exit-0 run from %s's binary. Record one with" % (len(missing), version))
+        print("  python scripts/run_ledger.py run -- <the command>")
+        return 1
     return 0
 
 

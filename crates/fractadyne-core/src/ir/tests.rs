@@ -588,3 +588,38 @@ fn elementary_functions_satisfy_their_identities() {
     }
     assert_eq!(step_f64(&power, (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), &[]).unwrap(), (0.0, 0.0), "0^w = 0");
 }
+
+/// `dwell` (a custom formula's oracle in `--tail-audit`) is `formula_dwell` where both apply: a
+/// typed `z^2 + c` and `z^3 + c` against the built-in Mandelbrot and Multibrot 3, the same escape
+/// iteration and smooth count. And it iterates ITS formula: the id-keyed oracle it replaced
+/// iterated z² + c for every custom formula, so the cubic must disagree with z² + c somewhere.
+#[test]
+fn a_custom_formula_s_dwell_iterates_its_own_formula() {
+    let p = 128;
+    let bf = |v: f64| BigFloat::from_f64(v, p);
+    let points = [(-0.75, 0.1), (0.3, 0.5), (-1.25, 0.02), (-0.1, 0.1), (0.2501, 0.0), (-2.1, 0.0), (0.4, 0.6)];
+    let mut escaped = 0;
+    for (src, id, power) in [("z^2 + c", f::MANDELBROT, 2.0), ("z^3 + c", f::MULTIBROT3, 3.0)] {
+        let formula = crate::ir::parse::parse(src).unwrap();
+        for (x, y) in points {
+            let want = crate::formula_dwell(&bf(x), &bf(y), id, 5000, 65536.0, p);
+            let got = dwell(&formula, &[], power, &bf(x), &bf(y), 5000, 65536.0, p).unwrap();
+            match (want, got) {
+                (None, None) => {}
+                (Some((nw, sw)), Some((ng, sg))) => {
+                    assert_eq!(nw, ng, "{src} at ({x}, {y}): escape iteration");
+                    assert!((sw.max(0.0) - sg).abs() < 1e-3, "{src} at ({x}, {y}): smooth {sw} vs {sg}");
+                    escaped += 1;
+                }
+                _ => panic!("{src} at ({x}, {y}): one oracle escaped and the other did not: {want:?} vs {got:?}"),
+            }
+        }
+    }
+    assert!(escaped >= 6, "too few escaping points compared ({escaped})");
+    let cubic = crate::ir::parse::parse("z^3 + c").unwrap();
+    let differs = points.iter().any(|&(x, y)| {
+        dwell(&cubic, &[], 3.0, &bf(x), &bf(y), 5000, 65536.0, p).unwrap()
+            != crate::formula_dwell(&bf(x), &bf(y), f::MANDELBROT, 5000, 65536.0, p)
+    });
+    assert!(differs, "z^3 + c's oracle agreed with z^2 + c's at every point");
+}

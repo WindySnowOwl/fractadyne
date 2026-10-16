@@ -342,18 +342,40 @@ fn sf_lt(a: Sf, b: Sf) -> bool {
 }
 
 // ⭐⭐THE df32 TAIL PHASE of the mode-2 loops (beta.141). Floatexp exists only for a δz too small
-// for df32's f32 exponent (~1e-38). Once |δz| has grown past 2^-60, a full step can run in plain
+// for df32's f32 exponent (~1e-38). Once |δz| is large enough, a full step can run in plain
 // df32 — about 383 lane-instructions against floatexp's 955 per iteration (RTX 3080, TODO.md).
 // The step counters (beta.137) found 84–100% of mode-2 full steps had |δz| >= 2^-100 at every deep
 // corpus scene, and full steps were 33–99% of all executed steps.
-// ⭐MEMORYLESS: a step runs in df32 exactly when |δz| >= 2^-60, whatever the previous step did, so
-// a chunked walk cannot depend on where a frame split. Every conversion between the two forms is
-// an exact power-of-two scaling at those magnitudes. BLA still works in floatexp: the δz is handed
-// back before each attempt, so skip decisions are unchanged. Mandelbrot only (the scope the corpus
-// measured), and never while glitch detection runs, so correction passes stay bit-identical.
-const TAIL_DF32_MIN: f32 = 8.673617379884035e-19; // 2^-60
-const TAIL_DF32_MIN_E: i32 = -60;
-// δc below 2^-120 is dropped in the tail: against |δz| >= 2^-60 it is under 2^-60 relative, below
+// ⭐MEMORYLESS: a step runs in df32 exactly when |δz| >= 2^-50 and Z is 0 or |Z| >= 2^-50 (see
+// `tail_step_ok`), whatever the previous step did, so a chunked walk cannot depend on where a frame
+// split. Every conversion
+// between the two forms is an exact power-of-two scaling at those magnitudes. BLA still works in
+// floatexp: the δz is handed back before each attempt, so skip decisions are unchanged. Mandelbrot
+// only (the scope the corpus measured), and never while glitch detection runs, so correction
+// passes stay bit-identical.
+// ⭐⭐BIT-IDENTICAL TO THE ALL-FLOATEXP LOOP, and it must stay so (2026-10-15). As first shipped
+// (|δz| >= 2^-60, its own rebase test, any Z) it changed 10 of the 38 corpus rows, and the
+// exact-arithmetic audit found 9 of 462 changed pixels WRONG (one 20.3 iterations late, corpus row
+// 13), against 0 the other way: floatexp keeps its mantissa near 1 under a shared exponent, and
+// plain df32 does not. Three causes, each found by bisecting on the corpus (`--tail-audit` with
+// FRACTADYNE_AUDIT_PIXELS on the row-13 point):
+//  - δz from 2^-60: a term of δz² or 2Z·δz falls under f32's normal range (2^-126) and flushes.
+//    Differing pixels at row 13: 1,556 at 2^-60, 25 at 2^-56, 0 at 2^-52. 2^-50 keeps even the
+//    low limbs of δz² (>= 2^-100) normal on hardware that computes them exactly (the RX 6800 XT).
+//  - Z near the reference orbit's close approaches (above the 1e-36 dip marker, below ~2^-79):
+//    2Z·δz flushes there whatever δz is. TAIL_Z_MIN sends those rare steps to floatexp (rows 35,
+//    37 matched only with it) — but NOT Z = 0: guarding Z₀ = 0 too sent the step after every
+//    rebase to floatexp and cost a third of the speed-up, for nothing (`tail_step_ok`).
+//  - The rebase test: comparing f32 SQUARES split the |z| ~ |δz| ties the other way; it takes the
+//    square roots floatexp's comparison takes now (`tail_rebase`; rows 11, 12, 34, 36 matched only
+//    with it). Calling floatexp's own `fe_abs_sf`/`sf_lt` instead also matched, at half the gain.
+// With all three the corpus is 38/38 against the pre-tail baselines, and the speed-up holds (RTX
+// 3080, 4K: 6.6e43 167 -> 60 ms, 1.2e148 2,359 -> 1,670, 4.2e275 741 -> 297, 4.6e1105 343 -> 107;
+// the same as at 2^-60). A change here is checked by `generate_corpus.py --check` and `--tail-audit`.
+const TAIL_DF32_MIN: f32 = 8.881784197001252e-16; // 2^-50
+const TAIL_DF32_MIN_E: i32 = -50;
+const TAIL_Z_MIN: f32 = 8.881784197001252e-16; // 2^-50: the reference value, as above
+// δc below 2^-120 is dropped in the tail: against |δz| >= 2^-50 it is under 2^-70 relative, below
 // df32 precision, and f32 could not hold it anyway.
 const TAIL_DC_MIN_E: i32 = -120;
 fn tail_df32_ok() -> bool {
@@ -368,14 +390,71 @@ fn tail_dc(dc: Fe) -> Cdf {
 fn df_max_abs(z: Cdf) -> f32 {
     return max(abs(z.re.x), abs(z.im.x));
 }
-// Zhuoran's rebase test |z| < |δz| in df32, on the hi limbs — the same Euclidean comparison
-// `fe_abs_sf`/`sf_lt` make in floatexp. Lifted by 2^64 when δz is small so neither square flushes
-// (an overflow to +inf on the z side only ever answers "no rebase", which is then correct).
-fn tail_rebase(zf: vec2<f32>, dzf: vec2<f32>) -> bool {
-    let lift = select(1.0, 1.8446744073709552e19, max(abs(dzf.x), abs(dzf.y)) < 1.0e-9);
-    let a = zf * lift;
-    let b = dzf * lift;
-    return dot(a, a) < dot(b, b);
+// Zhuoran's rebase test |z| < |δz| — the decision floatexp's own comparison makes (`fe_abs_sf` +
+// `sf_lt`: f32 square roots of the hi limbs' squared sums, compared exactly). Rounding commutes
+// with the power-of-two scaling between the two forms while no square underflows, so the same
+// square roots on the df32 hi limbs decide alike (a |z| whose square flushes reads 0 < |δz|, as
+// floatexp's tiny |z| does). As first shipped this compared the SQUARES, which split the ties where
+// two square roots round to one f32 the other way: an equally valid trajectory, but not floatexp's.
+fn tail_rebase(zfull: Cdf, dz: Cdf) -> bool {
+    let a = vec2<f32>(zfull.re.x, zfull.im.x);
+    let b = vec2<f32>(dz.re.x, dz.im.x);
+    return sqrt(dot(a, a)) < sqrt(dot(b, b));
+}
+// Zhuoran's rebase test |z| < |δz| on the df32 (mode 0) paths: ONE function for fs_iterate and the
+// resumable pass, which must decide alike, or a view's pixels would depend on whether a frame was
+// split (the chunk self-tests assert bit-identical output across a pass boundary). `z2` is
+// dot(zf, zf), which the caller forms for its escape test. `--gputest` grades this decision per
+// backend (row 13): the rebase counter is shader arithmetic, and a compiler that fuses these
+// sums differently decides a near-tie differently (U26).
+//
+// This is the SAME underflow that disabled Zhuoran rebasing in mode 2 (see the long note at the
+// mode-2 trigger), and it was live on this path too: the test squares plain f32, so once |δz| drops
+// below ~1.1e-19 the square falls under f32's 1.18e-38 normal floor and flushes to zero. With |z|
+// near zero the other side flushes too, the test reads `0 < 0`, and rebasing is silently off at
+// exactly the near-zero orbit passes it exists for. Mode 0 reaches 1e28×, where pixel δ is ~1e-31 —
+// squared, thirty decades under the floor — so the upper part of this mode's range ran with the
+// trigger dead, and the live path has no Pauldelbrot detection to catch the resulting glitch
+// (single reference + rebasing, by design).
+//
+// The repair is deliberately scoped to the degenerate case ONLY. Both squares reading exactly zero
+// is the one situation the original form cannot answer; every other combination it already gets
+// right (one side flushed while the other did not still orders correctly, because the flushed side
+// is genuinely the smaller magnitude). So the original comparison is kept verbatim and consulted
+// first, and the fallback runs just for `0 < 0`. Rewriting the test unconditionally is what NOT to
+// do here: an earlier attempt normalised by max-component, which is algebraically identical but
+// multiplies by an inexact 1/s, and it drifted three determinism checks by ~99 iterations in 1.2M
+// as near-ties rounded the other way.
+//
+// In the fallback both magnitudes are known to be under ~1.1e-19, so scaling by 2^64 cannot
+// overflow, and being a power of two the scaling is EXACT — this stays a true 2-norm comparison
+// rather than switching to an ∞-norm, which would shift the trigger by up to sqrt(2). Post-scale
+// the floor sits near 1e-38 * 2^64, leaving about seven decades of headroom below mode 0's deepest δ.
+fn rebase_df32(z2: f32, zf: vec2<f32>, dz: Cdf) -> bool {
+    let dzmag2 = dz.re.x * dz.re.x + dz.im.x * dz.im.x;
+    var rebase_now = z2 < dzmag2;
+    if (z2 == 0.0 && dzmag2 == 0.0) {
+        const LIFT: f32 = 18446744073709551616.0; // 2^64, exact
+        let zl = zf * LIFT;
+        let dl = vec2<f32>(dz.re.x * LIFT, dz.im.x * LIFT);
+        rebase_now = dot(zl, zl) < dot(dl, dl);
+    }
+    return rebase_now;
+}
+// Must the df32 tail keep this step from BLA? True when the level-0 node at this step has no
+// validity radius, or δz is past it by more than 0.01 in log2. Both mode-2 kernels call it, and
+// `--gputest` grades it per backend (row 17): `log2` is the GPU's own approximation, so a near-tie
+// can go either way on different hardware (U26).
+fn tail_no_skip(dzd: Cdf, r0: vec4<f32>) -> bool {
+    return !(r0.w > 0.0) || log2(df_max_abs(dzd)) > log2(r0.w) + r0.z + 0.01;
+}
+// May this full step run in the tail? (Mirrored by both mode-2 kernels.) Z = 0 is fine: Z₀ = 0 after
+// every rebase makes 2Z·δz exactly 0, and an extended dip reads 0 where 2Z·δz sits over 60 binary
+// orders under δz², so floatexp's own fe_add drops it too. Only a SMALL NONZERO Z is sent to floatexp.
+fn tail_step_ok(Z: Cdf, dz: Fe, dzd: Cdf, d_now: bool) -> bool {
+    let zm = df_max_abs(Z);
+    return tail_df32_ok() && (zm == 0.0 || zm >= TAIL_Z_MIN)
+        && select(dz.e >= TAIL_DF32_MIN_E, df_max_abs(dzd) >= TAIL_DF32_MIN, d_now);
 }
 
 // Slope normal for distance-estimate lighting: direction of u = z / (dz/dc).
@@ -1397,17 +1476,17 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         var d_now = false;
         loop {
             if (iter >= iu.max_iter) { break; }
-            // BLA works in floatexp: hand a df32 δz back first (exact at |δz| >= 2^-60), so every
+            // BLA works in floatexp: hand a df32 δz back first (exact at |δz| >= 2^-50), so every
             // skip decision is the one the all-floatexp loop would make.
             // In the df32 tail phase most steps cannot take a skip, and finding that out cost a floatexp
             // round trip and a search. No level's radius at ref_n exceeds level 0's (a merged radius is
             // at most its first child's), so a δz already past it rules every level out and the step
             // keeps its df32 δz. Exact either way: the round trip is a power-of-two scaling there, and
-            // the tail test reads |δz| ≥ 2^-60 the same in both forms.
+            // the tail test reads |δz| ≥ 2^-50 the same in both forms.
             var no_skip = false;
             if (d_now && bla_levels > 0u && ref_n < bla_len[0]) {
                 let r0 = reference[iu.orbit_len + (bla_off[0] + ref_n) * 4u + 2u];
-                no_skip = !(r0.w > 0.0) || log2(df_max_abs(dzd)) > log2(r0.w) + r0.z + 0.01;
+                no_skip = tail_no_skip(dzd, r0);
             }
             if (d_now && bla_levels > 0u && !no_skip) {
                 dz = fe_from_cdf(dzd);
@@ -1518,7 +1597,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             let Z = orbit_cdf(r); // reference Z_n (df32; an extended dip reads (0,0) here)
 
             // ⭐THE df32 TAIL PHASE (see TAIL_DF32_MIN). Mirrored exactly in fs_iterate_chunk_fe.
-            if (tail_df32_ok() && select(dz.e >= TAIL_DF32_MIN_E, df_max_abs(dzd) >= TAIL_DF32_MIN, d_now)) {
+            if (tail_step_ok(Z, dz, dzd, d_now)) {
                 if (!d_now) {
                     dzd = fe_to_cdf(dz);
                     d_now = true;
@@ -1529,17 +1608,17 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 let fp = deriv_factor(0u, zfn);
                 D = fe_mul_c(D, fp.x, fp.y);
                 if (iu.julia == 0u) { D = fe_add(D, fe_one()); }
-                // δz' = 2Z·δz + δz² + δc. An extended dip (|Z| < 1e-36) reads 0 here, and then
-                // 2Z·δz is under 2^-58 of δz² — below df32 precision.
+                // δz' = 2Z·δz + δz² + δc. |Z| and |δz| are both >= 2^-50 here (`tail_step_ok`;
+                // an extended dip reads 0 and so never gets here), so every term stays in f32 range.
                 dzd = c_add(c_add(c_two(c_mul(Z, dzd)), c_sqr(dzd)), tail_dc(dc));
                 ref_n = ref_n + 1u;
                 iter = iter + 1u;
-                // Z_{n+1} + δz: an extended dip reads 0, under 2^-60 of δz.
+                // Z_{n+1} + δz: an extended dip reads 0, under 2^-70 of δz (below df32's reach).
                 let zfull_d = c_add(orbit_cdf(reference[ref_n]), dzd);
                 zf = vec2<f32>(zfull_d.re.x, zfull_d.im.x);
                 if ((iu.aux_on & 1u) == 1u) { aux_step(&aux, zf, cmag, power_f); }
                 if (dot(zf, zf) > bail2) { escaped = true; break; }
-                if (tail_rebase(zf, vec2<f32>(dzd.re.x, dzd.im.x)) || ref_n + 1u >= iu.orbit_len) {
+                if (tail_rebase(zfull_d, dzd) || ref_n + 1u >= iu.orbit_len) {
                     n_rebase = n_rebase + 1u;
                     dzd = c_sub(zfull_d, orbit_cdf(reference[0]));
                     ref_n = 0u;
@@ -1904,39 +1983,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                 }
             }
             if (z2 > bail2) { escaped = true; break; }
-            // This is the SAME underflow that disabled Zhuoran rebasing in mode 2 (see the long
-            // note at the mode-2 trigger above), and it was still live on this path: the test
-            // squares plain f32, so once |δz| drops below ~1.1e-19 the square falls under f32's
-            // 1.18e-38 normal floor and flushes to zero. With |z| near zero the other side flushes
-            // too, the test reads `0 < 0`, and rebasing is silently off at exactly the near-zero
-            // orbit passes it exists for. Mode 0 reaches 1e28×, where pixel δ is ~1e-31 — squared,
-            // thirty decades under the floor — so the upper part of this mode's range ran with the
-            // trigger dead, and the live path has no Pauldelbrot detection to catch the resulting
-            // glitch (single reference + rebasing, by design).
-            //
-            // The repair is deliberately scoped to the degenerate case ONLY. Both squares reading
-            // exactly zero is the one situation the original form cannot answer; every other
-            // combination it already gets right (one side flushed while the other did not still
-            // orders correctly, because the flushed side is genuinely the smaller magnitude). So
-            // the original comparison is kept verbatim and consulted first, and the fallback runs
-            // just for `0 < 0`. Rewriting the test unconditionally is what NOT to do here: an
-            // earlier attempt normalised by max-component, which is algebraically identical but
-            // multiplies by an inexact 1/s, and it drifted three determinism checks by ~99
-            // iterations in 1.2M as near-ties rounded the other way.
-            //
-            // In the fallback both magnitudes are known to be under ~1.1e-19, so scaling by 2^64
-            // cannot overflow, and being a power of two the scaling is EXACT — this stays a true
-            // 2-norm comparison rather than switching to an ∞-norm, which would shift the trigger
-            // by up to sqrt(2). Post-scale the floor sits near 1e-38 * 2^64, leaving about seven
-            // decades of headroom below mode 0's deepest δ.
-            let dzmag2 = dz.re.x * dz.re.x + dz.im.x * dz.im.x;
-            var rebase_now = z2 < dzmag2;
-            if (z2 == 0.0 && dzmag2 == 0.0) {
-                const LIFT: f32 = 18446744073709551616.0; // 2^64, exact
-                let zl = zf * LIFT;
-                let dl = vec2<f32>(dz.re.x * LIFT, dz.im.x * LIFT);
-                rebase_now = dot(zl, zl) < dot(dl, dl);
-            }
+            let rebase_now = rebase_df32(z2, zf, dz);
             // @@CUSTOM_REBASE_BEGIN — a custom formula's module rebases PHASE-ALIGNED from here to
             // the matching END marker (a hybrid's reference index must stay ≡ iter mod phases).
             if (rebase_now || ref_n + 1u >= iu.orbit_len) {
@@ -2384,20 +2431,9 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             }
             if (z2m > bail2) { escaped = true; break; }
             // Zhuoran rebase: the δ overtook the reference (or the orbit ran out) — fold the
-            // full value back onto the orbit start. Identical to the single-pass branch.
-            // Degenerate-case fallback, identical to the single-pass branch above — see the full
-            // note there. These two must stay in lockstep: a rebase criterion that differed
-            // between the chunked and unchunked paths would make a view's pixels depend on whether
-            // the frame happened to be split, which is precisely what the chunk selftests exist to
-            // rule out (they assert bit-identical output across a chunk boundary).
-            let dzmag2 = dz.re.x * dz.re.x + dz.im.x * dz.im.x;
-            var rebase_now = z2m < dzmag2;
-            if (z2m == 0.0 && dzmag2 == 0.0) {
-                const LIFT: f32 = 18446744073709551616.0; // 2^64, exact
-                let zl = zf * LIFT;
-                let dl = vec2<f32>(dz.re.x * LIFT, dz.im.x * LIFT);
-                rebase_now = dot(zl, zl) < dot(dl, dl);
-            }
+            // full value back onto the orbit start. The single-pass branch's own test, by the one
+            // function both call (`rebase_df32`).
+            let rebase_now = rebase_df32(z2m, zf, dz);
             // @@CUSTOM_CHUNK_REBASE_BEGIN — rebased PHASE-ALIGNED in a custom module, as fs_iterate's.
             if (rebase_now || ref_n + 1u >= iu.orbit_len) {
                 n_rebase = n_rebase + 1u;
@@ -2707,11 +2743,11 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
         // round trip and a search. No level's radius at ref_n exceeds level 0's (a merged radius is
         // at most its first child's), so a δz already past it rules every level out and the step
         // keeps its df32 δz. Exact either way: the round trip is a power-of-two scaling there, and
-        // the tail test reads |δz| ≥ 2^-60 the same in both forms.
+        // the tail test reads |δz| ≥ 2^-50 the same in both forms.
         var no_skip = false;
         if (d_now && bla_levels > 0u && ref_n < bla_len[0]) {
             let r0 = reference[iu.orbit_len + (bla_off[0] + ref_n) * 4u + 2u];
-            no_skip = !(r0.w > 0.0) || log2(df_max_abs(dzd)) > log2(r0.w) + r0.z + 0.01;
+            no_skip = tail_no_skip(dzd, r0);
         }
         if (d_now && bla_levels > 0u && !no_skip) {
             dz = fe_from_cdf(dzd);
@@ -2781,7 +2817,7 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
         let Z = orbit_cdf(r); // reference Z_n (df32; an extended dip reads (0,0) here)
 
         // ⭐THE df32 TAIL PHASE — verbatim from fs_iterate's mode-2 branch (TAIL_DF32_MIN).
-        if (tail_df32_ok() && select(dz.e >= TAIL_DF32_MIN_E, df_max_abs(dzd) >= TAIL_DF32_MIN, d_now)) {
+        if (tail_step_ok(Z, dz, dzd, d_now)) {
             if (!d_now) {
                 dzd = fe_to_cdf(dz);
                 d_now = true;
@@ -2802,7 +2838,7 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
                 escaped = true;
                 break;
             }
-            if (tail_rebase(zf, vec2<f32>(dzd.re.x, dzd.im.x)) || ref_n + 1u >= iu.orbit_len) {
+            if (tail_rebase(zfull_d, dzd) || ref_n + 1u >= iu.orbit_len) {
                 n_rebase = n_rebase + 1u;
                 dzd = c_sub(zfull_d, orbit_cdf(reference[0]));
                 ref_n = 0u;
@@ -3623,7 +3659,88 @@ fn gt_two_sum_armored(a: f32, b: f32) -> vec2<f32> {
     let e = gt_opaque(a - gt_opaque(s - v)) + gt_opaque(b - v);
     return vec2<f32>(s, e);
 }
+// An input set for the rebase-test rows (13–15): (z.x, z.y, δz.x, δz.y), hi limbs. By class: one in
+// eight decisive (independent magnitudes), one in eight tiny (components near 2^-68, whose squares
+// fall below f32's normal range: the lift's case in `rebase_df32`), the rest near ties (δz = z's
+// components swapped, up to four low mantissa bits flipped in each).
+fn gt_rebase_case(t: u32) -> vec4<f32> {
+    let cls = gt_hash(t ^ 0x51ED270Bu) % 8u;
+    let emin = select(-8, -72, cls == 1u);
+    let a = gt_f32(t * 4u + 1u, emin, 8u);
+    let b = gt_f32(t * 4u + 2u, emin, 8u);
+    if (cls == 0u) {
+        return vec4<f32>(a, b, gt_f32(t * 4u + 3u, -8, 8u), gt_f32(t * 4u + 4u, -8, 8u));
+    }
+    let h = gt_hash(t ^ 0x2545F491u);
+    return vec4<f32>(a, b, bitcast<f32>(bitcast<u32>(b) ^ (h & 15u)), bitcast<f32>(bitcast<u32>(a) ^ ((h >> 4u) & 15u)));
+}
+fn gt_cdf(c: vec2<f32>) -> Cdf {
+    return cset(vec2<f32>(c.x, 0.0), vec2<f32>(c.y, 0.0));
+}
 
+// Rows 13–17 of `fs_gputest`: the decisions the rebase and BLA-skip COUNTERS count (U26). Each is
+// the renderer's own predicate, one decision per call (1 = true), four calls per texel, mostly on
+// near ties, where a compiler that fuses a sum of squares differently, a sqrt or a log2 that is not
+// correctly rounded, or subnormals flushed or kept decides otherwise. The CPU names the arithmetic
+// that reproduces every decision, so whether a counter means the same thing on this backend is a
+// reading. One function per row and no loop: FXC (DX12) aborts on the looped form.
+//
+// Row 13 — rebase test, df32 path (mode 0): `rebase_df32`, called as both kernels call it.
+fn gt_row13(t: u32) -> f32 {
+    let c = gt_rebase_case(t);
+    let zf = c.xy;
+    return select(0.0, 1.0, rebase_df32(dot(zf, zf), zf, gt_cdf(c.zw)));
+}
+// Row 14 — rebase test, floatexp (mode 2): `sf_lt(fe_abs_sf(z), fe_abs_sf(δz))`, the composition
+// every floatexp rebase site calls, at an extended exponent both share.
+fn gt_row14(t: u32) -> f32 {
+    let c = gt_rebase_case(t);
+    let e = i32(gt_hash(t ^ 0x68E31DA4u) % 6000u) - 3000;
+    let z = fe_norm(gt_cdf(c.xy), e);
+    let dz = fe_norm(gt_cdf(c.zw), e);
+    return select(0.0, 1.0, sf_lt(fe_abs_sf(z), fe_abs_sf(dz)));
+}
+// Row 15 — rebase test, df32 tail (mode 2): `tail_rebase`.
+fn gt_row15(t: u32) -> f32 {
+    let c = gt_rebase_case(t);
+    return select(0.0, 1.0, tail_rebase(gt_cdf(c.xy), gt_cdf(c.zw)));
+}
+// Row 16 — BLA validity test (mode 2): `sf_lt(fe_abs_sf(δz), radius)`, as the BLA walk calls it.
+// δz's parts are a large x and a small y (zero, or about 2^-12 below x), in either order so that
+// both fused forms are exercised, and the radius is |x| with its last bits moved by up to four: a
+// near tie that a fused sum of squares rounds otherwise. One in eight radii sits a binade away
+// instead (decisive).
+fn gt_row16(t: u32) -> f32 {
+    let x = gt_f32(t * 4u + 1u, -8, 8u);
+    let ex = i32((bitcast<u32>(x) >> 23u) & 0xFFu) - 127;
+    let y = select(0.0, gt_f32(t * 4u + 2u, ex - 13, 2u), (gt_hash(t ^ 0x1B873593u) & 1u) == 1u);
+    let h = gt_hash(t ^ 0xCC9E2D51u);
+    let base = bitcast<u32>(x) & 0x7FFFFFFFu;
+    var rbits = base + (h % 9u) - 4u;
+    if (((h >> 8u) % 8u) == 0u) { rbits = select(base + 0x800000u, base - 0x800000u, ((h >> 11u) & 1u) == 1u); }
+    let r = bitcast<f32>(rbits);
+    var c = vec2<f32>(x, y);
+    if (((h >> 12u) & 1u) == 1u) { c = vec2<f32>(y, x); }
+    let e = i32(gt_hash(t ^ 0x85EBCA77u) % 6000u) - 3000;
+    let dz = fe_norm(gt_cdf(c), e);
+    return select(0.0, 1.0, sf_lt(fe_abs_sf(dz), sf_norm(vec2<f32>(r, 0.0), e)));
+}
+// Row 17 — the df32 tail's BLA exit: `tail_no_skip`, with the GPU's own log2. The radius is 2^j
+// and δz's larger part sits within a few last bits of 2^(j + k + 0.01), so the decision turns on
+// log2's last bits. One in sixteen has no radius (always true).
+fn gt_row17(t: u32) -> f32 {
+    let j = i32(gt_hash(t ^ 0x7FEB352Du) % 60u) - 30;
+    let kk = i32(gt_hash(t ^ 0x846CA68Bu) % 41u) - 20;
+    let jit = gt_hash(t ^ 0x2C1B3C6Du) % 97u;
+    let sign = (gt_hash(t ^ 0x165667B1u) & 1u) << 31u;
+    let m = bitcast<f32>(sign | ((u32(127 + j + kk) << 23u) + 58300u + jit));
+    let other = bitcast<f32>((u32(126 + j + kk) << 23u) | (gt_hash(t ^ 0x27D4EB2Fu) & 0x7FFFFFu));
+    let none = (gt_hash(t ^ 0x9E3779B1u) % 16u) == 0u;
+    let r = select(bitcast<f32>(u32(127 + j) << 23u), 0.0, none);
+    var dzd = gt_cdf(vec2<f32>(m, other));
+    if ((t & 1u) == 1u) { dzd = gt_cdf(vec2<f32>(other, m)); }
+    return select(0.0, 1.0, tail_no_skip(dzd, vec4<f32>(0.0, 0.0, f32(kk), r)));
+}
 @fragment
 fn fs_gputest(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let ix = u32(pos.x);
@@ -3719,6 +3836,11 @@ fn fs_gputest(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             let r = quick_two_sum(p.x, e);
             return vec4<f32>(p.x, p.y, e, r.y);
         }
+        case 13u: { return vec4<f32>(gt_row13(s * 4u), gt_row13(s * 4u + 1u), gt_row13(s * 4u + 2u), gt_row13(s * 4u + 3u)); }
+        case 14u: { return vec4<f32>(gt_row14(s * 4u), gt_row14(s * 4u + 1u), gt_row14(s * 4u + 2u), gt_row14(s * 4u + 3u)); }
+        case 15u: { return vec4<f32>(gt_row15(s * 4u), gt_row15(s * 4u + 1u), gt_row15(s * 4u + 2u), gt_row15(s * 4u + 3u)); }
+        case 16u: { return vec4<f32>(gt_row16(s * 4u), gt_row16(s * 4u + 1u), gt_row16(s * 4u + 2u), gt_row16(s * 4u + 3u)); }
+        case 17u: { return vec4<f32>(gt_row17(s * 4u), gt_row17(s * 4u + 1u), gt_row17(s * 4u + 2u), gt_row17(s * 4u + 3u)); }
         default: { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
     }
 }

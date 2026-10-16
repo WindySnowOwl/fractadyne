@@ -1326,6 +1326,127 @@ fn stopping_playback_restores_interaction() {
 }
 
 #[test]
+fn the_battery_ships_and_declares_what_it_expects_of_every_step() {
+    // gpu-validate.ps1 judges its own bundle against gpu-validate-expected.json beside it (W8):
+    // a package that ships the battery without the file judges nothing, and a step the file does not
+    // declare is held to exit 0 by default, which would turn a known-failing step red on every card.
+    let publish = include_str!("../../../scripts/publish-share.ps1");
+    assert!(
+        publish.contains("scripts\\gpu-validate-expected.json"),
+        "publish-share.ps1 ships gpu-validate.ps1 but not gpu-validate-expected.json"
+    );
+    let battery = include_str!("../../../scripts/gpu-validate.ps1");
+    let exp: serde_json::Value =
+        serde_json::from_str(include_str!("../../../scripts/gpu-validate-expected.json")).expect("the file parses");
+    // Every step the battery records: `Invoke-Step "name"` and the two recorded by hand (`Step = "name"`).
+    let mut steps: Vec<String> = Vec::new();
+    for marker in ["Invoke-Step \"", "Step = \""] {
+        for (i, _) in battery.match_indices(marker) {
+            let rest = &battery[i + marker.len()..];
+            if let Some(end) = rest.find('"') {
+                let name = &rest[..end];
+                if !name.is_empty() && !name.contains('$') && !steps.iter().any(|s| s == name) {
+                    steps.push(name.to_string());
+                }
+            }
+        }
+    }
+    assert!(steps.len() >= 9, "read {steps:?} from gpu-validate.ps1: the scan is not finding its steps");
+    for s in &steps {
+        let rule = &exp["default"][s.as_str()];
+        assert!(rule["exit"].as_array().is_some_and(|a| !a.is_empty()), "no default expectation for step {s}");
+    }
+    // The Linux battery judges itself the same way (W8): it reads the same file, every step it
+    // records is declared, and its exit is the verdict's.
+    let linux = include_str!("../../../scripts/gpu-validate.sh");
+    assert!(linux.contains("\"$HERE/gpu-validate-expected.json\""), "gpu-validate.sh does not read the expected file");
+    assert!(linux.trim_end().ends_with("exit \"$VERDICT_CODE\""), "gpu-validate.sh does not exit with its verdict");
+    let mut linux_steps: Vec<&str> = vec!["build-id"];
+    for (i, _) in linux.match_indices("\nstep \"").chain(linux.match_indices("  step \"")) {
+        let rest = &linux[i..];
+        let rest = &rest[rest.find('"').unwrap() + 1..];
+        let name = &rest[..rest.find('"').unwrap()];
+        if !linux_steps.contains(&name) {
+            linux_steps.push(name);
+        }
+    }
+    assert!(linux_steps.len() >= 8, "read {linux_steps:?} from gpu-validate.sh: the scan is not finding its steps");
+    for s in &linux_steps {
+        assert!(steps.iter().any(|w| w == s), "gpu-validate.sh runs {s}, which gpu-validate.ps1 does not");
+    }
+    // Card keys are what the battery derives from the adapter line (the app's own slug), and every
+    // rule names a step the battery runs.
+    for (card, rules) in exp["adapters"].as_object().expect("adapters") {
+        assert_eq!(&crate::calibration::slug(card), card, "{card} is not an adapter slug");
+        for (step, rule) in rules.as_object().expect("a card's rules") {
+            assert!(steps.contains(step), "{card} declares {step}, which the battery does not run");
+            assert!(rule["exit"].as_array().is_some_and(|a| !a.is_empty()), "{card}/{step} declares no exit");
+        }
+    }
+}
+
+#[test]
+fn every_package_ships_every_cards_bench_matrix_baseline() {
+    // `--bench-matrix` and the self-test judge a card against its OWN baseline,
+    // `benchmarks/bench-matrix-baseline-<slug>.json`, when it has one (W8). A package that copies
+    // only the reference card's file leaves every other card with nothing to go red against.
+    for (recipe, text, jobs) in [
+        (".github/workflows/release.yml", include_str!("../../../.github/workflows/release.yml"), 2), // windows + linux
+        ("scripts/publish-share.ps1", include_str!("../../../scripts/publish-share.ps1"), 1),
+        ("scripts/build-accelerated.ps1", include_str!("../../../scripts/build-accelerated.ps1"), 1),
+        ("scripts/build-accelerated.sh", include_str!("../../../scripts/build-accelerated.sh"), 1),
+    ] {
+        let n = text.matches("benchmarks/bench-matrix-baseline*.json").count()
+            + text.matches("benchmarks\\bench-matrix-baseline*.json").count();
+        assert_eq!(n, jobs, "{recipe} copies every card's baseline {n} time(s), expected {jobs}");
+    }
+}
+
+#[test]
+fn only_the_share_package_ships_every_cards_golden_set() {
+    // The field battery runs from the share's package and compares a card against its own golden
+    // set, validation/golden/<card>/ (W8): that package must carry every card's set. A release
+    // package ships the reference set alone — each set is ~90 MB and a user's card has none.
+    let publish = include_str!("../../../scripts/publish-share.ps1");
+    assert!(
+        publish.contains("Get-ChildItem (Join-Path $root \"validation\\golden\") -Directory"),
+        "publish-share.ps1 does not copy the per-card golden sets"
+    );
+    for (recipe, text) in [
+        (".github/workflows/release.yml", include_str!("../../../.github/workflows/release.yml")),
+        ("scripts/build-accelerated.ps1", include_str!("../../../scripts/build-accelerated.ps1")),
+        ("scripts/build-accelerated.sh", include_str!("../../../scripts/build-accelerated.sh")),
+    ] {
+        for line in text.lines().filter(|l| l.contains("validation/golden") || l.contains("validation\\golden")) {
+            assert!(
+                !line.contains("-Recurse") && !line.contains("cp -r") && !line.contains("-Directory"),
+                "{recipe} copies golden subfolders into a release package: {line}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_share_package_ships_the_field_views_the_regime_rungs_soak() {
+    // W9's regime rungs soak `validation/field/*.fdn` (torture.rs, live/regime/*). They run on the
+    // card that fails, through the field agent and the share package, so that package must carry
+    // every view a rung names.
+    let publish = include_str!("../../../scripts/publish-share.ps1");
+    assert!(publish.contains("validation\\field\\*.fdn"), "publish-share.ps1 does not ship validation/field");
+    for r in crate::torture::LADDER {
+        let args: &[&str] = match &r.cmd {
+            crate::torture::Cmd::SelfExe(a) | crate::torture::Cmd::Instrumented(_, a) => a,
+            crate::torture::Cmd::External(..) => continue,
+        };
+        for w in args.windows(2).filter(|w| w[0] == "--soak-location") {
+            assert!(w[1].starts_with("validation/field/") && w[1].ends_with(".fdn"), "{}: {} is not a shipped field view", r.id, w[1]);
+            let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(w[1]);
+            assert!(file.exists(), "{}: {} is not in the tree", r.id, w[1]);
+        }
+    }
+}
+
+#[test]
 fn every_package_ships_the_replay_fixtures() {
     // `--selftest`'s replay group reads `validation/replays/*.jsonl` beside the binary (`anchored`).
     // A package that leaves them out turns three of its checks VACUOUS on every installed copy —

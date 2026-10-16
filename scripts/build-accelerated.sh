@@ -112,7 +112,8 @@ cp scripts/deep-sample.fdn "$dir/scripts/"
 cp validation/golden/*.png "$dir/validation/golden/"
 cp validation/golden/BLESSED-GPU.txt "$dir/validation/golden/" 2>/dev/null || true
 cp validation/catalog.toml "$dir/validation/"
-cp benchmarks/bench-matrix-baseline.json "$dir/benchmarks/"
+# Every card's bench-matrix baseline (the reference card's file and the per-card ones).
+cp benchmarks/bench-matrix-baseline*.json "$dir/benchmarks/"
 
 # Licence texts for the LGPL code compiled INTO this binary. Section 4(b) requires the LGPL and
 # the GPL it refers to, so both ship or the package is not conveyable — fail rather than omit.

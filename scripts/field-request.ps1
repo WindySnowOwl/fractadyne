@@ -26,6 +26,10 @@
 #   .\scripts\field-request.ps1 -Action harness -Run "--motiontest" -RecordDecide -Wait
 #                                                                 # a field capture (agent v24): the run's lifted live
 #                                                                 # decisions come back as decide.jsonl for --replay
+#   .\scripts\field-request.ps1 -Action harness -Run "--render --tail-audit 48 --formula z=z^3+c --center ... --zoom-log2 132.9 --iter 3000" -Wait
+#                                                                 # a custom formula (agent v25): written WITHOUT
+#                                                                 # spaces (-Run splits on whitespace); a comma outside
+#                                                                 # parentheses separates statements
 #   .\scripts\field-request.ps1 -Cancel <id>                      # withdraw a request not yet started
 #
 # The agent is the authority on what it will run (field-agent.ps1 $Allowed); this only checks the

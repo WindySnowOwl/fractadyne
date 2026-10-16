@@ -101,6 +101,8 @@ struct Base {
     dirty: u64,
     restarts: u64,
     hold_moving: u64,
+    /// Pinned walks that completed blank (`Perf::blank_walks_total`).
+    blank: u64,
 }
 
 pub(crate) struct MotionTest {
@@ -119,6 +121,11 @@ pub(crate) struct MotionTest {
     clicked: bool,
     /// Cleared by the verdict paths so the watchdog thread stands down.
     done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// W9's `motion-mode1` regime (CL-165: the one device loss this harness ever saw, at Home →
+    /// Settle in mode 1, never reproduced): view 0's MOTION frames rendered in mode 1 (direct),
+    /// folded from the frame record over the whole run, and the record's next `seq`.
+    mode1_motion: u64,
+    rec_next: u64,
 }
 
 impl MotionTest {
@@ -157,6 +164,8 @@ impl MotionTest {
             click_base: [0; 5],
             clicked: false,
             done,
+            mode1_motion: 0,
+            rec_next: 0,
         }
     }
 }
@@ -168,6 +177,21 @@ impl FractadyneApp {
     pub(crate) fn motiontest_frame(&mut self, ctx: &egui::Context) {
         let Some(mut mt) = self.harness.motiontest.take() else { return };
         mt.frames += 1;
+        // Fold the frame record (W9 `motion-mode1`): every record since the last frame.
+        {
+            use crate::diag::frame_record::kind;
+            let (recs, next, _lost) = crate::diag::frame_record::since(mt.rec_next);
+            mt.rec_next = next;
+            mt.mode1_motion += recs
+                .iter()
+                .filter(|r| {
+                    r.kind == kind::FRAME
+                        && r.view == 0
+                        && r.mode == crate::RenderMode::Direct.to_u32() as u8
+                        && r.frame_kind == crate::render::frame_plan::FrameKind::Motion as u8
+                })
+                .count() as u64;
+        }
         let in_phase = mt.phase_t0.elapsed().as_secs_f64();
         let now = ctx.input(|i| i.time);
 
@@ -188,7 +212,7 @@ impl FractadyneApp {
                 let cx = fractadyne_core::parse_bf_prec(CX, 192);
                 let cy = fractadyne_core::parse_bf_prec(CY, 192);
                 let (Some(cx), Some(cy)) = (cx, cy) else {
-                    self.motiontest_verdict(mt, false, "internal: corpus center failed to parse");
+                    self.motiontest_verdict(mt, crate::verdict::RED, "internal: corpus center failed to parse");
                 };
                 self.render_cfg.max_iter = ASK;
                 self.render_cfg.auto_iter = false;
@@ -226,6 +250,7 @@ impl FractadyneApp {
                         dirty: self.perf.dirty_shown[0],
                         restarts: self.perf.walk_restarts[0],
                         hold_moving: self.perf.hold_bound_moving[0],
+                        blank: self.perf.blank_walks_total[0],
                     };
                     let rc = &self.ref_cache[0];
                     crate::diag::log_line(
@@ -237,7 +262,8 @@ impl FractadyneApp {
                     );
                     advance(&mut mt, Phase::Dive);
                 } else if in_phase > WAIT_REF_S {
-                    self.motiontest_verdict(mt, false, "boot never completed: no full reference");
+                    // Nothing was driven: the experiment never started (W8 — not a failure of motion).
+                    self.motiontest_verdict(mt, crate::verdict::VACUOUS, "boot never completed: no full reference");
                 }
             }
             Phase::Click => {
@@ -297,7 +323,7 @@ impl FractadyneApp {
                 if self.home_anim.is_none() {
                     advance(&mut mt, Phase::Settle);
                 } else if in_phase > HOME_S {
-                    self.motiontest_verdict(mt, false, "home glide never finished");
+                    self.motiontest_verdict(mt, crate::verdict::RED, "home glide never finished");
                 }
             }
             Phase::Settle => {
@@ -383,6 +409,28 @@ impl FractadyneApp {
                             pt.unran, pt.unverified_served, pt.judged_capped, pt.climb_starved
                         ));
                     }
+                    // A8 (W8): a pinned walk that completes BLANK during the driven phases. This scene
+                    // is deep filaments; a blank walk here is the content guard catching a picture the
+                    // walk never reached — and three in a row end an autopilot dive (U57).
+                    let blank = self.perf.blank_walks_total[0].wrapping_sub(b.blank);
+                    eprintln!("--motiontest: A8 blank walks during the driven phases: {blank}");
+                    if blank != 0 {
+                        fails.push(format!(
+                            "A8: {blank} pinned walk(s) completed BLANK during the driven phases (kept off screen by the content guard)"
+                        ));
+                    }
+                    // W9 `motion-mode1`: CL-165's regime must have been entered, or a pass says
+                    // nothing about it (a regime assertion, not a reproduction).
+                    eprintln!(
+                        "--motiontest: mode-1 motion (CL-165's regime, Home -> Settle in mode 1): {} moving frame(s) in mode 1",
+                        mt.mode1_motion
+                    );
+                    if mt.mode1_motion == 0 {
+                        fails.push(
+                            "VACUOUS: no moving frame rendered in mode 1 - CL-165's regime (Home -> Settle in mode 1) was not reached"
+                                .into(),
+                        );
+                    }
                     let hold_moving = self.perf.hold_bound_moving[0].wrapping_sub(b.hold_moving);
                     eprintln!("--motiontest: A6 moving frames shown at the jump floor's clamped scale: {hold_moving}");
                     if hold_moving != 0 {
@@ -390,10 +438,16 @@ impl FractadyneApp {
                             "A6: {hold_moving} moving frame(s) showed the held frame at the jump floor's clamped scale (U39: it slides against the view)"
                         ));
                     }
+                    // W8: a VACUOUS term alone is not a failure of what this tests, and a real failure
+                    // beside one is still a failure (`crate::verdict::code`).
                     let pass = fails.is_empty();
+                    let code = crate::verdict::code(
+                        fails.iter().any(|f| !f.starts_with("VACUOUS")),
+                        fails.iter().any(|f| f.starts_with("VACUOUS")),
+                    );
                     self.motiontest_verdict(
                         mt,
-                        pass,
+                        code,
                         &if pass {
                             "all motion-presentation invariants hold".to_string()
                         } else {
@@ -408,13 +462,13 @@ impl FractadyneApp {
         ctx.request_repaint();
     }
 
-    fn motiontest_verdict(&mut self, mt: MotionTest, pass: bool, msg: &str) -> ! {
+    /// Exit with `code` (`crate::verdict`: 0 pass, 2 a criterion failed, 3 VACUOUS — the regime was
+    /// never reached, so nothing was tested).
+    fn motiontest_verdict(&mut self, mt: MotionTest, code: i32, msg: &str) -> ! {
         mt.done.store(true, std::sync::atomic::Ordering::Relaxed);
-        let verdict = if pass { "PASS" } else { "FAIL" };
+        let verdict = crate::verdict::word(code);
         crate::diag::log_line("motiontest", &format!("{verdict}: {msg}"));
         eprintln!("--motiontest: VERDICT {verdict}: {msg}");
-        // 2, not 1, on failure: torture's `classify` maps 2 -> FailAssert ("ran fine, result
-        // wrong"), and a run that never reached the regime must never read as a pass.
-        crate::exit(if pass { 0 } else { 2 });
+        crate::exit(code);
     }
 }

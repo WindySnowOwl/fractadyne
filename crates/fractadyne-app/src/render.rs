@@ -915,8 +915,17 @@ fn cache_best(inp: &RecomputeInputs) -> Option<(std::path::PathBuf, u32)> {
     if !crate::refcache_persist::enabled() || inp.custom.is_some() {
         return None;
     }
-    let fits = |point: &[fractadyne_core::BigFloat; 2], prec: usize| reuse_drift(inp, point, prec);
+    let fits = |h: &orbit_blob::Header| cache_fit(inp, h);
     crate::refcache_persist::find(&crate::refcache_persist::Query { key: orbit_key_for(inp), fits: &fits }).map(|h| (h.path, h.orbit_len))
+}
+
+/// The disk cache's admissibility test for `inp`, shared by every lookup: the entry's fitness for
+/// the ask (`reuse_fit`; on disk a complete orbit is an escaped one) and its drift (`reuse_drift`).
+fn cache_fit(inp: &RecomputeInputs, h: &orbit_blob::Header) -> Option<f64> {
+    if !reuse_fit(inp.gpu_iter, h.orbit_len, !h.partial, crate::tunables::cost().reuse_max_wraps) {
+        return None;
+    }
+    reuse_drift(inp, &h.point, h.prec)
 }
 
 /// Wait for a reference building on another thread, stamping liveness once a second (`diag::alive`):
@@ -1165,6 +1174,18 @@ fn reuse_drift(inp: &RecomputeInputs, point: &[fractadyne_core::BigFloat; 2], pr
     Some(dx.abs().max(dy.abs()))
 }
 
+/// §5.8 REFERENCE FITNESS: may an orbit of `orbit_len` samples serve an iteration `ask`? An ESCAPED
+/// orbit ends where the reference escaped, so every pixel the ask runs past it rebases off it again
+/// and again; past `max_wraps` (`REUSE_MAX_WRAPS`, 0 = off) it is refused and a fresh pick replaces
+/// it. A partial orbit is extended and a periodic one wraps by design, so neither is refused.
+///
+/// ⭐The live reuse passes `tail.escaped`; the disk cache passes `!partial`, which on disk means the
+/// same thing because `orbit_blob::encode` never writes a periodic orbit (pinned by
+/// `a_cached_complete_orbit_is_an_escaped_one`). One predicate for both, as `reuse_drift` is.
+pub(crate) fn reuse_fit(ask: u32, orbit_len: u32, escaped: bool, max_wraps: f64) -> bool {
+    max_wraps <= 0.0 || !escaped || ask as f64 <= max_wraps * orbit_len as f64
+}
+
 /// Look for an orbit on disk this build could reuse. `None` when the cache is off, holds nothing
 /// admissible, or the chosen entry failed to verify (in which case it has been removed).
 fn orbit_cache_lookup(inp: &RecomputeInputs, key: orbit_blob::OrbitKey) -> Option<ReuseRef> {
@@ -1172,7 +1193,7 @@ fn orbit_cache_lookup(inp: &RecomputeInputs, key: orbit_blob::OrbitKey) -> Optio
         return None;
     }
     let t = Instant::now();
-    let fits = |point: &[fractadyne_core::BigFloat; 2], prec: usize| reuse_drift(inp, point, prec);
+    let fits = |h: &orbit_blob::Header| cache_fit(inp, h);
     let hit = crate::refcache_persist::find(&crate::refcache_persist::Query { key, fits: &fits })?;
     let decoded = crate::refcache_persist::load(&hit.path);
     // The index said `len`/`prec`; the rest comes from the file itself, once it has verified.
@@ -1608,6 +1629,22 @@ fn try_reuse_reference(inp: &RecomputeInputs) -> Option<RecomputeResult> {
     // depth; the caller already gated on `!out_of_view`, but this snapshot could in principle
     // lag). ⭐The same test the disk lookup selects by — see `reuse_drift`.
     reuse_drift(inp, &reuse.point, reuse.prec)?;
+    // §5.8: an escaped orbit the ask runs too many times past is refused, so a fresh pick replaces it
+    // (off unless REUSE_MAX_WRAPS is set). The disk lookup applies the same `reuse_fit`.
+    let wraps = crate::tunables::cost().reuse_max_wraps;
+    if !reuse_fit(inp.gpu_iter, reuse.prefix.len() as u32, reuse.tail.escaped, wraps) {
+        crate::diag::log_line(
+            "ref",
+            &format!(
+                "reuse REFUSED [{}]: escaped orbit len={} against ask={} ({:.1} wraps, REUSE_MAX_WRAPS {wraps}) - a fresh pick replaces it",
+                inp.origin,
+                reuse.prefix.len(),
+                inp.gpu_iter,
+                inp.gpu_iter as f64 / reuse.prefix.len().max(1) as f64
+            ),
+        );
+        return None;
+    }
     let t = Instant::now();
     let (cx0, cy0) = if inp.julia {
         (
@@ -5612,6 +5649,7 @@ impl FractadyneApp {
                 budget_measured: self.perf.fe_budget[vidx] != 0,
                 worst_rate: self.perf.worst_rate_steps_per_ms(vidx),
                 motion_rate: self.perf.motion_rate_now(vidx),
+                frame_rate: self.perf.frame_rate_now(vidx),
                 last_dt_ms: self.perf.last_dt_ms,
                 frame_period_ms: self.perf.frame_period_ms,
                 present_throttle: self.perf.present_throttle,
@@ -5621,11 +5659,15 @@ impl FractadyneApp {
                 pin_inflight: self.perf.pin_inflight[vs],
                 pin_done_at: self.perf.pin_done_at[vs].load(std::sync::atomic::Ordering::Relaxed),
                 pin_dispatch_at: self.perf.pin_dispatch_at[vs],
+                late_readings: self.perf.late_readings[vs].clone(),
+                pin_inflight_max: crate::tunables::pin_inflight_max(self.perf.ts_supported),
+                no_timestamps: !self.perf.ts_supported,
                 ledger: decide::WalkLedger {
                     inflight: self.perf.chunk_inflight[vs],
                     bands: self.perf.chunk_bands[vs],
                     pass_dt: self.perf.chunk_pass_dt[vs],
                     motion_step_last: self.perf.motion_step_last[vs],
+                    late: self.perf.chunk_late[vs],
                 },
                 tdr_budget_ms: crate::tunables::cost().tdr_budget_ms,
                 tdr_explicit_budget_ms: crate::tunables::cost().tdr_explicit_budget_ms,
@@ -5639,6 +5681,10 @@ impl FractadyneApp {
             self.perf.chunk_bands[vs] = price.ledger.bands;
             self.perf.chunk_pass_dt[vs] = price.ledger.pass_dt;
             self.perf.motion_step_last[vs] = price.ledger.motion_step_last;
+            // Readings keep only while their pass is still parked.
+            self.perf.chunk_late[vs] = price.ledger.late;
+            let parked = price.ledger.late;
+            self.perf.late_readings[vs].retain(|r| parked.iter().flatten().any(|l| l.2 == r.0));
             if let Some(outcome) = price.retreat {
                 self.perf.retreat_last[vs] = Some(outcome);
                 self.perf.retreat_pending[vs] = self.perf.retreat_pending[vs].max(outcome.code());
@@ -5659,6 +5705,30 @@ impl FractadyneApp {
                                 }
                             ),
                         );
+                    }
+                    decide::WalkPriceEvent::PinDeferred { band, size, stand_in } => {
+                        if crate::diag::trace_on("tile") {
+                            crate::diag::trace(
+                                "tile",
+                                format!(
+                                    "pin-defer v={vs} f={} band={band} size={size} {} (priced by its reading)",
+                                    self.perf.frame_idx,
+                                    if stand_in >= 0.0 {
+                                        format!("released, stand_in={stand_in:.1}ms")
+                                    } else {
+                                        "still in flight".to_string()
+                                    },
+                                ),
+                            );
+                        }
+                    }
+                    decide::WalkPriceEvent::PinUnpriced { band, size } => {
+                        if crate::diag::trace_on("tile") {
+                            crate::diag::trace(
+                                "tile",
+                                format!("pin-unpriced v={vs} f={} band={band} size={size} (no reading came)", self.perf.frame_idx),
+                            );
+                        }
                     }
                     decide::WalkPriceEvent::PinPriced { band, size, price: p, acc } => {
                         if crate::diag::trace_on("tile") {
@@ -5732,6 +5802,9 @@ impl FractadyneApp {
             if id.clear_ledger {
                 self.perf.chunk_bands[vs] = [0; crate::tunables::CHUNK_BANDS];
                 self.perf.chunk_pass_dt[vs] = 0.0;
+                // A parked price belongs to the ledger it was earned in.
+                self.perf.chunk_late[vs] = [None; decide::LATE_MAX];
+                self.perf.late_readings[vs].clear();
             }
             if id.restarted {
                 self.perf.chunk_inflight[vs] = None;
@@ -5798,6 +5871,7 @@ impl FractadyneApp {
                 accum_active: self.perf.accum_active[vs],
                 walk_read_sig: self.perf.walk_read_sig[vs],
                 norm_sig_submit: self.perf.norm_sig_submit[vs],
+                pin_inflight_max: crate::tunables::pin_inflight_max(self.perf.ts_supported),
                 pin_timeout_scaled: crate::tunables::cost().pin_timeout_scaled,
                 chunk_charge: crate::tunables::cost().chunk_charge,
                 chunk_shuffle: crate::tunables::cost().chunk_shuffle,
@@ -6546,6 +6620,8 @@ impl FractadyneApp {
             self.perf.view_dispatch_at[vs] = crate::app_micros();
             self.perf.view_dispatch_steps[vs] = self.perf.fe_steps_last[vs];
             self.perf.view_dispatch_moving[vs] = interacting;
+            self.perf.view_dispatch_pin[vs] = self.perf.pin_pass_frame[vs] == self.perf.frame_idx;
+            self.perf.view_dispatch_samples[vs] = resolution[0] as u64 * resolution[1] as u64 * (ss.max(1) as u64).pow(2);
         }
         // MOTION-JAM ACCOUNTING — one site, after the one dispatch stamp above.
         // Whatever shape this frame dispatched (full frame, settle tile, chunk range, climb
@@ -9568,7 +9644,7 @@ pub(crate) fn pin_verdict(pin: &PinnedRefresh, i: &PinInputs) -> PinVerdict {
     if i.caller_reproject {
         return PinVerdict::Stop(PinStop::CallerReproject);
     }
-    if i.drift_oct > crate::tunables::PIN_ABANDON_OCTAVES {
+    if i.drift_oct > crate::tunables::PIN_ABANDON_OCTAVES && !drift_finishes_sooner(i.cursor as u64, pin.gpu_iter as u64) {
         return PinVerdict::Stop(PinStop::Drift);
     }
     if i.pan_spans > crate::tunables::PIN_ABANDON_SPANS {
@@ -9578,6 +9654,20 @@ pub(crate) fn pin_verdict(pin: &PinnedRefresh, i: &PinInputs) -> PinVerdict {
         return PinVerdict::Stop(PinStop::Age);
     }
     PinVerdict::Continue
+}
+
+/// May a pin the live view has zoomed past (`PIN_ABANDON_OCTAVES`) FINISH, rather than be abandoned
+/// for one at the live view? Yes once it has done at least half its work (`done` of `total`).
+///
+/// ⭐Abandoning buys freshness only if the new pin lands first, and past halfway it never does: the
+/// rest of this one is less work than all of the next. Meanwhile the screen holds the older snapshot
+/// either way — an abandoned pin's successor does not retake it — so a drift abandon past halfway
+/// only makes the held picture older. Found by W8's zoomtest gate (2026-10-14): a 4x glide toward
+/// the e4000 Misiurewicz point, in the escaped-reference regime, abandoned 40 of 44 pins for drift
+/// at 62–88% done; each new one opened smaller, and the screen held one picture for ~30 s while
+/// the view went 80 octaves deeper. The age backstop (`PIN_MAX_FRAMES`) still ends a pin that stalls.
+pub(crate) fn drift_finishes_sooner(done: u64, total: u64) -> bool {
+    total > 0 && done.saturating_mul(2) >= total
 }
 
 /// A SPLIT pin's decision (`PinnedRefresh::split`). Complete once every set has run — and then
@@ -9599,7 +9689,9 @@ fn split_verdict(pin: &PinnedRefresh, i: &PinInputs) -> PinVerdict {
     if i.caller_reproject {
         return PinVerdict::Stop(PinStop::CallerReproject);
     }
-    if i.drift_oct > crate::tunables::PIN_ABANDON_OCTAVES {
+    if i.drift_oct > crate::tunables::PIN_ABANDON_OCTAVES
+        && !drift_finishes_sooner(pin.split_next as u64, pin.split as u64)
+    {
         return PinVerdict::Stop(PinStop::Drift);
     }
     if i.pan_spans > crate::tunables::PIN_ABANDON_SPANS {

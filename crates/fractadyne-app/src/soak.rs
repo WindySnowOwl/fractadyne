@@ -45,15 +45,18 @@ pub(crate) struct Soak {
     samples: u32,
     crashes_at_start: Vec<String>,
     /// log10 magnification of the view being soaked; NaN = the session's own view
-    /// (`--soak-depth session`).
+    /// (`--soak-depth session`) or the `location` file's.
     decades: f64,
+    /// `--soak-location FILE`: a view file opened on the first frame (W9: the field crash view, so
+    /// a rung on any machine soaks the field's geometry without a staged session).
+    location: Option<std::path::PathBuf>,
     /// W9's regime predicate over every record of the run, and the next record `seq` to fold.
     regime: RegimeAcc,
     regime_next: u64,
 }
 
 impl Soak {
-    pub(crate) fn new(secs: f64, decades: f64) -> Self {
+    pub(crate) fn new(secs: f64, decades: f64, location: Option<std::path::PathBuf>) -> Self {
         let now = Instant::now();
         let duration = Duration::from_secs_f64(secs.max(1.0));
         spawn_watchdog(duration);
@@ -66,6 +69,7 @@ impl Soak {
             samples: 0,
             crashes_at_start: crate::diag::crash_report_names(),
             decades,
+            location,
             regime: RegimeAcc::default(),
             regime_next: 0,
         }
@@ -118,7 +122,26 @@ impl crate::FractadyneApp {
             // The view under soak: deep enough to be on the perturbation path with a real
             // reference orbit, which is the regime the checklist row is about — or, with
             // `--soak-depth session`, whatever view the session opened at.
-            let at = if s.decades.is_nan() {
+            let at = if let Some(loc) = &s.location {
+                match std::fs::read_to_string(loc) {
+                    Ok(text) => {
+                        let load = self.load_view_metadata(&text);
+                        if !load.clamped.is_empty() {
+                            eprintln!("[soak] clamped {}", load.clamped.join(", "));
+                        }
+                        loc.display().to_string()
+                    }
+                    Err(e) => {
+                        // The experiment cannot run: VACUOUS, not a failure of what it tests.
+                        crate::diag::verdict(&format!(
+                            "soak-liveness: VACUOUS (exit 3) — cannot read --soak-location {}: {e}",
+                            loc.display()
+                        ));
+                        DONE.store(true, Ordering::Relaxed);
+                        crate::exit(crate::verdict::VACUOUS);
+                    }
+                }
+            } else if s.decades.is_nan() {
                 "the session's view".to_string()
             } else {
                 self.uitest_set_live(ctx, s.decades);
@@ -176,13 +199,9 @@ impl crate::FractadyneApp {
             .filter(|n| !s.crashes_at_start.contains(n))
             .collect();
         let mut fails: Vec<String> = Vec::new();
-        // A soak too short to have been judged proves nothing, and must not report success.
-        if s.samples == 0 {
-            fails.push(format!(
-                "no liveness window completed in {elapsed:.0}s — run for at least {}s",
-                WINDOW.as_secs() * 2
-            ));
-        }
+        // A soak too short to have been judged proves nothing, and must not report success — nor a
+        // failure of liveness: it is VACUOUS (W8, `crate::verdict`).
+        let short = s.samples == 0;
         if growth > GROWTH_LIMIT_MB {
             fails.push(format!("resident set grew {growth} MB (limit {GROWTH_LIMIT_MB})"));
         }
@@ -203,22 +222,41 @@ impl crate::FractadyneApp {
             s.regime.folded, s.regime.lost
         );
         let escape_armed = crate::Perf::ref_escape_at() > 0;
-        if fails.is_empty() && escape_armed && !regime.entered {
-            crate::diag::verdict(
-                "soak-liveness: VACUOUS (exit 2) — FRACTADYNE_REF_ESCAPE_AT is armed but the regime was never \
-                 entered, so surviving it proves nothing",
-            );
-            return 2;
+        // §7.9's RED term: slow frames the budget never came down across - the 2026-09-21 field
+        // signature (20 over 32.8 s at 1.515e11, then the device was lost). Judged on every soak,
+        // armed or not: a budget that cannot shrink disables the chunking that would save the frame.
+        let stall = s.regime.stall_slow_max();
+        if stall >= STALL_RED_FRAMES {
+            fails.push(format!(
+                concat!(
+                    "the frame budget never came down across {} slow frames ",
+                    "(RED from {}: the field device-loss signature)"
+                ),
+                stall, STALL_RED_FRAMES
+            ));
         }
-        if fails.is_empty() {
-            crate::diag::verdict("soak-liveness: PASS (frames advanced in every window, memory held)");
-            0
-        } else {
+        if !fails.is_empty() {
             for f in &fails {
                 crate::diag::verdict(&format!("soak-liveness: FAIL — {f}"));
             }
-            1
+            return crate::verdict::RED;
         }
+        if short {
+            crate::diag::verdict(&format!(
+                "soak-liveness: VACUOUS (exit 3) — no liveness window completed in {elapsed:.0}s; run for at least {}s",
+                WINDOW.as_secs() * 2
+            ));
+            return crate::verdict::VACUOUS;
+        }
+        if escape_armed && !regime.entered {
+            crate::diag::verdict(
+                "soak-liveness: VACUOUS (exit 3) — FRACTADYNE_REF_ESCAPE_AT is armed but the regime was never \
+                 entered, so surviving it proves nothing",
+            );
+            return crate::verdict::VACUOUS;
+        }
+        crate::diag::verdict("soak-liveness: PASS (frames advanced in every window, memory held)");
+        crate::verdict::PASS
     }
 }
 
@@ -244,6 +282,13 @@ pub(crate) struct RegimeAcc {
     unchunked: u64,
     dispatched: u64,
     max_rebase: u64,
+    /// Every counter reading's rebases per sampled pixel, with its frame (a reading is armed only for
+    /// a full-frame iterate). REPORTED, never judged: §7.9 named "above 4" as a RED term, but at the
+    /// field crash view the healthy CONTROL (a normal reference) reads 2.7–9.1 on the RTX 3080, a
+    /// healthy autodive read up to 4.89 (design log `dca59ac`), and the field loss itself was ~3–4
+    /// (25–33M rebases over 8.68M samples). Density does not tell the failure from health; the budget
+    /// stall does (2026-10-16).
+    rebase_per_px: Vec<(f64, u64)>,
     /// `(min, max)` of `fe_budget` over the frames in shape.
     budget: Option<(u64, u64)>,
     /// `(ref_len, gpu_iter)` of the first frame in shape.
@@ -262,6 +307,10 @@ pub(crate) struct RegimeAcc {
 /// A frame the wall clock called slow while the app had asked for a repaint — the slow-frame
 /// line's own test (`main.rs`, `last_dt_ms > 200`), so the two can be read against each other.
 const STALL_SLOW_MS: f64 = 200.0;
+/// A budget stall this many slow frames long is RED (§7.9: "≥ 8 consecutive wall-slow frames with
+/// no retreat outcome"). The field loss ran 20; the still rung's seeded runs (2026-09-23/25) ran 8–9
+/// slow frames but their budget came down at the first reading, so no stall formed.
+const STALL_RED_FRAMES: u32 = 8;
 /// Slow frames further apart than this belong to separate episodes. The 2026-09-21 field episode
 /// had gaps of up to 6.9 s between its slow frames (825.9 → 832.8 s) and was one episode.
 const STALL_GAP_MS: u64 = 10_000;
@@ -334,6 +383,16 @@ impl RegimeAcc {
         });
     }
 
+    /// The most slow frames any budget stall of the run held, over both views (0 = none).
+    pub(crate) fn stall_slow_max(&self) -> u32 {
+        (0..2)
+            .flat_map(|v| [self.stall_best[v], self.stall_open[v]])
+            .flatten()
+            .map(|s| s.slow)
+            .max()
+            .unwrap_or(0)
+    }
+
     /// The longest budget stall of the run, over both views. One line, printed for EVERY run,
     /// armed or not, so the control is scored on the same number as the arm.
     pub(crate) fn stall_line(&self) -> String {
@@ -365,6 +424,9 @@ impl RegimeAcc {
         use crate::diag::frame_record::kind;
         self.folded += 1;
         self.track_stall(r);
+        if r.kind == kind::FRAME && r.ctr_new && r.ctr_px > 0 {
+            self.rebase_per_px.push((r.ctr_rebase as f64 / r.ctr_px as f64, r.frame));
+        }
         let shaped = r.kind == kind::FRAME
             && r.has_ref
             && !r.ref_partial
@@ -413,6 +475,22 @@ impl RegimeAcc {
         };
         if let Some((frame, t_ms)) = self.first_storm {
             line.push_str(&format!("; first storm reading at frame {frame} (+{:.1}s)", t_ms as f64 / 1000.0));
+        }
+        if !self.rebase_per_px.is_empty() {
+            let mut d: Vec<f64> = self.rebase_per_px.iter().map(|x| x.0).collect();
+            d.sort_by(f64::total_cmp);
+            let (max, at) = self.rebase_per_px.iter().copied().fold((0.0, 0), |m, x| if x.0 > m.0 { x } else { m });
+            line.push_str(&format!(
+                concat!(
+                    "; rebases per sampled px over {} reading(s): median {:.2}, max {:.2} (frame {}), ",
+                    "{} over 4 (reported, not judged)"
+                ),
+                d.len(),
+                d[d.len() / 2],
+                max,
+                at,
+                d.iter().filter(|x| **x > 4.0).count()
+            ));
         }
         if self.lost > 0 {
             line.push_str(&format!("; ⚠{} record(s) overwritten before they were read", self.lost));

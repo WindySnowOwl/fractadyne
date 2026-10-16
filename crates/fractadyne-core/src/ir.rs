@@ -1874,6 +1874,36 @@ pub fn reference_orbit_in(
     Ok((out, len, tail))
 }
 
+/// [`crate::formula_dwell`] for a custom formula: the point's OWN orbit in bignum
+/// ([`reference_orbit`], Mandelbrot mode: `z₀ = 0`, `c` = the point), scanned for the first
+/// sample past `bailout2` — no perturbation, no rebasing, so it can judge any render of the
+/// formula. The smooth count is the generated shader's: `power` is its escape degree
+/// (`CustomShader::power`), and the count is clamped at 0 as the shader clamps it. `Ok(None)` =
+/// no escape within `max`.
+#[allow(clippy::too_many_arguments)]
+pub fn dwell(
+    formula: &Formula,
+    params: &[(f64, f64)],
+    power: f64,
+    cx: &BigFloat,
+    cy: &BigFloat,
+    max: u32,
+    bailout2: f64,
+    p: usize,
+) -> Result<Option<(u32, f32)>, IrError> {
+    let zero = BigFloat::from_f64(0.0, p);
+    let (orbit, len, _) = reference_orbit(formula, &zero, &zero, cx, cy, params, max, p)?;
+    for (n, s) in orbit.iter().enumerate().take(len as usize).skip(1) {
+        let (x, y) = crate::sample_xy(s);
+        let m2 = x * x + y * y;
+        if m2 > bailout2 {
+            let nu = (m2.ln() * 0.5 / std::f64::consts::LN_2).ln() / power.ln();
+            return Ok(Some((n as u32, (n as f32 + 1.0 - nu as f32).max(0.0))));
+        }
+    }
+    Ok(None)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_reference<B: RefBackend + IrField>(
     out: &mut Vec<[f32; 4]>,

@@ -1276,7 +1276,103 @@ pub(crate) struct AutoDive {
     /// autopilot's target search returns None and the dive dies on the spot. Measured: 2 cycles
     /// requested, 1 completed, then a timeout doing nothing.
     current_log10: f64,
+    /// W8: the frame record, read over the WHOLE run (`frame_record::since`), and what it says.
+    rec_next: u64,
+    tally: DiveTally,
 }
+
+/// What the frame record says about a whole `--autodive` run (W8, design §7.8): the verdict reads
+/// THIS — readings in the lethal band, the retreats they caused and what those reached, and the
+/// wall-clock intervals that followed — not the last iterate time the harness happened to sample.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DiveTally {
+    /// Readings in the lethal band (`read_lethal`).
+    pub(crate) lethal: u32,
+    /// Emergency retreats that made the next dispatch smaller, and ones that reached nothing
+    /// (`retreat` 1 and 2; `render::RetreatOutcome`).
+    pub(crate) applied: u32,
+    pub(crate) unreached: u32,
+    /// Frames whose wall interval fell in the lethal band.
+    pub(crate) wall_slow: u32,
+    /// The longest run of lethal-band intervals after a retreat applied, and the current run.
+    pub(crate) slow_run_after: u32,
+    run: u32,
+    /// Records the ring had overwritten before they were read (0: the whole run was judged).
+    pub(crate) lost: u64,
+}
+
+/// Lethal-band intervals in a row after a retreat that still count as the retreat holding: the
+/// dispatch already queued when the budget came down runs anyway. Measured on the RX 6800 XT (the
+/// three beta.132 AFTER arms, 2026-09-27): one ~1,400 ms frame after each derate, then 92–105 ms.
+pub(crate) const SLOW_AFTER_RETREAT_MAX: u32 = 2;
+
+impl DiveTally {
+    /// Fold one frame record of view 0.
+    pub(crate) fn feed(&mut self, last_dt_ms: f64, retreat: u8, read_lethal: bool, lethal_ms: f64) {
+        self.lethal += read_lethal as u32;
+        match retreat {
+            1 => self.applied += 1,
+            2 => self.unreached += 1,
+            _ => {}
+        }
+        if last_dt_ms >= lethal_ms {
+            self.wall_slow += 1;
+            if self.applied > 0 {
+                self.run += 1;
+                self.slow_run_after = self.slow_run_after.max(self.run);
+            }
+        } else {
+            self.run = 0;
+        }
+    }
+}
+
+/// The verdict on a whole `--autodive` run (`crate::verdict`): VACUOUS when the regime was never
+/// reached; RED when it was and a retreat reached nothing, none applied, or the lethal intervals
+/// kept coming after one (the budget did not move); PASS only if the record covered every frame —
+/// otherwise VACUOUS too, since what was lost to the ring is exactly what was not judged.
+pub(crate) fn autodive_verdict(t: &DiveTally) -> (i32, String) {
+    if t.lethal == 0 && t.applied + t.unreached == 0 {
+        return (
+            crate::verdict::VACUOUS,
+            "DID NOT REACH THE REGIME - no lethal reading, so nothing was tested".to_string(),
+        );
+    }
+    let mut red = Vec::new();
+    if t.unreached > 0 {
+        red.push(format!("{} retreat(s) REACHED NOTHING", t.unreached));
+    }
+    if t.applied == 0 {
+        red.push("no retreat applied".to_string());
+    }
+    if t.slow_run_after > SLOW_AFTER_RETREAT_MAX {
+        red.push(format!(
+            "{} lethal-band intervals in a row after a retreat (more than {SLOW_AFTER_RETREAT_MAX}: the budget did not move)",
+            t.slow_run_after
+        ));
+    }
+    if red.is_empty() && t.lost > 0 {
+        return (
+            crate::verdict::VACUOUS,
+            format!("{} frame record(s) LOST to the ring before they were read - the run was not judged whole", t.lost),
+        );
+    }
+    if red.is_empty() {
+        (
+            crate::verdict::PASS,
+            format!(
+                "REACHED THE REGIME AND THE RETREAT HELD: {} lethal reading(s), {} retreat(s) applied, {} lethal-band interval(s), at most {} in a row after a retreat",
+                t.lethal, t.applied, t.wall_slow, t.slow_run_after
+            ),
+        )
+    } else {
+        (crate::verdict::RED, format!("REACHED THE REGIME AND THE RETREAT DID NOT HOLD: {}", red.join("; ")))
+    }
+}
+
+#[cfg(test)]
+#[path = "autopilot/dive_verdict_tests.rs"]
+mod dive_verdict_tests;
 
 /// Depth at which `--autodive` switches from auto-iter to its explicit iteration count.
 ///
@@ -1362,6 +1458,8 @@ impl AutoDive {
             homes_done: 0,
             peak_home_ms: 0.0,
             current_log10: 0.0,
+            rec_next: 0,
+            tally: DiveTally::default(),
         }
     }
 }
@@ -1390,6 +1488,16 @@ impl crate::FractadyneApp {
             }
             d.last_ms = ms;
             d.last_steps = steps;
+        }
+        // W8: the record of every frame since the last one read — the verdict's evidence.
+        {
+            let (recs, next, lost) = crate::diag::frame_record::since(d.rec_next);
+            d.rec_next = next;
+            d.tally.lost += lost;
+            let lethal_ms = crate::tunables::cost().tdr_lethal_ms;
+            for r in recs.iter().filter(|r| r.kind == crate::diag::frame_record::kind::FRAME && r.view == 0) {
+                d.tally.feed(r.last_dt_ms, r.retreat, r.read_n > 0 && r.read_lethal, lethal_ms);
+            }
         }
         let depth = self.viewport.log2_magnification() / LOG2_10;
         if depth.is_finite() {
@@ -1506,14 +1614,11 @@ impl crate::FractadyneApp {
             } else {
                 "AUTOPILOT STOPPED EARLY (no detail target, or interrupted) — dive did not finish"
             };
-            // The verdict, stated so a run that never reached the regime cannot be read as a pass.
-            // This is the whole point of the harness: a green exit with zero lethal readings means
-            // the experiment did not run, not that the code is safe.
-            let verdict = if d.lethal > 0 {
-                format!("REACHED THE REGIME: {} lethal reading(s)", d.lethal)
-            } else {
-                "DID NOT REACH THE REGIME - no lethal reading, so nothing was tested".to_string()
-            };
+            // The verdict, from the frame record over the whole run (W8): a run that never reached the
+            // regime is VACUOUS, never a pass — a green exit with zero lethal readings would mean the
+            // experiment did not run, not that the code is safe — and one that reached it passes only
+            // if every retreat held.
+            let (code, verdict) = autodive_verdict(&d.tally);
             crate::diag::log_line(
                 "autodive",
                 &format!(
@@ -1532,15 +1637,19 @@ impl crate::FractadyneApp {
                 d.peak_ms, crate::tunables::cost().tdr_lethal_ms);
             println!("  home glides         {} (peak during home {:.1}ms)",
                 d.homes_done, d.peak_home_ms);
-            println!("  lethal readings     {} (distinct)", d.lethal);
+            println!("  lethal readings     {} (distinct, sampled) · {} in the frame record", d.lethal, d.tally.lethal);
+            println!(
+                "  retreats            {} applied, {} reached nothing · lethal-band intervals {} (at most {} in a row after a retreat){}",
+                d.tally.applied,
+                d.tally.unreached,
+                d.tally.wall_slow,
+                d.tally.slow_run_after,
+                if d.tally.lost > 0 { format!(" · {} record(s) LOST to the ring", d.tally.lost) } else { String::new() }
+            );
             println!("  {verdict}");
-            // Exit 2, not 3: this codebase reserves 2 for "ran fine, the RESULT is wrong"
-            // (`--bench-matrix` uses it for algorithmic drift) and `torture::classify` maps it to
-            // FailAssert, where any other non-zero code becomes FailCrash. A clean run that simply
-            // did not reach the regime is an assertion failure, not a crash, and mislabelling it
-            // would send whoever reads the ladder report hunting a crash that never happened.
+            println!("--autodive: VERDICT {}", crate::verdict::word(code));
             d.done.store(true, std::sync::atomic::Ordering::Relaxed);
-            crate::exit(if d.lethal > 0 { 0 } else { 2 });
+            crate::exit(code);
         }
 
         self.harness.autodive = Some(d);

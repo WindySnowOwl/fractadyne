@@ -156,7 +156,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$dir/validation/replays" | Out-Null
           Copy-Item validation/replays/*.jsonl -Destination "$dir/validation/replays/"
           New-Item -ItemType Directory -Force -Path "$dir/benchmarks" | Out-Null
-          Copy-Item benchmarks/bench-matrix-baseline.json -Destination "$dir/benchmarks/"
+          # Every card's bench-matrix baseline (the reference card's file and the per-card ones).
+          Copy-Item benchmarks/bench-matrix-baseline*.json -Destination "$dir/benchmarks/"
           Compress-Archive -Path $dir -DestinationPath "$dir.zip" -Force
           $hash = (Get-FileHash "$dir.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  $dir.zip" | Out-File -FilePath "$dir.zip.sha256" -Encoding ascii
@@ -242,7 +243,8 @@ jobs:
           cp validation/catalog.toml "$dir/validation/"
           # The replay fixtures, for `--selftest`'s replay group (as the windows job).
           cp validation/replays/*.jsonl "$dir/validation/replays/"
-          cp benchmarks/bench-matrix-baseline.json "$dir/benchmarks/"
+          # Every card's bench-matrix baseline (as the windows job).
+          cp benchmarks/bench-matrix-baseline*.json "$dir/benchmarks/"
           tar czf "$dir.tar.gz" "$dir"
           sha256sum "$dir.tar.gz" > "$dir.tar.gz.sha256"
           echo "ASSET=$dir.tar.gz" >> "$GITHUB_ENV"
