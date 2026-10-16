@@ -4670,3 +4670,54 @@ method-switch-no-reiterate. Then move on to the meta gate."
     entry first said "rows 34–38" alone, read from the end of the output; corrected the same day.)
     Its control is red, so no arm can stand on it until those rows are reviewed against F3 and
     re-blessed: the user's call.
+
+**2026-10-15 — The corpus gap closed by fixing the renderer, not by re-blessing; the meta-gate
+passes.**
+
+*The review.*
+- The ten rows were re-rendered to scratch, and `--tail-audit 48` ran on every one: of 462 changed
+  pixels audited, 9 were wrong in the tail and right in floatexp, and 0 the other way.
+- One point at row 13 was 20.3 iterations late.
+- The user reviewed the comparison page (Corpus Re-bless Review, an artifact) and chose: "3, let's
+  investigate".
+
+*The investigation.* A new `FRACTADYNE_AUDIT_PIXELS` watch list makes the audit report named pixels
+beside their oracle. With it, the tail was bisected on the corpus, one change per build, in five
+steps:
+1. The entry threshold, at row 13: bit-identical at 2^-30, 2^-50 and 2^-52; 25 differing pixels at
+   2^-56 (none wrong); 1,556 at 2^-60. Below about 2^-52 a term of δz² or 2Z·δz underflows f32 and
+   flushes to zero. Floatexp keeps its mantissa near 1 under a shared exponent.
+2. At 2^-52 the whole corpus was 31/38 with nothing wrong in the audit. Rows 11, 12, 34 and 36 kept
+   the same counts, so a second cause was independent of δz: the rebase test compared f32 squares
+   and split |z| ~ |δz| ties the other way. Taking floatexp's own comparison matched them.
+3. Rows 35 and 37 still differed, fewer pixels the higher the threshold. A third cause depended on
+   Z: near the reference's close approaches a small nonzero Z flushes 2Z·δz. Sending those steps
+   to floatexp matched them.
+4. That full fix kept only 54–67% of the speed-up. Two changes recovered it:
+   - floatexp's comparison reduced to the square roots it takes, which costs nothing extra (77–89%);
+   - Z = 0 exempted from the guard (99.5–100%). After every rebase Z₀ = 0, where 2Z·δz is exactly
+     0, and the guard had sent all those steps to floatexp.
+5. Final (`28ca088`): δz ≥ 2^-50, Z = 0 or |Z| ≥ 2^-50, square-root rebase.
+   - The corpus is **38/38 against the pre-tail baselines**, and `--tail-audit` finds every pixel of
+     all ten rows bit-identical.
+   - The 4K GPU times equal the 2^-60 tail's.
+   - The bench-matrix reference was re-blessed for the intended change. Against tail-off only the
+     extended-dip decode counter differs.
+
+*On the RX 6800 XT* (dev.18 = `ec84e2c`, reverted in `7d698b8`; `--tail-audit` at rows 11, 13, 37
+and 38):
+- 0.09–1.1% of pixels differ, and of 192 audited none is wrong (172 sensitive, 20 both right).
+- That is the card's long-standing shape: beta.147 showed 0.2–8.2% and never a wrong pixel. Its
+  compiler keeps df32's error-free transforms, so the two code paths' operation orders round apart
+  in the low bits.
+- The fix's bit-identity is therefore a claim about the RTX 3080 (and any card that folds the
+  transforms). Its correctness claim, nothing wrong, holds on both.
+
+*The meta-gate.*
+- A corpus arm runs `--check --only 01` in a copy of what the script reads, with row 01's
+  committed render replaced by row 02's.
+- The full run: **13 arms across 11 gates, every one red for its named reason against a passing
+  control, no gaps, `gate_selfcheck: PASS`.**
+- §7.8's exit criterion "every harness in the checklist returns non-zero on its sabotage arm" holds
+  for every gate the checklist relies on. The zoomtest P-G rows and torture increment 2 remain
+  planned, as in the checklist.

@@ -187,6 +187,24 @@ ARMS = [
         "expect": r"BROKEN CLAIM.*\n.*no_such_test_anywhere",
     },
     {
+        # The Fraktaler-3 corpus check on one cheap row, in a copy of what it reads (it resolves
+        # everything, the binary included, from its own location): row 01's committed render
+        # replaced by row 02's, same size. Possible since the df32 tail fix (2026-10-15): before it
+        # the check's own control was red (28/38).
+        "gate": "corpus --check", "name": "corpus/swapped-baseline", "kind": "script",
+        "tree": ["validation/corpus/generate_corpus.py", "validation/corpus/locations.toml",
+                 "validation/corpus/session-template.toml",
+                 "validation/corpus/renders/01-home-fractadyne.png",
+                 "validation/corpus/renders/02-seahorse-1e4-fractadyne.png",
+                 "target/release/" + os.path.basename(EXE)],
+        "cmd": [sys.executable, "validation/corpus/generate_corpus.py", "--check", "--only", "01"],
+        "sabotage": lambda t: shutil.copyfile(
+            os.path.join(t, "validation", "corpus", "renders", "02-seahorse-1e4-fractadyne.png"),
+            os.path.join(t, "validation", "corpus", "renders", "01-home-fractadyne.png")),
+        "why": "row 01's committed render replaced by row 02's",
+        "expect": r"01-home\s+CHANGED",
+    },
+    {
         # SELF-ARMED: the screen gate's own --selftest trips every criterion on synthetic captures
         # beside a control that must pass, and checks each exit code - the per-assertion fixtures
         # 7.8 asks for. Run as is: it must exit 0 with its PASS line.
@@ -209,9 +227,7 @@ INVENTORY = [
     ("autodive", None),
     ("soak", None),
     ("screengate.py", None),
-    ("corpus --check", "no arm yet - its CONTROL is red: 28/38 (re-checked 2026-10-15: rows 11-15 and "
-                       "34-38 differ by 21-1,907 px since the beta.141 df32 tail phase; reviewing them "
-                       "against F3 and re-blessing is the user's call) where the checklist expects 38/38"),
+    ("corpus --check", None),
     ("checklist_coverage.py", None),
 ]
 
