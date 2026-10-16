@@ -228,8 +228,11 @@ impl crate::FractadyneApp {
         let stall = s.regime.stall_slow_max();
         if stall >= STALL_RED_FRAMES {
             fails.push(format!(
-                "the frame budget never came down across {stall} slow frames (RED from {STALL_RED_FRAMES}: the field \
-                 device-loss signature)"
+                concat!(
+                    "the frame budget never came down across {} slow frames ",
+                    "(RED from {}: the field device-loss signature)"
+                ),
+                stall, STALL_RED_FRAMES
             ));
         }
         if !fails.is_empty() {
@@ -478,10 +481,14 @@ impl RegimeAcc {
             d.sort_by(f64::total_cmp);
             let (max, at) = self.rebase_per_px.iter().copied().fold((0.0, 0), |m, x| if x.0 > m.0 { x } else { m });
             line.push_str(&format!(
-                "; rebases per sampled px over {} reading(s): median {:.2}, max {max:.2} (frame {at}), {} over 4 \
-                 (reported, not judged)",
+                concat!(
+                    "; rebases per sampled px over {} reading(s): median {:.2}, max {:.2} (frame {}), ",
+                    "{} over 4 (reported, not judged)"
+                ),
                 d.len(),
                 d[d.len() / 2],
+                max,
+                at,
                 d.iter().filter(|x| **x > 4.0).count()
             ));
         }

@@ -644,9 +644,11 @@ pub(crate) const LADDER: &[Rung] = &[
     Rung {
         id: "live/regime/escaped-ref-control",
         lane: Lane::Live,
-        motivation: "The escaped-reference rung's control: the field crash view, the same command, no \
-                     instrument. Scored on the same lines (soak-regime, soak-stall), so a red on the \
-                     armed rung can be told from the view's own cost.",
+        motivation: concat!(
+            "The escaped-reference rung's control: the field crash view, the same command, no ",
+            "instrument. Scored on the same lines (soak-regime, soak-stall), so a red on the ",
+            "armed rung can be told from the view's own cost."
+        ),
         cmd: Cmd::SelfExe(&[
             "--soak", "120", "--soak-location", "validation/field/radeon-crash-2026-09-21.fdn", "--window", "1676x1360",
         ]),
@@ -657,13 +659,15 @@ pub(crate) const LADDER: &[Rung] = &[
     Rung {
         id: "live/regime/escaped-ref-shallow",
         lane: Lane::Live,
-        motivation: "The regime that lost the RX 6800 XT on 2026-09-21 (beta.111): the field crash view \
-                     (1.76e6x, mode 0, auto-iter on) with the live reference truncated to the 655 \
-                     samples it escaped at, so every pixel runs ~7x past it and rebases with BLA off. \
-                     VACUOUS unless the regime is entered; RED on a budget stall (8+ slow frames the \
-                     budget never came down across: the field signature), a stalled frame loop, a leak \
-                     or a crash report. A pass proves the app survives the cost shape, not that the \
-                     picker produces it; never a golden.",
+        motivation: concat!(
+            "The regime that lost the RX 6800 XT on 2026-09-21 (beta.111): the field crash view ",
+            "(1.76e6x, mode 0, auto-iter on) with the live reference truncated to the 655 ",
+            "samples it escaped at, so every pixel runs ~7x past it and rebases with BLA off. ",
+            "VACUOUS unless the regime is entered; RED on a budget stall (8+ slow frames the ",
+            "budget never came down across: the field signature), a stalled frame loop, a leak ",
+            "or a crash report. A pass proves the app survives the cost shape, not that the ",
+            "picker produces it; never a golden."
+        ),
         cmd: Cmd::Instrumented(
             &[("FRACTADYNE_REF_ESCAPE_AT", "655")],
             &["--soak", "120", "--soak-location", "validation/field/radeon-crash-2026-09-21.fdn", "--window", "1676x1360"],
