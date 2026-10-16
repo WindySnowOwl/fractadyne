@@ -52,12 +52,13 @@ ALLOWED_ITEMS = {}
 # Functional file (repo-relative) -> how many times it may name `harness::`: the product's hooks
 # into the harnesses (src/harness.rs lists them). Exact, so the list shrinks as hooks go.
 HARNESS_HOOKS = {
-    # logcheck at start and exit, the profiler's timings field, and the windowed harness flags'
-    # parsing in new_state (phase 4 moves the parsing out).
-    'crates/fractadyne-app/src/main.rs': 27,
-    # the headless dispatch (one call per developer mode), HarnessModes and the frame hooks
-    # (phase 4 moves the last two out).
-    'crates/fractadyne-app/src/cli.rs': 21,
+    # logcheck at start and exit, the profiler's timings field, the four harness-mode fields of
+    # FractadyneApp (type, initialiser, doc), and the windowed harness flags' parsing in new_state
+    # (phase 4 moves the parsing out).
+    'crates/fractadyne-app/src/main.rs': 39,
+    # the headless dispatch: --torture, --logcheck, --gputest, one call per developer mode, and
+    # RenderCli's --glitch-audit kind.
+    'crates/fractadyne-app/src/cli.rs': 10,
     # --autodive's verdicts (phase 4 moves --autodive out).
     'crates/fractadyne-app/src/autopilot.rs': 5,
     # --replay's regime accumulator (phase 4 moves --replay out).

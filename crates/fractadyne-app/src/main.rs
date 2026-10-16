@@ -18,11 +18,9 @@
 //! # This crate's modules
 //!
 //! Extracted modules (cohesive units lifted out to keep `main.rs` navigable):
-//! - [`cli`]      — the CLI surface: headless commands (`--find-minibrot`, `--compare`,
-//!   `--crosscheck-f3`, `--validate-deep`), the CLI-launched mode state
-//!   (`SelftestCli`/`ProfileCli`/`FrametestCli`/`BenchState`/`RenderCli`/`HarnessModes`),
-//!   and `update()`'s per-frame harness hooks + mode ladder — `fn main` stays dispatch +
-//!   window setup.
+//! - [`cli`]      — the CLI surface: the headless commands (`--find-minibrot`, `--discover`,
+//!   `--reset-state`, …), the render and benchmark mode state (`BenchState`/`RenderCli`), and
+//!   `update()`'s mode ladder — `fn main` stays dispatch + window setup.
 //! - [`render`]   — the render-request builders: reference orbit, series-skip, mode select,
 //!   the staged `build_params` (frame budget → chunk walk → present gate → params), and
 //!   `ExportRequest` assembly (the performance-critical bridge to the GPU).
@@ -33,11 +31,10 @@
 //! - [`theme`]    — branding colors, dark/light visuals, fonts, wordmark, window icon.
 //! - [`tunables`] — every frame-cost constant, centralized; `--set NAME=VALUE` overrides.
 //! - [`sysinfo`]  — version string, UTC formatter, CPU/VRAM/RAM probes.
-//! - [`selftest`] — the `--selftest` GPU validation suite (render-path cross-checks + goldens).
-//! - [`profile`]  — `--profile`, plus the `--frametest`/`--divetest`/`--resizetest` harnesses.
-//! - dev harnesses in their own files: [`livetest`], [`uitest`] (+ `--juliadive`),
-//!   [`motiontest`], [`chunksweep`], [`torture`], [`soak`], [`shot`], [`gputest`],
-//!   [`reusetest`], [`bench_matrix`]; UI draw surfaces under `ui/`.
+//! - UI draw surfaces under `ui/`.
+//! - [`harness`]  — the test harnesses and developer tools that ship in the binary
+//!   (`--selftest`, `--uitest`, `--gputest`, `--livetest`, …), their mode state and the hooks
+//!   `update()` drives them through; `harness.rs` is the index.
 //!
 //! `main.rs` itself holds, in banner-sectioned reading order: `fn main` + startup; the
 //! render-regime/perf bookkeeping types (`Perf`, `RenderMode`); coloring + palette types;
@@ -50,11 +47,10 @@
 //! candidates. Moving items between modules in one crate has no runtime cost (no added
 //! indirection; inlining is unaffected) — purely an organization/readability change.
 //!
-//! Test layout: a `#[cfg(test)] mod` body does not share a file with the code it tests. Each
-//! is declared `mod name;` under `#[cfg(test)]` and its body lives in a sibling file —
-//! `tests.rs`, `session_zoom.rs`, `icons_coverage.rs`, … beside `main.rs`; `render/*.rs`
-//! beside `render.rs` — so a module file is mainline code end to end. A few sub-100-line
-//! tail modules in small leaf files remain inline.
+//! Test layout: nothing under `src/` is test code. The unit tests for `src/<path>.rs` live in
+//! `tests/unit/<path>/`, each declared at the bottom of the file it tests with
+//! `#[cfg(test)] #[path = "…"] mod name;` (this file's own are at the top of `tests/unit/`), so
+//! they stay children of the code they test while `src/` stays the product. See CONTRIBUTING.md.
 
 use eframe::egui;
 use fractadyne_core::Viewport;
@@ -6055,12 +6051,12 @@ struct FractadyneApp {
     farm_controller: crate::ui::farm_controller::FarmControllerUi,
     /// Help → Diagnostics…: run the user-safe tests from the UI (see `ui::diagnostics`).
     diagnostics: crate::ui::diagnostics::DiagnosticsUi,
-    /// `--selftest` CLI mode: run/done plus the filter/list/bless flags (see [`cli::SelftestCli`]).
-    selftest: cli::SelftestCli,
-    /// `--profile` CLI mode: reps, regions file, output path (see [`cli::ProfileCli`]).
-    profile: cli::ProfileCli,
-    /// `--frametest` CLI mode: the dive shape knobs (see [`cli::FrametestCli`]).
-    frametest: cli::FrametestCli,
+    /// `--selftest` CLI mode: run/done plus the filter/list/bless flags (see [`harness::modes::SelftestCli`]).
+    selftest: harness::modes::SelftestCli,
+    /// `--profile` CLI mode: reps, regions file, output path (see [`harness::modes::ProfileCli`]).
+    profile: harness::modes::ProfileCli,
+    /// `--frametest` CLI mode: the dive shape knobs (see [`harness::modes::FrametestCli`]).
+    frametest: harness::modes::FrametestCli,
     /// Benchmarks — the GUI standardized bench plus the `--benchmark` / `--benchmark-std` CLI
     /// drivers (see [`cli::BenchState`]).
     bench: cli::BenchState,
@@ -6068,8 +6064,8 @@ struct FractadyneApp {
     render_cli: cli::RenderCli,
     /// One-shot dev-harness modes (`--uitest`, `--livetest`, `--autodive`, `--soak`, …) — every
     /// flag/state pair that exists to drive the app from `update()`'s ladder rather than for a
-    /// person (see [`cli::HarnessModes`]).
-    harness: cli::HarnessModes,
+    /// person (see [`harness::modes::HarnessModes`]).
+    harness: harness::modes::HarnessModes,
     /// GPU backend ("Dx12"/"Vulkan"/"Gl") — names the shader-compiler stack for `--gputest`.
     gpu_backend: String,
     /// GPU adapter name (for benchmark reports).
@@ -7145,7 +7141,7 @@ impl FractadyneApp {
             farm_client: Default::default(),
             farm_controller: Default::default(),
             diagnostics: Default::default(),
-            selftest: cli::SelftestCli {
+            selftest: harness::modes::SelftestCli {
                 run: selftest,
                 done: false,
                 filter: selftest_filter,
@@ -7153,14 +7149,14 @@ impl FractadyneApp {
                 bless: selftest_bless,
                 bless_new_adapter: selftest_bless_new_adapter,
             },
-            profile: cli::ProfileCli {
+            profile: harness::modes::ProfileCli {
                 run: profile,
                 done: false,
                 reps: profile_reps,
                 regions: profile_regions,
                 out: out_path.clone(),
             },
-            frametest: cli::FrametestCli {
+            frametest: harness::modes::FrametestCli {
                 run: frametest,
                 center: frametest_center,
                 steps: frametest_steps,
@@ -7193,7 +7189,7 @@ impl FractadyneApp {
                 play: play_tour,
                 play_done: false,
             },
-            harness: cli::HarnessModes {
+            harness: harness::modes::HarnessModes {
                 bench_matrix,
                 bench_matrix_done: false,
                 reusetest,

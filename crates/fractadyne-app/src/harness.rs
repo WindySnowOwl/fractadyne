@@ -31,9 +31,16 @@
 //! (the experiment did not run), 4 WATCHDOG. A run whose own log breaks a `--logcheck` rule turns
 //! 0 into 1.
 //!
-//! Still in functional files until phase 4 moves them: `--autodive` (`autopilot.rs`), `--replay`
-//! and the decision recorder (`render/decide.rs`), and `--pickcheck`, `--refdiag`,
-//! `--crosscheck-f3`, `--bench-bignum`, `--validate-deep` and `--compare` (`cli.rs`).
+//! Developer modes that run before any window, from `cli::run_headless`, one module each:
+//! `--refdiag` ([`refdiag`]), `--pickcheck` ([`pickcheck`]), `--compare` ([`compare`]),
+//! `--crosscheck-f3` ([`crosscheck_f3`]), `--bench-bignum` ([`bench_bignum`]) and
+//! `--validate-deep` ([`validate_deep`]).
+//!
+//! [`modes`] holds the windowed harnesses' state, the per-frame hooks `update()` runs for them
+//! (`harness_frame_hooks`), and the mode ladder's harness branches (`harness_ladder`).
+//!
+//! Still in functional files until phase 4 moves them: `--autodive` (`autopilot.rs`), and
+//! `--replay` and the decision recorder (`render/decide.rs`).
 //!
 //! **Where the product calls in.** `scripts/check_test_layout.py` holds each functional file to the
 //! number of times it names `harness::` (HARNESS_HOOKS), so a new call into a harness is a decision,
@@ -41,9 +48,9 @@
 //! - `main()` logs the run's start ([`logcheck::harness_begin`]), and every exit checks the log
 //!   ([`logcheck::at_exit`], from `crate::exit`);
 //! - `cli::run_headless` starts the harnesses that run before any window (`--torture`,
-//!   `--logcheck`, `--gputest`);
-//! - `FractadyneApp::new_state` parses the windowed harnesses' flags into `cli::HarnessModes`, and
-//!   `update()` drives them each frame (`harness_frame_hooks`, `cli_mode_ladder`);
+//!   `--logcheck`, `--gputest` and the developer modes above);
+//! - `FractadyneApp::new_state` parses the windowed harnesses' flags into [`modes::HarnessModes`],
+//!   and `update()` drives them (`harness_frame_hooks`, and `cli_mode_ladder` → `harness_ladder`);
 //! - the export-request builder (`render.rs`) records the profiler's setup timings
 //!   ([`profile::ProfSetup`], `FractadyneApp::prof`).
 
@@ -57,6 +64,7 @@ pub(crate) mod glitchaudit;
 pub(crate) mod gputest;
 pub(crate) mod livetest;
 pub(crate) mod logcheck;
+pub(crate) mod modes;
 pub(crate) mod motiontest;
 pub(crate) mod pickcheck;
 pub(crate) mod profile;
