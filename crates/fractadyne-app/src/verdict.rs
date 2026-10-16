@@ -5,7 +5,7 @@
 //! computed a VACUOUS term and threw it away, `--autodive` called a run that never reached the
 //! lethal regime an assertion failure (U8). A vacuous run then reads as a regression, or a
 //! regression gets explained away as vacuous. One convention, for `--motiontest`, `--autodive`,
-//! `--zoomtest` and `--soak`; the torture ladder's `classify` reads it.
+//! `--zoomtest`, `--soak` and `--recordtest`; the torture ladder's `classify` reads it.
 //!
 //! (1 is not part of it: a harness whose own log broke a `--logcheck` rule turns 0 into 1.)
 
