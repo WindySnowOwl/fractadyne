@@ -4959,3 +4959,38 @@ ladder, RED on the budget stall.**
 - **`FRACTADYNE_EXTRA_GPU_LOAD`.** §6.7 gives one reason for it: to enter the busy-queue regime
   before §5.1 deletes three vetoes. W2 judged those deletions unneeded and never made them (B5),
   so the instrument has nothing to precede. Deferred until a deletion is proposed.
+
+*Per release, on the card that fails* (`344d4695`).
+- Both batteries run the armed rung as step 09 (`regime`), declared to exit 0. Field agent v28
+  reads the step.
+- Checklist row 149 stays `planned`, and says why: the checklist cannot read a field battery's
+  result.
+
+*The other §7.9 rungs, each measured on the RTX 3080 before it joins the ladder (§7's P8).*
+- **`motion-mode1`, added** (`a4a2a6b2`). CL-165 is the one device loss `--motiontest` ever saw,
+  at Home → Settle in mode 1, never reproduced. §7.9 asks for a regime assertion, not a
+  reproduction.
+  - `--motiontest` folds the frame record over the whole run and counts view 0's motion frames in
+    mode 1 (direct). None is a VACUOUS term.
+  - RTX 3080: 111 such frames, PASS. The rung is `live/regime/motion-mode1`.
+- **`crossover-hold`, not added.** `--soak-depth 28` settles at 2^92.4, in mode 0. A hold sits in
+  one mode at any fixed depth, while the danger at the crossover is crossing it with a budget sized
+  for the other mode. The Home glides cross it (`live/home/glide-from-depth`).
+- **`auto-iter-deep`, not added.** `--autodive 40 --autodive-iter 0 --autodive-home 1` peaked at
+  16.4 ms and was VACUOUS, as `--autodive`'s help predicts: the live path caps auto-iter frames
+  too cheaply to reach the lethal band. A rung that is always VACUOUS fails every ladder run while
+  testing nothing. Auto-iter at the field geometry is the escaped-reference rung, which does enter
+  its regime.
+- `queue-sat` waits on `EXTRA_GPU_LOAD` (above). `click-jump-deep` has no specification beyond its
+  name.
+
+*§5.8 (reference fitness): a gap in the design, found before writing it.*
+- The refusal is written as "`!partial && ask > REUSE_MAX_WRAPS * orbit_len`". But a COMPLETE
+  reference is either escaped or periodic, and a periodic one wraps by design: that is what makes
+  it cheap. The test must be on *escaped*.
+- The live reuse knows that (`tail.escaped`). The disk cache's header does not: it carries
+  `partial` and `iter` only. So the cache cannot select by the same predicate the reuse refuses
+  by, which §5.8's own rule forbids ("a cache entry can never be selected by one rule and refused
+  by another").
+- Closing it means an `escaped` field in the orbit blob (`VERSION` 5 → 6). Old files are refused
+  by version, so every existing cache is invalidated once and rebuilt on demand. The user's call.
