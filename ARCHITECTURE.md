@@ -406,3 +406,7 @@ only), live-view multi-reference glitch correction, and autopilot steering modes
   reference recompute + freeze/reproject, export-request builders.
 - [`crates/fractadyne-app/src/fractal.rs`](crates/fractadyne-app/src/fractal.rs) — `FractalKind`.
 - [`crates/fractadyne-app/src/main.rs`](crates/fractadyne-app/src/main.rs) — app struct + `update()`.
+- Each crate's `src/harness/` holds the code that exists only to test it and ships in the binary
+  (the app's harnesses; the gpu crate's test entry points and check modules; core's bignum
+  oracles), attached with `#[path]` to the module whose private parts it needs, so public paths do
+  not change; its `tests/unit/` holds the unit tests.

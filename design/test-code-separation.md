@@ -1,9 +1,13 @@
 # Separating test code from functional code
 
-Status (2026-10-16): Phases 0–4 done on `refactor/test-separation`. No test code under any
-`src/`; the app's harnesses in `src/harness/` (34 files, 27,959 lines), the product calling in only
-at counted hooks; every test name kept (renames declared); each move checked by
-`scripts/check_move_only.py`. Phase 5 (the gpu and core crates) not started.
+Status (2026-10-16): Phases 0–5 done on `refactor/test-separation` (the optional `fs_gputest`
+WGSL split not done).
+
+- No test code under any `src/`.
+- Each crate's harness code is in its `src/harness/` (the app's: 34 files, 27,959 lines), and the
+  product calls into the app's harnesses only at counted hooks.
+- Every test name is kept (renames declared), and each move is checked by
+  `scripts/check_move_only.py`.
 
 ## 1. Goal
 
@@ -363,6 +367,32 @@ One commit per row. Each moves whole functions or impl blocks.
 
   It is only worth doing if the shader's length gets in the way of reading it.
 - **Gates:** as Phase 4.
+
+**As done (2026-10-16).**
+
+- **gpu.** `export.rs` went from 4,419 lines to 3,952. Six functions and a struct became
+  `harness/export/testkit.rs` (`render_export_unchunked`, `render_iter_split`, `time_iter_pass`,
+  `render_iter_chunked` and `render_iter_chunked_timed` with `ChunkPassTiming`, and `gputest`),
+  attached to `export` and glob re-exported. `harness/life/check.rs`,
+  `harness/lsystem/check.rs` and `harness/timing.rs` are attached with `#[path]`.
+- **`render_export_multi_with` stayed.** The product's `render_export_multi` is a call to it.
+- **core.** `harness/reference/oracle.rs` (`naive_dwell_bf`, `formula_dwell`) and
+  `harness/bignum/deep_checks.rs` (`deep_consistency_bits`, `deep_roundtrip_bits`), attached and
+  re-exported.
+- **Not done:** the optional `fs_gputest` WGSL split.
+- **Every public path unchanged.** No caller in the app changed; core's own tests reach the
+  oracles through the crate root.
+
+**Gate results for phase 5:**
+
+- **RTX 3080:** `--selftest` 529/529 and 31/31; `--gputest` its 52 declared lines.
+- **RX 6800 XT:** battery on dev.26 (`20261016-152306-5tur`) VERDICT PASS, as dev.24 and dev.25.
+- **Core with rug:** the same 372 test names.
+- **`--bench-matrix`, phase 4 tip against phase 5 tip, six interleaved pairs (three in each order):**
+  - deterministic columns identical, and 0 drift in every run;
+  - summed medians +1.7%. That is inside this session's noise: the per-pair ratio ranges 0.92–1.11
+    and the mean 1.02 has t ≈ 0.7, and segments moved both ways. The session ran about 7% slower
+    than phase 4's for both arms.
 
 ### Size
 
