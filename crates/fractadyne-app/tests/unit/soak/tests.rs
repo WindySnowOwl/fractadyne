@@ -1,5 +1,14 @@
-use super::regime_report;
+use super::{RegimeAcc, RegimeReport};
 use crate::diag::frame_record::{kind, FrameRecord};
+
+/// The predicate over a slice; the harnesses fold as they go.
+fn regime_report(recs: &[FrameRecord]) -> RegimeReport {
+    let mut acc = RegimeAcc::default();
+    for r in recs {
+        acc.add(r);
+    }
+    acc.report()
+}
 
 /// The 2026-09-21 field frame: a 655-sample ESCAPED reference against a 4,627-iteration ask, BLA
 /// off, rebasing with no BLA skips, dispatched in one piece.

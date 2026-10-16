@@ -499,16 +499,6 @@ impl RegimeAcc {
     }
 }
 
-/// The predicate over a slice — the tests' entry point; the harnesses fold as they go.
-#[cfg(test)]
-pub(crate) fn regime_report(recs: &[crate::diag::frame_record::FrameRecord]) -> RegimeReport {
-    let mut acc = RegimeAcc::default();
-    for r in recs {
-        acc.add(r);
-    }
-    acc.report()
-}
-
 #[cfg(test)]
 #[path = "../tests/unit/soak/tests.rs"]
 mod tests;

@@ -1589,25 +1589,8 @@ pub fn series_skip(
 /// `pc` bits instead of `p` ([`SA_COEFF_BITS`]; `pc = p` is the historical walk exactly). The
 /// MPFR twin mirrors this loop op-for-op; change one only with the other, and with
 /// `the_sa_walk_is_backend_identical` green. `cancel`: see [`series_skip_in_cancellable`].
-// The tests' entry to the astro walk; production reaches it through `series_skip_walk`.
-#[cfg_attr(not(test), allow(dead_code))]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn series_skip_astro(
-    cx: &BigFloat,
-    cy: &BigFloat,
-    log2_max_dc: f64,
-    max_iter: u32,
-    orbit_len: u32,
-    formula: u32,
-    p: usize,
-    pc: usize,
-    cancel: Option<&std::sync::atomic::AtomicBool>,
-) -> SeriesSkip {
-    series_skip_astro_piped(cx, cy, log2_max_dc, max_iter, orbit_len, formula, p, pc, cancel, None, None)
-}
-
-/// [`series_skip_astro`] with the pipeline FORCED on or off (`None` = the production rule), so a
-/// test can hold the two orders to the same bytes.
+/// `pipe` FORCES the pipeline on or off (`None` = the production rule), so a test can hold the
+/// two orders to the same bytes; production reaches the walk through `series_skip_walk`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn series_skip_astro_piped(
     cx: &BigFloat,
@@ -1782,7 +1765,7 @@ pub(crate) fn series_skip_astro_piped(
     }
 }
 
-/// Walks at least this long run their Z chain on a thread of its own ([`series_skip_astro`] and
+/// Walks at least this long run their Z chain on a thread of its own ([`series_skip_astro_piped`] and
 /// its MPFR twin); shorter ones are not worth a thread.
 pub(crate) const SA_PIPELINE_MIN_STEPS: u32 = 1024;
 /// How far the pipelined Z chain may run ahead of the coefficients: bounds the work thrown away

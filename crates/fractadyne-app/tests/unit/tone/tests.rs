@@ -1,5 +1,10 @@
 use super::*;
 
+/// Clear the command-line override (production sets it once at startup).
+fn clear_override() {
+    OVERRIDE.store(UNSET, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The mute is the whole contract of `--no-sound`; assert the real decision function, since
 /// whether a sound actually reached the speakers is not observable from a test.
 ///

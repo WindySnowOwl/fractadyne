@@ -1,5 +1,14 @@
 use super::*;
 
+impl Witness {
+    /// Stamp a completion directly.
+    fn stamp_done(&self, frame: u64, us: u64) {
+        let slot = &self.done[(frame % RING as u64) as usize];
+        slot[1].store(us, Relaxed);
+        slot[0].store(frame, Relaxed);
+    }
+}
+
 #[test]
 fn a_window_runs_from_the_arming_to_the_frames_completion() {
     let w = Witness::default();

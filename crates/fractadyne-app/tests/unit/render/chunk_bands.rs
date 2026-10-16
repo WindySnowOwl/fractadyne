@@ -1,6 +1,11 @@
 use super::*;
 const N: usize = crate::tunables::CHUNK_BANDS;
 
+/// The ledger at the settled walk's fast lane (×2).
+fn chunk_band_update(bands: &mut [u32; N], band: usize, size: u32, price_ms: f64, target_ms: f64) {
+    chunk_band_update_with_lane(bands, band, size, price_ms, target_ms, 2);
+}
+
 #[test]
 fn bands_are_octaves_from_a_fixed_base_not_a_fraction_of_the_ask() {
     // Band 0 is [0,256); band k is [256*2^(k-1), 256*2^k).

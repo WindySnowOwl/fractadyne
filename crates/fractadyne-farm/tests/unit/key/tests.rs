@@ -1,5 +1,11 @@
 use super::*;
 
+impl FarmKey {
+    pub(crate) fn from_bytes(b: [u8; KEY_LEN]) -> Self {
+        Self(b)
+    }
+}
+
 #[test]
 fn a_key_round_trips_through_its_text_whatever_the_spacing_and_case() {
     let k = FarmKey::generate().expect("rng");

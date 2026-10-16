@@ -1,5 +1,10 @@
 use super::*;
 
+/// [`factor_of`] over a whole table; a test keeps every formula in the table.
+fn factor(t: &Table, formula: FractalKind, mode: RenderMode) -> f64 {
+    factor_of(&t.formula, formula, mode)
+}
+
 fn table() -> Table {
     parse(TABLE).expect("validation/calibration/ceilings.toml must parse — it is compiled in")
 }

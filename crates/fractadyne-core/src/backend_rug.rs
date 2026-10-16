@@ -1387,7 +1387,7 @@ pub(crate) fn atom_size_pass(cx: &BigFloat, cy: &BigFloat, period: u32, p: usize
 
 
 
-/// The series-approximation coefficient walk in MPFR — the twin of `series_skip_astro`
+/// The series-approximation coefficient walk in MPFR — the twin of `series_skip_astro_piped`
 /// (fractadyne-core `reference.rs`), Mandelbrot (`d = 2`) only; `None` = not handled here,
 /// and the caller falls through to the astro walk (correct arithmetic for every family —
 /// the fallback costs speed, never bits).

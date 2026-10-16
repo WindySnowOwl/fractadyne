@@ -1,5 +1,12 @@
 use super::*;
 
+impl MathFont {
+    /// Whether the font draws `ch` (the layout emits nothing else).
+    pub(crate) fn has(&self, ch: char) -> bool {
+        self.glyph(ch).is_some()
+    }
+}
+
 /// The bundled file IS the Latin Modern Math subset: its MATH table carries Latin Modern's values
 /// (a wrong or re-made font would shift every formula without a single test noticing otherwise).
 #[test]

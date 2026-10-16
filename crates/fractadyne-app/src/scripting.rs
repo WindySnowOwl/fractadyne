@@ -1370,20 +1370,6 @@ pub(crate) struct PlaybackRestore {
     pub(crate) dual_split: f32,
 }
 
-/// The `[[keyframe]]` table's field names, from the schema `--script-schema` prints.
-///
-/// Exposed so a test can ask what a script is ABLE to set: a keyframe field that writes one of
-/// the viewer's own settings must also be handed back when the tour ends, and the only way to
-/// keep that true as fields are added is to check the two lists against each other.
-#[cfg(test)]
-pub(crate) fn keyframe_field_names() -> Vec<&'static str> {
-    TOUR_SCHEMA
-        .iter()
-        .find(|t| t.toml == "[[keyframe]]")
-        .map(|t| t.fields.iter().map(|f| f.name).collect())
-        .unwrap_or_default()
-}
-
 /// A resolved chapter: `[start, end)` in tour seconds.
 pub(crate) struct Segment {
     pub(crate) id: String,

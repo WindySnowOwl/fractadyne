@@ -152,12 +152,6 @@ impl MathFont {
         self.to_char.get(&g.0).copied()
     }
 
-    /// Whether the font draws `ch` (the layout emits nothing else).
-    #[cfg(test)]
-    pub(crate) fn has(&self, ch: char) -> bool {
-        self.glyph(ch).is_some()
-    }
-
     pub(crate) fn advance(&self, ch: char) -> f32 {
         self.glyph(ch).and_then(|g| self.face.glyph_hor_advance(g)).unwrap_or(0) as f32
     }

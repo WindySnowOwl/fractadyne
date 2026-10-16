@@ -156,12 +156,7 @@ pub(crate) fn lookup(t: &Table, adapter: &str) -> Calibration {
 }
 
 /// The formula's cost relative to Mandelbrot in `mode`, clamped at ≥ 1 (see the module header). A
-/// formula without a row counts as Mandelbrot; a test keeps every formula in the table.
-#[cfg(test)]
-pub(crate) fn factor(t: &Table, formula: FractalKind, mode: RenderMode) -> f64 {
-    factor_of(&t.formula, formula, mode)
-}
-
+/// formula without a row counts as Mandelbrot.
 fn factor_of(rows: &[Factor], formula: FractalKind, mode: RenderMode) -> f64 {
     if formula == FractalKind::Custom {
         // No row can describe a formula the user wrote: its estimate (`custom::cost_factor`).

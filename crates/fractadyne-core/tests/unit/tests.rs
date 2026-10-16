@@ -1,5 +1,21 @@
 use super::*;
 
+/// The astro walk under the production pipeline rule, recording nothing.
+#[allow(clippy::too_many_arguments)]
+fn series_skip_astro(
+    cx: &BigFloat,
+    cy: &BigFloat,
+    log2_max_dc: f64,
+    max_iter: u32,
+    orbit_len: u32,
+    formula: u32,
+    p: usize,
+    pc: usize,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> SeriesSkip {
+    series_skip_astro_piped(cx, cy, log2_max_dc, max_iter, orbit_len, formula, p, pc, cancel, None, None)
+}
+
 /// `formula::caps` replaced id ranges written out at each use (design/custom-formulas.md, phase 0).
 /// Each capability must answer exactly as the range it replaced, for every id — the known ones and
 /// the out-of-range ones a view file could carry — so the change moves no decision anywhere.

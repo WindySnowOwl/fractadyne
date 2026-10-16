@@ -1,6 +1,22 @@
 use super::*;
 use fractadyne_core::ir::parse::parse;
 
+/// The source's non-blank lines, with each one's byte range (the editor reads a line at a time,
+/// through `edit::Doc`; the tests read whole sources).
+fn read(src: &str) -> Vec<(Line, Span)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for raw in src.split('\n') {
+        let span = Span { start, end: start + raw.len() };
+        start = span.end + 1;
+        if raw.trim().is_empty() {
+            continue;
+        }
+        out.push((read_line(raw, span.start), span));
+    }
+    out
+}
+
 fn row_of(src: &str) -> Row {
     match &read(src)[0].0 {
         Line::Read { stmts, .. } => stmts[0].row.clone(),

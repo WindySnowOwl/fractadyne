@@ -1,5 +1,8 @@
 use super::*;
 
+/// The diagonal neighbours.
+const M_CORNERS: Mask = M_NW | M_NE | M_SW | M_SE;
+
 fn class(count: u8, letter: char) -> Mask {
     let &(_, _, m) = CHART.iter().find(|&&(n, l, _)| n == count && l == letter).expect("a chart entry");
     canonical(m)

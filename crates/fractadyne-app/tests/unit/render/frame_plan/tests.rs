@@ -1,5 +1,21 @@
 use super::*;
 
+impl FrameKind {
+    /// The record's codes, by name. `scripts/framelog.py`'s `KIND` table must say the same, and a
+    /// test holds it to that.
+    const NAMES: [(u8, &'static str); 9] = [
+        (1, "placeholder"),
+        (2, "reproject"),
+        (3, "pin-walk"),
+        (4, "motion"),
+        (5, "hold"),
+        (6, "settled-walk"),
+        (7, "tile"),
+        (8, "accum"),
+        (9, "settled"),
+    ];
+}
+
 fn settled() -> FrameFacts {
     FrameFacts { has_frozen: true, dispatches: true, ..Default::default() }
 }

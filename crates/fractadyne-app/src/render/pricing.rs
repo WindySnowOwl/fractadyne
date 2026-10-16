@@ -617,18 +617,8 @@ pub(crate) fn chunk_band_retreat(bands: &mut [u32; crate::tunables::CHUNK_BANDS]
 /// still priced knowledge — "small is what this region affords" — where zero would fall back to
 /// the neighbour's license, which is exactly the license that just failed). Prices between 1×
 /// and 2× hold: neither evidence for growth nor a cliff.
-#[cfg_attr(not(test), allow(dead_code))] // the ×2 form is the ledger's documented contract; the live path passes its lane explicitly
-pub(crate) fn chunk_band_update(
-    bands: &mut [u32; crate::tunables::CHUNK_BANDS],
-    band: usize,
-    size: u32,
-    price_ms: f64,
-    target_ms: f64,
-) {
-    chunk_band_update_with_lane(bands, band, size, price_ms, target_ms, 2);
-}
-
-/// `chunk_band_update` with the fast lane's growth factor as a parameter. The settled walk keeps
+///
+/// `fast_lane` is the growth factor of a clearly cheap price. The settled walk keeps
 /// ×2 (it has the 400 ms target's worth of time); a PINNED refresh uses ×4, because its prices
 /// are completion-based with the pipeline latency subtracted, so "clearly cheap" there means the
 /// pass finished inside its own frame — and a pin ramping ×2 per pass through eight cold bands

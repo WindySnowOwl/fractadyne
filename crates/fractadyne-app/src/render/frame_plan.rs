@@ -50,21 +50,6 @@ impl FrameKind {
     pub(crate) fn code(self) -> u8 {
         self as u8
     }
-
-    /// The record's codes, by name. `scripts/framelog.py`'s `KIND` table must say the same, and a
-    /// test holds it to that.
-    #[cfg(test)]
-    pub(crate) const NAMES: [(u8, &'static str); 9] = [
-        (1, "placeholder"),
-        (2, "reproject"),
-        (3, "pin-walk"),
-        (4, "motion"),
-        (5, "hold"),
-        (6, "settled-walk"),
-        (7, "tile"),
-        (8, "accum"),
-        (9, "settled"),
-    ];
 }
 
 /// The facts [`classify`] decides a frame's kind from: what the frame handed the GPU.

@@ -47,11 +47,6 @@ impl FarmKey {
         &self.0
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_bytes(b: [u8; KEY_LEN]) -> Self {
-        Self(b)
-    }
-
     /// `fdn1-xxxxx-xxxxx-…`: the key and a 2-byte checksum, base32, in groups of five.
     pub fn to_text(&self) -> String {
         let mut raw = self.0.to_vec();
