@@ -4893,3 +4893,69 @@ BLA-skip counter arithmetic to join `--gputest`'s op families.
 
 §7.8's change list is now done, except the rows planned in the checklist (the zoomtest P-G matrix,
 torture increment 2). Next: W9.
+
+*The record-cost check made sturdier* (user: "make the check sturdier", `e7a8b988`).
+- `--recordtest` re-measures a near miss. A first-window p99 over the limit drives 240 more frames,
+  and the check fails only if the second window is over too. Preemption is random and rarely
+  repeats; a record that really costs too much is over in both.
+- The limit is the tunable `RECORD_COST_PPM` (default 5,000 = 0.5%), so the meta-gate's new arm
+  `recordtest/cost-both-windows` (1 ppm) can drive it red for its own reason: over in both windows,
+  exit 2.
+
+**2026-10-16 — W9 resumes (user: "continue to w9"): rung 1, the escaped-reference rung in the
+ladder, RED on the budget stall.**
+
+*What W9 already had* (beta.115–119, before this document's W numbering reached it):
+- `FRACTADYNE_REF_ESCAPE_AT`, with the `instrument_truncated` exemption from the install derate.
+- The soak's regime predicate (`RegimeAcc`), folded over every record, and its budget-stall
+  tracking.
+- The motion rung (`--zoomtest-location session`, taps and hold).
+- The September field runs: both rungs reached the storm on the RX 6800 XT, and neither reached
+  the failure. User, 2026-09-26: "the pricing reaction waits; the verifiability work ships."
+
+*Rung 1* (`210cf282`, string continuations fixed in `9833d083`).
+- **The soak's RED term.** It printed the field signature and passed regardless. Now eight or more
+  slow frames with the frame budget never coming down is RED, on every soak (`STALL_RED_FRAMES`).
+  The field loss ran 20 such frames. The still rung's seeded September runs ran 4: their budget
+  came down at the first reading.
+- **§7.9's other RED term is not adopted.** "rebase / sampled_px above 4 while chunk_needed ==
+  false" does not separate the failure from health.
+  - At the field view the healthy control (a normal reference) reads 2.7–9.1 on the RTX 3080 and
+    up to 217 on the RX 6800 XT.
+  - A healthy autodive read up to 4.89 (`dca59ac`).
+  - The field loss itself was ~3–4 (25–33M rebases over 8.68M samples).
+  - The density is reported (median, max with its frame, count over 4) and not judged. Its
+    maximum is usually the coarse first frame, where every pixel rebases off the bootstrap
+    reference 256 times and none escapes.
+- **The view, anywhere.** `--soak-location FILE` (repo-anchored), and the crash view the app wrote
+  on 2026-09-21 as a fixture, `validation/field/radeon-crash-2026-09-21.fdn`. The share package
+  ships it (tested), and field agent v27 accepts `--soak-location`.
+- **The ladder.** `Cmd::Instrumented(env, args)` re-invokes the binary with an instrument armed:
+  instruments are read from the environment, so a rung cannot pass one as an argument. Two rungs
+  differ only by the instrument (tested): `live/regime/escaped-ref-control` and
+  `live/regime/escaped-ref-shallow` (`FRACTADYNE_REF_ESCAPE_AT=655`), each 120 s at the field
+  window.
+- **RTX 3080, through the supervisor:** both rungs PASS.
+  - The control is not entered.
+  - The armed rung is entered: 3,301 frames on the 655-sample reference, 33 storm readings up to
+    16M rebases, 0 of 81 dispatches unchunked, no slow frame.
+- **On the RX 6800 XT** (dev.23 = `d10ec466`, reverted in `a4b79826`; agent v27).
+  - The control: not entered, one slow frame at a 4e8 budget, PASS.
+  - The armed rung, **three runs running, all PASS and all ENTERED:** ~6,020 frames on the
+    655-sample reference (ask 7,304), 32 storm readings up to 399M rebases, **0 of 85 dispatches
+    unchunked**, the budget climbing to ~2.0e10 (never held at the bootstrap), no slow frame.
+  - §7.9's exit criterion is met on the card that lost the device twice: a run that provably
+    entered `bla_skip == 0` on a short escaped reference and survived, three runs running.
+  - What changed since the field loss is the controller W2–W8 built: every storm dispatch is
+    chunked, where the field's fatal one was not. A pass shows the app survives this cost shape; it
+    does not show that the picker produces it.
+
+*Two W9 items whose premise is stale:*
+- **"`FRACTADYNE_BLA_DROP_FRAMES`, armed outside the mode-switch block."** `budget_mode` starts at
+  the sentinel `u32::MAX`, so a view's first frame is itself a switch, and the instrument arms at
+  session start. Measured: `suppressing BLA for 1000000 frame(s) after the 4294967295 → 0
+  switch`. And at the field view no counter reading skipped through BLA even without it (0 of 43),
+  so `bla_skip = 0` is the view's own state there. No change.
+- **`FRACTADYNE_EXTRA_GPU_LOAD`.** §6.7 gives one reason for it: to enter the busy-queue regime
+  before §5.1 deletes three vetoes. W2 judged those deletions unneeded and never made them (B5),
+  so the instrument has nothing to precede. Deferred until a deletion is proposed.
