@@ -676,6 +676,19 @@ pub(crate) const LADDER: &[Rung] = &[
         requires: &["live/regime/escaped-ref-control"],
         needs_disk: 64 * MB,
     },
+    Rung {
+        id: "live/regime/motion-mode1",
+        lane: Lane::Live,
+        motivation: concat!(
+            "CL-165: the one device loss --motiontest ever saw, at Home -> Settle in mode 1, never ",
+            "reproduced. A regime assertion, not a reproduction: the run is VACUOUS unless view 0 ",
+            "rendered moving frames in mode 1, so a run that never entered the regime cannot pass."
+        ),
+        cmd: Cmd::SelfExe(&["--motiontest"]),
+        deadline: Duration::from_secs(10 * MIN),
+        requires: &["live/ui/walk"],
+        needs_disk: 64 * MB,
+    },
 ];
 
 /// Resolve selectors to rungs, preserving ladder order. An empty selector list means everything.

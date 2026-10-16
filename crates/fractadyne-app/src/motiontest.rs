@@ -121,6 +121,11 @@ pub(crate) struct MotionTest {
     clicked: bool,
     /// Cleared by the verdict paths so the watchdog thread stands down.
     done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// W9's `motion-mode1` regime (CL-165: the one device loss this harness ever saw, at Home →
+    /// Settle in mode 1, never reproduced): view 0's MOTION frames rendered in mode 1 (direct),
+    /// folded from the frame record over the whole run, and the record's next `seq`.
+    mode1_motion: u64,
+    rec_next: u64,
 }
 
 impl MotionTest {
@@ -159,6 +164,8 @@ impl MotionTest {
             click_base: [0; 5],
             clicked: false,
             done,
+            mode1_motion: 0,
+            rec_next: 0,
         }
     }
 }
@@ -170,6 +177,21 @@ impl FractadyneApp {
     pub(crate) fn motiontest_frame(&mut self, ctx: &egui::Context) {
         let Some(mut mt) = self.harness.motiontest.take() else { return };
         mt.frames += 1;
+        // Fold the frame record (W9 `motion-mode1`): every record since the last frame.
+        {
+            use crate::diag::frame_record::kind;
+            let (recs, next, _lost) = crate::diag::frame_record::since(mt.rec_next);
+            mt.rec_next = next;
+            mt.mode1_motion += recs
+                .iter()
+                .filter(|r| {
+                    r.kind == kind::FRAME
+                        && r.view == 0
+                        && r.mode == crate::RenderMode::Direct.to_u32() as u8
+                        && r.frame_kind == crate::render::frame_plan::FrameKind::Motion as u8
+                })
+                .count() as u64;
+        }
         let in_phase = mt.phase_t0.elapsed().as_secs_f64();
         let now = ctx.input(|i| i.time);
 
@@ -396,6 +418,18 @@ impl FractadyneApp {
                         fails.push(format!(
                             "A8: {blank} pinned walk(s) completed BLANK during the driven phases (kept off screen by the content guard)"
                         ));
+                    }
+                    // W9 `motion-mode1`: CL-165's regime must have been entered, or a pass says
+                    // nothing about it (a regime assertion, not a reproduction).
+                    eprintln!(
+                        "--motiontest: mode-1 motion (CL-165's regime, Home -> Settle in mode 1): {} moving frame(s) in mode 1",
+                        mt.mode1_motion
+                    );
+                    if mt.mode1_motion == 0 {
+                        fails.push(
+                            "VACUOUS: no moving frame rendered in mode 1 - CL-165's regime (Home -> Settle in mode 1) was not reached"
+                                .into(),
+                        );
                     }
                     let hold_moving = self.perf.hold_bound_moving[0].wrapping_sub(b.hold_moving);
                     eprintln!("--motiontest: A6 moving frames shown at the jump floor's clamped scale: {hold_moving}");
