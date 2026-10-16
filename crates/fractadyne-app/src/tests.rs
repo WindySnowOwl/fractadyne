@@ -1330,14 +1330,14 @@ fn the_battery_ships_and_declares_what_it_expects_of_every_step() {
     // gpu-validate.ps1 judges its own bundle against gpu-validate-expected.json beside it (W8):
     // a package that ships the battery without the file judges nothing, and a step the file does not
     // declare is held to exit 0 by default, which would turn a known-failing step red on every card.
-    let publish = include_str!("../../../scripts/publish-share.ps1");
+    let publish = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/publish-share.ps1"));
     assert!(
         publish.contains("scripts\\gpu-validate-expected.json"),
         "publish-share.ps1 ships gpu-validate.ps1 but not gpu-validate-expected.json"
     );
-    let battery = include_str!("../../../scripts/gpu-validate.ps1");
+    let battery = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/gpu-validate.ps1"));
     let exp: serde_json::Value =
-        serde_json::from_str(include_str!("../../../scripts/gpu-validate-expected.json")).expect("the file parses");
+        serde_json::from_str(include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/gpu-validate-expected.json"))).expect("the file parses");
     // Every step the battery records: `Invoke-Step "name"` and the two recorded by hand (`Step = "name"`).
     let mut steps: Vec<String> = Vec::new();
     for marker in ["Invoke-Step \"", "Step = \""] {
@@ -1358,7 +1358,7 @@ fn the_battery_ships_and_declares_what_it_expects_of_every_step() {
     }
     // The Linux battery judges itself the same way (W8): it reads the same file, every step it
     // records is declared, and its exit is the verdict's.
-    let linux = include_str!("../../../scripts/gpu-validate.sh");
+    let linux = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/gpu-validate.sh"));
     assert!(linux.contains("\"$HERE/gpu-validate-expected.json\""), "gpu-validate.sh does not read the expected file");
     assert!(linux.trim_end().ends_with("exit \"$VERDICT_CODE\""), "gpu-validate.sh does not exit with its verdict");
     let mut linux_steps: Vec<&str> = vec!["build-id"];
@@ -1391,10 +1391,10 @@ fn every_package_ships_every_cards_bench_matrix_baseline() {
     // `benchmarks/bench-matrix-baseline-<slug>.json`, when it has one (W8). A package that copies
     // only the reference card's file leaves every other card with nothing to go red against.
     for (recipe, text, jobs) in [
-        (".github/workflows/release.yml", include_str!("../../../.github/workflows/release.yml"), 2), // windows + linux
-        ("scripts/publish-share.ps1", include_str!("../../../scripts/publish-share.ps1"), 1),
-        ("scripts/build-accelerated.ps1", include_str!("../../../scripts/build-accelerated.ps1"), 1),
-        ("scripts/build-accelerated.sh", include_str!("../../../scripts/build-accelerated.sh"), 1),
+        (".github/workflows/release.yml", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.github/workflows/release.yml")), 2), // windows + linux
+        ("scripts/publish-share.ps1", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/publish-share.ps1")), 1),
+        ("scripts/build-accelerated.ps1", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/build-accelerated.ps1")), 1),
+        ("scripts/build-accelerated.sh", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/build-accelerated.sh")), 1),
     ] {
         let n = text.matches("benchmarks/bench-matrix-baseline*.json").count()
             + text.matches("benchmarks\\bench-matrix-baseline*.json").count();
@@ -1407,15 +1407,15 @@ fn only_the_share_package_ships_every_cards_golden_set() {
     // The field battery runs from the share's package and compares a card against its own golden
     // set, validation/golden/<card>/ (W8): that package must carry every card's set. A release
     // package ships the reference set alone — each set is ~90 MB and a user's card has none.
-    let publish = include_str!("../../../scripts/publish-share.ps1");
+    let publish = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/publish-share.ps1"));
     assert!(
         publish.contains("Get-ChildItem (Join-Path $root \"validation\\golden\") -Directory"),
         "publish-share.ps1 does not copy the per-card golden sets"
     );
     for (recipe, text) in [
-        (".github/workflows/release.yml", include_str!("../../../.github/workflows/release.yml")),
-        ("scripts/build-accelerated.ps1", include_str!("../../../scripts/build-accelerated.ps1")),
-        ("scripts/build-accelerated.sh", include_str!("../../../scripts/build-accelerated.sh")),
+        (".github/workflows/release.yml", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.github/workflows/release.yml"))),
+        ("scripts/build-accelerated.ps1", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/build-accelerated.ps1"))),
+        ("scripts/build-accelerated.sh", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/build-accelerated.sh"))),
     ] {
         for line in text.lines().filter(|l| l.contains("validation/golden") || l.contains("validation\\golden")) {
             assert!(
@@ -1431,7 +1431,7 @@ fn the_share_package_ships_the_field_views_the_regime_rungs_soak() {
     // W9's regime rungs soak `validation/field/*.fdn` (torture.rs, live/regime/*). They run on the
     // card that fails, through the field agent and the share package, so that package must carry
     // every view a rung names.
-    let publish = include_str!("../../../scripts/publish-share.ps1");
+    let publish = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/publish-share.ps1"));
     assert!(publish.contains("validation\\field\\*.fdn"), "publish-share.ps1 does not ship validation/field");
     for r in crate::torture::LADDER {
         let args: &[&str] = match &r.cmd {
@@ -1453,9 +1453,9 @@ fn every_package_ships_the_replay_fixtures() {
     // which is how W6's field build found it (dev.9, RX 6800 XT, 2026-10-14). Every recipe that
     // builds a package must carry them.
     for (recipe, text) in [
-        (".github/workflows/release.yml", include_str!("../../../.github/workflows/release.yml")),
-        ("scripts/publish-share.ps1", include_str!("../../../scripts/publish-share.ps1")),
-        ("scripts/build-accelerated.ps1", include_str!("../../../scripts/build-accelerated.ps1")),
+        (".github/workflows/release.yml", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.github/workflows/release.yml"))),
+        ("scripts/publish-share.ps1", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/publish-share.ps1"))),
+        ("scripts/build-accelerated.ps1", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/build-accelerated.ps1"))),
     ] {
         let n = text.matches("validation/replays/*.jsonl").count() + text.matches("validation\\replays\\*.jsonl").count();
         let jobs = if recipe.ends_with(".yml") { 2 } else { 1 }; // the windows and the linux job

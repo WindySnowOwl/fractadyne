@@ -283,7 +283,7 @@ fn the_zero_record_is_the_default_record() {
 /// UTF-16).
 #[test]
 fn the_committed_frame_schema_matches_the_code() {
-    let committed = include_str!("../../../../validation/frame-schema.json").replace("\r\n", "\n");
+    let committed = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../validation/frame-schema.json")).replace("\r\n", "\n");
     assert_eq!(
         committed,
         schema_json(),
@@ -398,7 +398,7 @@ fn numbered_log_names_append_the_slot() {
 fn framelog_names_the_schema_11_codes_as_the_code_does() {
     // `framelog.py` decodes `climb_read` and `prev_gpu_why` by these names; a code added here and
     // not there would print as "?" (or vanish from a reason) in every summary.
-    let script = include_str!("../../../../scripts/framelog.py");
+    let script = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/framelog.py"));
     for (code, name) in [
         (climb_read::JUDGED, "judged"),
         (climb_read::OTHER_ASK, "DISCARDED: another ask"),

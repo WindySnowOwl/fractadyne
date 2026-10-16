@@ -74,7 +74,7 @@ fn a_scheduled_orbit_stores_the_full_precision_samples() {
 #[test]
 #[ignore]
 fn probe_schedule_at_the_1e148_centre() {
-    let kfr = include_str!("../../../../validation/corpus/locations/14-deep-1.2e148.kfr");
+    let kfr = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../validation/corpus/locations/14-deep-1.2e148.kfr"));
     let field = |k: &str| kfr.lines().find_map(|l| l.strip_prefix(k)).map(str::trim).unwrap().to_string();
     let p = 557;
     let cx = crate::parse_bf_prec(&field("Re:"), p).unwrap();

@@ -579,7 +579,7 @@ mod tests {
     fn framelog_names_the_kinds_as_the_code_does() {
         // The reader decodes the record by these names; a kind added here and not there would
         // print as "?" in every summary.
-        let script = include_str!("../../../../scripts/framelog.py");
+        let script = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/framelog.py"));
         for (code, name) in FrameKind::NAMES {
             assert!(
                 script.contains(&format!("{code}: \"{name}\"")),

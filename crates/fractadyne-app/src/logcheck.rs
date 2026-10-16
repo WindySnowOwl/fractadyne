@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The committed rules, compiled in: the check at a task's exit needs them with nothing to find on
 /// disk, and a binary can never be judged by rules from another commit.
-pub(crate) const BUILTIN_RULES: &str = include_str!("../../../validation/logcheck-rules.toml");
+pub(crate) const BUILTIN_RULES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../validation/logcheck-rules.toml"));
 
 const SESSION_TAG: &str = "[fd-start] fractadyne ";
 const BEGIN_TAG: &str = "[fd-harness] begin ";

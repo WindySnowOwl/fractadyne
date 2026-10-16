@@ -68,7 +68,7 @@ fn wgsl_struct_size(fields: &[(String, String)]) -> usize {
 /// ⭐⭐The gate: the two definitions of the coloring uniform must agree byte for byte.
 #[test]
 fn color_uniform_matches_the_shader() {
-    let src = include_str!("mandelbrot.wgsl");
+    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/mandelbrot.wgsl"));
     let fields = wgsl_struct_fields(src, "ColorU");
     assert_eq!(
         wgsl_struct_size(&fields),
@@ -93,7 +93,7 @@ fn color_uniform_matches_the_shader() {
 /// palette is silently truncated at the seam between them.
 #[test]
 fn lut_binding_is_declared_and_sized() {
-    let src = include_str!("mandelbrot.wgsl");
+    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/mandelbrot.wgsl"));
     assert!(
         src.contains("@group(0) @binding(3) var<storage, read> lut: array<vec4<f32>>;"),
         "the color pass no longer declares the palette LUT at binding 3",
@@ -123,7 +123,7 @@ fn wgsl_field_offset(fields: &[(String, String)], field: &str) -> usize {
 /// (a field added on one side only would shift it, and the step would read garbage).
 #[test]
 fn iter_uniform_matches_the_shader() {
-    let src = include_str!("mandelbrot.wgsl");
+    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/mandelbrot.wgsl"));
     let fields = wgsl_struct_fields(src, "IterU");
     assert_eq!(
         wgsl_struct_size(&fields),

@@ -4,7 +4,7 @@
 #[test]
 fn tour_schema_doc_current() {
     let generated = super::tour_schema_markdown();
-    let committed = include_str!("../../../../TOURS.md").replace("\r\n", "\n");
+    let committed = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../TOURS.md")).replace("\r\n", "\n");
     assert_eq!(
         generated, committed,
         "TOURS.md is stale — run `fractadyne --dump-tour-schema > TOURS.md` to regenerate"

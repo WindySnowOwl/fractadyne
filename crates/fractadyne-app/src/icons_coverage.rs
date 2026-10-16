@@ -12,9 +12,9 @@ use std::collections::BTreeSet;
 /// The Proportional family as `theme::install_fonts` builds it. Coverage is a union, so the
 /// order is documentation rather than logic.
 const FONTS: &[(&str, &[u8])] = &[
-    ("SplineSans", include_bytes!("../assets/fonts/SplineSans.ttf")),
-    ("SplineSansMono", include_bytes!("../assets/fonts/SplineSansMono.ttf")),
-    ("Lucide", include_bytes!("../assets/fonts/Lucide.ttf")),
+    ("SplineSans", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/fonts/SplineSans.ttf"))),
+    ("SplineSansMono", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/fonts/SplineSansMono.ttf"))),
+    ("Lucide", include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/fonts/Lucide.ttf"))),
     ("Ubuntu-Light", epaint_default_fonts::UBUNTU_LIGHT),
     ("NotoEmoji", epaint_default_fonts::NOTO_EMOJI_REGULAR),
     ("emoji-icon-font", epaint_default_fonts::EMOJI_ICON),
@@ -24,21 +24,21 @@ const FONTS: &[(&str, &[u8])] = &[
 /// `include_str!` rather than a directory walk, so this works from any working directory and
 /// fails to COMPILE if a file is renamed instead of silently scanning less.
 const SOURCES: &[(&str, &str)] = &[
-    ("menus.rs", include_str!("ui/menus.rs")),
-    ("panels.rs", include_str!("ui/panels.rs")),
-    ("dialogs.rs", include_str!("ui/dialogs.rs")),
-    ("diagnostics.rs", include_str!("ui/diagnostics.rs")),
-    ("tour_render.rs", include_str!("ui/tour_render.rs")),
-    ("farm_client.rs", include_str!("ui/farm_client.rs")),
-    ("farm_controller.rs", include_str!("ui/farm_controller.rs")),
-    ("central.rs", include_str!("ui/central.rs")),
-    ("help.rs", include_str!("help.rs")),
-    ("icons.rs", include_str!("icons.rs")),
+    ("menus.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ui/menus.rs"))),
+    ("panels.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ui/panels.rs"))),
+    ("dialogs.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ui/dialogs.rs"))),
+    ("diagnostics.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ui/diagnostics.rs"))),
+    ("tour_render.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ui/tour_render.rs"))),
+    ("farm_client.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ui/farm_client.rs"))),
+    ("farm_controller.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ui/farm_controller.rs"))),
+    ("central.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ui/central.rs"))),
+    ("help.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/help.rs"))),
+    ("icons.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/icons.rs"))),
     // ⚠⚠**`main.rs` was NOT scanned, and it draws UI text.** The gradient editor's `⊕`/`⊖`
     // affordances, its hint lines and its tooltips all live here, so the one file with the most
     // recently-written glyphs was the one file this check could not see. Adding it is the whole
     // point of the module: a glyph is only safe if something looked for a font that can draw it.
-    ("main.rs", include_str!("main.rs")),
+    ("main.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))),
 ];
 
 fn covered() -> BTreeSet<u32> {

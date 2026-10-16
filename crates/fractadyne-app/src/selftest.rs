@@ -7989,12 +7989,12 @@ impl FractadyneApp {
         // to sit next to an installed binary.
         if want("script") {
             const TOURS: &[(&str, &str)] = &[
-                ("grand-tour", include_str!("../../../tours/grand-tour.toml")),
-                ("deep-minibrot-dive", include_str!("../../../tours/deep-minibrot-dive.toml")),
-                ("deep-spiral-dive", include_str!("../../../tours/deep-spiral-dive.toml")),
-                ("dive-to-misiurewicz-4-1", include_str!("../../../tours/dive-to-misiurewicz-4-1.toml")),
-                ("dive-to-view-3e1216", include_str!("../../../tours/dive-to-view-3e1216.toml")),
-                ("julia-and-mandelbrot", include_str!("../../../tours/julia-and-mandelbrot.toml")),
+                ("grand-tour", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tours/grand-tour.toml"))),
+                ("deep-minibrot-dive", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tours/deep-minibrot-dive.toml"))),
+                ("deep-spiral-dive", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tours/deep-spiral-dive.toml"))),
+                ("dive-to-misiurewicz-4-1", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tours/dive-to-misiurewicz-4-1.toml"))),
+                ("dive-to-view-3e1216", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tours/dive-to-view-3e1216.toml"))),
+                ("julia-and-mandelbrot", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tours/julia-and-mandelbrot.toml"))),
             ];
             let mut bad = Vec::new();
             let mut total_s = 0.0;
@@ -8361,7 +8361,7 @@ zoom = \"1e94\"
             // Asserted against the script's OWN total rather than a literal: the tour's timeline
             // is edited (the deep chapter was slowed once already), and a hardcoded duration turns
             // every such edit into a spurious failure that says nothing about segment lookup.
-            let seg = crate::scripting::parse_tour_text(include_str!("../../../tours/grand-tour.toml"))
+            let seg = crate::scripting::parse_tour_text(include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tours/grand-tour.toml")))
                 .ok()
                 .map(|pb| {
                     let by_id = pb.find_segment("gauntlet").map(|s| (s.start, s.end));
@@ -10584,7 +10584,7 @@ mod opt_in_tests {
 
     /// The names this file passes to `opt_in("…")`, read from its own source.
     fn opt_in_calls() -> Vec<String> {
-        let src = include_str!("selftest.rs");
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/selftest.rs"));
         let needle = ["opt_in", "(\""].concat(); // split so this line is not itself a match
         src.match_indices(needle.as_str())
             .filter_map(|(i, _)| {

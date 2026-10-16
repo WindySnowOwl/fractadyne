@@ -62,7 +62,7 @@ fn the_histogram_fits_the_counter_buffer() {
 /// another counter's slot, silently.
 #[test]
 fn the_shader_agrees_on_the_step_accounting_slots() {
-    let wgsl = include_str!("mandelbrot.wgsl");
+    let wgsl = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/mandelbrot.wgsl"));
     for (name, v) in [
         ("CTR_STEP_PX", CTR_STEP_PX),
         ("CTR_STEP_EXEC", CTR_STEP_EXEC),
@@ -103,7 +103,7 @@ fn step_sums_are_read_as_two_words_with_the_carry() {
 /// a drift would write the histogram over another counter, or past the buffer, silently.
 #[test]
 fn the_shader_agrees_on_the_escape_histogram() {
-    let wgsl = include_str!("mandelbrot.wgsl");
+    let wgsl = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/mandelbrot.wgsl"));
     let slot = format!("const CTR_ESC_HIST: u32 = {CTR_ESC_HIST}u;");
     assert!(wgsl.contains(&slot), "mandelbrot.wgsl must declare `{slot}`");
     let top = format!("clamp(floor(log2(max(sm, 1.0))), 0.0, {}.0)", ESC_HIST_BUCKETS - 1);
