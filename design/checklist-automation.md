@@ -346,7 +346,7 @@ fast at real depth, and that the controls tell the truth.
 |---|---|---|
 | 144 | R | `run:scripts/dive-capture/screengate.py` over `gpu-validate`'s step 08 (three `capdive.ps1` dives at `dive-2p800.kfr`): blank (and mid-dive blank episodes) / flat / flash / stale, median of three, exit 0 PASS, 1 RED, 2 VACUOUS — red on the build before the 2026-09-20 blank-frame fix, green on the fixed one in twelve runs on two cards; `--selftest` proves each criterion fires (design/live-render-robustness.md §7.6). Was PLANNED until the `run:` class existed. |
 
-### Release gates (145–149)
+### Release gates (145–150)
 
 Commands whose recorded exit code is the evidence (`run:`, see 5. above), and the two gates that are
 declared but cannot gate yet.
@@ -355,17 +355,18 @@ declared but cannot gate yet.
 |---|---|---|
 | 145 | R | `run:--livetest tours/grand-tour.toml`: the live view against an offline render at the ask and, where it is black, at 4× the ask (W8): exit 0 = no drift from the blessed baseline. A STARVED checkpoint (the bigger budget resolves black the app does not explain) fails it. |
 | 146–147 | R | `run:--selftest-filter deep-location` and `run:--selftest-filter fe-df32-probe`: the self-test's two OPT-IN groups, which a full `--selftest` never runs (they cost minutes). Without these rows nothing ever required them to run. |
-| 148 | planned | The `--zoomtest-gate` P-G matrix (design/live-zoom-smoothing.md). The gate exists (W8 rung 1), but the held-picture bound fails on every Smooth row, on beta.19 too. That is open sizing work, and a row that can never go green teaches people to skip it. |
-| 149 | planned | The torture ladder's increment 2: the no-BLA regime that actually loses the RX 6800 XT. The rung (`live/regime/*`, W9) passed three runs running on the RX 6800 XT (2026-10-16) and runs in every full field battery (step 09); not a checklist gate because the checklist cannot read a field battery's result. |
+| 148 | R | `run:--motiontest --worker-gpu same`: the motion test with a second device, the window's own card as the worker. Every other gate keeps one GPU, which is how the worker's frames writing into the window's timings and provenance went unseen until a field log (2026-10-16, `1c818810`). Exit 0 needs A7 provenance 0; pins the worker's frames supersede are reported under A4, not gated (design/multi-gpu-live.md §9.1). |
+| 149 | planned | The `--zoomtest-gate` P-G matrix (design/live-zoom-smoothing.md). The gate exists (W8 rung 1), but the held-picture bound fails on every Smooth row, on beta.19 too. That is open sizing work, and a row that can never go green teaches people to skip it. |
+| 150 | planned | The torture ladder's increment 2: the no-BLA regime that actually loses the RX 6800 XT. The rung (`live/regime/*`, W9) passed three runs running on the RX 6800 XT (2026-10-16) and runs in every full field battery (step 09); not a checklist gate because the checklist cannot read a field battery's result. |
 
 (The design's third `planned:` item, TODO T-6's job watcher, shipped as `scripts/field-agent.ps1` and
 `scripts/field-request.ps1`. That is infrastructure, not a release check, so it has no row.)
 
-### Sign-off (150)
+### Sign-off (151)
 
 | # | class | enforcer |
 |---|---|---|
-| 150 | P | Not a behaviour. `checklist_coverage.py` can assert every row carries a verdict and no row is blank, which is the mechanical half. |
+| 151 | P | Not a behaviour. `checklist_coverage.py` can assert every row carries a verdict and no row is blank, which is the mechanical half. |
 
 ---
 

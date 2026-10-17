@@ -733,12 +733,80 @@ pub(crate) fn alive() {
 /// thread-local registry snapshotted in the hook) are the full fix — deferred as a larger,
 /// deliberate change; the full-timeline `[crumb]` log lines below already disambiguate.
 pub(crate) fn breadcrumb(msg: String) {
+    crumb(msg, true);
+}
+
+/// A breadcrumb: the slot the panic hook and the watchdog read is always set; the log gets the
+/// line when `to_log`.
+fn crumb(msg: String, to_log: bool) {
     alive();
     let thread = std::thread::current().name().unwrap_or("?").to_string();
-    file_line(&format!("[crumb] ({thread}) {msg}"));
+    if to_log {
+        file_line(&format!("[crumb] ({thread}) {msg}"));
+    }
     if let Ok(mut b) = BREADCRUMB.lock() {
         *b = format!("{msg} [{thread}]");
     }
+}
+
+/// ⭐**A SMALL REFERENCE BUILD IS RATE-LIMITED IN THE LOG, NEVER IN THE CRASH SLOT.** W10's exit
+/// criterion, measured on the maintainer's own sessions (2026-10-16): 300 to 1,450 KB per 14
+/// minutes, 70-86% of it `building reference` / `reference built` crumbs: four to eight builds a
+/// second of a few hundred samples each while zooming at shallow depth. Such a build is routine. A
+/// large one is what an out-of-memory abort dies inside (2026-08-08: `iter=10000000 prec=380` was
+/// the last line of the log), and an abort leaves only the log, so a build of at least
+/// `QUIET_BUILD_BIT_STEPS` (iterations x precision bits) always logs both lines. A smaller one logs
+/// its pair at most once per `QUIET_BUILD_GAP_MS` per thread, and the next start line printed says
+/// how many it held. Replayed over the logs that measured it: 167-257 KB per 14 minutes.
+pub(crate) const QUIET_BUILD_BIT_STEPS: f64 = 1.0e8;
+pub(crate) const QUIET_BUILD_GAP_MS: u64 = 5000;
+
+thread_local! {
+    /// Whether this thread's last `building reference` crumb was held, so its `reference built`
+    /// crumb is too: the pair stays a pair.
+    static BUILD_CRUMB_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// One limiter per build thread (`fd-ref-live`, `fd-ref-lookahead`, ...): the threads are spawned
+/// per build, so the limiter cannot live on the thread itself.
+static BUILD_CRUMB_LINES: Mutex<Vec<(String, LineLimiter)>> = Mutex::new(Vec::new());
+
+/// Whether a build of `iter` iterations at `prec` bits is small enough to be rate-limited.
+pub(crate) fn quiet_build(iter: u64, prec: usize) -> bool {
+    (iter as f64) * (prec as f64) < QUIET_BUILD_BIT_STEPS
+}
+
+/// The `building reference` crumb (see [`QUIET_BUILD_BIT_STEPS`]).
+pub(crate) fn build_crumb_start(msg: String, iter: u64, prec: usize) {
+    let mut note = String::new();
+    let held = quiet_build(iter, prec) && {
+        let thread = std::thread::current().name().unwrap_or("?").to_string();
+        let mut lines = BUILD_CRUMB_LINES.lock().unwrap_or_else(|e| e.into_inner());
+        let i = match lines.iter().position(|(t, _)| *t == thread) {
+            Some(i) => i,
+            None => {
+                lines.push((thread, LineLimiter::default()));
+                lines.len() - 1
+            }
+        };
+        match lines[i].1.admit(elapsed_ms(), QUIET_BUILD_GAP_MS) {
+            None => true,
+            Some(n) => {
+                if n > 0 {
+                    note = format!(" - and {n} more small build(s) on this thread since the last line like this (rate-limited)");
+                }
+                false
+            }
+        }
+    };
+    BUILD_CRUMB_HELD.with(|c| c.set(held));
+    crumb(format!("{msg}{note}"), !held);
+}
+
+/// The `reference built` crumb: in the log exactly when its `building reference` crumb was.
+pub(crate) fn build_crumb_done(msg: String) {
+    let held = BUILD_CRUMB_HELD.with(|c| c.replace(false));
+    crumb(msg, !held);
 }
 
 /// Current breadcrumb (empty string when none was set yet).
@@ -1246,13 +1314,28 @@ pub(crate) fn start_watchdog() {
             // start" — so the re-warn spacing suppressed EVERY hang in a process's first 30 s:
             // found when `--recordtest` wedged its UI thread for 13 s at +6 s and the watchdog
             // said nothing at all.
+            // A pipeline compile is one blocking driver call with no progress inside it: with the
+            // driver's shader cache cold or full, 5-10 s each (`fractadyne_gpu::pipeline_compile`).
+            // One that FINISHED is work, as a reference build's steps are; one still running is not
+            // a hang until it has run this long, far past any measured.
+            const COMPILE_GRACE_S: u64 = 60;
             let mut last_warn_ms: Option<u64> = None;
+            let mut compiles_seen = fractadyne_gpu::pipeline_compile::compiles_done();
             loop {
                 std::thread::sleep(Duration::from_secs(2));
                 let Some(t) = START.get() else { continue };
+                let compiles = fractadyne_gpu::pipeline_compile::compiles_done();
+                if compiles != compiles_seen {
+                    compiles_seen = compiles;
+                    alive();
+                }
+                let compiling_ms = fractadyne_gpu::pipeline_compile::compile_in_flight_ms();
                 let now_ms = t.elapsed().as_millis() as u64;
                 let alive_ms = ALIVE_MS.load(Ordering::Relaxed);
                 let stale_s = now_ms.saturating_sub(alive_ms) / 1000;
+                if compiling_ms.is_some_and(|ms| ms < COMPILE_GRACE_S * 1000) {
+                    continue;
+                }
                 if stale_s >= STALL_S
                     && last_warn_ms.is_none_or(|w| now_ms.saturating_sub(w) >= REWARN_S * 1000)
                 {
@@ -1264,11 +1347,15 @@ pub(crate) fn start_watchdog() {
                     log_line(
                         "watch",
                         &format!(
-                            "possible hang: no activity for {stale_s}s — last activity: {}",
+                            "possible hang: no activity for {stale_s}s — last activity: {}{}",
                             {
                                 let b = current_breadcrumb();
                                 if b.is_empty() { "<none recorded>".into() } else { b }
-                            }
+                            },
+                            compiling_ms.map_or(String::new(), |ms| format!(
+                                " (a pipeline compile has run {} s)",
+                                ms / 1000
+                            ))
                         ),
                     );
                 }

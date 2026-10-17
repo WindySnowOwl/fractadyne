@@ -1201,6 +1201,7 @@ impl FractadyneApp {
                 }
 
                 // Render the fractal at the current viewport with the chosen palette.
+                self.view_guard(ctx, "navigation (wheel, Space glide, drag, click or box zoom, minimap)", false);
                 let span_fe = self.viewport.complex_span_fe();
                 // Live pixel-iteration budget: the full depth-appropriate appetite. Freeze safety
                 // comes from bounding the REFERENCE length (`LIVE_REF_CAP` via `build_params`), not

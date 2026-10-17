@@ -1506,7 +1506,10 @@ impl FractadyneApp {
                 .and_then(|info| crate::gpu_worker::open_headless("same", &info, crate::gpu_choice::backends(), "fractadyne.selftest"));
             let split = |lose: Option<(usize, u32)>| -> Result<(fractadyne_gpu::ExportResult, Vec<fractadyne_gpu::DeviceShare>), String> {
                 let t = twin.as_ref().map_err(|e| e.clone())?;
-                fractadyne_gpu::render_export_multi_with(&[(device, queue), (&t.device, &t.queue)], &s, &progress, &cancel, lose)
+                // `together`: both devices set up before either takes a tile. Twelve small tiles
+                // otherwise go to this device before the twin is ready ([12, 0] in ~0.5 s, with a
+                // warm driver cache and a cold one, 2026-10-16/17; once in W5).
+                fractadyne_gpu::render_export_multi_with(&[(device, queue), (&t.device, &t.queue)], &s, &progress, &cancel, lose, true)
                     .map_err(|e| e.to_string())
             };
             for (lose, name, threshold) in [
@@ -10573,6 +10576,16 @@ zoom = \"1e94\"
         if let Some(l) = &not_run_line {
             println!("{l}");
         }
+        // What compiling pipelines cost this run: seconds where the driver's shader cache missed
+        // (cold, or full: 2026-10-16), milliseconds where it answered (`fractadyne_gpu::pipeline_compile`).
+        let compile_line = format!(
+            "pipelines: {} created, {:.1} s compiling, longest {} ms",
+            fractadyne_gpu::pipeline_compile::compiles_done(),
+            fractadyne_gpu::pipeline_compile::compile_ms_total() as f64 / 1000.0,
+            fractadyne_gpu::pipeline_compile::compile_ms_max(),
+        );
+        println!("{compile_line}");
+        crate::diag::log_line("gpu", &compile_line);
         println!("report → {}\n", report_path.display());
         ok
     }

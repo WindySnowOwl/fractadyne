@@ -619,13 +619,17 @@ pub(crate) fn recompute_worker(inp: RecomputeInputs) -> RecomputeResult {
     // abort dies inside — 2026-08-08, `iter=10000000 prec=380` was the last thing the log held
     // before the process vanished. Without a size here the report can name the phase but not say
     // how close it was to the wall.
-    crate::diag::breadcrumb(format!(
-        "building reference [{}]: iter={} prec={} ({})",
-        inp.origin,
-        inp.gpu_iter,
+    crate::diag::build_crumb_start(
+        format!(
+            "building reference [{}]: iter={} prec={} ({})",
+            inp.origin,
+            inp.gpu_iter,
+            inp.precision,
+            crate::diag::memory_summary()
+        ),
+        u64::from(inp.gpu_iter),
         inp.precision,
-        crate::diag::memory_summary()
-    ));
+    );
     if inp.custom.is_some() {
         return custom_reference(&inp);
     }
@@ -1535,7 +1539,7 @@ fn finish_reference(
         _ => std::sync::Arc::new(Vec::new()),
     };
     let rn_ms = t_rn.elapsed().as_secs_f64() * 1000.0;
-    crate::diag::breadcrumb(format!(
+    crate::diag::build_crumb_done(format!(
         "reference built [{}]: len={len} iter={orbit_iter} prec={orbit_prec}",
         inp.origin
     ));
@@ -5453,6 +5457,10 @@ impl FractadyneApp {
                 },
             };
             let id = decide::decide_walk_id(&id_in);
+            // A4's split: the first walk decision after a superseded pin restarts that pin's walk.
+            if std::mem::take(&mut self.perf.pin_superseded_pending[vs]) && id.restart_lost.is_some() {
+                self.perf.walk_restarts_superseded[vs] = self.perf.walk_restarts_superseded[vs].wrapping_add(1);
+            }
             if let Some((lost, of, from)) = id.restart_lost {
                 if crate::diag::trace_on("tile") {
                     crate::diag::trace(
@@ -6705,6 +6713,9 @@ impl FractadyneApp {
                     }
                 }
                 PinVerdict::Stop(reason) => {
+                    if reason == PinStop::Superseded {
+                        self.perf.pin_superseded_pending[vsub] = true;
+                    }
                     if reason == PinStop::Blank {
                         self.perf.content[vsub].blank_walks =
                             self.perf.content[vsub].blank_walks.saturating_add(1);
@@ -7049,7 +7060,8 @@ impl FractadyneApp {
         // …or a frame from the second GPU is on screen that a refresh of this device, at the
         // resolution it would render, could not show better (`motion_worker`): a walk started now
         // would only be abandoned for it.
-        let worker_hold = worker_q.is_some_and(|q| q >= res_scale.min(1.0).log2() - 1.0e-9);
+        let worker_hold = worker_q
+            .is_some_and(|q| crate::tunables::cost().worker_yield == 1 || q >= res_scale.min(1.0).log2() - 1.0e-9);
         let reuse_wanted = is_pert
             && interacting
             && !live_refresh

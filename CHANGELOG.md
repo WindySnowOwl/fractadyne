@@ -68,6 +68,42 @@ Changes after 0.3.0-beta.1:
   restart a pixel's orbit exactly as the slower arithmetic does. Deep renders are pixel-identical
   to the full-precision path again (38 of 38), at the same speed: 4.2e275× at 4K still takes
   0.30 s of GPU time against 0.74 s without the faster arithmetic.
+- **Fractadyne tells you when the graphics driver stops keeping its shaders (0.3.0-beta.20).** A
+  driver's shader cache normally answers a shader Fractadyne has compiled before in milliseconds.
+  Once the cache is full it does not, and every export and launch spends seconds compiling. When
+  the same shader compiles slowly a second time in one session, a notice says so, names the
+  shader and the time it took, and says what to clear: on NVIDIA, the cache folder with its size
+  and the Control Panel setting that keeps it from filling again; on AMD, Reset Shader Cache.
+- **A slow shader compile is no longer logged as a hang (0.3.0-beta.20).** When the graphics
+  driver's shader cache misses (after a driver update, or once the cache is full), Fractadyne's
+  largest shaders take 5 to 10 seconds each to compile. Two in a row made the watchdog log a
+  possible hang, and the self-test's log check failed a run that was compiling. A compile now
+  counts as activity (one still running is given a minute), and the self-test says how long
+  compiling took. Found on a machine whose NVIDIA shader cache had filled its 1 GB: the self-test
+  took 386 s instead of 164 s, with 219 s of it compiling, and now passes either way.
+- **A busy session's log is a quarter of the size (0.3.0-beta.20).** While zooming, the app
+  builds four to eight small reference orbits a second, and each wrote two lines to the log: 70 to
+  86% of a busy session's log, 300 KB to 1.4 MB per 14 minutes. A small build now logs at most
+  once per 5 seconds per kind, saying how many it held back. A large one, the kind an
+  out-of-memory crash dies inside, always logs. With a second graphics card, the per-sample
+  supersampling lines are now behind `FRACTADYNE_TRACE=accum`. Replayed over the sessions that
+  measured it, a busy 14 minutes logs 100 to 235 KB; a 2.5-minute zoom from 1x logs 21 KB
+  instead of 62 KB.
+- **A view that cannot be drawn is put back (0.3.0-beta.20).** Twice in October the view's
+  magnification became "not a number" near 2^16,600 and stayed that way until the user moved
+  elsewhere. Saving the session refused to keep it, 900 to 1,100 times each, but nothing said
+  where it came from. Each frame's view is now checked after every step that can move it. A view
+  that cannot be drawn is replaced by the last one that could, a running autopilot or zoom glide
+  stops, and the log names the step and what the frame knew, so the next occurrence identifies
+  the cause.
+- **A second graphics card no longer muddles the live view's timing (0.3.0-beta.20).** With
+  Advanced > Second graphics card on, every motion frame the second card rendered also reported
+  itself as a pass of the window's own card. It overwrote the window's record of which passes its
+  card had run, so the GPU timings the window sizes its frames by were credited to the wrong pass,
+  and at times the window gave up on them and priced frames by the wall clock. Found in a field
+  session's log (78 such warnings in 7 minutes). The motion test with a second device found 21 of
+  309 timings credited to a frame where the card ran nothing; now none in three runs (0 of 258 to
+  292), and no switch to wall-clock pricing.
 - **Zooming out and back in keeps a deep location (0.3.0-beta.20).** Each zoom step recomputed
   the view's centre at the precision the current depth needs, so zooming out rounded away the
   digits a deeper view had needed. Zooming back in about the centre then went somewhere else: a

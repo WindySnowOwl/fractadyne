@@ -451,10 +451,14 @@ impl MandelbrotParams {
         p.iterate_steps = None;
         p.iterate_frame = None;
         p.iterate_armed_us = None;
+        p.iterate_prov = None;
         p.live_timing = false;
         p.live_ms = None;
         p.live_steps = None;
         p.live_frame = None;
+        p.live_prov = None;
+        // The window's record of the passes its GPU ran (W6): a twin's pass is not one of them.
+        p.ran_out = None;
         p.pass_clock = None;
         p.maxiter_count = None;
         p.norm_range = None;

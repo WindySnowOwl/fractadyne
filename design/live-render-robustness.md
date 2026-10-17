@@ -5014,3 +5014,162 @@ ladder, RED on the budget stall.**
   install identity is still "longer wins", which can re-open the build-storm family (U55;
   CL-102, CL-127). Turning it on needs, first, a rung that produces the natural shape, and then
   install identity by fitness.
+
+**2026-10-16 — The maintainer's own logs: a second GPU's frames in the window's provenance, a NaN
+view caught and put back, and W10 measured** (`fix/worker-sinks`, off main `510c3796`).
+
+Before building the rest, I read the logs of the maintainer's own sessions (the app's config
+folder, read only: four rotated logs and `frames.jsonl` going back to 2026-09-25). They run what no
+harness runs: a second graphics device (the same RTX 3080, "same card"), the autopilot with a dive
+target of 2^16,609.6, and a randomly animated palette. Three findings came out of them.
+
+*A second GPU's motion frames wrote into the window's W6 sinks* (`1c818810`).
+- The session on main `9135c29` logged 78 `⚠PROVENANCE MISMATCH` lines in 7 minutes, where W6's
+  exit criterion was 0.
+- `MandelbrotParams::headless()` is the copy of a frame's params the second device renders from,
+  through the window's own `prepare` (`gpu_worker::render_live`). It dropped the timing sinks but
+  not the three W6 added (`iterate_prov`, `live_prov`, `ran_out`). So every pass the worker ran
+  wrote its frame into `gpu_ran`, the window's record of the passes its own GPU ran, and into the
+  provenance the window's readings carry.
+- No gate saw it, because every harness keeps one GPU unless `--worker-gpu` is given.
+- Reproduced with `--motiontest --worker-gpu same`: A7 RED, 21 of 309 readings named a frame where
+  the GPU ran no pass, and 2 switches to wall-clock pricing. With the fix, three runs: 0 of 258,
+  277 and 292, and no switch.
+- The test `headless_drops_every_sink_the_params_carry` reads the struct's sink fields from the
+  source and requires `headless()` to drop each. On the old code it was red, naming exactly the
+  three.
+- Still RED with the worker, and unchanged by the fix: A4, 22-28 walk restarts in the dive against
+  2 without the worker. With the worker present but `WORKER_MOTION=0` it is 2 again. These are window
+  pins that the worker's frames supersede, which L3 does by design (`PinStop::Superseded`). Whether
+  that is waste on a same-card worker or A4 counting a deliberate stop as starvation is a design
+  question for the multi-GPU work. It is left to the maintainer.
+
+*A NaN view, caught the frame it appears and put back* (`view_guard`).
+- `REFUSING to persist a non-finite zoom` was put in on 2026-08-18 to identify an unreproduced NaN
+  view. It has fired in two of the maintainer's sessions, and nobody had read them:
+  - beta.17 build 4336, 2026-10-04, at 711 s: 1,082 times.
+  - build 4550, 2026-10-06, at 106 s: 902 times.
+- Both were near 2^16,600 (the autopilot's dive target), and both came seconds after a frame that
+  had waited 12-72 s for the window to present. The view then stayed at `mag 2^NaN` until the user
+  moved elsewhere.
+- The refusal fires when the session is SAVED. It names nothing about what made the NaN, and the
+  frame record of those days is gone. Ruled out by the code:
+  - a minimized window: no window-size change was logged, and `set_size` clamps to 1 px;
+  - a long frame through the glide or the autopilot: both clamp dt to 0.1 s.
+- `Viewport::is_usable` asks for a finite, positive scale and a finite centre. `FractadyneApp::view_guard(stage)`
+  runs it after the feature solves, after the autopilot, after navigation in both draw paths
+  (before `build_params` reads the view), and at the end of the frame, where a passing view is
+  saved.
+  - The first check that fails logs `⚠UNUSABLE VIEW after <stage>`, with dt, the window, and the
+    glide and the autopilot's goal, aim and speed.
+  - It then puts back the last usable view and stops the motion that may carry the NaN.
+- The instrument `FRACTADYNE_POISON_VIEW_AT=N` plants a NaN scale after the autopilot's step at
+  frame N.
+  - Measured: caught as `after the autopilot`, the view restored (2^104.99), no refusal from the
+    autosave, and the motiontest's own verdict PASS.
+  - logcheck's new `unusable-view` rule (max 0, not lifted by any instrument) fails the run.
+  - It is the meta-gate's arm `motiontest/unusable-view`: control exit 0, sabotage RED for its
+    reason.
+- The cause is still open. The next field occurrence names its stage and inputs, and does not
+  leave the user at a broken view.
+
+*W10's exit criterion, measured* (a 14-minute session's log under 300 KB, accumulation under 5%).
+- Measured on the maintainer's sessions, not a harness. Accumulation is off under every harness
+  but the zoomtest's settle, so a harness reading 0% would be vacuous.
+- The accumulation half was met: 0-6% across the sessions since beta.113, against the 65%
+  baseline. The size half failed: busy sessions logged 300-1,450 KB per 14 minutes.
+- The flood had moved: 70-86% of it was `[crumb] (fd-ref-live|fd-ref-lookahead) building
+  reference` / `reference built`. While zooming at shallow depth the app builds four to eight
+  escaped references a second (a few hundred samples against asks of 12-21k, 37-80 ms each), two
+  lines apiece.
+- `--recordtest`'s log-budget check could not see it. It judges its own run, which never zooms
+  at shallow depth: a guard that checks only what its run exercises.
+- The change:
+  - A build smaller than 1e8 iterations x precision bits logs its pair at most once per 5 s per
+    thread. The next start line printed says how many it held (`diag::build_crumb_start` /
+    `build_crumb_done`; the pair stays a pair through a thread-local).
+  - Larger builds always log both lines: the 2026-08-08 out-of-memory abort died inside
+    `iter=10000000 prec=380`, and an abort leaves only the log.
+  - Every crumb still sets the crash report's and the watchdog's breadcrumb.
+  - With a second device, the per-sample `rendered on the worker GPU` lines, the template line
+    and `the average holds all` are behind `FRACTADYNE_TRACE=accum`. Once the crumbs were gone,
+    they were the accumulation share (12-17%).
+  - `converged` is rate-limited like `begin`: an animated palette restarts and converges a run
+    every second.
+- Zoomtest A/B (100 octaves from 1x, two runs per arm, interleaved):
+  - before: 62.0/62.2 KB and 490/494 crumb lines;
+  - after: 20.3/21.4 KB and 82/84 crumb lines, the pairs 41/41 and 42/42, 187/181 builds held and
+    counted.
+  - Other categories unchanged.
+- Replayed over the maintainer's beta.18/beta.19 sessions: 102-235 KB per 14 minutes,
+  accumulation 0.9-4.8%. Both halves of the criterion are met.
+
+*A4 with a second GPU, measured and decided* (`aef35aea`, `0e2a454f`, `3b54f9a1`).
+- With a worker on the same card, A4 failed at 22-35 dive restarts. Measured (design/multi-gpu-live.md
+  §9.1): they are window pins the worker's frames supersede by design, a few short passes each,
+  at most ~0.25 s of GPU time a run. The larger loss is pins the zoom outruns (`Drift`), which a
+  single GPU shows too (37 of ~100 pins) and A4 never counted.
+- `WORKER_YIELD=1` (kept as an experiment, default 0) makes the window hold any recent worker
+  frame. The worker delivered ~5% more frames, n = 3, with no change on screen.
+- The maintainer's decision: A4 reports superseded restarts apart (`Perf::walk_restarts_superseded`)
+  and gates the rest. Worker runs: gated 0/0/0, superseded 26-31; one GPU unchanged.
+- The release checklist runs `--motiontest --worker-gpu same` (step 148). No other gate used a
+  second device, which is how `1c818810`'s bug went unseen.
+- Found while adding it: `checklist_coverage.py` searched only main.rs, cli.rs and harness.rs for
+  run: flags. Step 32 (`--autodive-home`, parsed in `src/harness/modes.rs` since the test-code
+  separation) read as a BROKEN CLAIM on main. It now reads `src/harness/` too.
+
+*Two `--selftest` flakes seen this session, not fixed* (both are offers).
+- The first `--selftest` of an exe at a new path can go red on logcheck's `possible-hang`. The
+  same five pipeline-first-use checks run slow: the u-space BLA chunked export 0.7 -> 17-20 s,
+  scattered-gather 0.2 -> 7-9 s, the custom-formula interpreter check 1.5 -> 8-11 s, and 164 s ->
+  240-330 s in all. The pre-change guard build, copied to a never-run path, reproduced it: a
+  cold driver shader cache, not the code. It happened in 3 of the 5 first runs, and in none of 4
+  second runs. A release's first selftest of its fresh build can hit it.
+- The twin-still check (`a still split across this device and a twin is bit-identical, both
+  rendering`) flaked `tiles [12, 0]` again: the twin rendered none of the 12 tiles. That is its
+  one-tile margin, first seen in W5.
+
+*The two flakes' cause, fixed, and the driver cache made visible* (`f0cf44ea` and the next commit).
+- The cause of both `--selftest` flakes was NVIDIA's Vulkan shader cache (`%LOCALAPPDATA%\NVIDIA\GLCache`),
+  full at its 1 GB cap. 621 MB of it was written on 2026-10-16 by test runs from many exe paths;
+  the driver keeps a set per path. My earlier "first selftest of an exe at a new path" was a
+  symptom. The big iterate pipelines then missed on every run: the gather pipeline ~7.5 s each of
+  6 times, a u-space BLA iterate pipeline up to 9.5 s, so `--selftest` took 386-450 s instead of 164 s.
+- The selftest creates ~1,480 pipelines of ~18 shapes beside the custom formulas, because every
+  export creates its own.
+- `fractadyne_gpu::pipeline_compile` accounts every pipeline creation. The watchdog counts a
+  finished compile as activity, and a compile in flight under 60 s is not a hang.
+  `--recordtest`'s 13 s wedge is still caught. The twin-still check warms the twin first.
+- Under the full cache: exit 0, 0 `possible hang`, twin tiles [9, 3].
+- A `wgpu::PipelineCache` per device, which would compile each pipeline once per process, was tried
+  and backed out. wgpu 24 has no device identity unique across instances, and `open_headless`
+  makes an instance per device, so a same-card twin was handed the window's cache (wgpu-core
+  panic). It needs the cache passed in by the device's owner, or one instance for every device:
+  an offer.
+- Detection, at the maintainer's request ("check the shader cache when full and inform the user").
+  - The signal is the symptom, not a folder size: a repeat of a pipeline this process compiled
+    before (same source, entry, constants, formats), taking 1 s or more, where a working cache
+    answers in ~7 ms. Reported from the second such repeat.
+  - The source is in the key, because each custom formula is a new shader that legitimately
+    compiles slowly once.
+  - The app logs `[fd-gpu] the graphics driver's shader cache is not keeping compiled shaders`
+    once: per frame, and from `crate::exit`, because a harness can do all its work inside one
+    frame. Outside a harness it shows the notice "Graphics driver not keeping shaders": on NVIDIA
+    the folder with its size and the Shader Cache Size setting; on AMD, Reset Shader Cache.
+
+*Negative control after the maintainer cleared GLCache and set its size to 10 GB* (2026-10-17).
+- `--selftest`, empty cache, then warm:
+  - cold: 288 s, 118.5 s compiling, longest 9.7 s;
+  - warm: 182 s, 13.1 s compiling;
+  - no `not keeping` line in either, 0 `possible hang`. The detection's negative control holds.
+- But the cold run failed the twin-still check again, `tiles [12, 0]`, in a 556 ms split, so the
+  warm-up of `f0cf44ea` was not the fix. With its pipelines compiled, the twin still lost a race:
+  12 small tiles went to this device before the twin's `TileRenderer` was set up.
+- The loss-hook arm already had the answer: a barrier, "a fast window device otherwise took every
+  tile while the other was still building its pipelines" (PLUTO, 2026-10-08).
+  `render_export_multi_with(.., together)` now applies it for the selftest's split checks too. A real
+  export never waits for a slow device. The warm-up is gone.
+- Twelve interleaved runs of `--selftest-filter worker`: with the barrier, twin tiles 3-5 of 12
+  ([7, 5] to [9, 3]); without, 1-4 ([8, 4] to [11, 1]). That was the one-tile margin W5 recorded,
+  and none flaked in those 12.

@@ -188,8 +188,22 @@ def main():
 
     selftest = source("crates/fractadyne-app/src/harness/selftest.rs")
     uitest = source("crates/fractadyne-app/src/harness/uitest.rs")
-    # Flags are parsed in main.rs (windowed modes), cli.rs (headless) and harness.rs.
-    argparse_src = "".join(source(f"crates/fractadyne-app/src/{f}") for f in ("main.rs", "cli.rs", "harness.rs"))
+    # Flags are parsed in main.rs (windowed modes), cli.rs (headless), harness.rs and, since the
+    # test-code separation (main 510c3796), the harness modes under src/harness/ (harness/modes.rs
+    # parses --autodive-home and the other harness flags): without them step 32 read as a broken
+    # claim on main.
+    harness_dir = os.path.join(ROOT, "crates", "fractadyne-app", "src", "harness")
+    harness_files = sorted(
+        os.path.relpath(os.path.join(base, fn), ROOT).replace(os.sep, "/")
+        for base, _dirs, files in os.walk(harness_dir)
+        for fn in files
+        if fn.endswith(".rs")
+    )
+    if not harness_files:
+        sys.exit("checklist_coverage: crates/fractadyne-app/src/harness/ has no .rs file - a moved source tree must be followed here")
+    argparse_src = "".join(source(f"crates/fractadyne-app/src/{f}") for f in ("main.rs", "cli.rs", "harness.rs")) + "".join(
+        source(f) for f in harness_files
+    )
     listed = cargo_test_names() if args.cargo else None
     if args.cargo and listed is None:
         print("warning: `cargo test -- --list` did not run; falling back to a source scan")

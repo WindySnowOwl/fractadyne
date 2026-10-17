@@ -73,6 +73,7 @@ mod fractal;
 mod life_view;
 pub(crate) use life_view::UiPointer;
 mod lsystem_view;
+mod driver_cache;
 mod gpu_choice;
 mod gpu_worker;
 mod motion_worker;
@@ -484,6 +485,8 @@ fn main() -> eframe::Result<()> {
 pub(crate) fn exit(code: i32) -> ! {
     // A task logs its exit code and holds its own log to `validation/logcheck-rules.toml`; a rule
     // it broke turns a 0 into a 1 (`harness::logcheck::at_exit`).
+    // A harness can do all its work inside one frame, so the per-frame check never saw it.
+    let _ = driver_cache::log_once();
     let code = harness::logcheck::at_exit(code);
     diag::end_session();
     std::process::exit(code)
@@ -1558,6 +1561,12 @@ struct Perf {
     /// and PENDING for the next frame record (`walk_restarted`), cleared when it is written.
     walk_restarts: [u64; 2],
     walk_restart_pending: [bool; 2],
+    /// Of `walk_restarts`: those that followed a pin a frame from the second GPU superseded
+    /// (`PinStop::Superseded`), work the multi-GPU live view abandons on purpose; A4 reports them
+    /// apart from the starvation shape (design/multi-gpu-live.md §9.1). `pin_superseded_pending`:
+    /// such a stop, waiting for the walk decision that restarts its walk.
+    walk_restarts_superseded: [u64; 2],
+    pin_superseded_pending: [bool; 2],
     /// The worst bound a held frame's magnification took since the last frame record
     /// (`frame_plan::hold_floor`; record `hold_floor`, U39), cleared when it is written.
     hold_floor_pending: [u8; 2],
@@ -2008,6 +2017,8 @@ struct Perf {
     /// `diag::LineLimiter`; every begin is still counted in the frame record).
     accum_begin_line: [diag::LineLimiter; 2],
     accum_abandon_line: [diag::LineLimiter; 2],
+    /// `converged` too: a run restarted every second (an animated palette) converges every second.
+    accum_converged_line: [diag::LineLimiter; 2],
 }
 
 impl Perf {
@@ -2166,6 +2177,12 @@ impl Perf {
     /// steps as if it had been learned (see the call site in `render`). Zero, the default, disables it.
     pub(crate) fn seed_budget() -> u32 {
         crate::tunables::instrument("FRACTADYNE_SEED_BUDGET")
+    }
+
+    /// `FRACTADYNE_POISON_VIEW_AT=N`: frame N's view gets a NaN scale after the autopilot's step,
+    /// for `FractadyneApp::view_guard` to catch. Zero, the default, disables it.
+    pub(crate) fn poison_view_at() -> u32 {
+        crate::tunables::instrument("FRACTADYNE_POISON_VIEW_AT")
     }
 
     /// See `render::Meter::bootstrap_steps`.
@@ -2360,6 +2377,8 @@ impl Default for Perf {
             chunk_walk_end: [0, 0],
             walk_restarts: [0, 0],
             walk_restart_pending: [false, false],
+            walk_restarts_superseded: [0, 0],
+            pin_superseded_pending: [false, false],
             hold_floor_pending: [0, 0],
             hold_l2_last: [f64::NAN; 2],
             hold_step_last: [f64::NAN; 2],
@@ -2471,6 +2490,7 @@ impl Default for Perf {
             rec_us: 0.0,
             accum_begin_line: Default::default(),
             accum_abandon_line: Default::default(),
+            accum_converged_line: Default::default(),
         }
     }
 }
@@ -6167,6 +6187,13 @@ struct FractadyneApp {
     /// Last logged `(width_pt, height_pt, pixels_per_point)`, so the size log records CHANGES
     /// rather than a line per frame.
     last_window_geom: Option<(f32, f32, f32)>,
+    /// The last view of each pane (main, Julia) that passed `Viewport::is_usable` at the end of a
+    /// frame, and how many times a frame's view failed it ([`FractadyneApp::view_guard`]).
+    last_good_view: [Option<Viewport>; 2],
+    view_guard_trips: u32,
+    view_guard_line: diag::LineLimiter,
+    /// The driver's shader cache was found not keeping compiled shaders, and said so (`driver_cache`).
+    driver_cache_told: bool,
     /// After a scale-factor change: the logical size to restore, when the scale LAST changed (the
     /// settle clock, refreshed by every flip) and when the anchor was FIRST set (its expiry clock,
     /// which is not — or a burst that never settles would hold an anchor for ever). See the
@@ -7186,6 +7213,10 @@ impl FractadyneApp {
                 }),
             max_texture_dim: 0, // the device's, set by `attach_gpu`
             last_window_geom: None,
+            last_good_view: [None, None],
+            view_guard_trips: 0,
+            view_guard_line: diag::LineLimiter::default(),
+            driver_cache_told: false,
             dpi_hold: None,
             suppress_autosave: false,
             pending_state_warning,
@@ -7813,6 +7844,94 @@ impl FractadyneApp {
     }
 
     /// Snapshot current state and save it ~1 s after the last change (or on close).
+    /// ⭐⭐**A VIEW THAT CANNOT BE RENDERED IS CAUGHT THE FRAME IT APPEARS, NAMED, AND PUT BACK.**
+    /// Three field sessions (2026-08-18, and 2026-10-04 and 2026-10-06 on beta.17, both near
+    /// 2^16,600 where the autopilot's dive target was set) reached a NaN scale with no line naming
+    /// what set it. The only witness was `autosave`'s refusal below, written when SAVING — 900 to
+    /// 1,100 times — while the view stayed unusable (`arithmetic mode 2 → 1 … (mag 2^NaN)`) until
+    /// the user went somewhere else. `update` calls this after each stage that can move a view,
+    /// `stage` naming it: the first call to find a pane's view unusable says which stage and what
+    /// the frame knew, stops the motion that may carry the poison, and restores the last view that
+    /// passed. With `save`, a view that passes becomes that view.
+    fn view_guard(&mut self, ctx: &egui::Context, stage: &str, save: bool) {
+        for pane in 0..2 {
+            let vp = if pane == 0 { &self.viewport } else { &self.julia_viewport };
+            if vp.is_usable() {
+                let same = self.last_good_view[pane].as_ref().is_some_and(|g| {
+                    g.units_per_pixel == vp.units_per_pixel
+                        && g.width_px == vp.width_px
+                        && g.height_px == vp.height_px
+                        && g.precision == vp.precision
+                        && g.center_x == vp.center_x
+                        && g.center_y == vp.center_y
+                });
+                if save && !same {
+                    self.last_good_view[pane] = Some(vp.clone());
+                }
+                continue;
+            }
+            self.view_guard_trips = self.view_guard_trips.saturating_add(1);
+            let (dt, screen, focused, minimized) =
+                ctx.input(|i| (i.stable_dt, i.screen_rect(), i.focused, i.viewport().minimized));
+            let a = &self.autopilot;
+            let restored = self.last_good_view[pane].clone();
+            if let Some(held) = self.view_guard_line.admit(diag::elapsed_ms(), 5000) {
+                diag::log_line(
+                    "view",
+                    &format!(
+                        concat!(
+                            "⚠UNUSABLE VIEW after {stage}: pane {pane} scale m={} e={}, centre finite {}/{}, {:.0}x{:.0} px",
+                            " — frame {}, dt {dt:.3} s, window {:.0}x{:.0} pt focused={focused} minimized={minimized:?};",
+                            " zoom_vel {:.4}, autopilot active={} stepping={} speed={:.4} goal={:?} aim={:?} lead={:?},",
+                            " playback={}, tour={}; {}{}",
+                        ),
+                        vp.units_per_pixel.m,
+                        vp.units_per_pixel.e,
+                        !vp.center_x.is_nan() && !vp.center_x.is_inf(),
+                        !vp.center_y.is_nan() && !vp.center_y.is_inf(),
+                        vp.width_px,
+                        vp.height_px,
+                        self.perf.frame_idx,
+                        screen.width(),
+                        screen.height(),
+                        self.pointer.zoom_vel,
+                        a.active,
+                        a.stepping,
+                        a.speed,
+                        a.goal,
+                        a.aim,
+                        a.lead,
+                        self.playback.is_some(),
+                        self.tour_playing(),
+                        match &restored {
+                            Some(g) => format!("restored the last usable view (2^{:.2})", g.log2_magnification()),
+                            None => "no usable view yet: reset to the default view".to_string(),
+                        },
+                        held_note(held),
+                        stage = stage,
+                        pane = pane,
+                        dt = dt,
+                        focused = focused,
+                        minimized = minimized,
+                    ),
+                );
+            }
+            let vp = if pane == 0 { &mut self.viewport } else { &mut self.julia_viewport };
+            match restored {
+                Some(g) => *vp = g,
+                None => vp.reset(),
+            }
+            // Motion that produced the poison would produce it again next frame.
+            self.pointer.zoom_vel = 0.0;
+            if self.autopilot.active {
+                self.autopilot.active = false;
+                self.autopilot.stepping = false;
+                self.set_toast("Autopilot stopped: the view became unusable and was put back (logged)".to_string(), ctx);
+            }
+            self.schedule_repaint(ctx);
+        }
+    }
+
     fn autosave(&mut self, ctx: &egui::Context) {
         // After a state reset the user chose not to persist this session — don't recreate the
         // file we just deleted (on the idle timer or on close).
@@ -9271,6 +9390,8 @@ impl FractadyneApp {
             self.pointer.settle_t[view] = now;
         }
         let interacting = now - self.pointer.settle_t[view] < SETTLE_DELAY;
+        self.view_guard(ctx, "navigation (wheel, Space glide, drag, click or box zoom)", false);
+        let vp = if is_julia { &self.julia_viewport } else { &self.viewport };
 
         let eff_iter = if self.render_cfg.auto_iter {
             // Full depth-appropriate pixel appetite; freeze safety comes from the reference-length
@@ -14385,8 +14506,8 @@ impl FractadyneApp {
                         "accum",
                         &format!("⚠view {view}: converged at {count} samples, but the average holds {gpu}"),
                     );
-                } else if self.gpu_worker.is_some() {
-                    crate::diag::log_line("accum", &format!("view {view}: the average holds all {gpu} samples"));
+                } else if self.gpu_worker.is_some() && crate::diag::trace_on("accum") {
+                    crate::diag::trace("accum", format!("view {view}: the average holds all {gpu} samples"));
                 }
             }
         } else if busy {
@@ -14425,7 +14546,12 @@ impl FractadyneApp {
                 let folded = self.perf.accum_count[view] + 1;
                 self.perf.accum_count[view] = folded;
                 if folded >= accum_target() {
-                    crate::diag::log_line("accum", &format!("view {view}: converged at {folded} samples (with the worker GPU)"));
+                    if let Some(held) = self.perf.accum_converged_line[view].admit(diag::elapsed_ms(), ACCUM_LINE_GAP_MS) {
+                        crate::diag::log_line(
+                            "accum",
+                            &format!("view {view}: converged at {folded} samples (with the worker GPU){}", held_note(held)),
+                        );
+                    }
                 }
                 self.schedule_repaint(ctx);
             }
@@ -14675,13 +14801,17 @@ impl FractadyneApp {
                     let hash = s.rgba.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, v| {
                         (h ^ u64::from(v.to_bits())).wrapping_mul(0x0000_0100_0000_01b3)
                     });
-                    crate::diag::log_line(
-                        "accum",
-                        &format!(
-                            "view {}: sample {} rendered on the worker GPU in {:.0} ms (#{hash:016x})",
-                            d.view, d.index, d.ms
-                        ),
-                    );
+                    // Per sample, so behind the trace: 5 of every 24-sample run, and most of the
+                    // supersampling share of a worker session's log (W10, 2026-10-16).
+                    if crate::diag::trace_on("accum") {
+                        crate::diag::trace(
+                            "accum",
+                            format!(
+                                "view {}: sample {} rendered on the worker GPU in {:.0} ms (#{hash:016x})",
+                                d.view, d.index, d.ms
+                            ),
+                        );
+                    }
                     self.perf.accum_ext_ready[d.view].push(s);
                 }
                 None => {
@@ -14798,8 +14928,8 @@ impl FractadyneApp {
             params.ss
         );
         if count == 0 {
-            if self.gpu_worker.is_some() {
-                crate::diag::log_line("accum", &format!("view {view}: sample 0, the worker's template: {key}"));
+            if self.gpu_worker.is_some() && crate::diag::trace_on("accum") {
+                crate::diag::trace("accum", format!("view {view}: sample 0, the worker's template: {key}"));
             }
             self.perf.accum_key[view] = key;
             self.perf.accum_key_warned[view] = false;
@@ -14860,7 +14990,9 @@ impl FractadyneApp {
             );
         }
         if folded >= accum_target() {
-            crate::diag::log_line("accum", &format!("view {view}: converged at {folded} samples"));
+            if let Some(held) = self.perf.accum_converged_line[view].admit(diag::elapsed_ms(), ACCUM_LINE_GAP_MS) {
+                crate::diag::log_line("accum", &format!("view {view}: converged at {folded} samples{}", held_note(held)));
+            }
         }
         self.schedule_repaint(ctx); // advance (or reach the terminal state) next frame
     }
@@ -15534,6 +15666,8 @@ impl eframe::App for FractadyneApp {
         self.stash_crash_view();
         // Advanced ▸ Second graphics card: start, stop or replace the worker as the setting says.
         self.drive_worker_setting();
+        // The driver's shader cache stopped keeping compiled shaders: say so once (`driver_cache`).
+        self.check_driver_shader_cache();
         // While the centre still sits exactly on a coordinate expression, top its precision up to
         // whatever the current zoom needs — so zooming straight into an exact landmark stays exact
         // rather than freezing at the digits it was entered with. Cheap no-op once off-point.
@@ -15770,6 +15904,9 @@ impl eframe::App for FractadyneApp {
         }
         // Adapter name for the --uitest report header (once is enough; cheap to read each frame).
         let gpu_name = frame.wgpu_render_state().map(|rs| rs.adapter.get_info().name);
+        if let Some(rs) = frame.wgpu_render_state() {
+            driver_cache::set_vendor(rs.adapter.get_info().vendor);
+        }
         // The ADAPTER limit, not the device's: see `attach_bytes_per_sample`.
         let adapter_attach = frame
             .wgpu_render_state()
@@ -16101,6 +16238,7 @@ impl eframe::App for FractadyneApp {
         self.poll_snap_solve(ctx);
         self.poll_feature_solve(ctx);
         self.poll_misiurewicz_explorer(ctx, gpu.as_ref());
+        self.view_guard(ctx, "the feature solves (Go to: nearest minibrot / Misiurewicz)", false);
 
         self.harness_frame_hooks(ctx, &gpu, &gpu_name);
 
@@ -16206,6 +16344,11 @@ impl eframe::App for FractadyneApp {
         // Auto-zoom autopilot — dive toward detail (advance before drawing so this frame
         // reflects the new view).
         self.autopilot_step(ctx, &gpu);
+        if Perf::poison_view_at() != 0 && self.perf.frame_idx == u64::from(Perf::poison_view_at()) {
+            diag::log_line("instrument", &format!("POISON_VIEW_AT={}: the view's scale set to NaN", self.perf.frame_idx));
+            self.viewport.units_per_pixel = self.viewport.units_per_pixel.mul_f64(f64::NAN);
+        }
+        self.view_guard(ctx, "the autopilot", false);
 
         // Interactive reference LOOKAHEAD: a hold-Space glide or autopilot dive is predictable
         // from the zoom-rate slider, so build the references it is about to need on idle cores
@@ -16482,6 +16625,9 @@ impl eframe::App for FractadyneApp {
         self.draw_checksum_dialog(ctx);
 
         self.draw_export_dialog(ctx, &gpu);
+        // Menus, dialogs and tours run after the draw: what they set is checked, then kept as the
+        // last usable view.
+        self.view_guard(ctx, "the menus and dialogs (Go to, bookmarks, history, tours)", true);
 
         // ---- performance overlay + frame timing finalization ----
         let nowi = Instant::now();
