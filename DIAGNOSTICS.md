@@ -372,6 +372,22 @@ one set costs about its share (wall-clock timed), GPU timestamps describe their 
 draws, timestamp against wall — the price rides on them), and the tile geometry costs what the
 full-screen pass does.
 
+`REF_OVERTAKEN_DROP` (default 1 from 0.3.0-beta.20; `0` = off, for a before/after measurement): a
+reactive reference build, the one the live view starts when the installed BLA falls behind the zoom,
+is not installed when, while it ran, the lookahead installed a reference of the same point carrying
+at least as much whose BLA fits the view better. It used to be installed over the fresher one: in a
+fast deep zoom that froze the view for 14 to 18 frames at a time and made the zoom pace itself down
+on a quarter of its frames. `FRACTADYNE_TRACE=ref` prints `overtaken install DROPPED v0: len=… lag …
+vs installed lag …`, and `--zoomtest` counts them on its `reference installs` line. — and
+`PIN_BAND_SPAN` (an experiment, default 0 = off; a share of a pass from 0 to 1): a pinned refresh's
+pass that covers its whole start band runs on through the next bands while each has GPU prices of
+its own and their licences, shared, take no more than that share of one pass. A band with no price
+of its own still stops it, and a spanned pass's price is charged to every band it ran in. Off
+because spanned passes run over their price where costs jump (design/live-zoom-smoothing.md §7).
+With `FRACTADYNE_TRACE=tile` every pin pass prints `pin-pass v… f… to=… size=… band=…` (`band=1..5`
+for a pass across bands), and `pin-price` names each band's licence after the price
+(`licence=a/b/c`).
+
 - **Not a configuration surface.** The defaults are the only tested path: the self-test, the
   goldens, `--bench-matrix` and `--livetest` all assume them. `--selftest` carries a check that
   FAILS when any override is in effect, so an overridden run can never be quoted as a clean verdict.

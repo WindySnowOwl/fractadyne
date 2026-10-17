@@ -683,6 +683,58 @@ fn without_timestamps_the_stand_in_is_the_price_at_once() {
 }
 
 #[test]
+fn a_spanned_pin_pass_charges_its_whole_price_to_every_band_it_ran_in() {
+    // Bands 1–5 in one pass (7,936 iterations), its reading in: each band is fed its own iterations
+    // at the pass's whole price. 2 ms against the 20 ms target is the ×5 lane.
+    let span = crate::render::span_band_code(1, 5);
+    let pass = |gpu_ms, bands| WalkPriceInputs {
+        pin_pass_gpu_ms: gpu_ms,
+        ledger: WalkLedger { inflight: Some((7_936, span, 0.0, false)), bands, ..released_pin_pass().ledger },
+        ..released_pin_pass()
+    };
+    let d = decide_walk_price(&pass(2.0, [0; crate::tunables::CHUNK_BANDS]));
+    assert_eq!(d.ledger.inflight, None);
+    assert_eq!(d.ledger.bands[1..=5], [1_280, 2_560, 5_120, 10_240, 20_480]);
+    assert_eq!((d.ledger.bands[0], d.ledger.bands[6]), (0, 0), "no band it did not run in");
+    assert!(matches!(d.events[..], [WalkPriceEvent::PinPriced { size: 7_936, .. }]), "{:?}", d.events);
+    // Over the target (30 ms): every band it may have come from drifts down to half its own share.
+    let mut grown = [0; crate::tunables::CHUNK_BANDS];
+    grown[1..=5].copy_from_slice(&[4_096, 8_192, 16_384, 32_768, 65_536]);
+    let e = decide_walk_price(&pass(30.0, grown));
+    assert_eq!(e.ledger.bands[1..=5], [128, 256, 512, 1_024, 2_048]);
+}
+
+#[test]
+fn a_pin_pass_spans_priced_bands_only_when_asked() {
+    // A pin at band 1's edge, the growth limiter at 512, the cheap bands priced at 16× their width
+    // and band 6 at 10,240 (`pin_span_tests`): the pass runs to band 6's edge.
+    let mut bands = [0; crate::tunables::CHUNK_BANDS];
+    bands[1..=6].copy_from_slice(&[4_096, 8_192, 16_384, 32_768, 65_536, 10_240]);
+    let i = WalkDispatchInputs {
+        pin_frame: true,
+        interacting: true,
+        cur: 256,
+        walk_end: 42_237,
+        gpu_iter: 42_237,
+        budget_step: 512,
+        pass_steps: 20_000_000_000,
+        bands,
+        pin_span_share: 1.0,
+        ..dispatch()
+    };
+    let d = decide_walk_dispatch(&i);
+    assert_eq!(d.chunk_range, Some([256, 8_192]));
+    assert_eq!(d.state.inflight, Some((7_936, crate::render::span_band_code(1, 5), 0.0, false)));
+    assert_eq!(d.state.pin_pass_steps, 800_000 * 7_936);
+    // Off (and every recording made before it): the pass stops at its band's end.
+    let off = decide_walk_dispatch(&WalkDispatchInputs { pin_span_share: 0.0, ..i.clone() });
+    assert_eq!((off.chunk_range, off.state.inflight), (Some([256, 512]), Some((256, 1, 0.0, false))));
+    // The rate model's pass size bounds it: 4e9 steps over 800,000 px is 5,000 iterations.
+    let small = decide_walk_dispatch(&WalkDispatchInputs { pass_steps: 4_000_000_000, ..i });
+    assert_eq!(small.chunk_range, Some([256, 4_096]));
+}
+
+#[test]
 fn a_reading_that_never_comes_leaves_the_stand_in_standing() {
     let d = decide_walk_price(&released_pin_pass());
     let wait = crate::tunables::PIN_PRICE_WAIT_FRAMES;
@@ -955,6 +1007,7 @@ fn dispatch() -> WalkDispatchInputs {
         walk_read_sig: 0,
         norm_sig_submit: 0,
         pin_inflight_max: 1,
+        pin_span_share: 0.0,
         pin_timeout_scaled: 1,
         chunk_charge: 1,
         chunk_shuffle: 0,

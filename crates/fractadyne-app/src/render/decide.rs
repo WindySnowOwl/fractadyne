@@ -1184,17 +1184,16 @@ pub(crate) enum WalkPriceEvent {
     PinUnpriced { band: u8, size: u32 },
 }
 
-/// Feed one pin pass's price into the band ledger (`decide_walk_price`).
+/// Feed one pin pass's price into the band ledger (`decide_walk_price`). A pass across several bands
+/// (`pin_span_end`) charges its whole price to each band it ran in, with that band's iterations: no
+/// band can earn more than its own share of the pass proves, and an over-target price cuts every
+/// band it may have come from.
 fn feed_pin_price(led: &mut WalkLedger, band: u8, size: u32, price: f64, target_ms: f64) {
     led.pass_dt = price;
-    super::chunk_band_update_with_lane(
-        &mut led.bands,
-        band as usize,
-        size,
-        price,
-        target_ms,
-        super::pin_fast_lane(price, target_ms),
-    );
+    let lane = super::pin_fast_lane(price, target_ms);
+    for (b, len) in super::span_band_lengths(band, size) {
+        super::chunk_band_update_with_lane(&mut led.bands, b, len, price, target_ms, lane);
+    }
 }
 
 /// Park a pin pass's price in `led.late`. Full: the oldest stands on its stand-in, or goes unpriced.
@@ -1222,7 +1221,7 @@ fn park_pin_price(led: &mut WalkLedger, events: &mut Vec<WalkPriceEvent>, pass: 
 pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
     use super::{
         chunk_band_retreat, chunk_band_update_with_lane, chunk_step_factor, motion_pass_steps_fixed,
-        pin_fast_lane, pin_pass_priceable, wall_shed_now,
+        pin_pass_priceable, wall_shed_now,
     };
     let (interacting, pin_frame, spx, ss) = (i.interacting, i.pin_frame, i.spx, i.ss);
     let (tdr_steps, gpu_iter) = (i.tdr_steps, i.gpu_iter);
@@ -1445,20 +1444,13 @@ pub(crate) fn decide_walk_price(i: &WalkPriceInputs) -> WalkPriceDecision {
                 if defer {
                     park_pin_price(&mut led, &mut events, (size, band, i.pin_pass_frame, price), target_ms);
                     events.push(WalkPriceEvent::PinDeferred { band, size, stand_in: price });
+                } else if pin_frame {
+                    feed_pin_price(&mut led, band, size, price, target_ms);
+                    // Traced by the caller under `tile` (`WalkPriceEvent::PinPriced`).
+                    events.push(WalkPriceEvent::PinPriced { band, size, price, acc });
                 } else {
                     led.pass_dt = price;
-                    chunk_band_update_with_lane(
-                        &mut led.bands,
-                        band as usize,
-                        size,
-                        price,
-                        target_ms,
-                        if pin_frame { pin_fast_lane(price, target_ms) } else { 2 },
-                    );
-                    if pin_frame {
-                        // Traced by the caller under `tile` (`WalkPriceEvent::PinPriced`).
-                        events.push(WalkPriceEvent::PinPriced { band, size, price, acc });
-                    }
+                    chunk_band_update_with_lane(&mut led.bands, band as usize, size, price, target_ms, 2);
                 }
                 led.inflight = None;
             } else if pin_frame && !i.no_timestamps && i.pin_inflight < i.pin_inflight_max {
@@ -1880,6 +1872,10 @@ pub(crate) struct WalkDispatchInputs {
     /// Pin passes allowed in flight (`tunables::pin_inflight_max`); recordings made before it read 1.
     #[serde(default = "one")]
     pub(crate) pin_inflight_max: u32,
+    /// The share of one pass a pin pass across priced bands may take (`tunables::PIN_BAND_SPAN_DEFAULT`,
+    /// `pin_span_end`; 0 = off); recordings made before it read 0, the one-band pass they recorded.
+    #[serde(default)]
+    pub(crate) pin_span_share: f64,
     /// The overridable tunables it reads.
     pub(crate) pin_timeout_scaled: u64,
     pub(crate) chunk_charge: u64,
@@ -2083,6 +2079,27 @@ pub(crate) fn decide_walk_dispatch(i: &WalkDispatchInputs) -> WalkDispatchDecisi
             // extra pass per band. Output is unchanged by pass boundaries (the chunked
             // iterate's bit-identity contract).
             let end = if pin_frame { end.min(chunk_band_end(real_lo)).max(real_lo + 1).min(walk_end) } else { end };
+            // ⭐…and goes on through the next bands only while each has prices of its own and their
+            // licences, shared, still fit one pass (`pin_span_end`): a pin walked one octave band per
+            // frame however cheap the bands were. The span's bound is the rate model's pass size,
+            // not the growth limiter's doubling, which tracks the bands' own widths and so would undo
+            // it; every band past the first is bounded by its own prices.
+            let (end, band) = if pin_frame && i.pin_span_share > 0.0 {
+                let step_cap = ((pass_steps / spx.saturating_mul(ss2).max(1)) as u32).max(budget_step);
+                super::pin_span_end(
+                    &i.bands,
+                    real_lo,
+                    end,
+                    licence,
+                    pin_floor,
+                    walk_end,
+                    step_cap,
+                    i.orbit_len,
+                    i.pin_span_share,
+                )
+            } else {
+                (end, band)
+            };
             // START stays `cur` (0 on the first pass) so the shader takes its SA-seed
             // branch; the live work is [real_lo, end).
             chunk_range = Some([cur, end]);

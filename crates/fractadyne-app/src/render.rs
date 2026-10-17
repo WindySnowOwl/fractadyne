@@ -5372,6 +5372,7 @@ impl FractadyneApp {
             for e in &price.events {
                 match *e {
                     decide::WalkPriceEvent::LethalShed { size, band, acc, floor, outcome } => {
+                        let band = span_band_label(band);
                         crate::diag::log_line(
                             "render",
                             &format!(
@@ -5388,6 +5389,7 @@ impl FractadyneApp {
                     }
                     decide::WalkPriceEvent::PinDeferred { band, size, stand_in } => {
                         if crate::diag::trace_on("tile") {
+                            let band = span_band_label(band);
                             crate::diag::trace(
                                 "tile",
                                 format!(
@@ -5404,6 +5406,7 @@ impl FractadyneApp {
                     }
                     decide::WalkPriceEvent::PinUnpriced { band, size } => {
                         if crate::diag::trace_on("tile") {
+                            let band = span_band_label(band);
                             crate::diag::trace(
                                 "tile",
                                 format!("pin-unpriced v={vs} f={} band={band} size={size} (no reading came)", self.perf.frame_idx),
@@ -5412,12 +5415,18 @@ impl FractadyneApp {
                     }
                     decide::WalkPriceEvent::PinPriced { band, size, price: p, acc } => {
                         if crate::diag::trace_on("tile") {
+                            // The licence of each band the pass ran in, after its price.
+                            let (a, z) = span_band_decode(band);
+                            let licence = (a..=z)
+                                .map(|k| self.perf.chunk_bands[vs][k.min(crate::tunables::CHUNK_BANDS - 1)].to_string())
+                                .collect::<Vec<_>>()
+                                .join("/");
+                            let band = span_band_label(band);
                             crate::diag::trace(
                                 "tile",
                                 format!(
-                                    "pin-price v={vs} f={} band={band} size={size} price={p:.1}ms acc={acc:.1} licence={}",
+                                    "pin-price v={vs} f={} band={band} size={size} price={p:.1}ms acc={acc:.1} licence={licence}",
                                     self.perf.frame_idx,
-                                    self.perf.chunk_bands[vs][(band as usize).min(crate::tunables::CHUNK_BANDS - 1)]
                                 ),
                             );
                         }
@@ -5556,6 +5565,7 @@ impl FractadyneApp {
                 walk_read_sig: self.perf.walk_read_sig[vs],
                 norm_sig_submit: self.perf.norm_sig_submit[vs],
                 pin_inflight_max: crate::tunables::pin_inflight_max(self.perf.ts_supported),
+                pin_span_share: crate::tunables::cost().pin_band_span,
                 pin_timeout_scaled: crate::tunables::cost().pin_timeout_scaled,
                 chunk_charge: crate::tunables::cost().chunk_charge,
                 chunk_shuffle: crate::tunables::cost().chunk_shuffle,
@@ -5601,6 +5611,18 @@ impl FractadyneApp {
             }
             if dispatch.pin_dispatched {
                 self.perf.pin_dispatch_at[vs] = crate::app_micros();
+                if crate::diag::trace_on("tile") {
+                    if let (Some([_, to]), Some((size, band, _, _))) = (dispatch.chunk_range, dispatch.state.inflight) {
+                        crate::diag::trace(
+                            "tile",
+                            format!(
+                                "pin-pass v={vs} f={} to={to} size={size} band={}",
+                                self.perf.frame_idx,
+                                span_band_label(band)
+                            ),
+                        );
+                    }
+                }
             }
             for e in &dispatch.events {
                 match *e {
@@ -7978,7 +8000,42 @@ impl FractadyneApp {
             if let Some(rx) = self.recompute_rx[vi].take() {
                 loop {
                     match rx.try_recv() {
-                        Ok(res) => self.install_recompute(vi, res),
+                        Ok(res) => {
+                            // Overtaken while it ran (`reactive_build_overtaken`): the installed
+                            // reference fits this view better, so installing it would undo that.
+                            let vc = &self.ref_cache[vi];
+                            let view_dc = Self::bla_dc_max(span_mantissa, delta_exp).log2();
+                            let (installed_lag, arriving_lag) =
+                                (vc.bla_dc_max_log2 - view_dc, res.bla_dc_max_log2 - view_dc);
+                            let overtaken = crate::tunables::cost().ref_overtaken_drop == 1
+                                && reactive_build_overtaken(
+                                    res.spawn_orbit_id < vc.orbit_id,
+                                    vc.ref_pt.as_ref() == Some(&res.rp)
+                                        && vc.bla_stripe_freq == res.bla_stripe_freq
+                                        && vc.bla_trap_type == res.bla_trap_type,
+                                    res.orbit_len > vc.orbit_len
+                                        || res.prec > vc.orbit_prec
+                                        || (vc.partial && !res.partial),
+                                    installed_lag,
+                                    arriving_lag,
+                                );
+                            if overtaken {
+                                if crate::diag::trace_on("ref") {
+                                    crate::diag::trace(
+                                        "ref",
+                                        format!(
+                                            "overtaken install DROPPED v{vi}: len={} lag {arriving_lag:.2} (spawned at \
+                                             orbit_id {}) vs installed lag {installed_lag:.2} (orbit_id {})",
+                                            res.orbit_len, res.spawn_orbit_id, vc.orbit_id,
+                                        ),
+                                    );
+                                }
+                                self.perf.overtaken_installs[vi.min(1)] += 1;
+                                refwaste_log("install", "OVERTAKEN", res.ref_ms + res.series_ms + res.bla_ms);
+                            } else {
+                                self.install_recompute(vi, res);
+                            }
+                        }
                         Err(std::sync::mpsc::TryRecvError::Empty) => {
                             self.recompute_rx[vi] = Some(rx); // still running → keep polling
                             break;
@@ -8994,6 +9051,40 @@ pub(crate) struct PinnedRefresh {
 /// shader reads and would still bump `orbit_id` (abandoning any pinned refresh) and re-upload the
 /// orbit. `bla_dc_max_log2` compares `-inf` to `-inf` as equal (no tree on either side); a NaN
 /// never compares equal, which errs toward installing.
+/// ⭐A REACTIVE BUILD OVERTAKEN WHILE IT RAN (2026-10-17): the stale-clobber guard's same-length
+/// case (`install_recompute_now` drops an older result only when it is also SHORTER). In a deep
+/// 4× glide the reactive build is spawned as the BLA's lag passes 1.1, sized for the view at that
+/// moment, and runs ~0.3 s at 2^280 while the view moves ~0.75 octaves; meanwhile the lookahead
+/// installs a slot at lag ~0.9. The reactive result then landed on top of it at lag ~1.86, past
+/// `DEEP_LAG_HOLD`: every frame froze, the running pin was abandoned (`Froze`), and the lag spawned
+/// the next such build — measured on the (49,3) spiral at 2^277–2^280, 16–18 frozen frames after
+/// each install, the picture on screen up to 1.9 octaves behind the view.
+///
+/// Dropped when it is OLDER than the installed reference (`older`: spawned before it was installed),
+/// of the same point and tables, carries nothing the installed one lacks (`carries_more`: a longer
+/// or more precise orbit, or a complete one where the installed is partial), and the installed BLA
+/// fits the view NOW better: a fresh BLA sits at lag 1 (built with one octave of headroom), so the
+/// one nearer 1 serves the view. Measured against the view, not "deeper is better", so a zoom-out's
+/// shallower build still lands.
+pub(crate) fn reactive_build_overtaken(
+    older: bool,
+    same_point: bool,
+    carries_more: bool,
+    installed_lag: f64,
+    arriving_lag: f64,
+) -> bool {
+    older
+        && same_point
+        && !carries_more
+        && installed_lag.is_finite()
+        && arriving_lag.is_finite()
+        && (installed_lag - 1.0).abs() < (arriving_lag - 1.0).abs()
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/render/overtaken_tests.rs"]
+mod overtaken_tests;
+
 fn same_reference(vc: &crate::RefCache, res: &RecomputeResult) -> bool {
     vc.ref_pt.as_ref() == Some(&res.rp)
         && vc.orbit_len == res.orbit_len
@@ -9714,6 +9805,98 @@ pub(crate) fn pin_band_license(
     }
     floor
 }
+
+/// Where a PIN pass that covers its whole start band may stop instead of at that band's end: on
+/// through the following bands while each has a price of its own (`bands[b] > 0`) and the pass's
+/// shares of their licences sum to no more than `share_max` of a pass (`PIN_BAND_SPAN`; each band's
+/// licence is the size its prices say fits the pin's target), within `step_cap` iterations in all. Whole bands only, or the walk's
+/// end. Returns the end and the pass's band byte (`span_band_code`).
+///
+/// ⭐Why: a pin pass stopped at the end of the band it started in, and the bands are octaves, so a
+/// pin walked one band per frame however cheap the bands were. On the (49,3) spiral at 4× the cheap
+/// bands priced at 0.2 ms a pass against a 20 ms target, and a pin took a median of 10 frames for
+/// 9 passes while the held picture aged. The clip's protection holds: a band with no price of its
+/// own still stops the pass at its edge, so first contact with any band is still that band's floor
+/// (the storm the clip was traced on, `decide_walk_dispatch`).
+///
+/// The span starts only at a band's lower edge, so the pass's iterations per band follow from its
+/// size and the two bands it names (`span_band_lengths`); a pin's first pass that starts inside a
+/// band (past the series skip) stops at that band's end as before.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pin_span_end(
+    bands: &[u32; crate::tunables::CHUNK_BANDS],
+    real_lo: u32,
+    end: u32,
+    licence: u32,
+    floor: u32,
+    walk_end: u32,
+    step_cap: u32,
+    orbit_len: u32,
+    share_max: f64,
+) -> (u32, u8) {
+    let first = chunk_band_of(real_lo);
+    if real_lo != chunk_band_start(first) || end != chunk_band_end(real_lo) || end >= walk_end || licence == 0 {
+        return (end, first as u8);
+    }
+    let mut share = f64::from(end - real_lo) / f64::from(licence);
+    let (mut end, mut last) = (end, first);
+    while end < walk_end {
+        let b = chunk_band_of(end);
+        if b <= last || bands[b] == 0 {
+            break;
+        }
+        let next = chunk_band_end(end).min(walk_end);
+        let lic = pin_band_license(bands, b, floor, end, orbit_len).max(1);
+        let s = share + f64::from(next - end) / f64::from(lic);
+        if s > share_max || next - real_lo > step_cap {
+            break;
+        }
+        (share, end, last) = (s, next, b);
+    }
+    (end, span_band_code(first, last))
+}
+
+const _: () = assert!(crate::tunables::CHUNK_BANDS <= 16, "a band index must fit in four bits");
+
+/// A pin pass's band byte (`WalkLedger::inflight`, `late`): the band index for a pass in one band;
+/// for a pass across several (`pin_span_end`) the first band in the low four bits and the last in
+/// the high four. A one-band pass keeps the high bits zero, so a ledger recorded before spans reads
+/// the same.
+pub(crate) fn span_band_code(first: usize, last: usize) -> u8 {
+    let (first, last) = (first.min(15) as u8, last.min(15) as u8);
+    if last > first { first | (last << 4) } else { first }
+}
+
+/// The first and last bands a band byte names (`span_band_code`).
+pub(crate) fn span_band_decode(code: u8) -> (usize, usize) {
+    let (first, last) = ((code & 0x0f) as usize, (code >> 4) as usize);
+    (first, last.max(first))
+}
+
+/// Each band a pass of `size` iterations ran in, with its iterations there: the whole of every band
+/// but the last, the rest in the last (`pin_span_end` starts a span at a band's edge).
+pub(crate) fn span_band_lengths(code: u8, size: u32) -> impl Iterator<Item = (usize, u32)> {
+    let (first, last) = span_band_decode(code);
+    let mut left = size;
+    (first..=last).map(move |b| {
+        let width = chunk_band_end(chunk_band_start(b)).saturating_sub(chunk_band_start(b));
+        let len = if b == last { left } else { width.min(left) };
+        left -= len;
+        (b, len)
+    })
+}
+
+/// A band byte for a log line: `6`, or `1..5` for a pass across bands.
+pub(crate) fn span_band_label(code: u8) -> String {
+    match span_band_decode(code) {
+        (a, b) if a == b => a.to_string(),
+        (a, b) => format!("{a}..{b}"),
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/render/pin_span_tests.rs"]
+mod pin_span_tests;
 
 #[cfg(test)]
 #[path = "../tests/unit/render/motion_pace.rs"]

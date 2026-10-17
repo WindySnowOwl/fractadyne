@@ -1158,6 +1158,9 @@ struct Perf {
     /// Lookahead builds INSTALLED (tour or interactive), cumulative — the number that says the
     /// lookahead actually served the dive, as opposed to merely spawning (`--divetest` `look`).
     lookahead_installs: u64,
+    /// Reactive builds dropped because the reference installed while they ran fits the view
+    /// better (`render::reactive_build_overtaken`), per view, cumulative (`--zoomtest`).
+    overtaken_installs: [u64; 2],
     /// Latched once per session: a build rate this high is a bug, not a workload (the reactive
     /// path plus a full lookahead queue is single digits per second).
     build_storm_warned: bool,
@@ -2217,6 +2220,7 @@ impl Default for Perf {
             builds_per_s: 0.0,
             prefetch_count: 0,
             lookahead_installs: 0,
+            overtaken_installs: [0, 0],
             build_storm_warned: false,
             rate_t0: None,
             recompute_per_s: 0.0,
