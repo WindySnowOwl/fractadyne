@@ -669,6 +669,12 @@ STEPS = [
      "Every check passes (exit 0). Where the floatexp and df32 paths agree exactly (the RTX 3080) "
      "only the control carries a verdict; the RX 6800 XT under Linux is where it arbitrates."),
     ("Release gates",
+     "Run the motion test with a second device, the window's own card as the worker: python "
+     "scripts/run_ledger.py run -- --motiontest --worker-gpu same",
+     "VERDICT PASS (exit 0), A7 provenance 0. Every other gate keeps one GPU, which is how a "
+     "worker's frames writing into the window's timings went unseen until a field log (2026-10-16). "
+     "Pins the worker's frames supersede are reported under A4 and not gated (by design)."),
+    ("Release gates",
      "Hold the zoom-smoothness matrix: fractadyne --zoomtest --zoomtest-gate smooth on each "
      "continuous, jump-start and hand-over row of design/live-zoom-smoothing.md's P-G matrix, "
      "and --zoomtest-gate appetite on its appetite row.",
@@ -873,6 +879,7 @@ ENFORCERS = [
     ("Release gates", "run:--livetest tours/grand-tour.toml"),
     ("Release gates", "run:--selftest-filter deep-location"),
     ("Release gates", "run:--selftest-filter fe-df32-probe"),
+    ("Release gates", "run:--motiontest --worker-gpu same"),
     ("Release gates", "planned:run:--zoomtest-gate (the P-G matrix; Smooth rows RED on beta.19 too)"),
     ("Release gates", "planned:torture increment 2 (the no-BLA lethal regime, RX 6800 XT)"),
     ("Sign-off", "process"),
@@ -990,6 +997,7 @@ def build(out_path):
         "python validation/corpus/generate_corpus.py --check  -> 38/38 MATCH",
         "fractadyne --livetest tours/grand-tour.toml --size 480x270  -> 24/24, 0 drifted, VERDICT PASS",
         "fractadyne --motiontest          -> VERDICT PASS",
+        "fractadyne --motiontest --worker-gpu same -> VERDICT PASS",
         "cargo test --workspace --release -> all green",
         "cargo build --release            -> warning-free",
         "python scripts/checklist_coverage.py -> exit 0 (no row claims coverage it lacks)",
