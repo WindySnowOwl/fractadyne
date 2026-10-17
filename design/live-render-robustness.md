@@ -5103,3 +5103,29 @@ target of 2^16,609.6, and a randomly animated palette. Three findings came out o
   - Other categories unchanged.
 - Replayed over the maintainer's beta.18/beta.19 sessions: 102-235 KB per 14 minutes,
   accumulation 0.9-4.8%. Both halves of the criterion are met.
+
+*A4 with a second GPU, measured and decided* (`aef35aea`, `0e2a454f`, `3b54f9a1`).
+- With a worker on the same card, A4 failed at 22-35 dive restarts. Measured (design/multi-gpu-live.md
+  §9.1): they are window pins the worker's frames supersede by design, a few short passes each,
+  at most ~0.25 s of GPU time a run. The larger loss is pins the zoom outruns (`Drift`), which a
+  single GPU shows too (37 of ~100 pins) and A4 never counted.
+- `WORKER_YIELD=1` (kept as an experiment, default 0) makes the window hold any recent worker
+  frame. The worker delivered ~5% more frames, n = 3, with no change on screen.
+- The maintainer's decision: A4 reports superseded restarts apart (`Perf::walk_restarts_superseded`)
+  and gates the rest. Worker runs: gated 0/0/0, superseded 26-31; one GPU unchanged.
+- The release checklist runs `--motiontest --worker-gpu same` (step 148). No other gate used a
+  second device, which is how `1c818810`'s bug went unseen.
+- Found while adding it: `checklist_coverage.py` searched only main.rs, cli.rs and harness.rs for
+  run: flags. Step 32 (`--autodive-home`, parsed in `src/harness/modes.rs` since the test-code
+  separation) read as a BROKEN CLAIM on main. It now reads `src/harness/` too.
+
+*Two `--selftest` flakes seen this session, not fixed* (both are offers).
+- The first `--selftest` of an exe at a new path can go red on logcheck's `possible-hang`. The
+  same five pipeline-first-use checks run slow: the u-space BLA chunked export 0.7 -> 17-20 s,
+  scattered-gather 0.2 -> 7-9 s, the custom-formula interpreter check 1.5 -> 8-11 s, and 164 s ->
+  240-330 s in all. The pre-change guard build, copied to a never-run path, reproduced it: a
+  cold driver shader cache, not the code. It happened in 3 of the 5 first runs, and in none of 4
+  second runs. A release's first selftest of its fresh build can hit it.
+- The twin-still check (`a still split across this device and a twin is bit-identical, both
+  rendering`) flaked `tiles [12, 0]` again: the twin rendered none of the 12 tiles. That is its
+  one-tile margin, first seen in W5.
