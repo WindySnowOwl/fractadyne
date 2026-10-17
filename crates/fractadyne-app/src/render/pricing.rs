@@ -584,6 +584,13 @@ pub(crate) fn chunk_band_end(cur: u32) -> u32 {
     base.checked_shl(octave).unwrap_or(u32::MAX)
 }
 
+/// The first iteration of band `band` (`chunk_band_of`'s inverse at the band's lower edge): 0 for
+/// band 0, `256·2^(band−1)` above it.
+pub(crate) fn chunk_band_start(band: usize) -> u32 {
+    let band = band.min(crate::tunables::CHUNK_BANDS - 1);
+    if band == 0 { 0 } else { 256u32 << (band - 1) }
+}
+
 /// Shed the whole band ledger for a view: every band reopens at the floor (`chunk_band_license`
 /// treats 0 as unvisited). Called by the emergency retreat when a frame prices in the lethal band.
 ///

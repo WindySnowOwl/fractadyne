@@ -419,3 +419,111 @@ runs at the resolution floor and 17.7 ms — but still softens the first octaves
 
 Every step is measured by the same harness that found the problem, so a step that does not move
 its number is a finding, not a merge.
+
+## 7. The P-G round of 2026-10-17 (0.3.0-beta.20)
+
+The P-G rows (§4) on the RTX 3080 at 1280×800 pt (1455×1102 px), each run its own process with a
+fresh config dir, the continuous rows on `validation/misi-49-3.fdn` (the (49,3) spiral's centre,
+committed with this round). Every comparison is ONE exe with `--set` arms, alternated, and every run
+was put through `local/session-tools/w8/validity.py` (three runs it marked STEERED, a real pointer
+over the window, are left out of every number below).
+
+Where the 4× rows stood (stock): the continuous dive's picture lagged the view 0.74–0.76 octaves on
+average, 1.9–2.0 at worst, and the pacer slowed the zoom on 24–26% of frames.
+
+### 7.1 What the traces showed
+
+1. **The deep freezes are a stale reference installed over a fresh one.** At 2^230–2^330 the view
+   froze 14–18 frames at a time: the installed BLA's depth lag passed `DEEP_LAG_HOLD` (1.8), every
+   frame reprojected, and a running pin was abandoned (`reason=Froze`, the "unreachable by
+   analysis" belt in `bp_chunk_tiling`, 27 times in one run). The `ref` trace has the cause on
+   consecutive lines: a lookahead install at lag ~0.9, then 50–130 ms later a REACTIVE build of the
+   same orbit (`len=22968`) installed over it at lag ~1.86. The reactive build is spawned when the
+   lag passes 1.1, sized for the view at that moment, and runs ~180 ms at that depth while the view
+   moves ~0.5 octaves; the lookahead overtakes it, and the install path took whatever arrived. The
+   stale-clobber guard in `install_recompute_now` drops an older result only when it is also
+   SHORTER, and these were the same length. Each clobber spawned the next reactive build.
+2. **A reference build there costs ~180 ms, 150 of it the series walk.** `FRACTADYNE_TRACE=ref` over
+   a 4× dive (1,033 builds): orbit 1 ms (reused), SA 151–163 ms, BLA 23 ms. The orbit escapes early
+   (22,968 samples against a 57,720 ask), and `sa_short_escaper` forces SA on for such a reference
+   even in a BLA view, so every build re-walks the same point's series in bignum. The tours' SA
+   trace cache (`set_sa_trace_cache`) answers a repeat walk in ~1 ms but is on for `--render-tour`
+   only. Not changed in this round.
+3. **A pin walks one octave band per frame.** Both the band clip (`chunk_band_end`) and the growth
+   limiter (×2 a frame from `MOTION_STEP_OPEN`) double per pass, so a pin to a 42k ask took 9 passes
+   and a median of 10 frames however cheap the bands were (0.2 ms passes against the 20 ms target).
+4. **The 2^93 switch to floatexp** resets the budget to the bootstrap (deliberately: six device
+   losses, see the mode-switch block in `build_params`); the first pin opens at 4 iterations at
+   145×110 and takes 23–55 frames to adopt. This is the worst episode of most 4× runs now, 1.6–2.9
+   octaves (P-E).
+5. **df32 at 2^54–2^65** shows 22–24 frames between adoptions at ~1000×750 in some runs. Not traced.
+
+### 7.2 What changed
+
+- ⭐**`REF_OVERTAKEN_DROP` (on):** `render::reactive_build_overtaken`, at the reactive drain in
+  `build_params`. A reactive result is dropped when the installed reference was installed after it
+  was spawned, is the same point and tables, carries at least as much (length, precision,
+  completeness), and its BLA fits the view NOW better: nearer the fresh-install lag of 1, measured
+  against the current view, so a zoom-out's shallower build still lands. Traced (`overtaken install
+  DROPPED`) and counted on `--zoomtest`'s installs line.
+- **`PIN_BAND_SPAN` (an experiment, OFF):** `render::pin_span_end`. A pin pass that covers its whole
+  start band runs on through bands with prices of their own while their licence shares fit the
+  setting's share of a pass; a span's price is charged to every band it ran in (`feed_pin_price`,
+  the band byte `span_band_code`). Recorded as `WalkDispatchInputs::pin_span_share` (old recordings
+  replay as 0).
+
+### 7.3 Measured
+
+The overtaken-install drop, against it off (`--set REF_OVERTAKEN_DROP=0`), spans off in both, three
+rounds alternated:
+
+| 4× continuous | drop on | drop off |
+|---|---|---|
+| pacer throttled (share of frames) | 14.9, 6.9, 8.9% | 26.8, 24.2, 23.0% |
+| zoom speed reached (oct/s) | 2.57, 2.63, 2.61 | 2.49, 2.48, 2.50 |
+| reference installs | 680, 591, 607 | 805, 806, 796 |
+| pinned refreshes adopted | 562, 569, 566 | 543, 544, 540 |
+| picture's lag: mean / p95 (oct) | 0.736 / 1.10, 0.735 / 1.10, 0.734 / 1.10 | 0.754 / 1.18, 0.739 / 1.17, 0.755 / 1.21 |
+| held max (oct) | 1.71, 2.71, 1.91 | 2.13, 1.90, 2.48 |
+| on-screen detail, median (px, §7.4) | 221, 243, 241 | 236, 229, 235 |
+
+The jump row's held max: 3.17 (the 2^93 switch), 1.33, 1.33 on against 2.09, 2.32, 1.75 off; the
+hand-over row 0.91, 1.05, 0.90 against 1.15, 1.09, 0.81. At 1× the reference never lags past 1.6 and
+the drop has nothing to do. With spans on as well (two rounds), the pacer throttled 5.4–6.3% of
+frames against 25.1–26.1% with spans alone. The zoom now runs at the speed it was set to, the
+reference pipeline wastes a quarter fewer installs, and the picture on screen is no less sharp; the
+held max the gate reads is set by the 2^93 switch and stays over it.
+
+The span experiment, against spans off (same exe, alternated):
+
+| row | spans at 1 | spans at 0.5 | off |
+|---|---|---|---|
+| 4× continuous, mean lag (oct) | 0.59, 0.63 | 0.71 | 0.74, 0.75, 0.75 |
+| 4× hand-over, refresh width (px) | 147 in 7 of 10 runs | (in the 7) | 147 in 1 of 8; else 184–443 |
+| deep 1× 2^245–2^305 (traced), spanned passes over 40 ms | 4 of 205; 50 of 136 | — | (one-band: 40 of 895, 56 of 819) |
+| 1× continuous, frames over 50 ms | 355, 92, 28, 0 | 9, 28 | 116, 78, 34, 2, 10 |
+
+⛔**Why spans are off.** A band's licence grows ×16 on a cheap price, and the band ledger assumes
+cost scales with the iterations in a band; at depth it jumps instead (pixels that survive into a
+band). One band at a time, the growth limiter's ×2 a frame absorbs those jumps; a span spends several
+grown licences in one pass and lands at 2–3× its price before the ledger's cut catches up. The 4×
+gain is real but so is that. And the on-screen picture is about RESOLUTION as well as age: a refresh
+held 0.6 octaves at 257 px is not sharper than one held 0.75 octaves at 436 (§7.4).
+
+### 7.4 What the gate does not see
+
+`held frame max` and the lag mean measure how OLD the picture on screen is, not how SHARP. The
+resolution the refreshes render at varies 2–3× between runs of the same arm (the 4× continuous
+dive's median refresh width: 257 to 727 px), and a faster zoom (less pacing) gives the refresh fewer
+frames, which the rate-aware sizing pays for in pixels. The measure that sees both is the held
+picture's width over 2^gap, per frame (`local/session-tools/pg/sharp.py`, from the zoomtest
+JSON's `res_px`, `real` and `gap_oct`); `scripts/zoomtest_report.py` and the P-G gate should grow
+it as a detail floor before a change that trades one for the other is judged by them.
+
+### 7.5 Open
+
+The 4× rows still fail the gate: the 2^93 switch (P-E: seed floatexp's budget from the df32 rate it
+leaves, scaled by the measured per-step cost ratio — safety-sensitive, the device losses above);
+the per-build series walk at depth (turn the SA trace cache on for live dives — measure the first
+walk, which records to the orbit's end, and the record's size); the df32 episodes at 2^54–2^65; and
+the 1× rows' frames over 50 ms, which come and go between runs in every arm (2 to 355).

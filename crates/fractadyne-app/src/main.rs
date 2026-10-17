@@ -1158,6 +1158,9 @@ struct Perf {
     /// Lookahead builds INSTALLED (tour or interactive), cumulative — the number that says the
     /// lookahead actually served the dive, as opposed to merely spawning (`--divetest` `look`).
     lookahead_installs: u64,
+    /// Reactive builds dropped because the reference installed while they ran fits the view
+    /// better (`render::reactive_build_overtaken`), per view, cumulative (`--zoomtest`).
+    overtaken_installs: [u64; 2],
     /// Latched once per session: a build rate this high is a bug, not a workload (the reactive
     /// path plus a full lookahead queue is single digits per second).
     build_storm_warned: bool,
@@ -1761,6 +1764,12 @@ struct Perf {
     /// normalization, AA — makes every folded sample stale: the run restarts. Likewise a sample at
     /// a different `ss` than sample 0 would fold a differently-filtered image into the mean.
     accum_sig: [u64; 2],
+    /// The normalization part of `accum_sig` (`accum_norm_sig`), so a restart can say whether the
+    /// colouring changed or the live-normalization range moved; and why the last run ended, for the
+    /// next `begin` line (`None` once said). A field session restarted a converged run every
+    /// ~0.5 s on a still view (2026-10-16), and nothing said why.
+    accum_norm_sig: [u64; 2],
+    accum_end_why: [Option<String>; 2],
     accum_ss: [u32; 2],
     /// The view sample 0 of the running average was folded at — (log2 magnification, f64
     /// centre) — so a later fold at ANOTHER view is caught and logged (always, no trace flag):
@@ -2211,6 +2220,7 @@ impl Default for Perf {
             builds_per_s: 0.0,
             prefetch_count: 0,
             lookahead_installs: 0,
+            overtaken_installs: [0, 0],
             build_storm_warned: false,
             rate_t0: None,
             recompute_per_s: 0.0,
@@ -2358,6 +2368,8 @@ impl Default for Perf {
             live_adopted_total: [0, 0],
             accum_cmd: [AccumCmd::default(), AccumCmd::default()],
             accum_sig: [0, 0],
+            accum_norm_sig: [0, 0],
+            accum_end_why: [None, None],
             accum_ss: [1, 1],
             accum_view0: [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0)],
             content_stamp: [
@@ -14350,6 +14362,26 @@ impl FractadyneApp {
             self.perf.accum_gate_since[view] = None;
             if self.perf.accum_active[view] {
                 self.accum_worker_reset(view);
+                self.perf.accum_end_why[view] = Some(if stale {
+                    if self.accum_norm_sig(view) != self.perf.accum_norm_sig[view] {
+                        format!(
+                            "the normalization range moved (now {})",
+                            self.perf.norm_shown[view]
+                                .or(self.perf.norm_range[view])
+                                .map_or("unset".to_string(), |(lo, hi)| format!("{lo:.2}..{hi:.2}"))
+                        )
+                    } else {
+                        "the colouring changed (palette, its animation, effects or settings)".to_string()
+                    }
+                } else if interacting {
+                    "the view moved".to_string()
+                } else if self.tour_playing() {
+                    "a tour played".to_string()
+                } else if log2mag < ACCUM_MIN_LOG2 {
+                    "the view is too shallow".to_string()
+                } else {
+                    "supersampling was turned off".to_string()
+                });
             }
             self.perf.accum_active[view] = false;
             self.perf.accum_committed[view] = false;
@@ -14391,6 +14423,7 @@ impl FractadyneApp {
                 );
             }
             self.accum_worker_reset(view);
+            self.perf.accum_end_why[view] = Some("the texture stopped being this view".to_string());
             self.perf.accum_active[view] = false;
             self.perf.accum_due[view] = true; // a fresh run starts once the texture is this view's
             self.perf.accum_committed[view] = false;
@@ -14483,13 +14516,21 @@ impl FractadyneApp {
             self.perf.accum_committed[view] = false;
             self.perf.accum_jitter[view] = [0.0, 0.0];
             self.perf.accum_sig[view] = sig;
+            self.perf.accum_norm_sig[view] = self.accum_norm_sig(view);
             // Every begin counts in the record; the LINE is rate-limited (it was ~65% of a crashing
-            // session's log). A run that keeps restarting shows as a count on the next line.
+            // session's log). A run that keeps restarting shows as a count on the next line, and the
+            // line says why the run before it ended.
             self.perf.rec[view].accum_begins = self.perf.rec[view].accum_begins.saturating_add(1);
+            let after = self.perf.accum_end_why[view].take();
             if let Some(held) = self.perf.accum_begin_line[view].admit(diag::elapsed_ms(), ACCUM_LINE_GAP_MS) {
                 crate::diag::log_line(
                     "accum",
-                    &format!("view {view}: begin (2^{log2mag:.1}, target {}{waited}){}", accum_target(), held_note(held)),
+                    &format!(
+                        "view {view}: begin (2^{log2mag:.1}, target {}{waited}){}{}",
+                        accum_target(),
+                        after.map_or(String::new(), |w| format!(" after the last run ended: {w}")),
+                        held_note(held)
+                    ),
                 );
             }
         }
@@ -15047,6 +15088,20 @@ impl FractadyneApp {
         if let Some((lo, hi)) = self.perf.norm_shown[view] {
             lo.to_bits().hash(&mut h);
             hi.to_bits().hash(&mut h);
+        }
+        self.perf.norm_sig[view].hash(&mut h);
+        self.perf.norm_locked[view].hash(&mut h);
+        h.finish()
+    }
+
+    /// The live-normalization part of [`accum_color_sig`](Self::accum_color_sig): the fed and the
+    /// shown range and the lock. When the whole signature changed and this did not, the colouring
+    /// itself did (palette, its animation, effects or settings), which `accum_end_why` says.
+    fn accum_norm_sig(&self, view: usize) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for r in [self.perf.norm_range[view], self.perf.norm_shown[view]] {
+            r.map(|(lo, hi)| (lo.to_bits(), hi.to_bits())).hash(&mut h);
         }
         self.perf.norm_sig[view].hash(&mut h);
         self.perf.norm_locked[view].hash(&mut h);

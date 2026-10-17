@@ -98,6 +98,8 @@ struct Frame {
     lag: f64,
     orbit_id: u64,
     look: u64,
+    /// Reactive builds dropped as overtaken so far (`perf.overtaken_installs[0]`).
+    overtaken: u64,
     /// Share of the selected zoom speed the pacer let through this frame.
     vel_frac: f64,
     res: f64,
@@ -591,6 +593,7 @@ impl FractadyneApp {
                         lag: rc.last_depth_lag,
                         orbit_id: rc.orbit_id,
                         look: self.perf.lookahead_installs,
+                        overtaken: self.perf.overtaken_installs[0],
                         vel_frac,
                         res: self.perf.motion_res[0],
                         res_px: self.perf.last_res_v[0],
@@ -889,6 +892,7 @@ impl FractadyneApp {
         let lag_max = f.iter().map(|r| r.lag).fold(0.0, f64::max);
         let installs = f.last().unwrap().orbit_id.saturating_sub(f.first().unwrap().orbit_id);
         let look = f.last().unwrap().look.saturating_sub(f.first().unwrap().look);
+        let overtaken = f.last().unwrap().overtaken.saturating_sub(f.first().unwrap().overtaken);
         let adopts = f.last().unwrap().adopts.saturating_sub(f.first().unwrap().adopts);
         let converged = f.last().unwrap().converged.saturating_sub(f.first().unwrap().converged);
         let blank = f.last().unwrap().blank.saturating_sub(f.first().unwrap().blank);
@@ -944,7 +948,7 @@ impl FractadyneApp {
             "  snapshot served {snap_pct:.0}% of frames · longest run {snap_best} frames ({snap_best_s:.2} s)"
         );
         eprintln!(
-            "  reference installs {installs} (lookahead {look}) · pinned refreshes adopted {adopts} (+{converged} converged) · blank walks kept off screen {blank} · depth lag max {lag_max:.2} · pacer throttled {paced_pct:.1}% of frames"
+            "  reference installs {installs} (lookahead {look}; {overtaken} reactive builds dropped as overtaken) · pinned refreshes adopted {adopts} (+{converged} converged) · blank walks kept off screen {blank} · depth lag max {lag_max:.2} · pacer throttled {paced_pct:.1}% of frames"
         );
 
         let mut rows = String::with_capacity(n * 160);

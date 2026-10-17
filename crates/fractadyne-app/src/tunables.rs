@@ -132,6 +132,12 @@ pub(crate) struct Cost {
     pub worker_yield: u64,
     /// The wall each of the second card's walk passes is sized for, ms (`WORKER_PASS_MS_DEFAULT`).
     pub worker_pass_ms: f64,
+    /// The share of one pin pass a pass across several bands may take (`PIN_BAND_SPAN_DEFAULT`;
+    /// 0 = off).
+    pub pin_band_span: f64,
+    /// A reactive reference build overtaken while it ran is dropped (`REF_OVERTAKEN_DROP_DEFAULT`;
+    /// 0 = installed, as before).
+    pub ref_overtaken_drop: u64,
     /// BLA per-step linear tolerance. The one non-frame-cost member, and it is here rather than in a
     /// second override channel because duplicating the machinery for a single value would be worse.
     /// See the note above on what earns a place in this set.
@@ -184,6 +190,8 @@ impl Default for Cost {
             worker_motion: WORKER_MOTION_DEFAULT,
             worker_yield: WORKER_YIELD_DEFAULT,
             worker_pass_ms: WORKER_PASS_MS_DEFAULT,
+            pin_band_span: PIN_BAND_SPAN_DEFAULT,
+            ref_overtaken_drop: REF_OVERTAKEN_DROP_DEFAULT,
             bla_eps: BLA_EPS,
         }
     }
@@ -488,6 +496,24 @@ pub(crate) fn apply_overrides(pairs: &[(String, String)]) -> Result<(), String> 
                     .ok_or_else(|| format!("--set WORKER_PASS_MS: '{raw}' is not a number of ms from 1 to 400"))?;
                 p.to_string()
             }
+            "REF_OVERTAKEN_DROP" => {
+                let p = c.ref_overtaken_drop;
+                c.ref_overtaken_drop = match raw.as_str() {
+                    "0" => 0,
+                    "1" => 1,
+                    _ => return Err(format!("--set REF_OVERTAKEN_DROP: '{raw}' is not 0 (off) or 1 (on)")),
+                };
+                p.to_string()
+            }
+            "PIN_BAND_SPAN" => {
+                let p = c.pin_band_span;
+                c.pin_band_span = raw
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|v| v.is_finite() && (0.0..=1.0).contains(v))
+                    .ok_or_else(|| format!("--set PIN_BAND_SPAN: '{raw}' is not a share of a pass from 0 (off) to 1"))?;
+                p.to_string()
+            }
             "WORKER_YIELD" => {
                 let p = c.worker_yield;
                 c.worker_yield = match raw.as_str() {
@@ -624,7 +650,7 @@ pub(crate) const OVERRIDABLE: &str = "TDR_BUDGET_MS, TDR_EXPLICIT_BUDGET_MS, \
     EXPLICIT_DISPATCH_CAP, TDR_MAX_TILES, TDR_TILES_CEIL, BLA_EPS, PASS_FIXED_MS, MOTION_NEED_QUANTILE, MOTION_NEED_SOURCE, READING_POOL, \
     DEAD_MAN, DISPATCH_CEILING, SETTLE_SERIALIZE, ADMISSION, PIN_TIMEOUT_SCALED, TAIL_DF32, REF_OVERLAP, EARLY_REF, TILE_OCCUPANCY, LIVE_REFRESH, \
     ORBIT_LEN_CAP, RENORM, TILE_PACK, RENORM_BLA, ORBIT_SCHEDULE, SA_TRACE, CHUNK_CHARGE, \
-    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS";
+    CHUNK_SHUFFLE, WORKER_MOTION, WORKER_YIELD, WORKER_PASS_MS, RECORD_COST_PPM, REUSE_MAX_WRAPS, PIN_BAND_SPAN, REF_OVERTAKEN_DROP";
 
 #[cfg(test)]
 #[path = "../tests/unit/tunables/override_tests.rs"]
@@ -1408,6 +1434,26 @@ pub(crate) const PIN_PRICE_WAIT_FRAMES: u64 = 5;
 /// with as many adopted. Fewer passes are dispatched, so the GPU does less for it.
 pub(crate) const PIN_INFLIGHT_MAX: u32 = 2;
 
+/// EXPERIMENT, off by default (2026-10-17). Above 0: a pinned refresh's pass that covers its whole
+/// start band runs on through the next bands while each has prices of its own and their licences,
+/// shared, take no more than this share of one pass (`pin_span_end`). 0 = every pin pass stops at the
+/// end of the band it started in, one octave band per frame.
+///
+/// Measured on the P-G rows (RTX 3080, interleaved, same exe): at 1 the 4× continuous dive's picture
+/// lags the view 0.59–0.64 octaves on average against 0.74–0.80 off, with more refreshes adopted —
+/// but the spanned passes run over their price where costs jump: in a deep 1× stretch (2^245–2^305)
+/// one run priced them at a median 28.5 ms (p90 68.6) against the 20 ms pin target, 73 frames over
+/// 33 ms against 1. A band's licence grows ×16 on a cheap price; a span spends several such licences
+/// at once, past the growth limiter's ×2 a frame that absorbs the same overshoots one band at a time.
+/// In the df32 hand-over (2^10–2^26) the refreshes sat at the visible ladder's floor (147 px wide) in
+/// 7 of 10 runs with spans, 1 of 8 without. At 0.5 the 4× gain mostly went (0.71–0.72).
+pub(crate) const PIN_BAND_SPAN_DEFAULT: f64 = 0.0;
+
+/// 1 = a reactive reference build that another install overtook while it ran is dropped instead
+/// of installed over it (`render::reactive_build_overtaken`). 0 = it is installed, as before, for
+/// the before/after measurement.
+pub(crate) const REF_OVERTAKEN_DROP_DEFAULT: u64 = 1;
+
 /// [`PIN_INFLIGHT_MAX`] where the device gives GPU timestamps; one where it does not, since there a
 /// pass is priced by its completion, which two in flight would rarely let it see alone.
 pub(crate) fn pin_inflight_max(timestamps: bool) -> u32 {
@@ -1599,8 +1645,11 @@ pub(crate) const DEEP_LAG_HOLD: f64 = 1.8;
 
 /// Extra orbit precision above the depth's exact requirement, so successive DEEPER rebuilds within
 /// this band can extend the cached orbit (see [`try_reuse_reference`]) instead of recomputing it.
-/// The orbit is stored as df32 with ample accuracy headroom, so building at a higher precision
-/// leaves the df32 samples byte-identical — this only grows the accumulation margin, not the render.
+/// ⚠Not byte-neutral everywhere (measured 2026-10-17, `precision_tail` in fractadyne-core): a
+/// bounded orbit (a minibrot's) stores the same df32 samples at any of these precisions, but an
+/// orbit on a repelling cycle (a Misiurewicz point's) parts from a higher-precision build where its
+/// rounding has grown into the samples, and escapes earlier: misiurewicz-4-1 at 1,416 / 1,721 /
+/// 2,033 samples for the need, +128 and +256 bits. Each is a valid orbit to within its precision.
 pub(crate) const REF_PREC_HEADROOM: usize = 128;
 
 /// An orbit whose build took less than this is not written to the on-disk orbit cache

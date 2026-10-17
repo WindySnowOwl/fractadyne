@@ -83,6 +83,20 @@ pub(crate) struct Hit {
     pub(crate) prec: usize,
     pub(crate) drift: f64,
     pub(crate) candidates: usize,
+    /// Entries of this identity the caller's test admitted, and the one ranked next, so a log says
+    /// whether another rule (ranking by fitness to the ask, design §5.8) would have chosen
+    /// differently.
+    pub(crate) admissible: usize,
+    pub(crate) runner_up: Option<RunnerUp>,
+}
+
+/// The admissible entry ranked after the hit.
+pub(crate) struct RunnerUp {
+    pub(crate) orbit_len: u32,
+    pub(crate) partial: bool,
+    /// The iteration ask it was built for.
+    pub(crate) iter: u32,
+    pub(crate) drift: f64,
 }
 
 /// Usage for the controls.
@@ -258,22 +272,27 @@ pub(crate) fn find(q: &Query) -> Option<Hit> {
     s.refresh(&dir);
     let entries = s.entries.as_deref()?;
     let mut best: Option<(&Entry, f64)> = None;
+    let mut runner: Option<(&Entry, f64)> = None;
     let mut candidates = 0usize;
+    let mut admissible = 0usize;
+    let ahead = |e: &Entry, drift: f64, of: Option<(&Entry, f64)>| match of {
+        None => true,
+        Some((b, bd)) => {
+            e.header.orbit_len > b.header.orbit_len || (e.header.orbit_len == b.header.orbit_len && drift < bd)
+        }
+    };
     for e in entries {
         if e.header.key != q.key {
             continue;
         }
         candidates += 1;
         let Some(drift) = (q.fits)(&e.header) else { continue };
-        let better = match best {
-            None => true,
-            Some((b, bd)) => {
-                e.header.orbit_len > b.header.orbit_len
-                    || (e.header.orbit_len == b.header.orbit_len && drift < bd)
-            }
-        };
-        if better {
+        admissible += 1;
+        if ahead(e, drift, best) {
+            runner = best;
             best = Some((e, drift));
+        } else if ahead(e, drift, runner) {
+            runner = Some((e, drift));
         }
     }
     best.map(|(e, drift)| Hit {
@@ -282,6 +301,13 @@ pub(crate) fn find(q: &Query) -> Option<Hit> {
         prec: e.header.prec,
         drift,
         candidates,
+        admissible,
+        runner_up: runner.map(|(r, rd)| RunnerUp {
+            orbit_len: r.header.orbit_len,
+            partial: r.header.partial,
+            iter: r.header.iter,
+            drift: rd,
+        }),
     })
 }
 

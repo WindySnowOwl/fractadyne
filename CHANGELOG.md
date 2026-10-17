@@ -59,6 +59,14 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **A fast deep zoom no longer stalls on its own reference updates (0.3.0-beta.20).** Past about
+  1e70×, a zoom keeps its reference orbit current in two ways: it prepares the depths ahead of it,
+  and it rebuilds when the view gets ahead of the reference. A rebuild could finish after a newer
+  reference from the first was already in place, and replace it. The view then held its last
+  picture, enlarged, for about a quarter of a second, and the zoom slowed itself down. Such a
+  rebuild is now discarded. Zooming from 1× to 1e100× on the (49,3) spiral at the fastest speed,
+  the zoom slows itself on 7 to 15% of frames instead of about 25% and runs closer to the speed
+  you set, with no loss of detail.
 - **Deep renders are exact again where the cheaper arithmetic took over (0.3.0-beta.20).** Since
   0.2.41-beta.141 the deepest render mode switches each pixel to faster arithmetic once its
   values are large enough. The switch came too early: a few terms became too small for that

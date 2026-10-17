@@ -264,3 +264,20 @@ fn byte_counts_read_like_a_browser_shows_them() {
     assert_eq!(fmt_bytes(4_096_000), "3.9 MB");
     assert_eq!(fmt_bytes(1 << 30), "1.00 GB");
 }
+
+/// A hit names how many entries were admissible and the one ranked next (design §5.8: whether a
+/// fitness ranking would have chosen differently is a question for the field log).
+#[test]
+fn a_hit_names_the_admissible_count_and_the_runner_up() {
+    let _s = Scratch::new("runner-up");
+    offer(blob(&sample_orbit(64), 512, 1000, key())).unwrap().expect("written");
+    offer(blob_at(&sample_orbit(32), 512, 1000, key(), other_point(512))).unwrap().expect("written");
+    let hit = find(&Query { key: key(), fits: &accept_all }).expect("found");
+    assert_eq!((hit.orbit_len, hit.candidates, hit.admissible), (64, 2, 2));
+    let r = hit.runner_up.expect("a runner-up");
+    assert_eq!((r.orbit_len, r.iter), (32, 1000));
+    // Refusing the shorter leaves no runner-up; the count says so.
+    let only_long = |h: &Header| (h.orbit_len == 64).then_some(0.0);
+    let hit = find(&Query { key: key(), fits: &only_long }).expect("found");
+    assert_eq!((hit.admissible, hit.runner_up.is_none()), (1, true));
+}
