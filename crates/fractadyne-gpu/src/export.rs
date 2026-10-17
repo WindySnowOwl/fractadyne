@@ -2210,11 +2210,15 @@ pub fn render_export_multi(
         let (d, n) = v.trim().split_once(':')?;
         Some((d.parse().ok()?, n.parse().ok()?))
     });
-    render_export_multi_with(devices, req, progress, cancel, lose_after)
+    render_export_multi_with(devices, req, progress, cancel, lose_after, false)
 }
 
 /// [`render_export_multi`] with its failure hook as a parameter: `lose_after = Some((d, n))` makes
 /// device `d` fail as a lost device would after `n` tiles (the selftest's check of the hand-back).
+/// `together`: every device finishes setting up before any takes a tile, as under the loss hook,
+/// so a check that every device rendered is not a race against the slowest one's setup (the
+/// selftest's twin got 0 of 12 tiles in ~0.5 s splits, with fast compiles and slow, 2026-10-17).
+/// A real export never waits for a device that is slow to start.
 #[doc(hidden)]
 pub fn render_export_multi_with(
     devices: &[(&wgpu::Device, &wgpu::Queue)],
@@ -2222,6 +2226,7 @@ pub fn render_export_multi_with(
     progress: &std::sync::atomic::AtomicU32,
     cancel: &std::sync::atomic::AtomicBool,
     lose_after: Option<(usize, u32)>,
+    together: bool,
 ) -> Result<(ExportResult, Vec<DeviceShare>), GpuError> {
     use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
     if devices.is_empty() {
@@ -2254,13 +2259,14 @@ pub fn render_export_multi_with(
     // Under the loss hook every device starts taking tiles at once, so the one meant to fail
     // takes one: a fast window device otherwise took every tile while the other was still
     // building its pipelines, and the hook never fired (the RTX 3070 on PLUTO, 2026-10-08).
-    let together = std::sync::Barrier::new(devices.len());
+    let together_barrier = std::sync::Barrier::new(devices.len());
+    let start_together = together || lose_after.is_some();
     std::thread::scope(|sc| {
         for (di, &(device, queue)) in devices.iter().enumerate() {
-            let (tx, take, requeue, rects, together) = (tx.clone(), &take, &requeue, &rects, &together);
+            let (tx, take, requeue, rects, together) = (tx.clone(), &take, &requeue, &rects, &together_barrier);
             sc.spawn(move || {
                 let renderer = TileRenderer::new(device, queue, req, plan);
-                if lose_after.is_some() {
+                if start_together {
                     together.wait();
                 }
                 let mut renderer = match renderer {

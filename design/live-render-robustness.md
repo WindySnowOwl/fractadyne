@@ -5157,3 +5157,19 @@ target of 2^16,609.6, and a randomly animated palette. Three findings came out o
     once: per frame, and from `crate::exit`, because a harness can do all its work inside one
     frame. Outside a harness it shows the notice "Graphics driver not keeping shaders": on NVIDIA
     the folder with its size and the Shader Cache Size setting; on AMD, Reset Shader Cache.
+
+*Negative control after the maintainer cleared GLCache and set its size to 10 GB* (2026-10-17).
+- `--selftest`, empty cache, then warm:
+  - cold: 288 s, 118.5 s compiling, longest 9.7 s;
+  - warm: 182 s, 13.1 s compiling;
+  - no `not keeping` line in either, 0 `possible hang`. The detection's negative control holds.
+- But the cold run failed the twin-still check again, `tiles [12, 0]`, in a 556 ms split, so the
+  warm-up of `f0cf44ea` was not the fix. With its pipelines compiled, the twin still lost a race:
+  12 small tiles went to this device before the twin's `TileRenderer` was set up.
+- The loss-hook arm already had the answer: a barrier, "a fast window device otherwise took every
+  tile while the other was still building its pipelines" (PLUTO, 2026-10-08).
+  `render_export_multi_with(.., together)` now applies it for the selftest's split checks too. A real
+  export never waits for a slow device. The warm-up is gone.
+- Twelve interleaved runs of `--selftest-filter worker`: with the barrier, twin tiles 3-5 of 12
+  ([7, 5] to [9, 3]); without, 1-4 ([8, 4] to [11, 1]). That was the one-tile margin W5 recorded,
+  and none flaked in those 12.
