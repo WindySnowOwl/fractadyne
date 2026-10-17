@@ -7053,7 +7053,8 @@ impl FractadyneApp {
         // …or a frame from the second GPU is on screen that a refresh of this device, at the
         // resolution it would render, could not show better (`motion_worker`): a walk started now
         // would only be abandoned for it.
-        let worker_hold = worker_q.is_some_and(|q| q >= res_scale.min(1.0).log2() - 1.0e-9);
+        let worker_hold = worker_q
+            .is_some_and(|q| crate::tunables::cost().worker_yield == 1 || q >= res_scale.min(1.0).log2() - 1.0e-9);
         let reuse_wanted = is_pert
             && interacting
             && !live_refresh

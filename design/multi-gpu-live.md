@@ -767,3 +767,29 @@ crash, offer to turn it off on restart").**
 6. Where a moving df32 view refreshes live every frame (`live_refresh_verdict`), the window's own
    frame is always newer, so every worker frame is overtaken (dropped). Harmless — that regime is
    already smooth on one GPU — but the worker's work there is wasted.
+
+### 9.1 Superseded pins, measured (2026-10-16)
+
+`--motiontest --worker-gpu same` fails its A4 check (walk restarts with progress thrown away,
+RED past 12) at 22–35 a dive, against 0–2 with one GPU. Those are window pins superseded by worker
+frames (`PinStop::Superseded`): with `WORKER_MOTION=0` and the worker present, 2 again. The
+question was whether that is waste on a card the two share, or A4 counting a deliberate stop as
+starvation. Measured on the RTX 3080 with the worker on the same card, `FRACTADYNE_TRACE=tile`
+(each pin's start and end) joined with the frame record (each pass's GPU reading and its pin):
+
+- **With the worker, no window pin is ever adopted.** Of 46–76 pins per run, 23–48 are superseded
+  and 22–29 are outrun by the zoom (`Drift`). The superseded ones are cheap: a few short passes
+  (median 0.85 ms), at most ~0.25 s of GPU time in a 25 s run.
+- **Drift is the larger cost, and it is not the worker's.** With one GPU, 37–38 of 100–104 pins are
+  outrun (~1.0–1.1 s of GPU time a run) against 60–64 adopted; with the worker, 0.6–0.8 s. A4 does
+  not count those, which is why only the worker runs failed it.
+- **`--set WORKER_YIELD=1`** (`worker_hold` in `build_params` made unconditional while a recent
+  worker frame is on screen: the window holds it and starts no pin; the offers go on). Three
+  interleaved runs each against stock: the worker delivered 104–108 frames vs 96–103, at
+  98–101 ms each vs 102–104 (one stock run 149); superseded pins 2–4 vs 20–43; A4 1–3 (PASS) vs
+  8/28/25; the same mix of live and held frames on screen; all six valid (no flat frames).
+
+Decision (maintainer, 2026-10-16): supersession is the design working, so A4 reports it apart and
+gates the rest. `WORKER_YIELD` stays as an experiment, default 0: a ~5% gain on a shared card from
+n = 3 is not a default, and with two physical cards the window's work cannot slow the other card
+while yielding would hide its sharper refreshes.
