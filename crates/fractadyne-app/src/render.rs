@@ -5457,6 +5457,10 @@ impl FractadyneApp {
                 },
             };
             let id = decide::decide_walk_id(&id_in);
+            // A4's split: the first walk decision after a superseded pin restarts that pin's walk.
+            if std::mem::take(&mut self.perf.pin_superseded_pending[vs]) && id.restart_lost.is_some() {
+                self.perf.walk_restarts_superseded[vs] = self.perf.walk_restarts_superseded[vs].wrapping_add(1);
+            }
             if let Some((lost, of, from)) = id.restart_lost {
                 if crate::diag::trace_on("tile") {
                     crate::diag::trace(
@@ -6709,6 +6713,9 @@ impl FractadyneApp {
                     }
                 }
                 PinVerdict::Stop(reason) => {
+                    if reason == PinStop::Superseded {
+                        self.perf.pin_superseded_pending[vsub] = true;
+                    }
                     if reason == PinStop::Blank {
                         self.perf.content[vsub].blank_walks =
                             self.perf.content[vsub].blank_walks.saturating_add(1);

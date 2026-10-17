@@ -26,6 +26,9 @@
 //!   [`MAX_DIVE_RESTARTS`] in the DIVE (design/live-render-robustness.md §7.4; 3–4 measured on the
 //!   RTX 3080, 2026-10-13). The Home glide is reported, not gated: at 1M iterations its pins are
 //!   outrun by the glide (~6 frames each, 30–36 per glide) — abandons, not a re-chosen walk.
+//!   With a second GPU, pins its frames supersede (`PinStop::Superseded`, by design) are reported
+//!   apart and not gated (`Perf::walk_restarts_superseded`): 20–43 a dive on a same-card worker,
+//!   each a few short passes (design/multi-gpu-live.md §9.1).
 //!   Explanatory: the screen is the verdict on a motion fix, never this count alone.
 //! - **A5 (a jump keeps the jump floor, U39)**: first, at depth, a 100× click-to-zoom from the
 //!   settled view (the real actuator, at the panel's centre), watched for [`CLICK_S`] and then
@@ -100,6 +103,8 @@ struct Base {
     motion_frames: u64,
     dirty: u64,
     restarts: u64,
+    /// Of `restarts`: superseded by the second GPU's frames (`Perf::walk_restarts_superseded`).
+    superseded: u64,
     hold_moving: u64,
     /// Pinned walks that completed blank (`Perf::blank_walks_total`).
     blank: u64,
@@ -113,6 +118,7 @@ pub(crate) struct MotionTest {
     base: Base,
     /// `Perf::walk_restarts[0]` when the Home glide began (A4 splits the dive from the glide).
     restarts_at_home: u64,
+    superseded_at_home: u64,
     /// The motion phases' failures, carried past the click to the one verdict.
     fails: Vec<String>,
     /// `Perf::hold_floor_frames[0]` when the click went in (A5 reads the click window's deltas).
@@ -160,6 +166,7 @@ impl MotionTest {
             frames: 0,
             base: Base::default(),
             restarts_at_home: 0,
+            superseded_at_home: 0,
             fails: Vec::new(),
             click_base: [0; 5],
             clicked: false,
@@ -249,6 +256,7 @@ impl FractadyneApp {
                         motion_frames: self.perf.chunk_motion_frames[0],
                         dirty: self.perf.dirty_shown[0],
                         restarts: self.perf.walk_restarts[0],
+                        superseded: self.perf.walk_restarts_superseded[0],
                         hold_moving: self.perf.hold_bound_moving[0],
                         blank: self.perf.blank_walks_total[0],
                     };
@@ -316,6 +324,7 @@ impl FractadyneApp {
                     // `settle_t` every frame, so interaction is continuous across the seam.
                     self.zoom_home(now);
                     mt.restarts_at_home = self.perf.walk_restarts[0];
+                    mt.superseded_at_home = self.perf.walk_restarts_superseded[0];
                     advance(&mut mt, Phase::Home);
                 }
             }
@@ -335,8 +344,13 @@ impl FractadyneApp {
                     let motion =
                         self.perf.chunk_motion_frames[0].wrapping_sub(b.motion_frames);
                     let dirty = self.perf.dirty_shown[0].wrapping_sub(b.dirty);
-                    let dive_restarts = mt.restarts_at_home.wrapping_sub(b.restarts);
-                    let home_restarts = self.perf.walk_restarts[0].wrapping_sub(mt.restarts_at_home);
+                    // Superseded pins are the second GPU's design working, not starvation: apart.
+                    let dive_superseded = mt.superseded_at_home.wrapping_sub(b.superseded);
+                    let home_superseded = self.perf.walk_restarts_superseded[0].wrapping_sub(mt.superseded_at_home);
+                    let dive_restarts = mt.restarts_at_home.wrapping_sub(b.restarts).saturating_sub(dive_superseded);
+                    let home_restarts = self.perf.walk_restarts[0]
+                        .wrapping_sub(mt.restarts_at_home)
+                        .saturating_sub(home_superseded);
                     eprintln!();
                     eprintln!(
                         "--motiontest: frames={} motion-chunk-frames={} (actuators {:?})",
@@ -348,11 +362,13 @@ impl FractadyneApp {
                         self.perf.adopt_converged[0], self.perf.blank_walks_total[0]
                     );
                     eprintln!(
-                        "--motiontest: A4 walk restarts (progress thrown away): dive={dive_restarts} (RED past {MAX_DIVE_RESTARTS}) home={home_restarts} (reported)"
+                        "--motiontest: A4 walk restarts (progress thrown away): dive={dive_restarts} (RED past {MAX_DIVE_RESTARTS}) home={home_restarts} (reported); superseded by the second GPU's frames, not gated: dive={dive_superseded} home={home_superseded}"
                     );
                     crate::diag::log_line(
                         "motiontest",
-                        &format!("A4 walk restarts: dive={dive_restarts} home={home_restarts}"),
+                        &format!(
+                            "A4 walk restarts: dive={dive_restarts} home={home_restarts}; superseded dive={dive_superseded} home={home_superseded}"
+                        ),
                     );
                     // A5's failure, if any, came from the click before the motion.
                     let mut fails = std::mem::take(&mut mt.fails);

@@ -1558,6 +1558,12 @@ struct Perf {
     /// and PENDING for the next frame record (`walk_restarted`), cleared when it is written.
     walk_restarts: [u64; 2],
     walk_restart_pending: [bool; 2],
+    /// Of `walk_restarts`: those that followed a pin a frame from the second GPU superseded
+    /// (`PinStop::Superseded`), work the multi-GPU live view abandons on purpose; A4 reports them
+    /// apart from the starvation shape (design/multi-gpu-live.md §9.1). `pin_superseded_pending`:
+    /// such a stop, waiting for the walk decision that restarts its walk.
+    walk_restarts_superseded: [u64; 2],
+    pin_superseded_pending: [bool; 2],
     /// The worst bound a held frame's magnification took since the last frame record
     /// (`frame_plan::hold_floor`; record `hold_floor`, U39), cleared when it is written.
     hold_floor_pending: [u8; 2],
@@ -2368,6 +2374,8 @@ impl Default for Perf {
             chunk_walk_end: [0, 0],
             walk_restarts: [0, 0],
             walk_restart_pending: [false, false],
+            walk_restarts_superseded: [0, 0],
+            pin_superseded_pending: [false, false],
             hold_floor_pending: [0, 0],
             hold_l2_last: [f64::NAN; 2],
             hold_step_last: [f64::NAN; 2],
