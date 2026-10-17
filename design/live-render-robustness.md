@@ -5173,3 +5173,42 @@ target of 2^16,609.6, and a randomly animated palette. Three findings came out o
 - Twelve interleaved runs of `--selftest-filter worker`: with the barrier, twin tiles 3-5 of 12
   ([7, 5] to [9, 3]); without, 1-4 ([8, 4] to [11, 1]). That was the one-tile margin W5 recorded,
   and none flaked in those 12.
+
+**2026-10-17 — §5.8: the precision contradiction, settled by measurement** (`feat/ref-fitness`).
+
+§5.8 asked for this ("instrument the intermediate value before theorising, and record the answer").
+The tree said two things:
+- `precomputed_matches` (`==`, not `>=`): a reference built at a different precision rounds to
+  different df32 mantissas.
+- `REF_PREC_HEADROOM`: building at a higher precision leaves the df32 samples byte-identical.
+
+Measured by building the same reference at the depth's need, a fresh build's +128 bits, and +256,
+and comparing df32 samples bit for bit:
+
+| point | orbit | need / +128 / +256 |
+|---|---|---|
+| minibrot 9.3e78× (270 oct) | 100,001 samples, bounded | byte-identical at all three |
+| minibrot 1.8e122× (414 oct) | 12,016 samples | byte-identical at all three |
+| misiurewicz-4-1 (486 oct) | escapes | escapes at 1,416 / 1,721 / 2,033 samples; parts from sample 1,273 (need vs +128) and 1,583 (+128 vs +256) |
+
+- An orbit on a repelling cycle carries its rounding error forward, growing it each period. Every
+  128 bits kept misiurewicz-4-1 on its cycle ~310 iterations longer.
+- Each build is a valid orbit to within its precision (per-step error 2^-p, 64 bits under the
+  pixel), so the picture is right either way. But the bytes are not the same.
+- Both comments were half right. `REF_PREC_HEADROOM`'s "byte-identical" is false for Misiurewicz
+  views, and is corrected. `precomputed_matches`'s `==` stays.
+- `precision_tail` (fractadyne-core) pins both halves.
+
+What this changes in §5.8:
+- **The reuse precision comparand stays `prec >= inp.precision`.** The design proposed raising it to
+  `inp.precision + REF_PREC_HEADROOM`. A reused orbit with part of its headroom spent is still
+  correct, and only escapes somewhat earlier, which rebasing handles. Raising the floor would force
+  the rebuilds the headroom exists to avoid.
+- **The maintainer's 2^16,600 spiral explained.** Its reference "escaped" at 174,514 samples against a
+  2M ask at 16,810 bits (the cache hits of 2026-10-04/06): that is the precision limit of a
+  Misiurewicz view, not the point's own escape. At ~10 iterations per bit there, covering the ask
+  would need ~190k bits: far dearer than the rebases it saves.
+- **Fitness ranking of the disk cache, deferred.** The maintainer's 11 cache hits all chose the
+  longest escaped orbit among 368 of the same identity, and the log does not say whether a fitter
+  one was admissible. Ranking by fitness now would be a guess; the hit line should first name the
+  runner-up.

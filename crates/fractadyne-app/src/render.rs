@@ -600,9 +600,11 @@ pub(crate) fn live_orbit_cap(interacting: bool, ref_build_iter: u32, have_len: u
 /// slow** — which is why this compares recorded INPUTS, never a derived value, and why
 /// `precomputed_matches_a_fresh_build` exists to keep it that way.
 ///
-/// Deliberately `==` and not `>=`: a reference built at a DIFFERENT precision rounds to different
-/// df32 mantissas in the last bits, so "at least as precise" would not be pixel-identical to the
-/// fresh build it replaces.
+/// Deliberately `==` and not `>=`: a reference built at a DIFFERENT precision is not always the same
+/// df32 samples. A bounded orbit is; an orbit on a repelling cycle (a Misiurewicz point's) parts
+/// where the lower precision's rounding has grown into it, and escapes at another iteration
+/// (measured 2026-10-17: `precision_tail` in fractadyne-core), so "at least as precise" would not be
+/// pixel-identical to the fresh build it replaces.
 fn precomputed_matches(r: &RecomputeResult, eff_iter: u32, precision: usize) -> bool {
     r.iter == eff_iter && r.req_prec == precision
 }
@@ -1207,7 +1209,7 @@ fn orbit_cache_lookup(inp: &RecomputeInputs, key: orbit_blob::OrbitKey) -> Optio
     crate::diag::log_line(
         "cache",
         &format!(
-            "orbit cache {} [{}]: {} len={} prec={}{on_disk} drift={:.3} spans ({} of this identity) in {:.0} ms",
+            "orbit cache {} [{}]: {} len={} prec={}{on_disk} drift={:.3} spans ({} of this identity, {} admissible{}) for ask={} in {:.0} ms",
             if decoded.is_some() { "HIT" } else { "entry REFUSED" },
             inp.origin,
             hit.path.file_name().and_then(|f| f.to_str()).unwrap_or("?"),
@@ -1215,6 +1217,12 @@ fn orbit_cache_lookup(inp: &RecomputeInputs, key: orbit_blob::OrbitKey) -> Optio
             hit.prec,
             hit.drift,
             hit.candidates,
+            hit.admissible,
+            hit.runner_up.as_ref().map_or(String::new(), |r| format!(
+                "; next len={} partial={} built for ask={} drift={:.3}",
+                r.orbit_len, r.partial, r.iter, r.drift
+            )),
+            inp.gpu_iter,
             t.elapsed().as_secs_f64() * 1000.0,
         ),
     );

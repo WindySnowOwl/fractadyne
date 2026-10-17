@@ -4849,3 +4849,7 @@ mod sched_tests;
 #[cfg(test)]
 #[path = "../tests/unit/reference/sa_budget_tests.rs"]
 mod sa_budget_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/reference/precision_tail.rs"]
+mod precision_tail;

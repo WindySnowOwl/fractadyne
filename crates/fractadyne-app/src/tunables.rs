@@ -1599,8 +1599,11 @@ pub(crate) const DEEP_LAG_HOLD: f64 = 1.8;
 
 /// Extra orbit precision above the depth's exact requirement, so successive DEEPER rebuilds within
 /// this band can extend the cached orbit (see [`try_reuse_reference`]) instead of recomputing it.
-/// The orbit is stored as df32 with ample accuracy headroom, so building at a higher precision
-/// leaves the df32 samples byte-identical — this only grows the accumulation margin, not the render.
+/// ⚠Not byte-neutral everywhere (measured 2026-10-17, `precision_tail` in fractadyne-core): a
+/// bounded orbit (a minibrot's) stores the same df32 samples at any of these precisions, but an
+/// orbit on a repelling cycle (a Misiurewicz point's) parts from a higher-precision build where its
+/// rounding has grown into the samples, and escapes earlier: misiurewicz-4-1 at 1,416 / 1,721 /
+/// 2,033 samples for the need, +128 and +256 bits. Each is a valid orbit to within its precision.
 pub(crate) const REF_PREC_HEADROOM: usize = 128;
 
 /// An orbit whose build took less than this is not written to the on-disk orbit cache
