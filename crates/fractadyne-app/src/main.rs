@@ -243,8 +243,16 @@ fn main() -> eframe::Result<()> {
         fractadyne_gpu::set_tile_pack(tunables::cost().tile_pack == 1);
         fractadyne_core::set_orbit_schedule(tunables::cost().orbit_schedule == 1);
         // A tour renders hundreds of frames against one reference: its series walk once, not each.
+        // Anything else records only short walks (`SA_TRACE_LIVE_STEPS`): a live dive rebuilds
+        // one point's reference many times, and a long orbit's record would be large.
         let tour = args.iter().any(|a| a == "--render-tour");
-        fractadyne_core::set_sa_trace_cache(tour && tunables::cost().sa_trace == 1);
+        if tour {
+            fractadyne_core::set_sa_trace_cache(tunables::cost().sa_trace == 1);
+        } else {
+            fractadyne_core::set_sa_trace_cache_limited(
+                u32::try_from(tunables::cost().sa_trace_live_steps).unwrap_or(u32::MAX),
+            );
+        }
     }
     // `--oomtest`: force a real allocation failure, to prove the OOM path actually writes a crash
     // report. It cannot be verified any other way — an out-of-memory abort skips the panic hook,

@@ -101,7 +101,8 @@ impl Worker {
     /// lists Vulkan adapters before OpenGL ones, so the number names the same card, while the app
     /// itself never enumerates OpenGL beside its own device (the farm client's rule).
     pub(crate) fn spawn_on(spec: &str, window: &wgpu::AdapterInfo, backends: wgpu::Backends) -> Result<Worker, String> {
-        let Headless { device, queue, name, adapter, alive } = open_headless(spec, window, backends, "fractadyne.worker")?;
+        let Headless { device, queue, name, adapter, compile_tag, alive } =
+            open_headless(spec, window, backends, "fractadyne.worker")?;
         // Test hook: `FRACTADYNE_WORKER_LOSE_AFTER=n` — the worker answers `n` jobs, then behaves as
         // a lost device (the path a real loss takes from there: answers fail, `alive` reads false).
         let lose_after = match std::env::var("FRACTADYNE_WORKER_LOSE_AFTER") {
@@ -126,6 +127,8 @@ impl Worker {
             std::thread::Builder::new()
                 .name("fd-gpu-worker".into())
                 .spawn(move || {
+                    // This card's compiles are its own driver's (`Headless::compile_tag`).
+                    fractadyne_gpu::pipeline_compile::set_adapter(compile_tag);
                     let mut answered = 0u32;
                     // The live renderer on this device, built at the first motion refresh, and the
                     // pricing its walks carry from one to the next.
@@ -225,6 +228,9 @@ pub(crate) struct Headless {
     pub(crate) name: String,
     /// The adapter's own name (`AdapterInfo::name`).
     pub(crate) adapter: String,
+    /// Its card for the compile account (`fractadyne_gpu::pipeline_compile::set_adapter`): 0 on
+    /// the window's own card and graphics API (one driver shader cache), else `adapter_tag`.
+    pub(crate) compile_tag: u64,
     pub(crate) alive: Arc<AtomicBool>,
 }
 
@@ -312,7 +318,12 @@ pub(crate) fn open_headless(spec: &str, window: &wgpu::AdapterInfo, backends: wg
             crate::diag::log_line("worker", &format!("the second GPU ({name}) failed: {e} — it is dropped"));
         }));
     }
-    Ok(Headless { device, queue, name, adapter: info.name.clone(), alive })
+    let compile_tag = if info.name == window.name && info.backend == window.backend {
+        0
+    } else {
+        fractadyne_gpu::pipeline_compile::adapter_tag(&info.name, &format!("{:?}", info.backend))
+    };
+    Ok(Headless { device, queue, name, adapter: info.name.clone(), compile_tag, alive })
 }
 
 /// Open every graphics card of this machine except the window's own (Vulkan, real hardware), for

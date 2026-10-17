@@ -45,3 +45,31 @@ fn the_record_keeps_the_slowest_repeat_and_counts_them() {
     assert_eq!((c.pipeline.as_str(), c.ms, c.count), ("export.iter_pipeline fs_iterate", 9_500, 3));
     assert!(SLOW_REPEATS_TO_REPORT >= 2, "one slow repeat could be a disk stall");
 }
+
+/// Each card keeps its own driver shader cache: the second card of a two-card machine compiling a
+/// pipeline the window's card already compiled is a FIRST compile there, slow on a cold cache, not a
+/// repeat. Without the card in the key, two of those read as a cache that does not keep shaders.
+#[test]
+fn a_pipeline_another_card_compiled_is_a_first_compile_here() {
+    let (name, shape) = ("test.cross-card fs_iterate", "c0");
+    set_adapter(0);
+    assert!(!note_compile(repeat_key(name, shape), name, 2_000), "the window's card: a first compile");
+    let other = adapter_tag("AMD Radeon RX 6800 XT", "Vulkan");
+    set_adapter(other);
+    assert!(!note_compile(repeat_key(name, shape), name, 2_000), "the second card: its own first compile");
+    assert!(note_compile(repeat_key(name, shape), name, 2_000), "and its own repeat");
+    // Another graphics API on the same card has another cache too.
+    set_adapter(adapter_tag("AMD Radeon RX 6800 XT", "Dx12"));
+    assert!(!note_compile(repeat_key(name, shape), name, 2_000));
+    set_adapter(0);
+    assert!(note_compile(repeat_key(name, shape), name, 2_000), "the window's card's own repeat still counts");
+}
+
+#[test]
+fn a_card_tag_is_stable_and_never_the_windows() {
+    let t = adapter_tag("NVIDIA GeForce RTX 3070", "Vulkan");
+    assert_eq!(t, adapter_tag("NVIDIA GeForce RTX 3070", "Vulkan"));
+    assert_ne!(t, adapter_tag("NVIDIA GeForce RTX 3070", "Dx12"));
+    assert_ne!(t, 0);
+    assert_ne!(adapter_tag("", ""), 0);
+}

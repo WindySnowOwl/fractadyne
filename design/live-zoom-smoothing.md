@@ -524,6 +524,53 @@ it as a detail floor before a change that trades one for the other is judged by 
 
 The 4× rows still fail the gate: the 2^93 switch (P-E: seed floatexp's budget from the df32 rate it
 leaves, scaled by the measured per-step cost ratio — safety-sensitive, the device losses above);
-the per-build series walk at depth (turn the SA trace cache on for live dives — measure the first
-walk, which records to the orbit's end, and the record's size); the df32 episodes at 2^54–2^65; and
+the per-build series walk at depth (done the same day, §7.6); the df32 episodes at 2^54–2^65; and
 the 1× rows' frames over 50 ms, which come and go between runs in every arm (2 to 355).
+
+### 7.6 The series walk, recorded for live dives (`SA_TRACE_LIVE_STEPS`, 2026-10-17)
+
+The tours' record of a reference's series walk (`set_sa_trace_cache`, byte-identical replays) is now
+on outside a `--render-tour` too, for walks of at most `SA_TRACE_LIVE_STEPS` (65,536) steps
+(`set_sa_trace_cache_limited`): a record walks to the orbit's end at ~90 bytes a step, so a deep
+hold's long orbit is walked plainly instead. Same exe, alternated, the 4× continuous row
+(`FRACTADYNE_TRACE=ref` on one pair):
+
+| | record on | `--set SA_TRACE_LIVE_STEPS=0` |
+|---|---|---|
+| reference build, median ms (2^250–2^330) | 19 (23) | 128–139 (204–216) |
+| of it the series walk, median ms | 0 | 105–119 (181–188) |
+| reference lag max (oct) | 2.16, 2.22, 2.73, 1.76 | 3.16, 2.68, 2.42 |
+| pacer throttled | 8.3, 8.0, 12.5, 8.1% | 11.1, 26.4, 11.2% |
+| reference installs | 1,086, 1,082, 872, 1,093 | 697, 642, 696 |
+| picture's lag, mean (oct) | 0.71 | 0.71 |
+
+(One run of the off arm was STEERED and is left out.) CPU spent on reference builds over the dive
+falls ~5.6× (~24 s against ~136 s) though more builds complete. The picture's age does not move:
+with builds this cheap the lag at depth is set by the refresh cadence and the 2^93 switch, not by
+the reference pipeline any more.
+
+### 7.7 What holds the first floatexp pin, and the growth limiter's unit (analysis, not changed)
+
+Recorded with `FRACTADYNE_RECORD_DECIDE` through the 2^93 switch on the jump row (the `walk-price`
+decisions, frame 306 = the switch): the first floatexp pin opens at the visible ladder's floor
+(145×110, 16,170 px) and its passes are bounded first by the opening guess (`bootstrap_steps`: the
+df32 rate over `MODE_RATE_UNKNOWN_MARGIN`, 4.26e6 steps ⇒ 148 and 263 iterations), then for five
+frames by the growth limiter's ×2 a frame (526 → 8,416), and only then by the rate model (12,106).
+The passes priced 0.16–0.85 ms against the 20 ms pin target: the card had the room, the guard did
+not let the walk use it. That is the design's choice at the one place six device losses happened
+(the mode-switch block in `build_params`), and it stays until someone decides otherwise.
+
+⚠**The growth limiter counts ITERATIONS, not work.** `WalkLedger::motion_step_last` is shared by
+the pin passes and the moving frames between them, and the frames run at very different pixel
+counts: frame 317, a moving frame at 1,627,654 px, set it to 120 iterations (1.95e8 steps); the next
+pin, at 25,208 px, restarted its doubling at 240 iterations — 6e6 steps, 1/32 of the frame before.
+"At most double the previous pass" means work, and measured in iterations it is too strict when the
+resolution falls (here, every pin start) and too loose when it rises (a full-resolution pass after a
+small one may take 2× the iterations of a pass with 1/100 of the pixels). A step-counted limiter
+would be the invariant the comment states; it needs a recorded input (old recordings replay as
+iterations), its own reset at a mode switch (a df32 step is ~100× cheaper than a floatexp one), and
+the device-loss gates of §P-G.
+
+The df32 stretch at 2^54–2^65 (a jump-start at 2^48, 4×) is the sizing working at its edge, not a
+defect: refreshes at ~1028×779 adopt every 13–14 frames, held max 1.03 octaves, median on-screen
+detail 643 px. `HELD_MAX_OCT` (0.5) trades that age against resolution.

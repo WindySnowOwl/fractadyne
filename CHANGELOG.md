@@ -59,6 +59,12 @@ published as the pre-releases `v0.2.41-beta.1` to `v0.2.41-beta.150`, and a "bet
 
 Changes after 0.3.0-beta.1:
 
+- **Reference updates in a deep zoom take a seventh of the time (0.3.0-beta.20).** A zoom past
+  about 1e70× rebuilds its reference orbit every fraction of an octave, and where that orbit
+  escapes early each rebuild recalculated the same series approximation, 180 of its 210 ms. The
+  calculation is now kept and reused for the same point (with the same result, bit for bit), so a
+  rebuild takes about 23 ms. On a dive to 1e100× at the fastest speed, the reference lags the view
+  less (at most 1.8 to 2.7 octaves instead of 2.4 to 3.2) and the zoom slows itself on fewer frames.
 - **A fast deep zoom no longer stalls on its own reference updates (0.3.0-beta.20).** Past about
   1e70×, a zoom keeps its reference orbit current in two ways: it prepares the depths ahead of it,
   and it rebuilds when the view gets ahead of the reference. A rebuild could finish after a newer
@@ -79,8 +85,8 @@ Changes after 0.3.0-beta.1:
 - **Fractadyne tells you when the graphics driver stops keeping its shaders (0.3.0-beta.20).** A
   driver's shader cache normally answers a shader Fractadyne has compiled before in milliseconds.
   Once the cache is full it does not, and every export and launch spends seconds compiling. When
-  the same shader compiles slowly a second time in one session, a notice says so, names the
-  shader and the time it took, and says what to clear: on NVIDIA, the cache folder with its size
+  the same shader compiles slowly a second time on the same graphics card in one session, a
+  notice says so, names the shader and the time it took, and says what to clear: on NVIDIA, the cache folder with its size
   and the Control Panel setting that keeps it from filling again; on AMD, Reset Shader Cache.
 - **A slow shader compile is no longer logged as a hang (0.3.0-beta.20).** When the graphics
   driver's shader cache misses (after a driver update, or once the cache is full), Fractadyne's

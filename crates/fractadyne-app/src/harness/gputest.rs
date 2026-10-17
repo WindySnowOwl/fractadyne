@@ -725,7 +725,14 @@ pub(crate) fn run_gputest_sweep(out: Option<&std::path::Path>) -> usize {
         };
         sink.line(format!("── {label} · {} · driver: {} {}", info.name, info.driver, info.driver_info));
         ran += 1;
-        match fractadyne_gpu::gputest(&device, &queue) {
+        // Each graphics API has its own driver shader cache: its compiles are not repeats of another's.
+        fractadyne_gpu::pipeline_compile::set_adapter(fractadyne_gpu::pipeline_compile::adapter_tag(
+            &info.name,
+            &format!("{:?}", info.backend),
+        ));
+        let run = fractadyne_gpu::gputest(&device, &queue);
+        fractadyne_gpu::pipeline_compile::set_adapter(0);
+        match run {
             Ok((w, h, px)) => {
                 if report(&mut sink, label, w, h, &px) > 0 {
                     failed += 1;
