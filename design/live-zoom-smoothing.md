@@ -548,3 +548,29 @@ hold's long orbit is walked plainly instead. Same exe, alternated, the 4× conti
 falls ~5.6× (~24 s against ~136 s) though more builds complete. The picture's age does not move:
 with builds this cheap the lag at depth is set by the refresh cadence and the 2^93 switch, not by
 the reference pipeline any more.
+
+### 7.7 What holds the first floatexp pin, and the growth limiter's unit (analysis, not changed)
+
+Recorded with `FRACTADYNE_RECORD_DECIDE` through the 2^93 switch on the jump row (the `walk-price`
+decisions, frame 306 = the switch): the first floatexp pin opens at the visible ladder's floor
+(145×110, 16,170 px) and its passes are bounded first by the opening guess (`bootstrap_steps`: the
+df32 rate over `MODE_RATE_UNKNOWN_MARGIN`, 4.26e6 steps ⇒ 148 and 263 iterations), then for five
+frames by the growth limiter's ×2 a frame (526 → 8,416), and only then by the rate model (12,106).
+The passes priced 0.16–0.85 ms against the 20 ms pin target: the card had the room, the guard did
+not let the walk use it. That is the design's choice at the one place six device losses happened
+(the mode-switch block in `build_params`), and it stays until someone decides otherwise.
+
+⚠**The growth limiter counts ITERATIONS, not work.** `WalkLedger::motion_step_last` is shared by
+the pin passes and the moving frames between them, and the frames run at very different pixel
+counts: frame 317, a moving frame at 1,627,654 px, set it to 120 iterations (1.95e8 steps); the next
+pin, at 25,208 px, restarted its doubling at 240 iterations — 6e6 steps, 1/32 of the frame before.
+"At most double the previous pass" means work, and measured in iterations it is too strict when the
+resolution falls (here, every pin start) and too loose when it rises (a full-resolution pass after a
+small one may take 2× the iterations of a pass with 1/100 of the pixels). A step-counted limiter
+would be the invariant the comment states; it needs a recorded input (old recordings replay as
+iterations), its own reset at a mode switch (a df32 step is ~100× cheaper than a floatexp one), and
+the device-loss gates of §P-G.
+
+The df32 stretch at 2^54–2^65 (a jump-start at 2^48, 4×) is the sizing working at its edge, not a
+defect: refreshes at ~1028×779 adopt every 13–14 frames, held max 1.03 octaves, median on-screen
+detail 643 px. `HELD_MAX_OCT` (0.5) trades that age against resolution.
